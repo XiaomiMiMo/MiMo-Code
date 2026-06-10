@@ -1000,7 +1000,7 @@ export default function Page() {
   )
 
   const fileTreeTab = () => layout.fileTree.tab()
-  const setFileTreeTab = (value: "changes" | "all") => layout.fileTree.setTab(value)
+  const setFileTreeTab = (value: "changes" | "all" | "memory") => layout.fileTree.setTab(value)
 
   const [tree, setTree] = createStore({
     reviewScroll: undefined as HTMLDivElement | undefined,

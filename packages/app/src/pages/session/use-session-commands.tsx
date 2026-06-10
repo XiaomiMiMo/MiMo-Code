@@ -473,6 +473,14 @@ export const useSessionCommands = (actions: SessionCommandContext) => {
             keybind: "mod+\\",
             onSelect: () => layout.fileTree.toggle(),
           }),
+          viewCommand({
+            id: "memory.open",
+            title: language.t("command.memory.open"),
+            onSelect: () => {
+              layout.fileTree.open()
+              layout.fileTree.setTab("memory")
+            },
+          }),
         ]
       : []),
     viewCommand({

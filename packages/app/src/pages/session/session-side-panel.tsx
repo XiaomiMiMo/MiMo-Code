@@ -27,6 +27,7 @@ import { FileTabContent } from "@/pages/session/file-tabs"
 import { createOpenSessionFileTab, createSessionTabs, getTabReorderIndex, type Sizing } from "@/pages/session/helpers"
 import { setSessionHandoff } from "@/pages/session/handoff"
 import { useSessionLayout } from "@/pages/session/session-layout"
+import { MemorySearchPanel } from "@/pages/session/memory-search-panel"
 
 export function SessionSidePanel(props: {
   canReview: () => boolean
@@ -145,7 +146,7 @@ export function SessionSidePanel(props: {
   const fileTreeTab = () => layout.fileTree.tab()
 
   const setFileTreeTabValue = (value: string) => {
-    if (value !== "changes" && value !== "all") return
+    if (value !== "changes" && value !== "all" && value !== "memory") return
     layout.fileTree.setTab(value)
   }
 
@@ -387,6 +388,14 @@ export function SessionSidePanel(props: {
                     <Tabs.Trigger value="all" class="flex-1" classes={{ button: "w-full" }}>
                       {language.t("session.files.all")}
                     </Tabs.Trigger>
+                    <Tabs.Trigger
+                      value="memory"
+                      class="flex-1"
+                      classes={{ button: "w-full" }}
+                      data-testid="filetree-tab-memory"
+                    >
+                      {language.t("session.memory.tab.title")}
+                    </Tabs.Trigger>
                   </Tabs.List>
                   <Tabs.Content value="changes" class="bg-background-stronger px-3 py-0">
                     <Switch>
@@ -426,6 +435,9 @@ export function SessionSidePanel(props: {
                         />
                       </Match>
                     </Switch>
+                  </Tabs.Content>
+                  <Tabs.Content value="memory" class="bg-background-stronger min-h-0 flex-1 overflow-hidden">
+                    <MemorySearchPanel />
                   </Tabs.Content>
                 </Tabs>
               </div>
