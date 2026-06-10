@@ -332,7 +332,7 @@ export const dict = {
   "tui.command.voice.control.title_on": "语音控制：已开启（多模态） — 点击关闭",
   "tui.command.voice.control.title_off": "语音控制：已关闭（快速 ASR） — 点击开启",
   "tui.voice.error.no_auth": "请先登录 MiMo 账号",
-  "tui.voice.error.no_recorder": "未检测到录音工具，请安装 sox",
+  "tui.voice.error.no_recorder": "未检测到录音工具，请安装 sox（Windows: winget install sox_ng.sox_ng）",
   "tui.voice.error.too_short": "录音时间过短",
   "tui.voice.error.network": "转写失败，请检查网络",
   "tui.voice.error.empty_send": "无内容可发送",

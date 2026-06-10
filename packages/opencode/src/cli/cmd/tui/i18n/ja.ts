@@ -346,7 +346,7 @@ export const dict = {
   "tui.command.voice.control.title_on": "音声制御：有効（マルチモーダル） — クリックで無効化",
   "tui.command.voice.control.title_off": "音声制御：無効（高速ASR） — クリックで有効化",
   "tui.voice.error.no_auth": "まず MiMo アカウントにログインしてください",
-  "tui.voice.error.no_recorder": "録音ツールが見つかりません。sox をインストールしてください",
+  "tui.voice.error.no_recorder": "録音ツールが見つかりません。sox をインストールしてください（Windows: winget install sox_ng.sox_ng）",
   "tui.voice.error.too_short": "録音時間が短すぎます",
   "tui.voice.error.network": "文字起こしに失敗しました。ネットワークを確認してください",
   "tui.command.prompt.stash.title": "プロンプトを退避",

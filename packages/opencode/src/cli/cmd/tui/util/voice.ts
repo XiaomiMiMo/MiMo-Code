@@ -31,6 +31,10 @@ const RECORDERS: Record<string, Array<() => Recorder | null>> = {
   ],
   win32: [
     () =>
+      which("sox_ng")
+        ? { cmd: "sox_ng", pipeArgs: () => ["-d", "-r", "16000", "-c", "1", "-b", "16", "-t", "raw", "-"] }
+        : null,
+    () =>
       which("sox")
         ? { cmd: "sox", pipeArgs: () => ["-d", "-r", "16000", "-c", "1", "-b", "16", "-t", "raw", "-"] }
         : null,

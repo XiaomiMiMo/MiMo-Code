@@ -339,7 +339,7 @@ export const dict: Record<string, string> = {
   "tui.command.voice.control.title_on": "Voice control: ON (multimodal) — click to turn off",
   "tui.command.voice.control.title_off": "Voice control: OFF (fast ASR) — click to turn on",
   "tui.voice.error.no_auth": "Please log in to MiMo first",
-  "tui.voice.error.no_recorder": "No recording tool found, please install sox",
+  "tui.voice.error.no_recorder": "No recording tool found, please install sox (Windows: winget install sox_ng.sox_ng)",
   "tui.voice.error.too_short": "Recording too short",
   "tui.voice.error.network": "Transcription failed, please check your network",
   "tui.voice.error.empty_send": "Nothing to send",

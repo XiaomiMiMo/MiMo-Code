@@ -406,7 +406,7 @@ export const dict = {
   "tui.command.voice.control.title_on": "Голосовое управление: включено (мультимодальное) — нажмите для отключения",
   "tui.command.voice.control.title_off": "Голосовое управление: отключено (быстрый ASR) — нажмите для включения",
   "tui.voice.error.no_auth": "Сначала войдите в аккаунт MiMo",
-  "tui.voice.error.no_recorder": "Инструмент записи не найден, установите sox",
+  "tui.voice.error.no_recorder": "Инструмент записи не найден, установите sox (Windows: winget install sox_ng.sox_ng)",
   "tui.voice.error.too_short": "Запись слишком короткая",
   "tui.voice.error.network": "Ошибка транскрипции, проверьте сеть",
   "tui.command.prompt.stash.title": "Сохранить ввод во временное хранилище",

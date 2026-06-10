@@ -394,7 +394,7 @@ export const dict = {
   "tui.command.voice.control.title_on": "Contrôle vocal : activé (multimodal) — cliquer pour désactiver",
   "tui.command.voice.control.title_off": "Contrôle vocal : désactivé (ASR rapide) — cliquer pour activer",
   "tui.voice.error.no_auth": "Veuillez d'abord vous connecter à MiMo",
-  "tui.voice.error.no_recorder": "Aucun outil d'enregistrement trouvé, installez sox",
+  "tui.voice.error.no_recorder": "Aucun outil d'enregistrement trouvé, installez sox (Windows : winget install sox_ng.sox_ng)",
   "tui.voice.error.too_short": "Enregistrement trop court",
   "tui.voice.error.network": "La transcription a échoué, vérifiez votre réseau",
   "tui.command.prompt.stash.title": "Mettre l'invite de côté",
