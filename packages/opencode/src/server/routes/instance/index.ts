@@ -28,6 +28,7 @@ import { ExperimentalRoutes } from "./experimental"
 import { ProviderRoutes } from "./provider"
 import { EventRoutes } from "./event"
 import { SyncRoutes } from "./sync"
+import { MemoryRoutes, HistoryRoutes } from "./memory-history"
 import { InstanceMiddleware } from "./middleware"
 import { jsonRequest } from "./trace"
 
@@ -63,6 +64,8 @@ export const InstanceRoutes = (upgrade: UpgradeWebSocket): Hono => {
     .route("/bash-interactive", BashInteractiveRoutes())
     .route("/provider", ProviderRoutes())
     .route("/sync", SyncRoutes())
+    .route("/memory", MemoryRoutes())
+    .route("/history", HistoryRoutes())
     .route("/", FileRoutes())
     .route("/", EventRoutes())
     .route("/mcp", McpRoutes())

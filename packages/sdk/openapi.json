@@ -6123,6 +6123,357 @@
         ]
       }
     },
+    "/memory/search": {
+      "get": {
+        "operationId": "memory.search",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "directory",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "workspace",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "query",
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "description": "FTS query (BM25 over markdown bodies)"
+          },
+          {
+            "in": "query",
+            "name": "scope",
+            "schema": {
+              "type": "string",
+              "enum": ["global", "projects", "sessions", "cc"]
+            }
+          },
+          {
+            "in": "query",
+            "name": "scope_id",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "type",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "schema": {
+              "type": "number"
+            }
+          }
+        ],
+        "summary": "Search project memory",
+        "description": "BM25 full-text search over indexed memory markdown (MEMORY.md, checkpoint.md, notes, task progress, optional Claude Code memory).",
+        "responses": {
+          "200": {
+            "description": "Ranked memory hits",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/MemorySearchResult"
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BadRequestError"
+                }
+              }
+            }
+          }
+        },
+        "x-codeSamples": [
+          {
+            "lang": "js",
+            "source": "import { createOpencodeClient } from \"@mimo-ai/sdk\n\nconst client = createOpencodeClient()\nawait client.memory.search({\n  ...\n})"
+          }
+        ]
+      }
+    },
+    "/memory/file": {
+      "get": {
+        "operationId": "memory.file.get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "directory",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "workspace",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "path",
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "description": "Absolute path from a memory.search hit"
+          }
+        ],
+        "summary": "Read a memory file",
+        "description": "Return the full markdown body for an absolute path returned by memory.search.",
+        "responses": {
+          "200": {
+            "description": "Memory file contents",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MemoryFile"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BadRequestError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NotFoundError"
+                }
+              }
+            }
+          }
+        },
+        "x-codeSamples": [
+          {
+            "lang": "js",
+            "source": "import { createOpencodeClient } from \"@mimo-ai/sdk\n\nconst client = createOpencodeClient()\nawait client.memory.file.get({\n  ...\n})"
+          }
+        ]
+      }
+    },
+    "/history/search": {
+      "get": {
+        "operationId": "history.search",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "directory",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "workspace",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "query",
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "description": "FTS query over conversation trajectory"
+          },
+          {
+            "in": "query",
+            "name": "scope",
+            "schema": {
+              "type": "string",
+              "enum": ["project", "global"]
+            }
+          },
+          {
+            "in": "query",
+            "name": "session_id",
+            "schema": {
+              "type": "string",
+              "pattern": "^ses.*"
+            }
+          },
+          {
+            "in": "query",
+            "name": "kind",
+            "schema": {
+              "type": "string"
+            },
+            "description": "Comma-separated history kinds (e.g. user_text,assistant_text)"
+          },
+          {
+            "in": "query",
+            "name": "tool_name",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "time_after",
+            "schema": {
+              "type": "number"
+            }
+          },
+          {
+            "in": "query",
+            "name": "time_before",
+            "schema": {
+              "type": "number"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "schema": {
+              "type": "number"
+            }
+          }
+        ],
+        "summary": "Search conversation history",
+        "description": "BM25 full-text search over indexed session trajectory (user/assistant text, tool I/O, reasoning).",
+        "responses": {
+          "200": {
+            "description": "Ranked trajectory hits",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/HistorySearchHit"
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BadRequestError"
+                }
+              }
+            }
+          }
+        },
+        "x-codeSamples": [
+          {
+            "lang": "js",
+            "source": "import { createOpencodeClient } from \"@mimo-ai/sdk\n\nconst client = createOpencodeClient()\nawait client.history.search({\n  ...\n})"
+          }
+        ]
+      }
+    },
+    "/history/around": {
+      "get": {
+        "operationId": "history.around",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "directory",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "workspace",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "message_id",
+            "schema": {
+              "type": "string",
+              "pattern": "^msg.*"
+            },
+            "required": true
+          },
+          {
+            "in": "query",
+            "name": "before",
+            "schema": {
+              "type": "number"
+            }
+          },
+          {
+            "in": "query",
+            "name": "after",
+            "schema": {
+              "type": "number"
+            }
+          }
+        ],
+        "summary": "Get message context around an anchor",
+        "description": "Load neighboring messages for a trajectory search hit (same window as the history tool around operation).",
+        "responses": {
+          "200": {
+            "description": "Message window",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HistoryAround"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BadRequestError"
+                }
+              }
+            }
+          }
+        },
+        "x-codeSamples": [
+          {
+            "lang": "js",
+            "source": "import { createOpencodeClient } from \"@mimo-ai/sdk\n\nconst client = createOpencodeClient()\nawait client.history.around({\n  ...\n})"
+          }
+        ]
+      }
+    },
     "/find": {
       "get": {
         "operationId": "find.text",
@@ -8171,6 +8522,868 @@
   },
   "components": {
     "schemas": {
+      "Event.server.connected": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string",
+            "const": "server.connected"
+          },
+          "properties": {
+            "type": "object",
+            "properties": {}
+          }
+        },
+        "required": ["type", "properties"]
+      },
+      "Event.global.disposed": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string",
+            "const": "global.disposed"
+          },
+          "properties": {
+            "type": "object",
+            "properties": {}
+          }
+        },
+        "required": ["type", "properties"]
+      },
+      "Event.actor.registered": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string",
+            "const": "actor.registered"
+          },
+          "properties": {
+            "type": "object",
+            "properties": {
+              "sessionID": {
+                "type": "string",
+                "pattern": "^ses.*"
+              },
+              "actorID": {
+                "type": "string"
+              },
+              "mode": {
+                "type": "string",
+                "enum": ["peer", "subagent", "main"]
+              },
+              "parentActorID": {
+                "type": "string"
+              },
+              "description": {
+                "type": "string"
+              },
+              "agent": {
+                "type": "string"
+              },
+              "background": {
+                "type": "boolean"
+              }
+            },
+            "required": ["sessionID", "actorID", "mode", "description", "agent", "background"]
+          }
+        },
+        "required": ["type", "properties"]
+      },
+      "Event.actor.status": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string",
+            "const": "actor.status"
+          },
+          "properties": {
+            "type": "object",
+            "properties": {
+              "sessionID": {
+                "type": "string",
+                "pattern": "^ses.*"
+              },
+              "actorID": {
+                "type": "string"
+              },
+              "status": {
+                "type": "string",
+                "enum": ["pending", "running", "idle"]
+              },
+              "lastOutcome": {
+                "type": "string",
+                "enum": ["success", "failure", "cancelled"]
+              },
+              "turnCount": {
+                "type": "number"
+              },
+              "lastTurnTime": {
+                "type": "number"
+              },
+              "error": {
+                "type": "string"
+              }
+            },
+            "required": ["sessionID", "actorID", "status", "turnCount", "lastTurnTime"]
+          }
+        },
+        "required": ["type", "properties"]
+      },
+      "Event.actor.stuck": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string",
+            "const": "actor.stuck"
+          },
+          "properties": {
+            "type": "object",
+            "properties": {
+              "sessionID": {
+                "type": "string",
+                "pattern": "^ses.*"
+              },
+              "actorID": {
+                "type": "string"
+              },
+              "description": {
+                "type": "string"
+              },
+              "lastTurnTime": {
+                "type": "number"
+              },
+              "stuckDuration": {
+                "type": "number"
+              }
+            },
+            "required": ["sessionID", "actorID", "description", "lastTurnTime", "stuckDuration"]
+          }
+        },
+        "required": ["type", "properties"]
+      },
+      "Event.writer.cache_perf": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string",
+            "const": "writer.cache_perf"
+          },
+          "properties": {
+            "type": "object",
+            "properties": {
+              "sessionID": {
+                "type": "string",
+                "pattern": "^ses.*"
+              },
+              "writerActorID": {
+                "type": "string"
+              },
+              "status": {
+                "type": "string",
+                "enum": ["completed", "failed"]
+              },
+              "total_input_tokens": {
+                "type": "number"
+              },
+              "cache_read_tokens": {
+                "type": "number"
+              },
+              "cache_write_tokens": {
+                "type": "number"
+              },
+              "cache_hit_rate": {
+                "type": "number"
+              },
+              "num_llm_calls": {
+                "type": "number"
+              }
+            },
+            "required": [
+              "sessionID",
+              "writerActorID",
+              "status",
+              "total_input_tokens",
+              "cache_read_tokens",
+              "cache_write_tokens",
+              "cache_hit_rate",
+              "num_llm_calls"
+            ]
+          }
+        },
+        "required": ["type", "properties"]
+      },
+      "Event.inbox.arrived": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string",
+            "const": "inbox.arrived"
+          },
+          "properties": {
+            "type": "object",
+            "properties": {
+              "receiverSessionID": {
+                "type": "string",
+                "pattern": "^ses.*"
+              },
+              "receiverActorID": {
+                "type": "string"
+              },
+              "senderSessionID": {
+                "type": "string",
+                "pattern": "^ses.*"
+              },
+              "senderActorID": {
+                "type": "string"
+              },
+              "inboxID": {
+                "type": "string"
+              },
+              "type": {
+                "type": "string"
+              }
+            },
+            "required": ["receiverSessionID", "receiverActorID", "inboxID", "type"]
+          }
+        },
+        "required": ["type", "properties"]
+      },
+      "Event.task.created": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string",
+            "const": "task.created"
+          },
+          "properties": {
+            "type": "object",
+            "properties": {
+              "sessionID": {
+                "type": "string",
+                "pattern": "^ses.*"
+              },
+              "task": {
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "type": "string",
+                    "pattern": "^T\\d+(\\.\\d+)*$"
+                  },
+                  "session_id": {
+                    "type": "string",
+                    "pattern": "^ses.*"
+                  },
+                  "parent_task_id": {
+                    "type": "string",
+                    "pattern": "^T\\d+(\\.\\d+)*$"
+                  },
+                  "status": {
+                    "type": "string",
+                    "enum": ["open", "in_progress", "blocked", "done", "abandoned"]
+                  },
+                  "summary": {
+                    "type": "string"
+                  },
+                  "owner": {
+                    "type": "string"
+                  },
+                  "created_at": {
+                    "type": "number"
+                  },
+                  "last_event_at": {
+                    "type": "number"
+                  },
+                  "ended_at": {
+                    "type": "number"
+                  },
+                  "cleanup_after": {
+                    "type": "number"
+                  }
+                },
+                "required": ["id", "session_id", "status", "summary", "created_at", "last_event_at"]
+              }
+            },
+            "required": ["sessionID", "task"]
+          }
+        },
+        "required": ["type", "properties"]
+      },
+      "Event.task.updated": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string",
+            "const": "task.updated"
+          },
+          "properties": {
+            "type": "object",
+            "properties": {
+              "sessionID": {
+                "type": "string",
+                "pattern": "^ses.*"
+              },
+              "task": {
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "type": "string",
+                    "pattern": "^T\\d+(\\.\\d+)*$"
+                  },
+                  "session_id": {
+                    "type": "string",
+                    "pattern": "^ses.*"
+                  },
+                  "parent_task_id": {
+                    "type": "string",
+                    "pattern": "^T\\d+(\\.\\d+)*$"
+                  },
+                  "status": {
+                    "type": "string",
+                    "enum": ["open", "in_progress", "blocked", "done", "abandoned"]
+                  },
+                  "summary": {
+                    "type": "string"
+                  },
+                  "owner": {
+                    "type": "string"
+                  },
+                  "created_at": {
+                    "type": "number"
+                  },
+                  "last_event_at": {
+                    "type": "number"
+                  },
+                  "ended_at": {
+                    "type": "number"
+                  },
+                  "cleanup_after": {
+                    "type": "number"
+                  }
+                },
+                "required": ["id", "session_id", "status", "summary", "created_at", "last_event_at"]
+              },
+              "kind": {
+                "type": "string",
+                "enum": ["started", "unstarted", "blocked", "unblocked", "done", "abandoned", "renamed"]
+              }
+            },
+            "required": ["sessionID", "task", "kind"]
+          }
+        },
+        "required": ["type", "properties"]
+      },
+      "Event.team.created": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string",
+            "const": "team.created"
+          },
+          "properties": {
+            "type": "object",
+            "properties": {
+              "teamID": {
+                "type": "string"
+              },
+              "creatorSessionID": {
+                "type": "string",
+                "pattern": "^ses.*"
+              }
+            },
+            "required": ["teamID", "creatorSessionID"]
+          }
+        },
+        "required": ["type", "properties"]
+      },
+      "Event.team.member.joined": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string",
+            "const": "team.member.joined"
+          },
+          "properties": {
+            "type": "object",
+            "properties": {
+              "teamID": {
+                "type": "string"
+              },
+              "sessionID": {
+                "type": "string",
+                "pattern": "^ses.*"
+              },
+              "agent": {
+                "type": "string"
+              },
+              "role": {
+                "type": "string"
+              }
+            },
+            "required": ["teamID", "sessionID", "agent", "role"]
+          }
+        },
+        "required": ["type", "properties"]
+      },
+      "Event.metrics.model_call": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string",
+            "const": "metrics.model_call"
+          },
+          "properties": {
+            "type": "object",
+            "properties": {
+              "sessionID": {
+                "type": "string"
+              },
+              "finish_reason": {
+                "type": "string"
+              },
+              "ttft_ms": {
+                "type": "number"
+              },
+              "latency_ms": {
+                "type": "number"
+              },
+              "cached_read_tokens": {
+                "type": "number"
+              },
+              "model_id": {
+                "type": "string"
+              },
+              "provider": {
+                "type": "string"
+              },
+              "total_tokens_in": {
+                "type": "number"
+              },
+              "total_tokens_out": {
+                "type": "number"
+              }
+            },
+            "required": [
+              "sessionID",
+              "finish_reason",
+              "latency_ms",
+              "cached_read_tokens",
+              "model_id",
+              "provider",
+              "total_tokens_in",
+              "total_tokens_out"
+            ]
+          }
+        },
+        "required": ["type", "properties"]
+      },
+      "Event.metrics.tool_call": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string",
+            "const": "metrics.tool_call"
+          },
+          "properties": {
+            "type": "object",
+            "properties": {
+              "sessionID": {
+                "type": "string"
+              },
+              "tool_name": {
+                "type": "string"
+              },
+              "input_bytes": {
+                "type": "number"
+              },
+              "output_bytes": {
+                "type": "number"
+              },
+              "tool_call_id": {
+                "type": "string"
+              },
+              "tool_call_status": {
+                "type": "string",
+                "enum": ["success", "error"]
+              }
+            },
+            "required": ["sessionID", "tool_name", "input_bytes", "output_bytes", "tool_call_id", "tool_call_status"]
+          }
+        },
+        "required": ["type", "properties"]
+      },
+      "Event.metrics.agent_request": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string",
+            "const": "metrics.agent_request"
+          },
+          "properties": {
+            "type": "object",
+            "properties": {
+              "sessionID": {
+                "type": "string"
+              },
+              "phase": {
+                "type": "string"
+              },
+              "task_type": {
+                "type": "string"
+              },
+              "surface": {
+                "type": "string"
+              },
+              "total_tokens_in": {
+                "type": "number"
+              },
+              "total_tokens_out": {
+                "type": "number"
+              },
+              "files_changed": {
+                "type": "number"
+              },
+              "validation_status": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "sessionID",
+              "phase",
+              "task_type",
+              "surface",
+              "total_tokens_in",
+              "total_tokens_out",
+              "files_changed",
+              "validation_status"
+            ]
+          }
+        },
+        "required": ["type", "properties"]
+      },
+      "Event.tui.prompt.append": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string",
+            "const": "tui.prompt.append"
+          },
+          "properties": {
+            "type": "object",
+            "properties": {
+              "text": {
+                "type": "string"
+              }
+            },
+            "required": ["text"]
+          }
+        },
+        "required": ["type", "properties"]
+      },
+      "Event.tui.command.execute": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string",
+            "const": "tui.command.execute"
+          },
+          "properties": {
+            "type": "object",
+            "properties": {
+              "command": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "enum": [
+                      "session.list",
+                      "session.new",
+                      "session.share",
+                      "session.interrupt",
+                      "session.compact",
+                      "session.page.up",
+                      "session.page.down",
+                      "session.line.up",
+                      "session.line.down",
+                      "session.half.page.up",
+                      "session.half.page.down",
+                      "session.first",
+                      "session.last",
+                      "prompt.clear",
+                      "prompt.submit",
+                      "agent.cycle"
+                    ]
+                  },
+                  {
+                    "type": "string"
+                  }
+                ]
+              }
+            },
+            "required": ["command"]
+          }
+        },
+        "required": ["type", "properties"]
+      },
+      "Event.tui.toast.show": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string",
+            "const": "tui.toast.show"
+          },
+          "properties": {
+            "type": "object",
+            "properties": {
+              "title": {
+                "type": "string"
+              },
+              "message": {
+                "type": "string"
+              },
+              "variant": {
+                "type": "string",
+                "enum": ["info", "success", "warning", "error"]
+              },
+              "duration": {
+                "description": "Duration in milliseconds",
+                "default": 5000,
+                "type": "number"
+              }
+            },
+            "required": ["message", "variant"]
+          }
+        },
+        "required": ["type", "properties"]
+      },
+      "Event.tui.session.select": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string",
+            "const": "tui.session.select"
+          },
+          "properties": {
+            "type": "object",
+            "properties": {
+              "sessionID": {
+                "description": "Session ID to navigate to",
+                "type": "string",
+                "pattern": "^ses.*"
+              }
+            },
+            "required": ["sessionID"]
+          }
+        },
+        "required": ["type", "properties"]
+      },
+      "Event.tui.instructions.loaded": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string",
+            "const": "tui.instructions.loaded"
+          },
+          "properties": {
+            "type": "object",
+            "properties": {
+              "files": {
+                "description": "Display labels of loaded instruction files: worktree-relative path, ~-path, or absolute",
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            },
+            "required": ["files"]
+          }
+        },
+        "required": ["type", "properties"]
+      },
+      "Event.workflow.phase": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string",
+            "const": "workflow.phase"
+          },
+          "properties": {
+            "type": "object",
+            "properties": {
+              "sessionID": {
+                "type": "string",
+                "pattern": "^ses.*"
+              },
+              "runID": {
+                "type": "string"
+              },
+              "title": {
+                "type": "string"
+              }
+            },
+            "required": ["sessionID", "runID", "title"]
+          }
+        },
+        "required": ["type", "properties"]
+      },
+      "Event.workflow.log": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string",
+            "const": "workflow.log"
+          },
+          "properties": {
+            "type": "object",
+            "properties": {
+              "sessionID": {
+                "type": "string",
+                "pattern": "^ses.*"
+              },
+              "runID": {
+                "type": "string"
+              },
+              "message": {
+                "type": "string"
+              }
+            },
+            "required": ["sessionID", "runID", "message"]
+          }
+        },
+        "required": ["type", "properties"]
+      },
+      "Event.workflow.started": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string",
+            "const": "workflow.started"
+          },
+          "properties": {
+            "type": "object",
+            "properties": {
+              "sessionID": {
+                "type": "string",
+                "pattern": "^ses.*"
+              },
+              "runID": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              }
+            },
+            "required": ["sessionID", "runID", "name"]
+          }
+        },
+        "required": ["type", "properties"]
+      },
+      "Event.workflow.finished": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string",
+            "const": "workflow.finished"
+          },
+          "properties": {
+            "type": "object",
+            "properties": {
+              "sessionID": {
+                "type": "string",
+                "pattern": "^ses.*"
+              },
+              "runID": {
+                "type": "string"
+              },
+              "status": {
+                "type": "string",
+                "enum": ["completed", "failed", "cancelled"]
+              },
+              "error": {
+                "type": "string"
+              }
+            },
+            "required": ["sessionID", "runID", "status"]
+          }
+        },
+        "required": ["type", "properties"]
+      },
+      "Event.workflow.agent_failed": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string",
+            "const": "workflow.agent_failed"
+          },
+          "properties": {
+            "type": "object",
+            "properties": {
+              "sessionID": {
+                "type": "string",
+                "pattern": "^ses.*"
+              },
+              "runID": {
+                "type": "string"
+              },
+              "actorID": {
+                "type": "string"
+              },
+              "agentType": {
+                "type": "string"
+              },
+              "label": {
+                "type": "string"
+              },
+              "phase": {
+                "type": "string"
+              },
+              "reason": {
+                "type": "string",
+                "enum": ["over-cap", "spawn-reject", "timeout", "actor-error", "no-deliverable"]
+              },
+              "errorMessage": {
+                "type": "string"
+              }
+            },
+            "required": ["sessionID", "runID", "agentType", "reason"]
+          }
+        },
+        "required": ["type", "properties"]
+      },
+      "Event.workflow.child_failed": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string",
+            "const": "workflow.child_failed"
+          },
+          "properties": {
+            "type": "object",
+            "properties": {
+              "sessionID": {
+                "type": "string",
+                "pattern": "^ses.*"
+              },
+              "runID": {
+                "type": "string"
+              },
+              "childRunID": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              },
+              "status": {
+                "type": "string",
+                "enum": ["failed", "cancelled"]
+              },
+              "error": {
+                "type": "string"
+              }
+            },
+            "required": ["sessionID", "runID", "childRunID", "name", "status"]
+          }
+        },
+        "required": ["type", "properties"]
+      },
       "Project": {
         "type": "object",
         "properties": {
@@ -8262,34 +9475,6 @@
               }
             },
             "required": ["directory"]
-          }
-        },
-        "required": ["type", "properties"]
-      },
-      "Event.server.connected": {
-        "type": "object",
-        "properties": {
-          "type": {
-            "type": "string",
-            "const": "server.connected"
-          },
-          "properties": {
-            "type": "object",
-            "properties": {}
-          }
-        },
-        "required": ["type", "properties"]
-      },
-      "Event.global.disposed": {
-        "type": "object",
-        "properties": {
-          "type": {
-            "type": "string",
-            "const": "global.disposed"
-          },
-          "properties": {
-            "type": "object",
-            "properties": {}
           }
         },
         "required": ["type", "properties"]
@@ -8542,204 +9727,6 @@
               }
             },
             "required": ["sessionID", "requestID", "reply"]
-          }
-        },
-        "required": ["type", "properties"]
-      },
-      "Event.actor.registered": {
-        "type": "object",
-        "properties": {
-          "type": {
-            "type": "string",
-            "const": "actor.registered"
-          },
-          "properties": {
-            "type": "object",
-            "properties": {
-              "sessionID": {
-                "type": "string",
-                "pattern": "^ses.*"
-              },
-              "actorID": {
-                "type": "string"
-              },
-              "mode": {
-                "type": "string",
-                "enum": ["peer", "subagent", "main"]
-              },
-              "parentActorID": {
-                "type": "string"
-              },
-              "description": {
-                "type": "string"
-              },
-              "agent": {
-                "type": "string"
-              },
-              "background": {
-                "type": "boolean"
-              }
-            },
-            "required": ["sessionID", "actorID", "mode", "description", "agent", "background"]
-          }
-        },
-        "required": ["type", "properties"]
-      },
-      "Event.actor.status": {
-        "type": "object",
-        "properties": {
-          "type": {
-            "type": "string",
-            "const": "actor.status"
-          },
-          "properties": {
-            "type": "object",
-            "properties": {
-              "sessionID": {
-                "type": "string",
-                "pattern": "^ses.*"
-              },
-              "actorID": {
-                "type": "string"
-              },
-              "status": {
-                "type": "string",
-                "enum": ["pending", "running", "idle"]
-              },
-              "lastOutcome": {
-                "type": "string",
-                "enum": ["success", "failure", "cancelled"]
-              },
-              "turnCount": {
-                "type": "number"
-              },
-              "lastTurnTime": {
-                "type": "number"
-              },
-              "error": {
-                "type": "string"
-              }
-            },
-            "required": ["sessionID", "actorID", "status", "turnCount", "lastTurnTime"]
-          }
-        },
-        "required": ["type", "properties"]
-      },
-      "Event.actor.stuck": {
-        "type": "object",
-        "properties": {
-          "type": {
-            "type": "string",
-            "const": "actor.stuck"
-          },
-          "properties": {
-            "type": "object",
-            "properties": {
-              "sessionID": {
-                "type": "string",
-                "pattern": "^ses.*"
-              },
-              "actorID": {
-                "type": "string"
-              },
-              "description": {
-                "type": "string"
-              },
-              "lastTurnTime": {
-                "type": "number"
-              },
-              "stuckDuration": {
-                "type": "number"
-              }
-            },
-            "required": ["sessionID", "actorID", "description", "lastTurnTime", "stuckDuration"]
-          }
-        },
-        "required": ["type", "properties"]
-      },
-      "Event.writer.cache_perf": {
-        "type": "object",
-        "properties": {
-          "type": {
-            "type": "string",
-            "const": "writer.cache_perf"
-          },
-          "properties": {
-            "type": "object",
-            "properties": {
-              "sessionID": {
-                "type": "string",
-                "pattern": "^ses.*"
-              },
-              "writerActorID": {
-                "type": "string"
-              },
-              "status": {
-                "type": "string",
-                "enum": ["completed", "failed"]
-              },
-              "total_input_tokens": {
-                "type": "number"
-              },
-              "cache_read_tokens": {
-                "type": "number"
-              },
-              "cache_write_tokens": {
-                "type": "number"
-              },
-              "cache_hit_rate": {
-                "type": "number"
-              },
-              "num_llm_calls": {
-                "type": "number"
-              }
-            },
-            "required": [
-              "sessionID",
-              "writerActorID",
-              "status",
-              "total_input_tokens",
-              "cache_read_tokens",
-              "cache_write_tokens",
-              "cache_hit_rate",
-              "num_llm_calls"
-            ]
-          }
-        },
-        "required": ["type", "properties"]
-      },
-      "Event.inbox.arrived": {
-        "type": "object",
-        "properties": {
-          "type": {
-            "type": "string",
-            "const": "inbox.arrived"
-          },
-          "properties": {
-            "type": "object",
-            "properties": {
-              "receiverSessionID": {
-                "type": "string",
-                "pattern": "^ses.*"
-              },
-              "receiverActorID": {
-                "type": "string"
-              },
-              "senderSessionID": {
-                "type": "string",
-                "pattern": "^ses.*"
-              },
-              "senderActorID": {
-                "type": "string"
-              },
-              "inboxID": {
-                "type": "string"
-              },
-              "type": {
-                "type": "string"
-              }
-            },
-            "required": ["receiverSessionID", "receiverActorID", "inboxID", "type"]
           }
         },
         "required": ["type", "properties"]
@@ -9484,182 +10471,6 @@
         },
         "required": ["type", "properties"]
       },
-      "Event.team.created": {
-        "type": "object",
-        "properties": {
-          "type": {
-            "type": "string",
-            "const": "team.created"
-          },
-          "properties": {
-            "type": "object",
-            "properties": {
-              "teamID": {
-                "type": "string"
-              },
-              "creatorSessionID": {
-                "type": "string",
-                "pattern": "^ses.*"
-              }
-            },
-            "required": ["teamID", "creatorSessionID"]
-          }
-        },
-        "required": ["type", "properties"]
-      },
-      "Event.team.member.joined": {
-        "type": "object",
-        "properties": {
-          "type": {
-            "type": "string",
-            "const": "team.member.joined"
-          },
-          "properties": {
-            "type": "object",
-            "properties": {
-              "teamID": {
-                "type": "string"
-              },
-              "sessionID": {
-                "type": "string",
-                "pattern": "^ses.*"
-              },
-              "agent": {
-                "type": "string"
-              },
-              "role": {
-                "type": "string"
-              }
-            },
-            "required": ["teamID", "sessionID", "agent", "role"]
-          }
-        },
-        "required": ["type", "properties"]
-      },
-      "Event.task.created": {
-        "type": "object",
-        "properties": {
-          "type": {
-            "type": "string",
-            "const": "task.created"
-          },
-          "properties": {
-            "type": "object",
-            "properties": {
-              "sessionID": {
-                "type": "string",
-                "pattern": "^ses.*"
-              },
-              "task": {
-                "type": "object",
-                "properties": {
-                  "id": {
-                    "type": "string",
-                    "pattern": "^T\\d+(\\.\\d+)*$"
-                  },
-                  "session_id": {
-                    "type": "string",
-                    "pattern": "^ses.*"
-                  },
-                  "parent_task_id": {
-                    "type": "string",
-                    "pattern": "^T\\d+(\\.\\d+)*$"
-                  },
-                  "status": {
-                    "type": "string",
-                    "enum": ["open", "in_progress", "blocked", "done", "abandoned"]
-                  },
-                  "summary": {
-                    "type": "string"
-                  },
-                  "owner": {
-                    "type": "string"
-                  },
-                  "created_at": {
-                    "type": "number"
-                  },
-                  "last_event_at": {
-                    "type": "number"
-                  },
-                  "ended_at": {
-                    "type": "number"
-                  },
-                  "cleanup_after": {
-                    "type": "number"
-                  }
-                },
-                "required": ["id", "session_id", "status", "summary", "created_at", "last_event_at"]
-              }
-            },
-            "required": ["sessionID", "task"]
-          }
-        },
-        "required": ["type", "properties"]
-      },
-      "Event.task.updated": {
-        "type": "object",
-        "properties": {
-          "type": {
-            "type": "string",
-            "const": "task.updated"
-          },
-          "properties": {
-            "type": "object",
-            "properties": {
-              "sessionID": {
-                "type": "string",
-                "pattern": "^ses.*"
-              },
-              "task": {
-                "type": "object",
-                "properties": {
-                  "id": {
-                    "type": "string",
-                    "pattern": "^T\\d+(\\.\\d+)*$"
-                  },
-                  "session_id": {
-                    "type": "string",
-                    "pattern": "^ses.*"
-                  },
-                  "parent_task_id": {
-                    "type": "string",
-                    "pattern": "^T\\d+(\\.\\d+)*$"
-                  },
-                  "status": {
-                    "type": "string",
-                    "enum": ["open", "in_progress", "blocked", "done", "abandoned"]
-                  },
-                  "summary": {
-                    "type": "string"
-                  },
-                  "owner": {
-                    "type": "string"
-                  },
-                  "created_at": {
-                    "type": "number"
-                  },
-                  "last_event_at": {
-                    "type": "number"
-                  },
-                  "ended_at": {
-                    "type": "number"
-                  },
-                  "cleanup_after": {
-                    "type": "number"
-                  }
-                },
-                "required": ["id", "session_id", "status", "summary", "created_at", "last_event_at"]
-              },
-              "kind": {
-                "type": "string",
-                "enum": ["started", "unstarted", "blocked", "unblocked", "done", "abandoned", "renamed"]
-              }
-            },
-            "required": ["sessionID", "task", "kind"]
-          }
-        },
-        "required": ["type", "properties"]
-      },
       "Todo": {
         "type": "object",
         "properties": {
@@ -9842,142 +10653,6 @@
         },
         "required": ["type", "properties"]
       },
-      "Event.metrics.model_call": {
-        "type": "object",
-        "properties": {
-          "type": {
-            "type": "string",
-            "const": "metrics.model_call"
-          },
-          "properties": {
-            "type": "object",
-            "properties": {
-              "sessionID": {
-                "type": "string"
-              },
-              "finish_reason": {
-                "type": "string"
-              },
-              "ttft_ms": {
-                "type": "number"
-              },
-              "latency_ms": {
-                "type": "number"
-              },
-              "cached_read_tokens": {
-                "type": "number"
-              },
-              "model_id": {
-                "type": "string"
-              },
-              "provider": {
-                "type": "string"
-              },
-              "total_tokens_in": {
-                "type": "number"
-              },
-              "total_tokens_out": {
-                "type": "number"
-              }
-            },
-            "required": [
-              "sessionID",
-              "finish_reason",
-              "latency_ms",
-              "cached_read_tokens",
-              "model_id",
-              "provider",
-              "total_tokens_in",
-              "total_tokens_out"
-            ]
-          }
-        },
-        "required": ["type", "properties"]
-      },
-      "Event.metrics.tool_call": {
-        "type": "object",
-        "properties": {
-          "type": {
-            "type": "string",
-            "const": "metrics.tool_call"
-          },
-          "properties": {
-            "type": "object",
-            "properties": {
-              "sessionID": {
-                "type": "string"
-              },
-              "tool_name": {
-                "type": "string"
-              },
-              "input_bytes": {
-                "type": "number"
-              },
-              "output_bytes": {
-                "type": "number"
-              },
-              "tool_call_id": {
-                "type": "string"
-              },
-              "tool_call_status": {
-                "type": "string",
-                "enum": ["success", "error"]
-              }
-            },
-            "required": ["sessionID", "tool_name", "input_bytes", "output_bytes", "tool_call_id", "tool_call_status"]
-          }
-        },
-        "required": ["type", "properties"]
-      },
-      "Event.metrics.agent_request": {
-        "type": "object",
-        "properties": {
-          "type": {
-            "type": "string",
-            "const": "metrics.agent_request"
-          },
-          "properties": {
-            "type": "object",
-            "properties": {
-              "sessionID": {
-                "type": "string"
-              },
-              "phase": {
-                "type": "string"
-              },
-              "task_type": {
-                "type": "string"
-              },
-              "surface": {
-                "type": "string"
-              },
-              "total_tokens_in": {
-                "type": "number"
-              },
-              "total_tokens_out": {
-                "type": "number"
-              },
-              "files_changed": {
-                "type": "number"
-              },
-              "validation_status": {
-                "type": "string"
-              }
-            },
-            "required": [
-              "sessionID",
-              "phase",
-              "task_type",
-              "surface",
-              "total_tokens_in",
-              "total_tokens_out",
-              "files_changed",
-              "validation_status"
-            ]
-          }
-        },
-        "required": ["type", "properties"]
-      },
       "Event.session.compacted": {
         "type": "object",
         "properties": {
@@ -9994,144 +10669,6 @@
               }
             },
             "required": ["sessionID"]
-          }
-        },
-        "required": ["type", "properties"]
-      },
-      "Event.tui.prompt.append": {
-        "type": "object",
-        "properties": {
-          "type": {
-            "type": "string",
-            "const": "tui.prompt.append"
-          },
-          "properties": {
-            "type": "object",
-            "properties": {
-              "text": {
-                "type": "string"
-              }
-            },
-            "required": ["text"]
-          }
-        },
-        "required": ["type", "properties"]
-      },
-      "Event.tui.command.execute": {
-        "type": "object",
-        "properties": {
-          "type": {
-            "type": "string",
-            "const": "tui.command.execute"
-          },
-          "properties": {
-            "type": "object",
-            "properties": {
-              "command": {
-                "anyOf": [
-                  {
-                    "type": "string",
-                    "enum": [
-                      "session.list",
-                      "session.new",
-                      "session.share",
-                      "session.interrupt",
-                      "session.compact",
-                      "session.page.up",
-                      "session.page.down",
-                      "session.line.up",
-                      "session.line.down",
-                      "session.half.page.up",
-                      "session.half.page.down",
-                      "session.first",
-                      "session.last",
-                      "prompt.clear",
-                      "prompt.submit",
-                      "agent.cycle"
-                    ]
-                  },
-                  {
-                    "type": "string"
-                  }
-                ]
-              }
-            },
-            "required": ["command"]
-          }
-        },
-        "required": ["type", "properties"]
-      },
-      "Event.tui.toast.show": {
-        "type": "object",
-        "properties": {
-          "type": {
-            "type": "string",
-            "const": "tui.toast.show"
-          },
-          "properties": {
-            "type": "object",
-            "properties": {
-              "title": {
-                "type": "string"
-              },
-              "message": {
-                "type": "string"
-              },
-              "variant": {
-                "type": "string",
-                "enum": ["info", "success", "warning", "error"]
-              },
-              "duration": {
-                "description": "Duration in milliseconds",
-                "default": 5000,
-                "type": "number"
-              }
-            },
-            "required": ["message", "variant"]
-          }
-        },
-        "required": ["type", "properties"]
-      },
-      "Event.tui.session.select": {
-        "type": "object",
-        "properties": {
-          "type": {
-            "type": "string",
-            "const": "tui.session.select"
-          },
-          "properties": {
-            "type": "object",
-            "properties": {
-              "sessionID": {
-                "description": "Session ID to navigate to",
-                "type": "string",
-                "pattern": "^ses.*"
-              }
-            },
-            "required": ["sessionID"]
-          }
-        },
-        "required": ["type", "properties"]
-      },
-      "Event.tui.instructions.loaded": {
-        "type": "object",
-        "properties": {
-          "type": {
-            "type": "string",
-            "const": "tui.instructions.loaded"
-          },
-          "properties": {
-            "type": "object",
-            "properties": {
-              "files": {
-                "description": "Display labels of loaded instruction files: worktree-relative path, ~-path, or absolute",
-                "type": "array",
-                "items": {
-                  "type": "string"
-                }
-              }
-            },
-            "required": ["files"]
           }
         },
         "required": ["type", "properties"]
@@ -10375,114 +10912,6 @@
               }
             },
             "required": ["id"]
-          }
-        },
-        "required": ["type", "properties"]
-      },
-      "Event.workflow.phase": {
-        "type": "object",
-        "properties": {
-          "type": {
-            "type": "string",
-            "const": "workflow.phase"
-          },
-          "properties": {
-            "type": "object",
-            "properties": {
-              "sessionID": {
-                "type": "string",
-                "pattern": "^ses.*"
-              },
-              "runID": {
-                "type": "string"
-              },
-              "title": {
-                "type": "string"
-              }
-            },
-            "required": ["sessionID", "runID", "title"]
-          }
-        },
-        "required": ["type", "properties"]
-      },
-      "Event.workflow.log": {
-        "type": "object",
-        "properties": {
-          "type": {
-            "type": "string",
-            "const": "workflow.log"
-          },
-          "properties": {
-            "type": "object",
-            "properties": {
-              "sessionID": {
-                "type": "string",
-                "pattern": "^ses.*"
-              },
-              "runID": {
-                "type": "string"
-              },
-              "message": {
-                "type": "string"
-              }
-            },
-            "required": ["sessionID", "runID", "message"]
-          }
-        },
-        "required": ["type", "properties"]
-      },
-      "Event.workflow.started": {
-        "type": "object",
-        "properties": {
-          "type": {
-            "type": "string",
-            "const": "workflow.started"
-          },
-          "properties": {
-            "type": "object",
-            "properties": {
-              "sessionID": {
-                "type": "string",
-                "pattern": "^ses.*"
-              },
-              "runID": {
-                "type": "string"
-              },
-              "name": {
-                "type": "string"
-              }
-            },
-            "required": ["sessionID", "runID", "name"]
-          }
-        },
-        "required": ["type", "properties"]
-      },
-      "Event.workflow.finished": {
-        "type": "object",
-        "properties": {
-          "type": {
-            "type": "string",
-            "const": "workflow.finished"
-          },
-          "properties": {
-            "type": "object",
-            "properties": {
-              "sessionID": {
-                "type": "string",
-                "pattern": "^ses.*"
-              },
-              "runID": {
-                "type": "string"
-              },
-              "status": {
-                "type": "string",
-                "enum": ["completed", "failed", "cancelled"]
-              },
-              "error": {
-                "type": "string"
-              }
-            },
-            "required": ["sessionID", "runID", "status"]
           }
         },
         "required": ["type", "properties"]
@@ -12568,16 +12997,85 @@
           "payload": {
             "anyOf": [
               {
-                "$ref": "#/components/schemas/Event.project.updated"
-              },
-              {
-                "$ref": "#/components/schemas/Event.server.instance.disposed"
-              },
-              {
                 "$ref": "#/components/schemas/Event.server.connected"
               },
               {
                 "$ref": "#/components/schemas/Event.global.disposed"
+              },
+              {
+                "$ref": "#/components/schemas/Event.actor.registered"
+              },
+              {
+                "$ref": "#/components/schemas/Event.actor.status"
+              },
+              {
+                "$ref": "#/components/schemas/Event.actor.stuck"
+              },
+              {
+                "$ref": "#/components/schemas/Event.writer.cache_perf"
+              },
+              {
+                "$ref": "#/components/schemas/Event.inbox.arrived"
+              },
+              {
+                "$ref": "#/components/schemas/Event.task.created"
+              },
+              {
+                "$ref": "#/components/schemas/Event.task.updated"
+              },
+              {
+                "$ref": "#/components/schemas/Event.team.created"
+              },
+              {
+                "$ref": "#/components/schemas/Event.team.member.joined"
+              },
+              {
+                "$ref": "#/components/schemas/Event.metrics.model_call"
+              },
+              {
+                "$ref": "#/components/schemas/Event.metrics.tool_call"
+              },
+              {
+                "$ref": "#/components/schemas/Event.metrics.agent_request"
+              },
+              {
+                "$ref": "#/components/schemas/Event.tui.prompt.append"
+              },
+              {
+                "$ref": "#/components/schemas/Event.tui.command.execute"
+              },
+              {
+                "$ref": "#/components/schemas/Event.tui.toast.show"
+              },
+              {
+                "$ref": "#/components/schemas/Event.tui.session.select"
+              },
+              {
+                "$ref": "#/components/schemas/Event.tui.instructions.loaded"
+              },
+              {
+                "$ref": "#/components/schemas/Event.workflow.phase"
+              },
+              {
+                "$ref": "#/components/schemas/Event.workflow.log"
+              },
+              {
+                "$ref": "#/components/schemas/Event.workflow.started"
+              },
+              {
+                "$ref": "#/components/schemas/Event.workflow.finished"
+              },
+              {
+                "$ref": "#/components/schemas/Event.workflow.agent_failed"
+              },
+              {
+                "$ref": "#/components/schemas/Event.workflow.child_failed"
+              },
+              {
+                "$ref": "#/components/schemas/Event.project.updated"
+              },
+              {
+                "$ref": "#/components/schemas/Event.server.instance.disposed"
               },
               {
                 "$ref": "#/components/schemas/Event.file.edited"
@@ -12605,21 +13103,6 @@
               },
               {
                 "$ref": "#/components/schemas/Event.permission.replied"
-              },
-              {
-                "$ref": "#/components/schemas/Event.actor.registered"
-              },
-              {
-                "$ref": "#/components/schemas/Event.actor.status"
-              },
-              {
-                "$ref": "#/components/schemas/Event.actor.stuck"
-              },
-              {
-                "$ref": "#/components/schemas/Event.writer.cache_perf"
-              },
-              {
-                "$ref": "#/components/schemas/Event.inbox.arrived"
               },
               {
                 "$ref": "#/components/schemas/Event.session.diff"
@@ -12658,18 +13141,6 @@
                 "$ref": "#/components/schemas/Event.bash.interactive.replied"
               },
               {
-                "$ref": "#/components/schemas/Event.team.created"
-              },
-              {
-                "$ref": "#/components/schemas/Event.team.member.joined"
-              },
-              {
-                "$ref": "#/components/schemas/Event.task.created"
-              },
-              {
-                "$ref": "#/components/schemas/Event.task.updated"
-              },
-              {
                 "$ref": "#/components/schemas/Event.todo.updated"
               },
               {
@@ -12682,31 +13153,7 @@
                 "$ref": "#/components/schemas/Event.session.goal"
               },
               {
-                "$ref": "#/components/schemas/Event.metrics.model_call"
-              },
-              {
-                "$ref": "#/components/schemas/Event.metrics.tool_call"
-              },
-              {
-                "$ref": "#/components/schemas/Event.metrics.agent_request"
-              },
-              {
                 "$ref": "#/components/schemas/Event.session.compacted"
-              },
-              {
-                "$ref": "#/components/schemas/Event.tui.prompt.append"
-              },
-              {
-                "$ref": "#/components/schemas/Event.tui.command.execute"
-              },
-              {
-                "$ref": "#/components/schemas/Event.tui.toast.show"
-              },
-              {
-                "$ref": "#/components/schemas/Event.tui.session.select"
-              },
-              {
-                "$ref": "#/components/schemas/Event.tui.instructions.loaded"
               },
               {
                 "$ref": "#/components/schemas/Event.mcp.tools.changed"
@@ -12737,18 +13184,6 @@
               },
               {
                 "$ref": "#/components/schemas/Event.pty.deleted"
-              },
-              {
-                "$ref": "#/components/schemas/Event.workflow.phase"
-              },
-              {
-                "$ref": "#/components/schemas/Event.workflow.log"
-              },
-              {
-                "$ref": "#/components/schemas/Event.workflow.started"
-              },
-              {
-                "$ref": "#/components/schemas/Event.workflow.finished"
               },
               {
                 "$ref": "#/components/schemas/Event.workspace.ready"
@@ -13868,6 +14303,10 @@
                 "exclusiveMinimum": 0,
                 "maximum": 9007199254740991
               },
+              "fork": {
+                "description": "Whether to fork the parent agent's message prefix into the writer session for prefix-cache reuse. Requires provider cache-breakpoint support. Default: false.",
+                "type": "boolean"
+              },
               "push_caps": {
                 "description": "Per-section token caps for rebuild context (renderRebuildContext). Each section is loaded up to its cap so the rebuild stays within a predictable budget.",
                 "type": "object",
@@ -13949,6 +14388,63 @@
               "memory_reconcile_on_search": {
                 "description": "Whether to reconcile memory state on search operations. Default: true.",
                 "type": "boolean"
+              },
+              "memory_search_score_floor": {
+                "description": "Relative BM25 floor for memory.search (OR-joined query): keep results scoring >= this fraction of the top hit, dropping common-word-only noise. The #1 result is always kept. Default: 0.15. Set 0 to keep all matches.",
+                "type": "number"
+              }
+            }
+          },
+          "memory": {
+            "type": "object",
+            "properties": {
+              "cc_index": {
+                "description": "Index Claude Code memory (~/.claude/projects/<slug>/memory) and expose under scope='cc'. Default: false. Note: when enabled, every mimocode agent (build/explore/subagents) can search these memories via the builtin `memory` tool — including CC's `type: user` (your role/preferences) and `type: feedback` (your guidance) categories. CC originally writes them for future CC sessions; flipping this on widens the consumer set to mimocode agents on the same machine. Leave disabled (default) if you don't want personal context recallable from a prompt-injection-vulnerable agent.",
+                "type": "boolean"
+              }
+            }
+          },
+          "history": {
+            "description": "Trajectory (conversation history) FTS index configuration.",
+            "type": "object",
+            "properties": {
+              "kinds": {
+                "description": "Which part kinds the history FTS index should cover. Defaults to text (user/assistant) + tool input + tool errors. Add 'reasoning' or 'tool_output' to grow recall at the cost of database size. Note: enabling 'tool_output' reclassifies completed tools from kind='tool_input' to kind='tool_output' (input remains searchable in the body, but kind:['tool_input'] filter will then only match pending/error tools).",
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "enum": ["user_text", "assistant_text", "tool_input", "tool_error", "reasoning", "tool_output"]
+                }
+              }
+            }
+          },
+          "dream": {
+            "type": "object",
+            "properties": {
+              "auto": {
+                "description": "Auto-trigger dream memory consolidation on new session start. Default: true.",
+                "type": "boolean"
+              },
+              "interval_days": {
+                "description": "Minimum days between automatic dream runs. Set to 0 to trigger on every new session. Default: 7.",
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              }
+            }
+          },
+          "distill": {
+            "type": "object",
+            "properties": {
+              "auto": {
+                "description": "Auto-trigger distill workflow packaging on new session start. Default: true.",
+                "type": "boolean"
+              },
+              "interval_days": {
+                "description": "Minimum days between automatic distill runs. Default: 30.",
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
               }
             }
           },
@@ -14006,7 +14502,15 @@
             "type": "object",
             "properties": {
               "maxConcurrentAgents": {
-                "description": "Max subagents running concurrently in one workflow run. Default min(16, 2x CPU cores). Hard-capped at 2x cores.",
+                "description": "Process-wide ceiling on subagents running concurrently across ALL workflow runs (including nested children). Default min(16, 2x CPU cores). No upper clamp: the previous 2x-cores hard cap was removed so an operator can match real provider capacity — but that also means a misconfigured value (e.g. an extra zero) can exhaust provider rate limits or host memory. This is the only concurrency ceiling, so set it deliberately.",
+                "type": "number"
+              },
+              "maxDepth": {
+                "description": "Max nesting depth for workflow()-calls-workflow. Default 8. Exceeding it fails the run.",
+                "type": "number"
+              },
+              "maxLifecycleAgents": {
+                "description": "Hard ceiling on total agents a single workflow run may spawn over its life. Default 1000. Over-cap agent() calls return null (graceful degradation). PER-RUN, not tree-wide: each child workflow has its own independent budget, so a deep nesting can spawn maxDepth × this over the whole tree (concurrent in-flight is still bounded by maxConcurrentAgents).",
                 "type": "number"
               },
               "scriptDeadlineMs": {
@@ -14978,6 +15482,155 @@
         },
         "required": ["url", "method", "instructions"]
       },
+      "MemorySearchResult": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string"
+          },
+          "snippet": {
+            "type": "string"
+          },
+          "score": {
+            "type": "number"
+          },
+          "scope": {
+            "type": "string"
+          },
+          "scope_id": {
+            "type": "string"
+          },
+          "type": {
+            "type": "string"
+          }
+        },
+        "required": ["path", "snippet", "score", "scope", "scope_id", "type"]
+      },
+      "MemoryFile": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string"
+          },
+          "content": {
+            "type": "string"
+          }
+        },
+        "required": ["path", "content"]
+      },
+      "HistorySearchHit": {
+        "type": "object",
+        "properties": {
+          "part_id": {
+            "type": "string"
+          },
+          "session_id": {
+            "type": "string"
+          },
+          "message_id": {
+            "type": "string"
+          },
+          "project_id": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string",
+            "enum": ["user_text", "assistant_text", "tool_input", "tool_error", "reasoning", "tool_output"]
+          },
+          "tool_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "snippet": {
+            "type": "string"
+          },
+          "score": {
+            "type": "number"
+          },
+          "time_created": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "part_id",
+          "session_id",
+          "message_id",
+          "project_id",
+          "kind",
+          "tool_name",
+          "snippet",
+          "score",
+          "time_created"
+        ]
+      },
+      "HistoryMessageContext": {
+        "type": "object",
+        "properties": {
+          "message_id": {
+            "type": "string"
+          },
+          "matched": {
+            "type": "boolean"
+          },
+          "time_created": {
+            "type": "number"
+          },
+          "parts": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "part_id": {
+                  "type": "string"
+                },
+                "type": {
+                  "type": "string"
+                },
+                "role": {
+                  "type": "string",
+                  "enum": ["user", "assistant"]
+                },
+                "tool_name": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "text": {
+                  "type": "string"
+                }
+              },
+              "required": ["part_id", "type", "role", "tool_name", "text"]
+            }
+          }
+        },
+        "required": ["message_id", "matched", "time_created", "parts"]
+      },
+      "HistoryAround": {
+        "type": "object",
+        "properties": {
+          "session_id": {
+            "type": "string"
+          },
+          "messages": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/HistoryMessageContext"
+            }
+          }
+        },
+        "required": ["session_id", "messages"]
+      },
       "Symbol": {
         "type": "object",
         "properties": {
@@ -15121,16 +15774,85 @@
       "Event": {
         "anyOf": [
           {
-            "$ref": "#/components/schemas/Event.project.updated"
-          },
-          {
-            "$ref": "#/components/schemas/Event.server.instance.disposed"
-          },
-          {
             "$ref": "#/components/schemas/Event.server.connected"
           },
           {
             "$ref": "#/components/schemas/Event.global.disposed"
+          },
+          {
+            "$ref": "#/components/schemas/Event.actor.registered"
+          },
+          {
+            "$ref": "#/components/schemas/Event.actor.status"
+          },
+          {
+            "$ref": "#/components/schemas/Event.actor.stuck"
+          },
+          {
+            "$ref": "#/components/schemas/Event.writer.cache_perf"
+          },
+          {
+            "$ref": "#/components/schemas/Event.inbox.arrived"
+          },
+          {
+            "$ref": "#/components/schemas/Event.task.created"
+          },
+          {
+            "$ref": "#/components/schemas/Event.task.updated"
+          },
+          {
+            "$ref": "#/components/schemas/Event.team.created"
+          },
+          {
+            "$ref": "#/components/schemas/Event.team.member.joined"
+          },
+          {
+            "$ref": "#/components/schemas/Event.metrics.model_call"
+          },
+          {
+            "$ref": "#/components/schemas/Event.metrics.tool_call"
+          },
+          {
+            "$ref": "#/components/schemas/Event.metrics.agent_request"
+          },
+          {
+            "$ref": "#/components/schemas/Event.tui.prompt.append"
+          },
+          {
+            "$ref": "#/components/schemas/Event.tui.command.execute"
+          },
+          {
+            "$ref": "#/components/schemas/Event.tui.toast.show"
+          },
+          {
+            "$ref": "#/components/schemas/Event.tui.session.select"
+          },
+          {
+            "$ref": "#/components/schemas/Event.tui.instructions.loaded"
+          },
+          {
+            "$ref": "#/components/schemas/Event.workflow.phase"
+          },
+          {
+            "$ref": "#/components/schemas/Event.workflow.log"
+          },
+          {
+            "$ref": "#/components/schemas/Event.workflow.started"
+          },
+          {
+            "$ref": "#/components/schemas/Event.workflow.finished"
+          },
+          {
+            "$ref": "#/components/schemas/Event.workflow.agent_failed"
+          },
+          {
+            "$ref": "#/components/schemas/Event.workflow.child_failed"
+          },
+          {
+            "$ref": "#/components/schemas/Event.project.updated"
+          },
+          {
+            "$ref": "#/components/schemas/Event.server.instance.disposed"
           },
           {
             "$ref": "#/components/schemas/Event.file.edited"
@@ -15158,21 +15880,6 @@
           },
           {
             "$ref": "#/components/schemas/Event.permission.replied"
-          },
-          {
-            "$ref": "#/components/schemas/Event.actor.registered"
-          },
-          {
-            "$ref": "#/components/schemas/Event.actor.status"
-          },
-          {
-            "$ref": "#/components/schemas/Event.actor.stuck"
-          },
-          {
-            "$ref": "#/components/schemas/Event.writer.cache_perf"
-          },
-          {
-            "$ref": "#/components/schemas/Event.inbox.arrived"
           },
           {
             "$ref": "#/components/schemas/Event.session.diff"
@@ -15211,18 +15918,6 @@
             "$ref": "#/components/schemas/Event.bash.interactive.replied"
           },
           {
-            "$ref": "#/components/schemas/Event.team.created"
-          },
-          {
-            "$ref": "#/components/schemas/Event.team.member.joined"
-          },
-          {
-            "$ref": "#/components/schemas/Event.task.created"
-          },
-          {
-            "$ref": "#/components/schemas/Event.task.updated"
-          },
-          {
             "$ref": "#/components/schemas/Event.todo.updated"
           },
           {
@@ -15235,31 +15930,7 @@
             "$ref": "#/components/schemas/Event.session.goal"
           },
           {
-            "$ref": "#/components/schemas/Event.metrics.model_call"
-          },
-          {
-            "$ref": "#/components/schemas/Event.metrics.tool_call"
-          },
-          {
-            "$ref": "#/components/schemas/Event.metrics.agent_request"
-          },
-          {
             "$ref": "#/components/schemas/Event.session.compacted"
-          },
-          {
-            "$ref": "#/components/schemas/Event.tui.prompt.append"
-          },
-          {
-            "$ref": "#/components/schemas/Event.tui.command.execute"
-          },
-          {
-            "$ref": "#/components/schemas/Event.tui.toast.show"
-          },
-          {
-            "$ref": "#/components/schemas/Event.tui.session.select"
-          },
-          {
-            "$ref": "#/components/schemas/Event.tui.instructions.loaded"
           },
           {
             "$ref": "#/components/schemas/Event.mcp.tools.changed"
@@ -15290,18 +15961,6 @@
           },
           {
             "$ref": "#/components/schemas/Event.pty.deleted"
-          },
-          {
-            "$ref": "#/components/schemas/Event.workflow.phase"
-          },
-          {
-            "$ref": "#/components/schemas/Event.workflow.log"
-          },
-          {
-            "$ref": "#/components/schemas/Event.workflow.started"
-          },
-          {
-            "$ref": "#/components/schemas/Event.workflow.finished"
           },
           {
             "$ref": "#/components/schemas/Event.workspace.ready"

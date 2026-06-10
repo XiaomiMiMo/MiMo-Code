@@ -59,6 +59,10 @@ import type {
   GlobalHealthResponses,
   GlobalUpgradeErrors,
   GlobalUpgradeResponses,
+  HistoryAroundErrors,
+  HistoryAroundResponses,
+  HistorySearchErrors,
+  HistorySearchResponses,
   InstanceDisposeResponses,
   LspStatusResponses,
   McpAddErrors,
@@ -76,6 +80,10 @@ import type {
   McpLocalConfig,
   McpRemoteConfig,
   McpStatusResponses,
+  MemoryFileGetErrors,
+  MemoryFileGetResponses,
+  MemorySearchErrors,
+  MemorySearchResponses,
   OutputFormat,
   Part as Part2,
   PartDeleteErrors,
@@ -3503,6 +3511,171 @@ export class Sync extends HeyApiClient {
   }
 }
 
+export class File extends HeyApiClient {
+  /**
+   * Read a memory file
+   *
+   * Return the full markdown body for an absolute path returned by memory.search.
+   */
+  public get<ThrowOnError extends boolean = false>(
+    parameters: {
+      directory?: string
+      workspace?: string
+      path: string
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "query", key: "directory" },
+            { in: "query", key: "workspace" },
+            { in: "query", key: "path" },
+          ],
+        },
+      ],
+    )
+    return (options?.client ?? this.client).get<MemoryFileGetResponses, MemoryFileGetErrors, ThrowOnError>({
+      url: "/memory/file",
+      ...options,
+      ...params,
+    })
+  }
+}
+
+export class Memory extends HeyApiClient {
+  /**
+   * Search project memory
+   *
+   * BM25 full-text search over indexed memory markdown (MEMORY.md, checkpoint.md, notes, task progress, optional Claude Code memory).
+   */
+  public search<ThrowOnError extends boolean = false>(
+    parameters: {
+      directory?: string
+      workspace?: string
+      query: string
+      scope?: "global" | "projects" | "sessions" | "cc"
+      scope_id?: string
+      type?: string
+      limit?: number
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "query", key: "directory" },
+            { in: "query", key: "workspace" },
+            { in: "query", key: "query" },
+            { in: "query", key: "scope" },
+            { in: "query", key: "scope_id" },
+            { in: "query", key: "type" },
+            { in: "query", key: "limit" },
+          ],
+        },
+      ],
+    )
+    return (options?.client ?? this.client).get<MemorySearchResponses, MemorySearchErrors, ThrowOnError>({
+      url: "/memory/search",
+      ...options,
+      ...params,
+    })
+  }
+
+  private _file?: File
+  get file(): File {
+    return (this._file ??= new File({ client: this.client }))
+  }
+}
+
+export class History2 extends HeyApiClient {
+  /**
+   * Search conversation history
+   *
+   * BM25 full-text search over indexed session trajectory (user/assistant text, tool I/O, reasoning).
+   */
+  public search<ThrowOnError extends boolean = false>(
+    parameters: {
+      directory?: string
+      workspace?: string
+      query: string
+      scope?: "project" | "global"
+      session_id?: string
+      kind?: string
+      tool_name?: string
+      time_after?: number
+      time_before?: number
+      limit?: number
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "query", key: "directory" },
+            { in: "query", key: "workspace" },
+            { in: "query", key: "query" },
+            { in: "query", key: "scope" },
+            { in: "query", key: "session_id" },
+            { in: "query", key: "kind" },
+            { in: "query", key: "tool_name" },
+            { in: "query", key: "time_after" },
+            { in: "query", key: "time_before" },
+            { in: "query", key: "limit" },
+          ],
+        },
+      ],
+    )
+    return (options?.client ?? this.client).get<HistorySearchResponses, HistorySearchErrors, ThrowOnError>({
+      url: "/history/search",
+      ...options,
+      ...params,
+    })
+  }
+
+  /**
+   * Get message context around an anchor
+   *
+   * Load neighboring messages for a trajectory search hit (same window as the history tool around operation).
+   */
+  public around<ThrowOnError extends boolean = false>(
+    parameters: {
+      directory?: string
+      workspace?: string
+      message_id: string
+      before?: number
+      after?: number
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "query", key: "directory" },
+            { in: "query", key: "workspace" },
+            { in: "query", key: "message_id" },
+            { in: "query", key: "before" },
+            { in: "query", key: "after" },
+          ],
+        },
+      ],
+    )
+    return (options?.client ?? this.client).get<HistoryAroundResponses, HistoryAroundErrors, ThrowOnError>({
+      url: "/history/around",
+      ...options,
+      ...params,
+    })
+  }
+}
+
 export class Find extends HeyApiClient {
   /**
    * Find text
@@ -3607,7 +3780,7 @@ export class Find extends HeyApiClient {
   }
 }
 
-export class File extends HeyApiClient {
+export class File2 extends HeyApiClient {
   /**
    * List files
    *
@@ -4779,14 +4952,24 @@ export class OpencodeClient extends HeyApiClient {
     return (this._sync ??= new Sync({ client: this.client }))
   }
 
+  private _memory?: Memory
+  get memory(): Memory {
+    return (this._memory ??= new Memory({ client: this.client }))
+  }
+
+  private _history?: History2
+  get history(): History2 {
+    return (this._history ??= new History2({ client: this.client }))
+  }
+
   private _find?: Find
   get find(): Find {
     return (this._find ??= new Find({ client: this.client }))
   }
 
-  private _file?: File
-  get file(): File {
-    return (this._file ??= new File({ client: this.client }))
+  private _file?: File2
+  get file(): File2 {
+    return (this._file ??= new File2({ client: this.client }))
   }
 
   private _event?: Event
