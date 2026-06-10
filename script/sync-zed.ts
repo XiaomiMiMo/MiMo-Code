@@ -6,7 +6,7 @@ import { join } from "path"
 
 const FORK_REPO = "anomalyco/zed-extensions"
 const UPSTREAM_REPO = "zed-industries/extensions"
-const EXTENSION_NAME = "opencode"
+const EXTENSION_NAME = "mimocode"
 
 async function main() {
   const version = process.argv[2]
@@ -110,7 +110,7 @@ async function main() {
 
   console.log(`📬 Creating pull request...`)
   const prResult =
-    await $`gh pr create --repo ${UPSTREAM_REPO} --base main --head ${FORK_REPO.split("/")[0]}:${branchName} --title "Update ${EXTENSION_NAME} to v${cleanVersion}" --body "Updating OpenCode extension to v${cleanVersion}"`
+    await $`gh pr create --repo ${UPSTREAM_REPO} --base main --head ${FORK_REPO.split("/")[0]}:${branchName} --title "Update ${EXTENSION_NAME} to v${cleanVersion}" --body "Updating MiMoCode extension to v${cleanVersion}"`
       .env({ ...process.env, GH_TOKEN: prToken })
       .nothrow()
 

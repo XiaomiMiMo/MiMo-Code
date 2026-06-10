@@ -33,10 +33,10 @@
 可选：
 | 环境变量 | 用途 | 默认行为 |
 |----------|------|----------|
-| `OPENCODE_VERSION` | 覆盖版本号 | 读取 `packages/opencode/package.json` |
-| `OPENCODE_BUMP` | 自动递增 (major/minor/patch) | 不 bump，原样使用 |
-| `OPENCODE_RELEASE` | 创建 GitHub Release | 由 `script/version.ts` 自动设置 |
-| `OPENCODE_CHANNEL` | 发布 channel (latest/beta/...) | 从 git branch 推断，detached HEAD 默认 latest |
+| `MIMOCODE_VERSION` | 覆盖版本号 | 读取 `packages/opencode/package.json` |
+| `MIMOCODE_BUMP` | 自动递增 (major/minor/patch) | 不 bump，原样使用 |
+| `MIMOCODE_RELEASE` | 创建 GitHub Release | 由 `script/version.ts` 自动设置 |
+| `MIMOCODE_CHANNEL` | 发布 channel (latest/beta/...) | 从 git branch 推断，detached HEAD 默认 latest |
 
 ### 一键发布
 
@@ -59,10 +59,10 @@ GH_TOKEN=$(gh auth token) \
 
 ```bash
 # 仅构建（不发布）
-OPENCODE_VERSION=1.2.3 ./packages/opencode/script/build.ts
+MIMOCODE_VERSION=1.2.3 ./packages/opencode/script/build.ts
 
 # 仅 npm publish（需要先构建）
-NPM_TOKEN=npm_xxxxx OPENCODE_VERSION=1.2.3 ./script/publish.ts
+NPM_TOKEN=npm_xxxxx MIMOCODE_VERSION=1.2.3 ./script/publish.ts
 
 # 仅创建 GitHub Release（不含 npm）
 GH_TOKEN=$(gh auth token) GH_REPO=XiaomiMiMo/MiMo-Code ./script/version.ts
@@ -79,9 +79,9 @@ gh release edit v1.2.3 --draft=false --repo XiaomiMiMo/MiMo-Code
 
 | 优先级 | 条件 | 结果 |
 |--------|------|------|
-| 1 | `OPENCODE_VERSION` 有值 | 直接使用 |
+| 1 | `MIMOCODE_VERSION` 有值 | 直接使用 |
 | 2 | preview channel（非 latest） | `0.0.0-{channel}-{timestamp}` |
-| 3 | `OPENCODE_BUMP` 有值 | 从 package.json 读取并 bump |
+| 3 | `MIMOCODE_BUMP` 有值 | 从 package.json 读取并 bump |
 | 4 | 无 bump | 原样使用 package.json 版本 |
 
 ---

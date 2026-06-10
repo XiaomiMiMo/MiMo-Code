@@ -17,14 +17,14 @@ ts-dist
 /result
 refs
 Session.vim
-/opencode.json
+/mimocode.json
 a.out
 target
 .scripts
 .direnv/
 
 # Local dev files
-opencode-dev
+mimocode-dev
 UPCOMING_CHANGELOG.md
 logs/
 *.bun-build
