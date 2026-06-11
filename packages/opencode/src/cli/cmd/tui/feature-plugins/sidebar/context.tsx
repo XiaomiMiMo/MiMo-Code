@@ -1,6 +1,7 @@
 import type { AssistantMessage } from "@mimo-ai/sdk/v2"
 import type { TuiPlugin, TuiPluginApi, TuiPluginModule } from "@mimo-ai/plugin/tui"
 import { Show, createEffect, createMemo, createSignal, onCleanup } from "solid-js"
+import { computeCacheHitRate, formatCacheHitRate } from "./cache"
 import { completedTPS, formatTPS, streamingTPS } from "./tps"
 
 const id = "internal:sidebar-context"
@@ -64,6 +65,8 @@ function View(props: { api: TuiPluginApi; session_id: string }) {
 
   const tpsLabel = createMemo(() => formatTPS(tps()))
 
+  const cacheHitLabel = createMemo(() => formatCacheHitRate(computeCacheHitRate(msg())))
+
   const state = createMemo(() => {
     const last = msg().findLast((item): item is AssistantMessage => item.role === "assistant" && item.tokens.output > 0)
     if (!last) {
@@ -90,6 +93,7 @@ function View(props: { api: TuiPluginApi; session_id: string }) {
       <text fg={theme().textMuted}>{state().tokens.toLocaleString()} tokens</text>
       <text fg={theme().textMuted}>{state().percent ?? 0}% used</text>
       <Show when={tpsLabel()}>{(label) => <text fg={theme().textMuted}>{label()}</text>}</Show>
+      <Show when={cacheHitLabel()}>{(label) => <text fg={theme().textMuted}>{label()}</text>}</Show>
       <text fg={theme().textMuted}>{money.format(cost())} spent</text>
     </box>
   )
