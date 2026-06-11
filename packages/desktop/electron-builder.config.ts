@@ -27,7 +27,7 @@ const channel = (() => {
 })()
 
 const getBase = (): Configuration => ({
-  artifactName: "opencode-desktop-${os}-${arch}.${ext}",
+  artifactName: "MiMo-Code-${os}-${arch}.${ext}",
   directories: {
     output: "dist",
     buildResources: "resources",
@@ -54,8 +54,8 @@ const getBase = (): Configuration => ({
     sign: true,
   },
   protocols: {
-    name: "OpenCode",
-    schemes: ["opencode"],
+    name: "MiMo Code",
+    schemes: ["mimocode"],
   },
   win: {
     icon: `resources/icons/icon.ico`,
@@ -84,29 +84,29 @@ function getConfig() {
     case "dev": {
       return {
         ...base,
-        appId: "ai.opencode.desktop.dev",
+        appId: "com.xiaomi.mimocode.desktop.dev",
         productName: "OpenCode Dev",
-        rpm: { packageName: "opencode-dev" },
+        rpm: { packageName: "mimocode-dev" },
       }
     }
     case "beta": {
       return {
         ...base,
-        appId: "ai.opencode.desktop.beta",
+        appId: "com.xiaomi.mimocode.desktop.beta",
         productName: "OpenCode Beta",
-        protocols: { name: "OpenCode Beta", schemes: ["opencode"] },
-        publish: { provider: "github", owner: "anomalyco", repo: "opencode-beta", channel: "latest" },
-        rpm: { packageName: "opencode-beta" },
+        protocols: { name: "MiMo Code Beta", schemes: ["mimocode"] },
+        publish: { provider: "github", owner: "XiaomiMiMo", repo: "MiMo-Code", channel: "latest" },
+        rpm: { packageName: "mimocode-beta" },
       }
     }
     case "prod": {
       return {
         ...base,
-        appId: "ai.opencode.desktop",
+        appId: "com.xiaomi.mimocode.desktop",
         productName: "OpenCode",
-        protocols: { name: "OpenCode", schemes: ["opencode"] },
-        publish: { provider: "github", owner: "anomalyco", repo: "opencode", channel: "latest" },
-        rpm: { packageName: "opencode" },
+        protocols: { name: "MiMo Code", schemes: ["mimocode"] },
+        publish: { provider: "github", owner: "XiaomiMiMo", repo: "MiMo-Code", channel: "latest" },
+        rpm: { packageName: "mimocode" },
       }
     }
   }

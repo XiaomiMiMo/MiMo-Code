@@ -4,10 +4,10 @@
   "version": "0.1.0",
   "type": "module",
   "license": "MIT",
-  "homepage": "https://opencode.ai",
+  "homepage": "https://mimo.xiaomi.com",
   "author": {
-    "name": "OpenCode",
-    "email": "hello@opencode.ai"
+    "name": "MiMo Code",
+    "email": "mimo@xiaomi.com"
   },
   "scripts": {
     "typecheck": "tsgo -b",
