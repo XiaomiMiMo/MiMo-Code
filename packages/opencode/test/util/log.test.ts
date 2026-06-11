@@ -42,3 +42,30 @@ test("init cleanup keeps the newest timestamped logs", async () => {
   expect(next).not.toContain(list[0]!)
   expect(next).toContain(list.at(-1)!)
 })
+
+test("logger truncates large structured fields", async () => {
+  await using tmp = await tmpdir()
+  Global.Path.log = tmp.path
+
+  await Log.init({ print: false, dev: false, level: "INFO" })
+  const circular: Record<string, unknown> = { label: "root" }
+  circular.self = circular
+
+  Log.create({ service: "log-truncation-test" }).info("large field", {
+    payload: "x".repeat(10_000),
+    circular,
+    bigint: 1n,
+  })
+
+  let content = ""
+  for (let i = 0; i < 50; i++) {
+    content = await fs.readFile(Log.file(), "utf8").catch(() => "")
+    if (content.includes("truncated")) break
+    await Bun.sleep(10)
+  }
+
+  expect(content.length).toBeLessThan(5_000)
+  expect(content).toContain("...[truncated ")
+  expect(content).toContain("[Circular]")
+  expect(content).toContain("bigint=1")
+})

@@ -15,6 +15,7 @@ const levelPriority: Record<Level, number> = {
   ERROR: 3,
 }
 const keep = 10
+const maxFieldLength = 4096
 
 let level: Level = "INFO"
 
@@ -112,6 +113,34 @@ function formatError(error: Error, depth = 0): string {
     : result
 }
 
+function truncate(value: string) {
+  if (value.length <= maxFieldLength) return value
+  return value.slice(0, maxFieldLength) + `...[truncated ${value.length - maxFieldLength} chars]`
+}
+
+function formatValue(value: any): string {
+  if (value instanceof Error) return truncate(formatError(value))
+  if (typeof value === "object") {
+    const seen = new WeakSet<object>()
+    try {
+      const serialized = JSON.stringify(value, (_, item) => {
+        if (typeof item === "bigint") return item.toString()
+        if (item instanceof Error) return formatError(item)
+        if (typeof item === "object" && item !== null) {
+          if (seen.has(item)) return "[Circular]"
+          seen.add(item)
+        }
+        return item
+      })
+      return truncate(serialized ?? String(value))
+    } catch (error) {
+      const message = error instanceof Error ? formatError(error) : String(error)
+      return truncate(`[Unserializable: ${message}]`)
+    }
+  }
+  return truncate(String(value))
+}
+
 let last = Date.now()
 export function create(tags?: Record<string, any>) {
   tags = tags || {}
@@ -132,9 +161,7 @@ export function create(tags?: Record<string, any>) {
       .filter(([_, value]) => value !== undefined && value !== null)
       .map(([key, value]) => {
         const prefix = `${key}=`
-        if (value instanceof Error) return prefix + formatError(value)
-        if (typeof value === "object") return prefix + JSON.stringify(value)
-        return prefix + value
+        return prefix + formatValue(value)
       })
       .join(" ")
     const next = new Date()

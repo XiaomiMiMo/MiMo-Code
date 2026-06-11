@@ -149,8 +149,16 @@ interface State {
 }
 
 export function evaluate(permission: string, pattern: string, ...rulesets: Ruleset[]): Rule {
-  log.info("evaluate", { permission, pattern, ruleset: rulesets.flat() })
-  return evalRule(permission, pattern, ...rulesets)
+  const result = evalRule(permission, pattern, ...rulesets)
+  log.debug("evaluate", {
+    permission,
+    pattern,
+    rulesetCount: rulesets.reduce((count, ruleset) => count + ruleset.length, 0),
+    action: result.action,
+    matchedPermission: result.permission,
+    matchedPattern: result.pattern,
+  })
+  return result
 }
 
 export class Service extends Context.Service<Service, Interface>()("@opencode/Permission") {}
