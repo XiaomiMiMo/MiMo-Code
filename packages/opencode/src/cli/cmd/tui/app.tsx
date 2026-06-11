@@ -484,11 +484,11 @@ function App(props: { onSnapshot?: () => Promise<string[]> }) {
       },
     },
     {
-      title: "视觉模型",
+      title: "Vision model",
       value: "model.vision",
       category: "agent",
       // 设置图片/PDF处理的视觉模型（主模型不支持视觉时自动调用）
-      description: "设置视觉模型",
+      description: "Set vision model for image/PDF processing",
       slash: {
         name: "vision",
       },

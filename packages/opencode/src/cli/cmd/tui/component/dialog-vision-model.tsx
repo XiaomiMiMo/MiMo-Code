@@ -32,7 +32,7 @@ export function DialogVisionModel() {
         visionOptions.push({
           value: ref,
           title: model.name ?? modelID,
-          description: currentVisionModel() === ref ? "(当前)" : undefined,
+          description: currentVisionModel() === ref ? "(Current)" : undefined,
           category: provider.name,
           onSelect: () => onSelect(ref),
         })
@@ -57,7 +57,7 @@ export function DialogVisionModel() {
       toast.show({ variant: "error", message: JSON.stringify(res.error) })
       return
     }
-    toast.show({ variant: "success", message: `视觉模型已设置为 ${value}` })
+    toast.show({ variant: "success", message: `Vision model set to ${value}` })
     dialog.clear()
   }
 
@@ -68,7 +68,7 @@ export function DialogVisionModel() {
       toast.show({ variant: "error", message: JSON.stringify(res.error) })
       return
     }
-    toast.show({ variant: "success", message: "视觉模型已清除" })
+    toast.show({ variant: "success", message: "Vision model cleared" })
     dialog.clear()
   }
 
@@ -78,8 +78,8 @@ export function DialogVisionModel() {
         ...options(),
         {
           value: "__clear__",
-          title: "关闭视觉模型",
-          description: currentVisionModel() ? "移除当前设置" : undefined,
+          title: "Disable vision model",
+          description: currentVisionModel() ? "Remove current setting" : undefined,
           category: undefined as unknown as string,
           onSelect: onClear,
         },
@@ -87,7 +87,7 @@ export function DialogVisionModel() {
       onFilter={setQuery}
       flat={true}
       skipFilter={true}
-      title="选择视觉模型"
+      title="Select vision model"
     />
   )
 }

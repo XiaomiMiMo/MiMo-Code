@@ -59,7 +59,7 @@ export const ConfigVisionModelCommand = cmd({
             }
 
             if (visionModels.length === 0) {
-              yield* Effect.sync(() => prompts.log.error("No vision-capable models found in mimo/xiaomi providers"))
+              yield* Effect.sync(() => prompts.log.error("No vision-capable models found"))
               return
             }
 
