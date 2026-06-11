@@ -217,7 +217,7 @@ export const layer: Layer.Layer<Service, never, HttpClient.HttpClient | ChildPro
         //   return data.versions.stable
         // }
 
-        if (detectedMethod === "npm" || detectedMethod === "bun" || detectedMethod === "pnpm") {
+        if (detectedMethod === "npm" || detectedMethod === "bun" || detectedMethod === "pnpm" || detectedMethod === "curl") {
           const r = (yield* text(["npm", "config", "get", "registry"])).trim()
           const reg = r || "https://registry.npmjs.org"
           const registry = reg.endsWith("/") ? reg.slice(0, -1) : reg
