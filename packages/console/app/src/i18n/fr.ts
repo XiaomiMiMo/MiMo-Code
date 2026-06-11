@@ -11,6 +11,7 @@ export const dict = {
   "nav.x": "X",
   "nav.enterprise": "Entreprise",
   "nav.zen": "Zen",
+  "nav.go": "Go",
   "nav.login": "Se connecter",
   "nav.free": "Télécharger",
   "nav.home": "Accueil",
@@ -25,6 +26,7 @@ export const dict = {
   "footer.github": "GitHub",
   "footer.docs": "Documentation",
   "footer.changelog": "Changelog",
+  "footer.feishu": "Feishu",
   "footer.discord": "Discord",
   "footer.x": "X",
 
@@ -57,6 +59,7 @@ export const dict = {
   "common.cancel": "Annuler",
   "common.creating": "Création...",
   "common.create": "Créer",
+  "common.contactUs": "Contactez-nous",
 
   "common.videoUnsupported": "Votre navigateur ne prend pas en charge la balise vidéo.",
   "common.figure": "Fig {{n}}.",

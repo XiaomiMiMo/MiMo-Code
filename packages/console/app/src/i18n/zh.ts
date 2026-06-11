@@ -10,6 +10,7 @@ export const dict = {
   "nav.x": "X",
   "nav.enterprise": "企业版",
   "nav.zen": "Zen",
+  "nav.go": "Go",
   "nav.login": "登录",
   "nav.free": "下载",
   "nav.home": "首页",
@@ -59,6 +60,7 @@ export const dict = {
   "common.cancel": "取消",
   "common.creating": "正在创建...",
   "common.create": "创建",
+  "common.contactUs": "联系我们",
 
   "common.videoUnsupported": "您的浏览器不支持 video 标签。",
   "common.figure": "图 {{n}}.",
