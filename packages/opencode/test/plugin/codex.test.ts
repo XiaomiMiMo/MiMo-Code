@@ -1,8 +1,11 @@
 import { describe, expect, test } from "bun:test"
+import type { Auth } from "@mimo-ai/sdk"
+import type { Provider } from "@mimo-ai/sdk/v2"
 import {
   parseJwtClaims,
   extractAccountIdFromClaims,
   extractAccountId,
+  CodexAuthPlugin,
   type IdTokenClaims,
 } from "../../src/plugin/codex"
 
@@ -13,6 +16,40 @@ function createTestJwt(payload: object): string {
 }
 
 describe("plugin.codex", () => {
+  test("keeps gpt-5.5 available for ChatGPT Plus/Pro OAuth", async () => {
+    const hooks = await CodexAuthPlugin({} as never)
+    const provider = {
+      models: {
+        "gpt-5.4": {
+          id: "gpt-5.4",
+          api: { id: "gpt-5.4" },
+          cost: { input: 1, output: 2, cache: { read: 3, write: 4 } },
+          limit: { context: 1, input: 1, output: 1 },
+        },
+        "gpt-5.5": {
+          id: "gpt-5.5",
+          api: { id: "gpt-5.5" },
+          cost: { input: 1, output: 2, cache: { read: 3, write: 4 } },
+          limit: { context: 1, input: 1, output: 1 },
+        },
+        "gpt-5.1": {
+          id: "gpt-5.1",
+          api: { id: "gpt-5.1" },
+          cost: { input: 1, output: 2, cache: { read: 3, write: 4 } },
+          limit: { context: 1, input: 1, output: 1 },
+        },
+      },
+    } as unknown as Provider
+
+    const models = await hooks.provider!.models!(provider, { auth: { type: "oauth" } as Auth })
+
+    expect(models["gpt-5.4"]).toBeDefined()
+    expect(models["gpt-5.5"]).toBeDefined()
+    expect(models["gpt-5.1"]).toBeUndefined()
+    expect(models["gpt-5.5"].cost).toEqual({ input: 0, output: 0, cache: { read: 0, write: 0 } })
+    expect(models["gpt-5.5"].limit).toEqual({ context: 400_000, input: 272_000, output: 128_000 })
+  })
+
   describe("parseJwtClaims", () => {
     test("parses valid JWT with claims", () => {
       const payload = { email: "test@example.com", chatgpt_account_id: "acc-123" }
