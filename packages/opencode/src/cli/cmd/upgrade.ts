@@ -5,6 +5,15 @@ import { AppRuntime } from "@/effect/app-runtime"
 import { Installation } from "../../installation"
 import { InstallationVersion } from "../../installation/version"
 
+export async function resolveUpgradeTarget(input: {
+  target?: string
+  method: Installation.Method
+  latest: (method: Installation.Method) => Promise<string>
+}) {
+  if (input.target) return input.target.replace(/^v/, "")
+  return input.latest(input.method)
+}
+
 export const UpgradeCommand = {
   command: "upgrade [target]",
   describe: "upgrade mimocode to the latest or a specific version",
@@ -44,9 +53,11 @@ export const UpgradeCommand = {
       }
     }
     prompts.log.info("Using method: " + method)
-    const target = args.target
-      ? args.target.replace(/^v/, "")
-      : await AppRuntime.runPromise(Installation.Service.use((svc) => svc.latest()))
+    const target = await resolveUpgradeTarget({
+      target: args.target,
+      method,
+      latest: (method) => AppRuntime.runPromise(Installation.Service.use((svc) => svc.latest(method))),
+    })
 
     if (InstallationVersion === target) {
       prompts.log.warn(`opencode upgrade skipped: ${target} is already installed`)
