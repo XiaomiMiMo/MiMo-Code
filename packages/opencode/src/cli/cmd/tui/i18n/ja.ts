@@ -379,6 +379,39 @@ export const dict = {
   "cli.providers.mimo_login.decrypt_retry": "復号に失敗しました、再試行してください（残り {remaining} 回）",
   "cli.providers.mimo_login.decrypt_exhausted": "復号に失敗しました、最大再試行回数に達しました",
 
+  // Background image
+  "tui.command.worktree.list.title": "ワークツリー",
+  "tui.command.image.switch.title": "背景画像を変更",
+  "tui.dialog.image.title": "背景画像",
+  "tui.dialog.image.import.option": "新しい画像を選択…",
+  "tui.dialog.image.import.title": "背景画像をインポート",
+  "tui.dialog.image.import.placeholder": "/path/to/image.png または .jpg",
+  "tui.dialog.image.import.invalid": ".png、.jpg、.jpegファイルのみ対応",
+  "tui.dialog.image.import.not_found": "ファイルが見つかりません",
+  "tui.dialog.image.import.success": "背景画像をインポートしました",
+  "tui.dialog.image.none": "なし（星空の背景を使用）",
+
+  // Voice errors
+  "tui.voice.error.empty_send": "送信するものがありません",
+  "tui.voice.error.unknown_agent": "エージェント「{{name}}」が見つかりません",
+
+  // Login dialog
+  "tui.dialog.login.title": "プロバイダーを選択",
+  "tui.dialog.login.xiaomi": "Xiaomi",
+  "tui.dialog.login.xiaomi.desc": "（推奨）",
+  "tui.dialog.login.import_claude": "Claude Codeからインポート",
+  "tui.dialog.login.other": "その他のプロバイダー",
+  "tui.dialog.login.import_claude.no_key": "Claude Code APIキーが見つかりません",
+  "tui.dialog.login.import_claude.read_failed": "~/.claude/settings.jsonの読み込みに失敗しました",
+  "tui.dialog.login.import_claude.success": "Claude Codeからインポートしました",
+  "tui.dialog.login.start_failed": "ログインの開始に失敗しました",
+  "tui.dialog.login.flow.title": "MiMoログイン",
+  "tui.dialog.login.flow.placeholder": "コードを貼り付け（またはブラウザのコールバックを待機）",
+  "tui.dialog.login.flow.busy": "ログイン中...",
+  "tui.dialog.login.flow.manual_hint": "ブラウザが開きませんでしたか？手動でアクセス：",
+  "tui.dialog.login.flow.waiting": "ブラウザの認証を待っています...",
+  "tui.dialog.login.flow.invalid_code": "無効なコードです。再試行してください",
+
   // Question i18n — plan_exit
   "tui.question.plan_exit.question": "{{plan}} の計画が完了しました。build エージェントに切り替えて実装を開始しますか？",
   "tui.question.plan_exit.header": "計画終了",

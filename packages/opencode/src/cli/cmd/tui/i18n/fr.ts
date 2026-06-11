@@ -427,6 +427,39 @@ export const dict = {
   "cli.providers.mimo_login.decrypt_retry": "Échec du déchiffrement, veuillez réessayer ({remaining} tentatives restantes)",
   "cli.providers.mimo_login.decrypt_exhausted": "Échec du déchiffrement, nombre maximal de tentatives atteint",
 
+  // Background image
+  "tui.command.worktree.list.title": "Arborescences de travail",
+  "tui.command.image.switch.title": "Changer l'image d'arrière-plan",
+  "tui.dialog.image.title": "Images d'arrière-plan",
+  "tui.dialog.image.import.option": "Choisir une nouvelle image…",
+  "tui.dialog.image.import.title": "Importer une image d'arrière-plan",
+  "tui.dialog.image.import.placeholder": "/chemin/vers/image.png ou .jpg",
+  "tui.dialog.image.import.invalid": "Seuls les fichiers .png, .jpg et .jpeg sont pris en charge",
+  "tui.dialog.image.import.not_found": "Fichier introuvable",
+  "tui.dialog.image.import.success": "Image d'arrière-plan importée",
+  "tui.dialog.image.none": "Aucune (utiliser l'arrière-plan étoilé)",
+
+  // Voice errors
+  "tui.voice.error.empty_send": "Rien à envoyer",
+  "tui.voice.error.unknown_agent": "Agent \"{{name}}\" introuvable",
+
+  // Login dialog
+  "tui.dialog.login.title": "Sélectionner le fournisseur",
+  "tui.dialog.login.xiaomi": "Xiaomi",
+  "tui.dialog.login.xiaomi.desc": "(Recommandé)",
+  "tui.dialog.login.import_claude": "Importer depuis Claude Code",
+  "tui.dialog.login.other": "Autre fournisseur",
+  "tui.dialog.login.import_claude.no_key": "Clé API Claude Code introuvable",
+  "tui.dialog.login.import_claude.read_failed": "Échec de la lecture de ~/.claude/settings.json",
+  "tui.dialog.login.import_claude.success": "Importé depuis Claude Code",
+  "tui.dialog.login.start_failed": "Échec du démarrage de la connexion",
+  "tui.dialog.login.flow.title": "Connexion MiMo",
+  "tui.dialog.login.flow.placeholder": "Coller le code (ou attendre le callback du navigateur)",
+  "tui.dialog.login.flow.busy": "Connexion en cours...",
+  "tui.dialog.login.flow.manual_hint": "Le navigateur ne s'est pas ouvert ? Visitez manuellement :",
+  "tui.dialog.login.flow.waiting": "En attente de l'autorisation du navigateur...",
+  "tui.dialog.login.flow.invalid_code": "Code invalide, veuillez réessayer",
+
   // Question i18n — plan_exit
   "tui.question.plan_exit.question": "Le plan {{plan}} est terminé. Voulez-vous basculer vers l'agent build pour commencer l'implémentation ?",
   "tui.question.plan_exit.header": "Quitter le plan",

@@ -439,6 +439,42 @@ export const dict = {
   "cli.providers.mimo_login.decrypt_retry": "Ошибка расшифровки, повторите попытку (осталось попыток: {remaining})",
   "cli.providers.mimo_login.decrypt_exhausted": "Ошибка расшифровки, превышено максимальное число попыток",
 
+  // Background image + worktree
+  "tui.command.worktree.list.title": "Рабочие деревья",
+  "tui.command.image.switch.title": "Сменить фоновое изображение",
+  "tui.dialog.image.title": "Фоновые изображения",
+  "tui.dialog.image.import.option": "Выбрать новое изображение…",
+  "tui.dialog.image.import.title": "Импорт фонового изображения",
+  "tui.dialog.image.import.placeholder": "/путь/к/image.png или .jpg",
+  "tui.dialog.image.import.invalid": "Поддерживаются только файлы .png, .jpg и .jpeg",
+  "tui.dialog.image.import.not_found": "Файл не найден",
+  "tui.dialog.image.import.success": "Фоновое изображение импортировано",
+  "tui.dialog.image.none": "Нет (использовать звёздный фон)",
+
+  // Voice send + errors
+  "tui.command.voice.send.title": "Переключить голосовую отправку",
+  "tui.command.voice.send.title_on": "Голосовая отправка: ВКЛ — нажмите для отключения",
+  "tui.command.voice.send.title_off": "Голосовая отправка: ВЫКЛ — нажмите для включения",
+  "tui.voice.error.empty_send": "Нечего отправлять",
+  "tui.voice.error.unknown_agent": "Агент \"{{name}}\" не найден",
+
+  // Login dialog
+  "tui.dialog.login.title": "Выбор провайдера",
+  "tui.dialog.login.xiaomi": "Xiaomi",
+  "tui.dialog.login.xiaomi.desc": "(Рекомендуется)",
+  "tui.dialog.login.import_claude": "Импорт из Claude Code",
+  "tui.dialog.login.other": "Другой провайдер",
+  "tui.dialog.login.import_claude.no_key": "API-ключ Claude Code не найден",
+  "tui.dialog.login.import_claude.read_failed": "Не удалось прочитать ~/.claude/settings.json",
+  "tui.dialog.login.import_claude.success": "Импортировано из Claude Code",
+  "tui.dialog.login.start_failed": "Не удалось начать вход",
+  "tui.dialog.login.flow.title": "Вход в MiMo",
+  "tui.dialog.login.flow.placeholder": "Вставьте код (или дождитесь ответа браузера)",
+  "tui.dialog.login.flow.busy": "Выполняется вход...",
+  "tui.dialog.login.flow.manual_hint": "Браузер не открылся? Перейдите вручную:",
+  "tui.dialog.login.flow.waiting": "Ожидание авторизации браузера...",
+  "tui.dialog.login.flow.invalid_code": "Неверный код, попробуйте снова",
+
   // Question i18n — plan_exit
   "tui.question.plan_exit.question": "План {{plan}} завершён. Переключиться на агента build и начать реализацию?",
   "tui.question.plan_exit.header": "Выход из плана",
