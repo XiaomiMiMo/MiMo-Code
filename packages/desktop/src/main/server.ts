@@ -37,7 +37,7 @@ export async function spawnLocalServer(hostname: string, port: number, password:
   const listener = await Server.listen({
     port,
     hostname,
-    username: "opencode",
+    username: "mimocode",
     password,
     cors: ["oc://renderer"],
   })
@@ -67,7 +67,7 @@ function prepareServerEnv(password: string) {
     OPENCODE_EXPERIMENTAL_ICON_DISCOVERY: "true",
     OPENCODE_EXPERIMENTAL_FILEWATCHER: "true",
     OPENCODE_CLIENT: "desktop",
-    OPENCODE_SERVER_USERNAME: "opencode",
+    MIMOCODE_SERVER_USERNAME: "mimocode",
     OPENCODE_SERVER_PASSWORD: password,
     XDG_STATE_HOME: app.getPath("userData"),
   }
@@ -84,7 +84,7 @@ export async function checkHealth(url: string, password?: string | null): Promis
 
   const headers = new Headers()
   if (password) {
-    const auth = Buffer.from(`opencode:${password}`).toString("base64")
+    const auth = Buffer.from(`mimocode:${password}`).toString("base64")
     headers.set("authorization", `Basic ${auth}`)
   }
 
