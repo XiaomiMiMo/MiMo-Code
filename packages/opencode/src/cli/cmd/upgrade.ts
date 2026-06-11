@@ -5,6 +5,19 @@ import { AppRuntime } from "@/effect/app-runtime"
 import { Installation } from "../../installation"
 import { InstallationVersion } from "../../installation/version"
 
+export function resolveUpgradeMethod(input: { method?: string; detectedMethod: Installation.Method }) {
+  return (input.method as Installation.Method) ?? input.detectedMethod
+}
+
+export async function resolveUpgradeTarget(input: {
+  target?: string
+  method: Installation.Method
+  latest: (method: Installation.Method) => Promise<string>
+}) {
+  if (input.target) return input.target.replace(/^v/, "")
+  return input.latest(input.method)
+}
+
 export const UpgradeCommand = {
   command: "upgrade [target]",
   describe: "upgrade mimocode to the latest or a specific version",
@@ -27,7 +40,7 @@ export const UpgradeCommand = {
     UI.empty()
     prompts.intro("Upgrade")
     const detectedMethod = await AppRuntime.runPromise(Installation.Service.use((svc) => svc.method()))
-    const method = (args.method as Installation.Method) ?? detectedMethod
+    const method = resolveUpgradeMethod({ method: args.method, detectedMethod })
     if (method === "unknown") {
       prompts.log.error(`opencode is installed to ${process.execPath} and may be managed by a package manager`)
       const install = await prompts.select({
@@ -44,9 +57,11 @@ export const UpgradeCommand = {
       }
     }
     prompts.log.info("Using method: " + method)
-    const target = args.target
-      ? args.target.replace(/^v/, "")
-      : await AppRuntime.runPromise(Installation.Service.use((svc) => svc.latest()))
+    const target = await resolveUpgradeTarget({
+      target: args.target,
+      method,
+      latest: (method) => AppRuntime.runPromise(Installation.Service.use((svc) => svc.latest(method))),
+    })
 
     if (InstallationVersion === target) {
       prompts.log.warn(`opencode upgrade skipped: ${target} is already installed`)
