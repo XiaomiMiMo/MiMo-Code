@@ -9,6 +9,7 @@ import { InstanceBootstrap } from "@/project/bootstrap"
 import { Instance } from "@/project/instance"
 import { lazy } from "@/util/lazy"
 import { Filesystem } from "@/util"
+import { timingSafeStringEqual } from "@/util/crypto"
 import { ConfigApi, configHandlers } from "./config"
 import { PermissionApi, permissionHandlers } from "./permission"
 import { ProjectApi, projectHandlers } from "./project"
@@ -77,7 +78,7 @@ const auth = Layer.succeed(
         if (credential.username !== user) {
           return yield* new Unauthorized({ message: "Unauthorized" })
         }
-        if (Redacted.value(credential.password) !== Flag.MIMOCODE_SERVER_PASSWORD) {
+        if (!timingSafeStringEqual(Redacted.value(credential.password), Flag.MIMOCODE_SERVER_PASSWORD)) {
           return yield* new Unauthorized({ message: "Unauthorized" })
         }
         return yield* effect
