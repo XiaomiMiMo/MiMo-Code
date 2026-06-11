@@ -44,6 +44,7 @@ import { DialogSkill } from "../dialog-skill"
 import { DialogWorkspaceCreate, restoreWorkspaceSession } from "../dialog-workspace-create"
 import { DialogWorkspaceUnavailable } from "../dialog-workspace-unavailable"
 import { useArgs } from "@tui/context/args"
+import { normalizeClipboardText, pasteClipboardContent, type ClipboardContent } from "./paste"
 
 export type PromptProps = {
   sessionID?: string
@@ -1248,19 +1249,13 @@ export function Prompt(props: PromptProps) {
     }, 0)
   }
 
-  async function pasteFromClipboard() {
+  async function pasteFromClipboard(content?: ClipboardContent) {
     if (props.disabled) return
-    const content = await Clipboard.read()
-    if (!content) return
-    if (content.mime.startsWith("image/")) {
-      await pasteAttachment({
-        filename: "clipboard",
-        mime: content.mime,
-        content: content.data,
-      })
-      return
-    }
-    await pastePlainText(content.data.replace(/\r\n/g, "\n").replace(/\r/g, "\n"))
+    return pasteClipboardContent({
+      content: content ?? (await Clipboard.read()),
+      pasteText: pastePlainText,
+      pasteAttachment,
+    })
   }
 
   async function pasteAttachment(file: { filename?: string; filepath?: string; content: string; mime: string }) {
@@ -1433,21 +1428,18 @@ export function Prompt(props: PromptProps) {
                   e.preventDefault()
                   return
                 }
-                // Check clipboard for images before terminal-handled paste runs.
-                // This helps terminals that forward Ctrl+V to the app; Windows
-                // Terminal 1.25+ usually handles Ctrl+V before this path.
+                // Check clipboard before terminal-handled paste runs. Classic
+                // Windows Console forwards Ctrl+V/Shift+Insert as key events
+                // rather than bracketed paste, so text must be handled here too.
                 if (keybind.match("input_paste", e)) {
                   const content = await Clipboard.read()
-                  if (content?.mime.startsWith("image/")) {
+                  if (content) {
                     e.preventDefault()
-                    await pasteAttachment({
-                      filename: "clipboard",
-                      mime: content.mime,
-                      content: content.data,
-                    })
+                    await pasteFromClipboard(content)
                     return
                   }
-                  // If no image, let the default paste behavior continue
+                  // If clipboard access fails, let the terminal/default textarea
+                  // paste path continue.
                 }
                 if (keybind.match("input_clear", e) && store.prompt.input !== "") {
                   input.clear()
@@ -1541,7 +1533,7 @@ export function Prompt(props: PromptProps) {
                 // Normalize line endings at the boundary
                 // Windows ConPTY/Terminal often sends CR-only newlines in bracketed paste
                 // Replace CRLF first, then any remaining CR
-                const normalizedText = decodePasteBytes(event.bytes).replace(/\r\n/g, "\n").replace(/\r/g, "\n")
+                const normalizedText = normalizeClipboardText(decodePasteBytes(event.bytes))
 
                 // Windows Terminal <1.25 can surface image-only clipboard as an
                 // empty bracketed paste. Windows Terminal 1.25+ does not.
