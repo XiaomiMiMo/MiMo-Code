@@ -172,9 +172,15 @@ const EN_TIMEZONES = new Set([
   "Pacific/Auckland",
 ])
 
-function detectTimezoneLocale(): Locale | undefined {
+function matchLocale(value: string): Locale | undefined {
+  const cleaned = value.replace(/[.@].*$/, "").replace(/_/g, "-").toLowerCase()
+  if (!cleaned || cleaned === "c" || cleaned === "posix") return undefined
+  return matchers.find((m) => m.test(cleaned))?.locale
+}
+
+function detectTimezoneLocale(timeZone?: string): Locale | undefined {
   try {
-    const tz = Intl.DateTimeFormat().resolvedOptions().timeZone
+    const tz = timeZone ?? Intl.DateTimeFormat().resolvedOptions().timeZone
     if (!tz) return undefined
     if (ZHT_TIMEZONES.has(tz)) return "zht"
     if (CN_TIMEZONES.has(tz)) return "zh"
@@ -187,23 +193,25 @@ function detectTimezoneLocale(): Locale | undefined {
   return undefined
 }
 
-export function detectSystemLocale(): Locale {
-  const tz = detectTimezoneLocale()
-  if (tz) return tz
+export function detectSystemLocale(input?: {
+  env?: Partial<Pick<NodeJS.ProcessEnv, "LC_ALL" | "LC_MESSAGES" | "LANG" | "LANGUAGE">>
+  intlLocale?: string
+  timeZone?: string
+}): Locale {
+  const source = input?.env ?? process.env
   for (const env of ["LC_ALL", "LC_MESSAGES", "LANG", "LANGUAGE"] as const) {
-    const value = process.env[env]
+    const value = source[env]
     if (!value) continue
     for (const raw of value.split(":")) {
-      const cleaned = raw.replace(/[.@].*$/, "").replace(/_/g, "-").toLowerCase()
-      if (!cleaned || cleaned === "c" || cleaned === "posix") continue
-      const match = matchers.find((m) => m.test(cleaned))
-      if (match) return match.locale
+      const match = matchLocale(raw)
+      if (match) return match
     }
   }
   try {
-    const intl = Intl.DateTimeFormat().resolvedOptions().locale.toLowerCase()
-    const match = matchers.find((m) => m.test(intl))
-    if (match) return match.locale
+    const match = matchLocale(input?.intlLocale ?? Intl.DateTimeFormat().resolvedOptions().locale)
+    if (match) return match
   } catch {}
+  const tz = detectTimezoneLocale(input?.timeZone)
+  if (tz) return tz
   return "en"
 }
