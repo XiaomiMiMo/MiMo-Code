@@ -745,4 +745,79 @@ describe("Actor tool task_id degradation", () => {
       }),
     ),
   )
+
+  it.live("spawn accepts timeout_ms for compatibility (ignored in execution)", () =>
+    provideTmpdirInstance(() =>
+      Effect.gen(function* () {
+        yield* installMockSpawn()
+        const { chat, assistant } = yield* seed()
+        const tool = yield* ActorTool
+        const def = yield* tool.init()
+
+        const input = {
+          operation: {
+            action: "spawn" as const,
+            subagent_type: "general",
+            description: "Review code",
+            prompt: "Review current diff",
+            context: "full" as const,
+            timeout_ms: 600000,
+          },
+        }
+
+        const parseResult = def.parameters.safeParse(input)
+        expect(parseResult.success).toBe(true)
+
+        const result = yield* def.execute(
+          input,
+          {
+            sessionID: chat.id,
+            messageID: assistant.id,
+            agent: "build",
+            abort: new AbortController().signal,
+            extra: {},
+            messages: [],
+            metadata: () => Effect.void,
+            ask: () => Effect.void,
+          },
+        )
+
+        expect(result.output).toContain("Background actor started")
+      }),
+    ),
+  )
+
+  it.live("spawn still rejects unknown fields after timeout_ms compatibility", () =>
+    provideTmpdirInstance(() =>
+      Effect.gen(function* () {
+        const tool = yield* ActorTool
+        const def = yield* tool.init()
+        const params = def.parameters
+
+        expect(
+          params.safeParse({
+            operation: {
+              action: "spawn",
+              subagent_type: "general",
+              description: "Review code",
+              prompt: "Review current diff",
+              unexpected_field: true,
+            },
+          }).success,
+        ).toBe(false)
+
+        expect(
+          params.safeParse({
+            operation: {
+              action: "spawn",
+              subagent_type: "general",
+              description: "Review code",
+              prompt: "Review current diff",
+              timeout_ms: 600000,
+            },
+          }).success,
+        ).toBe(true)
+      }),
+    ),
+  )
 })

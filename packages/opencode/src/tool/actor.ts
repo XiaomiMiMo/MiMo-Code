@@ -383,6 +383,12 @@ export const ActorTool = Tool.define(
           .describe(
             "(optional) If set, resume the specified prior actor session instead of creating a new one.",
           ),
+        timeout_ms: z
+          .number()
+          .int()
+          .positive()
+          .optional()
+          .describe("(compatibility) Accepted for schema compatibility with run; spawn returns immediately so this has no effect."),
         command: z.string().min(1).optional().describe("(optional) The command that triggered this task."),
         context: z
           .enum(["none", "state", "full"])
