@@ -23,6 +23,8 @@ export const dict = {
 
   "command.sidebar.toggle": "Skift sidebjælke",
   "command.project.open": "Åbn projekt",
+  "command.project.previous": "Forrige projekt",
+  "command.project.next": "Næste projekt",
   "command.provider.connect": "Tilslut udbyder",
   "command.server.switch": "Skift server",
   "command.settings.open": "Åbn indstillinger",
@@ -234,6 +236,8 @@ export const dict = {
   "prompt.mode.shell": "Shell",
   "prompt.mode.normal": "Prompt",
   "prompt.mode.shell.exit": "esc for at afslutte",
+  "session.child.promptDisabled": "Underagent-sessioner kan ikke modtage prompts.",
+  "session.child.backToParent": "Tilbage til hovedsessionen.",
 
   "prompt.example.1": "Ret en TODO i koden",
   "prompt.example.2": "Hvad er teknologistakken for dette projekt?",
@@ -507,6 +511,8 @@ export const dict = {
   "session.review.noSnapshot":
     "Snapshot-sporing er deaktiveret i konfigurationen, så sessionsændringer er ikke tilgængelige",
   "session.review.noChanges": "Ingen ændringer",
+  "session.review.noUncommittedChanges": "Endnu ingen ikke-committede ændringer",
+  "session.review.noBranchChanges": "Endnu ingen branch-ændringer",
   "session.files.selectToOpen": "Vælg en fil at åbne",
   "session.files.all": "Alle filer",
   "session.files.empty": "Ingen filer",
@@ -606,6 +612,8 @@ export const dict = {
   "sidebar.project.recentSessions": "Seneste sessioner",
   "sidebar.project.viewAllSessions": "Vis alle sessioner",
   "sidebar.project.clearNotifications": "Ryd notifikationer",
+  "sidebar.empty.title": "Ingen åbne projekter",
+  "sidebar.empty.description": "Åbn et projekt for at komme i gang",
 
   "app.name.desktop": "OpenCode Desktop",
   "settings.section.desktop": "Desktop",
@@ -617,6 +625,7 @@ export const dict = {
   "settings.desktop.wsl.description": "Kør OpenCode-serveren inde i WSL på Windows.",
 
   "settings.general.section.appearance": "Udseende",
+  "settings.general.section.advanced": "Avanceret",
   "settings.general.section.notifications": "Systemmeddelelser",
   "settings.general.section.updates": "Opdateringer",
   "settings.general.section.sounds": "Lydeffekter",
@@ -641,6 +650,16 @@ export const dict = {
   "settings.general.row.followup.description": "Vælg om opfølgende forespørgsler skal styre straks eller vente i kø",
   "settings.general.row.followup.option.queue": "Kø",
   "settings.general.row.followup.option.steer": "Styr",
+  "settings.general.row.showFileTree.title": "Filtræ",
+  "settings.general.row.showFileTree.description": "Vis filtræ-knappen og -panelet i desktopsessioner",
+  "settings.general.row.showNavigation.title": "Navigationsknapper",
+  "settings.general.row.showNavigation.description": "Vis tilbage- og frem-knapperne i desktop-titellinjen",
+  "settings.general.row.showSearch.title": "Kommandopalet",
+  "settings.general.row.showSearch.description": "Vis søge- og kommandopalet-knappen i desktop-titellinjen",
+  "settings.general.row.showTerminal.title": "Terminal",
+  "settings.general.row.showTerminal.description": "Vis terminal-knappen i desktop-titellinjen",
+  "settings.general.row.showStatus.title": "Serverstatus",
+  "settings.general.row.showStatus.description": "Vis serverstatus-knappen i desktop-titellinjen",
   "settings.general.row.reasoningSummaries.title": "Vis tænkeoversigter",
   "settings.general.row.reasoningSummaries.description": "Vis model tænkeoversigter i tidslinjen",
 
