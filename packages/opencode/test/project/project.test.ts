@@ -115,6 +115,19 @@ describe("Project.fromDirectory", () => {
     const { project: b } = await run((svc) => svc.fromDirectory(tmp.path))
     expect(b.id).toBe(a.id)
   })
+
+  test("does not crash when .git/info path is not writable as a directory", async () => {
+    await using tmp = await tmpdir({ git: true })
+    // Simulate environments where mkdir(.git/info) fails (e.g. EEXIST on
+    // Windows network drives): make .git/info a file so mkdir always errors.
+    const info = path.join(tmp.path, ".git", "info")
+    await Bun.$`rm -rf ${info}`.quiet()
+    await Bun.write(info, "not a directory")
+
+    const { project } = await run((svc) => svc.fromDirectory(tmp.path))
+    expect(project.vcs).toBe("git")
+    expect(project.worktree).toBe(tmp.path)
+  })
 })
 
 describe("Project.fromDirectory git failure paths", () => {

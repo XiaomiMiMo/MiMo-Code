@@ -15,6 +15,9 @@ const levelPriority: Record<Level, number> = {
   ERROR: 3,
 }
 const keep = 10
+// Cap individual log files so runaway logging can't fill the disk; with `keep`
+// pruning this bounds the log directory to roughly keep * maxFileSize.
+const maxFileSize = 20 * 1024 * 1024
 
 let level: Level = "INFO"
 
@@ -78,8 +81,22 @@ export async function init(options: Options) {
   } else {
     await fs.truncate(logpath).catch(() => {})
   }
-  const stream = createWriteStream(logpath, { flags: "a" })
+  let stream = createWriteStream(logpath, { flags: "a" })
+  let written = (await fs.stat(logpath).catch(() => null))?.size ?? 0
+  let rotations = 0
+  const rotate = () => {
+    stream.end()
+    rotations++
+    const stamp = new Date().toISOString().split(".")[0].replace(/:/g, "")
+    // Counter suffix keeps the name unique even when rotating within a second
+    logpath = path.join(Global.Path.log, `${stamp}_${rotations}.log`)
+    stream = createWriteStream(logpath, { flags: "a" })
+    written = 0
+    void cleanup(Global.Path.log)
+  }
   write = async (msg: any) => {
+    if (!options.dev && written >= maxFileSize) rotate()
+    written += Buffer.byteLength(msg)
     return new Promise((resolve, reject) => {
       stream.write(msg, (err) => {
         if (err) reject(err)
@@ -91,7 +108,7 @@ export async function init(options: Options) {
 
 async function cleanup(dir: string) {
   const files = (
-    await Glob.scan("????-??-??T??????.log", {
+    await Glob.scan("????-??-??T??????*.log", {
       cwd: dir,
       absolute: false,
       include: "file",

@@ -42,3 +42,26 @@ test("init cleanup keeps the newest timestamped logs", async () => {
   expect(next).not.toContain(list[0]!)
   expect(next).toContain(list.at(-1)!)
 })
+
+test("rotates to a new file once the size cap is reached", async () => {
+  await using tmp = await tmpdir()
+  Global.Path.log = tmp.path
+
+  await Log.init({ print: false, dev: false, level: "INFO" })
+  const first = Log.file()
+
+  const logger = Log.create({ service: "rotation-test" })
+  const blob = "x".repeat(1024 * 1024)
+  for (let i = 0; i < 21; i++) {
+    logger.info("fill", { blob })
+  }
+
+  for (let i = 0; i < 100 && Log.file() === first; i++) {
+    await Bun.sleep(10)
+  }
+
+  expect(Log.file()).not.toBe(first)
+  expect(path.dirname(Log.file())).toBe(tmp.path)
+  // 20MB cap plus one in-flight message of slack
+  expect((await fs.stat(first)).size).toBeLessThan(22 * 1024 * 1024)
+})
