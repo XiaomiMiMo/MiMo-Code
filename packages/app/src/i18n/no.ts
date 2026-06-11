@@ -26,6 +26,8 @@ export const dict = {
 
   "command.sidebar.toggle": "Veksle sidepanel",
   "command.project.open": "Åpne prosjekt",
+  "command.project.previous": "Forrige prosjekt",
+  "command.project.next": "Neste prosjekt",
   "command.provider.connect": "Koble til leverandør",
   "command.server.switch": "Bytt server",
   "command.settings.open": "Åpne innstillinger",
@@ -238,6 +240,8 @@ export const dict = {
   "prompt.mode.shell": "Shell",
   "prompt.mode.normal": "Prompt",
   "prompt.mode.shell.exit": "ESC for å avslutte",
+  "session.child.promptDisabled": "Underagent-økter kan ikke forespørres.",
+  "session.child.backToParent": "Tilbake til hovedøkten.",
 
   "prompt.example.1": "Fiks en TODO i kodebasen",
   "prompt.example.2": "Hva er teknologistabelen i dette prosjektet?",
@@ -511,6 +515,8 @@ export const dict = {
   "session.review.noSnapshot":
     "Snapshot-sporing er deaktivert i konfigurasjonen, så sesjonsendringer er ikke tilgjengelige",
   "session.review.noChanges": "Ingen endringer",
+  "session.review.noUncommittedChanges": "Ingen ucommittede endringer ennå",
+  "session.review.noBranchChanges": "Ingen branch-endringer ennå",
 
   "session.files.selectToOpen": "Velg en fil å åpne",
   "session.files.all": "Alle filer",
@@ -613,6 +619,8 @@ export const dict = {
   "sidebar.project.recentSessions": "Nylige sesjoner",
   "sidebar.project.viewAllSessions": "Vis alle sesjoner",
   "sidebar.project.clearNotifications": "Fjern varsler",
+  "sidebar.empty.title": "Ingen åpne prosjekter",
+  "sidebar.empty.description": "Åpne et prosjekt for å komme i gang",
 
   "app.name.desktop": "OpenCode Desktop",
 
@@ -625,6 +633,7 @@ export const dict = {
   "settings.desktop.wsl.description": "Kjør OpenCode-serveren i WSL på Windows.",
 
   "settings.general.section.appearance": "Utseende",
+  "settings.general.section.advanced": "Avansert",
   "settings.general.section.notifications": "Systemvarsler",
   "settings.general.section.updates": "Oppdateringer",
   "settings.general.section.sounds": "Lydeffekter",
@@ -649,6 +658,16 @@ export const dict = {
   "settings.general.row.followup.description": "Velg om oppfølgingsspørsmål skal kjøres umiddelbart eller vente i kø",
   "settings.general.row.followup.option.queue": "Kø",
   "settings.general.row.followup.option.steer": "Styr",
+  "settings.general.row.showFileTree.title": "Filtre",
+  "settings.general.row.showFileTree.description": "Vis filtre-bryteren i sidefeltet",
+  "settings.general.row.showNavigation.title": "Navigasjonskontroller",
+  "settings.general.row.showNavigation.description": "Vis tilbake- og fremoverknappene",
+  "settings.general.row.showSearch.title": "Kommandopalett",
+  "settings.general.row.showSearch.description": "Vis søke- og kommandopalett-knappen",
+  "settings.general.row.showStatus.title": "Serverstatus",
+  "settings.general.row.showStatus.description": "Vis serverstatus-knappen",
+  "settings.general.row.showTerminal.title": "Terminal",
+  "settings.general.row.showTerminal.description": "Vis terminal-knappen",
   "settings.general.row.reasoningSummaries.title": "Vis resonneringssammendrag",
   "settings.general.row.reasoningSummaries.description": "Vis sammendrag av modellresonnering i tidslinjen",
   "settings.general.row.shellToolPartsExpanded.title": "Utvid shell-verktøydeler",
