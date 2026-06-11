@@ -348,6 +348,12 @@ export function Session() {
     dialog.clear()
   }
 
+  const scrollToMessageById = (messageID: string) => {
+    const child = scroll.getChildren().find((c) => c.id === messageID)
+    if (!child) return
+    scroll.scrollBy(child.y - scroll.y - 1)
+  }
+
   function toBottom() {
     setTimeout(() => {
       if (!scroll || scroll.isDestroyed) return
@@ -1218,7 +1224,7 @@ export function Session() {
         <Show when={sidebarVisible()}>
           <Switch>
             <Match when={wide()}>
-              <Sidebar sessionID={route.sessionID} />
+              <Sidebar sessionID={route.sessionID} scrollToMessage={scrollToMessageById} />
             </Match>
             <Match when={!wide()}>
               <box
@@ -1230,7 +1236,7 @@ export function Session() {
                 alignItems="flex-end"
                 backgroundColor={RGBA.fromInts(0, 0, 0, 70)}
               >
-                <Sidebar sessionID={route.sessionID} />
+                <Sidebar sessionID={route.sessionID} scrollToMessage={scrollToMessageById} />
               </box>
             </Match>
           </Switch>
