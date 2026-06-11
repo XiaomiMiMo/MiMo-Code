@@ -55,7 +55,7 @@ export function SessionSidePanel(props: {
   const shown = createMemo(
     () =>
       platform.platform !== "desktop" ||
-      import.meta.env.VITE_OPENCODE_CHANNEL !== "beta" ||
+      import.meta.env.VITE_MIMOCODE_CHANNEL !== "beta" ||
       settings.general.showFileTree(),
   )
 

@@ -80,7 +80,7 @@ export function Titlebar() {
   const canBack = createMemo(() => history.index > 0)
   const canForward = createMemo(() => history.index < history.stack.length - 1)
   const hasProjects = createMemo(() => layout.projects.list().length > 0)
-  const nav = createMemo(() => import.meta.env.VITE_OPENCODE_CHANNEL !== "beta" || settings.general.showNavigation())
+  const nav = createMemo(() => import.meta.env.VITE_MIMOCODE_CHANNEL !== "beta" || settings.general.showNavigation())
 
   const back = () => {
     const next = backPath(history)
@@ -287,10 +287,10 @@ export function Titlebar() {
                   </Tooltip>
                 </div>
               </Show>
-              <div id="opencode-titlebar-left" class="flex items-center gap-3 min-w-0 px-2" />
-              {["beta", "dev"].includes(import.meta.env.VITE_OPENCODE_CHANNEL) && (
+              <div id="mimocode-titlebar-left" class="flex items-center gap-3 min-w-0 px-2" />
+              {["beta", "dev"].includes(import.meta.env.VITE_MIMOCODE_CHANNEL) && (
                 <div class="bg-icon-interactive-base text-[#FFF] font-medium px-2 rounded-sm uppercase font-mono">
-                  {import.meta.env.VITE_OPENCODE_CHANNEL.toUpperCase()}
+                  {import.meta.env.VITE_MIMOCODE_CHANNEL.toUpperCase()}
                 </div>
               )}
             </div>
@@ -299,7 +299,7 @@ export function Titlebar() {
       </div>
 
       <div class="min-w-0 flex items-center justify-center pointer-events-none">
-        <div id="opencode-titlebar-center" class="pointer-events-auto min-w-0 flex justify-center w-fit max-w-full" />
+        <div id="mimocode-titlebar-center" class="pointer-events-auto min-w-0 flex justify-center w-fit max-w-full" />
       </div>
 
       <div
@@ -310,7 +310,7 @@ export function Titlebar() {
         data-tauri-drag-region
         onMouseDown={drag}
       >
-        <div id="opencode-titlebar-right" class="flex items-center gap-1 shrink-0 justify-end" />
+        <div id="mimocode-titlebar-right" class="flex items-center gap-1 shrink-0 justify-end" />
         <Show when={windows()}>
           {!tauriApi() && <div class="w-36 shrink-0" />}
           <div data-tauri-decorum-tb class="flex flex-row" />
