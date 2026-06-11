@@ -1,4 +1,4 @@
-import type { Hooks, PluginInput } from "@mimo-ai/plugin"
+import type { Config, Hooks, PluginInput } from "@mimo-ai/plugin"
 import { Log } from "../util"
 import { Global } from "../global"
 import crypto from "crypto"
@@ -12,6 +12,17 @@ const DEFAULT_BASE_URL = "https://api.xiaomimimo.com/"
 const BASE_URL = (process.env.MIMO_FREE_BASE_URL || DEFAULT_BASE_URL).replace(/\/+$/, "")
 const BOOTSTRAP_URL = `${BASE_URL}/api/free-ai/bootstrap`
 const CHAT_BASE_URL = `${BASE_URL}/api/free-ai/openai`
+type ConfigModel = NonNullable<NonNullable<NonNullable<Config["provider"]>[string]>["models"]>[string]
+const MIMO_FREE_MODEL: ConfigModel = {
+  name: "MiMo Auto",
+  attachment: true,
+  reasoning: true,
+  tool_call: true,
+  temperature: true,
+  modalities: { input: ["text", "image"], output: ["text"] },
+  limit: { context: 1_000_000, output: 128_000 },
+  cost: { input: 0, output: 0 },
+}
 
 let fingerprintCache: string | undefined
 function getClientFingerprint(): string {
@@ -131,19 +142,10 @@ export async function MimoFreeAuthPlugin(_input: PluginInput): Promise<Hooks> {
           apiKey: "anonymous",
           fetch: wrappedFetch,
         },
-        models: {
-          "mimo-auto": {
-            name: "MiMo Auto",
-            attachment: true,
-            reasoning: true,
-            tool_call: true,
-            temperature: true,
-            modalities: { input: ["text", "image"], output: ["text"] },
-            limit: { context: 1_000_000, output: 128_000 },
-            cost: { input: 0, output: 0 },
-          },
-        },
+        models: {},
       }
+      input.provider.mimo.models ??= {}
+      input.provider.mimo.models["mimo-auto"] ??= MIMO_FREE_MODEL
       input.disabled_providers ??= []
       for (const id of ["opencode", "opencode-go"]) {
         if (!input.disabled_providers.includes(id)) input.disabled_providers.push(id)
