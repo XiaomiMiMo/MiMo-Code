@@ -20,14 +20,8 @@ async function signWindows(configuration: { path: string }) {
   )
 }
 
-const channel = (() => {
-  const raw = process.env.OPENCODE_CHANNEL
-  if (raw === "dev" || raw === "beta" || raw === "prod") return raw
-  return "dev"
-})()
-
 const getBase = (): Configuration => ({
-  artifactName: "opencode-desktop-${os}-${arch}.${ext}",
+  artifactName: "mimocode-${os}-${arch}.${ext}",
   directories: {
     output: "dist",
     buildResources: "resources",
@@ -77,39 +71,26 @@ const getBase = (): Configuration => ({
   },
 })
 
-function getConfig() {
+const getConfig = (): Configuration => {
   const base = getBase()
+  const channel = process.env.OPENCODE_CHANNEL ?? "dev"
 
-  switch (channel) {
-    case "dev": {
-      return {
-        ...base,
-        appId: "ai.opencode.desktop.dev",
-        productName: "OpenCode Dev",
-        rpm: { packageName: "opencode-dev" },
-      }
-    }
-    case "beta": {
-      return {
-        ...base,
-        appId: "ai.opencode.desktop.beta",
-        productName: "OpenCode Beta",
-        protocols: { name: "OpenCode Beta", schemes: ["opencode"] },
-        publish: { provider: "github", owner: "anomalyco", repo: "opencode-beta", channel: "latest" },
-        rpm: { packageName: "opencode-beta" },
-      }
-    }
-    case "prod": {
-      return {
-        ...base,
-        appId: "ai.opencode.desktop",
-        productName: "OpenCode",
-        protocols: { name: "OpenCode", schemes: ["opencode"] },
-        publish: { provider: "github", owner: "anomalyco", repo: "opencode", channel: "latest" },
-        rpm: { packageName: "opencode" },
-      }
-    }
+  const branch = (() => {
+    if (channel === "beta") return "beta"
+    if (channel === "prod") return "latest"
+    return undefined
+  })()
+
+  return {
+    ...base,
+    appId: "ai.mimocode.desktop",
+    productName: "MiMo Code",
+    protocols: { name: "MiMo Code", schemes: ["opencode"] },
+    rpm: { packageName: "mimocode" },
+    ...(branch
+      ? { publish: { provider: "github", owner: "XiaomiMiMo", repo: "MiMo-Code", channel: branch } }
+      : {}),
   }
 }
 
-export default getConfig()
+export default getConfig
