@@ -4,6 +4,8 @@ type Keys = keyof typeof en
 
 export const dict = {
   "ui.sessionReview.title": "Oturum değişiklikleri",
+  "ui.sessionReview.title.git": "Git değişiklikleri",
+  "ui.sessionReview.title.branch": "Dal değişiklikleri",
   "ui.sessionReview.title.lastTurn": "Son tur değişiklikleri",
   "ui.sessionReview.diffStyle.unified": "Birleşik",
   "ui.sessionReview.diffStyle.split": "Bölünmüş",
@@ -44,6 +46,10 @@ export const dict = {
   "ui.sessionTurn.summary.response": "Yanıt",
   "ui.sessionTurn.diff.showMore": "Daha fazla değişiklik göster ({{count}})",
 
+  "ui.sessionTurn.diffs.changed": "Değiştirildi",
+  "ui.sessionTurn.diffs.showAll": "Tümünü göster",
+  "ui.sessionTurn.diffs.showLess": "Daha az göster",
+  "ui.sessionTurn.diffs.more": "+{{count}} dosya daha",
   "ui.sessionTurn.retry.retrying": "yeniden deneniyor",
   "ui.sessionTurn.retry.inSeconds": "{{seconds}}sn içinde",
   "ui.sessionTurn.retry.attempt": "deneme #{{attempt}}",
