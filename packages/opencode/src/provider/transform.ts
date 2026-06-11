@@ -68,6 +68,21 @@ function normalizeMessages(
   model: Provider.Model,
   _options: Record<string, unknown>,
 ): ModelMessage[] {
+  // vLLM- and Qwen-style OpenAI-compatible chat templates reject a request that
+  // carries more than one system message ("System message must be at the
+  // beginning"). MiMoCode emits the agent prompt and the memory-instructions as
+  // two separate leading system messages (see LLM.buildSystemArray), which trips
+  // these templates. Collapse any run of consecutive plain-text system messages
+  // into a single one for OpenAI-compatible providers.
+  if (model.api.npm === "@ai-sdk/openai-compatible") {
+    msgs = msgs.reduce<ModelMessage[]>((acc, msg) => {
+      const prev = acc.at(-1)
+      if (msg.role === "system" && prev?.role === "system" && typeof prev.content === "string" && typeof msg.content === "string")
+        return [...acc.slice(0, -1), { ...prev, content: `${prev.content}\n${msg.content}` }]
+      return [...acc, msg]
+    }, [])
+  }
+
   // Anthropic rejects messages with empty content - filter out empty string messages
   // and remove empty text/reasoning parts from array content
   if (model.api.npm === "@ai-sdk/anthropic" || model.api.npm === "@ai-sdk/amazon-bedrock") {
