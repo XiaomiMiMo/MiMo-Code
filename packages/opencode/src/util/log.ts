@@ -57,6 +57,9 @@ let write = (msg: any) => {
   return msg.length
 }
 
+const MAX_LOG_SIZE = 10 * 1024 * 1024 // 10MB
+let currentLogSize = 0
+
 export async function init(options: Options) {
   if (options.level) level = options.level
   void cleanup(Global.Path.log)
@@ -76,10 +79,29 @@ export async function init(options: Options) {
       }
     } catch {}
   } else {
-    await fs.truncate(logpath).catch(() => {})
+    const stat = await fs.stat(logpath).catch(() => null)
+    currentLogSize = stat?.size ?? 0
+    if (currentLogSize > MAX_LOG_SIZE) {
+      await fs.truncate(logpath).catch(() => {})
+      currentLogSize = 0
+    }
   }
   const stream = createWriteStream(logpath, { flags: "a" })
   write = async (msg: any) => {
+    currentLogSize += msg.length
+    if (currentLogSize > MAX_LOG_SIZE) {
+      stream.end()
+      const stamp = new Date().toISOString().split(".")[0].replace(/:/g, "")
+      await fs.rename(logpath, `${logpath}.${stamp}`).catch(() => {})
+      const newStream = createWriteStream(logpath, { flags: "a" })
+      currentLogSize = 0
+      return new Promise((resolve, reject) => {
+        newStream.write(msg, (err) => {
+          if (err) reject(err)
+          else resolve(msg.length)
+        })
+      })
+    }
     return new Promise((resolve, reject) => {
       stream.write(msg, (err) => {
         if (err) reject(err)
