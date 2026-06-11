@@ -162,25 +162,33 @@ export const Instance = {
     disposal.all = iife(async () => {
       Log.Default.info("disposing all instances")
       const entries = [...cache.entries()]
-      for (const [key, value] of entries) {
-        if (cache.get(key) !== value) continue
 
-        const ctx = await value.catch((error) => {
-          Log.Default.warn("instance dispose failed", { key, error })
-          return undefined
-        })
+      const resolved = await Promise.all(
+        entries.map(async ([key, value]) => {
+          if (cache.get(key) !== value) return undefined
 
-        if (!ctx) {
-          if (cache.get(key) === value) cache.delete(key)
-          continue
-        }
+          const ctx = await value.catch((error) => {
+            Log.Default.warn("instance dispose failed", { key, error })
+            return undefined
+          })
 
-        if (cache.get(key) !== value) continue
+          if (!ctx) {
+            if (cache.get(key) === value) cache.delete(key)
+            return undefined
+          }
 
-        await context.provide(ctx, async () => {
-          await Instance.dispose()
-        })
-      }
+          if (cache.get(key) !== value) return undefined
+          return ctx
+        }),
+      )
+
+      await Promise.allSettled(
+        resolved.filter((ctx): ctx is InstanceContext => ctx !== undefined).map((ctx) =>
+          context.provide(ctx, async () => {
+            await Instance.dispose()
+          }),
+        ),
+      )
     }).finally(() => {
       disposal.all = undefined
     })
