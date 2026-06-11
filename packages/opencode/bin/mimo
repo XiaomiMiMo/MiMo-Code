@@ -13,7 +13,11 @@ function run(target) {
     console.error(result.error.message)
     process.exit(1)
   }
-  const code = typeof result.status === "number" ? result.status : 0
+  if (result.signal) {
+    console.error(`${path.basename(target)} exited with signal ${result.signal}`)
+    process.exit(1)
+  }
+  const code = typeof result.status === "number" ? result.status : 1
   process.exit(code)
 }
 
@@ -24,12 +28,6 @@ if (envPath) {
 
 const scriptPath = fs.realpathSync(__filename)
 const scriptDir = path.dirname(scriptPath)
-
-//
-const cached = path.join(scriptDir, ".mimocode")
-if (fs.existsSync(cached)) {
-  run(cached)
-}
 
 const platformMap = {
   darwin: "darwin",
@@ -50,8 +48,8 @@ let arch = archMap[os.arch()]
 if (!arch) {
   arch = os.arch()
 }
-const base = "opencode-" + platform + "-" + arch
-const binary = platform === "windows" ? "opencode.exe" : "opencode"
+const base = "mimocode-" + platform + "-" + arch
+const binary = platform === "windows" ? "mimo.exe" : "mimo"
 
 function supportsAvx2() {
   if (arch !== "x64") return false
@@ -148,26 +146,64 @@ const names = (() => {
   return [base]
 })()
 
-function findBinary(startDir) {
+function realpath(target) {
+  try {
+    return fs.realpathSync(target)
+  } catch {
+    return target
+  }
+}
+
+function findBinaries(startDir) {
+  const found = []
   let current = startDir
   for (;;) {
     const modules = path.join(current, "node_modules")
     if (fs.existsSync(modules)) {
       for (const name of names) {
         const candidate = path.join(modules, name, "bin", binary)
-        if (fs.existsSync(candidate)) return candidate
+        if (fs.existsSync(candidate)) found.push(candidate)
       }
     }
     const parent = path.dirname(current)
     if (parent === current) {
-      return
+      return found
     }
     current = parent
   }
 }
 
-const resolved = findBinary(scriptDir)
-if (!resolved) {
+function runResult(target) {
+  const result = childProcess.spawnSync(target, process.argv.slice(2), {
+    stdio: "inherit",
+  })
+  if (result.error) {
+    console.error(result.error.message)
+    process.exit(1)
+  }
+  return result
+}
+
+function runCandidates(candidates) {
+  for (const target of candidates) {
+    const result = runResult(target)
+    if (result.signal === "SIGILL") {
+      console.error(`${path.basename(target)} exited with SIGILL; trying a compatible binary`)
+      continue
+    }
+    if (result.signal) {
+      console.error(`${path.basename(target)} exited with signal ${result.signal}`)
+      process.exit(1)
+    }
+    const code = typeof result.status === "number" ? result.status : 1
+    process.exit(code)
+  }
+  console.error("All candidate mimocode binaries failed to launch")
+  process.exit(1)
+}
+
+const resolved = findBinaries(scriptDir)
+if (resolved.length === 0) {
   console.error(
     "It seems that your package manager failed to install the right version of the mimocode CLI for your platform. You can try manually installing " +
       names.map((n) => `\"${n}\"`).join(" or ") +
@@ -176,4 +212,10 @@ if (!resolved) {
   process.exit(1)
 }
 
-run(resolved)
+const cached = path.join(scriptDir, ".mimocode")
+if (fs.existsSync(cached)) {
+  const cachedReal = realpath(cached)
+  runCandidates([cached, ...resolved.filter((item) => realpath(item) !== cachedReal)])
+}
+
+runCandidates(resolved)
