@@ -50,8 +50,8 @@ let arch = archMap[os.arch()]
 if (!arch) {
   arch = os.arch()
 }
-const base = "opencode-" + platform + "-" + arch
-const binary = platform === "windows" ? "opencode.exe" : "opencode"
+const base = "mimocode-" + platform + "-" + arch
+const binary = platform === "windows" ? "mimo.exe" : "mimo"
 
 function supportsAvx2() {
   if (arch !== "x64") return false
@@ -149,12 +149,15 @@ const names = (() => {
 })()
 
 function findBinary(startDir) {
+  const scope = "@mimo-ai"
   let current = startDir
   for (;;) {
     const modules = path.join(current, "node_modules")
     if (fs.existsSync(modules)) {
       for (const name of names) {
-        const candidate = path.join(modules, name, "bin", binary)
+        let candidate = path.join(modules, name, "bin", binary)
+        if (fs.existsSync(candidate)) return candidate
+        candidate = path.join(modules, scope, name, "bin", binary)
         if (fs.existsSync(candidate)) return candidate
       }
     }
@@ -170,7 +173,7 @@ const resolved = findBinary(scriptDir)
 if (!resolved) {
   console.error(
     "It seems that your package manager failed to install the right version of the mimocode CLI for your platform. You can try manually installing " +
-      names.map((n) => `\"${n}\"`).join(" or ") +
+      names.map((n) => `\"@mimo-ai/${n}\"`).join(" or ") +
       " package",
   )
   process.exit(1)
