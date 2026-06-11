@@ -10,6 +10,7 @@ export const dict = {
   "nav.x": "X",
   "nav.enterprise": "Enterprise",
   "nav.zen": "Zen",
+  "nav.go": "Перейти",
   "nav.login": "Войти",
   "nav.free": "Скачать",
   "nav.home": "Главная",
@@ -24,6 +25,7 @@ export const dict = {
   "footer.github": "GitHub",
   "footer.docs": "Документация",
   "footer.changelog": "Список изменений",
+  "footer.feishu": "Feishu",
   "footer.discord": "Discord",
   "footer.x": "X",
 
@@ -58,6 +60,7 @@ export const dict = {
   "common.cancel": "Отмена",
   "common.creating": "Создание...",
   "common.create": "Создать",
+  "common.contactUs": "Свяжитесь с нами",
 
   "common.videoUnsupported": "Ваш браузер не поддерживает видео тег.",
   "common.figure": "Рис {{n}}.",

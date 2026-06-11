@@ -10,6 +10,7 @@ export const dict = {
   "nav.x": "X",
   "nav.enterprise": "엔터프라이즈",
   "nav.zen": "Zen",
+  "nav.go": "이동",
   "nav.login": "로그인",
   "nav.free": "다운로드",
   "nav.home": "홈",
@@ -24,6 +25,7 @@ export const dict = {
   "footer.github": "GitHub",
   "footer.docs": "문서",
   "footer.changelog": "변경 내역",
+  "footer.feishu": "Feishu",
   "footer.discord": "Discord",
   "footer.x": "X",
 
@@ -58,6 +60,7 @@ export const dict = {
   "common.cancel": "취소",
   "common.creating": "생성 중...",
   "common.create": "만들기",
+  "common.contactUs": "문의하기",
 
   "common.videoUnsupported": "브라우저가 비디오 태그를 지원하지 않습니다.",
   "common.figure": "그림 {{n}}.",
