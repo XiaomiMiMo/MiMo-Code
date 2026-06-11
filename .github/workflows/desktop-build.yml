@@ -3,8 +3,8 @@ name: Build & Release Desktop
 on:
   push:
     tags:
-      - "v*"          # 打 tag 时自动构建并发布 Release
-  workflow_dispatch:   # 也可手动触发
+      - "v*"
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -52,11 +52,9 @@ jobs:
         run: cd packages/desktop && bun run build
 
       - name: Package (${{ matrix.platform }})
-        run: cd packages/desktop && bun run ${{ matrix.target }}
+        run: cd packages/desktop && bunx electron-builder ${{ matrix.target == 'package:win' && '--win' || matrix.target == 'package:mac' && '--mac' || '--linux' }} --config electron-builder.config.ts --publish never
         env:
-          # macOS 代码签名（没有开发者证书就跳过）
           CSC_IDENTITY_AUTO_DISCOVERY: false
-          # Windows 签名（没有证书跳过）
           WIN_CSC_LINK: ""
 
       - name: Upload artifacts
@@ -85,6 +83,8 @@ jobs:
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           files: artifacts/*
           draft: true
