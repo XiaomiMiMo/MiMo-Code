@@ -29,6 +29,21 @@ describe("ErrorMiddleware → BusyError mapping", () => {
     const body = (await res.json()) as { name: string; data: { message: string } }
     expect(body.data.message).toContain("ses_test_busy")
   })
+
+  test("unknown errors do not expose stack traces to clients", async () => {
+    const app = new Hono()
+    app.get("/throw-unknown", () => {
+      throw new Error("database connection failed")
+    })
+    app.onError(ErrorMiddleware)
+
+    const res = await app.request("/throw-unknown")
+    expect(res.status).toBe(500)
+    const body = (await res.json()) as { name: string; data: { message: string } }
+    expect(body.data.message).toBe("database connection failed")
+    expect(body.data.message).not.toContain("at ")
+    expect(body.data.message).not.toContain("session-prompt-busy.test.ts")
+  })
 })
 
 describe("POST /session/:sessionID/message busy-runner behavior", () => {
