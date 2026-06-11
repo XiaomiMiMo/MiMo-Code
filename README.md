@@ -106,42 +106,20 @@ MiMoCode is configured via `.mimocode/mimocode.json` in the project directory (o
 - MCP server connections
 - Keybindings and theme
 
-### Max Mode (Experimental)
+#### Max Mode
 
-Max Mode runs N parallel reasoning candidates each step and uses a judge model to pick the best one — only the winner is executed. This can improve output quality for complex tasks at the cost of higher token usage.
-
-**Enable Max Mode** by adding `experimental.maxMode` to your config:
-
-```jsonc
-// .mimocode/mimocode.json (project) or ~/.config/mimocode/mimocode.json (global)
-{
-  "experimental": {
-    "maxMode": {}  // enables max mode with default settings (5 candidates)
-  }
-}
-```
-
-**Options:**
-
-| Field | Type | Default | Description |
-|-------|------|---------|-------------|
-| `candidates` | number | `5` | Number of parallel reasoning candidates per step |
-
-**Example with custom candidate count:**
+Enable by adding `experimental.maxMode` to your config:
 
 ```jsonc
 {
   "experimental": {
-    "maxMode": {
-      "candidates": 3  // use 3 candidates instead of default 5
-    }
+    "maxMode": {}            // default: 5 parallel candidates per step
+    // "maxMode": { "candidates": 3 }  // custom candidate count
   }
 }
 ```
 
-Once enabled, a new **max** agent appears in the agent list. Press `Tab` to switch to it — it has the same permissions as the **build** agent.
-
-> **Note:** Max Mode is experimental. Each step consumes approximately `candidates ×` the normal token amount due to parallel reasoning and the judge call.
+A new **max** agent appears — press `Tab` to switch to it. Same permissions as **build**. Each step costs roughly `candidates ×` normal tokens.
 
 ---
 
