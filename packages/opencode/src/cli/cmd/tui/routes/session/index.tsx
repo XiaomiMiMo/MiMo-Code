@@ -171,7 +171,7 @@ export function Session() {
     if (evt.type !== "scroll") return
     setScrolling(true)
     if (scrollHideTimer) clearTimeout(scrollHideTimer)
-    scrollHideTimer = setTimeout(() => setScrolling(false), 1000)
+    scrollHideTimer = setTimeout(() => setScrolling(false), 3000)
   }
   onCleanup(() => {
     if (scrollHideTimer) clearTimeout(scrollHideTimer)
@@ -1995,10 +1995,10 @@ function Bash(props: ToolProps<typeof BashTool>) {
   const output = createMemo(() => stripAnsi(props.metadata.output?.trim() ?? ""))
   const [expanded, setExpanded] = createSignal(false)
   const lines = createMemo(() => output().split("\n"))
-  const overflow = createMemo(() => lines().length > 10)
+  const overflow = createMemo(() => lines().length > 20)
   const limited = createMemo(() => {
     if (expanded() || !overflow()) return output()
-    return [...lines().slice(0, 10), "…"].join("\n")
+    return [...lines().slice(0, 20), "…"].join("\n")
   })
 
   const workdirDisplay = createMemo(() => {
