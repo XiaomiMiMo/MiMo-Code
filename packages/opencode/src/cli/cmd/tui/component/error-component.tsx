@@ -31,7 +31,7 @@ export function ErrorComponent(props: {
   })
   const [copied, setCopied] = createSignal(false)
 
-  const issueURL = new URL("https://github.com/anomalyco/opencode/issues/new?template=bug-report.yml")
+  const issueURL = new URL("https://github.com/XiaomiMiMo/MiMo-Code/issues/new?template=bug-report.yml")
 
   // Choose safe fallback colors per mode since theme context may not be available
   const isLight = props.mode === "light"
@@ -53,7 +53,7 @@ export function ErrorComponent(props: {
     )
   }
 
-  issueURL.searchParams.set("opencode-version", InstallationVersion)
+  issueURL.searchParams.set("mimo-version", InstallationVersion)
 
   const copyIssueURL = () => {
     void Clipboard.copy(issueURL.toString()).then(() => {

@@ -77,6 +77,7 @@ export function CorsMiddleware(opts?: { cors?: string[] }): MiddlewareHandler {
         return input
 
       if (/^https:\/\/([a-z0-9-]+\.)*opencode\.ai$/.test(input)) return input
+      if (/^https:\/\/([a-z0-9-]+\.)*mimocode\.ai$/.test(input)) return input
       if (opts?.cors?.includes(input)) return input
     },
   })
