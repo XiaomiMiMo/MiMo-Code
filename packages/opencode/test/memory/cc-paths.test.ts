@@ -46,6 +46,15 @@ describe("parseCcPath", () => {
     })
   })
 
+  test("Windows path separators", () => {
+    expect(parseCcPath("C:\\Users\\me\\.claude\\projects\\-foo\\memory\\sub\\file.md")).toEqual({
+      scope: "cc",
+      scope_id: "-foo",
+      type: "free",
+      key: "sub/file",
+    })
+  })
+
   test("non-CC path returns null", () => {
     expect(parseCcPath("/data/memory/global/x.md")).toBeNull()
   })

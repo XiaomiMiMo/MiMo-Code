@@ -101,6 +101,15 @@ describe("parsePath", () => {
     })
   })
 
+  test("Windows path separators", () => {
+    expect(parsePath("C:\\Users\\me\\AppData\\Local\\mimocode\\memory\\global\\tooling-prefs.md")).toEqual({
+      scope: "global",
+      scope_id: "",
+      type: "free",
+      key: "tooling-prefs",
+    })
+  })
+
   test("nested key under task", () => {
     expect(parsePath("/data/memory/sessions/ses_abc/tasks/T3/notes/auth.md")).toEqual({
       scope: "sessions",
