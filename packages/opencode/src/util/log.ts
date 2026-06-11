@@ -3,7 +3,6 @@ import fs from "fs/promises"
 import { createWriteStream } from "fs"
 import { Global } from "../global"
 import z from "zod"
-import { Glob } from "@mimo-ai/shared/util/glob"
 
 export const Level = z.enum(["DEBUG", "INFO", "WARN", "ERROR"]).meta({ ref: "LogLevel", description: "Log level" })
 export type Level = z.infer<typeof Level>
@@ -15,6 +14,10 @@ const levelPriority: Record<Level, number> = {
   ERROR: 3,
 }
 const keep = 10
+const defaultMaxSize = 10 * 1024 * 1024
+const maxEntrySize = 256 * 1024
+const minMaxSize = 1024
+const managedLogName = /^(\d{4}-\d{2}-\d{2}T\d{6}\.log|dev\.log\.\d{4}-\d{2}-\d{2}T\d{6})$/
 
 let level: Level = "INFO"
 
@@ -52,6 +55,8 @@ let logpath = ""
 export function file() {
   return logpath
 }
+let close = async () => {}
+let queue = Promise.resolve()
 let write = (msg: any) => {
   process.stderr.write(msg)
   return msg.length
@@ -59,7 +64,15 @@ let write = (msg: any) => {
 
 export async function init(options: Options) {
   if (options.level) level = options.level
-  void cleanup(Global.Path.log)
+  await queue
+  await close()
+  close = async () => {}
+  queue = Promise.resolve()
+  write = (msg: any) => {
+    process.stderr.write(msg)
+    return msg.length
+  }
+  await cleanup(Global.Path.log)
   if (options.print) return
   logpath = path.join(
     Global.Path.log,
@@ -67,42 +80,113 @@ export async function init(options: Options) {
   )
   if (options.dev) {
     // Preserve previous dev.log as dev.log.<timestamp> for hang/incident
-    // forensics. cleanup() above already prunes old timestamped logs.
-    try {
-      const stat = await fs.stat(logpath).catch(() => null)
-      if (stat && stat.size > 0) {
-        const stamp = new Date().toISOString().split(".")[0].replace(/:/g, "")
-        await fs.rename(logpath, `${logpath}.${stamp}`).catch(() => {})
-      }
-    } catch {}
+    // forensics. cleanup() below prunes old managed logs.
+    const stat = await fs.stat(logpath).catch(() => null)
+    if (stat && stat.size > 0) {
+      const stamp = new Date().toISOString().split(".")[0].replace(/:/g, "")
+      await fs.rename(logpath, `${logpath}.${stamp}`).catch(() => {})
+    }
   } else {
     await fs.truncate(logpath).catch(() => {})
   }
-  const stream = createWriteStream(logpath, { flags: "a" })
-  write = async (msg: any) => {
-    return new Promise((resolve, reject) => {
-      stream.write(msg, (err) => {
+  await cleanup(Global.Path.log)
+  let size = (await fs.stat(logpath).catch(() => ({ size: 0 }))).size
+  let stream = createWriteStream(logpath, { flags: "a" })
+  const closeStream = () =>
+    new Promise<void>((resolve) => {
+      stream.end(resolve)
+    })
+  const resetStream = async () => {
+    await closeStream()
+    const truncated = await fs.truncate(logpath, 0).then(
+      () => true,
+      () => false,
+    )
+    stream = createWriteStream(logpath, { flags: "a" })
+    close = closeStream
+    size = truncated ? 0 : (await fs.stat(logpath).catch(() => ({ size: 0 }))).size
+    return truncated
+  }
+  const append = (output: string) =>
+    new Promise<number>((resolve, reject) => {
+      stream.write(output, (err) => {
         if (err) reject(err)
-        else resolve(msg.length)
+        else resolve(Buffer.byteLength(output))
       })
     })
+  close = closeStream
+  write = (input: any) => {
+    const next = queue.then(async () => {
+      const limit = maxLogSize()
+      const msg = truncateEntry(String(input), Math.min(limit, maxEntrySize))
+      const bytes = Buffer.byteLength(msg)
+      size = (await fs.stat(logpath).catch(() => ({ size }))).size
+      const reset = size + bytes > limit
+      if (reset && !(await resetStream())) return 0
+      const output = truncateEntry((reset ? "[log truncated]\n" : "") + msg, limit - size)
+      if (!output) return 0
+      size += await append(output)
+      size = (await fs.stat(logpath).catch(() => ({ size }))).size
+      if (size > limit) {
+        if (await resetStream()) size += await append(truncateEntry("[log truncated]\n", limit))
+      }
+      return Buffer.byteLength(output)
+    })
+    queue = next.then(
+      () => {},
+      () => {},
+    )
+    return next
   }
 }
 
+function maxLogSize() {
+  const value = Number(process.env.MIMOCODE_LOG_MAX_BYTES)
+  if (Number.isFinite(value) && value >= minMaxSize) return value
+  return defaultMaxSize
+}
+
+function truncateEntry(input: string, limit: number) {
+  if (Buffer.byteLength(input) <= limit) return input
+  const suffix = "\n[truncated]\n"
+  if (limit <= Buffer.byteLength(suffix)) return suffix.slice(0, limit)
+  let prefix = Buffer.from(input)
+    .subarray(0, limit - Buffer.byteLength(suffix))
+    .toString()
+  while (Buffer.byteLength(prefix + suffix) > limit) prefix = prefix.slice(0, -1)
+  return prefix + suffix
+}
+
+function logTimestamp(name: string) {
+  if (name.startsWith("dev.log.")) return name.slice("dev.log.".length)
+  return name.slice(0, -".log".length)
+}
+
 async function cleanup(dir: string) {
-  const files = (
-    await Glob.scan("????-??-??T??????.log", {
-      cwd: dir,
-      absolute: false,
-      include: "file",
-    }).catch(() => [])
+  const candidates = await Promise.all(
+    (
+      await fs.readdir(dir, { withFileTypes: true }).catch(() => [])
+    )
+      .filter((entry) => entry.isFile() && managedLogName.test(entry.name))
+      .map(async (entry) => ({
+        name: entry.name,
+        size: (await fs.stat(path.join(dir, entry.name)).catch(() => null))?.size,
+      })),
   )
-    .filter((file) => path.basename(file) === file)
-    .sort()
+
+  await Promise.all(
+    candidates
+      .filter((entry) => entry.size !== undefined && entry.size > maxLogSize())
+      .map((entry) => fs.unlink(path.join(dir, entry.name)).catch(() => {})),
+  )
+
+  const files = candidates
+    .filter((entry) => entry.size !== undefined && entry.size <= maxLogSize())
+    .map((entry) => entry.name)
+    .sort((a, b) => logTimestamp(a).localeCompare(logTimestamp(b)))
   if (files.length <= keep) return
 
-  const doomed = files.slice(0, -keep)
-  await Promise.all(doomed.map((file) => fs.unlink(path.join(dir, file)).catch(() => {})))
+  await Promise.all(files.slice(0, -keep).map((file) => fs.unlink(path.join(dir, file)).catch(() => {})))
 }
 
 function formatError(error: Error, depth = 0): string {

@@ -149,7 +149,7 @@ interface State {
 }
 
 export function evaluate(permission: string, pattern: string, ...rulesets: Ruleset[]): Rule {
-  log.info("evaluate", { permission, pattern, ruleset: rulesets.flat() })
+  log.debug("evaluate", { permission, pattern, rules: rulesets.reduce((sum, ruleset) => sum + ruleset.length, 0) })
   return evalRule(permission, pattern, ...rulesets)
 }
 
@@ -189,7 +189,7 @@ export const layer = Layer.effect(
 
       for (const pattern of request.patterns) {
         const rule = evaluate(request.permission, pattern, ruleset, approved)
-        log.info("evaluated", { permission: request.permission, pattern, action: rule })
+        log.debug("evaluated", { permission: request.permission, pattern, action: rule.action })
         if (rule.action === "deny") {
           return yield* new DeniedError({
             ruleset: ruleset.filter((rule) => Wildcard.match(request.permission, rule.permission)),
