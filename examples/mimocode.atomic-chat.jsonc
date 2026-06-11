@@ -1,0 +1,21 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  // Use Atomic Chat as the default model. Replace <your-model-id> with an id from:
+  // curl http://127.0.0.1:1337/v1/models
+  "model": "atomic-chat/<your-model-id>",
+  "provider": {
+    "atomic-chat": {
+      "npm": "@ai-sdk/openai-compatible",
+      "name": "Atomic Chat (local)",
+      "options": {
+        "baseURL": "http://127.0.0.1:1337/v1"
+      },
+      "models": {
+        "<your-model-id>": {
+          "name": "<your-model-name>",
+          "tool_call": true
+        }
+      }
+    }
+  }
+}

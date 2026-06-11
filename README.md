@@ -37,6 +37,7 @@ The first launch guides you through configuration automatically. Supported optio
 - **Xiaomi MiMo Platform** — OAuth login
 - **Import from Claude Code** — migrate existing authentication in one step
 - **Custom Provider** — add any OpenAI-compatible API in the TUI
+- **Atomic Chat** — local LLMs via [Atomic Chat](https://atomic.chat) at `http://127.0.0.1:1337/v1` (see [docs/providers/atomic-chat.md](docs/providers/atomic-chat.md))
 
 ---
 
@@ -100,7 +101,7 @@ Real-time streaming voice input powered by TenVAD and MiMo ASR. Activate with `/
 
 MiMoCode is configured via `.mimocode/mimocode.json` in the project directory (or `~/.config/mimocode/mimocode.json` globally). Key options include:
 
-- Provider and model selection
+- Provider and model selection (including [Atomic Chat](docs/providers/atomic-chat.md) and other local runtimes from [models.dev](https://models.dev))
 - Agent permissions and custom agents
 - Checkpoint and memory behavior
 - MCP server connections

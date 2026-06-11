@@ -134,6 +134,9 @@ export const dict = {
   "dialog.provider.google.note": "使用 Google 账号或 API 密钥连接",
   "dialog.provider.openrouter.note": "使用 OpenRouter 账号或 API 密钥连接",
   "dialog.provider.vercel.note": "使用 Vercel 账号或 API 密钥连接",
+  "dialog.provider.atomicChat.note": "通过 Atomic Chat 在本地运行模型（http://127.0.0.1:1337/v1）",
+  "dialog.provider.lmstudio.note": "通过 LM Studio 使用本地模型",
+  "dialog.provider.ollama.note": "通过 Ollama 使用本地或云端模型",
 
   "dialog.model.select.title": "选择模型",
   "dialog.model.search.placeholder": "搜索模型",

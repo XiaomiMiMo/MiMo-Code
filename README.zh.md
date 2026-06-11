@@ -37,6 +37,7 @@ npm install -g @mimo-ai/cli
 - **小米 MiMo 平台** — OAuth 登录
 - **从 Claude Code 导入** — 一键迁移已有认证
 - **自定义 Provider** — TUI 内添加任意 OpenAI 兼容 API
+- **Atomic Chat** — 通过 [Atomic Chat](https://atomic.chat) 在本地运行模型（`http://127.0.0.1:1337/v1`，见 [docs/providers/atomic-chat.zh.md](docs/providers/atomic-chat.zh.md)）
 
 ---
 
@@ -100,7 +101,7 @@ Compose 模式提供结构化的 specs-driven 开发流程，内置规划、执�
 
 通过项目目录下的 `.mimocode/mimocode.json`（或全局 `~/.config/mimocode/mimocode.json`）配置。主要选项包括：
 
-- Provider 和模型选择
+- Provider 和模型选择（含 [Atomic Chat](docs/providers/atomic-chat.zh.md) 等 [models.dev](https://models.dev) 本地运行时）
 - Agent 权限和自定义 Agent
 - 检查点和记忆行为
 - MCP 服务器连接
