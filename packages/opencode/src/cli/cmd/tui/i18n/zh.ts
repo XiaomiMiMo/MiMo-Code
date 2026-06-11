@@ -194,6 +194,11 @@ export const dict = {
   "tui.command.never_ask.toast_on":
     "已开启跳过提问 — 我不会再向你提问，会自行选择最佳选项，直到你关闭（/never-ask-questions）。权限请求仍需你确认。",
   "tui.command.never_ask.toast_off": "已关闭跳过提问 — 遇到决策点我会重新向你提问。",
+  "tui.command.yolo.title_on": "YOLO：开 - 点此关闭（恢复权限确认）",
+  "tui.command.yolo.title_off": "YOLO：关 - 点此开启（自动批准所有权限）",
+  "tui.command.yolo.toast_on":
+    "已开启 YOLO 模式 — 所有权限请求将自动批准。配置中的显式 deny 规则仍然生效。使用 /yolo 关闭。",
+  "tui.command.yolo.toast_off": "已关闭 YOLO 模式 — 恢复权限确认提示。",
   "tui.command.agent.cycle.title": "循环切换智能体",
   "tui.command.variant.cycle.title": "循环切换模型变体",
   "tui.command.variant.list.title": "切换模型变体",

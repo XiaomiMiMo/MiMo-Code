@@ -201,6 +201,11 @@ export const dict: Record<string, string> = {
   "tui.command.never_ask.toast_on":
     "Never-ask ON — I won't prompt you; I'll pick the best option myself until you turn it off (/never-ask-questions). Permission requests still need your approval.",
   "tui.command.never_ask.toast_off": "Never-ask OFF — I'll ask you at decision points again.",
+  "tui.command.yolo.title_on": "YOLO: ON — turn off (restore permission prompts)",
+  "tui.command.yolo.title_off": "YOLO: OFF — turn on (auto-approve all permissions)",
+  "tui.command.yolo.toast_on":
+    "YOLO mode ON — all permission requests will be auto-approved. Explicit deny rules in config still apply. Toggle off with /yolo.",
+  "tui.command.yolo.toast_off": "YOLO mode OFF — permission prompts restored.",
   "tui.command.agent.cycle.title": "Agent cycle",
   "tui.command.variant.cycle.title": "Variant cycle",
   "tui.command.variant.list.title": "Switch model variant",

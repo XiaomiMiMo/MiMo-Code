@@ -8,6 +8,7 @@ export interface Args {
   sessionID?: string
   fork?: boolean
   neverAsk?: boolean
+  yolo?: boolean
 }
 
 export const { use: useArgs, provider: ArgsProvider } = createSimpleContext({

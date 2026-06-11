@@ -425,6 +425,16 @@ function App(props: { onSnapshot?: () => Promise<string[]> }) {
     local.neverAsk.set(true)
   })
 
+  // YOLO mode: /yolo toggles auto-approval of all permission requests.
+  // --yolo flag enables it on startup. State persists via KV.
+  const [yoloMode, setYoloMode] = kv.signal("yolo_mode", false)
+  let seededYolo = false
+  createEffect(() => {
+    if (seededYolo || !args.yolo || !connected()) return
+    seededYolo = true
+    setYoloMode(() => true)
+  })
+
   command.register(() => [
     {
       title: t("tui.command.session.list.title"),
@@ -550,6 +560,25 @@ function App(props: { onSnapshot?: () => Promise<string[]> }) {
         toast.show({
           variant: next ? "warning" : "info",
           message: next ? t("tui.command.never_ask.toast_on") : t("tui.command.never_ask.toast_off"),
+          duration: 4000,
+        })
+      },
+    },
+    {
+      title: yoloMode()
+        ? t("tui.command.yolo.title_on")
+        : t("tui.command.yolo.title_off"),
+      value: "session.toggle.yolo",
+      category: "session",
+      slash: {
+        name: "yolo",
+      },
+      onSelect: () => {
+        const next = !yoloMode()
+        setYoloMode(() => next)
+        toast.show({
+          variant: next ? "warning" : "success",
+          message: next ? t("tui.command.yolo.toast_on") : t("tui.command.yolo.toast_off"),
           duration: 4000,
         })
       },

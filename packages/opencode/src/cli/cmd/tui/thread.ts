@@ -106,6 +106,11 @@ export const TuiThreadCommand = cmd({
         describe:
           "start in never-ask mode — never prompt you; pick the best option autonomously (toggle at runtime with /never-ask-questions)",
         default: false,
+      })
+      .option("yolo", {
+        type: "boolean",
+        describe: "start in yolo mode — auto-approve all permission requests (toggle at runtime with /yolo)",
+        default: false,
       }),
   handler: async (args) => {
     // Keep ENABLE_PROCESSED_INPUT cleared even if other code flips it.
@@ -232,6 +237,7 @@ export const TuiThreadCommand = cmd({
             prompt,
             fork: args.fork,
             neverAsk: args["never-ask-questions"],
+            yolo: args.yolo,
           },
         })
       } finally {

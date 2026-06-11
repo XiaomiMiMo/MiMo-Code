@@ -1607,6 +1607,11 @@ export function Prompt(props: PromptProps) {
                     <span style={{ fg: theme.error, bold: true }}>«never-ask»</span>
                   </text>
                 </Show>
+                <Show when={kv.get("yolo_mode", false)}>
+                  <text>
+                    <span style={{ fg: theme.warning, bold: true }}>«yolo»</span>
+                  </text>
+                </Show>
               </box>
               <box flexDirection="row" gap={1} alignItems="center">
                 <Show when={hasRightContent()}>

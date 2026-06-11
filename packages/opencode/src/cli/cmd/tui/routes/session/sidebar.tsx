@@ -5,6 +5,7 @@ import { useTheme } from "../../context/theme"
 import { useTuiConfig } from "../../context/tui-config"
 import { InstallationChannel, InstallationVersion } from "@/installation/version"
 import { TuiPluginRuntime } from "../../plugin"
+import { useKV } from "../../context/kv"
 
 import { getScrollAcceleration } from "../../util/scroll"
 
@@ -13,6 +14,7 @@ export function Sidebar(props: { sessionID: string; overlay?: boolean }) {
   const sync = useSync()
   const { theme } = useTheme()
   const tuiConfig = useTuiConfig()
+  const kv = useKV()
   const session = createMemo(() => sync.session.get(props.sessionID))
   const workspaceStatus = () => {
     const workspaceID = session()?.workspaceID
@@ -80,7 +82,12 @@ export function Sidebar(props: { sessionID: string; overlay?: boolean }) {
           </box>
         </scrollbox>
 
-        <box flexShrink={0} gap={1} paddingTop={1}>
+        <box flexShrink={0} gap={1} paddingTop={1} flexDirection="column">
+          <Show when={kv.get("yolo_mode", false)}>
+            <text fg={theme.warning}>
+              <b>YOLO MODE</b>
+            </text>
+          </Show>
           <TuiPluginRuntime.Slot name="sidebar_footer" mode="single_winner" session_id={props.sessionID}>
             <text fg={theme.textMuted}>
               <span style={{ fg: theme.success }}>•</span> <b>Open</b>

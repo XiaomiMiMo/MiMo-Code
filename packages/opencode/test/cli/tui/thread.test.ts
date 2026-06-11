@@ -61,6 +61,7 @@ describe("tui thread", () => {
       fork: false,
       "never-ask-questions": false,
       neverAskQuestions: false,
+      yolo: false,
       port: 0,
       hostname: "127.0.0.1",
       mdns: false,
