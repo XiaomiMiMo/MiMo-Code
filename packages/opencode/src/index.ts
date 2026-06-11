@@ -37,6 +37,7 @@ import { Database } from "./storage"
 import { ClaudeImport } from "./session/claude-import"
 import { errorMessage } from "./util/error"
 import { PluginCommand } from "./cli/cmd/plug"
+import { ConfigCommand } from "./cli/cmd/config"
 import { Heap } from "./cli/heap"
 import { drizzle } from "drizzle-orm/bun-sqlite"
 import { ensureProcessMetadata } from "./util/mimo-process"
@@ -189,6 +190,7 @@ const cli = yargs(args)
   .command(PrCommand)
   .command(SessionCommand)
   .command(PluginCommand)
+  .command(ConfigCommand)
   .command(DbCommand)
   .fail((msg, err) => {
     if (

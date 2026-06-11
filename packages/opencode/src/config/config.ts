@@ -138,6 +138,10 @@ const InfoSchema = Schema.Struct({
   small_model: Schema.optional(ConfigModelID).annotate({
     description: "Small model to use for tasks like title generation in the format of provider/model",
   }),
+  vision_model: Schema.optional(ConfigModelID).annotate({
+    description:
+      "Vision model for processing multimodal inputs (images, PDFs). When the main model does not support vision, this model is used automatically. Format: provider/model, e.g. 'mimo/mimo-v2.5'",
+  }),
   model_groups: Schema.optional(
     Schema.Record(
       Schema.String,

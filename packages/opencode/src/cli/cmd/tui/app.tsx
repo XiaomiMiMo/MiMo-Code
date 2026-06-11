@@ -28,6 +28,7 @@ import { StartupLoading } from "@tui/component/startup-loading"
 import { SyncProvider, useSync } from "@tui/context/sync"
 import { LocalProvider, useLocal } from "@tui/context/local"
 import { DialogModel, useConnected } from "@tui/component/dialog-model"
+import { DialogVisionModel } from "@tui/component/dialog-vision-model"
 import { DialogMcp } from "@tui/component/dialog-mcp"
 import { DialogStatus } from "@tui/component/dialog-status"
 import { DialogWorktree } from "@tui/component/dialog-worktree"
@@ -480,6 +481,19 @@ function App(props: { onSnapshot?: () => Promise<string[]> }) {
       },
       onSelect: () => {
         dialog.replace(() => <DialogModel />)
+      },
+    },
+    {
+      title: "视觉模型",
+      value: "model.vision",
+      category: "agent",
+      // 设置图片/PDF处理的视觉模型（主模型不支持视觉时自动调用）
+      description: "设置视觉模型",
+      slash: {
+        name: "vision",
+      },
+      onSelect: () => {
+        dialog.replace(() => <DialogVisionModel />)
       },
     },
     {

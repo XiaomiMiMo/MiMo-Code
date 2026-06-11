@@ -14,6 +14,7 @@ import type { MessageV2 } from "./message-v2"
 import { Plugin } from "@/plugin"
 import { SystemPrompt } from "./system"
 import { Flag } from "@/flag/flag"
+import { Multimodal } from "@/provider/multimodal"
 import { Permission } from "@/permission"
 import { PermissionID } from "@/permission/schema"
 import { Bus } from "@/bus"
@@ -355,7 +356,7 @@ const live: Layer.Layer<
       }
 
       const isWorkflow = language instanceof GitLabWorkflowLanguageModel
-      const messages = isOpenaiOauth
+      let messages = isOpenaiOauth
         ? input.messages
         : isWorkflow
           ? input.messages
@@ -368,6 +369,21 @@ const live: Layer.Layer<
               ),
               ...input.messages,
             ]
+
+      if (!input.small) {
+        const visionModelRef = cfg.vision_model
+        if (Multimodal.shouldUseVisionModel(input.model, visionModelRef)) {
+          const providers = yield* provider.list()
+          const visionModel = Multimodal.getVisionModel(visionModelRef!, providers)
+          if (visionModel) {
+            const getLang = (m: Provider.Model) =>
+              provider.getLanguage(m).pipe(Effect.runPromise)
+            messages = yield* Effect.promise(() =>
+              Multimodal.processMultimodalWithVision(messages, visionModel, getLang),
+            )
+          }
+        }
+      }
 
       const params = yield* plugin.trigger(
         "chat.params",
