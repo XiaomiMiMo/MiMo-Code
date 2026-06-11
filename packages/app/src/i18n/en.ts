@@ -109,7 +109,7 @@ export const dict = {
   "dialog.provider.google.note": "Gemini models for fast, structured responses",
   "dialog.provider.openrouter.note": "Access all supported models from one provider",
   "dialog.provider.vercel.note": "Unified access to AI models with smart routing",
-  "dialog.provider.atomicChat.note": "Local LLMs via Atomic Chat at http://127.0.0.1:1337/v1",
+  "dialog.provider.atomicChat.note": "Local LLMs via Atomic Chat",
   "dialog.provider.lmstudio.note": "Local models through LM Studio",
   "dialog.provider.ollama.note": "Local or cloud models through Ollama",
 
