@@ -50,8 +50,9 @@ let arch = archMap[os.arch()]
 if (!arch) {
   arch = os.arch()
 }
-const base = "opencode-" + platform + "-" + arch
-const binary = platform === "windows" ? "opencode.exe" : "opencode"
+const scope = "@mimo-ai/"
+const base = scope + "mimocode-" + platform + "-" + arch
+const binary = platform === "windows" ? "mimo.exe" : "mimo"
 
 function supportsAvx2() {
   if (arch !== "x64") return false
