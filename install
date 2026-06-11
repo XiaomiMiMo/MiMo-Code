@@ -182,10 +182,32 @@ else
 
     if [ -z "$requested_version" ]; then
         url="https://github.com/XiaomiMiMo/MiMo-Code/releases/latest/download/$filename"
-        specific_version=$(curl -s https://api.github.com/repos/XiaomiMiMo/MiMo-Code/releases/latest | sed -n 's/.*"tag_name": *"v\([^"]*\)".*/\1/p')
 
-        if [[ $? -ne 0 || -z "$specific_version" ]]; then
-            echo -e "${RED}Failed to fetch version information${NC}"
+        # Resolve the latest version. Prefer the public releases page redirect
+        # (no auth, no rate limit) and fall back to the GitHub REST API only if
+        # that fails. The previous implementation queried api.github.com directly,
+        # which is rate-limited per IP (60 req/hour unauthenticated) and would
+        # frequently fail with "Failed to fetch version information" on shared
+        # NAT/corporate networks.
+        specific_version=""
+        location=$(curl -fsSLI -o /dev/null -w "%{url_effective}" \
+            "https://github.com/XiaomiMiMo/MiMo-Code/releases/latest" 2>/dev/null || true)
+        if [[ "$location" == */releases/tag/v* ]]; then
+            specific_version="${location##*/releases/tag/v}"
+        fi
+
+        if [ -z "$specific_version" ]; then
+            api_response=$(curl -fsSL \
+                -H "Accept: application/vnd.github+json" \
+                "https://api.github.com/repos/XiaomiMiMo/MiMo-Code/releases/latest" 2>/dev/null || true)
+            specific_version=$(echo "$api_response" | sed -n 's/.*"tag_name"[[:space:]]*:[[:space:]]*"v\([^"]*\)".*/\1/p' | head -n1)
+        fi
+
+        if [ -z "$specific_version" ]; then
+            echo -e "${RED}Failed to fetch version information${NC}" >&2
+            echo -e "${MUTED}Please check your network connection, or install a specific version with:${NC}" >&2
+            echo -e "${MUTED}  curl -fsSL https://mimo.xiaomi.com/install | bash -s -- --version <version>${NC}" >&2
+            echo -e "${MUTED}Available releases: https://github.com/XiaomiMiMo/MiMo-Code/releases${NC}" >&2
             exit 1
         fi
     else
