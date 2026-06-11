@@ -227,8 +227,8 @@ export function Prompt(props: PromptProps) {
     }
     if (state === "finishing") return
     // Start streaming
-    const xiaomi = sync.data.provider.find((p) => p.id === "xiaomi")
-    if (!xiaomi?.key) {
+    const voiceAuth = Voice.resolveVoiceAuth(sync.data.provider)
+    if (!voiceAuth) {
       toast.show({ message: t("tui.voice.error.no_auth"), variant: "error" })
       return
     }
@@ -236,8 +236,6 @@ export function Prompt(props: PromptProps) {
       toast.show({ message: t("tui.voice.error.no_recorder"), variant: "error" })
       return
     }
-    const apiKey = xiaomi.key
-    const baseUrl = (xiaomi.options?.baseURL as string) || "https://api.xiaomimimo.com/v1"
 
     const av: NonNullable<typeof activeVoice> = {
       handle: undefined!,
@@ -269,8 +267,8 @@ export function Prompt(props: PromptProps) {
 
               const ctrl = await Voice.processVoiceControl({
                 audio: segment.audio,
-                apiKey,
-                baseUrl,
+                apiKey: voiceAuth.apiKey,
+                baseUrl: voiceAuth.baseUrl,
                 currentText,
                 currentAgent,
                 availableAgents,
@@ -299,8 +297,8 @@ export function Prompt(props: PromptProps) {
         } else {
           Voice.transcribeAudio({
             audio: segment.audio,
-            apiKey,
-            baseUrl,
+            apiKey: voiceAuth.apiKey,
+            baseUrl: voiceAuth.baseUrl,
           }).then((text) => {
             if (text) {
               if (voiceSendEnabled() && Voice.SEND_RE.test(text.replace(/[\s。.!！？?，,]+$/g, "").trim())) {

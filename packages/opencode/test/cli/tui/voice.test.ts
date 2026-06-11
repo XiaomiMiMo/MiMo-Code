@@ -63,6 +63,45 @@ describe("voice", () => {
     })
   })
 
+  describe("resolveVoiceAuth", () => {
+    test("uses the MiMo login key when present", async () => {
+      const { resolveVoiceAuth } = await import("../../../src/cli/cmd/tui/util/voice")
+      expect(
+        resolveVoiceAuth([
+          {
+            id: "xiaomi",
+            key: "login-key",
+            options: { apiKey: "config-key", baseURL: "https://voice.example/v1" },
+          },
+        ]),
+      ).toEqual({
+        apiKey: "login-key",
+        baseUrl: "https://voice.example/v1",
+      })
+    })
+
+    test("uses configured MiMo apiKey when no login key exists", async () => {
+      const { resolveVoiceAuth } = await import("../../../src/cli/cmd/tui/util/voice")
+      expect(
+        resolveVoiceAuth([
+          {
+            id: "xiaomi",
+            options: { apiKey: "config-key", baseURL: "https://voice.example/v1" },
+          },
+        ]),
+      ).toEqual({
+        apiKey: "config-key",
+        baseUrl: "https://voice.example/v1",
+      })
+    })
+
+    test("returns undefined when the MiMo provider has no usable key", async () => {
+      const { resolveVoiceAuth } = await import("../../../src/cli/cmd/tui/util/voice")
+      expect(resolveVoiceAuth([{ id: "xiaomi", options: { apiKey: "   " } }])).toBeUndefined()
+      expect(resolveVoiceAuth([{ id: "anthropic", key: "other-key", options: {} }])).toBeUndefined()
+    })
+  })
+
   describe("parseVoiceControl", () => {
     test("parses valid edit action", async () => {
       const { parseVoiceControl } = await import("../../../src/cli/cmd/tui/util/voice")

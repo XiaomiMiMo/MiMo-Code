@@ -8,6 +8,25 @@ type Recorder = {
   pipeArgs: () => string[]
 }
 
+const DEFAULT_BASE_URL = "https://api.xiaomimimo.com/v1"
+
+export function resolveVoiceAuth(
+  providers: Array<{
+    id: string
+    key?: string
+    options?: Record<string, unknown>
+  }>,
+): { apiKey: string; baseUrl: string } | undefined {
+  const xiaomi = providers.find((provider) => provider.id === "xiaomi")
+  const loginKey = typeof xiaomi?.key === "string" ? xiaomi.key.trim() : ""
+  const configKey = typeof xiaomi?.options?.apiKey === "string" ? xiaomi.options.apiKey.trim() : ""
+  const apiKey = loginKey || configKey
+  if (!apiKey) return
+
+  const baseUrl = typeof xiaomi?.options?.baseURL === "string" ? xiaomi.options.baseURL.trim() : ""
+  return { apiKey, baseUrl: baseUrl || DEFAULT_BASE_URL }
+}
+
 const RECORDERS: Record<string, Array<() => Recorder | null>> = {
   darwin: [
     () =>
