@@ -506,7 +506,7 @@ export class Agent implements ACPAgent {
 
     const authMethod: AuthMethod = {
       description: "Run `opencode auth login` in the terminal",
-      name: "Login with opencode",
+      name: "Login with MiMo Code",
       id: "opencode-login",
     }
 
@@ -516,7 +516,7 @@ export class Agent implements ACPAgent {
         "terminal-auth": {
           command: "opencode",
           args: ["auth", "login"],
-          label: "OpenCode Login",
+          label: "MiMo Code Login",
         },
       }
     }
@@ -541,7 +541,7 @@ export class Agent implements ACPAgent {
       },
       authMethods: [authMethod],
       agentInfo: {
-        name: "OpenCode",
+        name: "MiMo Code",
         version: InstallationVersion,
       },
     }
