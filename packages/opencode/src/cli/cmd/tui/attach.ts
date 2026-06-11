@@ -3,6 +3,7 @@ import { UI } from "@/cli/ui"
 import { tui } from "./app"
 import { win32DisableProcessedInput, win32InstallCtrlCGuard } from "./win32"
 import { TuiConfig } from "@/cli/cmd/tui/config/tui"
+import { attachAuthHeaders } from "./attach-auth"
 
 export const AttachCommand = cmd({
   command: "attach <url>",
@@ -58,12 +59,7 @@ export const AttachCommand = cmd({
           return args.dir
         }
       })()
-      const headers = (() => {
-        const password = args.password ?? process.env.MIMOCODE_SERVER_PASSWORD
-        if (!password) return undefined
-        const auth = `Basic ${Buffer.from(`opencode:${password}`).toString("base64")}`
-        return { Authorization: auth }
-      })()
+      const headers = attachAuthHeaders({ password: args.password })
       const config = await TuiConfig.get()
       await tui({
         url: args.url,
