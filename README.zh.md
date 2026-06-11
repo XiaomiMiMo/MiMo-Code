@@ -106,7 +106,42 @@ Compose 模式提供结构化的 specs-driven 开发流程，内置规划、执�
 - MCP 服务器连接
 - 快捷键和主题
 
-Max Mode（并行 best-of-N 推理 + 裁判选优）可通过配置中的 `experimental.maxMode` 开启。
+### Max Mode（实验性）
+
+Max Mode 每一步运行 N 个并行推理候选，由裁判模型选出最优结果执行——可以提升复杂任务的输出质量，但会消耗更多 token。
+
+**开启方式：** 在配置文件中添加 `experimental.maxMode`：
+
+```jsonc
+// .mimocode/mimocode.json（项目级）或 ~/.config/mimocode/mimocode.json（全局）
+{
+  "experimental": {
+    "maxMode": {}  // 使用默认设置开启（5 个候选）
+  }
+}
+```
+
+**配置项：**
+
+| 字段 | 类型 | 默认值 | 说明 |
+|------|------|--------|------|
+| `candidates` | number | `5` | 每步并行推理候选数量 |
+
+**自定义候选数量示例：**
+
+```jsonc
+{
+  "experimental": {
+    "maxMode": {
+      "candidates": 3  // 使用 3 个候选而非默认的 5 个
+    }
+  }
+}
+```
+
+开启后，智能体列表中会出现新的 **max** 智能体。按 `Tab` 切换到它——权限与 **build** 智能体相同。
+
+> **注意：** Max Mode 为实验性功能。由于并行推理和裁判调用，每步消耗约为正常的 `candidates ×` 倍。
 
 ---
 
