@@ -535,7 +535,7 @@ export const RunCommand = cmd({
               const permission = event.properties
               if (permission.sessionID !== sessionID) continue
 
-              if (args["dangerously-skip-permissions"]) {
+              if (args["dangerously-skip-permissions"] && !Permission.requiresManualApproval(permission.metadata)) {
                 await sdk.permission.reply({
                   requestID: permission.id,
                   reply: "once",
