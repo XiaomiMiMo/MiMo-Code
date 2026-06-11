@@ -16,6 +16,30 @@ export function isPlainTerminal(input?: { platform?: NodeJS.Platform; termProgra
   return isMacNativeTerminal(input)
 }
 
+/**
+ * Returns true when opentui's OSC 66 explicit-width protocol should be disabled.
+ *
+ * VTE-based terminals (MATE Terminal, GNOME Terminal, Xfce Terminal, etc.) do
+ * not understand OSC 66. Instead of ignoring the sequence they print it as
+ * literal text, which moves the cursor. opentui reads the cursor movement as a
+ * positive capability signal, then emits OSC 66 for every rendered grapheme,
+ * which VTE again prints literally—causing continuous garbled output in the TUI.
+ *
+ * VTE exports VTE_VERSION automatically, so that is used as the detection signal.
+ * Users can override auto-detection with MIMOCODE_DISABLE_TEXT_SIZING:
+ *   =1  force-disable (apply the workaround regardless of terminal type)
+ *   =0  force-enable  (skip the workaround even on VTE terminals)
+ */
+export function needsTextSizingDisabled(input?: { vteVersion?: string; disableTextSizing?: string }): boolean {
+  const disable = input?.disableTextSizing ?? process.env.MIMOCODE_DISABLE_TEXT_SIZING
+  if (disable === "false" || disable === "0") return false
+  if (disable === "true" || disable === "1") return true
+  // VTE_VERSION is set by all VTE-based terminals (MATE Terminal, GNOME Terminal,
+  // Xfce Terminal, Tilix, Guake, etc.)
+  const vteVersion = input?.vteVersion ?? process.env.VTE_VERSION
+  return vteVersion !== undefined && vteVersion !== ""
+}
+
 function parse(color: string): RGBA | null {
   if (color.startsWith("rgb:")) {
     const parts = color.substring(4).split("/")

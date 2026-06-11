@@ -67,7 +67,7 @@ import { TuiConfigProvider, useTuiConfig } from "./context/tui-config"
 import { TuiConfig } from "@/cli/cmd/tui/config/tui"
 import { createTuiApi, TuiPluginRuntime, type RouteMap } from "./plugin"
 import { FormatError, FormatUnknownError } from "@/cli/error"
-import { isPlainTerminal } from "./util/terminal"
+import { isPlainTerminal, needsTextSizingDisabled } from "./util/terminal"
 
 import type { EventSource } from "./context/sdk"
 import { DialogVariant } from "./component/dialog-variant"
@@ -149,6 +149,31 @@ export function tui(input: {
     }
 
     const plainTerminal = isPlainTerminal()
+
+    // VTE-based terminals (MATE Terminal, GNOME Terminal, etc.) do not support
+    // the OSC 66 explicit-width protocol used by opentui. When unsupported, VTE
+    // prints the raw escape sequence as literal text ("]66;w=1;…"), and because
+    // this moves the cursor, opentui incorrectly concludes the terminal supports
+    // explicit_width and then emits OSC 66 for every rendered grapheme, causing
+    // continuous garbled output throughout the TUI.
+    //
+    // OPENTUI_FORCE_EXPLICIT_WIDTH=0 fixes this in two ways:
+    //   1. Sets skip_explicit_width_query=true → detection queries are never sent
+    //   2. Forces caps.explicit_width=false → rendering never emits OSC 66
+    //
+    // OPENTUI_FORCE_WCWIDTH=1 additionally uses the standard wcwidth algorithm
+    // for CJK character-width measurement instead of Unicode mode 2027, which
+    // VTE terminals also do not support.
+    //
+    // Both env vars must be set before createCliRenderer so the native Zig
+    // renderer picks them up when its constructor forwards env vars via
+    // setTerminalEnvVar (verified against @opentui/core 0.1.101). ??= leaves any
+    // explicit user-provided opentui override untouched.
+    if (needsTextSizingDisabled()) {
+      process.env.OPENTUI_FORCE_EXPLICIT_WIDTH ??= "0"
+      process.env.OPENTUI_FORCE_WCWIDTH ??= "1"
+    }
+
     const renderer = await createCliRenderer(rendererConfig(input.config, plainTerminal))
     // 默认使用 dark 模式(不跟随终端背景);用户手动切换后会被 theme_mode_lock 记住并优先。
     const mode = "dark"
