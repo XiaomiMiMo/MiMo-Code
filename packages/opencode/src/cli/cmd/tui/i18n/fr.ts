@@ -94,6 +94,8 @@ export const dict = {
   "tui.tips.jump_last":
     "Appuyez sur {highlight}Ctrl+Alt+G{/highlight} ou {highlight}End{/highlight} pour aller au message le plus récent",
   "tui.tips.newline":
+    "Appuyez sur {highlight}Ctrl+J{/highlight} pour insérer un saut de ligne dans l'invite",
+  "tui.tips.newline_kitty":
     "Appuyez sur {highlight}Shift+Enter{/highlight} ou {highlight}Ctrl+J{/highlight} pour insérer un saut de ligne dans l'invite",
   "tui.tips.clear_input": "Appuyez sur {highlight}Ctrl+C{/highlight} pendant la saisie pour vider le champ",
   "tui.tips.escape": "Appuyez sur {highlight}Escape{/highlight} pour interrompre l'IA en cours de réponse",

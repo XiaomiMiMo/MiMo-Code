@@ -96,6 +96,8 @@ export const dict = {
   "tui.tips.jump_last":
     "Нажмите {highlight}Ctrl+Alt+G{/highlight} или {highlight}End{/highlight}, чтобы перейти к последнему сообщению",
   "tui.tips.newline":
+    "Нажмите {highlight}Ctrl+J{/highlight}, чтобы добавить перенос строки во ввод",
+  "tui.tips.newline_kitty":
     "Нажмите {highlight}Shift+Enter{/highlight} или {highlight}Ctrl+J{/highlight}, чтобы добавить перенос строки во ввод",
   "tui.tips.clear_input":
     "Нажмите {highlight}Ctrl+C{/highlight} во время ввода, чтобы очистить поле ввода",

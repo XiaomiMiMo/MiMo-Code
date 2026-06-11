@@ -1,7 +1,8 @@
-import { createMemo, createSignal, For, onCleanup } from "solid-js"
+import { createMemo, createSignal, For, onCleanup, onMount } from "solid-js"
 import { DEFAULT_THEMES, useTheme } from "@tui/context/theme"
 import { useLanguage } from "@tui/context/language"
 import { useLocal } from "@tui/context/local"
+import { useRenderer } from "@opentui/solid"
 
 const themeCount = Object.keys(DEFAULT_THEMES).length
 const TIP_ROTATION_MS = 10_000
@@ -167,10 +168,29 @@ export function Tips() {
   const theme = useTheme().theme
   const lang = useLanguage()
   const local = useLocal()
+  const renderer = useRenderer()
+  const [kittySupported, setKittySupported] = createSignal(false)
+  onMount(() => {
+    const caps = renderer.capabilities
+    if (caps?.kitty_keyboard) setKittySupported(true)
+    else {
+      const handler = (caps: any) => {
+        if (caps?.kitty_keyboard) {
+          setKittySupported(true)
+          renderer.off("capabilities" as any, handler)
+        }
+      }
+      renderer.on("capabilities" as any, handler)
+      onCleanup(() => renderer.off("capabilities" as any, handler))
+    }
+  })
   const platformSuspendKey = process.platform === "win32" ? "tui.tips.suspend.win" : "tui.tips.suspend.unix"
-  const allKeys = [...TIP_KEYS, platformSuspendKey] as readonly string[]
-  const [key, setKey] = createSignal(pickWeighted(allKeys))
-  const interval = setInterval(() => setKey(pickWeighted(allKeys)), TIP_ROTATION_MS)
+  const allKeys = createMemo(() => {
+    const keys = TIP_KEYS.map((k) => (k === "tui.tips.newline" && kittySupported() ? "tui.tips.newline_kitty" : k))
+    return [...keys, platformSuspendKey] as readonly string[]
+  })
+  const [key, setKey] = createSignal(pickWeighted(allKeys()))
+  const interval = setInterval(() => setKey(pickWeighted(allKeys())), TIP_ROTATION_MS)
   onCleanup(() => clearInterval(interval))
   const parts = createMemo(() => parse(lang.t(key(), { count: themeCount })))
   const labelColor = createMemo(() => {
