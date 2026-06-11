@@ -259,6 +259,7 @@ export const dict: Record<string, string> = {
   "tui.toast.instructions_loaded": "Loaded {{files}}",
   "tui.sidebar.instructions": "Instructions",
   "tui.sidebar.cwd": "Working Directory",
+  "tui.sidebar.branch": "Branch",
   "tui.toast.unknown_error": "An unknown error has occurred",
   "tui.command.docs.open.title": "Open docs",
   "tui.command.app.exit.title": "Exit the app",

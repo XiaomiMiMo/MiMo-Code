@@ -266,6 +266,7 @@ export const dict = {
   "tui.toast.instructions_loaded": "{{files}} を読み込みました",
   "tui.sidebar.instructions": "インストラクション",
   "tui.sidebar.cwd": "作業ディレクトリ",
+  "tui.sidebar.branch": "ブランチ",
   "tui.toast.unknown_error": "不明なエラーが発生しました",
   "tui.command.docs.open.title": "ドキュメントを開く",
   "tui.command.app.exit.title": "アプリを終了",

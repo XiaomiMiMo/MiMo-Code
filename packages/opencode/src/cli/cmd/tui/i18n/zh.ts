@@ -252,6 +252,7 @@ export const dict = {
   "tui.toast.instructions_loaded": "已加载 {{files}}",
   "tui.sidebar.instructions": "指令文件",
   "tui.sidebar.cwd": "工作目录",
+  "tui.sidebar.branch": "分支",
   "tui.toast.unknown_error": "发生未知错误",
   "tui.command.docs.open.title": "打开文档",
   "tui.command.app.exit.title": "退出应用",

@@ -329,6 +329,7 @@ export const dict = {
   "tui.toast.instructions_loaded": "Загружено {{files}}",
   "tui.sidebar.instructions": "Инструкции",
   "tui.sidebar.cwd": "Рабочий каталог",
+  "tui.sidebar.branch": "Ветка",
   "tui.toast.unknown_error": "Произошла неизвестная ошибка",
   "tui.command.docs.open.title": "Открыть документацию",
   "tui.command.app.exit.title": "Выйти из приложения",

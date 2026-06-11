@@ -325,6 +325,7 @@ export const dict = {
   "tui.toast.instructions_loaded": "Cargado {{files}}",
   "tui.sidebar.instructions": "Instrucciones",
   "tui.sidebar.cwd": "Directorio de trabajo",
+  "tui.sidebar.branch": "Rama",
   "tui.toast.unknown_error": "Ha ocurrido un error desconocido",
   "tui.command.docs.open.title": "Abrir documentación",
   "tui.command.app.exit.title": "Salir de la aplicación",
