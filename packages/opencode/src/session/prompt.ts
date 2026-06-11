@@ -240,7 +240,7 @@ export const layer = Layer.effect(
         ])
         // (checkpoint-writer never requests json_schema output, so STRUCTURED_OUTPUT_SYSTEM_PROMPT
         // is not included; parent's runLoop adds it conditionally based on user.format)
-        const additions = [...env, ...(skills ? [skills] : []), ...instructions.content]
+        const additions = [...(skills ? [skills] : []), ...instructions.content, ...env]
         const prefix = yield* buildLLMRequestPrefix({
           sessionID: input.sessionID,
           agent: ag,
@@ -2746,9 +2746,9 @@ NOTE: At any point in time through this workflow you should feel free to ask the
               }
             }
             const additions = [
-              ...env,
               ...(skills ? [skills] : []),
               ...instructions.content,
+              ...env,
               ...(format.type === "json_schema" ? [STRUCTURED_OUTPUT_SYSTEM_PROMPT] : []),
             ]
             // Note: `buildLLMRequestPrefix` also returns a `tools` field, but we
