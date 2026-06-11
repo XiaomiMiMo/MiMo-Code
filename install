@@ -401,37 +401,46 @@ case $current_shell in
 esac
 
 if [[ "$no_modify_path" != "true" ]]; then
-    config_file=""
+    config_files_found=()
     for file in $config_files; do
         if [[ -f $file ]]; then
-            config_file=$file
-            break
+            config_files_found+=("$file")
         fi
     done
 
-    if [[ -z $config_file ]]; then
+    if [[ ${#config_files_found[@]} -eq 0 ]]; then
         print_message warning "No config file found for $current_shell. You may need to manually add to PATH:"
         print_message info "  export PATH=$INSTALL_DIR:\$PATH"
     elif [[ ":$PATH:" != *":$INSTALL_DIR:"* ]]; then
         case $current_shell in
             fish)
-                add_to_path "$config_file" "fish_add_path $INSTALL_DIR"
+                for config_file in "${config_files_found[@]}"; do
+                    add_to_path "$config_file" "fish_add_path $INSTALL_DIR"
+                done
             ;;
             zsh)
-                add_to_path "$config_file" "export PATH=$INSTALL_DIR:\$PATH"
+                for config_file in "${config_files_found[@]}"; do
+                    add_to_path "$config_file" "export PATH=$INSTALL_DIR:\$PATH"
+                done
             ;;
             bash)
-                add_to_path "$config_file" "export PATH=$INSTALL_DIR:\$PATH"
+                for config_file in "${config_files_found[@]}"; do
+                    add_to_path "$config_file" "export PATH=$INSTALL_DIR:\$PATH"
+                done
             ;;
             ash)
-                add_to_path "$config_file" "export PATH=$INSTALL_DIR:\$PATH"
+                for config_file in "${config_files_found[@]}"; do
+                    add_to_path "$config_file" "export PATH=$INSTALL_DIR:\$PATH"
+                done
             ;;
             sh)
-                add_to_path "$config_file" "export PATH=$INSTALL_DIR:\$PATH"
+                for config_file in "${config_files_found[@]}"; do
+                    add_to_path "$config_file" "export PATH=$INSTALL_DIR:\$PATH"
+                done
             ;;
             *)
                 export PATH=$INSTALL_DIR:$PATH
-                print_message warning "Manually add the directory to $config_file (or similar):"
+                print_message warning "Manually add the directory to a shell config file (or similar):"
                 print_message info "  export PATH=$INSTALL_DIR:\$PATH"
             ;;
         esac
