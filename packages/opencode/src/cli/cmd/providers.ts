@@ -18,8 +18,10 @@ import { Process } from "../../util"
 import { text } from "node:stream/consumers"
 import { Effect } from "effect"
 import * as readline from "readline"
+import { isRecord } from "@/util/record"
 
 type PluginAuth = NonNullable<Hooks["auth"]>
+const MIMO_FREE_MODEL = { providerID: "mimo", modelID: "mimo-auto" } as const
 
 const put = (key: string, info: Auth.Info) =>
   AppRuntime.runPromise(
@@ -28,6 +30,49 @@ const put = (key: string, info: Auth.Info) =>
       yield* auth.set(key, info)
     }),
   )
+
+function isRecentModel(input: unknown): input is { providerID: string; modelID: string } {
+  return isRecord(input) && typeof input.providerID === "string" && typeof input.modelID === "string"
+}
+
+async function rememberMimoFreeModel() {
+  const file = path.join(Global.Path.state, "model.json")
+  const existing = await Bun.file(file)
+    .json()
+    .catch(() => ({}))
+  const state = isRecord(existing) ? existing : {}
+  const recent = Array.isArray(state.recent) ? state.recent.filter(isRecentModel) : []
+  await Bun.write(
+    file,
+    JSON.stringify(
+      {
+        ...state,
+        recent: [
+          MIMO_FREE_MODEL,
+          ...recent.filter(
+            (item) => item.providerID !== MIMO_FREE_MODEL.providerID || item.modelID !== MIMO_FREE_MODEL.modelID,
+          ),
+        ].slice(0, 10),
+      },
+      null,
+      2,
+    ),
+  )
+}
+
+async function persistMimoFreeLogin(input: { fingerprint: string; exp: number }) {
+  await put("mimo", {
+    type: "api",
+    key: "anonymous",
+    metadata: {
+      mode: "free",
+      endpoint: `${MimoFree.chatBaseUrl}/chat`,
+      fingerprint: input.fingerprint,
+      token_exp: new Date(input.exp).toISOString(),
+    },
+  })
+  await rememberMimoFreeModel()
+}
 
 async function handlePluginAuth(plugin: { auth: PluginAuth }, provider: string, methodName?: string): Promise<boolean> {
   let index = 0
@@ -220,6 +265,7 @@ async function mimoFreeLogin() {
   spinner.start(t("cli.providers.mimo_free.verifying"))
   try {
     const { fingerprint, exp } = await MimoFree.verify()
+    await persistMimoFreeLogin({ fingerprint, exp })
     spinner.stop(t("cli.providers.mimo_free.ready"))
     const expDate = new Date(exp).toISOString()
     prompts.log.success(t("cli.providers.mimo_free.default_set"))
