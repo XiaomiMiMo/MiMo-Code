@@ -46,7 +46,7 @@ export const UpgradeCommand = {
     prompts.log.info("Using method: " + method)
     const target = args.target
       ? args.target.replace(/^v/, "")
-      : await AppRuntime.runPromise(Installation.Service.use((svc) => svc.latest()))
+      : await AppRuntime.runPromise(Installation.Service.use((svc) => svc.latest(method)))
 
     if (InstallationVersion === target) {
       prompts.log.warn(`opencode upgrade skipped: ${target} is already installed`)

@@ -14,6 +14,7 @@ import { InstallationChannel, InstallationVersion } from "./version"
 const log = Log.create({ service: "installation" })
 
 const PACKAGE_NAME = "@mimo-ai/cli"
+const GITHUB_REPO = "XiaomiMiMo/MiMo-Code"
 
 export type Method = "curl" | "npm" | "pnpm" | "bun" | "brew" | "scoop" | "choco" | "unknown"
 
@@ -69,9 +70,9 @@ export class UpgradeFailedError extends Schema.TaggedErrorClass<UpgradeFailedErr
   stderr: Schema.String,
 }) {}
 
-// TODO(mimocode): uncomment when corresponding channels are supported
-// const GitHubRelease = Schema.Struct({ tag_name: Schema.String })
+const GitHubRelease = Schema.Struct({ tag_name: Schema.String })
 const NpmPackage = Schema.Struct({ version: Schema.String })
+// TODO(mimocode): uncomment when corresponding channels are supported
 // const BrewFormula = Schema.Struct({ versions: Schema.Struct({ stable: Schema.String }) })
 // const BrewInfoV2 = Schema.Struct({
 //   formulae: Schema.Array(Schema.Struct({ versions: Schema.Struct({ stable: Schema.String }) })),
@@ -230,6 +231,16 @@ export const layer: Layer.Layer<Service, never, HttpClient.HttpClient | ChildPro
           return data.version
         }
 
+        if (detectedMethod === "curl") {
+          const response = yield* httpOk.execute(
+            HttpClientRequest.get(`https://api.github.com/repos/${GITHUB_REPO}/releases/latest`).pipe(
+              HttpClientRequest.acceptJson,
+            ),
+          )
+          const data = yield* HttpClientResponse.schemaBodyJson(GitHubRelease)(response)
+          return data.tag_name.replace(/^v/, "")
+        }
+
         // TODO(mimocode): uncomment when mimocode is published to chocolatey
         // if (detectedMethod === "choco") {
         //   const response = yield* httpOk.execute(
@@ -251,15 +262,6 @@ export const layer: Layer.Layer<Service, never, HttpClient.HttpClient | ChildPro
         //   const data = yield* HttpClientResponse.schemaBodyJson(ScoopManifest)(response)
         //   return data.version
         // }
-
-        // TODO(mimocode): uncomment when mimocode has github releases
-        // const response = yield* httpOk.execute(
-        //   HttpClientRequest.get("https://api.github.com/repos/anomalyco/opencode/releases/latest").pipe(
-        //     HttpClientRequest.acceptJson,
-        //   ),
-        // )
-        // const data = yield* HttpClientResponse.schemaBodyJson(GitHubRelease)(response)
-        // return data.tag_name.replace(/^v/, "")
 
         log.warn("unsupported update channel, skipping", { method: detectedMethod })
         return yield* Effect.die(new Error(`unsupported update channel: ${detectedMethod}`))
