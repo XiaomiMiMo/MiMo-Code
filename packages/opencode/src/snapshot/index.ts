@@ -20,10 +20,12 @@ export type Patch = z.infer<typeof Patch>
 export const FileDiff = z
   .object({
     file: z.string(),
-    patch: z.string(),
+    patch: z.string().optional(),
     additions: z.number(),
     deletions: z.number(),
     status: z.enum(["added", "deleted", "modified"]).optional(),
+    patchBytes: z.number().optional(),
+    patchStored: z.boolean().optional(),
   })
   .meta({
     ref: "SnapshotFileDiff",
