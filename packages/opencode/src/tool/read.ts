@@ -282,8 +282,44 @@ export const ReadTool = Tool.define(
   }),
 )
 
+async function detectEncoding(filepath: string): Promise<string> {
+  const { readFile } = await import("fs/promises")
+  const sample = await readFile(filepath)
+  // Check for BOM markers
+  if (sample[0] === 0xEF && sample[1] === 0xBB && sample[2] === 0xBF) return "utf8"
+  if (sample[0] === 0xFF && sample[1] === 0xFE) return "utf16le"
+  if (sample[0] === 0xFE && sample[1] === 0xFF) return "utf16be"
+  // Check if valid UTF-8
+  let i = 0
+  let invalidUtf8 = false
+  while (i < sample.length) {
+    if (sample[i] <= 0x7F) { i++; continue }
+    if ((sample[i] & 0xE0) === 0xC0) {
+      if (i + 1 >= sample.length || (sample[i + 1] & 0xC0) !== 0x80) { invalidUtf8 = true; break }
+      i += 2
+    } else if ((sample[i] & 0xF0) === 0xE0) {
+      if (i + 2 >= sample.length || (sample[i + 1] & 0xC0) !== 0x80 || (sample[i + 2] & 0xC0) !== 0x80) { invalidUtf8 = true; break }
+      i += 3
+    } else if ((sample[i] & 0xF8) === 0xF0) {
+      if (i + 3 >= sample.length || (sample[i + 1] & 0xC0) !== 0x80 || (sample[i + 2] & 0xC0) !== 0x80 || (sample[i + 3] & 0xC0) !== 0x80) { invalidUtf8 = true; break }
+      i += 4
+    } else { invalidUtf8 = true; break }
+  }
+  if (!invalidUtf8) return "utf8"
+  // Heuristic: if high bytes in GBK range, assume GBK
+  for (let j = 0; j < Math.min(sample.length, 4096); j++) {
+    if (sample[j] >= 0x81 && sample[j] <= 0xFE) {
+      if (j + 1 < sample.length && sample[j + 1] >= 0x40 && sample[j + 1] <= 0xFE) {
+        return "gbk"
+      }
+    }
+  }
+  return "utf8"
+}
+
 async function lines(filepath: string, opts: { limit: number; offset: number }) {
-  const stream = createReadStream(filepath, { encoding: "utf8" })
+  const encoding = await detectEncoding(filepath)
+  const stream = createReadStream(filepath, { encoding: encoding as BufferEncoding })
   const rl = createInterface({
     input: stream,
     // Note: we use the crlfDelay option to recognize all instances of CR LF

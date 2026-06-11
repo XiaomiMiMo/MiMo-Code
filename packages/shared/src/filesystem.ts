@@ -73,7 +73,18 @@ export namespace AppFileSystem {
       })
 
       const readJson = Effect.fn("FileSystem.readJson")(function* (path: string) {
-        const text = yield* fs.readFileString(path)
+        const bytes = yield* fs.readFile(path)
+        let text: string
+        try {
+          text = new TextDecoder("utf-8", { fatal: true }).decode(bytes)
+        } catch {
+          // Fallback: try GBK decoding for non-UTF-8 files (e.g. Chinese Windows text)
+          try {
+            text = new TextDecoder("gbk").decode(bytes)
+          } catch {
+            text = new TextDecoder("utf-8").decode(bytes)
+          }
+        }
         return JSON.parse(text)
       })
 
