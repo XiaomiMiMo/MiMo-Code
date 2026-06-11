@@ -121,14 +121,15 @@ function truncate(value: string) {
 function formatValue(value: any): string {
   if (value instanceof Error) return truncate(formatError(value))
   if (typeof value === "object") {
-    const seen = new WeakSet<object>()
+    const stack: object[] = []
     try {
-      const serialized = JSON.stringify(value, (_, item) => {
+      const serialized = JSON.stringify(value, function (this: object, _, item) {
         if (typeof item === "bigint") return item.toString()
         if (item instanceof Error) return formatError(item)
         if (typeof item === "object" && item !== null) {
-          if (seen.has(item)) return "[Circular]"
-          seen.add(item)
+          while (stack.length > 0 && stack.at(-1) !== this) stack.pop()
+          if (stack.includes(item)) return "[Circular]"
+          stack.push(item)
         }
         return item
       })
@@ -139,6 +140,11 @@ function formatValue(value: any): string {
     }
   }
   return truncate(String(value))
+}
+
+function formatMessage(message: any): string {
+  if (message === undefined || message === null) return ""
+  return truncate(String(message))
 }
 
 let last = Date.now()
@@ -167,7 +173,7 @@ export function create(tags?: Record<string, any>) {
     const next = new Date()
     const diff = next.getTime() - last
     last = next.getTime()
-    return [next.toISOString().split(".")[0], "+" + diff + "ms", prefix, message].filter(Boolean).join(" ") + "\n"
+    return [next.toISOString().split(".")[0], "+" + diff + "ms", prefix, formatMessage(message)].filter(Boolean).join(" ") + "\n"
   }
   const result: Logger = {
     debug(message?: any, extra?: Record<string, any>) {
