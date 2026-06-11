@@ -1,0 +1,17 @@
+// Fixture: imports Global and prints resolved paths to stdout as JSON.
+// Env vars must be set by the spawning process before invocation.
+
+import { Global } from "../../../src/global"
+
+// Emit a single JSON line so the parent test can parse it
+process.stdout.write(
+  JSON.stringify({
+    data: Global.Path.data,
+    config: Global.Path.config,
+    state: Global.Path.state,
+    cache: Global.Path.cache,
+    bin: Global.Path.bin,
+    log: Global.Path.log,
+    home: Global.Path.home,
+  }) + "\n",
+)

@@ -1,0 +1,155 @@
+# Dream: Memory Consolidation
+
+You consolidate durable project memory from two sources:
+
+1. Memory files under the data directory's memory tree.
+2. Raw mimocode trajectory in the local SQLite database.
+
+Default window: review the last 7 days of sessions, or all available history if shorter.
+
+This command is manual. The user intentionally started it and is watching.
+You have bash access for inspection and SQLite queries, but use it carefully.
+
+## Data Source
+
+Trajectory database: `<DATA>/mimocode.db` (SQLite, read-only)
+Memory files root: `<DATA>/memory/`
+
+## Ground Rules
+
+- Raw trajectory is authoritative; memory files are a structured index/cache.
+- Prefer read-only bash commands for discovery and SQLite queries.
+- Do not modify the SQLite database or raw trajectory.
+- Write final durable knowledge only to project memory files unless the task explicitly requires cleaning current session notes.
+- Do not touch source files unless only verifying a path/function mentioned by memory.
+- Keep the memory folder compact and high-signal. Information density matters more than completeness.
+- Reuse existing memories instead of duplicating them. Packaging repeated workflows into skills, subagents, or commands is the job of `/distill`, not dream.
+- `global/MEMORY.md` is for cross-project user preferences and habits (heading: `# Global memory`). Prefer the project's MEMORY.md for project-specific facts; promote to global when a rule or preference clearly applies across projects.
+
+## Phase 0 - Locate Data
+
+1. Use memory search with broad queries such as "project", "session", "rule", "decision", and "error".
+2. Use Glob/Read to inspect the memory paths from the system memory instructions.
+3. Use bash to locate the database:
+   - Infer `<DATA>/mimocode.db` from the resolved memory root.
+   - If `MIMOCODE_DB` is visible in the shell environment, account for its override behavior.
+   - Treat the resolved database path as read-only.
+4. If memory is empty and the database has no current project sessions, report "Nothing to consolidate - memory is empty" and stop.
+
+## Phase 1 - Orient
+
+- Read the current project's `MEMORY.md`.
+- Read current session `notes.md` if it exists.
+- Glob `memory/sessions/*/checkpoint.md` and identify recent checkpoints.
+- Use bash/SQLite to list recent sessions for this project from `session`, newest first.
+- Record the current `MEMORY.md` section structure before editing to avoid duplicates.
+
+## Phase 2 - Gather From Memory Files
+
+Extract candidate durable facts from recent memory artifacts:
+
+1. Recent `checkpoint.md` files, focusing on discovered knowledge, errors/fixes, and design decisions.
+2. `tasks/*/progress.md` when checkpoint content points to durable task history.
+3. `notes.md` entries not already represented in project memory.
+
+Do not read every file exhaustively. Prefer recent and repeated signals.
+
+## Phase 3 - Verify Against Raw Trajectory
+
+Use bash with SQLite read-only queries to check candidate facts against raw trajectory:
+
+- `session`: project/session/directory/title/time metadata.
+- `message`: user and assistant turns.
+- `part`: text parts, tool calls, tool results, checkpoint parts.
+- `task` and `task_event`: task state and progress events.
+- `actor_registry`: subagent/background actor history.
+
+Schema notes:
+
+- `message(id, session_id, agent_id, time_created, data JSON with $.role)`
+- `part(id, message_id, session_id, time_created, data JSON)`
+- Each assistant turn can produce multiple `part` rows.
+- Part types include:
+  - `{"type":"text","text":"..."}` - agent text output.
+  - `{"type":"tool","tool":"...","state":{"input":...,"output":...}}` - tool call and result.
+  - `{"type":"step-start"}` / `{"type":"step-finish","tokens":...}` - step boundaries and token stats.
+- Empty `agent_id` means main agent; non-empty `agent_id` means subagent.
+
+Query template for a session's assistant tool execution chain:
+
+```sql
+SELECT m.id, m.agent_id,
+       json_extract(p.data, '$.type') as part_type,
+       json_extract(p.data, '$.tool') as tool,
+       substr(p.data, 1, 800) as preview
+FROM message m
+JOIN part p ON p.message_id = m.id
+WHERE m.session_id = '<SESSION_ID>'
+  AND json_extract(m.data, '$.role') = 'assistant'
+ORDER BY m.time_created, p.time_created;
+```
+
+Useful searches include user statements containing English keywords like:
+
+- "always", "never", "remember", "rule"
+- "decision", "decided", "tradeoff", "reason"
+- "repeat", "again", "every time", "workflow"
+
+Also search equivalent keywords in the user's language when the trajectory shows the user working in another language.
+Also search for repeated error text, failed commands, and recurring file paths.
+
+Promote a fact only when supported by an explicit user statement, a clear design decision, or repeated evidence across sessions.
+
+Drill into full trajectories when:
+
+- A session produced code files or architecture decisions but memory lacks detail; inspect write/edit tool calls.
+- A session involved debugging and gotchas may need promotion; inspect bash tool output for errors.
+- `agent_id` is non-empty; group by `agent_id` to inspect each subagent execution chain.
+- A session has many turns, for example more than 10 assistant messages, but memory only has a short summary.
+
+## Workflow Packaging
+
+If you notice a repeated manual workflow worth packaging, leave it to the
+`/distill` command, which is dedicated to that. You may note such a candidate in
+one line, but do not create skills, subagents, or commands here. Stay focused on
+memory consolidation.
+
+## Phase 4 - Consolidate
+
+Edit the current project's `MEMORY.md` using these sections when useful:
+
+- `## Rules` - project-level rules explicitly stated by the user.
+- `## Architecture decisions` - decision + absolute date + rationale.
+- `## Discovered durable knowledge` - cross-session durable facts.
+- `## Patterns` - repeated problems and solutions.
+- `## Gotchas` - easy-to-miss traps.
+
+Principles:
+
+- Merge duplicates instead of appending.
+- Convert relative dates like "yesterday" to YYYY-MM-DD.
+- Remove contradicted or obsolete entries when newer trajectory or code proves them stale.
+- Keep each entry to 1-3 lines.
+- Preserve source session ids at the end of entries, for example `[ses_xxx]`.
+
+## Phase 5 - Prune And Verify
+
+- Keep `MEMORY.md` under 200 lines and 10KB when possible. Prefer fewer, denser entries over exhaustive notes.
+- Remove entries superseded by newer decisions.
+- Remove details that mattered only to one session.
+- Remove low-signal memory files or entries that are redundant with stronger project memory.
+- Clear current `notes.md` entries only when fully integrated.
+- Verify mentioned file paths with Glob.
+- Verify mentioned function/class names with Grep.
+- Mark unverifiable-but-plausible claims `[unverified]`.
+
+## Output Format
+
+Return a brief summary:
+
+- Consolidated: new memory entries added.
+- Updated: existing entries changed.
+- Deleted: stale entries removed.
+- Skipped: reason if no changes were made.
+- Workflow candidates: at most a one-line pointer to run `/distill` if you noticed one.
+- Health: project memory line count / 200 and size / 10KB.

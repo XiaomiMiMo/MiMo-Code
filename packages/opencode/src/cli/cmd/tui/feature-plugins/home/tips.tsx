@@ -1,0 +1,54 @@
+import type { TuiPlugin, TuiPluginModule } from "@mimo-ai/plugin/tui"
+import { createMemo, Show } from "solid-js"
+import { Tips } from "./tips-view"
+import { useLanguage } from "@tui/context/language"
+
+const id = "internal:home-tips"
+
+function View(props: { show: boolean }) {
+  return (
+    <box height={4} minHeight={0} width="100%" maxWidth={75} alignItems="center" paddingTop={3} flexShrink={1}>
+      <Show when={props.show}>
+        <Tips />
+      </Show>
+    </box>
+  )
+}
+
+const tui: TuiPlugin = async (api) => {
+  api.command.register(() => {
+    const t = useLanguage().t
+    return [
+      {
+        title: t(api.kv.get("tips_hidden", false) ? "tui.command.tips.toggle.show" : "tui.command.tips.toggle.hide"),
+        value: "tips.toggle",
+        keybind: "tips_toggle",
+        category: "system",
+        hidden: api.route.current.name !== "home",
+        onSelect() {
+          api.kv.set("tips_hidden", !api.kv.get("tips_hidden", false))
+          api.ui.dialog.clear()
+        },
+      },
+    ]
+  })
+
+  api.slots.register({
+    order: 100,
+    slots: {
+      home_bottom() {
+        const hidden = createMemo(() => api.kv.get("tips_hidden", false))
+        const first = createMemo(() => api.state.session.count() === 0)
+        const show = createMemo(() => !first() && !hidden())
+        return <View show={show()} />
+      },
+    },
+  })
+}
+
+const plugin: TuiPluginModule & { id: string } = {
+  id,
+  tui,
+}
+
+export default plugin

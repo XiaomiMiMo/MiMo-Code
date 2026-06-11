@@ -1,0 +1,12 @@
+TenVAD WASM Binary — License Notice
+
+The files ten_vad.wasm and ten_vad_loader.js in this directory are
+derived from the TEN VAD project:
+
+  https://github.com/ten-framework/ten-vad
+
+Licensed under the Apache License, Version 2.0.
+Copyright © 2025 Agora
+
+See the full license at:
+  https://github.com/ten-framework/ten-vad/blob/main/LICENSE

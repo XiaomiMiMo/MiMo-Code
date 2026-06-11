@@ -1,0 +1,199 @@
+# Distill: Workflow Packaging
+
+You look back over recent work, identify repeated manual workflows worth
+packaging, and turn only the high-confidence ones into reusable assets:
+skills, custom subagents, commands, or recurring playbooks.
+
+Default window: review the last 30 days of sessions, or all available history if
+shorter.
+
+This command is manual. The user intentionally started it and is watching.
+You have bash access for inspection and SQLite queries, but use it carefully.
+
+## Data Sources
+
+Use available evidence in this order:
+
+1. Recent mimocode sessions and their assistant work, from the raw trajectory
+   database. This is the source of truth for what actually happened.
+2. Memory files (project `MEMORY.md`, session `checkpoint.md`, `notes.md`,
+   `tasks/*/progress.md`) to find patterns repeated across sessions.
+3. Existing skills, custom agents, custom commands, and plugins, so you reuse or
+   extend what already exists instead of duplicating it.
+
+Trajectory database: `<DATA>/mimocode.db` (SQLite, read-only)
+Memory files root: `<DATA>/memory/`
+
+## Ground Rules
+
+- Raw trajectory is authoritative; memory files are a structured index/cache.
+- Prefer read-only bash commands for discovery and SQLite queries.
+- Do not modify the SQLite database or raw trajectory.
+- Look broadly for work that is repeated, time-consuming, error-prone,
+  context-heavy, or that benefits from a consistent process. Include workflows
+  across coding, research, writing, planning, communication, operations,
+  analysis, and personal administration.
+- Default to a compact shortlist and recommendations. Create an asset only when
+  the evidence is very strong and the smallest useful form is obvious.
+- Do not create speculative, overlapping, or overly broad assets.
+- If nothing has actually been repeated, create nothing. Doing zero packaging is
+  a valid and expected outcome; just say so in the summary rather than
+  manufacturing an asset to justify the run.
+
+## Phase 0 - Locate Data
+
+1. Use memory search with broad queries such as "workflow", "repeat", "every
+   time", "rule", and "decision".
+2. Use Glob/Read to inspect the memory paths from the system memory instructions.
+3. Use bash to locate the database:
+   - Infer `<DATA>/mimocode.db` from the resolved memory root.
+   - If `MIMOCODE_DB` is visible in the shell environment, account for its
+     override behavior.
+   - Treat the resolved database path as read-only.
+4. If there is no recent project activity and memory is empty, report "Nothing to
+   distill - no recent workflows found" and stop.
+
+## Phase 1 - Inventory Existing Assets
+
+Before proposing anything, know what already exists so you reuse or extend
+rather than duplicate.
+
+- Skills: Glob `{skill,skills}/**/SKILL.md` under the project `.mimocode/` dir,
+  any config directories, and the home external dirs (`.claude`, `.agents`,
+  `.codex`, `.opencode`). Read each one's name + description.
+- Custom commands: Glob `{command,commands}/**/*.md` under config directories.
+- Custom agents: Glob `{agent,agents}/**/*.md` and `{mode,modes}/*.md` under
+  config directories.
+- Plugins: Glob `.mimocode/plugin*/**` for existing automation hooks.
+
+Record what each asset already covers. A candidate that an existing asset
+already handles is an "extend existing" or "skip", not a new asset.
+
+## Phase 2 - Discover Repeated Workflows From Memory
+
+Scan recent memory artifacts for repeated procedures:
+
+1. `checkpoint.md` files: recurring task shapes, repeated command sequences,
+   repeated debugging or setup steps.
+2. `tasks/*/progress.md`: multi-step procedures that recur across tasks.
+3. `notes.md` and `MEMORY.md` `## Patterns` / `## Rules`: explicitly noted
+   repeated problems and stated conventions.
+
+Prefer recent and repeated signals over exhaustive reading.
+
+## Phase 3 - Confirm Against Raw Trajectory
+
+Use bash with SQLite read-only queries to confirm candidates against what
+actually happened.
+
+- `session`: project/session/directory/title/time metadata.
+- `message`: user and assistant turns.
+- `part`: text parts, tool calls, tool results.
+- `task` and `task_event`: task state and progress events.
+- `actor_registry`: subagent/background actor history.
+
+Schema notes:
+
+- `message(id, session_id, agent_id, time_created, data JSON with $.role)`
+- `part(id, message_id, session_id, time_created, data JSON)`
+- Part types include `{"type":"text","text":"..."}`,
+  `{"type":"tool","tool":"...","state":{"input":...,"output":...}}`, and
+  step boundaries.
+- Empty `agent_id` means main agent; non-empty `agent_id` means subagent.
+
+Query template to find repeated tool/command usage across recent sessions:
+
+```sql
+SELECT json_extract(p.data, '$.tool') as tool,
+       substr(json_extract(p.data, '$.state.input'), 1, 200) as input_preview,
+       count(*) as n
+FROM message m
+JOIN part p ON p.message_id = m.id
+WHERE json_extract(m.data, '$.role') = 'assistant'
+  AND json_extract(p.data, '$.type') = 'tool'
+  AND m.time_created > <CUTOFF_MS>
+GROUP BY tool, input_preview
+ORDER BY n DESC
+LIMIT 50;
+```
+
+Useful searches in user turns include keywords like "again", "every time",
+"like last time", "the usual", "repeat", "same as before". Also search the
+equivalent keywords in the user's language when the trajectory shows the user
+working in another language. Also look for repeated command sequences, repeated
+file paths, and repeated error/fix cycles.
+
+A candidate is only real when it occurred at least twice, or is clearly likely
+to recur and costly to repeat.
+
+## Phase 4 - Shortlist
+
+Produce a compact shortlist. For each candidate include:
+
+- repeated workflow (one line)
+- supporting evidence and dates (cite session ids `[ses_xxx]`)
+- frequency / confidence
+- recommended form: skill, subagent, command, automation, extend existing, or
+  skip
+- why it is or is not worth creating
+
+Only keep a candidate for action when it:
+
+- occurred at least twice, or is clearly likely to recur and costly to repeat;
+- has stable inputs, a repeatable procedure, and a clear output or stopping
+  condition;
+- would materially improve speed, quality, consistency, or reliability;
+- is not already adequately covered by an existing asset.
+
+## Phase 5 - Choose The Smallest Form
+
+For each high-confidence candidate, pick the smallest appropriate form:
+
+- Skill - a reusable workflow or playbook. Write `SKILL.md` with YAML
+  frontmatter (`name`, `description`) under the project
+  `.mimocode/skills/<name>/` directory. Use a focused, imperative description so
+  it is discoverable.
+- Custom subagent - a bounded specialist role or investigation task suitable for
+  delegation. Write `.mimocode/agent/<name>.md` with frontmatter
+  (`description`, optional `mode`, `model`, `tools`/permission) and the system
+  prompt as the body.
+- Command - a parameterized prompt for a recurring task. Write
+  `.mimocode/command/<name>.md` with frontmatter (`description`, optional
+  `agent`) and a template body using `$ARGUMENTS` / `$1` placeholders.
+- Automation - mimocode has no built-in scheduler. Package recurring work as a
+  command the user can re-run, or, only if clearly justified, a plugin lifecycle
+  hook under `.mimocode/plugins/`. Do not invent a scheduler. If a true schedule
+  is needed, recommend it and explain the manual trigger instead.
+- Extend existing - edit the existing skill/agent/command rather than adding a
+  near-duplicate.
+- Skip - work that is too one-off, ambiguous, sensitive, or poorly evidenced to
+  package.
+
+## Phase 6 - Create And Validate
+
+Create only the high-confidence missing items. Keep them narrow, practical,
+source-aware, and easy to validate.
+
+- Write to the project `.mimocode/` directory unless the user asked for global
+  scope.
+- Reuse the project's existing conventions and tone; match the structure of
+  comparable assets already present.
+- Keep each asset focused on one workflow with a clear stopping condition.
+- After writing, verify referenced file paths with Glob and referenced
+  function/class names with Grep.
+- Do not create accounts, send messages, change permissions, or take any
+  irreversible external action; assets only describe procedures.
+
+## Output Format
+
+Return a brief summary:
+
+- Shortlist: the candidates considered, with evidence, frequency/confidence, and
+  recommended form.
+- Created or extended: assets written, with their paths and one-line purpose.
+  If nothing met the bar, say "Created nothing - no repeated workflow worth
+  packaging" and that is a complete, successful result.
+- Skipped: what you deliberately did not package, and why.
+- Needs more evidence: candidates that look promising but lack the repeated
+  evidence, stable inputs, or clear stopping condition required to package
+  safely.

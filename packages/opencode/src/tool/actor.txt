@@ -1,0 +1,103 @@
+Launch a new actor (subagent) to handle complex, multi-step tasks autonomously.
+
+JSON calls wrap the action payload inside an `operation` object; `action` is the discriminator field.
+
+Examples:
+{"operation":{"action":"run","subagent_type":"explore","description":"Find error recovery","prompt":"<full task>"}}
+{"operation":{"action":"run","subagent_type":"explore","description":"Investigate T4","prompt":"<full task>","task_id":"T4"}}
+{"operation":{"action":"spawn","subagent_type":"general","description":"Long-running search","prompt":"<full task>"}}
+{"operation":{"action":"status","actor_id":"<existing>"}}
+{"operation":{"action":"wait","actor_id":"<existing>"}}
+{"operation":{"action":"cancel","actor_id":"<existing>"}}
+{"operation":{"action":"send","to_actor_id":"<existing>","content":"<message>"}}
+
+## Operations (the `operation.action` field selects one)
+
+- run:    spawn a subagent and BLOCK until completion; result returned inline.
+          required: subagent_type, description, prompt
+          optional: actor_id, timeout_ms, command, context
+- spawn:  spawn a subagent and return actor_id IMMEDIATELY (background).
+          required: subagent_type, description, prompt
+          optional: actor_id, command, context
+- status: poll actor state without blocking. required: actor_id.
+          Returns: { status: "pending"|"running"|"idle"|"unknown", actor_id, turnCount, ... }
+- wait:   block until actor completes (success/failure/cancelled) or timeout (default 10 min).
+          required: actor_id. optional: timeout_ms.
+          Returns: { status, actor_id, result?, error? }
+- cancel: stop a running actor (graceful). required: actor_id. Idempotent.
+- send:   deliver message to another actor's inbox.
+          required: to_actor_id, content.
+          optional: to_session_id, type (default "text").
+          Receiver sees wrapped in <inbox from="..." sent_at="...">...</inbox> at next iteration.
+
+## When to use actor
+
+- **Parallelize**: spawn multiple independent searches/analyses concurrently; `wait` on each.
+- **Isolate heavy lifting**: delegate 10+ file reads to a subagent; you get only the synthesis.
+- **Specialized search**: use `explore` for read-only code discovery (finding definitions, callers).
+- **Custom review**: `general` subagent verifies implementation against spec without bias.
+- **Working on a tracked task**: when you spawn a subagent to do work for one of your active tasks (T1, T2, …) — investigation, focused review, dedicated implementation — pass `task_id` so the subagent's verbatim findings get captured to `tasks/<TID>/progress.md` and reconciled into the next checkpoint. Pass ONLY a task ID the `task` tool returned this session; never invent one. If you haven't created the task yet, create it with the `task` tool first, or omit `task_id` and run ad-hoc.
+- **Don't spawn for**: trivial single-file lookups, answers already in your context, or decisions on partial outputs.
+
+## Writing the prompt
+
+You are the subagent's only briefing — it hasn't seen this conversation.
+- Explain what you're trying to accomplish and why.
+- Say what you've already learned or ruled out.
+- Give enough context for judgment calls, not just narrow steps.
+- If you need short output, say so ("report in under 200 words").
+- For investigation: hand over the question; prescribed steps become dead weight.
+
+## Context inheritance
+
+- `context="full"`: subagent sees your full conversation history (for state writers, evaluators).
+- `context="state"`: subagent gets checkpoint summaries injected (background knowledge, no full detail).
+- `context="none"` (default): clean context, only the prompt.
+
+## Actor ID vs Task ID
+
+`actor_id` identifies a subagent session (resumable across turns). Task IDs (T1, T2, ...) come from the `task` tool — only pass a `task_id` you got from a `task` tool call this session. If the `task_id` is malformed or unknown, the binding is dropped: the subagent's findings won't be captured to any task, and the tool result tells you so.
+
+## Binding a subagent to a task
+
+When you `run` or `spawn` a subagent that's doing work for a specific task,
+pass the task's TID via `task_id` (e.g. `task_id: "T4"`) — but only a TID the
+`task` tool actually returned this session. After the subagent finishes, the
+system checks that `tasks/<task_id>/progress.md` exists with the required
+structure — if not, the subagent gets one more chance to write it before
+terminating. The next checkpoint writer then reads that file and integrates
+verbatim commands, outcome, and discoveries into the main checkpoint.
+
+If `task_id` is malformed or names no existing task, the binding is dropped —
+the subagent's findings won't be captured to that task, and the tool result
+says so. Leave `task_id` OFF for ad-hoc work that isn't bound to a task; the
+postStop check then becomes a no-op.
+
+## Usage notes
+
+- **Resume the same subagent**: pass `actor_id` to `run`/`spawn` and the call resumes that subagent's session (continues with its prior messages and tool outputs). Without `actor_id`, a fresh subagent is created.
+- **`run` vs `spawn` result delivery**: `run` blocks and returns the result inline. `spawn` returns the actor_id immediately; when the background actor finishes, its result appears as a notification in this conversation — your turn does NOT auto-wake to process it; you'll see it the next time you respond to the user. Use `wait` to block on the actor_id explicitly.
+- **`wait` on persistent peers caveat**: `wait` is designed for ephemeral subagents you spawned via `run`/`spawn`. Persistent peers idle between turns and never produce a "done" outcome on success — `wait` on a peer will block until that peer fails or is cancelled. Use `send` + `status` to coordinate with peers instead.
+- **`send` semantics**: fire-and-forget; returns within ~5 ms regardless of receiver load. The receiver picks the message up at the head of its next runLoop iteration. On unknown `to_actor_id`, `send` returns `{inboxID: null, error: "receiver not found"}` rather than throwing — handle the error path.
+- Trust the subagent's outputs generally, but the subagent doesn't see your full context (unless you pass `context="full"`); brief it accordingly.
+
+
+## Examples
+
+<example>
+user: "Find all places where parser.ts handles error recovery"
+assistant: I'll spawn an explore subagent to scan parser-related files.
+[actor({"operation":{"action":"run","subagent_type":"explore","description":"Find error recovery in parser","prompt":"Search src/parser.ts and adjacent files for error-recovery patterns. Return: each location's file:line + a one-sentence description of how it recovers. If you find catch blocks, panic-mode synchronization, or recovery sentinels, list them all."}})]
+</example>
+
+<example>
+user: "Verify the type checker is correct against spec.md §3"
+assistant: I'll spawn a general subagent to do an independent review.
+[actor({"operation":{"action":"run","subagent_type":"general","description":"Type checker spec review","prompt":"Read docs/spec.md §3 (Type System), then read src/types.ts and tests/types.test.ts. Report: (1) any §3 requirement not implemented; (2) any test that fails to cover a §3 requirement. Don't fix anything — just report findings."}})]
+</example>
+
+<example>
+user: "investigate T4's failing tests in the type checker"
+assistant: T4 is an active task in my tracker. I'll spawn an explore subagent bound to T4 so its findings end up in tasks/T4/progress.md and the next checkpoint can integrate them.
+[actor({"operation":{"action":"run","subagent_type":"explore","description":"Investigate T4 type checker failures","prompt":"Run `bun test src/types.test.ts` and report each failing case. For each failure: file:line of the assertion, the expected vs actual values, and the most likely root-cause hypothesis based on reading src/types.ts. Don't fix anything.","task_id":"T4"}})]
+</example>

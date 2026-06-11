@@ -1,0 +1,14 @@
+diff --git a/dist/index.mjs b/dist/index.mjs
+index 94b93fcf07317b9fccce35ec232653e2dfb4c01a..70b6d743feb01677d56d26ffa2bd38291baaeb2f 100644
+--- a/dist/index.mjs
++++ b/dist/index.mjs
+@@ -1,7 +1,6 @@
+-var __require = /* @__PURE__ */ ((x) => typeof require !== "undefined" ? require : typeof Proxy !== "undefined" ? new Proxy(x, {
+-  get: (a, b) => (typeof require !== "undefined" ? require : a)[b]
++var __require = /* @__PURE__ */ ((x) => typeof Proxy !== "undefined" ? new Proxy(x, {
++  get: (a, b) => a[b]
+ }) : x)(function(x) {
+-  if (typeof require !== "undefined") return require.apply(this, arguments);
+   throw Error('Dynamic require of "' + x + '" is not supported');
+ });
+ 

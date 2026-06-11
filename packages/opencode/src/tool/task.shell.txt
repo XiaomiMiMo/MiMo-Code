@@ -1,0 +1,57 @@
+Persistent work-item tool (shell form). Tasks form a tree (T1, T2, ...;
+subtasks T1.1, T1.2, ...) with lifecycle:
+open ⇄ in_progress, either → blocked → open, either → done | abandoned.
+
+# Script structure
+#   - Multi-line: one command per non-blank line, set-e on first failure
+#   - "double" quotes preserve literal LF and process \" \\ escapes
+#   - 'single' quotes are verbatim
+#   - # starts a line comment to end-of-line (quoted # is literal text)
+
+# create:
+    task create "Implement auth"
+    # subtask: pass the parent's TID via --parent; the subtask's id nests under it (e.g. T1.1)
+    task create "Email/password login" --parent T1
+
+# multi-line summary — heredoc body is verbatim (no escape needed for " \ $ #):
+    task create <<EOF
+    Implement auth
+    - email/password
+    - oauth (google, github)
+    - regex /\b[A-Z]+_TOKEN\b/ for env scan
+    EOF
+
+# inspect:
+    task list [<status>] [--include-terminal] [--include-archived]   # default: open+in_progress+blocked
+    task list open                     # filter by status
+    task get T1
+
+# state-machine transitions:
+    task start T1 [--reason "<note>"]  # mark in_progress (working on it now)
+    task block T1 "waiting on spec"
+    task unblock T1 "spec resolved"
+    task done T1 "all tests pass"
+    task abandon T1 "out of scope"
+
+# rename:
+    task rename T1 "Updated title"
+
+# every verb accepts --session <id> to act on another session (default: current).
+
+# multi-command (one per line, set-e on first failure):
+    task create "Lexer"
+    task create "Parser"
+    task create "Type checker"
+
+Status values for `task list <status>`: open | in_progress | blocked | done | abandoned
+
+# Removed verbs (use the listed equivalents instead):
+#   progress       — progress is maintained by the checkpoint writer in the
+#                    session-level progress.md; you do not journal events
+#   approve        — proposed state was removed; new tasks start in 'open'
+#   revise         — task is rename-only; long descriptions belong in §1
+#                    Active intent or main progress.md sections
+#   create_sub     — use 'create' with parent_id
+
+# Don't repeat the task tree in your reply — the UI already shows it.
+# Just summarize what you're working on or what changed.

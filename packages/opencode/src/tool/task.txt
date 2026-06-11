@@ -1,0 +1,56 @@
+Persistent work-item tool. Tasks are bounded, referenceable entities with
+IDs (T1, T2, ...; subtasks T1.1, T1.2, ...). This is the only work-item
+tool — use it to track every multi-step piece of work: what you're doing
+now, what's queued, what's blocked, what's done.
+
+JSON calls always wrap the action in an `operation` object — see examples below.
+
+## Operations
+
+- create:     register a new task. `summary` required. optional: `parent_id`.
+- list:       enumerate tasks. defaults to open+in_progress+blocked, excluding archived.
+              optional: `status` filter, `include_terminal`, `include_archived`.
+- get:        fetch one task by id.
+- start:      mark a task in_progress (you're working on it now). `id` required.
+- block:      transition → blocked. `id` required. optional: `event_summary`.
+- unblock:    transition blocked → open. `id` required. optional: `event_summary`.
+- done:       mark task complete. `id` required. optional: `event_summary`.
+- abandon:    drop task without completing. `id` required. optional: `event_summary`.
+- rename:     change a task's summary. `id` + `summary` required.
+
+Status lifecycle: open ⇄ in_progress, either → blocked → open, either → done | abandoned.
+Mark a task `start` before working it; `done` immediately after finishing.
+Terminal states clean up automatically after `checkpoint.task_archive_days` (default 7 days).
+
+## JSON examples
+
+{"operation":{"action":"create","summary":"Implement auth"}}
+{"operation":{"action":"create","summary":"Lexer","parent_id":"T1"}}
+{"operation":{"action":"list"}}
+{"operation":{"action":"get","id":"T1"}}
+{"operation":{"action":"start","id":"T1"}}
+{"operation":{"action":"block","id":"T1","event_summary":"waiting on spec"}}
+{"operation":{"action":"unblock","id":"T1","event_summary":"spec resolved"}}
+{"operation":{"action":"done","id":"T1","event_summary":"all tests pass"}}
+{"operation":{"action":"abandon","id":"T1","event_summary":"out of scope"}}
+{"operation":{"action":"rename","id":"T1","summary":"Updated title"}}
+
+## Discipline
+
+- Only mark `done` when the work is FULLY accomplished. If tests fail, the
+  implementation is partial, or you hit an unresolved error, keep it
+  in_progress or `block` it — never `done`.
+- If blocked, `block` the task or create a new task describing the blocker.
+- Keep one task in_progress at a time when working solo (not enforced —
+  parallel subagents may each have their own in_progress task).
+
+## When to use
+
+Use task whenever work has 3+ steps, spans multiple turns, will be referenced
+again (by you, the user, or a subagent), or needs to be visible in the session.
+Skip it for a single trivial action.
+
+## Don't repeat in your reply
+
+Do not list out the task tree in your reply — the UI already renders it.
+Summarize what task you're working on or what changed since the last call.
