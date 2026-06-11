@@ -306,14 +306,37 @@ const ask = Effect.fn("BashTool.ask")(function* (ctx: Tool.Context, scan: Scan) 
   })
 })
 
+function encodePowerShellCommand(command: string) {
+  return Buffer.from(command, "utf16le").toString("base64")
+}
+
+function withPowerShellUtf8Preamble(command: string) {
+  return `
+[Console]::InputEncoding = [System.Text.UTF8Encoding]::new($false);
+[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false);
+$OutputEncoding = [Console]::OutputEncoding;
+${command}
+`
+}
+
 function cmd(shell: string, name: string, command: string, cwd: string, env: NodeJS.ProcessEnv) {
   if (process.platform === "win32" && PS.has(name)) {
-    return ChildProcess.make(shell, ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", command], {
-      cwd,
-      env,
-      stdin: "ignore",
-      detached: false,
-    })
+    return ChildProcess.make(
+      shell,
+      [
+        "-NoLogo",
+        "-NoProfile",
+        "-NonInteractive",
+        "-EncodedCommand",
+        encodePowerShellCommand(withPowerShellUtf8Preamble(command)),
+      ],
+      {
+        cwd,
+        env,
+        stdin: "ignore",
+        detached: false,
+      },
+    )
   }
 
   return ChildProcess.make(command, [], {
