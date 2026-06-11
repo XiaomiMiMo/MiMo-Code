@@ -7,6 +7,7 @@
   sysctl,
   makeBinaryWrapper,
   models-dev,
+  prettier,
   ripgrep,
   installShellFiles,
   versionCheckHook,
@@ -31,6 +32,8 @@ stdenvNoCC.mkDerivation (finalAttrs: {
     runHook preConfigure
 
     cp -R ${finalAttrs.node_modules}/. .
+    chmod u+w node_modules
+    ln -s ${prettier}/lib/node_modules/prettier node_modules/prettier
     patchShebangs node_modules
     patchShebangs packages/*/node_modules
 
@@ -55,10 +58,10 @@ stdenvNoCC.mkDerivation (finalAttrs: {
   installPhase = ''
     runHook preInstall
 
-    install -Dm755 dist/opencode-*/bin/opencode $out/bin/opencode
+    install -Dm755 dist/mimocode-*/bin/mimo $out/bin/mimo
     install -Dm644 schema.json $out/share/opencode/schema.json
 
-    wrapProgram $out/bin/opencode \
+    wrapProgram $out/bin/mimo \
       --prefix PATH : ${
         lib.makeBinPath (
           [
@@ -73,10 +76,9 @@ stdenvNoCC.mkDerivation (finalAttrs: {
   '';
 
   postInstall = lib.optionalString (stdenvNoCC.buildPlatform.canExecute stdenvNoCC.hostPlatform) ''
-    # trick yargs into also generating zsh completions
-    installShellCompletion --cmd opencode \
-      --bash <($out/bin/opencode completion) \
-      --zsh <(SHELL=/bin/zsh $out/bin/opencode completion)
+      installShellCompletion --cmd mimo \
+        --bash <($out/bin/mimo completion) \
+        --zsh <(SHELL=/bin/zsh $out/bin/mimo completion)
   '';
 
   nativeInstallCheckInputs = [
@@ -93,9 +95,9 @@ stdenvNoCC.mkDerivation (finalAttrs: {
 
   meta = {
     description = "The open source coding agent";
-    homepage = "https://opencode.ai/";
+    homepage = "https://mimo.xiaomi.com/mimocode/start";
     license = lib.licenses.mit;
-    mainProgram = "opencode";
+    mainProgram = "mimo";
     inherit (node_modules.meta) platforms;
   };
 })
