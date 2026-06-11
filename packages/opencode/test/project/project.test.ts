@@ -3,6 +3,7 @@ import { Project } from "../../src/project"
 import { Log } from "../../src/util"
 import { $ } from "bun"
 import path from "path"
+import fs from "fs/promises"
 import { tmpdir } from "../fixture/fixture"
 import { GlobalBus } from "../../src/bus/global"
 import { ProjectID } from "../../src/project/schema"
@@ -146,6 +147,45 @@ describe("Project.fromDirectory git failure paths", () => {
     const { project, sandbox } = await run((svc) => svc.fromDirectory(tmp.path), layer)
     expect(project.worktree).toBe(tmp.path)
     expect(sandbox).toBe(tmp.path)
+  })
+
+  test("captures git discovery stderr on failures", async () => {
+    await using tmp = await tmpdir()
+    await fs.mkdir(path.join(tmp.path, ".git"))
+
+    const stdio: { stdout?: unknown; stderr?: unknown }[] = []
+    const spawner = Layer.succeed(
+      ChildProcessSpawner.ChildProcessSpawner,
+      ChildProcessSpawner.make((command) => {
+        const std = ChildProcess.isStandardCommand(command) ? command : undefined
+        if (std?.command === "git") stdio.push({ stdout: std.options.stdout, stderr: std.options.stderr })
+        return Effect.succeed(
+          ChildProcessSpawner.makeHandle({
+            pid: ChildProcessSpawner.ProcessId(0),
+            exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(128)),
+            isRunning: Effect.succeed(false),
+            kill: () => Effect.void,
+            stdin: { [Symbol.for("effect/Sink/TypeId")]: Symbol.for("effect/Sink/TypeId") } as any,
+            stdout: Stream.empty,
+            stderr: Stream.make(encoder.encode("fatal: not a git repository\n")),
+            all: Stream.empty,
+            getInputFd: () => ({ [Symbol.for("effect/Sink/TypeId")]: Symbol.for("effect/Sink/TypeId") }) as any,
+            getOutputFd: () => Stream.empty,
+            unref: Effect.succeed(Effect.void),
+          }),
+        )
+      }),
+    )
+    const layer = Project.layer.pipe(
+      Layer.provide(spawner),
+      Layer.provide(AppFileSystem.defaultLayer),
+      Layer.provide(NodePath.layer),
+    )
+
+    const { project } = await run((svc) => svc.fromDirectory(tmp.path), layer)
+
+    expect(project.id).toBe(ProjectID.global)
+    expect(stdio).toEqual([{ stdout: "pipe", stderr: "pipe" }])
   })
 })
 
