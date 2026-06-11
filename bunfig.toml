@@ -1,5 +1,6 @@
 [install]
 exact = true
+registry = "https://registry.npmjs.org/"
 
 [test]
 root = "./do-not-run-tests-from-root"

@@ -271,6 +271,14 @@ render(() => {
   // Fetch sidecar credentials (available immediately, before health check)
   const [sidecar] = createResource(() => window.api.awaitInitialization(() => undefined))
 
+  // Clear stale default server URL so sidecar takes priority
+  createEffect(() => {
+    const data = sidecar()
+    if (data) {
+      void window.api.setDefaultServerUrl(null)
+    }
+  })
+
   const [defaultServer] = createResource(() =>
     platform.getDefaultServer?.().then((url) => {
       if (url) return ServerConnection.key({ type: "http", http: { url } })

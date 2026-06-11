@@ -19,6 +19,15 @@ import * as CrossSpawnSpawner from "@/effect/cross-spawn-spawner"
 import { zod } from "@/util/effect-zod"
 import { withStatics } from "@/util/schema"
 
+async function fileExists(path: string): Promise<boolean> {
+  try {
+    await nodeFs.access(path)
+    return true
+  } catch {
+    return false
+  }
+}
+
 async function setupProjectIdEnvironment(workingDir: string): Promise<void> {
   const mainGit = resolveMainGitDir(workingDir)
   if (!mainGit) return
@@ -26,10 +35,10 @@ async function setupProjectIdEnvironment(workingDir: string): Promise<void> {
   const localFile = nodePath.join(workingDir, ".mimocode-project-id")
   const idFile = nodePath.join(mainGit, "mimocode-project-id")
 
-  if (await Bun.file(localFile).exists()) {
-    if (!(await Bun.file(idFile).exists())) {
-      const id = await Bun.file(localFile).text()
-      await Bun.write(idFile, id)
+  if (await fileExists(localFile)) {
+    if (!(await fileExists(idFile))) {
+      const id = await nodeFs.readFile(localFile, "utf-8")
+      await nodeFs.writeFile(idFile, id)
     }
     await nodeFs.unlink(localFile).catch(() => {})
   }
@@ -37,9 +46,7 @@ async function setupProjectIdEnvironment(workingDir: string): Promise<void> {
   // Belt-and-suspenders: ensure .git/info/exclude lists .mimocode-project-id
   const excludeFile = nodePath.join(mainGit, "info", "exclude")
   await nodeFs.mkdir(nodePath.dirname(excludeFile), { recursive: true })
-  const existing = await Bun.file(excludeFile)
-    .text()
-    .catch(() => "")
+  const existing = await nodeFs.readFile(excludeFile, "utf-8").catch(() => "")
   if (!existing.includes(".mimocode-project-id")) {
     await nodeFs.appendFile(excludeFile, "\n.mimocode-project-id\n")
   }
