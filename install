@@ -68,6 +68,37 @@ done
 INSTALL_DIR=$HOME/.mimocode/bin
 mkdir -p "$INSTALL_DIR"
 
+fetch_latest_version() {
+    local tag=""
+    local response=""
+    response=$(curl -fsSL --connect-timeout 5 --max-time 15 \
+        -H "Accept: application/vnd.github+json" \
+        -H "User-Agent: mimocode-installer" \
+        https://api.github.com/repos/XiaomiMiMo/MiMo-Code/releases/latest 2>/dev/null || true)
+
+    if [ -n "$response" ]; then
+        tag=$(printf "%s" "$response" | sed -n 's/.*"tag_name": *"v\{0,1\}\([^"]*\)".*/\1/p' | head -n 1)
+    fi
+
+    if [ -n "$tag" ]; then
+        printf "%s" "$tag"
+        return 0
+    fi
+
+    local latest_url=""
+    latest_url=$(curl -fsSIL --connect-timeout 5 --max-time 15 -o /dev/null -w "%{url_effective}" \
+        https://github.com/XiaomiMiMo/MiMo-Code/releases/latest 2>/dev/null || true)
+    tag="${latest_url##*/}"
+    tag="${tag#v}"
+
+    if [ -n "$tag" ] && [ "$tag" != "latest" ]; then
+        printf "%s" "$tag"
+        return 0
+    fi
+
+    return 1
+}
+
 # If --binary is provided, skip all download/detection logic
 if [ -n "$binary_path" ]; then
     if [ ! -f "$binary_path" ]; then
@@ -182,10 +213,9 @@ else
 
     if [ -z "$requested_version" ]; then
         url="https://github.com/XiaomiMiMo/MiMo-Code/releases/latest/download/$filename"
-        specific_version=$(curl -s https://api.github.com/repos/XiaomiMiMo/MiMo-Code/releases/latest | sed -n 's/.*"tag_name": *"v\([^"]*\)".*/\1/p')
-
-        if [[ $? -ne 0 || -z "$specific_version" ]]; then
+        if ! specific_version=$(fetch_latest_version); then
             echo -e "${RED}Failed to fetch version information${NC}"
+            echo -e "${MUTED}Try again later or pass an explicit version, for example: --version 0.1.0${NC}"
             exit 1
         fi
     else
