@@ -22,21 +22,54 @@
 
 ## 本地发布流程
 
-### 前置条件
+### .env 配置
 
-| 环境变量 | 用途 | 获取方式 |
-|----------|------|----------|
-| `NPM_TOKEN` | npm publish (`@mimo-ai` scope) | npmjs.com → Access Tokens → Granular Token |
-| `GH_TOKEN` | GitHub Release 创建/上传 | `gh auth token` 或 GitHub PAT（repo scope） |
-| `GH_REPO` | 目标 GitHub 仓库 | `XiaomiMiMo/MiMo-Code` |
+在项目根目录创建 `.env`（已在 .gitignore 中）：
 
-可选：
-| 环境变量 | 用途 | 默认行为 |
-|----------|------|----------|
-| `OPENCODE_VERSION` | 覆盖版本号 | 读取 `packages/opencode/package.json` |
-| `OPENCODE_BUMP` | 自动递增 (major/minor/patch) | 不 bump，原样使用 |
-| `OPENCODE_RELEASE` | 创建 GitHub Release | 由 `script/version.ts` 自动设置 |
-| `OPENCODE_CHANNEL` | 发布 channel (latest/beta/...) | 从 git branch 推断，detached HEAD 默认 latest |
+```env
+NPM_TOKEN=npm_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+```
+
+可选（如需发布 GitHub Release）：
+
+```env
+GH_TOKEN=ghp_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+GH_REPO=XiaomiMiMo/MiMo-Code
+```
+
+`NPM_TOKEN` 获取：npmjs.com → Access Tokens → Granular Access Token（Packages: Read and write, scope: `@mimo-ai`）
+
+### 构建
+
+```bash
+source .env && OPENCODE_VERSION="1.0.0" OPENCODE_CHANNEL="latest" ./packages/opencode/script/build.ts
+```
+
+### 发布到 npm
+
+```bash
+source .env && OPENCODE_VERSION="1.0.0" OPENCODE_CHANNEL="latest" NODE_AUTH_TOKEN="$NPM_TOKEN" ./script/publish.ts
+```
+
+### Preview 发布（不影响 latest tag）
+
+```bash
+source .env && OPENCODE_VERSION="1.0.0-preview.0" OPENCODE_CHANNEL="preview" ./packages/opencode/script/build.ts
+source .env && OPENCODE_VERSION="1.0.0-preview.0" OPENCODE_CHANNEL="preview" NODE_AUTH_TOKEN="$NPM_TOKEN" ./script/publish.ts
+```
+
+### 环境变量说明
+
+| 环境变量 | 必须 | 用途 | 默认行为 |
+|----------|------|------|----------|
+| `NPM_TOKEN` | 是 | npm publish 认证 | — |
+| `NODE_AUTH_TOKEN` | 是 | 传递给 npm（= NPM_TOKEN） | — |
+| `OPENCODE_VERSION` | 否 | 覆盖版本号 | 读取 `packages/opencode/package.json` |
+| `OPENCODE_CHANNEL` | 否 | npm dist-tag (latest/preview/beta) | 从 git branch 推断 |
+| `OPENCODE_BUMP` | 否 | 自动递增 (major/minor/patch) | 不 bump |
+| `GH_TOKEN` | 否 | GitHub Release 创建/上传 | 不发 Release |
+| `GH_REPO` | 否 | 目标 GitHub 仓库 | — |
+| `OPENCODE_RELEASE` | 否 | 启用 GitHub Release 流程 | 由 version.ts 自动设置 |
 
 ### 一键发布
 

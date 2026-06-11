@@ -30,6 +30,9 @@ curl -fsSL https://mimo.xiaomi.com/install | bash
 
 # 或通过 npm 安装
 npm install -g @mimo-ai/cli
+
+# 运行
+mimo
 ```
 
 首次启动自动引导配置。支持：
@@ -87,7 +90,7 @@ Compose 模式提供结构化的 specs-driven 开发流程，内置规划、执�
 
 ### 语音输入
 
-基于 TenVAD 和 MiMo ASR 的实时流式语音输入。通过 `/voice` 激活，按停顿分片转写，文本逐段追加到输入框。仅对 MiMo 登录用户可用。
+基于 TenVAD 和 MiMo ASR 的实时流式语音输入。通过 `/voice` 激活，按停顿分片转写，文本逐段追加到输入框。仅对 MiMo 登录用户可用。需要安装 `sox`（macOS 上 `brew install sox`，其他平台类似）。
 
 ### Dream & Distill
 
@@ -133,6 +136,12 @@ MiMoCode 基于 [OpenCode](https://github.com/XiaomiMiMo/MiMo-Code) fork 构建�
 <p align="center">
   <img src="assets/readme/community-qrcode.jpg" alt="社区群聊二维码" width="240">
 </p>
+
+---
+
+## 已知问题
+
+- **WSL 剪贴板：** 如果在 WSL 上复制出现乱码，可能缺少 `xsel`：`sudo apt install xsel`。
 
 ---
 

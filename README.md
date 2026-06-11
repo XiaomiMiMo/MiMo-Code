@@ -30,6 +30,9 @@ curl -fsSL https://mimo.xiaomi.com/install | bash
 
 # Or install via npm
 npm install -g @mimo-ai/cli
+
+# Run
+mimo
 ```
 
 The first launch guides you through configuration automatically. Supported options:
@@ -87,7 +90,7 @@ Compose mode provides a structured workflow for specs-driven development. It inc
 
 ### Voice Input
 
-Real-time streaming voice input powered by TenVAD and MiMo ASR. Activate with `/voice`, then speak — audio is segmented by pauses and transcribed incrementally into the input. Available for MiMo logged-in users.
+Real-time streaming voice input powered by TenVAD and MiMo ASR. Activate with `/voice`, then speak — audio is segmented by pauses and transcribed incrementally into the input. Available for MiMo logged-in users. Requires `sox` (`brew install sox` on macOS, other platforms similar).
 
 ### Dream & Distill
 
@@ -133,6 +136,12 @@ Scan the QR code to join the community group chat:
 <p align="center">
   <img src="assets/readme/community-qrcode.jpg" alt="Community group chat QR code" width="240">
 </p>
+
+---
+
+## Known Issues
+
+- **WSL clipboard:** If you encounter garbled text when copying on WSL, install `xsel`: `sudo apt install xsel`.
 
 ---
 
