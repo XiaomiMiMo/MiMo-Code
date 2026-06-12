@@ -15,6 +15,7 @@ export const ProviderID = providerIdSchema.pipe(
     anthropic: schema.make("anthropic"),
     openai: schema.make("openai"),
     astraflow: schema.make("astraflow"),
+    astraflowCn: schema.make("astraflow-cn"),
     google: schema.make("google"),
     googleVertex: schema.make("google-vertex"),
     githubCopilot: schema.make("github-copilot"),
@@ -23,8 +24,6 @@ export const ProviderID = providerIdSchema.pipe(
     openrouter: schema.make("openrouter"),
     mistral: schema.make("mistral"),
     gitlab: schema.make("gitlab"),
-    astraflow: schema.make("astraflow"),
-    astraflowCn: schema.make("astraflow-cn"),
   })),
 )
 

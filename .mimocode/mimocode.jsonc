@@ -1,6 +1,51 @@
 {
   "$schema": "https://opencode.ai/config.json",
-  "provider": {},
+  "provider": {
+    "astraflow": {
+      "npm": "@ai-sdk/openai-compatible",
+      "name": "Astraflow",
+      "env": ["ASTRAFLOW_API_KEY"],
+      "options": {
+        "baseURL": "https://api-us-ca.umodelverse.ai/v1"
+      },
+      "models": {
+        "kimi-k2-0711-preview": {
+          "name": "Kimi K2 0711 Preview",
+          "release_date": "2025-07-11",
+          "attachment": false,
+          "reasoning": false,
+          "temperature": true,
+          "tool_call": true,
+          "limit": {
+            "context": 128000,
+            "output": 16384
+          }
+        }
+      }
+    },
+    "astraflow-cn": {
+      "npm": "@ai-sdk/openai-compatible",
+      "name": "Astraflow China",
+      "env": ["ASTRAFLOW_CN_API_KEY"],
+      "options": {
+        "baseURL": "https://api.modelverse.cn/v1"
+      },
+      "models": {
+        "kimi-k2-0711-preview": {
+          "name": "Kimi K2 0711 Preview",
+          "release_date": "2025-07-11",
+          "attachment": false,
+          "reasoning": false,
+          "temperature": true,
+          "tool_call": true,
+          "limit": {
+            "context": 128000,
+            "output": 16384
+          }
+        }
+      }
+    }
+  },
   "permission": {
     "edit": {
       "packages/opencode/migration/*": "deny",
