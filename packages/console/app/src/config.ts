@@ -3,21 +3,20 @@
  */
 export const config = {
   // Base URL
-  baseUrl: "https://opencode.ai",
+  baseUrl: "https://mimo.xiaomi.com/mimocode",
 
   // GitHub
   github: {
-    repoUrl: "https://github.com/anomalyco/opencode",
+    repoUrl: "https://github.com/XiaomiMiMo/MiMo-Code",
     starsFormatted: {
-      compact: "140K",
-      full: "140,000",
+      compact: "4.8K",
+      full: "4,833",
     },
   },
 
   // Social links
   social: {
-    twitter: "https://x.com/opencode",
-    discord: "https://discord.gg/opencode",
+    issues: "https://github.com/XiaomiMiMo/MiMo-Code/issues",
   },
 
   // Static stats (used on landing page)

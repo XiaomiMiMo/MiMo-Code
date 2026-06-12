@@ -15,7 +15,7 @@ export const dict = {
   "nav.home": "Startseite",
   "nav.openMenu": "Menü öffnen",
   "nav.getStartedFree": "Kostenlos starten",
-  "nav.logoAlt": "OpenCode",
+  "nav.logoAlt": "MiMoCode",
 
   "nav.context.copyLogo": "Logo als SVG kopieren",
   "nav.context.copyWordmark": "Wortmarke als SVG kopieren",
@@ -24,8 +24,7 @@ export const dict = {
   "footer.github": "GitHub",
   "footer.docs": "Dokumentation",
   "footer.changelog": "Changelog",
-  "footer.discord": "Discord",
-  "footer.x": "X",
+  "footer.issues": "Issues",
 
   "legal.brand": "Marke",
   "legal.privacy": "Datenschutz",
@@ -37,14 +36,14 @@ export const dict = {
   "email.subscribe": "Anmelden",
   "email.success": "Fast geschafft, überprüfe deinen Posteingang und bestätige deine E-Mail-Adresse",
 
-  "notFound.title": "Nicht gefunden | OpenCode",
+  "notFound.title": "Nicht gefunden | MiMoCode",
   "notFound.heading": "404 - Seite nicht gefunden",
   "notFound.home": "Startseite",
   "notFound.docs": "Dokumentation",
   "notFound.github": "GitHub",
   "notFound.discord": "Discord",
-  "notFound.logoLightAlt": "OpenCode Logo hell",
-  "notFound.logoDarkAlt": "OpenCode Logo dunkel",
+  "notFound.logoLightAlt": "MiMoCode Logo hell",
+  "notFound.logoDarkAlt": "MiMoCode Logo dunkel",
 
   "user.logout": "Abmelden",
 
@@ -81,11 +80,11 @@ export const dict = {
   "error.reloadAmountMin": "Aufladebetrag muss mindestens ${{amount}} betragen",
   "error.reloadTriggerMin": "Guthaben-Auslöser muss mindestens ${{amount}} betragen",
 
-  "app.meta.description": "OpenCode - Der Open-Source Coding-Agent.",
+  "app.meta.description": "MiMoCode - Der Open-Source Coding-Agent.",
 
-  "home.title": "OpenCode | Der Open-Source AI-Coding-Agent",
+  "home.title": "MiMoCode | Der Open-Source AI-Coding-Agent",
 
-  "temp.title": "OpenCode | Für das Terminal gebauter AI-Coding-Agent",
+  "temp.title": "MiMoCode | Für das Terminal gebauter AI-Coding-Agent",
   "temp.hero.title": "Der für das Terminal gebaute AI-Coding-Agent",
   "temp.zen": "OpenCode Zen",
   "temp.getStarted": "Loslegen",
@@ -96,10 +95,10 @@ export const dict = {
   "temp.feature.zen.afterLink": "bereitgestellt von OpenCode",
   "temp.feature.models.beforeLink": "Unterstützt 75+ LLM-Anbieter durch",
   "temp.feature.models.afterLink": ", einschließlich lokaler Modelle",
-  "temp.screenshot.caption": "OpenCode TUI mit dem Tokyonight-Theme",
-  "temp.screenshot.alt": "OpenCode TUI mit Tokyonight-Theme",
-  "temp.logoLightAlt": "OpenCode Logo hell",
-  "temp.logoDarkAlt": "OpenCode Logo dunkel",
+  "temp.screenshot.caption": "MiMoCode TUI mit dem Tokyonight-Theme",
+  "temp.screenshot.alt": "MiMoCode TUI mit Tokyonight-Theme",
+  "temp.logoLightAlt": "MiMoCode Logo hell",
+  "temp.logoDarkAlt": "MiMoCode Logo dunkel",
 
   "home.banner.badge": "Neu",
   "home.banner.text": "Desktop-App in der Beta verfügbar",
@@ -113,9 +112,9 @@ export const dict = {
 
   "home.install.ariaLabel": "Installationsoptionen",
 
-  "home.what.title": "Was ist OpenCode?",
+  "home.what.title": "Was ist MiMoCode?",
   "home.what.body":
-    "OpenCode ist ein Open-Source-Agent, der dir hilft, Code in deinem Terminal, deiner IDE oder auf dem Desktop zu schreiben.",
+    "MiMoCode ist ein Open-Source-Agent, der dir hilft, Code in deinem Terminal, deiner IDE oder auf dem Desktop zu schreiben.",
   "home.what.lsp.title": "LSP-fähig",
   "home.what.lsp.body": "Lädt automatisch die richtigen LSPs für das LLM",
   "home.what.multiSession.title": "Multi-Session",
@@ -134,43 +133,43 @@ export const dict = {
 
   "home.growth.title": "Der Open-Source AI-Coding-Agent",
   "home.growth.body":
-    "Mit über <strong>{{stars}}</strong> GitHub-Stars, <strong>{{contributors}}</strong> Contributors und über <strong>{{commits}}</strong> Commits wird OpenCode von über <strong>{{monthlyUsers}}</strong> Entwickler:innen jeden Monat genutzt und geschätzt.",
+    "Mit über <strong>{{stars}}</strong> GitHub-Stars, <strong>{{contributors}}</strong> Contributors und über <strong>{{commits}}</strong> Commits wird MiMoCode von über <strong>{{monthlyUsers}}</strong> Entwickler:innen jeden Monat genutzt und geschätzt.",
   "home.growth.githubStars": "GitHub Stars",
   "home.growth.contributors": "Contributors",
   "home.growth.monthlyDevs": "Monatliche Devs",
 
   "home.privacy.title": "Built for privacy first",
   "home.privacy.body":
-    "OpenCode speichert keinen deiner Codes oder Kontextdaten, sodass es in datenschutzsensiblen Umgebungen arbeiten kann.",
+    "MiMoCode speichert keinen deiner Codes oder Kontextdaten, sodass es in datenschutzsensiblen Umgebungen arbeiten kann.",
   "home.privacy.learnMore": "Erfahre mehr über",
   "home.privacy.link": "Datenschutz",
 
-  "home.faq.q1": "Was ist OpenCode?",
+  "home.faq.q1": "Was ist MiMoCode?",
   "home.faq.a1":
-    "OpenCode ist ein Open-Source-Agent, der dir hilft, Code mit jedem KI-Modell zu schreiben und auszuführen. Er ist als Terminal-Interface, Desktop-App oder IDE-Erweiterung verfügbar.",
-  "home.faq.q2": "Wie nutze ich OpenCode?",
+    "MiMoCode ist ein Open-Source-Agent, der dir hilft, Code mit jedem KI-Modell zu schreiben und auszuführen. Er ist als Terminal-Interface, Desktop-App oder IDE-Erweiterung verfügbar.",
+  "home.faq.q2": "Wie nutze ich MiMoCode?",
   "home.faq.a2.before": "Der einfachste Weg zu starten ist, die",
   "home.faq.a2.link": "Einführung zu lesen",
-  "home.faq.q3": "Brauche ich zusätzliche AI-Abos, um OpenCode zu nutzen?",
+  "home.faq.q3": "Brauche ich zusätzliche AI-Abos, um MiMoCode zu nutzen?",
   "home.faq.a3.p1":
-    "Nicht unbedingt, OpenCode kommt mit einer Reihe kostenloser Modelle, die du ohne Account nutzen kannst.",
+    "Nicht unbedingt, MiMoCode kommt mit einer Reihe kostenloser Modelle, die du ohne Account nutzen kannst.",
   "home.faq.a3.p2.beforeZen": "Abgesehen davon kannst du jedes beliebige Coding-Modell nutzen, indem du einen",
   "home.faq.a3.p2.afterZen": " Account erstellst.",
   "home.faq.a3.p3":
-    "Während wir dazu raten, Zen zu nutzen, funktioniert OpenCode auch mit allen beliebten Anbietern wie OpenAI, Anthropic, xAI etc.",
+    "Während wir dazu raten, Zen zu nutzen, funktioniert MiMoCode auch mit allen beliebten Anbietern wie OpenAI, Anthropic, xAI etc.",
   "home.faq.a3.p4.beforeLocal": "Du kannst sogar deine",
   "home.faq.a3.p4.localLink": "lokalen Modelle verbinden",
-  "home.faq.q4": "Kann ich meine bestehenden AI-Abos mit OpenCode nutzen?",
+  "home.faq.q4": "Kann ich meine bestehenden AI-Abos mit MiMoCode nutzen?",
   "home.faq.a4.p1":
-    "Ja, OpenCode unterstützt Abos von allen großen Anbietern. Du kannst deine Claude Pro/Max, ChatGPT Plus/Pro oder GitHub Copilot Abos nutzen.",
-  "home.faq.q5": "Kann ich OpenCode nur im Terminal nutzen?",
-  "home.faq.a5.beforeDesktop": "Nicht mehr! OpenCode ist jetzt als App für",
+    "Ja, MiMoCode unterstützt Abos von allen großen Anbietern. Du kannst deine Claude Pro/Max, ChatGPT Plus/Pro oder GitHub Copilot Abos nutzen.",
+  "home.faq.q5": "Kann ich MiMoCode nur im Terminal nutzen?",
+  "home.faq.a5.beforeDesktop": "Nicht mehr! MiMoCode ist jetzt als App für",
   "home.faq.a5.desktop": "Desktop",
   "home.faq.a5.and": "und",
   "home.faq.a5.web": "Web verfügbar",
-  "home.faq.q6": "Wie viel kostet OpenCode?",
+  "home.faq.q6": "Wie viel kostet MiMoCode?",
   "home.faq.a6":
-    "OpenCode ist zu 100% kostenlos. Es enthält auch eine Reihe kostenloser Modelle. Zusätzliche Kosten können entstehen, wenn du andere Anbieter verbindest.",
+    "MiMoCode ist zu 100% kostenlos. Es enthält auch eine Reihe kostenloser Modelle. Zusätzliche Kosten können entstehen, wenn du andere Anbieter verbindest.",
   "home.faq.q7": "Was ist mit Daten und Privatsphäre?",
   "home.faq.a7.p1":
     "Deine Daten und Informationen werden nur gespeichert, wenn du unsere kostenlosen Modelle nutzt oder teilbare Links erstellst.",
@@ -178,8 +177,8 @@ export const dict = {
   "home.faq.a7.p2.modelsLink": "unsere Modelle",
   "home.faq.a7.p2.and": "und",
   "home.faq.a7.p2.shareLink": "Share-Pages",
-  "home.faq.q8": "Ist OpenCode Open Source?",
-  "home.faq.a8.p1": "Ja, OpenCode ist vollständig Open Source. Der Quellcode ist öffentlich auf",
+  "home.faq.q8": "Ist MiMoCode Open Source?",
+  "home.faq.a8.p1": "Ja, MiMoCode ist vollständig Open Source. Der Quellcode ist öffentlich auf",
   "home.faq.a8.p2": "unter der",
   "home.faq.a8.mitLicense": "MIT Lizenz",
   "home.faq.a8.p3":
@@ -445,15 +444,15 @@ export const dict = {
     "Zugriff auf Modelle, die für optimale Leistung konfiguriert sind – keine Downgrades oder Routing zu billigeren Anbietern.",
   "workspace.newUser.feature.lockin.title": "Kein Lock-in",
   "workspace.newUser.feature.lockin.body":
-    "Nutze Zen mit jedem Coding-Agent und nutze weiterhin andere Anbieter mit OpenCode, wann immer du willst.",
+    "Nutze Zen mit jedem Coding-Agent und nutze weiterhin andere Anbieter mit MiMoCode, wann immer du willst.",
   "workspace.newUser.copyApiKey": "API Key kopieren",
   "workspace.newUser.copyKey": "Key kopieren",
   "workspace.newUser.copied": "Kopiert!",
   "workspace.newUser.step.enableBilling": "Abrechnung aktivieren",
   "workspace.newUser.step.login.before": "Führe",
-  "workspace.newUser.step.login.after": "aus und wähle OpenCode",
+  "workspace.newUser.step.login.after": "aus und wähle MiMoCode",
   "workspace.newUser.step.pasteKey": "Füge deinen API Key ein",
-  "workspace.newUser.step.models.before": "Starte OpenCode und führe",
+  "workspace.newUser.step.models.before": "Starte MiMoCode und führe",
   "workspace.newUser.step.models.after": "aus, um ein Modell zu wählen",
 
   "workspace.models.title": "Modelle",
@@ -499,10 +498,10 @@ export const dict = {
   "workspace.cost.subscriptionShort": "Abo",
 
   "workspace.keys.title": "API Keys",
-  "workspace.keys.subtitle": "Verwalte deine API Keys für den Zugriff auf OpenCode-Dienste.",
+  "workspace.keys.subtitle": "Verwalte deine API Keys für den Zugriff auf MiMoCode-Dienste.",
   "workspace.keys.create": "API Key erstellen",
   "workspace.keys.placeholder": "Key-Namen eingeben",
-  "workspace.keys.empty": "Erstelle einen OpenCode Gateway API Key",
+  "workspace.keys.empty": "Erstelle einen MiMoCode Gateway API Key",
   "workspace.keys.table.name": "Name",
   "workspace.keys.table.key": "Key",
   "workspace.keys.table.createdBy": "Erstellt von",
@@ -667,38 +666,38 @@ export const dict = {
   "workspace.lite.promo.otherMethods": "Andere Zahlungsmethoden",
   "workspace.lite.promo.selectMethod": "Zahlungsmethode auswählen",
 
-  "download.title": "OpenCode | Download",
-  "download.meta.description": "Lade OpenCode für macOS, Windows und Linux herunter",
-  "download.hero.title": "OpenCode herunterladen",
-  "download.hero.subtitle": "In Beta verfügbar für macOS, Windows und Linux",
+  "download.title": "MiMoCode | Download",
+  "download.meta.description": "Lade MiMoCode für macOS, Windows und Linux herunter",
+  "download.hero.title": "MiMoCode herunterladen",
+  "download.hero.subtitle": "CLI archives and install commands for macOS, Windows, and Linux",
   "download.hero.button": "Download für {{os}}",
-  "download.section.terminal": "OpenCode Terminal",
-  "download.section.desktop": "OpenCode Desktop (Beta)",
-  "download.section.extensions": "OpenCode Extensions",
-  "download.section.integrations": "OpenCode Integrationen",
+  "download.section.terminal": "MiMoCode Terminal",
+  "download.section.desktop": "MiMoCode CLI Archives",
+  "download.section.extensions": "MiMoCode Extensions",
+  "download.section.integrations": "MiMoCode Integrationen",
   "download.action.download": "Download",
   "download.action.install": "Installieren",
 
   "download.platform.macosAppleSilicon": "macOS (Apple Silicon)",
   "download.platform.macosIntel": "macOS (Intel)",
   "download.platform.windowsX64": "Windows (x64)",
-  "download.platform.linuxDeb": "Linux (.deb)",
-  "download.platform.linuxRpm": "Linux (.rpm)",
+  "download.platform.linuxDeb": "Linux x64 (.tar.gz)",
+  "download.platform.linuxRpm": "Linux arm64 (.tar.gz)",
 
   "download.faq.a3.beforeLocal":
-    "Nicht unbedingt, aber wahrscheinlich. Du brauchst ein AI-Abo, wenn du OpenCode mit einem bezahlten Anbieter verbinden willst, obwohl du mit",
+    "Nicht unbedingt, aber wahrscheinlich. Du brauchst ein AI-Abo, wenn du MiMoCode mit einem bezahlten Anbieter verbinden willst, obwohl du mit",
   "download.faq.a3.localLink": "lokalen Modellen",
   "download.faq.a3.afterLocal.beforeZen": "kostenlos arbeiten kannst. Während wir Nutzern raten,",
   "download.faq.a3.afterZen":
-    " zu nutzen, funktioniert OpenCode mit allen populären Anbietern wie OpenAI, Anthropic, xAI etc.",
+    " zu nutzen, funktioniert MiMoCode mit allen populären Anbietern wie OpenAI, Anthropic, xAI etc.",
 
-  "download.faq.a5.p1": "OpenCode ist 100% kostenlos.",
+  "download.faq.a5.p1": "MiMoCode ist 100% kostenlos.",
   "download.faq.a5.p2.beforeZen":
-    "Zusätzliche Kosten entstehen durch dein Abo bei einem Modellanbieter. Während OpenCode mit jedem Modellanbieter funktioniert, empfehlen wir",
+    "Zusätzliche Kosten entstehen durch dein Abo bei einem Modellanbieter. Während MiMoCode mit jedem Modellanbieter funktioniert, empfehlen wir",
   "download.faq.a5.p2.afterZen": " zu nutzen.",
 
   "download.faq.a6.p1":
-    "Deine Daten und Informationen werden nur gespeichert, wenn du teilbare Links in OpenCode erstellst.",
+    "Deine Daten und Informationen werden nur gespeichert, wenn du teilbare Links in MiMoCode erstellst.",
   "download.faq.a6.p2.beforeShare": "Erfahre mehr über",
   "download.faq.a6.shareLink": "Share-Pages",
 

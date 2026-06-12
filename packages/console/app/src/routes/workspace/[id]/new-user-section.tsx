@@ -92,7 +92,7 @@ export function NewUserSection() {
           <ol>
             <li>{i18n.t("workspace.newUser.step.enableBilling")}</li>
             <li>
-              {i18n.t("workspace.newUser.step.login.before")} <code>opencode auth login</code>{" "}
+              {i18n.t("workspace.newUser.step.login.before")} <code>mimo auth login</code>{" "}
               {i18n.t("workspace.newUser.step.login.after")}
             </li>
             <li>{i18n.t("workspace.newUser.step.pasteKey")}</li>

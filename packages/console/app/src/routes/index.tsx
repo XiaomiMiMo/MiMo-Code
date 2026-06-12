@@ -101,12 +101,6 @@ export default function Home() {
                   <Tabs.Trigger value="bun" data-slot="tab">
                     bun
                   </Tabs.Trigger>
-                  <Tabs.Trigger value="brew" data-slot="tab">
-                    brew
-                  </Tabs.Trigger>
-                  <Tabs.Trigger value="paru" data-slot="tab">
-                    paru
-                  </Tabs.Trigger>
                   <Tabs.Indicator />
                 </Tabs.List>
                 <div data-slot="panels">
@@ -115,7 +109,7 @@ export default function Home() {
                       <span data-slot="command-script">
                         <span>curl -fsSL </span>
                         <span data-slot="protocol">https://</span>
-                        <span data-slot="highlight">opencode.ai/install</span>
+                        <span data-slot="highlight">mimo.xiaomi.com/install</span>
                         <span> | bash</span>
                       </span>
                       <CopyStatus />
@@ -125,7 +119,7 @@ export default function Home() {
                     <button data-copy data-slot="command" onClick={handleCopyClick}>
                       <span>
                         <span data-slot="protocol">npm i -g </span>
-                        <span data-slot="highlight">opencode-ai</span>
+                        <span data-slot="highlight">@mimo-ai/cli</span>
                       </span>
                       <CopyStatus />
                     </button>
@@ -134,25 +128,7 @@ export default function Home() {
                     <button data-copy data-slot="command" onClick={handleCopyClick}>
                       <span>
                         <span data-slot="protocol">bun add -g </span>
-                        <span data-slot="highlight">opencode-ai</span>
-                      </span>
-                      <CopyStatus />
-                    </button>
-                  </Tabs.Content>
-                  <Tabs.Content as="pre" data-slot="panel" value="brew">
-                    <button data-copy data-slot="command" onClick={handleCopyClick}>
-                      <span>
-                        <span data-slot="protocol">brew install </span>
-                        <span data-slot="highlight">anomalyco/tap/opencode</span>
-                      </span>
-                      <CopyStatus />
-                    </button>
-                  </Tabs.Content>
-                  <Tabs.Content as="pre" data-slot="panel" value="paru">
-                    <button data-copy data-slot="command" onClick={handleCopyClick}>
-                      <span>
-                        <span data-slot="protocol">paru -S </span>
-                        <span data-slot="highlight">opencode</span>
+                        <span data-slot="highlight">@mimo-ai/cli</span>
                       </span>
                       <CopyStatus />
                     </button>

@@ -5,6 +5,7 @@ import logoLight from "../asset/logo-ornate-light.svg"
 import logoDark from "../asset/logo-ornate-dark.svg"
 import { useI18n } from "~/context/i18n"
 import { useLanguage } from "~/context/language"
+import { config } from "~/config"
 
 export default function NotFound() {
   const i18n = useI18n()
@@ -30,7 +31,7 @@ export default function NotFound() {
             <a href={language.route("/docs")}>{i18n.t("notFound.docs")}</a>
           </div>
           <div data-slot="action">
-            <a href="https://github.com/anomalyco/opencode">{i18n.t("notFound.github")}</a>
+            <a href={config.github.repoUrl}>{i18n.t("notFound.github")}</a>
           </div>
           <div data-slot="action">
             <a href={language.route("/discord")}>{i18n.t("notFound.discord")}</a>

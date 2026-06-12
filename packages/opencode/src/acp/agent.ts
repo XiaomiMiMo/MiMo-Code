@@ -40,11 +40,8 @@ import { Provider } from "../provider"
 import { ModelID, ProviderID } from "../provider/schema"
 import { Agent as AgentModule } from "../agent/agent"
 import { AppRuntime } from "@/effect/app-runtime"
-import { Installation } from "@/installation"
 import { MessageV2 } from "@/session/message-v2"
-import { Config } from "@/config"
 import { ConfigMCP } from "@/config/mcp"
-import { z } from "zod"
 import { LoadAPIKeyError } from "ai"
 import type { AssistantMessage, Event, OpencodeClient, SessionMessageResponse, ToolPart } from "@mimo-ai/sdk/v2"
 import { applyPatch } from "diff"
@@ -505,8 +502,8 @@ export class Agent implements ACPAgent {
     log.info("initialize", { protocolVersion: params.protocolVersion })
 
     const authMethod: AuthMethod = {
-      description: "Run `opencode auth login` in the terminal",
-      name: "Login with opencode",
+      description: "Run `mimo auth login` in the terminal",
+      name: "Login with mimocode",
       id: "opencode-login",
     }
 
@@ -514,9 +511,9 @@ export class Agent implements ACPAgent {
     if (params.clientCapabilities?._meta?.["terminal-auth"] === true) {
       authMethod._meta = {
         "terminal-auth": {
-          command: "opencode",
+          command: "mimo",
           args: ["auth", "login"],
-          label: "OpenCode Login",
+          label: "MiMoCode Login",
         },
       }
     }
@@ -541,7 +538,7 @@ export class Agent implements ACPAgent {
       },
       authMethods: [authMethod],
       agentInfo: {
-        name: "OpenCode",
+        name: "MiMoCode",
         version: InstallationVersion,
       },
     }

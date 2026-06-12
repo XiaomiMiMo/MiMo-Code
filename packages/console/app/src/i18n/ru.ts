@@ -15,7 +15,7 @@ export const dict = {
   "nav.home": "Главная",
   "nav.openMenu": "Открыть меню",
   "nav.getStartedFree": "Начать бесплатно",
-  "nav.logoAlt": "OpenCode",
+  "nav.logoAlt": "MiMoCode",
 
   "nav.context.copyLogo": "Скопировать логотип как SVG",
   "nav.context.copyWordmark": "Скопировать название как SVG",
@@ -24,8 +24,7 @@ export const dict = {
   "footer.github": "GitHub",
   "footer.docs": "Документация",
   "footer.changelog": "Список изменений",
-  "footer.discord": "Discord",
-  "footer.x": "X",
+  "footer.issues": "Issues",
 
   "legal.brand": "Бренд",
   "legal.privacy": "Конфиденциальность",
@@ -37,14 +36,14 @@ export const dict = {
   "email.subscribe": "Подписаться",
   "email.success": "Почти готово, проверьте почту и подтвердите ваш email",
 
-  "notFound.title": "Не найдено | opencode",
+  "notFound.title": "Не найдено | MiMoCode",
   "notFound.heading": "404 - Страница не найдена",
   "notFound.home": "Главная",
   "notFound.docs": "Документация",
   "notFound.github": "GitHub",
   "notFound.discord": "Discord",
-  "notFound.logoLightAlt": "светлый логотип opencode",
-  "notFound.logoDarkAlt": "темный логотип opencode",
+  "notFound.logoLightAlt": "светлый логотип MiMoCode",
+  "notFound.logoDarkAlt": "темный логотип MiMoCode",
 
   "user.logout": "Выйти",
 
@@ -81,25 +80,25 @@ export const dict = {
   "error.reloadAmountMin": "Сумма пополнения должна быть не менее ${{amount}}",
   "error.reloadTriggerMin": "Порог баланса должен быть не менее ${{amount}}",
 
-  "app.meta.description": "OpenCode - AI-агент с открытым кодом для программирования.",
+  "app.meta.description": "MiMoCode - AI-агент с открытым кодом для программирования.",
 
-  "home.title": "OpenCode | AI-агент с открытым кодом для программирования",
+  "home.title": "MiMoCode | AI-агент с открытым кодом для программирования",
 
-  "temp.title": "opencode | AI-агент для программирования в терминале",
+  "temp.title": "MiMoCode | AI-агент для программирования в терминале",
   "temp.hero.title": "AI-агент для программирования в терминале",
-  "temp.zen": "opencode zen",
+  "temp.zen": "OpenCode Zen",
   "temp.getStarted": "Начать",
   "temp.feature.native.title": "Нативный TUI",
   "temp.feature.native.body": "Отзывчивый, нативный, темизируемый терминальный интерфейс",
   "temp.feature.zen.beforeLink": "",
   "temp.feature.zen.link": "Отобранный список моделей",
-  "temp.feature.zen.afterLink": "от opencode",
+  "temp.feature.zen.afterLink": "от OpenCode",
   "temp.feature.models.beforeLink": "Поддерживает 75+ провайдеров LLM через",
   "temp.feature.models.afterLink": ", включая локальные модели",
-  "temp.screenshot.caption": "OpenCode TUI с темой tokyonight",
-  "temp.screenshot.alt": "OpenCode TUI с темой tokyonight",
-  "temp.logoLightAlt": "светлый логотип opencode",
-  "temp.logoDarkAlt": "темный логотип opencode",
+  "temp.screenshot.caption": "MiMoCode TUI с темой tokyonight",
+  "temp.screenshot.alt": "MiMoCode TUI с темой tokyonight",
+  "temp.logoLightAlt": "светлый логотип MiMoCode",
+  "temp.logoDarkAlt": "темный логотип MiMoCode",
 
   "home.banner.badge": "Новое",
   "home.banner.text": "Доступно десктопное приложение (бета)",
@@ -113,9 +112,9 @@ export const dict = {
 
   "home.install.ariaLabel": "Варианты установки",
 
-  "home.what.title": "Что такое OpenCode?",
+  "home.what.title": "Что такое MiMoCode?",
   "home.what.body":
-    "OpenCode — это агент с открытым исходным кодом, который помогает писать код в терминале, IDE или на десктопе.",
+    "MiMoCode — это агент с открытым исходным кодом, который помогает писать код в терминале, IDE или на десктопе.",
   "home.what.lsp.title": "Поддержка LSP",
   "home.what.lsp.body": "Автоматически загружает нужные LSP для LLM",
   "home.what.multiSession.title": "Мульти-сессии",
@@ -134,44 +133,44 @@ export const dict = {
 
   "home.growth.title": "AI-агент с открытым кодом для программирования",
   "home.growth.body":
-    "С более чем <strong>{{stars}}</strong> звезд на GitHub, <strong>{{contributors}}</strong> контрибьюторов и <strong>{{commits}}</strong> коммитов, OpenCode доверяют более <strong>{{monthlyUsers}}</strong> разработчиков ежемесячно.",
+    "С более чем <strong>{{stars}}</strong> звезд на GitHub, <strong>{{contributors}}</strong> контрибьюторов и <strong>{{commits}}</strong> коммитов, MiMoCode доверяют более <strong>{{monthlyUsers}}</strong> разработчиков ежемесячно.",
   "home.growth.githubStars": "Звезд на GitHub",
   "home.growth.contributors": "Контрибьюторов",
   "home.growth.monthlyDevs": "Разработчиков в месяц",
 
   "home.privacy.title": "Создан с заботой о приватности",
   "home.privacy.body":
-    "OpenCode не хранит ваш код или контекстные данные, поэтому он может работать в средах, чувствительных к приватности.",
+    "MiMoCode не хранит ваш код или контекстные данные, поэтому он может работать в средах, чувствительных к приватности.",
   "home.privacy.learnMore": "Подробнее о",
   "home.privacy.link": "приватности",
 
-  "home.faq.q1": "Что такое OpenCode?",
+  "home.faq.q1": "Что такое MiMoCode?",
   "home.faq.a1":
-    "OpenCode — это агент с открытым исходным кодом, который помогает писать и запускать код с любой AI-моделью. Доступен как терминальный интерфейс, десктопное приложение или расширение для IDE.",
-  "home.faq.q2": "Как использовать OpenCode?",
+    "MiMoCode — это агент с открытым исходным кодом, который помогает писать и запускать код с любой AI-моделью. Доступен как терминальный интерфейс, десктопное приложение или расширение для IDE.",
+  "home.faq.q2": "Как использовать MiMoCode?",
   "home.faq.a2.before": "Проще всего начать с чтения",
   "home.faq.a2.link": "введения",
-  "home.faq.q3": "Нужны ли дополнительные подписки на AI для использования OpenCode?",
+  "home.faq.q3": "Нужны ли дополнительные подписки на AI для использования MiMoCode?",
   "home.faq.a3.p1":
-    "Не обязательно, OpenCode поставляется с набором бесплатных моделей, которые можно использовать без создания аккаунта.",
+    "Не обязательно, MiMoCode поставляется с набором бесплатных моделей, которые можно использовать без создания аккаунта.",
   "home.faq.a3.p2.beforeZen":
     "Помимо этого, вы можете использовать любые популярные модели для кодинга, создав аккаунт",
   "home.faq.a3.p2.afterZen": ".",
   "home.faq.a3.p3":
-    "Хотя мы рекомендуем использовать Zen, OpenCode также работает со всеми популярными провайдерами, такими как OpenAI, Anthropic, xAI и др.",
+    "Хотя мы рекомендуем использовать Zen, MiMoCode также работает со всеми популярными провайдерами, такими как OpenAI, Anthropic, xAI и др.",
   "home.faq.a3.p4.beforeLocal": "Вы даже можете подключить ваши",
   "home.faq.a3.p4.localLink": "локальные модели",
-  "home.faq.q4": "Могу ли я использовать мои существующие AI-подписки с OpenCode?",
+  "home.faq.q4": "Могу ли я использовать мои существующие AI-подписки с MiMoCode?",
   "home.faq.a4.p1":
-    "Да, OpenCode поддерживает подписки всех основных провайдеров. Вы можете использовать ваши подписки Claude Pro/Max, ChatGPT Plus/Pro или GitHub Copilot.",
-  "home.faq.q5": "Можно ли использовать OpenCode только в терминале?",
-  "home.faq.a5.beforeDesktop": "Больше нет! OpenCode теперь доступен как приложение для",
+    "Да, MiMoCode поддерживает подписки всех основных провайдеров. Вы можете использовать ваши подписки Claude Pro/Max, ChatGPT Plus/Pro или GitHub Copilot.",
+  "home.faq.q5": "Можно ли использовать MiMoCode только в терминале?",
+  "home.faq.a5.beforeDesktop": "Больше нет! MiMoCode теперь доступен как приложение для",
   "home.faq.a5.desktop": "десктопа",
   "home.faq.a5.and": "и",
   "home.faq.a5.web": "веба",
-  "home.faq.q6": "Сколько стоит OpenCode?",
+  "home.faq.q6": "Сколько стоит MiMoCode?",
   "home.faq.a6":
-    "OpenCode на 100% бесплатен. Он также включает набор бесплатных моделей. Дополнительные расходы могут возникнуть, если вы подключите другого провайдера.",
+    "MiMoCode на 100% бесплатен. Он также включает набор бесплатных моделей. Дополнительные расходы могут возникнуть, если вы подключите другого провайдера.",
   "home.faq.q7": "Как насчет данных и приватности?",
   "home.faq.a7.p1":
     "Ваши данные сохраняются только тогда, когда вы используете наши бесплатные модели или создаете ссылки для шеринга.",
@@ -179,8 +178,8 @@ export const dict = {
   "home.faq.a7.p2.modelsLink": "наших моделях",
   "home.faq.a7.p2.and": "и",
   "home.faq.a7.p2.shareLink": "страницах шеринга",
-  "home.faq.q8": "OpenCode — это open source?",
-  "home.faq.a8.p1": "Да, OpenCode полностью open source. Исходный код доступен публично на",
+  "home.faq.q8": "MiMoCode — это open source?",
+  "home.faq.a8.p1": "Да, MiMoCode полностью open source. Исходный код доступен публично на",
   "home.faq.a8.p2": "под",
   "home.faq.a8.mitLicense": "лицензией MIT",
   "home.faq.a8.p3":
@@ -449,15 +448,15 @@ export const dict = {
     "Доступ к моделям, настроенным для оптимальной производительности — никаких даунгрейдов или перенаправления к дешевым провайдерам.",
   "workspace.newUser.feature.lockin.title": "Без привязки (Lock-in)",
   "workspace.newUser.feature.lockin.body":
-    "Используйте Zen с любым кодинг-агентом и продолжайте использовать других провайдеров с opencode, когда захотите.",
+    "Используйте Zen с любым кодинг-агентом и продолжайте использовать других провайдеров с MiMoCode, когда захотите.",
   "workspace.newUser.copyApiKey": "Копировать API ключ",
   "workspace.newUser.copyKey": "Копировать ключ",
   "workspace.newUser.copied": "Скопировано!",
   "workspace.newUser.step.enableBilling": "Включить оплату",
   "workspace.newUser.step.login.before": "Запустите",
-  "workspace.newUser.step.login.after": "и выберите opencode",
+  "workspace.newUser.step.login.after": "и выберите MiMoCode",
   "workspace.newUser.step.pasteKey": "Вставьте ваш API ключ",
-  "workspace.newUser.step.models.before": "Запустите opencode и выполните",
+  "workspace.newUser.step.models.before": "Запустите MiMoCode и выполните",
   "workspace.newUser.step.models.after": "для выбора модели",
 
   "workspace.models.title": "Модели",
@@ -504,10 +503,10 @@ export const dict = {
   "workspace.cost.subscriptionShort": "подписка",
 
   "workspace.keys.title": "API Ключи",
-  "workspace.keys.subtitle": "Управляйте вашими API ключами для доступа к сервисам opencode.",
+  "workspace.keys.subtitle": "Управляйте вашими API ключами для доступа к сервисам MiMoCode.",
   "workspace.keys.create": "Создать API ключ",
   "workspace.keys.placeholder": "Введите название ключа",
-  "workspace.keys.empty": "Создайте API ключ для шлюза opencode",
+  "workspace.keys.empty": "Создайте API ключ для шлюза MiMoCode",
   "workspace.keys.table.name": "Название",
   "workspace.keys.table.key": "Ключ",
   "workspace.keys.table.createdBy": "Создан",
@@ -672,37 +671,37 @@ export const dict = {
   "workspace.lite.promo.otherMethods": "Другие способы оплаты",
   "workspace.lite.promo.selectMethod": "Выберите способ оплаты",
 
-  "download.title": "OpenCode | Скачать",
-  "download.meta.description": "Скачать OpenCode для macOS, Windows и Linux",
-  "download.hero.title": "Скачать OpenCode",
-  "download.hero.subtitle": "Доступна бета для macOS, Windows и Linux",
+  "download.title": "MiMoCode | Скачать",
+  "download.meta.description": "Скачать MiMoCode для macOS, Windows и Linux",
+  "download.hero.title": "Скачать MiMoCode",
+  "download.hero.subtitle": "CLI archives and install commands for macOS, Windows, and Linux",
   "download.hero.button": "Скачать для {{os}}",
-  "download.section.terminal": "OpenCode Terminal",
-  "download.section.desktop": "OpenCode Desktop (Beta)",
-  "download.section.extensions": "Расширения OpenCode",
-  "download.section.integrations": "Интеграции OpenCode",
+  "download.section.terminal": "MiMoCode Terminal",
+  "download.section.desktop": "MiMoCode CLI Archives",
+  "download.section.extensions": "Расширения MiMoCode",
+  "download.section.integrations": "Интеграции MiMoCode",
   "download.action.download": "Скачать",
   "download.action.install": "Установить",
 
   "download.platform.macosAppleSilicon": "macOS (Apple Silicon)",
   "download.platform.macosIntel": "macOS (Intel)",
   "download.platform.windowsX64": "Windows (x64)",
-  "download.platform.linuxDeb": "Linux (.deb)",
-  "download.platform.linuxRpm": "Linux (.rpm)",
+  "download.platform.linuxDeb": "Linux x64 (.tar.gz)",
+  "download.platform.linuxRpm": "Linux arm64 (.tar.gz)",
 
   "download.faq.a3.beforeLocal":
-    "Не обязательно, но возможно. Вам понадобится AI подписка, если вы хотите подключить OpenCode к платному провайдеру, хотя вы можете работать с",
+    "Не обязательно, но возможно. Вам понадобится AI подписка, если вы хотите подключить MiMoCode к платному провайдеру, хотя вы можете работать с",
   "download.faq.a3.localLink": "локальными моделями",
   "download.faq.a3.afterLocal.beforeZen": "бесплатно. Хотя мы рекомендуем использовать",
   "download.faq.a3.afterZen":
-    ", OpenCode работает со всеми популярными провайдерами, такими как OpenAI, Anthropic, xAI и др.",
+    ", MiMoCode работает со всеми популярными провайдерами, такими как OpenAI, Anthropic, xAI и др.",
 
-  "download.faq.a5.p1": "OpenCode на 100% бесплатен.",
+  "download.faq.a5.p1": "MiMoCode на 100% бесплатен.",
   "download.faq.a5.p2.beforeZen":
-    "Любые дополнительные расходы будут связаны с вашей подпиской у провайдера моделей. Хотя OpenCode работает с любым провайдером моделей, мы рекомендуем использовать",
+    "Любые дополнительные расходы будут связаны с вашей подпиской у провайдера моделей. Хотя MiMoCode работает с любым провайдером моделей, мы рекомендуем использовать",
   "download.faq.a5.p2.afterZen": ".",
 
-  "download.faq.a6.p1": "Ваши данные и информация сохраняются только при создании ссылок для шеринга в OpenCode.",
+  "download.faq.a6.p1": "Ваши данные и информация сохраняются только при создании ссылок для шеринга в MiMoCode.",
   "download.faq.a6.p2.beforeShare": "Подробнее о",
   "download.faq.a6.shareLink": "страницах шеринга",
 

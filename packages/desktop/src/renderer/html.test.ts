@@ -38,6 +38,12 @@ describe("electron renderer html", () => {
         const content = await html(name)
         expect(content).not.toContain('rel="manifest"')
       })
+
+      test("document title uses MiMoCode branding", async () => {
+        const content = await html(name)
+        expect(content).toContain("<title>MiMoCode</title>")
+        expect(content).not.toContain("<title>OpenCode</title>")
+      })
     })
   }
 })

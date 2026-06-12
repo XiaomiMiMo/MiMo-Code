@@ -44,7 +44,7 @@ export const ProjectIcon = (props: { project: LocalProject; class?: string; noti
           fallback={name()}
           src={
             props.project.id === OPENCODE_PROJECT_ID
-              ? "https://opencode.ai/favicon.svg"
+              ? "/favicon.svg"
               : props.project.icon?.override || props.project.icon?.url
           }
           {...getAvatarColors(props.project.icon?.color)}

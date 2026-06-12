@@ -25,9 +25,10 @@ const channel = (() => {
   if (raw === "dev" || raw === "beta" || raw === "prod") return raw
   return "dev"
 })()
+const artifactPrefix = channel === "beta" ? "mimocode-desktop-beta" : "mimocode-desktop"
 
 const getBase = (): Configuration => ({
-  artifactName: "opencode-desktop-${os}-${arch}.${ext}",
+  artifactName: `${artifactPrefix}-\${os}-\${arch}.\${ext}`,
   directories: {
     output: "dist",
     buildResources: "resources",
@@ -54,7 +55,7 @@ const getBase = (): Configuration => ({
     sign: true,
   },
   protocols: {
-    name: "OpenCode",
+    name: "MiMoCode",
     schemes: ["opencode"],
   },
   win: {
@@ -85,7 +86,7 @@ function getConfig() {
       return {
         ...base,
         appId: "ai.opencode.desktop.dev",
-        productName: "OpenCode Dev",
+        productName: "MiMoCode Dev",
         rpm: { packageName: "opencode-dev" },
       }
     }
@@ -93,9 +94,9 @@ function getConfig() {
       return {
         ...base,
         appId: "ai.opencode.desktop.beta",
-        productName: "OpenCode Beta",
-        protocols: { name: "OpenCode Beta", schemes: ["opencode"] },
-        publish: { provider: "github", owner: "anomalyco", repo: "opencode-beta", channel: "latest" },
+        productName: "MiMoCode Beta",
+        protocols: { name: "MiMoCode Beta", schemes: ["opencode"] },
+        publish: { provider: "github", owner: "XiaomiMiMo", repo: "MiMo-Code", channel: "beta" },
         rpm: { packageName: "opencode-beta" },
       }
     }
@@ -103,12 +104,19 @@ function getConfig() {
       return {
         ...base,
         appId: "ai.opencode.desktop",
-        productName: "OpenCode",
-        protocols: { name: "OpenCode", schemes: ["opencode"] },
-        publish: { provider: "github", owner: "anomalyco", repo: "opencode", channel: "latest" },
+        productName: "MiMoCode",
+        protocols: { name: "MiMoCode", schemes: ["opencode"] },
+        publish: { provider: "github", owner: "XiaomiMiMo", repo: "MiMo-Code", channel: "latest" },
         rpm: { packageName: "opencode" },
       }
     }
+  }
+
+  return {
+    ...base,
+    appId: "ai.opencode.desktop.dev",
+    productName: "MiMoCode Dev",
+    rpm: { packageName: "opencode-dev" },
   }
 }
 

@@ -1,36 +1,36 @@
-id = "opencode"
-name = "OpenCode"
+id = "mimocode"
+name = "MiMoCode"
 description = "The open source coding agent."
-version = "1.14.19"
+version = "0.1.0"
 schema_version = 1
-authors = ["Anomaly"]
-repository = "https://github.com/anomalyco/opencode"
+authors = ["XiaomiMiMo"]
+repository = "https://github.com/XiaomiMiMo/MiMo-Code"
 
-[agent_servers.opencode]
-name = "OpenCode"
+[agent_servers.mimocode]
+name = "MiMoCode"
 icon = "./icons/opencode.svg"
 
-[agent_servers.opencode.targets.darwin-aarch64]
-archive = "https://github.com/anomalyco/opencode/releases/download/v1.14.19/opencode-darwin-arm64.zip"
-cmd = "./opencode"
+[agent_servers.mimocode.targets.darwin-aarch64]
+archive = "https://github.com/XiaomiMiMo/MiMo-Code/releases/download/v0.1.0/mimocode-darwin-arm64.zip"
+cmd = "./mimo"
 args = ["acp"]
 
-[agent_servers.opencode.targets.darwin-x86_64]
-archive = "https://github.com/anomalyco/opencode/releases/download/v1.14.19/opencode-darwin-x64.zip"
-cmd = "./opencode"
+[agent_servers.mimocode.targets.darwin-x86_64]
+archive = "https://github.com/XiaomiMiMo/MiMo-Code/releases/download/v0.1.0/mimocode-darwin-x64.zip"
+cmd = "./mimo"
 args = ["acp"]
 
-[agent_servers.opencode.targets.linux-aarch64]
-archive = "https://github.com/anomalyco/opencode/releases/download/v1.14.19/opencode-linux-arm64.tar.gz"
-cmd = "./opencode"
+[agent_servers.mimocode.targets.linux-aarch64]
+archive = "https://github.com/XiaomiMiMo/MiMo-Code/releases/download/v0.1.0/mimocode-linux-arm64.tar.gz"
+cmd = "./mimo"
 args = ["acp"]
 
-[agent_servers.opencode.targets.linux-x86_64]
-archive = "https://github.com/anomalyco/opencode/releases/download/v1.14.19/opencode-linux-x64.tar.gz"
-cmd = "./opencode"
+[agent_servers.mimocode.targets.linux-x86_64]
+archive = "https://github.com/XiaomiMiMo/MiMo-Code/releases/download/v0.1.0/mimocode-linux-x64.tar.gz"
+cmd = "./mimo"
 args = ["acp"]
 
-[agent_servers.opencode.targets.windows-x86_64]
-archive = "https://github.com/anomalyco/opencode/releases/download/v1.14.19/opencode-windows-x64.zip"
-cmd = "./opencode.exe"
+[agent_servers.mimocode.targets.windows-x86_64]
+archive = "https://github.com/XiaomiMiMo/MiMo-Code/releases/download/v0.1.0/mimocode-windows-x64.zip"
+cmd = "./mimo.exe"
 args = ["acp"]

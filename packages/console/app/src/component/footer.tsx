@@ -12,7 +12,7 @@ export function Footer() {
     const locale = language.locale()
     return locale === "zh" || locale === "zht"
       ? ({ key: "footer.feishu", link: language.route("/feishu") } as const)
-      : ({ key: "footer.discord", link: language.route("/discord") } as const)
+      : ({ key: "footer.issues", link: config.social.issues } as const)
   })
   const githubData = createAsync(() => github())
   const starCount = createMemo(() =>
@@ -39,9 +39,6 @@ export function Footer() {
       </div>
       <div data-slot="cell">
         <a href={community().link}>{i18n.t(community().key)}</a>
-      </div>
-      <div data-slot="cell">
-        <a href={config.social.twitter}>{i18n.t("footer.x")}</a>
       </div>
     </footer>
   )

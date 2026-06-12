@@ -114,6 +114,20 @@ describe("formatServerError", () => {
     )
   })
 
+  test("uses MiMoCode config name in default provider/model fallback", () => {
+    const error = {
+      name: "ProviderModelNotFoundError",
+      data: {
+        providerID: "openai",
+        modelID: "gpt-4.1",
+      },
+    } satisfies ProviderModelNotFoundError
+
+    expect(formatServerError(error)).toBe(
+      ["Model not found: openai/gpt-4.1", "Check your config (mimocode.json) provider/model names"].join("\n"),
+    )
+  })
+
   test("formats provider model suggestions", () => {
     const error = {
       name: "ProviderModelNotFoundError",
