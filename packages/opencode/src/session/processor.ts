@@ -16,6 +16,7 @@ import { PartID } from "./schema"
 import type { SessionID } from "./schema"
 import { SessionRetry } from "./retry"
 import { LoopDetector, OutputLoopError } from "./loop-detector"
+import { TuiEvent } from "@/cli/cmd/tui/event"
 import { SessionStatus } from "./status"
 import { SessionSummary } from "./summary"
 import type { Provider } from "@/provider"
@@ -737,13 +738,18 @@ export const layer: Layer.Layer<
                 const attempt = yield* Ref.updateAndGet(loopAttempts, (n) => n + 1)
                 if (attempt > OUTPUT_LOOP_RETRY_LIMIT) return
                 slog.warn("retrying after model output loop", { attempt })
+                // The retry restarts the stream immediately, which flips the
+                // session status back to "busy" before a "retry" status could
+                // render — a toast survives that transition.
                 if (isMain)
-                  yield* status.set(ctx.sessionID, {
-                    type: "retry",
-                    attempt,
-                    message: "Model output entered a loop",
-                    next: Date.now(),
-                  })
+                  yield* bus
+                    .publish(TuiEvent.ToastShow, {
+                      title: "Loop detected",
+                      message: `Model output entered a loop — retrying (attempt ${attempt}/${OUTPUT_LOOP_RETRY_LIMIT})`,
+                      variant: "warning",
+                      duration: 6000,
+                    })
+                    .pipe(Effect.ignore)
               }),
             ),
             Effect.retry({
