@@ -1,5 +1,5 @@
 import { BoxRenderable, RGBA, TextareaRenderable, MouseEvent, PasteEvent, decodePasteBytes } from "@opentui/core"
-import { createEffect, createMemo, onMount, createSignal, onCleanup, on, Show, Switch, Match } from "solid-js"
+import { createEffect, createMemo, createResource, onMount, createSignal, onCleanup, on, Show, Switch, Match } from "solid-js"
 import "opentui-spinner/solid"
 import path from "path"
 import { fileURLToPath } from "url"
@@ -44,6 +44,7 @@ import { DialogSkill } from "../dialog-skill"
 import { DialogWorkspaceCreate, restoreWorkspaceSession } from "../dialog-workspace-create"
 import { DialogWorkspaceUnavailable } from "../dialog-workspace-unavailable"
 import { useArgs } from "@tui/context/args"
+import { skillCommandOptions } from "../skill-command"
 
 export type PromptProps = {
   sessionID?: string
@@ -131,6 +132,10 @@ export function Prompt(props: PromptProps) {
     activeVoice ? (activeVoice.pending > 0 ? "processing" : "listening") : "idle",
   )
   const [voiceElapsed, setVoiceElapsed] = createSignal(0)
+  const [skills] = createResource(async () => {
+    const result = await sdk.client.app.skills()
+    return result.data ?? []
+  })
 
   let voiceTimer: ReturnType<typeof setInterval> | undefined
   let voiceSegmentStart = 0
@@ -166,6 +171,16 @@ export function Prompt(props: PromptProps) {
       input.gotoBufferEnd()
       renderer.requestRender()
     }, 0)
+  }
+
+  function selectSkillPrompt(skill: string) {
+    const next = `/${skill} `
+    input.setText(next)
+    setStore("prompt", {
+      input: next,
+      parts: [],
+    })
+    input.gotoBufferEnd()
   }
 
   function voiceSetText(text: string) {
@@ -511,6 +526,13 @@ export function Prompt(props: PromptProps) {
     }
   })
 
+  command.register(() =>
+    skillCommandOptions(skills() ?? [], {
+      isCompose: local.agent.current()?.name === "compose",
+      onSelect: selectSkillPrompt,
+    }),
+  )
+
   command.register(() => {
     return [
       {
@@ -677,14 +699,7 @@ export function Prompt(props: PromptProps) {
         onSelect: () => {
           dialog.replace(() => (
             <DialogSkill
-              onSelect={(skill) => {
-                input.setText(`/${skill} `)
-                setStore("prompt", {
-                  input: `/${skill} `,
-                  parts: [],
-                })
-                input.gotoBufferEnd()
-              }}
+              onSelect={selectSkillPrompt}
             />
           ))
         },
