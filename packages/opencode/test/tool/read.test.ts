@@ -407,6 +407,17 @@ describe("tool.read truncation", () => {
     }),
   )
 
+  it.live("rejects unsupported image formats instead of attaching them", () =>
+    Effect.gen(function* () {
+      const dir = yield* tmpdirScoped()
+      yield* put(path.join(dir, "icon.ico"), Buffer.from([0x00, 0x00, 0x01, 0x00, 0x01, 0x00]))
+
+      const err = yield* fail(dir, { filePath: path.join(dir, "icon.ico") })
+      expect(err.message).toContain("Unsupported image format:")
+      expect(err.message).toContain("Supported formats: bmp, gif, png, jpeg, webp")
+    }),
+  )
+
   it.live("large image files are properly attached without error", () =>
     Effect.gen(function* () {
       const result = yield* exec(FIXTURES_DIR, { filePath: path.join(FIXTURES_DIR, "large-image.png") })
