@@ -20,15 +20,25 @@ export function client<T extends Definition>(target: {
   postMessage: (data: string) => void | null
   onmessage: ((this: Worker, ev: MessageEvent<any>) => any) | null
 }) {
-  const pending = new Map<number, (result: any) => void>()
+  const pending = new Map<number, { resolve: (result: any) => void; reject: (err: Error) => void }>()
   const listeners = new Map<string, Set<(data: any) => void>>()
   let id = 0
+  let closed = false
+
+  const rejectAll = (reason: string) => {
+    closed = true
+    for (const [requestId, { reject }] of pending) {
+      reject(new Error(reason))
+      pending.delete(requestId)
+    }
+  }
+
   target.onmessage = async (evt) => {
     const parsed = JSON.parse(evt.data)
     if (parsed.type === "rpc.result") {
-      const resolve = pending.get(parsed.id)
-      if (resolve) {
-        resolve(parsed.result)
+      const entry = pending.get(parsed.id)
+      if (entry) {
+        entry.resolve(parsed.result)
         pending.delete(parsed.id)
       }
     }
@@ -41,11 +51,26 @@ export function client<T extends Definition>(target: {
       }
     }
   }
+
   return {
-    call<Method extends keyof T>(method: Method, input: Parameters<T[Method]>[0]): Promise<ReturnType<T[Method]>> {
+    call<Method extends keyof T>(method: Method, input: Parameters<T[Method]>[0], timeoutMs = 300_000): Promise<ReturnType<T[Method]>> {
+      if (closed) return Promise.reject(new Error("RPC client closed"))
       const requestId = id++
-      return new Promise((resolve) => {
-        pending.set(requestId, resolve)
+      return new Promise((resolve, reject) => {
+        const timer = setTimeout(() => {
+          pending.delete(requestId)
+          reject(new Error(`RPC call "${String(method)}" timed out after ${timeoutMs}ms`))
+        }, timeoutMs)
+        pending.set(requestId, {
+          resolve: (result: any) => {
+            clearTimeout(timer)
+            resolve(result)
+          },
+          reject: (err: Error) => {
+            clearTimeout(timer)
+            reject(err)
+          },
+        })
         target.postMessage(JSON.stringify({ type: "rpc.request", method, input, id: requestId }))
       })
     },
@@ -59,6 +84,9 @@ export function client<T extends Definition>(target: {
       return () => {
         handlers!.delete(handler)
       }
+    },
+    close() {
+      rejectAll("RPC client closed")
     },
   }
 }
