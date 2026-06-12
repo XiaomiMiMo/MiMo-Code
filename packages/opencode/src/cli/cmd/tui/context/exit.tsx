@@ -60,6 +60,9 @@ export const { use: useExit, provider: ExitProvider } = createSimpleContext({
       },
     )
     process.on("SIGHUP", () => exit())
+    process.on("SIGINT", () => exit())
+    process.on("SIGTERM", () => exit())
+    process.on("beforeExit", () => exit())
     return exit
   },
 })
