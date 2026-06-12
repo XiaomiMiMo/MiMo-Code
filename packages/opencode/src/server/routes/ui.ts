@@ -1,8 +1,6 @@
 import { Flag } from "@/flag/flag"
 import { Hono } from "hono"
-import { proxy } from "hono/proxy"
 import { getMimeType } from "hono/utils/mime"
-import { createHash } from "node:crypto"
 import fs from "node:fs/promises"
 
 const embeddedUIPromise = Flag.MIMOCODE_DISABLE_EMBEDDED_WEB_UI
@@ -13,8 +11,44 @@ const embeddedUIPromise = Flag.MIMOCODE_DISABLE_EMBEDDED_WEB_UI
 const DEFAULT_CSP =
   "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; font-src 'self' data:; media-src 'self' data:; connect-src 'self' data:"
 
-const csp = (hash = "") =>
-  `default-src 'self'; script-src 'self' 'wasm-unsafe-eval'${hash ? ` 'sha256-${hash}'` : ""}; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; font-src 'self' data:; media-src 'self' data:; connect-src 'self' data:`
+const MISSING_EMBEDDED_WEB_UI = `<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>MiMo Code Web UI unavailable</title>
+    <style>
+      body {
+        margin: 0;
+        min-height: 100vh;
+        display: grid;
+        place-items: center;
+        background: #fcfaf8;
+        color: #26251e;
+        font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      }
+      main {
+        max-width: 520px;
+        padding: 32px;
+      }
+      h1 {
+        margin: 0 0 12px;
+        font-size: 24px;
+      }
+      p {
+        margin: 0;
+        color: #504f49;
+        line-height: 1.6;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>MiMo Code Web UI unavailable</h1>
+      <p>The embedded MiMo Code Web UI is missing from this build. Reinstall MiMo Code or rebuild the CLI without skipping the embedded web UI.</p>
+    </main>
+  </body>
+</html>`
 
 export const UIRoutes = (): Hono =>
   new Hono().all("/*", async (c) => {
@@ -35,21 +69,8 @@ export const UIRoutes = (): Hono =>
       } else {
         return c.json({ error: "Not Found" }, 404)
       }
-    } else {
-      const response = await proxy(`https://app.opencode.ai${path}`, {
-        raw: c.req.raw,
-        headers: {
-          ...Object.fromEntries(c.req.raw.headers.entries()),
-          host: "app.opencode.ai",
-        },
-      })
-      const match = response.headers.get("content-type")?.includes("text/html")
-        ? (await response.clone().text()).match(
-            /<script\b(?![^>]*\bsrc\s*=)[^>]*\bid=(['"])oc-theme-preload-script\1[^>]*>([\s\S]*?)<\/script>/i,
-          )
-        : undefined
-      const hash = match ? createHash("sha256").update(match[2]).digest("base64") : ""
-      response.headers.set("Content-Security-Policy", csp(hash))
-      return response
     }
+
+    c.header("Content-Security-Policy", DEFAULT_CSP)
+    return c.html(MISSING_EMBEDDED_WEB_UI, 503)
   })
