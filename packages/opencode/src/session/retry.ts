@@ -108,6 +108,9 @@ export function retryable(error: Err) {
   const msg = error.data?.message
   if (typeof msg === "string") {
     const lower = msg.toLowerCase()
+    if (lower.includes("mimo-free bootstrap failed: 429") && lower.includes("too many requests")) {
+      return "MiMo Auto is rate limited"
+    }
     if (
       lower.includes("rate increased too quickly") ||
       lower.includes("rate limit") ||

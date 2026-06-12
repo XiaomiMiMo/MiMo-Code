@@ -169,6 +169,13 @@ describe("session.retry.retryable", () => {
     expect(SessionRetry.retryable(error)).toBe(msg)
   })
 
+  test("normalizes MiMo Auto bootstrap rate limit messages", () => {
+    const error = wrap(
+      'mimo-free bootstrap failed: 429 {"code":"429","message":"Too many requests","type":"limitation"}',
+    )
+    expect(SessionRetry.retryable(error)).toBe("MiMo Auto is rate limited")
+  })
+
   test("does not retry context overflow errors", () => {
     const error = new MessageV2.ContextOverflowError({
       message: "Input exceeds context window of this model",
