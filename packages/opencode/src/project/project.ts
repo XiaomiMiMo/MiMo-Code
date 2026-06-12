@@ -19,6 +19,8 @@ import * as CrossSpawnSpawner from "@/effect/cross-spawn-spawner"
 import { zod } from "@/util/effect-zod"
 import { withStatics } from "@/util/schema"
 
+// Best-effort: never let project-id bookkeeping crash startup (e.g. EEXIST/EPERM
+// from mkdir on Windows network drives or read-only .git dirs).
 async function setupProjectIdEnvironment(workingDir: string): Promise<void> {
   const mainGit = resolveMainGitDir(workingDir)
   if (!mainGit) return
@@ -29,19 +31,19 @@ async function setupProjectIdEnvironment(workingDir: string): Promise<void> {
   if (await Bun.file(localFile).exists()) {
     if (!(await Bun.file(idFile).exists())) {
       const id = await Bun.file(localFile).text()
-      await Bun.write(idFile, id)
+      await Bun.write(idFile, id).catch(() => {})
     }
     await nodeFs.unlink(localFile).catch(() => {})
   }
 
   // Belt-and-suspenders: ensure .git/info/exclude lists .mimocode-project-id
   const excludeFile = nodePath.join(mainGit, "info", "exclude")
-  await nodeFs.mkdir(nodePath.dirname(excludeFile), { recursive: true })
+  await nodeFs.mkdir(nodePath.dirname(excludeFile), { recursive: true }).catch(() => {})
   const existing = await Bun.file(excludeFile)
     .text()
     .catch(() => "")
   if (!existing.includes(".mimocode-project-id")) {
-    await nodeFs.appendFile(excludeFile, "\n.mimocode-project-id\n")
+    await nodeFs.appendFile(excludeFile, "\n.mimocode-project-id\n").catch(() => {})
   }
 }
 
