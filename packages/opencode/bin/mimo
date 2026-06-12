@@ -110,8 +110,7 @@ function hasUnsafeOpenSslIa32cap() {
 }
 
 const names = (() => {
-  const avx2 = supportsAvx2()
-  const baseline = arch === "x64" && (!avx2 || hasUnsafeOpenSslIa32cap())
+  const baseline = arch === "x64" && (platform === "windows" || !supportsAvx2() || hasUnsafeOpenSslIa32cap())
 
   if (platform === "linux") {
     const musl = (() => {
