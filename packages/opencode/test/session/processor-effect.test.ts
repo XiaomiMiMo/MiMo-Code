@@ -617,6 +617,7 @@ it.live("session.processor effect tests compact on structured context overflow",
     ({ dir, llm }) =>
       Effect.gen(function* () {
         const { processors, session, provider } = yield* boot()
+        const bus = yield* Bus.Service
 
         yield* llm.error(400, { type: "error", error: { code: "context_length_exceeded" } })
 
@@ -628,6 +629,12 @@ it.live("session.processor effect tests compact on structured context overflow",
           assistantMessage: msg,
           sessionID: chat.id,
           model: mdl,
+        })
+        const errors: string[] = []
+        const off = yield* bus.subscribeCallback(Session.Event.Error, (evt) => {
+          if (evt.properties.sessionID !== chat.id) return
+          if (!evt.properties.error) return
+          errors.push(evt.properties.error.name)
         })
 
         const value = yield* handle.process({
@@ -646,10 +653,12 @@ it.live("session.processor effect tests compact on structured context overflow",
           messages: [{ role: "user", content: "compact json" }],
           tools: {},
         })
+        off()
 
         expect(value).toBe("overflow")
         expect(yield* llm.calls).toBe(1)
         expect(handle.message.error).toBeUndefined()
+        expect(errors).toStrictEqual([])
       }),
     { git: true, config: (url) => providerCfg(url) },
   ),
