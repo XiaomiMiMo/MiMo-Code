@@ -168,6 +168,8 @@ export const TuiThreadCommand = cmd({
       process.on("uncaughtException", error)
       process.on("unhandledRejection", error)
       process.on("SIGUSR2", reload)
+      process.on("SIGINT", () => stop())
+      process.on("SIGTERM", () => stop())
 
       let stopped = false
       const stop = async () => {
