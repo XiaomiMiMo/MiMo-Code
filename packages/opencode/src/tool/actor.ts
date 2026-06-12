@@ -792,6 +792,20 @@ export const ActorTool = Tool.define(
         description: DESCRIPTION,
         parameters,
         execute: (input: z.infer<typeof parameters>, ctx: Tool.Context) => run(input, ctx).pipe(Effect.orDie),
+        formatValidationError(error) {
+          const lines = [
+            "Actor tool 调用格式错误。正确格式：",
+            "",
+            '{"operation":{"action":"run","subagent_type":"explore","description":"简短描述","prompt":"详细任务"}}',
+            "",
+            "常见错误：",
+            "- operation 必须是对象，不能是字符串",
+            "- timeout_ms 等可选参数必须在 operation 内部，不能在顶层",
+            "",
+            `具体错误: ${error.message}`,
+          ]
+          return lines.join("\n")
+        },
         shell: {
           description: SHELL_DESCRIPTION,
           parse: parseActorScript,

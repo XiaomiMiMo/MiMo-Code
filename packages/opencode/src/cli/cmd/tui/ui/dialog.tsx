@@ -28,6 +28,12 @@ export function Dialog(
     return 60
   }
 
+  // In plain mode, use a solid dark background instead of semi-transparent
+  // because Apple_Terminal may not render semi-transparent colors correctly
+  const backdropColor = theme.background.a === 0 
+    ? RGBA.fromInts(0, 0, 0, 255)  // Solid black for plain mode
+    : RGBA.fromInts(0, 0, 0, 150)  // Semi-transparent for full mode
+
   return (
     <box
       onMouseDown={() => {
@@ -48,7 +54,7 @@ export function Dialog(
       paddingTop={dimensions().height / 4}
       left={0}
       top={0}
-      backgroundColor={RGBA.fromInts(0, 0, 0, 150)}
+      backgroundColor={backdropColor}
     >
       <box
         onMouseUp={(e) => {
@@ -65,7 +71,7 @@ export function Dialog(
         }}
         width={width()}
         maxWidth={dimensions().width - 2}
-        backgroundColor={theme.backgroundPanel}
+        backgroundColor={theme.background.a === 0 ? RGBA.fromInts(40, 40, 40, 255) : theme.backgroundPanel}
         paddingTop={1}
       >
         {props.children}

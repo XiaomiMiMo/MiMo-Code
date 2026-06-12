@@ -1,4 +1,5 @@
 import type { BoxRenderable, TextareaRenderable, KeyEvent, ScrollBoxRenderable } from "@opentui/core"
+import { RGBA } from "@opentui/core"
 import { pathToFileURL } from "bun"
 import fuzzysort from "fuzzysort"
 import { firstBy } from "remeda"
@@ -635,7 +636,7 @@ export function Autocomplete(props: {
     >
       <scrollbox
         ref={(r: ScrollBoxRenderable) => (scroll = r)}
-        backgroundColor={theme.backgroundMenu}
+        backgroundColor={theme.background.a === 0 ? RGBA.fromInts(40, 40, 40, 255) : theme.backgroundMenu}
         height={height()}
         scrollbarOptions={{ visible: false }}
         scrollAcceleration={scrollAcceleration()}
