@@ -94,8 +94,20 @@ function wrap<Parameters extends z.ZodType, Result extends Metadata>(
           ...(ctx.callID ? { "tool.call_id": ctx.callID } : {}),
         }
         return Effect.gen(function* () {
-          yield* Effect.try({
-            try: () => toolInfo.parameters.parse(args),
+          const parsedArgs = yield* Effect.try({
+            try: () => {
+              const parsed = toolInfo.parameters.safeParse(args)
+              if (parsed.success) return parsed.data
+
+              const recovered = toolInfo.shell?.recover?.(args)
+              if (recovered !== undefined) {
+                const recoveredParsed = toolInfo.parameters.safeParse(recovered)
+                if (recoveredParsed.success) return recoveredParsed.data
+                throw recoveredParsed.error
+              }
+
+              throw parsed.error
+            },
             catch: (error) => {
               if (error instanceof z.ZodError && toolInfo.formatValidationError) {
                 return new Error(toolInfo.formatValidationError(error), { cause: error })
@@ -106,7 +118,7 @@ function wrap<Parameters extends z.ZodType, Result extends Metadata>(
               )
             },
           })
-          const result = yield* execute(args, ctx)
+          const result = yield* execute(parsedArgs, ctx)
           if (result.metadata.truncated !== undefined) {
             return result
           }
