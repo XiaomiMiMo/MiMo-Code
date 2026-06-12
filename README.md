@@ -120,6 +120,18 @@ bun turbo typecheck      # Type check
 
 ---
 
+## Uninstalling
+
+Run the built-in uninstaller, which removes the binary, config, cache, data, and the `PATH` entry added by the installer:
+
+```bash
+mimo uninstall
+```
+
+If you installed via a package manager instead, uninstall with that tool, e.g. `npm uninstall -g @mimo-ai/cli`.
+
+---
+
 ## Relationship to OpenCode
 
 MiMoCode is built as a fork of [OpenCode](https://github.com/anomalyco/opencode). It keeps all core OpenCode capabilities (multiple providers, TUI, LSP, MCP, plugins) and adds persistent memory, intelligent context management, subagent orchestration, goal-driven autonomous loops, compose workflows, and self-improvement via dream/distill.
