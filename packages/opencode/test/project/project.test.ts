@@ -89,6 +89,20 @@ describe("Project.fromDirectory", () => {
     expect(await Bun.file(idFile).exists()).toBe(true)
   })
 
+  test("should not crash when .git/info already exists (#405)", async () => {
+    await using tmp = await tmpdir()
+    await $`git init`.cwd(tmp.path).quiet()
+    // Pre-create .git/info to simulate an existing git repo (fixes EEXIST on Windows/Bun)
+    const infoDir = path.join(tmp.path, ".git", "info")
+    await Bun.write(path.join(infoDir, "exclude"), "")
+
+    const { project } = await run((svc) => svc.fromDirectory(tmp.path))
+
+    expect(project).toBeDefined()
+    expect(project.id).not.toBe(ProjectID.global)
+    expect(project.vcs).toBe("git")
+  })
+
   test("should handle git repository with commits", async () => {
     await using tmp = await tmpdir({ git: true })
 

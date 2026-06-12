@@ -36,7 +36,11 @@ async function setupProjectIdEnvironment(workingDir: string): Promise<void> {
 
   // Belt-and-suspenders: ensure .git/info/exclude lists .mimocode-project-id
   const excludeFile = nodePath.join(mainGit, "info", "exclude")
-  await nodeFs.mkdir(nodePath.dirname(excludeFile), { recursive: true })
+  // On Windows, Bun's fs.mkdir can throw EEXIST even with recursive:true
+  // when the target directory already exists. Catch and ignore that specific error.
+  await nodeFs.mkdir(nodePath.dirname(excludeFile), { recursive: true }).catch((err: NodeJS.ErrnoException) => {
+    if (err.code !== "EEXIST") throw err
+  })
   const existing = await Bun.file(excludeFile)
     .text()
     .catch(() => "")
