@@ -126,11 +126,15 @@ const getCopyMethod = lazy(async () => {
     if (process.env["WAYLAND_DISPLAY"] && which("wl-copy")) {
       console.log("clipboard: using wl-copy")
       return async (text: string) => {
-        const proc = Process.spawn(["wl-copy"], { stdin: "pipe", stdout: "ignore", stderr: "ignore" })
-        if (!proc.stdin) return
+        const proc = Process.spawn(["wl-copy"], { stdin: "pipe", stdout: "ignore", stderr: "pipe" })
+        if (!proc.stdin) throw new Error("Failed to open stdin for wl-copy process")
         proc.stdin.write(text)
         proc.stdin.end()
-        await proc.exited.catch(() => {})
+        const exitCode = await proc.exited
+        if (exitCode !== 0) {
+          const stderr = await proc.stderr.text()
+          throw new Error(`wl-copy failed with exit code ${exitCode}: ${stderr}`)
+        }
       }
     }
     if (which("xclip")) {
@@ -139,12 +143,16 @@ const getCopyMethod = lazy(async () => {
         const proc = Process.spawn(["xclip", "-selection", "clipboard"], {
           stdin: "pipe",
           stdout: "ignore",
-          stderr: "ignore",
+          stderr: "pipe",
         })
-        if (!proc.stdin) return
+        if (!proc.stdin) throw new Error("Failed to open stdin for xclip process")
         proc.stdin.write(text)
         proc.stdin.end()
-        await proc.exited.catch(() => {})
+        const exitCode = await proc.exited
+        if (exitCode !== 0) {
+          const stderr = await proc.stderr.text()
+          throw new Error(`xclip failed with exit code ${exitCode}: ${stderr}`)
+        }
       }
     }
     if (which("xsel")) {
@@ -153,12 +161,16 @@ const getCopyMethod = lazy(async () => {
         const proc = Process.spawn(["xsel", "--clipboard", "--input"], {
           stdin: "pipe",
           stdout: "ignore",
-          stderr: "ignore",
+          stderr: "pipe",
         })
-        if (!proc.stdin) return
+        if (!proc.stdin) throw new Error("Failed to open stdin for xsel process")
         proc.stdin.write(text)
         proc.stdin.end()
-        await proc.exited.catch(() => {})
+        const exitCode = await proc.exited
+        if (exitCode !== 0) {
+          const stderr = await proc.stderr.text()
+          throw new Error(`xsel failed with exit code ${exitCode}: ${stderr}`)
+        }
       }
     }
   }
@@ -178,14 +190,18 @@ const getCopyMethod = lazy(async () => {
         {
           stdin: "pipe",
           stdout: "ignore",
-          stderr: "ignore",
+          stderr: "pipe",
         },
       )
 
-      if (!proc.stdin) return
+      if (!proc.stdin) throw new Error("Failed to open stdin for PowerShell clipboard process")
       proc.stdin.write(text)
       proc.stdin.end()
-      await proc.exited.catch(() => {})
+      const exitCode = await proc.exited
+      if (exitCode !== 0) {
+        const stderr = await proc.stderr.text()
+        throw new Error(`PowerShell clipboard failed with exit code ${exitCode}: ${stderr}`)
+      }
     }
   }
 
