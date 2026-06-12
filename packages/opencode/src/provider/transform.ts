@@ -353,6 +353,18 @@ function unsupportedParts(msgs: ModelMessage[], model: Provider.Model): ModelMes
       const filename = part.type === "file" ? part.filename : undefined
       const modality = mimeToModality(mime)
       if (!modality) return part
+
+      // Check if image format is supported by the API
+      if (modality === "image") {
+        const supportedFormats = ["image/bmp", "image/gif", "image/png", "image/jpeg", "image/webp"]
+        if (!supportedFormats.includes(mime.toLowerCase())) {
+          return {
+            type: "text" as const,
+            text: `ERROR: Unsupported image format "${mime}". Only bmp, gif, png, jpeg, and webp are supported. Please convert the image to a supported format.`,
+          }
+        }
+      }
+
       const supported = modality === "image" ? supportsImageInput(model) : model.capabilities.input[modality]
       if (supported) return part
 
