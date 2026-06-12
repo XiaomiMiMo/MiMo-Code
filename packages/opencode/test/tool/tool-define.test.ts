@@ -8,6 +8,15 @@ import { Truncate } from "../../src/tool"
 const runtime = ManagedRuntime.make(Layer.mergeAll(Truncate.defaultLayer, Agent.defaultLayer))
 
 const params = z.object({ input: z.string() })
+const ctx = {
+  sessionID: "ses_x" as never,
+  messageID: "msg_x" as never,
+  agent: "build",
+  abort: new AbortController().signal,
+  messages: [],
+  metadata: () => Effect.void,
+  ask: () => Effect.void,
+} as unknown as Tool.Context
 
 function makeTool(id: string, executeFn?: () => void) {
   return {
@@ -55,5 +64,45 @@ describe("Tool.define", () => {
     const second = await Effect.runPromise(info.init())
 
     expect(first).not.toBe(second)
+  })
+
+  test("recovers JSON args before execute when the tool opts in", async () => {
+    const parameters = z.object({
+      operation: z.object({
+        action: z.literal("run"),
+        prompt: z.string(),
+      }),
+    })
+    let received: z.infer<typeof parameters> | undefined
+    const info = await runtime.runPromise(
+      Tool.define(
+        "test-recover",
+        Effect.succeed({
+          description: "test tool",
+          parameters,
+          execute(args) {
+            received = args
+            return Effect.succeed({ title: "test", output: "ok", metadata: { truncated: false } })
+          },
+          shell: {
+            description: "test shell",
+            parse: () => Effect.succeed([] as z.infer<typeof parameters>[]),
+            recover(rawArgs) {
+              const operation = (rawArgs as { operation?: unknown }).operation
+              if (typeof operation !== "string") return undefined
+              return { operation: JSON.parse(operation) }
+            },
+          },
+        }),
+      ),
+    )
+    const tool = await Effect.runPromise(info.init())
+
+    const result = await Effect.runPromise(
+      tool.execute({ operation: '{"action":"run","prompt":"inspect"}' } as never, ctx),
+    )
+
+    expect(received).toEqual({ operation: { action: "run", prompt: "inspect" } })
+    expect(result.output).toBe("ok")
   })
 })
