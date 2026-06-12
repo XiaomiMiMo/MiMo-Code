@@ -407,7 +407,7 @@ export function Session() {
           return
         }
         if (!kv.get("share_consent", false)) {
-          const ok = await DialogConfirm.show(dialog, "Share Session", "Are you sure you want to share it?")
+          const ok = await DialogConfirm.show(dialog, t("tui.session.share.title"), t("tui.session.share.confirm"))
           if (ok !== true) return
           kv.set("share_consent", true)
         }
@@ -497,7 +497,7 @@ export function Session() {
         if (!selectedModel) {
           toast.show({
             variant: "warning",
-            message: "Connect a provider to summarize this session",
+            message: t("tui.session.connect_provider"),
             duration: 3000,
           })
           return
@@ -1095,8 +1095,8 @@ export function Session() {
                         const handleUnrevert = async () => {
                           const confirmed = await DialogConfirm.show(
                             dialog,
-                            "Confirm Redo",
-                            "Are you sure you want to restore the reverted messages?",
+                            t("tui.session.redo.title"),
+                            t("tui.session.redo.confirm"),
                           )
                           if (confirmed) {
                             command.trigger("session.redo")

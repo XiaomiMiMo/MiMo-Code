@@ -392,6 +392,63 @@ export const dict: Record<string, string> = {
   "tui.question.plan_exit.option.1.label": "No",
   "tui.question.plan_exit.option.1.description": "Stay with plan agent to continue refining the plan",
 
+  // Question UI
+  "tui.question.confirm": "Confirm",
+  "tui.question.select_all": " (select all that apply)",
+  "tui.question.type_own_answer": "Type your own answer",
+  "tui.question.not_answered": "(not answered)",
+  "tui.question.review": "Review",
+  "tui.question.hint.tab": "tab",
+  "tui.question.hint.select": "select",
+  "tui.question.hint.submit": "submit",
+  "tui.question.hint.toggle": "toggle",
+  "tui.question.hint.confirm": "confirm",
+  "tui.question.hint.dismiss": "dismiss",
+
+  // Permission UI
+  "tui.permission.no_diff": "No diff provided",
+  "tui.permission.always_allow": "Always allow",
+  "tui.permission.allow_until_restart": "This will allow {{permission}} until MiMoCode is restarted.",
+  "tui.permission.allow_patterns_until_restart": "This will allow the following patterns until MiMoCode is restarted",
+  "tui.permission.confirm": "Confirm",
+  "tui.permission.cancel": "Cancel",
+  "tui.permission.continue_after_failures": "Continue after repeated failures",
+  "tui.permission.continue_after_failures_desc": "This keeps the session running despite repeated failures.",
+  "tui.permission.required": "Permission required",
+  "tui.permission.allow_once": "Allow once",
+  "tui.permission.allow_always": "Allow always",
+  "tui.permission.reject": "Reject",
+  "tui.permission.reject_title": "Reject permission",
+  "tui.permission.reject_hint": "Tell MiMoCode what to do differently",
+  "tui.permission.confirm_action": "confirm",
+  "tui.permission.cancel_action": "cancel",
+
+  // Session UI
+  "tui.session.share.title": "Share Session",
+  "tui.session.share.confirm": "Are you sure you want to share it?",
+  "tui.session.connect_provider": "Connect a provider to summarize this session",
+  "tui.session.redo.title": "Confirm Redo",
+  "tui.session.redo.confirm": "Are you sure you want to restore the reverted messages?",
+
+  // Sidebar
+  "tui.sidebar.tasks": "Tasks",
+  "tui.sidebar.fewer_done": "fewer done",
+  "tui.sidebar.more_done": "{{count}} more done",
+
+  // Prompt
+  "tui.prompt.connect_provider": "Connect a provider to send prompts",
+  "tui.prompt.interrupt": "interrupt",
+  "tui.prompt.again_to_interrupt": "again to interrupt",
+  "tui.prompt.exit_shell_mode": "exit shell mode",
+
+  // Dialog
+  "tui.dialog.connect_provider": "Connect a provider",
+
+  // Providers
+  "tui.providers.login_method": "Login method",
+  "tui.providers.goto": "Go to: ",
+  "tui.providers.waiting_auth": "Waiting for authorization...",
+
   // Session badges
   "tui.session.badge.auto": "Auto",
 }

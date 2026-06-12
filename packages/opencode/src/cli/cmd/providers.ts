@@ -42,7 +42,7 @@ async function handlePluginAuth(plugin: { auth: PluginAuth }, provider: string, 
     index = match
   } else if (plugin.auth.methods.length > 1) {
     const method = await prompts.select({
-      message: "Login method",
+      message: t("tui.providers.login_method"),
       options: plugin.auth.methods.map((x, index) => ({
         label: x.label,
         value: index.toString(),
@@ -87,7 +87,7 @@ async function handlePluginAuth(plugin: { auth: PluginAuth }, provider: string, 
     const authorize = await method.authorize(inputs)
 
     if (authorize.url) {
-      prompts.log.info("Go to: " + authorize.url)
+      prompts.log.info(t("tui.providers.goto") + authorize.url)
     }
 
     if (authorize.method === "auto") {
@@ -95,7 +95,7 @@ async function handlePluginAuth(plugin: { auth: PluginAuth }, provider: string, 
         prompts.log.info(authorize.instructions)
       }
       const spinner = prompts.spinner()
-      spinner.start("Waiting for authorization...")
+      spinner.start(t("tui.providers.waiting_auth"))
       const result = await authorize.callback()
       if (result.type === "failed") {
         spinner.stop("Failed to authorize", 1)

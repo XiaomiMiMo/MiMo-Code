@@ -385,6 +385,63 @@ export const dict = {
   "tui.question.plan_exit.option.1.label": "否",
   "tui.question.plan_exit.option.1.description": "留在 plan 智能体继续完善计划",
 
+  // Question UI
+  "tui.question.confirm": "确认",
+  "tui.question.select_all": "（可多选）",
+  "tui.question.type_own_answer": "输入自定义答案",
+  "tui.question.not_answered": "（未回答）",
+  "tui.question.review": "检查",
+  "tui.question.hint.tab": "切换",
+  "tui.question.hint.select": "选择",
+  "tui.question.hint.submit": "提交",
+  "tui.question.hint.toggle": "切换",
+  "tui.question.hint.confirm": "确认",
+  "tui.question.hint.dismiss": "取消",
+
+  // Permission UI
+  "tui.permission.no_diff": "未提供 diff",
+  "tui.permission.always_allow": "始终允许",
+  "tui.permission.allow_until_restart": "这将允许 {{permission}} 直到 MiMoCode 重启。",
+  "tui.permission.allow_patterns_until_restart": "这将允许以下模式直到 MiMoCode 重启",
+  "tui.permission.confirm": "确认",
+  "tui.permission.cancel": "取消",
+  "tui.permission.continue_after_failures": "在重复失败后继续",
+  "tui.permission.continue_after_failures_desc": "即使反复失败也继续执行会话。",
+  "tui.permission.required": "需要权限",
+  "tui.permission.allow_once": "允许一次",
+  "tui.permission.allow_always": "始终允许",
+  "tui.permission.reject": "拒绝",
+  "tui.permission.reject_title": "拒绝权限",
+  "tui.permission.reject_hint": "告诉 MiMoCode 应该怎么做",
+  "tui.permission.confirm_action": "确认",
+  "tui.permission.cancel_action": "取消",
+
+  // Session UI
+  "tui.session.share.title": "分享会话",
+  "tui.session.share.confirm": "确定要分享吗？",
+  "tui.session.connect_provider": "连接服务商以总结此会话",
+  "tui.session.redo.title": "确认重做",
+  "tui.session.redo.confirm": "确定要恢复已撤销的消息吗？",
+
+  // Sidebar
+  "tui.sidebar.tasks": "任务",
+  "tui.sidebar.fewer_done": "收起已完成",
+  "tui.sidebar.more_done": "展开 {{count}} 个已完成",
+
+  // Prompt
+  "tui.prompt.connect_provider": "连接服务商以发送提示词",
+  "tui.prompt.interrupt": "中断",
+  "tui.prompt.again_to_interrupt": "再次中断",
+  "tui.prompt.exit_shell_mode": "退出 shell 模式",
+
+  // Dialog
+  "tui.dialog.connect_provider": "连接服务商",
+
+  // Providers
+  "tui.providers.login_method": "登录方式",
+  "tui.providers.goto": "前往：",
+  "tui.providers.waiting_auth": "等待授权...",
+
   // Session badges
   "tui.session.badge.auto": "自动",
 } satisfies Partial<Record<Keys, string>>

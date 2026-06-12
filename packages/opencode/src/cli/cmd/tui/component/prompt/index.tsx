@@ -348,7 +348,7 @@ export function Prompt(props: PromptProps) {
   function promptModelWarning() {
     toast.show({
       variant: "warning",
-      message: "Connect a provider to send prompts",
+      message: t("tui.prompt.connect_provider"),
       duration: 3000,
     })
     if (sync.data.provider.length === 0) {
@@ -1756,7 +1756,7 @@ export function Prompt(props: PromptProps) {
               <text fg={store.interrupt > 0 ? theme.primary : theme.text}>
                 esc{" "}
                 <span style={{ fg: store.interrupt > 0 ? theme.primary : theme.textMuted }}>
-                  {store.interrupt > 0 ? "again to interrupt" : "interrupt"}
+                  {store.interrupt > 0 ? t("tui.prompt.again_to_interrupt") : t("tui.prompt.interrupt")}
                 </span>
               </text>
             </box>
@@ -1798,7 +1798,7 @@ export function Prompt(props: PromptProps) {
                 <Match when={store.mode === "shell"}>
                   <box flexGrow={1} flexDirection="row" justifyContent="flex-end">
                     <text fg={theme.text}>
-                      esc <span style={{ fg: theme.textMuted }}>exit shell mode</span>
+                      esc <span style={{ fg: theme.textMuted }}>{t("tui.prompt.exit_shell_mode")}</span>
                     </text>
                   </box>
                 </Match>

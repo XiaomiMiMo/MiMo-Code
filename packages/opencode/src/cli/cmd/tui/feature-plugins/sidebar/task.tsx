@@ -1,6 +1,8 @@
 import type { TuiPlugin, TuiPluginApi, TuiPluginModule } from "@mimo-ai/plugin/tui"
 import { createMemo, Index, Show, createSignal } from "solid-js"
+import { useKeyboard } from "@opentui/solid"
 import { TaskItem } from "../../component/task-item"
+import { useLanguage } from "../../context/language"
 
 const id = "internal:sidebar-task"
 
@@ -18,7 +20,9 @@ const STATUS_ORDER: Record<string, number> = { in_progress: 0, open: 1, blocked:
 function View(props: { api: TuiPluginApi; session_id: string }) {
   const [open, setOpen] = createSignal(true)
   const [doneExpanded, setDoneExpanded] = createSignal(false)
+  const [selected, setSelected] = createSignal(0)
   const theme = () => props.api.theme.current
+  const { t } = useLanguage()
   const all = createMemo(() => props.api.state.session.task(props.session_id))
   // Active work, ordered in_progress → open(todo) → blocked; ties broken by id
   // so same-status rows keep a stable order across polls (no visual jitter).
@@ -39,34 +43,88 @@ function View(props: { api: TuiPluginApi; session_id: string }) {
   const show = createMemo(() => rows().length > 0)
   // Panel-level collapse appears once there's more than a couple of rows.
   const collapsible = createMemo(() => rows().length + (hiddenDoneCount() > 0 ? 1 : 0) > 2)
+  const totalItems = createMemo(() => rows().length + (hiddenDoneCount() > 0 ? 1 : 0))
+
+  useKeyboard((evt) => {
+    if (!show()) return
+    if (evt.name === "up" || evt.name === "k") {
+      evt.preventDefault()
+      setSelected((s) => Math.max(0, s - 1))
+      return
+    }
+    if (evt.name === "down" || evt.name === "j") {
+      evt.preventDefault()
+      setSelected((s) => Math.min(totalItems() - 1, s + 1))
+      return
+    }
+    if (evt.name === "left" || evt.name === "h") {
+      evt.preventDefault()
+      if (collapsible() && open()) {
+        setOpen(false)
+      }
+      return
+    }
+    if (evt.name === "right" || evt.name === "l") {
+      evt.preventDefault()
+      if (collapsible() && !open()) {
+        setOpen(true)
+      } else if (hiddenDoneCount() > 0 && !doneExpanded()) {
+        setDoneExpanded(true)
+      }
+      return
+    }
+    if (evt.name === "return" || evt.name === "space") {
+      evt.preventDefault()
+      if (selected() === 0 && collapsible()) {
+        setOpen((x) => !x)
+      } else if (selected() === rows().length && hiddenDoneCount() > 0) {
+        setDoneExpanded((x) => !x)
+      }
+      return
+    }
+  })
 
   return (
     <Show when={show()}>
       <box>
-        <box flexDirection="row" gap={1} onMouseDown={() => collapsible() && setOpen((x) => !x)}>
+        <box
+          flexDirection="row"
+          gap={1}
+          backgroundColor={selected() === 0 ? theme().backgroundElement : undefined}
+          onMouseDown={() => collapsible() && setOpen((x) => !x)}
+        >
           <Show when={collapsible()}>
             <text fg={theme().text}>{open() ? "▼" : "▶"}</text>
           </Show>
           <text fg={theme().text}>
-            <b>Tasks</b>
+            <b>{t("tui.sidebar.tasks")}</b>
           </text>
         </box>
         <Show when={!collapsible() || open()}>
           <Index each={rows()}>
-            {(item) => (
-              <TaskItem
-                id={item().id}
-                status={item().status}
-                summary={item().summary}
-                owner={item().owner ?? undefined}
-                depth={depthOf(item().id)}
-              />
+            {(item, index) => (
+              <box backgroundColor={selected() === index + 1 ? theme().backgroundElement : undefined}>
+                <TaskItem
+                  id={item().id}
+                  status={item().status}
+                  summary={item().summary}
+                  owner={item().owner ?? undefined}
+                  depth={depthOf(item().id)}
+                />
+              </box>
             )}
           </Index>
           <Show when={hiddenDoneCount() > 0 || doneExpanded()}>
-            <box flexDirection="row" gap={0} onMouseDown={() => setDoneExpanded((x) => !x)}>
+            <box
+              flexDirection="row"
+              gap={0}
+              backgroundColor={selected() === rows().length + 1 ? theme().backgroundElement : undefined}
+              onMouseDown={() => setDoneExpanded((x) => !x)}
+            >
               <text fg={theme().textMuted}>
-                {doneExpanded() ? "  ▾ fewer done" : `  ▸ ${hiddenDoneCount()} more done`}
+                {doneExpanded()
+                  ? `  ▾ ${t("tui.sidebar.fewer_done")}`
+                  : `  ▸ ${t("tui.sidebar.more_done", { count: hiddenDoneCount() })}`}
               </text>
             </box>
           </Show>
