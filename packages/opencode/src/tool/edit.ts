@@ -33,12 +33,19 @@ function convertToLineEnding(text: string, ending: "\n" | "\r\n"): string {
   return text.replaceAll("\n", "\r\n")
 }
 
+const MAX_LOCKS = 256
 const locks = new Map<string, Semaphore.Semaphore>()
 
 function lock(filePath: string) {
   const resolvedFilePath = AppFileSystem.resolve(filePath)
   const hit = locks.get(resolvedFilePath)
   if (hit) return hit
+
+  // Evict oldest entries when capacity is exceeded to prevent unbounded growth
+  if (locks.size >= MAX_LOCKS) {
+    const first = locks.keys().next().value
+    if (first !== undefined) locks.delete(first)
+  }
 
   const next = Semaphore.makeUnsafe(1)
   locks.set(resolvedFilePath, next)

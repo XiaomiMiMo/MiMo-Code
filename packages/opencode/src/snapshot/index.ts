@@ -67,11 +67,18 @@ export const layer: Layer.Layer<
     const fs = yield* AppFileSystem.Service
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner
     const config = yield* Config.Service
+    const MAX_LOCKS = 64
     const locks = new Map<string, Semaphore.Semaphore>()
 
     const lock = (key: string) => {
       const hit = locks.get(key)
       if (hit) return hit
+
+      // Evict oldest entries when capacity is exceeded to prevent unbounded growth
+      if (locks.size >= MAX_LOCKS) {
+        const first = locks.keys().next().value
+        if (first !== undefined) locks.delete(first)
+      }
 
       const next = Semaphore.makeUnsafe(1)
       locks.set(key, next)
