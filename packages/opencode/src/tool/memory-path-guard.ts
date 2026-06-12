@@ -49,34 +49,58 @@ function isCheckpointWriterAllowed(parts: string[]): boolean {
  * when it attempts a path with no scope dir or an invalid scope. Both throws
  * use byte-identical bodies — the corrective action is the same.
  */
-function formatMainAgentHelp(memoryFile: string, notesFile: string, target: string): string {
+function formatMainAgentHelp(memoryFile: string, checkpointFile: string, notesFile: string, target: string): string {
   return (
     `Memory writes go under <memoryRoot>/<scope>/<scope_id>/<key>.md (scope: global | projects | sessions). You attempted: ${target}.\n` +
     `\n` +
-    `Canonical main-agent paths (copy verbatim):\n` +
-    `  ${memoryFile}\n` +
-    `    Edit ## Rules / ## Architecture decisions / ## Discovered durable knowledge.\n` +
+    `The main agent can only write notes.md directly:\n` +
     `  ${notesFile}\n` +
     `    Append \`## [turn N · ISO-Z]\` entries for free-form scratch.\n` +
     `\n` +
-    `Other free-form <key>.md under a valid scope dir are also allowed.\n` +
-    `checkpoint.md, task progress, and memory-/checkpoint-<topic>.md spillovers are checkpoint-writer's domain.`
+    `Structured memory files are checkpoint-writer-only:\n` +
+    `  ${memoryFile}\n` +
+    `  ${checkpointFile}\n` +
+    `checkpoint.md, MEMORY.md, task progress, and memory-/checkpoint-<topic>.md spillovers are checkpoint-writer's domain.`
   )
 }
 
 /**
- * Returns true when the path is reserved-by-pattern for the checkpoint-writer
- * subagent — main agent must not write it directly.
- *
- * In v5 only the writer-managed task directory remains reserved-by-pattern.
- * Main agent CAN write <pid>/MEMORY.md and <sid>/checkpoint.md (system prompt
- * teaches it the rules).
+ * Returns true when a non-writer agent is using its only direct memory write
+ * channel: the current session's notes.md scratchpad.
  */
-function isReservedForCheckpointWriter(parts: string[]): boolean {
-  if (parts[0] !== "sessions" || parts.length < 4) return false
-  // Anything under <sid>/tasks/ is writer-managed (use task tool revise action).
-  if (parts[2] === "tasks") return true
-  return false
+function isCurrentSessionNotes(parts: string[], sessionID: SessionID): boolean {
+  return parts[0] === "sessions" && parts[1] === sessionID && parts.length === 3 && parts[2] === "notes.md"
+}
+
+function isOwnTaskMemory(parts: string[], sessionID: SessionID, taskId?: string): boolean {
+  return (
+    !!taskId &&
+    parts[0] === "sessions" &&
+    parts[1] === sessionID &&
+    parts[2] === "tasks" &&
+    parts[3] === taskId &&
+    parts.length >= 5 &&
+    parts[parts.length - 1].endsWith(".md")
+  )
+}
+
+function formatMainAgentDenied(
+  memoryFile: string,
+  checkpointFile: string,
+  notesFile: string,
+  rel: string,
+  target: string,
+): string {
+  return (
+    `Path '${rel}' is reserved for the checkpoint-writer subagent or is not a legal main-agent memory write.\n` +
+    `The main agent can only write notes.md directly:\n` +
+    `  ${notesFile}\n` +
+    `Structured memory files are checkpoint-writer-only:\n` +
+    `  ${memoryFile}\n` +
+    `  ${checkpointFile}\n` +
+    `Subagent bound to task <TID> may write to tasks/<TID>/*.md (pass task_id when spawning).\n` +
+    `You attempted: ${target}.`
+  )
 }
 
 /**
@@ -87,10 +111,10 @@ function isReservedForCheckpointWriter(parts: string[]): boolean {
  *   - For checkpoint-writer subagent: must be in the precise allowlist above
  *     (<pid>/MEMORY.md, <sid>/checkpoint.md, <sid>/tasks/<id>/*.md, plus
  *     memory-/checkpoint- spillover variants).
- *   - For all other agents: cannot write <sid>/tasks/* — that's
- *     checkpoint-writer-only.
+ *   - For all other agents: can only write the current session's notes.md,
+ *     except a task-bound subagent may write its own tasks/<TID>/*.md subtree.
  *
- * Non-memory paths and free keys under valid scopes pass through unmodified.
+ * Non-memory paths pass through unmodified.
  */
 export function assertMemoryWriteAllowed(input: {
   target: string
@@ -112,11 +136,11 @@ export function assertMemoryWriteAllowed(input: {
   const parts = rel.split(path.sep)
 
   if (parts.length < 2) {
-    throw new Error(formatMainAgentHelp(memoryFile, notesFile, target))
+    throw new Error(formatMainAgentHelp(memoryFile, checkpointFile, notesFile, target))
   }
   const scope = parts[0]
   if (!VALID_SCOPES.includes(scope as (typeof VALID_SCOPES)[number])) {
-    throw new Error(formatMainAgentHelp(memoryFile, notesFile, target))
+    throw new Error(formatMainAgentHelp(memoryFile, checkpointFile, notesFile, target))
   }
 
   if (agentName === "checkpoint-writer") {
@@ -133,30 +157,8 @@ export function assertMemoryWriteAllowed(input: {
     return
   }
 
-  if (isReservedForCheckpointWriter(parts)) {
-    // Spec ② follow-up: subagent bound to a specific TID may write anywhere
-    // under ITS OWN tasks/<TID>/ subtree. Cross-task writes still rejected.
-    // parts shape under tasks: ["sessions", sid, "tasks", "<TID>", "<file>.md", ...]
-    // NOTE: `parts.length >= 5` is deliberately looser than the checkpoint-writer
-    // path (which requires exactly tasks/<TID>/<file>.md). A subagent may nest
-    // its own workspace (tasks/<TID>/sub/foo.md); the `parts[3] === input.taskId`
-    // guard still confines it to its own task, so the extra depth is safe.
-    if (
-      input.taskId &&
-      parts[2] === "tasks" &&
-      parts[3] === input.taskId &&
-      parts.length >= 5 &&
-      parts[parts.length - 1].endsWith(".md")
-    ) {
-      return
-    }
-    throw new Error(
-      `Path '${rel}' is reserved for the checkpoint-writer subagent.\n` +
-        `Main agent writes to:\n` +
-        `  ${memoryFile}\n` +
-        `  ${notesFile}\n` +
-        `Subagent bound to task <TID> may write to tasks/<TID>/*.md (pass task_id when spawning).\n` +
-        `You attempted: ${target}.`,
-    )
-  }
+  if (isCurrentSessionNotes(parts, sessionID)) return
+  if (isOwnTaskMemory(parts, sessionID, input.taskId)) return
+
+  throw new Error(formatMainAgentDenied(memoryFile, checkpointFile, notesFile, rel, target))
 }
