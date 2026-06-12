@@ -101,9 +101,17 @@ function supportsAvx2() {
   return false
 }
 
+function hasUnsafeOpenSslIa32cap() {
+  if (arch !== "x64") return false
+  const value = process.env.OPENSSL_ia32cap
+  if (!value) return false
+  const firstWord = value.trim().split(":")[0].split(",")[0].trim().toLowerCase()
+  return firstWord === "~0x200000000000000"
+}
+
 const names = (() => {
   const avx2 = supportsAvx2()
-  const baseline = arch === "x64" && !avx2
+  const baseline = arch === "x64" && (!avx2 || hasUnsafeOpenSslIa32cap())
 
   if (platform === "linux") {
     const musl = (() => {

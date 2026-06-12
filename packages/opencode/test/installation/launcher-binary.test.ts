@@ -92,4 +92,47 @@ describe("mimo launcher binary fallback", () => {
     expect(output.calls.some((item: string) => item.includes("mimocode-linux-x64/bin/mimo"))).toBe(true)
     expect(output.calls.some((item: string) => item.includes("mimocode-linux-x64-baseline/bin/mimo"))).toBe(true)
   })
+
+  test("prefers baseline binary when OPENSSL_ia32cap triggers Bun AES-GCM corruption", () => {
+    const root = tmpdir()
+    copyLauncher(root)
+    binaryPackage(root, "mimocode-windows-x64", "mimo.exe")
+    binaryPackage(root, "mimocode-windows-x64-baseline", "mimo.exe")
+
+    const result = runNode(
+      root,
+      `
+        const os = require("os")
+        os.platform = () => "win32"
+        os.arch = () => "x64"
+
+        process.env.OPENSSL_ia32cap = "~0x200000000000000"
+
+        const childProcess = require("child_process")
+        const calls = []
+        childProcess.spawnSync = (target, args) => {
+          if (args?.includes("-Command")) return { status: 0, stdout: "True" }
+          calls.push(target)
+          return { status: 0, signal: null }
+        }
+
+        process.argv = ["node", "./bin/mimo"]
+        process.exit = (code) => {
+          console.log(JSON.stringify({ code, calls }))
+          throw new Error("EXIT")
+        }
+
+        try {
+          require("./bin/mimo")
+        } catch (error) {
+          if (error.message !== "EXIT") throw error
+        }
+      `,
+    )
+
+    expect(result.status).toBe(0)
+    const output = JSON.parse(result.stdout.trim())
+    expect(output).toMatchObject({ code: 0 })
+    expect(output.calls[0]).toContain("mimocode-windows-x64-baseline")
+  })
 })
