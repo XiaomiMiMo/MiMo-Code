@@ -92,7 +92,8 @@ describe("Project.fromDirectory", () => {
   test("should not crash when .git/info already exists (#405)", async () => {
     await using tmp = await tmpdir()
     await $`git init`.cwd(tmp.path).quiet()
-    // Pre-create .git/info to simulate an existing git repo (fixes EEXIST on Windows/Bun)
+    // Pre-create .git/info/exclude to simulate an existing git repo.
+    // This triggers EEXIST on Windows/Bun even with recursive:true.
     const infoDir = path.join(tmp.path, ".git", "info")
     await Bun.write(path.join(infoDir, "exclude"), "")
 
@@ -101,6 +102,9 @@ describe("Project.fromDirectory", () => {
     expect(project).toBeDefined()
     expect(project.id).not.toBe(ProjectID.global)
     expect(project.vcs).toBe("git")
+    // Verify the exclude file was still updated after the mkdir catch
+    const excludeContent = await Bun.file(path.join(infoDir, "exclude")).text()
+    expect(excludeContent).toContain(".mimocode-project-id")
   })
 
   test("should handle git repository with commits", async () => {
