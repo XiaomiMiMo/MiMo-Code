@@ -16,6 +16,11 @@ export function isPlainTerminal(input?: { platform?: NodeJS.Platform; termProgra
   return isMacNativeTerminal(input)
 }
 
+export function isMouseEnabled(input?: { configMouse?: boolean; disableMouse?: boolean; plainTerminal?: boolean }) {
+  if (input?.disableMouse) return false
+  return input?.configMouse ?? true
+}
+
 function parse(color: string): RGBA | null {
   if (color.startsWith("rgb:")) {
     const parts = color.substring(4).split("/")
