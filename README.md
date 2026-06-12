@@ -106,6 +106,8 @@ MiMoCode is configured via `.mimocode/mimocode.json` in the project directory (o
 - MCP server connections
 - Keybindings and theme
 
+Run `/mcps` in the TUI to view configured MCP servers and toggle each one on or off for the session.
+
 Max Mode (parallel best-of-N reasoning with judge selection) can be enabled via `experimental.maxMode` in the config.
 
 ---
