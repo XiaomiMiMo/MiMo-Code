@@ -194,6 +194,13 @@ function custom(dep: CustomDep): Record<string, CustomLoader> {
         },
         options: {},
       }),
+    astraflow: () =>
+      Effect.succeed({
+        autoload: false,
+        options: {
+          baseURL: "https://api-us-ca.umodelverse.ai/v1",
+        },
+      }),
     xai: () =>
       Effect.succeed({
         autoload: false,

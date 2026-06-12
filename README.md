@@ -38,6 +38,8 @@ The first launch guides you through configuration automatically. Supported optio
 - **Import from Claude Code** — migrate existing authentication in one step
 - **Custom Provider** — add any OpenAI-compatible API in the TUI
 
+Astraflow by UCloud is also supported as an OpenAI-compatible provider via `ASTRAFLOW_API_KEY` and the global endpoint `https://api-us-ca.umodelverse.ai/v1`.
+
 ---
 
 ## Core Features

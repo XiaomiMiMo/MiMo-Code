@@ -14,6 +14,7 @@ export const ProviderID = providerIdSchema.pipe(
     opencode: schema.make("opencode"),
     anthropic: schema.make("anthropic"),
     openai: schema.make("openai"),
+    astraflow: schema.make("astraflow"),
     google: schema.make("google"),
     googleVertex: schema.make("google-vertex"),
     githubCopilot: schema.make("github-copilot"),
