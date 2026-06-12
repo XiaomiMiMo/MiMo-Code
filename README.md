@@ -41,6 +41,13 @@ The first launch guides you through configuration automatically. Supported optio
 - **Import from Claude Code** — migrate existing authentication in one step
 - **Custom Provider** — add any OpenAI-compatible API in the TUI
 
+### First Run
+
+- The installed binary is named `mimo`, not `mimocode`.
+- The installer adds `~/.mimocode/bin` to `PATH` via your shell rc file. Open a new terminal (or `source` your rc file) before running `mimo`.
+- The first `mimo --help` or launch runs a one-time database migration — this is expected.
+- If the default model returns `403 region unavailable`, press `Ctrl+X` then select a different model (e.g. a free/available one).
+
 <details>
 <summary><strong>WSL: clipboard issues</strong></summary>
 
