@@ -131,7 +131,9 @@ MiMoCode 基于 [OpenCode](https://github.com/anomalyco/opencode) fork 构建，
 扫描二维码加入社区群聊：
 
 <p align="center">
-  <img src="assets/readme/community-qrcode.jpg" alt="社区群聊二维码" width="240">
+  <img src="assets/readme/community-qrcode-1.jpg" alt="社区群聊二维码 1" width="240">
+  &nbsp;&nbsp;
+  <img src="assets/readme/community-qrcode-2.jpg" alt="社区群聊二维码 2" width="240">
 </p>
 
 ---
