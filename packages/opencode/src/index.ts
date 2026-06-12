@@ -93,14 +93,12 @@ const cli = yargs(args)
       process.env.MIMOCODE_PURE = "1"
     }
 
+    const cliLogLevel = opts.logLevel as Log.Level | undefined
     await Log.init({
       print: process.argv.includes("--print-logs"),
       dev: Installation.isLocal(),
-      level: (() => {
-        if (opts.logLevel) return opts.logLevel as Log.Level
-        if (Installation.isLocal()) return "DEBUG"
-        return "INFO"
-      })(),
+      level: cliLogLevel ?? (Installation.isLocal() ? "DEBUG" : "INFO"),
+      lockLevel: !!cliLogLevel,
     })
 
     Heap.start()

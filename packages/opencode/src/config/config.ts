@@ -575,6 +575,8 @@ export const layer = Layer.effect(
         )
       }
 
+      if (result.logLevel) Log.setLevel(result.logLevel)
+
       return result
     })
 
@@ -915,6 +917,8 @@ export const layer = Layer.effect(
         if (Flag.MIMOCODE_DISABLE_PRUNE) {
           result.compaction = { ...result.compaction, prune: false }
         }
+
+        if (result.logLevel) Log.setLevel(result.logLevel)
 
         return {
           config: result,

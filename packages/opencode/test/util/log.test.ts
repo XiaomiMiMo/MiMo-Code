@@ -7,8 +7,9 @@ import { tmpdir } from "../fixture/fixture"
 
 const log = Global.Path.log
 
-afterEach(() => {
+afterEach(async () => {
   Global.Path.log = log
+  await Log.init({ print: true, level: "INFO" })
 })
 
 async function files(dir: string) {
@@ -41,4 +42,20 @@ test("init cleanup keeps the newest timestamped logs", async () => {
 
   expect(next).not.toContain(list[0]!)
   expect(next).toContain(list.at(-1)!)
+})
+
+test("setLevel updates unlocked log level", async () => {
+  await Log.init({ print: true, level: "INFO" })
+
+  Log.setLevel("WARN")
+
+  expect(Log.getLevel()).toBe("WARN")
+})
+
+test("setLevel does not override locked CLI log level", async () => {
+  await Log.init({ print: true, level: "ERROR", lockLevel: true })
+
+  Log.setLevel("DEBUG")
+
+  expect(Log.getLevel()).toBe("ERROR")
 })

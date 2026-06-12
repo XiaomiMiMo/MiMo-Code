@@ -25,7 +25,7 @@ import fs from "fs/promises"
 import { pathToFileURL } from "url"
 import { Global } from "../../src/global"
 import { ProjectID } from "../../src/project/schema"
-import { Filesystem } from "../../src/util"
+import { Filesystem, Log } from "../../src/util"
 import { ConfigPlugin } from "@/config/plugin"
 import { Npm } from "@/npm"
 
@@ -125,6 +125,22 @@ test("loads config with defaults when no files exist", async () => {
       expect(config.username).toBeDefined()
     },
   })
+})
+
+test("applies logLevel from project config", async () => {
+  await Log.init({ print: true, level: "INFO" })
+  try {
+    await using tmp = await tmpdir({ config: { logLevel: "WARN" } })
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () => {
+        await load()
+        expect(Log.getLevel()).toBe("WARN")
+      },
+    })
+  } finally {
+    await Log.init({ print: true, level: "INFO" })
+  }
 })
 
 test("loads JSON config file", async () => {

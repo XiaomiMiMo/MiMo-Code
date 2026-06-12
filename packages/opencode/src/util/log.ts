@@ -17,9 +17,19 @@ const levelPriority: Record<Level, number> = {
 const keep = 10
 
 let level: Level = "INFO"
+let levelLocked = false
 
 function shouldLog(input: Level): boolean {
   return levelPriority[input] >= levelPriority[level]
+}
+
+export function setLevel(input: Level) {
+  if (levelLocked) return
+  level = input
+}
+
+export function getLevel() {
+  return level
 }
 
 export type Logger = {
@@ -46,6 +56,7 @@ export interface Options {
   print: boolean
   dev?: boolean
   level?: Level
+  lockLevel?: boolean
 }
 
 let logpath = ""
@@ -59,6 +70,7 @@ let write = (msg: any) => {
 
 export async function init(options: Options) {
   if (options.level) level = options.level
+  levelLocked = options.lockLevel ?? false
   void cleanup(Global.Path.log)
   if (options.print) return
   logpath = path.join(
