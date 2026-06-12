@@ -1,6 +1,6 @@
-import { useDialog } from "@tui/ui/dialog"
+import { useDialog, type DialogContext } from "@tui/ui/dialog"
 import { DialogSelect, type DialogSelectOption, type DialogSelectRef } from "@tui/ui/dialog-select"
-import { isEditBufferRenderable } from "@opentui/core"
+import { isEditBufferRenderable, type ParsedKey } from "@opentui/core"
 import {
   createContext,
   createMemo,
@@ -40,6 +40,37 @@ export type CommandOption = DialogSelectOption<string> & {
   slash?: Slash
   hidden?: boolean
   enabled?: boolean
+}
+
+export function handleCommandListKey(
+  evt: ParsedKey & { preventDefault: () => void },
+  keybind: Pick<ReturnType<typeof useKeybind>, "match">,
+  show: () => void,
+) {
+  if (!keybind.match("command_list", evt)) return false
+  evt.preventDefault()
+  show()
+  return true
+}
+
+export function withCommandPaletteBack(options: CommandOption[], dialog: DialogContext) {
+  const nestedDialog = {
+    clear: () => dialog.clear(),
+    replace: (input, onClose) => dialog.push(input, onClose),
+    push: (input, onClose) => dialog.push(input, onClose),
+    get stack() {
+      return dialog.stack
+    },
+    get size() {
+      return dialog.size
+    },
+    setSize: (size) => dialog.setSize(size),
+  } satisfies DialogContext
+
+  return options.map((option) => ({
+    ...option,
+    onSelect: option.onSelect ? () => option.onSelect?.(nestedDialog) : undefined,
+  }))
 }
 
 function init() {
@@ -186,12 +217,8 @@ export function CommandProvider(props: ParentProps) {
   useKeyboard((evt) => {
     if (value.suspended()) return
     if (dialog.stack.length > 0) return
+    if (handleCommandListKey(evt, keybind, value.show)) return
     if (evt.defaultPrevented) return
-    if (keybind.match("command_list", evt)) {
-      evt.preventDefault()
-      value.show()
-      return
-    }
   })
 
   return <ctx.Provider value={value}>{props.children}</ctx.Provider>
@@ -199,10 +226,17 @@ export function CommandProvider(props: ParentProps) {
 
 function DialogCommand(props: { options: CommandOption[]; suggestedOptions: CommandOption[] }) {
   const lang = useLanguage()
+  const dialog = useDialog()
   let ref: DialogSelectRef<string>
   const list = () => {
     if (ref?.filter) return props.options
     return [...props.suggestedOptions, ...props.options]
   }
-  return <DialogSelect ref={(r) => (ref = r)} title={lang.t("tui.command.palette.title")} options={list()} />
+  return (
+    <DialogSelect
+      ref={(r) => (ref = r)}
+      title={lang.t("tui.command.palette.title")}
+      options={withCommandPaletteBack(list(), dialog)}
+    />
+  )
 }
