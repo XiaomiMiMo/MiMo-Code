@@ -22,7 +22,12 @@ MiMo Auto is built in as a free-for-limited-time channel, so you can start with 
 
 ---
 
-## Quick Start
+## Astraflow
+
+| Provider | Description |
+|--------|------|
+| **Astraflow** | Astraflow by UCloud — OpenAI-compatible platform supporting 200+ models (global endpoint) |
+| **Astraflow (CN)** | Astraflow by UCloud — OpenAI-compatible platform supporting 200+ models (China endpoint) |## Quick Start
 
 ```bash
 # One-line install

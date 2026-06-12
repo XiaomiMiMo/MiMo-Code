@@ -22,7 +22,12 @@ MiMoCode 是一个终端原生的 AI 编程助手。它能读写代码、执行�
 
 ---
 
-## 快速开始
+## Astraflow
+
+| Provider  | Description |
+| --------- | ----------- |
+| **Astraflow**  | Astraflow by UCloud — OpenAI-compatible platform supporting 200+ models (global endpoint) |
+| **Astraflow (CN)**  | Astraflow by UCloud — OpenAI-compatible platform supporting 200+ models (China endpoint) |## 快速开始
 
 ```bash
 # 一键安装
