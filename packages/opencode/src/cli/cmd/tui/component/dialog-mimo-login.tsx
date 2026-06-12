@@ -9,6 +9,12 @@ import { DialogProvider as DialogProviderList } from "./dialog-provider"
 import { DialogSelect } from "@tui/ui/dialog-select"
 import { DialogPrompt } from "../ui/dialog-prompt"
 import { useToast } from "../ui/toast"
+import {
+  CLAUDE_SETTINGS_FILES,
+  claudeSettingsEnvSources,
+  resolveClaudeApiKey,
+  resolveClaudeEnvValue,
+} from "../util/claude-settings"
 import os from "os"
 import path from "path"
 
@@ -66,26 +72,19 @@ export function DialogMimoLogin() {
           value: "import_claude",
           onSelect: async () => {
             const claudeDir = path.join(os.homedir(), ".claude")
-            const candidates = ["settings.json", "settings.local.json", "settings_local.json"]
 
             const resolve = await (async () => {
-              const envs: Record<string, string>[] = []
-              for (const file of candidates) {
+              const envs: Record<string, unknown>[] = []
+              for (const file of CLAUDE_SETTINGS_FILES) {
                 try {
                   const content = await Bun.file(path.join(claudeDir, file)).json()
-                  if (content?.env && typeof content.env === "object") envs.push(content.env)
+                  envs.push(...claudeSettingsEnvSources(content))
                 } catch {}
               }
-              return (name: string) => {
-                for (let i = envs.length - 1; i >= 0; i--) {
-                  const v = envs[i][name]
-                  if (v && typeof v === "string") return v
-                }
-                return process.env[name]
-              }
+              return (name: string) => resolveClaudeEnvValue(envs, name)
             })()
 
-            const key = resolve("ANTHROPIC_API_KEY")
+            const key = resolveClaudeApiKey(resolve)
             const rawBaseUrl = resolve("ANTHROPIC_BASE_URL")
             const baseUrl = rawBaseUrl
               ? rawBaseUrl.replace(/\/+$/, "").replace(/(?<!\/v1)$/, "/v1")
