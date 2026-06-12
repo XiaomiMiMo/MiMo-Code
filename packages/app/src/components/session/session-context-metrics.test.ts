@@ -92,6 +92,34 @@ describe("getSessionContextMetrics", () => {
     expect(two.totalCost).toBe(1)
   })
 
+  test("counts only output tokens when latest assistant is a compaction summary", () => {
+    const summary = {
+      ...(assistant("a2", { input: 900000, output: 8000, reasoning: 2000, read: 50000, write: 0 }, 0) as object),
+      summary: true,
+    } as unknown as Message
+    const messages = [
+      user("u1"),
+      assistant("a1", { input: 300000, output: 50000, reasoning: 0, read: 50000, write: 0 }, 1),
+      summary,
+    ]
+    const providers = [
+      {
+        id: "openai",
+        models: {
+          "gpt-4.1": {
+            limit: { context: 1000000 },
+          },
+        },
+      },
+    ]
+
+    const metrics = getSessionContextMetrics(messages, providers)
+
+    expect(metrics.context?.message.id).toBe("a2")
+    expect(metrics.context?.total).toBe(8000)
+    expect(metrics.context?.usage).toBe(1)
+  })
+
   test("returns empty metrics when inputs are undefined", () => {
     const metrics = getSessionContextMetrics(undefined, undefined)
 
