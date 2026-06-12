@@ -4,7 +4,9 @@ import { Effect, Stream, ManagedRuntime, Layer } from "effect"
 import { LLM } from "../../src/session/llm"
 import { ActorRegistry } from "../../src/actor/registry"
 import { Session as SessionNs } from "../../src/session"
+import { InstanceRef } from "../../src/effect/instance-ref"
 import { Instance } from "../../src/project/instance"
+import { ProjectID } from "../../src/project/schema"
 import { Provider } from "../../src/provider"
 import { ProviderID, ModelID } from "../../src/provider/schema"
 import { Filesystem } from "../../src/util"
@@ -475,5 +477,68 @@ describe("session.llm system prompt — memory-instructions guard", () => {
         expect(allSys).not.toContain("<data>/memory/sessions")
       },
     })
+  })
+
+  test("main agent memory instructions use InstanceRef project outside ALS", async () => {
+    const server = queueState.server!
+    const providerID = "alibaba"
+    const modelID = "qwen-plus"
+    const fixture = await loadFixture(providerID, modelID)
+    const request = waitRequest(
+      "/chat/completions",
+      new Response(createChatStream("Hi"), { status: 200, headers: { "Content-Type": "text/event-stream" } }),
+    )
+
+    await using tmp = await tmpdir({
+      git: true,
+      init: async (dir) => {
+        await Bun.write(path.join(dir, "mimocode.json"), tmpConfig(providerID, `${server.url.origin}/v1`))
+      },
+    })
+
+    const setup = await Instance.provide({
+      directory: tmp.path,
+      fn: async () => {
+        const resolved = await getModel(ProviderID.make(providerID), ModelID.make(fixture.model.id))
+        const sessionRt = ManagedRuntime.make(SessionNs.defaultLayer)
+        try {
+          const info = await sessionRt.runPromise(SessionNs.Service.use((svc) => svc.create({})))
+          return { ctx: Instance.current, resolved, sessionID: info.id }
+        } finally {
+          await sessionRt.dispose()
+        }
+      },
+    })
+
+    expect(setup.ctx.project.id).not.toBe(ProjectID.global)
+
+    const rt = ManagedRuntime.make(Layer.mergeAll(LLM.defaultLayer))
+    try {
+      await rt.runPromise(
+        LLM.Service.use((svc) =>
+          svc
+            .stream({
+              user: makeBaseUser(setup.sessionID, providerID, setup.resolved.id),
+              sessionID: setup.sessionID,
+              model: setup.resolved,
+              agent: makeAgent(),
+              system: ["You are a helpful assistant."],
+              messages: [{ role: "user", content: "Hello" }],
+              tools: {},
+            })
+            .pipe(Stream.runDrain),
+        ).pipe(Effect.provideService(InstanceRef, setup.ctx)),
+      )
+    } finally {
+      await rt.dispose()
+    }
+
+    const capture = await request
+    const allSys = (capture.body.messages as Array<{ role: string; content: string }>)
+      .filter((m) => m.role === "system")
+      .map((m) => m.content)
+      .join("\n")
+    expect(allSys).toContain(path.join(Global.Path.data, "memory", "projects", setup.ctx.project.id, "MEMORY.md"))
+    expect(allSys).not.toContain(path.join(Global.Path.data, "memory", "projects", ProjectID.global, "MEMORY.md"))
   })
 })

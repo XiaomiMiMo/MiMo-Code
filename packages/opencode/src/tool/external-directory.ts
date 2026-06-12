@@ -5,7 +5,6 @@ import { InstanceState } from "@/effect"
 import { Global } from "@/global"
 import type * as Tool from "./tool"
 import { Instance } from "../project/instance"
-import { ProjectID } from "../project/schema"
 import { assertMemoryWriteAllowed } from "./memory-path-guard"
 import { AppFileSystem } from "@mimo-ai/shared/filesystem"
 
@@ -81,18 +80,7 @@ export const assertWriteAllowed = Effect.fn("Tool.assertWriteAllowed")(function*
   yield* assertExternalDirectoryEffect(ctx, target, options)
   if (!target) return
 
-  // Instance.current is a getter that THROWS when no instance is ALS-bound
-  // (detached fibers, tests without a project fixture). The optional chain runs
-  // only after the getter returns, so it cannot save us — the try/catch is
-  // load-bearing, not defensive dead code. Fall back to ProjectID.global so the
-  // guard can still resolve a canonical memory path. Mirrors session/checkpoint.ts.
-  const projectID = (() => {
-    try {
-      return (Instance.current?.project?.id as ProjectID | undefined) ?? ProjectID.global
-    } catch {
-      return ProjectID.global
-    }
-  })()
+  const projectID = yield* InstanceState.projectID
 
   assertMemoryWriteAllowed({
     target,

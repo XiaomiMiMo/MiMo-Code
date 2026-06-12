@@ -1,6 +1,7 @@
 import { Effect, Fiber, ScopedCache, Scope, Context } from "effect"
 import * as EffectLogger from "./logger"
 import { Instance, type InstanceContext } from "@/project/instance"
+import { ProjectID } from "@/project/schema"
 import { LocalContext } from "@/util"
 import { InstanceRef, WorkspaceRef } from "./instance-ref"
 import { registerDisposer } from "./instance-registry"
@@ -27,6 +28,15 @@ export const bind = <F extends (...args: any[]) => any>(fn: F): F => {
 
 export const context = Effect.gen(function* () {
   return (yield* InstanceRef) ?? Instance.current
+})
+
+export const projectID = Effect.gen(function* () {
+  const ctx = yield* InstanceRef
+  if (ctx) return ctx.project.id
+  return yield* Effect.try({
+    try: () => Instance.current.project.id,
+    catch: () => undefined,
+  }).pipe(Effect.orElseSucceed(() => ProjectID.global))
 })
 
 export const workspaceID = Effect.gen(function* () {

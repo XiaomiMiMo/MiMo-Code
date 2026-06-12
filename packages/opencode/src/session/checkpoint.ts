@@ -11,7 +11,6 @@ import type { AgentOutcome, ForkContext } from "@/actor/spawn"
 import { spawnRef } from "@/actor/spawn-ref"
 import { prefixCaptureRef } from "./prefix-capture-ref"
 import { Database, and, eq, or } from "@/storage"
-import { Instance } from "@/project/instance"
 import { ProjectID } from "@/project/schema"
 import { SessionTable } from "./session.sql"
 import * as Session from "./session"
@@ -19,6 +18,7 @@ import { MessageV2 } from "./message-v2"
 import { SessionID, MessageID, PartID } from "./schema"
 import { Log, Token } from "../util"
 import { Effect, Layer, Deferred, Context, Scope } from "effect"
+import { InstanceState } from "@/effect"
 import { makeRuntime } from "@/effect/run-service"
 import type { ActorPromptOps } from "@/tool/actor"
 import type { ProviderID, ModelID } from "../provider/schema"
@@ -571,13 +571,8 @@ export const layer: Layer.Layer<
 
       // v5 paths: single checkpoint.md per session, single memory.md per
       // project (carries across sessions in the same repo), task narrative
-      // under <sid>/tasks/<id>/. Resolve projectID once HERE — Instance.current
-      // is ALS-bound and lost once the writer subagent fiber detaches.
-      const projectID =
-        (yield* Effect.try({
-          try: () => Instance.current?.project?.id as ProjectID | undefined,
-          catch: () => undefined,
-        }).pipe(Effect.orElseSucceed(() => undefined))) ?? ProjectID.global
+      // under <sid>/tasks/<id>/.
+      const projectID = yield* InstanceState.projectID
       const sessMemDir = metaDir(input.sessionID)
       const projectMemDir = path.join(Global.Path.data, "memory", "projects", projectID)
       const checkpointFile = checkpointPath(input.sessionID)
@@ -1038,14 +1033,8 @@ export const layer: Layer.Layer<
 
       const sessMemDir = path.join(memoryRoot, "sessions", sessionID)
 
-      // Resolve current project ID once. Used by Section 7 (project memory
-      // read) and Section 8 (FTS scope filter). ALS-bound — must be resolved
-      // before any deferred work.
-      const currentProjectID = yield* Effect.try({
-        try: () => Instance.current?.project?.id as ProjectID | undefined,
-        catch: () => undefined as ProjectID | undefined,
-      }).pipe(Effect.catch(() => Effect.succeed<ProjectID | undefined>(undefined)))
-      const projectID = currentProjectID ?? ProjectID.global
+      const currentProjectID = yield* InstanceState.projectID
+      const projectID = currentProjectID
 
       // Section data: tasks (SQL), session checkpoint (file), project memory (file).
       const tasks = yield* taskRegistry.list({ session_id: sessionID, include_terminal: true })

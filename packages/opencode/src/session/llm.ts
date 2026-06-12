@@ -25,7 +25,7 @@ import { ProjectID } from "@/project/schema"
 import { Auth } from "@/auth"
 import { Installation } from "@/installation"
 import { InstallationVersion } from "@/installation/version"
-import { EffectBridge } from "@/effect"
+import { EffectBridge, InstanceState } from "@/effect"
 import { Global } from "@/global"
 import * as Option from "effect/Option"
 import * as OtelTracer from "@effect/opentelemetry/Tracer"
@@ -263,12 +263,8 @@ const live: Layer.Layer<
       const isSystemActor = input.agentID
         ? yield* actorReg.isSystemSpawned(SessionID.make(input.sessionID), input.agentID)
         : false
+      const projectID = yield* InstanceState.projectID
       if (!isSystemActor) {
-        const projectID =
-          (yield* Effect.try({
-            try: () => Instance.current?.project?.id as ProjectID | undefined,
-            catch: () => undefined,
-          }).pipe(Effect.orElseSucceed(() => undefined))) ?? ProjectID.global
         // Bootstrap the memory.md → MEMORY.md migration at session start so a
         // legacy lowercase file is renamed before the agent's first direct
         // Edit/Write (which would otherwise miss it on a case-sensitive FS, or
@@ -546,6 +542,7 @@ const live: Layer.Layer<
         msgCount: messages.length,
         toolCount: Object.keys(tools).length,
       })
+      const projectID = yield* InstanceState.projectID
 
       return streamText({
         onError(error) {
@@ -591,7 +588,7 @@ const live: Layer.Layer<
         headers: {
           ...(input.model.providerID.startsWith("opencode")
             ? {
-                "x-opencode-project": Instance.project.id,
+                "x-opencode-project": projectID,
                 "x-opencode-session": input.sessionID,
                 "x-opencode-request": input.user.id,
                 "x-opencode-client": Flag.MIMOCODE_CLIENT,
