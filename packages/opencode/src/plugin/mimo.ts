@@ -113,11 +113,9 @@ export async function MimoAuthPlugin(_input: PluginInput): Promise<Hooks> {
             const port = typeof addr === "object" && addr ? addr.port : 0
             log.info("mimo oauth server started", { port })
 
-            const redirectUri = `http://localhost:${port}/`
-            const authUrl = buildAuthorizeUrl(publicKey, redirectUri)
             const manualUrl = buildAuthorizeUrl(publicKey, `${PLATFORM_URL}/authorize/code/callback`)
 
-            openBrowser(authUrl)
+            openBrowser(manualUrl)
 
             const serverCallbackPromise = new Promise<{ sk?: string; uid: string; url?: string }>((resolve, reject) => {
               const timeout = setTimeout(() => {

@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import crypto from "crypto"
+import path from "path"
 import { MimoAuthPlugin } from "../../src/plugin/mimo"
 import type { PluginInput } from "@mimo-ai/plugin"
 
@@ -109,6 +110,13 @@ describe("MimoAuthPlugin", () => {
       expect(redirectUri).toContain("/authorize/code/callback")
 
       await result.callback("invalid").catch(() => {})
+    })
+
+    test("auto-open uses the same platform callback url shown to the user", async () => {
+      const text = await Bun.file(path.join(import.meta.dir, "../../src/plugin/mimo.ts")).text()
+
+      expect(text).toContain("openBrowser(manualUrl)")
+      expect(text).not.toContain("openBrowser(authUrl)")
     })
 
     test("returns method auto", async () => {
