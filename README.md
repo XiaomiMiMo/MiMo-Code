@@ -38,6 +38,8 @@ The first launch guides you through configuration automatically. Supported optio
 - **Import from Claude Code** — migrate existing authentication in one step
 - **Custom Provider** — add any OpenAI-compatible API in the TUI
 
+Astraflow by UCloud is available as an OpenAI-compatible provider. Configure `astraflow` with `ASTRAFLOW_API_KEY` for the global endpoint (`https://api-us-ca.umodelverse.ai/v1`) or `astraflow-cn` with `ASTRAFLOW_CN_API_KEY` for the China endpoint (`https://api.modelverse.cn/v1`).
+
 Astraflow by UCloud is also supported as an OpenAI-compatible provider via `ASTRAFLOW_API_KEY` and the global endpoint `https://api-us-ca.umodelverse.ai/v1`.
 
 ---
