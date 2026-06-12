@@ -117,6 +117,7 @@ export const layer = Layer.effect(
     const agents = yield* Agent.Service
     const skill = yield* Skill.Service
     const truncate = yield* Truncate.Service
+    const auth = yield* Auth.Service
 
     const invalid = yield* InvalidTool
     const actor = yield* ActorTool
@@ -307,12 +308,16 @@ export const layer = Layer.effect(
     })
 
     const tools: Interface["tools"] = Effect.fn("ToolRegistry.tools")(function* (input) {
+      const xiaomiAuth = yield* auth.get("xiaomi").pipe(Effect.orElseSucceed(() => undefined))
+      const hasMimoWebsearch = Boolean(process.env.MIMO_WEB_SEARCH_API_KEY) || xiaomiAuth?.type === "api"
       let filtered = (yield* all()).filter((tool) => {
         if (tool.id === CodeSearchTool.id || tool.id === WebSearchTool.id) {
           if (tool.id === WebSearchTool.id) {
             return (
               input.providerID === ProviderID.opencode ||
               input.providerID === "xiaomi" ||
+              input.providerID === "mimo" ||
+              hasMimoWebsearch ||
               Flag.MIMOCODE_ENABLE_EXA
             )
           }

@@ -5,12 +5,20 @@ import { Effect, Layer } from "effect"
 import { Instance } from "../../src/project/instance"
 import * as CrossSpawnSpawner from "../../src/effect/cross-spawn-spawner"
 import { ToolRegistry } from "../../src/tool"
+import type { Agent } from "../../src/agent/agent"
+import { ModelID, ProviderID } from "../../src/provider/schema"
 import { provideTmpdirInstance } from "../fixture/fixture"
 import { testEffect } from "../lib/effect"
 
 const node = CrossSpawnSpawner.defaultLayer
 
 const it = testEffect(Layer.mergeAll(ToolRegistry.defaultLayer, node))
+const buildAgent = {
+  name: "build",
+  mode: "primary",
+  options: {},
+  permission: [{ permission: "*", pattern: "*", action: "allow" }],
+} satisfies Agent.Info
 
 afterEach(async () => {
   await Instance.disposeAll()
@@ -158,6 +166,20 @@ describe("tool.registry", () => {
         expect(ids).not.toContain("todowrite")
         expect(ids).not.toContain("todo")
         expect(ids).toContain("task")
+      }),
+    ),
+  )
+
+  it.live("exposes websearch for MiMo provider models", () =>
+    provideTmpdirInstance(() =>
+      Effect.gen(function* () {
+        const registry = yield* ToolRegistry.Service
+        const tools = yield* registry.tools({
+          providerID: ProviderID.make("mimo"),
+          modelID: ModelID.make("mimo-auto"),
+          agent: buildAgent,
+        })
+        expect(tools.map((tool) => tool.id)).toContain("websearch")
       }),
     ),
   )
