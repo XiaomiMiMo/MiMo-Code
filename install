@@ -182,9 +182,17 @@ else
 
     if [ -z "$requested_version" ]; then
         url="https://github.com/XiaomiMiMo/MiMo-Code/releases/latest/download/$filename"
-        specific_version=$(curl -s https://api.github.com/repos/XiaomiMiMo/MiMo-Code/releases/latest | sed -n 's/.*"tag_name": *"v\([^"]*\)".*/\1/p')
+        if latest_url=$(curl -fsSIL -o /dev/null -w "%{url_effective}" "https://github.com/XiaomiMiMo/MiMo-Code/releases/latest"); then
+            if [[ "$latest_url" == *"/releases/tag/v"* ]]; then
+                specific_version="${latest_url##*/v}"
+            else
+                specific_version=""
+            fi
+        else
+            specific_version=""
+        fi
 
-        if [[ $? -ne 0 || -z "$specific_version" ]]; then
+        if [[ -z "$specific_version" ]]; then
             echo -e "${RED}Failed to fetch version information${NC}"
             exit 1
         fi
