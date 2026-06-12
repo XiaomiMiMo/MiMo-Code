@@ -1,4 +1,4 @@
-import { Cause, Deferred, Effect, Layer, Context, Scope } from "effect"
+import { Cause, Deferred, Effect, Layer, Context, Ref, Scope } from "effect"
 import * as Stream from "effect/Stream"
 import { Agent } from "@/agent/agent"
 import { SYSTEM_SPAWNED_AGENT_TYPES } from "@/agent/config"
@@ -15,6 +15,7 @@ import { isOverflow } from "./overflow"
 import { PartID } from "./schema"
 import type { SessionID } from "./schema"
 import { SessionRetry } from "./retry"
+import { LoopDetector, OutputLoopError } from "./loop-detector"
 import { SessionStatus } from "./status"
 import { SessionSummary } from "./summary"
 import type { Provider } from "@/provider"
@@ -24,6 +25,9 @@ import { Log } from "@/util"
 import { isRecord } from "@/util/record"
 
 const DOOM_LOOP_THRESHOLD = 3
+// Output loops are stochastic — a fresh attempt usually escapes them. Junk
+// parts from the failed attempt are removed by the retry pipeline's tapError.
+const OUTPUT_LOOP_RETRY_LIMIT = 2
 const log = Log.create({ service: "session.processor" })
 
 export type Result = "overflow" | "stop" | "continue"
@@ -144,6 +148,7 @@ interface ProcessorContext extends Input {
   stepStartedAt: number | undefined
   firstTokenAt: number | undefined
   stepPartIds: PartID[]
+  loopDetector: LoopDetector | undefined
 }
 
 type StreamEvent = Event
@@ -198,6 +203,7 @@ export const layer: Layer.Layer<
         stepStartedAt: undefined,
         firstTokenAt: undefined,
         stepPartIds: [],
+        loopDetector: undefined,
       }
       let aborted = false
       // Only the main agent owns session-level status. Subagents (explore,
@@ -296,6 +302,14 @@ export const layer: Layer.Layer<
         return true
       })
 
+      const detectLoop = (text: string) => {
+        if (!ctx.loopDetector) return
+        const check = ctx.loopDetector.append(text)
+        if (!check.loop) return
+        slog.warn("model output loop detected", { period: check.period, count: check.count })
+        throw new OutputLoopError(check.period, check.count)
+      }
+
       const handleEvent = Effect.fnUntraced(function* (value: StreamEvent) {
         switch (value.type) {
           case "start":
@@ -304,6 +318,7 @@ export const layer: Layer.Layer<
 
           case "reasoning-start":
             if (value.id in ctx.reasoningMap) return
+            ctx.loopDetector?.reset()
             ctx.reasoningMap[value.id] = {
               id: PartID.ascending(),
               messageID: ctx.assistantMessage.id,
@@ -323,6 +338,7 @@ export const layer: Layer.Layer<
           case "reasoning-delta":
             if (!ctx.firstTokenAt) ctx.firstTokenAt = Date.now()
             if (!(value.id in ctx.reasoningMap)) return
+            detectLoop(value.text)
             ctx.reasoningMap[value.id].text += value.text
             if (value.providerMetadata) ctx.reasoningMap[value.id].metadata = value.providerMetadata
             yield* session.updatePartDelta({
@@ -532,6 +548,7 @@ export const layer: Layer.Layer<
           }
 
           case "text-start":
+            ctx.loopDetector?.reset()
             ctx.currentText = {
               id: PartID.ascending(),
               messageID: ctx.assistantMessage.id,
@@ -548,6 +565,7 @@ export const layer: Layer.Layer<
           case "text-delta":
             if (!ctx.firstTokenAt) ctx.firstTokenAt = Date.now()
             if (!ctx.currentText) return
+            detectLoop(value.text)
             ctx.currentText.text += value.text
             if (value.providerMetadata) ctx.currentText.metadata = value.providerMetadata
             yield* session.updatePartDelta({
@@ -669,7 +687,10 @@ export const layer: Layer.Layer<
       const process = Effect.fn("SessionProcessor.process")(function* (streamInput: LLM.StreamInput) {
         slog.info("process")
         ctx.needsOverflowHandling = false
-        ctx.shouldBreak = (yield* config.get()).experimental?.continue_loop_on_deny !== true
+        const cfg = yield* config.get()
+        ctx.shouldBreak = cfg.experimental?.continue_loop_on_deny !== true
+        const loopDetect = cfg.loop_detect !== false
+        const loopAttempts = yield* Ref.make(0)
 
         return yield* Effect.gen(function* () {
           yield* Effect.gen(function* () {
@@ -677,6 +698,7 @@ export const layer: Layer.Layer<
             ctx.reasoningMap = {}
             ctx.stepPartIds = []
             ctx.toolcalls = {}
+            ctx.loopDetector = loopDetect ? new LoopDetector() : undefined
             const stream = llm.stream(streamInput)
 
             yield* stream.pipe(
@@ -709,6 +731,25 @@ export const layer: Layer.Layer<
                 ctx.stepPartIds = []
               }),
             ),
+            Effect.tapError((error) =>
+              Effect.gen(function* () {
+                if (!(error instanceof OutputLoopError)) return
+                const attempt = yield* Ref.updateAndGet(loopAttempts, (n) => n + 1)
+                if (attempt > OUTPUT_LOOP_RETRY_LIMIT) return
+                slog.warn("retrying after model output loop", { attempt })
+                if (isMain)
+                  yield* status.set(ctx.sessionID, {
+                    type: "retry",
+                    attempt,
+                    message: "Model output entered a loop",
+                    next: Date.now(),
+                  })
+              }),
+            ),
+            Effect.retry({
+              while: (error) => error instanceof OutputLoopError,
+              times: OUTPUT_LOOP_RETRY_LIMIT,
+            }),
             Effect.retry(
               SessionRetry.policy({
                 parse,
@@ -737,6 +778,9 @@ export const layer: Layer.Layer<
         slog.info("replay", { toolCalls: input.toolCalls.length, finish: input.finishReason })
         ctx.needsOverflowHandling = false
         ctx.shouldBreak = (yield* config.get()).experimental?.continue_loop_on_deny !== true
+        // Replays lay down an already-selected candidate; there is no live
+        // request to truncate, so loop detection stays off.
+        ctx.loopDetector = undefined
 
         const ctrl = new AbortController()
 

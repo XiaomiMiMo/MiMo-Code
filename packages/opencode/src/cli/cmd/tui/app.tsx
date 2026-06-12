@@ -807,6 +807,30 @@ function App(props: { onSnapshot?: () => Promise<string[]> }) {
       },
     },
     {
+      title: t(
+        sync.data.config.loop_detect !== false
+          ? "tui.command.loop_detect.disable.title"
+          : "tui.command.loop_detect.enable.title",
+      ),
+      category: "system",
+      value: "loop_detect.toggle",
+      onSelect: async (dialog) => {
+        const next = sync.data.config.loop_detect === false
+        dialog.clear()
+        const res = await sdk.client.global.config.update({ config: { loop_detect: next } })
+        if (res.error) {
+          toast.show({ variant: "error", message: JSON.stringify(res.error) })
+          return
+        }
+        await sdk.client.instance.dispose()
+        await sync.bootstrap()
+        toast.show({
+          variant: "info",
+          message: t(next ? "tui.toast.loop_detect.enabled" : "tui.toast.loop_detect.disabled"),
+        })
+      },
+    },
+    {
       title: t("tui.command.app.heap_snapshot.title"),
       category: "system",
       value: "app.heap_snapshot",

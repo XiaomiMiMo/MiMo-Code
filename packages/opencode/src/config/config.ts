@@ -113,6 +113,10 @@ const InfoSchema = Schema.Struct({
     description:
       "Enable or disable snapshot tracking. When false, filesystem snapshots are not recorded and undoing or reverting will not undo/redo file changes. Defaults to true.",
   }),
+  loop_detect: Schema.optional(Schema.Boolean).annotate({
+    description:
+      "Detect runaway repetition in streamed model output and truncate the response when found. Defaults to true.",
+  }),
   // User-facing plugin config is stored as Specs; provenance gets attached later while configs are merged.
   plugin: Schema.optional(Schema.mutable(Schema.Array(ConfigPlugin.Spec))),
   share: Schema.optional(Schema.Literals(["manual", "auto", "disabled"])).annotate({

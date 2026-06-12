@@ -851,3 +851,100 @@ it.live("session.processor effect tests mark interruptions aborted without manua
     { git: true, config: (url) => providerCfg(url) },
   ),
 )
+
+const LOOPING_TEXT = "I should check the file again. ".repeat(40)
+
+it.live("session.processor effect tests retry when model output loops", () =>
+  provideTmpdirServer(
+    ({ dir, llm }) =>
+      Effect.gen(function* () {
+        const { processors, session, provider } = yield* boot()
+
+        yield* llm.push(reply().text(LOOPING_TEXT).stop(), reply().text("recovered").stop())
+
+        const chat = yield* session.create({})
+        const parent = yield* user(chat.id, "loop")
+        const msg = yield* assistant(chat.id, parent.id, path.resolve(dir))
+        const mdl = yield* provider.getModel(ref.providerID, ref.modelID)
+        const handle = yield* processors.create({
+          assistantMessage: msg,
+          sessionID: chat.id,
+          model: mdl,
+        })
+
+        const value = yield* handle.process({
+          user: {
+            id: parent.id,
+            sessionID: chat.id,
+            role: "user",
+            time: parent.time,
+            agent: parent.agent,
+            model: { providerID: ref.providerID, modelID: ref.modelID },
+          } satisfies MessageV2.User,
+          sessionID: chat.id,
+          model: mdl,
+          agent: agent(),
+          system: [],
+          messages: [{ role: "user", content: "loop" }],
+          tools: {},
+        })
+
+        const parts = MessageV2.parts(msg.id)
+
+        expect(value).toBe("continue")
+        expect(yield* llm.calls).toBe(2)
+        expect(parts.some((part) => part.type === "text" && part.text === "recovered")).toBe(true)
+        expect(parts.some((part) => part.type === "text" && part.text.includes(LOOPING_TEXT))).toBe(false)
+        expect(handle.message.error).toBeUndefined()
+      }),
+    { git: true, config: (url) => providerCfg(url) },
+  ),
+)
+
+it.live("session.processor effect tests stop after output loop retries are exhausted", () =>
+  provideTmpdirServer(
+    ({ dir, llm }) =>
+      Effect.gen(function* () {
+        const { processors, session, provider } = yield* boot()
+
+        yield* llm.push(
+          reply().text(LOOPING_TEXT).stop(),
+          reply().text(LOOPING_TEXT).stop(),
+          reply().text(LOOPING_TEXT).stop(),
+        )
+
+        const chat = yield* session.create({})
+        const parent = yield* user(chat.id, "loop forever")
+        const msg = yield* assistant(chat.id, parent.id, path.resolve(dir))
+        const mdl = yield* provider.getModel(ref.providerID, ref.modelID)
+        const handle = yield* processors.create({
+          assistantMessage: msg,
+          sessionID: chat.id,
+          model: mdl,
+        })
+
+        const value = yield* handle.process({
+          user: {
+            id: parent.id,
+            sessionID: chat.id,
+            role: "user",
+            time: parent.time,
+            agent: parent.agent,
+            model: { providerID: ref.providerID, modelID: ref.modelID },
+          } satisfies MessageV2.User,
+          sessionID: chat.id,
+          model: mdl,
+          agent: agent(),
+          system: [],
+          messages: [{ role: "user", content: "loop forever" }],
+          tools: {},
+        })
+
+        expect(value).toBe("stop")
+        expect(yield* llm.calls).toBe(3)
+        expect(handle.message.error?.name).toBe("ModelError")
+        expect(handle.message.error?.data.message).toContain("loop")
+      }),
+    { git: true, config: (url) => providerCfg(url) },
+  ),
+)
