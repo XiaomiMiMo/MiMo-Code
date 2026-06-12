@@ -51,6 +51,8 @@ const FILES = new Set([
 ])
 const FLAGS = new Set(["-destination", "-literalpath", "-path"])
 const SWITCHES = new Set(["-confirm", "-debug", "-force", "-nonewline", "-recurse", "-verbose", "-whatif"])
+const POWERSHELL_UTF8_PREAMBLE =
+  "[Console]::InputEncoding = [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false); $OutputEncoding = [Console]::OutputEncoding;"
 
 const Parameters = z.object({
   command: z.string().describe("The command to execute"),
@@ -306,9 +308,19 @@ const ask = Effect.fn("BashTool.ask")(function* (ctx: Tool.Context, scan: Scan) 
   })
 })
 
+export function powerShellCommandArgs(command: string) {
+  return [
+    "-NoLogo",
+    "-NoProfile",
+    "-NonInteractive",
+    "-EncodedCommand",
+    Buffer.from(`${POWERSHELL_UTF8_PREAMBLE}\n${command}`, "utf16le").toString("base64"),
+  ]
+}
+
 function cmd(shell: string, name: string, command: string, cwd: string, env: NodeJS.ProcessEnv) {
   if (process.platform === "win32" && PS.has(name)) {
-    return ChildProcess.make(shell, ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", command], {
+    return ChildProcess.make(shell, powerShellCommandArgs(command), {
       cwd,
       env,
       stdin: "ignore",
