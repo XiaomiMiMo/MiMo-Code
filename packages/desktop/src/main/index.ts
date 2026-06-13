@@ -7,6 +7,7 @@ import { join } from "node:path"
 import type { Event } from "electron"
 import { app, BrowserWindow, dialog } from "electron"
 import pkg from "electron-updater"
+import "./bun-polyfill"
 
 import contextMenu from "electron-context-menu"
 contextMenu({ showSaveImageAs: true, showLookUpSelection: false, showSearchWithGoogle: false })
@@ -17,6 +18,7 @@ try {
 } catch {}
 
 process.env.OPENCODE_DISABLE_EMBEDDED_WEB_UI = "true"
+process.env.MIMOCODE_DISABLE_EMBEDDED_WEB_UI = "true"
 
 const APP_NAMES: Record<string, string> = {
   dev: "OpenCode Dev",

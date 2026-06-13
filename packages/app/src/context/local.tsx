@@ -7,6 +7,7 @@ import { useModels } from "@/context/models"
 import { useProviders } from "@/hooks/use-providers"
 import { Persist, persisted } from "@/utils/persist"
 import { cycleModelVariant, getConfiguredAgentVariant, resolveModelVariant } from "./model-variant"
+import { parseModelRef } from "./model-ref"
 import { useSDK } from "./sdk"
 import { useSync } from "./sync"
 
@@ -141,9 +142,8 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
     })
 
     const configuredModel = () => {
-      if (!sync.data.config.model) return
-      const [providerID, modelID] = sync.data.config.model.split("/")
-      const model = { providerID, modelID }
+      const model = parseModelRef(sync.data.config.model)
+      if (!model) return
       if (validModel(model)) return model
     }
 

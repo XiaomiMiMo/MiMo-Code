@@ -786,7 +786,9 @@ export const layer = Layer.effect(
               Effect.tap((exit) =>
                 Exit.isFailure(exit)
                   ? Effect.sync(() => {
-                      log.warn("background dependency install failed", { dir, error: String(exit.cause) })
+                      const payload = { dir, error: String(exit.cause) }
+                      if (Flag.MIMOCODE_STRICT_CONFIG_DEPS) log.warn("background dependency install failed", payload)
+                      else log.debug("background dependency install failed", payload)
                     })
                   : Effect.void,
               ),
