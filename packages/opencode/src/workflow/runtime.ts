@@ -355,6 +355,9 @@ export const layer = Layer.effect(
         entry.status = "cancelled"
         yield* Deferred.succeed(entry.deferred, { status: "cancelled" })
         yield* bus.publish(WorkflowFinished, { sessionID: entry.sessionID, runID: entry.runID, status: "cancelled" })
+        // Evict the cancelled entry after a grace period so status/wait
+        // callers can still read the terminal outcome briefly.
+        setTimeout(() => runs.delete(entry.runID), 30_000)
       })
 
     const waitFor = (childRunID: string) =>
