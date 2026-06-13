@@ -75,6 +75,25 @@ test("plan agent denies edits except .mimocode/plans/*", async () => {
   })
 })
 
+test("plan agent allows only read-only bash commands by default", async () => {
+  await using tmp = await tmpdir()
+  await Instance.provide({
+    directory: tmp.path,
+    fn: async () => {
+      const plan = await load(tmp.path, (svc) => svc.get("plan"))
+      expect(plan).toBeDefined()
+
+      for (const pattern of ["mkdir test", "touch output.txt", "echo test > output.txt"]) {
+        expect(Permission.evaluate("bash", pattern, plan!.permission).action).toBe("deny")
+      }
+
+      for (const pattern of ["ls -la", "git status --short", "rg needle src", "Get-ChildItem ."]) {
+        expect(Permission.evaluate("bash", pattern, plan!.permission).action).toBe("allow")
+      }
+    },
+  })
+})
+
 test("explore agent denies edit and write", async () => {
   await using tmp = await tmpdir()
   await Instance.provide({

@@ -163,6 +163,21 @@ export const layer = Layer.effect(
                 external_directory: {
                   [path.join(Global.Path.data, "plans", "*")]: "allow",
                 },
+                bash: {
+                  "*": "deny",
+                  "pwd *": "allow",
+                  "ls *": "allow",
+                  "cat *": "allow",
+                  "grep *": "allow",
+                  "rg *": "allow",
+                  "find *": "allow",
+                  "git status *": "allow",
+                  "git diff *": "allow",
+                  "git log *": "allow",
+                  "git show *": "allow",
+                  "Get-ChildItem *": "allow",
+                  "Get-Content *": "allow",
+                },
                 edit: {
                   "*": "deny",
                   [path.join(".mimocode", "plans", "*.md")]: "allow",
