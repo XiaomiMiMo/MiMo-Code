@@ -26,8 +26,30 @@ const channel = (() => {
   return "dev"
 })()
 
+const updateRepository = (() => {
+  const fallback = process.env.GITHUB_REPOSITORY?.split("/")
+  return {
+    owner: process.env.MIMOCODE_UPDATE_OWNER || fallback?.[0] || "SheriAkhtamov",
+    repo: process.env.MIMOCODE_UPDATE_REPO || fallback?.[1] || "MiMo-Code",
+  }
+})()
+
+const macSigningEnabled = process.env.MIMOCODE_SIGN_MAC === "true"
+const macNotarizeEnabled =
+  macSigningEnabled &&
+  !!process.env.APPLE_ID &&
+  !!process.env.APPLE_APP_SPECIFIC_PASSWORD &&
+  !!process.env.APPLE_TEAM_ID
+
+const githubPublish = {
+  provider: "github" as const,
+  owner: updateRepository.owner,
+  repo: updateRepository.repo,
+  channel: "latest",
+}
+
 const getBase = (): Configuration => ({
-  artifactName: "opencode-desktop-${os}-${arch}.${ext}",
+  artifactName: "mimocode-desktop-${os}-${arch}.${ext}",
   directories: {
     output: "dist",
     buildResources: "resources",
@@ -43,19 +65,20 @@ const getBase = (): Configuration => ({
   mac: {
     category: "public.app-category.developer-tools",
     icon: `resources/icons/icon.icns`,
-    hardenedRuntime: true,
+    identity: macSigningEnabled ? undefined : null,
+    hardenedRuntime: macSigningEnabled,
     gatekeeperAssess: false,
     entitlements: "resources/entitlements.plist",
     entitlementsInherit: "resources/entitlements.plist",
-    notarize: true,
+    notarize: macNotarizeEnabled,
     target: ["dmg", "zip"],
   },
   dmg: {
-    sign: true,
+    sign: macSigningEnabled,
   },
   protocols: {
-    name: "OpenCode",
-    schemes: ["opencode"],
+    name: "MiMoCode",
+    schemes: ["mimocode", "opencode"],
   },
   win: {
     icon: `resources/icons/icon.ico`,
@@ -84,29 +107,29 @@ function getConfig() {
     case "dev": {
       return {
         ...base,
-        appId: "ai.opencode.desktop.dev",
-        productName: "OpenCode Dev",
-        rpm: { packageName: "opencode-dev" },
+        appId: "io.github.sheriakhtamov.mimocode.dev",
+        productName: "MiMoCode Dev",
+        rpm: { packageName: "mimocode-dev" },
       }
     }
     case "beta": {
       return {
         ...base,
-        appId: "ai.opencode.desktop.beta",
-        productName: "OpenCode Beta",
-        protocols: { name: "OpenCode Beta", schemes: ["opencode"] },
-        publish: { provider: "github", owner: "anomalyco", repo: "opencode-beta", channel: "latest" },
-        rpm: { packageName: "opencode-beta" },
+        appId: "io.github.sheriakhtamov.mimocode.beta",
+        productName: "MiMoCode Beta",
+        protocols: { name: "MiMoCode Beta", schemes: ["mimocode", "opencode"] },
+        publish: githubPublish,
+        rpm: { packageName: "mimocode-beta" },
       }
     }
     case "prod": {
       return {
         ...base,
-        appId: "ai.opencode.desktop",
-        productName: "OpenCode",
-        protocols: { name: "OpenCode", schemes: ["opencode"] },
-        publish: { provider: "github", owner: "anomalyco", repo: "opencode", channel: "latest" },
-        rpm: { packageName: "opencode" },
+        appId: "io.github.sheriakhtamov.mimocode",
+        productName: "MiMoCode",
+        protocols: { name: "MiMoCode", schemes: ["mimocode", "opencode"] },
+        publish: githubPublish,
+        rpm: { packageName: "mimocode" },
       }
     }
   }

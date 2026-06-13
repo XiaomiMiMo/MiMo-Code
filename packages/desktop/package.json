@@ -4,10 +4,9 @@
   "version": "0.1.0",
   "type": "module",
   "license": "MIT",
-  "homepage": "https://opencode.ai",
+  "homepage": "https://github.com/SheriAkhtamov/MiMo-Code",
   "author": {
-    "name": "OpenCode",
-    "email": "hello@opencode.ai"
+    "name": "SheriAkhtamov"
   },
   "scripts": {
     "typecheck": "tsgo -b",

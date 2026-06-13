@@ -21,14 +21,14 @@ process.env.OPENCODE_DISABLE_EMBEDDED_WEB_UI = "true"
 process.env.MIMOCODE_DISABLE_EMBEDDED_WEB_UI = "true"
 
 const APP_NAMES: Record<string, string> = {
-  dev: "OpenCode Dev",
-  beta: "OpenCode Beta",
-  prod: "OpenCode",
+  dev: "MiMoCode Dev",
+  beta: "MiMoCode Beta",
+  prod: "MiMoCode",
 }
 const APP_IDS: Record<string, string> = {
-  dev: "ai.opencode.desktop.dev",
-  beta: "ai.opencode.desktop.beta",
-  prod: "ai.opencode.desktop",
+  dev: "io.github.sheriakhtamov.mimocode.dev",
+  beta: "io.github.sheriakhtamov.mimocode.beta",
+  prod: "io.github.sheriakhtamov.mimocode",
 }
 const appId = app.isPackaged ? APP_IDS[CHANNEL] : "ai.opencode.desktop.dev"
 app.setName(app.isPackaged ? APP_NAMES[CHANNEL] : "OpenCode Dev")
@@ -83,7 +83,7 @@ function setupApp() {
   }
 
   app.on("second-instance", (_event: Event, argv: string[]) => {
-    const urls = argv.filter((arg: string) => arg.startsWith("opencode://"))
+    const urls = argv.filter(isDeepLink)
     if (urls.length) {
       logger.log("deep link received via second-instance", { urls })
       emitDeepLinks(urls)
@@ -113,6 +113,7 @@ function setupApp() {
   }
 
   void app.whenReady().then(async () => {
+    app.setAsDefaultProtocolClient("mimocode")
     app.setAsDefaultProtocolClient("opencode")
     registerRendererProtocol()
     setDockIcon()
@@ -125,6 +126,10 @@ function emitDeepLinks(urls: string[]) {
   if (urls.length === 0) return
   pendingDeepLinks.push(...urls)
   if (mainWindow) sendDeepLinks(mainWindow, urls)
+}
+
+function isDeepLink(url: string) {
+  return url.startsWith("mimocode://") || url.startsWith("opencode://")
 }
 
 function focusMainWindow() {
