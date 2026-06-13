@@ -2,8 +2,9 @@ import type { Argv } from "yargs"
 import { cmd } from "./cmd"
 import { Session } from "../../session"
 import { bootstrap } from "../bootstrap"
-import { Database } from "../../storage"
+import { Database, eq } from "../../storage"
 import { SessionTable } from "../../session/session.sql"
+import { ClaudeImportTable } from "../../session/claude-import.sql"
 import { Project } from "../../project"
 import { Instance } from "../../project/instance"
 import { AppRuntime } from "@/effect/app-runtime"
@@ -89,8 +90,15 @@ async function getCurrentProject(): Promise<Project.Info> {
 }
 
 async function getAllSessions(): Promise<Session.Info[]> {
+  const importedSessionIds = new Set(
+    Database.use((db) => db.select({ session_id: ClaudeImportTable.session_id }).from(ClaudeImportTable).all()).map(
+      (row) => row.session_id,
+    ),
+  )
   const rows = Database.use((db) => db.select().from(SessionTable).all())
-  return rows.map((row) => Session.fromRow(row))
+  return rows
+    .filter((row) => !importedSessionIds.has(row.id as Session.SessionID))
+    .map((row) => Session.fromRow(row))
 }
 
 export async function aggregateSessionStats(days?: number, projectFilter?: string): Promise<SessionStats> {
