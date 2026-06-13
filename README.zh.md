@@ -7,7 +7,7 @@
 <p align="center"><strong>开源 AI 编程智能体，拥有跨会话记忆。</strong></p>
 
 <p align="center">
-  中文 | <a href="README.md">English</a>
+  中文 | <a href="README.md">English</a> | <a href="README.ja.md">日本語</a>
 </p>
 
 <p align="center">

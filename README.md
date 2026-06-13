@@ -7,7 +7,7 @@
 <p align="center"><strong>An open-source AI coding agent with cross-session memory.</strong></p>
 
 <p align="center">
-  <a href="README.zh.md">中文</a> | English
+  <a href="README.zh.md">中文</a> | English | <a href="README.ja.md">日本語</a>
 </p>
 
 <p align="center">
