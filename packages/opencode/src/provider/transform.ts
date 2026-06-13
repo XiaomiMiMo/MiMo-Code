@@ -398,12 +398,18 @@ function limitImages(msgs: ModelMessage[]): ModelMessage[] {
       if (part.type !== "image") return part
       if (toDrop > 0) {
         toDrop--
-        return { type: "text" as const, text: `[Image omitted: exceeds the configured limit of ${maxImages} prompt image(s).]` }
+        return {
+          type: "text" as const,
+          text: `[Image omitted: exceeds the configured limit of ${maxImages} prompt image(s).]`,
+        }
       }
       if (maxSize !== undefined) {
         const size = imageByteSize(String(part.image))
         if (size !== undefined && size > maxSize) {
-          return { type: "text" as const, text: `[Image omitted: exceeds the configured ${maxSize}-byte prompt image size limit.]` }
+          return {
+            type: "text" as const,
+            text: `[Image omitted: exceeds the configured ${maxSize}-byte prompt image size limit.]`,
+          }
         }
       }
       return part
@@ -991,6 +997,7 @@ export function options(input: {
         input.model.api.npm === "@ai-sdk/github-copilot"
       ) {
         result["reasoningSummary"] = "auto"
+        result["include"] = ["reasoning.encrypted_content"]
       }
     }
 
@@ -999,6 +1006,7 @@ export function options(input: {
     if (
       input.model.api.id.includes("gpt-5.") &&
       !input.model.api.id.includes("codex") &&
+      !input.model.api.id.includes("gpt-5.5") &&
       !input.model.api.id.includes("-chat") &&
       input.model.providerID !== "azure"
     ) {
@@ -1159,9 +1167,7 @@ function flattenDiscriminatedUnion(schema: JSONSchema.BaseSchema | JSONSchema7):
   const propertyOwners: Record<string, unknown[]> = {}
   for (const v of variants) {
     if (!v.properties) continue
-    const variantValue = discriminator
-      ? (v.properties as Record<string, any>)[discriminator]?.const
-      : undefined
+    const variantValue = discriminator ? (v.properties as Record<string, any>)[discriminator]?.const : undefined
     for (const [key, prop] of Object.entries(v.properties as Record<string, any>)) {
       if (key === discriminator) continue
       if (!(key in properties)) properties[key] = prop
@@ -1200,7 +1206,9 @@ function flattenDiscriminatedUnion(schema: JSONSchema.BaseSchema | JSONSchema7):
     properties[discriminator] = {
       type: "string",
       enum: enumValues,
-      description: baseDescription ? `${baseDescription}\n\nPer-${discriminator}: ${hints}.` : `Per-${discriminator}: ${hints}.`,
+      description: baseDescription
+        ? `${baseDescription}\n\nPer-${discriminator}: ${hints}.`
+        : `Per-${discriminator}: ${hints}.`,
     }
   }
 
@@ -1210,6 +1218,18 @@ function flattenDiscriminatedUnion(schema: JSONSchema.BaseSchema | JSONSchema7):
     required: discriminator ? [discriminator] : [],
     additionalProperties: false,
   } as JSONSchema7
+}
+
+function flattenNestedDiscriminatedUnions(schema: JSONSchema7): JSONSchema7 {
+  const visit = (node: unknown): unknown => {
+    if (Array.isArray(node)) return node.map(visit)
+    if (node === null || typeof node !== "object") return node
+
+    const flattened = flattenDiscriminatedUnion(node as JSONSchema7) as Record<string, unknown>
+    return Object.fromEntries(Object.entries(flattened).map(([key, value]) => [key, visit(value)]))
+  }
+
+  return visit(schema) as JSONSchema7
 }
 
 export function schema(model: Provider.Model, schema: JSONSchema.BaseSchema | JSONSchema7): JSONSchema7 {
@@ -1238,6 +1258,10 @@ export function schema(model: Provider.Model, schema: JSONSchema.BaseSchema | JS
   // Flatten unconditionally — all providers accept a flat `type: "object"` schema,
   // and zod's runtime parse still enforces per-variant required fields strictly.
   schema = flattenDiscriminatedUnion(schema)
+
+  if (model.providerID === "openai" && model.api.id.includes("gpt-5.5")) {
+    schema = flattenNestedDiscriminatedUnions(schema)
+  }
 
   // Convert integer enums to string enums for Google/Gemini
   if (model.providerID === "google" || model.api.id.includes("gemini")) {
