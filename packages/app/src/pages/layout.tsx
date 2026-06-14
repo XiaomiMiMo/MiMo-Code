@@ -1323,6 +1323,7 @@ export default function Layout(props: ParentProps) {
     const projectSession = store.lastProjectSession[root]
     if (projectSession?.id) {
       const opened = await openSession(projectSession)
+      if (pendingProjectRoot !== root) return
       if (opened) return
       clearLastProjectSession(root)
     }
@@ -1334,6 +1335,7 @@ export default function Layout(props: ParentProps) {
     if (latest && (await openSession(latest))) {
       return
     }
+    if (pendingProjectRoot !== root) return
 
     const fetched = latestRootSession(
       await Promise.all(
@@ -1350,6 +1352,7 @@ export default function Layout(props: ParentProps) {
     if (fetched && (await openSession(fetched))) {
       return
     }
+    if (pendingProjectRoot !== root) return
 
     navigateWithSidebarReset(`/${base64Encode(root)}/session`)
   }
