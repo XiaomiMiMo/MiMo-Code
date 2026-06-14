@@ -71,6 +71,8 @@ import { isPlainTerminal } from "./util/terminal"
 
 import type { EventSource } from "./context/sdk"
 import { DialogVariant } from "./component/dialog-variant"
+import { DialogAnimationSettings } from "./component/dialog-animation-settings"
+import { AnimationShowcase } from "./component/animation-showcase"
 
 function rendererConfig(_config: TuiConfig.Info, plainTerminal: boolean): CliRendererConfig {
   const mouseEnabled = !plainTerminal && !Flag.MIMOCODE_DISABLE_MOUSE && (_config.mouse ?? true)
@@ -863,6 +865,22 @@ function App(props: { onSnapshot?: () => Promise<string[]> }) {
       onSelect: (dialog) => {
         kv.set("animations_enabled", !kv.get("animations_enabled", true))
         dialog.clear()
+      },
+    },
+    {
+      title: "Animation Settings",
+      value: "app.animation.settings",
+      category: "system",
+      onSelect: (dialog) => {
+        dialog.replace(() => <DialogAnimationSettings />)
+      },
+    },
+    {
+      title: "Animation Showcase",
+      value: "app.animation.showcase",
+      category: "system",
+      onSelect: (dialog) => {
+        dialog.replace(() => <AnimationShowcase />)
       },
     },
     {

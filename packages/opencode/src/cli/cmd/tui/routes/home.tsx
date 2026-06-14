@@ -17,6 +17,7 @@ import { useLanguage } from "@tui/context/language"
 import { TuiPluginRuntime } from "../plugin"
 import { Global } from "@/global"
 import { isPlainTerminal } from "../util/terminal"
+import { SlideIn, MessageAppear } from "../component/message-appear"
 
 let once = false
 
@@ -112,42 +113,46 @@ export function Home() {
           </Show>
         </box>
         <box height={1} minHeight={0} flexShrink={1} />
-        <box
-          width="100%"
-          maxWidth={75}
-          zIndex={1000}
-          paddingTop={1}
-          flexShrink={0}
-        >
-          <Show
-            when={plainTerminal}
-            fallback={
-              <TuiPluginRuntime.Slot
-                name="home_prompt"
-                mode="replace"
-                workspace_id={project.workspace.current()}
-                ref={bind}
-              >
-                <Prompt
-                  ref={bind}
-                  workspaceID={project.workspace.current()}
-                  right={<TuiPluginRuntime.Slot name="home_prompt_right" workspace_id={project.workspace.current()} />}
-                  placeholders={placeholder}
-                />
-              </TuiPluginRuntime.Slot>
-            }
+        <SlideIn direction="up" duration={300} delay={100}>
+          <box
+            width="100%"
+            maxWidth={75}
+            zIndex={1000}
+            paddingTop={1}
+            flexShrink={0}
           >
-            <Prompt
-              ref={bind}
-              workspaceID={project.workspace.current()}
-              placeholders={placeholder}
-            />
-          </Show>
-        </box>
-        <Show when={plainTerminal}>
-          <box paddingTop={1} flexShrink={0}>
-            <text selectable={false}>{t("tui.tips.plain_terminal")}</text>
+            <Show
+              when={plainTerminal}
+              fallback={
+                <TuiPluginRuntime.Slot
+                  name="home_prompt"
+                  mode="replace"
+                  workspace_id={project.workspace.current()}
+                  ref={bind}
+                >
+                  <Prompt
+                    ref={bind}
+                    workspaceID={project.workspace.current()}
+                    right={<TuiPluginRuntime.Slot name="home_prompt_right" workspace_id={project.workspace.current()} />}
+                    placeholders={placeholder}
+                  />
+                </TuiPluginRuntime.Slot>
+              }
+            >
+              <Prompt
+                ref={bind}
+                workspaceID={project.workspace.current()}
+                placeholders={placeholder}
+              />
+            </Show>
           </box>
+        </SlideIn>
+        <Show when={plainTerminal}>
+          <MessageAppear direction="up" delay={200}>
+            <box paddingTop={1} flexShrink={0}>
+              <text selectable={false}>{t("tui.tips.plain_terminal")}</text>
+            </box>
+          </MessageAppear>
         </Show>
         <Show when={!plainTerminal}>
           <TuiPluginRuntime.Slot name="home_bottom" />
