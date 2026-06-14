@@ -28,6 +28,9 @@ MiMoCode 是一个终端原生的 AI 编程助手。它能读写代码、执行�
 # 一键安装
 curl -fsSL https://mimo.xiaomi.com/install | bash
 
+# 或通过 Homebrew 安装（macOS/Linux）
+brew install mimo-code
+
 # 或通过 npm 安装
 npm install -g @mimo-ai/cli
 ```

@@ -28,6 +28,9 @@ MiMo Auto is built in as a free-for-limited-time channel, so you can start with 
 # One-line install
 curl -fsSL https://mimo.xiaomi.com/install | bash
 
+# Or install via Homebrew (macOS/Linux)
+brew install mimo-code
+
 # Or install via npm
 npm install -g @mimo-ai/cli
 ```
