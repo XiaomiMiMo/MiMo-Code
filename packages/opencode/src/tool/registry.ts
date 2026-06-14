@@ -182,7 +182,7 @@ export const layer = Layer.effect(
           ["tool", "tools"].flatMap((subdir) =>
             Glob.scanSync(`${subdir}/*.{js,ts}`, { cwd: dir, absolute: true, dot: true, symlink: true }),
           ),
-        )
+        ).sort()
         if (matches.length) yield* config.waitForDependencies()
         for (const match of matches) {
           const namespace = path.basename(match, path.extname(match))
