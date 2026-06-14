@@ -29,16 +29,20 @@ export type Origin = {
 
 export async function load(dir: string) {
   const plugins: Spec[] = []
-
-  for (const subdir of ["plugin", "plugins"]) {
-    for (const item of await Glob.scan(`${subdir}/*.{ts,js}`, {
-      cwd: dir,
-      absolute: true,
-      dot: true,
-      symlink: true,
-    })) {
-      plugins.push(pathToFileURL(item).href)
-    }
+  const subdirs = ["plugin", "plugins"]
+  const scans = await Promise.all(
+    subdirs.map((subdir) =>
+      Glob.scan(`${subdir}/*.{ts,js}`, {
+        cwd: dir,
+        absolute: true,
+        dot: true,
+        symlink: true,
+      }),
+    ),
+  )
+  const items = scans.flat().sort()
+  for (const item of items) {
+    plugins.push(pathToFileURL(item).href)
   }
   return plugins
 }
