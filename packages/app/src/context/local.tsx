@@ -6,7 +6,7 @@ import { createStore } from "solid-js/store"
 import { useModels } from "@/context/models"
 import { useProviders } from "@/hooks/use-providers"
 import { Persist, persisted } from "@/utils/persist"
-import { cycleModelVariant, getConfiguredAgentVariant, resolveModelVariant } from "./model-variant"
+import { cycleModelVariant, getConfiguredAgentVariant, modelVariantList, resolveModelVariant } from "./model-variant"
 import { parseModelRef } from "./model-ref"
 import { useSDK } from "./sdk"
 import { useSync } from "./sync"
@@ -153,6 +153,12 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
       }
     }
 
+    const savedVariant = (model: ModelKey | undefined) => {
+      if (!model) return undefined
+      const variant = models.variant.get(model)
+      return variant === "default" ? null : variant
+    }
+
     const defaultModel = () => {
       const defaults = providers.default()
       for (const provider of providers.connected()) {
@@ -184,18 +190,19 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
         }
 
         batch(() => {
+          const variant = item.variant ?? savedVariant(item.model)
           setStore("current", item.name)
           setStore("last", {
             type: "agent",
             agent: item.name,
             model: item.model,
-            variant: item.variant ?? null,
+            variant: variant ?? null,
           })
           const prev = scope()
           const next = {
             agent: item.name,
             model: item.model ?? prev?.model,
-            variant: item.variant ?? prev?.variant,
+            variant: variant === undefined ? prev?.variant : variant,
           } satisfies State
           const session = id()
           if (session) {
@@ -241,7 +248,17 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
       })
     }
 
-    const selected = () => scope()?.variant
+    const selected = () => {
+      const model = current()
+      const scoped = scope()?.variant
+      const value =
+        scoped !== undefined
+          ? scoped
+          : model
+            ? savedVariant({ providerID: model.provider.id, modelID: model.id })
+            : undefined
+      return value === "default" ? null : value
+    }
 
     const snapshot = () => {
       const model = current()
@@ -297,7 +314,7 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
             model: item ?? null,
             variant: selected(),
           })
-          write({ model: item })
+          write({ model: item, variant: savedVariant(item) })
           if (!item) return
           models.setVisibility(item, true)
           if (!options?.recent) return
@@ -322,8 +339,7 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
         },
         list() {
           const item = current()
-          if (!item?.variants) return []
-          return Object.keys(item.variants)
+          return modelVariantList(item)
         },
         set(value: string | undefined) {
           batch(() => {
@@ -334,6 +350,7 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
               model: model ? { providerID: model.provider.id, modelID: model.id } : null,
               variant: value ?? null,
             })
+            if (model) models.variant.set({ providerID: model.provider.id, modelID: model.id }, value ?? null)
             write({ variant: value ?? null })
           })
         },

@@ -479,6 +479,14 @@ export const PromptInput: Component<PromptInputProps> = (props) => {
 
   const closePopover = () => setStore("popover", null)
 
+  const commandOption = (id: string) => command.options.find((option) => option.id === id)
+  const commandDisabled = (id: string) => commandOption(id)?.disabled ?? true
+  const commandTitle = (id: string, fallback: string) => commandOption(id)?.title ?? fallback
+  const runCommand = (id: string) => {
+    command.trigger(id, "palette")
+    restoreFocus()
+  }
+
   const resetHistoryNavigation = (force = false) => {
     if (!force && (store.historyIndex < 0 || store.applyingHistory)) return
     setStore("historyIndex", -1)
@@ -520,6 +528,15 @@ export const PromptInput: Component<PromptInputProps> = (props) => {
       queueScroll()
     })
   }
+
+  const openHelperPopover = (popover: "at" | "agent" | "slash") => {
+    if (popover === "at") atOnInput("")
+    if (popover === "agent") agentOnInput("")
+    if (popover === "slash") slashOnInput("")
+    setStore("popover", popover)
+    restoreFocus()
+  }
+  const preserveEditorFocus = (event: MouseEvent) => event.preventDefault()
 
   const renderEditorWithCursor = (parts: Prompt) => {
     const cursor = currentCursor()
@@ -1072,7 +1089,8 @@ export const PromptInput: Component<PromptInputProps> = (props) => {
     readClipboardImage: platform.readClipboardImage,
   })
 
-  const variants = createMemo(() => ["default", ...local.model.variant.list()])
+  const variants = createMemo(() => local.model.variant.list())
+  const variantOptions = createMemo(() => ["default", ...variants()])
   const accepting = createMemo(() => {
     const id = params.id
     if (!id) return permission.isAutoAcceptingDirectory(sdk.directory)
@@ -1469,7 +1487,7 @@ export const PromptInput: Component<PromptInputProps> = (props) => {
       </DockShellForm>
       <Show when={store.mode === "normal" || store.mode === "shell"}>
         <DockTray attach="top">
-          <div class="px-1.75 pt-5.5 pb-2 flex items-center gap-2 min-w-0">
+          <div class="px-1.75 pt-5.5 pb-2 flex flex-col gap-2 min-w-0">
             <div class="flex items-center gap-1.5 min-w-0 flex-1 relative">
               <div
                 class="h-7 flex items-center gap-1.5 max-w-[160px] min-w-0 absolute inset-y-0 left-0"
@@ -1580,33 +1598,207 @@ export const PromptInput: Component<PromptInputProps> = (props) => {
                         </TooltipKeybind>
                       </Show>
                     </div>
-                    <div data-component="prompt-variant-control" style={{ animation: "fade-in 0.3s" }}>
-                      <TooltipKeybind
-                        placement="top"
-                        gutter={4}
-                        title={language.t("command.model.variant.cycle")}
-                        keybind={command.keybind("model.variant.cycle")}
-                      >
-                        <Select
-                          size="normal"
-                          options={variants()}
-                          current={local.model.variant.current() ?? "default"}
-                          label={(x) => (x === "default" ? language.t("common.default") : x)}
-                          onSelect={(value) => {
-                            local.model.variant.set(value === "default" ? undefined : value)
-                            restoreFocus()
-                          }}
-                          class="capitalize max-w-[160px] text-text-base"
-                          valueClass="truncate text-13-regular text-text-base"
-                          triggerStyle={control()}
-                          triggerProps={{ "data-action": "prompt-model-variant" }}
-                          variant="ghost"
-                        />
-                      </TooltipKeybind>
-                    </div>
+                    <Show when={variants().length > 0}>
+                      <div data-component="prompt-variant-control" style={{ animation: "fade-in 0.3s" }}>
+                        <TooltipKeybind
+                          placement="top"
+                          gutter={4}
+                          title={language.t("command.model.variant.cycle")}
+                          keybind={command.keybind("model.variant.cycle")}
+                        >
+                          <Select
+                            size="normal"
+                            options={variantOptions()}
+                            current={local.model.variant.current() ?? "default"}
+                            label={(x) => (x === "default" ? language.t("common.default") : x)}
+                            onSelect={(value) => {
+                              local.model.variant.set(value === "default" ? undefined : value)
+                              restoreFocus()
+                            }}
+                            class="capitalize max-w-[160px] text-text-base"
+                            valueClass="truncate text-13-regular text-text-base"
+                            triggerStyle={control()}
+                            triggerProps={{ "data-action": "prompt-model-variant" }}
+                            variant="ghost"
+                          />
+                        </TooltipKeybind>
+                      </div>
+                    </Show>
                   </Show>
                 </Show>
               </div>
+            </div>
+            <div class="flex flex-wrap items-center gap-1.5 min-w-0">
+              <TooltipKeybind placement="top" gutter={4} title={language.t("command.palette")} keybind="">
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="small"
+                  icon="bullet-list"
+                  disabled={store.mode !== "normal"}
+                  onMouseDown={preserveEditorFocus}
+                  onClick={() => openHelperPopover("slash")}
+                >
+                  /
+                </Button>
+              </TooltipKeybind>
+              <TooltipKeybind placement="top" gutter={4} title={language.t("prompt.action.attachFile")} keybind="">
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="small"
+                  icon="folder"
+                  disabled={store.mode !== "normal"}
+                  onMouseDown={preserveEditorFocus}
+                  onClick={() => openHelperPopover("at")}
+                >
+                  @
+                </Button>
+              </TooltipKeybind>
+              <TooltipKeybind placement="top" gutter={4} title={language.t("command.category.agent")} keybind="">
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="small"
+                  icon="brain"
+                  disabled={store.mode !== "normal"}
+                  onMouseDown={preserveEditorFocus}
+                  onClick={() => openHelperPopover("agent")}
+                >
+                  $
+                </Button>
+              </TooltipKeybind>
+              <TooltipKeybind
+                placement="top"
+                gutter={4}
+                title={language.t(store.mode === "shell" ? "command.prompt.mode.normal" : "command.prompt.mode.shell")}
+                keybind={command.keybind(store.mode === "shell" ? "prompt.mode.normal" : "prompt.mode.shell")}
+              >
+                <Button
+                  type="button"
+                  variant={store.mode === "shell" ? "secondary" : "ghost"}
+                  size="small"
+                  icon="console"
+                  onClick={() => setMode(store.mode === "shell" ? "normal" : "shell")}
+                >
+                  {language.t(store.mode === "shell" ? "command.prompt.mode.normal" : "command.prompt.mode.shell")}
+                </Button>
+              </TooltipKeybind>
+              <TooltipKeybind
+                placement="top"
+                gutter={4}
+                title={commandTitle("terminal.toggle", language.t("command.terminal.toggle"))}
+                keybind={command.keybind("terminal.toggle")}
+              >
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="small"
+                  icon="terminal"
+                  disabled={commandDisabled("terminal.toggle")}
+                  onClick={() => runCommand("terminal.toggle")}
+                >
+                  {language.t("command.category.terminal")}
+                </Button>
+              </TooltipKeybind>
+              <TooltipKeybind
+                placement="top"
+                gutter={4}
+                title={commandTitle("mcp.toggle", language.t("command.mcp.toggle"))}
+                keybind={command.keybind("mcp.toggle")}
+              >
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="small"
+                  icon="mcp"
+                  disabled={store.mode !== "normal" || commandDisabled("mcp.toggle")}
+                  onClick={() => runCommand("mcp.toggle")}
+                >
+                  MCP
+                </Button>
+              </TooltipKeybind>
+              <TooltipKeybind
+                placement="top"
+                gutter={4}
+                title={commandTitle("permissions.autoaccept", language.t("command.permissions.autoaccept.enable"))}
+                keybind={command.keybind("permissions.autoaccept")}
+              >
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="small"
+                  icon="shield"
+                  disabled={commandDisabled("permissions.autoaccept")}
+                  onClick={() => runCommand("permissions.autoaccept")}
+                >
+                  {language.t("command.category.permissions")}
+                </Button>
+              </TooltipKeybind>
+              <TooltipKeybind
+                placement="top"
+                gutter={4}
+                title={commandTitle("session.undo", language.t("command.session.undo"))}
+                keybind={command.keybind("session.undo")}
+              >
+                <IconButton
+                  type="button"
+                  variant="ghost"
+                  size="small"
+                  icon="reset"
+                  disabled={store.mode !== "normal" || commandDisabled("session.undo")}
+                  onClick={() => runCommand("session.undo")}
+                  aria-label={language.t("command.session.undo")}
+                />
+              </TooltipKeybind>
+              <TooltipKeybind
+                placement="top"
+                gutter={4}
+                title={commandTitle("session.redo", language.t("command.session.redo"))}
+                keybind={command.keybind("session.redo")}
+              >
+                <IconButton
+                  type="button"
+                  variant="ghost"
+                  size="small"
+                  icon="arrow-right"
+                  disabled={store.mode !== "normal" || commandDisabled("session.redo")}
+                  onClick={() => runCommand("session.redo")}
+                  aria-label={language.t("command.session.redo")}
+                />
+              </TooltipKeybind>
+              <TooltipKeybind
+                placement="top"
+                gutter={4}
+                title={commandTitle("session.compact", language.t("command.session.compact"))}
+                keybind=""
+              >
+                <IconButton
+                  type="button"
+                  variant="ghost"
+                  size="small"
+                  icon="checklist"
+                  disabled={store.mode !== "normal" || commandDisabled("session.compact")}
+                  onClick={() => runCommand("session.compact")}
+                  aria-label={language.t("command.session.compact")}
+                />
+              </TooltipKeybind>
+              <TooltipKeybind
+                placement="top"
+                gutter={4}
+                title={commandTitle("session.fork", language.t("command.session.fork"))}
+                keybind=""
+              >
+                <IconButton
+                  type="button"
+                  variant="ghost"
+                  size="small"
+                  icon="fork"
+                  disabled={store.mode !== "normal" || commandDisabled("session.fork")}
+                  onClick={() => runCommand("session.fork")}
+                  aria-label={language.t("command.session.fork")}
+                />
+              </TooltipKeybind>
             </div>
           </div>
         </DockTray>

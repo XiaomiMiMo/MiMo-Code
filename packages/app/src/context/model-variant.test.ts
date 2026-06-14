@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { cycleModelVariant, getConfiguredAgentVariant, resolveModelVariant } from "./model-variant"
+import { cycleModelVariant, getConfiguredAgentVariant, modelVariantList, resolveModelVariant } from "./model-variant"
 
 describe("model variant", () => {
   test("resolves configured agent variant when model matches", () => {
@@ -54,6 +54,24 @@ describe("model variant", () => {
     expect(value).toBeUndefined()
   })
 
+  test("treats legacy default string as explicit default", () => {
+    const value = resolveModelVariant({
+      variants: ["low", "high", "xhigh"],
+      selected: "default",
+      configured: "xhigh",
+    })
+
+    expect(value).toBeUndefined()
+  })
+
+  test("filters provider default from selectable variants", () => {
+    const value = modelVariantList({
+      variants: { default: {}, low: {}, high: {} },
+    })
+
+    expect(value).toEqual(["low", "high"])
+  })
+
   test("cycles from configured variant to next", () => {
     const value = cycleModelVariant({
       variants: ["low", "high", "xhigh"],
@@ -78,6 +96,16 @@ describe("model variant", () => {
     const value = cycleModelVariant({
       variants: ["low", "high", "xhigh"],
       selected: null,
+      configured: "xhigh",
+    })
+
+    expect(value).toBe("low")
+  })
+
+  test("cycles from legacy default string to the first variant", () => {
+    const value = cycleModelVariant({
+      variants: ["low", "high", "xhigh"],
+      selected: "default",
       configured: "xhigh",
     })
 
