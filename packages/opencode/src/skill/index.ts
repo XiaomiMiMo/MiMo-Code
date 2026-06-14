@@ -21,7 +21,7 @@ import { extractComposeBundle } from "./compose/extract"
 const log = Log.create({ service: "skill" })
 const EXTERNAL_DIRS = [".claude", ".agents", ".codex", ".opencode"]
 const EXTERNAL_SKILL_PATTERN = "skills/**/SKILL.md"
-const MIMOCODE_SKILL_PATTERN = "{skill,skills}/**/SKILL.md"
+const MIMOCODE_SKILL_PATTERNS = ["skill/**/SKILL.md", "skills/**/SKILL.md"]
 const SKILL_PATTERN = "**/SKILL.md"
 
 export const Info = z.object({
@@ -189,7 +189,9 @@ const discoverSkills = Effect.fnUntraced(function* (
 
   const configDirs = yield* config.directories()
   for (const dir of configDirs) {
-    yield* scan(state, dir, MIMOCODE_SKILL_PATTERN)
+    for (const pattern of MIMOCODE_SKILL_PATTERNS) {
+      yield* scan(state, dir, pattern)
+    }
   }
 
   const cfg = yield* config.get()
