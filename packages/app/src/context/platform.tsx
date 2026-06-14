@@ -55,6 +55,9 @@ export type Platform = {
   /** Install updates (Tauri only) */
   update?(): Promise<void>
 
+  /** Install or refresh the terminal CLI from the desktop app */
+  installCli?(): Promise<void>
+
   /** Fetch override */
   fetch?: typeof fetch
 

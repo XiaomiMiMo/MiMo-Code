@@ -19,6 +19,7 @@ import { MemoryRouter } from "@solidjs/router"
 import { createEffect, createResource, onCleanup, onMount, Show } from "solid-js"
 import { render } from "solid-js/web"
 import pkg from "../../package.json"
+import { installCli } from "./cli"
 import { initI18n, t } from "./i18n"
 import { webviewZoom } from "./webview-zoom"
 import "./styles.css"
@@ -175,6 +176,8 @@ const createPlatform = (): Platform => {
       if (!config.updaterEnabled) return
       await window.api.installUpdate()
     },
+
+    installCli,
 
     restart: async () => {
       await window.api.killSidecar().catch(() => undefined)

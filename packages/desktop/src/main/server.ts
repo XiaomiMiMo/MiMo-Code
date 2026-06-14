@@ -66,7 +66,6 @@ function prepareServerEnv(password: string) {
     ...process.env,
     ...shellEnv,
     DEVORA_EXPERIMENTAL_ICON_DISCOVERY: "true",
-    DEVORA_EXPERIMENTAL_DISABLE_FILEWATCHER: "true",
     DEVORA_CLIENT: "desktop",
     DEVORA_SERVER_USERNAME: "devora",
     DEVORA_SERVER_PASSWORD: password,

@@ -1061,6 +1061,18 @@ export default function Layout(props: ParentProps) {
         keybind: "mod+comma",
         onSelect: () => openSettings(),
       },
+      ...(platform.installCli
+        ? [
+            {
+              id: "desktop.installCli",
+              title: "Install CLI",
+              category: language.t("settings.section.desktop"),
+              onSelect: () => {
+                void platform.installCli?.()
+              },
+            },
+          ]
+        : []),
       {
         id: "session.previous",
         title: language.t("command.session.previous"),

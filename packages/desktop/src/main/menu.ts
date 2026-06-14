@@ -24,6 +24,10 @@ export function createMenu(deps: Deps) {
           click: () => deps.checkForUpdates(),
         },
         {
+          label: "Install CLI...",
+          click: () => deps.trigger("desktop.installCli"),
+        },
+        {
           label: "Reload Webview",
           click: () => deps.reload(),
         },
