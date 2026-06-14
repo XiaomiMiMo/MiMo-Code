@@ -181,6 +181,7 @@ export const layer = Layer.effect(
                   "*>>*": "deny",
                   "* > *": "deny",
                   "* >> *": "deny",
+                  "*|*": "deny",
                   "find * -delete": "deny",
                   "find * -delete *": "deny",
                   "find * -exec *": "deny",
