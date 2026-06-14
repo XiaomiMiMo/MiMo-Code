@@ -128,12 +128,10 @@ MiMoCode is built as a fork of [OpenCode](https://github.com/anomalyco/opencode)
 
 ## Community
 
-Scan the QR code to join the community group chat:
+Scan the QR code to subscribe to the author’s channel:
 
 <p align="center">
   <img src="assets/readme/community-qrcode-1.jpg" alt="Community group chat QR code 1" width="240">
-  &nbsp;&nbsp;
-  <img src="assets/readme/community-qrcode-2.jpg" alt="Community group chat QR code 2" width="240">
 </p>
 
 ---
