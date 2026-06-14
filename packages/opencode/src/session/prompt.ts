@@ -5,6 +5,7 @@ import { SessionID, MessageID, PartID } from "./schema"
 import { MessageV2 } from "./message-v2"
 import { classifyAssistantStep } from "./classify"
 import { Log } from "../util"
+import { Instance } from "../project/instance"
 import { SessionRevert } from "./revert"
 import * as Session from "./session"
 import { Agent } from "../agent/agent"
@@ -24,6 +25,7 @@ import { Bus } from "../bus"
 import { ProviderTransform } from "../provider"
 import { SystemPrompt } from "./system"
 import { Instruction } from "./instruction"
+import { ExternalChange } from "./external-change"
 import { TuiEvent } from "@/cli/cmd/tui/event"
 import { Plugin } from "../plugin"
 import BUILD_SWITCH from "../session/prompt/build-switch.txt"
@@ -184,6 +186,7 @@ export const layer = Layer.effect(
   Service,
   Effect.gen(function* () {
     const bus = yield* Bus.Service
+    yield* ExternalChange.subscribe(bus)
     const status = yield* SessionStatus.Service
     const sessions = yield* Session.Service
     const agents = yield* Agent.Service
@@ -240,7 +243,15 @@ export const layer = Layer.effect(
         ])
         // (checkpoint-writer never requests json_schema output, so STRUCTURED_OUTPUT_SYSTEM_PROMPT
         // is not included; parent's runLoop adds it conditionally based on user.format)
-        const additions = [...env, ...(skills ? [skills] : []), ...instructions.content]
+        const forkChangedFiles = ExternalChange.drain()
+        const forkChangeReminders = forkChangedFiles.length > 0
+          ? [
+              "<system-reminder>\n以下文件已被外部修改，你当前上下文中的内容可能已过期：\n" +
+              forkChangedFiles.map((f) => `  - ${path.relative(Instance.worktree, f)}`).join("\n") +
+              "\n请使用 read 工具重新读取这些文件以获取最新内容。\n</system-reminder>",
+            ]
+          : []
+        const additions = [...env, ...(skills ? [skills] : []), ...instructions.content, ...forkChangeReminders]
         const prefix = yield* buildLLMRequestPrefix({
           sessionID: input.sessionID,
           agent: ag,
@@ -2745,10 +2756,19 @@ NOTE: At any point in time through this workflow you should feel free to ask the
                 yield* bus.publish(TuiEvent.InstructionsLoaded, { files }).pipe(Effect.ignore)
               }
             }
+            const changedFiles = ExternalChange.drain()
+            const changeReminders = changedFiles.length > 0
+              ? [
+                  "<system-reminder>\n以下文件已被外部修改，你当前上下文中的内容可能已过期：\n" +
+                  changedFiles.map((f) => `  - ${path.relative(Instance.worktree, f)}`).join("\n") +
+                  "\n请使用 read 工具重新读取这些文件以获取最新内容。\n</system-reminder>",
+                ]
+              : []
             const additions = [
               ...env,
               ...(skills ? [skills] : []),
               ...instructions.content,
+              ...changeReminders,
               ...(format.type === "json_schema" ? [STRUCTURED_OUTPUT_SYSTEM_PROMPT] : []),
             ]
             // Note: `buildLLMRequestPrefix` also returns a `tools` field, but we

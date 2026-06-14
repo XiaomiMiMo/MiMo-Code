@@ -14,6 +14,7 @@ import { File } from "../file"
 import { FileWatcher } from "../file/watcher"
 import { Bus } from "../bus"
 import { Config } from "../config"
+import { ExternalChange } from "../session/external-change"
 import { Format } from "../format"
 import { Instance } from "../project/instance"
 import { SessionCwd } from "./session-cwd"
@@ -116,6 +117,7 @@ export const EditTool = Tool.define(
                 yield* afs.writeWithDirs(filePath, params.newString)
                 yield* format.file(filePath)
                 yield* bus.publish(File.Event.Edited, { file: filePath })
+                ExternalChange.markAiModified(filePath)
                 yield* bus.publish(FileWatcher.Event.Updated, {
                   file: filePath,
                   event: existed ? "change" : "add",
@@ -150,6 +152,7 @@ export const EditTool = Tool.define(
               yield* afs.writeWithDirs(filePath, contentNew)
               yield* format.file(filePath)
               yield* bus.publish(File.Event.Edited, { file: filePath })
+              ExternalChange.markAiModified(filePath)
               yield* bus.publish(FileWatcher.Event.Updated, {
                 file: filePath,
                 event: "change",
