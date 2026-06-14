@@ -14,7 +14,8 @@ const levelPriority: Record<Level, number> = {
   WARN: 2,
   ERROR: 3,
 }
-const keep = 10
+const MAX_LOG_SIZE = 100 * 1024 * 1024 // 100MB auto-rotate threshold
+const KEEP = 10 // max timestamped log files to retain
 
 let level: Level = "INFO"
 
@@ -49,60 +50,111 @@ export interface Options {
 }
 
 let logpath = ""
+let errorLogpath = ""
+let writeCount = 0
 export function file() {
   return logpath
+}
+export function errorFile() {
+  return errorLogpath
 }
 let write = (msg: any) => {
   process.stderr.write(msg)
   return msg.length
+}
+let writeError = write
+
+function createWriter(filepath: string) {
+  const stream = createWriteStream(filepath, { flags: "a" })
+  return (msg: any) =>
+    new Promise<number>((resolve, reject) => {
+      stream.write(msg, (err) => {
+        if (err) reject(err)
+        else resolve(msg.length)
+      })
+    })
+}
+
+async function maybeRotate(filepath: string, streamCheck: boolean) {
+  try {
+    const stat = await fs.stat(filepath).catch(() => null)
+    if (stat && stat.size > MAX_LOG_SIZE) {
+      const stamp = new Date().toISOString().replace(/[:.]/g, "").replace("T", "_").slice(0, 17)
+      await fs.rename(filepath, `${filepath}.${stamp}`).catch(() => {})
+      return createWriter(filepath)
+    }
+  } catch {}
+  return streamCheck ? undefined : createWriter(filepath)
+}
+
+function makeWrite(filepath: string, checkInterval: number = 100) {
+  let writer = createWriter(filepath)
+  return async (msg: any) => {
+    writeCount++
+    if (writeCount % checkInterval === 0) {
+      const newWriter = await maybeRotate(filepath, true)
+      if (newWriter) writer = newWriter
+    }
+    return writer(msg)
+  }
 }
 
 export async function init(options: Options) {
   if (options.level) level = options.level
   void cleanup(Global.Path.log)
   if (options.print) return
-  logpath = path.join(
-    Global.Path.log,
-    options.dev ? "dev.log" : new Date().toISOString().split(".")[0].replace(/:/g, "") + ".log",
-  )
+
+  const ts = new Date().toISOString().split(".")[0].replace(/:/g, "")
+
   if (options.dev) {
-    // Preserve previous dev.log as dev.log.<timestamp> for hang/incident
-    // forensics. cleanup() above already prunes old timestamped logs.
+    // Dev mode: rotate existing dev.log → dev.log.<ts>, write to new dev.log
+    const devLog = path.join(Global.Path.log, "dev.log")
     try {
-      const stat = await fs.stat(logpath).catch(() => null)
+      const stat = await fs.stat(devLog).catch(() => null)
       if (stat && stat.size > 0) {
-        const stamp = new Date().toISOString().split(".")[0].replace(/:/g, "")
-        await fs.rename(logpath, `${logpath}.${stamp}`).catch(() => {})
+        await fs.rename(devLog, `${devLog}.${ts}`).catch(() => {})
       }
     } catch {}
+    logpath = devLog
   } else {
-    await fs.truncate(logpath).catch(() => {})
+    logpath = path.join(Global.Path.log, `${ts}.log`)
   }
-  const stream = createWriteStream(logpath, { flags: "a" })
-  write = async (msg: any) => {
-    return new Promise((resolve, reject) => {
-      stream.write(msg, (err) => {
-        if (err) reject(err)
-        else resolve(msg.length)
-      })
-    })
-  }
+  errorLogpath = path.join(Global.Path.log, `error.log`)
+
+  write = makeWrite(logpath)
+  writeError = makeWrite(errorLogpath)
 }
 
 async function cleanup(dir: string) {
-  const files = (
+  // Cleanup timestamped production logs (keep newest KEEP)
+  const tsLogs = (
     await Glob.scan("????-??-??T??????.log", {
       cwd: dir,
       absolute: false,
       include: "file",
     }).catch(() => [])
   )
-    .filter((file) => path.basename(file) === file)
+    .map((f) => path.basename(f))
     .sort()
-  if (files.length <= keep) return
+  if (tsLogs.length > KEEP) {
+    const doomed = tsLogs.slice(0, -KEEP)
+    await Promise.all(doomed.map((file) => fs.unlink(path.join(dir, file)).catch(() => {})))
+  }
 
-  const doomed = files.slice(0, -keep)
-  await Promise.all(doomed.map((file) => fs.unlink(path.join(dir, file)).catch(() => {})))
+  // Cleanup rotated dev logs (dev.log.<ts> — keep newest KEEP)
+  const devLogs = (
+    await Glob.scan("dev.log.*", {
+      cwd: dir,
+      absolute: false,
+      include: "file",
+    }).catch(() => [])
+  )
+    .map((f) => path.basename(f))
+    .sort()
+  if (devLogs.length > KEEP) {
+    const doomed = devLogs.slice(0, -KEEP)
+    await Promise.all(doomed.map((file) => fs.unlink(path.join(dir, file)).catch(() => {})))
+  }
 }
 
 function formatError(error: Error, depth = 0): string {
@@ -155,7 +207,9 @@ export function create(tags?: Record<string, any>) {
     },
     error(message?: any, extra?: Record<string, any>) {
       if (shouldLog("ERROR")) {
-        write("ERROR " + build(message, extra))
+        const line = "ERROR " + build(message, extra)
+        write(line)
+        writeError(line)
       }
     },
     warn(message?: any, extra?: Record<string, any>) {
