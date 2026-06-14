@@ -188,11 +188,13 @@ const discoverSkills = Effect.fnUntraced(function* (
   }
 
   const configDirs = yield* config.directories()
-  for (const dir of configDirs) {
-    for (const pattern of MIMOCODE_SKILL_PATTERNS) {
-      yield* scan(state, dir, pattern)
-    }
-  }
+  yield* Effect.forEach(
+    configDirs.flatMap((dir) =>
+      MIMOCODE_SKILL_PATTERNS.map((pattern) => ({ dir, pattern })),
+    ),
+    ({ dir, pattern }) => scan(state, dir, pattern),
+    { concurrency: "unbounded" },
+  )
 
   const cfg = yield* config.get()
   for (const item of cfg.skills?.paths ?? []) {
