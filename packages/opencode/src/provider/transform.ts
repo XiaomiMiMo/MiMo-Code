@@ -502,21 +502,22 @@ function anthropicAdaptiveEfforts(apiId: string): string[] | null {
 }
 
 export function variants(model: Provider.Model): Record<string, Record<string, any>> {
-  if (!model.capabilities.reasoning) return {}
+  if (!model.capabilities.reasoning) {
+    // 非 reasoning 模型：提供 max_tokens 预设变体
+    const maxOut = model.limit.output || 32768
+    const levels: [string, number][] = [
+      ["low", Math.min(4096, maxOut)],
+      ["normal", Math.min(8192, maxOut)],
+      ["high", Math.min(16384, maxOut)],
+      ["max", maxOut],
+    ]
+    // 去重避免重复的预设
+    const seen = new Set<number>()
+    return Object.fromEntries(levels.filter(([_, v]) => { if (seen.has(v)) return false; seen.add(v); return true }).map(([k, v]) => [k, { max_tokens: v }]))
+  }
 
   const id = model.id.toLowerCase()
   const adaptiveEfforts = anthropicAdaptiveEfforts(model.api.id)
-  if (
-    id.includes("deepseek") ||
-    id.includes("minimax") ||
-    id.includes("glm") ||
-    id.includes("mistral") ||
-    id.includes("kimi") ||
-    id.includes("k2p5") ||
-    id.includes("qwen") ||
-    id.includes("big-pickle")
-  )
-    return {}
 
   // see: https://docs.x.ai/docs/guides/reasoning#control-how-hard-the-model-thinks
   if (id.includes("grok") && id.includes("grok-3-mini")) {
