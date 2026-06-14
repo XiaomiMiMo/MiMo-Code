@@ -46,6 +46,7 @@ const githubPublish = {
   owner: updateRepository.owner,
   repo: updateRepository.repo,
   channel: "latest",
+  releaseType: "release",
 }
 
 const getBase = (): Configuration => ({

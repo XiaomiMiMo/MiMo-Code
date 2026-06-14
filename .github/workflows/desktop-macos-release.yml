@@ -60,6 +60,13 @@ jobs:
           echo "DEVORA_VERSION=$VERSION" >> "$GITHUB_ENV"
           echo "RELEASE_TAG=v$VERSION" >> "$GITHUB_ENV"
 
+      - name: Create and push release tag
+        if: github.event_name == 'workflow_dispatch'
+        shell: bash
+        run: |
+          git tag -a "$RELEASE_TAG" -m "$RELEASE_TAG"
+          git push origin "$RELEASE_TAG"
+
       - name: Prepare desktop version
         working-directory: packages/desktop
         run: bun ./scripts/prepare.ts
