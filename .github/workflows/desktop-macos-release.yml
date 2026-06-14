@@ -54,7 +54,10 @@ jobs:
       - name: Resolve release version
         shell: bash
         run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+          if [ "${{ github.event_name }}" = "push" ] && [ "${{ github.ref }}" = "refs/heads/main" ] && [ "${DEVORA_SIGN_MAC}" != "true" ]; then
+            VERSION=$(bun -e 'console.log((await Bun.file("packages/desktop/package.json").json()).version)')
+            echo "Unsigned macOS build; skipping release tag and public auto-update publish"
+          elif [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
             VERSION="${{ inputs.version }}"
           elif [[ "${{ github.ref }}" == refs/tags/v* ]]; then
             VERSION="${GITHUB_REF_NAME#v}"
@@ -109,8 +112,14 @@ jobs:
         run: bun run build
 
       - name: Package and publish macOS release
+        if: env.DEVORA_SIGN_MAC == 'true'
         working-directory: packages/desktop
         run: bun run package:mac -- --arm64 --publish always
+
+      - name: Package unsigned macOS artifact
+        if: env.DEVORA_SIGN_MAC != 'true'
+        working-directory: packages/desktop
+        run: bun run package:mac -- --arm64 --publish never
 
       - name: Upload workflow artifacts
         uses: actions/upload-artifact@v4

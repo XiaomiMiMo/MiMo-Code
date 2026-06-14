@@ -1,5 +1,6 @@
 interface ImportMetaEnv {
   readonly DEVORA_CHANNEL: string
+  readonly DEVORA_SIGN_MAC: string
 }
 
 interface ImportMeta {

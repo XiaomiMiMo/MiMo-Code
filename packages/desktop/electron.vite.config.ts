@@ -8,6 +8,7 @@ const channel = (() => {
   return "dev"
 })()
 
+const macSigningEnabled = process.env.DEVORA_SIGN_MAC === "true"
 const DEVORA_SERVER_DIST = "../devora/dist/node"
 
 const nodePtyPkg = `@lydell/node-pty-${process.platform}-${process.arch}`
@@ -16,6 +17,7 @@ export default defineConfig({
   main: {
     define: {
       "import.meta.env.DEVORA_CHANNEL": JSON.stringify(channel),
+      "import.meta.env.DEVORA_SIGN_MAC": JSON.stringify(macSigningEnabled ? "true" : "false"),
     },
     build: {
       rollupOptions: {
