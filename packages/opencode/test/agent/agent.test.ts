@@ -83,7 +83,19 @@ test("plan agent allows only read-only bash commands by default", async () => {
       const plan = await load(tmp.path, (svc) => svc.get("plan"))
       expect(plan).toBeDefined()
 
-      for (const pattern of ["mkdir test", "touch output.txt", "echo test > output.txt"]) {
+      for (const pattern of [
+        "mkdir test",
+        "touch output.txt",
+        "echo test > output.txt",
+        "cat package.json > out.txt",
+        "cat package.json>out.txt",
+        "grep foo file > out.txt",
+        "rg needle src >> out.txt",
+        "rg needle src>>out.txt",
+        "find . -delete",
+        "find . -exec rm {} \\;",
+        "git diff --output=out.patch",
+      ]) {
         expect(Permission.evaluate("bash", pattern, plan!.permission).action).toBe("deny")
       }
 
