@@ -182,6 +182,7 @@ export const layer = Layer.effect(
                   "* > *": "deny",
                   "* >> *": "deny",
                   "*|*": "deny",
+                  "*<(*": "deny",
                   "*\n*": "deny",
                   "*;*": "deny",
                   "*&*": "deny",
