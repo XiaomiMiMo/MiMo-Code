@@ -135,14 +135,16 @@ describe("tool.write", () => {
       Effect.gen(function* () {
         if (process.platform === "win32" || typeof process.umask !== "function") return
         const filepath = path.join(dir, "sensitive.json")
-        const prev = process.umask(umask)
-        try {
-          yield* run({ filePath: filepath, content: JSON.stringify({ secret: "data" }) })
-          const stats = yield* Effect.promise(() => fs.stat(filepath))
-          expect(stats.mode & 0o777).toBe(expected)
-        } finally {
-          process.umask(prev)
-        }
+        yield* Effect.acquireUseRelease(
+          Effect.sync(() => process.umask(umask)),
+          () =>
+            Effect.gen(function* () {
+              yield* run({ filePath: filepath, content: JSON.stringify({ secret: "data" }) })
+              const stats = yield* Effect.promise(() => fs.stat(filepath))
+              expect(stats.mode & 0o777).toBe(expected)
+            }),
+          (prev) => Effect.sync(() => process.umask(prev)),
+        )
       })
 
     it.live("base mode is 0o666 before umask masking", () =>
