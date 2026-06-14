@@ -1,7 +1,7 @@
 import type { BoxRenderable, TextareaRenderable, KeyEvent, ScrollBoxRenderable } from "@opentui/core"
+import { RGBA } from "@opentui/core"
 import { pathToFileURL } from "bun"
 import fuzzysort from "fuzzysort"
-import { firstBy } from "remeda"
 import { createMemo, createResource, createEffect, onMount, onCleanup, Index, Show, createSignal } from "solid-js"
 import { createStore } from "solid-js/store"
 import { useSDK } from "@tui/context/sdk"
@@ -380,13 +380,7 @@ export function Autocomplete(props: {
     }
 
     results.sort((a, b) => a.display.localeCompare(b.display))
-
-    const max = firstBy(results, [(x) => x.display.length, "desc"])?.display.length
-    if (!max) return results
-    return results.map((item) => ({
-      ...item,
-      display: item.display.padEnd(max + 2),
-    }))
+    return results
   })
 
   const options = createMemo((prev: AutocompleteOption[] | undefined) => {
@@ -635,7 +629,7 @@ export function Autocomplete(props: {
     >
       <scrollbox
         ref={(r: ScrollBoxRenderable) => (scroll = r)}
-        backgroundColor={theme.backgroundMenu}
+        backgroundColor={theme.background.a === 0 ? RGBA.fromInts(40, 40, 40, 255) : theme.backgroundMenu}
         height={height()}
         scrollbarOptions={{ visible: false }}
         scrollAcceleration={scrollAcceleration()}
@@ -667,12 +661,12 @@ export function Autocomplete(props: {
               }}
               onMouseUp={() => select()}
             >
-              <text fg={index === store.selected ? selectedForeground(theme) : theme.text} flexShrink={0}>
+              <text fg={index === store.selected ? selectedForeground(theme) : theme.text} overflow="hidden" wrapMode="none">
                 {option().display}
               </text>
               <Show when={option().description}>
                 <text fg={index === store.selected ? selectedForeground(theme) : theme.textMuted} wrapMode="none">
-                  {option().description}
+                  {" "}{option().description}
                 </text>
               </Show>
             </box>

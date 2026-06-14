@@ -451,13 +451,60 @@ export const { use: useTheme, provider: ThemeProvider } = createSimpleContext({
     })
 
     const values = createMemo(() => {
+      // Try to use the user's selected theme first (works for both plain and full mode)
+      const active = store.themes[store.active]
+      if (active) {
+        // In plain mode, force transparent backgrounds
+        if (props.plain) {
+          return resolveTheme(
+            {
+              ...active,
+              theme: {
+                ...active.theme,
+                background: "transparent",
+                backgroundPanel: "transparent",
+                backgroundElement: "transparent",
+                backgroundMenu: "transparent",
+              },
+            },
+            store.mode,
+          )
+        }
+        return resolveTheme(active, store.mode)
+      }
+
+      // Fall back to saved theme or default
+      const saved = kv.get("theme")
+      if (typeof saved === "string") {
+        const theme = store.themes[saved]
+        if (theme) {
+          if (props.plain) {
+            return resolveTheme(
+              {
+                ...theme,
+                theme: {
+                  ...theme.theme,
+                  background: "transparent",
+                  backgroundPanel: "transparent",
+                  backgroundElement: "transparent",
+                  backgroundMenu: "transparent",
+                },
+              },
+              store.mode,
+            )
+          }
+          return resolveTheme(theme, store.mode)
+        }
+      }
+
+      // Final fallback
       if (props.plain) {
-        const theme = store.themes.system ?? PLAIN_TERMINAL_THEME
+        const fallback = store.themes.system ?? PLAIN_TERMINAL_THEME
         return resolveTheme(
           {
-            ...theme,
+            ...fallback,
             theme: {
-              ...theme.theme,
+              ...fallback.theme,
               background: "transparent",
               backgroundPanel: "transparent",
               backgroundElement: "transparent",
@@ -467,16 +514,6 @@ export const { use: useTheme, provider: ThemeProvider } = createSimpleContext({
           store.mode,
         )
       }
-
-      const active = store.themes[store.active]
-      if (active) return resolveTheme(active, store.mode)
-
-      const saved = kv.get("theme")
-      if (typeof saved === "string") {
-        const theme = store.themes[saved]
-        if (theme) return resolveTheme(theme, store.mode)
-      }
-
       return resolveTheme(store.themes.mimocode, store.mode)
     })
 
@@ -521,10 +558,11 @@ export const { use: useTheme, provider: ThemeProvider } = createSimpleContext({
         pin(mode)
       },
       set(theme: string) {
-        if (props.plain) return false
         if (!hasTheme(theme)) return false
         setStore("active", theme)
         kv.set("theme", theme)
+        // Increment version to force syntax style regeneration
+        syntaxVersion++
         return true
       },
       get ready() {
@@ -765,8 +803,17 @@ function generateMutedTextColor(bg: RGBA, isDark: boolean): RGBA {
   return RGBA.fromInts(grayValue, grayValue, grayValue)
 }
 
+// Version counter to force new SyntaxStyle objects when theme changes
+let syntaxVersion = 0
+
 function generateSyntax(theme: Theme) {
-  return SyntaxStyle.fromTheme(getSyntaxRules(theme))
+  // Add version to force new object creation even if rules are the same
+  const rules = getSyntaxRules(theme).map((rule, i) => ({
+    ...rule,
+    // Add a unique identifier based on version to ensure new object
+    _version: syntaxVersion,
+  }))
+  return SyntaxStyle.fromTheme(rules)
 }
 
 function generateSubtleSyntax(theme: Theme) {

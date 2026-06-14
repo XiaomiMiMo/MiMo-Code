@@ -13,6 +13,8 @@ import DESCRIPTION from "./edit.txt"
 import { File } from "../file"
 import { FileWatcher } from "../file/watcher"
 import { Bus } from "../bus"
+import { Config } from "../config"
+import { ExternalChange } from "../session/external-change"
 import { Format } from "../format"
 import { Instance } from "../project/instance"
 import { SessionCwd } from "./session-cwd"
@@ -20,7 +22,7 @@ import { Snapshot } from "@/snapshot"
 import { assertWriteAllowed, askEditUnlessMemory } from "./external-directory"
 import { AppFileSystem } from "@mimo-ai/shared/filesystem"
 
-function normalizeLineEndings(text: string): string {
+export function normalizeLineEndings(text: string): string {
   return text.replaceAll("\r\n", "\n")
 }
 
@@ -59,6 +61,7 @@ export const EditTool = Tool.define(
     const afs = yield* AppFileSystem.Service
     const format = yield* Format.Service
     const bus = yield* Bus.Service
+    const config = yield* Config.Service
 
     return {
       description: DESCRIPTION,
@@ -78,6 +81,41 @@ export const EditTool = Tool.define(
             : path.join(SessionCwd.get(ctx.sessionID), params.filePath)
           yield* assertWriteAllowed(ctx, filePath)
 
+          // Auto-refresh: before modifying, re-read the file from disk to ensure
+          // the AI works with the latest content. If the file has changed externally,
+          // surface the current content directly so the AI can retry without an
+          // extra `read` tool call.
+          if ((yield* config.get()).autoRefreshFiles && params.oldString) {
+            const content = yield* afs
+              .stat(filePath)
+              .pipe(
+                Effect.flatMap((info) => (info.type !== "Directory" ? afs.readFileString(filePath) : Effect.succeed(""))),
+                Effect.catch(() => Effect.succeed("")),
+              )
+            if (content) {
+              const normalContent = normalizeLineEndings(content)
+              const normalOld = normalizeLineEndings(params.oldString)
+              if (!normalContent.includes(normalOld)) {
+                const relPath = path.relative(Instance.worktree, filePath)
+                const detail = content.length > 2000
+                  ? content.slice(0, 1000) + "\n...\n" + content.slice(-1000)
+                  : content
+                return {
+                  metadata: { diagnostics: {}, diff: "", filediff: { file: filePath, patch: "", additions: 0, deletions: 0 } },
+                  title: relPath,
+                  output: [
+                    `<system-reminder>`,
+                    `文件 ${relPath} 已被外部修改，oldString 不匹配当前文件内容。`,
+                    `以下是文件当前的最新内容（已自动重新读取）：`,
+                    `\`\`\`\n${detail}\n\`\`\``,
+                    `请基于以上最新内容重新生成 edit 操作后重试。`,
+                    `</system-reminder>`,
+                  ].join("\n"),
+                }
+              }
+            }
+          }
+
           let diff = ""
           let contentOld = ""
           let contentNew = ""
@@ -94,6 +132,7 @@ export const EditTool = Tool.define(
                 yield* afs.writeWithDirs(filePath, params.newString)
                 yield* format.file(filePath)
                 yield* bus.publish(File.Event.Edited, { file: filePath })
+                ExternalChange.markAiModified(filePath)
                 yield* bus.publish(FileWatcher.Event.Updated, {
                   file: filePath,
                   event: existed ? "change" : "add",
@@ -128,6 +167,7 @@ export const EditTool = Tool.define(
               yield* afs.writeWithDirs(filePath, contentNew)
               yield* format.file(filePath)
               yield* bus.publish(File.Event.Edited, { file: filePath })
+              ExternalChange.markAiModified(filePath)
               yield* bus.publish(FileWatcher.Event.Updated, {
                 file: filePath,
                 event: "change",

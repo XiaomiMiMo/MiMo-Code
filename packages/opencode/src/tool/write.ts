@@ -6,6 +6,7 @@ import { LSP } from "../lsp"
 import { createTwoFilesPatch } from "diff"
 import DESCRIPTION from "./write.txt"
 import { Bus } from "../bus"
+import { ExternalChange } from "../session/external-change"
 import { File } from "../file"
 import { FileWatcher } from "../file/watcher"
 import { Format } from "../format"
@@ -50,6 +51,7 @@ export const WriteTool = Tool.define(
           yield* fs.writeWithDirs(filepath, params.content)
           yield* format.file(filepath)
           yield* bus.publish(File.Event.Edited, { file: filepath })
+          ExternalChange.markAiModified(filepath)
           yield* bus.publish(FileWatcher.Event.Updated, {
             file: filepath,
             event: exists ? "change" : "add",
@@ -78,7 +80,7 @@ export const WriteTool = Tool.define(
             metadata: {
               diagnostics,
               filepath,
-              exists: exists,
+              exists,
             },
             output,
           }
