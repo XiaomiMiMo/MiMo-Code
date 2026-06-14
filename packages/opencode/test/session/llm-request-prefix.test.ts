@@ -195,3 +195,93 @@ describe("buildLLMRequestPrefix", () => {
     })
   })
 })
+
+describe("prefix ordering for cache optimization", () => {
+  function extractSystemText(system: string[]): string {
+    return system.join("\n")
+  }
+
+  function findFirstDivergence(a: string, b: string): number {
+    const minLen = Math.min(a.length, b.length)
+    for (let i = 0; i < minLen; i++) {
+      if (a[i] !== b[i]) return i
+    }
+    return minLen
+  }
+
+  async function buildPrefix(dir: string, additions: string[]) {
+    return await Instance.provide({
+      directory: dir,
+      fn: async () => {
+        const session = await AppRuntime.runPromise(SessionNs.Service.use((svc) => svc.create({})))
+        const userID = MessageID.ascending()
+        await AppRuntime.runPromise(
+          SessionNs.Service.use((svc) =>
+            svc.updateMessage({
+              id: userID, sessionID: session.id, role: "user",
+              time: { created: Date.now() }, agent: "build",
+              model: { providerID: ProviderID.make("test"), modelID: ModelID.make("test") },
+              tools: {}, mode: "",
+            } as unknown as MessageV2.Info),
+          ),
+        )
+        await AppRuntime.runPromise(
+          SessionNs.Service.use((svc) =>
+            svc.updatePart({ id: PartID.ascending(), sessionID: session.id, messageID: userID, type: "text", text: "hello" }),
+          ),
+        )
+        const msgs = await AppRuntime.runPromise(SessionNs.Service.use((svc) => svc.messages({ sessionID: session.id })))
+        return AppRuntime.runPromise(
+          buildLLMRequestPrefix({ sessionID: session.id, agent: makeAgent(), model: ProviderTest.model(), msgs, additions }),
+        )
+      },
+    })
+  }
+
+  test("environmentParts splits stable identity before dynamic env, and both appear in correct order in system prompt", async () => {
+    await using tmp = await tmpdir({ git: true })
+    const result = await buildPrefix(tmp.path, [
+      "You are MiMo Code Agent",            // stable identity
+      "IMPORTANT: language rule",            // stable language
+      "Skills block here",                   // skills
+      "Instructions from: /proj/AGENTS.md",  // project-specific
+      "Working directory: /some/path",       // dynamic env
+      `Today's date: ${new Date().toDateString()}`, // dynamic env
+    ])
+    const text = extractSystemText(result.system)
+
+    // Verify stable parts appear before dynamic parts
+    const stableMarkers = ["You are MiMo Code Agent", "IMPORTANT: language rule"]
+    const dynamicMarkers = ["Working directory: /some/path", "Today's date:"]
+    const lastStable = Math.max(...stableMarkers.map((m) => text.indexOf(m)))
+    const firstDynamic = Math.min(...dynamicMarkers.map((m) => text.indexOf(m)))
+    expect(lastStable).toBeLessThan(firstDynamic)
+
+    // Verify all parts present
+    expect(text).toContain("Skills block here")
+    expect(text).toContain("Instructions from: /proj/AGENTS.md")
+  })
+
+  test("two projects with different instructions share stable prefix but diverge after it", async () => {
+    await using tmpA = await tmpdir({ git: true })
+    await using tmpB = await tmpdir({ git: true })
+
+    const stable = ["You are MiMo Code Agent", "IMPORTANT: language rule"]
+    const resultA = await buildPrefix(tmpA.path, [...stable, "Instructions from: /proj-a\nProject A rules", `Working directory: ${tmpA.path}`])
+    const resultB = await buildPrefix(tmpB.path, [...stable, "Instructions from: /proj-b\nProject B rules", `Working directory: ${tmpB.path}`])
+
+    const textA = extractSystemText(resultA.system)
+    const textB = extractSystemText(resultB.system)
+
+    expect(textA).not.toEqual(textB)
+
+    const sharedPrefix = "You are MiMo Code Agent\nIMPORTANT: language rule"
+    const posA = textA.indexOf(sharedPrefix)
+    const posB = textB.indexOf(sharedPrefix)
+    expect(posA).toBe(posB)
+    expect(posA).toBeGreaterThan(-1)
+
+    const divergeIdx = findFirstDivergence(textA, textB)
+    expect(divergeIdx).toBeGreaterThan(posA + sharedPrefix.length)
+  })
+})

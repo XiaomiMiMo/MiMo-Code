@@ -34,10 +34,33 @@ export function provider(model: Provider.Model) {
 
 export interface Interface {
   readonly environment: (model: Provider.Model) => string[]
+  readonly environmentParts: (model: Provider.Model) => { stable: string[]; dynamic: string[] }
   readonly skills: (agent: Agent.Info) => Effect.Effect<string | undefined>
 }
 
 export class Service extends Context.Service<Service, Interface>()("@opencode/SystemPrompt") {}
+
+function buildEnvParts(model: Provider.Model) {
+  const project = Instance.project
+  const identity = [
+    `You are MiMo Code Agent, built by Xiaomi MiMo Team. You are an interactive agent that helps users with software engineering tasks. Use the instructions below and the tools available to you to assist the user.`,
+    `You are powered by the model named ${model.api.id}. The exact model ID is ${model.providerID}/${model.api.id}`,
+  ].join("\n")
+  const dynamicEnv = [
+    [
+      `Here is some useful information about the environment you are running in:`,
+      `<env>`,
+      `  Working directory: ${Instance.directory}`,
+      `  Workspace root folder: ${Instance.worktree}`,
+      `  Is directory a git repo: ${project.vcs === "git" ? "yes" : "no"}`,
+      `  Platform: ${process.platform}`,
+      `  Today's date: ${new Date().toDateString()}`,
+      `</env>`,
+    ].join("\n"),
+  ]
+  const stable = [identity, `IMPORTANT: Your response must ALWAYS strictly follow the same major language as the user.`]
+  return { stable, dynamic: dynamicEnv }
+}
 
 export const layer = Layer.effect(
   Service,
@@ -46,22 +69,12 @@ export const layer = Layer.effect(
 
     return Service.of({
       environment(model) {
-        const project = Instance.project
-        return [
-          [
-            `You are MiMo Code Agent, built by Xiaomi MiMo Team. You are an interactive agent that helps users with software engineering tasks. Use the instructions below and the tools available to you to assist the user.`,
-            `You are powered by the model named ${model.api.id}. The exact model ID is ${model.providerID}/${model.api.id}`,
-            `Here is some useful information about the environment you are running in:`,
-            `<env>`,
-            `  Working directory: ${Instance.directory}`,
-            `  Workspace root folder: ${Instance.worktree}`,
-            `  Is directory a git repo: ${project.vcs === "git" ? "yes" : "no"}`,
-            `  Platform: ${process.platform}`,
-            `  Today's date: ${new Date().toDateString()}`,
-            `</env>`,
-          ].join("\n"),
-          `IMPORTANT: Your response must ALWAYS strictly follow the same major language as the user.`,
-        ]
+        const { stable, dynamic } = buildEnvParts(model)
+        return [...stable, ...dynamic]
+      },
+
+      environmentParts(model) {
+        return buildEnvParts(model)
       },
 
       skills: Effect.fn("SystemPrompt.skills")(function* (agent: Agent.Info) {

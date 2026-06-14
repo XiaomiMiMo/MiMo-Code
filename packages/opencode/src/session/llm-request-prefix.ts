@@ -34,8 +34,9 @@ export const buildLLMRequestPrefix = Effect.fn("Session.buildLLMRequestPrefix")(
   msgs: MessageV2.WithParts[]
   /**
    * Caller-built system parts to splice into the system array (after agent.prompt
-   * and before memory instructions). Currently env, skills, instructions in that
-   * order. Caller is responsible for the ordering and content.
+   * and before memory instructions). Ordering: stable identity/language → skills →
+   * project-specific instructions → dynamic env fields. Caller is responsible for
+   * the ordering and content.
    */
   additions: string[]
 }) {

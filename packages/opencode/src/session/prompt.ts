@@ -233,14 +233,17 @@ export const layer = Layer.effect(
           .getModel(input.providerID as ProviderID, input.modelID as ModelID)
           .pipe(Effect.catch(() => Effect.succeed(undefined)))
         if (!model) return empty
-        const [skills, env, instructions] = yield* Effect.all([
+        const [skills, envParts, instructions] = yield* Effect.all([
           sys.skills(ag),
-          Effect.sync(() => sys.environment(model)),
+          Effect.sync(() => sys.environmentParts(model)),
           instruction.system().pipe(Effect.orDie),
         ])
         // (checkpoint-writer never requests json_schema output, so STRUCTURED_OUTPUT_SYSTEM_PROMPT
         // is not included; parent's runLoop adds it conditionally based on user.format)
-        const additions = [...(skills ? [skills] : []), ...instructions.content, ...env]
+        // Ordering: stable identity/language → skills → project-specific instructions → dynamic env fields.
+        // This maximizes cross-project prefix cache hits because stableParts are
+        // identical across projects, while instructions and dynamic env vary per project.
+        const additions = [...envParts.stable, ...(skills ? [skills] : []), ...instructions.content, ...envParts.dynamic]
         const prefix = yield* buildLLMRequestPrefix({
           sessionID: input.sessionID,
           agent: ag,
@@ -2730,9 +2733,9 @@ NOTE: At any point in time through this workflow you should feel free to ask the
               return "continue" as const
             }
 
-            const [skills, env, instructions] = yield* Effect.all([
+            const [skills, envParts, instructions] = yield* Effect.all([
               sys.skills(agent),
-              Effect.sync(() => sys.environment(model)),
+              Effect.sync(() => sys.environmentParts(model)),
               instruction.system().pipe(Effect.orDie),
             ])
             // Surface which instruction files (CLAUDE.md, AGENTS.md, ...) were loaded.
@@ -2745,10 +2748,14 @@ NOTE: At any point in time through this workflow you should feel free to ask the
                 yield* bus.publish(TuiEvent.InstructionsLoaded, { files }).pipe(Effect.ignore)
               }
             }
+            // Ordering: stable identity/language → skills → project-specific instructions → dynamic env fields.
+            // This maximizes cross-project prefix cache hits because stableParts are
+            // identical across projects, while instructions and dynamic env vary per project.
             const additions = [
+              ...envParts.stable,
               ...(skills ? [skills] : []),
               ...instructions.content,
-              ...env,
+              ...envParts.dynamic,
               ...(format.type === "json_schema" ? [STRUCTURED_OUTPUT_SYSTEM_PROMPT] : []),
             ]
             // Note: `buildLLMRequestPrefix` also returns a `tools` field, but we
