@@ -2,6 +2,8 @@ name: desktop macOS release
 
 on:
   push:
+    branches:
+      - main
     tags:
       - "v*"
   workflow_dispatch:
@@ -22,6 +24,10 @@ jobs:
   build:
     name: Build macOS app
     runs-on: macos-15
+    if: |
+      github.event_name != 'push' ||
+      startsWith(github.ref, 'refs/tags/v') ||
+      (github.ref == 'refs/heads/main' && !contains(github.event.head_commit.message, '[skip ci]'))
     env:
       GH_TOKEN: ${{ github.token }}
       GITHUB_TOKEN: ${{ github.token }}
@@ -39,6 +45,8 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Setup Bun
         uses: ./.github/actions/setup-bun
@@ -48,8 +56,33 @@ jobs:
         run: |
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
             VERSION="${{ inputs.version }}"
-          else
+          elif [[ "${{ github.ref }}" == refs/tags/v* ]]; then
             VERSION="${GITHUB_REF_NAME#v}"
+          else
+            git fetch --tags
+            LATEST_TAG=$(git tag -l "v[0-9]*.[0-9]*.[0-9]*" --sort=-v:refname | head -1)
+
+            if [ -z "$LATEST_TAG" ]; then
+              VERSION="0.1.0"
+            else
+              BASE="${LATEST_TAG#v}"
+              MAJOR=$(echo "$BASE" | cut -d. -f1)
+              MINOR=$(echo "$BASE" | cut -d. -f2)
+              PATCH=$(echo "$BASE" | cut -d. -f3)
+              VERSION="${MAJOR}.${MINOR}.$((PATCH + 1))"
+            fi
+
+            if gh release view "v${VERSION}" &>/dev/null; then
+              echo "Release v${VERSION} already exists, skipping"
+              exit 0
+            fi
+
+            echo "Auto-bumped version: $LATEST_TAG -> v${VERSION}"
+
+            git config user.name "github-actions[bot]"
+            git config user.email "github-actions[bot]@users.noreply.github.com"
+            git tag -a "v${VERSION}" -m "${VERSION}"
+            git push origin "v${VERSION}"
           fi
 
           if ! [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+([-.][0-9A-Za-z.]+)?$ ]]; then
@@ -57,15 +90,15 @@ jobs:
             exit 1
           fi
 
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            git config user.name "github-actions[bot]"
+            git config user.email "github-actions[bot]@users.noreply.github.com"
+            git tag -a "v${VERSION}" -m "${VERSION}"
+            git push origin "v${VERSION}"
+          fi
+
           echo "DEVORA_VERSION=$VERSION" >> "$GITHUB_ENV"
           echo "RELEASE_TAG=v$VERSION" >> "$GITHUB_ENV"
-
-      - name: Create and push release tag
-        if: github.event_name == 'workflow_dispatch'
-        shell: bash
-        run: |
-          git tag -a "$RELEASE_TAG" -m "$RELEASE_TAG"
-          git push origin "$RELEASE_TAG"
 
       - name: Prepare desktop version
         working-directory: packages/desktop
