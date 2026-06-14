@@ -1,3 +1,11 @@
-<svg width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
-<path fill-rule="evenodd" clip-rule="evenodd" d="M13 14H3V2H13V14ZM10.5 4.4H5.5V11.6H10.5V4.4Z" fill="#C4CAD4"/>
+<svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <path d="M6.5 5H12.6C16.5 5 19.5 8.1 19.5 12C19.5 15.9 16.5 19 12.6 19H6.5" stroke="url(#devoraGradient)" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M8.6 9.9L11 12L8.6 14.1" stroke="url(#devoraGradient)" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M14.1 14.2L15.8 9.8" stroke="url(#devoraGradient)" stroke-width="1.9" stroke-linecap="round"/>
+  <defs>
+    <linearGradient id="devoraGradient" x1="4" y1="5" x2="20" y2="19" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#6EC9F6"/>
+      <stop offset="1" stop-color="#2768FF"/>
+    </linearGradient>
+  </defs>
 </svg>
