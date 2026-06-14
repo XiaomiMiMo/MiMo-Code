@@ -1274,9 +1274,12 @@ export default function Layout(props: ParentProps) {
     return root
   }
 
+  let pendingProjectRoot: string | undefined
+
   async function navigateToProject(directory: string | undefined) {
     if (!directory) return
     const root = projectRoot(directory)
+    pendingProjectRoot = root
     server.projects.touch(root)
     const project = layout.projects.list().find((item) => item.worktree === root)
     let dirs = project
@@ -1297,6 +1300,7 @@ export default function Layout(props: ParentProps) {
     }
     const openSession = async (target: { directory: string; id: string }) => {
       if (!(await ensureDirOpenable(target.directory))) return false
+      if (pendingProjectRoot !== root) return false
       const [data] = globalSync.child(target.directory, { bootstrap: false })
       if (data.session.some((item) => item.id === target.id)) {
         setStore("lastProjectSession", root, { directory: target.directory, id: target.id, at: Date.now() })
@@ -1307,8 +1311,10 @@ export default function Layout(props: ParentProps) {
         .get({ sessionID: target.id })
         .then((x) => x.data)
         .catch(() => undefined)
+      if (pendingProjectRoot !== root) return false
       if (!resolved?.directory) return false
       if (!(await ensureDirOpenable(resolved.directory))) return false
+      if (pendingProjectRoot !== root) return false
       setStore("lastProjectSession", root, { directory: resolved.directory, id: resolved.id, at: Date.now() })
       navigateWithSidebarReset(`/${base64Encode(resolved.directory)}/session/${resolved.id}`)
       return true
