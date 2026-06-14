@@ -1,6 +1,6 @@
 import path from "path"
 import fs from "fs/promises"
-import { createWriteStream } from "fs"
+import { createWriteStream, type WriteStream, statSync } from "fs"
 import { Global } from "../global"
 import z from "zod"
 import { Glob } from "@mimo-ai/shared/util/glob"
@@ -14,7 +14,11 @@ const levelPriority: Record<Level, number> = {
   WARN: 2,
   ERROR: 3,
 }
-const keep = 10
+
+// TEMPORARY FIX for #530: size-based log rotation
+const MAX_FILE_SIZE = 50 * 1024 * 1024    // single file cap: 50MB
+const MAX_TOTAL_SIZE = 500 * 1024 * 1024  // total log dir cap: 500MB
+const CLEANUP_INTERVAL = 200              // check cleanup every N writes
 
 let level: Level = "INFO"
 
@@ -49,6 +53,14 @@ export interface Options {
 }
 
 let logpath = ""
+let logdir = ""
+let stream: WriteStream | null = null
+let currentSize = 0
+let writeCount = 0
+let rotating = false
+const writeQueue: { msg: string; resolve: (n: number) => void; reject: (e: any) => void }[] = []
+let draining = false
+
 export function file() {
   return logpath
 }
@@ -57,17 +69,86 @@ let write = (msg: any) => {
   return msg.length
 }
 
+function generateLogFilename(): string {
+  return new Date().toISOString().split(".")[0].replace(/:/g, "") + ".log"
+}
+
+async function openStream(filepath: string): Promise<WriteStream> {
+  const s = createWriteStream(filepath, { flags: "a" })
+  try {
+    const stat = await fs.stat(filepath).catch(() => null)
+    currentSize = stat?.size ?? 0
+  } catch {
+    currentSize = 0
+  }
+  return s
+}
+
+async function rotateStream() {
+  if (rotating || !stream) return
+  rotating = true
+  try {
+    await new Promise<void>((resolve) => stream!.end(() => resolve()))
+    stream = null
+    logpath = path.join(logdir, generateLogFilename())
+    stream = await openStream(logpath)
+  } finally {
+    rotating = false
+  }
+}
+
+function drainQueue() {
+  if (draining || writeQueue.length === 0) return
+  draining = true
+  const item = writeQueue.shift()!
+  if (!stream) {
+    item.reject(new Error("Log stream not initialized"))
+    draining = false
+    return
+  }
+  const msgSize = Buffer.byteLength(item.msg, "utf8")
+  if (currentSize + msgSize > MAX_FILE_SIZE && !rotating) {
+    rotateStream().then(() => {
+      if (!stream) return
+      stream.write(item.msg, (err) => {
+        if (err) item.reject(err)
+        else {
+          currentSize += msgSize
+          item.resolve(msgSize)
+          checkCleanup()
+        }
+        draining = false
+        drainQueue()
+      })
+    }).catch((e) => {
+      item.reject(e)
+      draining = false
+      drainQueue()
+    })
+    return
+  }
+  stream.write(item.msg, (err) => {
+    if (err) item.reject(err)
+    else {
+      currentSize += msgSize
+      item.resolve(msgSize)
+      checkCleanup()
+    }
+    draining = false
+    drainQueue()
+  })
+}
+
 export async function init(options: Options) {
   if (options.level) level = options.level
-  void cleanup(Global.Path.log)
+  logdir = Global.Path.log
+  await cleanupByTotalSize(logdir)
   if (options.print) return
   logpath = path.join(
-    Global.Path.log,
-    options.dev ? "dev.log" : new Date().toISOString().split(".")[0].replace(/:/g, "") + ".log",
+    logdir,
+    options.dev ? "dev.log" : generateLogFilename(),
   )
   if (options.dev) {
-    // Preserve previous dev.log as dev.log.<timestamp> for hang/incident
-    // forensics. cleanup() above already prunes old timestamped logs.
     try {
       const stat = await fs.stat(logpath).catch(() => null)
       if (stat && stat.size > 0) {
@@ -78,31 +159,64 @@ export async function init(options: Options) {
   } else {
     await fs.truncate(logpath).catch(() => {})
   }
-  const stream = createWriteStream(logpath, { flags: "a" })
+  stream = await openStream(logpath)
   write = async (msg: any) => {
-    return new Promise((resolve, reject) => {
-      stream.write(msg, (err) => {
-        if (err) reject(err)
-        else resolve(msg.length)
-      })
+    return new Promise<number>((resolve, reject) => {
+      writeQueue.push({ msg, resolve, reject })
+      drainQueue()
     })
   }
 }
 
-async function cleanup(dir: string) {
+let cleanupPending = false
+
+function checkCleanup() {
+  writeCount++
+  if (writeCount % CLEANUP_INTERVAL === 0 && !cleanupPending) {
+    cleanupPending = true
+    cleanupByTotalSize(logdir).finally(() => {
+      cleanupPending = false
+    })
+  }
+}
+
+async function cleanupByTotalSize(dir: string) {
   const files = (
-    await Glob.scan("????-??-??T??????.log", {
+    await Glob.scan("*.log*", {
       cwd: dir,
-      absolute: false,
+      absolute: true,
       include: "file",
     }).catch(() => [])
   )
-    .filter((file) => path.basename(file) === file)
+    .filter((f) => {
+      const base = path.basename(f)
+      return /^\d{4}-\d{2}-\d{2}T\d{6}(\.\d+)?\.log/.test(base) || base === "dev.log"
+    })
     .sort()
-  if (files.length <= keep) return
 
-  const doomed = files.slice(0, -keep)
-  await Promise.all(doomed.map((file) => fs.unlink(path.join(dir, file)).catch(() => {})))
+  if (files.length === 0) return
+
+  let totalSize = 0
+  const fileStats: { path: string; size: number }[] = []
+  for (const f of files) {
+    try {
+      const stat = statSync(f)
+      fileStats.push({ path: f, size: stat.size })
+      totalSize += stat.size
+    } catch {}
+  }
+
+  while (totalSize > MAX_TOTAL_SIZE && fileStats.length > 1) {
+    const oldest = fileStats.shift()!
+    if (oldest.path === logpath) {
+      fileStats.push(oldest)
+      continue
+    }
+    try {
+      await fs.unlink(oldest.path)
+      totalSize -= oldest.size
+    } catch {}
+  }
 }
 
 function formatError(error: Error, depth = 0): string {
