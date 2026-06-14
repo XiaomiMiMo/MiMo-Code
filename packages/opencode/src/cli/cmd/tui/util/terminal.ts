@@ -9,10 +9,23 @@ export function isMacNativeTerminal(input?: { platform?: NodeJS.Platform; termPr
   )
 }
 
-export function isPlainTerminal(input?: { platform?: NodeJS.Platform; termProgram?: string; plain?: string }) {
+export function isGNUScreenTerminal(input?: { term?: string; sty?: string }) {
+  const term = input?.term ?? process.env.TERM
+  const sty = input?.sty ?? process.env.STY
+  return Boolean(sty) || term === "screen" || term?.startsWith("screen-") === true
+}
+
+export function isPlainTerminal(input?: {
+  platform?: NodeJS.Platform
+  termProgram?: string
+  plain?: string
+  term?: string
+  sty?: string
+}) {
   const plain = input?.plain ?? process.env.MIMOCODE_TUI_PLAIN
   if (plain === "false" || plain === "0") return false
   if (plain === "true" || plain === "1") return true
+  if (isGNUScreenTerminal(input)) return true
   return isMacNativeTerminal(input)
 }
 
