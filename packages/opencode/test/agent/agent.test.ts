@@ -93,8 +93,11 @@ test("plan agent allows only read-only bash commands by default", async () => {
         "rg needle src >> out.txt",
         "rg needle src>>out.txt",
         "find . -delete",
+        "find . -delete -print",
         "find . -exec rm {} \\;",
+        "find . -execdir rm {} \\;",
         "git diff --output=out.patch",
+        "git diff --output out.patch",
       ]) {
         expect(Permission.evaluate("bash", pattern, plan!.permission).action).toBe("deny")
       }

@@ -182,8 +182,12 @@ export const layer = Layer.effect(
                   "* > *": "deny",
                   "* >> *": "deny",
                   "find * -delete": "deny",
+                  "find * -delete *": "deny",
                   "find * -exec *": "deny",
+                  "find * -execdir *": "deny",
+                  "git diff --output *": "deny",
                   "git diff --output=*": "deny",
+                  "git diff * --output *": "deny",
                   "git diff * --output=*": "deny",
                 },
                 edit: {
