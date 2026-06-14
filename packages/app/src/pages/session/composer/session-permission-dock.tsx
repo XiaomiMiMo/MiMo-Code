@@ -1,8 +1,8 @@
 import { For, Show } from "solid-js"
-import type { PermissionRequest } from "@mimo-ai/sdk/v2"
-import { Button } from "@mimo-ai/ui/button"
-import { DockPrompt } from "@mimo-ai/ui/dock-prompt"
-import { Icon } from "@mimo-ai/ui/icon"
+import type { PermissionRequest } from "@devora-ai/sdk/v2"
+import { Button } from "@devora-ai/ui/button"
+import { DockPrompt } from "@devora-ai/ui/dock-prompt"
+import { Icon } from "@devora-ai/ui/icon"
 import { useLanguage } from "@/context/language"
 
 export function SessionPermissionDock(props: {

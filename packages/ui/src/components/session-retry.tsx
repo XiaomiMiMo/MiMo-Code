@@ -1,5 +1,5 @@
 import { createEffect, createMemo, createSignal, on, onCleanup, Show } from "solid-js"
-import type { SessionStatus } from "@mimo-ai/sdk/v2/client"
+import type { SessionStatus } from "@devora-ai/sdk/v2/client"
 import { useI18n } from "../context/i18n"
 import { Card } from "./card"
 import { Tooltip } from "./tooltip"

@@ -15,7 +15,7 @@ export function createMenu(deps: Deps) {
 
   const template: Electron.MenuItemConstructorOptions[] = [
     {
-      label: "OpenCode",
+      label: "Devora",
       submenu: [
         { role: "about" },
         {
@@ -115,19 +115,19 @@ export function createMenu(deps: Deps) {
     {
       label: "Help",
       submenu: [
-        { label: "MiMoCode Repository", click: () => shell.openExternal("https://github.com/SheriAkhtamov/MiMo-Code") },
+        { label: "Devora Repository", click: () => shell.openExternal("https://github.com/SheriAkhtamov/Devora") },
         { type: "separator" },
         {
           label: "Share Feedback",
           click: () =>
             shell.openExternal(
-              "https://github.com/SheriAkhtamov/MiMo-Code/issues/new?template=feature-request.yml",
+              "https://github.com/SheriAkhtamov/Devora/issues/new?template=feature-request.yml",
             ),
         },
         {
           label: "Report a Bug",
           click: () =>
-            shell.openExternal("https://github.com/SheriAkhtamov/MiMo-Code/issues/new?template=bug-report.yml"),
+            shell.openExternal("https://github.com/SheriAkhtamov/Devora/issues/new?template=bug-report.yml"),
         },
       ],
     },

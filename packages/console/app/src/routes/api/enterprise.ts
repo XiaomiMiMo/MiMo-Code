@@ -1,6 +1,6 @@
 import type { APIEvent } from "@solidjs/start/server"
-import { AWS } from "@mimo-ai/console-core/aws.js"
-import { Resource } from "@mimo-ai/console-resource"
+import { AWS } from "@devora-ai/console-core/aws.js"
+import { Resource } from "@devora-ai/console-resource"
 import { i18n } from "~/i18n"
 import { localeFromRequest } from "~/lib/language"
 import { createLead } from "~/lib/salesforce"
@@ -98,7 +98,7 @@ ${body.phone ? `${body.phone}<br>` : ""}`.trim()
         return false
       }),
       AWS.sendEmail({
-        to: "contact@anoma.ly",
+        to: "no-reply@devora.local",
         subject: `Enterprise Inquiry from ${body.name}`,
         body: emailContent,
         replyTo: body.email,

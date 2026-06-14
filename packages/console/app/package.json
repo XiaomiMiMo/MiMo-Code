@@ -1,13 +1,13 @@
 {
-  "name": "@mimo-ai/console-app",
+  "name": "@devora-ai/console-app",
   "version": "1.14.19",
   "type": "module",
   "license": "MIT",
   "scripts": {
     "typecheck": "tsgo --noEmit",
     "dev": "vite dev --host 0.0.0.0",
-    "dev:remote": "VITE_AUTH_URL=https://auth.dev.opencode.ai VITE_STRIPE_PUBLISHABLE_KEY=pk_test_51RtuLNE7fOCwHSD4mewwzFejyytjdGoSDK7CAvhbffwaZnPbNb2rwJICw6LTOXCmWO320fSNXvb5NzI08RZVkAxd00syfqrW7t bun sst shell --stage=dev bun dev",
-    "build": "bun ./script/generate-sitemap.ts && vite build && bun ../../opencode/script/schema.ts ./.output/public/config.json ./.output/public/tui.json",
+    "dev:remote": "VITE_AUTH_URL=https://auth.dev.devora.ai VITE_STRIPE_PUBLISHABLE_KEY=pk_test_51RtuLNE7fOCwHSD4mewwzFejyytjdGoSDK7CAvhbffwaZnPbNb2rwJICw6LTOXCmWO320fSNXvb5NzI08RZVkAxd00syfqrW7t bun sst shell --stage=dev bun dev",
+    "build": "bun ./script/generate-sitemap.ts && vite build && bun ../../devora/script/schema.ts ./.output/public/config.json ./.output/public/tui.json",
     "start": "vite start"
   },
   "dependencies": {
@@ -16,10 +16,10 @@
     "@jsx-email/render": "1.1.1",
     "@kobalte/core": "catalog:",
     "@openauthjs/openauth": "catalog:",
-    "@mimo-ai/console-core": "workspace:*",
-    "@mimo-ai/console-mail": "workspace:*",
-    "@mimo-ai/console-resource": "workspace:*",
-    "@mimo-ai/ui": "workspace:*",
+    "@devora-ai/console-core": "workspace:*",
+    "@devora-ai/console-mail": "workspace:*",
+    "@devora-ai/console-resource": "workspace:*",
+    "@devora-ai/ui": "workspace:*",
     "@smithy/eventstream-codec": "4.2.7",
     "@smithy/util-utf8": "4.2.0",
     "@solidjs/meta": "catalog:",

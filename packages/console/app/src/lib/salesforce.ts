@@ -1,4 +1,4 @@
-import { Resource } from "@mimo-ai/console-resource"
+import { Resource } from "@devora-ai/console-resource"
 
 async function login() {
   const url = Resource.SALESFORCE_INSTANCE_URL.value.replace(/\/$/, "")

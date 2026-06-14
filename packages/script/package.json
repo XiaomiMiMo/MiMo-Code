@@ -1,6 +1,6 @@
 {
   "$schema": "https://json.schemastore.org/package",
-  "name": "@mimo-ai/script",
+  "name": "@devora-ai/script",
   "license": "MIT",
   "publishConfig": {
     "access": "public"

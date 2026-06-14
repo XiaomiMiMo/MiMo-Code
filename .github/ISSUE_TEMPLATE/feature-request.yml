@@ -1,5 +1,5 @@
-name: 🚀 Feature Request
-description: Suggest an idea, feature, or enhancement
+name: Feature request
+description: Suggest an idea, feature, or enhancement for Devora
 labels: [discussion]
 title: "[FEATURE]:"
 
@@ -7,14 +7,14 @@ body:
   - type: checkboxes
     id: verified
     attributes:
-      label: Feature hasn't been suggested before.
+      label: This feature has not been suggested before.
       options:
-        - label: I have verified this feature I'm about to request hasn't been suggested before.
+        - label: I checked existing Devora issues before opening this request.
           required: true
 
   - type: textarea
     attributes:
-      label: Describe the enhancement you want to request
-      description: What do you want to change or add? What are the benefits of implementing this? Try to be detailed so we can understand your request better :)
+      label: Describe the enhancement
+      description: What should Devora change or add, and why would it help?
     validations:
       required: true

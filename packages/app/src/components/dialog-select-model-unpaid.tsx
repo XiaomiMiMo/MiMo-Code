@@ -1,10 +1,10 @@
-import { Button } from "@mimo-ai/ui/button"
-import { useDialog } from "@mimo-ai/ui/context/dialog"
-import { Dialog } from "@mimo-ai/ui/dialog"
-import { List, type ListRef } from "@mimo-ai/ui/list"
-import { ProviderIcon } from "@mimo-ai/ui/provider-icon"
-import { Tag } from "@mimo-ai/ui/tag"
-import { Tooltip } from "@mimo-ai/ui/tooltip"
+import { Button } from "@devora-ai/ui/button"
+import { useDialog } from "@devora-ai/ui/context/dialog"
+import { Dialog } from "@devora-ai/ui/dialog"
+import { List, type ListRef } from "@devora-ai/ui/list"
+import { ProviderIcon } from "@devora-ai/ui/provider-icon"
+import { Tag } from "@devora-ai/ui/tag"
+import { Tooltip } from "@devora-ai/ui/tooltip"
 import { type Component, Show } from "solid-js"
 import { useLocal } from "@/context/local"
 import { popularProviders, useProviders } from "@/hooks/use-providers"
@@ -59,7 +59,7 @@ export const DialogSelectModelUnpaid: Component<{ model?: ModelState }> = (props
                 <ModelTooltip
                   model={item}
                   latest={item.latest}
-                  free={item.provider.id === "opencode" && (!item.cost || item.cost.input === 0)}
+                  free={item.provider.id === "devora" && (!item.cost || item.cost.input === 0)}
                 />
               }
             >
@@ -108,16 +108,16 @@ export const DialogSelectModelUnpaid: Component<{ model?: ModelState }> = (props
                   <div class="w-full flex items-center gap-x-3">
                     <ProviderIcon data-slot="list-item-extra-icon" id={i.id} />
                     <span>{i.name}</span>
-                    <Show when={i.id === "opencode"}>
-                      <div class="text-14-regular text-text-weak">{language.t("dialog.provider.opencode.tagline")}</div>
+                    <Show when={i.id === "devora"}>
+                      <div class="text-14-regular text-text-weak">{language.t("dialog.provider.devora.tagline")}</div>
                     </Show>
-                    <Show when={i.id === "opencode"}>
+                    <Show when={i.id === "devora"}>
                       <Tag>{language.t("dialog.provider.tag.recommended")}</Tag>
                     </Show>
-                    <Show when={i.id === "opencode-go"}>
+                    <Show when={i.id === "devora-go"}>
                       <>
                         <div class="text-14-regular text-text-weak">
-                          {language.t("dialog.provider.opencodeGo.tagline")}
+                          {language.t("dialog.provider.devoraGo.tagline")}
                         </div>
                         <Tag>{language.t("dialog.provider.tag.recommended")}</Tag>
                       </>

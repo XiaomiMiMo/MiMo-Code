@@ -25,10 +25,10 @@ jobs:
     env:
       GH_TOKEN: ${{ github.token }}
       GITHUB_TOKEN: ${{ github.token }}
-      OPENCODE_CHANNEL: prod
-      MIMOCODE_UPDATE_OWNER: SheriAkhtamov
-      MIMOCODE_UPDATE_REPO: MiMo-Code
-      MIMOCODE_SIGN_MAC: ${{ secrets.CSC_LINK != '' && 'true' || 'false' }}
+      DEVORA_CHANNEL: prod
+      DEVORA_UPDATE_OWNER: SheriAkhtamov
+      DEVORA_UPDATE_REPO: Devora
+      DEVORA_SIGN_MAC: ${{ secrets.CSC_LINK != '' && 'true' || 'false' }}
       CSC_IDENTITY_AUTO_DISCOVERY: ${{ secrets.CSC_LINK != '' && 'true' || 'false' }}
       CSC_LINK: ${{ secrets.CSC_LINK }}
       CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
@@ -57,7 +57,7 @@ jobs:
             exit 1
           fi
 
-          echo "OPENCODE_VERSION=$VERSION" >> "$GITHUB_ENV"
+          echo "DEVORA_VERSION=$VERSION" >> "$GITHUB_ENV"
           echo "RELEASE_TAG=v$VERSION" >> "$GITHUB_ENV"
 
       - name: Prepare desktop version
@@ -75,7 +75,7 @@ jobs:
       - name: Upload workflow artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: mimocode-desktop-macos-${{ env.OPENCODE_VERSION }}
+          name: devora-desktop-macos-${{ env.DEVORA_VERSION }}
           path: |
             packages/desktop/dist/*.dmg
             packages/desktop/dist/*.zip

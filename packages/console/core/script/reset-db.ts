@@ -1,4 +1,4 @@
-import { Resource } from "@mimo-ai/console-resource"
+import { Resource } from "@devora-ai/console-resource"
 import { Database } from "../src/drizzle/index.js"
 import { UserTable } from "../src/schema/user.sql.js"
 import { AccountTable } from "../src/schema/account.sql.js"

@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
-import type { PermissionRequest, Session } from "@mimo-ai/sdk/v2/client"
-import { base64Encode } from "@mimo-ai/shared/util/encode"
+import type { PermissionRequest, Session } from "@devora-ai/sdk/v2/client"
+import { base64Encode } from "@devora-ai/shared/util/encode"
 import { autoRespondsPermission, isDirectoryAutoAccepting } from "./permission-auto-respond"
 
 const session = (input: { id: string; parentID?: string }) =>

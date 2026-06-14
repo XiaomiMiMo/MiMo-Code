@@ -1,8 +1,8 @@
 import { getRequestEvent } from "solid-js/web"
-import { and, Database, eq, inArray, isNull, sql } from "@mimo-ai/console-core/drizzle/index.js"
-import { UserTable } from "@mimo-ai/console-core/schema/user.sql.js"
+import { and, Database, eq, inArray, isNull, sql } from "@devora-ai/console-core/drizzle/index.js"
+import { UserTable } from "@devora-ai/console-core/schema/user.sql.js"
 import { redirect } from "@solidjs/router"
-import { Actor } from "@mimo-ai/console-core/actor.js"
+import { Actor } from "@devora-ai/console-core/actor.js"
 
 import { createClient } from "@openauthjs/openauth/client"
 
@@ -12,7 +12,7 @@ export const AuthClient = createClient({
 })
 
 import { useSession } from "@solidjs/start/http"
-import { Resource } from "@mimo-ai/console-resource"
+import { Resource } from "@devora-ai/console-resource"
 
 export interface AuthSession {
   account?: Record<

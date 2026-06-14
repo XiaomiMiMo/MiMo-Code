@@ -1,7 +1,7 @@
 import { action, useParams, useAction, createAsync, useSubmission, json } from "@solidjs/router"
 import { createMemo, Match, Show, Switch, createEffect } from "solid-js"
 import { createStore } from "solid-js/store"
-import { Billing } from "@mimo-ai/console-core/billing.js"
+import { Billing } from "@devora-ai/console-core/billing.js"
 import { withActor } from "~/context/auth.withActor"
 import { IconAlipay, IconCreditCard, IconStripe, IconUpi, IconWechat } from "~/component/icon"
 import styles from "./billing-section.module.css"
@@ -143,7 +143,7 @@ export function BillingSection() {
         <h2>{i18n.t("workspace.billing.title")}</h2>
         <p>
           {i18n.t("workspace.billing.subtitle.beforeLink")}{" "}
-          <a href="mailto:contact@anoma.ly">{i18n.t("workspace.billing.contactUs")}</a>{" "}
+          <a href="https://github.com/SheriAkhtamov/Devora/issues">{i18n.t("workspace.billing.contactUs")}</a>{" "}
           {i18n.t("workspace.billing.subtitle.afterLink")}
         </p>
       </div>

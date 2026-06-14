@@ -1,5 +1,5 @@
 {
-  description = "OpenCode development flake";
+  description = "Devora development flake";
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixpkgs-unstable";
@@ -37,16 +37,16 @@
             node_modules = final.callPackage ./nix/node_modules.nix {
               inherit rev;
             };
-            opencode = final.callPackage ./nix/opencode.nix {
+            devora = final.callPackage ./nix/devora.nix {
               inherit node_modules;
             };
             desktop = final.callPackage ./nix/desktop.nix {
-              inherit opencode;
+              inherit devora;
             };
           in
           {
-            inherit opencode;
-            opencode-desktop = desktop;
+            inherit devora;
+            devora-desktop = desktop;
           };
       };
 
@@ -56,16 +56,16 @@
           node_modules = pkgs.callPackage ./nix/node_modules.nix {
             inherit rev;
           };
-          opencode = pkgs.callPackage ./nix/opencode.nix {
+          devora = pkgs.callPackage ./nix/devora.nix {
             inherit node_modules;
           };
           desktop = pkgs.callPackage ./nix/desktop.nix {
-            inherit opencode;
+            inherit devora;
           };
         in
         {
-          default = opencode;
-          inherit opencode desktop;
+          default = devora;
+          inherit devora desktop;
           # Updater derivation with fakeHash - build fails and reveals correct hash
           node_modules_updater = node_modules.override {
             hash = pkgs.lib.fakeHash;

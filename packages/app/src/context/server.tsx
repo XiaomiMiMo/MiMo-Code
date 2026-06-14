@@ -1,4 +1,4 @@
-import { createSimpleContext } from "@mimo-ai/ui/context"
+import { createSimpleContext } from "@devora-ai/ui/context"
 import { type Accessor, batch, createEffect, createMemo, onCleanup } from "solid-js"
 import { createStore } from "solid-js/store"
 import { Persist, persisted } from "@/utils/persist"

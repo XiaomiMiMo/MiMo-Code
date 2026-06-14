@@ -1,6 +1,6 @@
 import { Component, For, Show } from "solid-js"
-import { Icon } from "@mimo-ai/ui/icon"
-import { Tooltip } from "@mimo-ai/ui/tooltip"
+import { Icon } from "@devora-ai/ui/icon"
+import { Tooltip } from "@devora-ai/ui/tooltip"
 import type { ImageAttachmentPart } from "@/context/prompt"
 
 type PromptImageAttachmentsProps = {

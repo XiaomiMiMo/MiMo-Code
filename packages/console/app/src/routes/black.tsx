@@ -87,7 +87,7 @@ export default function BlackLayout(props: RouteSectionProps) {
       <header data-component="header">
         <A href={language.route("/")} data-component="header-logo">
           <svg xmlns="http://www.w3.org/2000/svg" width="179" height="32" viewBox="0 0 179 32" fill="none">
-            <title>opencode</title>
+            <title>devora</title>
             <g clip-path="url(#clip0_3654_210259)">
               <mask
                 id="mask0_3654_210259"
@@ -260,7 +260,7 @@ export default function BlackLayout(props: RouteSectionProps) {
       <footer data-component="footer">
         <div data-slot="footer-content">
           <span data-slot="anomaly">
-            ©{new Date().getFullYear()} <a href="https://anoma.ly">Anomaly</a>
+            ©{new Date().getFullYear()} <a href="https://github.com/SheriAkhtamov/Devora">Devora</a>
           </span>
           <a href={config.github.repoUrl} target="_blank">
             {i18n.t("nav.github")} <span data-slot="github-stars">[{starCount()}]</span>
@@ -275,7 +275,7 @@ export default function BlackLayout(props: RouteSectionProps) {
           </span>
         </div>
         <span data-slot="anomaly-alt">
-          ©{new Date().getFullYear()} <a href="https://anoma.ly">Anomaly</a>
+          ©{new Date().getFullYear()} <a href="https://github.com/SheriAkhtamov/Devora">Devora</a>
         </span>
       </footer>
     </div>

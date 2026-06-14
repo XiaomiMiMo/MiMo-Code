@@ -1,13 +1,13 @@
 import { Component, Show, createMemo, createResource, onMount, type JSX } from "solid-js"
 import { createStore } from "solid-js/store"
-import { Button } from "@mimo-ai/ui/button"
-import { Icon } from "@mimo-ai/ui/icon"
-import { Select } from "@mimo-ai/ui/select"
-import { Switch } from "@mimo-ai/ui/switch"
-import { TextField } from "@mimo-ai/ui/text-field"
-import { Tooltip } from "@mimo-ai/ui/tooltip"
-import { useTheme, type ColorScheme } from "@mimo-ai/ui/theme/context"
-import { showToast } from "@mimo-ai/ui/toast"
+import { Button } from "@devora-ai/ui/button"
+import { Icon } from "@devora-ai/ui/icon"
+import { Select } from "@devora-ai/ui/select"
+import { Switch } from "@devora-ai/ui/switch"
+import { TextField } from "@devora-ai/ui/text-field"
+import { Tooltip } from "@devora-ai/ui/tooltip"
+import { useTheme, type ColorScheme } from "@devora-ai/ui/theme/context"
+import { showToast } from "@devora-ai/ui/toast"
 import { useParams } from "@solidjs/router"
 import { useLanguage } from "@/context/language"
 import { usePermission } from "@/context/permission"
@@ -385,7 +385,7 @@ export const SettingsGeneral: Component = () => {
           description={
             <>
               {language.t("settings.general.row.theme.description")}{" "}
-              <Link href="https://opencode.ai/docs/themes/">{language.t("common.learnMore")}</Link>
+              <Link href="https://devora.ai/docs/themes/">{language.t("common.learnMore")}</Link>
             </>
           }
         >
@@ -707,7 +707,7 @@ export const SettingsGeneral: Component = () => {
           }}
         </Show>
 
-        <Show when={desktop() && import.meta.env.VITE_OPENCODE_CHANNEL === "beta"}>
+        <Show when={desktop() && import.meta.env.VITE_DEVORA_CHANNEL === "beta"}>
           <AdvancedSection />
         </Show>
       </div>

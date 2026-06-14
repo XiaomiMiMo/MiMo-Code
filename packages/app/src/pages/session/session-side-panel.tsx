@@ -1,16 +1,16 @@
 import { For, Match, Show, Switch, createEffect, createMemo, onCleanup, type JSX } from "solid-js"
 import { createStore } from "solid-js/store"
 import { createMediaQuery } from "@solid-primitives/media"
-import { Tabs } from "@mimo-ai/ui/tabs"
-import { IconButton } from "@mimo-ai/ui/icon-button"
-import { TooltipKeybind } from "@mimo-ai/ui/tooltip"
-import { ResizeHandle } from "@mimo-ai/ui/resize-handle"
-import { Mark } from "@mimo-ai/ui/logo"
+import { Tabs } from "@devora-ai/ui/tabs"
+import { IconButton } from "@devora-ai/ui/icon-button"
+import { TooltipKeybind } from "@devora-ai/ui/tooltip"
+import { ResizeHandle } from "@devora-ai/ui/resize-handle"
+import { Mark } from "@devora-ai/ui/logo"
 import { DragDropProvider, DragDropSensors, DragOverlay, SortableProvider, closestCenter } from "@thisbeyond/solid-dnd"
 import type { DragEvent } from "@thisbeyond/solid-dnd"
-import type { SnapshotFileDiff, VcsFileDiff } from "@mimo-ai/sdk/v2"
+import type { SnapshotFileDiff, VcsFileDiff } from "@devora-ai/sdk/v2"
 import { ConstrainDragYAxis, getDraggableId } from "@/utils/solid-dnd"
-import { useDialog } from "@mimo-ai/ui/context/dialog"
+import { useDialog } from "@devora-ai/ui/context/dialog"
 
 import FileTree from "@/components/file-tree"
 import { SessionContextUsage } from "@/components/session-context-usage"
@@ -55,7 +55,7 @@ export function SessionSidePanel(props: {
   const shown = createMemo(
     () =>
       platform.platform !== "desktop" ||
-      import.meta.env.VITE_OPENCODE_CHANNEL !== "beta" ||
+      import.meta.env.VITE_DEVORA_CHANNEL !== "beta" ||
       settings.general.showFileTree(),
   )
 

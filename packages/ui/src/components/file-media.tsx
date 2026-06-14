@@ -1,4 +1,4 @@
-import type { FileContent } from "@mimo-ai/sdk/v2"
+import type { FileContent } from "@devora-ai/sdk/v2"
 import { createEffect, createMemo, createResource, Match, on, Show, Switch, type JSX } from "solid-js"
 import { useI18n } from "../context/i18n"
 import {

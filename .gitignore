@@ -17,14 +17,14 @@ ts-dist
 /result
 refs
 Session.vim
-/opencode.json
+/devora.json
 a.out
 target
 .scripts
 .direnv/
 
 # Local dev files
-opencode-dev
+devora-dev
 UPCOMING_CHANGELOG.md
 logs/
 *.bun-build
@@ -34,8 +34,8 @@ tsconfig.tsbuildinfo
 # Local agent harness state
 .claude/
 *.pid
-.mimo-worktrees
-.mimocode/
+.devora-worktrees
+.devora/
 
 # experiment run artifacts (regenerated per run, not source)
 experiment/*.log

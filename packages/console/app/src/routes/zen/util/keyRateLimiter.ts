@@ -1,5 +1,5 @@
-import { Database, eq, and, sql } from "@mimo-ai/console-core/drizzle/index.js"
-import { KeyRateLimitTable } from "@mimo-ai/console-core/schema/ip.sql.js"
+import { Database, eq, and, sql } from "@devora-ai/console-core/drizzle/index.js"
+import { KeyRateLimitTable } from "@devora-ai/console-core/schema/ip.sql.js"
 import { RateLimitError } from "./error"
 import { i18n } from "~/i18n"
 import { localeFromRequest } from "~/lib/language"

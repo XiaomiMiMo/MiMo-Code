@@ -1,6 +1,6 @@
 {
   "$schema": "https://json.schemastore.org/package.json",
-  "name": "@mimo-ai/console-core",
+  "name": "@devora-ai/console-core",
   "version": "1.14.19",
   "private": true,
   "type": "module",
@@ -8,8 +8,8 @@
   "dependencies": {
     "@aws-sdk/client-sts": "3.782.0",
     "@jsx-email/render": "1.1.1",
-    "@mimo-ai/console-mail": "workspace:*",
-    "@mimo-ai/console-resource": "workspace:*",
+    "@devora-ai/console-mail": "workspace:*",
+    "@devora-ai/console-resource": "workspace:*",
     "@planetscale/database": "1.19.0",
     "aws4fetch": "1.0.20",
     "drizzle-orm": "catalog:",

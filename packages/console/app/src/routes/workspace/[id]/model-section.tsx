@@ -1,8 +1,8 @@
-import { Model } from "@mimo-ai/console-core/model.js"
+import { Model } from "@devora-ai/console-core/model.js"
 import { query, action, useParams, createAsync, json } from "@solidjs/router"
 import { createMemo, For, Show } from "solid-js"
 import { withActor } from "~/context/auth.withActor"
-import { ZenData } from "@mimo-ai/console-core/model.js"
+import { ZenData } from "@devora-ai/console-core/model.js"
 import styles from "./model-section.module.css"
 import { querySessionInfo } from "../common"
 import {
@@ -16,7 +16,7 @@ import {
   IconOpenAI,
   IconStealth,
   IconXai,
-  IconXiaomi,
+  IconDevora,
   IconZai,
 } from "~/component/icon"
 import { useI18n } from "~/context/i18n"
@@ -32,7 +32,7 @@ const getModelLab = (modelId: string) => {
   if (modelId.startsWith("qwen")) return "Alibaba"
   if (modelId.startsWith("minimax")) return "MiniMax"
   if (modelId.startsWith("grok")) return "xAI"
-  if (modelId.startsWith("mimo")) return "Xiaomi"
+  if (modelId.startsWith("devora")) return "Devora"
   if (modelId.startsWith("nemotron")) return "NVIDIA"
   if (modelId.startsWith("trinity")) return "Arcee"
   return "Stealth"
@@ -145,8 +145,8 @@ export function ModelSection() {
                                   return <IconXai width={16} height={16} />
                                 case "MiniMax":
                                   return <IconMiniMax width={16} height={16} />
-                                case "Xiaomi":
-                                  return <IconXiaomi width={16} height={16} />
+                                case "Devora":
+                                  return <IconDevora width={16} height={16} />
                                 case "NVIDIA":
                                   return <IconNvidia width={16} height={16} />
                                 case "Arcee":

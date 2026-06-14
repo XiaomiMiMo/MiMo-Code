@@ -12,7 +12,7 @@ import { Footer } from "~/component/footer"
 import { Header } from "~/component/header"
 import { config } from "~/config"
 import { getLastSeenWorkspaceID } from "../workspace/common"
-import { IconMiniMax, IconMiMo, IconZai, IconAlibaba } from "~/component/icon"
+import { IconMiniMax, IconDevora, IconZai, IconAlibaba } from "~/component/icon"
 import { useI18n } from "~/context/i18n"
 import { useLanguage } from "~/context/language"
 import { LocaleLinks } from "~/component/locale-links"
@@ -27,8 +27,8 @@ const models = [
   { name: "GLM-5", provider: "DeepInfra, Z.ai" },
   { name: "Kimi K2.5", provider: "Moonshot AI" },
   { name: "Kimi K2.6", provider: "Moonshot AI" },
-  { name: "MiMo-V2-Pro", provider: "Xiaomi MiMo" },
-  { name: "MiMo-V2-Omni", provider: "Xiaomi MiMo" },
+  { name: "Devora-V2-Pro", provider: "Devora" },
+  { name: "Devora-V2-Omni", provider: "Devora" },
   { name: "Qwen3.5 Plus", provider: "Alibaba Cloud Model Studio" },
   { name: "Qwen3.6 Plus", provider: "Alibaba Cloud Model Studio" },
   { name: "MiniMax M2.7", provider: "MiniMax" },
@@ -60,7 +60,7 @@ function LimitsGraph(props: { href: string }) {
   const graph = [
     { id: "glm-5.1", name: "GLM-5.1", req: 880, d: "100ms" },
     { id: "kimi-k2.6", name: "Kimi K2.6 (3x usage)", req: 3450, baseReq: 1150, d: "150ms" },
-    { id: "mimo-v2-pro", name: "MiMo-V2-Pro", req: 1290, d: "150ms" },
+    { id: "devora-v2-pro", name: "Devora-V2-Pro", req: 1290, d: "150ms" },
     { id: "qwen3.6-plus", name: "Qwen3.6 Plus", req: 3300, d: "280ms" },
     { id: "minimax-m2.7", name: "MiniMax M2.7", req: 3400, d: "300ms" },
     { id: "qwen3.5-plus", name: "Qwen3.5 Plus", req: 10200, d: "360ms" },
@@ -251,7 +251,7 @@ export default function Home() {
       <Meta name="twitter:title" content={i18n.t("go.title")} />
       <Meta name="twitter:description" content={i18n.t("go.meta.description")} />
       <Meta name="twitter:image" content="/social-share-black.png" />
-      <Meta name="opencode:auth" content={workspaceID() ? "true" : "false"} />
+      <Meta name="devora:auth" content={workspaceID() ? "true" : "false"} />
 
       <div data-component="container">
         <Header go hideGetStarted />
@@ -335,7 +335,7 @@ export default function Home() {
                   <IconAlibaba width="24" height="24" />
                 </div>
                 <div>
-                  <IconMiMo width="24" height="24" />
+                  <IconDevora width="24" height="24" />
                 </div>
                 {/*
                 <div>

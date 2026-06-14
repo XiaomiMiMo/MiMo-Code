@@ -1,10 +1,10 @@
 {
-  "name": "@mimo-ai/desktop",
+  "name": "@devora-ai/desktop",
   "private": true,
-  "version": "0.1.0",
+  "version": "0.1.1",
   "type": "module",
   "license": "MIT",
-  "homepage": "https://github.com/SheriAkhtamov/MiMo-Code",
+  "homepage": "https://github.com/SheriAkhtamov/Devora",
   "author": {
     "name": "SheriAkhtamov"
   },
@@ -35,8 +35,8 @@
   "devDependencies": {
     "@actions/artifact": "4.0.0",
     "@lydell/node-pty": "catalog:",
-    "@mimo-ai/app": "workspace:*",
-    "@mimo-ai/ui": "workspace:*",
+    "@devora-ai/app": "workspace:*",
+    "@devora-ai/ui": "workspace:*",
     "@solid-primitives/i18n": "2.2.1",
     "@solid-primitives/storage": "catalog:",
     "@solidjs/meta": "catalog:",

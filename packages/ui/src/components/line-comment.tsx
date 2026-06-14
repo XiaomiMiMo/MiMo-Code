@@ -1,5 +1,5 @@
-import { useFilteredList } from "@mimo-ai/ui/hooks"
-import { getDirectory, getFilename } from "@mimo-ai/shared/util/path"
+import { useFilteredList } from "@devora-ai/ui/hooks"
+import { getDirectory, getFilename } from "@devora-ai/shared/util/path"
 import { createSignal, For, onMount, Show, splitProps, type JSX } from "solid-js"
 import { Button } from "./button"
 import { FileIcon } from "./file-icon"

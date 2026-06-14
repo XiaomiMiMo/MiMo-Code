@@ -63,18 +63,18 @@ beforeAll(async () => {
     useParams: () => params,
   }))
 
-  mock.module("@mimo-ai/sdk/v2/client", () => ({
-    createOpencodeClient: (input: { directory: string }) => {
+  mock.module("@devora-ai/sdk/v2/client", () => ({
+    createDevoraClient: (input: { directory: string }) => {
       createdClients.push(input.directory)
       return clientFor(input.directory)
     },
   }))
 
-  mock.module("@mimo-ai/ui/toast", () => ({
+  mock.module("@devora-ai/ui/toast", () => ({
     showToast: () => 0,
   }))
 
-  mock.module("@mimo-ai/shared/util/encode", () => ({
+  mock.module("@devora-ai/shared/util/encode", () => ({
     base64Encode: (value: string) => value,
   }))
 

@@ -1,6 +1,6 @@
-# OpenCode Desktop
+# Devora Desktop
 
-The OpenCode Desktop app, built with Electron.
+The Devora Desktop app, built with Electron.
 
 ## Development
 

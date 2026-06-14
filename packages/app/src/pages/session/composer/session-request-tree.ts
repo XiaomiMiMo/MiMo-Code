@@ -1,4 +1,4 @@
-import type { PermissionRequest, QuestionRequest, Session } from "@mimo-ai/sdk/v2/client"
+import type { PermissionRequest, QuestionRequest, Session } from "@devora-ai/sdk/v2/client"
 
 function sessionTreeRequest<T>(
   session: Session[],

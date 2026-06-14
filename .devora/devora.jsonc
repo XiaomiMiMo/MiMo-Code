@@ -1,0 +1,10 @@
+{
+  "$schema": "https://devora.ai/config.json",
+  "provider": {},
+  "permission": {
+    "edit": {
+      "packages/devora/migration/*": "deny",
+    },
+  },
+  "mcp": {},
+}

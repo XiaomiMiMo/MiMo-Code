@@ -33,12 +33,12 @@ export function setWslConfig(config: WslConfig) {
 
 export async function spawnLocalServer(hostname: string, port: number, password: string) {
   prepareServerEnv(password)
-  const { Log, Server } = await import("virtual:opencode-server")
+  const { Log, Server } = await import("virtual:devora-server")
   await Log.init({ level: "WARN" })
   const listener = await Server.listen({
     port,
     hostname,
-    username: "opencode",
+    username: "devora",
     password,
     cors: ["oc://renderer"],
   })
@@ -65,16 +65,11 @@ function prepareServerEnv(password: string) {
   const env = {
     ...process.env,
     ...shellEnv,
-    OPENCODE_EXPERIMENTAL_ICON_DISCOVERY: "true",
-    OPENCODE_EXPERIMENTAL_DISABLE_FILEWATCHER: "true",
-    OPENCODE_CLIENT: "desktop",
-    OPENCODE_SERVER_USERNAME: "opencode",
-    OPENCODE_SERVER_PASSWORD: password,
-    MIMOCODE_EXPERIMENTAL_ICON_DISCOVERY: "true",
-    MIMOCODE_EXPERIMENTAL_DISABLE_FILEWATCHER: "true",
-    MIMOCODE_CLIENT: "desktop",
-    MIMOCODE_SERVER_USERNAME: "opencode",
-    MIMOCODE_SERVER_PASSWORD: password,
+    DEVORA_EXPERIMENTAL_ICON_DISCOVERY: "true",
+    DEVORA_EXPERIMENTAL_DISABLE_FILEWATCHER: "true",
+    DEVORA_CLIENT: "desktop",
+    DEVORA_SERVER_USERNAME: "devora",
+    DEVORA_SERVER_PASSWORD: password,
     XDG_STATE_HOME: app.getPath("userData"),
   }
   Object.assign(process.env, env)
@@ -90,7 +85,7 @@ export async function checkHealth(url: string, password?: string | null): Promis
 
   const headers = new Headers()
   if (password) {
-    const auth = Buffer.from(`opencode:${password}`).toString("base64")
+    const auth = Buffer.from(`devora:${password}`).toString("base64")
     headers.set("authorization", `Basic ${auth}`)
   }
 

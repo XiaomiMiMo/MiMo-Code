@@ -2,8 +2,8 @@ import { MetaProvider, Title, Meta } from "@solidjs/meta"
 import { Router } from "@solidjs/router"
 import { FileRoutes } from "@solidjs/start/router"
 import { Suspense } from "solid-js"
-import { Favicon } from "@mimo-ai/ui/favicon"
-import { Font } from "@mimo-ai/ui/font"
+import { Favicon } from "@devora-ai/ui/favicon"
+import { Font } from "@devora-ai/ui/font"
 import "@ibm/plex/css/ibm-plex.css"
 import "./app.css"
 import { LanguageProvider } from "~/context/language"
@@ -14,7 +14,7 @@ function AppMeta() {
   const i18n = useI18n()
   return (
     <>
-      <Title>opencode</Title>
+      <Title>devora</Title>
       <Meta name="description" content={i18n.t("app.meta.description")} />
       <Favicon />
       <Font />

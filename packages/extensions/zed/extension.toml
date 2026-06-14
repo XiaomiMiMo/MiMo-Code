@@ -1,36 +1,36 @@
-id = "opencode"
-name = "OpenCode"
-description = "The open source coding agent."
-version = "1.14.19"
+id = "devora"
+name = "Devora"
+description = "Devora, Sheri Akhtamov's open source coding agent."
+version = "0.1.0"
 schema_version = 1
-authors = ["Anomaly"]
-repository = "https://github.com/anomalyco/opencode"
+authors = ["SheriAkhtamov"]
+repository = "https://github.com/SheriAkhtamov/Devora"
 
-[agent_servers.opencode]
-name = "OpenCode"
-icon = "./icons/opencode.svg"
+[agent_servers.devora]
+name = "Devora"
+icon = "./icons/devora.svg"
 
-[agent_servers.opencode.targets.darwin-aarch64]
-archive = "https://github.com/anomalyco/opencode/releases/download/v1.14.19/opencode-darwin-arm64.zip"
-cmd = "./opencode"
+[agent_servers.devora.targets.darwin-aarch64]
+archive = "https://github.com/SheriAkhtamov/Devora/releases/latest/download/devora-darwin-arm64.zip"
+cmd = "./devora"
 args = ["acp"]
 
-[agent_servers.opencode.targets.darwin-x86_64]
-archive = "https://github.com/anomalyco/opencode/releases/download/v1.14.19/opencode-darwin-x64.zip"
-cmd = "./opencode"
+[agent_servers.devora.targets.darwin-x86_64]
+archive = "https://github.com/SheriAkhtamov/Devora/releases/latest/download/devora-darwin-x64.zip"
+cmd = "./devora"
 args = ["acp"]
 
-[agent_servers.opencode.targets.linux-aarch64]
-archive = "https://github.com/anomalyco/opencode/releases/download/v1.14.19/opencode-linux-arm64.tar.gz"
-cmd = "./opencode"
+[agent_servers.devora.targets.linux-aarch64]
+archive = "https://github.com/SheriAkhtamov/Devora/releases/latest/download/devora-linux-arm64.tar.gz"
+cmd = "./devora"
 args = ["acp"]
 
-[agent_servers.opencode.targets.linux-x86_64]
-archive = "https://github.com/anomalyco/opencode/releases/download/v1.14.19/opencode-linux-x64.tar.gz"
-cmd = "./opencode"
+[agent_servers.devora.targets.linux-x86_64]
+archive = "https://github.com/SheriAkhtamov/Devora/releases/latest/download/devora-linux-x64.tar.gz"
+cmd = "./devora"
 args = ["acp"]
 
-[agent_servers.opencode.targets.windows-x86_64]
-archive = "https://github.com/anomalyco/opencode/releases/download/v1.14.19/opencode-windows-x64.zip"
-cmd = "./opencode.exe"
+[agent_servers.devora.targets.windows-x86_64]
+archive = "https://github.com/SheriAkhtamov/Devora/releases/latest/download/devora-windows-x64.zip"
+cmd = "./devora.exe"
 args = ["acp"]

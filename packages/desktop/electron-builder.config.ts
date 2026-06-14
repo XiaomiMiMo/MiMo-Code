@@ -21,7 +21,7 @@ async function signWindows(configuration: { path: string }) {
 }
 
 const channel = (() => {
-  const raw = process.env.OPENCODE_CHANNEL
+  const raw = process.env.DEVORA_CHANNEL
   if (raw === "dev" || raw === "beta" || raw === "prod") return raw
   return "dev"
 })()
@@ -29,12 +29,12 @@ const channel = (() => {
 const updateRepository = (() => {
   const fallback = process.env.GITHUB_REPOSITORY?.split("/")
   return {
-    owner: process.env.MIMOCODE_UPDATE_OWNER || fallback?.[0] || "SheriAkhtamov",
-    repo: process.env.MIMOCODE_UPDATE_REPO || fallback?.[1] || "MiMo-Code",
+    owner: process.env.DEVORA_UPDATE_OWNER || fallback?.[0] || "SheriAkhtamov",
+    repo: process.env.DEVORA_UPDATE_REPO || fallback?.[1] || "Devora",
   }
 })()
 
-const macSigningEnabled = process.env.MIMOCODE_SIGN_MAC === "true"
+const macSigningEnabled = process.env.DEVORA_SIGN_MAC === "true"
 const macNotarizeEnabled =
   macSigningEnabled &&
   !!process.env.APPLE_ID &&
@@ -49,7 +49,7 @@ const githubPublish = {
 }
 
 const getBase = (): Configuration => ({
-  artifactName: "mimocode-desktop-${os}-${arch}.${ext}",
+  artifactName: "devora-desktop-${os}-${arch}.${ext}",
   directories: {
     output: "dist",
     buildResources: "resources",
@@ -77,8 +77,8 @@ const getBase = (): Configuration => ({
     sign: macSigningEnabled,
   },
   protocols: {
-    name: "MiMoCode",
-    schemes: ["mimocode", "opencode"],
+    name: "Devora",
+    schemes: ["devora"],
   },
   win: {
     icon: `resources/icons/icon.ico`,
@@ -107,29 +107,29 @@ function getConfig() {
     case "dev": {
       return {
         ...base,
-        appId: "io.github.sheriakhtamov.mimocode.dev",
-        productName: "MiMoCode Dev",
-        rpm: { packageName: "mimocode-dev" },
+        appId: "io.github.sheriakhtamov.devora.dev",
+        productName: "Devora Dev",
+        rpm: { packageName: "devora-dev" },
       }
     }
     case "beta": {
       return {
         ...base,
-        appId: "io.github.sheriakhtamov.mimocode.beta",
-        productName: "MiMoCode Beta",
-        protocols: { name: "MiMoCode Beta", schemes: ["mimocode", "opencode"] },
+        appId: "io.github.sheriakhtamov.devora.beta",
+        productName: "Devora Beta",
+        protocols: { name: "Devora Beta", schemes: ["devora"] },
         publish: githubPublish,
-        rpm: { packageName: "mimocode-beta" },
+        rpm: { packageName: "devora-beta" },
       }
     }
     case "prod": {
       return {
         ...base,
-        appId: "io.github.sheriakhtamov.mimocode",
-        productName: "MiMoCode",
-        protocols: { name: "MiMoCode", schemes: ["mimocode", "opencode"] },
+        appId: "io.github.sheriakhtamov.devora",
+        productName: "Devora",
+        protocols: { name: "Devora", schemes: ["devora"] },
         publish: githubPublish,
-        rpm: { packageName: "mimocode" },
+        rpm: { packageName: "devora" },
       }
     }
   }

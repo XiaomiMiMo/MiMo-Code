@@ -4,9 +4,9 @@ import { $ } from "bun"
 import { tmpdir } from "os"
 import { join } from "path"
 
-const FORK_REPO = "anomalyco/zed-extensions"
+const FORK_REPO = "SheriAkhtamov/zed-extensions"
 const UPSTREAM_REPO = "zed-industries/extensions"
-const EXTENSION_NAME = "opencode"
+const EXTENSION_NAME = "devora"
 
 async function main() {
   const version = process.argv[2]
@@ -42,8 +42,8 @@ async function main() {
   process.chdir(workDir)
 
   // Configure git identity
-  await $`git config user.name "Aiden Cline"`
-  await $`git config user.email "63023139+rekram1-node@users.noreply.github.com "`
+  await $`git config user.name "Sheri Akhtamov"`
+  await $`git config user.email "SheriAkhtamov@users.noreply.github.com"`
 
   // Sync fork with upstream (force reset to match exactly)
   console.log(`🔄 Syncing fork with upstream...`)
@@ -87,7 +87,7 @@ async function main() {
   await $`git commit -m ${commitMessage}`
   console.log(`✅ Changes committed`)
 
-  // Delete any existing branches for opencode updates
+  // Delete any existing branches for devora updates
   console.log(`🔍 Checking for existing branches...`)
   const branches = await $`git ls-remote --heads https://x-access-token:${token}@github.com/${FORK_REPO}.git`.text()
   const branchPattern = `refs/heads/update-${EXTENSION_NAME}-`
@@ -110,7 +110,7 @@ async function main() {
 
   console.log(`📬 Creating pull request...`)
   const prResult =
-    await $`gh pr create --repo ${UPSTREAM_REPO} --base main --head ${FORK_REPO.split("/")[0]}:${branchName} --title "Update ${EXTENSION_NAME} to v${cleanVersion}" --body "Updating OpenCode extension to v${cleanVersion}"`
+    await $`gh pr create --repo ${UPSTREAM_REPO} --base main --head ${FORK_REPO.split("/")[0]}:${branchName} --title "Update ${EXTENSION_NAME} to v${cleanVersion}" --body "Updating Devora extension to v${cleanVersion}"`
       .env({ ...process.env, GH_TOKEN: prToken })
       .nothrow()
 

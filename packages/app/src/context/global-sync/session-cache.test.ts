@@ -7,7 +7,7 @@ import type {
   SessionStatus,
   SnapshotFileDiff,
   Todo,
-} from "@mimo-ai/sdk/v2/client"
+} from "@devora-ai/sdk/v2/client"
 import { dropSessionCaches, pickSessionCacheEvictions } from "./session-cache"
 
 const msg = (id: string, sessionID: string) =>

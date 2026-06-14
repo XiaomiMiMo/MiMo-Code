@@ -1,19 +1,19 @@
 import type { APIEvent } from "@solidjs/start/server"
-import { and, Database, eq, isNull, lt, or, sql } from "@mimo-ai/console-core/drizzle/index.js"
-import { KeyTable } from "@mimo-ai/console-core/schema/key.sql.js"
-import { BillingTable, LiteTable, SubscriptionTable, UsageTable } from "@mimo-ai/console-core/schema/billing.sql.js"
-import { centsToMicroCents } from "@mimo-ai/console-core/util/price.js"
-import { getMonthlyBounds, getWeekBounds } from "@mimo-ai/console-core/util/date.js"
-import { Identifier } from "@mimo-ai/console-core/identifier.js"
-import { Billing } from "@mimo-ai/console-core/billing.js"
-import { Actor } from "@mimo-ai/console-core/actor.js"
-import { WorkspaceTable } from "@mimo-ai/console-core/schema/workspace.sql.js"
-import { ZenData } from "@mimo-ai/console-core/model.js"
-import { Subscription } from "@mimo-ai/console-core/subscription.js"
-import { BlackData } from "@mimo-ai/console-core/black.js"
-import { UserTable } from "@mimo-ai/console-core/schema/user.sql.js"
-import { ModelTable } from "@mimo-ai/console-core/schema/model.sql.js"
-import { ProviderTable } from "@mimo-ai/console-core/schema/provider.sql.js"
+import { and, Database, eq, isNull, lt, or, sql } from "@devora-ai/console-core/drizzle/index.js"
+import { KeyTable } from "@devora-ai/console-core/schema/key.sql.js"
+import { BillingTable, LiteTable, SubscriptionTable, UsageTable } from "@devora-ai/console-core/schema/billing.sql.js"
+import { centsToMicroCents } from "@devora-ai/console-core/util/price.js"
+import { getMonthlyBounds, getWeekBounds } from "@devora-ai/console-core/util/date.js"
+import { Identifier } from "@devora-ai/console-core/identifier.js"
+import { Billing } from "@devora-ai/console-core/billing.js"
+import { Actor } from "@devora-ai/console-core/actor.js"
+import { WorkspaceTable } from "@devora-ai/console-core/schema/workspace.sql.js"
+import { ZenData } from "@devora-ai/console-core/model.js"
+import { Subscription } from "@devora-ai/console-core/subscription.js"
+import { BlackData } from "@devora-ai/console-core/black.js"
+import { UserTable } from "@devora-ai/console-core/schema/user.sql.js"
+import { ModelTable } from "@devora-ai/console-core/schema/model.sql.js"
+import { ProviderTable } from "@devora-ai/console-core/schema/provider.sql.js"
 import { logger } from "./logger"
 import {
   AuthError,
@@ -41,8 +41,8 @@ import { createRateLimiter as createKeyRateLimiter } from "./keyRateLimiter"
 import { createDataDumper } from "./dataDumper"
 import { createTrialLimiter } from "./trialLimiter"
 import { createStickyTracker } from "./stickyProviderTracker"
-import { LiteData } from "@mimo-ai/console-core/lite.js"
-import { Resource } from "@mimo-ai/console-resource"
+import { LiteData } from "@devora-ai/console-core/lite.js"
+import { Resource } from "@devora-ai/console-resource"
 import { i18n, type Key } from "~/i18n"
 import { localeFromRequest } from "~/lib/language"
 import { createModelTpmLimiter } from "./modelTpmLimiter"
@@ -97,16 +97,16 @@ export async function handler(
     const ip = rawIp.includes(":") ? rawIp.split(":").slice(0, 4).join(":") : rawIp
     const rawZenApiKey = opts.parseApiKey(input.request.headers)
     const zenApiKey = rawZenApiKey === "public" ? undefined : rawZenApiKey
-    const sessionId = input.request.headers.get("x-opencode-session") ?? ""
-    const requestId = input.request.headers.get("x-opencode-request") ?? ""
-    const projectId = input.request.headers.get("x-opencode-project") ?? ""
-    const ocClient = input.request.headers.get("x-opencode-client") ?? ""
+    const sessionId = input.request.headers.get("x-devora-session") ?? ""
+    const requestId = input.request.headers.get("x-devora-request") ?? ""
+    const projectId = input.request.headers.get("x-devora-project") ?? ""
+    const ocClient = input.request.headers.get("x-devora-client") ?? ""
     logger.metric({
       is_stream: isStream,
       session: sessionId,
       request: requestId,
       client: ocClient,
-      ...(model === "mimo-v2-pro-free" && JSON.stringify(body).length < 1000 ? { payload: JSON.stringify(body) } : {}),
+      ...(model === "devora-v2-pro-free" && JSON.stringify(body).length < 1000 ? { payload: JSON.stringify(body) } : {}),
     })
     const zenData = ZenData.list(opts.modelList)
     const modelInfo = validateModel(zenData, model)
@@ -168,10 +168,10 @@ export async function handler(
           })
           headers.delete("host")
           headers.delete("content-length")
-          headers.delete("x-opencode-request")
-          headers.delete("x-opencode-session")
-          headers.delete("x-opencode-project")
-          headers.delete("x-opencode-client")
+          headers.delete("x-devora-request")
+          headers.delete("x-devora-session")
+          headers.delete("x-devora-project")
+          headers.delete("x-devora-client")
           return headers
         })(),
         body: reqBody,
@@ -420,7 +420,7 @@ export async function handler(
       throw new ModelError(
         `${t("zen.api.error.trialEnded", {
           model: modelData.name,
-          link: "https://opencode.ai/go",
+          link: "https://devora.ai/go",
         })}`,
       )
 
@@ -762,8 +762,8 @@ export async function handler(
 
     // Validate pay as you go billing
     const billing = authInfo.billing
-    const billingUrl = `https://opencode.ai/workspace/${authInfo.workspaceID}/billing`
-    const membersUrl = `https://opencode.ai/workspace/${authInfo.workspaceID}/members`
+    const billingUrl = `https://devora.ai/workspace/${authInfo.workspaceID}/billing`
+    const membersUrl = `https://devora.ai/workspace/${authInfo.workspaceID}/members`
     if (!billing.paymentMethodID && billing.balance <= 0)
       throw new CreditsError(t("zen.api.error.noPaymentMethod", { billingUrl }))
     if (billing.balance <= 0) throw new CreditsError(t("zen.api.error.insufficientBalance", { billingUrl }))

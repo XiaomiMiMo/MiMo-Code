@@ -1,4 +1,4 @@
-import { Resource } from "@mimo-ai/console-resource"
+import { Resource } from "@devora-ai/console-resource"
 
 export function createStickyTracker(stickyProvider: "strict" | "prefer" | undefined, session: string) {
   if (!stickyProvider) return

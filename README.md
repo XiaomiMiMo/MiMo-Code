@@ -1,24 +1,24 @@
-<h1 align="center">MiMoCode</h1>
+<h1 align="center">Devora</h1>
 
 <p align="center">
-  <img src="assets/readme/mimocode-banner.png" alt="MiMoCode" width="700">
+  <img src="assets/readme/devora-banner.png" alt="Devora" width="700">
 </p>
 
-<p align="center"><strong>An open-source AI coding agent with cross-session memory.</strong></p>
+<p align="center"><strong>Sheri Akhtamov's open-source AI coding agent with cross-session memory.</strong></p>
 
 <p align="center">
   <a href="README.zh.md">中文</a> | English
 </p>
 
 <p align="center">
-  <a href="https://mimo.xiaomi.com/en/mimocode">Website</a> | <a href="https://mimo.xiaomi.com/en/blog/mimo-code-long-horizon">Blog</a>
+  <a href="https://github.com/SheriAkhtamov/Devora">Repository</a> | <a href="https://github.com/SheriAkhtamov/Devora/releases">Releases</a>
 </p>
 
 ---
 
-MiMoCode is a terminal-native AI coding assistant. It can read and write code, run commands, manage Git, and use a persistent memory system to keep a deep understanding of your project across sessions while continuously improving itself.
+Devora is a terminal-native AI coding assistant maintained by Sheri Akhtamov. It can read and write code, run commands, manage Git, and use a persistent memory system to keep a deep understanding of your project across sessions while continuously improving itself.
 
-MiMo Auto is built in as a free-for-limited-time channel, so you can start with zero configuration. MiMoCode also supports connecting to any mainstream LLM provider API.
+Devora Auto is built in as a free-for-limited-time channel, so you can start with zero configuration. Devora also supports connecting to any mainstream LLM provider API.
 
 ---
 
@@ -26,15 +26,15 @@ MiMo Auto is built in as a free-for-limited-time channel, so you can start with 
 
 ```bash
 # One-line install
-curl -fsSL https://mimo.xiaomi.com/install | bash
+curl -fsSL https://raw.githubusercontent.com/SheriAkhtamov/Devora/main/install | bash
 
 # Or install via npm
-npm install -g @mimo-ai/cli
+npm install -g @devora-ai/cli
 ```
 
 The first launch guides you through configuration automatically. Supported options:
-- **MiMo Auto (free for a limited time)** — anonymous channel, zero configuration
-- **Xiaomi MiMo Platform** — OAuth login
+- **Devora Auto (free for a limited time)** — anonymous channel, zero configuration
+- **Devora Platform** — OAuth login
 - **Import from Claude Code** — migrate existing authentication in one step
 - **Custom Provider** — add any OpenAI-compatible API in the TUI
 
@@ -87,7 +87,7 @@ Compose mode provides a structured workflow for specs-driven development. It inc
 
 ### Voice Input
 
-Real-time streaming voice input powered by TenVAD and MiMo ASR. Activate with `/voice`, then speak — audio is segmented by pauses and transcribed incrementally into the input. Available for MiMo logged-in users.
+Real-time streaming voice input powered by TenVAD and Devora ASR. Activate with `/voice`, then speak — audio is segmented by pauses and transcribed incrementally into the input. Available for Devora logged-in users.
 
 ### Dream & Distill
 
@@ -98,7 +98,7 @@ Real-time streaming voice input powered by TenVAD and MiMo ASR. Activate with `/
 
 ## Configuration
 
-MiMoCode is configured via `.mimocode/mimocode.json` in the project directory (or `~/.config/mimocode/mimocode.json` globally). Key options include:
+Devora is configured via `.devora/devora.jsonc` in the project directory (or `~/.config/devora/devora.jsonc` globally). Key options include:
 
 - Provider and model selection
 - Agent permissions and custom agents
@@ -120,9 +120,9 @@ bun turbo typecheck      # Type check
 
 ---
 
-## Relationship to OpenCode
+## Project
 
-MiMoCode is built as a fork of [OpenCode](https://github.com/anomalyco/opencode). It keeps all core OpenCode capabilities (multiple providers, TUI, LSP, MCP, plugins) and adds persistent memory, intelligent context management, subagent orchestration, goal-driven autonomous loops, compose workflows, and self-improvement via dream/distill.
+Devora is maintained by Sheri Akhtamov in [SheriAkhtamov/Devora](https://github.com/SheriAkhtamov/Devora). This repository contains the CLI, desktop app, web UI, SDK, plugin system, release scripts, and update configuration for the Devora distribution.
 
 ---
 
@@ -140,6 +140,6 @@ Scan the QR code to subscribe to the author’s channel:
 
 Source code is licensed under the [MIT License](./LICENSE).
 
-Use of MiMoCode is also subject to the [Use Restrictions](./USE_RESTRICTIONS.md).
-Use of Xiaomi MiMo-hosted services is subject to the [MiMo Terms of Service](https://platform.xiaomimimo.com/docs/terms/user-agreement).
-Use of the MiMo name, logo, and trademarks is subject to the MiMo Trademark Policy.
+Use of Devora is also subject to the [Use Restrictions](./USE_RESTRICTIONS.md).
+Provider-hosted services are subject to the terms of the provider you configure.
+The Devora name, logo, and distribution branding are maintained by Sheri Akhtamov.

@@ -1,5 +1,5 @@
 import { createStore, produce } from "solid-js/store"
-import { createSimpleContext } from "@mimo-ai/ui/context"
+import { createSimpleContext } from "@devora-ai/ui/context"
 import { batch, createEffect, createMemo, createRoot, on, onCleanup } from "solid-js"
 import { useParams } from "@solidjs/router"
 import { useSDK } from "./sdk"

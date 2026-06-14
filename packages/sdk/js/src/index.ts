@@ -1,16 +1,16 @@
 export * from "./client.js"
 export * from "./server.js"
 
-import { createOpencodeClient } from "./client.js"
-import { createOpencodeServer } from "./server.js"
+import { createDevoraClient } from "./client.js"
+import { createDevoraServer } from "./server.js"
 import type { ServerOptions } from "./server.js"
 
-export async function createOpencode(options?: ServerOptions) {
-  const server = await createOpencodeServer({
+export async function createDevora(options?: ServerOptions) {
+  const server = await createDevoraServer({
     ...options,
   })
 
-  const client = createOpencodeClient({
+  const client = createDevoraClient({
     baseUrl: server.url,
   })
 

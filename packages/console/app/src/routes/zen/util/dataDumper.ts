@@ -1,4 +1,4 @@
-import { Resource, waitUntil } from "@mimo-ai/console-resource"
+import { Resource, waitUntil } from "@devora-ai/console-resource"
 
 export function createDataDumper(sessionId: string, requestId: string, projectId: string) {
   if (Resource.App.stage !== "production") return

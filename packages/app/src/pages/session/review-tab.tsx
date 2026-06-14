@@ -1,12 +1,12 @@
 import { createEffect, onCleanup, type JSX } from "solid-js"
 import { makeEventListener } from "@solid-primitives/event-listener"
-import type { SnapshotFileDiff, VcsFileDiff } from "@mimo-ai/sdk/v2"
-import { SessionReview } from "@mimo-ai/ui/session-review"
+import type { SnapshotFileDiff, VcsFileDiff } from "@devora-ai/sdk/v2"
+import { SessionReview } from "@devora-ai/ui/session-review"
 import type {
   SessionReviewCommentActions,
   SessionReviewCommentDelete,
   SessionReviewCommentUpdate,
-} from "@mimo-ai/ui/session-review"
+} from "@devora-ai/ui/session-review"
 import type { SelectedLineRange } from "@/context/file"
 import { useSDK } from "@/context/sdk"
 import { useLayout } from "@/context/layout"

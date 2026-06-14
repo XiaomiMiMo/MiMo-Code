@@ -1,6 +1,6 @@
 {
   "$schema": "https://json.schemastore.org/package.json",
-  "name": "@mimo-ai/sdk",
+  "name": "@devora-ai/sdk",
   "version": "1.14.19",
   "type": "module",
   "license": "MIT",

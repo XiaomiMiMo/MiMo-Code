@@ -1,4 +1,4 @@
-import { UserMessage } from "@mimo-ai/sdk/v2"
+import { UserMessage } from "@devora-ai/sdk/v2"
 import { ComponentProps, For, Match, Show, splitProps, Switch } from "solid-js"
 import { DiffChanges } from "./diff-changes"
 import { Tooltip } from "./tooltip"

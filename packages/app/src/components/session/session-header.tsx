@@ -1,13 +1,13 @@
-import { AppIcon } from "@mimo-ai/ui/app-icon"
-import { Button } from "@mimo-ai/ui/button"
-import { DropdownMenu } from "@mimo-ai/ui/dropdown-menu"
-import { Icon } from "@mimo-ai/ui/icon"
-import { IconButton } from "@mimo-ai/ui/icon-button"
-import { Keybind } from "@mimo-ai/ui/keybind"
-import { Spinner } from "@mimo-ai/ui/spinner"
-import { showToast } from "@mimo-ai/ui/toast"
-import { Tooltip, TooltipKeybind } from "@mimo-ai/ui/tooltip"
-import { getFilename } from "@mimo-ai/shared/util/path"
+import { AppIcon } from "@devora-ai/ui/app-icon"
+import { Button } from "@devora-ai/ui/button"
+import { DropdownMenu } from "@devora-ai/ui/dropdown-menu"
+import { Icon } from "@devora-ai/ui/icon"
+import { IconButton } from "@devora-ai/ui/icon-button"
+import { Keybind } from "@devora-ai/ui/keybind"
+import { Spinner } from "@devora-ai/ui/spinner"
+import { showToast } from "@devora-ai/ui/toast"
+import { Tooltip, TooltipKeybind } from "@devora-ai/ui/tooltip"
+import { getFilename } from "@devora-ai/shared/util/path"
 import { createEffect, createMemo, createSignal, For, onMount, Show } from "solid-js"
 import { createStore } from "solid-js/store"
 import { Portal } from "solid-js/web"
@@ -153,7 +153,7 @@ export function SessionHeader() {
   })
   const hotkey = createMemo(() => command.keybind("file.open"))
   const os = createMemo(() => detectOS(platform))
-  const isDesktopBeta = platform.platform === "desktop" && import.meta.env.VITE_OPENCODE_CHANNEL === "beta"
+  const isDesktopBeta = platform.platform === "desktop" && import.meta.env.VITE_DEVORA_CHANNEL === "beta"
   const search = createMemo(() => !isDesktopBeta || settings.general.showSearch())
   const tree = createMemo(() => !isDesktopBeta || settings.general.showFileTree())
   const term = createMemo(() => !isDesktopBeta || settings.general.showTerminal())
@@ -272,8 +272,8 @@ export function SessionHeader() {
   const [centerMount, setCenterMount] = createSignal<HTMLElement | null>(null)
   const [rightMount, setRightMount] = createSignal<HTMLElement | null>(null)
   onMount(() => {
-    setCenterMount(document.getElementById("opencode-titlebar-center"))
-    setRightMount(document.getElementById("opencode-titlebar-right"))
+    setCenterMount(document.getElementById("devora-titlebar-center"))
+    setRightMount(document.getElementById("devora-titlebar-right"))
   })
 
   return (

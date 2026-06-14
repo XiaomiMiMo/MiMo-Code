@@ -1,4 +1,4 @@
-import { Actor } from "@mimo-ai/console-core/actor.js"
+import { Actor } from "@devora-ai/console-core/actor.js"
 import { getActor } from "./auth"
 
 export async function withActor<T>(fn: () => T, workspace?: string) {

@@ -1,7 +1,7 @@
 import { Component, For, Match, Show, Switch } from "solid-js"
-import { FileIcon } from "@mimo-ai/ui/file-icon"
-import { Icon } from "@mimo-ai/ui/icon"
-import { getDirectory, getFilename } from "@mimo-ai/shared/util/path"
+import { FileIcon } from "@devora-ai/ui/file-icon"
+import { Icon } from "@devora-ai/ui/icon"
+import { getDirectory, getFilename } from "@devora-ai/shared/util/path"
 
 export type AtOption = { path: string; display: string; recent?: boolean }
 export type AgentOption = { name: string; display: string }

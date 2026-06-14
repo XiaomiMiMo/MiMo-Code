@@ -1,4 +1,4 @@
-import { base64Decode } from "@mimo-ai/shared/util/encode"
+import { base64Decode } from "@devora-ai/shared/util/encode"
 
 export function decode64(value: string | undefined) {
   if (value === undefined) return

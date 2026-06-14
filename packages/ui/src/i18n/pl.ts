@@ -16,7 +16,7 @@ export const dict = {
   "ui.sessionReview.image.placeholder": "Obraz",
   "ui.sessionReview.largeDiff.title": "Diff jest zbyt duży, aby go wyrenderować",
   "ui.sessionReview.largeDiff.meta": "Limit: {{limit}} zmienionych linii. Obecnie: {{current}} zmienionych linii.",
-  "ui.sessionReview.largeDiff.renderAnyway": "Renderuj mimo to",
+  "ui.sessionReview.largeDiff.renderAnyway": "Renderuj devora to",
   "ui.fileMedia.kind.image": "obraz",
   "ui.fileMedia.kind.audio": "dźwięk",
   "ui.fileMedia.state.removed": "{{kind}} usunięty",

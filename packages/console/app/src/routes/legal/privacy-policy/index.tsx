@@ -11,9 +11,9 @@ export default function PrivacyPolicy() {
   const language = useLanguage()
   return (
     <main data-page="legal">
-      <Title>OpenCode | Privacy Policy</Title>
+      <Title>Devora | Privacy Policy</Title>
       <LocaleLinks path="/legal/privacy-policy" />
-      <Meta name="description" content="OpenCode privacy policy" />
+      <Meta name="description" content="Devora privacy policy" />
       <div data-component="container">
         <Header />
 
@@ -24,7 +24,7 @@ export default function PrivacyPolicy() {
               <p class="effective-date">Effective date: Mar 6, 2026</p>
 
               <p>
-                At OpenCode, we take your privacy seriously. Please read this Privacy Policy to learn how we treat your
+                At Devora, we take your privacy seriously. Please read this Privacy Policy to learn how we treat your
                 personal data.{" "}
                 <strong>
                   By using or accessing our Services in any manner, you acknowledge that you accept the practices and
@@ -37,8 +37,8 @@ export default function PrivacyPolicy() {
               </p>
 
               <p>
-                Remember that your use of OpenCode is at all times subject to our Terms of Use,{" "}
-                <a href={language.route("/legal/terms-of-service")}>https://opencode.ai/legal/terms-of-service</a>,
+                Remember that your use of Devora is at all times subject to our Terms of Use,{" "}
+                <a href={language.route("/legal/terms-of-service")}>Devora Terms of Use</a>,
                 which incorporates this Privacy Policy. Any terms we use in this Policy without defining them have the
                 definitions given to them in the Terms of Use.
               </p>
@@ -47,7 +47,7 @@ export default function PrivacyPolicy() {
 
               <p>
                 As we continually work to improve our Services, we may need to change this Privacy Policy from time to
-                time. We will alert you of material changes by placing a notice on the OpenCode website, by sending you
+                time. We will alert you of material changes by placing a notice on the Devora website, by sending you
                 an email and/or by some other means. Please note that if you've opted not to receive legal notice emails
                 from us (or you haven't provided us with your email address), those legal notices will still govern your
                 use of the Services, and you are still responsible for reading and understanding them. If you use the
@@ -288,7 +288,7 @@ export default function PrivacyPolicy() {
               <ul>
                 <li>
                   Responding to correspondence that we receive from you, contacting you when necessary or requested, and
-                  sending you information about OpenCode.
+                  sending you information about Devora.
                 </li>
                 <li>Sending emails and other communications according to your preferences.</li>
               </ul>
@@ -300,7 +300,7 @@ export default function PrivacyPolicy() {
                 requirements and enforcing legal terms including: fulfilling our legal obligations under applicable law,
                 regulation, court order or other legal process, such as preventing, detecting and investigating security
                 incidents and potentially illegal or prohibited activities; protecting the rights, property or safety of
-                you, OpenCode or another party; enforcing any agreements with you; responding to claims that any posting
+                you, Devora or another party; enforcing any agreements with you; responding to claims that any posting
                 or other content violates third-party rights; and resolving disputes.
               </p>
 
@@ -501,7 +501,7 @@ export default function PrivacyPolicy() {
                 otherwise use the Services or send us any Personal Data. If we learn we have collected Personal Data
                 from a child under 18 years of age, we will delete that information as quickly as possible. If you
                 believe that a child under 18 years of age may have provided Personal Data to us, please contact us at{" "}
-                <a href="mailto:contact@anoma.ly">contact@anoma.ly</a>.
+                <a href="https://github.com/SheriAkhtamov/Devora/issues">Devora GitHub Issues</a>.
               </p>
 
               <h2 id="california-resident-rights">California Resident Rights</h2>
@@ -520,7 +520,7 @@ export default function PrivacyPolicy() {
                 If there are any conflicts between this section and any other provision of this Privacy Policy and you
                 are a California resident, the portion that is more protective of Personal Data shall control to the
                 extent of such conflict. If you have any questions about this section or whether any of the following
-                rights apply to you, please contact us at <a href="mailto:contact@anoma.ly">contact@anoma.ly</a>.
+                rights apply to you, please contact us at <a href="https://github.com/SheriAkhtamov/Devora/issues">Devora GitHub Issues</a>.
               </p>
 
               <h3>Access</h3>
@@ -605,7 +605,7 @@ export default function PrivacyPolicy() {
                 If there are any conflicts between this section and any other provision of this Privacy Policy and you
                 are a Colorado resident, the portion that is more protective of Personal Data shall control to the
                 extent of such conflict. If you have any questions about this section or whether any of the following
-                rights apply to you, please contact us at <a href="mailto:contact@anoma.ly">contact@anoma.ly</a>.
+                rights apply to you, please contact us at <a href="https://github.com/SheriAkhtamov/Devora/issues">Devora GitHub Issues</a>.
               </p>
 
               <h3>Access and Portability</h3>
@@ -676,7 +676,7 @@ export default function PrivacyPolicy() {
                 If there are any conflicts between this section and any other provision of this Privacy Policy and you
                 are a Connecticut resident, the portion that is more protective of Personal Data shall control to the
                 extent of such conflict. If you have any questions about this section or whether any of the following
-                rights apply to you, please contact us at <a href="mailto:contact@anoma.ly">contact@anoma.ly</a>.
+                rights apply to you, please contact us at <a href="https://github.com/SheriAkhtamov/Devora/issues">Devora GitHub Issues</a>.
               </p>
 
               <h3>Access and Portability</h3>
@@ -745,7 +745,7 @@ export default function PrivacyPolicy() {
                 If there are any conflicts between this section and any other provision of this Privacy Policy and you
                 are a Delaware resident, the portion that is more protective of Personal Data shall control to the
                 extent of such conflict. If you have any questions about this section or whether any of the following
-                rights apply to you, please contact us at <a href="mailto:contact@anoma.ly">contact@anoma.ly</a>.
+                rights apply to you, please contact us at <a href="https://github.com/SheriAkhtamov/Devora/issues">Devora GitHub Issues</a>.
               </p>
 
               <h3>Access and Portability</h3>
@@ -818,7 +818,7 @@ export default function PrivacyPolicy() {
                 If there are any conflicts between this section and any other provision of this Privacy Policy and you
                 are an Iowa resident, the portion that is more protective of Personal Data shall control to the extent
                 of such conflict. If you have any questions about this section or whether any of the following rights
-                apply to you, please contact us at <a href="mailto:contact@anoma.ly">contact@anoma.ly</a>.
+                apply to you, please contact us at <a href="https://github.com/SheriAkhtamov/Devora/issues">Devora GitHub Issues</a>.
               </p>
 
               <h3>Access and Portability</h3>
@@ -864,7 +864,7 @@ export default function PrivacyPolicy() {
                 If there are any conflicts between this section and any other provision of this Privacy Policy and you
                 are a Montana resident, the portion that is more protective of Personal Data shall control to the extent
                 of such conflict. If you have any questions about this section or whether any of the following rights
-                apply to you, please contact us at <a href="mailto:contact@anoma.ly">contact@anoma.ly</a>.
+                apply to you, please contact us at <a href="https://github.com/SheriAkhtamov/Devora/issues">Devora GitHub Issues</a>.
               </p>
 
               <h3>Access and Portability</h3>
@@ -937,7 +937,7 @@ export default function PrivacyPolicy() {
                 If there are any conflicts between this section and any other provision of this Privacy Policy and you
                 are a Nebraska resident, the portion that is more protective of Personal Data shall control to the
                 extent of such conflict. If you have any questions about this section or whether any of the following
-                rights apply to you, please contact us at <a href="mailto:contact@anoma.ly">contact@anoma.ly</a>.
+                rights apply to you, please contact us at <a href="https://github.com/SheriAkhtamov/Devora/issues">Devora GitHub Issues</a>.
               </p>
 
               <h3>Access and Portability</h3>
@@ -1007,7 +1007,7 @@ export default function PrivacyPolicy() {
                 If there are any conflicts between this section and any other provision of this Privacy Policy and you
                 are a New Hampshire resident, the portion that is more protective of Personal Data shall control to the
                 extent of such conflict. If you have any questions about this section or whether any of the following
-                rights apply to you, please contact us at <a href="mailto:contact@anoma.ly">contact@anoma.ly</a>.
+                rights apply to you, please contact us at <a href="https://github.com/SheriAkhtamov/Devora/issues">Devora GitHub Issues</a>.
               </p>
 
               <h3>Access and Portability</h3>
@@ -1078,7 +1078,7 @@ export default function PrivacyPolicy() {
                 If there are any conflicts between this section and any other provision of this Privacy Policy and you
                 are a New Jersey resident, the portion that is more protective of Personal Data shall control to the
                 extent of such conflict. If you have any questions about this section or whether any of the following
-                rights apply to you, please contact us at <a href="mailto:contact@anoma.ly">contact@anoma.ly</a>.
+                rights apply to you, please contact us at <a href="https://github.com/SheriAkhtamov/Devora/issues">Devora GitHub Issues</a>.
               </p>
 
               <h3>Access and Portability</h3>
@@ -1151,7 +1151,7 @@ export default function PrivacyPolicy() {
                 If there are any conflicts between this section and any other provision of this Privacy Policy and you
                 are an Oregon resident, the portion that is more protective of Personal Data shall control to the extent
                 of such conflict. If you have any questions about this section or whether any of the following rights
-                apply to you, please contact us at <a href="mailto:contact@anoma.ly">contact@anoma.ly</a>.
+                apply to you, please contact us at <a href="https://github.com/SheriAkhtamov/Devora/issues">Devora GitHub Issues</a>.
               </p>
 
               <h3>Access and Portability</h3>
@@ -1225,7 +1225,7 @@ export default function PrivacyPolicy() {
                 If there are any conflicts between this section and any other provision of this Privacy Policy and you
                 are a Texas resident, the portion that is more protective of Personal Data shall control to the extent
                 of such conflict. If you have any questions about this section or whether any of the following rights
-                apply to you, please contact us at <a href="mailto:contact@anoma.ly">contact@anoma.ly</a>.
+                apply to you, please contact us at <a href="https://github.com/SheriAkhtamov/Devora/issues">Devora GitHub Issues</a>.
               </p>
 
               <h3>Access and Portability</h3>
@@ -1293,7 +1293,7 @@ export default function PrivacyPolicy() {
                 If there are any conflicts between this section and any other provision of this Privacy Policy and you
                 are a Utah resident, the portion that is more protective of Personal Data shall control to the extent of
                 such conflict. If you have any questions about this section or whether any of the following rights apply
-                to you, please contact us at contact@anoma.ly.
+                to you, please contact us at Devora GitHub Issues.
               </p>
 
               <h3>Access and Portability</h3>
@@ -1339,7 +1339,7 @@ export default function PrivacyPolicy() {
                 If there are any conflicts between this section and any other provision of this Privacy Policy and you
                 are a Virginia resident, the portion that is more protective of Personal Data shall control to the
                 extent of such conflict. If you have any questions about this section or whether any of the following
-                rights apply to you, please contact us at <a href="mailto:contact@anoma.ly">contact@anoma.ly</a>.
+                rights apply to you, please contact us at <a href="https://github.com/SheriAkhtamov/Devora/issues">Devora GitHub Issues</a>.
               </p>
 
               <h3>Access and Portability</h3>
@@ -1418,7 +1418,7 @@ export default function PrivacyPolicy() {
               </p>
               <ul>
                 <li>
-                  Email us at <a href="mailto:contact@anoma.ly">contact@anoma.ly</a>
+                  Email us at <a href="https://github.com/SheriAkhtamov/Devora/issues">Devora GitHub Issues</a>
                 </li>
                 <li>Call us at: +1 415 794-0209</li>
               </ul>
@@ -1430,7 +1430,7 @@ export default function PrivacyPolicy() {
               </p>
               <ul>
                 <li>
-                  Email us at <a href="mailto:contact@anoma.ly">contact@anoma.ly</a>
+                  Email us at <a href="https://github.com/SheriAkhtamov/Devora/issues">Devora GitHub Issues</a>
                 </li>
                 <li>Call us at: +1 415 794-0209</li>
               </ul>
@@ -1457,7 +1457,7 @@ export default function PrivacyPolicy() {
               </p>
               <ul>
                 <li>
-                  Email us at <a href="mailto:contact@anoma.ly">contact@anoma.ly</a>
+                  Email us at <a href="https://github.com/SheriAkhtamov/Devora/issues">Devora GitHub Issues</a>
                 </li>
                 <li>Call us at: +1 415 794-0209</li>
               </ul>
@@ -1475,7 +1475,7 @@ export default function PrivacyPolicy() {
                 Under California Civil Code Sections 1798.83-1798.84, California residents are entitled to contact us to
                 prevent disclosure of Personal Data to third parties for such third parties' direct marketing purposes;
                 in order to submit such a request, please contact us at{" "}
-                <a href="mailto:contact@anoma.ly">contact@anoma.ly</a>.
+                <a href="https://github.com/SheriAkhtamov/Devora/issues">Devora GitHub Issues</a>.
               </p>
 
               <p>
@@ -1500,10 +1500,10 @@ export default function PrivacyPolicy() {
               </p>
               <ul>
                 <li>
-                  Email: <a href="mailto:contact@anoma.ly">contact@anoma.ly</a>
+                  Email: <a href="https://github.com/SheriAkhtamov/Devora/issues">Devora GitHub Issues</a>
                 </li>
-                <li>Phone: +1 415 794-0209</li>
-                <li>Address: 2443 Fillmore St #380-6343, San Francisco, CA 94115, United States</li>
+                <li>Maintainer: Sheri Akhtamov</li>
+                <li>Repository: https://github.com/SheriAkhtamov/Devora</li>
               </ul>
             </article>
           </section>

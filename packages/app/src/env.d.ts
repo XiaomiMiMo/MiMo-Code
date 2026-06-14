@@ -1,7 +1,7 @@
 interface ImportMetaEnv {
-  readonly VITE_OPENCODE_SERVER_HOST: string
-  readonly VITE_OPENCODE_SERVER_PORT: string
-  readonly VITE_OPENCODE_CHANNEL?: "dev" | "beta" | "prod"
+  readonly VITE_DEVORA_SERVER_HOST: string
+  readonly VITE_DEVORA_SERVER_PORT: string
+  readonly VITE_DEVORA_CHANNEL?: "dev" | "beta" | "prod"
 }
 
 interface ImportMeta {

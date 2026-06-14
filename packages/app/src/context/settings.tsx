@@ -1,6 +1,6 @@
 import { createStore, reconcile } from "solid-js/store"
 import { createEffect, createMemo } from "solid-js"
-import { createSimpleContext } from "@mimo-ai/ui/context"
+import { createSimpleContext } from "@devora-ai/ui/context"
 import { persisted } from "@/utils/persist"
 
 export interface NotificationSettings {

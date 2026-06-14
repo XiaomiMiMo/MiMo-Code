@@ -1,21 +1,21 @@
 import { defineConfig } from "electron-vite"
-import appPlugin from "@mimo-ai/app/vite"
+import appPlugin from "@devora-ai/app/vite"
 import * as fs from "node:fs/promises"
 
 const channel = (() => {
-  const raw = process.env.OPENCODE_CHANNEL
+  const raw = process.env.DEVORA_CHANNEL
   if (raw === "dev" || raw === "beta" || raw === "prod") return raw
   return "dev"
 })()
 
-const OPENCODE_SERVER_DIST = "../opencode/dist/node"
+const DEVORA_SERVER_DIST = "../devora/dist/node"
 
 const nodePtyPkg = `@lydell/node-pty-${process.platform}-${process.arch}`
 
 export default defineConfig({
   main: {
     define: {
-      "import.meta.env.OPENCODE_CHANNEL": JSON.stringify(channel),
+      "import.meta.env.DEVORA_CHANNEL": JSON.stringify(channel),
     },
     build: {
       rollupOptions: {
@@ -25,25 +25,25 @@ export default defineConfig({
     },
     plugins: [
       {
-        name: "opencode:node-pty-narrower",
+        name: "devora:node-pty-narrower",
         enforce: "pre",
         resolveId(s) {
           if (s === "@lydell/node-pty") return nodePtyPkg
         },
       },
       {
-        name: "opencode:virtual-server-module",
+        name: "devora:virtual-server-module",
         enforce: "pre",
         resolveId(id) {
-          if (id === "virtual:opencode-server") return this.resolve(`${OPENCODE_SERVER_DIST}/node.js`)
+          if (id === "virtual:devora-server") return this.resolve(`${DEVORA_SERVER_DIST}/node.js`)
         },
       },
       {
-        name: "opencode:copy-server-assets",
+        name: "devora:copy-server-assets",
         async writeBundle() {
-          for (const l of await fs.readdir(OPENCODE_SERVER_DIST)) {
+          for (const l of await fs.readdir(DEVORA_SERVER_DIST)) {
             if (!l.endsWith(".wasm")) continue
-            await fs.writeFile(`./out/main/chunks/${l}`, await fs.readFile(`${OPENCODE_SERVER_DIST}/${l}`))
+            await fs.writeFile(`./out/main/chunks/${l}`, await fs.readFile(`${DEVORA_SERVER_DIST}/${l}`))
           }
         },
       },
@@ -65,7 +65,7 @@ export default defineConfig({
     publicDir: "../../../app/public",
     root: "src/renderer",
     define: {
-      "import.meta.env.VITE_OPENCODE_CHANNEL": JSON.stringify(channel),
+      "import.meta.env.VITE_DEVORA_CHANNEL": JSON.stringify(channel),
     },
     build: {
       rollupOptions: {

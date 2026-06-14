@@ -2,8 +2,8 @@ export * from "./gen/types.gen.js"
 
 import { createClient } from "./gen/client/client.gen.js"
 import { type Config } from "./gen/client/types.gen.js"
-import { OpencodeClient } from "./gen/sdk.gen.js"
-export { type Config as OpencodeClientConfig, OpencodeClient }
+import { DevoraClient } from "./gen/sdk.gen.js"
+export { type Config as DevoraClientConfig, DevoraClient }
 
 function pick(value: string | null, fallback?: string, encode?: (value: string) => string) {
   if (!value) return
@@ -20,8 +20,8 @@ function rewrite(request: Request, values: { directory?: string; workspace?: str
   let changed = false
 
   for (const [name, key] of [
-    ["x-mimocode-directory", "directory"],
-    ["x-mimocode-workspace", "workspace"],
+    ["x-devora-directory", "directory"],
+    ["x-devora-workspace", "workspace"],
   ] as const) {
     const value = pick(
       request.headers.get(name),
@@ -38,12 +38,12 @@ function rewrite(request: Request, values: { directory?: string; workspace?: str
   if (!changed) return request
 
   const next = new Request(url, request)
-  next.headers.delete("x-mimocode-directory")
-  next.headers.delete("x-mimocode-workspace")
+  next.headers.delete("x-devora-directory")
+  next.headers.delete("x-devora-workspace")
   return next
 }
 
-export function createOpencodeClient(config?: Config & { directory?: string; experimental_workspaceID?: string }) {
+export function createDevoraClient(config?: Config & { directory?: string; experimental_workspaceID?: string }) {
   if (!config?.fetch) {
     const customFetch: any = (req: any) => {
       // @ts-ignore
@@ -59,14 +59,14 @@ export function createOpencodeClient(config?: Config & { directory?: string; exp
   if (config?.directory) {
     config.headers = {
       ...config.headers,
-      "x-mimocode-directory": encodeURIComponent(config.directory),
+      "x-devora-directory": encodeURIComponent(config.directory),
     }
   }
 
   if (config?.experimental_workspaceID) {
     config.headers = {
       ...config.headers,
-      "x-mimocode-workspace": config.experimental_workspaceID,
+      "x-devora-workspace": config.experimental_workspaceID,
     }
   }
 
@@ -80,9 +80,9 @@ export function createOpencodeClient(config?: Config & { directory?: string; exp
   client.interceptors.response.use((response) => {
     const contentType = response.headers.get("content-type")
     if (contentType === "text/html")
-      throw new Error("Request is not supported by this version of OpenCode Server (Server responded with text/html)")
+      throw new Error("Request is not supported by this version of Devora Server (Server responded with text/html)")
 
     return response
   })
-  return new OpencodeClient({ client })
+  return new DevoraClient({ client })
 }

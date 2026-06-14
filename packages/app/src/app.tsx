@@ -1,12 +1,12 @@
 import "@/index.css"
-import { I18nProvider } from "@mimo-ai/ui/context"
-import { DialogProvider } from "@mimo-ai/ui/context/dialog"
-import { FileComponentProvider } from "@mimo-ai/ui/context/file"
-import { MarkedProvider } from "@mimo-ai/ui/context/marked"
-import { File } from "@mimo-ai/ui/file"
-import { Font } from "@mimo-ai/ui/font"
-import { Splash } from "@mimo-ai/ui/logo"
-import { ThemeProvider } from "@mimo-ai/ui/theme/context"
+import { I18nProvider } from "@devora-ai/ui/context"
+import { DialogProvider } from "@devora-ai/ui/context/dialog"
+import { FileComponentProvider } from "@devora-ai/ui/context/file"
+import { MarkedProvider } from "@devora-ai/ui/context/marked"
+import { File } from "@devora-ai/ui/file"
+import { Font } from "@devora-ai/ui/font"
+import { Splash } from "@devora-ai/ui/logo"
+import { ThemeProvider } from "@devora-ai/ui/theme/context"
 import { MetaProvider } from "@solidjs/meta"
 import { type BaseRouterProps, Navigate, Route, Router } from "@solidjs/router"
 import { QueryClient, QueryClientProvider } from "@tanstack/solid-query"
@@ -70,7 +70,7 @@ function UiI18nBridge(props: ParentProps) {
 
 declare global {
   interface Window {
-    __OPENCODE__?: {
+    __DEVORA__?: {
       updaterEnabled?: boolean
       deepLinks?: string[]
       wsl?: boolean

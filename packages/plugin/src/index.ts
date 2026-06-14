@@ -1,6 +1,6 @@
 import type {
   Event,
-  createOpencodeClient,
+  createDevoraClient,
   Project,
   Model,
   Provider,
@@ -10,8 +10,8 @@ import type {
   Part,
   Auth,
   Config as SDKConfig,
-} from "@mimo-ai/sdk"
-import type { Provider as ProviderV2, Model as ModelV2 } from "@mimo-ai/sdk/v2"
+} from "@devora-ai/sdk"
+import type { Provider as ProviderV2, Model as ModelV2 } from "@devora-ai/sdk/v2"
 
 import type { BunShell } from "./shell.js"
 import { type ToolDefinition } from "./tool.js"
@@ -55,7 +55,7 @@ export type WorkspaceAdaptor = {
 }
 
 export type PluginInput = {
-  client: ReturnType<typeof createOpencodeClient>
+  client: ReturnType<typeof createDevoraClient>
   project: Project
   directory: string
   worktree: string

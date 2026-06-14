@@ -1,5 +1,5 @@
 {
-  "name": "@mimo-ai/function",
+  "name": "@devora-ai/function",
   "version": "0.1.0",
   "$schema": "https://json.schemastore.org/package.json",
   "private": true,

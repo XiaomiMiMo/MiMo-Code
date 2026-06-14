@@ -8,7 +8,7 @@ export function POST(input: APIEvent) {
     parseApiKey: (headers: Headers) => headers.get("x-goog-api-key") ?? undefined,
     parseModel: (url: string, _body: any) => url.split("/").pop()?.split(":")?.[0] ?? "",
     parseIsStream: (url: string, _body: any) =>
-      // ie. url: https://opencode.ai/zen/v1/models/gemini-3-pro:streamGenerateContent?alt=sse'
+      // ie. url: https://devora.ai/zen/v1/models/gemini-3-pro:streamGenerateContent?alt=sse'
       url.split("/").pop()?.split(":")?.[1]?.startsWith("streamGenerateContent") ?? false,
   })
 }

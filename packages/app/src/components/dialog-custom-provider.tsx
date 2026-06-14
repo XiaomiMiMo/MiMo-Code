@@ -1,11 +1,11 @@
-import { Button } from "@mimo-ai/ui/button"
-import { useDialog } from "@mimo-ai/ui/context/dialog"
-import { Dialog } from "@mimo-ai/ui/dialog"
-import { IconButton } from "@mimo-ai/ui/icon-button"
-import { ProviderIcon } from "@mimo-ai/ui/provider-icon"
+import { Button } from "@devora-ai/ui/button"
+import { useDialog } from "@devora-ai/ui/context/dialog"
+import { Dialog } from "@devora-ai/ui/dialog"
+import { IconButton } from "@devora-ai/ui/icon-button"
+import { ProviderIcon } from "@devora-ai/ui/provider-icon"
 import { useMutation } from "@tanstack/solid-query"
-import { TextField } from "@mimo-ai/ui/text-field"
-import { showToast } from "@mimo-ai/ui/toast"
+import { TextField } from "@devora-ai/ui/text-field"
+import { showToast } from "@devora-ai/ui/toast"
 import { batch, For } from "solid-js"
 import { createStore, produce } from "solid-js/store"
 import { Link } from "@/components/link"
@@ -183,7 +183,7 @@ export function DialogCustomProvider(props: Props) {
         <form onSubmit={save} class="px-2.5 pb-6 flex flex-col gap-6">
           <p class="text-14-regular text-text-base">
             {language.t("provider.custom.description.prefix")}
-            <Link href="https://opencode.ai/docs/providers/#custom-provider" tabIndex={-1}>
+            <Link href="https://devora.ai/docs/providers/#custom-provider" tabIndex={-1}>
               {language.t("provider.custom.description.link")}
             </Link>
             {language.t("provider.custom.description.suffix")}

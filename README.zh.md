@@ -1,24 +1,24 @@
-<h1 align="center">MiMoCode</h1>
+<h1 align="center">Devora</h1>
 
 <p align="center">
-  <img src="assets/readme/mimocode-banner.png" alt="MiMoCode" width="700">
+  <img src="assets/readme/devora-banner.png" alt="Devora" width="700">
 </p>
 
-<p align="center"><strong>开源 AI 编程智能体，拥有跨会话记忆。</strong></p>
+<p align="center"><strong>Sheri Akhtamov 维护的开源 AI 编程智能体，拥有跨会话记忆。</strong></p>
 
 <p align="center">
   中文 | <a href="README.md">English</a>
 </p>
 
 <p align="center">
-  <a href="https://mimo.xiaomi.com/zh/mimocode">官网</a> | <a href="https://mimo.xiaomi.com/zh/blog/mimo-code-long-horizon">博客</a>
+  <a href="https://github.com/SheriAkhtamov/Devora">代码仓库</a> | <a href="https://github.com/SheriAkhtamov/Devora/releases">发布版本</a>
 </p>
 
 ---
 
-MiMoCode 是一个终端原生的 AI 编程助手。它能读写代码、执行命令、管理 Git，通过持久化记忆系统，在多次会话间保持对你项目的深度理解，并自我进化。
+Devora 是 Sheri Akhtamov 维护的终端原生 AI 编程助手。它能读写代码、执行命令、管理 Git，通过持久化记忆系统，在多次会话间保持对你项目的深度理解，并自我进化。
 
-内置 MiMo Auto 限时免费通道——零配置即可开始使用。也支持接入各家主流 LLM 厂商 API。
+内置 Devora Auto 限时免费通道——零配置即可开始使用。也支持接入各家主流 LLM 厂商 API。
 
 ---
 
@@ -26,15 +26,15 @@ MiMoCode 是一个终端原生的 AI 编程助手。它能读写代码、执行�
 
 ```bash
 # 一键安装
-curl -fsSL https://mimo.xiaomi.com/install | bash
+curl -fsSL https://raw.githubusercontent.com/SheriAkhtamov/Devora/main/install | bash
 
 # 或通过 npm 安装
-npm install -g @mimo-ai/cli
+npm install -g @devora-ai/cli
 ```
 
 首次启动自动引导配置。支持：
-- **MiMo Auto（限时免费）** — 匿名通道，零配置
-- **小米 MiMo 平台** — OAuth 登录
+- **Devora Auto（限时免费）** — 匿名通道，零配置
+- **Devora 平台** — OAuth 登录
 - **从 Claude Code 导入** — 一键迁移已有认证
 - **自定义 Provider** — TUI 内添加任意 OpenAI 兼容 API
 
@@ -87,7 +87,7 @@ Compose 模式提供结构化的 specs-driven 开发流程，内置规划、执�
 
 ### 语音输入
 
-基于 TenVAD 和 MiMo ASR 的实时流式语音输入。通过 `/voice` 激活，按停顿分片转写，文本逐段追加到输入框。仅对 MiMo 登录用户可用。
+基于 TenVAD 和 Devora ASR 的实时流式语音输入。通过 `/voice` 激活，按停顿分片转写，文本逐段追加到输入框。仅对 Devora 登录用户可用。
 
 ### Dream & Distill
 
@@ -98,7 +98,7 @@ Compose 模式提供结构化的 specs-driven 开发流程，内置规划、执�
 
 ## 配置
 
-通过项目目录下的 `.mimocode/mimocode.json`（或全局 `~/.config/mimocode/mimocode.json`）配置。主要选项包括：
+通过项目目录下的 `.devora/devora.jsonc`（或全局 `~/.config/devora/devora.jsonc`）配置。主要选项包括：
 
 - Provider 和模型选择
 - Agent 权限和自定义 Agent
@@ -120,15 +120,15 @@ bun turbo typecheck      # 类型检查
 
 ---
 
-## 与 OpenCode 的关系
+## 项目
 
-MiMoCode 基于 [OpenCode](https://github.com/anomalyco/opencode) fork 构建，保留其全部核心能力（多 Provider、TUI、LSP、MCP、插件），并在此基础上构建了持久化记忆、智能上下文管理、子智能体编排、目标驱动的自主循环、Compose 工作流，以及通过 dream/distill 实现的自我进化。
+Devora 由 Sheri Akhtamov 维护在 [SheriAkhtamov/Devora](https://github.com/SheriAkhtamov/Devora)。该仓库包含 Devora 发行版的 CLI、桌面应用、Web UI、SDK、插件系统、发布脚本和更新配置。
 
 ---
 
 ## 社区
 
-扫描二维码加入社区群聊：
+扫描二维码关注作者频道和社区入口：
 
 <p align="center">
   <img src="assets/readme/community-qrcode-1.jpg" alt="社区群聊二维码 1" width="240">
@@ -142,6 +142,6 @@ MiMoCode 基于 [OpenCode](https://github.com/anomalyco/opencode) fork 构建，
 
 源代码基于 [MIT 许可证](./LICENSE) 开源。
 
-使用 MiMoCode 还需遵守[使用限制](./USE_RESTRICTIONS.md)。
-使用小米 MiMo 托管服务须遵守 [MiMo 服务条款](https://platform.xiaomimimo.com/docs/terms/user-agreement)。
-使用 MiMo 名称、标志和商标须遵守 MiMo 商标政策。
+使用 Devora 还需遵守[使用限制](./USE_RESTRICTIONS.md)。
+Provider 托管服务须遵守你所配置 provider 的条款。
+Devora 名称、标志和发行版品牌由 Sheri Akhtamov 维护。

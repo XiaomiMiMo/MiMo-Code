@@ -1,4 +1,4 @@
-import "@mimo-ai/ui/styles/tailwind"
+import "@devora-ai/ui/styles/tailwind"
 
 import { createEffect, onCleanup, onMount } from "solid-js"
 import addonA11y from "@storybook/addon-a11y"
@@ -7,10 +7,10 @@ import { MetaProvider } from "@solidjs/meta"
 import { addons } from "storybook/preview-api"
 import { GLOBALS_UPDATED } from "storybook/internal/core-events"
 import { createJSXDecorator, definePreview } from "storybook-solidjs-vite"
-import { DialogProvider } from "@mimo-ai/ui/context/dialog"
-import { MarkedProvider } from "@mimo-ai/ui/context/marked"
-import { ThemeProvider, useTheme, type ColorScheme } from "@mimo-ai/ui/theme"
-import { Font } from "@mimo-ai/ui/font"
+import { DialogProvider } from "@devora-ai/ui/context/dialog"
+import { MarkedProvider } from "@devora-ai/ui/context/marked"
+import { ThemeProvider, useTheme, type ColorScheme } from "@devora-ai/ui/theme"
+import { Font } from "@devora-ai/ui/font"
 
 function resolveScheme(value: unknown): ColorScheme {
   if (value === "light" || value === "dark" || value === "system") return value

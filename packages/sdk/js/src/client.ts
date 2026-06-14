@@ -2,8 +2,8 @@ export * from "./gen/types.gen.js"
 
 import { createClient } from "./gen/client/client.gen.js"
 import { type Config } from "./gen/client/types.gen.js"
-import { OpencodeClient } from "./gen/sdk.gen.js"
-export { type Config as OpencodeClientConfig, OpencodeClient }
+import { DevoraClient } from "./gen/sdk.gen.js"
+export { type Config as DevoraClientConfig, DevoraClient }
 
 function pick(value: string | null, fallback?: string) {
   if (!value) return
@@ -16,7 +16,7 @@ function pick(value: string | null, fallback?: string) {
 function rewrite(request: Request, directory?: string) {
   if (request.method !== "GET" && request.method !== "HEAD") return request
 
-  const value = pick(request.headers.get("x-mimocode-directory"), directory)
+  const value = pick(request.headers.get("x-devora-directory"), directory)
   if (!value) return request
 
   const url = new URL(request.url)
@@ -25,11 +25,11 @@ function rewrite(request: Request, directory?: string) {
   }
 
   const next = new Request(url, request)
-  next.headers.delete("x-mimocode-directory")
+  next.headers.delete("x-devora-directory")
   return next
 }
 
-export function createOpencodeClient(config?: Config & { directory?: string }) {
+export function createDevoraClient(config?: Config & { directory?: string }) {
   if (!config?.fetch) {
     const customFetch: any = (req: any) => {
       // @ts-ignore
@@ -45,11 +45,11 @@ export function createOpencodeClient(config?: Config & { directory?: string }) {
   if (config?.directory) {
     config.headers = {
       ...config.headers,
-      "x-mimocode-directory": encodeURIComponent(config.directory),
+      "x-devora-directory": encodeURIComponent(config.directory),
     }
   }
 
   const client = createClient(config)
   client.interceptors.request.use((request) => rewrite(request, config?.directory))
-  return new OpencodeClient({ client })
+  return new DevoraClient({ client })
 }

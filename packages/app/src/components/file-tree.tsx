@@ -1,8 +1,8 @@
 import { useFile } from "@/context/file"
 import { encodeFilePath } from "@/context/file/path"
-import { Collapsible } from "@mimo-ai/ui/collapsible"
-import { FileIcon } from "@mimo-ai/ui/file-icon"
-import { Icon } from "@mimo-ai/ui/icon"
+import { Collapsible } from "@devora-ai/ui/collapsible"
+import { FileIcon } from "@devora-ai/ui/file-icon"
+import { Icon } from "@devora-ai/ui/icon"
 import {
   createEffect,
   createMemo,
@@ -17,7 +17,7 @@ import {
   type ParentProps,
 } from "solid-js"
 import { Dynamic } from "solid-js/web"
-import type { FileNode } from "@mimo-ai/sdk/v2"
+import type { FileNode } from "@devora-ai/sdk/v2"
 
 const MAX_DEPTH = 128
 

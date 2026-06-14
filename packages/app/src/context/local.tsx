@@ -1,5 +1,5 @@
-import { createSimpleContext } from "@mimo-ai/ui/context"
-import { base64Encode } from "@mimo-ai/shared/util/encode"
+import { createSimpleContext } from "@devora-ai/ui/context"
+import { base64Encode } from "@devora-ai/shared/util/encode"
 import { useParams } from "@solidjs/router"
 import { batch, createEffect, createMemo } from "solid-js"
 import { createStore } from "solid-js/store"

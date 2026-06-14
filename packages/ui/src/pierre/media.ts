@@ -1,4 +1,4 @@
-import type { FileContent } from "@mimo-ai/sdk/v2"
+import type { FileContent } from "@devora-ai/sdk/v2"
 
 export type MediaKind = "image" | "audio" | "svg"
 

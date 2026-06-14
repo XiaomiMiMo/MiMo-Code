@@ -19,11 +19,11 @@ if (!process.env.GH_TOKEN) throw new Error("Missing required env: GH_TOKEN or GI
 console.log("=== version ===\n")
 await $`./script/version.ts`
 
-const { Script } = await import("@mimo-ai/script")
+const { Script } = await import("@devora-ai/script")
 console.log(`\nReleasing v${Script.version} (channel: ${Script.channel})\n`)
 
 console.log("=== build ===\n")
-await $`./packages/opencode/script/build.ts`
+await $`./packages/devora/script/build.ts`
 
 console.log("\n=== publish npm ===\n")
 await $`./script/publish.ts`

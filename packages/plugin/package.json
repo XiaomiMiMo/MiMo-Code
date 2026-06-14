@@ -1,6 +1,6 @@
 {
   "$schema": "https://json.schemastore.org/package.json",
-  "name": "@mimo-ai/plugin",
+  "name": "@devora-ai/plugin",
   "version": "0.1.0",
   "type": "module",
   "license": "MIT",
@@ -20,7 +20,7 @@
     "dist"
   ],
   "dependencies": {
-    "@mimo-ai/sdk": "workspace:*",
+    "@devora-ai/sdk": "workspace:*",
     "effect": "catalog:",
     "zod": "catalog:"
   },

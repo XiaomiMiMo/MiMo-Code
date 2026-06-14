@@ -1,4 +1,4 @@
-import { Resource } from "@mimo-ai/console-resource"
+import { Resource } from "@devora-ai/console-resource"
 import type { TraceItem } from "@cloudflare/workers-types"
 
 export default {

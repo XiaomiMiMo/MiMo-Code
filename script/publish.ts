@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 
-import { Script } from "@mimo-ai/script"
+import { Script } from "@devora-ai/script"
 import { $ } from "bun"
 import { fileURLToPath } from "url"
 
@@ -26,7 +26,7 @@ await $`bun install`
 await $`./packages/sdk/js/script/build.ts`
 
 console.log("\n=== cli ===\n")
-await $`bun ./packages/opencode/script/publish.ts`
+await $`bun ./packages/devora/script/publish.ts`
 
 console.log("\n=== sdk ===\n")
 await $`bun ./packages/sdk/js/script/publish.ts`

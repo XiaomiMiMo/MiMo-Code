@@ -17,21 +17,20 @@ try {
   process.chdir(homedir())
 } catch {}
 
-process.env.OPENCODE_DISABLE_EMBEDDED_WEB_UI = "true"
-process.env.MIMOCODE_DISABLE_EMBEDDED_WEB_UI = "true"
+process.env.DEVORA_DISABLE_EMBEDDED_WEB_UI = "true"
 
 const APP_NAMES: Record<string, string> = {
-  dev: "MiMoCode Dev",
-  beta: "MiMoCode Beta",
-  prod: "MiMoCode",
+  dev: "Devora Dev",
+  beta: "Devora Beta",
+  prod: "Devora",
 }
 const APP_IDS: Record<string, string> = {
-  dev: "io.github.sheriakhtamov.mimocode.dev",
-  beta: "io.github.sheriakhtamov.mimocode.beta",
-  prod: "io.github.sheriakhtamov.mimocode",
+  dev: "io.github.sheriakhtamov.devora.dev",
+  beta: "io.github.sheriakhtamov.devora.beta",
+  prod: "io.github.sheriakhtamov.devora",
 }
-const appId = app.isPackaged ? APP_IDS[CHANNEL] : "ai.opencode.desktop.dev"
-app.setName(app.isPackaged ? APP_NAMES[CHANNEL] : "OpenCode Dev")
+const appId = app.isPackaged ? APP_IDS[CHANNEL] : APP_IDS.dev
+app.setName(app.isPackaged ? APP_NAMES[CHANNEL] : "Devora Dev")
 app.setAppUserModelId(appId)
 app.setPath("userData", join(app.getPath("appData"), appId))
 const { autoUpdater } = pkg
@@ -52,7 +51,7 @@ import {
   setDockIcon,
 } from "./windows"
 import { drizzle } from "drizzle-orm/node-sqlite/driver"
-import type { Server } from "virtual:opencode-server"
+import type { Server } from "virtual:devora-server"
 
 const initEmitter = new EventEmitter()
 let initStep: InitStep = { phase: "server_waiting" }
@@ -113,8 +112,7 @@ function setupApp() {
   }
 
   void app.whenReady().then(async () => {
-    app.setAsDefaultProtocolClient("mimocode")
-    app.setAsDefaultProtocolClient("opencode")
+    app.setAsDefaultProtocolClient("devora")
     registerRendererProtocol()
     setDockIcon()
     setupAutoUpdater()
@@ -129,7 +127,7 @@ function emitDeepLinks(urls: string[]) {
 }
 
 function isDeepLink(url: string) {
-  return url.startsWith("mimocode://") || url.startsWith("opencode://")
+  return url.startsWith("devora://") || url.startsWith("devora://")
 }
 
 function focusMainWindow() {
@@ -165,7 +163,7 @@ async function initialize() {
     })
 
     if (needsMigration) {
-      const { Database, JsonMigration } = await import("virtual:opencode-server")
+      const { Database, JsonMigration } = await import("virtual:devora-server")
       await JsonMigration.run(drizzle({ client: Database.Client().$client }), {
         progress: (event: { current: number; total: number }) => {
           const percent = Math.round(event.current / event.total) * 100
@@ -186,7 +184,7 @@ async function initialize() {
     server = listener
     serverReady.resolve({
       url,
-      username: "opencode",
+      username: "devora",
       password,
     })
 
@@ -300,7 +298,7 @@ function ensureLoopbackNoProxy() {
 }
 
 async function getSidecarPort() {
-  const fromEnv = process.env.OPENCODE_PORT
+  const fromEnv = process.env.DEVORA_PORT
   if (fromEnv) {
     const parsed = Number.parseInt(fromEnv, 10)
     if (!Number.isNaN(parsed)) return parsed
@@ -325,7 +323,7 @@ async function getSidecarPort() {
 function sqliteFileExists() {
   const xdg = process.env.XDG_DATA_HOME
   const base = xdg && xdg.length > 0 ? xdg : join(homedir(), ".local", "share")
-  return existsSync(join(base, "opencode", "opencode.db"))
+  return existsSync(join(base, "devora", "devora.db"))
 }
 
 function setupAutoUpdater() {

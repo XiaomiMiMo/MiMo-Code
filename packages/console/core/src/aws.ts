@@ -1,5 +1,5 @@
 import { z } from "zod"
-import { Resource } from "@mimo-ai/console-resource"
+import { Resource } from "@devora-ai/console-resource"
 import { AwsClient } from "aws4fetch"
 import { fn } from "./util/fn"
 
@@ -32,7 +32,7 @@ export namespace AWS {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          FromEmailAddress: `OpenCode Zen <contact@anoma.ly>`,
+          FromEmailAddress: `Devora Zen <no-reply@devora.local>`,
           Destination: {
             ToAddresses: [input.to],
           },

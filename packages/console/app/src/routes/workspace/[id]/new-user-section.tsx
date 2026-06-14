@@ -1,8 +1,8 @@
 import { query, useParams, createAsync } from "@solidjs/router"
 import { createMemo, createSignal, Show } from "solid-js"
 import { IconCopy, IconCheck } from "~/component/icon"
-import { Key } from "@mimo-ai/console-core/key.js"
-import { Billing } from "@mimo-ai/console-core/billing.js"
+import { Key } from "@devora-ai/console-core/key.js"
+import { Billing } from "@devora-ai/console-core/billing.js"
 import { withActor } from "~/context/auth.withActor"
 import styles from "./new-user-section.module.css"
 import { useI18n } from "~/context/i18n"
@@ -92,7 +92,7 @@ export function NewUserSection() {
           <ol>
             <li>{i18n.t("workspace.newUser.step.enableBilling")}</li>
             <li>
-              {i18n.t("workspace.newUser.step.login.before")} <code>opencode auth login</code>{" "}
+              {i18n.t("workspace.newUser.step.login.before")} <code>devora auth login</code>{" "}
               {i18n.t("workspace.newUser.step.login.after")}
             </li>
             <li>{i18n.t("workspace.newUser.step.pasteKey")}</li>

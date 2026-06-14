@@ -1,32 +1,32 @@
-import { Message, Model, Part, Session, SessionStatus, SnapshotFileDiff, UserMessage } from "@mimo-ai/sdk/v2"
-import { SessionTurn } from "@mimo-ai/ui/session-turn"
-import { SessionReview } from "@mimo-ai/ui/session-review"
-import { DataProvider } from "@mimo-ai/ui/context"
-import { FileComponentProvider } from "@mimo-ai/ui/context/file"
-import { WorkerPoolProvider } from "@mimo-ai/ui/context/worker-pool"
+import { Message, Model, Part, Session, SessionStatus, SnapshotFileDiff, UserMessage } from "@devora-ai/sdk/v2"
+import { SessionTurn } from "@devora-ai/ui/session-turn"
+import { SessionReview } from "@devora-ai/ui/session-review"
+import { DataProvider } from "@devora-ai/ui/context"
+import { FileComponentProvider } from "@devora-ai/ui/context/file"
+import { WorkerPoolProvider } from "@devora-ai/ui/context/worker-pool"
 import { createAsync, query, useParams } from "@solidjs/router"
 import { createMemo, createSignal, ErrorBoundary, For, Match, Show, Switch } from "solid-js"
 import { Share } from "~/core/share"
-import { Logo, Mark } from "@mimo-ai/ui/logo"
-import { IconButton } from "@mimo-ai/ui/icon-button"
-import { ProviderIcon } from "@mimo-ai/ui/provider-icon"
-import { iife } from "@mimo-ai/shared/util/iife"
-import { Binary } from "@mimo-ai/shared/util/binary"
-import { NamedError } from "@mimo-ai/shared/util/error"
+import { Logo, Mark } from "@devora-ai/ui/logo"
+import { IconButton } from "@devora-ai/ui/icon-button"
+import { ProviderIcon } from "@devora-ai/ui/provider-icon"
+import { iife } from "@devora-ai/shared/util/iife"
+import { Binary } from "@devora-ai/shared/util/binary"
+import { NamedError } from "@devora-ai/shared/util/error"
 import { DateTime } from "luxon"
 import { createStore } from "solid-js/store"
 import z from "zod"
 import NotFound from "../[...404]"
-import { Tabs } from "@mimo-ai/ui/tabs"
-import { MessageNav } from "@mimo-ai/ui/message-nav"
-import { FileSSR } from "@mimo-ai/ui/file-ssr"
+import { Tabs } from "@devora-ai/ui/tabs"
+import { MessageNav } from "@devora-ai/ui/message-nav"
+import { FileSSR } from "@devora-ai/ui/file-ssr"
 import { clientOnly } from "@solidjs/start"
 import { Meta, Title } from "@solidjs/meta"
 import { Base64 } from "js-base64"
 import { getRequestEvent } from "solid-js/web"
 
 const ClientOnlyWorkerPoolProvider = clientOnly(() =>
-  import("@mimo-ai/ui/pierre/worker").then((m) => ({
+  import("@devora-ai/ui/pierre/worker").then((m) => ({
     default: (props: { children: any }) => (
       <WorkerPoolProvider pools={m.getWorkerPools()}>{props.children}</WorkerPoolProvider>
     ),
@@ -165,15 +165,15 @@ export default function () {
               modelParam = "unknown"
             }
             const version = `v${info().version}`
-            return `https://social-cards.sst.dev/opencode-share/${encodedTitle}.png?model=${modelParam}&version=${version}&id=${data().shareID}`
+            return `https://social-cards.sst.dev/devora-share/${encodedTitle}.png?model=${modelParam}&version=${version}&id=${data().shareID}`
           })
 
           return (
             <>
               <Show when={info().title}>
-                <Title>{info().title} | OpenCode</Title>
+                <Title>{info().title} | Devora</Title>
               </Show>
-              <Meta name="description" content="opencode - The AI coding agent built for the terminal." />
+              <Meta name="description" content="devora - The AI coding agent built for the terminal." />
               <Meta property="og:image" content={ogImage()} />
               <Meta name="twitter:image" content={ogImage()} />
               <ClientOnlyWorkerPoolProvider>
@@ -260,21 +260,21 @@ export default function () {
                         <div class="relative bg-background-stronger w-screen h-screen overflow-hidden flex flex-col">
                           <header class="h-12 px-6 py-2 flex items-center justify-between self-stretch bg-background-base border-b border-border-weak-base">
                             <div class="">
-                              <a href="https://opencode.ai">
+                              <a href="https://devora.ai">
                                 <Mark />
                               </a>
                             </div>
                             <div class="flex gap-3 items-center">
                               <IconButton
                                 as={"a"}
-                                href="https://github.com/anomalyco/opencode"
+                                href="https://github.com/SheriAkhtamov/Devora"
                                 target="_blank"
                                 icon="github"
                                 variant="ghost"
                               />
                               <IconButton
                                 as={"a"}
-                                href="https://opencode.ai/discord"
+                                href="https://devora.ai/discord"
                                 target="_blank"
                                 icon="discord"
                                 variant="ghost"

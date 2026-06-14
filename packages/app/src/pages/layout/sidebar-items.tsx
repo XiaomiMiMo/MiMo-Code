@@ -1,10 +1,10 @@
-import type { Session } from "@mimo-ai/sdk/v2/client"
-import { Avatar } from "@mimo-ai/ui/avatar"
-import { Icon } from "@mimo-ai/ui/icon"
-import { IconButton } from "@mimo-ai/ui/icon-button"
-import { Spinner } from "@mimo-ai/ui/spinner"
-import { Tooltip } from "@mimo-ai/ui/tooltip"
-import { getFilename } from "@mimo-ai/shared/util/path"
+import type { Session } from "@devora-ai/sdk/v2/client"
+import { Avatar } from "@devora-ai/ui/avatar"
+import { Icon } from "@devora-ai/ui/icon"
+import { IconButton } from "@devora-ai/ui/icon-button"
+import { Spinner } from "@devora-ai/ui/spinner"
+import { Tooltip } from "@devora-ai/ui/tooltip"
+import { getFilename } from "@devora-ai/shared/util/path"
 import { A, useParams } from "@solidjs/router"
 import { type Accessor, createMemo, For, type JSX, Match, Show, Switch } from "solid-js"
 import { useGlobalSync } from "@/context/global-sync"
@@ -17,7 +17,7 @@ import { sessionTitle } from "@/utils/session-title"
 import { sessionPermissionRequest } from "../session/composer/session-request-tree"
 import { childSessionOnPath, hasProjectPermissions } from "./helpers"
 
-const OPENCODE_PROJECT_ID = "4b0ea68d7af9a6031a7ffda7ad66e0cb83315750"
+const DEVORA_PROJECT_ID = "4b0ea68d7af9a6031a7ffda7ad66e0cb83315750"
 
 export const ProjectIcon = (props: { project: LocalProject; class?: string; notify?: boolean }): JSX.Element => {
   const globalSync = useGlobalSync()
@@ -43,8 +43,8 @@ export const ProjectIcon = (props: { project: LocalProject; class?: string; noti
         <Avatar
           fallback={name()}
           src={
-            props.project.id === OPENCODE_PROJECT_ID
-              ? "https://opencode.ai/favicon.svg"
+            props.project.id === DEVORA_PROJECT_ID
+              ? "https://devora.ai/favicon.svg"
               : props.project.icon?.override || props.project.icon?.url
           }
           {...getAvatarColors(props.project.icon?.color)}

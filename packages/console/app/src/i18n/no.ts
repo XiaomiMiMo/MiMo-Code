@@ -15,7 +15,7 @@ export const dict = {
   "nav.home": "Hjem",
   "nav.openMenu": "Åpne meny",
   "nav.getStartedFree": "Kom i gang gratis",
-  "nav.logoAlt": "OpenCode",
+  "nav.logoAlt": "Devora",
 
   "nav.context.copyLogo": "Kopier logo som SVG",
   "nav.context.copyWordmark": "Kopier wordmark som SVG",
@@ -37,14 +37,14 @@ export const dict = {
   "email.subscribe": "Abonner",
   "email.success": "Nesten ferdig - sjekk innboksen din og bekreft e-postadressen",
 
-  "notFound.title": "Ikke funnet | opencode",
+  "notFound.title": "Ikke funnet | devora",
   "notFound.heading": "404 - Side ikke funnet",
   "notFound.home": "Hjem",
   "notFound.docs": "Dokumentasjon",
   "notFound.github": "GitHub",
   "notFound.discord": "Discord",
-  "notFound.logoLightAlt": "opencode logo lys",
-  "notFound.logoDarkAlt": "opencode logo mørk",
+  "notFound.logoLightAlt": "devora logo lys",
+  "notFound.logoDarkAlt": "devora logo mørk",
 
   "user.logout": "Logg ut",
 
@@ -81,25 +81,25 @@ export const dict = {
   "error.reloadAmountMin": "Påfyllingsbeløp må være minst ${{amount}}",
   "error.reloadTriggerMin": "Saldo-trigger må være minst ${{amount}}",
 
-  "app.meta.description": "OpenCode - Den åpne kildekode kodingsagenten.",
+  "app.meta.description": "Devora - Den åpne kildekode kodingsagenten.",
 
-  "home.title": "OpenCode | Den åpne kildekode AI-kodingsagenten",
+  "home.title": "Devora | Den åpne kildekode AI-kodingsagenten",
 
-  "temp.title": "opencode | AI-kodingsagent bygget for terminalen",
+  "temp.title": "devora | AI-kodingsagent bygget for terminalen",
   "temp.hero.title": "AI-kodingsagenten bygget for terminalen",
-  "temp.zen": "opencode zen",
+  "temp.zen": "devora zen",
   "temp.getStarted": "Kom i gang",
   "temp.feature.native.title": "Native TUI",
   "temp.feature.native.body": "Et responsivt, native terminal-brukergrensesnitt som kan temes",
   "temp.feature.zen.beforeLink": "En",
   "temp.feature.zen.link": "kuratert liste over modeller",
-  "temp.feature.zen.afterLink": "levert av opencode",
+  "temp.feature.zen.afterLink": "levert av devora",
   "temp.feature.models.beforeLink": "Støtter 75+ LLM-leverandører gjennom",
   "temp.feature.models.afterLink": ", inkludert lokale modeller",
-  "temp.screenshot.caption": "opencode TUI med tokyonight-tema",
-  "temp.screenshot.alt": "opencode TUI med tokyonight-tema",
-  "temp.logoLightAlt": "opencode logo lys",
-  "temp.logoDarkAlt": "opencode logo mørk",
+  "temp.screenshot.caption": "devora TUI med tokyonight-tema",
+  "temp.screenshot.alt": "devora TUI med tokyonight-tema",
+  "temp.logoLightAlt": "devora logo lys",
+  "temp.logoDarkAlt": "devora logo mørk",
 
   "home.banner.badge": "Ny",
   "home.banner.text": "Desktop-app tilgjengelig i beta",
@@ -114,8 +114,8 @@ export const dict = {
 
   "home.install.ariaLabel": "Installeringsalternativer",
 
-  "home.what.title": "Hva er OpenCode?",
-  "home.what.body": "OpenCode er en åpen kildekode-agent som hjelper deg å skrive kode i terminal, IDE eller desktop.",
+  "home.what.title": "Hva er Devora?",
+  "home.what.body": "Devora er en åpen kildekode-agent som hjelper deg å skrive kode i terminal, IDE eller desktop.",
   "home.what.lsp.title": "LSP aktivert",
   "home.what.lsp.body": "Laster automatisk de riktige LSP-ene for LLM-en",
   "home.what.multiSession.title": "Multi-sesjon",
@@ -134,51 +134,51 @@ export const dict = {
 
   "home.growth.title": "Den åpne kildekode AI-kodingsagenten",
   "home.growth.body":
-    "Med over <strong>{{stars}}</strong> GitHub-stjerner, <strong>{{contributors}}</strong> bidragsytere og over <strong>{{commits}}</strong> commits, brukes OpenCode av over <strong>{{monthlyUsers}}</strong> utviklere hver måned.",
+    "Med over <strong>{{stars}}</strong> GitHub-stjerner, <strong>{{contributors}}</strong> bidragsytere og over <strong>{{commits}}</strong> commits, brukes Devora av over <strong>{{monthlyUsers}}</strong> utviklere hver måned.",
   "home.growth.githubStars": "GitHub-stjerner",
   "home.growth.contributors": "Bidragsytere",
   "home.growth.monthlyDevs": "Månedlige utviklere",
 
   "home.privacy.title": "Bygget med personvern først",
   "home.privacy.body":
-    "OpenCode lagrer ikke koden din eller kontekstdata, slik at den kan fungere i personvernsensitive miljøer.",
+    "Devora lagrer ikke koden din eller kontekstdata, slik at den kan fungere i personvernsensitive miljøer.",
   "home.privacy.learnMore": "Les mer om",
   "home.privacy.link": "personvern",
 
-  "home.faq.q1": "Hva er OpenCode?",
+  "home.faq.q1": "Hva er Devora?",
   "home.faq.a1":
-    "OpenCode er en åpen kildekode-agent som hjelper deg å skrive og kjøre kode med hvilken som helst AI-modell. Den er tilgjengelig som terminalgrensesnitt, desktop-app eller IDE-utvidelse.",
-  "home.faq.q2": "Hvordan bruker jeg OpenCode?",
+    "Devora er en åpen kildekode-agent som hjelper deg å skrive og kjøre kode med hvilken som helst AI-modell. Den er tilgjengelig som terminalgrensesnitt, desktop-app eller IDE-utvidelse.",
+  "home.faq.q2": "Hvordan bruker jeg Devora?",
   "home.faq.a2.before": "Den enkleste måten å komme i gang på er å lese",
   "home.faq.a2.link": "introen",
-  "home.faq.q3": "Trenger jeg ekstra AI-abonnementer for å bruke OpenCode?",
+  "home.faq.q3": "Trenger jeg ekstra AI-abonnementer for å bruke Devora?",
   "home.faq.a3.p1":
-    "Ikke nødvendigvis. OpenCode kommer med et sett gratis modeller du kan bruke uten å opprette en konto.",
+    "Ikke nødvendigvis. Devora kommer med et sett gratis modeller du kan bruke uten å opprette en konto.",
   "home.faq.a3.p2.beforeZen": "I tillegg kan du bruke populære kodemodeller ved å opprette en",
   "home.faq.a3.p2.afterZen": " konto.",
   "home.faq.a3.p3":
-    "Vi oppfordrer til å bruke Zen, men OpenCode fungerer også med populære leverandører som OpenAI, Anthropic, xAI osv.",
+    "Vi oppfordrer til å bruke Zen, men Devora fungerer også med populære leverandører som OpenAI, Anthropic, xAI osv.",
   "home.faq.a3.p4.beforeLocal": "Du kan til og med koble til dine",
   "home.faq.a3.p4.localLink": "lokale modeller",
-  "home.faq.q4": "Kan jeg bruke mine eksisterende AI-abonnementer med OpenCode?",
+  "home.faq.q4": "Kan jeg bruke mine eksisterende AI-abonnementer med Devora?",
   "home.faq.a4.p1":
-    "Ja, OpenCode støtter abonnementer fra alle store leverandører. Du kan bruke Claude Pro/Max, ChatGPT Plus/Pro eller GitHub Copilot-abonnementer.",
-  "home.faq.q5": "Kan jeg bare bruke OpenCode i terminalen?",
-  "home.faq.a5.beforeDesktop": "Ikke lenger! OpenCode er nå tilgjengelig som en app for",
+    "Ja, Devora støtter abonnementer fra alle store leverandører. Du kan bruke Claude Pro/Max, ChatGPT Plus/Pro eller GitHub Copilot-abonnementer.",
+  "home.faq.q5": "Kan jeg bare bruke Devora i terminalen?",
+  "home.faq.a5.beforeDesktop": "Ikke lenger! Devora er nå tilgjengelig som en app for",
   "home.faq.a5.desktop": "desktop",
   "home.faq.a5.and": "og",
   "home.faq.a5.web": "web",
-  "home.faq.q6": "Hva koster OpenCode?",
+  "home.faq.q6": "Hva koster Devora?",
   "home.faq.a6":
-    "OpenCode er 100% gratis å bruke. Det kommer også med et sett gratis modeller. Det kan være ekstra kostnader hvis du kobler til en annen leverandør.",
+    "Devora er 100% gratis å bruke. Det kommer også med et sett gratis modeller. Det kan være ekstra kostnader hvis du kobler til en annen leverandør.",
   "home.faq.q7": "Hva med data og personvern?",
   "home.faq.a7.p1": "Dataene dine lagres kun når du bruker våre gratis modeller eller lager delbare lenker.",
   "home.faq.a7.p2.beforeModels": "Les mer om",
   "home.faq.a7.p2.modelsLink": "våre modeller",
   "home.faq.a7.p2.and": "og",
   "home.faq.a7.p2.shareLink": "delingssider",
-  "home.faq.q8": "Er OpenCode åpen kildekode?",
-  "home.faq.a8.p1": "Ja, OpenCode er fullt open source. Kildekoden er offentlig på",
+  "home.faq.q8": "Er Devora åpen kildekode?",
+  "home.faq.a8.p1": "Ja, Devora er fullt open source. Kildekoden er offentlig på",
   "home.faq.a8.p2": "under",
   "home.faq.a8.mitLicense": "MIT-lisensen",
   "home.faq.a8.p3":
@@ -186,23 +186,23 @@ export const dict = {
 
   "home.zenCta.title": "Få tilgang til pålitelige, optimaliserte modeller for kodeagenter",
   "home.zenCta.body":
-    "Zen gir deg tilgang til et håndplukket sett med AI-modeller som OpenCode har testet og benchmarked spesielt for kodeagenter. Du slipper å bekymre deg for ujevn ytelse og kvalitet på tvers av leverandører; bruk validerte modeller som fungerer.",
+    "Zen gir deg tilgang til et håndplukket sett med AI-modeller som Devora har testet og benchmarked spesielt for kodeagenter. Du slipper å bekymre deg for ujevn ytelse og kvalitet på tvers av leverandører; bruk validerte modeller som fungerer.",
   "home.zenCta.link": "Les om Zen",
 
-  "zen.title": "OpenCode Zen | Et kuratert sett med pålitelige, optimaliserte modeller for kodeagenter",
+  "zen.title": "Devora Zen | Et kuratert sett med pålitelige, optimaliserte modeller for kodeagenter",
   "zen.hero.title": "Pålitelige optimaliserte modeller for kodeagenter",
   "zen.hero.body":
-    "Zen gir deg tilgang til et kuratert sett med AI-modeller som OpenCode har testet og benchmarked spesielt for kodeagenter. Du slipper å bekymre deg for ujevn ytelse og kvalitet; bruk validerte modeller som fungerer.",
+    "Zen gir deg tilgang til et kuratert sett med AI-modeller som Devora har testet og benchmarked spesielt for kodeagenter. Du slipper å bekymre deg for ujevn ytelse og kvalitet; bruk validerte modeller som fungerer.",
 
-  "zen.faq.q1": "Hva er OpenCode Zen?",
+  "zen.faq.q1": "Hva er Devora Zen?",
   "zen.faq.a1":
-    "Zen er et kuratert sett med AI-modeller testet og benchmarked for kodeagenter, laget av teamet bak OpenCode.",
+    "Zen er et kuratert sett med AI-modeller testet og benchmarked for kodeagenter, laget av teamet bak Devora.",
   "zen.faq.q2": "Hva gjør Zen mer presis?",
   "zen.faq.a2":
     "Zen tilbyr bare modeller som er testet og benchmarked spesifikt for kodeagenter. Du ville ikke brukt en smørkniv til å skjære biff; ikke bruk dårlige modeller til koding.",
   "zen.faq.q3": "Er Zen billigere?",
   "zen.faq.a3":
-    "Zen er ikke for profitt. Zen videreformidler kostnadene fra modellleverandørene direkte til deg. Jo mer Zen brukes, desto bedre priser kan OpenCode forhandle og gi videre til deg.",
+    "Zen er ikke for profitt. Zen videreformidler kostnadene fra modellleverandørene direkte til deg. Jo mer Zen brukes, desto bedre priser kan Devora forhandle og gi videre til deg.",
   "zen.faq.q4": "Hva koster Zen?",
   "zen.faq.a4.p1.beforePricing": "Zen",
   "zen.faq.a4.p1.pricingLink": "tar betalt per forespørsel",
@@ -210,7 +210,7 @@ export const dict = {
   "zen.faq.a4.p2.beforeAccount": "Totalprisen avhenger av bruk, og du kan sette månedlige utgiftsgrenser i din",
   "zen.faq.a4.p2.accountLink": "konto",
   "zen.faq.a4.p3":
-    "For å dekke kostnader legger OpenCode til bare et lite betalingsbehandlingsgebyr på $1.23 per $20 saldo-påfyll.",
+    "For å dekke kostnader legger Devora til bare et lite betalingsbehandlingsgebyr på $1.23 per $20 saldo-påfyll.",
   "zen.faq.q5": "Hva med data og personvern?",
   "zen.faq.a5.beforeExceptions":
     "Alle Zen-modeller hostes i USA. Leverandører følger en policy om null oppbevaring og bruker ikke dataene dine til modelltrening, med de",
@@ -221,7 +221,7 @@ export const dict = {
   "zen.faq.a7": "Ja, du kan deaktivere fakturering når som helst og bruke gjenværende saldo.",
   "zen.faq.q8": "Kan jeg bruke Zen med andre kodeagenter?",
   "zen.faq.a8":
-    "Selv om Zen fungerer veldig bra med OpenCode, kan du bruke Zen med hvilken som helst agent. Følg oppsettinstruksjonene i din foretrukne kodeagent.",
+    "Selv om Zen fungerer veldig bra med Devora, kan du bruke Zen med hvilken som helst agent. Følg oppsettinstruksjonene i din foretrukne kodeagent.",
 
   "zen.cta.start": "Kom i gang med Zen",
   "zen.pricing.title": "Legg til $20 Pay as you go-saldo",
@@ -230,12 +230,12 @@ export const dict = {
   "zen.problem.title": "Hvilket problem løser Zen?",
   "zen.problem.body":
     "Det er så mange modeller tilgjengelig, men bare noen få fungerer bra med kodeagenter. De fleste leverandører konfigurerer dem annerledes med varierende resultater.",
-  "zen.problem.subtitle": "Vi fikser dette for alle, ikke bare OpenCode-brukere.",
+  "zen.problem.subtitle": "Vi fikser dette for alle, ikke bare Devora-brukere.",
   "zen.problem.item1": "Tester utvalgte modeller og konsulterer teamene deres",
   "zen.problem.item2": "Samarbeider med leverandører for å sikre at de blir levert riktig",
   "zen.problem.item3": "Benchmarker alle modell-leverandør-kombinasjoner vi anbefaler",
   "zen.how.title": "Hvordan Zen fungerer",
-  "zen.how.body": "Selv om vi foreslår at du bruker Zen med OpenCode, kan du bruke Zen med hvilken som helst agent.",
+  "zen.how.body": "Selv om vi foreslår at du bruker Zen med Devora, kan du bruke Zen med hvilken som helst agent.",
   "zen.how.step1.title": "Registrer deg og legg til $20 saldo",
   "zen.how.step1.beforeLink": "følg",
   "zen.how.step1.link": "oppsettsinstruksjonene",
@@ -249,9 +249,9 @@ export const dict = {
     "Alle Zen-modeller hostes i USA. Leverandører følger en policy om null oppbevaring og bruker ikke dataene dine til modelltrening, med",
   "zen.privacy.exceptionsLink": "følgende unntak",
 
-  "go.title": "OpenCode Go | Rimelige kodemodeller for alle",
+  "go.title": "Devora Go | Rimelige kodemodeller for alle",
   "go.meta.description":
-    "Go starter på $5 for den første måneden, deretter $10/måned, med sjenerøse 5-timers forespørselsgrenser for GLM-5.1, GLM-5, Kimi K2.5, Kimi K2.6, MiMo-V2-Pro, MiMo-V2-Omni, Qwen3.5 Plus, Qwen3.6 Plus, MiniMax M2.5 og MiniMax M2.7.",
+    "Go starter på $5 for den første måneden, deretter $10/måned, med sjenerøse 5-timers forespørselsgrenser for GLM-5.1, GLM-5, Kimi K2.5, Kimi K2.6, Devora-V2-Pro, Devora-V2-Omni, Qwen3.5 Plus, Qwen3.6 Plus, MiniMax M2.5 og MiniMax M2.7.",
   "go.hero.title": "Rimelige kodemodeller for alle",
   "go.hero.body":
     "Go bringer agent-koding til programmerere over hele verden. Med rause grenser og pålitelig tilgang til de mest kapable åpen kildekode-modellene, kan du bygge med kraftige agenter uten å bekymre deg for kostnader eller tilgjengelighet.",
@@ -275,7 +275,7 @@ export const dict = {
 
   "go.testimonials.brand.zen": "Zen",
   "go.testimonials.brand.go": "Go",
-  "go.testimonials.handle": "@OpenCode",
+  "go.testimonials.handle": "@Devora",
   "go.testimonials.dax.name": "Dax Raad",
   "go.testimonials.dax.title": "tidligere CEO, Terminal Products",
   "go.testimonials.dax.quoteAfter": "har endret livet mitt, det er virkelig en no-brainer.",
@@ -296,16 +296,16 @@ export const dict = {
   "go.testimonials.frank.quote": "Jeg skulle ønske jeg fortsatt var hos Nvidia.",
   "go.problem.title": "Hvilket problem løser Go?",
   "go.problem.body":
-    "Vi fokuserer på å bringe OpenCode-opplevelsen til så mange som mulig. OpenCode Go er et rimelig abonnement: $5 for den første måneden, deretter $10/måned. Det gir sjenerøse grenser og pålitelig tilgang til de mest kapable åpen kildekode-modellene.",
+    "Vi fokuserer på å bringe Devora-opplevelsen til så mange som mulig. Devora Go er et rimelig abonnement: $5 for den første måneden, deretter $10/måned. Det gir sjenerøse grenser og pålitelig tilgang til de mest kapable åpen kildekode-modellene.",
   "go.problem.subtitle": " ",
   "go.problem.item1": "Rimelig abonnementspris",
   "go.problem.item2": "Rause grenser og pålitelig tilgang",
   "go.problem.item3": "Bygget for så mange programmerere som mulig",
   "go.problem.item4":
-    "Inkluderer GLM-5.1, GLM-5, Kimi K2.5, Kimi K2.6, MiMo-V2-Pro, MiMo-V2-Omni, Qwen3.5 Plus, Qwen3.6 Plus, MiniMax M2.5 og MiniMax M2.7",
+    "Inkluderer GLM-5.1, GLM-5, Kimi K2.5, Kimi K2.6, Devora-V2-Pro, Devora-V2-Omni, Qwen3.5 Plus, Qwen3.6 Plus, MiniMax M2.5 og MiniMax M2.7",
   "go.how.title": "Hvordan Go fungerer",
   "go.how.body":
-    "Go starter på $5 for den første måneden, deretter $10/måned. Du kan bruke det med OpenCode eller hvilken som helst agent.",
+    "Go starter på $5 for den første måneden, deretter $10/måned. Du kan bruke det med Devora eller hvilken som helst agent.",
   "go.how.step1.title": "Opprett en konto",
   "go.how.step1.beforeLink": "følg",
   "go.how.step1.link": "oppsettsinstruksjonene",
@@ -321,14 +321,14 @@ export const dict = {
   "go.privacy.beforeExceptions":
     "Go-modeller hostes i USA. Leverandører følger en policy om null oppbevaring og bruker ikke dataene dine til modelltrening, med",
   "go.privacy.exceptionsLink": "følgende unntak",
-  "go.faq.q1": "Hva er OpenCode Go?",
+  "go.faq.q1": "Hva er Devora Go?",
   "go.faq.a1":
     "Go er et rimelig abonnement som gir deg pålitelig tilgang til kapable åpen kildekode-modeller for agent-koding.",
   "go.faq.q2": "Hvilke modeller inkluderer Go?",
   "go.faq.a2": "Go inkluderer modellene nedenfor, med høye grenser og pålitelig tilgang.",
   "go.faq.q3": "Er Go det samme som Zen?",
   "go.faq.a3":
-    "Nei. Zen er betaling etter bruk, mens Go starter på $5 for den første måneden, deretter $10/måned, med sjenerøse grenser og pålitelig tilgang til åpen kildekode-modellene GLM-5.1, GLM-5, Kimi K2.5, Kimi K2.6, MiMo-V2-Pro, MiMo-V2-Omni, Qwen3.5 Plus, Qwen3.6 Plus, MiniMax M2.5 og MiniMax M2.7.",
+    "Nei. Zen er betaling etter bruk, mens Go starter på $5 for den første måneden, deretter $10/måned, med sjenerøse grenser og pålitelig tilgang til åpen kildekode-modellene GLM-5.1, GLM-5, Kimi K2.5, Kimi K2.6, Devora-V2-Pro, Devora-V2-Omni, Qwen3.5 Plus, Qwen3.6 Plus, MiniMax M2.5 og MiniMax M2.7.",
   "go.faq.q4": "Hva koster Go?",
   "go.faq.a4.p1.beforePricing": "Go koster",
   "go.faq.a4.p1.pricingLink": "$5 første måned",
@@ -352,7 +352,7 @@ export const dict = {
 
   "go.faq.q9": "Hva er forskjellen mellom gratis modeller og Go?",
   "go.faq.a9":
-    "Gratis modeller inkluderer Big Pickle pluss kampanjemodeller tilgjengelig på det tidspunktet, med en kvote på 200 forespørsler/dag. Go inkluderer GLM-5.1, GLM-5, Kimi K2.5, Kimi K2.6, MiMo-V2-Pro, MiMo-V2-Omni, Qwen3.5 Plus, Qwen3.6 Plus, MiniMax M2.5 og MiniMax M2.7 med høyere kvoter håndhevet over rullerende vinduer (5 timer, ukentlig og månedlig), omtrent tilsvarende $12 per 5 timer, $30 per uke og $60 per måned (faktiske forespørselsantall varierer etter modell og bruk).",
+    "Gratis modeller inkluderer Big Pickle pluss kampanjemodeller tilgjengelig på det tidspunktet, med en kvote på 200 forespørsler/dag. Go inkluderer GLM-5.1, GLM-5, Kimi K2.5, Kimi K2.6, Devora-V2-Pro, Devora-V2-Omni, Qwen3.5 Plus, Qwen3.6 Plus, MiniMax M2.5 og MiniMax M2.7 med høyere kvoter håndhevet over rullerende vinduer (5 timer, ukentlig og månedlig), omtrent tilsvarende $12 per 5 timer, $30 per uke og $60 per måned (faktiske forespørselsantall varierer etter modell og bruk).",
 
   "zen.api.error.rateLimitExceeded": "Rate limit overskredet. Vennligst prøv igjen senere.",
   "zen.api.error.modelNotSupported": "Modell {{model}} støttes ikke",
@@ -372,13 +372,13 @@ export const dict = {
     "Du har nådd din månedlige utgiftsgrense på ${{amount}}. Administrer grensene dine her: {{membersUrl}}",
   "zen.api.error.modelDisabled": "Modellen er deaktivert",
   "zen.api.error.trialEnded":
-    "Den gratis kampanjen for {{model}} er avsluttet. Du kan fortsette å bruke modellen ved å abonnere på OpenCode Go - {{link}}",
+    "Den gratis kampanjen for {{model}} er avsluttet. Du kan fortsette å bruke modellen ved å abonnere på Devora Go - {{link}}",
 
-  "black.meta.title": "OpenCode Black | Få tilgang til verdens beste kodemodeller",
-  "black.meta.description": "Få tilgang til Claude, GPT, Gemini og mer med OpenCode Black-abonnementer.",
+  "black.meta.title": "Devora Black | Få tilgang til verdens beste kodemodeller",
+  "black.meta.description": "Få tilgang til Claude, GPT, Gemini og mer med Devora Black-abonnementer.",
   "black.hero.title": "Få tilgang til verdens beste kodemodeller",
   "black.hero.subtitle": "Inkludert Claude, GPT, Gemini og mer",
-  "black.title": "OpenCode Black | Priser",
+  "black.title": "Devora Black | Priser",
   "black.paused": "Black-planregistrering er midlertidig satt på pause.",
   "black.plan.icon20": "Black 20-plan",
   "black.plan.icon100": "Black 100-plan",
@@ -397,10 +397,10 @@ export const dict = {
   "black.action.continue": "Fortsett",
   "black.finePrint.beforeTerms": "Priser vist inkluderer ikke gjeldende skatt",
   "black.finePrint.terms": "Vilkår for bruk",
-  "black.workspace.title": "OpenCode Black | Velg arbeidsområde",
+  "black.workspace.title": "Devora Black | Velg arbeidsområde",
   "black.workspace.selectPlan": "Velg et arbeidsområde for denne planen",
   "black.workspace.name": "Arbeidsområde {{n}}",
-  "black.subscribe.title": "Abonner på OpenCode Black",
+  "black.subscribe.title": "Abonner på Devora Black",
   "black.subscribe.paymentMethod": "Betalingsmetode",
   "black.subscribe.loadingPaymentForm": "Laster betalingsskjema...",
   "black.subscribe.selectWorkspaceToContinue": "Velg et arbeidsområde for å fortsette",
@@ -412,9 +412,9 @@ export const dict = {
   "black.subscribe.processing": "Behandler...",
   "black.subscribe.submit": "Abonner ${{plan}}",
   "black.subscribe.form.chargeNotice": "Du blir kun belastet når abonnementet ditt aktiveres",
-  "black.subscribe.success.title": "Du er på ventelisten for OpenCode Black",
+  "black.subscribe.success.title": "Du er på ventelisten for Devora Black",
   "black.subscribe.success.subscriptionPlan": "Abonnementsplan",
-  "black.subscribe.success.planName": "OpenCode Black {{plan}}",
+  "black.subscribe.success.planName": "Devora Black {{plan}}",
   "black.subscribe.success.amount": "Beløp",
   "black.subscribe.success.amountValue": "${{plan}} per måned",
   "black.subscribe.success.paymentMethod": "Betalingsmetode",
@@ -443,15 +443,15 @@ export const dict = {
     "Få tilgang til modeller konfigurert for optimal ytelse – ingen nedgraderinger eller ruting til billigere leverandører.",
   "workspace.newUser.feature.lockin.title": "Ingen innlåsing",
   "workspace.newUser.feature.lockin.body":
-    "Bruk Zen med hvilken som helst kodeagent, og fortsett å bruke andre leverandører med opencode når du vil.",
+    "Bruk Zen med hvilken som helst kodeagent, og fortsett å bruke andre leverandører med devora når du vil.",
   "workspace.newUser.copyApiKey": "Kopier API-nøkkel",
   "workspace.newUser.copyKey": "Kopier nøkkel",
   "workspace.newUser.copied": "Kopiert!",
   "workspace.newUser.step.enableBilling": "Aktiver fakturering",
   "workspace.newUser.step.login.before": "Kjør",
-  "workspace.newUser.step.login.after": "og velg opencode",
+  "workspace.newUser.step.login.after": "og velg devora",
   "workspace.newUser.step.pasteKey": "Lim inn API-nøkkelen",
-  "workspace.newUser.step.models.before": "Start opencode og kjør",
+  "workspace.newUser.step.models.before": "Start devora og kjør",
   "workspace.newUser.step.models.after": "for å velge en modell",
 
   "workspace.models.title": "Modeller",
@@ -497,10 +497,10 @@ export const dict = {
   "workspace.cost.subscriptionShort": "sub",
 
   "workspace.keys.title": "API-nøkler",
-  "workspace.keys.subtitle": "Administrer API-nøklene dine for å få tilgang til opencode-tjenester.",
+  "workspace.keys.subtitle": "Administrer API-nøklene dine for å få tilgang til devora-tjenester.",
   "workspace.keys.create": "Opprett API-nøkkel",
   "workspace.keys.placeholder": "Skriv inn navn på nøkkel",
-  "workspace.keys.empty": "Opprett en opencode Gateway API-nøkkel",
+  "workspace.keys.empty": "Opprett en devora Gateway API-nøkkel",
   "workspace.keys.table.name": "Navn",
   "workspace.keys.table.key": "Nøkkel",
   "workspace.keys.table.createdBy": "Opprettet av",
@@ -615,15 +615,15 @@ export const dict = {
   "workspace.black.time.minutes": "minutter",
   "workspace.black.time.fewSeconds": "noen få sekunder",
   "workspace.black.subscription.title": "Abonnement",
-  "workspace.black.subscription.message": "Du abonnerer på OpenCode Black for ${{plan}} per måned.",
+  "workspace.black.subscription.message": "Du abonnerer på Devora Black for ${{plan}} per måned.",
   "workspace.black.subscription.manage": "Administrer abonnement",
   "workspace.black.subscription.rollingUsage": "5-timers bruk",
   "workspace.black.subscription.weeklyUsage": "Ukentlig bruk",
   "workspace.black.subscription.resetsIn": "Nullstilles om",
   "workspace.black.subscription.useBalance": "Bruk din tilgjengelige saldo etter å ha nådd bruksgrensene",
   "workspace.black.waitlist.title": "Venteliste",
-  "workspace.black.waitlist.joined": "Du står på venteliste for OpenCode Black-planen til ${{plan}} per måned.",
-  "workspace.black.waitlist.ready": "Vi er klare til å melde deg på OpenCode Black-planen til ${{plan}} per måned.",
+  "workspace.black.waitlist.joined": "Du står på venteliste for Devora Black-planen til ${{plan}} per måned.",
+  "workspace.black.waitlist.ready": "Vi er klare til å melde deg på Devora Black-planen til ${{plan}} per måned.",
   "workspace.black.waitlist.leave": "Forlat venteliste",
   "workspace.black.waitlist.leaving": "Forlater...",
   "workspace.black.waitlist.left": "Forlot",
@@ -641,7 +641,7 @@ export const dict = {
   "workspace.lite.time.minute": "minutt",
   "workspace.lite.time.minutes": "minutter",
   "workspace.lite.time.fewSeconds": "noen få sekunder",
-  "workspace.lite.subscription.message": "Du abonnerer på OpenCode Go.",
+  "workspace.lite.subscription.message": "Du abonnerer på Devora Go.",
   "workspace.lite.subscription.manage": "Administrer abonnement",
   "workspace.lite.subscription.rollingUsage": "Løpende bruk",
   "workspace.lite.subscription.weeklyUsage": "Ukentlig bruk",
@@ -649,13 +649,13 @@ export const dict = {
   "workspace.lite.subscription.resetsIn": "Nullstilles om",
   "workspace.lite.subscription.useBalance": "Bruk din tilgjengelige saldo etter å ha nådd bruksgrensene",
   "workspace.lite.subscription.selectProvider":
-    'Velg "OpenCode Go" som leverandør i opencode-konfigurasjonen din for å bruke Go-modeller.',
+    'Velg "Devora Go" som leverandør i devora-konfigurasjonen din for å bruke Go-modeller.',
   "workspace.lite.black.message":
-    "Du abonnerer for øyeblikket på OpenCode Black eller står på venteliste. Vennligst avslutt abonnementet først hvis du vil bytte til Go.",
+    "Du abonnerer for øyeblikket på Devora Black eller står på venteliste. Vennligst avslutt abonnementet først hvis du vil bytte til Go.",
   "workspace.lite.other.message":
-    "Et annet medlem i dette arbeidsområdet abonnerer allerede på OpenCode Go. Kun ett medlem per arbeidsområde kan abonnere.",
+    "Et annet medlem i dette arbeidsområdet abonnerer allerede på Devora Go. Kun ett medlem per arbeidsområde kan abonnere.",
   "workspace.lite.promo.description":
-    "OpenCode Go starter på {{price}}, deretter $10/måned, og gir pålitelig tilgang til populære åpne kodingsmodeller med sjenerøse bruksgrenser.",
+    "Devora Go starter på {{price}}, deretter $10/måned, og gir pålitelig tilgang til populære åpne kodingsmodeller med sjenerøse bruksgrenser.",
   "workspace.lite.promo.price": "$5 for den første måneden",
   "workspace.lite.promo.modelsTitle": "Hva som er inkludert",
   "workspace.lite.promo.footer":
@@ -665,15 +665,15 @@ export const dict = {
   "workspace.lite.promo.otherMethods": "Andre betalingsmetoder",
   "workspace.lite.promo.selectMethod": "Velg betalingsmetode",
 
-  "download.title": "OpenCode | Last ned",
-  "download.meta.description": "Last ned OpenCode for macOS, Windows og Linux",
-  "download.hero.title": "Last ned OpenCode",
+  "download.title": "Devora | Last ned",
+  "download.meta.description": "Last ned Devora for macOS, Windows og Linux",
+  "download.hero.title": "Last ned Devora",
   "download.hero.subtitle": "Tilgjengelig i beta for macOS, Windows og Linux",
   "download.hero.button": "Last ned for {{os}}",
-  "download.section.terminal": "OpenCode Terminal",
-  "download.section.desktop": "OpenCode Desktop (Beta)",
-  "download.section.extensions": "OpenCode Extensions",
-  "download.section.integrations": "OpenCode Integrations",
+  "download.section.terminal": "Devora Terminal",
+  "download.section.desktop": "Devora Desktop (Beta)",
+  "download.section.extensions": "Devora Extensions",
+  "download.section.integrations": "Devora Integrations",
   "download.action.download": "Last ned",
   "download.action.install": "Installer",
 
@@ -684,25 +684,25 @@ export const dict = {
   "download.platform.linuxRpm": "Linux (.rpm)",
 
   "download.faq.a3.beforeLocal":
-    "Ikke nødvendigvis, men sannsynligvis. Du trenger et AI-abonnement hvis du vil koble OpenCode til en betalt leverandør, selv om du kan jobbe med",
+    "Ikke nødvendigvis, men sannsynligvis. Du trenger et AI-abonnement hvis du vil koble Devora til en betalt leverandør, selv om du kan jobbe med",
   "download.faq.a3.localLink": "lokale modeller",
   "download.faq.a3.afterLocal.beforeZen": "gratis. Selv om vi oppfordrer brukere til å bruke",
-  "download.faq.a3.afterZen": ", fungerer OpenCode med alle populære leverandører som OpenAI, Anthropic, xAI osv.",
+  "download.faq.a3.afterZen": ", fungerer Devora med alle populære leverandører som OpenAI, Anthropic, xAI osv.",
 
-  "download.faq.a5.p1": "OpenCode er 100% gratis å bruke.",
+  "download.faq.a5.p1": "Devora er 100% gratis å bruke.",
   "download.faq.a5.p2.beforeZen":
-    "Eventuelle ekstra kostnader kommer fra abonnementet ditt hos en modellleverandør. Selv om OpenCode fungerer med enhver modellleverandør, anbefaler vi å bruke",
+    "Eventuelle ekstra kostnader kommer fra abonnementet ditt hos en modellleverandør. Selv om Devora fungerer med enhver modellleverandør, anbefaler vi å bruke",
   "download.faq.a5.p2.afterZen": ".",
 
-  "download.faq.a6.p1": "Dataene og informasjonen din lagres bare når du oppretter delbare lenker i OpenCode.",
+  "download.faq.a6.p1": "Dataene og informasjonen din lagres bare når du oppretter delbare lenker i Devora.",
   "download.faq.a6.p2.beforeShare": "Les mer om",
   "download.faq.a6.shareLink": "delingssider",
 
-  "enterprise.title": "OpenCode | Enterprise-løsninger for din organisasjon",
-  "enterprise.meta.description": "Kontakt OpenCode for enterprise-løsninger",
+  "enterprise.title": "Devora | Enterprise-løsninger for din organisasjon",
+  "enterprise.meta.description": "Kontakt Devora for enterprise-løsninger",
   "enterprise.hero.title": "Koden din er din",
   "enterprise.hero.body1":
-    "OpenCode opererer sikkert inne i organisasjonen din uten at data eller kontekst lagres, og uten lisensbegrensninger eller eierskapskrav. Start en prøveperiode med teamet ditt, og rull den deretter ut i hele organisasjonen ved å integrere den med SSO og din interne AI-gateway.",
+    "Devora opererer sikkert inne i organisasjonen din uten at data eller kontekst lagres, og uten lisensbegrensninger eller eierskapskrav. Start en prøveperiode med teamet ditt, og rull den deretter ut i hele organisasjonen ved å integrere den med SSO og din interne AI-gateway.",
   "enterprise.hero.body2": "Fortell oss hvordan vi kan hjelpe.",
   "enterprise.form.name.label": "Fullt navn",
   "enterprise.form.name.placeholder": "Jeff Bezos",
@@ -724,29 +724,29 @@ export const dict = {
   "enterprise.form.error.invalidEmailFormat": "Ugyldig e-postformat.",
   "enterprise.form.error.internalServer": "Intern serverfeil.",
   "enterprise.faq.title": "FAQ",
-  "enterprise.faq.q1": "Hva er OpenCode Enterprise?",
+  "enterprise.faq.q1": "Hva er Devora Enterprise?",
   "enterprise.faq.a1":
-    "OpenCode Enterprise er for organisasjoner som vil sikre at koden og dataene deres aldri forlater infrastrukturen. Dette kan gjøres med en sentral konfigurasjon som integreres med SSO og intern AI-gateway.",
-  "enterprise.faq.q2": "Hvordan kommer jeg i gang med OpenCode Enterprise?",
+    "Devora Enterprise er for organisasjoner som vil sikre at koden og dataene deres aldri forlater infrastrukturen. Dette kan gjøres med en sentral konfigurasjon som integreres med SSO og intern AI-gateway.",
+  "enterprise.faq.q2": "Hvordan kommer jeg i gang med Devora Enterprise?",
   "enterprise.faq.a2":
-    "Start enkelt med en intern prøveperiode med teamet ditt. OpenCode lagrer som standard ikke koden din eller kontekstdata, noe som gjør det enkelt å komme i gang. Kontakt oss deretter for å diskutere priser og implementeringsalternativer.",
+    "Start enkelt med en intern prøveperiode med teamet ditt. Devora lagrer som standard ikke koden din eller kontekstdata, noe som gjør det enkelt å komme i gang. Kontakt oss deretter for å diskutere priser og implementeringsalternativer.",
   "enterprise.faq.q3": "Hvordan fungerer enterprise-prising?",
   "enterprise.faq.a3":
     "Vi tilbyr enterprise-prising per sete. Har du din egen LLM-gateway, tar vi ikke betalt for brukte tokens. Kontakt oss for flere detaljer og et tilpasset tilbud basert på organisasjonens behov.",
-  "enterprise.faq.q4": "Er dataene mine sikre med OpenCode Enterprise?",
+  "enterprise.faq.q4": "Er dataene mine sikre med Devora Enterprise?",
   "enterprise.faq.a4":
-    "Ja. OpenCode lagrer ikke koden din eller kontekstdata. All behandling skjer lokalt eller gjennom direkte API-kall til AI-leverandøren din. Med sentral konfigurasjon og SSO-integrasjon forblir dataene dine sikre innenfor organisasjonens infrastruktur.",
+    "Ja. Devora lagrer ikke koden din eller kontekstdata. All behandling skjer lokalt eller gjennom direkte API-kall til AI-leverandøren din. Med sentral konfigurasjon og SSO-integrasjon forblir dataene dine sikre innenfor organisasjonens infrastruktur.",
 
-  "brand.title": "OpenCode | Merkevare",
-  "brand.meta.description": "OpenCode retningslinjer for merkevare",
+  "brand.title": "Devora | Merkevare",
+  "brand.meta.description": "Devora retningslinjer for merkevare",
   "brand.heading": "Retningslinjer for merkevare",
-  "brand.subtitle": "Ressurser og assets som hjelper deg å jobbe med OpenCode-brandet.",
+  "brand.subtitle": "Ressurser og assets som hjelper deg å jobbe med Devora-brandet.",
   "brand.downloadAll": "Last ned alle assets",
 
-  "changelog.title": "OpenCode | Endringslogg",
-  "changelog.meta.description": "Utgivelsesnotater og endringslogg for OpenCode",
+  "changelog.title": "Devora | Endringslogg",
+  "changelog.meta.description": "Utgivelsesnotater og endringslogg for Devora",
   "changelog.hero.title": "Endringslogg",
-  "changelog.hero.subtitle": "Nye oppdateringer og forbedringer for OpenCode",
+  "changelog.hero.subtitle": "Nye oppdateringer og forbedringer for Devora",
   "changelog.empty": "Ingen endringsloggoppføringer funnet.",
   "changelog.viewJson": "Vis JSON",
 

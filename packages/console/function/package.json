@@ -1,5 +1,5 @@
 {
-  "name": "@mimo-ai/console-function",
+  "name": "@devora-ai/console-function",
   "version": "1.14.19",
   "$schema": "https://json.schemastore.org/package.json",
   "private": true,
@@ -21,8 +21,8 @@
     "@ai-sdk/openai": "3.0.48",
     "@ai-sdk/openai-compatible": "2.0.37",
     "@hono/zod-validator": "catalog:",
-    "@mimo-ai/console-core": "workspace:*",
-    "@mimo-ai/console-resource": "workspace:*",
+    "@devora-ai/console-core": "workspace:*",
+    "@devora-ai/console-resource": "workspace:*",
     "@openauthjs/openauth": "0.0.0-20250322224806",
     "ai": "catalog:",
     "hono": "catalog:",

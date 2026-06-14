@@ -1,5 +1,5 @@
 {
-  "name": "@mimo-ai/app",
+  "name": "@devora-ai/app",
   "version": "0.1.0",
   "description": "",
   "type": "module",
@@ -40,9 +40,9 @@
   },
   "dependencies": {
     "@kobalte/core": "catalog:",
-    "@mimo-ai/sdk": "workspace:*",
-    "@mimo-ai/ui": "workspace:*",
-    "@mimo-ai/shared": "workspace:*",
+    "@devora-ai/sdk": "workspace:*",
+    "@devora-ai/ui": "workspace:*",
+    "@devora-ai/shared": "workspace:*",
     "@shikijs/transformers": "3.9.2",
     "@solid-primitives/active-element": "2.1.3",
     "@solid-primitives/audio": "1.4.2",

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import type { Message, Part } from "@mimo-ai/sdk/v2/client"
+import type { Message, Part } from "@devora-ai/sdk/v2/client"
 import { applyOptimisticAdd, applyOptimisticRemove, mergeOptimisticPage } from "./sync"
 
 type Text = Extract<Part, { type: "text" }>

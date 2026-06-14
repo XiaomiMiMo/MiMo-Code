@@ -9,7 +9,7 @@ export function Legal() {
   return (
     <div data-component="legal">
       <span>
-        ©{new Date().getFullYear()} <a href="https://anoma.ly">Anomaly</a>
+        ©{new Date().getFullYear()} <a href="https://github.com/SheriAkhtamov/Devora">Devora</a>
       </span>
       <span>
         <A href={language.route("/brand")}>{i18n.t("legal.brand")}</A>
