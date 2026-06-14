@@ -14,6 +14,7 @@ import { useKeyboard } from "@opentui/solid"
 import * as Clipboard from "@tui/util/clipboard"
 import { useToast, type ToastContext } from "../ui/toast"
 import { isConsoleManagedProvider } from "@tui/util/provider-origin"
+import { customProviderConfig, optionalApiKey } from "@tui/util/custom-provider"
 
 const PROVIDER_PRIORITY: Record<string, number> = {
   opencode: 0,
@@ -188,10 +189,9 @@ export async function runCustomProviderWizard(opts: {
   const baseURL = baseURLRaw.trim()
   if (!baseURL) return
 
-  const apiKeyRaw = await step(4, 6, "API key", "sk-...")
+  const apiKeyRaw = await step(4, 6, "API key", "optional for local providers")
   if (apiKeyRaw === null) return
-  const apiKey = apiKeyRaw.trim()
-  if (!apiKey) return
+  const apiKey = optionalApiKey(apiKeyRaw)
 
   const modelIDRaw = await step(5, 6, "First model id", "e.g. claude-sonnet-4-6")
   if (modelIDRaw === null) return
@@ -202,25 +202,7 @@ export async function runCustomProviderWizard(opts: {
   if (modelNameRaw === null) return
   const modelName = modelNameRaw.trim() || modelID
 
-  const envKey = `${providerID.toUpperCase().replace(/[^A-Z0-9]+/g, "_")}_API_KEY`
-  const patch = {
-    provider: {
-      [providerID]: {
-        name,
-        npm: "@ai-sdk/openai-compatible",
-        env: [envKey],
-        options: {
-          baseURL,
-          setCacheKey: true,
-        },
-        models: {
-          [modelID]: {
-            name: modelName,
-          },
-        },
-      },
-    },
-  } as const
+  const patch = customProviderConfig({ providerID, name, baseURL, modelID, modelName })
 
   const updateRes = await sdk.client.global.config.update({ config: patch as any })
   if (updateRes.error) {
@@ -228,13 +210,15 @@ export async function runCustomProviderWizard(opts: {
     return
   }
 
-  const authRes = await sdk.client.auth.set({
-    providerID,
-    auth: { type: "api", key: apiKey },
-  })
-  if (authRes.error) {
-    toast.show({ variant: "error", message: JSON.stringify(authRes.error) })
-    return
+  if (apiKey) {
+    const authRes = await sdk.client.auth.set({
+      providerID,
+      auth: { type: "api", key: apiKey },
+    })
+    if (authRes.error) {
+      toast.show({ variant: "error", message: JSON.stringify(authRes.error) })
+      return
+    }
   }
 
   await sdk.client.instance.dispose()
