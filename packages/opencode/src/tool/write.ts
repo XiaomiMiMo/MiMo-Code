@@ -6,14 +6,13 @@ import { LSP } from "../lsp"
 import { createTwoFilesPatch } from "diff"
 import DESCRIPTION from "./write.txt"
 import { Bus } from "../bus"
-import { Config } from "../config"
 import { File } from "../file"
 import { FileWatcher } from "../file/watcher"
 import { Format } from "../format"
 import { AppFileSystem } from "@mimo-ai/shared/filesystem"
 import { Instance } from "../project/instance"
 import { SessionCwd } from "./session-cwd"
-import { normalizeLineEndings, trimDiff } from "./edit"
+import { trimDiff } from "./edit"
 import { assertWriteAllowed, askEditUnlessMemory } from "./external-directory"
 
 const MAX_PROJECT_DIAGNOSTICS_FILES = 5
@@ -25,7 +24,6 @@ export const WriteTool = Tool.define(
     const fs = yield* AppFileSystem.Service
     const bus = yield* Bus.Service
     const format = yield* Format.Service
-    const config = yield* Config.Service
 
     return {
       description: DESCRIPTION,
@@ -42,17 +40,6 @@ export const WriteTool = Tool.define(
 
           const exists = yield* fs.existsSafe(filepath)
           const contentOld = exists ? yield* fs.readFileString(filepath) : ""
-
-          if (exists && (yield* config.get()).autoRefreshFiles) {
-            const diskContent = yield* fs.readFileString(filepath)
-            if (normalizeLineEndings(diskContent) !== normalizeLineEndings(params.content)) {
-              return {
-                title: path.relative(Instance.worktree, filepath),
-                metadata: { diagnostics: {}, filepath, exists },
-                output: `<system-reminder>文件 ${filepath} 已被外部修改，磁盘内容与你预期的不一致。请使用 read 工具重新读取文件后，基于最新内容重新生成写入内容。</system-reminder>`,
-              }
-            }
-          }
 
           const diff = trimDiff(createTwoFilesPatch(filepath, filepath, contentOld, params.content))
           yield* askEditUnlessMemory(ctx, filepath, {
