@@ -133,7 +133,7 @@ describe("tool.write", () => {
 
     const writeAndCheckMode = (dir: string, umask: number, expected: number) =>
       Effect.gen(function* () {
-        if (process.platform === "win32") return
+        if (process.platform === "win32" || typeof process.umask !== "function") return
         const filepath = path.join(dir, "sensitive.json")
         const prev = process.umask(umask)
         try {
@@ -158,9 +158,7 @@ describe("tool.write", () => {
       provideTmpdirInstance((dir) => writeAndCheckMode(dir, 0o077, base & ~0o077)),
     )
     it.live("0o777 fully masks the 0o666 base mode", () =>
-      Effect.sync(() => {
-        expect(base & ~0o777).toBe(0o000)
-      }),
+      provideTmpdirInstance((dir) => writeAndCheckMode(dir, 0o777, base & ~0o777)),
     )
   })
 
