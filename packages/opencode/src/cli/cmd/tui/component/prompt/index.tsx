@@ -695,6 +695,7 @@ export function Prompt(props: PromptProps) {
           dialog.replace(() => (
             <DialogSkill
               onSelect={(skill) => {
+                if (!input || input.isDestroyed) return
                 input.insertText(`/${skill} `)
                 setStore("prompt", "input", input.plainText)
                 syncExtmarksWithPromptParts()
