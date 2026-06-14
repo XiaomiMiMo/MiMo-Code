@@ -36,7 +36,7 @@ export function Sidebar(props: { sessionID: string; overlay?: boolean }) {
   onCleanup(() => {
     if (timer) clearInterval(timer)
   })
-  const timeStr = createMemo(() => now().toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }))
+  const timeStr = createMemo(() => now().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: false }))
 
   return (
     <Show when={session()}>
