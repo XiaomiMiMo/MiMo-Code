@@ -88,6 +88,8 @@ test("plan agent allows only read-only bash commands by default", async () => {
         "touch output.txt",
         "echo test > output.txt",
         "cat package.json; touch out.txt",
+        "cat package.json\ntouch out.txt",
+        "cat package.json & touch out.txt",
         "cat package.json > out.txt",
         "cat package.json>out.txt",
         "cat package.json `touch out.txt`",
