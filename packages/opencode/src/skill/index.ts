@@ -193,7 +193,7 @@ const discoverSkills = Effect.fnUntraced(function* (
       MIMOCODE_SKILL_PATTERNS.map((pattern) => ({ dir, pattern })),
     ),
     ({ dir, pattern }) => scan(state, dir, pattern),
-    { concurrency: "unbounded" },
+    { concurrency: 1 },
   )
 
   const cfg = yield* config.get()
