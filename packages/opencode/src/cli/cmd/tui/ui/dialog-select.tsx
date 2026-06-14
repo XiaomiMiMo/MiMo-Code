@@ -53,6 +53,10 @@ export type DialogSelectRef<T> = {
   filtered: DialogSelectOption<T>[]
 }
 
+export function shouldShowFilterInput<T>(props: Pick<DialogSelectProps<T>, "skipFilter" | "onFilter">) {
+  return !props.skipFilter || props.onFilter !== undefined
+}
+
 export function DialogSelect<T>(props: DialogSelectProps<T>) {
   const dialog = useDialog()
   const { theme } = useTheme()
@@ -252,7 +256,7 @@ export function DialogSelect<T>(props: DialogSelectProps<T>) {
             {t("tui.dialog.close_hint")}
           </text>
         </box>
-        <Show when={!props.skipFilter}>
+        <Show when={shouldShowFilterInput(props)}>
           <box paddingTop={1}>
             <input
               onInput={(e) => {
