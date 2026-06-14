@@ -15,9 +15,14 @@ const levelPriority: Record<Level, number> = {
   ERROR: 3,
 }
 const MAX_LOG_SIZE = 100 * 1024 * 1024 // 100MB auto-rotate threshold
-const KEEP = 10 // max timestamped log files to retain
+const KEEP = 10 // max log files to retain
 
 let level: Level = "INFO"
+
+function logTimestamp(): string {
+  // YYYY-MM-DDTHHmmss — sortable, consistent for all rotated file suffixes
+  return new Date().toISOString().split(".")[0].replace(/:/g, "")
+}
 
 function shouldLog(input: Level): boolean {
   return levelPriority[input] >= levelPriority[level]
@@ -79,8 +84,7 @@ async function maybeRotate(filepath: string, streamCheck: boolean) {
   try {
     const stat = await fs.stat(filepath).catch(() => null)
     if (stat && stat.size > MAX_LOG_SIZE) {
-      const stamp = new Date().toISOString().replace(/[:.]/g, "").replace("T", "_").slice(0, 17)
-      await fs.rename(filepath, `${filepath}.${stamp}`).catch(() => {})
+      await fs.rename(filepath, `${filepath}.${logTimestamp()}`).catch(() => {})
       return createWriter(filepath)
     }
   } catch {}
@@ -104,20 +108,18 @@ export async function init(options: Options) {
   void cleanup(Global.Path.log)
   if (options.print) return
 
-  const ts = new Date().toISOString().split(".")[0].replace(/:/g, "")
-
   if (options.dev) {
     // Dev mode: rotate existing dev.log → dev.log.<ts>, write to new dev.log
     const devLog = path.join(Global.Path.log, "dev.log")
     try {
       const stat = await fs.stat(devLog).catch(() => null)
       if (stat && stat.size > 0) {
-        await fs.rename(devLog, `${devLog}.${ts}`).catch(() => {})
+        await fs.rename(devLog, `${devLog}.${logTimestamp()}`).catch(() => {})
       }
     } catch {}
     logpath = devLog
   } else {
-    logpath = path.join(Global.Path.log, `${ts}.log`)
+    logpath = path.join(Global.Path.log, `${logTimestamp()}.log`)
   }
   errorLogpath = path.join(Global.Path.log, `error.log`)
 
@@ -153,6 +155,21 @@ async function cleanup(dir: string) {
     .sort()
   if (devLogs.length > KEEP) {
     const doomed = devLogs.slice(0, -KEEP)
+    await Promise.all(doomed.map((file) => fs.unlink(path.join(dir, file)).catch(() => {})))
+  }
+
+  // Cleanup rotated error logs (error.log.<ts> — keep newest KEEP)
+  const errLogs = (
+    await Glob.scan("error.log.*", {
+      cwd: dir,
+      absolute: false,
+      include: "file",
+    }).catch(() => [])
+  )
+    .map((f) => path.basename(f))
+    .sort()
+  if (errLogs.length > KEEP) {
+    const doomed = errLogs.slice(0, -KEEP)
     await Promise.all(doomed.map((file) => fs.unlink(path.join(dir, file)).catch(() => {})))
   }
 }
