@@ -13,6 +13,7 @@ import DESCRIPTION from "./edit.txt"
 import { File } from "../file"
 import { FileWatcher } from "../file/watcher"
 import { Bus } from "../bus"
+import { Config } from "../config"
 import { Format } from "../format"
 import { Instance } from "../project/instance"
 import { SessionCwd } from "./session-cwd"
@@ -20,7 +21,7 @@ import { Snapshot } from "@/snapshot"
 import { assertWriteAllowed, askEditUnlessMemory } from "./external-directory"
 import { AppFileSystem } from "@mimo-ai/shared/filesystem"
 
-function normalizeLineEndings(text: string): string {
+export function normalizeLineEndings(text: string): string {
   return text.replaceAll("\r\n", "\n")
 }
 
@@ -59,6 +60,7 @@ export const EditTool = Tool.define(
     const afs = yield* AppFileSystem.Service
     const format = yield* Format.Service
     const bus = yield* Bus.Service
+    const config = yield* Config.Service
 
     return {
       description: DESCRIPTION,
@@ -105,6 +107,18 @@ export const EditTool = Tool.define(
               if (!info) throw new Error(`File ${filePath} not found`)
               if (info.type === "Directory") throw new Error(`Path is a directory, not a file: ${filePath}`)
               contentOld = yield* afs.readFileString(filePath)
+
+              if ((yield* config.get()).autoRefreshFiles) {
+                const normalOld = normalizeLineEndings(params.oldString)
+                const normalContent = normalizeLineEndings(contentOld)
+                if (!normalContent.includes(normalOld)) {
+                  return {
+                    metadata: {},
+                    title: `${path.relative(Instance.worktree, filePath)}`,
+                    output: `<system-reminder>文件 ${filePath} 已被外部修改，oldString 不匹配当前文件内容。请使用 read 工具重新读取文件后重试。</system-reminder>`,
+                  }
+                }
+              }
 
               const ending = detectLineEnding(contentOld)
               const old = convertToLineEnding(normalizeLineEndings(params.oldString), ending)

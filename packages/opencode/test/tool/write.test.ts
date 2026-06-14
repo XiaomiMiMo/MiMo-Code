@@ -8,6 +8,7 @@ import { LSP } from "../../src/lsp"
 import { AppFileSystem } from "@mimo-ai/shared/filesystem"
 import { Bus } from "../../src/bus"
 import { Format } from "../../src/format"
+import { Config } from "../../src/config"
 import { Truncate } from "../../src/tool"
 import { Tool } from "../../src/tool"
 import { Agent } from "../../src/agent/agent"
@@ -40,6 +41,7 @@ const it = testEffect(
     CrossSpawnSpawner.defaultLayer,
     Truncate.defaultLayer,
     Agent.defaultLayer,
+    Config.defaultLayer,
   ),
 )
 

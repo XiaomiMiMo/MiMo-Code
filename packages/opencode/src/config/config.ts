@@ -126,6 +126,10 @@ const InfoSchema = Schema.Struct({
     description:
       "Automatically update to the latest version. Set to true to auto-update, false to disable, or 'notify' to show update notifications",
   }),
+  autoRefreshFiles: Schema.optional(Schema.Boolean).annotate({
+    description:
+      "When true, re-read the file from disk before every edit/write to detect external changes. Prevents AI from overwriting manual fixes. Defaults to false.",
+  }),
   disabled_providers: Schema.optional(Schema.mutable(Schema.Array(Schema.String))).annotate({
     description: "Disable providers that are loaded automatically",
   }),
