@@ -80,6 +80,26 @@ export const EditTool = Tool.define(
             : path.join(SessionCwd.get(ctx.sessionID), params.filePath)
           yield* assertWriteAllowed(ctx, filePath)
 
+          // Auto-refresh check: if the file was externally modified, warn the AI
+          // before attempting the edit. This check runs outside the write lock
+          // because concurrent edits will naturally fail at the replace step anyway.
+          if ((yield* config.get()).autoRefreshFiles && params.oldString) {
+            const content = yield* afs
+              .stat(filePath)
+              .pipe(
+                Effect.flatMap((info) => (info.type !== "Directory" ? afs.readFileString(filePath) : Effect.succeed(""))),
+                Effect.catch(() => Effect.succeed("")),
+              )
+            if (content && !normalizeLineEndings(content).includes(normalizeLineEndings(params.oldString))) {
+              const relPath = path.relative(Instance.worktree, filePath)
+              return {
+                metadata: { diagnostics: {}, diff: "", filediff: { file: filePath, patch: "", additions: 0, deletions: 0 } },
+                title: relPath,
+                output: `<system-reminder>文件 ${relPath} 已被外部修改，oldString 不匹配当前文件内容。请使用 read 工具重新读取文件后重试。</system-reminder>`,
+              }
+            }
+          }
+
           let diff = ""
           let contentOld = ""
           let contentNew = ""
@@ -107,18 +127,6 @@ export const EditTool = Tool.define(
               if (!info) throw new Error(`File ${filePath} not found`)
               if (info.type === "Directory") throw new Error(`Path is a directory, not a file: ${filePath}`)
               contentOld = yield* afs.readFileString(filePath)
-
-              if ((yield* config.get()).autoRefreshFiles) {
-                const normalOld = normalizeLineEndings(params.oldString)
-                const normalContent = normalizeLineEndings(contentOld)
-                if (!normalContent.includes(normalOld)) {
-                  return {
-                    metadata: {},
-                    title: `${path.relative(Instance.worktree, filePath)}`,
-                    output: `<system-reminder>文件 ${filePath} 已被外部修改，oldString 不匹配当前文件内容。请使用 read 工具重新读取文件后重试。</system-reminder>`,
-                  }
-                }
-              }
 
               const ending = detectLineEnding(contentOld)
               const old = convertToLineEnding(normalizeLineEndings(params.oldString), ending)
