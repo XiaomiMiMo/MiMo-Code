@@ -1,5 +1,5 @@
 {
-  description = "OpenCode development flake";
+  description = "MiMo-Code development flake";
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixpkgs-unstable";
@@ -37,15 +37,16 @@
             node_modules = final.callPackage ./nix/node_modules.nix {
               inherit rev;
             };
-            opencode = final.callPackage ./nix/opencode.nix {
+            mimo = final.callPackage ./nix/mimo.nix {
               inherit node_modules;
             };
             desktop = final.callPackage ./nix/desktop.nix {
-              inherit opencode;
+              opencode = mimo;
             };
           in
           {
-            inherit opencode;
+            inherit mimo;
+            # desktop is not yet adapted for MiMo (still uses OpenCode branding)
             opencode-desktop = desktop;
           };
       };
@@ -56,16 +57,16 @@
           node_modules = pkgs.callPackage ./nix/node_modules.nix {
             inherit rev;
           };
-          opencode = pkgs.callPackage ./nix/opencode.nix {
+          mimo = pkgs.callPackage ./nix/mimo.nix {
             inherit node_modules;
           };
           desktop = pkgs.callPackage ./nix/desktop.nix {
-            inherit opencode;
+            inherit mimo;
           };
         in
         {
-          default = opencode;
-          inherit opencode desktop;
+          default = mimo;
+          inherit mimo desktop;
           # Updater derivation with fakeHash - build fails and reveals correct hash
           node_modules_updater = node_modules.override {
             hash = pkgs.lib.fakeHash;
