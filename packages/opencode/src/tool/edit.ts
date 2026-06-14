@@ -81,9 +81,10 @@ export const EditTool = Tool.define(
             : path.join(SessionCwd.get(ctx.sessionID), params.filePath)
           yield* assertWriteAllowed(ctx, filePath)
 
-          // Auto-refresh check: if the file was externally modified, warn the AI
-          // before attempting the edit. This check runs outside the write lock
-          // because concurrent edits will naturally fail at the replace step anyway.
+          // Auto-refresh: before modifying, re-read the file from disk to ensure
+          // the AI works with the latest content. If the file has changed externally,
+          // surface the current content directly so the AI can retry without an
+          // extra `read` tool call.
           if ((yield* config.get()).autoRefreshFiles && params.oldString) {
             const content = yield* afs
               .stat(filePath)
@@ -91,12 +92,26 @@ export const EditTool = Tool.define(
                 Effect.flatMap((info) => (info.type !== "Directory" ? afs.readFileString(filePath) : Effect.succeed(""))),
                 Effect.catch(() => Effect.succeed("")),
               )
-            if (content && !normalizeLineEndings(content).includes(normalizeLineEndings(params.oldString))) {
-              const relPath = path.relative(Instance.worktree, filePath)
-              return {
-                metadata: { diagnostics: {}, diff: "", filediff: { file: filePath, patch: "", additions: 0, deletions: 0 } },
-                title: relPath,
-                output: `<system-reminder>文件 ${relPath} 已被外部修改，oldString 不匹配当前文件内容。请使用 read 工具重新读取文件后重试。</system-reminder>`,
+            if (content) {
+              const normalContent = normalizeLineEndings(content)
+              const normalOld = normalizeLineEndings(params.oldString)
+              if (!normalContent.includes(normalOld)) {
+                const relPath = path.relative(Instance.worktree, filePath)
+                const detail = content.length > 2000
+                  ? content.slice(0, 1000) + "\n...\n" + content.slice(-1000)
+                  : content
+                return {
+                  metadata: { diagnostics: {}, diff: "", filediff: { file: filePath, patch: "", additions: 0, deletions: 0 } },
+                  title: relPath,
+                  output: [
+                    `<system-reminder>`,
+                    `文件 ${relPath} 已被外部修改，oldString 不匹配当前文件内容。`,
+                    `以下是文件当前的最新内容（已自动重新读取）：`,
+                    `\`\`\`\n${detail}\n\`\`\``,
+                    `请基于以上最新内容重新生成 edit 操作后重试。`,
+                    `</system-reminder>`,
+                  ].join("\n"),
+                }
               }
             }
           }

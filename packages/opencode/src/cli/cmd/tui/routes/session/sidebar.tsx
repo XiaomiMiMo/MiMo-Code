@@ -1,6 +1,6 @@
 import { useProject } from "@tui/context/project"
 import { useSync } from "@tui/context/sync"
-import { createMemo, Show } from "solid-js"
+import { createMemo, createSignal, onCleanup, onMount, Show } from "solid-js"
 import { useTheme } from "../../context/theme"
 import { useTuiConfig } from "../../context/tui-config"
 import { InstallationChannel, InstallationVersion } from "@/installation/version"
@@ -27,6 +27,16 @@ export function Sidebar(props: { sessionID: string; overlay?: boolean }) {
     return `${info.type}: ${info.name}`
   }
   const scrollAcceleration = createMemo(() => getScrollAcceleration(tuiConfig))
+
+  const [now, setNow] = createSignal(new Date())
+  let timer: ReturnType<typeof setInterval> | undefined
+  onMount(() => {
+    timer = setInterval(() => setNow(new Date()), 1000)
+  })
+  onCleanup(() => {
+    if (timer) clearInterval(timer)
+  })
+  const timeStr = createMemo(() => now().toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }))
 
   return (
     <Show when={session()}>
@@ -80,7 +90,7 @@ export function Sidebar(props: { sessionID: string; overlay?: boolean }) {
           </box>
         </scrollbox>
 
-        <box flexShrink={0} gap={1} paddingTop={1}>
+        <box flexShrink={0} gap={1} paddingTop={1} flexDirection="row" justifyContent="space-between">
           <TuiPluginRuntime.Slot name="sidebar_footer" mode="single_winner" session_id={props.sessionID}>
             <text fg={theme.textMuted}>
               <span style={{ fg: theme.success }}>•</span> <b>Open</b>
@@ -90,6 +100,7 @@ export function Sidebar(props: { sessionID: string; overlay?: boolean }) {
               <span>{InstallationVersion}</span>
             </text>
           </TuiPluginRuntime.Slot>
+          <text fg={theme.textMuted}>{timeStr()}</text>
         </box>
       </box>
     </Show>
