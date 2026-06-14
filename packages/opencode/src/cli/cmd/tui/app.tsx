@@ -337,7 +337,8 @@ function App(props: { onSnapshot?: () => Promise<string[]> }) {
     if (route.data.type === "session") {
       const session = sync.session.get(route.data.sessionID)
       const status = sync.session.status(route.data.sessionID)
-      const statusIcon = status === "working" ? "🟢 " : ""
+      const hasQuestions = (sync.data.question[route.data.sessionID]?.length ?? 0) > 0
+      const statusIcon = hasQuestions ? "❓ " : status === "working" ? "🟢 " : ""
 
       if (!session || SessionApi.isDefaultTitle(session.title)) {
         renderer.setTerminalTitle(`${statusIcon}🅼 MiMoCode`)
