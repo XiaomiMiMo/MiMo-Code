@@ -1,0 +1,60 @@
+name: desktop auto release
+
+on:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: write
+
+concurrency:
+  group: desktop-auto-release-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  bump:
+    name: Bump version and trigger release
+    runs-on: ubuntu-latest
+    if: "!contains(github.event.head_commit.message, '[skip ci]')"
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Bump version and push tag
+        shell: bash
+        run: |
+          git fetch --tags
+
+          LATEST_TAG=$(git tag -l "v[0-9]*.[0-9]*.[0-9]*" --sort=-v:refname | head -1)
+
+          if [ -z "$LATEST_TAG" ]; then
+            echo "No version tags found, starting from v0.1.0"
+            NEW_VERSION="0.1.0"
+          else
+            VERSION="${LATEST_TAG#v}"
+            MAJOR=$(echo "$VERSION" | cut -d. -f1)
+            MINOR=$(echo "$VERSION" | cut -d. -f2)
+            PATCH=$(echo "$VERSION" | cut -d. -f3)
+            NEW_VERSION="${MAJOR}.${MINOR}.$((PATCH + 1))"
+          fi
+
+          NEW_TAG="v${NEW_VERSION}"
+
+          if gh release view "$NEW_TAG" &>/dev/null; then
+            echo "Release $NEW_TAG already exists, skipping"
+            exit 0
+          fi
+
+          echo "Bumping version: $LATEST_TAG -> $NEW_TAG"
+          echo "NEW_TAG=$NEW_TAG" >> "$GITHUB_ENV"
+
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag -a "$NEW_TAG" -m "$NEW_VERSION"
+          git push origin "$NEW_TAG"
+        env:
+          GH_TOKEN: ${{ github.token }}
