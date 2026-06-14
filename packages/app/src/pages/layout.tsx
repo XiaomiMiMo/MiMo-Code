@@ -1274,12 +1274,12 @@ export default function Layout(props: ParentProps) {
     return root
   }
 
-  let pendingProjectRoot: string | undefined
+  let navigationId = 0
 
   async function navigateToProject(directory: string | undefined) {
     if (!directory) return
     const root = projectRoot(directory)
-    pendingProjectRoot = root
+    const currentNavigationId = ++navigationId
     server.projects.touch(root)
     const project = layout.projects.list().find((item) => item.worktree === root)
     let dirs = project
@@ -1300,7 +1300,7 @@ export default function Layout(props: ParentProps) {
     }
     const openSession = async (target: { directory: string; id: string }) => {
       if (!(await ensureDirOpenable(target.directory))) return false
-      if (pendingProjectRoot !== root) return false
+      if (currentNavigationId !== navigationId) return false
       const [data] = globalSync.child(target.directory, { bootstrap: false })
       if (data.session.some((item) => item.id === target.id)) {
         setStore("lastProjectSession", root, { directory: target.directory, id: target.id, at: Date.now() })
@@ -1311,10 +1311,10 @@ export default function Layout(props: ParentProps) {
         .get({ sessionID: target.id })
         .then((x) => x.data)
         .catch(() => undefined)
-      if (pendingProjectRoot !== root) return false
+      if (currentNavigationId !== navigationId) return false
       if (!resolved?.directory) return false
       if (!(await ensureDirOpenable(resolved.directory))) return false
-      if (pendingProjectRoot !== root) return false
+      if (currentNavigationId !== navigationId) return false
       setStore("lastProjectSession", root, { directory: resolved.directory, id: resolved.id, at: Date.now() })
       navigateWithSidebarReset(`/${base64Encode(resolved.directory)}/session/${resolved.id}`)
       return true
@@ -1323,7 +1323,7 @@ export default function Layout(props: ParentProps) {
     const projectSession = store.lastProjectSession[root]
     if (projectSession?.id) {
       const opened = await openSession(projectSession)
-      if (pendingProjectRoot !== root) return
+      if (currentNavigationId !== navigationId) return
       if (opened) return
       clearLastProjectSession(root)
     }
@@ -1335,7 +1335,7 @@ export default function Layout(props: ParentProps) {
     if (latest && (await openSession(latest))) {
       return
     }
-    if (pendingProjectRoot !== root) return
+    if (currentNavigationId !== navigationId) return
 
     const fetched = latestRootSession(
       await Promise.all(
@@ -1352,7 +1352,7 @@ export default function Layout(props: ParentProps) {
     if (fetched && (await openSession(fetched))) {
       return
     }
-    if (pendingProjectRoot !== root) return
+    if (currentNavigationId !== navigationId) return
 
     navigateWithSidebarReset(`/${base64Encode(root)}/session`)
   }
