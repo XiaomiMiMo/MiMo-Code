@@ -6,11 +6,17 @@ import z from "zod"
 import { cors } from "hono/cors"
 import { Share } from "~/core/share"
 
+const ALLOWED_ORIGINS = (process.env.CORS_ALLOWED_ORIGINS ?? "").split(",").filter(Boolean)
+
+const corsConfig = ALLOWED_ORIGINS.length > 0
+  ? cors({ origin: ALLOWED_ORIGINS, credentials: true })
+  : cors()
+
 const app = new Hono()
 
 app
   .basePath("/api")
-  .use(cors())
+  .use(corsConfig)
   .get(
     "/doc",
     openAPIRouteHandler(app, {
