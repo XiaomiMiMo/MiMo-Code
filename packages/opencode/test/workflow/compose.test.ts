@@ -75,3 +75,33 @@ describe("compose phase 1: Classify", () => {
     expect(classifyCall).toBeUndefined()
   })
 })
+
+describe("compose phase 2: Design", () => {
+  test.each([
+    ["feature", "compose:plan"],
+    ["refactor", "compose:plan"],
+    ["bugfix", "compose:debug"],
+    ["feedback", "compose:feedback"],
+  ])("type=%s routes to %s", async (type, skill) => {
+    const { calls } = await runCompose(
+      { task: "x", type },
+      (prompt, opts) => {
+        if (opts?.schema?.properties?.tasks) {
+          return { tasks: [{ id: "t1", description: "d", acceptance: "a" }] }
+        }
+        return null
+      },
+    )
+    const designCall = calls.find((c) => c.opts?.schema?.properties?.tasks)
+    expect(designCall).toBeDefined()
+    expect(designCall!.prompt).toContain(skill)
+  })
+
+  test("design returning null surfaces design-failed", async () => {
+    const { result } = await runCompose(
+      { task: "x", type: "feature" },
+      () => null,
+    )
+    expect(result).toMatchObject({ error: "design-failed" })
+  })
+})

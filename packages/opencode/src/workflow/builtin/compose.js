@@ -119,5 +119,28 @@ if (VALID_TYPES.indexOf(argType) >= 0) {
   log("Classified as " + type + (classification ? " (" + classification.confidence + ")" : " (default)"))
 }
 
+const SKILL_BY_TYPE = {
+  feature: "compose:plan",
+  refactor: "compose:plan",
+  bugfix: "compose:debug",
+  feedback: "compose:feedback",
+}
+
+phase("Design")
+const designSkill = SKILL_BY_TYPE[type] || "compose:plan"
+const design = await agent(
+  "Apply the `" + designSkill + "` skill to the task below. Use the `skill` tool to load the skill before working.\n\n" +
+  "## Task\n" + TASK + "\n\n" +
+  "## What to produce\n" +
+  "A task list of bite-sized work items, each with id, description, and acceptance criteria. " +
+  "Optionally list the files each task touches.\n\n" +
+  "Return structured output only.",
+  { label: "design:" + type, phase: "Design", schema: DESIGN_SHAPE }
+)
+if (!design) {
+  return { error: "design-failed", type, classification }
+}
+log("Designed " + design.tasks.length + " task(s) using " + designSkill)
+
 // Placeholder return — replaced in subsequent tasks.
-return { type, classification, todo: "design+impl+review+merge" }
+return { type, classification, design, todo: "impl+review+merge" }
