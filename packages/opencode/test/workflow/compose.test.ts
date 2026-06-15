@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import { BuiltinWorkflow } from "../../src/workflow/builtin"
-import { parseMeta, parseMeta as pm } from "../../src/workflow/meta"
+import { parseMeta } from "../../src/workflow/meta"
 import { evalScript } from "../../src/workflow/sandbox"
 
 const composeScript = () => {
@@ -279,9 +279,9 @@ describe("compose phase 6: Merge + final shape", () => {
 })
 
 describe("compose E2E smoke", () => {
-  test("full happy path runs all 6 phases in order", async () => {
+  test("happy path runs 5 phases in order (Fix conditional on review-critical)", async () => {
     const phases: string[] = []
-    const parsed = pm(composeScript())
+    const parsed = parseMeta(composeScript())
     if (!parsed.ok) throw new Error(parsed.error)
     const argsValue = { task: "ship a feature", type: "feature" }
     const hooks = {
