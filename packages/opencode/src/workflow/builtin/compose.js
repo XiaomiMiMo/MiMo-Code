@@ -90,13 +90,24 @@ const MERGE_SHAPE = {
 }
 
 // Placeholder body — replaced in subsequent tasks.
-const TASK = (typeof args === "object" && args && typeof args.task === "string") ? args.task : ""
+// Accept args as either an object {task,type?} OR a JSON string OR a bare task string,
+// because the AI-SDK tool boundary often serializes nested args as strings.
+let _argsObj
+if (typeof args === "object" && args !== null) {
+  _argsObj = args
+} else if (typeof args === "string") {
+  try { _argsObj = JSON.parse(args) } catch (_) { _argsObj = { task: args } }
+  if (typeof _argsObj !== "object" || _argsObj === null) _argsObj = { task: args }
+} else {
+  _argsObj = {}
+}
+const TASK = typeof _argsObj.task === "string" ? _argsObj.task : ""
 if (!TASK) {
   return { error: "no-task", message: "Pass args.task = '<request>'." }
 }
 
 const VALID_TYPES = ["feature", "bugfix", "refactor", "feedback"]
-const argType = (typeof args === "object" && args && typeof args.type === "string") ? args.type : ""
+const argType = typeof _argsObj.type === "string" ? _argsObj.type : ""
 
 phase("Classify")
 let classification = null
