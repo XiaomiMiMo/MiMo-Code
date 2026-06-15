@@ -14,7 +14,7 @@ import {
   batch,
   Show,
 } from "solid-js"
-import { win32DisableProcessedInput, win32InstallCtrlCGuard } from "./win32"
+import { win32DisableProcessedInput, win32EnableVTProcessing, win32InstallCtrlCGuard } from "./win32"
 import { Flag } from "@/flag/flag"
 import semver from "semver"
 import { DialogProvider, useDialog } from "@tui/ui/dialog"
@@ -138,6 +138,7 @@ export function tui(input: {
   return new Promise<void>(async (resolve) => {
     const unguard = win32InstallCtrlCGuard()
     win32DisableProcessedInput()
+    win32EnableVTProcessing()
 
     const onExit = async () => {
       unguard?.()
