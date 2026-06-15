@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import { BuiltinWorkflow } from "../../src/workflow/builtin"
-import { parseMeta } from "../../src/workflow/meta"
+import { parseMeta, parseMeta as pm } from "../../src/workflow/meta"
 import { evalScript } from "../../src/workflow/sandbox"
 
 const composeScript = () => {
@@ -275,5 +275,35 @@ describe("compose phase 6: Merge + final shape", () => {
       },
     )
     expect(result).toMatchObject({ error: "merge-failed", merge: { committed: false } })
+  })
+})
+
+describe("compose E2E smoke", () => {
+  test("full happy path runs all 6 phases in order", async () => {
+    const phases: string[] = []
+    const parsed = pm(composeScript())
+    if (!parsed.ok) throw new Error(parsed.error)
+    const argsValue = { task: "ship a feature", type: "feature" }
+    const hooks = {
+      agent: async (prompt: unknown, opts: unknown) => {
+        const o = opts as any
+        if (o?.schema?.properties?.tasks) return { tasks: [{ id: "t1", description: "d", acceptance: "a" }] }
+        if (o?.schema?.properties?.allPassed) return { typecheck: "ok", tests: { passed: 1, failed: 0 }, build: "ok", allPassed: true }
+        if (o?.schema?.properties?.readyToMerge) return { critical: [], important: [], minor: [], readyToMerge: true }
+        if (o?.schema?.properties?.committed) return { committed: true, sha: "deadbeef", action: "commit" }
+        return "ok"
+      },
+      phase: (title: unknown) => { phases.push(String(title)) },
+      log: () => undefined,
+      workflow: async () => null,
+      readFile: async () => null,
+      writeFile: async () => undefined,
+      exists: async () => false,
+      glob: async () => [],
+    }
+    const body = `globalThis.args = ${JSON.stringify(argsValue)};\n` + parsed.body
+    const result = await evalScript(body, hooks)
+    expect(phases).toEqual(["Classify", "Design", "Implement", "Review", "Merge"]) // Fix only runs on review failure
+    expect((result as any).merge?.committed).toBe(true)
   })
 })
