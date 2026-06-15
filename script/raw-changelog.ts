@@ -28,7 +28,8 @@ const team = [
   ...(await Bun.file(new URL("../.github/TEAM_MEMBERS", import.meta.url))
     .text()
     .then((x) => x.split(/\r?\n/).map((x) => x.trim()))
-    .then((x) => x.filter((x) => x && !x.startsWith("#")))),
+    .then((x) => x.filter((x) => x && !x.startsWith("#")))
+    .catch(() => [])),
   ...bot,
 ]
 const order = ["Core", "TUI", "Desktop", "SDK", "Extensions"] as const
