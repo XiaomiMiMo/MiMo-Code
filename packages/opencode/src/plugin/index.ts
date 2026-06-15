@@ -20,6 +20,7 @@ import { Flag } from "../flag/flag"
 import { CodexAuthPlugin } from "./codex"
 import { MimoAuthPlugin, AnthropicProxyPlugin } from "./mimo"
 import { MimoFreeAuthPlugin } from "./mimo-free"
+import { AstraflowAuthPlugin } from "./astraflow"
 import { Session } from "../session"
 import type { SessionID } from "../session/schema"
 import { NamedError } from "@mimo-ai/shared/util/error"
@@ -124,6 +125,7 @@ export class Service extends Context.Service<Service, Interface>()("@opencode/Pl
 const INTERNAL_PLUGINS: PluginInstance[] = [
   MimoFreeAuthPlugin,
   MimoAuthPlugin,
+  AstraflowAuthPlugin,
   AnthropicProxyPlugin,
   CodexAuthPlugin,
   CopilotAuthPlugin,
