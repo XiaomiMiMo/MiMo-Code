@@ -176,3 +176,67 @@ describe("compose phase 3: TDD loop", () => {
     expect(debugCalls).toBe(2)
   })
 })
+
+describe("compose phases 4-5: Review + Fix loop", () => {
+  test("review with no critical → no fix loop, proceeds to merge", async () => {
+    let fixCalls = 0
+    let reviewCalls = 0
+    const { result } = await runCompose(
+      { task: "x", type: "feature" },
+      (prompt, opts) => {
+        if (opts?.schema?.properties?.tasks) return { tasks: [{ id: "t1", description: "d", acceptance: "a" }] }
+        if (opts?.schema?.properties?.allPassed) return { typecheck: "ok", tests: { passed: 1, failed: 0 }, build: "ok", allPassed: true }
+        if (opts?.schema?.properties?.readyToMerge) {
+          reviewCalls++
+          return { critical: [], important: ["nit"], minor: [], readyToMerge: true }
+        }
+        if (opts?.label === "fix") fixCalls++
+        if (opts?.schema?.properties?.committed) return { committed: true, sha: "abc", action: "commit" }
+        return "ok"
+      },
+    )
+    expect(reviewCalls).toBe(1)
+    expect(fixCalls).toBe(0)
+    expect(result).not.toMatchObject({ readyToMerge: false })
+  })
+
+  test("review critical, fix succeeds on iteration 1 → exits loop, merges", async () => {
+    let reviewCalls = 0
+    const { result } = await runCompose(
+      { task: "x", type: "feature" },
+      (prompt, opts) => {
+        if (opts?.schema?.properties?.tasks) return { tasks: [{ id: "t1", description: "d", acceptance: "a" }] }
+        if (opts?.schema?.properties?.allPassed) return { typecheck: "ok", tests: { passed: 1, failed: 0 }, build: "ok", allPassed: true }
+        if (opts?.schema?.properties?.readyToMerge) {
+          reviewCalls++
+          return reviewCalls === 1
+            ? { critical: ["bug X"], important: [], minor: [], readyToMerge: false }
+            : { critical: [], important: [], minor: [], readyToMerge: true }
+        }
+        if (opts?.schema?.properties?.committed) return { committed: true, sha: "abc", action: "commit" }
+        return "ok"
+      },
+    )
+    expect(reviewCalls).toBe(2)
+    expect(result).not.toMatchObject({ readyToMerge: false })
+  })
+
+  test("review critical persists through 2 fix iterations → readyToMerge:false", async () => {
+    let reviewCalls = 0
+    const { result } = await runCompose(
+      { task: "x", type: "feature" },
+      (prompt, opts) => {
+        if (opts?.schema?.properties?.tasks) return { tasks: [{ id: "t1", description: "d", acceptance: "a" }] }
+        if (opts?.schema?.properties?.allPassed) return { typecheck: "ok", tests: { passed: 1, failed: 0 }, build: "ok", allPassed: true }
+        if (opts?.schema?.properties?.readyToMerge) {
+          reviewCalls++
+          return { critical: ["unfixable"], important: [], minor: [], readyToMerge: false }
+        }
+        return "ok"
+      },
+    )
+    expect(reviewCalls).toBe(3) // initial + 2 fix-loop reviews
+    expect(result).toMatchObject({ readyToMerge: false })
+    expect((result as any).review.critical).toContain("unfixable")
+  })
+})

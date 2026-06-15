@@ -190,5 +190,50 @@ for (let attempt = 0; attempt < MAX_TDD_ATTEMPTS; attempt++) {
   await runDebug(verify ? (verify.failures || "verify returned no detail") : "verify agent failed (null)")
 }
 
-// Placeholder return — replaced in subsequent tasks.
-return { type, classification, design, verifyHistory, todo: "review+merge" }
+const runReview = () => agent(
+  "Apply the `compose:review` skill. Use the `skill` tool to load it before working.\n\n" +
+  "## Task context\n" + TASK + "\n\n" +
+  "## What to produce\n" +
+  "Triage findings into critical (must fix before merge), important (should fix), and minor (nits). " +
+  "Set readyToMerge=true only if critical is empty.\n\n" +
+  "Return structured output only.",
+  { label: "review", phase: "Review", schema: REVIEW_SHAPE }
+)
+
+const runFix = (criticalList) => agent(
+  "Address the CRITICAL review findings below. Apply the `compose:tdd` skill to fix them with tests where possible.\n\n" +
+  "## Critical findings\n" + criticalList.map((c, i) => (i + 1) + ". " + c).join("\n") + "\n\n" +
+  "Fix each, then commit.",
+  { label: "fix", phase: "Review" }
+)
+
+phase("Review")
+let review = await runReview()
+if (!review) review = { critical: [], important: [], minor: [], readyToMerge: true }
+let reviewFixAttempts = 0
+
+if (review.critical && review.critical.length > 0) {
+  phase("Fix")
+  for (let attempt = 0; attempt < MAX_REVIEW_FIX_ATTEMPTS; attempt++) {
+    reviewFixAttempts = attempt + 1
+    await runFix(review.critical)
+    const reverify = await runVerify()
+    if (reverify) verifyHistory.push(reverify)
+    review = await runReview()
+    if (!review) review = { critical: [], important: [], minor: [], readyToMerge: false }
+    if (!review.critical || review.critical.length === 0) {
+      log("Critical issues cleared on fix attempt " + reviewFixAttempts)
+      break
+    }
+  }
+  if (review.critical && review.critical.length > 0) {
+    return {
+      readyToMerge: false,
+      type, classification, design, verifyHistory, review,
+      attempts: { tdd: tddAttempts, reviewFix: reviewFixAttempts },
+    }
+  }
+}
+
+// Placeholder return — replaced in next task.
+return { type, classification, design, verifyHistory, review, todo: "merge" }
