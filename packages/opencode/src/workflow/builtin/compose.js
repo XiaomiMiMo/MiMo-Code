@@ -90,4 +90,34 @@ const MERGE_SHAPE = {
 }
 
 // Placeholder body — replaced in subsequent tasks.
-return { ok: true, todo: "implement phases" }
+const TASK = (typeof args === "object" && args && typeof args.task === "string") ? args.task : ""
+if (!TASK) {
+  return { error: "no-task", message: "Pass args.task = '<request>'." }
+}
+
+const VALID_TYPES = ["feature", "bugfix", "refactor", "feedback"]
+const argType = (typeof args === "object" && args && typeof args.type === "string") ? args.type : ""
+
+phase("Classify")
+let classification = null
+let type
+if (VALID_TYPES.indexOf(argType) >= 0) {
+  type = argType
+} else {
+  classification = await agent(
+    "Classify the task below into exactly one of: feature, bugfix, refactor, feedback.\n\n" +
+    "## Task\n" + TASK + "\n\n" +
+    "## Definitions\n" +
+    "- feature: net-new capability or user-visible behavior\n" +
+    "- bugfix: existing behavior is broken; root-cause + fix\n" +
+    "- refactor: restructure without behavior change\n" +
+    "- feedback: address PR review or user-reported issues against an existing change\n\n" +
+    "Return structured output only.",
+    { label: "classify", phase: "Classify", schema: CLASSIFY_SHAPE, model: "lite" }
+  )
+  type = classification && classification.type ? classification.type : "feature"
+  log("Classified as " + type + (classification ? " (" + classification.confidence + ")" : " (default)"))
+}
+
+// Placeholder return — replaced in subsequent tasks.
+return { type, classification, todo: "design+impl+review+merge" }
