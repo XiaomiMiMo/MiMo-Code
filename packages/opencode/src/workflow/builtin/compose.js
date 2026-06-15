@@ -235,5 +235,38 @@ if (review.critical && review.critical.length > 0) {
   }
 }
 
-// Placeholder return — replaced in next task.
-return { type, classification, design, verifyHistory, review, todo: "merge" }
+phase("Merge")
+const merge = await agent(
+  "Apply the `compose:merge` skill. Use the `skill` tool to load it before working.\n\n" +
+  "## Task\n" + TASK + "\n\n" +
+  "Commit the changes. If the branch tracks a remote and a PR is appropriate, push and open one.\n" +
+  "Pick the smallest action that satisfies the goal:\n" +
+  "- `commit`: just record locally\n" +
+  "- `commit+push`: also push to the existing remote branch\n" +
+  "- `commit+pr`: push and open a PR\n\n" +
+  "Return structured output only.",
+  { label: "merge", phase: "Merge", schema: MERGE_SHAPE }
+)
+if (!merge || !merge.committed) {
+  return {
+    error: "merge-failed",
+    type, classification, design, verifyHistory, review,
+    merge: merge || { committed: false, action: "none" },
+    attempts: { tdd: tddAttempts, reviewFix: reviewFixAttempts },
+  }
+}
+
+return {
+  type,
+  classification,
+  design,
+  verifyHistory,
+  review,
+  reviewFixes: reviewFixAttempts,
+  merge,
+  stats: {
+    agents: verifyHistory.length + tddAttempts + reviewFixAttempts + 3, // classify + design + review + merge + impl/debug
+    phases: 6,
+    durationMs: 0, // QuickJS guest has no Date; host can compute from journal if needed
+  },
+}

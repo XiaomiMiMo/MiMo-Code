@@ -240,3 +240,40 @@ describe("compose phases 4-5: Review + Fix loop", () => {
     expect((result as any).review.critical).toContain("unfixable")
   })
 })
+
+describe("compose phase 6: Merge + final shape", () => {
+  test("happy path returns full shape per [S4]", async () => {
+    const { result } = await runCompose(
+      { task: "x", type: "feature" },
+      (prompt, opts) => {
+        if (opts?.schema?.properties?.tasks) return { tasks: [{ id: "t1", description: "d", acceptance: "a" }] }
+        if (opts?.schema?.properties?.allPassed) return { typecheck: "ok", tests: { passed: 1, failed: 0 }, build: "ok", allPassed: true }
+        if (opts?.schema?.properties?.readyToMerge) return { critical: [], important: [], minor: [], readyToMerge: true }
+        if (opts?.schema?.properties?.committed) return { committed: true, sha: "abc1234", action: "commit", prUrl: undefined }
+        return "ok"
+      },
+    )
+    expect(result).toMatchObject({
+      type: "feature",
+      design: { tasks: expect.any(Array) },
+      review: { readyToMerge: true },
+      merge: { committed: true, sha: "abc1234", action: "commit" },
+    })
+    expect((result as any).verifyHistory).toBeDefined()
+    expect((result as any).stats).toMatchObject({ agents: expect.any(Number), durationMs: expect.any(Number) })
+  })
+
+  test("merge failure returns merge-failed", async () => {
+    const { result } = await runCompose(
+      { task: "x", type: "feature" },
+      (prompt, opts) => {
+        if (opts?.schema?.properties?.tasks) return { tasks: [{ id: "t1", description: "d", acceptance: "a" }] }
+        if (opts?.schema?.properties?.allPassed) return { typecheck: "ok", tests: { passed: 1, failed: 0 }, build: "ok", allPassed: true }
+        if (opts?.schema?.properties?.readyToMerge) return { critical: [], important: [], minor: [], readyToMerge: true }
+        if (opts?.schema?.properties?.committed) return { committed: false, action: "none" }
+        return "ok"
+      },
+    )
+    expect(result).toMatchObject({ error: "merge-failed", merge: { committed: false } })
+  })
+})
