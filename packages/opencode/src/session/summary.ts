@@ -71,6 +71,19 @@ export interface Interface {
 
 export class Service extends Context.Service<Service, Interface>()("@opencode/SessionSummary") {}
 
+function summarizeDiff(diff: Snapshot.FileDiff): Snapshot.FileDiff {
+  return {
+    file: diff.file,
+    additions: diff.additions,
+    deletions: diff.deletions,
+    status: diff.status,
+    patchBytes:
+      diff.patchBytes ??
+      (typeof diff.patch === "string" ? Buffer.byteLength(diff.patch, "utf8") : undefined),
+    patchStored: typeof diff.patch === "string" || diff.patchStored === true,
+  }
+}
+
 export const layer = Layer.effect(
   Service,
   Effect.gen(function* () {
@@ -124,11 +137,17 @@ export const layer = Layer.effect(
       const target = messages.find((m) => m.info.id === input.messageID)
       if (!target || target.info.role !== "user") return
       const msgDiffs = yield* computeDiff({ messages })
-      target.info.summary = { ...target.info.summary, diffs: msgDiffs }
+      yield* storage.write(["session_diff_file", input.sessionID, input.messageID], msgDiffs).pipe(Effect.ignore)
+      target.info.summary = { ...target.info.summary, diffs: msgDiffs.map(summarizeDiff) }
       yield* sessions.updateMessage(target.info)
     })
 
     const diff = Effect.fn("SessionSummary.diff")(function* (input: { sessionID: SessionID; messageID?: MessageID }) {
+      if (input.messageID) {
+        return yield* storage
+          .read<Snapshot.FileDiff[]>(["session_diff_file", input.sessionID, input.messageID])
+          .pipe(Effect.catch(() => Effect.succeed([] as Snapshot.FileDiff[])))
+      }
       const diffs = yield* storage
         .read<Snapshot.FileDiff[]>(["session_diff", input.sessionID])
         .pipe(Effect.catch(() => Effect.succeed([] as Snapshot.FileDiff[])))

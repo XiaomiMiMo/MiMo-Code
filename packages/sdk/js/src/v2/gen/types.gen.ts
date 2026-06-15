@@ -428,10 +428,12 @@ export type EventPermissionReplied = {
 
 export type SnapshotFileDiff = {
   file: string
-  patch: string
+  patch?: string
   additions: number
   deletions: number
   status?: "added" | "deleted" | "modified"
+  patchBytes?: number
+  patchStored?: boolean
 }
 
 export type EventSessionDiff = {

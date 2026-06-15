@@ -567,6 +567,40 @@ export default function Page() {
   }, desktopReviewOpen())
 
   const turnDiffs = createMemo(() => list(lastUserMessage()?.summary?.diffs))
+  const turnDiffNeedsPatch = createMemo(() => {
+    const diffs = turnDiffs()
+    const messageID = lastUserMessage()?.id
+    return !!messageID && diffs.some((item) => item.patch === undefined && "patchStored" in item && item.patchStored)
+  })
+  const turnDiffQuery = createQuery(() => {
+    const id = params.id
+    const messageID = lastUserMessage()?.id
+    return {
+      queryKey: ["session-turn-diff", id ?? "", messageID ?? ""] as const,
+      enabled: !!id && !!messageID && turnDiffNeedsPatch(),
+      initialData: [] as ReturnType<typeof turnDiffs>,
+      queryFn: () =>
+        sdk.client.session
+          .diff({ sessionID: id!, messageID: messageID! })
+          .then((response) => list(response.data))
+          .catch((error) => {
+            console.debug("[session] failed to load turn diff", { sessionID: id, messageID, error })
+            return turnDiffs()
+          }),
+      staleTime: Number.POSITIVE_INFINITY,
+    }
+  })
+  const turnDiffsWithPatch = createMemo(() => {
+    const base = turnDiffs()
+    const next = turnDiffQuery.data
+    if (!next || !next.length) return base
+
+    const map = new Map(base.map((item) => [item.file, item]))
+    return next.map((item) => {
+      const fallback = map.get(item.file)
+      return fallback ? { ...item, ...fallback, patch: item.patch ?? fallback.patch } : item
+    })
+  })
   const nogit = createMemo(() => !!sync.project && sync.project.vcs !== "git")
   const changesOptions = createMemo<ChangeMode[]>(() => {
     const list: ChangeMode[] = []
@@ -620,7 +654,7 @@ export default function Page() {
     if (store.changes === "git" || store.changes === "branch")
       // avoids suspense
       return vcsQuery.isFetched ? (vcsQuery.data ?? []) : []
-    return turnDiffs()
+    return turnDiffsWithPatch()
   }
   const reviewCount = () => reviewDiffs().length
   const hasReview = () => reviewCount() > 0
