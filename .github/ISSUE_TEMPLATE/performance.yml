@@ -1,0 +1,76 @@
+name: Performance issue
+description: Report slow startup, high memory or CPU usage, slow inference, or responsiveness problems
+title: "[Performance]: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use this form for performance problems such as slow startup, high memory usage, high CPU usage, slow model responses, or UI/TUI lag. Concrete measurements make these issues much easier to diagnose.
+
+  - type: textarea
+    id: description
+    attributes:
+      label: Description
+      description: What performance problem did you observe?
+      placeholder: "Startup takes about 30 seconds before the prompt appears..."
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to reproduce
+      description: List the exact commands, project size, model/provider, and workflow needed to reproduce the issue.
+      placeholder: |
+        1. Run `mimo` in ...
+        2. Start a session with ...
+        3. Observe ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: measurements
+    attributes:
+      label: Measurements
+      description: Include before/after timings, memory or CPU numbers, profiler output, logs, screenshots, or traces.
+      placeholder: |
+        - Startup time:
+        - Peak memory:
+        - CPU usage:
+        - Profiling data:
+    validations:
+      required: false
+
+  - type: input
+    id: version
+    attributes:
+      label: MiMo Code version
+      description: Run `mimo --version` or include the installed package version.
+      placeholder: "0.1.1"
+    validations:
+      required: false
+
+  - type: input
+    id: os
+    attributes:
+      label: Operating system
+      placeholder: "Windows 11, macOS 15, Ubuntu 24.04, WSL2, etc."
+    validations:
+      required: false
+
+  - type: input
+    id: terminal
+    attributes:
+      label: Terminal or environment
+      placeholder: "Windows Terminal, PowerShell, iTerm2, VS Code terminal, Web UI, Desktop app, etc."
+    validations:
+      required: false
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Additional context
+      description: Add logs, screenshots, linked sessions, or other context that may explain the performance issue.
+    validations:
+      required: false

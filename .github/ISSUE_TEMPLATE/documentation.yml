@@ -1,0 +1,44 @@
+name: Documentation issue
+description: Report unclear, missing, or incorrect documentation
+title: "[Docs]: "
+labels: ["documentation"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for helping improve the MiMo Code documentation. Please include the exact page or section so we can verify and fix it quickly.
+
+  - type: input
+    id: page
+    attributes:
+      label: Page or section
+      description: Link to the page, heading, README section, or file path.
+      placeholder: "README.md#quick-start or README.zh.md"
+    validations:
+      required: true
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: What is wrong or missing?
+      description: Describe the typo, broken link, unclear wording, outdated content, or missing example.
+      placeholder: "The install instructions do not mention..."
+    validations:
+      required: true
+
+  - type: textarea
+    id: suggested-fix
+    attributes:
+      label: Suggested fix
+      description: If you know how the docs should change, describe it here.
+      placeholder: "Replace ... with ..."
+    validations:
+      required: false
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Additional context
+      description: Add screenshots, related issues, logs, or environment details if they help explain the documentation problem.
+    validations:
+      required: false

@@ -1,5 +1,14 @@
 blank_issues_enabled: false
 contact_links:
-  - name: 💬 Discord Community
-    url: https://discord.gg/opencode
-    about: For quick questions or real-time discussion. Note that issues are searchable and help others with the same question.
+  - name: Documentation
+    url: https://github.com/XiaomiMiMo/MiMo-Code#readme
+    about: Read the project overview, install instructions, and usage notes.
+  - name: Chinese documentation
+    url: https://github.com/XiaomiMiMo/MiMo-Code/blob/main/README.zh.md
+    about: Read the Chinese project overview, install instructions, and usage notes.
+  - name: GitHub Discussions
+    url: https://github.com/XiaomiMiMo/MiMo-Code/discussions
+    about: Ask support questions or discuss ideas that are not actionable bug reports.
+  - name: Report a security vulnerability
+    url: https://github.com/XiaomiMiMo/MiMo-Code/security/advisories/new
+    about: Privately disclose security issues instead of opening a public issue.

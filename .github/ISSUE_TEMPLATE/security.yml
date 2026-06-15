@@ -1,0 +1,22 @@
+name: Security vulnerability
+description: Read the security policy before reporting a vulnerability
+title: "[Security]: "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Please do not report security vulnerabilities as public GitHub issues.
+
+        Use GitHub Security Advisories instead:
+        https://github.com/XiaomiMiMo/MiMo-Code/security/advisories/new
+
+        Review the security policy before submitting:
+        https://github.com/XiaomiMiMo/MiMo-Code/blob/main/SECURITY.md
+
+  - type: checkboxes
+    id: acknowledgement
+    attributes:
+      label: Acknowledgement
+      options:
+        - label: I understand that security vulnerabilities should be reported privately through GitHub Security Advisories, not as public issues.
+          required: true
