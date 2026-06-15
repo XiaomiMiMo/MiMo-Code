@@ -142,5 +142,53 @@ if (!design) {
 }
 log("Designed " + design.tasks.length + " task(s) using " + designSkill)
 
+const TASKS_DIGEST = design.tasks.map((t, i) => (i + 1) + ". " + t.id + ": " + t.description + " — " + t.acceptance).join("\n")
+
+const runVerify = () => agent(
+  "Run the project's verification commands and report the outcome.\n\n" +
+  "## Steps\n" +
+  "1. Inspect AGENTS.md / CLAUDE.md / package.json for the project's verify commands (typecheck, test, build).\n" +
+  "2. Run them via the Bash tool, in the right directory (e.g. `packages/<x>/` not the repo root if AGENTS.md says so).\n" +
+  "3. Capture passed/failed test counts. Summarize failures concisely if any.\n\n" +
+  "Return structured output only.",
+  { label: "verify", phase: "Verify", schema: VERIFY_SHAPE }
+)
+
+const runImplement = (failuresOrEmpty) => agent(
+  "Apply the `compose:tdd` skill. Use the `skill` tool to load it before working.\n\n" +
+  "## Task\n" + TASK + "\n\n" +
+  "## Plan\n" + TASKS_DIGEST + "\n\n" +
+  (failuresOrEmpty ? "## Verify failures from previous attempt — focus on these\n" + failuresOrEmpty + "\n\n" : "") +
+  "Implement the plan. Write the failing test first, then the minimal code to pass, then refactor. " +
+  "Commit each task as you complete it.",
+  { label: "implement", phase: "Implement" }
+)
+
+const runDebug = (failures) => agent(
+  "Apply the `compose:debug` skill. Use the `skill` tool to load it before working.\n\n" +
+  "## Verify failures\n" + failures + "\n\n" +
+  "Identify the root cause and fix it. Do not paper over symptoms.",
+  { label: "debug", phase: "Implement" }
+)
+
+phase("Implement")
+const verifyHistory = []
+let verify = null
+let tddAttempts = 0
+for (let attempt = 0; attempt < MAX_TDD_ATTEMPTS; attempt++) {
+  tddAttempts = attempt + 1
+  await runImplement(attempt === 0 ? "" : (verify && verify.failures ? verify.failures : ""))
+  verify = await runVerify()
+  if (verify) verifyHistory.push(verify)
+  if (verify && verify.allPassed) {
+    log("Verify passed on attempt " + tddAttempts)
+    break
+  }
+  if (attempt + 1 === MAX_TDD_ATTEMPTS) {
+    return { error: "verify-exhausted", type, classification, design, verifyHistory, attempts: MAX_TDD_ATTEMPTS }
+  }
+  await runDebug(verify ? (verify.failures || "verify returned no detail") : "verify agent failed (null)")
+}
+
 // Placeholder return — replaced in subsequent tasks.
-return { type, classification, design, todo: "impl+review+merge" }
+return { type, classification, design, verifyHistory, todo: "review+merge" }
