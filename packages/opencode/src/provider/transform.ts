@@ -234,7 +234,7 @@ function normalizeMessages(
 // Determines whether a model's provider respects inline cache_control / cachePoint
 // markers. Pure name matching (model.api.id.includes("claude")) is fragile — a Claude
 // model behind an OpenAI-compatible proxy gets matched but markers are silently dropped.
-// See upstream opencode#26786.
+// See docs/cache-policy.md and upstream opencode#26786.
 function supportsCacheMarkers(model: Provider.Model): boolean {
   // Anthropic-only SDKs — always support inline markers
   if (model.api.npm === "@ai-sdk/anthropic" || model.api.npm === "@ai-sdk/google-vertex/anthropic") return true

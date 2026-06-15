@@ -109,6 +109,27 @@ describe("Project.fromDirectory", () => {
     expect(project.id).toBe(ProjectID.global)
   })
 
+  test("disables vcs when .git is anchored at $HOME", async () => {
+    await using tmp = await tmpdir()
+    await $`git init`.cwd(tmp.path).quiet()
+
+    const prevHome = process.env.HOME
+    const prevUserProfile = process.env.USERPROFILE
+    process.env.HOME = tmp.path
+    process.env.USERPROFILE = tmp.path
+    try {
+      const { project } = await run((svc) => svc.fromDirectory(tmp.path))
+      expect(project.vcs).toBeUndefined()
+      expect(project.id).toBe(ProjectID.global)
+      expect(project.worktree).toBe(tmp.path)
+    } finally {
+      if (prevHome === undefined) delete process.env.HOME
+      else process.env.HOME = prevHome
+      if (prevUserProfile === undefined) delete process.env.USERPROFILE
+      else process.env.USERPROFILE = prevUserProfile
+    }
+  })
+
   test("derives stable project ID from cached UUID", async () => {
     await using tmp = await tmpdir({ git: true })
     const { project: a } = await run((svc) => svc.fromDirectory(tmp.path))

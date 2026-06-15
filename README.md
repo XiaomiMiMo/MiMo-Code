@@ -4,7 +4,7 @@
   <img src="assets/readme/mimocode-banner.png" alt="MiMoCode" width="700">
 </p>
 
-<p align="center"><strong>An open-source AI coding agent with cross-session memory.</strong></p>
+<p align="center"><strong>MiMo Code: Where Models and Agents Co-Evolve</strong></p>
 
 <p align="center">
   <a href="README.zh.md">中文</a> | English
@@ -30,6 +30,9 @@ curl -fsSL https://mimo.xiaomi.com/install | bash
 
 # Or install via npm
 npm install -g @mimo-ai/cli
+
+# Run
+mimo
 ```
 
 The first launch guides you through configuration automatically. Supported options:
@@ -37,6 +40,15 @@ The first launch guides you through configuration automatically. Supported optio
 - **Xiaomi MiMo Platform** — OAuth login
 - **Import from Claude Code** — migrate existing authentication in one step
 - **Custom Provider** — add any OpenAI-compatible API in the TUI
+
+<details>
+<summary><strong>WSL: clipboard issues</strong></summary>
+
+If you encounter garbled text when copying on WSL, install `xsel`:
+```bash
+sudo apt install xsel
+```
+</details>
 
 ---
 
@@ -87,7 +99,32 @@ Compose mode provides a structured workflow for specs-driven development. It inc
 
 ### Voice Input
 
-Real-time streaming voice input powered by TenVAD and MiMo ASR. Activate with `/voice`, then speak — audio is segmented by pauses and transcribed incrementally into the input. Available for MiMo logged-in users.
+Real-time streaming voice input powered by TenVAD and MiMo ASR. Activate with `/voice`, then speak — audio is segmented by pauses and transcribed incrementally into the input. Available for MiMo logged-in users. Requires `sox` (`brew install sox` on macOS, other platforms similar).
+
+<details>
+<summary><strong>WSLg audio setup</strong></summary>
+
+```bash
+sudo apt install -y sox pulseaudio libasound2-plugins
+export PULSE_SERVER=unix:/mnt/wslg/PulseServer
+```
+</details>
+
+<details>
+<summary><strong>SSH remote audio (Mac → remote host)</strong></summary>
+
+```bash
+# Mac (local)
+brew install pulseaudio
+pulseaudio --load="module-native-protocol-tcp auth-ip-acl=127.0.0.1" --exit-idle-time=-1 --daemonize
+# Add to ~/.ssh/config: RemoteForward 4713 127.0.0.1:4713
+
+# Remote host
+apt install -y pulseaudio pulseaudio-utils sox
+export PULSE_SERVER=tcp:127.0.0.1:4713
+# Verify: pactl info
+```
+</details>
 
 ### Dream & Distill
 
@@ -122,7 +159,7 @@ bun turbo typecheck      # Type check
 
 ## Relationship to OpenCode
 
-MiMoCode is built as a fork of [OpenCode](https://github.com/anomalyco/opencode). It keeps all core OpenCode capabilities (multiple providers, TUI, LSP, MCP, plugins) and adds persistent memory, intelligent context management, subagent orchestration, goal-driven autonomous loops, compose workflows, and self-improvement via dream/distill.
+MiMoCode is built as a fork of [OpenCode](https://github.com/XiaomiMiMo/MiMo-Code). It keeps all core OpenCode capabilities (multiple providers, TUI, LSP, MCP, plugins) and adds persistent memory, intelligent context management, subagent orchestration, goal-driven autonomous loops, compose workflows, and self-improvement via dream/distill.
 
 ---
 
@@ -131,9 +168,7 @@ MiMoCode is built as a fork of [OpenCode](https://github.com/anomalyco/opencode)
 Scan the QR code to join the community group chat:
 
 <p align="center">
-  <img src="assets/readme/community-qrcode-1.jpg" alt="Community group chat QR code 1" width="240">
-  &nbsp;&nbsp;
-  <img src="assets/readme/community-qrcode-2.jpg" alt="Community group chat QR code 2" width="240">
+  <img src="assets/readme/community-qrcode.jpg" alt="Community group chat QR code" width="240">
 </p>
 
 ---

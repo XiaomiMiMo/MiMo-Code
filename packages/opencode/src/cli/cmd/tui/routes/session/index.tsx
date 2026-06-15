@@ -1340,6 +1340,10 @@ function AssistantMessage(props: { message: AssistantMessage; parts: Part[]; las
   const local = useLocal()
   const { theme } = useTheme()
   const sync = useSync()
+  const toast = useToast()
+  const renderer = useRenderer()
+  const t = useLanguage().t
+  const [copyHover, setCopyHover] = createSignal(false)
   const messages = createMemo(() => sync.data.message[props.message.sessionID]?.[props.message.agentID ?? "main"] ?? [])
   const model = createMemo(() => Model.name(ctx.providers(), props.message.providerID, props.message.modelID))
 
@@ -1356,6 +1360,19 @@ function AssistantMessage(props: { message: AssistantMessage; parts: Part[]; las
   })
 
   const keybind = useKeybind()
+
+  const handleCopy = () => {
+    if (renderer.getSelection()?.getSelectedText()) return
+    const text = props.parts
+      .filter((p) => p.type === "text")
+      .map((p) => (p as TextPart).text)
+      .join("\n")
+      .trim()
+    if (!text) return
+    Clipboard.copy(text)
+      .then(() => toast.show({ message: t("tui.toast.copied_to_clipboard"), variant: "success" }))
+      .catch(() => toast.show({ message: "Failed to copy to clipboard", variant: "error" }))
+  }
 
   // Goal judge verdict for this specific turn, if the stop-condition judge
   // evaluated it. Rendered as a foldable per-turn marker so the user can trace
@@ -1401,8 +1418,8 @@ function AssistantMessage(props: { message: AssistantMessage; parts: Part[]; las
       </Show>
       <Switch>
         <Match when={props.last || final() || props.message.error?.name === "MessageAbortedError"}>
-          <box paddingLeft={3}>
-            <text marginTop={1}>
+          <box paddingLeft={3} flexDirection="row" justifyContent="space-between" marginTop={1}>
+            <text>
               <span
                 style={{
                   fg:
@@ -1422,6 +1439,15 @@ function AssistantMessage(props: { message: AssistantMessage; parts: Part[]; las
                 <span style={{ fg: theme.textMuted }}> · interrupted</span>
               </Show>
             </text>
+            <Show when={props.message.time.completed}>
+              <box
+                onMouseOver={() => setCopyHover(true)}
+                onMouseOut={() => setCopyHover(false)}
+                onMouseUp={handleCopy}
+              >
+                <text fg={copyHover() ? theme.text : theme.textMuted}>⎘ copy</text>
+              </box>
+            </Show>
           </box>
         </Match>
       </Switch>
@@ -1877,6 +1903,14 @@ function InlineTool(props: {
       error()?.includes("user dismissed"),
   )
 
+  // Agent-recoverable failures (bad args, malformed call, unknown task/actor id)
+  // are flagged on the error state. Render them muted (struck through, no red
+  // block) like denials — the agent self-corrects; the user needn't be alarmed.
+  const recoverable = createMemo(() => {
+    const state = props.part.state
+    return state.status === "error" && state.metadata?.recoverable === true
+  })
+
   return (
     <box
       marginTop={margin()}
@@ -1915,14 +1949,14 @@ function InlineTool(props: {
           <Spinner color={fg()} children={props.children} />
         </Match>
         <Match when={true}>
-          <text paddingLeft={3} fg={fg()} attributes={denied() || props.dismissed ? TextAttributes.STRIKETHROUGH : undefined}>
+          <text paddingLeft={3} fg={fg()} attributes={denied() || recoverable() || props.dismissed ? TextAttributes.STRIKETHROUGH : undefined}>
             <Show fallback={<>~ {props.pending}</>} when={props.complete}>
               <span style={{ fg: props.iconColor }}>{props.icon}</span> {props.children}
             </Show>
           </text>
         </Match>
       </Switch>
-      <Show when={error() && !denied()}>
+      <Show when={error() && !denied() && !recoverable()}>
         <CollapsibleError error={error()!} paddingLeft={3} />
       </Show>
     </box>
@@ -2192,24 +2226,25 @@ function Task(props: ToolProps<typeof ActorTool>) {
   const route = useRoute()
   const sync = useSync()
 
-  // Spawn-shaped view: the Task display is meaningful only for run/spawn calls
-  // (the only actions that create a delegated child session). status/wait/cancel
-  // end up here with these fields undefined and the early returns below render empty.
-  const raw = props.input as Partial<{ operation: { description: string; subagent_type: string } } & {
-    description: string
-    subagent_type: string
-  }>
-  const input: Partial<{ description: string; subagent_type: string }> = raw?.operation ?? raw
-
-  const targetSession = props.metadata.sessionId
-  const targetBucket = (props.metadata.actorId as string | undefined) ?? "main"
-
-  onMount(() => {
-    if (targetSession && !sync.data.message[targetSession]?.[targetBucket]?.length)
-      void sync.session.sync(targetSession)
+  const input = createMemo(() => {
+    const raw = props.input as Partial<{ operation: { description: string; subagent_type: string } } & {
+      description: string
+      subagent_type: string
+    }>
+    return (raw?.operation ?? raw) as Partial<{ description: string; subagent_type: string }>
   })
 
-  const messages = createMemo(() => sync.data.message[targetSession ?? ""]?.[targetBucket] ?? [])
+  const targetSession = createMemo(() => props.metadata.sessionId as string | undefined)
+  const targetBucket = createMemo(() => (props.metadata.actorId as string | undefined) ?? "main")
+
+  createEffect(() => {
+    const session = targetSession()
+    const bucket = targetBucket()
+    if (session && !sync.data.message[session]?.[bucket]?.length)
+      void sync.session.sync(session)
+  })
+
+  const messages = createMemo(() => sync.data.message[targetSession() ?? ""]?.[targetBucket()] ?? [])
 
   const tools = createMemo(() => {
     return messages().flatMap((msg) =>
@@ -2233,8 +2268,8 @@ function Task(props: ToolProps<typeof ActorTool>) {
   })
 
   const content = createMemo(() => {
-    if (!input.description) return ""
-    let content = [`${Locale.titlecase(input.subagent_type ?? "General")} Task — ${input.description}`]
+    if (!input().description) return ""
+    let content = [`${Locale.titlecase(input().subagent_type ?? "General")} Task — ${input().description}`]
 
     if (isRunning() && tools().length > 0) {
       // content[0] += ` · ${tools().length} toolcalls`
@@ -2256,7 +2291,7 @@ function Task(props: ToolProps<typeof ActorTool>) {
     <InlineTool
       icon="│"
       spinner={isRunning()}
-      complete={input.description}
+      complete={input().description}
       pending="Delegating..."
       part={props.part}
       onClick={() => {

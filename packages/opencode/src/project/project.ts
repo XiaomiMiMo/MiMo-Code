@@ -1,5 +1,6 @@
 import z from "zod"
 import * as nodeFs from "fs/promises"
+import * as nodeOs from "os"
 import * as nodePath from "path"
 import { and, Database, eq } from "../storage"
 import { ProjectTable } from "./project.sql"
@@ -26,10 +27,17 @@ async function setupProjectIdEnvironment(workingDir: string): Promise<void> {
   const localFile = nodePath.join(workingDir, ".mimocode-project-id")
   const idFile = nodePath.join(mainGit, "mimocode-project-id")
 
-  if (await Bun.file(localFile).exists()) {
-    if (!(await Bun.file(idFile).exists())) {
-      const id = await Bun.file(localFile).text()
-      await Bun.write(idFile, id)
+  // 运行时无关:用 node fs(node engine 构建里没有 Bun 全局)
+  const exists = (p: string) =>
+    nodeFs
+      .access(p)
+      .then(() => true)
+      .catch(() => false)
+
+  if (await exists(localFile)) {
+    if (!(await exists(idFile))) {
+      const id = await nodeFs.readFile(localFile, "utf-8")
+      await nodeFs.writeFile(idFile, id)
     }
     await nodeFs.unlink(localFile).catch(() => {})
   }
@@ -37,9 +45,7 @@ async function setupProjectIdEnvironment(workingDir: string): Promise<void> {
   // Belt-and-suspenders: ensure .git/info/exclude lists .mimocode-project-id
   const excludeFile = nodePath.join(mainGit, "info", "exclude")
   await nodeFs.mkdir(nodePath.dirname(excludeFile), { recursive: true })
-  const existing = await Bun.file(excludeFile)
-    .text()
-    .catch(() => "")
+  const existing = await nodeFs.readFile(excludeFile, "utf-8").catch(() => "")
   if (!existing.includes(".mimocode-project-id")) {
     await nodeFs.appendFile(excludeFile, "\n.mimocode-project-id\n")
   }
@@ -215,7 +221,22 @@ export const layer: Layer.Layer<
           }
         }
 
-        let sandbox = pathSvc.dirname(dotgit)
+        // Refuse to anchor snapshots at the user's home directory or a filesystem root.
+        // Anchoring there makes git's pathspec walk cover the entire user tree on every
+        // turn, which has shipped as a bug for users opening mimocode in $HOME.
+        const candidate = pathSvc.dirname(dotgit)
+        const home = process.env.HOME ?? process.env.USERPROFILE ?? nodeOs.homedir()
+        if (candidate === home || nodePath.parse(candidate).root === candidate) {
+          log.warn("ignoring .git at home or filesystem root, snapshots disabled", { dotgit })
+          return {
+            id: ProjectID.global,
+            worktree: directory,
+            sandbox: directory,
+            vcs: fakeVcs,
+          }
+        }
+
+        let sandbox = candidate
         const gitBinary = yield* Effect.sync(() => which("git"))
         let id: ProjectID | undefined
 

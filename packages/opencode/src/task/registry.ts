@@ -6,8 +6,15 @@ import type { SessionID } from "../session/schema"
 import { TaskTable, TaskEventTable } from "./task.sql"
 import type { Task, TaskEvent } from "./schema"
 import { Created as TaskCreated, Updated as TaskUpdated, type UpdatedKind } from "./events"
+import { RecoverableError } from "@/tool/recoverable"
 
 const DAY_MS = 24 * 60 * 60 * 1000
+
+// Shared recovery message for every mutate-by-id miss, so the agent learns one
+// pattern. Wrapped in RecoverableError at each call site so the TUI mutes it
+// (agent-recoverable) while the guidance still reaches the model.
+const notFoundMessage = (id: string) =>
+  `Task ${id} not found. Use \`task list\` to see valid task IDs, or \`task create\` to add one.`
 
 type TaskRow = typeof TaskTable.$inferSelect
 type TaskEventRow = typeof TaskEventTable.$inferSelect
@@ -227,7 +234,7 @@ export const layer: Layer.Layer<Service, never, Bus.Service | Config.Service> = 
       )
       insertEvent(input.session_id, input.id, "blocked", input.event_summary, now)
       const updated = yield* get({ session_id: input.session_id, id: input.id })
-      if (!updated) return yield* Effect.die(`Task ${input.id} not found in session ${input.session_id}`)
+      if (!updated) return yield* Effect.die(new RecoverableError(notFoundMessage(input.id)))
       publishUpdated(updated, "blocked")
       return updated
     })
@@ -247,7 +254,7 @@ export const layer: Layer.Layer<Service, never, Bus.Service | Config.Service> = 
       )
       insertEvent(input.session_id, input.id, "unblocked", input.event_summary, now)
       const updated = yield* get({ session_id: input.session_id, id: input.id })
-      if (!updated) return yield* Effect.die(`Task ${input.id} not found in session ${input.session_id}`)
+      if (!updated) return yield* Effect.die(new RecoverableError(notFoundMessage(input.id)))
       publishUpdated(updated, "unblocked")
       return updated
     })
@@ -260,7 +267,7 @@ export const layer: Layer.Layer<Service, never, Bus.Service | Config.Service> = 
     }) {
       const now = Date.now()
       const existing = yield* get({ session_id: input.session_id, id: input.id })
-      if (!existing) return yield* Effect.die(`Task ${input.id} not found in session ${input.session_id}`)
+      if (!existing) return yield* Effect.die(new RecoverableError(notFoundMessage(input.id)))
 
       // Terminal states are final. Auto-start makes start() a structural side-effect of
       // every actor spawn, so a stale/reused task_id (ReAct re-entry, verification rerun,
@@ -290,7 +297,7 @@ export const layer: Layer.Layer<Service, never, Bus.Service | Config.Service> = 
       )
       insertEvent(input.session_id, input.id, "started", input.event_summary, now)
       const updated = yield* get({ session_id: input.session_id, id: input.id })
-      if (!updated) return yield* Effect.die(`Task ${input.id} not found in session ${input.session_id}`)
+      if (!updated) return yield* Effect.die(new RecoverableError(notFoundMessage(input.id)))
       publishUpdated(updated, "started")
       return updated
     })
@@ -316,7 +323,7 @@ export const layer: Layer.Layer<Service, never, Bus.Service | Config.Service> = 
       )
       insertEvent(input.session_id, input.id, "done", input.event_summary, now)
       const updated = yield* get({ session_id: input.session_id, id: input.id })
-      if (!updated) return yield* Effect.die(`Task ${input.id} not found in session ${input.session_id}`)
+      if (!updated) return yield* Effect.die(new RecoverableError(notFoundMessage(input.id)))
       publishUpdated(updated, "done")
       return updated
     })
@@ -342,7 +349,7 @@ export const layer: Layer.Layer<Service, never, Bus.Service | Config.Service> = 
       )
       insertEvent(input.session_id, input.id, "abandoned", input.event_summary, now)
       const updated = yield* get({ session_id: input.session_id, id: input.id })
-      if (!updated) return yield* Effect.die(`Task ${input.id} not found in session ${input.session_id}`)
+      if (!updated) return yield* Effect.die(new RecoverableError(notFoundMessage(input.id)))
       publishUpdated(updated, "abandoned")
       return updated
     })
@@ -362,7 +369,7 @@ export const layer: Layer.Layer<Service, never, Bus.Service | Config.Service> = 
       )
       insertEvent(input.session_id, input.id, "renamed", input.summary, now)
       const updated = yield* get({ session_id: input.session_id, id: input.id })
-      if (!updated) return yield* Effect.die(`Task ${input.id} not found in session ${input.session_id}`)
+      if (!updated) return yield* Effect.die(new RecoverableError(notFoundMessage(input.id)))
       publishUpdated(updated, "renamed")
       return updated
     })

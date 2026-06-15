@@ -70,6 +70,8 @@ evaluate every sibling, which defeats tree-shaking and slows module load.
 
 Use these rules when writing or migrating Effect code.
 
+See `specs/effect/migration.md` for the compact pattern reference and examples.
+
 ## Core
 
 - Use `Effect.gen(function* () { ... })` for composition.
@@ -116,7 +118,7 @@ Use these rules when writing or migrating Effect code.
 
 ## Effect.cached for deduplication
 
-Use `Effect.cached` when multiple concurrent callers should share a single in-flight computation rather than storing `Fiber | undefined` or `Promise | undefined` manually.
+Use `Effect.cached` when multiple concurrent callers should share a single in-flight computation rather than storing `Fiber | undefined` or `Promise | undefined` manually. See `specs/effect/migration.md` for the full pattern.
 
 ## Instance.bind — ALS for native callbacks
 

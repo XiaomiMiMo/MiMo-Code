@@ -16,6 +16,8 @@ import { win32DisableProcessedInput, win32InstallCtrlCGuard } from "./win32"
 import { writeHeapSnapshot } from "v8"
 import { TuiConfig } from "./config/tui"
 import { MIMOCODE_PROCESS_ROLE, MIMOCODE_RUN_ID, ensureRunID, sanitizedProcessEnv } from "@/util/mimo-process"
+import { checkTrust, markTrusted } from "@/project/workspace-trust"
+import { t } from "@/cli/i18n"
 
 declare global {
   const OPENCODE_WORKER_PATH: string
@@ -65,6 +67,63 @@ async function input(value?: string) {
   return piped + "\n" + value
 }
 
+async function promptWorkspaceTrust(directory: string, level: "untrusted" | "dangerous"): Promise<boolean> {
+  const prompts = await import("@clack/prompts")
+  const { EOL } = await import("os")
+
+  if (level === "dangerous") {
+    const isRoot = path.parse(directory).root === directory
+    const title = t(isRoot ? "trust.dangerous.title_root" : "trust.dangerous.title_home")
+    const body = t(isRoot ? "trust.dangerous.body_root" : "trust.dangerous.body_home")
+    const advice = t(isRoot ? "trust.dangerous.advice_root" : "trust.dangerous.advice_home")
+    prompts.log.warning(
+      [
+        UI.Style.TEXT_WARNING_BOLD + title + UI.Style.TEXT_NORMAL,
+        "",
+        directory,
+        "",
+        body,
+        "",
+        UI.Style.TEXT_DANGER + t("trust.plugin_warn") + UI.Style.TEXT_NORMAL,
+        "",
+        advice,
+      ].join(EOL),
+    )
+    const result = await prompts.select({
+      message: "",
+      options: [
+        { label: t("trust.dangerous.option.no"), value: false },
+        { label: t("trust.dangerous.option.yes"), value: true },
+      ],
+    })
+    if (prompts.isCancel(result)) return false
+    return result
+  }
+
+  prompts.log.info(
+    [
+      UI.Style.TEXT_HIGHLIGHT_BOLD + t("trust.title") + UI.Style.TEXT_NORMAL,
+      "",
+      directory,
+      "",
+      t("trust.safety_check"),
+      "",
+      t("trust.capabilities"),
+      "",
+      UI.Style.TEXT_DANGER + t("trust.plugin_warn") + UI.Style.TEXT_NORMAL,
+    ].join(EOL),
+  )
+  const result = await prompts.select({
+    message: "",
+    options: [
+      { label: t("trust.option.yes"), value: true },
+      { label: t("trust.option.no"), value: false },
+    ],
+  })
+  if (prompts.isCancel(result)) return false
+  return result
+}
+
 export const TuiThreadCommand = cmd({
   command: "$0 [project]",
   describe: "start mimocode tui",
@@ -101,10 +160,15 @@ export const TuiThreadCommand = cmd({
         type: "string",
         describe: "agent to use",
       })
-      .option("never-ask-questions", {
+      .option("never-ask", {
         type: "boolean",
         describe:
-          "start in never-ask mode — never prompt you; pick the best option autonomously (toggle at runtime with /never-ask-questions)",
+          "start in never-ask mode — auto-decide without asking (permissions excluded), toggle at runtime with /never-ask",
+        default: false,
+      })
+      .option("trust", {
+        type: "boolean",
+        describe: "skip workspace trust prompt and trust the directory",
         default: false,
       }),
   handler: async (args) => {
@@ -136,6 +200,19 @@ export const TuiThreadCommand = cmd({
         return
       }
       const cwd = Filesystem.resolve(process.cwd())
+
+      if (!args.trust) {
+        const trustLevel = await checkTrust(cwd)
+        if (trustLevel !== "trusted") {
+          const accepted = await promptWorkspaceTrust(cwd, trustLevel)
+          if (!accepted) {
+            process.exit(0)
+            return
+          }
+          if (trustLevel === "untrusted") await markTrusted(cwd)
+        }
+      }
+
       const env = sanitizedProcessEnv({
         [MIMOCODE_PROCESS_ROLE]: "worker",
         [MIMOCODE_RUN_ID]: ensureRunID(),
@@ -231,7 +308,7 @@ export const TuiThreadCommand = cmd({
             model: args.model,
             prompt,
             fork: args.fork,
-            neverAsk: args["never-ask-questions"],
+            neverAsk: args["never-ask"],
           },
         })
       } finally {

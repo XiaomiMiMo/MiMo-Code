@@ -29,6 +29,15 @@ import { Plugin } from "../plugin"
 import BUILD_SWITCH from "../session/prompt/build-switch.txt"
 import MAX_STEPS from "../session/prompt/max-steps.txt"
 import PROMPT_COMPOSE from "../session/prompt/compose.txt"
+import {
+  RECOVERY_PROMPT_MILD,
+  RECOVERY_PROMPT_STRONG,
+  TEXT_LOOP_BUFFER_SIZE,
+  TEXT_LOOP_TRIGGER_COUNT,
+  TEXT_LOOP_MAX_RECOVERY,
+  normalizeForLoopDetection,
+  detectTextLoop,
+} from "../session/prompt/text-loop-recovery"
 import { composeSkillsBlock } from "@/skill/compose/extract"
 import { ToolRegistry } from "../tool"
 import { MCP } from "../mcp"
@@ -165,6 +174,10 @@ const OUTPUT_LENGTH_CONTINUATION_LIMIT = Flag.MIMOCODE_OUTPUT_LENGTH_CONTINUATIO
 const INVALID_OUTPUT_CONTINUATION_LIMIT = Flag.MIMOCODE_INVALID_OUTPUT_CONTINUATION_LIMIT
 
 const log = Log.create({ service: "session.prompt" })
+
+function isExtensionPath(filePath: string): boolean {
+  return /\/\.mimocode\/(tools?|skills?|hooks?)\//.test(filePath)
+}
 const elog = EffectLogger.create({ service: "session.prompt" })
 
 export interface Interface {
@@ -671,12 +684,32 @@ NOTE: At any point in time through this workflow you should feel free to ask the
                   yield* input.processor.completeToolCall(options.toolCallId, output)
                   return output
                 }
+                const beforeOutput: { args: any; cancel?: boolean; cancelReason?: string } = { args }
                 yield* plugin.trigger(
                   "tool.execute.before",
                   { tool: item.id, sessionID: ctx.sessionID, callID: ctx.callID },
-                  { args },
+                  beforeOutput,
                 )
-                const result = yield* item.execute(args, ctx)
+                if (beforeOutput.cancel) {
+                  const cancelOutput = {
+                    title: "Cancelled",
+                    output: beforeOutput.cancelReason || "Tool call cancelled by hook",
+                    metadata: { cancelled: true },
+                  }
+                  yield* bus
+                    .publish(Metrics.ToolCall, {
+                      sessionID: ctx.sessionID,
+                      tool_name: item.id,
+                      input_bytes: Metrics.jsonByteLength(beforeOutput.args),
+                      output_bytes: 0,
+                      tool_call_id: options.toolCallId,
+                      tool_call_status: "cancelled",
+                    })
+                    .pipe(Effect.ignore)
+                  yield* input.processor.completeToolCall(options.toolCallId, cancelOutput)
+                  return cancelOutput
+                }
+                const result = yield* item.execute(beforeOutput.args, ctx)
                 log.debug("tool execute done", {
                   tool: item.id,
                   callID,
@@ -694,14 +727,21 @@ NOTE: At any point in time through this workflow you should feel free to ask the
                 }
                 yield* plugin.trigger(
                   "tool.execute.after",
-                  { tool: item.id, sessionID: ctx.sessionID, callID: ctx.callID, args },
+                  { tool: item.id, sessionID: ctx.sessionID, callID: ctx.callID, args: beforeOutput.args },
                   output,
                 )
+                if (
+                  (item.id === "write" || item.id === "edit") &&
+                  beforeOutput.args?.filePath &&
+                  isExtensionPath(beforeOutput.args.filePath)
+                ) {
+                  yield* registry.reload().pipe(Effect.tapError((err) => Effect.sync(() => log.warn("extension reload failed", { error: err }))), Effect.ignore)
+                }
                 yield* bus
                   .publish(Metrics.ToolCall, {
                     sessionID: ctx.sessionID,
                     tool_name: item.id,
-                    input_bytes: Metrics.jsonByteLength(args),
+                    input_bytes: Metrics.jsonByteLength(beforeOutput.args),
                     output_bytes: Buffer.byteLength(output.output ?? "", "utf8"),
                     tool_call_id: options.toolCallId,
                     tool_call_status: "success",
@@ -752,14 +792,31 @@ NOTE: At any point in time through this workflow you should feel free to ask the
                 yield* input.processor.completeToolCall(opts.toolCallId, output)
                 return output
               }
+              const mcpBeforeOutput: { args: any; cancel?: boolean; cancelReason?: string } = { args }
               yield* plugin.trigger(
                 "tool.execute.before",
                 { tool: key, sessionID: ctx.sessionID, callID: opts.toolCallId },
-                { args },
+                mcpBeforeOutput,
               )
+              if (mcpBeforeOutput.cancel) {
+                const cancelResult = {
+                  content: [{ type: "text" as const, text: mcpBeforeOutput.cancelReason || "Tool call cancelled by hook" }],
+                }
+                yield* bus
+                  .publish(Metrics.ToolCall, {
+                    sessionID: ctx.sessionID,
+                    tool_name: key,
+                    input_bytes: Metrics.jsonByteLength(mcpBeforeOutput.args),
+                    output_bytes: 0,
+                    tool_call_id: opts.toolCallId,
+                    tool_call_status: "cancelled",
+                  })
+                  .pipe(Effect.ignore)
+                return cancelResult
+              }
               yield* ctx.ask({ permission: key, metadata: {}, patterns: ["*"], always: ["*"] })
               const result: Awaited<ReturnType<NonNullable<typeof execute>>> = yield* Effect.promise(() =>
-                execute(args, opts),
+                execute(mcpBeforeOutput.args, opts),
               )
               log.debug("tool execute done (mcp)", {
                 tool: key,
@@ -1735,6 +1792,9 @@ NOTE: At any point in time through this workflow you should feel free to ask the
         // its new assistant message will carry accurate tokens for the next check.
         let skipOverflowCheck = false
 
+        const textLoopBuffer: string[] = []
+        let textLoopRecoveryAttempts = 0
+
         // Contract (T05): on finish="length", inject a continuation nudge ONLY for
         // plain text. If any non-providerExecuted client tool part exists we bail
         // (return false) and let classify route the normal tool-observation re-loop.
@@ -2303,7 +2363,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
             const compactionPart = lastUserMsgForCompaction.parts.find(
               (p): p is MessageV2.CompactionPart => p.type === "compaction",
             )
-            const allMsgs = yield* sessions.messages({ sessionID })
+            const allMsgs = yield* sessions.messages({ sessionID, agentID: lastUser.agentID ?? "main" })
             const result = yield* compaction.process({
               parentID: lastUser.id,
               messages: allMsgs,
@@ -2923,6 +2983,67 @@ NOTE: At any point in time through this workflow you should feel free to ask the
             }
             return "continue" as const
           }).pipe(Effect.ensuring(instruction.clear(handle.message.id)))
+
+          // --- Text Loop Detection (cross-step) ---
+          const completedParts = MessageV2.parts(handle.message.id)
+          const stepText = completedParts
+            .filter((p): p is MessageV2.TextPart => p.type === "text" && !p.synthetic)
+            .map((p) => p.text)
+            .join(" ")
+          if (stepText.trim()) {
+            // Include tool call signatures in the key so same text + different tools ≠ loop
+            const toolSig = completedParts
+              .filter((p): p is MessageV2.ToolPart => p.type === "tool")
+              .map((p) => `${p.tool}:${JSON.stringify(p.state && "input" in p.state ? p.state.input : "")}`)
+              .join("|")
+            const normalized = normalizeForLoopDetection(stepText) + (toolSig ? `\0${toolSig}` : "")
+            textLoopBuffer.push(normalized)
+            if (textLoopBuffer.length > TEXT_LOOP_BUFFER_SIZE) textLoopBuffer.shift()
+
+            if (textLoopBuffer.length >= TEXT_LOOP_TRIGGER_COUNT) {
+              const isTextLoop = detectTextLoop(textLoopBuffer, TEXT_LOOP_TRIGGER_COUNT)
+
+              if (isTextLoop) {
+                if (textLoopRecoveryAttempts >= TEXT_LOOP_MAX_RECOVERY) {
+                  yield* slog.info("text loop: max recovery exceeded, terminating")
+                  yield* bus.publish(Session.Event.Error, {
+                    sessionID,
+                    error: new NamedError.Unknown({
+                      message: `Text loop detected: model repeated the same output ${TEXT_LOOP_TRIGGER_COUNT} times after ${TEXT_LOOP_MAX_RECOVERY} recovery attempts. Session terminated.`,
+                    }).toObject(),
+                  })
+                  break
+                }
+                const recoveryText =
+                  textLoopRecoveryAttempts === 0 ? RECOVERY_PROMPT_MILD : RECOVERY_PROMPT_STRONG
+                // Create a NEW user message at the end of conversation (not append to original)
+                const reentry = yield* sessions.updateMessage({
+                  id: MessageID.ascending(),
+                  role: "user" as const,
+                  sessionID,
+                  agentID: lastUser.agentID,
+                  agent: lastUser.agent,
+                  model: lastUser.model,
+                  tools: lastUser.tools,
+                  format: lastUser.format,
+                  time: { created: Date.now() },
+                })
+                yield* sessions.updatePart({
+                  id: PartID.ascending(),
+                  messageID: reentry.id,
+                  sessionID,
+                  type: "text",
+                  synthetic: true,
+                  text: recoveryText,
+                } satisfies MessageV2.TextPart)
+                textLoopRecoveryAttempts++
+                textLoopBuffer.length = 0
+                yield* slog.info("text loop: recovery injected", { attempt: textLoopRecoveryAttempts })
+                continue
+              }
+            }
+          }
+
           if (outcome === "break") {
             if (yield* taskGate(lastUser)) continue
             if (yield* goalGate(lastUser)) continue

@@ -642,6 +642,41 @@ it.live("failed subtask preserves metadata on error tool state", () =>
   ),
 )
 
+it.live("recoverable tool failure flags the error tool state for muted display", () =>
+  provideTmpdirServer(
+    Effect.fnUntraced(function* ({ llm }) {
+      const prompt = yield* SessionPrompt.Service
+      const sessions = yield* Session.Service
+      const session = yield* sessions.create({
+        title: "Recoverable",
+        permission: [{ permission: "*", pattern: "*", action: "allow" }],
+      })
+
+      // `task start` on a nonexistent id is valid args that fail at execution
+      // with a RecoverableError. This drives failToolCall, which must flag the
+      // error part recoverable so the TUI mutes it instead of showing a red block.
+      yield* llm.tool("task", { operation: { action: "start", id: "T99" } })
+      yield* llm.text("done")
+      yield* user(session.id, "start task T99")
+
+      const result = yield* prompt.loop({ sessionID: session.id })
+      expect(result.info.role).toBe("assistant")
+
+      const tool = (yield* MessageV2.filterCompactedEffect(session.id))
+        .flatMap((msg) => msg.parts)
+        .find(
+          (part): part is ErrorToolPart =>
+            part.type === "tool" && part.tool === "task" && part.state.status === "error",
+        )
+      expect(tool).toBeDefined()
+      if (!tool) return
+      expect(tool.state.metadata?.recoverable).toBe(true)
+      expect(tool.state.error).toContain("task list")
+    }),
+    { git: true, config: providerCfg },
+  ),
+)
+
 it.live(
   "running subtask preserves metadata after tool-call transition",
   () =>

@@ -4,6 +4,7 @@ import type { MessageV2 } from "../session/message-v2"
 import type { Permission } from "../permission"
 import type { SessionID, MessageID } from "../session/schema"
 import * as Truncate from "./truncate"
+import { RecoverableError } from "./recoverable"
 import { Agent } from "@/agent/agent"
 
 export interface Metadata {
@@ -76,6 +77,18 @@ export type InferDef<T> =
       ? Def<P, M>
       : never
 
+// Builds the agent-facing message for an argument-validation failure. zod v4's
+// prettifyError gives a precise, path-annotated breakdown (which field, what was
+// expected vs received) — far more actionable than dumping the raw issue JSON —
+// so we surface that directly for ZodErrors and keep a generic fallback for
+// anything else.
+export function validationErrorMessage(id: string, error: unknown): string {
+  if (error instanceof z.ZodError) {
+    return `Invalid arguments for the ${id} tool:\n${z.prettifyError(error)}`
+  }
+  return `The ${id} tool was called with invalid arguments: ${error}.\nPlease rewrite the input so it satisfies the expected schema.`
+}
+
 function wrap<Parameters extends z.ZodType, Result extends Metadata>(
   id: string,
   init: Init<Parameters, Result>,
@@ -97,13 +110,13 @@ function wrap<Parameters extends z.ZodType, Result extends Metadata>(
           yield* Effect.try({
             try: () => toolInfo.parameters.parse(args),
             catch: (error) => {
+              // Bad arguments are always agent-recoverable: the model sees the
+              // message and rewrites the call next turn. Mark it so the TUI
+              // renders it muted instead of alarming the user with a red block.
               if (error instanceof z.ZodError && toolInfo.formatValidationError) {
-                return new Error(toolInfo.formatValidationError(error), { cause: error })
+                return new RecoverableError(toolInfo.formatValidationError(error), { cause: error })
               }
-              return new Error(
-                `The ${id} tool was called with invalid arguments: ${error}.\nPlease rewrite the input so it satisfies the expected schema.`,
-                { cause: error },
-              )
+              return new RecoverableError(validationErrorMessage(id, error), { cause: error })
             },
           })
           const result = yield* execute(args, ctx)

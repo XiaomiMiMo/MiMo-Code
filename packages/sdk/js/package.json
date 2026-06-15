@@ -1,9 +1,21 @@
 {
   "$schema": "https://json.schemastore.org/package.json",
   "name": "@mimo-ai/sdk",
-  "version": "1.14.19",
+  "version": "0.1.1",
+  "description": "TypeScript SDK for the MiMoCode API",
+  "keywords": ["mimo", "mimocode", "ai", "sdk", "coding-assistant"],
   "type": "module",
   "license": "MIT",
+  "author": "Xiaomi MiMo Team",
+  "homepage": "https://mimo.xiaomi.com/en/mimocode",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/XiaomiMiMo/MiMo-Code.git",
+    "directory": "packages/sdk/js"
+  },
+  "bugs": {
+    "url": "https://github.com/XiaomiMiMo/MiMo-Code/issues"
+  },
   "publishConfig": {
     "access": "public"
   },

@@ -1,16 +1,17 @@
 import path from "path"
 import { existsSync } from "fs"
+import { readFile } from "fs/promises"
 import { Slug } from "@mimo-ai/shared/util/slug"
 import { Glob } from "@mimo-ai/shared/util/glob"
 import { Global } from "../global"
 import { Log, Filesystem } from "../util"
-import { Database, eq, inArray } from "../storage"
+import { Database, eq, and, inArray } from "../storage"
 import { ProjectTable } from "../project/project.sql"
 import { ProjectID } from "../project/schema"
 import { resolveMainGitDir, resolveProjectId } from "../project/project-id"
 import { ProviderID, ModelID } from "../provider/schema"
 import { SessionTable, MessageTable, PartTable } from "./session.sql"
-import { ClaudeImportTable } from "./claude-import.sql"
+import { ExternalImportTable } from "./external-import.sql"
 import { SessionID, MessageID, PartID } from "./schema"
 import { MessageV2 } from "./message-v2"
 
@@ -245,7 +246,7 @@ export async function run(opts?: { force?: boolean }) {
       }
       const mtime = Math.floor(Number(st.mtimeMs))
       let existing = Database.use((db) =>
-        db.select().from(ClaudeImportTable).where(eq(ClaudeImportTable.source_uuid, sourceUuid)).get(),
+        db.select().from(ExternalImportTable).where(and(eq(ExternalImportTable.source, "cc"), eq(ExternalImportTable.source_key, sourceUuid))).get(),
       )
       if (existing && existing.source_mtime === mtime && !opts?.force) {
         stats.skipped++
@@ -263,7 +264,7 @@ export async function run(opts?: { force?: boolean }) {
           db.select({ updated: SessionTable.time_updated }).from(SessionTable).where(eq(SessionTable.id, prior.session_id)).get(),
         )
         if (!sess) {
-          Database.use((db) => db.delete(ClaudeImportTable).where(eq(ClaudeImportTable.source_uuid, prior.source_uuid)).run())
+          Database.use((db) => db.delete(ExternalImportTable).where(and(eq(ExternalImportTable.source, "cc"), eq(ExternalImportTable.source_key, prior.source_key))).run())
           existing = undefined
         } else {
           existingUpdated = sess.updated
@@ -271,7 +272,7 @@ export async function run(opts?: { force?: boolean }) {
       }
 
       const sessionId = existing ? existing.session_id : SessionID.descending()
-      const parsed = parse(await Bun.file(file).text(), sessionId)
+      const parsed = parse(await readFile(file, "utf-8"), sessionId)
       if (!parsed || parsed.messages.length === 0) {
         stats.skipped++
         continue
@@ -348,9 +349,10 @@ export async function run(opts?: { force?: boolean }) {
           }
         }
 
-        tx.insert(ClaudeImportTable)
+        tx.insert(ExternalImportTable)
           .values({
-            source_uuid: sourceUuid,
+            source: "cc",
+            source_key: sourceUuid,
             session_id: sessionId,
             source_path: file,
             source_mtime: mtime,
@@ -358,7 +360,7 @@ export async function run(opts?: { force?: boolean }) {
             message_ids: messageIds,
           })
           .onConflictDoUpdate({
-            target: ClaudeImportTable.source_uuid,
+            target: [ExternalImportTable.source, ExternalImportTable.source_key],
             set: { session_id: sessionId, source_path: file, source_mtime: mtime, time_imported: now, message_ids: messageIds },
           })
           .run()

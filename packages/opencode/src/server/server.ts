@@ -36,10 +36,10 @@ export const Default = lazy(() => create({}))
 function create(opts: { cors?: string[] }) {
   const app = new Hono()
     .onError(ErrorMiddleware)
-    .use(AuthMiddleware)
-    .use(LoggerMiddleware)
-    .use(CompressionMiddleware)
     .use(CorsMiddleware(opts))
+    .use(LoggerMiddleware)
+    .use(AuthMiddleware)
+    .use(CompressionMiddleware)
     .route("/global", GlobalRoutes())
 
   const runtime = adapter.create(app)

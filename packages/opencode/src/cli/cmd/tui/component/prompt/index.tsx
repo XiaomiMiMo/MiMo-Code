@@ -43,6 +43,7 @@ import { useTextareaKeybindings } from "../textarea-keybindings"
 import { DialogSkill } from "../dialog-skill"
 import { DialogWorkspaceCreate, restoreWorkspaceSession } from "../dialog-workspace-create"
 import { DialogWorkspaceUnavailable } from "../dialog-workspace-unavailable"
+import { DialogAgreement, FREE_AGREEMENT_KEY, FREE_MODEL_IDS } from "../dialog-agreement"
 import { useArgs } from "@tui/context/args"
 
 export type PromptProps = {
@@ -292,7 +293,8 @@ export function Prompt(props: PromptProps) {
               }
             } finally {
               av.pending--
-              if (activeVoice === av) av.setState("listening")
+              if (activeVoice === av && voiceState() !== "speaking")
+                av.setState(av.pending > 0 ? "processing" : "listening")
               if (!activeVoice && av.pending <= 0) av.setState("idle")
             }
           }).catch(() => {})
@@ -312,11 +314,13 @@ export function Prompt(props: PromptProps) {
               av.showError(t("tui.voice.error.network"))
             }
             av.pending--
-            if (activeVoice === av) av.setState("listening")
+            if (activeVoice === av && voiceState() !== "speaking")
+              av.setState(av.pending > 0 ? "processing" : "listening")
             if (!activeVoice && av.pending <= 0) av.setState("idle")
           }).catch(() => {
             av.pending--
-            if (activeVoice === av) av.setState("listening")
+            if (activeVoice === av && voiceState() !== "speaking")
+              av.setState(av.pending > 0 ? "processing" : "listening")
             if (!activeVoice && av.pending <= 0) av.setState("idle")
           })
         }
@@ -690,6 +694,23 @@ export function Prompt(props: PromptProps) {
         },
       },
       {
+        title: t("tui.command.consent.revoke.title"),
+        value: "consent.revoke",
+        category: "prompt",
+        slash: {
+          name: "revoke-consent",
+        },
+        onSelect: (dialog) => {
+          kv.delete(FREE_AGREEMENT_KEY)
+          dialog.clear()
+          toast.show({
+            message: t("tui.consent.revoked"),
+            variant: "info",
+            duration: 3000,
+          })
+        },
+      },
+      {
         title: voiceEnabled() ? t("tui.command.voice.toggle.title_on") : t("tui.command.voice.toggle.title_off"),
         value: "voice.toggle",
         category: "prompt",
@@ -959,7 +980,13 @@ export function Prompt(props: PromptProps) {
     },
   ])
 
+  // While the free-model agreement dialog is open, ignore any further submit()
+  // calls. Enter triggers submit twice (the input_submit keybind plus the
+  // textarea's deferred onSubmit), and without this guard the deferred call can
+  // interleave with the post-accept re-submit and drop the user's message.
+  let agreementPending = false
   async function submit() {
+    if (agreementPending) return false
     setGhost("")
     // IME: double-defer may fire before onContentChange flushes the last
     // composed character (e.g. Korean hangul) to the store, so read
@@ -981,6 +1008,25 @@ export function Prompt(props: PromptProps) {
     const selectedModel = local.model.current()
     if (!selectedModel) {
       void promptModelWarning()
+      return false
+    }
+
+    // Free models require a one-time acknowledgment of the terms and privacy
+    // policy. Gate submission until the user accepts; the flag is stored in KV.
+    const isFreeModel = FREE_MODEL_IDS.has(selectedModel.modelID)
+    if (isFreeModel && !kv.get(FREE_AGREEMENT_KEY)) {
+      agreementPending = true
+      DialogAgreement.show(dialog, {
+        onConfirm: () => {
+          kv.set(FREE_AGREEMENT_KEY, true)
+          void submit()
+        },
+        // Fires on any dismissal (confirm, cancel, esc, click-outside). Reset
+        // the guard here so submission is unblocked once the dialog is gone.
+        onClose: () => {
+          agreementPending = false
+        },
+      })
       return false
     }
 

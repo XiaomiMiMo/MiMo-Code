@@ -1,3 +1,4 @@
+// TEMPORARILY DISABLED: not registered in src/index.ts
 import { Server } from "../../server/server"
 import { UI } from "../ui"
 import { cmd } from "./cmd"

@@ -501,11 +501,11 @@ export const Terminal = (props: TerminalProps) => {
           }
           if (disposed) return
           tries += 1
-          open()
+          void open()
         }, ms)
       }
 
-      const open = () => {
+      const open = async () => {
         if (disposed) return
         drop?.()
 
@@ -513,11 +513,34 @@ export const Terminal = (props: TerminalProps) => {
         next.searchParams.set("directory", directory)
         next.searchParams.set("cursor", String(seek))
         next.protocol = next.protocol === "https:" ? "wss:" : "ws:"
-        if (!sameOrigin && password) {
-          next.searchParams.set("auth_token", btoa(`${username}:${password}`))
-          // For same-origin requests, let the browser reuse the page's existing auth.
-          next.username = username
-          next.password = password
+
+        if (password) {
+          // Acquire a one-time ticket so credentials don't leak in the WebSocket URL.
+          try {
+            const tokenUrl = new URL(url + `/pty/${id}/connect-token`)
+            const headers: Record<string, string> = {
+              "x-mimocode-ticket": "1",
+              Authorization: `Basic ${btoa(`${username}:${password}`)}`,
+            }
+            const res = await fetch(tokenUrl, { method: "POST", headers })
+            if (res.ok) {
+              const { ticket } = (await res.json()) as { ticket: string }
+              next.searchParams.set("ticket", ticket)
+            } else {
+              // Fallback to legacy auth_token if ticket endpoint unavailable
+              next.searchParams.set("auth_token", btoa(`${username}:${password}`))
+              if (!sameOrigin) {
+                next.username = username
+                next.password = password
+              }
+            }
+          } catch {
+            next.searchParams.set("auth_token", btoa(`${username}:${password}`))
+            if (!sameOrigin) {
+              next.username = username
+              next.password = password
+            }
+          }
         }
 
         const socket = new WebSocket(next)
@@ -591,7 +614,7 @@ export const Terminal = (props: TerminalProps) => {
         socket.addEventListener("close", handleClose)
       }
 
-      open()
+      await open()
     }
 
     void run().catch((err) => {

@@ -9,9 +9,7 @@ const required = (name: string) => {
 }
 
 const GH_REPO = required("GH_REPO")
-const NPM_TOKEN = required("NPM_TOKEN")
 
-process.env.NODE_AUTH_TOKEN = NPM_TOKEN
 process.env.GH_TOKEN = process.env.GH_TOKEN || process.env.GITHUB_TOKEN
 
 if (!process.env.GH_TOKEN) throw new Error("Missing required env: GH_TOKEN or GITHUB_TOKEN")

@@ -9,6 +9,13 @@ import { PtyID } from "@/pty/schema"
 import { NotFoundError } from "@/storage"
 import { errors } from "../../error"
 import { jsonRequest, runRequest } from "./trace"
+import {
+  issue as issueTicket,
+  consume as consumeTicket,
+  PTY_CONNECT_TICKET_QUERY,
+  PTY_CONNECT_TOKEN_HEADER,
+  PTY_CONNECT_TOKEN_HEADER_VALUE,
+} from "../../pty-ticket"
 
 export function PtyRoutes(upgradeWebSocket: UpgradeWebSocket) {
   return new Hono()
@@ -146,6 +153,47 @@ export function PtyRoutes(upgradeWebSocket: UpgradeWebSocket) {
           return true
         }),
     )
+    .post(
+      "/:ptyID/connect-token",
+      describeRoute({
+        summary: "Issue PTY connect ticket",
+        description:
+          "Issue a one-time ticket for authenticating a WebSocket connection to a PTY session. " +
+          "The ticket must be passed as the 'ticket' query parameter on the /connect WebSocket URL.",
+        operationId: "pty.connectToken",
+        responses: {
+          200: {
+            description: "Issued ticket",
+            content: {
+              "application/json": {
+                schema: resolver(z.object({ ticket: z.string(), expires_in: z.number() })),
+              },
+            },
+          },
+          403: { description: "Forbidden — missing required header or invalid origin" },
+          ...errors(404),
+        },
+      }),
+      validator("param", z.object({ ptyID: PtyID.zod })),
+      async (c) => {
+        if (c.req.header(PTY_CONNECT_TOKEN_HEADER) !== PTY_CONNECT_TOKEN_HEADER_VALUE) {
+          return c.json({ error: "Forbidden" }, 403)
+        }
+        const id = c.req.valid("param").ptyID
+        const exists = await runRequest(
+          "PtyRoutes.connectToken",
+          c,
+          Effect.gen(function* () {
+            const pty = yield* Pty.Service
+            return yield* pty.get(id)
+          }),
+        )
+        if (!exists) {
+          throw new NotFoundError({ message: "Session not found" })
+        }
+        return c.json(issueTicket(id))
+      },
+    )
     .get(
       "/:ptyID/connect",
       describeRoute({
@@ -172,6 +220,13 @@ export function PtyRoutes(upgradeWebSocket: UpgradeWebSocket) {
         }
 
         const id = PtyID.zod.parse(c.req.param("ptyID"))
+
+        // Validate ticket if present (required when auth is enabled and basic auth was skipped)
+        const ticket = c.req.query(PTY_CONNECT_TICKET_QUERY)
+        if (ticket && !consumeTicket(ticket, id)) {
+          throw new Error("Invalid or expired ticket")
+        }
+
         const cursor = (() => {
           const value = c.req.query("cursor")
           if (!value) return

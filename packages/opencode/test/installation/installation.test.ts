@@ -50,11 +50,11 @@ function testLayer(
 
 describe("installation", () => {
   describe("method", () => {
-    test("detects npm when @mimocode/cli-ai is in npm list output", async () => {
+    test("detects npm when @mimo-ai/cli is in npm list output", async () => {
       const layer = testLayer(
         () => jsonResponse({}),
         (cmd, args) => {
-          if (cmd === "npm" && args.includes("-g")) return "@mimocode/cli-ai@1.0.0"
+          if (cmd === "npm" && args.includes("-g")) return "@mimo-ai/cli@1.0.0"
           return ""
         },
       )
@@ -65,11 +65,11 @@ describe("installation", () => {
       expect(result).toBe("npm")
     })
 
-    test("detects pnpm when @mimocode/cli-ai is in pnpm list output", async () => {
+    test("detects pnpm when @mimo-ai/cli is in pnpm list output", async () => {
       const layer = testLayer(
         () => jsonResponse({}),
         (cmd, args) => {
-          if (cmd === "pnpm" && args.includes("-g")) return "@mimocode/cli-ai@1.0.0"
+          if (cmd === "pnpm" && args.includes("-g")) return "@mimo-ai/cli@1.0.0"
           return ""
         },
       )
@@ -80,11 +80,11 @@ describe("installation", () => {
       expect(result).toBe("pnpm")
     })
 
-    test("detects bun when @mimocode/cli-ai is in bun pm ls output", async () => {
+    test("detects bun when @mimo-ai/cli is in bun pm ls output", async () => {
       const layer = testLayer(
         () => jsonResponse({}),
         (cmd, args) => {
-          if (cmd === "bun" && args.includes("-g")) return "@mimocode/cli-ai@1.0.0"
+          if (cmd === "bun" && args.includes("-g")) return "@mimo-ai/cli@1.0.0"
           return ""
         },
       )
@@ -95,7 +95,7 @@ describe("installation", () => {
       expect(result).toBe("bun")
     })
 
-    test("returns unknown when no package manager has @mimocode/cli-ai", async () => {
+    test("returns unknown when no package manager has @mimo-ai/cli", async () => {
       const layer = testLayer(
         () => jsonResponse({}),
         () => "",
@@ -109,14 +109,16 @@ describe("installation", () => {
   })
 
   describe("latest", () => {
-    test("reads version from xiaomi npm registry for npm method", async () => {
+    test("reads version from npm registry for npm method", async () => {
       const layer = testLayer(
         (req) => {
-          expect(req.url).toContain("pkgs.d.xiaomi.net")
-          expect(req.url).toContain(encodeURIComponent("@mimocode/cli-ai"))
+          expect(req.url).toContain(encodeURIComponent("@mimo-ai/cli"))
           return jsonResponse({ version: "1.5.0" })
         },
-        () => "",
+        (cmd, args) => {
+          if (cmd === "npm" && args.includes("registry")) return "https://registry.npmjs.org"
+          return ""
+        },
       )
 
       const result = await Effect.runPromise(
@@ -125,8 +127,14 @@ describe("installation", () => {
       expect(result).toBe("1.5.0")
     })
 
-    test("reads version from xiaomi npm registry for pnpm method", async () => {
-      const layer = testLayer(() => jsonResponse({ version: "1.6.0" }))
+    test("reads version from npm registry for pnpm method", async () => {
+      const layer = testLayer(
+        () => jsonResponse({ version: "1.6.0" }),
+        (cmd, args) => {
+          if (cmd === "npm" && args.includes("registry")) return "https://registry.npmjs.org"
+          return ""
+        },
+      )
 
       const result = await Effect.runPromise(
         Installation.Service.use((svc) => svc.latest("pnpm")).pipe(Effect.provide(layer)),
@@ -134,8 +142,14 @@ describe("installation", () => {
       expect(result).toBe("1.6.0")
     })
 
-    test("reads version from xiaomi npm registry for bun method", async () => {
-      const layer = testLayer(() => jsonResponse({ version: "1.7.0" }))
+    test("reads version from npm registry for bun method", async () => {
+      const layer = testLayer(
+        () => jsonResponse({ version: "1.7.0" }),
+        (cmd, args) => {
+          if (cmd === "npm" && args.includes("registry")) return "https://registry.npmjs.org"
+          return ""
+        },
+      )
 
       const result = await Effect.runPromise(
         Installation.Service.use((svc) => svc.latest("bun")).pipe(Effect.provide(layer)),
@@ -143,9 +157,25 @@ describe("installation", () => {
       expect(result).toBe("1.7.0")
     })
 
-    test("dies for unsupported channels (brew/choco/scoop/curl/unknown)", async () => {
+    test("resolves version from GitHub releases redirect for curl method", async () => {
+      const layer = testLayer(
+        () => jsonResponse({}),
+        (cmd, args) => {
+          if (cmd === "curl" && args.includes("https://github.com/XiaomiMiMo/MiMo-Code/releases/latest"))
+            return "HTTP/2 302\r\nlocation: https://github.com/XiaomiMiMo/MiMo-Code/releases/tag/v0.1.1\r\n"
+          return ""
+        },
+      )
+
+      const result = await Effect.runPromise(
+        Installation.Service.use((svc) => svc.latest("curl")).pipe(Effect.provide(layer)),
+      )
+      expect(result).toBe("0.1.1")
+    })
+
+    test("dies for unsupported channels (brew/choco/scoop/unknown)", async () => {
       const layer = testLayer(() => jsonResponse({}))
-      const unsupported: Installation.Method[] = ["brew", "choco", "scoop", "curl", "unknown"]
+      const unsupported: Installation.Method[] = ["brew", "choco", "scoop", "unknown"]
 
       for (const method of unsupported) {
         const result = Effect.runPromise(
@@ -157,7 +187,7 @@ describe("installation", () => {
   })
 
   describe("upgrade", () => {
-    test("runs npm install with correct package and registry", async () => {
+    test("runs npm install with correct package", async () => {
       let capturedCmd = ""
       let capturedArgs: readonly string[] = []
       const layer = testLayer(
@@ -176,11 +206,10 @@ describe("installation", () => {
       )
       expect(capturedCmd).toBe("npm")
       expect(capturedArgs).toContain("-g")
-      expect(capturedArgs).toContain("@mimocode/cli-ai@2.0.0")
-      expect(capturedArgs.find((a) => a.startsWith("--registry="))).toContain("pkgs.d.xiaomi.net")
+      expect(capturedArgs).toContain("@mimo-ai/cli@2.0.0")
     })
 
-    test("runs pnpm install with correct package and registry", async () => {
+    test("runs pnpm install with correct package", async () => {
       let capturedArgs: readonly string[] = []
       const layer = testLayer(
         () => jsonResponse({}),
@@ -193,11 +222,11 @@ describe("installation", () => {
       await Effect.runPromise(
         Installation.Service.use((svc) => svc.upgrade("pnpm", "2.0.0")).pipe(Effect.provide(layer)),
       )
-      expect(capturedArgs).toContain("@mimocode/cli-ai@2.0.0")
-      expect(capturedArgs.find((a) => a.startsWith("--registry="))).toContain("pkgs.d.xiaomi.net")
+      expect(capturedArgs).toContain("-g")
+      expect(capturedArgs).toContain("@mimo-ai/cli@2.0.0")
     })
 
-    test("runs bun install with correct package and registry", async () => {
+    test("runs bun install with correct package", async () => {
       let capturedArgs: readonly string[] = []
       const layer = testLayer(
         () => jsonResponse({}),
@@ -210,8 +239,8 @@ describe("installation", () => {
       await Effect.runPromise(
         Installation.Service.use((svc) => svc.upgrade("bun", "2.0.0")).pipe(Effect.provide(layer)),
       )
-      expect(capturedArgs).toContain("@mimocode/cli-ai@2.0.0")
-      expect(capturedArgs.find((a) => a.startsWith("--registry="))).toContain("pkgs.d.xiaomi.net")
+      expect(capturedArgs).toContain("-g")
+      expect(capturedArgs).toContain("@mimo-ai/cli@2.0.0")
     })
 
     test("fails for unknown method", async () => {
