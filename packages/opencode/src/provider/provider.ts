@@ -175,9 +175,14 @@ function custom(dep: CustomDep): Record<string, CustomLoader> {
         Boolean((yield* dep.config()).provider?.["opencode"]?.options?.apiKey)
 
       if (!ok) {
-        for (const [key, value] of Object.entries(input.models)) {
-          if (value.cost.input === 0) continue
-          delete input.models[key]
+        const hasMimo = Boolean((yield* dep.config()).provider?.["xiaomi"])
+        if (hasMimo) {
+          input.models = {}
+        } else {
+          for (const [key, value] of Object.entries(input.models)) {
+            if (value.cost.input === 0) continue
+            delete input.models[key]
+          }
         }
       }
 
