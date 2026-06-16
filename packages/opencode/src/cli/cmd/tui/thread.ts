@@ -18,6 +18,7 @@ import { TuiConfig } from "./config/tui"
 import { MIMOCODE_PROCESS_ROLE, MIMOCODE_RUN_ID, ensureRunID, sanitizedProcessEnv } from "@/util/mimo-process"
 import { checkTrust, markTrusted } from "@/project/workspace-trust"
 import { t } from "@/cli/i18n"
+import { normalizePromptText } from "@/cli/prompt-text"
 
 declare global {
   const OPENCODE_WORKER_PATH: string
@@ -58,10 +59,6 @@ async function target() {
   const dist = new URL("./cli/cmd/tui/worker.js", import.meta.url)
   if (await Filesystem.exists(fileURLToPath(dist))) return dist
   return new URL("./worker.ts", import.meta.url)
-}
-
-function normalizePromptText(text: string): string {
-  return text.replace(/\r\n/g, "\n").replace(/\r/g, "\n")
 }
 
 async function input(value?: string) {

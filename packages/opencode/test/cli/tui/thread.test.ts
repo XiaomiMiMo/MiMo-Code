@@ -13,6 +13,7 @@ import { TuiConfig } from "../../../src/cli/cmd/tui/config/tui"
 const stop = new Error("stop")
 const seen = {
   tui: [] as string[],
+  prompts: [] as string[],
 }
 
 function setup() {
@@ -23,6 +24,7 @@ function setup() {
   // https://github.com/oven-sh/bun/issues/7823 and #12823.
   spyOn(App, "tui").mockImplementation(async (input) => {
     if (input.directory) seen.tui.push(input.directory)
+    if (input.args?.prompt) seen.prompts.push(input.args.prompt)
     throw stop
   })
   spyOn(Rpc, "client").mockImplementation(() => ({
@@ -47,13 +49,14 @@ describe("tui thread", () => {
     mock.restore()
   })
 
-  async function call(project?: string) {
+  async function call(project?: string, prompt = "hi", trust = false) {
     const { TuiThreadCommand } = await import("../../../src/cli/cmd/tui/thread")
     const args: Parameters<NonNullable<typeof TuiThreadCommand.handler>>[0] = {
       _: [],
       $0: "opencode",
       project,
-      prompt: "hi",
+      prompt,
+      trust,
       model: undefined,
       agent: undefined,
       session: undefined,
@@ -61,7 +64,6 @@ describe("tui thread", () => {
       fork: false,
       "never-ask": false,
       neverAsk: false,
-      trust: false,
       port: 0,
       hostname: "127.0.0.1",
       mdns: false,
@@ -82,6 +84,7 @@ describe("tui thread", () => {
     const link = path.join(path.dirname(tmp.path), path.basename(tmp.path) + "-link")
     const type = process.platform === "win32" ? "junction" : "dir"
     seen.tui.length = 0
+    seen.prompts.length = 0
     await fs.symlink(tmp.path, link, type)
 
     Object.defineProperty(process.stdin, "isTTY", {
@@ -118,5 +121,39 @@ describe("tui thread", () => {
 
   test("uses the real cwd after resolving a relative project from PWD", async () => {
     await check(".")
+  })
+
+  test("normalizes CRLF in --prompt before starting the TUI", async () => {
+    setup()
+    await using tmp = await tmpdir({ git: true })
+    const cwd = process.cwd()
+    const tty = Object.getOwnPropertyDescriptor(process.stdin, "isTTY")
+    const worker = globalThis.Worker
+    seen.tui.length = 0
+    seen.prompts.length = 0
+
+    Object.defineProperty(process.stdin, "isTTY", {
+      configurable: true,
+      value: true,
+    })
+    globalThis.Worker = class extends EventTarget {
+      onerror = null
+      onmessage = null
+      onmessageerror = null
+      postMessage() {}
+      terminate() {}
+    } as unknown as typeof Worker
+
+    try {
+      process.chdir(tmp.path)
+      await expect(call(undefined, "fix tests\r\n", true)).rejects.toBe(stop)
+      expect(seen.prompts[0]).toBe("fix tests\n")
+      expect(seen.prompts[0]).not.toContain("\r")
+    } finally {
+      process.chdir(cwd)
+      if (tty) Object.defineProperty(process.stdin, "isTTY", tty)
+      else delete (process.stdin as { isTTY?: boolean }).isTTY
+      globalThis.Worker = worker
+    }
   })
 })

@@ -159,6 +159,39 @@ describe("tool.bash", () => {
       },
     })
   })
+
+  test("routes apply_patch heredoc through ApplyPatchTool", async () => {
+    await using fixture = await tmpdir({ git: true })
+    const requests: Array<Omit<Permission.Request, "id" | "sessionID" | "tool">> = []
+    const command = `apply_patch <<'PATCH'
+*** Begin Patch
+*** Add File: routed.txt
++routed via bash
+*** End Patch
+PATCH`
+
+    await Instance.provide({
+      directory: fixture.path,
+      fn: async () => {
+        const bash = await initBash()
+        const result = await Effect.runPromise(
+          bash.execute(
+            {
+              command,
+              description: "Apply patch via bash",
+            },
+            capture(requests),
+          ),
+        )
+
+        expect(result.output).toContain("Success. Updated the following files")
+        expect(result.output).toContain("routed.txt")
+        expect(result.metadata.exit).toBe(0)
+        expect(requests.some((req) => req.permission === "edit")).toBe(true)
+        expect(requests.some((req) => req.permission === "bash")).toBe(false)
+      },
+    })
+  })
 })
 
 describe("tool.bash permissions", () => {
