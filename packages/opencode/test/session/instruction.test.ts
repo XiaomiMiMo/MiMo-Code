@@ -270,6 +270,86 @@ describe("Instruction.system", () => {
       }
     }
   })
+
+  test("loads CLAUDE.local.md alongside AGENTS.md (stacking)", async () => {
+    await using tmp = await tmpdir({
+      init: async (dir) => {
+        await Bun.write(path.join(dir, "AGENTS.md"), "# Project Instructions")
+        await Bun.write(path.join(dir, "CLAUDE.local.md"), "# Personal Local")
+      },
+    })
+    await Instance.provide({
+      directory: tmp.path,
+      fn: () =>
+        run(
+          Instruction.Service.use((svc) =>
+            Effect.gen(function* () {
+              const paths = yield* svc.systemPaths()
+              expect(paths.has(path.join(tmp.path, "AGENTS.md"))).toBe(true)
+              expect(paths.has(path.join(tmp.path, "CLAUDE.local.md"))).toBe(true)
+
+              const rules = (yield* svc.system()).content
+              expect(rules).toContain(
+                `Instructions from: ${path.join(tmp.path, "CLAUDE.local.md")}\n# Personal Local`,
+              )
+            }),
+          ),
+        ),
+    })
+  })
+
+  test("loads CLAUDE.local.md alongside CLAUDE.md fallback (no AGENTS.md)", async () => {
+    await using tmp = await tmpdir({
+      init: async (dir) => {
+        await Bun.write(path.join(dir, "CLAUDE.md"), "# Claude Instructions")
+        await Bun.write(path.join(dir, "CLAUDE.local.md"), "# Personal Local")
+      },
+    })
+    await Instance.provide({
+      directory: tmp.path,
+      fn: () =>
+        run(
+          Instruction.Service.use((svc) =>
+            Effect.gen(function* () {
+              const paths = yield* svc.systemPaths()
+              expect(paths.has(path.join(tmp.path, "CLAUDE.md"))).toBe(true)
+              expect(paths.has(path.join(tmp.path, "CLAUDE.local.md"))).toBe(true)
+            }),
+          ),
+        ),
+    })
+  })
+
+  test("prefers AGENTS.local.md over CLAUDE.local.md (first-match-wins)", async () => {
+    await using tmp = await tmpdir({
+      init: async (dir) => {
+        await Bun.write(path.join(dir, "AGENTS.md"), "# Project Instructions")
+        await Bun.write(path.join(dir, "AGENTS.local.md"), "# Agents Local")
+        await Bun.write(path.join(dir, "CLAUDE.local.md"), "# Claude Local")
+      },
+    })
+    await Instance.provide({
+      directory: tmp.path,
+      fn: () =>
+        run(
+          Instruction.Service.use((svc) =>
+            Effect.gen(function* () {
+              const paths = yield* svc.systemPaths()
+              expect(paths.has(path.join(tmp.path, "AGENTS.local.md"))).toBe(true)
+              expect(paths.has(path.join(tmp.path, "CLAUDE.local.md"))).toBe(false)
+
+              const rules = (yield* svc.system()).content
+              expect(rules).toContain(
+                `Instructions from: ${path.join(tmp.path, "AGENTS.local.md")}\n# Agents Local`,
+              )
+              expect(rules).not.toContain(
+                `Instructions from: ${path.join(tmp.path, "CLAUDE.local.md")}\n# Claude Local`,
+              )
+            }),
+          ),
+        ),
+    })
+  })
 })
 
 describe("Instruction.systemPaths MIMOCODE_CONFIG_DIR", () => {
