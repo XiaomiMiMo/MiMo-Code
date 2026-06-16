@@ -1,9 +1,9 @@
 import { Duration, Effect, Schema } from "effect"
 import { HttpClient, HttpClientRequest } from "effect/unstable/http"
 
-const URL = process.env.EXA_API_KEY
-  ? `https://mcp.exa.ai/mcp?exaApiKey=${encodeURIComponent(process.env.EXA_API_KEY)}`
-  : "https://mcp.exa.ai/mcp"
+const URL = "https://mcp.exa.ai/mcp"
+
+const EXA_KEY = process.env.EXA_API_KEY
 
 const McpResult = Schema.Struct({
   result: Schema.Struct({
@@ -61,6 +61,7 @@ export const call = <F extends Schema.Struct.Fields>(
   Effect.gen(function* () {
     const request = yield* HttpClientRequest.post(URL).pipe(
       HttpClientRequest.accept("application/json, text/event-stream"),
+      ...(EXA_KEY ? [HttpClientRequest.bearerToken(EXA_KEY)] : []),
       HttpClientRequest.schemaBodyJson(McpRequest(args))({
         jsonrpc: "2.0" as const,
         id: 1 as const,
