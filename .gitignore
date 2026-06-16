@@ -34,6 +34,7 @@ tsconfig.tsbuildinfo
 
 # Local agent harness state
 .claude/
+.agents/
 *.pid
 .mimo-worktrees
 .mimocode/
