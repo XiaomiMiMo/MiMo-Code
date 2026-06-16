@@ -42,3 +42,6 @@ tsconfig.tsbuildinfo
 experiment/*.log
 experiment/last-outcome.json
 /experiment
+
+# Internal workspace (separate private repo, must not be tracked here)
+/mimocode-internal/
