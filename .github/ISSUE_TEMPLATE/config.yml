@@ -1,5 +1,5 @@
 blank_issues_enabled: false
 contact_links:
-  - name: 💬 Discord Community
-    url: https://discord.gg/opencode
-    about: For quick questions or real-time discussion. Note that issues are searchable and help others with the same question.
+  - name: 💬 Community Chat
+    url: https://github.com/XiaomiMiMo/MiMo-Code?tab=readme-ov-file#community
+    about: Scan the WeChat QR code in the README to join the MiMo Code community group chat. For quick questions or real-time discussion.
