@@ -35,11 +35,14 @@ if (await published(pkg.name, pkg.version)) {
   console.log(`already published ${pkg.name}@${pkg.version}`)
 } else {
   pkg.exports = transformExports(pkg.exports)
+  await Bun.file("README.md").write(await Bun.file("../../../README_npm.md").text())
+  await Bun.file("LICENSE").write(await Bun.file("../../../LICENSE").text())
   await Bun.write("package.json", JSON.stringify(pkg, null, 2))
   try {
     await $`bun pm pack`
     await $`npm publish *.tgz --tag ${Script.channel} --access public`
   } finally {
     await Bun.write("package.json", originalText)
+    await $`rm -f README.md LICENSE *.tgz`
   }
 }

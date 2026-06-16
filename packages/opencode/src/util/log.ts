@@ -3,7 +3,6 @@ import fs from "fs/promises"
 import { createWriteStream } from "fs"
 import { Global } from "../global"
 import z from "zod"
-import { Glob } from "@mimo-ai/shared/util/glob"
 
 export const Level = z.enum(["DEBUG", "INFO", "WARN", "ERROR"]).meta({ ref: "LogLevel", description: "Log level" })
 export type Level = z.infer<typeof Level>
@@ -15,6 +14,11 @@ const levelPriority: Record<Level, number> = {
   ERROR: 3,
 }
 const keep = 10
+// Cap a single log file so one long-running or runaway session can't write an
+// unbounded file, and cap the total of archived logs so the directory can't
+// fill the disk. The active file is excluded from the total and kept separate.
+const MAX_FILE_SIZE = 50 * 1024 * 1024
+const MAX_TOTAL_SIZE = 200 * 1024 * 1024
 
 let level: Level = "INFO"
 
@@ -52,36 +56,40 @@ let logpath = ""
 export function file() {
   return logpath
 }
+let stream: ReturnType<typeof createWriteStream> | undefined
+let written = 0
 let write = (msg: any) => {
   process.stderr.write(msg)
   return msg.length
+}
+
+function stamp() {
+  return new Date().toISOString().split(".")[0].replace(/:/g, "")
 }
 
 export async function init(options: Options) {
   if (options.level) level = options.level
   void cleanup(Global.Path.log)
   if (options.print) return
-  logpath = path.join(
-    Global.Path.log,
-    options.dev ? "dev.log" : new Date().toISOString().split(".")[0].replace(/:/g, "") + ".log",
-  )
+  logpath = path.join(Global.Path.log, options.dev ? "dev.log" : stamp() + ".log")
   if (options.dev) {
     // Preserve previous dev.log as dev.log.<timestamp> for hang/incident
-    // forensics. cleanup() above already prunes old timestamped logs.
-    try {
-      const stat = await fs.stat(logpath).catch(() => null)
-      if (stat && stat.size > 0) {
-        const stamp = new Date().toISOString().split(".")[0].replace(/:/g, "")
-        await fs.rename(logpath, `${logpath}.${stamp}`).catch(() => {})
-      }
-    } catch {}
+    // forensics. cleanup() above already prunes old archived logs.
+    const stat = await fs.stat(logpath).catch(() => null)
+    if (stat && stat.size > 0) await fs.rename(logpath, `${logpath}.${stamp()}`).catch(() => {})
   } else {
     await fs.truncate(logpath).catch(() => {})
   }
-  const stream = createWriteStream(logpath, { flags: "a" })
+  stream = createWriteStream(logpath, { flags: "a" })
+  written = 0
   write = async (msg: any) => {
+    written += Buffer.byteLength(msg)
+    if (written >= MAX_FILE_SIZE) {
+      written = 0
+      await rotate()
+    }
     return new Promise((resolve, reject) => {
-      stream.write(msg, (err) => {
+      stream!.write(msg, (err) => {
         if (err) reject(err)
         else resolve(msg.length)
       })
@@ -89,20 +97,43 @@ export async function init(options: Options) {
   }
 }
 
-async function cleanup(dir: string) {
-  const files = (
-    await Glob.scan("????-??-??T??????.log", {
-      cwd: dir,
-      absolute: false,
-      include: "file",
-    }).catch(() => [])
-  )
-    .filter((file) => path.basename(file) === file)
-    .sort()
-  if (files.length <= keep) return
+// Archive the active file as <logpath>.<timestamp> and start a fresh one at the
+// same path, so file() stays stable. The renamed file is then subject to
+// cleanup's total-size budget.
+async function rotate() {
+  const previous = stream
+  await fs.rename(logpath, `${logpath}.${stamp()}`).catch(() => {})
+  stream = createWriteStream(logpath, { flags: "a" })
+  if (previous) previous.end()
+  void cleanup(Global.Path.log)
+}
 
-  const doomed = files.slice(0, -keep)
-  await Promise.all(doomed.map((file) => fs.unlink(path.join(dir, file)).catch(() => {})))
+async function cleanup(dir: string) {
+  const entries = await fs.readdir(dir).catch(() => [] as string[])
+  const stats = await Promise.all(
+    entries
+      // Match session logs (<iso>.log), dev rotations (dev.log.<stamp>) and
+      // size rotations (<name>.log.<stamp>). Skip the active file so it is
+      // never deleted out from under the open write stream.
+      .filter((name) => name.includes(".log") && path.join(dir, name) !== logpath)
+      .map(async (name) => {
+        const stat = await fs.stat(path.join(dir, name)).catch(() => null)
+        return stat?.isFile() ? { name, size: stat.size } : null
+      }),
+  )
+  // Sort oldest first by name; filenames are timestamp-encoded so lexical order
+  // is chronological within each family.
+  const files = stats.flatMap((f) => (f ? [f] : [])).sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0))
+
+  let total = files.reduce((sum, f) => sum + f.size, 0)
+  let remaining = files.length
+  const doomed = files.filter((f) => {
+    if (remaining <= keep && total <= MAX_TOTAL_SIZE) return false
+    total -= f.size
+    remaining -= 1
+    return true
+  })
+  await Promise.all(doomed.map((f) => fs.unlink(path.join(dir, f.name)).catch(() => {})))
 }
 
 function formatError(error: Error, depth = 0): string {

@@ -52,7 +52,7 @@ await Bun.build({
   external: ["jsonc-parser", "@lydell/node-pty"],
   define: {
     OPENCODE_MIGRATIONS: JSON.stringify(migrations),
-    OPENCODE_CHANNEL: `'${Script.channel}'`,
+    MIMOCODE_CHANNEL: `'${Script.channel}'`,
   },
   files: {
     "opencode-web-ui.gen.ts": "",

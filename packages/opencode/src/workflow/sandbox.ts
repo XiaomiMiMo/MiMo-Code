@@ -1,10 +1,16 @@
 import {
-  getQuickJS,
+  newQuickJSWASMModuleFromVariant,
   shouldInterruptAfterDeadline,
   type QuickJSContext,
   type QuickJSDeferredPromise,
   type QuickJSHandle,
-} from "quickjs-emscripten"
+} from "quickjs-emscripten-core"
+// Singlefile variant inlines the wasm as base64 — no sidecar .wasm to ship,
+// so `bun build --compile` produces a self-contained binary. Sidecar variants
+// (the default `quickjs-emscripten` package) break under --compile because
+// emscripten reads the wasm via __dirname at runtime and Bun's bunfs can't
+// see that import.
+import singlefileVariant from "@jitl/quickjs-singlefile-mjs-release-sync"
 
 /** An injected host function: receives already-marshaled JS args, returns a JS value or Promise. */
 export type HostFn = (...args: unknown[]) => unknown | Promise<unknown>
@@ -75,7 +81,7 @@ globalThis.URL = class URL {
  *  - every QuickJSHandle disposed before context dispose (else process abort)
  */
 export async function evalScript(body: string, hooks: Record<string, HostFn>, opts: SandboxOptions = {}): Promise<unknown> {
-  const QuickJS = await getQuickJS()
+  const QuickJS = await newQuickJSWASMModuleFromVariant(singlefileVariant)
   const rt = QuickJS.newRuntime()
   rt.setMemoryLimit(opts.memoryLimitBytes ?? DEFAULT_MEMORY)
   rt.setInterruptHandler(shouldInterruptAfterDeadline(Date.now() + (opts.deadlineMs ?? DEFAULT_DEADLINE_MS)))

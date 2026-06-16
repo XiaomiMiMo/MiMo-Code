@@ -117,6 +117,51 @@ describe("compaction scope is (session_id, agent_id)", () => {
     })
   })
 
+  test("sessions.messages with agentID returns subagent boundary; without agentID it does not", async () => {
+    await Instance.provide({
+      directory: root,
+      fn: async () => {
+        const session = await svc.create({})
+
+        // Subagent "sub-1" has conversation history
+        await addUser(session.id, "sub-msg-1", "sub-1")
+        await addUser(session.id, "sub-msg-2", "sub-1")
+
+        // Insert a compaction boundary scoped to sub-1
+        await Compaction.create({
+          sessionID: session.id,
+          agent: "compaction",
+          model: { providerID: ProviderID.make("test"), modelID: ModelID.make("test") },
+          auto: true,
+          agentID: "sub-1",
+        })
+
+        // With agentID: boundary is visible in the subagent's slice
+        const subMsgs = await run(
+          SessionNs.Service.use((s) => s.messages({ sessionID: session.id, agentID: "sub-1" })),
+        )
+        const boundaryInSub = subMsgs.find((m) =>
+          m.parts.some((p) => p.type === "compaction"),
+        )
+        expect(boundaryInSub).toBeDefined()
+        expect(boundaryInSub!.info.agentID).toBe("sub-1")
+
+        // Without agentID (defaults to "main"): boundary is NOT visible.
+        // This was the bug — compaction.process() used to query without
+        // agentID and then failed to find the subagent's boundary.
+        const mainMsgs = await run(
+          SessionNs.Service.use((s) => s.messages({ sessionID: session.id })),
+        )
+        const boundaryInMain = mainMsgs.find((m) =>
+          m.parts.some((p) => p.type === "compaction"),
+        )
+        expect(boundaryInMain).toBeUndefined()
+
+        await svc.remove(session.id)
+      },
+    })
+  })
+
   test("compacting writer-1 leaves writer-2's history untouched", async () => {
     await Instance.provide({
       directory: root,

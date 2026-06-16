@@ -4,6 +4,308 @@ export type ClientOptions = {
   baseUrl: `${string}://${string}` | (string & {})
 }
 
+export type EventServerConnected = {
+  type: "server.connected"
+  properties: {
+    [key: string]: unknown
+  }
+}
+
+export type EventGlobalDisposed = {
+  type: "global.disposed"
+  properties: {
+    [key: string]: unknown
+  }
+}
+
+export type EventActorRegistered = {
+  type: "actor.registered"
+  properties: {
+    sessionID: string
+    actorID: string
+    mode: "peer" | "subagent" | "main"
+    parentActorID?: string
+    description: string
+    agent: string
+    background: boolean
+  }
+}
+
+export type EventActorStatus = {
+  type: "actor.status"
+  properties: {
+    sessionID: string
+    actorID: string
+    status: "pending" | "running" | "idle"
+    lastOutcome?: "success" | "failure" | "cancelled"
+    turnCount: number
+    lastTurnTime: number
+    error?: string
+  }
+}
+
+export type EventActorStuck = {
+  type: "actor.stuck"
+  properties: {
+    sessionID: string
+    actorID: string
+    description: string
+    lastTurnTime: number
+    stuckDuration: number
+  }
+}
+
+export type EventWriterCachePerf = {
+  type: "writer.cache_perf"
+  properties: {
+    sessionID: string
+    writerActorID: string
+    status: "completed" | "failed"
+    total_input_tokens: number
+    cache_read_tokens: number
+    cache_write_tokens: number
+    cache_hit_rate: number
+    num_llm_calls: number
+  }
+}
+
+export type EventInboxArrived = {
+  type: "inbox.arrived"
+  properties: {
+    receiverSessionID: string
+    receiverActorID: string
+    senderSessionID?: string
+    senderActorID?: string
+    inboxID: string
+    type: string
+  }
+}
+
+export type EventTaskCreated = {
+  type: "task.created"
+  properties: {
+    sessionID: string
+    task: {
+      id: string
+      session_id: string
+      parent_task_id?: string
+      status: "open" | "in_progress" | "blocked" | "done" | "abandoned"
+      summary: string
+      owner?: string
+      created_at: number
+      last_event_at: number
+      ended_at?: number
+      cleanup_after?: number
+    }
+  }
+}
+
+export type EventTaskUpdated = {
+  type: "task.updated"
+  properties: {
+    sessionID: string
+    task: {
+      id: string
+      session_id: string
+      parent_task_id?: string
+      status: "open" | "in_progress" | "blocked" | "done" | "abandoned"
+      summary: string
+      owner?: string
+      created_at: number
+      last_event_at: number
+      ended_at?: number
+      cleanup_after?: number
+    }
+    kind: "started" | "unstarted" | "blocked" | "unblocked" | "done" | "abandoned" | "renamed"
+  }
+}
+
+export type EventTeamCreated = {
+  type: "team.created"
+  properties: {
+    teamID: string
+    creatorSessionID: string
+  }
+}
+
+export type EventTeamMemberJoined = {
+  type: "team.member.joined"
+  properties: {
+    teamID: string
+    sessionID: string
+    agent: string
+    role: string
+  }
+}
+
+export type EventMetricsModelCall = {
+  type: "metrics.model_call"
+  properties: {
+    sessionID: string
+    finish_reason: string
+    ttft_ms?: number
+    latency_ms: number
+    cached_read_tokens: number
+    model_id: string
+    provider: string
+    total_tokens_in: number
+    total_tokens_out: number
+  }
+}
+
+export type EventMetricsToolCall = {
+  type: "metrics.tool_call"
+  properties: {
+    sessionID: string
+    tool_name: string
+    input_bytes: number
+    output_bytes: number
+    tool_call_id: string
+    tool_call_status: "success" | "error"
+  }
+}
+
+export type EventMetricsAgentRequest = {
+  type: "metrics.agent_request"
+  properties: {
+    sessionID: string
+    phase: string
+    task_type: string
+    surface: string
+    total_tokens_in: number
+    total_tokens_out: number
+    files_changed: number
+    validation_status: string
+  }
+}
+
+export type EventTuiPromptAppend = {
+  type: "tui.prompt.append"
+  properties: {
+    text: string
+  }
+}
+
+export type EventTuiCommandExecute = {
+  type: "tui.command.execute"
+  properties: {
+    command:
+      | "session.list"
+      | "session.new"
+      | "session.share"
+      | "session.interrupt"
+      | "session.compact"
+      | "session.page.up"
+      | "session.page.down"
+      | "session.line.up"
+      | "session.line.down"
+      | "session.half.page.up"
+      | "session.half.page.down"
+      | "session.first"
+      | "session.last"
+      | "prompt.clear"
+      | "prompt.submit"
+      | "agent.cycle"
+      | string
+  }
+}
+
+export type EventTuiToastShow = {
+  type: "tui.toast.show"
+  properties: {
+    title?: string
+    message: string
+    variant: "info" | "success" | "warning" | "error"
+    /**
+     * Duration in milliseconds
+     */
+    duration?: number
+  }
+}
+
+export type EventTuiSessionSelect = {
+  type: "tui.session.select"
+  properties: {
+    /**
+     * Session ID to navigate to
+     */
+    sessionID: string
+  }
+}
+
+export type EventTuiInstructionsLoaded = {
+  type: "tui.instructions.loaded"
+  properties: {
+    /**
+     * Display labels of loaded instruction files: worktree-relative path, ~-path, or absolute
+     */
+    files: Array<string>
+  }
+}
+
+export type EventWorkflowPhase = {
+  type: "workflow.phase"
+  properties: {
+    sessionID: string
+    runID: string
+    title: string
+  }
+}
+
+export type EventWorkflowLog = {
+  type: "workflow.log"
+  properties: {
+    sessionID: string
+    runID: string
+    message: string
+  }
+}
+
+export type EventWorkflowStarted = {
+  type: "workflow.started"
+  properties: {
+    sessionID: string
+    runID: string
+    name: string
+  }
+}
+
+export type EventWorkflowFinished = {
+  type: "workflow.finished"
+  properties: {
+    sessionID: string
+    runID: string
+    status: "completed" | "failed" | "cancelled"
+    error?: string
+  }
+}
+
+export type EventWorkflowAgentFailed = {
+  type: "workflow.agent_failed"
+  properties: {
+    sessionID: string
+    runID: string
+    actorID?: string
+    agentType: string
+    label?: string
+    phase?: string
+    reason: "over-cap" | "spawn-reject" | "timeout" | "actor-error" | "no-deliverable"
+    errorMessage?: string
+  }
+}
+
+export type EventWorkflowChildFailed = {
+  type: "workflow.child_failed"
+  properties: {
+    sessionID: string
+    runID: string
+    childRunID: string
+    name: string
+    status: "failed" | "cancelled"
+    error?: string
+  }
+}
+
 export type Project = {
   id: string
   worktree: string
@@ -37,20 +339,6 @@ export type EventServerInstanceDisposed = {
   type: "server.instance.disposed"
   properties: {
     directory: string
-  }
-}
-
-export type EventServerConnected = {
-  type: "server.connected"
-  properties: {
-    [key: string]: unknown
-  }
-}
-
-export type EventGlobalDisposed = {
-  type: "global.disposed"
-  properties: {
-    [key: string]: unknown
   }
 }
 
@@ -135,69 +423,6 @@ export type EventPermissionReplied = {
     sessionID: string
     requestID: string
     reply: "once" | "always" | "reject"
-  }
-}
-
-export type EventActorRegistered = {
-  type: "actor.registered"
-  properties: {
-    sessionID: string
-    actorID: string
-    mode: "peer" | "subagent" | "main"
-    parentActorID?: string
-    description: string
-    agent: string
-    background: boolean
-  }
-}
-
-export type EventActorStatus = {
-  type: "actor.status"
-  properties: {
-    sessionID: string
-    actorID: string
-    status: "pending" | "running" | "idle"
-    lastOutcome?: "success" | "failure" | "cancelled"
-    turnCount: number
-    lastTurnTime: number
-    error?: string
-  }
-}
-
-export type EventActorStuck = {
-  type: "actor.stuck"
-  properties: {
-    sessionID: string
-    actorID: string
-    description: string
-    lastTurnTime: number
-    stuckDuration: number
-  }
-}
-
-export type EventWriterCachePerf = {
-  type: "writer.cache_perf"
-  properties: {
-    sessionID: string
-    writerActorID: string
-    status: "completed" | "failed"
-    total_input_tokens: number
-    cache_read_tokens: number
-    cache_write_tokens: number
-    cache_hit_rate: number
-    num_llm_calls: number
-  }
-}
-
-export type EventInboxArrived = {
-  type: "inbox.arrived"
-  properties: {
-    receiverSessionID: string
-    receiverActorID: string
-    senderSessionID?: string
-    senderActorID?: string
-    inboxID: string
-    type: string
   }
 }
 
@@ -482,63 +707,6 @@ export type EventBashInteractiveReplied = {
   }
 }
 
-export type EventTeamCreated = {
-  type: "team.created"
-  properties: {
-    teamID: string
-    creatorSessionID: string
-  }
-}
-
-export type EventTeamMemberJoined = {
-  type: "team.member.joined"
-  properties: {
-    teamID: string
-    sessionID: string
-    agent: string
-    role: string
-  }
-}
-
-export type EventTaskCreated = {
-  type: "task.created"
-  properties: {
-    sessionID: string
-    task: {
-      id: string
-      session_id: string
-      parent_task_id?: string
-      status: "open" | "in_progress" | "blocked" | "done" | "abandoned"
-      summary: string
-      owner?: string
-      created_at: number
-      last_event_at: number
-      ended_at?: number
-      cleanup_after?: number
-    }
-  }
-}
-
-export type EventTaskUpdated = {
-  type: "task.updated"
-  properties: {
-    sessionID: string
-    task: {
-      id: string
-      session_id: string
-      parent_task_id?: string
-      status: "open" | "in_progress" | "blocked" | "done" | "abandoned"
-      summary: string
-      owner?: string
-      created_at: number
-      last_event_at: number
-      ended_at?: number
-      cleanup_after?: number
-    }
-    kind: "started" | "unstarted" | "blocked" | "unblocked" | "done" | "abandoned" | "renamed"
-  }
-}
-
 export type Todo = {
   /**
    * Brief description of the task
@@ -606,115 +774,10 @@ export type EventSessionGoal = {
   }
 }
 
-export type EventMetricsModelCall = {
-  type: "metrics.model_call"
-  properties: {
-    sessionID: string
-    finish_reason: string
-    ttft_ms?: number
-    latency_ms: number
-    cached_read_tokens: number
-    model_id: string
-    provider: string
-    total_tokens_in: number
-    total_tokens_out: number
-  }
-}
-
-export type EventMetricsToolCall = {
-  type: "metrics.tool_call"
-  properties: {
-    sessionID: string
-    tool_name: string
-    input_bytes: number
-    output_bytes: number
-    tool_call_id: string
-    tool_call_status: "success" | "error"
-  }
-}
-
-export type EventMetricsAgentRequest = {
-  type: "metrics.agent_request"
-  properties: {
-    sessionID: string
-    phase: string
-    task_type: string
-    surface: string
-    total_tokens_in: number
-    total_tokens_out: number
-    files_changed: number
-    validation_status: string
-  }
-}
-
 export type EventSessionCompacted = {
   type: "session.compacted"
   properties: {
     sessionID: string
-  }
-}
-
-export type EventTuiPromptAppend = {
-  type: "tui.prompt.append"
-  properties: {
-    text: string
-  }
-}
-
-export type EventTuiCommandExecute = {
-  type: "tui.command.execute"
-  properties: {
-    command:
-      | "session.list"
-      | "session.new"
-      | "session.share"
-      | "session.interrupt"
-      | "session.compact"
-      | "session.page.up"
-      | "session.page.down"
-      | "session.line.up"
-      | "session.line.down"
-      | "session.half.page.up"
-      | "session.half.page.down"
-      | "session.first"
-      | "session.last"
-      | "prompt.clear"
-      | "prompt.submit"
-      | "agent.cycle"
-      | string
-  }
-}
-
-export type EventTuiToastShow = {
-  type: "tui.toast.show"
-  properties: {
-    title?: string
-    message: string
-    variant: "info" | "success" | "warning" | "error"
-    /**
-     * Duration in milliseconds
-     */
-    duration?: number
-  }
-}
-
-export type EventTuiSessionSelect = {
-  type: "tui.session.select"
-  properties: {
-    /**
-     * Session ID to navigate to
-     */
-    sessionID: string
-  }
-}
-
-export type EventTuiInstructionsLoaded = {
-  type: "tui.instructions.loaded"
-  properties: {
-    /**
-     * Display labels of loaded instruction files: worktree-relative path, ~-path, or absolute
-     */
-    files: Array<string>
   }
 }
 
@@ -801,43 +864,6 @@ export type EventPtyDeleted = {
   type: "pty.deleted"
   properties: {
     id: string
-  }
-}
-
-export type EventWorkflowPhase = {
-  type: "workflow.phase"
-  properties: {
-    sessionID: string
-    runID: string
-    title: string
-  }
-}
-
-export type EventWorkflowLog = {
-  type: "workflow.log"
-  properties: {
-    sessionID: string
-    runID: string
-    message: string
-  }
-}
-
-export type EventWorkflowStarted = {
-  type: "workflow.started"
-  properties: {
-    sessionID: string
-    runID: string
-    name: string
-  }
-}
-
-export type EventWorkflowFinished = {
-  type: "workflow.finished"
-  properties: {
-    sessionID: string
-    runID: string
-    status: "completed" | "failed" | "cancelled"
-    error?: string
   }
 }
 
@@ -1472,10 +1498,33 @@ export type GlobalEvent = {
   project?: string
   workspace?: string
   payload:
-    | EventProjectUpdated
-    | EventServerInstanceDisposed
     | EventServerConnected
     | EventGlobalDisposed
+    | EventActorRegistered
+    | EventActorStatus
+    | EventActorStuck
+    | EventWriterCachePerf
+    | EventInboxArrived
+    | EventTaskCreated
+    | EventTaskUpdated
+    | EventTeamCreated
+    | EventTeamMemberJoined
+    | EventMetricsModelCall
+    | EventMetricsToolCall
+    | EventMetricsAgentRequest
+    | EventTuiPromptAppend
+    | EventTuiCommandExecute
+    | EventTuiToastShow
+    | EventTuiSessionSelect
+    | EventTuiInstructionsLoaded
+    | EventWorkflowPhase
+    | EventWorkflowLog
+    | EventWorkflowStarted
+    | EventWorkflowFinished
+    | EventWorkflowAgentFailed
+    | EventWorkflowChildFailed
+    | EventProjectUpdated
+    | EventServerInstanceDisposed
     | EventFileEdited
     | EventFileWatcherUpdated
     | EventLspClientDiagnostics
@@ -1485,11 +1534,6 @@ export type GlobalEvent = {
     | EventMessagePartDelta
     | EventPermissionAsked
     | EventPermissionReplied
-    | EventActorRegistered
-    | EventActorStatus
-    | EventActorStuck
-    | EventWriterCachePerf
-    | EventInboxArrived
     | EventSessionDiff
     | EventSessionError
     | EventSessionRetryAttempt
@@ -1502,23 +1546,11 @@ export type GlobalEvent = {
     | EventSessionCwd
     | EventBashInteractiveAsked
     | EventBashInteractiveReplied
-    | EventTeamCreated
-    | EventTeamMemberJoined
-    | EventTaskCreated
-    | EventTaskUpdated
     | EventTodoUpdated
     | EventSessionStatus
     | EventSessionIdle
     | EventSessionGoal
-    | EventMetricsModelCall
-    | EventMetricsToolCall
-    | EventMetricsAgentRequest
     | EventSessionCompacted
-    | EventTuiPromptAppend
-    | EventTuiCommandExecute
-    | EventTuiToastShow
-    | EventTuiSessionSelect
-    | EventTuiInstructionsLoaded
     | EventMcpToolsChanged
     | EventMcpBrowserOpenFailed
     | EventCommandExecuted
@@ -1529,10 +1561,6 @@ export type GlobalEvent = {
     | EventPtyUpdated
     | EventPtyExited
     | EventPtyDeleted
-    | EventWorkflowPhase
-    | EventWorkflowLog
-    | EventWorkflowStarted
-    | EventWorkflowFinished
     | EventWorkspaceReady
     | EventWorkspaceFailed
     | EventWorkspaceRestore
@@ -2156,6 +2184,45 @@ export type Config = {
      * Whether to reconcile memory state on search operations. Default: true.
      */
     memory_reconcile_on_search?: boolean
+    /**
+     * Relative BM25 floor for memory.search (OR-joined query): keep results scoring >= this fraction of the top hit, dropping common-word-only noise. The #1 result is always kept. Default: 0.15. Set 0 to keep all matches.
+     */
+    memory_search_score_floor?: number
+  }
+  memory?: {
+    /**
+     * Index Claude Code memory (~/.claude/projects/<slug>/memory) and expose under scope='cc'. Default: false. Note: when enabled, every mimocode agent (build/explore/subagents) can search these memories via the builtin `memory` tool — including CC's `type: user` (your role/preferences) and `type: feedback` (your guidance) categories. CC originally writes them for future CC sessions; flipping this on widens the consumer set to mimocode agents on the same machine. Leave disabled (default) if you don't want personal context recallable from a prompt-injection-vulnerable agent.
+     */
+    cc_index?: boolean
+  }
+  /**
+   * Trajectory (conversation history) FTS index configuration.
+   */
+  history?: {
+    /**
+     * Which part kinds the history FTS index should cover. Defaults to text (user/assistant) + tool input + tool errors. Add 'reasoning' or 'tool_output' to grow recall at the cost of database size. Note: enabling 'tool_output' reclassifies completed tools from kind='tool_input' to kind='tool_output' (input remains searchable in the body, but kind:['tool_input'] filter will then only match pending/error tools).
+     */
+    kinds?: Array<"user_text" | "assistant_text" | "tool_input" | "tool_error" | "reasoning" | "tool_output">
+  }
+  dream?: {
+    /**
+     * Auto-trigger dream memory consolidation on new session start. Default: true.
+     */
+    auto?: boolean
+    /**
+     * Minimum days between automatic dream runs. Set to 0 to trigger on every new session. Default: 7.
+     */
+    interval_days?: number
+  }
+  distill?: {
+    /**
+     * Auto-trigger distill workflow packaging on new session start. Default: true.
+     */
+    auto?: boolean
+    /**
+     * Minimum days between automatic distill runs. Default: 30.
+     */
+    interval_days?: number
   }
   experimental?: {
     disable_paste_summary?: boolean
@@ -2198,9 +2265,17 @@ export type Config = {
    */
   workflow?: {
     /**
-     * Max subagents running concurrently in one workflow run. Default min(16, 2x CPU cores). Hard-capped at 2x cores.
+     * Process-wide ceiling on subagents running concurrently across ALL workflow runs (including nested children). Default min(16, 2x CPU cores). No upper clamp: the previous 2x-cores hard cap was removed so an operator can match real provider capacity — but that also means a misconfigured value (e.g. an extra zero) can exhaust provider rate limits or host memory. This is the only concurrency ceiling, so set it deliberately.
      */
     maxConcurrentAgents?: number
+    /**
+     * Max nesting depth for workflow()-calls-workflow. Default 8. Exceeding it fails the run.
+     */
+    maxDepth?: number
+    /**
+     * Hard ceiling on total agents a single workflow run may spawn over its life. Default 1000. Over-cap agent() calls return null (graceful degradation). PER-RUN, not tree-wide: each child workflow has its own independent budget, so a deep nesting can spawn maxDepth × this over the whole tree (concurrent in-flight is still bounded by maxConcurrentAgents).
+     */
+    maxLifecycleAgents?: number
     /**
      * Wall-clock budget for a whole workflow script, in milliseconds. Default 12h. The sandbox interrupt handler enforces this as a hard kill-switch.
      */
@@ -2574,10 +2649,33 @@ export type File = {
 }
 
 export type Event =
-  | EventProjectUpdated
-  | EventServerInstanceDisposed
   | EventServerConnected
   | EventGlobalDisposed
+  | EventActorRegistered
+  | EventActorStatus
+  | EventActorStuck
+  | EventWriterCachePerf
+  | EventInboxArrived
+  | EventTaskCreated
+  | EventTaskUpdated
+  | EventTeamCreated
+  | EventTeamMemberJoined
+  | EventMetricsModelCall
+  | EventMetricsToolCall
+  | EventMetricsAgentRequest
+  | EventTuiPromptAppend
+  | EventTuiCommandExecute
+  | EventTuiToastShow
+  | EventTuiSessionSelect
+  | EventTuiInstructionsLoaded
+  | EventWorkflowPhase
+  | EventWorkflowLog
+  | EventWorkflowStarted
+  | EventWorkflowFinished
+  | EventWorkflowAgentFailed
+  | EventWorkflowChildFailed
+  | EventProjectUpdated
+  | EventServerInstanceDisposed
   | EventFileEdited
   | EventFileWatcherUpdated
   | EventLspClientDiagnostics
@@ -2587,11 +2685,6 @@ export type Event =
   | EventMessagePartDelta
   | EventPermissionAsked
   | EventPermissionReplied
-  | EventActorRegistered
-  | EventActorStatus
-  | EventActorStuck
-  | EventWriterCachePerf
-  | EventInboxArrived
   | EventSessionDiff
   | EventSessionError
   | EventSessionRetryAttempt
@@ -2604,23 +2697,11 @@ export type Event =
   | EventSessionCwd
   | EventBashInteractiveAsked
   | EventBashInteractiveReplied
-  | EventTeamCreated
-  | EventTeamMemberJoined
-  | EventTaskCreated
-  | EventTaskUpdated
   | EventTodoUpdated
   | EventSessionStatus
   | EventSessionIdle
   | EventSessionGoal
-  | EventMetricsModelCall
-  | EventMetricsToolCall
-  | EventMetricsAgentRequest
   | EventSessionCompacted
-  | EventTuiPromptAppend
-  | EventTuiCommandExecute
-  | EventTuiToastShow
-  | EventTuiSessionSelect
-  | EventTuiInstructionsLoaded
   | EventMcpToolsChanged
   | EventMcpBrowserOpenFailed
   | EventCommandExecuted
@@ -2631,10 +2712,6 @@ export type Event =
   | EventPtyUpdated
   | EventPtyExited
   | EventPtyDeleted
-  | EventWorkflowPhase
-  | EventWorkflowLog
-  | EventWorkflowStarted
-  | EventWorkflowFinished
   | EventWorkspaceReady
   | EventWorkspaceFailed
   | EventWorkspaceRestore
@@ -2876,6 +2953,64 @@ export type GlobalUpgradeResponses = {
 }
 
 export type GlobalUpgradeResponse = GlobalUpgradeResponses[keyof GlobalUpgradeResponses]
+
+export type GlobalImportScanData = {
+  body?: never
+  path?: never
+  query?: never
+  url: "/global/import/scan"
+}
+
+export type GlobalImportScanResponses = {
+  /**
+   * Per-source availability and counts
+   */
+  200: {
+    [key: string]: {
+      available: boolean
+      sessions: number
+      imported: number
+    }
+  }
+}
+
+export type GlobalImportScanResponse = GlobalImportScanResponses[keyof GlobalImportScanResponses]
+
+export type GlobalImportRunData = {
+  body?: {
+    sources?: Array<"cc" | "codex" | "opencode">
+    force?: boolean
+  }
+  path?: never
+  query?: never
+  url: "/global/import/run"
+}
+
+export type GlobalImportRunErrors = {
+  /**
+   * Bad request
+   */
+  400: BadRequestError
+}
+
+export type GlobalImportRunError = GlobalImportRunErrors[keyof GlobalImportRunErrors]
+
+export type GlobalImportRunResponses = {
+  /**
+   * Per-source import stats
+   */
+  200: {
+    [key: string]: {
+      scanned: number
+      imported: number
+      resynced: number
+      skipped: number
+      errors: Array<string>
+    }
+  }
+}
+
+export type GlobalImportRunResponse = GlobalImportRunResponses[keyof GlobalImportRunResponses]
 
 export type AuthRemoveData = {
   body?: never
@@ -3402,6 +3537,43 @@ export type PtyUpdateResponses = {
 }
 
 export type PtyUpdateResponse = PtyUpdateResponses[keyof PtyUpdateResponses]
+
+export type PtyConnectTokenData = {
+  body?: never
+  path: {
+    ptyID: string
+  }
+  query?: {
+    directory?: string
+    workspace?: string
+  }
+  url: "/pty/{ptyID}/connect-token"
+}
+
+export type PtyConnectTokenErrors = {
+  /**
+   * Forbidden — missing required header or invalid origin
+   */
+  403: unknown
+  /**
+   * Not found
+   */
+  404: NotFoundError
+}
+
+export type PtyConnectTokenError = PtyConnectTokenErrors[keyof PtyConnectTokenErrors]
+
+export type PtyConnectTokenResponses = {
+  /**
+   * Issued ticket
+   */
+  200: {
+    ticket: string
+    expires_in: number
+  }
+}
+
+export type PtyConnectTokenResponse = PtyConnectTokenResponses[keyof PtyConnectTokenResponses]
 
 export type PtyConnectData = {
   body?: never

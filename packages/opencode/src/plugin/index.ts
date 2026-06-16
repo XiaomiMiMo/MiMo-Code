@@ -19,7 +19,6 @@ import { createOpencodeClient } from "@mimo-ai/sdk"
 import { Flag } from "../flag/flag"
 import { CodexAuthPlugin } from "./codex"
 import { MimoAuthPlugin, AnthropicProxyPlugin } from "./mimo"
-import { MimoFreeAuthPlugin } from "./mimo-free"
 import { Session } from "../session"
 import type { SessionID } from "../session/schema"
 import { NamedError } from "@mimo-ai/shared/util/error"
@@ -37,6 +36,10 @@ import { PluginLoader } from "./loader"
 import { parsePluginSpecifier, readPluginId, readV1Plugin, resolvePluginId } from "./shared"
 import { registerAdaptor } from "@/control-plane/adaptors"
 import type { WorkspaceAdaptor } from "@/control-plane/types"
+import { Glob } from "@mimo-ai/shared/util/glob"
+import fs from "fs"
+import path from "path"
+import { pathToFileURL, fileURLToPath } from "url"
 
 const log = Log.create({ service: "plugin" })
 
@@ -110,6 +113,7 @@ export interface Interface {
   ) => Effect.Effect<Output>
   readonly list: () => Effect.Effect<Hooks[]>
   readonly init: () => Effect.Effect<void>
+  readonly reloadFileHooks: () => Effect.Effect<void>
   readonly triggerActorPreStop: (
     input: ActorPreStopInput,
   ) => Effect.Effect<ActorStopAggregatedDecision>
@@ -122,7 +126,6 @@ export class Service extends Context.Service<Service, Interface>()("@opencode/Pl
 
 // Built-in plugins that are directly imported (not installed from npm)
 const INTERNAL_PLUGINS: PluginInstance[] = [
-  MimoFreeAuthPlugin,
   MimoAuthPlugin,
   AnthropicProxyPlugin,
   CodexAuthPlugin,
@@ -263,6 +266,46 @@ export const layer = Layer.effect(
           }
         }
 
+        // Private, internal-only plugins live in src/private/ (e.g. the free
+        // "mimo-auto" channel). That directory is NOT part of the open-source
+        // tree; it is injected at build time only when the internal repo is
+        // present. Auto-detected at runtime: present → loaded; absent
+        // (open-source build) → skipped. Never referenced statically, so the
+        // open-source build compiles and runs without it.
+        const privateDir = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "private")
+        const privateFiles = fs.existsSync(privateDir)
+          ? fs.readdirSync(privateDir).filter((f) => f.endsWith(".ts") && !f.endsWith(".d.ts"))
+          : []
+        for (const entry of privateFiles) {
+          const file = path.join(privateDir, entry)
+          const name = entry.replace(/\.ts$/, "")
+          const mod = yield* Effect.tryPromise({
+            try: () => import(/* @vite-ignore */ pathToFileURL(file).href),
+            catch: (err) => log.error("failed to import private plugin", { name, error: err }),
+          }).pipe(Effect.option)
+          if (mod._tag !== "Some") continue
+          // Only treat *Plugin-named function exports as plugins. Other private
+          // modules (e.g. free-login.ts exporting a CLI helper) are not plugins
+          // and must not be invoked as plugin factories.
+          const overlay = Object.entries(mod.value as Record<string, unknown>).find(
+            ([exportName, v]) => typeof v === "function" && exportName.endsWith("Plugin"),
+          )?.[1] as PluginInstance | undefined
+          if (!overlay) continue
+          log.info("loading private plugin", { name })
+          const init = yield* Effect.tryPromise({
+            try: () => overlay(input),
+            catch: (err) => log.error("failed to load private plugin", { name, error: err }),
+          }).pipe(Effect.option)
+          if (init._tag === "Some") {
+            hooks.push(init.value)
+            hooksWithMeta.push({
+              hook: init.value,
+              pluginName: name,
+              hookIDFor: (event: string) => `${name}#${event}`,
+            })
+          }
+        }
+
         const plugins = Flag.MIMOCODE_PURE ? [] : (cfg.plugin_origins ?? [])
         if (Flag.MIMOCODE_PURE && cfg.plugin_origins?.length) {
           log.info("skipping external plugins in pure mode", { count: cfg.plugin_origins.length })
@@ -361,18 +404,51 @@ export const layer = Layer.effect(
       }),
     )
 
+    const fileHookState = yield* InstanceState.make<{ hooks: Hooks[]; meta: HookEntry[] }>(
+      Effect.fn("Plugin.fileHooks")(function* () {
+        const hooks: Hooks[] = []
+        const meta: HookEntry[] = []
+        const cfg = yield* config.get()
+        const dirs = yield* config.directories()
+
+        for (const dir of dirs) {
+          const matches = Glob.scanSync("{hook,hooks}/*.{js,ts}", { cwd: dir, absolute: true, dot: true, symlink: true })
+          for (const match of matches) {
+            const mod = yield* Effect.tryPromise({
+              try: () => import(`${pathToFileURL(match).href}?v=${Date.now()}`),
+              catch: (err) => err,
+            }).pipe(Effect.catch((err) => {
+              log.error("failed to load file hook", { path: match, error: errorMessage(err) })
+              return Effect.succeed(undefined)
+            }))
+            if (!mod) continue
+            const hookObj: Hooks = mod.default ?? mod
+            if (hookObj && typeof hookObj === "object") {
+              const name = path.basename(match, path.extname(match))
+              hooks.push(hookObj)
+              meta.push({ hook: hookObj, pluginName: `file:${name}`, hookIDFor: (event: string) => `file:${name}#${event}` })
+              log.info("loaded file hook", { path: match, name })
+            }
+          }
+        }
+
+        return { hooks, meta }
+      }),
+    )
+
     const aggregateDecision = (
       input: ActorPreStopInput | ActorPostStopInput,
       eventName: "actor.preStop" | "actor.postStop",
     ) =>
       Effect.gen(function* () {
         const s = yield* InstanceState.get(state)
+        const fh = yield* InstanceState.get(fileHookState)
         const reasons: string[] = []
         const pluginNames: string[] = []
         const hookIDs: string[] = []
         let anyContinue = false
 
-        for (const entry of s.hooksWithMeta) {
+        for (const entry of [...s.hooksWithMeta, ...fh.meta]) {
           const reg = entry.hook[eventName]
           if (!reg) continue
 
@@ -476,7 +552,8 @@ export const layer = Layer.effect(
     >(name: Name, input: Input, output: Output) {
       if (!name) return output
       const s = yield* InstanceState.get(state)
-      for (const hook of s.hooks) {
+      const fh = yield* InstanceState.get(fileHookState)
+      for (const hook of [...s.hooks, ...fh.hooks]) {
         const fn = hook[name] as any
         if (!fn) continue
         yield* Effect.promise(async () => fn(input, output))
@@ -491,9 +568,14 @@ export const layer = Layer.effect(
 
     const init = Effect.fn("Plugin.init")(function* () {
       yield* InstanceState.get(state)
+      yield* InstanceState.get(fileHookState)
     })
 
-    return Service.of({ trigger, list, init, triggerActorPreStop, triggerActorPostStop })
+    const reloadFileHooks: Interface["reloadFileHooks"] = Effect.fn("Plugin.reloadFileHooks")(function* () {
+      yield* InstanceState.invalidate(fileHookState)
+    })
+
+    return Service.of({ trigger, list, init, reloadFileHooks, triggerActorPreStop, triggerActorPostStop })
   }),
 )
 

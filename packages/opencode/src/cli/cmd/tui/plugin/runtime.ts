@@ -11,7 +11,7 @@ import {
   type TuiTheme,
 } from "@mimo-ai/plugin/tui"
 import path from "path"
-import { fileURLToPath } from "url"
+import { fileURLToPath, pathToFileURL } from "url"
 import { TuiConfig } from "@/cli/cmd/tui/config/tui"
 import { Log } from "@/util"
 import { errorData, errorMessage } from "@/util/error"
@@ -34,6 +34,7 @@ import { Filesystem } from "@/util"
 import { Process } from "@/util"
 import { Flock } from "@mimo-ai/shared/util/flock"
 import { Flag } from "@/flag/flag"
+import { Glob } from "@mimo-ai/shared/util/glob"
 import { INTERNAL_TUI_PLUGINS, type InternalTuiPlugin } from "./internal"
 import { setupSlots, Slot as View } from "./slots"
 import type { HostPluginApi, HostSlots } from "./slots"
@@ -972,6 +973,11 @@ export async function dispose() {
   }
 }
 
+export async function reload(input: { api: HostPluginApi; config: TuiConfig.Info }) {
+  await dispose()
+  return init(input)
+}
+
 async function load(input: { api: Api; config: TuiConfig.Info }) {
   const { api, config } = input
   const cwd = process.cwd()
@@ -1010,6 +1016,27 @@ async function load(input: { api: Api; config: TuiConfig.Info }) {
 
         const ready = await resolveExternalPlugins(records, () => TuiConfig.waitForDependencies())
         await addExternalPluginEntries(next, ready)
+
+        // File-based TUI plugins from .mimocode/tui/*.{ts,tsx}
+        const configDirs = [
+          path.join(Global.Path.config, "tui"),
+          path.join(cwd, ".mimocode", "tui"),
+        ]
+        const fileTuiOrigins: ConfigPlugin.Origin[] = []
+        for (const dir of configDirs) {
+          const matches = Glob.scanSync("*.{ts,tsx,js}", { cwd: dir, absolute: true, dot: true, symlink: true })
+          for (const match of matches) {
+            fileTuiOrigins.push({
+              spec: `${pathToFileURL(match).href}?v=${Date.now()}`,
+              source: path.join(dir, "tui.json"),
+              scope: dir.startsWith(Global.Path.config) ? "global" : "local",
+            })
+          }
+        }
+        if (fileTuiOrigins.length) {
+          const fileReady = await resolveExternalPlugins(fileTuiOrigins, () => Promise.resolve())
+          await addExternalPluginEntries(next, fileReady)
+        }
 
         applyInitialPluginEnabledState(next, config)
         for (const plugin of next.plugins) {

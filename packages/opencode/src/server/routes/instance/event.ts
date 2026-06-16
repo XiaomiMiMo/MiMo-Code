@@ -9,6 +9,20 @@ import { AsyncQueue } from "@/util/queue"
 
 const log = Log.create({ service: "server" })
 
+// Cap on buffered SSE events per connection. Bounds worst-case memory for a
+// stalled consumer while tolerating normal streaming bursts (the heaviest
+// producer is per-token PartDelta during streaming). At ~1KB/event the default
+// is ≈10MB worst-case per stalled connection. Tune via env if needed.
+//
+// Note: the heartbeat and the disconnect sentinel also travel through this
+// queue. Under sustained saturation (drop-oldest active) both lag behind up to
+// EVENT_QUEUE_CAPACITY buffered items, so heartbeats no longer arrive on a
+// strict 10s cadence for that connection. This is acceptable: a saturated
+// stream is not the idle-stream case the heartbeat exists to keep alive, and a
+// proxy that drops the stalled connection just triggers the durable /sync
+// catch-up path on reconnect.
+const EVENT_QUEUE_CAPACITY = Number(process.env["MIMOCODE_EVENT_QUEUE_CAPACITY"]) || 10_000
+
 export const EventRoutes = () =>
   new Hono().get(
     "/event",
@@ -37,7 +51,12 @@ export const EventRoutes = () =>
       c.header("X-Accel-Buffering", "no")
       c.header("X-Content-Type-Options", "nosniff")
       return streamSSE(c, async (stream) => {
-        const q = new AsyncQueue<string | null>()
+        // Bounded buffer: the bus delta firehose (per-token PartDelta) is pushed
+        // here synchronously and never blocks the producer. A slow/stalled SSE
+        // consumer would otherwise let this grow without limit and exhaust the
+        // server's memory. Events are best-effort telemetry (DB is authoritative
+        // + heartbeat), so drop-oldest is safe under sustained backpressure.
+        const q = new AsyncQueue<string | null>({ capacity: EVENT_QUEUE_CAPACITY })
         let done = false
 
         q.push(
@@ -63,7 +82,8 @@ export const EventRoutes = () =>
           clearInterval(heartbeat)
           unsub()
           q.push(null)
-          log.info("event disconnected")
+          if (q.dropped > 0) log.warn("event dropped under backpressure", { dropped: q.dropped })
+          log.info("event disconnected", { buffered: q.size })
         }
 
         const unsub = Bus.subscribeAll((event) => {

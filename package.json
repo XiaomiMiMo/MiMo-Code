@@ -1,6 +1,6 @@
 {
   "$schema": "https://json.schemastore.org/package.json",
-  "name": "mimocode",
+  "name": "opencode",
   "description": "AI-powered development tool",
   "private": true,
   "type": "module",
@@ -105,7 +105,7 @@
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/XiaomiMiMo/MiMo-Code"
+    "url": "https://github.com/anomalyco/opencode"
   },
   "license": "MIT",
   "prettier": {

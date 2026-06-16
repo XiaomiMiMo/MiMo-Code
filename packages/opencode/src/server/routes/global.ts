@@ -14,15 +14,25 @@ import { InstallationVersion } from "@/installation/version"
 import { Log } from "../../util"
 import { lazy } from "../../util/lazy"
 import { Config } from "../../config"
+import { ExternalImport } from "../../session/external-import"
 import { errors } from "../error"
 
 const log = Log.create({ service: "server" })
+
+// Cap on buffered SSE events per connection. The bus delta firehose is pushed
+// into the queue synchronously and never blocks the producer, so a slow/stalled
+// consumer would otherwise grow it without limit and exhaust server memory.
+// Events are best-effort telemetry (DB authoritative + heartbeat) so drop-oldest
+// is safe under sustained backpressure. At ~1KB/event the default is ≈10MB
+// worst-case per stalled connection. See routes/instance/event.ts for the full
+// rationale (incl. heartbeat/sentinel lag under saturation). Tune via env.
+const EVENT_QUEUE_CAPACITY = Number(process.env["MIMOCODE_EVENT_QUEUE_CAPACITY"]) || 10_000
 
 export const GlobalDisposedEvent = BusEvent.define("global.disposed", z.object({}))
 
 async function streamEvents(c: Context, subscribe: (q: AsyncQueue<string | null>) => () => void) {
   return streamSSE(c, async (stream) => {
-    const q = new AsyncQueue<string | null>()
+    const q = new AsyncQueue<string | null>({ capacity: EVENT_QUEUE_CAPACITY })
     let done = false
 
     q.push(
@@ -52,7 +62,8 @@ async function streamEvents(c: Context, subscribe: (q: AsyncQueue<string | null>
       clearInterval(heartbeat)
       unsub()
       q.push(null)
-      log.info("global event disconnected")
+      if (q.dropped > 0) log.warn("global event dropped under backpressure", { dropped: q.dropped })
+      log.info("global event disconnected", { buffered: q.size })
     }
 
     const unsub = subscribe(q)
@@ -282,6 +293,75 @@ export const GlobalRoutes = lazy(() =>
           },
         })
         return c.json({ success: true, version: target })
+      },
+    )
+    .get(
+      "/import/scan",
+      describeRoute({
+        summary: "Scan external session sources",
+        description:
+          "Detect availability and session counts of external AI tool session stores (Claude Code, Codex, opencode). Read-only.",
+        operationId: "global.import.scan",
+        responses: {
+          200: {
+            description: "Per-source availability and counts",
+            content: {
+              "application/json": {
+                schema: resolver(
+                  z.record(
+                    z.enum(["cc", "codex", "opencode"]),
+                    z.object({ available: z.boolean(), sessions: z.number(), imported: z.number() }),
+                  ),
+                ),
+              },
+            },
+          },
+        },
+      }),
+      async (c) => {
+        return c.json(await ExternalImport.scan())
+      },
+    )
+    .post(
+      "/import/run",
+      describeRoute({
+        summary: "Import external sessions",
+        description:
+          "Import sessions from external AI tools (Claude Code, Codex, opencode) into mimocode. Idempotent; pass force to re-sync. Per-source failures are not thrown as HTTP errors — they are collected into the corresponding stats.errors[] while other sources continue.",
+        operationId: "global.import.run",
+        responses: {
+          200: {
+            description: "Per-source import stats",
+            content: {
+              "application/json": {
+                schema: resolver(
+                  z.record(
+                    z.enum(["cc", "codex", "opencode"]),
+                    z.object({
+                      scanned: z.number(),
+                      imported: z.number(),
+                      resynced: z.number(),
+                      skipped: z.number(),
+                      errors: z.array(z.string()),
+                    }),
+                  ),
+                ),
+              },
+            },
+          },
+          ...errors(400),
+        },
+      }),
+      validator(
+        "json",
+        z.object({
+          sources: z.array(z.enum(["cc", "codex", "opencode"])).optional(),
+          force: z.boolean().optional(),
+        }),
+      ),
+      async (c) => {
+        const { sources, force } = c.req.valid("json")
+        return c.json(await ExternalImport.runAll({ sources, force }))
       },
     ),
 )

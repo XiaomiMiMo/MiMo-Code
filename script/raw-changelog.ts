@@ -158,7 +158,7 @@ async function contributors(from: string, to: string) {
   const users: User = new Map()
   for (const item of await diff(base, head)) {
     const title = item.message.split("\n")[0] ?? ""
-    if (!item.login || team.includes(item.login)) continue
+    if (!item.login || bot.includes(item.login)) continue
     if (title.match(/^(ignore:|test:|chore:|ci:|release:)/i)) continue
     if (!users.has(item.login)) users.set(item.login, new Set())
     users.get(item.login)!.add(title)
@@ -199,7 +199,7 @@ function format(from: string, to: string, list: Commit[], thanks: string[]) {
 
   for (const commit of list) {
     const title = section(commit.areas)
-    const attr = commit.author && !team.includes(commit.author) ? ` (@${commit.author})` : ""
+    const attr = commit.author && !bot.includes(commit.author) ? ` (@${commit.author})` : ""
     grouped.get(title)!.push(`- \`${commit.hash}\` ${commit.message}${attr}`)
   }
 

@@ -1,4 +1,5 @@
 import * as Tool from "./tool"
+import { RecoverableError } from "./recoverable"
 import DESCRIPTION from "./actor.txt"
 import SHELL_DESCRIPTION from "./actor.shell.txt"
 import { tokenize } from "./shell-tokenize"
@@ -631,7 +632,11 @@ export const ActorTool = Tool.define(
 
         const next = yield* agent.get(op.subagent_type)
         if (!next) {
-          return yield* Effect.fail(new Error(`Unknown agent type: ${op.subagent_type} is not a valid agent type`))
+          return yield* Effect.fail(
+            new RecoverableError(
+              `Unknown agent type "${op.subagent_type}". Valid subagent_type values are listed in the actor tool description — pass one of those.`,
+            ),
+          )
         }
 
         let prompt = op.prompt

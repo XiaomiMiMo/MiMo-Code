@@ -1,11 +1,12 @@
 import { afterEach, describe, expect } from "bun:test"
-import { Effect, Layer } from "effect"
+import { Cause, Effect, Layer } from "effect"
 import { Bus } from "../../src/bus"
 import { Session } from "../../src/session"
 import { TaskRegistry } from "../../src/task/registry"
 import { Instance } from "../../src/project/instance"
 import { provideTmpdirInstance } from "../fixture/fixture"
 import { testEffect } from "../lib/effect"
+import { isRecoverableError } from "../../src/tool/recoverable"
 import * as CrossSpawnSpawner from "../../src/effect/cross-spawn-spawner"
 
 afterEach(async () => {
@@ -100,6 +101,24 @@ describe("TaskRegistry.create", () => {
         expect(tb.id).toBe("T1")
         expect(ta.session_id).toBe(a.id)
         expect(tb.session_id).toBe(b.id)
+      }),
+    ),
+  )
+})
+
+describe("TaskRegistry not-found is agent-recoverable", () => {
+  it.live("start on a nonexistent id dies with an actionable RecoverableError", () =>
+    provideTmpdirInstance(() =>
+      Effect.gen(function* () {
+        const reg = yield* TaskRegistry.Service
+        const sess = yield* seedSession()
+
+        const exit = yield* Effect.exit(reg.start({ session_id: sess.id, id: "T99" }))
+        expect(exit._tag).toBe("Failure")
+        if (exit._tag !== "Failure") return
+        const err = Cause.squash(exit.cause)
+        expect(isRecoverableError(err)).toBe(true)
+        expect((err as Error).message).toContain("task list")
       }),
     ),
   )

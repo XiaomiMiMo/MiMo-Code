@@ -300,7 +300,7 @@ describe("session.message-v2.fromError unwraps AI_RetryError", () => {
   const apiCall = (statusCode: number) =>
     new APICallError({
       message: "No available channel for model claude-sonnet-4.6 under group default",
-      url: "http://mimorouter.llmcore.ai.srv/v1/messages",
+      url: "https://api.example.com/v1/messages",
       requestBodyValues: {},
       statusCode,
       responseHeaders: { "content-type": "application/json" },

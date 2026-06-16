@@ -24,7 +24,7 @@ export const ToolCall = BusEvent.define(
     input_bytes: z.number(),
     output_bytes: z.number(),
     tool_call_id: z.string(),
-    tool_call_status: z.enum(["success", "error"]),
+    tool_call_status: z.enum(["success", "error", "cancelled"]),
   }),
 )
 
