@@ -367,6 +367,48 @@ describe("SessionPrune.fireCheckpoints writer-failure retry", () => {
       { checkpoint: { thresholds: ["50%"] } },
     )
   })
+
+  test("resetThresholds clears writer failure counter without prior success", async () => {
+    const harness = makeRetryHarness()
+    const promptOps = {} as any
+
+    await runWithHarness(
+      harness,
+      Effect.gen(function* () {
+        const svc = yield* SessionPrune.Service
+        const ssn = yield* SessionNs.Service
+        const info = yield* ssn.create({})
+        const model = createModel({ context: 100_000, output: 32_000 })
+
+        // Phase 1: record 2 writer failures (counter = 2, one short of cap).
+        harness.outcomes.push("failure", "failure")
+        for (let i = 0; i < 2; i++) {
+          yield* svc.fireCheckpoints({ sessionID: info.id, model, tokens: makeTokens(), promptOps })
+          yield* Effect.sleep(100)
+        }
+        expect(harness.state.enqueueCount).toBe(2)
+
+        // Simulate a discard+rebuild cycle: resetThresholds should clear
+        // crossed, maxCrossed, AND writerFailures together.
+        yield* svc.resetThresholds(info.id)
+
+        // Phase 2: with a fresh counter, all 3 failure slots are available.
+        harness.outcomes.push("failure", "failure", "failure")
+        for (let i = 0; i < 3; i++) {
+          yield* svc.fireCheckpoints({ sessionID: info.id, model, tokens: makeTokens(), promptOps })
+          yield* Effect.sleep(100)
+        }
+        // Counter started fresh → all 3 fire. Total enqueues: 2 + 3 = 5.
+        expect(harness.state.enqueueCount).toBe(5)
+
+        // Fourth fire: counter === 3 again (cap hit), crossed stays → no enqueue.
+        yield* svc.fireCheckpoints({ sessionID: info.id, model, tokens: makeTokens(), promptOps })
+        yield* Effect.sleep(100)
+        expect(harness.state.enqueueCount).toBe(5)
+      }),
+      { checkpoint: { thresholds: ["50%"] } },
+    )
+  })
 })
 
 describe("defaultThresholdsFor (Part 2 density)", () => {
