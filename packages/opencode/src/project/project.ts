@@ -44,7 +44,13 @@ async function setupProjectIdEnvironment(workingDir: string): Promise<void> {
 
   // Belt-and-suspenders: ensure .git/info/exclude lists .mimocode-project-id
   const excludeFile = nodePath.join(mainGit, "info", "exclude")
-  await nodeFs.mkdir(nodePath.dirname(excludeFile), { recursive: true })
+  await nodeFs
+    .mkdir(nodePath.dirname(excludeFile), { recursive: true })
+    .catch((e: any) => {
+      // Windows: EEXIST is thrown when the directory has the ReadOnly
+      // attribute (e.g. OneDrive-synced folders). nodejs#43994.
+      if (e?.code !== "EEXIST") throw e
+    })
   const existing = await nodeFs.readFile(excludeFile, "utf-8").catch(() => "")
   if (!existing.includes(".mimocode-project-id")) {
     await nodeFs.appendFile(excludeFile, "\n.mimocode-project-id\n")
