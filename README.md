@@ -38,6 +38,7 @@ mimo
 The first launch guides you through configuration automatically. Supported options:
 - **MiMo Auto (free for a limited time)** — anonymous channel, zero configuration
 - **Xiaomi MiMo Platform** — OAuth login
+- **Astraflow** — OpenAI-compatible platform supporting 200+ models
 - **Import from Claude Code** — migrate existing authentication in one step
 - **Custom Provider** — add any OpenAI-compatible API in the TUI
 
