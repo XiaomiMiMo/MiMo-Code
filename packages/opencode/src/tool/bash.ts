@@ -22,6 +22,8 @@ import { Effect, Stream } from "effect"
 import { ChildProcess } from "effect/unstable/process"
 import { ChildProcessSpawner } from "effect/unstable/process/ChildProcessSpawner"
 import * as BashInteractive from "./bash-interactive"
+import { Patch } from "../patch"
+import { ApplyPatchTool } from "./apply_patch"
 
 const MAX_METADATA_LENGTH = 30_000
 const DEFAULT_TIMEOUT = Flag.MIMOCODE_EXPERIMENTAL_BASH_DEFAULT_TIMEOUT_MS || 2 * 60 * 1000
@@ -360,6 +362,7 @@ export const BashTool = Tool.define(
     const fs = yield* AppFileSystem.Service
     const trunc = yield* Truncate.Service
     const plugin = yield* Plugin.Service
+    const applyPatch = yield* ApplyPatchTool.pipe(Effect.flatMap((info) => info.init()))
 
     const cygpath = Effect.fn("BashTool.cygpath")(function* (shell: string, text: string) {
       const lines = yield* spawner
@@ -632,6 +635,24 @@ export const BashTool = Tool.define(
           parameters: Parameters,
           execute: (params: z.infer<typeof Parameters>, ctx: Tool.Context) =>
             Effect.gen(function* () {
+              const intercepted = Patch.maybeParseApplyPatchFromCommand(params.command)
+              if (intercepted.type === Patch.MaybeApplyPatch.PatchParseError) {
+                throw intercepted.error
+              }
+              if (intercepted.type === Patch.MaybeApplyPatch.Body) {
+                const result = yield* applyPatch.execute({ patchText: intercepted.args.patch }, ctx)
+                return {
+                  title: result.title,
+                  metadata: {
+                    output: result.output,
+                    exit: 0,
+                    description: params.description,
+                    truncated: false,
+                  },
+                  output: result.output,
+                }
+              }
+
               const effectiveCwd = SessionCwd.get(ctx.sessionID)
               const cwd = params.workdir
                 ? yield* resolvePath(params.workdir, effectiveCwd, shell)

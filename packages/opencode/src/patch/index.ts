@@ -301,6 +301,33 @@ export function maybeParseApplyPatch(
   return { type: MaybeApplyPatch.NotApplyPatch }
 }
 
+// Parse apply_patch invocations embedded in a bash tool command string.
+// Models often run apply_patch via bash heredoc instead of the dedicated tool,
+// bypassing approval and safety checks.
+export function maybeParseApplyPatchFromCommand(
+  command: string,
+):
+  | { type: MaybeApplyPatch.Body; args: ApplyPatchArgs }
+  | { type: MaybeApplyPatch.PatchParseError; error: Error }
+  | { type: MaybeApplyPatch.NotApplyPatch } {
+  const trimmed = command.trim()
+  if (!trimmed) return { type: MaybeApplyPatch.NotApplyPatch }
+
+  const fromScript = maybeParseApplyPatch(["bash", "-lc", trimmed])
+  if (fromScript.type !== MaybeApplyPatch.NotApplyPatch) {
+    return fromScript
+  }
+
+  for (const cmd of ["apply_patch", "applypatch"] as const) {
+    if (!trimmed.startsWith(`${cmd} `)) continue
+    const patchText = trimmed.slice(cmd.length + 1).trim()
+    if (!patchText) return { type: MaybeApplyPatch.NotApplyPatch }
+    return maybeParseApplyPatch([cmd, patchText])
+  }
+
+  return { type: MaybeApplyPatch.NotApplyPatch }
+}
+
 // File content manipulation
 interface ApplyPatchFileUpdate {
   unified_diff: string

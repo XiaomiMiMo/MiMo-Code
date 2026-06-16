@@ -14,6 +14,9 @@ import { SessionID, MessageID } from "../../src/session/schema"
 import * as CrossSpawnSpawner from "../../src/effect/cross-spawn-spawner"
 import { AppFileSystem } from "@mimo-ai/shared/filesystem"
 import { Plugin } from "../../src/plugin"
+import { LSP } from "../../src/lsp"
+import { Format } from "../../src/format"
+import { Bus } from "../../src/bus"
 
 const runtime = ManagedRuntime.make(
   Layer.mergeAll(
@@ -22,6 +25,9 @@ const runtime = ManagedRuntime.make(
     Plugin.defaultLayer,
     Truncate.defaultLayer,
     Agent.defaultLayer,
+    LSP.defaultLayer,
+    Format.defaultLayer,
+    Bus.layer,
   ),
 )
 

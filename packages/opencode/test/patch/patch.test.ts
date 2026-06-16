@@ -133,6 +133,36 @@ PATCH`
     })
   })
 
+  describe("maybeParseApplyPatchFromCommand", () => {
+    test("should parse heredoc command strings", () => {
+      const command = `apply_patch <<'PATCH'
+*** Begin Patch
+*** Add File: test.txt
++Content
+*** End Patch
+PATCH`
+
+      const result = Patch.maybeParseApplyPatchFromCommand(command)
+      expect(result.type).toBe(Patch.MaybeApplyPatch.Body)
+      if (result.type === Patch.MaybeApplyPatch.Body) {
+        expect(result.args.hunks).toHaveLength(1)
+      }
+    })
+
+    test("should parse direct apply_patch command strings", () => {
+      const patchText = `*** Begin Patch
+*** Add File: test.txt
++Content
+*** End Patch`
+      const result = Patch.maybeParseApplyPatchFromCommand(`apply_patch ${patchText}`)
+      expect(result.type).toBe(Patch.MaybeApplyPatch.Body)
+    })
+
+    test("should return NotApplyPatch for regular shell commands", () => {
+      expect(Patch.maybeParseApplyPatchFromCommand("echo hello").type).toBe(Patch.MaybeApplyPatch.NotApplyPatch)
+    })
+  })
+
   describe("applyPatch", () => {
     test("should add a new file", async () => {
       const patchText = `*** Begin Patch

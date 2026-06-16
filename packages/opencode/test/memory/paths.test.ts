@@ -11,6 +11,24 @@ describe("parsePath", () => {
     })
   })
 
+  test("Windows backslash paths parse correctly", () => {
+    expect(parsePath("C:\\data\\memory\\global\\tooling-prefs.md")).toEqual({
+      scope: "global",
+      scope_id: "",
+      type: "free",
+      key: "tooling-prefs",
+    })
+  })
+
+  test("Windows project memory path parses correctly", () => {
+    expect(parsePath("C:\\Users\\me\\.mimocode\\memory\\projects\\uuid-1\\memory.md")).toEqual({
+      scope: "projects",
+      scope_id: "uuid-1",
+      type: "memory",
+      key: "memory",
+    })
+  })
+
   test("project memory: <pid>/memory.md", () => {
     expect(parsePath("/data/memory/projects/uuid-1/memory.md")).toEqual({
       scope: "projects",

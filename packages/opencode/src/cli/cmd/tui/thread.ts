@@ -60,11 +60,15 @@ async function target() {
   return new URL("./worker.ts", import.meta.url)
 }
 
+function normalizePromptText(text: string): string {
+  return text.replace(/\r\n/g, "\n").replace(/\r/g, "\n")
+}
+
 async function input(value?: string) {
   const piped = process.stdin.isTTY ? undefined : await Bun.stdin.text()
-  if (!value) return piped
-  if (!piped) return value
-  return piped + "\n" + value
+  if (!value) return piped ? normalizePromptText(piped) : piped
+  if (!piped) return normalizePromptText(value)
+  return normalizePromptText(piped + "\n" + value)
 }
 
 async function promptWorkspaceTrust(directory: string, level: "untrusted" | "dangerous"): Promise<boolean> {
