@@ -266,35 +266,32 @@ export const layer = Layer.effect(
           }
         }
 
-        // Private, internal-only plugins live in src/private/ (e.g. the free
-        // "mimo-auto" channel). That directory is NOT part of the open-source
-        // tree; it is injected at build time only when the internal repo is
-        // present. Auto-detected at runtime: present → loaded; absent
-        // (open-source build) → skipped. Never referenced statically, so the
-        // open-source build compiles and runs without it.
-        const privateDir = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "private")
-        const privateFiles = fs.existsSync(privateDir)
-          ? fs.readdirSync(privateDir).filter((f) => f.endsWith(".ts") && !f.endsWith(".d.ts"))
+        // Optional local extensions live in src/ext/. The directory may be
+        // absent; when present, every *Plugin-named export is auto-loaded at
+        // runtime. Never referenced statically, so builds work with or without it.
+        const extDir = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "ext")
+        const extFiles = fs.existsSync(extDir)
+          ? fs.readdirSync(extDir).filter((f) => f.endsWith(".ts") && !f.endsWith(".d.ts"))
           : []
-        for (const entry of privateFiles) {
-          const file = path.join(privateDir, entry)
+        for (const entry of extFiles) {
+          const file = path.join(extDir, entry)
           const name = entry.replace(/\.ts$/, "")
           const mod = yield* Effect.tryPromise({
             try: () => import(/* @vite-ignore */ pathToFileURL(file).href),
-            catch: (err) => log.error("failed to import private plugin", { name, error: err }),
+            catch: (err) => log.error("failed to import extension", { name, error: err }),
           }).pipe(Effect.option)
           if (mod._tag !== "Some") continue
-          // Only treat *Plugin-named function exports as plugins. Other private
-          // modules (e.g. free-login.ts exporting a CLI helper) are not plugins
-          // and must not be invoked as plugin factories.
+          // Only treat *Plugin-named function exports as plugins. Other modules
+          // (e.g. a CLI helper export) are not plugins and must not be invoked
+          // as plugin factories.
           const overlay = Object.entries(mod.value as Record<string, unknown>).find(
             ([exportName, v]) => typeof v === "function" && exportName.endsWith("Plugin"),
           )?.[1] as PluginInstance | undefined
           if (!overlay) continue
-          log.info("loading private plugin", { name })
+          log.info("loading extension", { name })
           const init = yield* Effect.tryPromise({
             try: () => overlay(input),
-            catch: (err) => log.error("failed to load private plugin", { name, error: err }),
+            catch: (err) => log.error("failed to load extension", { name, error: err }),
           }).pipe(Effect.option)
           if (init._tag === "Some") {
             hooks.push(init.value)
