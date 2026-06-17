@@ -228,17 +228,31 @@ export function Prompt(props: PromptProps) {
     }
     if (state === "finishing") return
     // Start streaming
-    const xiaomi = sync.data.provider.find((p) => p.id === "xiaomi")
-    if (!xiaomi?.key) {
-      toast.show({ message: t("tui.voice.error.no_auth"), variant: "error" })
+    const voiceConfig = sync.data.config.voice
+    const asrModelID = voiceConfig?.asr_model || "xiaomi/mimo-v2.5-asr"
+    const controlModelID = voiceConfig?.control_model || "xiaomi/mimo-v2.5"
+    const asrProviderID = asrModelID.split("/")[0]
+    const asrModel = asrModelID.slice(asrProviderID.length + 1)
+    const controlProviderID = controlModelID.split("/")[0]
+    const controlModel = controlModelID.slice(controlProviderID.length + 1)
+
+    const asrProvider = sync.data.provider.find((p) => p.id === asrProviderID)
+    if (!asrProvider?.key) {
+      const msg = voiceConfig?.asr_model
+        ? t("tui.voice.error.no_auth_provider", { provider: asrProviderID })
+        : t("tui.voice.error.no_auth")
+      toast.show({ message: msg, variant: "error" })
       return
     }
     if (!Voice.isAvailable()) {
       toast.show({ message: t("tui.voice.error.no_recorder"), variant: "error" })
       return
     }
-    const apiKey = xiaomi.key
-    const baseUrl = (xiaomi.options?.baseURL as string) || "https://api.xiaomimimo.com/v1"
+    const apiKey = asrProvider.key
+    const baseUrl = (asrProvider.options?.baseURL as string) || "https://api.xiaomimimo.com/v1"
+    const controlProvider = sync.data.provider.find((p) => p.id === controlProviderID)
+    const controlApiKey = controlProvider?.key || apiKey
+    const controlBaseUrl = (controlProvider?.options?.baseURL as string) || baseUrl
 
     const av: NonNullable<typeof activeVoice> = {
       handle: undefined!,
@@ -270,8 +284,9 @@ export function Prompt(props: PromptProps) {
 
               const ctrl = await Voice.processVoiceControl({
                 audio: segment.audio,
-                apiKey,
-                baseUrl,
+                apiKey: controlApiKey,
+                baseUrl: controlBaseUrl,
+                model: controlModel,
                 currentText,
                 currentAgent,
                 availableAgents,
@@ -303,6 +318,7 @@ export function Prompt(props: PromptProps) {
             audio: segment.audio,
             apiKey,
             baseUrl,
+            model: asrModel,
           }).then((text) => {
             if (text) {
               if (voiceSendEnabled() && Voice.SEND_RE.test(text.replace(/[\s。.!！？?，,]+$/g, "").trim())) {

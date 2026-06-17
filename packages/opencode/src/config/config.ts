@@ -353,6 +353,18 @@ const InfoSchema = Schema.Struct({
       }),
     }),
   ),
+  voice: Schema.optional(
+    Schema.Struct({
+      asr_model: Schema.optional(ConfigModelID).annotate({
+        description:
+          "Model to use for voice ASR transcription in provider/model format. Defaults to xiaomi/mimo-v2.5-asr.",
+      }),
+      control_model: Schema.optional(ConfigModelID).annotate({
+        description:
+          "Model to use for voice control (multimodal) in provider/model format. Defaults to xiaomi/mimo-v2.5.",
+      }),
+    }),
+  ).annotate({ description: "Voice input provider and model configuration." }),
   experimental: Schema.optional(
     Schema.Struct({
       disable_paste_summary: Schema.optional(Schema.Boolean),

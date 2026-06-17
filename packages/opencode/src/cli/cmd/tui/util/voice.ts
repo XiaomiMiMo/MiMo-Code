@@ -124,6 +124,7 @@ export async function transcribeAudio(opts: {
   audio: Int16Array
   apiKey: string
   baseUrl: string
+  model?: string
 }): Promise<string | null> {
   const wavBuffer = encodeWav(opts.audio)
   const base64 = Buffer.from(wavBuffer).toString("base64")
@@ -141,7 +142,7 @@ export async function transcribeAudio(opts: {
       "X-Mimo-Source": "mimocode-cli",
     },
     body: JSON.stringify({
-      model: "mimo-v2.5-asr",
+      model: opts.model || "mimo-v2.5-asr",
       messages: [{ role: "user", content: [{ type: "input_audio", input_audio: { data: dataUrl } }] }],
       asr_options: { language: "auto" },
     }),
@@ -302,6 +303,7 @@ export async function processVoiceControl(opts: {
   audio: Int16Array
   apiKey: string
   baseUrl: string
+  model?: string
   currentText: string
   currentAgent: string
   availableAgents: string[]
@@ -331,7 +333,7 @@ export async function processVoiceControl(opts: {
       "X-Mimo-Source": "mimocode-cli",
     },
     body: JSON.stringify({
-      model: "mimo-v2.5",
+      model: opts.model || "mimo-v2.5",
       messages: [
         { role: "system", content: VOICE_CONTROL_SYSTEM_PROMPT },
         {
