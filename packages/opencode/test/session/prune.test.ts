@@ -367,6 +367,47 @@ describe("SessionPrune.fireCheckpoints writer-failure retry", () => {
       { checkpoint: { thresholds: ["50%"] } },
     )
   })
+
+  test("resetThresholds clears the writer-failure counter", async () => {
+    const harness = makeRetryHarness()
+    const promptOps = {} as any
+
+    await runWithHarness(
+      harness,
+      Effect.gen(function* () {
+        const svc = yield* SessionPrune.Service
+        const ssn = yield* SessionNs.Service
+        const info = yield* ssn.create({})
+        const model = createModel({ context: 100_000, output: 32_000 })
+
+        // Phase 1: two failures (counter 1→2, both below the cap of 3, so each
+        // watcher clears `crossed` and the next fire re-enqueues). The counter
+        // is left at 2 — and crucially is NOT reset by a success.
+        harness.outcomes.push("failure", "failure")
+        for (let i = 0; i < 2; i++) {
+          yield* svc.fireCheckpoints({ sessionID: info.id, model, tokens: makeTokens(), promptOps })
+          yield* Effect.sleep(100)
+        }
+        expect(harness.state.enqueueCount).toBe(2)
+
+        // resetThresholds starts a fresh checkpoint cycle and must reset ALL
+        // per-session threshold state, including the writer-failure counter.
+        yield* svc.resetThresholds(info.id)
+
+        // Phase 2: three more failures. With a freshly-zeroed counter all three
+        // land before the cap → enqueue 2→5. If the counter still carried over
+        // (2), the very first fire would hit the cap, leaving crossed set and
+        // suppressing the rest — enqueueCount would stall at 3.
+        harness.outcomes.push("failure", "failure", "failure")
+        for (let i = 0; i < 3; i++) {
+          yield* svc.fireCheckpoints({ sessionID: info.id, model, tokens: makeTokens(), promptOps })
+          yield* Effect.sleep(100)
+        }
+        expect(harness.state.enqueueCount).toBe(5)
+      }),
+      { checkpoint: { thresholds: ["50%"] } },
+    )
+  })
 })
 
 describe("defaultThresholdsFor (Part 2 density)", () => {

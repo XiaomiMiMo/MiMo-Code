@@ -463,6 +463,10 @@ export const layer: Layer.Layer<
     const resetThresholds = Effect.fn("SessionPrune.resetThresholds")(function* (sessionID: SessionID) {
       crossed.delete(sessionID)
       maxCrossed.delete(sessionID)
+      // Starting a fresh threshold cycle must also drop the consecutive
+      // writer-failure count, otherwise the new cycle inherits the old count
+      // and can hit the retry cap earlier than expected.
+      writerFailures.delete(sessionID)
     })
 
     return Service.of({ prune, fireCheckpoints, maxThresholdCrossed, resetThresholds })
