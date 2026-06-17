@@ -412,6 +412,8 @@ export const dict = {
   "tui.command.voice.control.title_off": "Contrôle vocal : désactivé (ASR rapide) — cliquer pour activer",
   "tui.voice.error.no_auth": "Utilisez /connect pour vous connecter à MiMo, ou configurez voice.asr_model pour un autre fournisseur",
   "tui.voice.error.no_auth_provider": "Le fournisseur vocal \"{{provider}}\" n'est pas authentifié, vérifiez sa configuration",
+  "tui.voice.error.no_device": "Aucun microphone/appareil audio trouvé — vérifiez les paramètres audio du système",
+  "tui.voice.error.recorder_failed": "L'enregistrement a échoué",
   "tui.voice.error.no_recorder": "Aucun outil d'enregistrement trouvé, installez sox",
   "tui.voice.error.too_short": "Enregistrement trop court",
   "tui.voice.error.network": "La transcription a échoué, vérifiez votre réseau",

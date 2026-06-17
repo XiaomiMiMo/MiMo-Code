@@ -350,6 +350,8 @@ export const dict = {
   "tui.command.voice.control.title_off": "語音控制：已關閉（快速 ASR） — 點擊開啟",
   "tui.voice.error.no_auth": "請先用 /connect 連接 MiMo 帳號，或配置 voice.asr_model 指定其他 provider",
   "tui.voice.error.no_auth_provider": "語音 provider「{{provider}}」未認證，請檢查其配置",
+  "tui.voice.error.no_device": "未偵測到麥克風/音訊裝置 — 請檢查系統音訊設定",
+  "tui.voice.error.recorder_failed": "錄音失敗",
   "tui.voice.error.no_recorder": "未偵測到錄音工具，請安裝 sox",
   "tui.voice.error.too_short": "錄音時間過短",
   "tui.voice.error.network": "轉寫失敗，請檢查網路",
