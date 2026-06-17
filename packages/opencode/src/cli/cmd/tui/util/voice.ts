@@ -375,7 +375,6 @@ export async function processVoiceControl(opts: {
   log.debug("voice control request", { model, samples, agent: opts.currentAgent })
   const wavBuffer = encodeWav(opts.audio)
   const base64 = Buffer.from(wavBuffer).toString("base64")
-  const dataUrl = `data:audio/wav;base64,${base64}`
   const url = `${opts.baseUrl.replace(/\/+$/, "")}/chat/completions`
 
   const userContext = JSON.stringify({
@@ -404,7 +403,7 @@ export async function processVoiceControl(opts: {
           role: "user",
           content: [
             { type: "text", text: userContext },
-            { type: "input_audio", input_audio: { data: dataUrl } },
+            { type: "input_audio", input_audio: { data: base64, format: "wav" } },
           ],
         },
       ],
