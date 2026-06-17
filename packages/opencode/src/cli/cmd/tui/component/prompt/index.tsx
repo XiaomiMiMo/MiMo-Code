@@ -126,7 +126,7 @@ export function Prompt(props: PromptProps) {
   const kv = useKV()
   const animationsEnabled = createMemo(() => kv.get("animations_enabled", true))
   const voiceEnabled = createMemo(() => kv.get("voice_enabled", false))
-  const voiceSendEnabled = createMemo(() => kv.get("voice_send_command", true))
+  const voiceSendEnabled = createMemo(() => kv.get("voice_send_command", false))
   const voiceControlEnabled = createMemo(() => kv.get("voice_control_enabled", false))
   const [voiceState, setVoiceState] = createSignal<"idle" | "listening" | "speaking" | "processing" | "finishing">(
     activeVoice ? (activeVoice.pending > 0 ? "processing" : "listening") : "idle",

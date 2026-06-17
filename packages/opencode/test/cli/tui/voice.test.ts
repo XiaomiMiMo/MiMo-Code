@@ -32,23 +32,23 @@ describe("voice", () => {
 
     test("parses custom control_model correctly", async () => {
       const { resolveVoiceConfig } = await import("../../../src/cli/cmd/tui/util/voice")
-      const result = resolveVoiceConfig({ control_model: "openrouter/mimo-v2.5" })
+      const result = resolveVoiceConfig({ control_model: "openrouter/xiaomi/mimo-v2.5" })
       expect(result.asr.providerID).toBe("xiaomi")
       expect(result.asr.model).toBe("mimo-v2.5-asr")
       expect(result.control.providerID).toBe("openrouter")
-      expect(result.control.model).toBe("mimo-v2.5")
+      expect(result.control.model).toBe("xiaomi/mimo-v2.5")
     })
 
     test("supports both custom asr and control", async () => {
       const { resolveVoiceConfig } = await import("../../../src/cli/cmd/tui/util/voice")
       const result = resolveVoiceConfig({
         asr_model: "newapi/mimo-v2.5-asr",
-        control_model: "openrouter/mimo-v2.5",
+        control_model: "openrouter/xiaomi/mimo-v2.5",
       })
       expect(result.asr.providerID).toBe("newapi")
       expect(result.asr.model).toBe("mimo-v2.5-asr")
       expect(result.control.providerID).toBe("openrouter")
-      expect(result.control.model).toBe("mimo-v2.5")
+      expect(result.control.model).toBe("xiaomi/mimo-v2.5")
     })
 
     test("handles model IDs with multiple slashes", async () => {
