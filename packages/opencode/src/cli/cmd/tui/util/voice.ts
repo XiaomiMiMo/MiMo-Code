@@ -124,6 +124,8 @@ export function startStreaming(opts: {
       }
     }
   })().catch((err) => {
+    if (handle.aborted) return
+    handle.aborted = true
     proc.kill("SIGINT")
     opts.onError?.(err instanceof Error ? err : new Error(String(err)))
   })

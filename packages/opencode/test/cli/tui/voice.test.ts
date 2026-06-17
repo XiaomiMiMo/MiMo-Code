@@ -168,6 +168,47 @@ describe("voice", () => {
       })
       expect(result).toBeNull()
     })
+
+    test("returns null on network error with custom model", async () => {
+      const { transcribeAudio } = await import("../../../src/cli/cmd/tui/util/voice")
+      const result = await transcribeAudio({
+        audio: new Int16Array(100),
+        apiKey: "test-key",
+        baseUrl: "http://127.0.0.1:1",
+        model: "custom-provider/custom-asr",
+      })
+      expect(result).toBeNull()
+    })
+  })
+
+  describe("processVoiceControl", () => {
+    test("returns null on network error", async () => {
+      const { processVoiceControl } = await import("../../../src/cli/cmd/tui/util/voice")
+      const result = await processVoiceControl({
+        audio: new Int16Array(100),
+        apiKey: "test-key",
+        baseUrl: "http://127.0.0.1:1",
+        currentText: "",
+        currentAgent: "build",
+        availableAgents: ["build", "plan"],
+      })
+      expect(result).toBeNull()
+    })
+
+    test("returns null on network error with custom model", async () => {
+      const { processVoiceControl } = await import("../../../src/cli/cmd/tui/util/voice")
+      const result = await processVoiceControl({
+        audio: new Int16Array(100),
+        apiKey: "test-key",
+        baseUrl: "http://127.0.0.1:1",
+        model: "custom-provider/mimo-v2.5",
+        currentText: "hello",
+        currentAgent: "build",
+        availableAgents: ["build", "plan"],
+        sendEnabled: false,
+      })
+      expect(result).toBeNull()
+    })
   })
 
   describe("RealtimeVAD", () => {
