@@ -3,6 +3,28 @@ import { which } from "@/util/which"
 import { RealtimeVAD, type VADSegment } from "./vad"
 import z from "zod"
 
+const DEFAULT_ASR_MODEL = "xiaomi/mimo-v2.5-asr"
+const DEFAULT_CONTROL_MODEL = "xiaomi/mimo-v2.5"
+
+export type VoiceProviderConfig = {
+  providerID: string
+  model: string
+}
+
+export function resolveVoiceConfig(voiceConfig?: { asr_model?: string; control_model?: string }): {
+  asr: VoiceProviderConfig
+  control: VoiceProviderConfig
+} {
+  const asrModelID = voiceConfig?.asr_model || DEFAULT_ASR_MODEL
+  const controlModelID = voiceConfig?.control_model || DEFAULT_CONTROL_MODEL
+  const asrProviderID = asrModelID.split("/")[0]
+  const controlProviderID = controlModelID.split("/")[0]
+  return {
+    asr: { providerID: asrProviderID, model: asrModelID.slice(asrProviderID.length + 1) },
+    control: { providerID: controlProviderID, model: controlModelID.slice(controlProviderID.length + 1) },
+  }
+}
+
 type Recorder = {
   cmd: string
   pipeArgs: () => string[]
