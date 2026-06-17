@@ -232,7 +232,8 @@ export function Prompt(props: PromptProps) {
     const resolved = Voice.resolveVoiceConfig(voiceConfig)
 
     const asrProvider = sync.data.provider.find((p) => p.id === resolved.asr.providerID)
-    if (!asrProvider?.key) {
+    const asrKey = asrProvider?.key || (asrProvider?.options?.apiKey as string | undefined)
+    if (!asrKey) {
       const msg = voiceConfig?.asr_model
         ? t("tui.voice.error.no_auth_provider", { provider: resolved.asr.providerID })
         : t("tui.voice.error.no_auth")
@@ -243,11 +244,11 @@ export function Prompt(props: PromptProps) {
       toast.show({ message: t("tui.voice.error.no_recorder"), variant: "error" })
       return
     }
-    const apiKey = asrProvider.key
-    const baseUrl = (asrProvider.options?.baseURL as string) || "https://api.xiaomimimo.com/v1"
+    const apiKey = asrKey
+    const baseUrl = (asrProvider!.options?.baseURL as string) || "https://api.xiaomimimo.com/v1"
     const sameProvider = resolved.control.providerID === resolved.asr.providerID
-    const controlProvider = sameProvider ? asrProvider : sync.data.provider.find((p) => p.id === resolved.control.providerID)
-    const controlApiKey = controlProvider?.key || apiKey
+    const controlProvider = sameProvider ? asrProvider! : sync.data.provider.find((p) => p.id === resolved.control.providerID)
+    const controlApiKey = controlProvider?.key || (controlProvider?.options?.apiKey as string | undefined) || apiKey
     const controlBaseUrl = (controlProvider?.options?.baseURL as string) || (sameProvider ? baseUrl : "https://api.xiaomimimo.com/v1")
 
     const av: NonNullable<typeof activeVoice> = {
