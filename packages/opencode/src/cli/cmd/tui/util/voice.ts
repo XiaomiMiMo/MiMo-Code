@@ -1,7 +1,9 @@
-import { Process } from "@/util"
+import { Log, Process } from "@/util"
 import { which } from "@/util/which"
 import { RealtimeVAD, type VADSegment } from "./vad"
 import z from "zod"
+
+const log = Log.create({ service: "tui.voice" })
 
 const DEFAULT_ASR_MODEL = "xiaomi/mimo-v2.5-asr"
 const DEFAULT_CONTROL_MODEL = "xiaomi/mimo-v2.5"
@@ -99,6 +101,7 @@ export function startStreaming(opts: {
   const recorder = detectRecorder()
   if (!recorder) return null
 
+  log.info("recording started", { recorder: recorder.cmd })
   const vad = new RealtimeVAD({ onSegment: opts.onSegment, onActiveChange: opts.onActiveChange })
   const proc = Process.spawn([recorder.cmd, ...recorder.pipeArgs()], {
     stdin: "ignore",
@@ -123,6 +126,7 @@ export function startStreaming(opts: {
         handle.aborted = true
         const stderrText = Buffer.concat(stderrChunks).toString().trim()
         const msg = stderrText || `Recorder exited with code ${code}`
+        log.warn("recorder exited with error", { code, stderr: stderrText })
         opts.onError?.(new Error(msg))
       }
     })
@@ -166,6 +170,7 @@ export async function stopStreaming(handle: StreamingHandle) {
   await handle.reading
   handle.vad.flush()
   handle.vad.destroy()
+  log.info("recording stopped", { duration: Date.now() - handle.startTime })
 }
 
 export async function transcribeAudio(opts: {
@@ -174,6 +179,9 @@ export async function transcribeAudio(opts: {
   baseUrl: string
   model?: string
 }): Promise<string | null> {
+  const model = opts.model || "mimo-v2.5-asr"
+  const samples = opts.audio.length
+  log.debug("transcribe request", { model, samples })
   const wavBuffer = encodeWav(opts.audio)
   const base64 = Buffer.from(wavBuffer).toString("base64")
   const dataUrl = `data:audio/wav;base64,${base64}`
@@ -190,7 +198,7 @@ export async function transcribeAudio(opts: {
       "X-Mimo-Source": "mimocode-cli",
     },
     body: JSON.stringify({
-      model: opts.model || "mimo-v2.5-asr",
+      model,
       messages: [{ role: "user", content: [{ type: "input_audio", input_audio: { data: dataUrl } }] }],
       asr_options: { language: "auto" },
     }),
@@ -198,10 +206,15 @@ export async function transcribeAudio(opts: {
   }).catch(() => null)
 
   clearTimeout(timeout)
-  if (!res || !res.ok) return null
+  if (!res || !res.ok) {
+    log.warn("transcribe failed", { model, status: res?.status })
+    return null
+  }
   try {
     const data = (await res.json()) as { choices?: Array<{ message?: { content?: string } }> }
-    return data.choices?.[0]?.message?.content?.trim() || null
+    const text = data.choices?.[0]?.message?.content?.trim() || null
+    log.debug("transcribe result", { model, length: text?.length ?? 0 })
+    return text
   } catch {
     return null
   }
@@ -357,6 +370,9 @@ export async function processVoiceControl(opts: {
   availableAgents: string[]
   sendEnabled?: boolean
 }): Promise<VoiceControlResult | null> {
+  const model = opts.model || "mimo-v2.5"
+  const samples = opts.audio.length
+  log.debug("voice control request", { model, samples, agent: opts.currentAgent })
   const wavBuffer = encodeWav(opts.audio)
   const base64 = Buffer.from(wavBuffer).toString("base64")
   const dataUrl = `data:audio/wav;base64,${base64}`
@@ -381,7 +397,7 @@ export async function processVoiceControl(opts: {
       "X-Mimo-Source": "mimocode-cli",
     },
     body: JSON.stringify({
-      model: opts.model || "mimo-v2.5",
+      model,
       messages: [
         { role: "system", content: VOICE_CONTROL_SYSTEM_PROMPT },
         {
@@ -398,12 +414,17 @@ export async function processVoiceControl(opts: {
   }).catch(() => null)
 
   clearTimeout(timeout)
-  if (!res || !res.ok) return null
+  if (!res || !res.ok) {
+    log.warn("voice control failed", { model, status: res?.status })
+    return null
+  }
   try {
     const data = (await res.json()) as { choices?: Array<{ message?: { content?: string } }> }
     const content = data.choices?.[0]?.message?.content
     if (!content) return null
-    return parseVoiceControl(content)
+    const result = parseVoiceControl(content)
+    log.debug("voice control result", { model, actions: result?.actions.length ?? 0 })
+    return result
   } catch {
     return null
   }
