@@ -173,6 +173,7 @@ export async function stopStreaming(handle: StreamingHandle) {
   log.info("recording stopped", { duration: Date.now() - handle.startTime })
 }
 
+// Xiaomi ASR uses a proprietary data-URL audio format and asr_options field, not the standard OpenAI input_audio schema.
 export async function transcribeAudio(opts: {
   audio: Int16Array
   apiKey: string
@@ -184,7 +185,6 @@ export async function transcribeAudio(opts: {
   log.debug("transcribe request", { model, samples })
   const wavBuffer = encodeWav(opts.audio)
   const base64 = Buffer.from(wavBuffer).toString("base64")
-  const dataUrl = `data:audio/wav;base64,${base64}`
   const url = `${opts.baseUrl.replace(/\/+$/, "")}/chat/completions`
 
   const controller = new AbortController()
@@ -199,7 +199,7 @@ export async function transcribeAudio(opts: {
     },
     body: JSON.stringify({
       model,
-      messages: [{ role: "user", content: [{ type: "input_audio", input_audio: { data: dataUrl } }] }],
+      messages: [{ role: "user", content: [{ type: "input_audio", input_audio: { data: `data:audio/wav;base64,${base64}` } }] }],
       asr_options: { language: "auto" },
     }),
     signal: controller.signal,
@@ -207,7 +207,8 @@ export async function transcribeAudio(opts: {
 
   clearTimeout(timeout)
   if (!res || !res.ok) {
-    log.warn("transcribe failed", { model, status: res?.status })
+    const body = await res?.text().catch(() => "")
+    log.warn("transcribe failed", { model, status: res?.status, body })
     return null
   }
   try {
@@ -414,7 +415,8 @@ export async function processVoiceControl(opts: {
 
   clearTimeout(timeout)
   if (!res || !res.ok) {
-    log.warn("voice control failed", { model, status: res?.status })
+    const body = await res?.text().catch(() => "")
+    log.warn("voice control failed", { model, status: res?.status, body })
     return null
   }
   try {
