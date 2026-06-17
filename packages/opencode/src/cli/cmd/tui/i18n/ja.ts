@@ -364,6 +364,8 @@ export const dict = {
   "tui.command.voice.control.title_off": "音声制御：無効（高速ASR） — クリックで有効化",
   "tui.voice.error.no_auth": "/connect で MiMo アカウントに接続するか、voice.asr_model で別のプロバイダーを設定してください",
   "tui.voice.error.no_auth_provider": "音声プロバイダー「{{provider}}」が認証されていません。設定を確認してください",
+  "tui.voice.error.no_device": "マイク/オーディオデバイスが見つかりません — システムのオーディオ設定を確認してください",
+  "tui.voice.error.recorder_failed": "録音に失敗しました",
   "tui.voice.error.no_recorder": "録音ツールが見つかりません。sox をインストールしてください",
   "tui.voice.error.too_short": "録音時間が短すぎます",
   "tui.voice.error.network": "文字起こしに失敗しました。ネットワークを確認してください",

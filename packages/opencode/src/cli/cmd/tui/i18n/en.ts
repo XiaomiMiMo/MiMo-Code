@@ -357,6 +357,8 @@ export const dict: Record<string, string> = {
   "tui.command.voice.control.title_off": "Voice control: OFF (fast ASR) — click to turn on",
   "tui.voice.error.no_auth": "Use /connect to sign in to MiMo, or configure voice.asr_model for another provider",
   "tui.voice.error.no_auth_provider": "Voice provider \"{{provider}}\" is not authenticated, check its configuration",
+  "tui.voice.error.no_device": "No microphone/audio device found — please check your system audio settings",
+  "tui.voice.error.recorder_failed": "Recording failed",
   "tui.voice.error.no_recorder": "No recording tool found, please install sox",
   "tui.voice.error.too_short": "Recording too short",
   "tui.voice.error.network": "Transcription failed, please check your network",
