@@ -148,6 +148,24 @@ describe("parsePath", () => {
   test("legacy <root>/tasks/<id>/ path no longer matches (tasks dropped from Scope)", () => {
     expect(parsePath("/data/memory/tasks/T1/progress.md")).toBeNull()
   })
+
+  test("windows backslash path: global scope", () => {
+    expect(parsePath("C:\\Users\\me\\AppData\\Local\\mimocode\\memory\\global\\tooling-prefs.md")).toEqual({
+      scope: "global",
+      scope_id: "",
+      type: "free",
+      key: "tooling-prefs",
+    })
+  })
+
+  test("windows backslash path: project memory", () => {
+    expect(parsePath("C:\\Users\\me\\mimocode\\memory\\projects\\uuid-1\\MEMORY.md")).toEqual({
+      scope: "projects",
+      scope_id: "uuid-1",
+      type: "memory",
+      key: "MEMORY",
+    })
+  })
 })
 
 describe("buildPath", () => {

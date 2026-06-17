@@ -43,7 +43,9 @@ function detectType(key: string): MemoryType {
 }
 
 export function parsePath(absPath: string): MemoryLocator | null {
-  const m = absPath.match(/\/memory\/(global|projects|sessions)(?:\/([^/]+))?\/(.+)\.md$/)
+  // buildPath() composes these with path.join(), which emits backslashes on
+  // Windows. Normalize to forward slashes so the layout regex matches there too.
+  const m = absPath.replace(/\\/g, "/").match(/\/memory\/(global|projects|sessions)(?:\/([^/]+))?\/(.+)\.md$/)
   if (!m) return null
   const [, scope, idMaybe, keyRaw] = m
   const scope_id = scope === "global" ? "" : (idMaybe ?? "")
@@ -57,7 +59,7 @@ export function parsePath(absPath: string): MemoryLocator | null {
 const CC_PATH_RE = /\/\.claude\/projects\/([^/]+)\/memory\/(.+)\.md$/
 
 export function parseCcPath(absPath: string): MemoryLocator | null {
-  const m = absPath.match(CC_PATH_RE)
+  const m = absPath.replace(/\\/g, "/").match(CC_PATH_RE)
   if (!m) return null
   const [, slug, keyRaw] = m
   return {

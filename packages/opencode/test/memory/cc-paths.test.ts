@@ -57,4 +57,15 @@ describe("parseCcPath", () => {
   test("non-md file returns null", () => {
     expect(parseCcPath("/home/u/.claude/projects/-foo/memory/x.txt")).toBeNull()
   })
+
+  test("windows backslash path resolves the same as posix", () => {
+    expect(
+      parseCcPath("C:\\Users\\u\\.claude\\projects\\-myproj\\memory\\feedback_x.md"),
+    ).toEqual({
+      scope: "cc",
+      scope_id: "-myproj",
+      type: "free",
+      key: "feedback_x",
+    })
+  })
 })
