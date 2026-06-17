@@ -132,7 +132,7 @@ describe("compose spec-anchored review contract", () => {
       for (const rel of ["spec-reviewer-prompt.md", "code-quality-reviewer-prompt.md", "implementer-prompt.md"]) {
         const md = bundle["subagent"][rel]
         expect(md).toMatch(/\bactor\b/)
-        expect(md).toMatch(/subagent_type[:=]?\s*"?general"?/)
+        expect(md).toMatch(/`general`\s*subagent/)
         // no embedded operation-discriminator call syntax
         expect(md).not.toMatch(/operation:\s*run/)
       }
