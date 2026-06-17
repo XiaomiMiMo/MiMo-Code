@@ -168,19 +168,34 @@ const targets = singleFlag
 
 await $`rm -rf dist`
 
-// Optional private overlay (internal-only, e.g. the free "mimo-auto" channel).
-// The open-source tree has no src/private/. When present (injected by the
-// internal build), its files are loaded at runtime via dynamic import, so they
-// must be added as build entrypoints — otherwise the bundler can't statically
-// see them and they'd be dropped from the compiled binary. Absent → no-op.
+// Optional overlay: extra entrypoints under src/private/, loaded at runtime
+// via dynamic import. They must be added as build entrypoints — otherwise the
+// bundler can't statically see them and they'd be dropped from the compiled
+// binary. The overlay can arrive two ways:
+//   1. already present at src/private/ (e.g. pre-staged by an external script)
+//   2. discovered in the adjacent mimoapi/ dir and staged here for this build
+// When this build stages it, the copy is removed on exit so the tree stays
+// clean. Absent both places (a plain checkout) → no-op, graceful.
 const privateDir = path.join(dir, "src", "private")
+if (!fs.existsSync(privateDir)) {
+  const overlaySrc = path.resolve(dir, "../../mimoapi/packages/opencode/src/private")
+  if (fs.existsSync(overlaySrc)) {
+    console.log(`Staging overlay entrypoints from ${overlaySrc}`)
+    fs.cpSync(overlaySrc, privateDir, { recursive: true })
+    process.on("exit", () => {
+      try {
+        fs.rmSync(privateDir, { recursive: true, force: true })
+      } catch {}
+    })
+  }
+}
 const privateEntrypoints = fs.existsSync(privateDir)
   ? fs.readdirSync(privateDir)
       .filter((f) => f.endsWith(".ts") && !f.endsWith(".d.ts"))
       .map((f) => `./src/private/${f}`)
   : []
 if (privateEntrypoints.length) {
-  console.log(`Including private overlay entrypoints: ${privateEntrypoints.join(", ")}`)
+  console.log(`Including overlay entrypoints: ${privateEntrypoints.join(", ")}`)
 }
 
 const binaries: Record<string, string> = {}
