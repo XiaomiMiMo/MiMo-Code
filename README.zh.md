@@ -126,6 +126,50 @@ export PULSE_SERVER=tcp:127.0.0.1:4713
 ```
 </details>
 
+<details>
+<summary><strong>非 MiMo 渠道语音输入（OpenRouter、内部 API 等）</strong></summary>
+
+语音输入可通过 `voice` 配置字段路由到其他 OpenAI 兼容 provider。ASR 模型（`mimo-v2.5-asr`）仅在 MiMo 平台可用；语音控制模式（`mimo-v2.5`）可通过 OpenRouter 等中转平台使用。
+
+**OpenRouter（仅语音控制）：**
+
+使用 `/connect` 连接 OpenRouter 后，只需在配置中添加：
+```jsonc
+{
+  "voice": {
+    "control_model": "openrouter/xiaomi/mimo-v2.5"
+  }
+}
+```
+
+**内部 / 自建中转平台（ASR + 语音控制）：**
+```jsonc
+{
+  "provider": {
+    "internal": {
+      "options": {
+        "baseURL": "https://your-api-gateway.example.com/v1",
+        "apiKey": "sk-..."
+      },
+      "models": {
+        "xiaomi/mimo-v2.5-asr": { "name": "MiMo-V2.5-ASR" },
+        "xiaomi/mimo-v2.5": { "name": "MiMo-V2.5" }
+      }
+    }
+  },
+  "voice": {
+    "asr_model": "internal/xiaomi/mimo-v2.5-asr",
+    "control_model": "internal/xiaomi/mimo-v2.5"
+  }
+}
+```
+
+自定义 provider 必须在 `models` 中注册至少一个模型才能被系统识别。`voice.*_model` 中的模型名直接传给 API，不必与注册的 key 完全一致。OpenRouter 等内置 provider 无需手动配置 models。
+
+> **注意**：自定义 provider 注册的模型会出现在主模型选择列表中。请勿将 ASR 专用模型（如 `mimo-v2.5-asr`）用作编程主模型。
+
+</details>
+
 ### Dream & Distill
 
 - **`/dream`** — 扫描近期会话轨迹，提取持久知识到项目记忆，清理过时条目

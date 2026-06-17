@@ -65,6 +65,76 @@ describe("voice", () => {
       expect(result.asr.model).toBe("mimo-v2.5-asr")
     })
   })
+
+  describe("resolveCredentials", () => {
+    const makeProvider = (id: string, opts: { key?: string; apiKey?: string; baseURL?: string; modelUrl?: string }) => ({
+      id,
+      key: opts.key,
+      options: { ...(opts.apiKey && { apiKey: opts.apiKey }), ...(opts.baseURL && { baseURL: opts.baseURL }) } as Record<string, unknown>,
+      models: opts.modelUrl ? { "m1": { api: { url: opts.modelUrl } } } : {} as Record<string, { api: { url: string } }>,
+    })
+
+    test("resolves credentials from provider.key and options.baseURL", async () => {
+      const { resolveCredentials } = await import("../../../src/cli/cmd/tui/util/voice")
+      const result = resolveCredentials(
+        [makeProvider("openrouter", { key: "sk-or-123", modelUrl: "https://openrouter.ai/api/v1" })],
+        { providerID: "openrouter", model: "xiaomi/mimo-v2.5" },
+      )
+      expect(result).toEqual({ apiKey: "sk-or-123", baseUrl: "https://openrouter.ai/api/v1" })
+    })
+
+    test("resolves apiKey from options.apiKey when provider.key is absent", async () => {
+      const { resolveCredentials } = await import("../../../src/cli/cmd/tui/util/voice")
+      const result = resolveCredentials(
+        [makeProvider("internal", { apiKey: "sk-int", baseURL: "https://internal.example.com/v1" })],
+        { providerID: "internal", model: "mimo-v2.5" },
+      )
+      expect(result).toEqual({ apiKey: "sk-int", baseUrl: "https://internal.example.com/v1" })
+    })
+
+    test("resolves baseURL from model.api.url when options.baseURL is absent", async () => {
+      const { resolveCredentials } = await import("../../../src/cli/cmd/tui/util/voice")
+      const result = resolveCredentials(
+        [makeProvider("openrouter", { key: "sk-or-123", modelUrl: "https://openrouter.ai/api/v1" })],
+        { providerID: "openrouter", model: "xiaomi/mimo-v2.5" },
+      )
+      expect("apiKey" in result && result.baseUrl).toBe("https://openrouter.ai/api/v1")
+    })
+
+    test("returns not_found when provider is missing", async () => {
+      const { resolveCredentials } = await import("../../../src/cli/cmd/tui/util/voice")
+      const result = resolveCredentials([], { providerID: "unknown", model: "m" })
+      expect(result).toEqual({ error: "not_found", providerID: "unknown", model: "m" })
+    })
+
+    test("returns no_key when provider has no apiKey", async () => {
+      const { resolveCredentials } = await import("../../../src/cli/cmd/tui/util/voice")
+      const result = resolveCredentials(
+        [makeProvider("internal", { baseURL: "https://x.com/v1" })],
+        { providerID: "internal", model: "m" },
+      )
+      expect(result).toEqual({ error: "no_key", providerID: "internal", model: "m" })
+    })
+
+    test("returns no_url for non-xiaomi provider without baseURL", async () => {
+      const { resolveCredentials } = await import("../../../src/cli/cmd/tui/util/voice")
+      const result = resolveCredentials(
+        [makeProvider("custom", { key: "sk-x" })],
+        { providerID: "custom", model: "m" },
+      )
+      expect(result).toEqual({ error: "no_url", providerID: "custom", model: "m" })
+    })
+
+    test("falls back to hardcoded URL only for xiaomi", async () => {
+      const { resolveCredentials } = await import("../../../src/cli/cmd/tui/util/voice")
+      const result = resolveCredentials(
+        [makeProvider("xiaomi", { key: "sk-x" })],
+        { providerID: "xiaomi", model: "mimo-v2.5-asr" },
+      )
+      expect(result).toEqual({ apiKey: "sk-x", baseUrl: "https://api.xiaomimimo.com/v1" })
+    })
+  })
+
   describe("encodeWav", () => {
     // Import the function dynamically since it's not exported directly
     // We test via transcribeAudio's internal usage — or we can test the WAV header format

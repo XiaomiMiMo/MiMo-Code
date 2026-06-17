@@ -13,6 +13,24 @@ export type VoiceProviderConfig = {
   model: string
 }
 
+export type VoiceCredentials = { apiKey: string; baseUrl: string }
+export type VoiceCredentialError = { error: "not_found" | "no_key" | "no_url"; providerID: string; model: string }
+
+export function resolveCredentials(
+  providers: Array<{ id: string; key?: string; options: Record<string, unknown>; models: Record<string, { api: { url: string } }> }>,
+  config: VoiceProviderConfig,
+): VoiceCredentials | VoiceCredentialError {
+  const provider = providers.find((p) => p.id === config.providerID)
+  if (!provider) return { error: "not_found", providerID: config.providerID, model: config.model }
+  const apiKey = provider.key || (provider.options?.apiKey as string | undefined)
+  if (!apiKey) return { error: "no_key", providerID: config.providerID, model: config.model }
+  const baseUrl = (provider.options?.baseURL as string)
+    || Object.values(provider.models)[0]?.api?.url
+    || (config.providerID === "xiaomi" ? "https://api.xiaomimimo.com/v1" : undefined)
+  if (!baseUrl) return { error: "no_url", providerID: config.providerID, model: config.model }
+  return { apiKey, baseUrl }
+}
+
 export function resolveVoiceConfig(voiceConfig?: { asr_model?: string; control_model?: string }): {
   asr: VoiceProviderConfig
   control: VoiceProviderConfig

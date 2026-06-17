@@ -227,16 +227,17 @@ export function Prompt(props: PromptProps) {
       return
     }
     if (state === "finishing") return
-    // Start streaming
+    // Start streaming — only validate the active mode's provider
     const voiceConfig = sync.data.config.voice
     const resolved = Voice.resolveVoiceConfig(voiceConfig)
-
-    const asrProvider = sync.data.provider.find((p) => p.id === resolved.asr.providerID)
-    const asrKey = asrProvider?.key || (asrProvider?.options?.apiKey as string | undefined)
-    if (!asrKey) {
-      const msg = voiceConfig?.asr_model
-        ? t("tui.voice.error.no_auth_provider", { provider: resolved.asr.providerID })
-        : t("tui.voice.error.no_auth")
+    const activeConfig = voiceControlEnabled() ? resolved.control : resolved.asr
+    const creds = Voice.resolveCredentials(sync.data.provider, activeConfig)
+    if ("error" in creds) {
+      const vars = { provider: creds.providerID, model: creds.model }
+      const msg = !voiceConfig ? t("tui.voice.error.no_auth")
+        : creds.error === "not_found" ? t("tui.voice.error.provider_not_found", vars)
+        : creds.error === "no_url" ? t("tui.voice.error.no_url", vars)
+        : t("tui.voice.error.no_auth_provider", vars)
       toast.show({ message: msg, variant: "error" })
       return
     }
@@ -244,12 +245,6 @@ export function Prompt(props: PromptProps) {
       toast.show({ message: t("tui.voice.error.no_recorder"), variant: "error" })
       return
     }
-    const apiKey = asrKey
-    const baseUrl = (asrProvider!.options?.baseURL as string) || "https://api.xiaomimimo.com/v1"
-    const sameProvider = resolved.control.providerID === resolved.asr.providerID
-    const controlProvider = sameProvider ? asrProvider! : sync.data.provider.find((p) => p.id === resolved.control.providerID)
-    const controlApiKey = controlProvider?.key || (controlProvider?.options?.apiKey as string | undefined) || apiKey
-    const controlBaseUrl = (controlProvider?.options?.baseURL as string) || (sameProvider ? baseUrl : "https://api.xiaomimimo.com/v1")
 
     const av: NonNullable<typeof activeVoice> = {
       handle: undefined!,
@@ -281,8 +276,8 @@ export function Prompt(props: PromptProps) {
 
               const ctrl = await Voice.processVoiceControl({
                 audio: segment.audio,
-                apiKey: controlApiKey,
-                baseUrl: controlBaseUrl,
+                apiKey: creds.apiKey,
+                baseUrl: creds.baseUrl,
                 model: resolved.control.model,
                 currentText,
                 currentAgent,
@@ -313,8 +308,8 @@ export function Prompt(props: PromptProps) {
         } else {
           Voice.transcribeAudio({
             audio: segment.audio,
-            apiKey,
-            baseUrl,
+            apiKey: creds.apiKey,
+            baseUrl: creds.baseUrl,
             model: resolved.asr.model,
           }).then((text) => {
             if (text) {
