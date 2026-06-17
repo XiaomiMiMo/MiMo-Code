@@ -105,6 +105,77 @@ export const Provider = z.object({
   models: z.record(z.string(), Model),
 })
 
+
+const astraflowModels: Record<string, Model> = {
+  "gpt-5.5": {
+    id: "gpt-5.5",
+    name: "gpt-5.5",
+    release_date: "unknown",
+    attachment: false,
+    reasoning: false,
+    temperature: true,
+    tool_call: true,
+    limit: { context: 128_000, output: 4_096 },
+  },
+  "deepseek-v4-pro": {
+    id: "deepseek-v4-pro",
+    name: "deepseek-v4-pro",
+    release_date: "unknown",
+    attachment: false,
+    reasoning: false,
+    temperature: true,
+    tool_call: true,
+    limit: { context: 128_000, output: 4_096 },
+  },
+  "qwen3.7-max": {
+    id: "qwen3.7-max",
+    name: "qwen3.7-max",
+    release_date: "unknown",
+    attachment: false,
+    reasoning: false,
+    temperature: true,
+    tool_call: true,
+    limit: { context: 128_000, output: 4_096 },
+  },
+  "o4-mini": {
+    id: "o4-mini",
+    name: "o4-mini",
+    release_date: "unknown",
+    attachment: false,
+    reasoning: true,
+    temperature: true,
+    tool_call: true,
+    limit: { context: 128_000, output: 4_096 },
+  },
+  "deepseek-ai/DeepSeek-R1-0528": {
+    id: "deepseek-ai/DeepSeek-R1-0528",
+    name: "deepseek-ai/DeepSeek-R1-0528",
+    release_date: "unknown",
+    attachment: false,
+    reasoning: true,
+    temperature: true,
+    tool_call: false,
+    limit: { context: 128_000, output: 4_096 },
+  },
+}
+
+const astraflowProvider: Provider = {
+  id: "astraflow",
+  name: "Astraflow",
+  npm: "@ai-sdk/openai-compatible",
+  api: "https://api.umodelverse.ai/v1",
+  env: ["ASTRAFLOW_API_KEY"],
+  models: astraflowModels,
+}
+
+const astraflowCNProvider: Provider = {
+  id: "astraflow-cn",
+  name: "Astraflow China",
+  npm: "@ai-sdk/openai-compatible",
+  api: "https://api.modelverse.cn/v1",
+  env: ["ASTRAFLOW_CN_API_KEY"],
+  models: astraflowModels,
+}
 export type Provider = z.infer<typeof Provider>
 
 function url() {
@@ -150,8 +221,12 @@ export const Data = lazy(async () => {
 })
 
 export async function get() {
-  const result = await Data()
-  return result as Record<string, Provider>
+  const result = (await Data()) as Record<string, Provider>
+  return {
+    ...result,
+    astraflow: result.astraflow ?? astraflowProvider,
+    "astraflow-cn": result["astraflow-cn"] ?? astraflowCNProvider,
+  }
 }
 
 export async function refresh(force = false) {

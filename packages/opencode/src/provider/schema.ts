@@ -22,6 +22,8 @@ export const ProviderID = providerIdSchema.pipe(
     openrouter: schema.make("openrouter"),
     mistral: schema.make("mistral"),
     gitlab: schema.make("gitlab"),
+    astraflow: schema.make("astraflow"),
+    astraflowCN: schema.make("astraflow-cn"),
   })),
 )
 

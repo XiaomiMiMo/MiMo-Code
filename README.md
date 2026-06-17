@@ -40,6 +40,7 @@ The first launch guides you through configuration automatically. Supported optio
 - **Xiaomi MiMo Platform** — OAuth login
 - **Import from Claude Code** — migrate existing authentication in one step
 - **Custom Provider** — add any OpenAI-compatible API in the TUI
+- **Astraflow** — OpenAI-compatible access via the global (`ASTRAFLOW_API_KEY`) or China (`ASTRAFLOW_CN_API_KEY`) endpoint
 
 <details>
 <summary><strong>WSL: clipboard issues</strong></summary>
