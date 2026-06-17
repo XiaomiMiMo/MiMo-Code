@@ -2,6 +2,62 @@ import { describe, expect, test } from "bun:test"
 import { RealtimeVAD, type VADSegment } from "../../../src/cli/cmd/tui/util/vad"
 
 describe("voice", () => {
+  describe("resolveVoiceConfig", () => {
+    test("returns xiaomi defaults when no config provided", async () => {
+      const { resolveVoiceConfig } = await import("../../../src/cli/cmd/tui/util/voice")
+      const result = resolveVoiceConfig(undefined)
+      expect(result.asr.providerID).toBe("xiaomi")
+      expect(result.asr.model).toBe("mimo-v2.5-asr")
+      expect(result.control.providerID).toBe("xiaomi")
+      expect(result.control.model).toBe("mimo-v2.5")
+    })
+
+    test("returns xiaomi defaults when config is empty object", async () => {
+      const { resolveVoiceConfig } = await import("../../../src/cli/cmd/tui/util/voice")
+      const result = resolveVoiceConfig({})
+      expect(result.asr.providerID).toBe("xiaomi")
+      expect(result.asr.model).toBe("mimo-v2.5-asr")
+      expect(result.control.providerID).toBe("xiaomi")
+      expect(result.control.model).toBe("mimo-v2.5")
+    })
+
+    test("parses custom asr_model correctly", async () => {
+      const { resolveVoiceConfig } = await import("../../../src/cli/cmd/tui/util/voice")
+      const result = resolveVoiceConfig({ asr_model: "my-provider/whisper-large-v3" })
+      expect(result.asr.providerID).toBe("my-provider")
+      expect(result.asr.model).toBe("whisper-large-v3")
+      expect(result.control.providerID).toBe("xiaomi")
+      expect(result.control.model).toBe("mimo-v2.5")
+    })
+
+    test("parses custom control_model correctly", async () => {
+      const { resolveVoiceConfig } = await import("../../../src/cli/cmd/tui/util/voice")
+      const result = resolveVoiceConfig({ control_model: "openai/gpt-4o-audio" })
+      expect(result.asr.providerID).toBe("xiaomi")
+      expect(result.asr.model).toBe("mimo-v2.5-asr")
+      expect(result.control.providerID).toBe("openai")
+      expect(result.control.model).toBe("gpt-4o-audio")
+    })
+
+    test("supports both custom asr and control", async () => {
+      const { resolveVoiceConfig } = await import("../../../src/cli/cmd/tui/util/voice")
+      const result = resolveVoiceConfig({
+        asr_model: "azure/whisper-1",
+        control_model: "openai/gpt-4o-audio",
+      })
+      expect(result.asr.providerID).toBe("azure")
+      expect(result.asr.model).toBe("whisper-1")
+      expect(result.control.providerID).toBe("openai")
+      expect(result.control.model).toBe("gpt-4o-audio")
+    })
+
+    test("handles model IDs with multiple slashes", async () => {
+      const { resolveVoiceConfig } = await import("../../../src/cli/cmd/tui/util/voice")
+      const result = resolveVoiceConfig({ asr_model: "provider/org/model-name" })
+      expect(result.asr.providerID).toBe("provider")
+      expect(result.asr.model).toBe("org/model-name")
+    })
+  })
   describe("encodeWav", () => {
     // Import the function dynamically since it's not exported directly
     // We test via transcribeAudio's internal usage — or we can test the WAV header format
