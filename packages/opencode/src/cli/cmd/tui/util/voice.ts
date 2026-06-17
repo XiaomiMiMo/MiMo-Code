@@ -17,12 +17,16 @@ export function resolveVoiceConfig(voiceConfig?: { asr_model?: string; control_m
 } {
   const asrModelID = voiceConfig?.asr_model || DEFAULT_ASR_MODEL
   const controlModelID = voiceConfig?.control_model || DEFAULT_CONTROL_MODEL
-  const asrProviderID = asrModelID.split("/")[0]
-  const controlProviderID = controlModelID.split("/")[0]
   return {
-    asr: { providerID: asrProviderID, model: asrModelID.slice(asrProviderID.length + 1) },
-    control: { providerID: controlProviderID, model: controlModelID.slice(controlProviderID.length + 1) },
+    asr: parseModelID(asrModelID),
+    control: parseModelID(controlModelID),
   }
+}
+
+function parseModelID(modelID: string): VoiceProviderConfig {
+  const slashIndex = modelID.indexOf("/")
+  if (slashIndex < 1) return { providerID: "xiaomi", model: modelID }
+  return { providerID: modelID.slice(0, slashIndex), model: modelID.slice(slashIndex + 1) }
 }
 
 type Recorder = {

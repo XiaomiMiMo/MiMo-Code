@@ -57,6 +57,13 @@ describe("voice", () => {
       expect(result.asr.providerID).toBe("provider")
       expect(result.asr.model).toBe("org/model-name")
     })
+
+    test("treats no-slash model ID as model with default provider", async () => {
+      const { resolveVoiceConfig } = await import("../../../src/cli/cmd/tui/util/voice")
+      const result = resolveVoiceConfig({ asr_model: "whisper-large" })
+      expect(result.asr.providerID).toBe("xiaomi")
+      expect(result.asr.model).toBe("whisper-large")
+    })
   })
   describe("encodeWav", () => {
     // Import the function dynamically since it's not exported directly
