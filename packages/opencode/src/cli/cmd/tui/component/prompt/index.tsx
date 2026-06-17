@@ -245,9 +245,10 @@ export function Prompt(props: PromptProps) {
     }
     const apiKey = asrProvider.key
     const baseUrl = (asrProvider.options?.baseURL as string) || "https://api.xiaomimimo.com/v1"
-    const controlProvider = sync.data.provider.find((p) => p.id === resolved.control.providerID)
+    const sameProvider = resolved.control.providerID === resolved.asr.providerID
+    const controlProvider = sameProvider ? asrProvider : sync.data.provider.find((p) => p.id === resolved.control.providerID)
     const controlApiKey = controlProvider?.key || apiKey
-    const controlBaseUrl = (controlProvider?.options?.baseURL as string) || baseUrl
+    const controlBaseUrl = (controlProvider?.options?.baseURL as string) || (sameProvider ? baseUrl : "https://api.xiaomimimo.com/v1")
 
     const av: NonNullable<typeof activeVoice> = {
       handle: undefined!,
