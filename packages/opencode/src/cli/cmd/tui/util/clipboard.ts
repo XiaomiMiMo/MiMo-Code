@@ -24,6 +24,14 @@ const getClipboardy = lazy(async () => {
  */
 function writeOsc52(text: string): void {
   if (!process.stdout.isTTY) return
+
+  // Warn about tmux blocking OSC 52
+  if (process.env["TMUX"]) {
+    // tmux allow-passthrough can be "on", "all", "off", or undefined
+    // When off or unset, tmux silently drops OSC 52 sequences
+    console.log("clipboard: running inside tmux — OSC 52 requires 'set -g allow-passthrough on' in ~/.tmux.conf")
+  }
+
   const base64 = Buffer.from(text).toString("base64")
   const osc52 = `\x1b]52;c;${base64}\x07`
   const passthrough = process.env["TMUX"] || process.env["STY"]
@@ -161,6 +169,15 @@ const getCopyMethod = lazy(async () => {
         await proc.exited.catch(() => {})
       }
     }
+
+    // No native clipboard tool found — warn the user with install instructions
+    console.warn(
+      "clipboard: no native clipboard tool found (tried wl-copy, xclip, xsel).\n" +
+      "  Copy/paste will not work. Install one of the following:\n" +
+      "    X11:      sudo apt install xclip  OR  sudo apt install xsel\n" +
+      "    Wayland:  sudo apt install wl-clipboard\n" +
+      "  If using tmux, also ensure: set -g allow-passthrough on  in ~/.tmux.conf"
+    )
   }
 
   if (os === "win32") {
