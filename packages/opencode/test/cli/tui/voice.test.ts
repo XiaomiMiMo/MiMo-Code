@@ -23,32 +23,32 @@ describe("voice", () => {
 
     test("parses custom asr_model correctly", async () => {
       const { resolveVoiceConfig } = await import("../../../src/cli/cmd/tui/util/voice")
-      const result = resolveVoiceConfig({ asr_model: "my-provider/whisper-large-v3" })
-      expect(result.asr.providerID).toBe("my-provider")
-      expect(result.asr.model).toBe("whisper-large-v3")
+      const result = resolveVoiceConfig({ asr_model: "newapi/mimo-v2.5-asr" })
+      expect(result.asr.providerID).toBe("newapi")
+      expect(result.asr.model).toBe("mimo-v2.5-asr")
       expect(result.control.providerID).toBe("xiaomi")
       expect(result.control.model).toBe("mimo-v2.5")
     })
 
     test("parses custom control_model correctly", async () => {
       const { resolveVoiceConfig } = await import("../../../src/cli/cmd/tui/util/voice")
-      const result = resolveVoiceConfig({ control_model: "openai/gpt-4o-audio" })
+      const result = resolveVoiceConfig({ control_model: "openrouter/mimo-v2.5" })
       expect(result.asr.providerID).toBe("xiaomi")
       expect(result.asr.model).toBe("mimo-v2.5-asr")
-      expect(result.control.providerID).toBe("openai")
-      expect(result.control.model).toBe("gpt-4o-audio")
+      expect(result.control.providerID).toBe("openrouter")
+      expect(result.control.model).toBe("mimo-v2.5")
     })
 
     test("supports both custom asr and control", async () => {
       const { resolveVoiceConfig } = await import("../../../src/cli/cmd/tui/util/voice")
       const result = resolveVoiceConfig({
-        asr_model: "azure/whisper-1",
-        control_model: "openai/gpt-4o-audio",
+        asr_model: "newapi/mimo-v2.5-asr",
+        control_model: "openrouter/mimo-v2.5",
       })
-      expect(result.asr.providerID).toBe("azure")
-      expect(result.asr.model).toBe("whisper-1")
-      expect(result.control.providerID).toBe("openai")
-      expect(result.control.model).toBe("gpt-4o-audio")
+      expect(result.asr.providerID).toBe("newapi")
+      expect(result.asr.model).toBe("mimo-v2.5-asr")
+      expect(result.control.providerID).toBe("openrouter")
+      expect(result.control.model).toBe("mimo-v2.5")
     })
 
     test("handles model IDs with multiple slashes", async () => {
@@ -60,9 +60,9 @@ describe("voice", () => {
 
     test("treats no-slash model ID as model with default provider", async () => {
       const { resolveVoiceConfig } = await import("../../../src/cli/cmd/tui/util/voice")
-      const result = resolveVoiceConfig({ asr_model: "whisper-large" })
+      const result = resolveVoiceConfig({ asr_model: "mimo-v2.5-asr" })
       expect(result.asr.providerID).toBe("xiaomi")
-      expect(result.asr.model).toBe("whisper-large")
+      expect(result.asr.model).toBe("mimo-v2.5-asr")
     })
   })
   describe("encodeWav", () => {
