@@ -61,7 +61,7 @@ describe("tui thread", () => {
       fork: false,
       "never-ask": false,
       neverAsk: false,
-      trust: false,
+      trust: true,
       port: 0,
       hostname: "127.0.0.1",
       mdns: false,
