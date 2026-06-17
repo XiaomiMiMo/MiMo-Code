@@ -194,7 +194,7 @@ export async function transcribeAudio(opts: {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      "api-key": opts.apiKey,
+      "Authorization": `Bearer ${opts.apiKey}`,
       "X-Mimo-Source": "mimocode-cli",
     },
     body: JSON.stringify({
@@ -393,7 +393,7 @@ export async function processVoiceControl(opts: {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      "api-key": opts.apiKey,
+      "Authorization": `Bearer ${opts.apiKey}`,
       "X-Mimo-Source": "mimocode-cli",
     },
     body: JSON.stringify({
