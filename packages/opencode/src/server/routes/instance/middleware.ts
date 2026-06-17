@@ -25,7 +25,7 @@ const PROJECT_MARKERS = [
 const SYSTEM_PATHS = ["/etc", "/proc", "/sys", "/var", "/boot", "/root", "/dev", "/usr", "/bin", "/sbin", "/lib", "/tmp"]
 
 export function isValidProjectDirectory(directory: string): boolean {
-  const cwd = process.cwd()
+  const cwd = Filesystem.resolve(process.cwd())
 
   if (Filesystem.contains(cwd, directory)) return true
 
@@ -50,7 +50,7 @@ export function InstanceMiddleware(workspaceID?: WorkspaceID): MiddlewareHandler
     )
 
     if (!Flag.MIMOCODE_SERVER_PASSWORD) {
-      const cwd = process.cwd()
+      const cwd = Filesystem.resolve(process.cwd())
       if (!Filesystem.contains(cwd, directory)) {
         return c.json({ error: "Access denied: directory must be within project root on unauthenticated servers" }, 403)
       }

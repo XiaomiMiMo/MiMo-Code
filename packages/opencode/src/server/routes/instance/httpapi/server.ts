@@ -103,7 +103,7 @@ const instance = HttpRouter.middleware()(
         const directory = Filesystem.resolve(decode(raw))
 
         if (!Flag.MIMOCODE_SERVER_PASSWORD) {
-          const cwd = process.cwd()
+          const cwd = Filesystem.resolve(process.cwd())
           if (!Filesystem.contains(cwd, directory)) {
             return yield* new DirectoryAccessDenied({
               message: "Access denied: directory must be within project root on unauthenticated servers",
