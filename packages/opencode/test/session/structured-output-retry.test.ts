@@ -110,8 +110,8 @@ describe("structured-output retry — integration", () => {
                 parts: [{ type: "text", text: "What is 2 + 2?" }],
                 format: { type: "json_schema", schema, retryCount },
               })
-              // retryCount repair nudges + 1 initial attempt that trips the terminal error.
-              expect(stub.captures.length).toBe(retryCount + 1)
+              // 1 initial + retryCount structured nudges + 1 invalid-output continuation.
+              expect(stub.captures.length).toBe(retryCount + 2)
               expect(result.info.role).toBe("assistant")
               if (result.info.role === "assistant") {
                 expect(result.info.error?.name).toBe("StructuredOutputError")
