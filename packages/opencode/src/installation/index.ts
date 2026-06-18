@@ -218,14 +218,17 @@ export const layer: Layer.Layer<Service, never, HttpClient.HttpClient | ChildPro
         // }
 
         if (detectedMethod === "curl") {
-          const headers = yield* text([
-            "curl",
-            "-sI",
-            "https://github.com/XiaomiMiMo/MiMo-Code/releases/latest",
-          ])
-          const match = headers.match(/^location:.*\/tag\/v([0-9][^\s/]*)/im)
+          const response = yield* httpOk.execute(
+            HttpClientRequest.get("https://api.github.com/repos/XiaomiMiMo/MiMo-Code/releases/latest").pipe(
+              HttpClientRequest.acceptJson,
+            ),
+          )
+          const body = yield* HttpClientResponse.schemaBodyJson(
+            z.object({ tag_name: z.string() }),
+          )(response)
+          const match = body.tag_name.match(/^v(.+)$/)
           if (match) return match[1]
-          return yield* Effect.die(new Error("failed to resolve latest version from GitHub releases redirect"))
+          return body.tag_name
         }
 
         if (detectedMethod === "npm" || detectedMethod === "bun" || detectedMethod === "pnpm") {
