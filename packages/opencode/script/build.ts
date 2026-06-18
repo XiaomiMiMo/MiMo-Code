@@ -168,26 +168,26 @@ const targets = singleFlag
 
 await $`rm -rf dist`
 
-const privateDir = path.join(dir, "src", "private")
-if (!fs.existsSync(privateDir)) {
-  const overlaySrc = path.resolve(dir, "../../mimoapi/packages/opencode/src/private")
+const extDir = path.join(dir, "src", "ext")
+if (!fs.existsSync(extDir)) {
+  const overlaySrc = path.resolve(dir, "../../mimoapi/packages/opencode/src/ext")
   if (fs.existsSync(overlaySrc)) {
     console.log(`Staging overlay entrypoints from ${overlaySrc}`)
-    fs.cpSync(overlaySrc, privateDir, { recursive: true })
+    fs.cpSync(overlaySrc, extDir, { recursive: true })
     process.on("exit", () => {
       try {
-        fs.rmSync(privateDir, { recursive: true, force: true })
+        fs.rmSync(extDir, { recursive: true, force: true })
       } catch {}
     })
   }
 }
-const privateEntrypoints = fs.existsSync(privateDir)
-  ? fs.readdirSync(privateDir)
+const extEntrypoints = fs.existsSync(extDir)
+  ? fs.readdirSync(extDir)
       .filter((f) => f.endsWith(".ts") && !f.endsWith(".d.ts"))
-      .map((f) => `./src/private/${f}`)
+      .map((f) => `./src/ext/${f}`)
   : []
-if (privateEntrypoints.length) {
-  console.log(`Including overlay entrypoints: ${privateEntrypoints.join(", ")}`)
+if (extEntrypoints.length) {
+  console.log(`Including overlay entrypoints: ${extEntrypoints.join(", ")}`)
 }
 
 const binaries: Record<string, string> = {}
@@ -237,7 +237,7 @@ for (const item of targets) {
       windows: {},
     },
     files: embeddedFileMap ? { "opencode-web-ui.gen.ts": embeddedFileMap } : {},
-    entrypoints: ["./src/index.ts", parserWorker, workerPath, ...(embeddedFileMap ? ["opencode-web-ui.gen.ts"] : []), ...privateEntrypoints],
+    entrypoints: ["./src/index.ts", parserWorker, workerPath, ...(embeddedFileMap ? ["opencode-web-ui.gen.ts"] : []), ...extEntrypoints],
     define: {
       MIMOCODE_VERSION: `'${Script.version}'`,
       OPENCODE_MIGRATIONS: JSON.stringify(migrations),
