@@ -406,9 +406,11 @@ describe("session.llm system prompt — memory-instructions guard", () => {
         expect(allSys).toContain("Notes scratchpad")
         expect(allSys).toContain("notes.md")
 
-        // (5) MEMORY.md exception still present
+        // (5) main agent no longer gets a direct MEMORY.md write exception.
         expect(allSys).toContain("MEMORY.md")
-        expect(allSys).toContain("User states a project-level rule")
+        expect(allSys).not.toContain("When to Edit MEMORY.md directly")
+        expect(allSys).not.toContain("User states a project-level rule")
+        expect(allSys).toContain("only legal memory write path")
       },
     })
   })

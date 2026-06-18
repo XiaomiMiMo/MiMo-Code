@@ -27,8 +27,8 @@ describe("assertMemoryWriteAllowed", () => {
     ).not.toThrow()
   })
 
-  test("free key in sessions/<sid>/foo.md passes for main agent", () => {
-    const target = path.join(MEMORY_ROOT, "sessions", "sid", "foo.md")
+  test("notes.md in the current session passes for main agent", () => {
+    const target = path.join(MEMORY_ROOT, "sessions", "sid", "notes.md")
     expect(() =>
       assertMemoryWriteAllowed({
         target,
@@ -40,7 +40,7 @@ describe("assertMemoryWriteAllowed", () => {
     ).not.toThrow()
   })
 
-  test("_meta.json is a free key for main agent", () => {
+  test("_meta.json is rejected for main agent", () => {
     const target = path.join(MEMORY_ROOT, "sessions", "sid", "_meta.json")
     expect(() =>
       assertMemoryWriteAllowed({
@@ -50,7 +50,7 @@ describe("assertMemoryWriteAllowed", () => {
         projectID: PROJECT_ID,
         sessionID: SESSION_ID,
       }),
-    ).not.toThrow()
+    ).toThrow(/only write notes\.md/)
   })
 
   test("path directly under memory/ rejected (no scope dir)", () => {
@@ -63,7 +63,7 @@ describe("assertMemoryWriteAllowed", () => {
         projectID: PROJECT_ID,
         sessionID: SESSION_ID,
       }),
-    ).toThrow(/copy verbatim/)
+    ).toThrow(/only write notes\.md/)
   })
 
   test("invalid scope rejected", () => {
@@ -76,14 +76,14 @@ describe("assertMemoryWriteAllowed", () => {
         projectID: PROJECT_ID,
         sessionID: SESSION_ID,
       }),
-    ).toThrow(/copy verbatim/)
+    ).toThrow(/only write notes\.md/)
   })
 
   test.each([
     ["global", "free.md"],
     ["projects", "p_abc/free.md"],
     ["sessions", "sid/free.md"],
-  ])("free key under %s scope passes", (scope, suffix) => {
+  ])("free key under %s scope is rejected for main agent", (scope, suffix) => {
     const target = path.join(MEMORY_ROOT, scope, suffix)
     expect(() =>
       assertMemoryWriteAllowed({
@@ -93,7 +93,7 @@ describe("assertMemoryWriteAllowed", () => {
         projectID: PROJECT_ID,
         sessionID: SESSION_ID,
       }),
-    ).not.toThrow()
+    ).toThrow(/only write notes\.md/)
   })
 
   test("traversal via .. that lands in tasks is rejected", () => {
@@ -320,7 +320,20 @@ describe("assertMemoryWriteAllowed", () => {
   })
 
   describe("main agent paths (v5)", () => {
-    test("main agent CAN write <pid>/memory.md (system prompt teaches it)", () => {
+    test("main agent cannot write project MEMORY.md", () => {
+      const target = path.join(MEMORY_ROOT, "projects", "abc-uuid", "MEMORY.md")
+      expect(() =>
+        assertMemoryWriteAllowed({
+          target,
+          agentName: "build",
+          memoryRoot: MEMORY_ROOT,
+          projectID: PROJECT_ID,
+          sessionID: SESSION_ID,
+        }),
+      ).toThrow(/only write notes\.md/)
+    })
+
+    test("main agent cannot write project memory.md", () => {
       const target = path.join(MEMORY_ROOT, "projects", "abc-uuid", "memory.md")
       expect(() =>
         assertMemoryWriteAllowed({
@@ -330,10 +343,23 @@ describe("assertMemoryWriteAllowed", () => {
           projectID: PROJECT_ID,
           sessionID: SESSION_ID,
         }),
-      ).not.toThrow()
+      ).toThrow(/only write notes\.md/)
     })
 
-    test("main agent CAN write <sid>/checkpoint.md (for §3 directives)", () => {
+    test("main agent cannot write global MEMORY.md", () => {
+      const target = path.join(MEMORY_ROOT, "global", "MEMORY.md")
+      expect(() =>
+        assertMemoryWriteAllowed({
+          target,
+          agentName: "build",
+          memoryRoot: MEMORY_ROOT,
+          projectID: PROJECT_ID,
+          sessionID: SESSION_ID,
+        }),
+      ).toThrow(/only write notes\.md/)
+    })
+
+    test("main agent cannot write <sid>/checkpoint.md", () => {
       const target = path.join(MEMORY_ROOT, "sessions", "sid", "checkpoint.md")
       expect(() =>
         assertMemoryWriteAllowed({
@@ -343,7 +369,7 @@ describe("assertMemoryWriteAllowed", () => {
           projectID: PROJECT_ID,
           sessionID: SESSION_ID,
         }),
-      ).not.toThrow()
+      ).toThrow(/only write notes\.md/)
     })
 
     test("main agent rejected on <sid>/tasks/<id>/progress.md (writer-managed)", () => {
@@ -359,7 +385,7 @@ describe("assertMemoryWriteAllowed", () => {
       ).toThrow(/reserved for the checkpoint-writer/)
     })
 
-    test("main agent CAN write free-key <sid>/scratch.md", () => {
+    test("main agent cannot write free-key <sid>/scratch.md", () => {
       const target = path.join(MEMORY_ROOT, "sessions", "sid", "scratch.md")
       expect(() =>
         assertMemoryWriteAllowed({
@@ -369,7 +395,33 @@ describe("assertMemoryWriteAllowed", () => {
           projectID: PROJECT_ID,
           sessionID: SESSION_ID,
         }),
+      ).toThrow(/only write notes\.md/)
+    })
+
+    test("main agent can write current session notes.md", () => {
+      const target = path.join(MEMORY_ROOT, "sessions", "sid", "notes.md")
+      expect(() =>
+        assertMemoryWriteAllowed({
+          target,
+          agentName: "build",
+          memoryRoot: MEMORY_ROOT,
+          projectID: PROJECT_ID,
+          sessionID: SESSION_ID,
+        }),
       ).not.toThrow()
+    })
+
+    test("main agent cannot write another session's notes.md", () => {
+      const target = path.join(MEMORY_ROOT, "sessions", "other", "notes.md")
+      expect(() =>
+        assertMemoryWriteAllowed({
+          target,
+          agentName: "build",
+          memoryRoot: MEMORY_ROOT,
+          projectID: PROJECT_ID,
+          sessionID: SESSION_ID,
+        }),
+      ).toThrow(/only write notes\.md/)
     })
   })
 
@@ -416,8 +468,8 @@ describe("assertMemoryWriteAllowed", () => {
       expect(msg).toContain("sessions")
     })
 
-    test("notes free-form keys are allowed", () => {
-      expect(captureError().message).toContain("Other free-form")
+    test("states the only main-agent write path", () => {
+      expect(captureError().message).toContain("only write notes.md")
     })
   })
 
@@ -448,10 +500,10 @@ describe("assertMemoryWriteAllowed", () => {
       expect(msg).toContain(target)
     })
 
-    test("contains scope format hint and free-form note", () => {
+    test("contains scope format hint and notes-only rule", () => {
       const msg = captureError().message
       expect(msg).toContain("<scope>/<scope_id>/<key>.md")
-      expect(msg).toContain("Other free-form")
+      expect(msg).toContain("only write notes.md")
     })
   })
 
