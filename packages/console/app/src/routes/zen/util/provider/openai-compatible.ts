@@ -144,10 +144,14 @@ export function toOaCompatibleRequest(body: CommonRequest) {
   const msgsIn = Array.isArray(body.messages) ? body.messages : []
   const msgsOut: any[] = []
 
-  const toImg = (p: any) => {
+  const toImg = (p: {
+    type?: string
+    image_url?: { url: string }
+    source?: { type: string; url?: string; media_type?: string; data?: string }
+  }) => {
     if (!p || typeof p !== "object") return undefined
     if (p.type === "image_url" && p.image_url) return { type: "image_url", image_url: p.image_url }
-    const s = (p as any).source
+    const s = p.source
     if (!s || typeof s !== "object") return undefined
     if (s.type === "url" && typeof s.url === "string") return { type: "image_url", image_url: { url: s.url } }
     if (s.type === "base64" && typeof s.media_type === "string" && typeof s.data === "string")
@@ -217,16 +221,16 @@ export function toOaCompatibleRequest(body: CommonRequest) {
     stream: !!body.stream,
     tools,
     tool_choice: body.tool_choice,
-    response_format: (body as any).response_format,
+    response_format: (body as CommonRequest & { response_format?: unknown }).response_format,
   }
 }
 
 export function fromOaCompatibleResponse(resp: any): CommonResponse {
   if (!resp || typeof resp !== "object") return resp
 
-  if (!Array.isArray((resp as any).choices)) return resp
+  if (!Array.isArray(resp.choices)) return resp
 
-  const choice = (resp as any).choices[0]
+  const choice = resp.choices[0]
   if (!choice) return resp
 
   const message = choice.message
@@ -267,7 +271,7 @@ export function fromOaCompatibleResponse(resp: any): CommonResponse {
   })()
 
   const usage = (() => {
-    const u = (resp as any).usage
+    const u = resp.usage
     if (!u) return undefined
     return {
       prompt_tokens: u.prompt_tokens,
@@ -280,10 +284,10 @@ export function fromOaCompatibleResponse(resp: any): CommonResponse {
   })()
 
   return {
-    id: (resp as any).id,
+    id: resp.id,
     object: "chat.completion" as const,
     created: Math.floor(Date.now() / 1000),
-    model: (resp as any).model,
+    model: resp.model,
     choices: [
       {
         index: 0,
@@ -319,20 +323,35 @@ export function fromOaCompatibleResponse(resp: any): CommonResponse {
   }
 }
 
-export function toOaCompatibleResponse(resp: CommonResponse) {
+type OaCompatResponse = CommonResponse & {
+  type?: string
+  content?: Array<{ type?: string; text?: string; name?: string; id?: string; input?: unknown }>
+  stop_reason?: string
+  usage?: {
+    prompt_tokens?: number
+    completion_tokens?: number
+    total_tokens?: number
+    prompt_tokens_details?: { cached_tokens?: number }
+    input_tokens?: number
+    output_tokens?: number
+    cache_read_input_tokens?: number
+  }
+}
+
+export function toOaCompatibleResponse(resp: OaCompatResponse) {
   if (!resp || typeof resp !== "object") return resp
 
-  if (Array.isArray((resp as any).choices)) return resp
+  if (Array.isArray(resp.choices)) return resp
 
-  const isAnthropic = typeof (resp as any).type === "string" && (resp as any).type === "message"
+  const isAnthropic = typeof resp.type === "string" && resp.type === "message"
   if (!isAnthropic) return resp
 
-  const idIn = (resp as any).id
+  const idIn = resp.id
   const id =
     typeof idIn === "string" ? idIn.replace(/^msg_/, "chatcmpl_") : `chatcmpl_${Math.random().toString(36).slice(2)}`
-  const model = (resp as any).model
+  const model = resp.model
 
-  const blocks: any[] = Array.isArray((resp as any).content) ? (resp as any).content : []
+  const blocks = Array.isArray(resp.content) ? resp.content : []
   const text = blocks
     .filter((b) => b && b.type === "text" && typeof b.text === "string")
     .map((b) => b.text)
@@ -340,9 +359,9 @@ export function toOaCompatibleResponse(resp: CommonResponse) {
   const tcs = blocks
     .filter((b) => b && b.type === "tool_use")
     .map((b) => {
-      const name = (b as any).name
+      const name = b.name
       const args = (() => {
-        const inp = (b as any).input
+        const inp = b.input
         if (typeof inp === "string") return inp
         try {
           return JSON.stringify(inp ?? {})
@@ -350,11 +369,8 @@ export function toOaCompatibleResponse(resp: CommonResponse) {
           return String(inp ?? "")
         }
       })()
-      const tid =
-        typeof (b as any).id === "string" && (b as any).id.length > 0
-          ? (b as any).id
-          : `toolu_${Math.random().toString(36).slice(2)}`
-      return { id: tid, type: "function" as const, function: { name, arguments: args } }
+      const tid = typeof b.id === "string" && b.id.length > 0 ? b.id : `toolu_${Math.random().toString(36).slice(2)}`
+      return { id: tid, type: "function" as const, function: { name: name ?? "", arguments: args } }
     })
 
   const finish = (r: string | null) => {
@@ -365,9 +381,9 @@ export function toOaCompatibleResponse(resp: CommonResponse) {
     return null
   }
 
-  const u = (resp as any).usage
+  const u = resp.usage
   const usage = (() => {
-    if (!u) return undefined as any
+    if (!u) return undefined
     const pt = typeof u.input_tokens === "number" ? u.input_tokens : undefined
     const ct = typeof u.output_tokens === "number" ? u.output_tokens : undefined
     const total = pt != null && ct != null ? pt + ct : undefined
@@ -385,7 +401,7 @@ export function toOaCompatibleResponse(resp: CommonResponse) {
     id,
     object: "chat.completion",
     created: Math.floor(Date.now() / 1000),
-    model,
+    model: model ?? "",
     choices: [
       {
         index: 0,
@@ -394,7 +410,7 @@ export function toOaCompatibleResponse(resp: CommonResponse) {
           ...(text && text.length > 0 ? { content: text } : {}),
           ...(tcs.length > 0 ? { tool_calls: tcs } : {}),
         },
-        finish_reason: finish((resp as any).stop_reason ?? null),
+        finish_reason: finish(resp.stop_reason ?? null),
       },
     ],
     ...(usage ? { usage } : {}),
