@@ -991,6 +991,7 @@ export function options(input: {
         input.model.api.npm === "@ai-sdk/github-copilot"
       ) {
         result["reasoningSummary"] = "auto"
+        result["include"] = ["reasoning.encrypted_content"]
       }
     }
 
@@ -999,6 +1000,7 @@ export function options(input: {
     if (
       input.model.api.id.includes("gpt-5.") &&
       !input.model.api.id.includes("codex") &&
+      !input.model.api.id.includes("gpt-5.5") &&
       !input.model.api.id.includes("-chat") &&
       input.model.providerID !== "azure"
     ) {
@@ -1212,6 +1214,18 @@ function flattenDiscriminatedUnion(schema: JSONSchema.BaseSchema | JSONSchema7):
   } as JSONSchema7
 }
 
+function flattenNestedDiscriminatedUnions(schema: JSONSchema7): JSONSchema7 {
+  const visit = (node: unknown): unknown => {
+    if (Array.isArray(node)) return node.map(visit)
+    if (node === null || typeof node !== "object") return node
+
+    const flattened = flattenDiscriminatedUnion(node as JSONSchema7) as Record<string, unknown>
+    return Object.fromEntries(Object.entries(flattened).map(([key, value]) => [key, visit(value)]))
+  }
+
+  return visit(schema) as JSONSchema7
+}
+
 export function schema(model: Provider.Model, schema: JSONSchema.BaseSchema | JSONSchema7): JSONSchema7 {
   /*
   if (["openai", "azure"].includes(providerID)) {
@@ -1238,6 +1252,10 @@ export function schema(model: Provider.Model, schema: JSONSchema.BaseSchema | JS
   // Flatten unconditionally — all providers accept a flat `type: "object"` schema,
   // and zod's runtime parse still enforces per-variant required fields strictly.
   schema = flattenDiscriminatedUnion(schema)
+
+  if (model.providerID === "openai" && model.api.id.includes("gpt-5.5")) {
+    schema = flattenNestedDiscriminatedUnions(schema)
+  }
 
   // Convert integer enums to string enums for Google/Gemini
   if (model.providerID === "google" || model.api.id.includes("gemini")) {
