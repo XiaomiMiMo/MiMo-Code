@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test"
 import path from "path"
+import fs from "fs/promises"
 import { Effect } from "effect"
 import { ModelID, ProviderID } from "../../src/provider/schema"
 import { Instruction } from "../../src/session/instruction"
@@ -268,6 +269,37 @@ describe("Instruction.system", () => {
       } else {
         process.env["MIMOCODE_CONFIG_DIR"] = originalConfigDir
       }
+    }
+  })
+
+  test("does not load external tool global instructions by default", async () => {
+    const claude = path.join(Global.Path.home, ".claude", "CLAUDE.md")
+    const codex = path.join(Global.Path.home, ".codex", "AGENTS.md")
+
+    await fs.mkdir(path.dirname(claude), { recursive: true })
+    await fs.mkdir(path.dirname(codex), { recursive: true })
+    await Bun.write(claude, "# Claude Global Instructions")
+    await Bun.write(codex, "# Codex Global Instructions")
+
+    try {
+      await using projectTmp = await tmpdir()
+
+      await Instance.provide({
+        directory: projectTmp.path,
+        fn: () =>
+          run(
+            Instruction.Service.use((svc) =>
+              Effect.gen(function* () {
+                const paths = yield* svc.systemPaths()
+                expect(paths.has(claude)).toBe(false)
+                expect(paths.has(codex)).toBe(false)
+              }),
+            ),
+          ),
+      })
+    } finally {
+      await fs.rm(path.dirname(claude), { recursive: true, force: true })
+      await fs.rm(path.dirname(codex), { recursive: true, force: true })
     }
   })
 })
