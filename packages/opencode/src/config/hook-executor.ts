@@ -9,7 +9,7 @@
 import { Effect } from "effect"
 import { Log } from "@/util"
 import type { HookEvent, HookResult } from "@/config/hooks"
-import { DEFAULT_HOOKS, mergeHooks } from "./default-hooks"
+import { mergeHooks } from "./default-hooks"
 
 const log = Log.create({ service: "hook-executor" })
 

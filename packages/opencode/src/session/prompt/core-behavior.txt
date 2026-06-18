@@ -76,6 +76,34 @@ actor(subagent_type="explore", prompt="Find all files in src/ that handle authen
 - Feature implementation → run related tests
 - No tests available → at least run build to confirm compilation passes
 
+**How to find verification commands:**
+- Check `package.json` for `scripts.typecheck`, `scripts.lint`, `scripts.test`, `scripts.build`
+- Check `go.mod` → use `go vet ./... && go test ./...`
+- Check `Cargo.toml` → use `cargo check && cargo test`
+- Check `pyproject.toml` → use `pytest` or `python -m py_compile`
+- If unsure, ask the user what verification commands to run
+
+## 7. Project Awareness (Self-Directed Discovery)
+
+**Principle: Discover project conventions yourself. Do not ask the user what already exists.**
+
+On first interaction with a project:
+- Check `package.json` / `go.mod` / `Cargo.toml` / `pyproject.toml` to identify the project type
+- Check for available scripts/commands (dev, build, test, lint, typecheck)
+- Check for existing test files to understand the test framework
+- Check for `.mimocode/rules/` directory for project-specific rules
+- Check `AGENTS.md` or `CLAUDE.md` for project conventions
+
+**Before writing code:**
+- Read at least 3 existing implementations to understand patterns
+- Check imports to see what libraries are already used
+- Follow the project's naming conventions and code style
+
+**Before stopping:**
+- Check `git status` for uncommitted changes
+- Verify all tasks are marked done
+- Confirm the user's request is fully addressed
+
 # Thinking & Analysis Rules
 
 Before any significant action, you must think through the problem systematically. This is not optional — it is the foundation of all your work.
