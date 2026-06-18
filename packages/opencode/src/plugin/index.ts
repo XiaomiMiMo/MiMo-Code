@@ -542,6 +542,10 @@ export const layer = Layer.effect(
       return yield* aggregateDecision(input, "actor.postStop")
     })
 
+    const HOOK_TIMEOUT_MS = 5000
+    const CIRCUIT_BREAKER_THRESHOLD = 3
+    const hookFailures = new Map<string, number>()
+
     const trigger = Effect.fn("Plugin.trigger")(function* <
       Name extends TriggerName,
       Input = Parameters<Required<Hooks>[Name]>[0],
@@ -550,10 +554,51 @@ export const layer = Layer.effect(
       if (!name) return output
       const s = yield* InstanceState.get(state)
       const fh = yield* InstanceState.get(fileHookState)
-      for (const hook of [...s.hooks, ...fh.hooks]) {
-        const fn = hook[name] as any
+
+      for (const entry of s.hooksWithMeta) {
+        const fn = entry.hook[name] as any
         if (!fn) continue
         yield* Effect.promise(async () => fn(input, output))
+      }
+
+      for (const entry of fh.meta) {
+        const fn = entry.hook[name] as any
+        if (!fn) continue
+        const hookID = entry.hookIDFor(name)
+
+        if ((hookFailures.get(hookID) ?? 0) >= CIRCUIT_BREAKER_THRESHOLD) {
+          log.warn("hook circuit-breaker open, skipping", { hook: hookID })
+          continue
+        }
+
+        const snapshot = structuredClone(output)
+        const failed = yield* Effect.tryPromise({
+          try: async () => {
+            await Promise.race([
+              Promise.resolve(fn(input, output)),
+              new Promise<never>((_, reject) =>
+                setTimeout(() => reject(new Error(`hook timed out after ${HOOK_TIMEOUT_MS}ms`)), HOOK_TIMEOUT_MS),
+              ),
+            ])
+          },
+          catch: (err) => err,
+        }).pipe(
+          Effect.map(() => false),
+          Effect.catch((err) => {
+            Object.assign(output as any, snapshot)
+            const count = (hookFailures.get(hookID) ?? 0) + 1
+            hookFailures.set(hookID, count)
+            log.error("file hook failed, output rolled back", {
+              hook: hookID,
+              event: name,
+              error: errorMessage(err),
+              consecutiveFailures: count,
+              circuitOpen: count >= CIRCUIT_BREAKER_THRESHOLD,
+            })
+            return Effect.succeed(true)
+          }),
+        )
+        if (!failed) hookFailures.delete(hookID)
       }
       return output
     })

@@ -9,6 +9,7 @@ import { InstanceBootstrap } from "@/project/bootstrap"
 import { Instance } from "@/project/instance"
 import { lazy } from "@/util/lazy"
 import { Filesystem } from "@/util"
+import { isValidProjectDirectory } from "../middleware"
 import { ConfigApi, configHandlers } from "./config"
 import { PermissionApi, permissionHandlers } from "./permission"
 import { ProjectApi, projectHandlers } from "./project"
@@ -85,6 +86,12 @@ const auth = Layer.succeed(
   }),
 )
 
+class DirectoryAccessDenied extends Schema.TaggedErrorClass<DirectoryAccessDenied>()(
+  "DirectoryAccessDenied",
+  { message: Schema.String },
+  { httpApiStatus: 403 },
+) {}
+
 const instance = HttpRouter.middleware()(
   Effect.gen(function* () {
     return (effect) =>
@@ -93,9 +100,24 @@ const instance = HttpRouter.middleware()(
         const headers = yield* HttpServerRequest.schemaHeaders(Headers)
         const raw = query.directory || headers["x-mimocode-directory"] || process.cwd()
         const workspace = query.workspace || undefined
+        const directory = Filesystem.resolve(decode(raw))
+
+        if (!Flag.MIMOCODE_SERVER_PASSWORD) {
+          const cwd = Filesystem.resolve(process.cwd())
+          if (!Filesystem.contains(cwd, directory)) {
+            return yield* new DirectoryAccessDenied({
+              message: "Access denied: directory must be within project root on unauthenticated servers",
+            })
+          }
+        }
+
+        if (!isValidProjectDirectory(directory)) {
+          return yield* new DirectoryAccessDenied({ message: "Access denied: invalid project directory" })
+        }
+
         const ctx = yield* Effect.promise(() =>
           Instance.provide({
-            directory: Filesystem.resolve(decode(raw)),
+            directory,
             init: () => AppRuntime.runPromise(InstanceBootstrap),
             fn: () => Instance.current,
           }),
