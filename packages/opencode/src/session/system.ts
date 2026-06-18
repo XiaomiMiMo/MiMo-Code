@@ -1,4 +1,5 @@
 import { Context, Effect, Layer } from "effect"
+import os from "os"
 
 import { Instance } from "../project/instance"
 
@@ -15,6 +16,28 @@ import type { Provider } from "@/provider"
 import type { Agent } from "@/agent/agent"
 import { Permission } from "@/permission"
 import { Skill } from "@/skill"
+
+type WslInput = {
+  platform?: NodeJS.Platform
+  release?: string
+  env?: Record<string, string | undefined>
+}
+
+export function isWslEnvironment(input: WslInput = {}) {
+  if ((input.platform ?? process.platform) !== "linux") return false
+  const env = input.env ?? process.env
+  if (env.WSL_DISTRO_NAME || env.WSL_INTEROP) return true
+  return /microsoft|wsl/i.test(input.release ?? os.release())
+}
+
+export function wslEnvironmentDetails(input: WslInput = {}) {
+  if (!isWslEnvironment(input)) return []
+  return [
+    `  WSL: yes`,
+    `  Windows host interop: use powershell.exe or cmd.exe for Windows commands when available.`,
+    `  Windows drives are mounted under /mnt/<drive-letter>/, for example /mnt/c/.`,
+  ]
+}
 
 export function provider(model: Provider.Model) {
   if (model.api.id.includes("gpt-4") || model.api.id.includes("o1") || model.api.id.includes("o3"))
@@ -57,6 +80,7 @@ export const layer = Layer.effect(
             `  Workspace root folder: ${Instance.worktree}`,
             `  Is directory a git repo: ${project.vcs === "git" ? "yes" : "no"}`,
             `  Platform: ${process.platform}`,
+            ...wslEnvironmentDetails(),
             `  Today's date: ${new Date().toDateString()}`,
             `</env>`,
           ].join("\n"),

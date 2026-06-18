@@ -3,7 +3,7 @@ import path from "path"
 import { Effect } from "effect"
 import { Agent } from "../../src/agent/agent"
 import { Instance } from "../../src/project/instance"
-import { SystemPrompt } from "../../src/session/system"
+import { SystemPrompt, wslEnvironmentDetails } from "../../src/session/system"
 import { provideInstance, tmpdir } from "../fixture/fixture"
 
 function load<A>(dir: string, fn: (svc: Agent.Interface) => Effect.Effect<A>) {
@@ -11,6 +11,22 @@ function load<A>(dir: string, fn: (svc: Agent.Interface) => Effect.Effect<A>) {
 }
 
 describe("session.system", () => {
+  test("WSL environment details teach Windows command interop", () => {
+    const details = wslEnvironmentDetails({
+      platform: "linux",
+      release: "5.15.167.4-microsoft-standard-WSL2",
+      env: {
+        WSL_DISTRO_NAME: "Ubuntu",
+        WSL_INTEROP: "/run/WSL/123_interop",
+      },
+    })
+
+    expect(details.join("\n")).toContain("WSL: yes")
+    expect(details.join("\n")).toContain("powershell.exe")
+    expect(details.join("\n")).toContain("cmd.exe")
+    expect(details.join("\n")).toContain("/mnt/c")
+  })
+
   test("skills output is sorted by name and stable across calls", async () => {
     await using tmp = await tmpdir({
       git: true,
