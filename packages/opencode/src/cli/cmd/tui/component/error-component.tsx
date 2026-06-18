@@ -6,6 +6,24 @@ import { InstallationVersion } from "@/installation/version"
 import { win32FlushInputBuffer } from "../win32"
 import { getScrollAcceleration } from "../util/scroll"
 
+export function createIssueURL(error: Error): URL {
+  const issueURL = new URL("https://github.com/XiaomiMiMo/MiMo-Code/issues/new?template=bug-report.yml")
+
+  if (error.message) {
+    issueURL.searchParams.set("title", `opentui: fatal: ${error.message}`)
+  }
+
+  if (error.stack) {
+    issueURL.searchParams.set(
+      "description",
+      "```\n" + error.stack.substring(0, 6000 - issueURL.toString().length) + "...\n```",
+    )
+  }
+
+  issueURL.searchParams.set("opencode-version", InstallationVersion)
+  return issueURL
+}
+
 export function ErrorComponent(props: {
   error: Error
   reset: () => void
@@ -31,7 +49,7 @@ export function ErrorComponent(props: {
   })
   const [copied, setCopied] = createSignal(false)
 
-  const issueURL = new URL("https://github.com/anomalyco/opencode/issues/new?template=bug-report.yml")
+  const issueURL = createIssueURL(props.error)
 
   // Choose safe fallback colors per mode since theme context may not be available
   const isLight = props.mode === "light"
@@ -41,19 +59,6 @@ export function ErrorComponent(props: {
     muted: isLight ? "#8a8a8a" : "#808080",
     primary: isLight ? "#3b7dd8" : "#fab283",
   }
-
-  if (props.error.message) {
-    issueURL.searchParams.set("title", `opentui: fatal: ${props.error.message}`)
-  }
-
-  if (props.error.stack) {
-    issueURL.searchParams.set(
-      "description",
-      "```\n" + props.error.stack.substring(0, 6000 - issueURL.toString().length) + "...\n```",
-    )
-  }
-
-  issueURL.searchParams.set("opencode-version", InstallationVersion)
 
   const copyIssueURL = () => {
     void Clipboard.copy(issueURL.toString()).then(() => {
