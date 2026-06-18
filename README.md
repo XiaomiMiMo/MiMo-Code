@@ -187,7 +187,20 @@ MiMoCode is configured via `.mimocode/mimocode.json` in the project directory (o
 - MCP server connections
 - Keybindings and theme
 
-Max Mode (parallel best-of-N reasoning with judge selection) can be enabled via `experimental.maxMode` in the config.
+#### Max Mode
+
+Enable by adding `experimental.maxMode` to your config:
+
+```jsonc
+{
+  "experimental": {
+    "maxMode": {}            // default: 5 parallel candidates per step
+    // "maxMode": { "candidates": 3 }  // custom candidate count
+  }
+}
+```
+
+A new **max** agent appears — press `Tab` to switch to it. Same permissions as **build**. Each step costs roughly `candidates ×` normal tokens.
 
 ---
 
