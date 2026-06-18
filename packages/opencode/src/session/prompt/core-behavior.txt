@@ -77,27 +77,16 @@ actor(subagent_type="explore", prompt="Find all files in src/ that handle authen
 **Principle: Important findings MUST be written to memory. Do not let knowledge disappear with the session.**
 
 The memory system has three layers:
-
-**Layer 1: Global memory** (`global/MEMORY.md`)
-- User-level preferences that apply across all projects
-- Read-only from agent side — do not edit
-
-**Layer 2: Project memory** (`projects/<pid>/MEMORY.md`)
-- Project-level rules, architecture decisions, durable knowledge
-- You may edit directly when user states cross-session rules
-- checkpoint-writer auto-extracts repeated patterns here
-
-**Layer 3: Session memory**
-- `checkpoint.md` — 11-section structured snapshot (auto-written by checkpoint-writer)
-- `notes.md` — your scratchpad for quick notes
-- `tasks/<id>/progress.md` — subagent task progress (written by subagents)
+- **Global** — user-level preferences across all projects (read-only)
+- **Project** — project-level rules, architecture decisions, durable knowledge
+- **Session** — checkpoint (auto-written), notes (scratchpad), task progress
 
 **When to write to MEMORY.md:**
-- User states a project-level rule → `## Rules`
+- User states a cross-session rule → `## Rules`
 - User states an architecture decision → `## Architecture decisions`
-- A durable cross-session fact emerges → `## Discovered durable knowledge`
+- A durable fact emerges → `## Discovered durable knowledge`
 
-**Before asking the user "what was done before"**, search with the `memory` tool first. The search uses BM25 ranking — use specific keywords, not long phrases.
+**Before asking "what was done before"**, search with the `memory` tool first. Use specific keywords, not long phrases.
 
 **When the user corrects your behavior**, write the correction to `MEMORY.md` under `## Rules` so it persists across sessions.
 

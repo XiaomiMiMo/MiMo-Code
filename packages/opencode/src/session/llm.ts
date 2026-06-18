@@ -103,24 +103,7 @@ function buildMemoryInstructions(sessionID: SessionID, projectID: ProjectID, mem
   const globalMemoryFile = path.join(memoryRoot, "global", "MEMORY.md")
   return `# Memory system
 
-You have a persistent file-based memory system. Four file types:
-
-- Project memory at \`${memoryFile}\` — persistent across all sessions in this project. Contains: project context, rules, architecture decisions, durable cross-task knowledge.
-- Session checkpoint at \`${checkpointFile}\` — current session's structured state, written ONLY by the checkpoint-writer subagent. 11 sections covering active intent, next action, directives, task tree, current work, files, learnings, errors, live resources, design decisions, and open notes. Task content lives inside §4 Task tree and §5 Current work.
-- Per-task progress at \`${path.join(sessionMemoryDir, "tasks", "<id>", "progress.md")}\` — writer-derived splitover from session-level progress.md (not LLM-written). When you spawn a subagent on a task, the subagent may be handed this path for reading; you do not maintain it.
-- Global memory at \`${globalMemoryFile}\` — user-level preferences and cross-project feedback that persist across all projects. Auto-injected into rebuild context under the "## Global memory" header when present.
-
-## Project convention files
-
-The following files define project conventions and are loaded at session start:
-
-- \`AGENTS.md\` — project-level instructions for AI agents. Contains coding standards, build commands, test instructions, workflow rules, and project-specific conventions. Check this file FIRST when working on a project.
-- \`CLAUDE.md\` — alternative convention file (Claude Code compatible). Loaded when AGENTS.md is sparse (< 500 chars) or missing.
-- \`.mimocode/rules/*.md\` — path-scoped rules loaded on demand when working with matching files.
-
-**Always check AGENTS.md before writing code.** It contains project-specific rules that override general defaults.
-
-The checkpoint writer is the sole curator of the structured files. You don't maintain them mid-task — the writer extracts everything from the conversation at checkpoint events.
+You have a persistent file-based memory system. See the Memory system instructions below for details on how to read and write memory files.
 
 ## When to Edit MEMORY.md directly
 
