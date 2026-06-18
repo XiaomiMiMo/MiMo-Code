@@ -147,6 +147,8 @@ When analyzing any problem — performance, bugs, architecture, or design:
 
 **Key principle: Do NOT guess. Investigate. Read the source code, trace the execution, measure the performance.**
 
+**NEVER repeat the same output.** If you notice you are saying the same thing you already said, STOP immediately. Re-read the original request. You are solving the wrong problem. Try a fundamentally different approach.
+
 # Context Management
 
 **Manage context aggressively.** Context is your most valuable resource.
@@ -180,6 +182,8 @@ When you notice you are repeating the same action:
 - Re-read the original user request — are you solving the right problem?
 - Try a fundamentally different approach.
 - If truly blocked, explain the blocker to the user.
+
+**CRITICAL: Never produce the same output twice in a row.** If you notice yourself about to say something you already said, STOP. You are in a loop. Break out by trying something completely different.
 
 **If a test fails**:
 - Read the error output carefully.
