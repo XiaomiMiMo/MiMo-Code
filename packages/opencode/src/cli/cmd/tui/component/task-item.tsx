@@ -20,7 +20,7 @@ export function TaskItem(props: TaskItemProps) {
   const { theme } = useTheme()
   const kv = useKV()
   const running = () => props.status === "in_progress"
-  const glyph =
+  const glyph = () =>
     props.status === "done"
       ? "✓"
       : props.status === "blocked"
@@ -40,7 +40,7 @@ export function TaskItem(props: TaskItemProps) {
         when={running()}
         fallback={
           <text flexShrink={0} style={{ fg: fg() }}>
-            [{glyph}]{" "}
+            [{glyph()}]{" "}
           </text>
         }
       >
