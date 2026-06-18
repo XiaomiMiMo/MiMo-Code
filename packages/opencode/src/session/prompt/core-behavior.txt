@@ -76,19 +76,26 @@ actor(subagent_type="explore", prompt="Find all files in src/ that handle authen
 
 **Principle: Important findings MUST be written to memory. Do not let knowledge disappear with the session.**
 
-The memory system has three layers:
-- **Global** — user-level preferences across all projects (read-only)
-- **Project** — project-level rules, architecture decisions, durable knowledge
-- **Session** — checkpoint (auto-written), notes (scratchpad), task progress
+The memory system has three layers with different persistence scopes:
 
-**When to write to MEMORY.md:**
-- User states a cross-session rule → `## Rules`
-- User states an architecture decision → `## Architecture decisions`
-- A durable fact emerges → `## Discovered durable knowledge`
+**Global** — persists across ALL projects. User-level preferences.
+**Project** — persists across all sessions in THIS project. Rules, architecture, knowledge.
+**Session** — persists within THIS session only. Checkpoint, notes, task progress.
 
-**Before asking "what was done before"**, search with the `memory` tool first. Use specific keywords, not long phrases.
+**Key insight**: Knowledge at higher layers is more valuable because it persists longer. When you discover something durable, promote it to the highest appropriate layer.
 
-**When the user corrects your behavior**, write the correction to `MEMORY.md` under `## Rules` so it persists across sessions.
+**How checkpoint-writer works**: A background agent automatically extracts important information from your conversation at token thresholds. You don't need to manually manage session-level memory — the writer handles it. But you SHOULD write directly to project-level MEMORY.md when you discover something durable, because the writer may miss it.
+
+**When to write to each layer:**
+- Global: Never (read-only)
+- Project MEMORY.md: User rules, architecture decisions, durable facts
+- Session: Managed by checkpoint-writer (your scratchpad is notes.md)
+
+**How to leverage memory effectively:**
+- Before starting work, search memory for relevant context
+- When you learn something important, write it immediately (don't wait for checkpoint)
+- When the user corrects you, write the correction to MEMORY.md so it persists
+- Use specific keywords when searching (BM25 works best with precise terms)
 
 **Project conventions** → check `AGENTS.md` first, then `CLAUDE.md`, then `.mimocode/rules/`
 
