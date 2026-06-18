@@ -63,6 +63,8 @@ import { buildLLMRequestPrefix } from "./llm-request-prefix"
 import { prefixCaptureRef } from "./prefix-capture-ref"
 import { spawnRef } from "@/actor/spawn-ref"
 import { Inbox } from "@/inbox"
+import { executeHooks } from "../config/hook-executor"
+import type { HookResult } from "../config/hooks"
 import { sessionPromptRef } from "@/inbox/inbox-ref"
 import { Tool } from "@/tool"
 import { Permission } from "@/permission"
@@ -2230,6 +2232,52 @@ NOTE: At any point in time through this workflow you should feel free to ask the
 
           if (!lastUser) throw new Error("No user message found in stream. This should never happen.")
 
+          // Execute SessionStart hook on first iteration
+          if (step === 0) {
+            const cfg = yield* config.get()
+            const sessionStartResult = yield* executeHooks(
+              "SessionStart",
+              (cfg as any).hooks,
+              { sessionID, agentID, model: lastUser.model },
+            ).pipe(Effect.catch(() => Effect.succeed({} as HookResult)))
+            if (sessionStartResult.additionalContext) {
+              // Inject session start context into the first user message
+              const firstUserMsg = msgs.find((m) => m.info.role === "user")
+              if (firstUserMsg) {
+                firstUserMsg.parts.push({
+                  id: PartID.ascending(),
+                  messageID: firstUserMsg.info.id,
+                  sessionID,
+                  type: "text",
+                  synthetic: true,
+                  text: `<system-reminder>\n${sessionStartResult.additionalContext}\n</system-reminder>`,
+                })
+              }
+            }
+          }
+
+          // Execute UserPromptSubmit hook
+          const cfg = yield* config.get()
+          const userPromptResult = yield* executeHooks(
+            "UserPromptSubmit",
+            (cfg as any).hooks,
+            { sessionID, agentID, userMessage: lastUser },
+            lastUser.agent,
+          ).pipe(Effect.catch(() => Effect.succeed({} as HookResult)))
+          if (userPromptResult.additionalContext) {
+            const lastUserMsg = msgs.findLast((m) => m.info.role === "user")
+            if (lastUserMsg) {
+              lastUserMsg.parts.push({
+                id: PartID.ascending(),
+                messageID: lastUserMsg.info.id,
+                sessionID,
+                type: "text",
+                synthetic: true,
+                text: `<system-reminder>\n${userPromptResult.additionalContext}\n</system-reminder>`,
+              })
+            }
+          }
+
           // Per-user-message active recall reminder. Once the session has
           // any memory artifacts (memory dir populated OR tasks recorded),
           // append a brief recall protocol so the agent's reflex to query
@@ -3228,6 +3276,26 @@ NOTE: At any point in time through this workflow you should feel free to ask the
           finalIsError ? "error" : "completed",
           Option.isSome(lastUserForMetrics) ? lastUserForMetrics.value.info.agent : final.info.agent,
         )
+
+        // Execute Stop hook before returning
+        const cfgForStop = yield* config.get()
+        const stopResult = yield* executeHooks(
+          "Stop",
+          (cfgForStop as any).hooks,
+          { sessionID, agentID, finalMessage: final },
+        ).pipe(Effect.catch(() => Effect.succeed({} as HookResult)))
+        if (stopResult.additionalContext) {
+          // Inject stop context into the final message
+          final.parts.push({
+            id: PartID.ascending(),
+            messageID: final.info.id,
+            sessionID,
+            type: "text",
+            synthetic: true,
+            text: `<system-reminder>\n${stopResult.additionalContext}\n</system-reminder>`,
+          })
+        }
+
         return final
       },
     )
