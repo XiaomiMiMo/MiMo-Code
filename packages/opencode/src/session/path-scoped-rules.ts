@@ -1,10 +1,9 @@
 /**
  * 路径作用域指令模块
  *
- * 参考 Claude Code 的 .claude/rules/ 机制：
- * - 指令可以按文件路径模式作用域化
- * - 仅当 Claude 处理匹配文件时才加载相关指令
- * - 减少 context 噪声，节省 token
+ * 扫描 .mimocode/rules/ 目录，根据当前文件路径筛选适用的规则。
+ * 指令按文件路径模式作用域化，仅当处理匹配文件时才加载相关指令，
+ * 减少 context 噪声，节省 token。
  */
 
 import { Effect } from "effect"

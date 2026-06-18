@@ -2,34 +2,23 @@ import { Context, Effect, Layer } from "effect"
 
 import { Instance } from "../project/instance"
 
-import PROMPT_ANTHROPIC from "./prompt/anthropic.txt"
-import PROMPT_DEFAULT from "./prompt/default.txt"
-import PROMPT_BEAST from "./prompt/beast.txt"
-import PROMPT_GEMINI from "./prompt/gemini.txt"
-import PROMPT_GPT from "./prompt/gpt.txt"
-import PROMPT_KIMI from "./prompt/kimi.txt"
+// 所有模型共享统一的核心行为指令
+import PROMPT_CORE_BEHAVIOR from "./prompt/core-behavior.txt"
 
-import PROMPT_CODEX from "./prompt/codex.txt"
-import PROMPT_TRINITY from "./prompt/trinity.txt"
 import type { Provider } from "@/provider"
 import type { Agent } from "@/agent/agent"
 import { Permission } from "@/permission"
 import { Skill } from "@/skill"
 
-export function provider(model: Provider.Model) {
-  if (model.api.id.includes("gpt-4") || model.api.id.includes("o1") || model.api.id.includes("o3"))
-    return [PROMPT_BEAST]
-  if (model.api.id.includes("gpt")) {
-    if (model.api.id.includes("codex")) {
-      return [PROMPT_CODEX]
-    }
-    return [PROMPT_GPT]
-  }
-  if (model.api.id.includes("gemini-")) return [PROMPT_GEMINI]
-  if (model.api.id.includes("claude")) return [PROMPT_ANTHROPIC]
-  if (model.api.id.toLowerCase().includes("trinity")) return [PROMPT_TRINITY]
-  if (model.api.id.toLowerCase().includes("kimi")) return [PROMPT_KIMI]
-  return [PROMPT_DEFAULT]
+/**
+ * 所有模型使用统一的核心行为 prompt
+ *
+ * 设计哲学：不同模型的能力差异由 extended thinking budget 控制，
+ * 而行为风格（思考方式、输出风格、工具策略等）保持一致。
+ * 这确保了无论使用哪个模型，用户都能获得一致的交互体验。
+ */
+export function provider(_model: Provider.Model) {
+  return [PROMPT_CORE_BEHAVIOR]
 }
 
 export interface Interface {

@@ -1,48 +1,24 @@
 import { describe, expect, test } from "bun:test"
-import PROMPT_ANTHROPIC from "../../src/session/prompt/anthropic.txt"
-import PROMPT_DEFAULT from "../../src/session/prompt/default.txt"
+import PROMPT_CORE_BEHAVIOR from "../../src/session/prompt/core-behavior.txt"
 import BUILD_SWITCH from "../../src/session/prompt/build-switch.txt"
 import MAX_STEPS from "../../src/session/prompt/max-steps.txt"
 import { RECOVERY_PROMPT_MILD, RECOVERY_PROMPT_STRONG } from "../../src/session/prompt/text-loop-recovery"
+import { SystemPrompt } from "../../src/session/system"
 
-// 模拟 Provider.Model 类型
-function mockModel(apiId: string, providerID = "anthropic") {
-  return {
-    id: apiId,
-    api: { id: apiId, npm: "@ai-sdk/anthropic" },
-    providerID,
-    capabilities: {
-      reasoning: true,
-      temperature: false,
-      input: { image: true, audio: false, video: false, pdf: false },
-    },
-    limit: { output: 128000 },
-  } as any
-}
+describe("核心行为 prompt 注入验证", () => {
+  test("所有模型使用同一个核心行为 prompt", () => {
+    // 无论什么模型，都应该返回同一个 prompt
+    const claudeModel = { api: { id: "claude-sonnet-4-20250514" } } as any
+    const gptModel = { api: { id: "gpt-4o" } } as any
+    const geminiModel = { api: { id: "gemini-2.5-pro" } } as any
 
-describe("System Prompt 注入验证", () => {
-  test("Claude 模型应加载 anthropic.txt 而非 default.txt", () => {
-    // 模拟 system.ts provider() 函数的逻辑
-    const model = mockModel("claude-sonnet-4-20250514")
-    const prompt = model.api.id.includes("claude") ? PROMPT_ANTHROPIC : PROMPT_DEFAULT
-
-    expect(prompt).toBe(PROMPT_ANTHROPIC)
-    expect(prompt).not.toBe(PROMPT_DEFAULT)
+    expect(SystemPrompt.provider(claudeModel)).toEqual([PROMPT_CORE_BEHAVIOR])
+    expect(SystemPrompt.provider(gptModel)).toEqual([PROMPT_CORE_BEHAVIOR])
+    expect(SystemPrompt.provider(geminiModel)).toEqual([PROMPT_CORE_BEHAVIOR])
   })
 
-  test("非 Claude 模型应加载 default.txt", () => {
-    const model = mockModel("gpt-4o", "openai")
-    model.api.npm = "@ai-sdk/openai"
-    const prompt = model.api.id.includes("claude")
-      ? PROMPT_ANTHROPIC
-      : PROMPT_DEFAULT
-
-    expect(prompt).toBe(PROMPT_DEFAULT)
-  })
-
-  test("anthropic.txt 包含所有 Claude Code 风格行为指令", () => {
+  test("核心行为 prompt 包含所有 Claude Code 风格行为指令", () => {
     const requiredDirectives = [
-      // 核心行为指令
       "Thinking & Analysis Rules",
       "Professional objectivity",
       "Output Style",
@@ -51,7 +27,6 @@ describe("System Prompt 注入验证", () => {
       "Tool Usage Strategy",
       "Executing Actions with Care",
       "Git Safety",
-      // 关键行为规则
       "Read at least 3 existing implementations",
       "Parallel execution",
       "file_path:line_number",
@@ -61,24 +36,13 @@ describe("System Prompt 注入验证", () => {
     ]
 
     for (const directive of requiredDirectives) {
-      expect(PROMPT_ANTHROPIC).toContain(directive)
+      expect(PROMPT_CORE_BEHAVIOR).toContain(directive)
     }
   })
 
-  test("default.txt 包含所有 Claude Code 风格行为指令", () => {
-    const requiredDirectives = [
-      "Thinking & Analysis Rules",
-      "Professional objectivity",
-      "Tool Usage Strategy",
-      "Executing Actions with Care",
-      "Git Safety",
-      "Read at least 3 existing implementations",
-      "Parallel execution",
-    ]
-
-    for (const directive of requiredDirectives) {
-      expect(PROMPT_DEFAULT).toContain(directive)
-    }
+  test("核心行为 prompt 长度合理", () => {
+    expect(PROMPT_CORE_BEHAVIOR.length).toBeGreaterThan(5000)
+    expect(PROMPT_CORE_BEHAVIOR.length).toBeLessThan(15000)
   })
 })
 
@@ -105,23 +69,5 @@ describe("运行时 system-reminder 注入验证", () => {
     expect(RECOVERY_PROMPT_STRONG).toContain("CRITICAL FAILURE")
     expect(RECOVERY_PROMPT_STRONG).toContain("ABANDON your current plan")
     expect(RECOVERY_PROMPT_STRONG).toContain("Propose 2-3 alternative approaches")
-  })
-})
-
-describe("prompt 文件完整性", () => {
-  test("anthropic.txt 长度合理（非空、非过长）", () => {
-    expect(PROMPT_ANTHROPIC.length).toBeGreaterThan(5000)
-    expect(PROMPT_ANTHROPIC.length).toBeLessThan(15000)
-  })
-
-  test("default.txt 长度合理", () => {
-    expect(PROMPT_DEFAULT.length).toBeGreaterThan(5000)
-    expect(PROMPT_DEFAULT.length).toBeLessThan(15000)
-  })
-
-  test("anthropic.txt 包含模型 ID 占位符", () => {
-    // anthropic.txt 应该有 ${model.api.id} 占位符（被 system.ts 替换）
-    expect(PROMPT_ANTHROPIC).toContain("${model.api.id}")
-    expect(PROMPT_ANTHROPIC).toContain("${model.providerID}")
   })
 })

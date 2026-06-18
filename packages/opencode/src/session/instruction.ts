@@ -259,13 +259,13 @@ export const layer: Layer.Layer<Service, never, AppFileSystem.Service | Config.S
 
       /**
        * 获取路径作用域规则
-       * 扫描 .claude/rules/ 目录，根据当前文件路径筛选适用的规则
+       * 扫描 .mimocode/rules/ 目录，根据当前文件路径筛选适用的规则
        */
       const pathScopedRules: Interface["pathScopedRules"] = Effect.fn(
         "Instruction.pathScopedRules",
       )(function* (currentFile?: string) {
         const ctx = yield* InstanceState.context
-        const rulesDir = path.join(ctx.worktree, ".claude", "rules")
+        const rulesDir = path.join(ctx.worktree, ".mimocode", "rules")
         const rules = yield* Effect.promise(() => scanRules(rulesDir))
         return filterRulesByPath(rules, currentFile)
       })
