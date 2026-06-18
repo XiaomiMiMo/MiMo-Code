@@ -831,6 +831,7 @@ function App(props: { onSnapshot?: () => Promise<string[]> }) {
       onSelect: () => {
         process.once("SIGCONT", () => {
           renderer.resume()
+          renderer.currentRenderBuffer.clear()
         })
 
         renderer.suspend()
@@ -1052,6 +1053,7 @@ function App(props: { onSnapshot?: () => Promise<string[]> }) {
       } finally {
         renderer.currentRenderBuffer.clear()
         renderer.resume()
+        renderer.currentRenderBuffer.clear()
         renderer.requestRender()
       }
 
