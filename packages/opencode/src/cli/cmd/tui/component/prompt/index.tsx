@@ -453,8 +453,8 @@ export function Prompt(props: PromptProps) {
   // session change, status leaving idle).
   createEffect(() => {
     if (!ghost()) return
-    command.keybinds(false)
-    onCleanup(() => command.keybinds(true))
+    command.keybinds(false, "input")
+    onCleanup(() => command.keybinds(true, "input"))
   })
 
   const usage = createMemo(() => {
