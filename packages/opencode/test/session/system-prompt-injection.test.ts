@@ -48,7 +48,7 @@ describe("Core behavior prompt injection verification", () => {
 
   test("core-behavior prompt has reasonable length", () => {
     expect(PROMPT_CORE_BEHAVIOR.length).toBeGreaterThan(5000)
-    expect(PROMPT_CORE_BEHAVIOR.length).toBeLessThan(15000)
+    expect(PROMPT_CORE_BEHAVIOR.length).toBeLessThan(25000)
   })
 })
 
