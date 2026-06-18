@@ -12,6 +12,7 @@ import { useArgs } from "./args"
 import { useSDK } from "./sdk"
 import { RGBA } from "@opentui/core"
 import { Filesystem } from "@/util"
+import { getProviderDefaultModel } from "./model-default"
 
 export function parseModel(model: string) {
   const [providerID, ...rest] = model.split("/")
@@ -185,16 +186,9 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
           }
         }
 
-        const provider = sync.data.provider[0]
-        if (!provider) return undefined
-        const defaultModel = sync.data.provider_default[provider.id]
-        const firstModel = Object.values(provider.models)[0]
-        const model = defaultModel ?? firstModel?.id
-        if (!model) return undefined
-        return {
-          providerID: provider.id,
-          modelID: model,
-        }
+        return sync.data.provider
+          .map((provider) => getProviderDefaultModel(sync.data.provider, sync.data.provider_default, provider.id))
+          .find((model) => model)
       })
 
       const currentModel = createMemo(() => {
@@ -309,6 +303,11 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
               save()
             }
           })
+        },
+        selectProviderDefault(providerID: string, options?: { recent?: boolean }) {
+          const model = getProviderDefaultModel(sync.data.provider, sync.data.provider_default, providerID)
+          if (!model) return
+          this.set(model, options)
         },
         toggleFavorite(model: { providerID: string; modelID: string }) {
           batch(() => {
