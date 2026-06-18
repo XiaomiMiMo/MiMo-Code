@@ -1,6 +1,7 @@
 ---
 feature: tui-model-selector-search
 status: delivered
+pr: https://github.com/XiaomiMiMo/MiMo-Code/pull/932
 branch: fix/model-selector-search-ui
 commits: 83ca130..ee30bc0
 ---
