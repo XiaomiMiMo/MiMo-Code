@@ -44,6 +44,12 @@ import { MCP } from "../mcp"
 import { LSP } from "../lsp"
 import { Flag } from "../flag/flag"
 import { ulid } from "ulid"
+import { generateToolSummaries, formatToolSummariesForPrompt } from "../tool/deferred-descriptions"
+import {
+  scanRules as scanPathRules,
+  filterRulesByPath as filterPathRules,
+  formatRulesForPrompt,
+} from "./path-scoped-rules"
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process"
 import * as CrossSpawnSpawner from "@/effect/cross-spawn-spawner"
 import * as Stream from "effect/Stream"
@@ -2828,6 +2834,24 @@ NOTE: At any point in time through this workflow you should feel free to ask the
               ...instructions.content,
               ...(format.type === "json_schema" ? [STRUCTURED_OUTPUT_SYSTEM_PROMPT] : []),
             ]
+
+            // 注入工具摘要：按类别分组的简短描述，帮助模型快速了解可用工具
+            const toolIds = yield* registry.ids()
+            const toolSummaries = generateToolSummaries(toolIds)
+            if (toolSummaries.length > 0) {
+              additions.push(formatToolSummariesForPrompt(toolSummaries))
+            }
+
+            // 注入路径作用域规则：仅加载与当前工作文件匹配的指令
+            const worktree = (yield* InstanceState.context).worktree
+            const pathRulesDir = path.join(worktree, ".mimocode", "rules")
+            const pathRules = yield* Effect.promise(() => scanPathRules(pathRulesDir)).pipe(
+              Effect.catch(() => Effect.succeed([])),
+            )
+            const formattedPathRules = formatRulesForPrompt(pathRules)
+            if (formattedPathRules) {
+              additions.push(formattedPathRules)
+            }
             // Note: `buildLLMRequestPrefix` also returns a `tools` field, but we
             // intentionally don't use it here — the `tools` variable from `resolveTools`
             // (set earlier via `handle.process({tools: ...})`) carries `execute` closures
