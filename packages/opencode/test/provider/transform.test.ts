@@ -3377,3 +3377,88 @@ describe("ProviderTransform.schema - openai discriminated-union flatten", () => 
     expect(result.anyOf).toBeUndefined()
   })
 })
+
+describe("ProviderTransform.message - openai-compatible system message merge", () => {
+  const compatibleModel = {
+    id: ModelID.make("Qwen3.6-27B"),
+    providerID: ProviderID.make("vllm"),
+    api: { id: "Qwen3.6-27B", url: "http://127.0.0.1:8080/v1", npm: "@ai-sdk/openai-compatible" },
+    name: "Qwen",
+    capabilities: {
+      temperature: true,
+      reasoning: false,
+      attachment: false,
+      toolcall: true,
+      input: { text: true, audio: false, image: false, video: false, pdf: false },
+      output: { text: true, audio: false, image: false, video: false, pdf: false },
+      interleaved: false,
+    },
+    cost: { input: 0, output: 0, cache: { read: 0, write: 0 } },
+    limit: { context: 32768, output: 8192 },
+    status: "active",
+    options: {},
+    headers: {},
+    release_date: "2026-01-01",
+  } as any
+
+  test("merges consecutive leading system messages into one", () => {
+    const result = ProviderTransform.message(
+      [
+        { role: "system", content: "AGENT PROMPT" },
+        { role: "system", content: "MEMORY INSTRUCTIONS" },
+        { role: "user", content: "hi" },
+      ] as any[],
+      compatibleModel,
+      {},
+    )
+
+    expect(result).toHaveLength(2)
+    expect(result[0].role).toBe("system")
+    expect(result[0].content).toBe("AGENT PROMPT\nMEMORY INSTRUCTIONS")
+    expect(result[1].role).toBe("user")
+  })
+
+  test("collapses three consecutive system messages", () => {
+    const result = ProviderTransform.message(
+      [
+        { role: "system", content: "A" },
+        { role: "system", content: "B" },
+        { role: "system", content: "C" },
+        { role: "user", content: "hi" },
+      ] as any[],
+      compatibleModel,
+      {},
+    )
+
+    expect(result.filter((m) => m.role === "system")).toHaveLength(1)
+    expect(result[0].content).toBe("A\nB\nC")
+  })
+
+  test("leaves a single system message untouched", () => {
+    const result = ProviderTransform.message(
+      [
+        { role: "system", content: "ONLY" },
+        { role: "user", content: "hi" },
+      ] as any[],
+      compatibleModel,
+      {},
+    )
+
+    expect(result).toHaveLength(2)
+    expect(result[0].content).toBe("ONLY")
+  })
+
+  test("does not merge for non-openai-compatible providers", () => {
+    const result = ProviderTransform.message(
+      [
+        { role: "system", content: "ONE" },
+        { role: "system", content: "TWO" },
+        { role: "user", content: "hi" },
+      ] as any[],
+      { ...compatibleModel, providerID: ProviderID.make("openai"), api: { id: "gpt-4", npm: "@ai-sdk/openai" } } as any,
+      {},
+    )
+
+    expect(result.filter((m) => m.role === "system")).toHaveLength(2)
+  })
+})
