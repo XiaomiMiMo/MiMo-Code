@@ -63,7 +63,7 @@ export const WebSearchTool = Tool.define(
           const timeout = params.timeout === undefined ? undefined : Math.min(params.timeout * 1000, MAX_TIMEOUT)
 
           const result =
-            model?.providerID === "xiaomi"
+            model?.providerID.startsWith("xiaomi")
               ? yield* Effect.catchCause(
                   Effect.gen(function* () {
                     const info = yield* auth.get("xiaomi")

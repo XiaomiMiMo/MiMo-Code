@@ -315,7 +315,7 @@ export const layer = Layer.effect(
           if (tool.id === WebSearchTool.id) {
             return (
               input.providerID === ProviderID.opencode ||
-              input.providerID === "xiaomi" ||
+              input.providerID.startsWith("xiaomi") ||
               Flag.MIMOCODE_ENABLE_EXA
             )
           }
