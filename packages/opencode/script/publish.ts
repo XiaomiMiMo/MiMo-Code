@@ -45,7 +45,7 @@ await Bun.file(`./dist/${pkg.name}/package.json`).write(
       description: "MiMo Code: Where Models and Agents Co-Evolve",
       license: "MIT",
       author: "Xiaomi MiMo Team",
-      homepage: "https://mimo.xiaomi.com/en/mimocode",
+      homepage: "https://mimo.xiaomi.com/coder",
       repository: {
         type: "git",
         url: "git+https://github.com/XiaomiMiMo/MiMo-Code.git",

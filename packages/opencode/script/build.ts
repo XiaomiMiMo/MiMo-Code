@@ -273,7 +273,7 @@ for (const item of targets) {
         description: "Platform-specific binary for @mimo-ai/cli.",
         license: "MIT",
         author: "Xiaomi MiMo Team",
-        homepage: "https://mimo.xiaomi.com/en/mimocode",
+        homepage: "https://mimo.xiaomi.com/coder",
         repository: {
           type: "git",
           url: "git+https://github.com/XiaomiMiMo/MiMo-Code.git",
