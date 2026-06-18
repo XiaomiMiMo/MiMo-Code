@@ -22,7 +22,7 @@ import { useEvent } from "@tui/context/event"
 import { SplitBorder } from "@tui/component/border"
 import { Spinner } from "@tui/component/spinner"
 import { selectedForeground, useTheme } from "@tui/context/theme"
-import { BoxRenderable, ScrollBoxRenderable, addDefaultParsers, TextAttributes, RGBA, MouseEvent } from "@opentui/core"
+import { BoxRenderable, ScrollBoxRenderable, addDefaultParsers, detectLinks, TextAttributes, RGBA, MouseEvent } from "@opentui/core"
 import { Prompt, type PromptRef } from "@tui/component/prompt"
 import type {
   AssistantMessage,
@@ -1556,6 +1556,7 @@ function ReasoningPart(props: { last: boolean; part: ReasoningPart; message: Ass
           <box paddingLeft={inMinimal() ? 2 : 0} marginTop={1}>
             <code
               filetype="markdown"
+              onChunks={detectLinks}
               drawUnstyledText={false}
               streaming={true}
               syntaxStyle={subtleSyntax()}
@@ -1634,6 +1635,7 @@ function TextPart(props: { last: boolean; part: TextPart; message: AssistantMess
           <Match when={!Flag.MIMOCODE_EXPERIMENTAL_MARKDOWN}>
             <code
               filetype="markdown"
+              onChunks={detectLinks}
               drawUnstyledText={false}
               streaming={true}
               syntaxStyle={syntax()}
