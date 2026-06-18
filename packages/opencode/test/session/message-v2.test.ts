@@ -262,6 +262,40 @@ describe("session.message-v2.toModelMessage", () => {
     ])
   })
 
+  test("omits unsupported user image attachments", async () => {
+    const messageID = "m-user-unsupported-image"
+
+    const input: MessageV2.WithParts[] = [
+      {
+        info: userInfo(messageID),
+        parts: [
+          {
+            ...basePart(messageID, "p1"),
+            type: "text",
+            text: "describe this",
+          },
+          {
+            ...basePart(messageID, "p2"),
+            type: "file",
+            mime: "image/x-icon",
+            filename: "icon.ico",
+            url: "data:image/x-icon;base64,AAAB",
+          },
+        ] as MessageV2.Part[],
+      },
+    ]
+
+    expect(await MessageV2.toModelMessages(input, model)).toStrictEqual([
+      {
+        role: "user",
+        content: [
+          { type: "text", text: "describe this" },
+          { type: "text", text: "[Unsupported image attachment omitted: icon.ico (image/x-icon)]" },
+        ],
+      },
+    ])
+  })
+
   test("extracts tool-result media into a user message for openai models", async () => {
     const userID = "m-user"
     const assistantID = "m-assistant"
@@ -357,6 +391,85 @@ describe("session.message-v2.toModelMessage", () => {
             mediaType: "image/png",
             filename: "attachment.png",
             data: "data:image/png;base64,Zm9v",
+          },
+        ],
+      },
+    ])
+  })
+
+  test("omits unsupported tool-result image attachments from follow-up requests", async () => {
+    const userID = "m-user-unsupported-tool-image"
+    const assistantID = "m-assistant-unsupported-tool-image"
+
+    const input: MessageV2.WithParts[] = [
+      {
+        info: userInfo(userID),
+        parts: [
+          {
+            ...basePart(userID, "u1"),
+            type: "text",
+            text: "read icon",
+          },
+        ] as MessageV2.Part[],
+      },
+      {
+        info: assistantInfo(assistantID, userID),
+        parts: [
+          {
+            ...basePart(assistantID, "a1"),
+            type: "tool",
+            callID: "call-icon",
+            tool: "read",
+            state: {
+              status: "completed",
+              input: { filePath: "/tmp/icon.ico" },
+              output: "Image read successfully",
+              title: "Read",
+              metadata: {},
+              time: { start: 0, end: 1 },
+              attachments: [
+                {
+                  ...basePart(assistantID, "file-icon"),
+                  type: "file",
+                  mime: "image/x-icon",
+                  filename: "icon.ico",
+                  url: "data:image/x-icon;base64,AAAB",
+                },
+              ],
+            },
+          },
+        ] as MessageV2.Part[],
+      },
+    ]
+
+    expect(await MessageV2.toModelMessages(input, model)).toStrictEqual([
+      {
+        role: "user",
+        content: [{ type: "text", text: "read icon" }],
+      },
+      {
+        role: "assistant",
+        content: [
+          {
+            type: "tool-call",
+            toolCallId: "call-icon",
+            toolName: "read",
+            input: { filePath: "/tmp/icon.ico" },
+            providerExecuted: undefined,
+          },
+        ],
+      },
+      {
+        role: "tool",
+        content: [
+          {
+            type: "tool-result",
+            toolCallId: "call-icon",
+            toolName: "read",
+            output: {
+              type: "text",
+              value: "Image read successfully\n\n[Unsupported image attachment omitted: icon.ico (image/x-icon)]",
+            },
           },
         ],
       },

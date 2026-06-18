@@ -12,6 +12,14 @@ export function isImageAttachment(mime: string) {
   return mime.startsWith("image/") && mime !== "image/svg+xml" && mime !== "image/vnd.fastbidsheet"
 }
 
+export function isSupportedImageAttachment(mime: string) {
+  return ["image/bmp", "image/gif", "image/png", "image/jpeg", "image/webp"].includes(mime.toLowerCase())
+}
+
+export function isSupportedMediaAttachment(mime: string) {
+  return isPdfAttachment(mime) || isSupportedImageAttachment(mime)
+}
+
 export function sniffAttachmentMime(bytes: Uint8Array, fallback: string) {
   if (startsWith(bytes, [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])) return "image/png"
   if (startsWith(bytes, [0xff, 0xd8, 0xff])) return "image/jpeg"
