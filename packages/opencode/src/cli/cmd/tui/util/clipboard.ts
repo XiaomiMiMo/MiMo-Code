@@ -22,13 +22,15 @@ const getClipboardy = lazy(async () => {
  * This allows clipboard operations to work over SSH by having
  * the terminal emulator handle the clipboard locally.
  */
-function writeOsc52(text: string): void {
-  if (!process.stdout.isTTY) return
+function writeOsc52(text: string): boolean {
+  if (!process.stdout.isTTY) return false
+  if (process.env["TERM_PROGRAM"]?.toLowerCase() === "xterminal") return false
   const base64 = Buffer.from(text).toString("base64")
   const osc52 = `\x1b]52;c;${base64}\x07`
   const passthrough = process.env["TMUX"] || process.env["STY"]
   const sequence = passthrough ? `\x1bPtmux;\x1b${osc52}\x1b\\` : osc52
   process.stdout.write(sequence)
+  return true
 }
 
 export interface Content {
@@ -192,12 +194,15 @@ const getCopyMethod = lazy(async () => {
   console.log("clipboard: no native support")
   return async (text: string) => {
     const clipboardy = await getClipboardy()
-    await clipboardy.write(text).catch(() => {})
+    await clipboardy.write(text)
   }
 })
 
 export async function copy(text: string): Promise<void> {
-  writeOsc52(text)
+  const triedOsc52 = writeOsc52(text)
   const method = await getCopyMethod()
-  await method(text)
+  await method(text).catch((error) => {
+    if (triedOsc52) return
+    throw error
+  })
 }
