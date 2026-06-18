@@ -39,7 +39,7 @@ export const MultiEditTool = Tool.define(
           for (const [, entry] of params.edits.entries()) {
             const result = yield* edit.execute(
               {
-                filePath: params.filePath,
+                filePath: entry.filePath || params.filePath,
                 oldString: entry.oldString,
                 newString: entry.newString,
                 replaceAll: entry.replaceAll,
