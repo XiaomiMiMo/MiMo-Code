@@ -228,6 +228,42 @@ function normalizeMessages(
     })
   }
 
+  // VLLM and other OpenAI-compatible providers strictly require system messages
+  // at the beginning of the messages array. Reorder if a system message appears
+  // after any non-system message. When multiple system messages exist, merge them
+  // into a single message for maximum compatibility with stricter VLLM versions.
+  if (
+    model.api.npm === "@ai-sdk/openai-compatible" ||
+    model.api.npm?.includes("openai-compatible")
+  ) {
+    const systemMsgs = msgs.filter((msg) => msg.role === "system")
+    const nonSystemMsgs = msgs.filter((msg) => msg.role !== "system")
+    if (systemMsgs.length > 0 && nonSystemMsgs.length > 0) {
+      const firstNonSystemIdx = msgs.findIndex((msg) => msg.role !== "system")
+      const lastSystemIdx =
+        msgs.length - 1 - [...msgs].reverse().findIndex((msg) => msg.role === "system")
+      if (lastSystemIdx > firstNonSystemIdx) {
+        if (systemMsgs.length > 1) {
+          const extractText = (msg: ModelMessage) =>
+            typeof msg.content === "string"
+              ? msg.content
+              : Array.isArray(msg.content)
+                ? msg.content
+                    .filter((p: any) => p.type === "text")
+                    .map((p: any) => p.text)
+                    .join("\n")
+                : ""
+          const merged: ModelMessage = {
+            role: "system",
+            content: systemMsgs.map(extractText).join("\n\n"),
+          }
+          return [merged, ...nonSystemMsgs]
+        }
+        return [...systemMsgs, ...nonSystemMsgs]
+      }
+    }
+  }
+
   return msgs
 }
 
