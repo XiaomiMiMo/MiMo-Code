@@ -68,26 +68,41 @@ function normalizeMessages(
   model: Provider.Model,
   _options: Record<string, unknown>,
 ): ModelMessage[] {
+  const filterEmptyContent = (msg: ModelMessage) => {
+    if (typeof msg.content === "string") {
+      if (msg.content === "") return undefined
+      return msg
+    }
+    if (!Array.isArray(msg.content)) return msg
+    const filtered = msg.content.filter((part) => {
+      if (part.type === "text" || part.type === "reasoning") {
+        return part.text !== ""
+      }
+      return true
+    })
+    if (filtered.length === 0) return undefined
+    return { ...msg, content: filtered }
+  }
+
+  const filterEmptyMessages = (input: ModelMessage[]) =>
+    input.map(filterEmptyContent).filter((msg): msg is ModelMessage => msg !== undefined && msg.content !== "")
+
   // Anthropic rejects messages with empty content - filter out empty string messages
   // and remove empty text/reasoning parts from array content
   if (model.api.npm === "@ai-sdk/anthropic" || model.api.npm === "@ai-sdk/amazon-bedrock") {
-    msgs = msgs
+    msgs = filterEmptyMessages(msgs)
+  }
+
+  const filterEmptyAssistantMessages = (input: ModelMessage[]) =>
+    input
       .map((msg) => {
-        if (typeof msg.content === "string") {
-          if (msg.content === "") return undefined
-          return msg
-        }
-        if (!Array.isArray(msg.content)) return msg
-        const filtered = msg.content.filter((part) => {
-          if (part.type === "text" || part.type === "reasoning") {
-            return part.text !== ""
-          }
-          return true
-        })
-        if (filtered.length === 0) return undefined
-        return { ...msg, content: filtered }
+        if (msg.role !== "assistant") return msg
+        return filterEmptyContent(msg)
       })
-      .filter((msg): msg is ModelMessage => msg !== undefined && msg.content !== "")
+      .filter((msg): msg is ModelMessage => msg !== undefined)
+
+  if (model.api.npm === "@ai-sdk/openai-compatible") {
+    msgs = filterEmptyAssistantMessages(msgs)
   }
 
   if (model.api.id.includes("claude")) {
@@ -190,12 +205,12 @@ function normalizeMessages(
         })
       }
     }
-    return result
+    return model.api.npm === "@ai-sdk/openai-compatible" ? filterEmptyAssistantMessages(result) : result
   }
 
   if (typeof model.capabilities.interleaved === "object" && model.capabilities.interleaved.field) {
     const field = model.capabilities.interleaved.field
-    return msgs.map((msg) => {
+    const result = msgs.map((msg) => {
       if (msg.role === "assistant" && Array.isArray(msg.content)) {
         const reasoningParts = msg.content.filter((part: any) => part.type === "reasoning")
         const reasoningText = reasoningParts.map((part: any) => part.text).join("")
@@ -226,6 +241,7 @@ function normalizeMessages(
 
       return msg
     })
+    return model.api.npm === "@ai-sdk/openai-compatible" ? filterEmptyAssistantMessages(result) : result
   }
 
   return msgs

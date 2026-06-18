@@ -1342,6 +1342,83 @@ describe("ProviderTransform.message - anthropic empty content filtering", () => 
     expect(result[1].content).toHaveLength(1)
   })
 
+  test("filters empty assistant content for openai-compatible providers", () => {
+    const openaiCompatibleModel = {
+      ...anthropicModel,
+      id: "nvidia/google/diffusiongemma-26b-a4b-it",
+      providerID: "nvidia",
+      api: {
+        id: "google/diffusiongemma-26b-a4b-it",
+        url: "https://integrate.api.nvidia.com/v1",
+        npm: "@ai-sdk/openai-compatible",
+      },
+    }
+
+    const msgs = [
+      { role: "user", content: "Hello" },
+      { role: "assistant", content: "" },
+      {
+        role: "assistant",
+        content: [
+          { type: "text", text: "" },
+          { type: "reasoning", text: "" },
+        ],
+      },
+      {
+        role: "assistant",
+        content: [
+          { type: "text", text: "" },
+          { type: "tool-call", toolCallId: "123", toolName: "bash", input: { command: "ls" } },
+        ],
+      },
+      { role: "user", content: "" },
+    ] as any[]
+
+    const result = ProviderTransform.message(msgs, openaiCompatibleModel, {})
+
+    expect(result).toHaveLength(3)
+    expect(result[0].content).toBe("Hello")
+    expect(result[1].content).toEqual([
+      { type: "tool-call", toolCallId: "123", toolName: "bash", input: { command: "ls" } },
+    ])
+    expect(result[2].content).toBe("")
+  })
+
+  test("drops openai-compatible assistant turns emptied by interleaved reasoning transform", () => {
+    const openaiCompatibleModel = {
+      ...anthropicModel,
+      id: "deepseek/deepseek-chat",
+      providerID: "deepseek",
+      api: {
+        id: "deepseek-chat",
+        url: "https://api.deepseek.com",
+        npm: "@ai-sdk/openai-compatible",
+      },
+      capabilities: {
+        ...anthropicModel.capabilities,
+        reasoning: true,
+        interleaved: {
+          field: "reasoning_content",
+        },
+      },
+    }
+
+    const msgs = [
+      { role: "user", content: "Hello" },
+      {
+        role: "assistant",
+        content: [{ type: "reasoning", text: "Thinking only" }],
+      },
+      { role: "user", content: "World" },
+    ] as any[]
+
+    const result = ProviderTransform.message(msgs, openaiCompatibleModel, {})
+
+    expect(result).toHaveLength(2)
+    expect(result[0].content).toBe("Hello")
+    expect(result[1].content).toBe("World")
+  })
+
   test("splits anthropic assistant messages when text trails tool calls", () => {
     const msgs = [
       {
