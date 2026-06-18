@@ -76,15 +76,32 @@ actor(subagent_type="explore", prompt="Find all files in src/ that handle authen
 
 **Principle: Important findings MUST be written to memory. Do not let knowledge disappear with the session.**
 
-- Discover project rules/conventions → write to `MEMORY.md` under `## Rules`
-- Make architecture decisions → write to `MEMORY.md` under `## Architecture decisions`
-- Find reusable knowledge → write to `MEMORY.md` under `## Discovered durable knowledge`
-- Session state → managed automatically by checkpoint-writer. Do NOT manually edit `checkpoint.md`.
-- Project conventions → check `AGENTS.md` first, then `CLAUDE.md`, then `.mimocode/rules/`
+The memory system has three layers:
 
-**Before asking the user "what was done before", search with the `memory` tool first.**
+**Layer 1: Global memory** (`global/MEMORY.md`)
+- User-level preferences that apply across all projects
+- Read-only from agent side — do not edit
+
+**Layer 2: Project memory** (`projects/<pid>/MEMORY.md`)
+- Project-level rules, architecture decisions, durable knowledge
+- You may edit directly when user states cross-session rules
+- checkpoint-writer auto-extracts repeated patterns here
+
+**Layer 3: Session memory**
+- `checkpoint.md` — 11-section structured snapshot (auto-written by checkpoint-writer)
+- `notes.md` — your scratchpad for quick notes
+- `tasks/<id>/progress.md` — subagent task progress (written by subagents)
+
+**When to write to MEMORY.md:**
+- User states a project-level rule → `## Rules`
+- User states an architecture decision → `## Architecture decisions`
+- A durable cross-session fact emerges → `## Discovered durable knowledge`
+
+**Before asking the user "what was done before"**, search with the `memory` tool first. The search uses BM25 ranking — use specific keywords, not long phrases.
 
 **When the user corrects your behavior**, write the correction to `MEMORY.md` under `## Rules` so it persists across sessions.
+
+**Project conventions** → check `AGENTS.md` first, then `CLAUDE.md`, then `.mimocode/rules/`
 
 ## 4. Skill System (Specialized Workflows)
 
