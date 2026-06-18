@@ -685,7 +685,7 @@ export const layer = Layer.effect(
         gateEligible,
         format: input.format,
       })
-      if (input.onReady) yield* input.onReady({ actorID, sessionID: input.sessionID }).pipe(Effect.ignore)
+      if (input.onReady) yield* Effect.ignore(input.onReady({ actorID, sessionID: input.sessionID }))
       if (!input.background) yield* Fiber.join(fiber).pipe(Effect.ignore)
       return { actorID, sessionID: input.sessionID, outcome }
     })
