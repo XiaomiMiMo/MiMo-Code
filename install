@@ -411,6 +411,7 @@ case $current_shell in
 esac
 
 if [[ "$no_modify_path" != "true" ]]; then
+    refresh_hint_command=""
     config_file=""
     for file in $config_files; do
         if [[ -f $file ]]; then
@@ -426,18 +427,23 @@ if [[ "$no_modify_path" != "true" ]]; then
         case $current_shell in
             fish)
                 add_to_path "$config_file" "fish_add_path $INSTALL_DIR"
+                refresh_hint_command="source $config_file"
             ;;
             zsh)
                 add_to_path "$config_file" "export PATH=$INSTALL_DIR:\$PATH"
+                refresh_hint_command="source $config_file"
             ;;
             bash)
                 add_to_path "$config_file" "export PATH=$INSTALL_DIR:\$PATH"
+                refresh_hint_command="source $config_file"
             ;;
             ash)
                 add_to_path "$config_file" "export PATH=$INSTALL_DIR:\$PATH"
+                refresh_hint_command="source $config_file"
             ;;
             sh)
                 add_to_path "$config_file" "export PATH=$INSTALL_DIR:\$PATH"
+                refresh_hint_command="source $config_file"
             ;;
             *)
                 export PATH=$INSTALL_DIR:$PATH
@@ -445,6 +451,11 @@ if [[ "$no_modify_path" != "true" ]]; then
                 print_message info "  export PATH=$INSTALL_DIR:\$PATH"
             ;;
         esac
+    fi
+
+    if [[ -n "$refresh_hint_command" ]]; then
+        print_message info "${MUTED}Open a new terminal or run:${NC}"
+        print_message info "  $refresh_hint_command"
     fi
 fi
 
