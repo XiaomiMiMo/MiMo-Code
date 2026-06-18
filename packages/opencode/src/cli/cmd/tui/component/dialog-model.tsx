@@ -200,7 +200,6 @@ export function DialogModel(props: { providerID?: string }) {
       ]}
       onFilter={setQuery}
       flat={true}
-      skipFilter={true}
       title={title()}
       current={local.model.current()}
     />

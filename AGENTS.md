@@ -5,6 +5,10 @@
 - CI triggers on both `main` and `dev` branches.
 - Prefer automation: execute requested actions without confirmation unless blocked by missing info or safety/irreversibility.
 
+## Core Focus (as of 2025-06-18)
+
+Our core development focus is the **TUI** (terminal UI) implementation in `packages/opencode/src/cli/cmd/tui/`. We do not currently provide support for Web or App interfaces. All operations should default to checking the TUI implementation first.
+
 ## Style Guide
 
 ### General Principles
