@@ -38,6 +38,14 @@ const tokenTotal = (msg: AssistantMessage) => {
   return msg.tokens.input + msg.tokens.output + msg.tokens.reasoning + msg.tokens.cache.read + msg.tokens.cache.write
 }
 
+// A compaction summary's input/cache tokens describe the discarded pre-compact
+// history it summarized; only its output (the summary text that seeds the new
+// context window) counts toward occupancy.
+const contextTotal = (msg: AssistantMessage) => {
+  if (msg.summary) return msg.tokens.output
+  return tokenTotal(msg)
+}
+
 const lastAssistantWithTokens = (messages: Message[]) => {
   for (let i = messages.length - 1; i >= 0; i--) {
     const msg = messages[i]
@@ -55,7 +63,7 @@ const build = (messages: Message[] = [], providers: Provider[] = []): Metrics =>
   const provider = providers.find((item) => item.id === message.providerID)
   const model = provider?.models[message.modelID]
   const limit = model?.limit.context
-  const total = tokenTotal(message)
+  const total = contextTotal(message)
 
   return {
     totalCost,

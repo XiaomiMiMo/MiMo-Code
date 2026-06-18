@@ -2,6 +2,7 @@ import type { AssistantMessage } from "@mimo-ai/sdk/v2"
 import type { TuiPlugin, TuiPluginApi, TuiPluginModule } from "@mimo-ai/plugin/tui"
 import { Show, createEffect, createMemo, createSignal, onCleanup } from "solid-js"
 import { completedTPS, formatTPS, streamingTPS } from "./tps"
+import { contextTokens } from "@tui/util/context-tokens"
 
 const id = "internal:sidebar-context"
 const REFRESH_MS = 1000
@@ -73,8 +74,7 @@ function View(props: { api: TuiPluginApi; session_id: string }) {
       }
     }
 
-    const tokens =
-      last.tokens.input + last.tokens.output + last.tokens.reasoning + last.tokens.cache.read + last.tokens.cache.write
+    const tokens = contextTokens(last)
     const model = props.api.state.provider.find((item) => item.id === last.providerID)?.models[last.modelID]
     return {
       tokens,
