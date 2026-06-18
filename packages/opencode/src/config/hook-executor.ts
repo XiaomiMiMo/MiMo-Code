@@ -3,11 +3,13 @@
  *
  * 在 run loop 的特定生命周期点执行用户配置的 hooks。
  * 支持 command/prompt/agent 三种 handler 类型。
+ * 当用户未配置 hooks 时，使用默认配置。
  */
 
 import { Effect } from "effect"
 import { Log } from "@/util"
 import type { HookEvent, HookResult } from "@/config/hooks"
+import { DEFAULT_HOOKS, mergeHooks } from "./default-hooks"
 
 const log = Log.create({ service: "hook-executor" })
 
@@ -69,7 +71,6 @@ async function executeCommandHandler(
 
 /**
  * 执行 prompt 类型的 hook handler
- * 发送单轮 prompt 到 LLM 进行评估，返回 yes/no 决策
  */
 async function executePromptHandler(
   handler: HookHandlerConfig,
@@ -78,10 +79,8 @@ async function executePromptHandler(
   const timeout = (handler.timeout ?? 30) * 1000
 
   try {
-    // 构建评估 prompt
     const evalPrompt = handler.prompt!.replace(/\$ARGUMENTS/g, JSON.stringify(input))
 
-    // 通过 bash 调用 MiMoCode 的 run 模式进行单轮评估
     const proc = Bun.spawn(
       [
         "bash", "-c",
@@ -113,9 +112,7 @@ async function executePromptHandler(
         if (eval_result.additionalContext) {
           return { additionalContext: eval_result.additionalContext }
         }
-      } catch {
-        // 解析失败，不阻止
-      }
+      } catch {}
     }
 
     return {}
@@ -127,7 +124,6 @@ async function executePromptHandler(
 
 /**
  * 执行 agent 类型的 hook handler
- * 启动子 agent 进行验证，返回验证结果
  */
 async function executeAgentHandler(
   handler: HookHandlerConfig,
@@ -138,7 +134,6 @@ async function executeAgentHandler(
   try {
     const evalPrompt = handler.prompt!.replace(/\$ARGUMENTS/g, JSON.stringify(input))
 
-    // 通过 bash 调用 MiMoCode 的 run 模式，指定 explore agent
     const proc = Bun.spawn(
       [
         "bash", "-c",
@@ -175,9 +170,7 @@ async function executeAgentHandler(
         if (eval_result.additionalContext) {
           return { additionalContext: eval_result.additionalContext }
         }
-      } catch {
-        // 解析失败，不阻止
-      }
+      } catch {}
     }
 
     return {}
@@ -208,15 +201,17 @@ async function executeHandler(
 
 /**
  * 在指定事件点执行所有匹配的 hooks
+ * 自动合并用户配置的 hooks 与默认 hooks
  */
 export function executeHooks(
   event: HookEvent,
-  hooksConfig: Record<string, Array<{ matcher?: string; hooks: HookHandlerConfig[] }>> | undefined,
+  userHooksConfig: Record<string, Array<{ matcher?: string; hooks: HookHandlerConfig[] }>> | undefined,
   input: Record<string, unknown>,
   matcherValue?: string,
 ): Effect.Effect<HookResult, never> {
   return Effect.gen(function* () {
-    if (!hooksConfig) return {} as HookResult
+    // 合并用户 hooks 与默认 hooks
+    const hooksConfig = mergeHooks(userHooksConfig as any)
 
     const eventHooks = hooksConfig[event]
     if (!eventHooks || eventHooks.length === 0) return {} as HookResult
