@@ -888,6 +888,99 @@ describe("tool.bash permissions", () => {
     })
   })
 
+  each("requires manual approval for destructive rm commands", async () => {
+    await using tmp = await tmpdir({
+      init: async (dir) => {
+        await Bun.write(path.join(dir, "nested"), "x")
+      },
+    })
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () => {
+        const bash = await initBash()
+        const err = new Error("stop after permission")
+        const requests: Array<Omit<Permission.Request, "id" | "sessionID" | "tool">> = []
+        await expect(
+          Effect.runPromise(
+            bash.execute(
+              {
+                command: `rm -rf ${path.join(tmp.path, "nested")}`,
+                description: "Remove nested file",
+              },
+              capture(requests, err),
+            ),
+          ),
+        ).rejects.toThrow(err.message)
+        const bashReq = requests.find((r) => r.permission === "bash")
+        expect(bashReq).toBeDefined()
+        expect(bashReq!.metadata.requiresManualApproval).toBe(true)
+        expect(bashReq!.always).not.toContain("rm *")
+      },
+    })
+  })
+
+  each("requires manual approval for Windows rmdir commands", async () => {
+    await using tmp = await tmpdir()
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () => {
+        const bash = await initBash()
+        const err = new Error("stop after permission")
+        const requests: Array<Omit<Permission.Request, "id" | "sessionID" | "tool">> = []
+        const stopAfterBash = {
+          ...ctx,
+          ask: (req: Omit<Permission.Request, "id" | "sessionID" | "tool">) =>
+            Effect.sync(() => {
+              requests.push(req)
+              if (req.permission === "bash") throw err
+            }),
+        }
+        await expect(
+          Effect.runPromise(
+            bash.execute(
+              {
+                command: `rmdir /S /Q ${path.join(tmp.path, "nested")}`,
+                description: "Remove nested directory",
+              },
+              stopAfterBash,
+            ),
+          ),
+        ).rejects.toThrow(err.message)
+        const bashReq = requests.find((r) => r.permission === "bash")
+        expect(bashReq).toBeDefined()
+        expect(bashReq!.metadata.requiresManualApproval).toBe(true)
+        expect(bashReq!.always).not.toContain("rmdir *")
+      },
+    })
+  })
+
+  each("requires manual approval for package uninstall commands", async () => {
+    await using tmp = await tmpdir()
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () => {
+        const bash = await initBash()
+        const err = new Error("stop after permission")
+        const requests: Array<Omit<Permission.Request, "id" | "sessionID" | "tool">> = []
+        await expect(
+          Effect.runPromise(
+            bash.execute(
+              {
+                command: "npm uninstall -g opencode-ai",
+                description: "Uninstall global package",
+              },
+              capture(requests, err),
+            ),
+          ),
+        ).rejects.toThrow(err.message)
+        const bashReq = requests.find((r) => r.permission === "bash")
+        expect(bashReq).toBeDefined()
+        expect(bashReq!.metadata.requiresManualApproval).toBe(true)
+        expect(bashReq!.always).not.toContain("npm uninstall *")
+      },
+    })
+  })
+
   each("includes always patterns for auto-approval", async () => {
     await using tmp = await tmpdir()
     await Instance.provide({

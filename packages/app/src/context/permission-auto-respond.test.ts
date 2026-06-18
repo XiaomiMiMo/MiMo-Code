@@ -9,10 +9,11 @@ const session = (input: { id: string; parentID?: string }) =>
     parentID: input.parentID,
   }) as Session
 
-const permission = (sessionID: string) =>
+const permission = (sessionID: string, metadata?: Record<string, unknown>) =>
   ({
     sessionID,
-  }) as Pick<PermissionRequest, "sessionID">
+    metadata,
+  }) as Pick<PermissionRequest, "sessionID" | "metadata">
 
 describe("autoRespondsPermission", () => {
   test("uses a parent session's directory-scoped auto-accept", () => {
@@ -69,6 +70,18 @@ describe("autoRespondsPermission", () => {
     }
 
     expect(autoRespondsPermission(autoAccept, sessions, permission("root"), directory)).toBe(true)
+  })
+
+  test("does not auto-respond to requests that require manual approval", () => {
+    const directory = "/tmp/project"
+    const sessions = [session({ id: "root" })]
+    const autoAccept = {
+      [`${base64Encode(directory)}/*`]: true,
+    }
+
+    expect(
+      autoRespondsPermission(autoAccept, sessions, permission("root", { requiresManualApproval: true }), directory),
+    ).toBe(false)
   })
 
   test("session-level override takes precedence over directory-level", () => {
