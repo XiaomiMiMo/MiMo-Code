@@ -1,64 +1,54 @@
 /**
  * 默认 Hook 配置
  *
- * 当用户没有在 .mimocode/settings.json 中配置 hooks 时，
- * 使用这些默认行为。用户配置的 hooks 会与默认 hooks 合并。
- *
- * 设计哲学：
- * - 默认 hooks 复制当前硬编码的 system-reminder 行为
- * - 用户可以通过配置覆盖或扩展默认行为
- * - 合并策略：用户 hooks 追加到默认 hooks 之后
+ * 使用外部脚本实现动态输出，每次注入的内容基于实际状态。
+ * 脚本位于 src/config/hooks/ 目录下。
  */
+
+import path from "path"
+
+const hooksDir = path.join(import.meta.dir, "hooks")
 
 /**
  * 默认 hooks 配置
- * 与 prompt.ts 中硬编码的 system-reminder 行为一致
+ * 使用外部脚本，每次输出不同
  */
 export const DEFAULT_HOOKS: Record<string, Array<{ matcher?: string; hooks: Array<{ type: string; command?: string; prompt?: string; timeout?: number }> }>> = {
-  // 会话开始时：注入推荐的工作方式
+  // 会话开始时：分析项目结构，建议相关命令
   SessionStart: [
     {
       hooks: [
         {
           type: "command",
-          command: `cat << 'HOOK_EOF'
-{
-  "additionalContext": "Recommended approach for this session:\\n1. Use task tool to break complex work into subtasks.\\n2. Delegate code exploration to actor(subagent_type='explore').\\n3. For complex tasks (3+ files), consider plan mode first.\\n4. After code changes, always run verification (typecheck/lint/test)."
-}
-HOOK_EOF`,
+          command: `bash ${path.join(hooksDir, "session-start.sh")}`,
+          timeout: 10,
         },
       ],
     },
   ],
 
-  // 工具执行后：代码修改后建议验证
+  // 工具执行后：代码修改后分析变更，建议具体验证命令
   PostToolUse: [
     {
       matcher: "edit|write",
       hooks: [
         {
           type: "command",
-          command: `cat << 'HOOK_EOF'
-{
-  "additionalContext": "Code modified. Run verification (typecheck/lint/test) before claiming the task is complete."
-}
-HOOK_EOF`,
+          command: `bash ${path.join(hooksDir, "post-tool-use.sh")}`,
+          timeout: 10,
         },
       ],
     },
   ],
 
-  // 模型停止前：确保任务完成
+  // 模型停止前：检查未提交变更和测试状态
   Stop: [
     {
       hooks: [
         {
           type: "command",
-          command: `cat << 'HOOK_EOF'
-{
-  "additionalContext": "Before stopping: verify all tasks are marked done, all code changes are tested, and the user's request is fully addressed."
-}
-HOOK_EOF`,
+          command: `bash ${path.join(hooksDir, "stop.sh")}`,
+          timeout: 10,
         },
       ],
     },
