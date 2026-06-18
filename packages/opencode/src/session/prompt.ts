@@ -2266,6 +2266,118 @@ NOTE: At any point in time through this workflow you should feel free to ask the
             }
           }
 
+          // === 主动引导机制 ===
+
+          // 1. 首次任务引导：会话第一条消息时，主动建议使用 task 工具和 explore agent
+          const userMsgCount = msgs.filter((m) => m.info.role === "user").length
+          if (userMsgCount === 1 && lastUser) {
+            const lastUserMsg = msgs.findLast((m) => m.info.role === "user")
+            if (
+              lastUserMsg &&
+              !lastUserMsg.parts.some(
+                (p) => p.type === "text" && p.text?.includes("Use the task tool to plan"),
+              )
+            ) {
+              const text = lastUserMsg.parts.find((p) => p.type === "text")
+              const content = text?.type === "text" ? text.text : ""
+              // 仅对非简单问题注入引导（排除问候、简单查询等）
+              const isSimpleQuery =
+                content.length < 50 ||
+                /^(hi|hello|hey|你好|帮助|help|what|who|when|where|怎么|如何)\s/i.test(content)
+              if (!isSimpleQuery) {
+                lastUserMsg.parts.push({
+                  id: PartID.ascending(),
+                  messageID: lastUserMsg.info.id,
+                  sessionID,
+                  type: "text",
+                  synthetic: true,
+                  text: [
+                    "<system-reminder>",
+                    "This is a new task. Recommended approach:",
+                    "1. Use `task` tool to break this into subtasks and track progress.",
+                    "2. If the task involves code exploration, delegate to `actor(subagent_type='explore')` to save your context.",
+                    "3. If the task is complex (3+ files), consider using `plan` mode first.",
+                    "</system-reminder>",
+                  ].join("\n"),
+                })
+              }
+            }
+          }
+
+          // 2. 复杂度感知引导：检测到多文件修改时，建议并行 actor
+          if (lastFinished && lastFinished.summary !== true) {
+            const finishedParts = MessageV2.parts(lastFinished.id)
+            const fileParts = finishedParts.filter(
+              (p) => p.type === "tool" && (p.tool === "edit" || p.tool === "write"),
+            )
+            if (fileParts.length >= 3) {
+              const lastUserMsg = msgs.findLast((m) => m.info.role === "user")
+              if (
+                lastUserMsg &&
+                !lastUserMsg.parts.some(
+                  (p) => p.type === "text" && p.text?.includes("multiple files"),
+                )
+              ) {
+                lastUserMsg.parts.push({
+                  id: PartID.ascending(),
+                  messageID: lastUserMsg.info.id,
+                  sessionID,
+                  type: "text",
+                  synthetic: true,
+                  text: [
+                    "<system-reminder>",
+                    `You've modified ${fileParts.length} files in this step.`,
+                    "For large multi-file changes, consider delegating independent parts to parallel actors",
+                    "to reduce context consumption and speed up execution.",
+                    "</system-reminder>",
+                  ].join("\n"),
+                })
+              }
+            }
+          }
+
+          // 3. 验证闭环引导：代码修改后，主动建议运行验证
+          if (lastFinished && lastFinished.summary !== true) {
+            const finishedParts = MessageV2.parts(lastFinished.id)
+            const hasCodeChanges = finishedParts.some(
+              (p) => p.type === "tool" && (p.tool === "edit" || p.tool === "write"),
+            )
+            const hasVerification = finishedParts.some(
+              (p) =>
+                p.type === "tool" &&
+                (p.tool === "bash" || p.tool === "task") &&
+                p.state.status === "completed" &&
+                typeof p.state.output === "string" &&
+                (p.state.output.includes("PASS") ||
+                  p.state.output.includes("ok") ||
+                  p.state.output.includes("success")),
+            )
+            if (hasCodeChanges && !hasVerification) {
+              const lastUserMsg = msgs.findLast((m) => m.info.role === "user")
+              if (
+                lastUserMsg &&
+                !lastUserMsg.parts.some(
+                  (p) => p.type === "text" && p.text?.includes("run verification"),
+                )
+              ) {
+                lastUserMsg.parts.push({
+                  id: PartID.ascending(),
+                  messageID: lastUserMsg.info.id,
+                  sessionID,
+                  type: "text",
+                  synthetic: true,
+                  text: [
+                    "<system-reminder>",
+                    "You just modified code but haven't run verification yet.",
+                    "Run the project's typecheck, lint, or test commands now to verify correctness.",
+                    "Never claim a task is complete without verification evidence.",
+                    "</system-reminder>",
+                  ].join("\n"),
+                })
+              }
+            }
+          }
+
           const lastAssistantMsg = msgs.findLast(
             (msg) => msg.info.role === "assistant" && msg.info.id === lastAssistant?.id,
           )

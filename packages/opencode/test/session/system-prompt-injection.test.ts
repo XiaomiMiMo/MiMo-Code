@@ -17,13 +17,19 @@ describe("核心行为 prompt 注入验证", () => {
     expect(SystemPrompt.provider(geminiModel)).toEqual([PROMPT_CORE_BEHAVIOR])
   })
 
-  test("核心行为 prompt 包含所有 Claude Code 风格行为指令", () => {
+  test("核心行为 prompt 包含所有 MiMoCode 专属行为指令", () => {
     const requiredDirectives = [
+      // MiMoCode 核心特性
+      "Actor 委派",
+      "Task 工具",
+      "Memory 系统",
+      "Skill 系统",
+      "Plan 模式",
+      "验证闭环",
+      // 通用行为指令
       "Thinking & Analysis Rules",
       "Professional objectivity",
       "Output Style",
-      "Task Management",
-      "Code Quality",
       "Tool Usage Strategy",
       "Executing Actions with Care",
       "Git Safety",
