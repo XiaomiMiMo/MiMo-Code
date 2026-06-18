@@ -2295,20 +2295,18 @@ function Task(props: ToolProps<typeof ActorTool>) {
       pending="Delegating..."
       part={props.part}
       onClick={() => {
-        const targetSession = props.metadata.sessionId
-        const targetActor = props.metadata.actorId as string | undefined
-        if (!targetSession) return
+        const session = targetSession()
+        if (!session) return
+        const actor = targetBucket()
         if (
           route.data.type === "session" &&
-          targetSession === route.data.sessionID &&
-          targetActor
+          session === route.data.sessionID &&
+          actor !== "main"
         ) {
-          // Subagent mode (shared sessionID): switch the agent slice in place.
-          route.navigate({ ...route.data, agentID: targetActor })
+          route.navigate({ ...route.data, agentID: actor })
           return
         }
-        // Peer mode (different sessionID): navigate to peer's session, viewing its slice.
-        route.navigate({ type: "session", sessionID: targetSession, agentID: targetActor })
+        route.navigate({ type: "session", sessionID: session, agentID: actor !== "main" ? actor : undefined })
       }}
     >
       {content()}

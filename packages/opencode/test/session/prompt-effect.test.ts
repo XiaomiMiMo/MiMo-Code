@@ -677,10 +677,10 @@ it.live("recoverable tool failure flags the error tool state for muted display",
   ),
 )
 
-// TODO(blocking-run-metadata): actor.spawn() now joins the fiber for action:"run" (spawn.ts:680),
-// so ctx.metadata() at actor.ts:718 is never reached until subagent completes.
-// The test expects metadata to appear while tool is still "running", but blocking
-// semantics prevent that. Fix: emit metadata before Fiber.join in spawnSubagent.
+// TODO(blocking-run-metadata): Production fix landed (onReady callback in spawn.ts emits metadata
+// before Fiber.join). Test still skipped because: (1) Actor.layer must be added to makeHttp() layer
+// composition (circular dep with SessionPrompt.layer needs refactoring), and (2) AI SDK v6 fullStream
+// may not yield tool-call events to the processor until tool execution completes.
 it.live.skip(
   "running subtask preserves metadata after tool-call transition",
   () =>
@@ -720,7 +720,7 @@ it.live.skip(
   30_000,
 )
 
-// TODO(blocking-run-metadata): same root cause as above — blocking run semantics prevent metadata emission.
+// TODO(blocking-run-metadata): same as above — production fix in place, test infra needs Actor.layer.
 it.live.skip(
   "running task tool preserves metadata after tool-call transition",
   () =>
