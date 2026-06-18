@@ -1525,7 +1525,7 @@ function ReasoningPart(props: { last: boolean; part: ReasoningPart; message: Ass
   const [expanded, setExpanded] = createSignal(false)
 
   const content = createMemo(() => {
-    return props.part.text.replace("[REDACTED]", "").trim()
+    return stripAnsi(props.part.text.replace("[REDACTED]", "").trim())
   })
   const isDone = createMemo(() => props.part.time.end !== undefined)
   const inMinimal = createMemo(() => ctx.thinkingMode() === "hide")
@@ -1617,15 +1617,16 @@ function ReasoningHeader(props: {
 function TextPart(props: { last: boolean; part: TextPart; message: AssistantMessage }) {
   const ctx = use()
   const { theme, syntax } = useTheme()
+  const cleanText = createMemo(() => stripAnsi(props.part.text.trim()))
   return (
-    <Show when={props.part.text.trim()}>
+    <Show when={cleanText()}>
       <box id={"text-" + props.part.id} paddingLeft={3} marginTop={1} flexShrink={0}>
         <Switch>
           <Match when={Flag.MIMOCODE_EXPERIMENTAL_MARKDOWN}>
             <markdown
               syntaxStyle={syntax()}
               streaming={true}
-              content={props.part.text.trim()}
+              content={cleanText()}
               conceal={ctx.conceal()}
               fg={theme.markdownText}
               bg={theme.background}
@@ -1637,7 +1638,7 @@ function TextPart(props: { last: boolean; part: TextPart; message: AssistantMess
               drawUnstyledText={false}
               streaming={true}
               syntaxStyle={syntax()}
-              content={props.part.text.trim()}
+              content={cleanText()}
               conceal={ctx.conceal()}
               fg={theme.text}
             />
