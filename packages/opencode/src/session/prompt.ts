@@ -1842,6 +1842,11 @@ NOTE: At any point in time through this workflow you should feel free to ask the
         // Skip one overflow check so the model can respond on the trimmed context;
         // its new assistant message will carry accurate tokens for the next check.
         let skipOverflowCheck = false
+        // Consecutive tool-only steps counter (reading loop detection)
+        // When model reads files without producing user-facing text, increment.
+        // Reset when model produces text output. Inject nudge at threshold.
+        let consecutiveToolOnlySteps = 0
+        const CONSECUTIVE_TOOL_ONLY_THRESHOLD = 5
 
         const textLoopBuffer: string[] = []
         let textLoopRecoveryAttempts = 0
@@ -3219,6 +3224,46 @@ NOTE: At any point in time through this workflow you should feel free to ask the
                 textLoopBuffer.length = 0
                 yield* slog.info("text loop: recovery injected", { attempt: textLoopRecoveryAttempts })
                 continue
+              }
+            }
+          }
+
+          // --- Consecutive Tool-Only Step Detection (reading loop) ---
+          // When model reads files without producing user-facing text, increment counter.
+          // Reset when model produces text output. Inject nudge at threshold.
+          if (stepText.trim()) {
+            consecutiveToolOnlySteps = 0  // Reset: model produced text output
+          } else {
+            // No text output — check if there were tool calls
+            const hasToolCalls = completedParts.some((p) => p.type === "tool")
+            if (hasToolCalls) {
+              consecutiveToolOnlySteps++
+              if (consecutiveToolOnlySteps >= CONSECUTIVE_TOOL_ONLY_THRESHOLD) {
+                // Inject nudge to produce output
+                const lastUserMsg = msgs.findLast((m) => m.info.role === "user")
+                if (
+                  lastUserMsg &&
+                  !lastUserMsg.parts.some(
+                    (p) => p.type === "text" && p.text?.includes("produce output"),
+                  )
+                ) {
+                  lastUserMsg.parts.push({
+                    id: PartID.ascending(),
+                    messageID: lastUserMsg.info.id,
+                    sessionID,
+                    type: "text",
+                    synthetic: true,
+                    text: [
+                      "<system-reminder>",
+                      `You have read ${consecutiveToolOnlySteps} files without producing any output.`,
+                      "The user is waiting for results, not more exploration.",
+                      "You MUST now produce a direct answer or call a tool that makes concrete progress.",
+                      "Do NOT read more files — provide output now.",
+                      "</system-reminder>",
+                    ].join("\n"),
+                  })
+                  consecutiveToolOnlySteps = 0  // Reset after nudge
+                }
               }
             }
           }
