@@ -17,6 +17,40 @@ const getClipboardy = lazy(async () => {
   return clipboardy
 })
 
+const WINDOWS_SET_CLIPBOARD_SCRIPT =
+  "[Console]::InputEncoding = [System.Text.UTF8Encoding]::new($false); Set-Clipboard -Value ([Console]::In.ReadToEnd())"
+
+function encodePowerShellCommand(script: string) {
+  return Buffer.from(script, "utf16le").toString("base64")
+}
+
+export function windowsCopyCommands(which: (cmd: string) => string | null) {
+  return [
+    ...["powershell.exe", "pwsh.exe"]
+      .map((shell) => which(shell))
+      .filter((shell): shell is string => !!shell)
+      .map((shell) => [
+        shell,
+        "-NonInteractive",
+        "-NoProfile",
+        "-EncodedCommand",
+        encodePowerShellCommand(WINDOWS_SET_CLIPBOARD_SCRIPT),
+      ]),
+    ...["clip.exe", "clip"]
+      .map((command) => which(command))
+      .filter((command): command is string => !!command)
+      .slice(0, 1)
+      .map((command) => [command]),
+  ]
+}
+
+export async function writeClipboardProcess(cmd: string[], text: string) {
+  const proc = Process.spawn(cmd, { stdin: "pipe", stdout: "ignore", stderr: "ignore" })
+  if (!proc.stdin) return false
+  proc.stdin.end(text)
+  return (await proc.exited.catch(() => 1)) === 0
+}
+
 /**
  * Writes text to clipboard via OSC 52 escape sequence.
  * This allows clipboard operations to work over SSH by having
@@ -164,35 +198,23 @@ const getCopyMethod = lazy(async () => {
   }
 
   if (os === "win32") {
-    console.log("clipboard: using powershell")
+    console.log("clipboard: using windows native")
     return async (text: string) => {
-      // Pipe via stdin to avoid PowerShell string interpolation ($env:FOO, $(), etc.)
-      const proc = Process.spawn(
-        [
-          "powershell.exe",
-          "-NonInteractive",
-          "-NoProfile",
-          "-Command",
-          "[Console]::InputEncoding = [System.Text.Encoding]::UTF8; Set-Clipboard -Value ([Console]::In.ReadToEnd())",
-        ],
-        {
-          stdin: "pipe",
-          stdout: "ignore",
-          stderr: "ignore",
-        },
+      const copied = await windowsCopyCommands(which).reduce(
+        async (previous, cmd) => (await previous) || (await writeClipboardProcess(cmd, text)),
+        Promise.resolve(false),
       )
 
-      if (!proc.stdin) return
-      proc.stdin.write(text)
-      proc.stdin.end()
-      await proc.exited.catch(() => {})
+      if (copied) return
+      const clipboardy = await getClipboardy()
+      await clipboardy.write(text)
     }
   }
 
   console.log("clipboard: no native support")
   return async (text: string) => {
     const clipboardy = await getClipboardy()
-    await clipboardy.write(text).catch(() => {})
+    await clipboardy.write(text)
   }
 })
 
