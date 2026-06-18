@@ -23,6 +23,8 @@ export const dict = {
 
   "command.sidebar.toggle": "Alternar barra lateral",
   "command.project.open": "Abrir proyecto",
+  "command.project.previous": "Proyecto anterior",
+  "command.project.next": "Siguiente proyecto",
   "command.provider.connect": "Conectar proveedor",
   "command.server.switch": "Cambiar servidor",
   "command.settings.open": "Abrir ajustes",
@@ -235,6 +237,8 @@ export const dict = {
   "prompt.mode.shell": "Shell",
   "prompt.mode.normal": "Prompt",
   "prompt.mode.shell.exit": "esc para salir",
+  "session.child.promptDisabled": "Las sesiones de subagentes no pueden recibir indicaciones.",
+  "session.child.backToParent": "Volver a la sesión principal.",
 
   "prompt.example.1": "Arreglar un TODO en el código",
   "prompt.example.2": "¿Cuál es el stack tecnológico de este proyecto?",
@@ -511,6 +515,8 @@ export const dict = {
   "session.review.noSnapshot":
     "El seguimiento de instantáneas está deshabilitado en la configuración, por lo que los cambios de sesión no están disponibles",
   "session.review.noChanges": "Sin cambios",
+  "session.review.noUncommittedChanges": "Aún no hay cambios sin confirmar",
+  "session.review.noBranchChanges": "Aún no hay cambios en la rama",
 
   "session.files.selectToOpen": "Selecciona un archivo para abrir",
   "session.files.all": "Todos los archivos",
@@ -613,6 +619,8 @@ export const dict = {
   "sidebar.project.recentSessions": "Sesiones recientes",
   "sidebar.project.viewAllSessions": "Ver todas las sesiones",
   "sidebar.project.clearNotifications": "Borrar notificaciones",
+  "sidebar.empty.title": "No hay proyectos abiertos",
+  "sidebar.empty.description": "Abra un proyecto para comenzar",
 
   "app.name.desktop": "OpenCode Desktop",
 
@@ -625,6 +633,7 @@ export const dict = {
   "settings.desktop.wsl.description": "Ejecutar el servidor OpenCode dentro de WSL en Windows.",
 
   "settings.general.section.appearance": "Apariencia",
+  "settings.general.section.advanced": "Avanzado",
   "settings.general.section.notifications": "Notificaciones del sistema",
   "settings.general.section.updates": "Actualizaciones",
   "settings.general.section.sounds": "Efectos de sonido",
@@ -650,6 +659,16 @@ export const dict = {
     "Elige si los prompts de seguimiento se dirigen inmediatamente o esperan en una cola",
   "settings.general.row.followup.option.queue": "Cola",
   "settings.general.row.followup.option.steer": "Dirigir",
+  "settings.general.row.showFileTree.title": "Árbol de archivos",
+  "settings.general.row.showFileTree.description": "Mostrar el botón del árbol de archivos en la barra lateral",
+  "settings.general.row.showNavigation.title": "Controles de navegación",
+  "settings.general.row.showNavigation.description": "Mostrar los botones de navegación atrás y adelante",
+  "settings.general.row.showSearch.title": "Paleta de comandos",
+  "settings.general.row.showSearch.description": "Mostrar el botón de búsqueda y paleta de comandos",
+  "settings.general.row.showStatus.title": "Estado del servidor",
+  "settings.general.row.showStatus.description": "Mostrar el botón de estado del servidor",
+  "settings.general.row.showTerminal.title": "Terminal",
+  "settings.general.row.showTerminal.description": "Mostrar el botón del terminal",
   "settings.general.row.reasoningSummaries.title": "Mostrar resúmenes de razonamiento",
   "settings.general.row.reasoningSummaries.description":
     "Mostrar resúmenes del razonamiento del modelo en la línea de tiempo",
