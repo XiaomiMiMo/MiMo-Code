@@ -1,6 +1,8 @@
 export const dict = {
   "ui.sessionReview.title": "Sessionsændringer",
   "ui.sessionReview.title.lastTurn": "Ændringer fra sidste tur",
+  "ui.sessionReview.title.git": "Git-ændringer",
+  "ui.sessionReview.title.branch": "Gren-ændringer",
   "ui.sessionReview.diffStyle.unified": "Samlet",
   "ui.sessionReview.diffStyle.split": "Opdelt",
   "ui.sessionReview.openFile": "Åbn fil",
@@ -36,6 +38,10 @@ export const dict = {
   "ui.sessionTurn.steps.hide": "Skjul trin",
   "ui.sessionTurn.summary.response": "Svar",
   "ui.sessionTurn.diff.showMore": "Vis flere ændringer ({{count}})",
+  "ui.sessionTurn.diffs.changed": "Ændret",
+  "ui.sessionTurn.diffs.showAll": "Vis alle",
+  "ui.sessionTurn.diffs.showLess": "Vis færre",
+  "ui.sessionTurn.diffs.more": "+{{count}} flere filer",
 
   "ui.sessionTurn.retry.retrying": "prøver igen",
   "ui.sessionTurn.retry.inSeconds": "om {{seconds}}s",

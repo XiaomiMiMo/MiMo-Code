@@ -5,6 +5,8 @@ type Keys = keyof typeof en
 export const dict = {
   "ui.sessionReview.title": "Promjene sesije",
   "ui.sessionReview.title.lastTurn": "Promjene u posljednjem potezu",
+  "ui.sessionReview.title.git": "Git izmjene",
+  "ui.sessionReview.title.branch": "Izmjene grane",
   "ui.sessionReview.diffStyle.unified": "Ujedinjeno",
   "ui.sessionReview.diffStyle.split": "Podijeljeno",
   "ui.sessionReview.openFile": "Otvori fajl",
@@ -41,6 +43,10 @@ export const dict = {
   "ui.sessionTurn.steps.hide": "Sakrij korake",
   "ui.sessionTurn.summary.response": "Odgovor",
   "ui.sessionTurn.diff.showMore": "Prikaži još izmjena ({{count}})",
+  "ui.sessionTurn.diffs.changed": "Promijenjeno",
+  "ui.sessionTurn.diffs.showAll": "Prikaži sve",
+  "ui.sessionTurn.diffs.showLess": "Prikaži manje",
+  "ui.sessionTurn.diffs.more": "+{{count}} datoteka više",
 
   "ui.sessionTurn.retry.retrying": "ponovni pokušaj",
   "ui.sessionTurn.retry.inSeconds": "za {{seconds}}s",
