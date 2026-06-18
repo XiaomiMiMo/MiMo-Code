@@ -698,6 +698,32 @@ NOTE: At any point in time through this workflow you should feel free to ask the
                   { tool: item.id, sessionID: ctx.sessionID, callID: ctx.callID },
                   beforeOutput,
                 )
+
+                // Execute user-configured PreToolUse hooks
+                const preToolCfg = yield* config.get()
+                const preToolResult = yield* executeHooks(
+                  "PreToolUse",
+                  (preToolCfg as any).hooks,
+                  { tool: item.id, args, sessionID: ctx.sessionID },
+                  item.id,
+                ).pipe(Effect.catch(() => Effect.succeed({} as HookResult)))
+                if (preToolResult.additionalContext) {
+                  // Inject pre-tool context as metadata
+                  beforeOutput.args = { ...beforeOutput.args, _hookContext: preToolResult.additionalContext }
+                }
+                if (preToolResult.updatedInput) {
+                  beforeOutput.args = { ...beforeOutput.args, ...preToolResult.updatedInput }
+                }
+                if (preToolResult.blocked) {
+                  const blockOutput = {
+                    title: "Blocked by hook",
+                    output: preToolResult.blockReason || "Tool call blocked by PreToolUse hook",
+                    metadata: { blocked: true, reason: preToolResult.blockReason },
+                  }
+                  yield* input.processor.completeToolCall(options.toolCallId, blockOutput)
+                  return blockOutput
+                }
+
                 if (beforeOutput.cancel) {
                   const cancelOutput = {
                     title: "Cancelled",
@@ -738,6 +764,23 @@ NOTE: At any point in time through this workflow you should feel free to ask the
                   { tool: item.id, sessionID: ctx.sessionID, callID: ctx.callID, args: beforeOutput.args },
                   output,
                 )
+
+                // Execute user-configured PostToolUse hooks
+                const postToolCfg = yield* config.get()
+                const postToolResult = yield* executeHooks(
+                  "PostToolUse",
+                  (postToolCfg as any).hooks,
+                  { tool: item.id, args: beforeOutput.args, output, sessionID: ctx.sessionID },
+                  item.id,
+                ).pipe(Effect.catch(() => Effect.succeed({} as HookResult)))
+                if (postToolResult.additionalContext) {
+                  // Append hook context to tool output
+                  output.output = output.output + "\n\n" + postToolResult.additionalContext
+                }
+                if (postToolResult.updatedOutput) {
+                  output.output = postToolResult.updatedOutput
+                }
+
                 if (
                   (item.id === "write" || item.id === "edit") &&
                   beforeOutput.args?.filePath &&
@@ -2540,6 +2583,21 @@ NOTE: At any point in time through this workflow you should feel free to ask the
             const compactionPart = lastUserMsgForCompaction.parts.find(
               (p): p is MessageV2.CompactionPart => p.type === "compaction",
             )
+
+            // Execute PreCompact hook
+            const preCompactCfg = yield* config.get()
+            const preCompactResult = yield* executeHooks(
+              "PreCompact",
+              (preCompactCfg as any).hooks,
+              { sessionID, auto: compactionPart?.auto, overflow: compactionPart?.overflow },
+              compactionPart?.auto ? "auto" : "manual",
+            ).pipe(Effect.catch(() => Effect.succeed({} as HookResult)))
+            if (preCompactResult.blocked) {
+              // Hook blocked compaction, skip it
+              yield* slog.info("compaction blocked by hook", { reason: preCompactResult.blockReason })
+              continue
+            }
+
             const allMsgs = yield* sessions.messages({ sessionID, agentID: lastUser.agentID ?? "main" })
             const result = yield* compaction.process({
               parentID: lastUser.id,
@@ -2549,6 +2607,30 @@ NOTE: At any point in time through this workflow you should feel free to ask the
               overflow: compactionPart?.overflow,
               agentID: lastUser.agentID,
             })
+
+            // Execute PostCompact hook
+            const postCompactCfg = yield* config.get()
+            const postCompactResult = yield* executeHooks(
+              "PostCompact",
+              (postCompactCfg as any).hooks,
+              { sessionID, result, auto: compactionPart?.auto },
+              compactionPart?.auto ? "auto" : "manual",
+            ).pipe(Effect.catch(() => Effect.succeed({} as HookResult)))
+            if (postCompactResult.additionalContext) {
+              // Inject post-compaction context
+              const lastUserMsg = msgs.findLast((m) => m.info.role === "user")
+              if (lastUserMsg) {
+                lastUserMsg.parts.push({
+                  id: PartID.ascending(),
+                  messageID: lastUserMsg.info.id,
+                  sessionID,
+                  type: "text",
+                  synthetic: true,
+                  text: `<system-reminder>\n${postCompactResult.additionalContext}\n</system-reminder>`,
+                })
+              }
+            }
+
             if (result === "stop") break
             continue
           }
