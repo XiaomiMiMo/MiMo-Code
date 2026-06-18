@@ -300,6 +300,46 @@ test("custom provider with npm package", async () => {
   })
 })
 
+test("custom openai-compatible provider can load without an API key", async () => {
+  await using tmp = await tmpdir({
+    init: async (dir) => {
+      await Bun.write(
+        path.join(dir, "mimocode.json"),
+        JSON.stringify({
+          $schema: "https://opencode.ai/config.json",
+          provider: {
+            "local-llm": {
+              name: "Local LLM",
+              npm: "@ai-sdk/openai-compatible",
+              env: ["LOCAL_LLM_API_KEY"],
+              options: {
+                baseURL: "http://localhost:11434/v1",
+                setCacheKey: true,
+              },
+              models: {
+                "llama-3": {
+                  name: "Llama 3",
+                },
+              },
+            },
+          },
+        }),
+      )
+    },
+  })
+  await Instance.provide({
+    directory: tmp.path,
+    fn: async () => {
+      const providers = await list()
+      const provider = providers[ProviderID.make("local-llm")]
+      expect(provider).toBeDefined()
+      expect(provider.models["llama-3"]).toBeDefined()
+      expect(provider.options.baseURL).toBe("http://localhost:11434/v1")
+      expect(provider.options.apiKey).toBeUndefined()
+    },
+  })
+})
+
 test("custom DeepSeek openai-compatible model defaults interleaved reasoning field", async () => {
   await using tmp = await tmpdir({
     init: async (dir) => {
