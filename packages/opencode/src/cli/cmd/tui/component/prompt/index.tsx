@@ -17,6 +17,7 @@ import { createStore, produce, unwrap } from "solid-js/store"
 import { useKeybind } from "@tui/context/keybind"
 import { usePromptHistory, type PromptInfo } from "./history"
 import { assign } from "./part"
+import { shouldAbortBusySession } from "./interrupt"
 import { usePromptStash } from "./stash"
 import { DialogStash } from "../dialog-stash"
 import { type AutocompleteRef, Autocomplete } from "./autocomplete"
@@ -1507,6 +1508,17 @@ export function Prompt(props: PromptProps) {
                     return
                   }
                   // If no image, let the default paste behavior continue
+                }
+                if (
+                  shouldAbortBusySession({
+                    appExit: keybind.match("app_exit", e),
+                    sessionID: props.sessionID,
+                    status: status(),
+                  })
+                ) {
+                  void sdk.client.session.abort({ sessionID: props.sessionID! })
+                  e.preventDefault()
+                  return
                 }
                 if (keybind.match("input_clear", e) && store.prompt.input !== "") {
                   input.clear()
