@@ -126,6 +126,50 @@ export PULSE_SERVER=tcp:127.0.0.1:4713
 ```
 </details>
 
+<details>
+<summary><strong>Non-MiMo voice providers (OpenRouter, internal API, etc.)</strong></summary>
+
+Voice input can route through other OpenAI-compatible providers via the `voice` config field. The ASR model (`mimo-v2.5-asr`) is only available on MiMo's platform; voice control mode (`mimo-v2.5`) is available on OpenRouter and compatible relay platforms.
+
+**OpenRouter (voice control only):**
+
+Use `/connect` to sign in to OpenRouter, then add to your config:
+```jsonc
+{
+  "voice": {
+    "control_model": "openrouter/xiaomi/mimo-v2.5"
+  }
+}
+```
+
+**Internal / self-hosted relay (both ASR and voice control):**
+```jsonc
+{
+  "provider": {
+    "internal": {
+      "options": {
+        "baseURL": "https://your-api-gateway.example.com/v1",
+        "apiKey": "sk-..."
+      },
+      "models": {
+        "xiaomi/mimo-v2.5-asr": { "name": "MiMo-V2.5-ASR" },
+        "xiaomi/mimo-v2.5": { "name": "MiMo-V2.5" }
+      }
+    }
+  },
+  "voice": {
+    "asr_model": "internal/xiaomi/mimo-v2.5-asr",
+    "control_model": "internal/xiaomi/mimo-v2.5"
+  }
+}
+```
+
+Custom providers must register at least one model in their `models` field to be recognized. The model names in `voice.*_model` are sent directly to the API — they don't need to match the registered model keys exactly.
+
+> **Note:** Models registered under a custom provider will appear in the model selection list. Don't use ASR-only models (e.g. `mimo-v2.5-asr`) as your primary coding model.
+
+</details>
+
 ### Dream & Distill
 
 - **`/dream`** — scans recent session traces, extracts persistent knowledge into project memory, and removes outdated entries

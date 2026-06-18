@@ -58,6 +58,7 @@ function decrypt(privateKeyDer: Buffer, encryptedBase64: string): { sk?: string;
 }
 
 function openBrowser(url: string) {
+  if (process.env.CI || process.env.NODE_ENV === "test") return
   const command =
     process.platform === "darwin"
       ? `open "${url}"`

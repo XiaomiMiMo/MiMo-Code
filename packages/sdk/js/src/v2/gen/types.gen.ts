@@ -161,7 +161,7 @@ export type EventMetricsToolCall = {
     input_bytes: number
     output_bytes: number
     tool_call_id: string
-    tool_call_status: "success" | "error"
+    tool_call_status: "success" | "error" | "cancelled"
   }
 }
 
@@ -2223,6 +2223,19 @@ export type Config = {
      * Minimum days between automatic distill runs. Default: 30.
      */
     interval_days?: number
+  }
+  /**
+   * Voice input provider and model configuration.
+   */
+  voice?: {
+    /**
+     * Model to use for voice ASR transcription in provider/model format. Defaults to xiaomi/mimo-v2.5-asr.
+     */
+    asr_model?: string
+    /**
+     * Model to use for voice control (multimodal) in provider/model format. Defaults to xiaomi/mimo-v2.5.
+     */
+    control_model?: string
   }
   experimental?: {
     disable_paste_summary?: boolean

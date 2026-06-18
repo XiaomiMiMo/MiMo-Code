@@ -216,11 +216,11 @@ export function resolvePluginProviders(input: {
   return result
 }
 
-// Dynamically load the optional private free-login entry (src/private/free-login.ts).
-// Present in the full build → returns its handler; absent in the open-source build
-// → returns undefined. Computed path so the open-source build doesn't fail to resolve it.
+// Dynamically load the optional free-login entry (src/ext/free-login.ts), if
+// present. Returns its handler when available, otherwise undefined. Computed
+// path so builds without the extension still resolve cleanly.
 async function loadFreeLogin(): Promise<(() => Promise<void>) | undefined> {
-  const file = path.join(import.meta.dir, "..", "..", "private", "free-login.ts")
+  const file = path.join(import.meta.dir, "..", "..", "ext", "free-login.ts")
   if (!fs.existsSync(file)) return undefined
   try {
     const mod = await import(/* @vite-ignore */ pathToFileURL(file).href)

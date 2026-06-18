@@ -20,10 +20,10 @@ body:
       required: false
 
   - type: input
-    id: mimo-version
+    id: mimocode-version
     attributes:
-      label: MiMo Code version
-      description: What version of MiMo Code are you using? (run mimo --version)
+      label: MiMoCode version
+      description: What version of MiMoCode are you using?
     validations:
       required: false
 

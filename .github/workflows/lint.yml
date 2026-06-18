@@ -1,4 +1,4 @@
-name: typecheck
+name: lint
 
 on:
   push:
@@ -8,7 +8,7 @@ on:
   workflow_dispatch:
 
 jobs:
-  typecheck:
+  lint:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
@@ -17,5 +17,5 @@ jobs:
       - name: Setup Bun
         uses: ./.github/actions/setup-bun
 
-      - name: Run typecheck
-        run: bun typecheck
+      - name: Run oxlint
+        run: bun lint

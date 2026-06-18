@@ -126,7 +126,7 @@ export function Prompt(props: PromptProps) {
   const kv = useKV()
   const animationsEnabled = createMemo(() => kv.get("animations_enabled", true))
   const voiceEnabled = createMemo(() => kv.get("voice_enabled", false))
-  const voiceSendEnabled = createMemo(() => kv.get("voice_send_command", true))
+  const voiceSendEnabled = createMemo(() => kv.get("voice_send_command", false))
   const voiceControlEnabled = createMemo(() => kv.get("voice_control_enabled", false))
   const [voiceState, setVoiceState] = createSignal<"idle" | "listening" | "speaking" | "processing" | "finishing">(
     activeVoice ? (activeVoice.pending > 0 ? "processing" : "listening") : "idle",
@@ -227,18 +227,24 @@ export function Prompt(props: PromptProps) {
       return
     }
     if (state === "finishing") return
-    // Start streaming
-    const xiaomi = sync.data.provider.find((p) => p.id === "xiaomi")
-    if (!xiaomi?.key) {
-      toast.show({ message: t("tui.voice.error.no_auth"), variant: "error" })
+    // Start streaming — only validate the active mode's provider
+    const voiceConfig = sync.data.config.voice
+    const resolved = Voice.resolveVoiceConfig(voiceConfig)
+    const activeConfig = voiceControlEnabled() ? resolved.control : resolved.asr
+    const creds = Voice.resolveCredentials(sync.data.provider, activeConfig)
+    if ("error" in creds) {
+      const vars = { provider: creds.providerID, model: creds.model }
+      const msg = !voiceConfig ? t("tui.voice.error.no_auth")
+        : creds.error === "not_found" ? t("tui.voice.error.provider_not_found", vars)
+        : creds.error === "no_url" ? t("tui.voice.error.no_url", vars)
+        : t("tui.voice.error.no_auth_provider", vars)
+      toast.show({ message: msg, variant: "error" })
       return
     }
     if (!Voice.isAvailable()) {
       toast.show({ message: t("tui.voice.error.no_recorder"), variant: "error" })
       return
     }
-    const apiKey = xiaomi.key
-    const baseUrl = (xiaomi.options?.baseURL as string) || "https://api.xiaomimimo.com/v1"
 
     const av: NonNullable<typeof activeVoice> = {
       handle: undefined!,
@@ -270,8 +276,9 @@ export function Prompt(props: PromptProps) {
 
               const ctrl = await Voice.processVoiceControl({
                 audio: segment.audio,
-                apiKey,
-                baseUrl,
+                apiKey: creds.apiKey,
+                baseUrl: creds.baseUrl,
+                model: resolved.control.model,
                 currentText,
                 currentAgent,
                 availableAgents,
@@ -301,8 +308,9 @@ export function Prompt(props: PromptProps) {
         } else {
           Voice.transcribeAudio({
             audio: segment.audio,
-            apiKey,
-            baseUrl,
+            apiKey: creds.apiKey,
+            baseUrl: creds.baseUrl,
+            model: resolved.asr.model,
           }).then((text) => {
             if (text) {
               if (voiceSendEnabled() && Voice.SEND_RE.test(text.replace(/[\s。.!！？?，,]+$/g, "").trim())) {
@@ -328,8 +336,13 @@ export function Prompt(props: PromptProps) {
       onActiveChange: (active) => {
         if (active && activeVoice === av) av.setState("speaking")
       },
-      onError: () => {
-        av.showError(t("tui.voice.error.no_recorder"))
+      onError: (err) => {
+        const msg = err.message || ""
+        if (msg.includes("no default audio") || msg.includes("not found") || msg.includes("Cannot open") || msg.includes("ALSA")) {
+          av.showError(t("tui.voice.error.no_device"))
+        } else {
+          av.showError(`${t("tui.voice.error.recorder_failed")}: ${msg}`)
+        }
         activeVoice = undefined
         av.setState("idle")
       },
