@@ -784,12 +784,13 @@ export const layer = Layer.effect(
 
           yield* ensureGitignore(dir).pipe(Effect.orDie)
 
+          const pluginVersion = InstallationLocal ? undefined : `^${InstallationVersion}`
           const dep = yield* npmSvc
             .install(dir, {
               add: [
                 {
                   name: "@mimo-ai/plugin",
-                  version: InstallationLocal ? undefined : InstallationVersion,
+                  version: pluginVersion,
                 },
               ],
             })
