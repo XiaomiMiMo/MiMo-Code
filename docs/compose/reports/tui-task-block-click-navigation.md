@@ -48,14 +48,18 @@ actor.spawn() → onReady fires → ctx.metadata() writes to DB → Fiber.join(f
 
 - Manual TUI testing: spawned a `run`-mode subagent (sleep 20s), confirmed spinner visible during execution, click navigates into subagent view, can exit and re-enter after completion.
 - Typecheck: passes.
+- Unit test: `test/actor/spawn.test.ts` — "onReady fires before Fiber.join blocks" verifies the callback fires during spawn and receives correct actorID/sessionID.
 
-## Known Remaining Issues
+## Testing Strategy
 
-Two tests in `test/session/prompt-effect.test.ts` remain `.skip`-ed with updated TODOs:
+The `onReady` behavior is tested at the **spawn layer** (`test/actor/spawn.test.ts`) rather than via end-to-end prompt-loop integration tests. Two prior integration tests (`prompt-effect.test.ts`) were removed because:
 
-1. **Actor.layer missing in test layer composition**: The test's `makeHttp()` layer doesn't include `Actor.layer`. Adding it creates a circular dependency with `SessionPrompt.layer` (Actor depends on SessionPrompt). Requires Effect layer refactoring.
-
-2. **AI SDK v6 `fullStream` pipeline**: In the test environment, the AI SDK's `fullStream` never yields the `tool-call` event to the processor (stream stalls after `start-step`). This appears to be an interaction between Effect's fiber scheduler and Web Streams' microtask-based piping. Unrelated to the production fix.
+1. Their integration path (prompt loop → AI SDK v6 `fullStream` → tool execution → DB poll) is fundamentally broken in the test environment — AI SDK v6's `fullStream` stalls after `start-step` due to microtask scheduling conflicts between Web Streams and Effect's fiber runtime.
+2. Adding `Actor.layer` to `prompt-effect.test.ts`'s layer composition creates a circular dependency with `SessionPrompt.layer`.
+3. The behavior they intended to verify is already covered by:
+   - **Spawn-level unit test**: `onReady` fires at the correct time (before `Fiber.join`)
+   - **Existing tool tests**: `ctx.metadata()` → `updateToolCall` → `SyncEvent.run` → DB write (used by bash/edit/glob tools)
+   - **Manual TUI verification**: running subagent shows spinner, click navigates correctly
 
 ## Journey Log
 
