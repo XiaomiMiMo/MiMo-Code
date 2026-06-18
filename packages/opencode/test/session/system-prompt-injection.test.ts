@@ -17,28 +17,28 @@ describe("Core behavior prompt injection verification", () => {
     expect(SystemPrompt.provider(geminiModel)).toEqual([PROMPT_CORE_BEHAVIOR])
   })
 
-  test("core-behavior prompt contains all MiMoCode-specific behavioral directives", () => {
+  test("core-behavior prompt contains all generic behavioral directives", () => {
     const requiredDirectives = [
-      // MiMoCode core features
-      "Actor Delegation",
-      "Task Tool",
-      "Memory System",
-      "Skill System",
-      "Plan Mode",
-      "Verification Loop",
-      // General behavioral directives
-      "Thinking & Analysis Rules",
-      "Professional objectivity",
+      // 通用行为框架
+      "Analytical Thinking",
+      "Professional Objectivity",
+      "Code Quality Rules",
       "Output Style",
       "Tool Usage Strategy",
       "Executing Actions with Care",
       "Git Safety",
+      "Context Management",
+      "Error Recovery",
+      "Debugging",
+      // 关键行为规则
       "Read at least 3 existing implementations",
       "Parallel execution",
       "file_path:line_number",
-      "Do NOT add comments unless explicitly asked",
+      "add comments unless explicitly asked",
       "NEVER commit changes unless the user explicitly asks",
-      "Prioritize technical accuracy over validating",
+      "Prioritize technical accuracy and truthfulness",
+      "Manage context aggressively",
+      "Do NOT guess. Investigate",
     ]
 
     for (const directive of requiredDirectives) {
