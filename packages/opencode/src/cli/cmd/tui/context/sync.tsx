@@ -28,7 +28,7 @@ import { createSimpleContext } from "./helper"
 import type { Snapshot } from "@/snapshot"
 import { useExit } from "./exit"
 import { useArgs } from "./args"
-import { batch, onMount } from "solid-js"
+import { batch, onMount, onCleanup } from "solid-js"
 import { Log } from "@/util"
 import { emptyConsoleState, type ConsoleState } from "@/config/console-state"
 
@@ -226,6 +226,42 @@ export const { use: useSync, provider: SyncProvider } = createSimpleContext({
 
     const fullSyncedSessions = new Set<string>()
     let syncedWorkspace = project.workspace.current()
+
+    // Delta batching: accumulate deltas and flush periodically to reduce re-renders
+    const deltaAccumulator = new Map<string, { partID: string; field: string; deltas: string[] }>()
+    let deltaFlushTimer: ReturnType<typeof setTimeout> | null = null
+    const DELTA_FLUSH_INTERVAL = 32 // ~2 frames at 30fps
+
+    function flushDeltas() {
+      if (deltaAccumulator.size === 0) return
+      const batch = new Map(deltaAccumulator)
+      deltaAccumulator.clear()
+
+      batch.forEach((entry, key) => {
+        const parts = store.part[key]
+        if (!parts) return
+        const result = Binary.search(parts, entry.partID, (p) => p.id)
+        if (!result.found) return
+        setStore(
+          "part",
+          key,
+          produce((draft) => {
+            const part = draft[result.index]
+            const field = entry.field as keyof typeof part
+            const existing = part[field] as string | undefined
+            ;(part[field] as string) = (existing ?? "") + entry.deltas.join("")
+          }),
+        )
+      })
+    }
+
+    function scheduleDeltaFlush() {
+      if (deltaFlushTimer) return
+      deltaFlushTimer = setTimeout(() => {
+        deltaFlushTimer = null
+        flushDeltas()
+      }, DELTA_FLUSH_INTERVAL)
+    }
 
     event.subscribe((event) => {
       switch (event.type) {
@@ -516,16 +552,19 @@ export const { use: useSync, provider: SyncProvider } = createSimpleContext({
           if (!parts) break
           const result = Binary.search(parts, event.properties.partID, (p) => p.id)
           if (!result.found) break
-          setStore(
-            "part",
-            event.properties.messageID,
-            produce((draft) => {
-              const part = draft[result.index]
-              const field = event.properties.field as keyof typeof part
-              const existing = part[field] as string | undefined
-              ;(part[field] as string) = (existing ?? "") + event.properties.delta
-            }),
-          )
+          // Batch deltas instead of updating store immediately
+          const key = event.properties.messageID
+          const existing = deltaAccumulator.get(key)
+          if (existing && existing.partID === event.properties.partID && existing.field === event.properties.field) {
+            existing.deltas.push(event.properties.delta)
+          } else {
+            deltaAccumulator.set(key, {
+              partID: event.properties.partID,
+              field: event.properties.field,
+              deltas: [event.properties.delta],
+            })
+          }
+          scheduleDeltaFlush()
           break
         }
 
@@ -734,6 +773,15 @@ export const { use: useSync, provider: SyncProvider } = createSimpleContext({
 
     onMount(() => {
       void bootstrap()
+    })
+
+    // Cleanup delta batching timer on unmount
+    onCleanup(() => {
+      if (deltaFlushTimer) {
+        clearTimeout(deltaFlushTimer)
+        deltaFlushTimer = null
+      }
+      flushDeltas() // Flush any remaining deltas
     })
 
     const result = {
