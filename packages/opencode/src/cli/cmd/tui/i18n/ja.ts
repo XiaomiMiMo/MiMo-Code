@@ -89,6 +89,8 @@ export const dict = {
   "tui.tips.jump_last":
     "{highlight}Ctrl+Alt+G{/highlight} または {highlight}End{/highlight} で最新メッセージにジャンプします",
   "tui.tips.newline":
+    "{highlight}Ctrl+J{/highlight} でプロンプトに改行を入れます",
+  "tui.tips.newline_kitty":
     "{highlight}Shift+Enter{/highlight} または {highlight}Ctrl+J{/highlight} でプロンプトに改行を入れます",
   "tui.tips.clear_input": "入力中に {highlight}Ctrl+C{/highlight} を押すと入力欄をクリアします",
   "tui.tips.escape": "{highlight}Escape{/highlight} で AI の応答を途中で停止します",
