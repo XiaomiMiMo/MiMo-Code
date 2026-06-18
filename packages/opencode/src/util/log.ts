@@ -2,6 +2,7 @@ import path from "path"
 import fs from "fs/promises"
 import { createWriteStream } from "fs"
 import { Global } from "../global"
+import { Flag } from "../flag/flag"
 import z from "zod"
 
 export const Level = z.enum(["DEBUG", "INFO", "WARN", "ERROR"]).meta({ ref: "LogLevel", description: "Log level" })
@@ -50,6 +51,9 @@ export interface Options {
   print: boolean
   dev?: boolean
   level?: Level
+  // Defaults to enabled. When false, the active log file grows in place and is
+  // never archived to <name>.log.<stamp> on reaching MAX_FILE_SIZE.
+  rotate?: boolean
 }
 
 let logpath = ""
@@ -58,6 +62,7 @@ export function file() {
 }
 let stream: ReturnType<typeof createWriteStream> | undefined
 let written = 0
+let rotation = true
 let write = (msg: any) => {
   process.stderr.write(msg)
   return msg.length
@@ -69,6 +74,7 @@ function stamp() {
 
 export async function init(options: Options) {
   if (options.level) level = options.level
+  rotation = options.rotate ?? !Flag.MIMOCODE_DISABLE_LOG_ROTATION
   void cleanup(Global.Path.log)
   if (options.print) return
   logpath = path.join(Global.Path.log, options.dev ? "dev.log" : stamp() + ".log")
@@ -84,7 +90,7 @@ export async function init(options: Options) {
   written = 0
   write = async (msg: any) => {
     written += Buffer.byteLength(msg)
-    if (written >= MAX_FILE_SIZE) {
+    if (rotation && written >= MAX_FILE_SIZE) {
       written = 0
       await rotate()
     }

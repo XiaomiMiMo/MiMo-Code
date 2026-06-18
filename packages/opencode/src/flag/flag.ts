@@ -46,6 +46,11 @@ export const Flag = {
 
   MIMOCODE_DISABLE_AUTOUPDATE: truthy("MIMOCODE_DISABLE_AUTOUPDATE"),
 
+  // Defaults to false (rotation enabled). When enabled, the active log file is
+  // never archived to <name>.log.<stamp> on hitting MAX_FILE_SIZE — it grows in
+  // place. Useful when an external tool tails/manages the single log file.
+  MIMOCODE_DISABLE_LOG_ROTATION: truthy("MIMOCODE_DISABLE_LOG_ROTATION"),
+
   // Defaults to true (analytics enabled). Set MIMOCODE_ENABLE_ANALYSIS=false
   // to opt out of POSTing model_call/tool_call/agent_request metrics.
   MIMOCODE_ENABLE_ANALYSIS: !falsy("MIMOCODE_ENABLE_ANALYSIS"),
