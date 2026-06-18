@@ -2266,9 +2266,9 @@ NOTE: At any point in time through this workflow you should feel free to ask the
             }
           }
 
-          // === 主动引导机制 ===
+          // === Proactive guidance mechanisms ===
 
-          // 1. 首次任务引导：会话第一条消息时，主动建议使用 task 工具和 explore agent
+          // 1. First-task guidance: on the first user message, suggest using task tool and explore agent
           const userMsgCount = msgs.filter((m) => m.info.role === "user").length
           if (userMsgCount === 1 && lastUser) {
             const lastUserMsg = msgs.findLast((m) => m.info.role === "user")
@@ -2280,10 +2280,10 @@ NOTE: At any point in time through this workflow you should feel free to ask the
             ) {
               const text = lastUserMsg.parts.find((p) => p.type === "text")
               const content = text?.type === "text" ? text.text : ""
-              // 仅对非简单问题注入引导（排除问候、简单查询等）
+              // Only inject guidance for non-trivial queries (exclude greetings, simple questions, etc.)
               const isSimpleQuery =
                 content.length < 50 ||
-                /^(hi|hello|hey|你好|帮助|help|what|who|when|where|怎么|如何)\s/i.test(content)
+                /^(hi|hello|hey|help|what|who|when|where)\s/i.test(content)
               if (!isSimpleQuery) {
                 lastUserMsg.parts.push({
                   id: PartID.ascending(),
@@ -2304,7 +2304,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
             }
           }
 
-          // 2. 复杂度感知引导：检测到多文件修改时，建议并行 actor
+          // 2. Complexity detection: when multi-file modifications detected, suggest parallel actors
           if (lastFinished && lastFinished.summary !== true) {
             const finishedParts = MessageV2.parts(lastFinished.id)
             const fileParts = finishedParts.filter(
@@ -2336,7 +2336,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
             }
           }
 
-          // 3. 验证闭环引导：代码修改后，主动建议运行验证
+          // 3. Verification loop: after code modifications, proactively suggest running verification
           if (lastFinished && lastFinished.summary !== true) {
             const finishedParts = MessageV2.parts(lastFinished.id)
             const hasCodeChanges = finishedParts.some(
@@ -2947,14 +2947,14 @@ NOTE: At any point in time through this workflow you should feel free to ask the
               ...(format.type === "json_schema" ? [STRUCTURED_OUTPUT_SYSTEM_PROMPT] : []),
             ]
 
-            // 注入工具摘要：按类别分组的简短描述，帮助模型快速了解可用工具
+            // Inject tool summaries: categorized short descriptions to help the model quickly understand available tools
             const toolIds = yield* registry.ids()
             const toolSummaries = generateToolSummaries(toolIds)
             if (toolSummaries.length > 0) {
               additions.push(formatToolSummariesForPrompt(toolSummaries))
             }
 
-            // 注入路径作用域规则：仅加载与当前工作文件匹配的指令
+            // Inject path-scoped rules: load instructions matching the current working files
             const worktree = (yield* InstanceState.context).worktree
             const pathRulesDir = path.join(worktree, ".mimocode", "rules")
             const pathRules = yield* Effect.promise(() => scanPathRules(pathRulesDir)).pipe(
