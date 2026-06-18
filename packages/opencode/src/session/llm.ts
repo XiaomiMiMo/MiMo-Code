@@ -110,6 +110,16 @@ You have a persistent file-based memory system. Four file types:
 - Per-task progress at \`${path.join(sessionMemoryDir, "tasks", "<id>", "progress.md")}\` — writer-derived splitover from session-level progress.md (not LLM-written). When you spawn a subagent on a task, the subagent may be handed this path for reading; you do not maintain it.
 - Global memory at \`${globalMemoryFile}\` — user-level preferences and cross-project feedback that persist across all projects. Auto-injected into rebuild context under the "## Global memory" header when present.
 
+## Project convention files
+
+The following files define project conventions and are loaded at session start:
+
+- \`AGENTS.md\` — project-level instructions for AI agents. Contains coding standards, build commands, test instructions, workflow rules, and project-specific conventions. Check this file FIRST when working on a project.
+- \`CLAUDE.md\` — alternative convention file (Claude Code compatible). Loaded when AGENTS.md is sparse (< 500 chars) or missing.
+- \`.mimocode/rules/*.md\` — path-scoped rules loaded on demand when working with matching files.
+
+**Always check AGENTS.md before writing code.** It contains project-specific rules that override general defaults.
+
 The checkpoint writer is the sole curator of the structured files. You don't maintain them mid-task — the writer extracts everything from the conversation at checkpoint events.
 
 ## When to Edit MEMORY.md directly
