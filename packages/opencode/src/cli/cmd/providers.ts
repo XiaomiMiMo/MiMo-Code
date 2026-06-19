@@ -16,6 +16,7 @@ import { t } from "../i18n"
 import { Instance } from "../../project/instance"
 import type { Hooks } from "@mimo-ai/plugin"
 import { Process } from "../../util"
+import { PROVIDER_PRIORITY } from "../../util/provider-priority"
 import { text } from "node:stream/consumers"
 import { Effect } from "effect"
 import * as readline from "readline"
@@ -467,15 +468,7 @@ export const ProvidersLoginCommand = cmd({
           }),
         )
 
-        const priority: Record<string, number> = {
-          opencode: 0,
-          openai: 1,
-          "github-copilot": 2,
-          google: 3,
-          anthropic: 4,
-          openrouter: 5,
-          vercel: 6,
-        }
+        const priority = PROVIDER_PRIORITY
         const pluginProviders = resolvePluginProviders({
           hooks,
           existingProviders: providers,
@@ -495,7 +488,6 @@ export const ProvidersLoginCommand = cmd({
               label: x.name,
               value: x.id,
               hint: {
-                opencode: "recommended",
                 openai: "ChatGPT Plus/Pro or API key",
               }[x.id],
             })),
