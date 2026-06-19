@@ -246,9 +246,15 @@ export const layer = Layer.effect(
           .getModel(input.providerID as ProviderID, input.modelID as ModelID)
           .pipe(Effect.catch(() => Effect.succeed(undefined)))
         if (!model) return empty
+        // Anchor the env date to the session's creation time so the captured prefix is
+        // byte-identical to the runLoop's (which uses session.time.created), preserving
+        // Anthropic cache parity. If the session can't be loaded we can't guarantee that
+        // parity, so fall through to empty rather than emit a divergent date.
+        const captureSession = yield* sessions.get(input.sessionID).pipe(Effect.catch(() => Effect.succeed(undefined)))
+        if (!captureSession) return empty
         const [skills, env, instructions] = yield* Effect.all([
           sys.skills(ag),
-          Effect.sync(() => sys.environment(model)),
+          Effect.sync(() => sys.environment(model, captureSession.time.created)),
           instruction.system().pipe(Effect.orDie),
         ])
         // (checkpoint-writer never requests json_schema output, so STRUCTURED_OUTPUT_SYSTEM_PROMPT
@@ -2792,7 +2798,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
 
             const [skills, env, instructions] = yield* Effect.all([
               sys.skills(agent),
-              Effect.sync(() => sys.environment(model)),
+              Effect.sync(() => sys.environment(model, session.time.created)),
               instruction.system().pipe(Effect.orDie),
             ])
             // Surface which instruction files (CLAUDE.md, AGENTS.md, ...) were loaded.
