@@ -98,7 +98,11 @@ export function ScrollView(props: ScrollViewProps) {
       local.viewportRef(viewportRef)
     }
 
-    createResizeObserver([viewportRef, viewportRef.firstElementChild], updateThumb)
+    let frameId = 0
+    createResizeObserver([viewportRef, viewportRef.firstElementChild], () => {
+      cancelAnimationFrame(frameId)
+      frameId = requestAnimationFrame(updateThumb)
+    })
 
     updateThumb()
   })

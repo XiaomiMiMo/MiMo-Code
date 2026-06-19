@@ -56,6 +56,9 @@ export function TaskItem(props: TaskItemProps) {
         </box>
       </Show>
       <text flexGrow={1} wrapMode="word" style={{ fg: fg() }}>
+        <Show when={props.owner}>
+          <span style={{ fg: theme.textMuted }}>@{props.owner} </span>
+        </Show>
         <span style={{ fg: theme.textMuted }}>{props.id}</span> {props.summary}
       </text>
     </box>

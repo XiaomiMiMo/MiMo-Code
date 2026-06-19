@@ -221,6 +221,7 @@ export function Session() {
   const [showAssistantMetadata, _setShowAssistantMetadata] = kv.signal("assistant_metadata_visibility", true)
   const [showScrollbar, setShowScrollbar] = kv.signal("scrollbar_visible", false)
   const [scrolling, setScrolling] = createSignal(false)
+  const [stickyBottom, setStickyBottom] = createSignal(true)
   let scrollHideTimer: ReturnType<typeof setTimeout> | undefined
   const scrollbarVisible = createMemo(() => showScrollbar() || scrolling())
   const onWheel = (evt: MouseEvent) => {
@@ -228,6 +229,8 @@ export function Session() {
     setScrolling(true)
     if (scrollHideTimer) clearTimeout(scrollHideTimer)
     scrollHideTimer = setTimeout(() => setScrolling(false), 2500)
+    // Disable sticky scroll when user scrolls up; re-enable when near bottom (80px buffer).
+    if (scroll) setStickyBottom(scroll.y + scroll.height >= scroll.scrollHeight - 80)
   }
   onCleanup(() => {
     if (scrollHideTimer) clearTimeout(scrollHideTimer)
@@ -450,6 +453,7 @@ export function Session() {
   }
 
   function toBottom() {
+    setStickyBottom(true)
     setTimeout(() => {
       if (!scroll || scroll.isDestroyed) return
       scroll.scrollTo(scroll.scrollHeight)
@@ -1400,7 +1404,7 @@ export function Session() {
                   foregroundColor: scrollbarVisible() ? theme.border : theme.background,
                 },
               }}
-              stickyScroll={true}
+              stickyScroll={stickyBottom()}
               stickyStart="bottom"
               flexGrow={1}
               scrollAcceleration={scrollAcceleration()}
