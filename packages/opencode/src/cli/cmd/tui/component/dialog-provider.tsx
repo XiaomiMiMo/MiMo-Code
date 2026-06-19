@@ -14,6 +14,7 @@ import { useKeyboard } from "@opentui/solid"
 import * as Clipboard from "@tui/util/clipboard"
 import { useToast, type ToastContext } from "../ui/toast"
 import { isConsoleManagedProvider } from "@tui/util/provider-origin"
+import { useLocal } from "@tui/context/local"
 
 const PROVIDER_PRIORITY: Record<string, number> = {
   opencode: 0,
@@ -29,6 +30,7 @@ export function createDialogProviderOptions() {
   const dialog = useDialog()
   const sdk = useSDK()
   const toast = useToast()
+  const local = useLocal()
   const { theme } = useTheme()
   const options = createMemo(() => {
     const list = pipe(
@@ -149,7 +151,7 @@ export function createDialogProviderOptions() {
         category: "Other",
         gutter: undefined,
         async onSelect() {
-          await runCustomProviderWizard({ dialog, sdk, sync, toast })
+          await runCustomProviderWizard({ dialog, sdk, sync, toast, local })
         },
       },
     ]
@@ -167,8 +169,9 @@ export async function runCustomProviderWizard(opts: {
   sdk: ReturnType<typeof useSDK>
   sync: ReturnType<typeof useSync>
   toast: ToastContext
+  local: ReturnType<typeof useLocal>
 }) {
-  const { dialog, sdk, sync, toast } = opts
+  const { dialog, sdk, sync, toast, local } = opts
 
   function step(n: number, total: number, title: string, placeholder?: string, value?: string) {
     return DialogPrompt.show(dialog, `${title} (${n}/${total})`, { placeholder, value })
@@ -239,6 +242,7 @@ export async function runCustomProviderWizard(opts: {
 
   await sdk.client.instance.dispose()
   await sync.bootstrap()
+  local.model.set({ providerID, modelID }, { recent: true })
   dialog.replace(() => <DialogModel providerID={providerID} />)
 }
 
@@ -254,6 +258,7 @@ function AutoMethod(props: AutoMethodProps) {
   const dialog = useDialog()
   const sync = useSync()
   const toast = useToast()
+  const local = useLocal()
 
   useKeyboard((evt) => {
     if (evt.name === "c" && !evt.ctrl && !evt.meta) {
@@ -275,6 +280,7 @@ function AutoMethod(props: AutoMethodProps) {
     }
     await sdk.client.instance.dispose()
     await sync.bootstrap()
+    local.model.selectProviderDefault(props.providerID, { recent: true })
     dialog.replace(() => <DialogModel providerID={props.providerID} />)
   })
 
@@ -311,6 +317,7 @@ function CodeMethod(props: CodeMethodProps) {
   const sdk = useSDK()
   const sync = useSync()
   const dialog = useDialog()
+  const local = useLocal()
   const [error, setError] = createSignal(false)
 
   return (
@@ -326,6 +333,7 @@ function CodeMethod(props: CodeMethodProps) {
         if (!error) {
           await sdk.client.instance.dispose()
           await sync.bootstrap()
+          local.model.selectProviderDefault(props.providerID, { recent: true })
           dialog.replace(() => <DialogModel providerID={props.providerID} />)
           return
         }
@@ -354,6 +362,7 @@ function ApiMethod(props: ApiMethodProps) {
   const sdk = useSDK()
   const sync = useSync()
   const { theme } = useTheme()
+  const local = useLocal()
 
   return (
     <DialogPrompt
@@ -397,6 +406,7 @@ function ApiMethod(props: ApiMethodProps) {
         })
         await sdk.client.instance.dispose()
         await sync.bootstrap()
+        local.model.selectProviderDefault(props.providerID, { recent: true })
         dialog.replace(() => <DialogModel providerID={props.providerID} />)
       }}
     />
