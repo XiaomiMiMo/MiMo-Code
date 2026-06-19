@@ -58,11 +58,22 @@ function init() {
     return category
   }
 
+  // The command value (e.g. "session.list") and slash names are stable English
+  // identifiers. Expose them as latin search keywords so users in a non-English
+  // locale can still find commands by typing "session", "model", "theme", etc.
+  // without switching input method, even though the visible title is localized.
+  const deriveKeywords = (option: CommandOption) => {
+    const tokens = [option.value, ...option.value.split(/[.\-_:]/)]
+    if (option.slash) tokens.push(option.slash.name, ...(option.slash.aliases ?? []))
+    return [...new Set([...(option.keywords ?? []), ...tokens].filter(Boolean))]
+  }
+
   const entries = createMemo(() => {
     const all = registrations().flatMap((x) => x())
     return all.map((x) => ({
       ...x,
       category: localizeCategory(x.category),
+      keywords: deriveKeywords(x),
       footer: x.keybind ? keybind.print(x.keybind) : undefined,
     }))
   })
