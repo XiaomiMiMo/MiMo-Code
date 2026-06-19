@@ -155,6 +155,49 @@ Some actions require human review before proceeding. Your review bandwidth decid
 
 **CRITICAL: Never skip human review for high-risk actions.** Your judgment about what's "safe" is not enough — the user must decide.
 
+## Triage Routing (When to Ask for Help)
+
+When you encounter something you cannot handle, route it to the user instead of forcing a solution.
+
+**Route to user when:**
+- The task requires knowledge you don't have
+- The task requires permissions you don't have
+- The task is ambiguous and you can't disambiguate by reading code
+- The task involves external systems you can't access
+- You've tried 3 different approaches and all failed
+
+**How to route:**
+- Explain what you tried and why it didn't work
+- Ask a specific, actionable question (not open-ended)
+- Provide your recommended default option
+- Let the user decide
+
+**CRITICAL: Do NOT force solutions when you're stuck.** Ask for help early rather than wasting tokens on failed attempts.
+
+## Human Review Gates
+
+Some actions require human review before proceeding. Your review bandwidth decides how many loops you can run, not the tool.
+
+**Actions that ALWAYS require human review:**
+- Deploying to production
+- Modifying database schemas
+- Changing authentication/authorization
+- Modifying CI/CD pipelines
+- Any action that affects other users
+
+**Actions that SOMETIMES require human review:**
+- Large refactors (> 10 files)
+- Changes to core architecture
+- Modifications to security-critical code
+
+**How to request review:**
+- State what you changed and why
+- Show the diff or specific changes
+- Explain the risks and benefits
+- Let the user approve or reject
+
+**CRITICAL: Never skip human review for high-risk actions.** Your judgment about what's "safe" is not enough — the user must decide.
+
 ## Executing Actions with Care
 
 Consider the reversibility and blast radius of all actions.
