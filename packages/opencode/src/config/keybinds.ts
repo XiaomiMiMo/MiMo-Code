@@ -65,7 +65,7 @@ const KeybindsSchema = Schema.Struct({
   variant_cycle: keybind("ctrl+t", "Cycle model variants"),
   variant_list: keybind("none", "List model variants"),
   input_clear: keybind("ctrl+c", "Clear input field"),
-  input_paste: keybind("ctrl+v", "Paste from clipboard"),
+  input_paste: keybind("super+v,ctrl+v", "Paste from clipboard"),
   input_submit: keybind("return", "Submit input"),
   input_newline: keybind("shift+return,ctrl+return,alt+return,ctrl+j", "Insert newline in input"),
   input_move_left: keybind("left,ctrl+b", "Move cursor left in input"),
