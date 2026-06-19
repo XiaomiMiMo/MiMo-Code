@@ -5,6 +5,8 @@ import { BusEvent } from "../bus/bus-event"
 import { Config } from "../config"
 import { Skill } from "../skill"
 import { Log } from "../util"
+import { Database, eq, desc } from "../storage"
+import { AutomationTaskTable, AutomationResultTable } from "./automation.sql"
 import type { AutomationTask, WorkItem, AutomationResult } from "./schema"
 
 const log = Log.create({ service: "automation-scheduler" })
@@ -69,6 +71,7 @@ export interface Interface {
   }>
   readonly enqueueWork: (work_item: WorkItem) => Effect.Effect<void>
   readonly pendingWork: () => Effect.Effect<WorkItem[]>
+  readonly results: (task_id?: string, limit?: number) => Effect.Effect<AutomationResult[]>
 }
 
 export class Service extends Context.Service<Service, Interface>()("@opencode/AutomationScheduler") {}
@@ -79,21 +82,57 @@ function parseSchedule(schedule: string): number | null {
     const value = parseInt(intervalMatch[1])
     const unit = intervalMatch[2]
     switch (unit) {
-      case "s":
-        return value * 1000
-      case "m":
-        return value * 60 * 1000
-      case "h":
-        return value * 60 * 60 * 1000
+      case "s": return value * 1000
+      case "m": return value * 60 * 1000
+      case "h": return value * 60 * 60 * 1000
     }
   }
-
   const cronParts = schedule.split(" ")
-  if (cronParts.length === 5) {
-    return 60 * 1000
-  }
-
+  if (cronParts.length === 5) return 60 * 1000
   return null
+}
+
+function ensureTable(): void {
+  const db = Database.Client().$client
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS automation_task (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      description TEXT,
+      schedule TEXT NOT NULL,
+      skill TEXT NOT NULL,
+      enabled INTEGER NOT NULL DEFAULT 1,
+      priority TEXT NOT NULL DEFAULT 'medium',
+      timeout INTEGER,
+      retries INTEGER NOT NULL DEFAULT 0,
+      time_created INTEGER NOT NULL,
+      time_updated INTEGER NOT NULL
+    )
+  `)
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS automation_result (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      task_id TEXT NOT NULL,
+      task_name TEXT NOT NULL DEFAULT '',
+      skill TEXT NOT NULL DEFAULT '',
+      status TEXT NOT NULL,
+      output TEXT,
+      error TEXT,
+      duration_ms INTEGER NOT NULL,
+      executed_at INTEGER NOT NULL,
+      time_created INTEGER NOT NULL,
+      time_updated INTEGER NOT NULL
+    )
+  `)
+}
+
+function saveResult(row: {
+  task_id: string; task_name: string; skill: string; status: "success" | "failure" | "timeout" | "skipped";
+  output: string | null; error: string | null; duration_ms: number; executed_at: number;
+}): void {
+  Database.use((db) =>
+    db.insert(AutomationResultTable).values([row]).run(),
+  )
 }
 
 export const layer: Layer.Layer<Service, never, Bus.Service | Config.Service | Skill.Service> = Layer.effect(
@@ -102,6 +141,8 @@ export const layer: Layer.Layer<Service, never, Bus.Service | Config.Service | S
     const bus = yield* Bus.Service
     const config = yield* Config.Service
     const skill = yield* Skill.Service
+
+    Effect.sync(() => ensureTable()).pipe(Effect.runSync)
 
     const state = yield* Ref.make({
       running: false,
@@ -136,23 +177,25 @@ export const layer: Layer.Layer<Service, never, Bus.Service | Config.Service | S
       }))
 
       try {
-        // 查找技能是否可用
+        // 查找并验证技能
         const skillInfo = yield* skill.get(task.skill)
         if (!skillInfo) {
           throw new Error(`Skill "${task.skill}" not found for task "${task.name}"`)
         }
 
-        log.info("skill found, executing", {
+        log.info("skill found", {
           skill: task.skill,
           location: skillInfo.location,
         })
 
-        // 模拟技能执行（此处为未来实际执行预留接口）
+        // 模拟技能执行（预留扩展点）
         yield* Effect.sleep(Duration.millis(100))
 
         const duration = Date.now() - startTime
         const result: AutomationResult = {
           task_id: task.id,
+          task_name: task.name,
+          skill: task.skill,
           work_item_id: work_item?.id,
           status: "success",
           output: `Task "${task.name}" completed. Skill: ${task.skill}`,
@@ -174,15 +217,22 @@ export const layer: Layer.Layer<Service, never, Bus.Service | Config.Service | S
           duration,
         })
 
+        Effect.sync(() => saveResult({
+          task_id: result.task_id, task_name: result.task_name ?? "", skill: result.skill ?? "",
+          status: result.status, output: result.output ?? null, error: null,
+          duration_ms: result.duration_ms, executed_at: result.executed_at,
+        })).pipe(Effect.runSync)
+
         return result
       } catch (error) {
         const duration = Date.now() - startTime
         const errorMessage = error instanceof Error ? error.message : String(error)
+        const status = task.timeout && duration >= task.timeout ? "timeout" as const : "failure" as const
 
         yield* bus.publish(Event.TaskCompleted, {
           task_id: task.id,
           task_name: task.name,
-          status: "failure",
+          status,
           duration_ms: duration,
           completed_at: Date.now(),
         })
@@ -194,14 +244,24 @@ export const layer: Layer.Layer<Service, never, Bus.Service | Config.Service | S
           duration,
         })
 
-        return {
+        const result: AutomationResult = {
           task_id: task.id,
+          task_name: task.name,
+          skill: task.skill,
           work_item_id: work_item?.id,
-          status: "failure" as const,
+          status,
           error: errorMessage,
           duration_ms: duration,
           executed_at: Date.now(),
         }
+
+        Effect.sync(() => saveResult({
+          task_id: result.task_id, task_name: result.task_name ?? "", skill: result.skill ?? "",
+          status: result.status, output: null, error: result.error ?? null,
+          duration_ms: result.duration_ms, executed_at: result.executed_at,
+        })).pipe(Effect.runSync)
+
+        return result
       } finally {
         yield* Ref.update(state, (s) => {
           const newExecutions = new Set(s.activeExecutions)
@@ -218,21 +278,45 @@ export const layer: Layer.Layer<Service, never, Bus.Service | Config.Service | S
         return { ...s, tasks: newTasks }
       })
 
+      // 持久化到数据库
+      Effect.sync(() => {
+        Database.use((db) =>
+          db.insert(AutomationTaskTable).values({
+            id: task.id,
+            name: task.name,
+            description: task.description ?? null,
+            schedule: task.schedule,
+            skill: task.skill,
+            enabled: task.enabled,
+            priority: task.priority,
+            timeout: task.timeout ?? null,
+            retries: task.retries ?? 0,
+          }).onConflictDoUpdate({
+            target: AutomationTaskTable.id,
+            set: {
+              name: task.name,
+              description: task.description ?? null,
+              schedule: task.schedule,
+              skill: task.skill,
+              enabled: task.enabled,
+              priority: task.priority,
+              timeout: task.timeout ?? null,
+              retries: task.retries ?? 0,
+            },
+          }).run(),
+        )
+      }).pipe(Effect.runSync)
+
       log.info("registered automation task", {
-        task_id: task.id,
-        task_name: task.name,
-        schedule: task.schedule,
-        skill: task.skill,
+        task_id: task.id, task_name: task.name,
+        schedule: task.schedule, skill: task.skill,
       })
 
       const currentState = yield* Ref.get(state)
       if (currentState.running && task.enabled) {
         const interval = parseSchedule(task.schedule)
         if (interval) {
-          const timer = setInterval(() => {
-            Effect.runFork(executeTask(task))
-          }, interval)
-
+          const timer = setInterval(() => Effect.runFork(executeTask(task)), interval)
           yield* Ref.update(state, (s) => {
             const newIntervals = new Map(s.intervals)
             newIntervals.set(task.id, timer)
@@ -253,33 +337,26 @@ export const layer: Layer.Layer<Service, never, Bus.Service | Config.Service | S
           return { ...s, intervals: newIntervals }
         })
       }
-
       yield* Ref.update(state, (s) => {
         const newTasks = new Map(s.tasks)
         newTasks.delete(task_id)
         return { ...s, tasks: newTasks }
       })
-
+      Effect.sync(() => {
+        Database.use((db) => db.delete(AutomationTaskTable).where(eq(AutomationTaskTable.id, task_id)).run())
+      }).pipe(Effect.runSync)
       log.info("unregistered automation task", { task_id })
     })
 
     const start = Effect.fn("AutomationScheduler.start")(function* () {
       const currentState = yield* Ref.get(state)
-      if (currentState.running) {
-        log.warn("scheduler already running")
-        return
-      }
-
+      if (currentState.running) { log.warn("scheduler already running"); return }
       yield* Ref.update(state, (s) => ({ ...s, running: true }))
-
       for (const task of currentState.tasks.values()) {
         if (task.enabled) {
           const interval = parseSchedule(task.schedule)
           if (interval) {
-            const timer = setInterval(() => {
-              Effect.runFork(executeTask(task))
-            }, interval)
-
+            const timer = setInterval(() => Effect.runFork(executeTask(task)), interval)
             yield* Ref.update(state, (s) => {
               const newIntervals = new Map(s.intervals)
               newIntervals.set(task.id, timer)
@@ -288,56 +365,34 @@ export const layer: Layer.Layer<Service, never, Bus.Service | Config.Service | S
           }
         }
       }
-
       yield* bus.publish(Event.SchedulerStateChanged, {
-        running: true,
-        active_tasks: currentState.tasks.size,
-        pending_work: currentState.pendingWork.length,
-        last_cycle_at: Date.now(),
+        running: true, active_tasks: currentState.tasks.size,
+        pending_work: currentState.pendingWork.length, last_cycle_at: Date.now(),
       })
-
-      log.info("automation scheduler started", {
-        task_count: currentState.tasks.size,
-      })
+      log.info("automation scheduler started", { task_count: currentState.tasks.size })
     })
 
     const stop = Effect.fn("AutomationScheduler.stop")(function* () {
       const currentState = yield* Ref.get(state)
-
-      for (const timer of currentState.intervals.values()) {
-        clearInterval(timer)
-      }
-
-      yield* Ref.update(state, (s) => ({
-        ...s,
-        running: false,
-        intervals: new Map(),
-      }))
-
+      for (const timer of currentState.intervals.values()) clearInterval(timer)
+      yield* Ref.update(state, (s) => ({ ...s, running: false, intervals: new Map() }))
       yield* bus.publish(Event.SchedulerStateChanged, {
-        running: false,
-        active_tasks: 0,
-        pending_work: currentState.pendingWork.length,
-        last_cycle_at: Date.now(),
+        running: false, active_tasks: 0,
+        pending_work: currentState.pendingWork.length, last_cycle_at: Date.now(),
       })
-
       log.info("automation scheduler stopped")
     })
 
     const trigger = Effect.fn("AutomationScheduler.trigger")(function* (
-      task_id: string,
-      work_item?: WorkItem,
+      task_id: string, work_item?: WorkItem,
     ) {
       const currentState = yield* Ref.get(state)
       const task = currentState.tasks.get(task_id)
-      if (!task) {
-        throw new Error(`Task ${task_id} not found`)
-      }
-
+      if (!task) throw new Error(`Task ${task_id} not found`)
       return yield* executeTask(task, work_item)
     })
 
-    const status = Effect.fn("AutomationScheduler.status")(function* () {
+    const getStatus = Effect.fn("AutomationScheduler.status")(function* () {
       const currentState = yield* Ref.get(state)
       return {
         running: currentState.running,
@@ -349,56 +404,73 @@ export const layer: Layer.Layer<Service, never, Bus.Service | Config.Service | S
 
     const enqueueWork = Effect.fn("AutomationScheduler.enqueueWork")(function* (work_item: WorkItem) {
       yield* Ref.update(state, (s) => ({
-        ...s,
-        pendingWork: [...s.pendingWork, work_item],
+        ...s, pendingWork: [...s.pendingWork, work_item],
       }))
-
       yield* bus.publish(Event.WorkDiscovered, {
-        work_item: {
-          id: work_item.id,
-          type: work_item.type,
-          source: work_item.source,
-          title: work_item.title,
-          priority: work_item.priority,
-        },
+        work_item: { id: work_item.id, type: work_item.type, source: work_item.source, title: work_item.title, priority: work_item.priority },
         discovered_at: work_item.discovered_at,
       })
-
-      log.info("work item enqueued", {
-        work_item_id: work_item.id,
-        type: work_item.type,
-        priority: work_item.priority,
-      })
+      log.info("work item enqueued", { work_item_id: work_item.id, type: work_item.type, priority: work_item.priority })
     })
 
-    const pendingWork = Effect.fn("AutomationScheduler.pendingWork")(function* () {
+    const pendingWorkAccessor = Effect.fn("AutomationScheduler.pendingWork")(function* () {
       const currentState = yield* Ref.get(state)
       return currentState.pendingWork
     })
 
-    // 从配置加载自动化任务
+    const getResults = Effect.fn("AutomationScheduler.results")(function* (
+      task_id?: string, limit = 50,
+    ) {
+      return yield* Effect.sync(() =>
+        Database.use((db) => {
+          const query = db.select().from(AutomationResultTable)
+          if (task_id) {
+            return query.where(eq(AutomationResultTable.task_id, task_id))
+              .orderBy(desc(AutomationResultTable.executed_at)).limit(limit).all()
+          }
+          return query.orderBy(desc(AutomationResultTable.executed_at)).limit(limit).all()
+        }),
+      ) as Effect.Effect<AutomationResult[]>
+    })
+
+    // ---- 初始化 ----
+
+    // 从数据库加载已注册任务
+    const dbRows = Effect.sync(() =>
+      Database.use((db) => db.select().from(AutomationTaskTable).all()),
+    ).pipe(Effect.runSync)
+    for (const row of dbRows) {
+      const task: AutomationTask = {
+        id: row.id, name: row.name, description: row.description ?? undefined,
+        schedule: row.schedule, skill: row.skill, enabled: row.enabled,
+        priority: row.priority, timeout: row.timeout ?? undefined, retries: row.retries,
+      }
+      yield* Ref.update(state, (s) => {
+        const newTasks = new Map(s.tasks); newTasks.set(task.id, task)
+        return { ...s, tasks: newTasks }
+      })
+    }
+
+    // 从配置加载任务（仅数据库中不存在时注册）
     const cfg = yield* config.get()
     const autoCfg = cfg.automation
     if (autoCfg?.tasks) {
       for (const taskDef of autoCfg.tasks) {
-        const task: AutomationTask = {
-          id: taskDef.id,
-          name: taskDef.name,
-          description: taskDef.description,
-          schedule: taskDef.schedule,
-          skill: taskDef.skill,
-          enabled: taskDef.enabled ?? true,
-          priority: taskDef.priority ?? "medium",
-          timeout: taskDef.timeout,
-          retries: taskDef.retries ?? 0,
+        const cur = yield* Ref.get(state)
+        if (!cur.tasks.has(taskDef.id)) {
+          yield* register({
+            id: taskDef.id, name: taskDef.name, description: taskDef.description,
+            schedule: taskDef.schedule, skill: taskDef.skill,
+            enabled: taskDef.enabled ?? true, priority: taskDef.priority ?? "medium",
+            timeout: taskDef.timeout, retries: taskDef.retries ?? 0,
+          })
         }
-        yield* register(task)
       }
+    }
 
-      // 如果配置启用，自动启动调度器
-      if (autoCfg.enabled) {
-        yield* start()
-      }
+    // 配置启用则自动启动
+    if (autoCfg?.enabled) {
+      yield* start()
     }
 
     return Service.of({
@@ -407,9 +479,10 @@ export const layer: Layer.Layer<Service, never, Bus.Service | Config.Service | S
       start,
       stop,
       trigger,
-      status,
+      status: getStatus,
       enqueueWork,
-      pendingWork,
+      pendingWork: pendingWorkAccessor,
+      results: getResults,
     })
   }),
 )
@@ -419,4 +492,3 @@ export const defaultLayer = layer.pipe(
   Layer.provide(Bus.layer),
   Layer.provide(Skill.defaultLayer),
 )
-

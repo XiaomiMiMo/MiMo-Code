@@ -2,10 +2,7 @@ import { cmd } from "./cmd"
 import { Effect } from "effect"
 import { Instance } from "../../project/instance"
 import { AppRuntime } from "../../effect/app-runtime"
-import { Config } from "../../config"
-import { SchedulerService, schedulerLayer } from "../../automation"
-import { Bus } from "../../bus"
-import { Skill } from "../../skill"
+import { Service as SchedulerService } from "../../automation/scheduler"
 import type { AutomationTask } from "../../automation/schema"
 import { UI } from "../ui"
 import * as prompts from "@clack/prompts"
@@ -40,7 +37,7 @@ export const AutomationStatusCommand = cmd({
           Effect.gen(function* () {
             const scheduler = yield* SchedulerService
             return yield* scheduler.status()
-          }).pipe(Effect.provide(schedulerLayer)),
+          }),
         )
 
         prompts.log.info(`运行状态: ${result.running ? "✅ 运行中" : "⏹️ 已停止"}`)
@@ -74,7 +71,7 @@ export const AutomationListCommand = cmd({
           Effect.gen(function* () {
             const scheduler = yield* SchedulerService
             return yield* scheduler.status()
-          }).pipe(Effect.provide(schedulerLayer)),
+          }),
         )
 
         if (result.registered_tasks.length === 0) {
@@ -112,7 +109,7 @@ export const AutomationStartCommand = cmd({
           Effect.gen(function* () {
             const scheduler = yield* SchedulerService
             yield* scheduler.start()
-          }).pipe(Effect.provide(schedulerLayer)),
+          }),
         )
 
         prompts.log.success("自动化调度器已启动")
@@ -136,7 +133,7 @@ export const AutomationStopCommand = cmd({
           Effect.gen(function* () {
             const scheduler = yield* SchedulerService
             yield* scheduler.stop()
-          }).pipe(Effect.provide(schedulerLayer)),
+          }),
         )
 
         prompts.log.success("自动化调度器已停止")
@@ -166,7 +163,7 @@ export const AutomationTriggerCommand = cmd({
           Effect.gen(function* () {
             const scheduler = yield* SchedulerService
             return yield* scheduler.trigger(args["task-id"])
-          }).pipe(Effect.provide(schedulerLayer)),
+          }),
         )
 
         prompts.log.info(`任务: ${result.task_id}`)
@@ -232,7 +229,7 @@ export const AutomationRegisterCommand = cmd({
           Effect.gen(function* () {
             const scheduler = yield* SchedulerService
             yield* scheduler.register(task)
-          }).pipe(Effect.provide(schedulerLayer)),
+          }),
         )
 
         prompts.log.success(`任务 "${args.name}" 已注册`)
@@ -262,7 +259,7 @@ export const AutomationUnregisterCommand = cmd({
           Effect.gen(function* () {
             const scheduler = yield* SchedulerService
             yield* scheduler.unregister(args["task-id"])
-          }).pipe(Effect.provide(schedulerLayer)),
+          }),
         )
 
         prompts.log.success(`任务 "${args["task-id"]}" 已注销`)

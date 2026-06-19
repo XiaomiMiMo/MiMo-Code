@@ -43,6 +43,8 @@ export type WorkItem = z.infer<typeof WorkItem>
 export const AutomationResult = z
   .object({
     task_id: z.string(),
+    task_name: z.string().optional(),
+    skill: z.string().optional(),
     work_item_id: z.string().optional(),
     status: z.enum(["success", "failure", "timeout", "skipped"]),
     output: z.string().optional(),
