@@ -25,12 +25,12 @@ const log = Log.create({ service: "actor.spawn" })
 
 /**
  * Cap on preStop ReAct re-entries per spawn — prevents infinite loops.
- * TODO: lift to mimocode.json config (e.g. actor.maxPreReact) and add per-hook
- * `maxContinue` clamp at registration. Plan: platform cap = hard ceiling, hook
- * cap may only narrow, never widen. See spec Future work.
+ * 计划迁移至 mimocode.json config（如 actor.maxPreReact）并添加逐钩子
+ * maxContinue 夹具。平台约束 = 硬天花板，钩子上限只能缩窄不能放宽。
+ * 参见 spec Future work。
  */
 export const MAX_PRE_REACT = 3
-/** Cap on postStop ReAct re-entries per spawn. See MAX_PRE_REACT TODO. */
+/** Cap on postStop ReAct re-entries per spawn. */
 export const MAX_POST_REACT = 3
 const RETURN_FORMAT_INSTRUCTION = `
 

@@ -42,6 +42,7 @@ import { ConfigProvider } from "./provider"
 import { ConfigServer } from "./server"
 import { ConfigSkills } from "./skills"
 import { ConfigVariable } from "./variable"
+import { HooksConfig } from "./hooks"
 import { Npm } from "@/npm"
 
 const log = Log.create({ service: "config" })
@@ -88,6 +89,7 @@ export type Layout = ConfigLayout.Layout
 const AgentRef = Schema.Any.annotate({ [ZodOverride]: ConfigAgent.Info })
 const PermissionRef = Schema.Any.annotate({ [ZodOverride]: ConfigPermission.Info })
 const LogLevelRef = Schema.Any.annotate({ [ZodOverride]: Log.Level })
+const HooksRef = Schema.Any.annotate({ [ZodOverride]: HooksConfig })
 
 const PositiveInt = Schema.Number.check(Schema.isInt()).check(Schema.isGreaterThan(0))
 const NonNegativeInt = Schema.Number.check(Schema.isInt()).check(Schema.isGreaterThanOrEqualTo(0))
@@ -416,6 +418,65 @@ const InfoSchema = Schema.Struct({
       }),
     }),
   ).annotate({ description: "Dynamic workflow runtime settings." }),
+  hooks: Schema.optional(HooksRef).annotate({
+    description:
+      "Hooks configuration for run loop lifecycle events (SessionStart, PreToolUse, PostToolUse, etc.). Each hook can run commands, prompts, or agent evaluations.",
+  }),
+  automation: Schema.optional(
+    Schema.Struct({
+      enabled: Schema.optional(Schema.Boolean).annotate({
+        description: "Enable or disable the automation scheduler (default: false)",
+      }),
+      max_concurrent: Schema.optional(Schema.Number).annotate({
+        description: "Maximum concurrent task executions (default: 3)",
+      }),
+      default_timeout: Schema.optional(Schema.Number).annotate({
+        description: "Default task timeout in milliseconds (default: 300000)",
+      }),
+      retry_delay: Schema.optional(Schema.Number).annotate({
+        description: "Delay between retries in milliseconds (default: 5000)",
+      }),
+      work_discovery_interval: Schema.optional(Schema.Number).annotate({
+        description: "Work discovery polling interval in milliseconds (default: 300000)",
+      }),
+      ci_monitoring: Schema.optional(Schema.Boolean).annotate({
+        description: "Enable CI failure monitoring (default: true)",
+      }),
+      issue_monitoring: Schema.optional(Schema.Boolean).annotate({
+        description: "Enable issue monitoring (default: true)",
+      }),
+      commit_monitoring: Schema.optional(Schema.Boolean).annotate({
+        description: "Enable commit monitoring (default: true)",
+      }),
+      tasks: Schema.optional(
+        Schema.mutable(
+          Schema.Array(
+            Schema.Struct({
+              id: Schema.String,
+              name: Schema.String,
+              description: Schema.optional(Schema.String),
+              schedule: Schema.String.annotate({
+                description: "Cron expression or interval string (e.g. '5m', '1h')",
+              }),
+              skill: Schema.String.annotate({ description: "Skill name to invoke" }),
+              enabled: Schema.optional(Schema.Boolean).annotate({
+                description: "Whether this task is enabled (default: true)",
+              }),
+              priority: Schema.optional(
+                Schema.Literals(["low", "medium", "high"]),
+              ).annotate({ description: "Task priority (default: medium)" }),
+              timeout: Schema.optional(Schema.Number).annotate({
+                description: "Task timeout in milliseconds",
+              }),
+              retries: Schema.optional(Schema.Number).annotate({
+                description: "Number of retries on failure (default: 0, max: 5)",
+              }),
+            }),
+          ),
+        ),
+      ).annotate({ description: "Configured automation tasks" }),
+    }),
+  ).annotate({ description: "Automation scheduler configuration" }),
 })
 
 // Schema.Struct produces readonly types by default, but the service code
@@ -451,6 +512,7 @@ export type Info = z.output<typeof Info> & {
   // with the file and scope it came from so later runtime code can make location-sensitive decisions.
   plugin_origins?: ConfigPlugin.Origin[]
   mcp_origins?: Record<string, ConfigMCP.Origin>
+  hooks?: z.infer<typeof HooksConfig>
 }
 
 type State = {

@@ -24,6 +24,7 @@ import { ChildProcessSpawner } from "effect/unstable/process/ChildProcessSpawner
 import * as BashInteractive from "./bash-interactive"
 
 const MAX_METADATA_LENGTH = 30_000
+const METADATA_UPDATE_INTERVAL = 20 // 每 20 块更新一次元数据，减少 SQLite 写入
 const DEFAULT_TIMEOUT = Flag.MIMOCODE_EXPERIMENTAL_BASH_DEFAULT_TIMEOUT_MS || 2 * 60 * 1000
 const PS = new Set(["powershell", "pwsh"])
 const CWD = new Set(["cd", "push-location", "set-location"])
@@ -352,7 +353,9 @@ const parser = lazy(async () => {
   return { bash, ps }
 })
 
-// TODO: we may wanna rename this tool so it works better on other shells
+// 工具名 "bash" 源于历史原因（从 Claude Code 分叉而来），
+// 实际在 Windows 上自动切换到 cmd/powershell，zsh 上使用 zsh。
+// 后续版本可考虑改名为 "terminal" 以跨 shell，但需提供别名保持向后兼容。
 export const BashTool = Tool.define(
   "bash",
   Effect.gen(function* () {
@@ -457,6 +460,7 @@ export const BashTool = Tool.define(
       let cut = false
       let expired = false
       let aborted = false
+      let chunkCount = 0
 
       yield* ctx.metadata({
         metadata: {
@@ -509,12 +513,16 @@ export const BashTool = Tool.define(
                 }
               }
 
-              return ctx.metadata({
-                metadata: {
-                  output: last,
-                  description: input.description,
-                },
-              })
+              chunkCount++
+              if (chunkCount % METADATA_UPDATE_INTERVAL === 0) {
+                return ctx.metadata({
+                  metadata: {
+                    output: last,
+                    description: input.description,
+                  },
+                })
+              }
+              return Effect.void
             }),
           )
 

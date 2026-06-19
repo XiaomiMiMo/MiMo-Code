@@ -1725,7 +1725,7 @@ function getResponsesModelConfig(modelId: string): ResponsesModelConfig {
   }
 }
 
-// TODO AI SDK 6: use optional here instead of nullish
+// AI SDK 6 后上游不再传入 null，可将 .nullish() 收紧为 .optional()
 const openaiResponsesProviderOptionsSchema = z.object({
   include: z
     .array(z.enum(["reasoning.encrypted_content", "file_search_call.results", "message.output_text.logprobs"]))

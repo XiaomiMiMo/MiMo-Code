@@ -8,7 +8,7 @@ import { Log } from "../util"
 import { SessionRevert } from "./revert"
 import * as Session from "./session"
 import { Agent } from "../agent/agent"
-import { SYSTEM_SPAWNED_AGENT_TYPES } from "@/agent/config"
+import { SYSTEM_SPAWNED_AGENT_TYPES, AGENT_PLAN, AGENT_COMPOSE } from "@/agent/config"
 import { Provider } from "../provider"
 import { ModelID, ProviderID } from "../provider/schema"
 import { type Tool as AITool, type ModelMessage, tool, jsonSchema, type ToolExecutionOptions, asSchema } from "ai"
@@ -28,6 +28,8 @@ import { TuiEvent } from "@/cli/cmd/tui/event"
 import { Plugin } from "../plugin"
 import BUILD_SWITCH from "../session/prompt/build-switch.txt"
 import MAX_STEPS from "../session/prompt/max-steps.txt"
+import PLAN_MODE from "../session/prompt/plan-mode.txt"
+import { detectProtocolLevel } from "./protocol-level"
 import PROMPT_COMPOSE from "../session/prompt/compose.txt"
 import {
   RECOVERY_PROMPT_MILD,
@@ -44,6 +46,12 @@ import { MCP } from "../mcp"
 import { LSP } from "../lsp"
 import { Flag } from "../flag/flag"
 import { ulid } from "ulid"
+import { generateToolSummaries, formatToolSummariesForPrompt } from "../tool/deferred-descriptions"
+import {
+  scanRules as scanPathRules,
+  filterRulesByPath as filterPathRules,
+  formatRulesForPrompt,
+} from "./path-scoped-rules"
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process"
 import * as CrossSpawnSpawner from "@/effect/cross-spawn-spawner"
 import * as Stream from "effect/Stream"
@@ -57,6 +65,8 @@ import { buildLLMRequestPrefix } from "./llm-request-prefix"
 import { prefixCaptureRef } from "./prefix-capture-ref"
 import { spawnRef } from "@/actor/spawn-ref"
 import { Inbox } from "@/inbox"
+import { executeHooks } from "../config/hook-executor"
+import type { HookResult } from "../config/hooks"
 import { sessionPromptRef } from "@/inbox/inbox-ref"
 import { Tool } from "@/tool"
 import { Permission } from "@/permission"
@@ -106,7 +116,7 @@ export function recallHintLines(toolCfg: ToolStyleConfig | undefined): string[] 
  * Cap on goal-driven main-loop re-entries per turn — the safety valve against
  * a never-satisfiable condition burning tokens forever. Higher than spawned
  * actors' MAX_PRE_REACT (=3) because main-session goals are usually larger.
- * TODO: lift to mimocode.json config (e.g. session.maxGoalReact).
+ * 计划迁移至 mimocode.json config（如 session.maxGoalReact）。
  */
 const MAX_GOAL_REACT = 12
 
@@ -453,128 +463,103 @@ export const layer = Layer.effect(
       return stripped.length > 120 ? stripped.substring(0, 117) + "..." : stripped
     })
 
-    const insertReminders = Effect.fn("SessionPrompt.insertReminders")(function* (input: {
+    // Compose 模式：向首个 compose user message 注入 compose prompt + skills block
+    const injectComposePrompt = Effect.fn("SessionPrompt.injectComposePrompt")(function* (input: {
+      messages: MessageV2.WithParts[]
+    }) {
+      const composeModeMsg = input.messages.find(
+        (msg) => msg.info.role === "user" && msg.info.agent === AGENT_COMPOSE,
+      )
+      if (!composeModeMsg) return
+
+      // 防止重复注入：检查是否已经注入过 compose prompt
+      const alreadyInjected = composeModeMsg.parts.some(
+        (p) => p.type === "text" && p.text.includes(PROMPT_COMPOSE.slice(0, 50)),
+      )
+      if (alreadyInjected) return
+
+      const composeModeBlock = composeSkillsBlock()
+      composeModeMsg.parts.unshift({
+        id: PartID.ascending(),
+        messageID: composeModeMsg.info.id,
+        sessionID: composeModeMsg.info.sessionID,
+        type: "text",
+        text: PROMPT_COMPOSE + (composeModeBlock ? "\n\n" + composeModeBlock : ""),
+        synthetic: true,
+      })
+    })
+
+    // Plan → Build 切换：当上一个 assistant 是 plan agent 时，注入 build switch 提示
+    const injectBuildSwitch = Effect.fn("SessionPrompt.injectBuildSwitch")(function* (input: {
       messages: MessageV2.WithParts[]
       agent: Agent.Info
       session: Session.Info
     }) {
-      const userMessage = input.messages.findLast((msg) => msg.info.role === "user")
-      if (!userMessage) return input.messages
-
-      const composeModeMsg = input.messages.find(
-        (msg) => msg.info.role === "user" && msg.info.agent === "compose",
-      )
-      if (composeModeMsg) {
-        const composeModeBlock = composeSkillsBlock()
-        composeModeMsg.parts.unshift({
-          id: PartID.ascending(),
-          messageID: composeModeMsg.info.id,
-          sessionID: composeModeMsg.info.sessionID,
-          type: "text",
-          text: PROMPT_COMPOSE + (composeModeBlock ? "\n\n" + composeModeBlock : ""),
-          synthetic: true,
-        })
-      }
-
+      if (input.agent.name === AGENT_PLAN) return
       const assistantMessage = input.messages.findLast((msg) => msg.info.role === "assistant")
-      if (input.agent.name !== "plan" && assistantMessage?.info.agent === "plan") {
-        const plan = Session.plan(input.session)
-        if (!(yield* fsys.existsSafe(plan))) return input.messages
-        const part = yield* sessions.updatePart({
-          id: PartID.ascending(),
-          messageID: userMessage.info.id,
-          sessionID: userMessage.info.sessionID,
-          type: "text",
-          text: `${BUILD_SWITCH}\n\nA plan file exists at ${plan}. You should execute on the plan defined within it`,
-          synthetic: true,
-        })
-        userMessage.parts.push(part)
-        return input.messages
-      }
+      if (assistantMessage?.info.agent !== AGENT_PLAN) return
 
-      if (input.agent.name !== "plan" || assistantMessage?.info.agent === "plan") return input.messages
+      const userMessage = input.messages.findLast((msg) => msg.info.role === "user")
+      if (!userMessage) return
 
       const plan = Session.plan(input.session)
-      const exists = yield* fsys.existsSafe(plan)
-      if (!exists) yield* fsys.ensureDir(path.dirname(plan)).pipe(Effect.catch(Effect.die))
+      if (!(yield* fsys.existsSafe(plan))) return
+
       const part = yield* sessions.updatePart({
         id: PartID.ascending(),
         messageID: userMessage.info.id,
         sessionID: userMessage.info.sessionID,
         type: "text",
-        text: `<system-reminder>
-Plan mode is active. The user indicated that they do not want you to execute yet -- you MUST NOT make any edits (with the exception of the plan file mentioned below), run any non-readonly tools (including changing configs or making commits), or otherwise make any changes to the system. This supersedes any other instructions you have received.
-
-## Plan File Info:
-${exists ? `A plan file already exists at ${plan}. You can read it and make incremental edits using the edit tool.` : `No plan file exists yet. You should create your plan at ${plan} using the write tool.`}
-You should build your plan incrementally by writing to or editing this file. NOTE that this is the only file you are allowed to edit - other than this you are only allowed to take READ-ONLY actions.
-
-## Plan Workflow
-
-### Phase 1: Initial Understanding
-Goal: Gain a comprehensive understanding of the user's request by reading through code and asking them questions. Critical: In this phase you should only use the explore subagent type.
-
-1. Focus on understanding the user's request and the code associated with their request
-
-2. **Launch up to 3 explore agents IN PARALLEL** (single message, multiple tool calls) to efficiently explore the codebase.
- - Use 1 agent when the task is isolated to known files, the user provided specific file paths, or you're making a small targeted change.
- - Use multiple agents when: the scope is uncertain, multiple areas of the codebase are involved, or you need to understand existing patterns before planning.
- - Quality over quantity - 3 agents maximum, but you should try to use the minimum number of agents necessary (usually just 1)
- - If using multiple agents: Provide each agent with a specific search focus or area to explore. Example: One agent searches for existing implementations, another explores related components, a third investigates testing patterns
-
-3. After exploring the code, use the question tool to clarify ambiguities in the user request up front.
-
-### Phase 2: Design
-Goal: Design an implementation approach.
-
-Launch general agent(s) to design the implementation based on the user's intent and your exploration results from Phase 1.
-
-You can launch up to 1 agent(s) in parallel.
-
-**Guidelines:**
-- **Default**: Launch at least 1 Plan agent for most tasks - it helps validate your understanding and consider alternatives
-- **Skip agents**: Only for truly trivial tasks (typo fixes, single-line changes, simple renames)
-
-Examples of when to use multiple agents:
-- The task touches multiple parts of the codebase
-- It's a large refactor or architectural change
-- There are many edge cases to consider
-- You'd benefit from exploring different approaches
-
-Example perspectives by task type:
-- New feature: simplicity vs performance vs maintainability
-- Bug fix: root cause vs workaround vs prevention
-- Refactoring: minimal change vs clean architecture
-
-In the agent prompt:
-- Provide comprehensive background context from Phase 1 exploration including filenames and code path traces
-- Describe requirements and constraints
-- Request a detailed implementation plan
-
-### Phase 3: Review
-Goal: Review the plan(s) from Phase 2 and ensure alignment with the user's intentions.
-1. Read the critical files identified by agents to deepen your understanding
-2. Ensure that the plans align with the user's original request
-3. Use question tool to clarify any remaining questions with the user
-
-### Phase 4: Final Plan
-Goal: Write your final plan to the plan file (the only file you can edit).
-- Include only your recommended approach, not all alternatives
-- Ensure that the plan file is concise enough to scan quickly, but detailed enough to execute effectively
-- Include the paths of critical files to be modified
-- Include a verification section describing how to test the changes end-to-end (run the code, use MCP tools, run tests)
-
-### Phase 5: Call plan_exit tool
-At the very end of your turn, once you have asked the user questions and are happy with your final plan file - you should always call plan_exit to indicate to the user that you are done planning.
-This is critical - your turn should only end with either asking the user a question or calling plan_exit. Do not stop unless it's for these 2 reasons.
-
-**Important:** Use question tool to clarify requirements/approach, use plan_exit to request plan approval. Do NOT use question tool to ask "Is this plan okay?" - that's what plan_exit does.
-
-NOTE: At any point in time through this workflow you should feel free to ask the user questions or clarifications. Don't make large assumptions about user intent. The goal is to present a well researched plan to the user, and tie any loose ends before implementation begins.
-</system-reminder>`,
+        text: `${BUILD_SWITCH}\n\nA plan file exists at ${plan}. You should execute on the plan defined within it`,
         synthetic: true,
       })
       userMessage.parts.push(part)
+    })
+
+    // Plan 模式：进入 plan agent 时注入 plan mode 提示
+    const injectPlanMode = Effect.fn("SessionPrompt.injectPlanMode")(function* (input: {
+      messages: MessageV2.WithParts[]
+      agent: Agent.Info
+      session: Session.Info
+    }) {
+      if (input.agent.name !== AGENT_PLAN) return
+      const assistantMessage = input.messages.findLast((msg) => msg.info.role === "assistant")
+      if (assistantMessage?.info.agent === AGENT_PLAN) return
+
+      const userMessage = input.messages.findLast((msg) => msg.info.role === "user")
+      if (!userMessage) return
+
+      const plan = Session.plan(input.session)
+      const exists = yield* fsys.existsSafe(plan)
+      if (!exists) yield* fsys.ensureDir(path.dirname(plan)).pipe(Effect.catch(Effect.die))
+
+      const part = yield* sessions.updatePart({
+        id: PartID.ascending(),
+        messageID: userMessage.info.id,
+        sessionID: userMessage.info.sessionID,
+        type: "text",
+        text: PLAN_MODE.replace(
+          "{{PLAN_FILE_INFO}}",
+          exists
+            ? `A plan file already exists at ${plan}. You can read it and make incremental edits using the edit tool.`
+            : `No plan file exists yet. You should create your plan at ${plan} using the write tool.`,
+        ).replace(
+          "{{PROTOCOL_NOTE}}",
+          "",
+        ),
+        synthetic: true,
+      })
+      userMessage.parts.push(part)
+    })
+
+    const insertReminders = Effect.fn("SessionPrompt.insertReminders")(function* (input: {
+      messages: MessageV2.WithParts[]
+      agent: Agent.Info
+      session: Session.Info
+    }) {
+      yield* injectComposePrompt(input)
+      yield* injectBuildSwitch(input)
+      yield* injectPlanMode(input)
       return input.messages
     })
 
@@ -690,6 +675,32 @@ NOTE: At any point in time through this workflow you should feel free to ask the
                   { tool: item.id, sessionID: ctx.sessionID, callID: ctx.callID },
                   beforeOutput,
                 )
+
+                // Execute user-configured PreToolUse hooks
+                const preToolCfg = yield* config.get()
+                const preToolResult = yield* executeHooks(
+                  "PreToolUse",
+                  preToolCfg.hooks,
+                  { tool: item.id, args, sessionID: ctx.sessionID },
+                  item.id,
+                ).pipe(Effect.catch(() => Effect.succeed({} as HookResult)))
+                if (preToolResult.additionalContext) {
+                  // Inject pre-tool context as metadata
+                  beforeOutput.args = { ...beforeOutput.args, _hookContext: preToolResult.additionalContext }
+                }
+                if (preToolResult.updatedInput) {
+                  beforeOutput.args = { ...beforeOutput.args, ...preToolResult.updatedInput }
+                }
+                if (preToolResult.blocked) {
+                  const blockOutput = {
+                    title: "Blocked by hook",
+                    output: preToolResult.blockReason || "Tool call blocked by PreToolUse hook",
+                    metadata: { blocked: true, reason: preToolResult.blockReason },
+                  }
+                  yield* input.processor.completeToolCall(options.toolCallId, blockOutput)
+                  return blockOutput
+                }
+
                 if (beforeOutput.cancel) {
                   const cancelOutput = {
                     title: "Cancelled",
@@ -730,6 +741,23 @@ NOTE: At any point in time through this workflow you should feel free to ask the
                   { tool: item.id, sessionID: ctx.sessionID, callID: ctx.callID, args: beforeOutput.args },
                   output,
                 )
+
+                // Execute user-configured PostToolUse hooks
+                const postToolCfg = yield* config.get()
+                const postToolResult = yield* executeHooks(
+                  "PostToolUse",
+                  postToolCfg.hooks,
+                  { tool: item.id, args: beforeOutput.args, output, sessionID: ctx.sessionID },
+                  item.id,
+                ).pipe(Effect.catch(() => Effect.succeed({} as HookResult)))
+                if (postToolResult.additionalContext) {
+                  // Append hook context to tool output
+                  output.output = output.output + "\n\n" + postToolResult.additionalContext
+                }
+                if (postToolResult.updatedOutput) {
+                  output.output = postToolResult.updatedOutput
+                }
+
                 if (
                   (item.id === "write" || item.id === "edit") &&
                   beforeOutput.args?.filePath &&
@@ -1297,12 +1325,8 @@ NOTE: At any point in time through this workflow you should feel free to ask the
     })
 
     const lastModel = Effect.fnUntraced(function* (sessionID: SessionID) {
-      const match = yield* sessions.findMessage(
-        sessionID,
-        (m) => m.info.role === "user" && !!m.info.model,
-        { agentID: "*" },
-      )
-      if (Option.isSome(match) && match.value.info.role === "user") return match.value.info.model
+      const model = MessageV2.findLastUserModel(sessionID)
+      if (model) return model
       return yield* provider.defaultModel()
     })
 
@@ -1791,6 +1815,11 @@ NOTE: At any point in time through this workflow you should feel free to ask the
         // Skip one overflow check so the model can respond on the trimmed context;
         // its new assistant message will carry accurate tokens for the next check.
         let skipOverflowCheck = false
+        // Consecutive tool-only steps counter (reading loop detection)
+        // When model reads files without producing user-facing text, increment.
+        // Reset when model produces text output. Inject nudge at threshold.
+        let consecutiveToolOnlySteps = 0
+        const CONSECUTIVE_TOOL_ONLY_THRESHOLD = 5
 
         const textLoopBuffer: string[] = []
         let textLoopRecoveryAttempts = 0
@@ -1842,9 +1871,14 @@ NOTE: At any point in time through this workflow you should feel free to ask the
             synthetic: true,
             text: [
               "<system-reminder>",
-              "The previous assistant response hit the model output token limit before completing.",
-              "Continue the same task from the exact point where it stopped.",
-              "Do not restart, recap, or repeat prior reasoning. Keep reasoning concise, prefer concrete tool calls or final output, and only stop when the user's task is complete or genuinely blocked.",
+              "Your previous response hit the output token limit and was truncated.",
+              "Continue the task from the exact point where you stopped.",
+              "CRITICAL RULES:",
+              "- Do NOT restart, recap, or repeat any reasoning already done.",
+              "- Do NOT re-read files you already have in context.",
+              "- Pick up exactly where you left off — the next tool call or final answer.",
+              "- Prefer concrete action (tool calls, code output) over more reasoning.",
+              "- Stop only when the user's task is genuinely complete or you are blocked.",
               "</system-reminder>",
             ].join("\n"),
           } satisfies MessageV2.TextPart)
@@ -2024,9 +2058,13 @@ NOTE: At any point in time through this workflow you should feel free to ask the
             text: [
               "<system-reminder>",
               `Your goal is not yet satisfied: "${active.condition}".`,
-              "A judge reviewed the transcript and reported what is still missing:",
+              "A judge reviewed the transcript and found what is still missing:",
               verdict.reason,
-              "Keep working toward the goal. Do not stop until it is genuinely met or impossible.",
+              "You MUST continue working toward this goal. Specific actions required:",
+              "1. Address the exact gaps identified by the judge above.",
+              "2. Do NOT repeat work that has already been done correctly.",
+              "3. Do NOT stop until the goal is genuinely met or you have a concrete reason it's impossible.",
+              "Stopping now would be incomplete — the user is waiting for this to be finished.",
               "</system-reminder>",
             ].join("\n"),
           } satisfies MessageV2.TextPart)
@@ -2075,9 +2113,11 @@ NOTE: At any point in time through this workflow you should feel free to ask the
             synthetic: true,
             text: [
               "<system-reminder>",
-              "Your previous response contained no usable answer (it had only reasoning, or was empty).",
-              "Provide a final answer to the user now, or call a valid tool to make progress on the task.",
-              "Do not respond with only reasoning/thinking.",
+              "Your previous response contained no usable answer — only reasoning/thinking, or was empty.",
+              "This is not acceptable. You MUST now provide one of:",
+              "1. A direct, actionable answer to the user's question, OR",
+              "2. A valid tool call that makes concrete progress on the task.",
+              "Do NOT respond with only reasoning. The user needs results, not deliberation.",
               "</system-reminder>",
             ].join("\n"),
           } satisfies MessageV2.TextPart)
@@ -2213,6 +2253,52 @@ NOTE: At any point in time through this workflow you should feel free to ask the
 
           if (!lastUser) throw new Error("No user message found in stream. This should never happen.")
 
+          // Execute SessionStart hook on first iteration
+          if (step === 0) {
+            const cfg = yield* config.get()
+            const sessionStartResult = yield* executeHooks(
+              "SessionStart",
+              cfg.hooks,
+              { sessionID, agentID, model: lastUser.model },
+            ).pipe(Effect.catch(() => Effect.succeed({} as HookResult)))
+            if (sessionStartResult.additionalContext) {
+              // Inject session start context into the first user message
+              const firstUserMsg = msgs.find((m) => m.info.role === "user")
+              if (firstUserMsg) {
+                firstUserMsg.parts.push({
+                  id: PartID.ascending(),
+                  messageID: firstUserMsg.info.id,
+                  sessionID,
+                  type: "text",
+                  synthetic: true,
+                  text: `<system-reminder>\n${sessionStartResult.additionalContext}\n</system-reminder>`,
+                })
+              }
+            }
+          }
+
+          // Execute UserPromptSubmit hook
+          const cfg = yield* config.get()
+          const userPromptResult = yield* executeHooks(
+            "UserPromptSubmit",
+            cfg.hooks,
+            { sessionID, agentID, userMessage: lastUser },
+            lastUser.agent,
+          ).pipe(Effect.catch(() => Effect.succeed({} as HookResult)))
+          if (userPromptResult.additionalContext) {
+            const lastUserMsg = msgs.findLast((m) => m.info.role === "user")
+            if (lastUserMsg) {
+              lastUserMsg.parts.push({
+                id: PartID.ascending(),
+                messageID: lastUserMsg.info.id,
+                sessionID,
+                type: "text",
+                synthetic: true,
+                text: `<system-reminder>\n${userPromptResult.additionalContext}\n</system-reminder>`,
+              })
+            }
+          }
+
           // Per-user-message active recall reminder. Once the session has
           // any memory artifacts (memory dir populated OR tasks recorded),
           // append a brief recall protocol so the agent's reflex to query
@@ -2235,19 +2321,27 @@ NOTE: At any point in time through this workflow you should feel free to ask the
                 synthetic: true,
                 text: [
                   "<system-reminder>",
-                  `This session has memory at ${sessMemDir}/. Recall content`,
-                  "not in your context with:",
+                  `This session has memory at ${sessMemDir}/. Before asking the user`,
+                  "about past context, ALWAYS check memory first using:",
                   hints[0],
                   `- Read(file_path="${sessMemDir}/...")`,
                   hints[1],
                   hints[2],
                   "",
-                  "Don't ask the user about something memory may already record.",
+                  "Checking memory before asking saves time and avoids redundant questions.",
                   "</system-reminder>",
                 ].join("\n"),
               })
             }
           }
+
+          // === State-dependent runtime adjustments ===
+          // These handle situations the prompt cannot self-detect:
+          // - Context pressure (token count)
+          // - Repeated steps (loop detection)
+          // - Output truncation (finish reason)
+          // - Invalid output (think-only/empty)
+          // - Goal not satisfied (judge result)
 
           const lastAssistantMsg = msgs.findLast(
             (msg) => msg.info.role === "assistant" && msg.info.id === lastAssistant?.id,
@@ -2294,8 +2388,20 @@ NOTE: At any point in time through this workflow you should feel free to ask the
             if (classification.type === "final" && classification.degraded)
               yield* slog.warn("degraded final on abnormal finish", { finish: lastAssistant.finish })
             if (classification.type !== "continue") {
-              if (yield* taskGate(lastUser)) continue
-              if (yield* goalGate(lastUser)) continue
+              const userText = msgs
+                .filter((m): m is MessageV2.WithParts => m.info.id === lastUser.id)
+                .flatMap((m) => m.parts.filter((p) => p.type === "text"))
+                .map((p) => (p as { text?: string }).text ?? "")
+                .join("\n")
+              const protocolLevel = detectProtocolLevel({
+                userText,
+                agentName: lastUser.agent ?? "main",
+                msgCount: msgs.length,
+              })
+              if (protocolLevel !== "minimal") {
+                if (yield* taskGate(lastUser)) continue
+                if (yield* goalGate(lastUser)) continue
+              }
               yield* slog.info("exiting loop", { classification: classification.type })
               break
             }
@@ -2363,6 +2469,21 @@ NOTE: At any point in time through this workflow you should feel free to ask the
             const compactionPart = lastUserMsgForCompaction.parts.find(
               (p): p is MessageV2.CompactionPart => p.type === "compaction",
             )
+
+            // Execute PreCompact hook
+            const preCompactCfg = yield* config.get()
+            const preCompactResult = yield* executeHooks(
+              "PreCompact",
+              preCompactCfg.hooks,
+              { sessionID, auto: compactionPart?.auto, overflow: compactionPart?.overflow },
+              compactionPart?.auto ? "auto" : "manual",
+            ).pipe(Effect.catch(() => Effect.succeed({} as HookResult)))
+            if (preCompactResult.blocked) {
+              // Hook blocked compaction, skip it
+              yield* slog.info("compaction blocked by hook", { reason: preCompactResult.blockReason })
+              continue
+            }
+
             const allMsgs = yield* sessions.messages({ sessionID, agentID: lastUser.agentID ?? "main" })
             const result = yield* compaction.process({
               parentID: lastUser.id,
@@ -2372,6 +2493,30 @@ NOTE: At any point in time through this workflow you should feel free to ask the
               overflow: compactionPart?.overflow,
               agentID: lastUser.agentID,
             })
+
+            // Execute PostCompact hook
+            const postCompactCfg = yield* config.get()
+            const postCompactResult = yield* executeHooks(
+              "PostCompact",
+              postCompactCfg.hooks,
+              { sessionID, result, auto: compactionPart?.auto },
+              compactionPart?.auto ? "auto" : "manual",
+            ).pipe(Effect.catch(() => Effect.succeed({} as HookResult)))
+            if (postCompactResult.additionalContext) {
+              // Inject post-compaction context
+              const lastUserMsg = msgs.findLast((m) => m.info.role === "user")
+              if (lastUserMsg) {
+                lastUserMsg.parts.push({
+                  id: PartID.ascending(),
+                  messageID: lastUserMsg.info.id,
+                  sessionID,
+                  type: "text",
+                  synthetic: true,
+                  text: `<system-reminder>\n${postCompactResult.additionalContext}\n</system-reminder>`,
+                })
+              }
+            }
+
             if (result === "stop") break
             continue
           }
@@ -2396,8 +2541,11 @@ NOTE: At any point in time through this workflow you should feel free to ask the
                   text: [
                     "<system-reminder>",
                     `Context is filling up (${pressure >= 3 ? ">85%" : ">70%"}).`,
-                    "If you have important learnings or decisions from this session,",
-                    "consider writing them to memory now before context may be reset.",
+                    "You are approaching the context limit. Before it resets:",
+                    "1. Write critical learnings, decisions, and file paths to memory now.",
+                    "2. Summarize progress so far in a concise note.",
+                    "3. If the task is incomplete, note exactly where you stopped and what comes next.",
+                    "Do NOT continue exploring or reading files — focus on preserving knowledge.",
                     "</system-reminder>",
                   ].join("\n"),
                 })
@@ -2438,11 +2586,14 @@ NOTE: At any point in time through this workflow you should feel free to ask the
                   synthetic: true,
                   text: [
                     "<system-reminder>",
-                    `Your last ${REPEATED_STEP_THRESHOLD} steps have been identical — you appear to be`,
-                    "repeating the same action without making progress. Stop and reconsider:",
-                    "the current approach is not working. Try a different strategy, use a",
-                    "different tool, or if you are blocked, explain the blocker to the user",
-                    "instead of repeating the same step again.",
+                    `Your last ${REPEATED_STEP_THRESHOLD} steps have been identical — you are stuck in a loop.`,
+                    "The current approach is NOT working. You MUST change strategy:",
+                    "1. STOP repeating the same tool call.",
+                    "2. Re-read the original user request — are you solving the right problem?",
+                    "3. Try a fundamentally different approach: different tool, different search query,",
+                    "   different file, or ask the user for clarification.",
+                    "4. If truly blocked, explain the blocker to the user instead of looping.",
+                    "Repeating the same action again is unacceptable.",
                     "</system-reminder>",
                   ].join("\n"),
                 })
@@ -2811,6 +2962,24 @@ NOTE: At any point in time through this workflow you should feel free to ask the
               ...instructions.content,
               ...(format.type === "json_schema" ? [STRUCTURED_OUTPUT_SYSTEM_PROMPT] : []),
             ]
+
+            // Inject tool summaries: categorized short descriptions to help the model quickly understand available tools
+            const toolIds = yield* registry.ids()
+            const toolSummaries = generateToolSummaries(toolIds)
+            if (toolSummaries.length > 0) {
+              additions.push(formatToolSummariesForPrompt(toolSummaries))
+            }
+
+            // Inject path-scoped rules: load instructions matching the current working files
+            const worktree = (yield* InstanceState.context).worktree
+            const pathRulesDir = path.join(worktree, ".mimocode", "rules")
+            const pathRules = yield* Effect.promise(() => scanPathRules(pathRulesDir)).pipe(
+              Effect.catch(() => Effect.succeed([])),
+            )
+            const formattedPathRules = formatRulesForPrompt(pathRules)
+            if (formattedPathRules) {
+              additions.push(formattedPathRules)
+            }
             // Note: `buildLLMRequestPrefix` also returns a `tools` field, but we
             // intentionally don't use it here — the `tools` variable from `resolveTools`
             // (set earlier via `handle.process({tools: ...})`) carries `execute` closures
@@ -3005,11 +3174,12 @@ NOTE: At any point in time through this workflow you should feel free to ask the
 
               if (isTextLoop) {
                 if (textLoopRecoveryAttempts >= TEXT_LOOP_MAX_RECOVERY) {
+                  const repeatedSnippet = textLoopBuffer[textLoopBuffer.length - 1]?.slice(0, 200) ?? "(empty)"
                   yield* slog.info("text loop: max recovery exceeded, terminating")
                   yield* bus.publish(Session.Event.Error, {
                     sessionID,
                     error: new NamedError.Unknown({
-                      message: `Text loop detected: model repeated the same output ${TEXT_LOOP_TRIGGER_COUNT} times after ${TEXT_LOOP_MAX_RECOVERY} recovery attempts. Session terminated.`,
+                      message: `Text loop detected: model repeated the same output ${TEXT_LOOP_TRIGGER_COUNT} times after ${TEXT_LOOP_MAX_RECOVERY} recovery attempts. Session terminated.\n\nRepeated output snippet: "${repeatedSnippet}"\n\nSuggestion: try switching to a different model or reducing the task scope.`,
                     }).toObject(),
                   })
                   break
@@ -3040,6 +3210,46 @@ NOTE: At any point in time through this workflow you should feel free to ask the
                 textLoopBuffer.length = 0
                 yield* slog.info("text loop: recovery injected", { attempt: textLoopRecoveryAttempts })
                 continue
+              }
+            }
+          }
+
+          // --- Consecutive Tool-Only Step Detection (reading loop) ---
+          // When model reads files without producing user-facing text, increment counter.
+          // Reset when model produces text output. Inject nudge at threshold.
+          if (stepText.trim()) {
+            consecutiveToolOnlySteps = 0  // Reset: model produced text output
+          } else {
+            // No text output — check if there were tool calls
+            const hasToolCalls = completedParts.some((p) => p.type === "tool")
+            if (hasToolCalls) {
+              consecutiveToolOnlySteps++
+              if (consecutiveToolOnlySteps >= CONSECUTIVE_TOOL_ONLY_THRESHOLD) {
+                // Inject nudge to produce output
+                const lastUserMsg = msgs.findLast((m) => m.info.role === "user")
+                if (
+                  lastUserMsg &&
+                  !lastUserMsg.parts.some(
+                    (p) => p.type === "text" && p.text?.includes("produce output"),
+                  )
+                ) {
+                  lastUserMsg.parts.push({
+                    id: PartID.ascending(),
+                    messageID: lastUserMsg.info.id,
+                    sessionID,
+                    type: "text",
+                    synthetic: true,
+                    text: [
+                      "<system-reminder>",
+                      `You have read ${consecutiveToolOnlySteps} files without producing any output.`,
+                      "The user is waiting for results, not more exploration.",
+                      "You MUST now produce a direct answer or call a tool that makes concrete progress.",
+                      "Do NOT read more files — provide output now.",
+                      "</system-reminder>",
+                    ].join("\n"),
+                  })
+                  consecutiveToolOnlySteps = Math.floor(CONSECUTIVE_TOOL_ONLY_THRESHOLD / 2)  // Partial reset: next nudge sooner
+                }
               }
             }
           }
@@ -3075,6 +3285,26 @@ NOTE: At any point in time through this workflow you should feel free to ask the
           finalIsError ? "error" : "completed",
           Option.isSome(lastUserForMetrics) ? lastUserForMetrics.value.info.agent : final.info.agent,
         )
+
+        // Execute Stop hook before returning
+        const cfgForStop = yield* config.get()
+        const stopResult = yield* executeHooks(
+          "Stop",
+          cfgForStop.hooks,
+          { sessionID, agentID, finalMessage: final },
+        ).pipe(Effect.catch(() => Effect.succeed({} as HookResult)))
+        if (stopResult.additionalContext) {
+          // Inject stop context into the final message
+          final.parts.push({
+            id: PartID.ascending(),
+            messageID: final.info.id,
+            sessionID,
+            type: "text",
+            synthetic: true,
+            text: `<system-reminder>\n${stopResult.additionalContext}\n</system-reminder>`,
+          })
+        }
+
         return final
       },
     )

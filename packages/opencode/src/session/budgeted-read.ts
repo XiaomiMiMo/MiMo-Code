@@ -1,4 +1,5 @@
 import { Token } from "../util"
+import { readFile } from "fs/promises"
 
 export interface BudgetedReadResult {
   text: string
@@ -10,7 +11,7 @@ export async function readBudgeted(
   filePath: string,
   budgetTokens: number,
 ): Promise<BudgetedReadResult | undefined> {
-  const fullText = await Bun.file(filePath).text().catch(() => undefined as string | undefined)
+  const fullText = await readFile(filePath, "utf-8").catch(() => undefined as string | undefined)
   if (fullText === undefined) return undefined
   const totalTokens = Token.estimate(fullText)
   if (totalTokens <= budgetTokens)
@@ -66,7 +67,7 @@ export async function readBudgetedSectionAware(
   filePath: string,
   budgetTokens: number,
 ): Promise<BudgetedReadResult | undefined> {
-  const fullText = await Bun.file(filePath).text().catch(() => undefined as string | undefined)
+  const fullText = await readFile(filePath, "utf-8").catch(() => undefined as string | undefined)
   if (fullText === undefined) return undefined
   const totalTokens = Token.estimate(fullText)
   if (totalTokens <= budgetTokens) return { text: fullText, truncated: false, totalTokens }

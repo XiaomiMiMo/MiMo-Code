@@ -21,10 +21,6 @@ export function DialogSkill(props: DialogSkillProps) {
 
   const options = createMemo<DialogSelectOption<string>[]>(() => {
     let list = skills() ?? []
-    const isCompose = local.agent.current()?.name === "compose"
-    if (!isCompose) {
-      list = list.filter((s) => !s.name.startsWith("compose:"))
-    }
     const maxWidth = Math.max(0, ...list.map((s) => s.name.length))
     return list.map((skill) => ({
       title: skill.name.padEnd(maxWidth),

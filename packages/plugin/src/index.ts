@@ -284,11 +284,13 @@ export type ActorStopOutput = {
 export type ActorPreStopHook = (
   input: ActorPreStopInput,
   output: ActorStopOutput,
+  signal?: AbortSignal,
 ) => Promise<void>
 
 export type ActorPostStopHook = (
   input: ActorPostStopInput,
   output: ActorStopOutput,
+  signal?: AbortSignal,
 ) => Promise<void>
 
 export type ActorPreStopRegistration =

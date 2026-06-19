@@ -6,6 +6,7 @@ import { AppFileSystem } from "@mimo-ai/shared/filesystem"
 import { Path as GlobalPath } from "@/global"
 import { InstallationLocal, InstallationVersion } from "@/installation/version"
 import { Log } from "@/util"
+import { skillElement } from "@/skill"
 import { loadComposeBundle } from "./bundle.macro" with { type: "macro" }
 import { loadComposeBundle as loadComposeBundleDev } from "./bundle.macro"
 import { fallbackSanitization } from "@/config/markdown"
@@ -60,7 +61,11 @@ function parseSkillMeta(content: string) {
   }
 }
 
+let _composeSkillsBlockCache: string | undefined
+
 export function composeSkillsBlock(): string {
+  if (_composeSkillsBlockCache !== undefined) return _composeSkillsBlockCache
+
   const root = path.join(GlobalPath.data, "compose", InstallationVersion)
   const entries: string[] = []
 
@@ -71,15 +76,11 @@ export function composeSkillsBlock(): string {
     if (!parsed?.data?.name || !parsed?.data?.description) continue
 
     const location = pathToFileURL(path.join(root, "skills", skillName, "SKILL.md")).href
-    entries.push(
-      `  <skill>`,
-      `    <name>${parsed.data.name}</name>`,
-      `    <description>${parsed.data.description}</description>`,
-      `    <location>${location}</location>`,
-      `  </skill>`,
-    )
+    entries.push(skillElement(parsed.data.name, parsed.data.description, location))
   }
 
-  if (entries.length === 0) return ""
-  return ["<compose_skills>", ...entries, "</compose_skills>"].join("\n")
+  _composeSkillsBlockCache = entries.length === 0
+    ? ""
+    : ["<compose_skills>", ...entries, "</compose_skills>"].join("\n")
+  return _composeSkillsBlockCache
 }

@@ -17,6 +17,7 @@ const parameters = z.object({
     .optional()
     .describe("Filter by memory type (pinned, snapshot, learning, progress, free, ...)"),
   limit: z.number().optional().describe("Max results (default 10)"),
+  mode: z.enum(["or", "and"]).optional().describe("Search mode: 'or' for high recall (default), 'and' for high precision (all keywords must match)"),
 })
 
 export const MemoryTool = Tool.define(
@@ -34,6 +35,7 @@ export const MemoryTool = Tool.define(
             scope_id: args.scope_id,
             type: args.type,
             limit: args.limit,
+            mode: args.mode,
           })
           if (results.length === 0) {
             return {

@@ -612,3 +612,6 @@ export const defaultLayer = layer.pipe(
 )
 
 export * as Worktree from "."
+
+// 子代理集成模块 — 使用 getDefaultLayer() 延迟加载以解决循环依赖
+export * from "./agent-integration"

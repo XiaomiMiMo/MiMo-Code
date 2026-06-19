@@ -11,6 +11,13 @@ import { Global } from "../global"
 import { Log } from "../util"
 import type { MessageV2 } from "./message-v2"
 import type { MessageID } from "./schema"
+import {
+  scanRules,
+  filterRulesByPath,
+  formatRulesForPrompt,
+  generateRulesSummary,
+  type PathScopedRule,
+} from "./path-scoped-rules"
 
 const log = Log.create({ service: "instruction" })
 
@@ -63,6 +70,8 @@ export interface Interface {
     filepath: string,
     messageID: MessageID,
   ) => Effect.Effect<{ filepath: string; content: string }[], AppFileSystem.Error>
+  readonly pathScopedRules: (currentFile?: string) => Effect.Effect<PathScopedRule[]>
+  readonly pathScopedRulesSummary: () => Effect.Effect<string>
 }
 
 export class Service extends Context.Service<Service, Interface>()("@opencode/Instruction") {}
@@ -248,7 +257,30 @@ export const layer: Layer.Layer<Service, never, AppFileSystem.Service | Config.S
         return results
       })
 
-      return Service.of({ clear, systemPaths, system, find, resolve })
+      /**
+       * 获取路径作用域规则
+       * 扫描 .mimocode/rules/ 目录，根据当前文件路径筛选适用的规则
+       */
+      const pathScopedRules: Interface["pathScopedRules"] = Effect.fn(
+        "Instruction.pathScopedRules",
+      )(function* (currentFile?: string) {
+        const ctx = yield* InstanceState.context
+        const rulesDir = path.join(ctx.worktree, ".mimocode", "rules")
+        const rules = yield* Effect.promise(() => scanRules(rulesDir))
+        return filterRulesByPath(rules, currentFile)
+      })
+
+      /**
+       * 生成路径作用域规则摘要，用于初始 context 注入
+       */
+      const pathScopedRulesSummary: Interface["pathScopedRulesSummary"] = Effect.fn(
+        "Instruction.pathScopedRulesSummary",
+      )(function* () {
+        const rules = yield* pathScopedRules()
+        return generateRulesSummary(rules)
+      })
+
+      return Service.of({ clear, systemPaths, system, find, resolve, pathScopedRules, pathScopedRulesSummary })
     }),
   )
 

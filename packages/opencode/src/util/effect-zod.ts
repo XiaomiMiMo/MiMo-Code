@@ -17,12 +17,11 @@ export const ZodOverride: unique symbol = Symbol.for("effect-zod/override")
  * needs to inspect the user's raw input (e.g. to capture insertion order)
  * before `Schema.Struct` canonicalises the object.
  *
- * TODO: This exists to paper over a missing Effect Schema feature.  The
- * parser canonicalises open struct output (known fields first in
- * declaration order, then catchall fields) before any user-defined
- * transform sees the value, and there is no pre-parse hook — so the
- * user's original property insertion order is gone by the time
- * `Schema.decodeTo` or `middlewareDecoding` runs.
+ * Effect Schema 尚不支持预处理钩子（pre-parse hook）。
+ * 解析器会在用户自定义 transform 之前对输出规范化（声明字段在前、捕获字段在后），
+ * 等到 Schema.decodeTo 或 middlewareDecoding 运行时原始插入顺序已经丢失。
+ * 此垫片通过 zod 的 z.preprocess 在 Effect Schema 解析前捕获原始顺序，
+ * 是已知的 Effect Schema 功能缺失，待上游支持后移除。
  *
  * That canonicalisation is a reasonable default, but `config/permission.ts`
  * encodes rule precedence in the user's JSON key order (`evaluate.ts`

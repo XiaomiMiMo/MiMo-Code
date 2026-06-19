@@ -242,7 +242,7 @@ export const layer = Layer.effect(
             },
           },
           get serverUrl(): URL {
-            return Server.url ?? new URL("http://localhost:4096")
+            return Server.getUrl() ?? new URL("http://localhost:4096")
           },
           // @ts-expect-error
           $: typeof Bun === "undefined" ? undefined : Bun.$,
@@ -355,24 +355,21 @@ export const layer = Layer.effect(
 
           // Keep plugin execution sequential so hook registration and execution
           // order remains deterministic across plugin runs.
-          yield* Effect.tryPromise({
+          const pluginResult = yield* Effect.tryPromise({
             try: () => applyPlugin(load, input, hooks, hooksWithMeta),
             catch: (err) => {
               const message = errorMessage(err)
               log.error("failed to load plugin", { path: load.spec, error: message })
               return message
             },
-          }).pipe(
-            Effect.catch(() => {
-              // TODO: make proper events for this
-              // bus.publish(Session.Event.Error, {
-              //   error: new NamedError.Unknown({
-              //     message: `Failed to load plugin ${load.spec}: ${message}`,
-              //   }).toObject(),
-              // })
-              return Effect.void
-            }),
-          )
+          }).pipe(Effect.catch(() => Effect.succeed({ path: load.spec, failed: true as const })))
+          if (pluginResult && "failed" in pluginResult) {
+            yield* bus.publish(Session.Event.Error, {
+              error: new NamedError.Unknown({
+                message: `Failed to load plugin ${load.spec}: ${pluginResult.path}`,
+              }).toObject(),
+            })
+          }
         }
 
         // Notify plugins of current config
@@ -471,16 +468,15 @@ export const layer = Layer.effect(
           const startedAt = Date.now()
           const o: ActorStopOutput = { continue: false }
           let hookOutcome: "success" | "error" = "success"
-          // TODO: pass an AbortSignal to fn so plugin authors can wire cooperative
-          // cancellation into their fetch / DB calls. Effect interrupt only stops
-          // the awaiting fiber — the underlying Promise keeps running and may
-          // bus.publish events after the actor has been cleaned up. See spec
-          // Future work for full discussion. Strict in-process cancellation
-          // (子进程隔离) is out of scope; AbortSignal is the in-process ceiling.
+          // 创建 AbortController 并将 signal 传给插件，支持插件的协作式取消。
+          // Effect.interrupt 只停止等待 fiber 本身，底层 Promise 仍会继续运行。
+          // 通过 AbortSignal，插件可以在 fetch/DB 调用中响应取消。
+          const ac = new AbortController()
           yield* Effect.tryPromise({
-            try: () => fn(input as never, o),
+            try: () => fn(input as never, o, ac.signal),
             catch: (err) => err,
           }).pipe(
+            Effect.onInterrupt(() => Effect.sync(() => ac.abort("fiber interrupted"))),
             Effect.tapError((err) =>
               Effect.gen(function* () {
                 hookOutcome = "error"
@@ -553,7 +549,10 @@ export const layer = Layer.effect(
       for (const hook of [...s.hooks, ...fh.hooks]) {
         const fn = hook[name] as any
         if (!fn) continue
-        yield* Effect.promise(async () => fn(input, output))
+        const ac = new AbortController()
+        yield* Effect.promise(async () => fn(input, output, ac.signal)).pipe(
+          Effect.onInterrupt(() => Effect.sync(() => ac.abort("fiber interrupted"))),
+        )
       }
       return output
     })

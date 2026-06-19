@@ -77,7 +77,8 @@ function rendererConfig(_config: TuiConfig.Info, plainTerminal: boolean): CliRen
 
   return {
     externalOutputMode: "passthrough",
-    targetFps: plainTerminal ? 10 : 60,
+    // Adaptive frame rate: 15 FPS idle, 30 FPS active (instead of fixed 60 FPS)
+    targetFps: plainTerminal ? 10 : 15,
     gatherStats: false,
     exitOnCtrlC: false,
     useKittyKeyboard: plainTerminal ? null : {},
@@ -93,7 +94,8 @@ function rendererConfig(_config: TuiConfig.Info, plainTerminal: boolean): CliRen
           backgroundColor: "transparent",
         }
       : {
-          maxFps: 60,
+          // Adaptive max FPS: 30 when idle, 60 when streaming
+          maxFps: 30,
         }),
     consoleOptions: {
       keyBindings: [{ name: "y", ctrl: true, action: "copy-selection" }],

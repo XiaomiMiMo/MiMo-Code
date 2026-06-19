@@ -36,6 +36,7 @@ const DEFAULT_CONTEXT_WINDOW = 1_000_000
 // model when not configured in `model_groups` (zero-config never errors).
 const BUILTIN_TIERS = new Set(["ultra", "standard", "lite"])
 // F41: warn once per (providerID, modelID) when limit.context falls back to default
+const MAX_WARNED_MODELS = 500
 const warnedContextDefaults = new Set<string>()
 
 export const DEFAULT_CHUNK_TIMEOUT = 480_000 // 8 minutes — bounds single-attempt SSE stall.
@@ -272,8 +273,8 @@ function custom(dep: CustomDep): Record<string, CustomLoader> {
 
       const awsAccessKeyId = env["AWS_ACCESS_KEY_ID"]
 
-      // TODO: Using process.env directly because Env.set only updates a process.env shallow copy,
-      // until the scope of the Env API is clarified (test only or runtime?)
+      // 直接使用 process.env：Effect 的 Env.set 只更新内部浅拷贝，不会同步到 process.env。
+      // 部分 SDK（bedrock）需要在 process.env 中读取配置，因此不能使用 Env.set。
       const awsBearerToken = iife(() => {
         const envToken = process.env.AWS_BEARER_TOKEN_BEDROCK
         if (envToken) return envToken
@@ -512,8 +513,7 @@ function custom(dep: CustomDep): Record<string, CustomLoader> {
     }),
     "sap-ai-core": Effect.fnUntraced(function* () {
       const auth = yield* dep.auth("sap-ai-core")
-      // TODO: Using process.env directly because Env.set only updates a shallow copy (not process.env),
-      // until the scope of the Env API is clarified (test only or runtime?)
+      // 同上：Env.set 不更新 process.env，SDK 需要从 process.env 读取配置
       const envServiceKey = iife(() => {
         const envAICoreServiceKey = process.env.AICORE_SERVICE_KEY
         if (envAICoreServiceKey) return envAICoreServiceKey
@@ -871,11 +871,13 @@ const ProviderCacheCost = Schema.Struct({
 const ProviderCost = Schema.Struct({
   input: Schema.Number,
   output: Schema.Number,
+  reasoning: Schema.optional(Schema.Number),
   cache: ProviderCacheCost,
   experimentalOver200K: Schema.optional(
     Schema.Struct({
       input: Schema.Number,
       output: Schema.Number,
+      reasoning: Schema.optional(Schema.Number),
       cache: ProviderCacheCost,
     }),
   ),
@@ -1220,6 +1222,11 @@ const layer: Layer.Layer<
                   if (explicit !== undefined) return explicit
                   const key = `${providerID}/${modelID}`
                   if (!warnedContextDefaults.has(key)) {
+                    // 限制缓存大小，避免长期运行的服务器中无限增长
+                    if (warnedContextDefaults.size >= MAX_WARNED_MODELS) {
+                      const first = warnedContextDefaults.values().next().value
+                      if (first) warnedContextDefaults.delete(first)
+                    }
                     warnedContextDefaults.add(key)
                     log.warn("limit.context not configured and not found in models.dev", {
                       providerID,

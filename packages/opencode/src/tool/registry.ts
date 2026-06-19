@@ -61,6 +61,11 @@ import { shellWrap } from "./shell-wrap"
 import * as BashInteractive from "./bash-interactive"
 import { resolveInvocationStyle } from "./invocation-style"
 import { BuiltinWorkflow } from "@/workflow/builtin"
+import {
+  generateToolSummaries,
+  formatToolSummariesForPrompt,
+  type ToolSummary,
+} from "./deferred-descriptions"
 
 const log = Log.create({ service: "tool.registry" })
 
@@ -105,6 +110,8 @@ export interface Interface {
   readonly all: () => Effect.Effect<Tool.Def[]>
   readonly named: () => Effect.Effect<{ actor: ActorDef; read: ReadDef }>
   readonly tools: (model: { providerID: ProviderID; modelID: ModelID; agent: Agent.Info }) => Effect.Effect<Tool.Def[]>
+  readonly toolSummaries: () => Effect.Effect<ToolSummary[]>
+  readonly toolSummariesPrompt: () => Effect.Effect<string>
   readonly reload: () => Effect.Effect<void>
 }
 
@@ -378,13 +385,34 @@ export const layer = Layer.effect(
       return { actor: s.actor, read: s.read }
     })
 
+    /**
+     * 生成工具摘要列表，用于延迟加载
+     * 仅包含工具名称和简短描述，不包含完整参数 schema
+     */
+    const toolSummaries: Interface["toolSummaries"] = Effect.fn(
+      "ToolRegistry.toolSummaries",
+    )(function* () {
+      const toolIds = yield* ids()
+      return generateToolSummaries(toolIds)
+    })
+
+    /**
+     * 生成工具摘要的文本格式，用于注入到 system prompt
+     */
+    const toolSummariesPrompt: Interface["toolSummariesPrompt"] = Effect.fn(
+      "ToolRegistry.toolSummariesPrompt",
+    )(function* () {
+      const summaries = yield* toolSummaries()
+      return formatToolSummariesForPrompt(summaries)
+    })
+
     const reload: Interface["reload"] = Effect.fn("ToolRegistry.reload")(function* () {
       yield* skill.reload()
       yield* plugin.reloadFileHooks()
       yield* InstanceState.invalidate(state)
     })
 
-    return Service.of({ ids, all, named, tools, reload })
+    return Service.of({ ids, all, named, tools, toolSummaries, toolSummariesPrompt, reload })
   }),
 )
 

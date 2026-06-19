@@ -8,10 +8,12 @@ import { RecoverableError } from "./recoverable"
 import { Agent } from "@/agent/agent"
 
 export interface Metadata {
-  [key: string]: any
+  [key: string]: unknown
 }
 
-// TODO: remove this hack
+// 动态描述类型 — 允许工具根据 agent 信息生成描述文本。
+// 当前未使用，预留为 future enhancement。
+// 如需启用，需确保所有使用 ToolDefinition 的地方都能处理 DynamicDescription。
 export type DynamicDescription = (agent: Agent.Info) => Effect.Effect<string>
 
 export type Context<M extends Metadata = Metadata> = {

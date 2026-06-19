@@ -35,6 +35,13 @@ const _Info = Schema.Union([Oauth, Api, WellKnown]).annotate({ discriminator: "t
 export const Info = Object.assign(_Info, { zod: zod(_Info) })
 export type Info = Schema.Schema.Type<typeof _Info>
 
+/** 检查指定 provider 是否使用 OAuth 认证。
+ *  OpenAI OAuth 模型不支持 system 消息，需用 instructions 替代。
+ *  此函数统一处理此逻辑，避免在多个模块中重复。 */
+export function isOpenaiOAuth(info: Info | undefined): info is Oauth {
+  return info?.type === "oauth"
+}
+
 export class AuthError extends Schema.TaggedErrorClass<AuthError>()("AuthError", {
   message: Schema.String,
   cause: Schema.optional(Schema.Defect),

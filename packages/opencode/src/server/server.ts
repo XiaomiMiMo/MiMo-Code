@@ -8,7 +8,6 @@ import { WorkspaceID } from "@/control-plane/schema"
 import { MDNS } from "./mdns"
 import { AuthMiddleware, CompressionMiddleware, CorsMiddleware, ErrorMiddleware, LoggerMiddleware } from "./middleware"
 import { FenceMiddleware } from "./fence"
-import { initProjectors } from "./projectors"
 import { InstanceRoutes } from "./routes/instance"
 import { ControlPlaneRoutes } from "./routes/control"
 import { UIRoutes } from "./routes/ui"
@@ -16,11 +15,7 @@ import { GlobalRoutes } from "./routes/global"
 import { WorkspaceRouterMiddleware } from "./workspace"
 import { InstanceMiddleware } from "./routes/instance/middleware"
 import { WorkspaceRoutes } from "./routes/control/workspace"
-
-// @ts-ignore This global is needed to prevent ai-sdk from logging warnings to stdout https://github.com/vercel/ai/blob/2dc67e0ef538307f21368db32d5a12345d98831b/packages/ai/src/logger/log-warnings.ts#L85
-globalThis.AI_SDK_LOG_WARNINGS = false
-
-initProjectors()
+import { initProjectors } from "./projectors"
 
 const log = Log.create({ service: "server" })
 
@@ -89,7 +84,13 @@ export async function openapi() {
   return result
 }
 
-export let url: URL
+let url: URL | undefined
+
+export function getUrl(): URL | undefined {
+  return url
+}
+
+let initOnce = false
 
 export async function listen(opts: {
   port: number
@@ -98,6 +99,14 @@ export async function listen(opts: {
   mdnsDomain?: string
   cors?: string[]
 }): Promise<Listener> {
+  // 延迟初始化：server 启动时执行一次
+  if (!initOnce) {
+    initOnce = true
+    // @ts-ignore 防止 ai-sdk 输出警告到 stdout
+    globalThis.AI_SDK_LOG_WARNINGS = false
+    initProjectors()
+  }
+
   const built = create(opts)
   const server = await built.runtime.listen(opts)
 

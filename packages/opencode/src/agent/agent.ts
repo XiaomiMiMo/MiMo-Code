@@ -7,6 +7,7 @@ import { Instance } from "../project/instance"
 import { Truncate } from "../tool"
 import { Auth } from "../auth"
 import { ProviderTransform } from "../provider"
+import { AGENT_BUILD, AGENT_PLAN, AGENT_COMPOSE } from "./config"
 
 import PROMPT_GENERATE from "./generate.txt"
 import PROMPT_EXPLORE from "./prompt/explore.txt"
@@ -109,22 +110,23 @@ export const layer = Layer.effect(
 
         const user = Permission.fromConfig(cfg.permission ?? {})
 
+        // 合并默认权限、agent 特定权限和用户配置
+        const perms = (agentOverrides: Record<string, any> = {}) =>
+          Permission.merge(defaults, Permission.fromConfig(agentOverrides), user)
+
         const agents: Record<string, Info> = {
           build: {
-            name: "build",
+            name: AGENT_BUILD,
             color: "#fb8147",
             description: "Executes tools based on configured permissions.",
             options: {},
-            permission: Permission.merge(
-              defaults,
-              Permission.fromConfig({
-                question: "allow",
-                plan_enter: "allow",
-              }),
-              user,
-            ),
+            permission: perms({
+              question: "allow",
+              plan_enter: "allow",
+            }),
             mode: "primary",
             native: true,
+            steps: 100,
           },
           // Max mode is experimental and opt-in: only registered when
           // `experimental.maxMode` is configured. This keeps the default agent
@@ -137,70 +139,81 @@ export const layer = Layer.effect(
                   description:
                     "Max mode (experimental). Runs N parallel reasoning candidates each step and executes the best one. Same permissions as build.",
                   options: {},
-                  permission: Permission.merge(
-                    defaults,
-                    Permission.fromConfig({
-                      question: "allow",
-                      plan_enter: "allow",
-                    }),
-                    user,
-                  ),
+                  permission: perms({
+                    question: "allow",
+                    plan_enter: "allow",
+                  }),
                   mode: "primary" as const,
                   native: true,
                 },
               }
             : {}),
           plan: {
-            name: "plan",
+            name: AGENT_PLAN,
             color: "#c7e2a8",
             description: "Plan mode. Disallows all edit tools.",
             options: {},
-            permission: Permission.merge(
-              defaults,
-              Permission.fromConfig({
-                question: "allow",
-                plan_exit: "allow",
-                external_directory: {
-                  [path.join(Global.Path.data, "plans", "*")]: "allow",
-                },
-                edit: {
-                  "*": "deny",
-                  [path.join(".mimocode", "plans", "*.md")]: "allow",
-                  [path.relative(Instance.worktree, path.join(Global.Path.data, path.join("plans", "*.md")))]: "allow",
-                },
-              }),
-              user,
-            ),
+            permission: perms({
+              question: "allow",
+              plan_exit: "allow",
+              external_directory: {
+                [path.join(Global.Path.data, "plans", "*")]: "allow",
+              },
+              edit: {
+                "*": "deny",
+                [path.join(".mimocode", "plans", "*.md")]: "allow",
+                // NOTE: Instance.worktree is read at construction time.
+                // Requires Instance layer to be initialized before Agent layer.
+                [path.relative(Instance.worktree, path.join(Global.Path.data, path.join("plans", "*.md")))]: "allow",
+              },
+            }),
             mode: "primary",
             native: true,
+            steps: 30,
+            toolAllowlist: [
+              "read", "grep", "glob", "list",
+              "question", "plan_exit",
+              "actor",
+              "edit", "write",
+              "webfetch", "websearch", "codesearch",
+            ],
           },
           compose: {
-            name: "compose",
+            name: AGENT_COMPOSE,
             color: "#a7a3d8",
             description: "Compose mode. Orchestrates workflows with built-in compose skills.",
             options: {},
-            permission: Permission.merge(
-              defaults,
-              Permission.fromConfig({
-                question: "allow",
-                skill: "allow",
-              }),
-              user,
-            ),
+            permission: perms({
+              "*": "deny",
+              question: "allow",
+              plan_enter: "deny",
+              plan_exit: "deny",
+              skill: "allow",
+              read: { "*": "allow", "*.env": "ask", "*.env.*": "ask", "*.env.example": "allow" },
+              external_directory: {
+                "*": "ask",
+                ...Object.fromEntries(
+                  [Truncate.GLOB, ...skillDirs.map((dir) => path.join(dir, "*"))].map((dir) => [dir, "allow"]),
+                ),
+              },
+            }),
             mode: "primary",
             native: true,
+            steps: 150,
+            toolAllowlist: [
+              "skill", "question", "actor", "task",
+              "read", "grep", "glob", "list",
+              "edit", "write",
+              "webfetch", "websearch", "codesearch",
+            ],
           },
           general: {
             name: "general",
             color: "#aac4e1",
             description: `General-purpose agent for researching complex questions and executing multi-step tasks. Use this agent to execute multiple units of work in parallel.`,
-            permission: Permission.merge(
-              defaults,
-              Permission.fromConfig({
-                change_directory: "deny",
-              }),
-              user,
-            ),
+            permission: perms({
+              change_directory: "deny",
+            }),
             options: {},
             mode: "subagent",
             native: true,
@@ -208,26 +221,21 @@ export const layer = Layer.effect(
           explore: {
             name: "explore",
             color: "#f5c9b0",
-            permission: Permission.merge(
-              defaults,
-              Permission.fromConfig({
-                "*": "deny",
-                grep: "allow",
-                glob: "allow",
-                list: "allow",
-                bash: "allow",
-                webfetch: "allow",
-                websearch: "allow",
-                codesearch: "allow",
-                read: "allow",
-                external_directory: {
-                  "*": "ask",
-                  ...Object.fromEntries(whitelistedDirs.map((dir) => [dir, "allow"])),
-                },
-              }),
-              user,
-            ),
-            description: `Fast agent specialized for exploring codebases. Use this when you need to quickly find files by patterns (eg. "src/components/**/*.tsx"), search code for keywords (eg. "API endpoints"), or answer questions about the codebase (eg. "how do API endpoints work?"). When calling this agent, specify the desired thoroughness level: "quick" for basic searches, "medium" for moderate exploration, or "very thorough" for comprehensive analysis across multiple locations and naming conventions.`,
+            permission: perms({
+              "*": "deny",
+              grep: "allow",
+              glob: "allow",
+              list: "allow",
+              read: "allow",
+              webfetch: "allow",
+              websearch: "allow",
+              codesearch: "allow",
+              external_directory: {
+                "*": "ask",
+                ...Object.fromEntries(whitelistedDirs.map((dir) => [dir, "allow"])),
+              },
+            }),
+            description: `Fast agent for exploring codebases. Find files by patterns, search code for keywords, or answer questions about code. Specify thoroughness: "quick", "medium", or "very thorough".`,
             prompt: PROMPT_EXPLORE,
             options: {},
             mode: "subagent",
@@ -240,13 +248,7 @@ export const layer = Layer.effect(
             native: true,
             hidden: true,
             temperature: 0.5,
-            permission: Permission.merge(
-              defaults,
-              Permission.fromConfig({
-                "*": "deny",
-              }),
-              user,
-            ),
+            permission: perms({ "*": "deny" }),
             prompt: PROMPT_TITLE,
             toolAllowlist: [],
           },
@@ -256,13 +258,7 @@ export const layer = Layer.effect(
             options: {},
             native: true,
             hidden: true,
-            permission: Permission.merge(
-              defaults,
-              Permission.fromConfig({
-                "*": "deny",
-              }),
-              user,
-            ),
+            permission: perms({ "*": "deny" }),
             prompt: PROMPT_SUMMARY,
             toolAllowlist: [],
           },
@@ -272,13 +268,7 @@ export const layer = Layer.effect(
             options: {},
             native: true,
             hidden: true,
-            permission: Permission.merge(
-              defaults,
-              Permission.fromConfig({
-                "*": "deny",
-              }),
-              user,
-            ),
+            permission: perms({ "*": "deny" }),
             prompt: PROMPT_COMPACTION,
             toolAllowlist: [],
           },
@@ -310,7 +300,7 @@ export const layer = Layer.effect(
             // un-answerable ask fails clean (SYSTEM_SPAWNED_AGENT_TYPES →
             // interactive:false). See
             // docs/superpowers/specs/2026-06-05-checkpoint-writer-permission-deadlock-design.md
-            permission: Permission.merge(defaults, user),
+            permission: perms(),
           },
           dream: {
             name: "dream",
@@ -319,24 +309,20 @@ export const layer = Layer.effect(
             native: true,
             hidden: true,
             prompt: PROMPT_DREAM,
-            permission: Permission.merge(
-              defaults,
-              Permission.fromConfig({
-                "*": "deny",
-                read: "allow",
-                write: "allow",
-                edit: "allow",
-                glob: "allow",
-                grep: "allow",
-                memory: "allow",
-                bash: "allow",
-                external_directory: {
-                  [path.join(Global.Path.data, "memory")]: "allow",
-                  [path.join(Global.Path.data, "memory", "*")]: "allow",
-                },
-              }),
-              user,
-            ),
+            permission: perms({
+              "*": "deny",
+              read: "allow",
+              write: "allow",
+              edit: "allow",
+              glob: "allow",
+              grep: "allow",
+              memory: "allow",
+              bash: "allow",
+              external_directory: {
+                [path.join(Global.Path.data, "memory")]: "allow",
+                [path.join(Global.Path.data, "memory", "*")]: "allow",
+              },
+            }),
             toolAllowlist: ["read", "write", "edit", "glob", "grep", "memory", "bash"],
           },
           distill: {
@@ -346,24 +332,20 @@ export const layer = Layer.effect(
             native: true,
             hidden: true,
             prompt: PROMPT_DISTILL,
-            permission: Permission.merge(
-              defaults,
-              Permission.fromConfig({
-                "*": "deny",
-                read: "allow",
-                write: "allow",
-                edit: "allow",
-                glob: "allow",
-                grep: "allow",
-                memory: "allow",
-                bash: "allow",
-                external_directory: {
-                  [path.join(Global.Path.data, "memory")]: "allow",
-                  [path.join(Global.Path.data, "memory", "*")]: "allow",
-                },
-              }),
-              user,
-            ),
+            permission: perms({
+              "*": "deny",
+              read: "allow",
+              write: "allow",
+              edit: "allow",
+              glob: "allow",
+              grep: "allow",
+              memory: "allow",
+              bash: "allow",
+              external_directory: {
+                [path.join(Global.Path.data, "memory")]: "allow",
+                [path.join(Global.Path.data, "memory", "*")]: "allow",
+              },
+            }),
             toolAllowlist: ["read", "write", "edit", "glob", "grep", "memory", "bash"],
           },
         }
@@ -428,8 +410,8 @@ export const layer = Layer.effect(
             values(),
             sortBy(
               [(x) => cfg.default_agent !== undefined && x.name === cfg.default_agent, "desc"],
-              [(x) => x.name === "build", "desc"],
-              [(x) => x.name === "plan", "desc"],
+              [(x) => x.name === AGENT_BUILD, "desc"],
+              [(x) => x.name === AGENT_PLAN, "desc"],
               [(x) => x.name === "compose", "desc"],
               [(x) => x.name === "max", "desc"],
               [(x) => x.name, "asc"],
@@ -485,9 +467,8 @@ export const layer = Layer.effect(
         yield* plugin.trigger("experimental.chat.system.transform", { model: resolved }, { system })
         const existing = yield* InstanceState.useEffect(state, (s) => s.list())
 
-        // TODO: clean this up so provider specific logic doesnt bleed over
         const authInfo = yield* auth.get(model.providerID).pipe(Effect.orDie)
-        const isOpenaiOauth = model.providerID === "openai" && authInfo?.type === "oauth"
+        const useOA = Auth.isOpenaiOAuth(authInfo) && model.providerID === "openai"
 
         const params = {
           experimental_telemetry: {
@@ -499,7 +480,7 @@ export const layer = Layer.effect(
           },
           temperature: 0.3,
           messages: [
-            ...(isOpenaiOauth
+            ...(useOA
               ? []
               : system.map(
                   (item): ModelMessage => ({
@@ -520,7 +501,7 @@ export const layer = Layer.effect(
           }),
         } satisfies Parameters<typeof generateObject>[0]
 
-        if (isOpenaiOauth) {
+        if (useOA) {
           return yield* Effect.promise(async () => {
             const result = streamObject({
               ...params,

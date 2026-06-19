@@ -25,6 +25,18 @@ import { Log } from "@/util"
 import { isRecord } from "@/util/record"
 
 const DOOM_LOOP_THRESHOLD = 3
+
+function stableStringify(value: unknown): string {
+  if (value === undefined) return "undefined"
+  if (value === null) return "null"
+  if (typeof value === "string") return JSON.stringify(value)
+  if (typeof value === "number" || typeof value === "boolean") return String(value)
+  if (Array.isArray(value)) return "[" + value.map(stableStringify).join(",") + "]"
+  const keys = Object.keys(value as Record<string, unknown>).sort()
+  return "{" +
+    keys.map((k) => JSON.stringify(k) + ":" + stableStringify((value as Record<string, unknown>)[k])).join(",") +
+    "}"
+}
 const log = Log.create({ service: "session.processor" })
 
 export type Result = "overflow" | "stop" | "continue"
@@ -407,7 +419,7 @@ export const layer: Layer.Layer<
                   part.type === "tool" &&
                   part.tool === value.toolName &&
                   part.state.status !== "pending" &&
-                  JSON.stringify(part.state.input) === JSON.stringify(value.input),
+                  stableStringify(part.state.input) === stableStringify(value.input),
               )
             ) {
               return

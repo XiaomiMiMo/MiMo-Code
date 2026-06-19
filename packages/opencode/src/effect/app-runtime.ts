@@ -57,6 +57,7 @@ import { TaskRegistry } from "@/task/registry"
 import { WorkflowRuntime } from "@/workflow/runtime"
 import { History } from "@/history"
 import { Memory } from "@/memory"
+import { defaultLayer as SchedulerDefaultLayer } from "@/automation/scheduler"
 import * as BashInteractive from "@/tool/bash-interactive"
 import { memoMap } from "./memo-map"
 
@@ -119,8 +120,11 @@ export const AppLayer = Layer.suspend(() =>
     WorkflowRuntime.defaultLayer,
     Memory.defaultLayer,
     History.defaultLayer,
-  ).pipe(Layer.provideMerge(Observability.layer), Layer.provideMerge(BashInteractive.defaultLayer)),
-)
+    SchedulerDefaultLayer,
+  ).pipe(
+    Layer.provideMerge(Observability.layer),
+    Layer.provideMerge(BashInteractive.defaultLayer),
+  ),)
 
 const rt = ManagedRuntime.make(AppLayer, { memoMap })
 type Runtime = Pick<typeof rt, "runSync" | "runPromise" | "runPromiseExit" | "runFork" | "runCallback" | "dispose">

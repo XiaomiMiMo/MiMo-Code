@@ -1,21 +1,14 @@
 import z from "zod"
-import path from "path"
 import { Effect } from "effect"
 import * as Tool from "./tool"
 import { Question } from "../question"
 import { Session } from "../session"
 import { MessageV2 } from "../session/message-v2"
 import { Provider } from "../provider"
-import { Instance } from "../project/instance"
+import { AppFileSystem } from "@mimo-ai/shared/filesystem"
+import { AGENT_BUILD, AGENT_PLAN } from "@/agent/config"
 import { type SessionID, MessageID, PartID } from "../session/schema"
 import EXIT_DESCRIPTION from "./plan-exit.txt"
-
-function getLastModel(sessionID: SessionID) {
-  for (const item of MessageV2.stream(sessionID, { agentID: "*" })) {
-    if (item.info.role === "user" && item.info.model) return item.info.model
-  }
-  return undefined
-}
 
 export const PlanExitTool = Tool.define(
   "plan_exit",
@@ -23,14 +16,35 @@ export const PlanExitTool = Tool.define(
     const session = yield* Session.Service
     const question = yield* Question.Service
     const provider = yield* Provider.Service
+    const fsys = yield* AppFileSystem.Service
 
     return {
       description: EXIT_DESCRIPTION,
       parameters: z.object({}),
       execute: (_params: {}, ctx: Tool.Context) =>
         Effect.gen(function* () {
+          // 仅 plan agent 可以调用此工具
+          if (ctx.agent !== AGENT_PLAN) {
+            return {
+              title: "Invalid agent",
+              output: "The plan_exit tool can only be called by the plan agent.",
+              metadata: { switched: false, feedback: "", model: "" },
+            }
+          }
+
           const info = yield* session.get(ctx.sessionID)
-          const plan = path.relative(Instance.worktree, Session.plan(info))
+          const plan = Session.planRelative(info)
+
+          // 检查 plan 文件是否存在
+          const planAbs = Session.plan(info)
+          if (!(yield* fsys.existsSafe(planAbs))) {
+            return {
+              title: "No plan file found",
+              output: `No plan file exists at ${plan}. Please create a plan file first before calling plan_exit.`,
+              metadata: { switched: false, feedback: "", model: "" },
+            }
+          }
+
           const answers = yield* question.ask({
             sessionID: ctx.sessionID,
             questions: [
@@ -49,24 +63,30 @@ export const PlanExitTool = Tool.define(
           })
 
           const answer = answers[0]?.[0]
-          if (answer === "No") return yield* new Question.RejectedError()
+          if (answer === "No") {
+            return {
+              title: "Staying in plan mode",
+              output: "User chose to stay in plan mode and continue refining the plan.",
+              metadata: { switched: false, feedback: "", model: "" },
+            }
+          }
 
           if (answer !== "Yes") {
             return {
               title: "User provided feedback",
               output: `User chose not to switch yet and provided feedback: ${answer}`,
-              metadata: { switched: false, feedback: answer },
+              metadata: { switched: false, feedback: answer, model: "" },
             }
           }
 
-          const model = getLastModel(ctx.sessionID) ?? (yield* provider.defaultModel())
+          const model = MessageV2.findLastUserModel(ctx.sessionID) ?? (yield* provider.defaultModel())
 
           const msg: MessageV2.User = {
             id: MessageID.ascending(),
             sessionID: ctx.sessionID,
             role: "user",
             time: { created: Date.now() },
-            agent: "build",
+            agent: AGENT_BUILD,
             model,
           }
           yield* session.updateMessage(msg)
@@ -81,8 +101,8 @@ export const PlanExitTool = Tool.define(
 
           return {
             title: "Switching to build agent",
-            output: "User approved switching to build agent. Wait for further instructions.",
-            metadata: { switched: true, feedback: "" },
+            output: `User approved switching to build agent. Current model: ${model.providerID}/${model.modelID}. You can use /model to change the model after switching. Wait for further instructions.`,
+            metadata: { switched: true, feedback: "", model: `${model.providerID}/${model.modelID}` },
           }
         }).pipe(Effect.orDie),
     }

@@ -575,7 +575,7 @@ export function Prompt(props: PromptProps) {
         onSelect: (dialog) => {
           if (autocomplete.visible) return
           if (!input.focused) return
-          // TODO: this should be its own command
+          // 中断会话：shell 模式切回 normal，否则递增中断信号触发 AI 停止
           if (store.mode === "shell") {
             setStore("mode", "normal")
             return

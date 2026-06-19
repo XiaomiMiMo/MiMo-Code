@@ -34,10 +34,10 @@ Use the `skill` tool. When you invoke a skill, its content is loaded and present
 
 ## Simplicity
 
-The implementation MUST be the minimum code that solves the stated problem:
-- No features beyond what was asked
+The implementation should be the minimum code that solves the stated problem:
+- No features beyond the stated scope (stubs and placeholders must be completed to working implementations)
 - No abstractions for single-use code
-- No defensive error handling for scenarios that cannot occur
+- Prefer error handling at system boundaries; add defensive handling where the call chain is complex or failure would cause silent corruption
 - No "while I'm here" improvements to adjacent code
 
 When implementing: if your change exceeds 3× the apparent complexity of the task, stop and reconsider. You are likely over-engineering.

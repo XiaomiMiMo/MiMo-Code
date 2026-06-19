@@ -945,6 +945,13 @@ export function* stream(sessionID: SessionID, options?: { agentID?: string }) {
   }
 }
 
+export function findLastUserModel(sessionID: SessionID) {
+  for (const item of stream(sessionID, { agentID: "*" })) {
+    if (item.info.role === "user" && item.info.model) return item.info.model
+  }
+  return undefined
+}
+
 export function parts(message_id: MessageID) {
   const rows = Database.use((db) =>
     db.select().from(PartTable).where(eq(PartTable.message_id, message_id)).orderBy(PartTable.id).all(),

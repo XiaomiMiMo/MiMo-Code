@@ -1,0 +1,30 @@
+name: Loop Engineering - Auto Triage
+
+on:
+  issues:
+    types: [opened, reopened]
+  pull_request:
+    types: [opened, synchronize, reopened]
+  schedule:
+    - cron: '0 9 * * 1'  # Every Monday at 9am UTC
+
+jobs:
+  triage:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'issues' || github.event_name == 'pull_request'
+    steps:
+      - uses: actions/checkout@v4
+      - name: Triage issue/PR
+        run: |
+          echo "Triaging ${{ github.event_name }} #${{ github.event.issue.number || github.event.pull_request.number }}"
+          # Add triage logic here
+
+  weekly-review:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'schedule'
+    steps:
+      - uses: actions/checkout@v4
+      - name: Weekly review
+        run: |
+          echo "Running weekly review..."
+          # Add weekly review logic here

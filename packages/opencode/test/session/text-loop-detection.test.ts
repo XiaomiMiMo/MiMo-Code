@@ -27,9 +27,9 @@ describe("normalizeForLoopDetection", () => {
     expect(normalizeForLoopDetection("Let's do something")).toBe("do something")
   })
 
-  test("truncates to 200 chars", () => {
-    const long = "a".repeat(300)
-    expect(normalizeForLoopDetection(long)).toHaveLength(200)
+  test("truncates to 300 chars", () => {
+    const long = "a".repeat(400)
+    expect(normalizeForLoopDetection(long)).toHaveLength(300)
   })
 
   test("identical inputs produce identical outputs", () => {

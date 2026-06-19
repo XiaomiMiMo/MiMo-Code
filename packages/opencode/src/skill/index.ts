@@ -288,6 +288,17 @@ export const defaultLayer = layer.pipe(
   Layer.provide(AppFileSystem.defaultLayer),
 )
 
+/** 生成单个 <skill> XML 元素，供 Skill.fmt 和 composeSkillsBlock 共用 */
+export function skillElement(name: string, description: string, location: string) {
+  return [
+    `  <skill>`,
+    `    <name>${name}</name>`,
+    `    <description>${description}</description>`,
+    `    <location>${location}</location>`,
+    `  </skill>`,
+  ].join("\n")
+}
+
 export function fmt(list: Info[], opts: { verbose: boolean }) {
   if (list.length === 0) return "No skills are currently available."
   if (opts.verbose) {
@@ -295,13 +306,7 @@ export function fmt(list: Info[], opts: { verbose: boolean }) {
       "<available_skills>",
       ...list
         .sort((a, b) => a.name.localeCompare(b.name))
-        .flatMap((skill) => [
-          "  <skill>",
-          `    <name>${skill.name}</name>`,
-          `    <description>${skill.description}</description>`,
-          `    <location>${pathToFileURL(skill.location).href}</location>`,
-          "  </skill>",
-        ]),
+        .map((skill) => skillElement(skill.name, skill.description, pathToFileURL(skill.location).href)),
       "</available_skills>",
     ].join("\n")
   }

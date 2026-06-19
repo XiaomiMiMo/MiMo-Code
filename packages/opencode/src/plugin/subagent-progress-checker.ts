@@ -115,7 +115,7 @@ export async function SubagentProgressCheckerPlugin(_pluginInput: PluginInput): 
 
         let body: string | undefined
         try {
-          body = await Bun.file(filePath).text()
+          body = await fs.readFile(filePath, "utf-8")
         } catch {
           body = undefined
         }

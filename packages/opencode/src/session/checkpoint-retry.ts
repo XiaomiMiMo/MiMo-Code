@@ -29,7 +29,7 @@ import { CHECKPOINT_SECTION_BUDGETS, MEMORY_SECTION_BUDGETS } from "./checkpoint
 export async function loadPriorDiscoveredTitles(
   sessionID: SessionID,
 ): Promise<Set<string>> {
-  const text = await Bun.file(checkpointPath(sessionID)).text().catch(() => "")
+  const text = await fs.readFile(checkpointPath(sessionID), "utf-8").catch(() => "")
   if (!text) return new Set()
   return new Set(extractTitlesFromLearning(text))
 }
@@ -50,8 +50,8 @@ export async function runValidatorsForCkpt(
     budgets?: { checkpoint: number; memory: number; progress_per_task: number }
   },
 ): Promise<Violation[]> {
-  const checkpointContent = await Bun.file(checkpointPath(sessionID)).text().catch(() => "")
-  const memoryContent = await Bun.file(memoryPath(injected.projectID)).text().catch(() => "")
+  const checkpointContent = await fs.readFile(checkpointPath(sessionID), "utf-8").catch(() => "")
+  const memoryContent = await fs.readFile(memoryPath(injected.projectID), "utf-8").catch(() => "")
 
   const violations: Violation[] = []
 
@@ -100,15 +100,20 @@ export async function runValidatorsForCkpt(
  * `next-filler` warnings on stale unrelated tasks are noise the writer
  * can't fix on retry anyway.
  *
- * TODO: filter by mtime > interval-start so we don't surface stale warnings
- * for tasks not touched in this interval at all.
+ * 只检查在此次运行期间（startAfter）被修改过的 progress.md，避免对旧任务
+ * 产生干扰性警告。startAfter 传 0 则检查所有文件（首次运行场景）。
  */
-export async function runTaskProgressValidators(sessionID: SessionID): Promise<Violation[]> {
+export async function runTaskProgressValidators(
+  sessionID: SessionID,
+  startAfter = 0,
+): Promise<Violation[]> {
   const violations: Violation[] = []
   const taskMemRoot = path.join(metaDir(sessionID), "tasks")
   const taskDirs = await fs.readdir(taskMemRoot).catch(() => [] as string[])
   for (const tid of taskDirs) {
     const progPath = path.join(taskMemRoot, tid, "progress.md")
+    const stat = await fs.stat(progPath).catch(() => null)
+    if (!stat || stat.mtimeMs <= startAfter) continue
     const prog = await fs.readFile(progPath, "utf-8").catch(() => "")
     if (prog) {
       violations.push(...validateProgress(prog, `tasks/${tid}/progress.md`))
