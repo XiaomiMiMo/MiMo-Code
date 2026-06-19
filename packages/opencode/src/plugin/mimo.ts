@@ -90,13 +90,12 @@ export async function MimoAuthPlugin(_input: PluginInput): Promise<Hooks> {
       const xiaomi = input.provider.xiaomi
       xiaomi.name ??= "MiMo"
       xiaomi.api ??= "https://api.xiaomimimo.com/v1"
-      // Disable upstream OpenCode hosted providers so they don't silently
-      // auto-load their free/public tier (opencode autoloads zero-cost models
-      // with apiKey "public" when no key is configured). Previously set by the
-      // free channel; moved here so it applies in every build (the free channel
-      // is now an optional private overlay).
+      // Keep "opencode-go" disabled: it has no custom loader, so it would
+      // autoload its free/public tier. "opencode" stays enabled — its custom
+      // loader hides the free tier and only surfaces subscription models when
+      // the user is authenticated.
       input.disabled_providers ??= []
-      for (const id of ["opencode", "opencode-go"]) {
+      for (const id of ["opencode-go"]) {
         if (!input.disabled_providers.includes(id)) input.disabled_providers.push(id)
       }
     },
