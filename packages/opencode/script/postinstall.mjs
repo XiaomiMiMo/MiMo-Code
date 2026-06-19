@@ -3,6 +3,7 @@
 import fs from "fs"
 import path from "path"
 import os from "os"
+import childProcess from "child_process"
 import { fileURLToPath } from "url"
 import { createRequire } from "module"
 
@@ -47,25 +48,109 @@ function detectPlatformAndArch() {
   return { platform, arch }
 }
 
-function findBinary() {
-  const { platform, arch } = detectPlatformAndArch()
-  const packageName = `@mimo-ai/mimocode-${platform}-${arch}`
-  const binaryName = platform === "windows" ? "mimo.exe" : "mimo"
+function supportsAvx2(platform, arch) {
+  if (arch !== "x64") return false
 
-  try {
-    // Use require.resolve to find the package
-    const packageJsonPath = require.resolve(`${packageName}/package.json`)
-    const packageDir = path.dirname(packageJsonPath)
-    const binaryPath = path.join(packageDir, "bin", binaryName)
+  if (platform === "linux") {
+    try {
+      return /(^|\s)avx2(\s|$)/i.test(fs.readFileSync("/proc/cpuinfo", "utf8"))
+    } catch {
+      return false
+    }
+  }
 
-    if (!fs.existsSync(binaryPath)) {
-      throw new Error(`Binary not found at ${binaryPath}`)
+  if (platform === "darwin") {
+    try {
+      const result = childProcess.spawnSync("sysctl", ["-n", "hw.optional.avx2_0"], {
+        encoding: "utf8",
+        timeout: 1500,
+      })
+      if (result.status !== 0) return false
+      return (result.stdout || "").trim() === "1"
+    } catch {
+      return false
+    }
+  }
+
+  if (platform === "windows") {
+    const cmd =
+      '(Add-Type -MemberDefinition "[DllImport(""kernel32.dll"")] public static extern bool IsProcessorFeaturePresent(int ProcessorFeature);" -Name Kernel32 -Namespace Win32 -PassThru)::IsProcessorFeaturePresent(40)'
+
+    for (const exe of ["powershell.exe", "pwsh.exe", "pwsh", "powershell"]) {
+      try {
+        const result = childProcess.spawnSync(exe, ["-NoProfile", "-NonInteractive", "-Command", cmd], {
+          encoding: "utf8",
+          timeout: 3000,
+          windowsHide: true,
+        })
+        if (result.status !== 0) continue
+        const out = (result.stdout || "").trim().toLowerCase()
+        if (out === "true" || out === "1") return true
+        if (out === "false" || out === "0") return false
+      } catch {
+        continue
+      }
     }
 
-    return { binaryPath, binaryName }
-  } catch (error) {
-    throw new Error(`Could not find package ${packageName}: ${error.message}`, { cause: error })
+    return false
   }
+
+  return false
+}
+
+function findBinary() {
+  const { platform, arch } = detectPlatformAndArch()
+  const binaryName = platform === "windows" ? "mimo.exe" : "mimo"
+  const avx2 = supportsAvx2(platform, arch)
+  const baseline = arch === "x64" && !avx2
+
+  const packageNames = (() => {
+    if (platform === "linux") {
+      const musl = (() => {
+        try {
+          if (fs.existsSync("/etc/alpine-release")) return true
+        } catch {}
+        try {
+          const result = childProcess.spawnSync("ldd", ["--version"], { encoding: "utf8" })
+          const text = ((result.stdout || "") + (result.stderr || "")).toLowerCase()
+          if (text.includes("musl")) return true
+        } catch {}
+        return false
+      })()
+      const base = `@mimo-ai/mimocode-${platform}-${arch}`
+      if (musl) {
+        if (arch === "x64") {
+          if (baseline) return [`${base}-baseline-musl`, `${base}-musl`, `${base}-baseline`, base]
+          return [`${base}-musl`, `${base}-baseline-musl`, base, `${base}-baseline`]
+        }
+        return [`${base}-musl`, base]
+      }
+      if (arch === "x64") {
+        if (baseline) return [`${base}-baseline`, base, `${base}-baseline-musl`, `${base}-musl`]
+        return [base, `${base}-baseline`, `${base}-musl`, `${base}-baseline-musl`]
+      }
+      return [base, `${base}-musl`]
+    }
+    const base = `@mimo-ai/mimocode-${platform}-${arch}`
+    if (arch === "x64") {
+      if (baseline) return [`${base}-baseline`, base]
+      return [base, `${base}-baseline`]
+    }
+    return [base]
+  })()
+
+  for (const packageName of packageNames) {
+    try {
+      const packageJsonPath = require.resolve(`${packageName}/package.json`)
+      const packageDir = path.dirname(packageJsonPath)
+      const binaryPath = path.join(packageDir, "bin", binaryName)
+      if (fs.existsSync(binaryPath)) {
+        return { binaryPath, binaryName }
+      }
+    } catch {}
+  }
+
+  throw new Error(`Could not find any compatible binary package. Tried: ${packageNames.join(", ")}`)
 }
 
 async function main() {
