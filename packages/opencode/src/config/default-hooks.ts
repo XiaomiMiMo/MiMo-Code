@@ -11,13 +11,14 @@
  * - hooks 仅用于用户自定义扩展（可选）
  */
 
+import type { HooksConfig } from "./hooks"
+
 /**
  * 合并用户配置的 hooks
  * 没有默认 hooks，只有用户配置的 hooks
  */
 export function mergeHooks(
-  userHooks: Record<string, any[]> | undefined,
-): Record<string, any[]> {
-  if (!userHooks) return {}
-  return userHooks
+  userHooks: HooksConfig | undefined,
+): Partial<HooksConfig> {
+  return userHooks ?? {}
 }

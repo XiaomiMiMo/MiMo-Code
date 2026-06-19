@@ -26,8 +26,6 @@ import { AttachCommand } from "./cli/cmd/tui/attach"
 import { TuiThreadCommand } from "./cli/cmd/tui/thread"
 import { AcpCommand } from "./cli/cmd/acp"
 import { EOL } from "os"
-// Web command temporarily disabled
-// import { WebCommand } from "./cli/cmd/web"
 import { PrCommand } from "./cli/cmd/pr"
 import { SessionCommand } from "./cli/cmd/session"
 import { DbCommand } from "./cli/cmd/db"
@@ -181,8 +179,6 @@ const cli = yargs(args)
   .command(UpgradeCommand)
   .command(UninstallCommand)
   .command(ServeCommand)
-  // Web command temporarily disabled
-  // .command(WebCommand)
   .command(ModelsCommand)
   .command(StatsCommand)
   .command(ExportCommand)
@@ -234,29 +230,19 @@ try {
     })
   }
 
-  if (e instanceof ResolveMessage) {
-    Object.assign(data, {
-      name: e.name,
-      message: e.message,
-      code: e.code,
-      specifier: e.specifier,
-      referrer: e.referrer,
-      position: e.position,
-      importKind: e.importKind,
-    })
-  }
   Log.Default.error("fatal", data)
   const formatted = FormatError(e)
-  if (formatted) UI.error(formatted)
-  if (formatted === undefined) {
+  if (formatted !== undefined) {
+    if (formatted) UI.error(formatted)
+  } else {
     UI.error("Unexpected error, check log file at " + Log.file() + " for more details" + EOL)
     process.stderr.write(errorMessage(e) + EOL)
   }
   process.exitCode = 1
 } finally {
-  // Some subprocesses don't react properly to SIGTERM and similar signals.
-  // Most notably, some docker-container-based MCP servers don't handle such signals unless
-  // run using `docker run --init`.
-  // Explicitly exit to avoid any hanging subprocesses.
-  process.exit()
+  // 子进程（如基于 Docker 的 MCP 服务器）可能无法正确处理 SIGTERM。
+  // 使用超时机制优雅退出：5 秒后强制退出，.unref() 确保正常完成时不会阻塞。
+  setTimeout(() => {
+    process.exit()
+  }, 5_000).unref()
 }

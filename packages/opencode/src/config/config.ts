@@ -42,6 +42,7 @@ import { ConfigProvider } from "./provider"
 import { ConfigServer } from "./server"
 import { ConfigSkills } from "./skills"
 import { ConfigVariable } from "./variable"
+import { HooksConfig } from "./hooks"
 import { Npm } from "@/npm"
 
 const log = Log.create({ service: "config" })
@@ -88,6 +89,7 @@ export type Layout = ConfigLayout.Layout
 const AgentRef = Schema.Any.annotate({ [ZodOverride]: ConfigAgent.Info })
 const PermissionRef = Schema.Any.annotate({ [ZodOverride]: ConfigPermission.Info })
 const LogLevelRef = Schema.Any.annotate({ [ZodOverride]: Log.Level })
+const HooksRef = Schema.Any.annotate({ [ZodOverride]: HooksConfig })
 
 const PositiveInt = Schema.Number.check(Schema.isInt()).check(Schema.isGreaterThan(0))
 const NonNegativeInt = Schema.Number.check(Schema.isInt()).check(Schema.isGreaterThanOrEqualTo(0))
@@ -416,6 +418,10 @@ const InfoSchema = Schema.Struct({
       }),
     }),
   ).annotate({ description: "Dynamic workflow runtime settings." }),
+  hooks: Schema.optional(HooksRef).annotate({
+    description:
+      "Hooks configuration for run loop lifecycle events (SessionStart, PreToolUse, PostToolUse, etc.). Each hook can run commands, prompts, or agent evaluations.",
+  }),
 })
 
 // Schema.Struct produces readonly types by default, but the service code
@@ -451,7 +457,7 @@ export type Info = z.output<typeof Info> & {
   // with the file and scope it came from so later runtime code can make location-sensitive decisions.
   plugin_origins?: ConfigPlugin.Origin[]
   mcp_origins?: Record<string, ConfigMCP.Origin>
-  hooks?: Record<string, Array<{ matcher?: string; hooks: Array<{ type: string; command?: string; prompt?: string; timeout?: number }> }>>
+  hooks?: z.infer<typeof HooksConfig>
 }
 
 type State = {

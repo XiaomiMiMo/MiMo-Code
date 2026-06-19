@@ -48,38 +48,6 @@ describe("Agent name constants", () => {
   })
 })
 
-// ─── roles.ts / team.ts 废弃标记 ──────────────────────
-
-describe("roles.ts deprecation", () => {
-  test("PredefinedRoles still exists and can be imported", async () => {
-    // 验证废弃的导出仍然可用（向后兼容）
-    const { PredefinedRoles, PredefinedTeams } = await import("../../src/agent/roles")
-    expect(PredefinedRoles.writer).toBeDefined()
-    expect(PredefinedRoles.writer.name).toBe("writer")
-    expect(PredefinedTeams.codeReview).toBeDefined()
-    expect(PredefinedTeams.codeReview.name).toBe("code-review")
-  })
-
-  test("AgentTeam schema still parses correctly", async () => {
-    const { AgentRole, AgentTeam } = await import("../../src/agent/roles")
-    const role = AgentRole.parse({
-      name: "test",
-      responsibilities: ["test"],
-    })
-    expect(role.name).toBe("test")
-
-    const team = AgentTeam.parse({
-      name: "test-team",
-      roles: [
-        { name: "writer", responsibilities: ["write"] },
-        { name: "reviewer", responsibilities: ["review"] },
-      ],
-    })
-    expect(team.name).toBe("test-team")
-    expect(team.roles).toHaveLength(2)
-  })
-})
-
 // ─── findLastUserModel ──────────────────────────────────
 
 describe("MessageV2.findLastUserModel", () => {

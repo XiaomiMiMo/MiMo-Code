@@ -8,12 +8,12 @@
 
 import { Effect } from "effect"
 import { Log } from "@/util"
-import type { HookEvent, HookResult } from "@/config/hooks"
+import type { HookEvent, HookResult, HooksConfig, HookHandler } from "@/config/hooks"
 import { mergeHooks } from "./default-hooks"
 
 const log = Log.create({ service: "hook-executor" })
 
-type HookHandlerConfig = { type: string; command?: string; prompt?: string; timeout?: number }
+type HookHandlerConfig = HookHandler
 
 /**
  * 执行 command 类型的 hook handler
@@ -205,13 +205,13 @@ async function executeHandler(
  */
 export function executeHooks(
   event: HookEvent,
-  userHooksConfig: Record<string, Array<{ matcher?: string; hooks: HookHandlerConfig[] }>> | undefined,
+  userHooksConfig: HooksConfig | undefined,
   input: Record<string, unknown>,
   matcherValue?: string,
 ): Effect.Effect<HookResult, never> {
   return Effect.gen(function* () {
     // 合并用户 hooks 与默认 hooks
-    const hooksConfig = mergeHooks(userHooksConfig as any)
+    const hooksConfig = mergeHooks(userHooksConfig)
 
     const eventHooks = hooksConfig[event]
     if (!eventHooks || eventHooks.length === 0) return {} as HookResult

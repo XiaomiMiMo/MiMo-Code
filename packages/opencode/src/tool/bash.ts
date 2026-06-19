@@ -24,6 +24,7 @@ import { ChildProcessSpawner } from "effect/unstable/process/ChildProcessSpawner
 import * as BashInteractive from "./bash-interactive"
 
 const MAX_METADATA_LENGTH = 30_000
+const METADATA_UPDATE_INTERVAL = 20 // 每 20 块更新一次元数据，减少 SQLite 写入
 const DEFAULT_TIMEOUT = Flag.MIMOCODE_EXPERIMENTAL_BASH_DEFAULT_TIMEOUT_MS || 2 * 60 * 1000
 const PS = new Set(["powershell", "pwsh"])
 const CWD = new Set(["cd", "push-location", "set-location"])
@@ -457,6 +458,7 @@ export const BashTool = Tool.define(
       let cut = false
       let expired = false
       let aborted = false
+      let chunkCount = 0
 
       yield* ctx.metadata({
         metadata: {
@@ -509,12 +511,16 @@ export const BashTool = Tool.define(
                 }
               }
 
-              return ctx.metadata({
-                metadata: {
-                  output: last,
-                  description: input.description,
-                },
-              })
+              chunkCount++
+              if (chunkCount % METADATA_UPDATE_INTERVAL === 0) {
+                return ctx.metadata({
+                  metadata: {
+                    output: last,
+                    description: input.description,
+                  },
+                })
+              }
+              return Effect.void
             }),
           )
 

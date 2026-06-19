@@ -19,6 +19,7 @@ import { SessionCwd } from "./session-cwd"
 import { Snapshot } from "@/snapshot"
 import { assertWriteAllowed, askEditUnlessMemory } from "./external-directory"
 import { AppFileSystem } from "@mimo-ai/shared/filesystem"
+import { levenshtein } from "../util/levenshtein"
 
 function normalizeLineEndings(text: string): string {
   return text.replaceAll("\r\n", "\n")
@@ -33,12 +34,25 @@ function convertToLineEnding(text: string, ending: "\n" | "\r\n"): string {
   return text.replaceAll("\n", "\r\n")
 }
 
+const MAX_LOCKS = 1024
+
 const locks = new Map<string, Semaphore.Semaphore>()
 
 function lock(filePath: string) {
   const resolvedFilePath = AppFileSystem.resolve(filePath)
   const hit = locks.get(resolvedFilePath)
-  if (hit) return hit
+  if (hit) {
+    // 更新 LRU 顺序：删除后重新插入
+    locks.delete(resolvedFilePath)
+    locks.set(resolvedFilePath, hit)
+    return hit
+  }
+
+  // 达到上限时淘汰最早插入的条目
+  if (locks.size >= MAX_LOCKS) {
+    const firstKey = locks.keys().next().value
+    if (firstKey !== undefined) locks.delete(firstKey)
+  }
 
   const next = Semaphore.makeUnsafe(1)
   locks.set(resolvedFilePath, next)
@@ -189,27 +203,6 @@ export type Replacer = (content: string, find: string) => Generator<string, void
 // Similarity thresholds for block anchor fallback matching
 const SINGLE_CANDIDATE_SIMILARITY_THRESHOLD = 0.0
 const MULTIPLE_CANDIDATES_SIMILARITY_THRESHOLD = 0.3
-
-/**
- * Levenshtein distance algorithm implementation
- */
-function levenshtein(a: string, b: string): number {
-  // Handle empty strings
-  if (a === "" || b === "") {
-    return Math.max(a.length, b.length)
-  }
-  const matrix = Array.from({ length: a.length + 1 }, (_, i) =>
-    Array.from({ length: b.length + 1 }, (_, j) => (i === 0 ? j : j === 0 ? i : 0)),
-  )
-
-  for (let i = 1; i <= a.length; i++) {
-    for (let j = 1; j <= b.length; j++) {
-      const cost = a[i - 1] === b[j - 1] ? 0 : 1
-      matrix[i][j] = Math.min(matrix[i - 1][j] + 1, matrix[i][j - 1] + 1, matrix[i - 1][j - 1] + cost)
-    }
-  }
-  return matrix[a.length][b.length]
-}
 
 export const SimpleReplacer: Replacer = function* (_content, find) {
   yield find

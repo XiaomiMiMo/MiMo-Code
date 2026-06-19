@@ -10,6 +10,7 @@ import { Effect } from "effect"
 import { Glob } from "@mimo-ai/shared/util/glob"
 import path from "path"
 import { Instance } from "@/project/instance"
+import { readFile } from "fs/promises"
 
 /**
  * 路径作用域规则的结构
@@ -80,7 +81,7 @@ export async function scanRules(rulesDir: string): Promise<PathScopedRule[]> {
     })
 
     for (const match of matches) {
-      const content = await Bun.file(match).text()
+      const content = await readFile(match, "utf-8")
       const { paths, body } = parseFrontmatter(content)
       const name = path.basename(match, ".md")
 

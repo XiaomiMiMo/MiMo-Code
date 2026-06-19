@@ -110,7 +110,7 @@ const normalize = (agent: z.infer<typeof Info>) => {
     }
     permission[tool] = action
   }
-  globalThis.Object.assign(permission, agent.permission)
+  Object.assign(permission, agent.permission)
 
   return { ...agent, options, permission, steps: agent.steps ?? agent.maxSteps }
 }
@@ -191,7 +191,12 @@ export async function loadMode(dir: string) {
         ...parsed.data,
         mode: "primary" as const,
       }
+      continue
     }
+    log.warn("failed to parse mode, skipping", {
+      mode: config.name,
+      issues: parsed.error.issues,
+    })
   }
   return result
 }

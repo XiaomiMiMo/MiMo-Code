@@ -2,6 +2,7 @@ import z from "zod"
 import { EOL } from "os"
 import { NamedError } from "@mimo-ai/shared/util/error"
 import { logo as glyphs } from "./logo"
+import { createInterface } from "readline"
 
 const wordmark = [
   `⠀                                       `,
@@ -105,8 +106,7 @@ export function logo(pad?: string) {
 }
 
 export async function input(prompt: string): Promise<string> {
-  const readline = require("readline")
-  const rl = readline.createInterface({
+  const rl = createInterface({
     input: process.stdin,
     output: process.stdout,
   })

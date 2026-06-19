@@ -36,6 +36,7 @@ const DEFAULT_CONTEXT_WINDOW = 1_000_000
 // model when not configured in `model_groups` (zero-config never errors).
 const BUILTIN_TIERS = new Set(["ultra", "standard", "lite"])
 // F41: warn once per (providerID, modelID) when limit.context falls back to default
+const MAX_WARNED_MODELS = 500
 const warnedContextDefaults = new Set<string>()
 
 export const DEFAULT_CHUNK_TIMEOUT = 480_000 // 8 minutes — bounds single-attempt SSE stall.
@@ -1219,6 +1220,11 @@ const layer: Layer.Layer<
                   if (explicit !== undefined) return explicit
                   const key = `${providerID}/${modelID}`
                   if (!warnedContextDefaults.has(key)) {
+                    // 限制缓存大小，避免长期运行的服务器中无限增长
+                    if (warnedContextDefaults.size >= MAX_WARNED_MODELS) {
+                      const first = warnedContextDefaults.values().next().value
+                      if (first) warnedContextDefaults.delete(first)
+                    }
                     warnedContextDefaults.add(key)
                     log.warn("limit.context not configured and not found in models.dev", {
                       providerID,

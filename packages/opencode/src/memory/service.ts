@@ -7,6 +7,12 @@ import { Config } from "../config"
 import { reconcileMemory } from "./reconcile"
 import { buildFtsQuery, buildFtsQueryAnd } from "./fts-query"
 
+// 记忆回收去抖：两次回收之间至少间隔 10 秒
+const RECONCILE_DEBOUNCE_MS = 10_000
+
+let lastReconcile = 0
+let reconcileRunning = false
+
 type SearchRow = {
   path: string
   scope: string
@@ -58,11 +64,20 @@ export const layer: Layer.Layer<Service, never, Config.Service> = Layer.effect(
       limit?: number
       mode?: "or" | "and"
     }) {
-      // Lazy reconcile before search (covers off-tool writes); honour config flag.
+      // 按配置开关和去抖间隔执行记忆回收（避免每次搜索触发完整 I/O）
       const cfg = yield* config.get()
       if (cfg.checkpoint?.memory_reconcile_on_search ?? true) {
-        const cc = cfg.memory?.cc_index ? ccBase : undefined
-        yield* Effect.promise(() => reconcileMemory({ mimo: root, cc }))
+        const now = Date.now()
+        if (!reconcileRunning && now - lastReconcile > RECONCILE_DEBOUNCE_MS) {
+          lastReconcile = now
+          reconcileRunning = true
+          const cc = cfg.memory?.cc_index ? ccBase : undefined
+          yield* Effect.promise(() =>
+            reconcileMemory({ mimo: root, cc }).finally(() => {
+              reconcileRunning = false
+            }),
+          )
+        }
       }
 
       const limit = input.limit ?? 10
