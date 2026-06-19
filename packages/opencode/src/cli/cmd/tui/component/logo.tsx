@@ -899,9 +899,17 @@ export function Logo(props: { shape?: LogoShape; ink?: RGBA; animated?: boolean;
         )
       }
 
+      // Catch-all: any non-space character (e.g. box-drawing ╗ ╔ ║ ═ ╚ ╝) renders as a
+      // solid filled cell using the same ▀ trick as █. The logo data defines shape via
+      // which cells are filled; the actual Unicode character shape is irrelevant in TUI.
       return (
-        <text fg={shade(inkTinted, theme, n + p + e + b)} attributes={attrs} selectable={false}>
-          {char}
+        <text
+          fg={shade(inkTop, theme, n + p + e + b)}
+          bg={shade(inkBot, theme, n + p + e + b)}
+          attributes={attrs}
+          selectable={false}
+        >
+          ▀
         </text>
       )
     })
@@ -930,8 +938,8 @@ export function Logo(props: { shape?: LogoShape; ink?: RGBA; animated?: boolean;
     }
   }
 
-  const MIMO_ORANGE = RGBA.fromInts(251, 129, 71)
-  const MIMO_GRAY = RGBA.fromInts(160, 160, 160)
+  const SCAFFOLD_TEAL = RGBA.fromInts(56, 189, 173)
+  const SCAFFOLD_GRAY = RGBA.fromInts(155, 155, 155)
 
   return (
     <box ref={(item: BoxRenderable) => (box = item)}>
@@ -950,21 +958,21 @@ export function Logo(props: { shape?: LogoShape; ink?: RGBA; animated?: boolean;
           if (labelRow) {
             return (
               <box flexDirection="row" gap={1}>
-                <text fg={MIMO_GRAY} selectable={false}>{line}</text>
-                <text fg={MIMO_GRAY} selectable={false}>{ctx.shape.right[index()]}</text>
+                <text fg={SCAFFOLD_GRAY} selectable={false}>{line}</text>
+                <text fg={SCAFFOLD_GRAY} selectable={false}>{ctx.shape.right[index()]}</text>
               </box>
             )
           }
           return (
             <box flexDirection="row" gap={1}>
               <box flexDirection="row">
-                {renderLine(line, index(), props.ink ?? MIMO_ORANGE, true, 0, frame(), dusk(), idleState())}
+                {renderLine(line, index(), props.ink ?? SCAFFOLD_TEAL, true, 0, frame(), dusk(), idleState())}
               </box>
               <box flexDirection="row">
                 {renderLine(
                   ctx.shape.right[index()],
                   index(),
-                  props.ink ?? MIMO_GRAY,
+                  props.ink ?? SCAFFOLD_TEAL,
                   true,
                   ctx.LEFT + GAP,
                   frame(),

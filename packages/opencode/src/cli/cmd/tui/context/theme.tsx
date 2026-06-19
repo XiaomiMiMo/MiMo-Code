@@ -620,20 +620,20 @@ function generateSystem(colors: TerminalColors, mode: "dark" | "light"): ThemeJs
   const diffRemovedLineNumberBg = tint(diffContextBg, ansiColors.red, diffAlpha)
   const diffLineNumber = textMuted
 
-  const xiaomiOrange = RGBA.fromInts(255, 103, 0)
+  const scaffoldTeal = RGBA.fromInts(56, 189, 173)
 
   return {
     theme: {
-      // Primary colors using Xiaomi Orange
-      primary: xiaomiOrange,
-      secondary: xiaomiOrange,
-      accent: xiaomiOrange,
+      // Primary colors using Scaffold Teal
+      primary: scaffoldTeal,
+      secondary: scaffoldTeal,
+      accent: scaffoldTeal,
 
       // Status colors using ANSI
       error: ansiColors.red,
       warning: ansiColors.yellow,
-      success: xiaomiOrange,
-      info: xiaomiOrange,
+      success: scaffoldTeal,
+      info: scaffoldTeal,
 
       // Text colors
       text: fg,
