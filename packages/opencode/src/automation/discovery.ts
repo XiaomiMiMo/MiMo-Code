@@ -132,4 +132,3 @@ export const layer: Layer.Layer<Service, never, Bus.Service | Config.Service> = 
 
 export const defaultLayer = layer.pipe(Layer.provide(Config.defaultLayer), Layer.provide(Bus.layer))
 
-export * as WorkDiscovery from "."

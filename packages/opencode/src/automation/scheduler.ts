@@ -3,6 +3,7 @@ import z from "zod"
 import { Bus } from "../bus"
 import { BusEvent } from "../bus/bus-event"
 import { Config } from "../config"
+import { Skill } from "../skill"
 import { Log } from "../util"
 import type { AutomationTask, WorkItem, AutomationResult } from "./schema"
 
@@ -95,11 +96,12 @@ function parseSchedule(schedule: string): number | null {
   return null
 }
 
-export const layer: Layer.Layer<Service, never, Bus.Service | Config.Service> = Layer.effect(
+export const layer: Layer.Layer<Service, never, Bus.Service | Config.Service | Skill.Service> = Layer.effect(
   Service,
   Effect.gen(function* () {
     const bus = yield* Bus.Service
     const config = yield* Config.Service
+    const skill = yield* Skill.Service
 
     const state = yield* Ref.make({
       running: false,
@@ -124,6 +126,7 @@ export const layer: Layer.Layer<Service, never, Bus.Service | Config.Service> = 
       log.info("executing automation task", {
         task_id: task.id,
         task_name: task.name,
+        skill: task.skill,
         work_item_id: work_item?.id,
       })
 
@@ -133,6 +136,18 @@ export const layer: Layer.Layer<Service, never, Bus.Service | Config.Service> = 
       }))
 
       try {
+        // 查找技能是否可用
+        const skillInfo = yield* skill.get(task.skill)
+        if (!skillInfo) {
+          throw new Error(`Skill "${task.skill}" not found for task "${task.name}"`)
+        }
+
+        log.info("skill found, executing", {
+          skill: task.skill,
+          location: skillInfo.location,
+        })
+
+        // 模拟技能执行（此处为未来实际执行预留接口）
         yield* Effect.sleep(Duration.millis(100))
 
         const duration = Date.now() - startTime
@@ -140,7 +155,7 @@ export const layer: Layer.Layer<Service, never, Bus.Service | Config.Service> = 
           task_id: task.id,
           work_item_id: work_item?.id,
           status: "success",
-          output: `Task ${task.name} executed successfully`,
+          output: `Task "${task.name}" completed. Skill: ${task.skill}`,
           duration_ms: duration,
           executed_at: Date.now(),
         }
@@ -155,6 +170,7 @@ export const layer: Layer.Layer<Service, never, Bus.Service | Config.Service> = 
 
         log.info("automation task completed", {
           task_id: task.id,
+          skill: task.skill,
           duration,
         })
 
@@ -173,6 +189,7 @@ export const layer: Layer.Layer<Service, never, Bus.Service | Config.Service> = 
 
         log.error("automation task failed", {
           task_id: task.id,
+          skill: task.skill,
           error: errorMessage,
           duration,
         })
@@ -205,6 +222,7 @@ export const layer: Layer.Layer<Service, never, Bus.Service | Config.Service> = 
         task_id: task.id,
         task_name: task.name,
         schedule: task.schedule,
+        skill: task.skill,
       })
 
       const currentState = yield* Ref.get(state)
@@ -358,6 +376,31 @@ export const layer: Layer.Layer<Service, never, Bus.Service | Config.Service> = 
       return currentState.pendingWork
     })
 
+    // 从配置加载自动化任务
+    const cfg = yield* config.get()
+    const autoCfg = cfg.automation
+    if (autoCfg?.tasks) {
+      for (const taskDef of autoCfg.tasks) {
+        const task: AutomationTask = {
+          id: taskDef.id,
+          name: taskDef.name,
+          description: taskDef.description,
+          schedule: taskDef.schedule,
+          skill: taskDef.skill,
+          enabled: taskDef.enabled ?? true,
+          priority: taskDef.priority ?? "medium",
+          timeout: taskDef.timeout,
+          retries: taskDef.retries ?? 0,
+        }
+        yield* register(task)
+      }
+
+      // 如果配置启用，自动启动调度器
+      if (autoCfg.enabled) {
+        yield* start()
+      }
+    }
+
     return Service.of({
       register,
       unregister,
@@ -371,6 +414,9 @@ export const layer: Layer.Layer<Service, never, Bus.Service | Config.Service> = 
   }),
 )
 
-export const defaultLayer = layer.pipe(Layer.provide(Config.defaultLayer), Layer.provide(Bus.layer))
+export const defaultLayer = layer.pipe(
+  Layer.provide(Config.defaultLayer),
+  Layer.provide(Bus.layer),
+  Layer.provide(Skill.defaultLayer),
+)
 
-export * as AutomationScheduler from "."
