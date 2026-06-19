@@ -8,7 +8,7 @@ import { Log } from "../util"
 import { SessionRevert } from "./revert"
 import * as Session from "./session"
 import { Agent } from "../agent/agent"
-import { SYSTEM_SPAWNED_AGENT_TYPES } from "@/agent/config"
+import { SYSTEM_SPAWNED_AGENT_TYPES, AGENT_PLAN, AGENT_COMPOSE } from "@/agent/config"
 import { Provider } from "../provider"
 import { ModelID, ProviderID } from "../provider/schema"
 import { type Tool as AITool, type ModelMessage, tool, jsonSchema, type ToolExecutionOptions, asSchema } from "ai"
@@ -28,6 +28,8 @@ import { TuiEvent } from "@/cli/cmd/tui/event"
 import { Plugin } from "../plugin"
 import BUILD_SWITCH from "../session/prompt/build-switch.txt"
 import MAX_STEPS from "../session/prompt/max-steps.txt"
+import PLAN_MODE from "../session/prompt/plan-mode.txt"
+import { detectProtocolLevel } from "./protocol-level"
 import PROMPT_COMPOSE from "../session/prompt/compose.txt"
 import {
   RECOVERY_PROMPT_MILD,
@@ -461,128 +463,103 @@ export const layer = Layer.effect(
       return stripped.length > 120 ? stripped.substring(0, 117) + "..." : stripped
     })
 
-    const insertReminders = Effect.fn("SessionPrompt.insertReminders")(function* (input: {
+    // Compose 模式：向首个 compose user message 注入 compose prompt + skills block
+    const injectComposePrompt = Effect.fn("SessionPrompt.injectComposePrompt")(function* (input: {
+      messages: MessageV2.WithParts[]
+    }) {
+      const composeModeMsg = input.messages.find(
+        (msg) => msg.info.role === "user" && msg.info.agent === AGENT_COMPOSE,
+      )
+      if (!composeModeMsg) return
+
+      // 防止重复注入：检查是否已经注入过 compose prompt
+      const alreadyInjected = composeModeMsg.parts.some(
+        (p) => p.type === "text" && p.text.includes(PROMPT_COMPOSE.slice(0, 50)),
+      )
+      if (alreadyInjected) return
+
+      const composeModeBlock = composeSkillsBlock()
+      composeModeMsg.parts.unshift({
+        id: PartID.ascending(),
+        messageID: composeModeMsg.info.id,
+        sessionID: composeModeMsg.info.sessionID,
+        type: "text",
+        text: PROMPT_COMPOSE + (composeModeBlock ? "\n\n" + composeModeBlock : ""),
+        synthetic: true,
+      })
+    })
+
+    // Plan → Build 切换：当上一个 assistant 是 plan agent 时，注入 build switch 提示
+    const injectBuildSwitch = Effect.fn("SessionPrompt.injectBuildSwitch")(function* (input: {
       messages: MessageV2.WithParts[]
       agent: Agent.Info
       session: Session.Info
     }) {
-      const userMessage = input.messages.findLast((msg) => msg.info.role === "user")
-      if (!userMessage) return input.messages
-
-      const composeModeMsg = input.messages.find(
-        (msg) => msg.info.role === "user" && msg.info.agent === "compose",
-      )
-      if (composeModeMsg) {
-        const composeModeBlock = composeSkillsBlock()
-        composeModeMsg.parts.unshift({
-          id: PartID.ascending(),
-          messageID: composeModeMsg.info.id,
-          sessionID: composeModeMsg.info.sessionID,
-          type: "text",
-          text: PROMPT_COMPOSE + (composeModeBlock ? "\n\n" + composeModeBlock : ""),
-          synthetic: true,
-        })
-      }
-
+      if (input.agent.name === AGENT_PLAN) return
       const assistantMessage = input.messages.findLast((msg) => msg.info.role === "assistant")
-      if (input.agent.name !== "plan" && assistantMessage?.info.agent === "plan") {
-        const plan = Session.plan(input.session)
-        if (!(yield* fsys.existsSafe(plan))) return input.messages
-        const part = yield* sessions.updatePart({
-          id: PartID.ascending(),
-          messageID: userMessage.info.id,
-          sessionID: userMessage.info.sessionID,
-          type: "text",
-          text: `${BUILD_SWITCH}\n\nA plan file exists at ${plan}. You should execute on the plan defined within it`,
-          synthetic: true,
-        })
-        userMessage.parts.push(part)
-        return input.messages
-      }
+      if (assistantMessage?.info.agent !== AGENT_PLAN) return
 
-      if (input.agent.name !== "plan" || assistantMessage?.info.agent === "plan") return input.messages
+      const userMessage = input.messages.findLast((msg) => msg.info.role === "user")
+      if (!userMessage) return
 
       const plan = Session.plan(input.session)
-      const exists = yield* fsys.existsSafe(plan)
-      if (!exists) yield* fsys.ensureDir(path.dirname(plan)).pipe(Effect.catch(Effect.die))
+      if (!(yield* fsys.existsSafe(plan))) return
+
       const part = yield* sessions.updatePart({
         id: PartID.ascending(),
         messageID: userMessage.info.id,
         sessionID: userMessage.info.sessionID,
         type: "text",
-        text: `<system-reminder>
-Plan mode is active. The user indicated that they do not want you to execute yet -- you MUST NOT make any edits (with the exception of the plan file mentioned below), run any non-readonly tools (including changing configs or making commits), or otherwise make any changes to the system. This supersedes any other instructions you have received.
-
-## Plan File Info:
-${exists ? `A plan file already exists at ${plan}. You can read it and make incremental edits using the edit tool.` : `No plan file exists yet. You should create your plan at ${plan} using the write tool.`}
-You should build your plan incrementally by writing to or editing this file. NOTE that this is the only file you are allowed to edit - other than this you are only allowed to take READ-ONLY actions.
-
-## Plan Workflow
-
-### Phase 1: Initial Understanding
-Goal: Gain a comprehensive understanding of the user's request by reading through code and asking them questions. Critical: In this phase you should only use the explore subagent type.
-
-1. Focus on understanding the user's request and the code associated with their request
-
-2. **Launch up to 3 explore agents IN PARALLEL** (single message, multiple tool calls) to efficiently explore the codebase.
- - Use 1 agent when the task is isolated to known files, the user provided specific file paths, or you're making a small targeted change.
- - Use multiple agents when: the scope is uncertain, multiple areas of the codebase are involved, or you need to understand existing patterns before planning.
- - Quality over quantity - 3 agents maximum, but you should try to use the minimum number of agents necessary (usually just 1)
- - If using multiple agents: Provide each agent with a specific search focus or area to explore. Example: One agent searches for existing implementations, another explores related components, a third investigates testing patterns
-
-3. After exploring the code, use the question tool to clarify ambiguities in the user request up front.
-
-### Phase 2: Design
-Goal: Design an implementation approach.
-
-Launch general agent(s) to design the implementation based on the user's intent and your exploration results from Phase 1.
-
-You can launch up to 1 agent(s) in parallel.
-
-**Guidelines:**
-- **Default**: Launch at least 1 Plan agent for most tasks - it helps validate your understanding and consider alternatives
-- **Skip agents**: Only for truly trivial tasks (typo fixes, single-line changes, simple renames)
-
-Examples of when to use multiple agents:
-- The task touches multiple parts of the codebase
-- It's a large refactor or architectural change
-- There are many edge cases to consider
-- You'd benefit from exploring different approaches
-
-Example perspectives by task type:
-- New feature: simplicity vs performance vs maintainability
-- Bug fix: root cause vs workaround vs prevention
-- Refactoring: minimal change vs clean architecture
-
-In the agent prompt:
-- Provide comprehensive background context from Phase 1 exploration including filenames and code path traces
-- Describe requirements and constraints
-- Request a detailed implementation plan
-
-### Phase 3: Review
-Goal: Review the plan(s) from Phase 2 and ensure alignment with the user's intentions.
-1. Read the critical files identified by agents to deepen your understanding
-2. Ensure that the plans align with the user's original request
-3. Use question tool to clarify any remaining questions with the user
-
-### Phase 4: Final Plan
-Goal: Write your final plan to the plan file (the only file you can edit).
-- Include only your recommended approach, not all alternatives
-- Ensure that the plan file is concise enough to scan quickly, but detailed enough to execute effectively
-- Include the paths of critical files to be modified
-- Include a verification section describing how to test the changes end-to-end (run the code, use MCP tools, run tests)
-
-### Phase 5: Call plan_exit tool
-At the very end of your turn, once you have asked the user questions and are happy with your final plan file - you should always call plan_exit to indicate to the user that you are done planning.
-This is critical - your turn should only end with either asking the user a question or calling plan_exit. Do not stop unless it's for these 2 reasons.
-
-**Important:** Use question tool to clarify requirements/approach, use plan_exit to request plan approval. Do NOT use question tool to ask "Is this plan okay?" - that's what plan_exit does.
-
-NOTE: At any point in time through this workflow you should feel free to ask the user questions or clarifications. Don't make large assumptions about user intent. The goal is to present a well researched plan to the user, and tie any loose ends before implementation begins.
-</system-reminder>`,
+        text: `${BUILD_SWITCH}\n\nA plan file exists at ${plan}. You should execute on the plan defined within it`,
         synthetic: true,
       })
       userMessage.parts.push(part)
+    })
+
+    // Plan 模式：进入 plan agent 时注入 plan mode 提示
+    const injectPlanMode = Effect.fn("SessionPrompt.injectPlanMode")(function* (input: {
+      messages: MessageV2.WithParts[]
+      agent: Agent.Info
+      session: Session.Info
+    }) {
+      if (input.agent.name !== AGENT_PLAN) return
+      const assistantMessage = input.messages.findLast((msg) => msg.info.role === "assistant")
+      if (assistantMessage?.info.agent === AGENT_PLAN) return
+
+      const userMessage = input.messages.findLast((msg) => msg.info.role === "user")
+      if (!userMessage) return
+
+      const plan = Session.plan(input.session)
+      const exists = yield* fsys.existsSafe(plan)
+      if (!exists) yield* fsys.ensureDir(path.dirname(plan)).pipe(Effect.catch(Effect.die))
+
+      const part = yield* sessions.updatePart({
+        id: PartID.ascending(),
+        messageID: userMessage.info.id,
+        sessionID: userMessage.info.sessionID,
+        type: "text",
+        text: PLAN_MODE.replace(
+          "{{PLAN_FILE_INFO}}",
+          exists
+            ? `A plan file already exists at ${plan}. You can read it and make incremental edits using the edit tool.`
+            : `No plan file exists yet. You should create your plan at ${plan} using the write tool.`,
+        ).replace(
+          "{{PROTOCOL_NOTE}}",
+          "",
+        ),
+        synthetic: true,
+      })
+      userMessage.parts.push(part)
+    })
+
+    const insertReminders = Effect.fn("SessionPrompt.insertReminders")(function* (input: {
+      messages: MessageV2.WithParts[]
+      agent: Agent.Info
+      session: Session.Info
+    }) {
+      yield* injectComposePrompt(input)
+      yield* injectBuildSwitch(input)
+      yield* injectPlanMode(input)
       return input.messages
     })
 
@@ -703,7 +680,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
                 const preToolCfg = yield* config.get()
                 const preToolResult = yield* executeHooks(
                   "PreToolUse",
-                  (preToolCfg as any).hooks,
+                  preToolCfg.hooks,
                   { tool: item.id, args, sessionID: ctx.sessionID },
                   item.id,
                 ).pipe(Effect.catch(() => Effect.succeed({} as HookResult)))
@@ -769,7 +746,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
                 const postToolCfg = yield* config.get()
                 const postToolResult = yield* executeHooks(
                   "PostToolUse",
-                  (postToolCfg as any).hooks,
+                  postToolCfg.hooks,
                   { tool: item.id, args: beforeOutput.args, output, sessionID: ctx.sessionID },
                   item.id,
                 ).pipe(Effect.catch(() => Effect.succeed({} as HookResult)))
@@ -1348,12 +1325,8 @@ NOTE: At any point in time through this workflow you should feel free to ask the
     })
 
     const lastModel = Effect.fnUntraced(function* (sessionID: SessionID) {
-      const match = yield* sessions.findMessage(
-        sessionID,
-        (m) => m.info.role === "user" && !!m.info.model,
-        { agentID: "*" },
-      )
-      if (Option.isSome(match) && match.value.info.role === "user") return match.value.info.model
+      const model = MessageV2.findLastUserModel(sessionID)
+      if (model) return model
       return yield* provider.defaultModel()
     })
 
@@ -2285,7 +2258,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
             const cfg = yield* config.get()
             const sessionStartResult = yield* executeHooks(
               "SessionStart",
-              (cfg as any).hooks,
+              cfg.hooks,
               { sessionID, agentID, model: lastUser.model },
             ).pipe(Effect.catch(() => Effect.succeed({} as HookResult)))
             if (sessionStartResult.additionalContext) {
@@ -2308,7 +2281,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
           const cfg = yield* config.get()
           const userPromptResult = yield* executeHooks(
             "UserPromptSubmit",
-            (cfg as any).hooks,
+            cfg.hooks,
             { sessionID, agentID, userMessage: lastUser },
             lastUser.agent,
           ).pipe(Effect.catch(() => Effect.succeed({} as HookResult)))
@@ -2415,8 +2388,20 @@ NOTE: At any point in time through this workflow you should feel free to ask the
             if (classification.type === "final" && classification.degraded)
               yield* slog.warn("degraded final on abnormal finish", { finish: lastAssistant.finish })
             if (classification.type !== "continue") {
-              if (yield* taskGate(lastUser)) continue
-              if (yield* goalGate(lastUser)) continue
+              const userText = msgs
+                .filter((m): m is MessageV2.WithParts => m.info.id === lastUser.id)
+                .flatMap((m) => m.parts.filter((p) => p.type === "text"))
+                .map((p) => (p as { text?: string }).text ?? "")
+                .join("\n")
+              const protocolLevel = detectProtocolLevel({
+                userText,
+                agentName: lastUser.agent ?? "main",
+                msgCount: msgs.length,
+              })
+              if (protocolLevel !== "minimal") {
+                if (yield* taskGate(lastUser)) continue
+                if (yield* goalGate(lastUser)) continue
+              }
               yield* slog.info("exiting loop", { classification: classification.type })
               break
             }
@@ -2489,7 +2474,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
             const preCompactCfg = yield* config.get()
             const preCompactResult = yield* executeHooks(
               "PreCompact",
-              (preCompactCfg as any).hooks,
+              preCompactCfg.hooks,
               { sessionID, auto: compactionPart?.auto, overflow: compactionPart?.overflow },
               compactionPart?.auto ? "auto" : "manual",
             ).pipe(Effect.catch(() => Effect.succeed({} as HookResult)))
@@ -2513,7 +2498,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
             const postCompactCfg = yield* config.get()
             const postCompactResult = yield* executeHooks(
               "PostCompact",
-              (postCompactCfg as any).hooks,
+              postCompactCfg.hooks,
               { sessionID, result, auto: compactionPart?.auto },
               compactionPart?.auto ? "auto" : "manual",
             ).pipe(Effect.catch(() => Effect.succeed({} as HookResult)))
@@ -3189,11 +3174,12 @@ NOTE: At any point in time through this workflow you should feel free to ask the
 
               if (isTextLoop) {
                 if (textLoopRecoveryAttempts >= TEXT_LOOP_MAX_RECOVERY) {
+                  const repeatedSnippet = textLoopBuffer[textLoopBuffer.length - 1]?.slice(0, 200) ?? "(empty)"
                   yield* slog.info("text loop: max recovery exceeded, terminating")
                   yield* bus.publish(Session.Event.Error, {
                     sessionID,
                     error: new NamedError.Unknown({
-                      message: `Text loop detected: model repeated the same output ${TEXT_LOOP_TRIGGER_COUNT} times after ${TEXT_LOOP_MAX_RECOVERY} recovery attempts. Session terminated.`,
+                      message: `Text loop detected: model repeated the same output ${TEXT_LOOP_TRIGGER_COUNT} times after ${TEXT_LOOP_MAX_RECOVERY} recovery attempts. Session terminated.\n\nRepeated output snippet: "${repeatedSnippet}"\n\nSuggestion: try switching to a different model or reducing the task scope.`,
                     }).toObject(),
                   })
                   break
@@ -3262,7 +3248,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
                       "</system-reminder>",
                     ].join("\n"),
                   })
-                  consecutiveToolOnlySteps = 0  // Reset after nudge
+                  consecutiveToolOnlySteps = Math.floor(CONSECUTIVE_TOOL_ONLY_THRESHOLD / 2)  // Partial reset: next nudge sooner
                 }
               }
             }
@@ -3304,7 +3290,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
         const cfgForStop = yield* config.get()
         const stopResult = yield* executeHooks(
           "Stop",
-          (cfgForStop as any).hooks,
+          cfgForStop.hooks,
           { sessionID, agentID, finalMessage: final },
         ).pipe(Effect.catch(() => Effect.succeed({} as HookResult)))
         if (stopResult.additionalContext) {

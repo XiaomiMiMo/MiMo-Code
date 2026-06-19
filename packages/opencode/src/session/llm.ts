@@ -232,18 +232,33 @@ const live: Layer.Layer<
       agentID?: string
     }) {
       const system: string[] = []
-      system.push(
-        [
-          // use agent prompt otherwise provider prompt
-          ...(input.agent.prompt ? [input.agent.prompt] : SystemPrompt.provider(input.model)),
-          // any custom prompt passed into this call
-          ...input.system,
-          // any custom prompt from last user message
-          ...(input.user.system ? [input.user.system] : []),
-        ]
-          .filter((x) => x)
-          .join("\n"),
-      )
+
+      // 分层 system 结构:
+      //   特化 agent (有 agent.prompt) → system[0] = 完整 prompt
+      //   标准 agent → system[0] = assistant-core, system[1] = engineering-process
+      //   system[N] = additions (env + skills + instructions + tool-summaries + path-rules)
+      //   system[N] = user.system
+      //   system[last] = memory-instructions
+      //
+      // 这种结构让 LLM 前缀缓存对稳定的 core 部分保持高命中率。
+      // fork agent (checkpoint-writer) 通过 ForkContext 存储和回放完整的 system 数组,
+      // 因此 N 元素结构可以正确处理。
+      const providerParts = input.agent.prompt
+        ? [input.agent.prompt]
+        : SystemPrompt.provider(input.model)
+      for (const part of providerParts) {
+        if (part) system.push(part)
+      }
+
+      // additions: env, skills, instructions, tool-summaries, path-rules
+      if (input.system.length > 0) {
+        system.push(input.system.filter((x) => x).join("\n"))
+      }
+
+      // user.system: explicit system content from the user message
+      if (input.user.system) {
+        system.push(input.user.system)
+      }
 
       // v5: memory-instructions section. Teaches the main agent how/where/when
       // to maintain `MEMORY.md` and `checkpoint.md` directly via Edit. Project
@@ -271,18 +286,11 @@ const live: Layer.Layer<
         system.push(buildMemoryInstructions(SessionID.make(input.sessionID), projectID, yield* memory.root()))
       }
 
-      const header = system[0]
       yield* plugin.trigger(
         "experimental.chat.system.transform",
         { sessionID: input.sessionID, model: input.model },
         { system },
       )
-      // rejoin to maintain 2-part structure for caching if header unchanged
-      if (system.length > 2 && system[0] === header) {
-        const rest = system.slice(1)
-        system.length = 0
-        system.push(header, rest.join("\n"))
-      }
 
       return system
     })

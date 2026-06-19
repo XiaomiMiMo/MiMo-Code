@@ -451,6 +451,7 @@ export type Info = z.output<typeof Info> & {
   // with the file and scope it came from so later runtime code can make location-sensitive decisions.
   plugin_origins?: ConfigPlugin.Origin[]
   mcp_origins?: Record<string, ConfigMCP.Origin>
+  hooks?: Record<string, Array<{ matcher?: string; hooks: Array<{ type: string; command?: string; prompt?: string; timeout?: number }> }>>
 }
 
 type State = {

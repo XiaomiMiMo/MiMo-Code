@@ -8,6 +8,9 @@ import { MemoryFtsTable } from "@/memory/fts.sql"
 import { TaskRegistry } from "@/task/registry"
 import { ActorRegistry } from "@/actor/registry"
 import type { AgentOutcome, ForkContext } from "@/actor/spawn"
+
+// hasMemoryOrTasks 结果缓存：避免每步都查文件系统和 DB
+const _hasMemoryOrTasksCache = new Map<string, boolean>()
 import { spawnRef } from "@/actor/spawn-ref"
 import { prefixCaptureRef } from "./prefix-capture-ref"
 import { Database, and, eq, or } from "@/storage"
@@ -956,14 +959,19 @@ export const layer: Layer.Layer<
     })
 
     const hasMemoryOrTasks = Effect.fn("SessionCheckpoint.hasMemoryOrTasks")(function* (sessionID: SessionID) {
+      // 缓存：同一 session 中避免重复文件系统/DB 查询
+      if (_hasMemoryOrTasksCache.has(sessionID)) return _hasMemoryOrTasksCache.get(sessionID)!
+
       const memoryRoot = yield* memory.root()
       const sessMemDir = path.join(memoryRoot, "sessions", sessionID)
       const memEntries = yield* Effect.promise(() =>
         fs.readdir(sessMemDir).catch(() => [] as string[]),
       )
-      if (memEntries.length > 0) return true
+      if (memEntries.length > 0) { _hasMemoryOrTasksCache.set(sessionID, true); return true }
       const tasks = yield* taskRegistry.list({ session_id: sessionID, include_terminal: true })
-      return tasks.length > 0
+      const result = tasks.length > 0
+      _hasMemoryOrTasksCache.set(sessionID, result)
+      return result
     })
 
     const loadLatest = Effect.fn("SessionCheckpoint.loadLatest")(function* (sessionID: SessionID) {

@@ -7,6 +7,7 @@ import { Instance } from "../project/instance"
 import { Truncate } from "../tool"
 import { Auth } from "../auth"
 import { ProviderTransform } from "../provider"
+import { AGENT_BUILD, AGENT_PLAN, AGENT_COMPOSE } from "./config"
 
 import PROMPT_GENERATE from "./generate.txt"
 import PROMPT_EXPLORE from "./prompt/explore.txt"
@@ -111,7 +112,7 @@ export const layer = Layer.effect(
 
         const agents: Record<string, Info> = {
           build: {
-            name: "build",
+            name: AGENT_BUILD,
             color: "#fb8147",
             description: "Executes tools based on configured permissions.",
             options: {},
@@ -125,6 +126,7 @@ export const layer = Layer.effect(
             ),
             mode: "primary",
             native: true,
+            steps: 100,
           },
           // Max mode is experimental and opt-in: only registered when
           // `experimental.maxMode` is configured. This keeps the default agent
@@ -151,7 +153,7 @@ export const layer = Layer.effect(
               }
             : {}),
           plan: {
-            name: "plan",
+            name: AGENT_PLAN,
             color: "#c7e2a8",
             description: "Plan mode. Disallows all edit tools.",
             options: {},
@@ -166,6 +168,8 @@ export const layer = Layer.effect(
                 edit: {
                   "*": "deny",
                   [path.join(".mimocode", "plans", "*.md")]: "allow",
+                  // NOTE: Instance.worktree is read at construction time.
+                  // Requires Instance layer to be initialized before Agent layer.
                   [path.relative(Instance.worktree, path.join(Global.Path.data, path.join("plans", "*.md")))]: "allow",
                 },
               }),
@@ -173,22 +177,47 @@ export const layer = Layer.effect(
             ),
             mode: "primary",
             native: true,
+            steps: 30,
+            toolAllowlist: [
+              "read", "grep", "glob", "list",
+              "question", "plan_exit",
+              "actor",
+              "edit", "write",
+              "webfetch", "websearch", "codesearch",
+            ],
           },
           compose: {
-            name: "compose",
+            name: AGENT_COMPOSE,
             color: "#a7a3d8",
             description: "Compose mode. Orchestrates workflows with built-in compose skills.",
             options: {},
             permission: Permission.merge(
               defaults,
               Permission.fromConfig({
+                "*": "deny",
                 question: "allow",
+                plan_enter: "deny",
+                plan_exit: "deny",
                 skill: "allow",
+                read: { "*": "allow", "*.env": "ask", "*.env.*": "ask", "*.env.example": "allow" },
+                external_directory: {
+                  "*": "ask",
+                  ...Object.fromEntries(
+                    [Truncate.GLOB, ...skillDirs.map((dir) => path.join(dir, "*"))].map((dir) => [dir, "allow"]),
+                  ),
+                },
               }),
               user,
             ),
             mode: "primary",
             native: true,
+            steps: 150,
+            toolAllowlist: [
+              "skill", "question", "actor", "task",
+              "read", "grep", "glob", "list",
+              "edit", "write",
+              "webfetch", "websearch", "codesearch",
+            ],
           },
           general: {
             name: "general",
@@ -215,11 +244,10 @@ export const layer = Layer.effect(
                 grep: "allow",
                 glob: "allow",
                 list: "allow",
-                bash: "allow",
+                read: "allow",
                 webfetch: "allow",
                 websearch: "allow",
                 codesearch: "allow",
-                read: "allow",
                 external_directory: {
                   "*": "ask",
                   ...Object.fromEntries(whitelistedDirs.map((dir) => [dir, "allow"])),
@@ -227,7 +255,7 @@ export const layer = Layer.effect(
               }),
               user,
             ),
-            description: `Fast agent specialized for exploring codebases. Use this when you need to quickly find files by patterns (eg. "src/components/**/*.tsx"), search code for keywords (eg. "API endpoints"), or answer questions about the codebase (eg. "how do API endpoints work?"). When calling this agent, specify the desired thoroughness level: "quick" for basic searches, "medium" for moderate exploration, or "very thorough" for comprehensive analysis across multiple locations and naming conventions.`,
+            description: `Fast agent for exploring codebases. Find files by patterns, search code for keywords, or answer questions about code. Specify thoroughness: "quick", "medium", or "very thorough".`,
             prompt: PROMPT_EXPLORE,
             options: {},
             mode: "subagent",
@@ -428,8 +456,8 @@ export const layer = Layer.effect(
             values(),
             sortBy(
               [(x) => cfg.default_agent !== undefined && x.name === cfg.default_agent, "desc"],
-              [(x) => x.name === "build", "desc"],
-              [(x) => x.name === "plan", "desc"],
+              [(x) => x.name === AGENT_BUILD, "desc"],
+              [(x) => x.name === AGENT_PLAN, "desc"],
               [(x) => x.name === "compose", "desc"],
               [(x) => x.name === "max", "desc"],
               [(x) => x.name, "asc"],

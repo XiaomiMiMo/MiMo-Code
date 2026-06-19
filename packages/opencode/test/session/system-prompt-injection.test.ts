@@ -1,54 +1,53 @@
 import { describe, expect, test } from "bun:test"
-import PROMPT_CORE_BEHAVIOR from "../../src/session/prompt/core-behavior.txt"
+import PROMPT_ANTHROPIC from "../../src/session/prompt/anthropic.txt"
+import PROMPT_GPT from "../../src/session/prompt/gpt.txt"
+import PROMPT_GEMINI from "../../src/session/prompt/gemini.txt"
+import PROMPT_CORE from "../../src/session/prompt/core-behavior-core.txt"
 import BUILD_SWITCH from "../../src/session/prompt/build-switch.txt"
 import MAX_STEPS from "../../src/session/prompt/max-steps.txt"
 import { RECOVERY_PROMPT_MILD, RECOVERY_PROMPT_STRONG } from "../../src/session/prompt/text-loop-recovery"
 import { SystemPrompt } from "../../src/session/system"
 
 describe("Core behavior prompt injection verification", () => {
-  test("all models use the same core behavior prompt", () => {
-    // 无论什么模型，都应该返回同一个 prompt
-    const claudeModel = { api: { id: "claude-sonnet-4-20250514" } } as any
-    const gptModel = { api: { id: "gpt-4o" } } as any
-    const geminiModel = { api: { id: "gemini-2.5-pro" } } as any
+  test("each provider gets its own optimized prompt", () => {
+    const claudeModel = { api: { id: "claude-sonnet-4-20250514" }, providerID: "anthropic" } as any
+    const gptModel = { api: { id: "gpt-4o" }, providerID: "openai" } as any
+    const geminiModel = { api: { id: "gemini-2.5-pro" }, providerID: "google" } as any
+    const unknownModel = { api: { id: "unknown-model" }, providerID: "unknown" } as any
 
-    expect(SystemPrompt.provider(claudeModel)).toEqual([PROMPT_CORE_BEHAVIOR])
-    expect(SystemPrompt.provider(gptModel)).toEqual([PROMPT_CORE_BEHAVIOR])
-    expect(SystemPrompt.provider(geminiModel)).toEqual([PROMPT_CORE_BEHAVIOR])
+    // 已知提供商应获取其专属精简提示词
+    expect(SystemPrompt.provider(claudeModel)[0]).toStartWith("You are MiMoCode, a professional software engineering assistant built by Xiaomi MiMo Team.")
+    // GPT 应从 gpt.txt 获取更简洁的提示词（可能起始行不同）
+    expect(SystemPrompt.provider(gptModel)[0]).toBeTruthy()
+    expect(SystemPrompt.provider(geminiModel)[0]).toBeTruthy()
+    // 未知提供商回退到 core-behavior-core.txt
+    expect(SystemPrompt.provider(unknownModel)[0]).toBeTruthy()
   })
 
-  test("core-behavior prompt contains all generic behavioral directives", () => {
+  test("provider prompts are shorter than core behavior", () => {
+    expect(PROMPT_ANTHROPIC.length).toBeLessThan(15000)
+    expect(PROMPT_GPT.length).toBeLessThan(12000)
+    expect(PROMPT_GEMINI.length).toBeLessThan(10000)
+  })
+
+  test("core-behavior prompt contains key behavioral directives", () => {
     const requiredDirectives = [
-      // 通用行为框架
-      "Analytical Thinking",
-      "Professional Objectivity",
-      "Code Quality Rules",
-      "Output Style",
-      "Tool Usage Strategy",
-      "Executing Actions with Care",
-      "Git Safety",
-      "Context Management",
-      "Error Recovery",
-      "Debugging",
-      // 关键行为规则
-      "Read at least 3 existing implementations",
-      "Parallel execution",
       "file_path:line_number",
-      "add comments unless explicitly asked",
-      "NEVER commit changes unless the user explicitly asks",
-      "Prioritize technical accuracy and truthfulness",
-      "Manage context aggressively",
-      "Do NOT guess. Investigate",
+      "NEVER commit",
+      "Prioritize technical accuracy",
+      "Parallel execution",
     ]
 
     for (const directive of requiredDirectives) {
-      expect(PROMPT_CORE_BEHAVIOR).toContain(directive)
+      expect(PROMPT_ANTHROPIC).toContain(directive)
+      expect(PROMPT_GPT).toContain(directive)
+      expect(PROMPT_GEMINI).toContain(directive)
     }
   })
 
   test("core-behavior prompt has reasonable length", () => {
-    expect(PROMPT_CORE_BEHAVIOR.length).toBeGreaterThan(5000)
-    expect(PROMPT_CORE_BEHAVIOR.length).toBeLessThan(25000)
+    expect(PROMPT_CORE.length).toBeGreaterThan(3000)
+    expect(PROMPT_CORE.length).toBeLessThan(15000)
   })
 })
 

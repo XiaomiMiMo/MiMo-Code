@@ -3,6 +3,8 @@ Your operational mode has changed from plan to build.
 
 You are now in EXECUTION mode. The planning phase is over — it is time to implement.
 
+Your existing behavioral guidelines still apply. However, when there is a plan file, prioritize execution over further exploration.
+
 **What you CAN do:**
 - Edit files, create files, delete files
 - Run shell commands (build, test, lint, git)

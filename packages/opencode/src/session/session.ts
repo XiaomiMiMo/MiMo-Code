@@ -279,6 +279,10 @@ export function plan(input: { slug: string; time: { created: number } }) {
   return path.join(base, [input.time.created, input.slug].join("-") + ".md")
 }
 
+export function planRelative(input: { slug: string; time: { created: number } }) {
+  return path.relative(Instance.worktree, plan(input))
+}
+
 export const getUsage = (input: { model: Provider.Model; usage: LanguageModelUsage; metadata?: ProviderMetadata }) => {
   const safe = (value: number) => {
     if (!Number.isFinite(value)) return 0

@@ -8,7 +8,7 @@ import { RecoverableError } from "./recoverable"
 import { Agent } from "@/agent/agent"
 
 export interface Metadata {
-  [key: string]: any
+  [key: string]: unknown
 }
 
 // TODO: remove this hack
