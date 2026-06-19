@@ -11,6 +11,7 @@ import { useKeybind } from "@tui/context/keybind"
 import { Keybind } from "@/util"
 import { Locale } from "@/util"
 import { getScrollAcceleration } from "../util/scroll"
+import { pinyinSearch } from "../util/pinyin"
 import { useTuiConfig } from "../context/tui-config"
 import { useLanguage } from "@tui/context/language"
 
@@ -40,6 +41,8 @@ export interface DialogSelectOption<T = any> {
   description?: string
   footer?: JSX.Element | string
   category?: string
+  /** Extra latin search terms (e.g. English keywords) so the item is findable without switching input method. */
+  keywords?: string[]
   categoryView?: JSX.Element
   disabled?: boolean
   bg?: RGBA
@@ -93,10 +96,18 @@ export function DialogSelect<T>(props: DialogSelectProps<T>) {
 
     // prioritize title matches (weight: 2) over category matches (weight: 1).
     // users typically search by the item name, and not its category.
+    // keywords carry latin/English aliases (weight 2) and pinyin carries a
+    // romanized form of the title (weight 1), so CJK-locale users can search by
+    // English keyword or pinyin without switching input method.
     const result = fuzzysort
       .go(needle, options, {
-        keys: ["title", "category"],
-        scoreFn: (r) => r[0].score * 2 + r[1].score,
+        keys: [
+          "title",
+          "category",
+          (o) => o.keywords?.join(" ") ?? "",
+          (o) => pinyinSearch(o.title),
+        ],
+        scoreFn: (r) => r[0].score * 2 + r[1].score + r[2].score * 2 + r[3].score,
       })
       .map((x) => x.obj)
 
