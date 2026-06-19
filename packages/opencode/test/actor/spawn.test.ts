@@ -352,6 +352,40 @@ describe("Actor.spawn fiber lifecycle", () => {
   )
 })
 
+describe("Actor.spawn onReady callback", () => {
+  it.live("onReady fires before Fiber.join blocks (metadata available while running)", () =>
+    provideTmpdirServer(
+      Effect.fnUntraced(function* ({ llm }) {
+        const actor = yield* Actor.Service
+        const session = yield* Session.Service
+        const parent = yield* session.create({
+          title: "x",
+          permission: [{ permission: "*", pattern: "*", action: "allow" }],
+        })
+        yield* llm.hang
+        let readyInfo: { actorID: string; sessionID: string } | undefined
+        const result = yield* actor.spawn({
+          mode: "subagent",
+          sessionID: parent.id,
+          agentType: "build",
+          task: "long running task",
+          context: "none",
+          tools: ["read"],
+          background: true,
+          model: ref,
+          onReady: ({ actorID, sessionID }) =>
+            Effect.sync(() => { readyInfo = { actorID, sessionID: sessionID as string } }),
+        })
+        expect(readyInfo).toBeDefined()
+        expect(readyInfo!.actorID).toBe(result.actorID)
+        expect(readyInfo!.sessionID).toBe(parent.id)
+        yield* actor.cancel(parent.id, result.actorID, "forced")
+      }),
+      { git: true, config: providerCfg },
+    ),
+  )
+})
+
 describe("Actor.cancel", () => {
   it.live("cancel(forced) interrupts fiber and marks actor cancelled", () =>
     provideTmpdirServer(

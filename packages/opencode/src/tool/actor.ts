@@ -710,18 +710,14 @@ export const ActorTool = Tool.define(
           model,
           background,
           task_id: effectiveTaskId,
+          onReady: ({ actorID, sessionID }) =>
+            ctx.metadata({
+              title: op.description,
+              metadata: { sessionId: sessionID, actorId: actorID, model },
+            }),
           ...(op.output_schema
             ? { format: { type: "json_schema" as const, schema: op.output_schema, retryCount: 2 } }
             : {}),
-        })
-
-        yield* ctx.metadata({
-          title: op.description,
-          metadata: {
-            sessionId: spawnResult.sessionID,
-            actorId: spawnResult.actorID,
-            model,
-          },
         })
 
         if (op.action ==="spawn") {

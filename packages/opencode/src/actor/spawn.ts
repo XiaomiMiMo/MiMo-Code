@@ -157,6 +157,14 @@ export interface SpawnInput {
    * not — peers are not orchestrated by the workflow runtime.
    */
   onActorID?: (actorID: string) => void
+  /**
+   * Fired as an Effect BEFORE Fiber.join (for non-background spawns). Lets the
+   * caller emit metadata (sessionId/actorId) to the tool part state while the
+   * tool is still "running" — critical for the TUI to navigate into a running
+   * subagent. The callback receives the allocated actorID and sessionID.
+   * Swallowed on failure (best-effort, same as onActorID).
+   */
+  onReady?: (info: { actorID: string; sessionID: SessionID }) => Effect.Effect<void>
 }
 
 export interface SpawnResult {
@@ -677,6 +685,7 @@ export const layer = Layer.effect(
         gateEligible,
         format: input.format,
       })
+      if (input.onReady) yield* Effect.ignore(input.onReady({ actorID, sessionID: input.sessionID }))
       if (!input.background) yield* Fiber.join(fiber).pipe(Effect.ignore)
       return { actorID, sessionID: input.sessionID, outcome }
     })
