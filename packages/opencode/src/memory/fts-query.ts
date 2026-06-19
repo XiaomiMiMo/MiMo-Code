@@ -35,3 +35,21 @@ export function buildFtsQuery(raw: string): string | null {
   const quoted = tokens.map((t) => `"${t.replaceAll('"', "")}"`)
   return quoted.join(" OR ")
 }
+
+/**
+ * Build an FTS5 MATCH expression with AND-join (all tokens must appear).
+ * Use this when the user provides very specific keywords (e.g. exact function
+ * names, error codes) where OR would return too many false positives.
+ *
+ * Returns null when no usable tokens are extracted.
+ */
+export function buildFtsQueryAnd(raw: string): string | null {
+  const tokens =
+    raw
+      .match(/[\p{L}\p{N}_]+/gu)
+      ?.map((t) => t.trim())
+      .filter(Boolean) ?? []
+  if (tokens.length === 0) return null
+  const quoted = tokens.map((t) => `"${t.replaceAll('"', "")}"`)
+  return quoted.join(" AND ")
+}
