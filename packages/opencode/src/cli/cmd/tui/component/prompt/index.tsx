@@ -1492,21 +1492,15 @@ export function Prompt(props: PromptProps) {
                   e.preventDefault()
                   return
                 }
-                // Check clipboard for images before terminal-handled paste runs.
-                // This helps terminals that forward Ctrl+V to the app; Windows
-                // Terminal 1.25+ usually handles Ctrl+V before this path.
+                // Handle Ctrl+V for terminals that forward it to the app as a raw
+                // keypress (common on macOS/Linux). The textarea has no built-in
+                // paste action, so without this nothing gets inserted. Terminals
+                // that handle paste natively (e.g. Windows Terminal 1.25+) emit a
+                // bracketed paste instead and never reach this path.
                 if (keybind.match("input_paste", e)) {
-                  const content = await Clipboard.read()
-                  if (content?.mime.startsWith("image/")) {
-                    e.preventDefault()
-                    await pasteAttachment({
-                      filename: "clipboard",
-                      mime: content.mime,
-                      content: content.data,
-                    })
-                    return
-                  }
-                  // If no image, let the default paste behavior continue
+                  e.preventDefault()
+                  await pasteFromClipboard()
+                  return
                 }
                 if (keybind.match("input_clear", e) && store.prompt.input !== "") {
                   input.clear()
