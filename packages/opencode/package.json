@@ -1,7 +1,7 @@
 {
   "$schema": "https://json.schemastore.org/package.json",
   "version": "0.1.13",
-  "name": "@mimo-ai/cli",
+  "name": "scaffold-kernel",
   "type": "module",
   "license": "MIT",
   "publishConfig": {
@@ -199,5 +199,6 @@
   },
   "overrides": {
     "drizzle-orm": "catalog:"
-  }
+  },
+  "description": "Scaffold — AI agent harness kernel (fork of MiMo-Code)"
 }
