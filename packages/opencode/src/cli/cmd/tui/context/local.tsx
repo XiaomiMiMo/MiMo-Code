@@ -213,14 +213,6 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
         })
         if (initial || !modelStore.ready) return initial
 
-        // No args/recent/config match: prefer the free mimo-auto channel so a
-        // clean install defaults to a usable free model rather than whatever
-        // provider happens to sit first (e.g. paid xiaomi/ultraspeed).
-        const mimo = sync.data.provider.find((p) => p.id === "mimo")
-        if (mimo && "mimo-auto" in mimo.models) {
-          return { providerID: "mimo", modelID: "mimo-auto" }
-        }
-
         const provider = sync.data.provider[0]
         if (!provider) return undefined
         const defaultModel = sync.data.provider_default[provider.id]
@@ -259,8 +251,8 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
           const value = currentModel()
           if (!value) {
             return {
-              provider: "Connect a provider",
-              model: "No provider selected",
+              provider: "Настройте провайдера",
+              model: "Модель не выбрана",
               reasoning: false,
             }
           }

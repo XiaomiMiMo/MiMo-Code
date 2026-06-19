@@ -1,16 +1,12 @@
-import { createMemo, createSignal, onMount, Show } from "solid-js"
+import { createMemo } from "solid-js"
 import { useSDK } from "../context/sdk"
 import { useSync } from "@tui/context/sync"
 import { useLocal } from "@tui/context/local"
 import { useDialog } from "@tui/ui/dialog"
-import { useTheme } from "../context/theme"
 import { useLanguage } from "../context/language"
 import { AutoMethod, createDialogProviderOptions } from "./dialog-provider"
 import { DialogSelect } from "@tui/ui/dialog-select"
-import { DialogPrompt } from "../ui/dialog-prompt"
 import { useToast } from "../ui/toast"
-import * as Clipboard from "@tui/util/clipboard"
-import { useRenderer } from "@opentui/solid"
 import os from "os"
 import path from "path"
 
@@ -25,26 +21,6 @@ export function DialogMimoLogin() {
 
   const options = createMemo(() => {
     const recommended = [
-      {
-        title: t("tui.dialog.login.xiaomi"),
-        value: "xiaomi",
-        description: t("tui.dialog.login.xiaomi.desc"),
-        category: "Recommended",
-        onSelect: async () => {
-          const result = await sdk.client.provider.oauth.authorize({
-            providerID: "xiaomi",
-            method: 0,
-          })
-          if (result.error) {
-            toast.show({ message: t("tui.dialog.login.start_failed"), variant: "error" })
-            dialog.clear()
-            return
-          }
-          dialog.replace(() => (
-            <MimoOAuthFlow url={result.data!.url} instructions={result.data!.instructions} />
-          ))
-        },
-      },
       {
         title: "Codex",
         value: "codex",
@@ -156,7 +132,7 @@ export function DialogMimoLogin() {
 
     return [
       ...recommended,
-      ...providerOptions().filter((option) => option.value !== "xiaomi"),
+      ...providerOptions(),
     ]
   })
 
@@ -164,95 +140,6 @@ export function DialogMimoLogin() {
     <DialogSelect
       title={t("tui.dialog.login.title")}
       options={options()}
-    />
-  )
-}
-
-function MimoOAuthFlow(props: { url: string; instructions: string }) {
-  const dialog = useDialog()
-  const sdk = useSDK()
-  const sync = useSync()
-  const local = useLocal()
-  const { theme } = useTheme()
-  const { t } = useLanguage()
-  const toast = useToast()
-  const renderer = useRenderer()
-  const [busy, setBusy] = createSignal(false)
-  const [copied, setCopied] = createSignal(false)
-
-  function copyUrl() {
-    Clipboard.copy(props.url)
-      .then(() => {
-        setCopied(true)
-        setTimeout(() => setCopied(false), 2000)
-      })
-      .catch(toast.error)
-  }
-
-  async function onLoginSuccess() {
-    await sdk.client.instance.dispose()
-    await sync.bootstrap()
-    const xiaomi = sync.data.provider.find((p) => p.id === "xiaomi")
-    const defaultModel = xiaomi && "mimo-v2.5-pro" in xiaomi.models ? "mimo-v2.5-pro" : xiaomi ? Object.keys(xiaomi.models)[0] : undefined
-    if (defaultModel) {
-      local.model.set({ providerID: "xiaomi", modelID: defaultModel }, { recent: true })
-    }
-    dialog.clear()
-  }
-
-  onMount(async () => {
-    const callbackResult = await sdk.client.provider.oauth.callback({
-      providerID: "xiaomi",
-      method: 0,
-    })
-    if (callbackResult.error) return
-    await onLoginSuccess()
-  })
-
-  return (
-    <DialogPrompt
-      title={t("tui.dialog.login.flow.title")}
-      placeholder={t("tui.dialog.login.flow.placeholder")}
-      busy={busy()}
-      busyText={t("tui.dialog.login.flow.busy")}
-      description={
-        <box gap={1}>
-          <Show when={props.url}>
-            <text fg={theme.textMuted}>
-              {t("tui.dialog.login.flow.manual_hint")}
-              <Show when={copied()}>{" "}<span style={{ fg: theme.primary }}>({t("tui.dialog.login.flow.copied")})</span></Show>
-            </text>
-            <text
-              fg={theme.primary}
-              onMouseUp={() => {
-                if (renderer.getSelection()?.getSelectedText()) return
-                copyUrl()
-              }}
-            >
-              {props.url}
-            </text>
-          </Show>
-          <Show when={props.instructions}>
-            <text fg={theme.textMuted}>{props.instructions}</text>
-          </Show>
-          <text fg={theme.textMuted}>{t("tui.dialog.login.flow.waiting")}</text>
-        </box>
-      }
-      onConfirm={async (value) => {
-        if (!value) return
-        setBusy(true)
-        const { error: err } = await sdk.client.provider.oauth.callback({
-          providerID: "xiaomi",
-          method: 0,
-          code: value.trim(),
-        })
-        if (err) {
-          setBusy(false)
-          toast.show({ message: t("tui.dialog.login.flow.invalid_code"), variant: "error" })
-          return
-        }
-        await onLoginSuccess()
-      }}
     />
   )
 }

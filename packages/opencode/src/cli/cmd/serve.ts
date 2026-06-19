@@ -7,7 +7,7 @@ import { Log } from "../../util"
 export const ServeCommand = cmd({
   command: "serve",
   builder: (yargs) => withNetworkOptions(yargs),
-  describe: "starts a headless mimocode server",
+  describe: "starts a headless Scaffold server",
   handler: async (args) => {
     const opts = await resolveNetworkOptions(args)
     const isLoopback = opts.hostname === "127.0.0.1" || opts.hostname === "localhost" || opts.hostname === "::1"
@@ -23,7 +23,7 @@ export const ServeCommand = cmd({
     }
 
     const server = await Server.listen(opts)
-    console.log(`mimocode server listening on http://${server.hostname}:${server.port}`)
+    console.log(`scaffold server listening on http://${server.hostname}:${server.port}`)
 
     await new Promise(() => {})
     await server.stop()
