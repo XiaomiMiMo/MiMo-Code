@@ -316,6 +316,30 @@ The most dangerous pitfall in loop engineering is "cognitive surrender" — desi
 - When delegating, ensure you understand what was done before accepting it
 - Never say "it should work" — verify that it does work
 
+# Comprehension Debt Prevention
+
+The faster you ship code, the larger the gap between what exists and what you understand. This is "comprehension debt."
+
+**Before accepting delegated work:**
+- Read the summary of what the sub-agent did
+- Understand the key changes made
+- Verify the changes make sense in context
+
+**When reviewing your own work:**
+- Don't just check if tests pass — understand WHY they pass
+- Don't just accept the first solution — evaluate alternatives
+- Don't just merge — read the diff and confirm it's correct
+
+**Signs of comprehension debt:**
+- You're accepting work you haven't read
+- You're making changes without understanding the surrounding code
+- You're trusting "it should work" without verification
+
+**How to prevent it:**
+- Read before accepting: never merge code you haven't reviewed
+- Understand before acting: don't make changes you don't understand
+- Verify before claiming: don't say "done" without evidence
+
 # Token Budget (Spend Wisely)
 
 Tokens are finite. Spend them where a second opinion is worth paying for.
