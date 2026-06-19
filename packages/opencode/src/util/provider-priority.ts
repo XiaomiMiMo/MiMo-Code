@@ -1,6 +1,6 @@
 const HEAD_POPULAR_PROVIDERS = ["openai", "anthropic"] as const
 
-const CHINA_POPULAR_PROVIDERS = [
+const CHINA_POPULAR_BEFORE_ALIBABA = [
   "deepseek",
   "zai",
   "zhipuai",
@@ -8,6 +8,11 @@ const CHINA_POPULAR_PROVIDERS = [
   "moonshotai-cn",
   "kimi-for-coding",
   "stepfun",
+] as const
+
+const MID_POPULAR_PROVIDERS = ["opencode", "openrouter"] as const
+
+const CHINA_POPULAR_FROM_ALIBABA = [
   "alibaba",
   "alibaba-cn",
   "bytedance",
@@ -21,22 +26,22 @@ const CHINA_POPULAR_PROVIDERS = [
   "kuae-cloud-coding-plan",
 ] as const
 
-const WESTERN_POPULAR_PROVIDERS = ["opencode", "opencode-go", "github-copilot", "google"] as const
+const TAIL_POPULAR_PROVIDERS = ["opencode-go", "github-copilot", "google", "vercel"] as const
 
-const EXTRA_POPULAR_PROVIDERS = ["openrouter", "vercel"] as const
+const POPULAR_PROVIDER_GROUPS = [
+  HEAD_POPULAR_PROVIDERS,
+  CHINA_POPULAR_BEFORE_ALIBABA,
+  MID_POPULAR_PROVIDERS,
+  CHINA_POPULAR_FROM_ALIBABA,
+  TAIL_POPULAR_PROVIDERS,
+] as const
 
-export const PROVIDER_PRIORITY: Record<string, number> = Object.fromEntries([
-  ...HEAD_POPULAR_PROVIDERS.map((id, index) => [id, index]),
-  ...CHINA_POPULAR_PROVIDERS.map((id, index) => [id, HEAD_POPULAR_PROVIDERS.length + index]),
-  ...WESTERN_POPULAR_PROVIDERS.map((id, index) => [
-    id,
-    HEAD_POPULAR_PROVIDERS.length + CHINA_POPULAR_PROVIDERS.length + index,
-  ]),
-  ...EXTRA_POPULAR_PROVIDERS.map((id, index) => [
-    id,
-    HEAD_POPULAR_PROVIDERS.length + CHINA_POPULAR_PROVIDERS.length + WESTERN_POPULAR_PROVIDERS.length + index,
-  ]),
-])
+export const PROVIDER_PRIORITY: Record<string, number> = Object.fromEntries(
+  POPULAR_PROVIDER_GROUPS.flatMap((group, groupIndex, groups) => {
+    const offset = groups.slice(0, groupIndex).reduce((sum, g) => sum + g.length, 0)
+    return group.map((id, index) => [id, offset + index])
+  }),
+)
 
 export function isPopularProvider(id: string) {
   return id in PROVIDER_PRIORITY
