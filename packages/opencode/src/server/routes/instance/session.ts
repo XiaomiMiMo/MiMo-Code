@@ -389,7 +389,8 @@ export const SessionRoutes = lazy(() =>
           return yield* session.get(sessionID)
         }),
     )
-    // TODO(v2): remove this dedicated route and rely on the normal `/init` command flow.
+    // 专用 POST /session/init 路由与通用 /init 命令流功能重叠。
+    // v2 时移除本路由，统一走 /init 命令流。
     .post(
       "/:sessionID/init",
       describeRoute({

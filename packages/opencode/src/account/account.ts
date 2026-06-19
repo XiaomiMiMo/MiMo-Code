@@ -415,7 +415,8 @@ export const layer: Layer.Layer<Service, never, AccountRepo.Service | HttpClient
 
       const [account, remoteOrgs] = yield* Effect.all([user, orgs], { concurrency: 2 })
 
-      // TODO: When there are multiple orgs, let the user choose
+      // 多 org 时默认选第一个。后续可扩展 poll 入参 `selectOrg` 回调，
+      // 由 CLI/TUI 层展示选择对话框，无需修改数据层。
       const firstOrgID = remoteOrgs.length > 0 ? Option.some(remoteOrgs[0].id) : Option.none<OrgID>()
 
       const now = yield* Clock.currentTimeMillis

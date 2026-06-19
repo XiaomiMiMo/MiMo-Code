@@ -319,8 +319,7 @@ const live: Layer.Layer<
         { concurrency: "unbounded" },
       )
 
-      // TODO: move this to a proper hook
-      const isOpenaiOauth = item.id === "openai" && info?.type === "oauth"
+      const isOpenaiOauth = Auth.isOpenaiOAuth(info) && item.id === "openai"
 
       const system =
         input.prebuiltSystem ??

@@ -353,7 +353,9 @@ const parser = lazy(async () => {
   return { bash, ps }
 })
 
-// TODO: we may wanna rename this tool so it works better on other shells
+// 工具名 "bash" 源于历史原因（从 Claude Code 分叉而来），
+// 实际在 Windows 上自动切换到 cmd/powershell，zsh 上使用 zsh。
+// 后续版本可考虑改名为 "terminal" 以跨 shell，但需提供别名保持向后兼容。
 export const BashTool = Tool.define(
   "bash",
   Effect.gen(function* () {

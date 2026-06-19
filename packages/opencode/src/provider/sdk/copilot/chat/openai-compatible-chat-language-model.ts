@@ -383,7 +383,10 @@ export class OpenAICompatibleChatLanguageModel implements LanguageModelV3 {
             controller.enqueue({ type: "stream-start", warnings })
           },
 
-          // TODO we lost type safety on Chunk, most likely due to the error schema. MUST FIX
+          // 已丢失 Chunk 类型安全：errorSchema 加入到 chunkSchema 后，ParseResult 的
+          // 推断类型与 transform 方法入参不一致。实际运行时取值正确（rawValue 等字段存在），
+          // 但 TypeScript 无法追踪通过 errorStructure.errorSchema 动态构建后的精确类型。
+          // 修复方向：为 errorStructure 添加泛型参数，确保 chunkSchema 类型可追溯。
           transform(chunk, controller) {
             // Emit raw chunk if requested (before anything else)
             if (options.includeRawChunks) {
