@@ -17,7 +17,9 @@
     "prepare": "husky",
     "random": "echo 'Random script'",
     "hello": "echo 'Hello World!'",
-    "test": "echo 'do not run tests from root' && exit 1"
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "test": "bun turbo test"
   },
   "workspaces": {
     "packages": [

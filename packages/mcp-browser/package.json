@@ -1,0 +1,24 @@
+{
+  "name": "@mimo-ai/mcp-browser",
+  "version": "0.1.0",
+  "description": "Visual Browser Inspector MCP Server",
+  "type": "module",
+  "bin": {
+    "mimo-mcp-browser": "./dist/index.js"
+  },
+  "scripts": {
+    "typecheck": "tsgo --noEmit",
+    "build": "bun build ./src/index.ts --outdir ./dist --target node",
+    "start": "node ./dist/index.js"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "1.27.1",
+    "@playwright/test": "catalog:"
+  },
+  "devDependencies": {
+    "@tsconfig/node22": "catalog:",
+    "@types/node": "catalog:",
+    "typescript": "catalog:",
+    "@typescript/native-preview": "catalog:"
+  }
+}

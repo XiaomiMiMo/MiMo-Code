@@ -19,3 +19,6 @@ jobs:
 
       - name: Run oxlint
         run: bun lint
+
+      - name: Run prettier check
+        run: bun run format:check
