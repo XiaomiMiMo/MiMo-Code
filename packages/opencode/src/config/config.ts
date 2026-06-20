@@ -113,6 +113,9 @@ const InfoSchema = Schema.Struct({
     description:
       "Enable or disable snapshot tracking. When false, filesystem snapshots are not recorded and undoing or reverting will not undo/redo file changes. Defaults to true.",
   }),
+  disable_claude_code_prompt: Schema.optional(Schema.Boolean).annotate({
+    description: "When true, disables automatic loading of ~/.claude/CLAUDE.md and project CLAUDE.md files.",
+  }),
   // User-facing plugin config is stored as Specs; provenance gets attached later while configs are merged.
   plugin: Schema.optional(Schema.mutable(Schema.Array(ConfigPlugin.Spec))),
   share: Schema.optional(Schema.Literals(["manual", "auto", "disabled"])).annotate({
