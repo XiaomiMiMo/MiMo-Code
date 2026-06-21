@@ -1590,8 +1590,6 @@ async function defaultModel(config: ACPConfig, cwd?: string): Promise<{ provider
     }
   }
 
-  if (specified) return specified
-
   return { providerID: ProviderID.opencode, modelID: ModelID.make("big-pickle") }
 }
 

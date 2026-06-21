@@ -33,9 +33,12 @@ export const AcpCommand = cmd({
       // Wait for providers to be fully loaded after potential DB migration.
       // Without this, the first request may race with provider initialization
       // and fall back to Provider.sort() which picks a paid model.
-      await waitForProviders(() =>
+      const providersReady = await waitForProviders(() =>
         sdk.config.providers({ directory: args.cwd }, { throwOnError: false }),
       )
+      if (!providersReady) {
+        log.warn("providers not ready after timeout; relying on config-specified model fallback")
+      }
 
       const input = new WritableStream<Uint8Array>({
         write(chunk) {
