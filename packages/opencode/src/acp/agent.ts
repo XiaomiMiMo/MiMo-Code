@@ -1568,7 +1568,7 @@ async function defaultModel(config: ACPConfig, cwd?: string): Promise<{ provider
     if (provider && provider.models[specified.modelID]) return specified
     // Provider not yet loaded or model not found — still honor the user's explicit choice
     // rather than falling through to Provider.sort() which may pick a paid model
-    if (!provider) return specified
+    if (!provider || !provider.models[specified.modelID]) return specified
   }
 
   if (specified && !providers.length) return specified
