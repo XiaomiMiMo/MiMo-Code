@@ -262,6 +262,18 @@ export const dict = {
   "tui.command.category.internal": "Внутренние",
   "tui.command.category.external": "Внешние",
 
+  // Built-in slash command descriptions
+  "tui.slash.init.description": "пошаговая настройка AGENTS.md",
+  "tui.slash.review.description": "просмотр изменений [commit|branch|pr], по умолчанию незакоммиченные",
+  "tui.slash.dream.description":
+    "вручную консолидировать память проекта из memory-файлов и сырой траектории",
+  "tui.slash.distill.description":
+    "найти повторяющиеся workflow в недавней работе и упаковать их в skills, субагентов или команды",
+  "tui.slash.goal.description":
+    "задать цель с условием остановки; выполняется, пока судья не подтвердит. /goal clear для отмены",
+  "tui.slash.deep-research.description":
+    "глубокий многоисточниковый проверенный отчёт (запускает workflow deep-research)",
+
   // Language switching
   "tui.command.language.switch.title": "Сменить язык",
   "tui.command.language.switch.description": "Изменить язык интерфейса",

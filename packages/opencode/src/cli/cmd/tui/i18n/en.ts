@@ -183,6 +183,18 @@ export const dict: Record<string, string> = {
   "tui.command.category.internal": "Internal",
   "tui.command.category.external": "External",
 
+  // Built-in slash command descriptions
+  "tui.slash.init.description": "guided AGENTS.md setup",
+  "tui.slash.review.description": "review changes [commit|branch|pr], defaults to uncommitted",
+  "tui.slash.dream.description":
+    "manually consolidate project memory from memory files and raw trajectory",
+  "tui.slash.distill.description":
+    "find repeated workflows in recent work and package them into skills, subagents, or commands",
+  "tui.slash.goal.description":
+    "set a stop-condition goal; runs until a judge says it's met. /goal clear to abort",
+  "tui.slash.deep-research.description":
+    "deep multi-source, fact-checked research report (runs the deep-research workflow)",
+
   // Language switching
   "tui.command.language.switch.title": "Switch language",
   "tui.command.language.switch.description": "Change the display language",

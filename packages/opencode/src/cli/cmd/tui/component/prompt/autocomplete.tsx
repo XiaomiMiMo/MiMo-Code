@@ -11,6 +11,8 @@ import { useTuiConfig } from "../../context/tui-config"
 import { useTheme, selectedForeground } from "@tui/context/theme"
 import { SplitBorder } from "@tui/component/border"
 import { useCommandDialog } from "@tui/component/dialog-command"
+import { useLanguage } from "@tui/context/language"
+import { slashCommandDescription } from "@tui/i18n/slash-command"
 import { useTerminalDimensions } from "@opentui/solid"
 import { Locale } from "@/util"
 import type { PromptInfo } from "./history"
@@ -80,6 +82,7 @@ export function Autocomplete(props: {
   const sdk = useSDK()
   const sync = useSync()
   const command = useCommandDialog()
+  const lang = useLanguage()
   const { theme } = useTheme()
   const dimensions = useTerminalDimensions()
   const frecency = useFrecency()
@@ -368,7 +371,7 @@ export function Autocomplete(props: {
       const label = serverCommand.source === "mcp" ? ":mcp" : ""
       results.push({
         display: "/" + serverCommand.name + label,
-        description: serverCommand.description,
+        description: slashCommandDescription(lang.t, serverCommand.name, serverCommand.description),
         onSelect: () => {
           const newText = "/" + serverCommand.name + " "
           const cursor = props.input().logicalCursor
