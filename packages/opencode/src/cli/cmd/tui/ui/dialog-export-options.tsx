@@ -101,6 +101,8 @@ export function DialogExportOptions(props: DialogExportOptionsProps) {
             })
           }}
           height={3}
+          selectionFg={theme.text}
+          selectionBg={theme.backgroundElement}
           keyBindings={[{ name: "return", action: "submit" }]}
           ref={(val: TextareaRenderable) => {
             textarea = val

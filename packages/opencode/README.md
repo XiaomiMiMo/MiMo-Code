@@ -1,15 +1,15 @@
-# js
+# MiMoCode Package
 
-To install dependencies:
+MiMoCode is an open-source, terminal-native AI coding assistant developed by Xiaomi. It is built as a fork of OpenCode and is designed specifically for long-horizon automated programming tasks.
+
+This package contains the core business logic, API server, and TUI implementation for MiMoCode.
+
+## Development
+
+To run MiMoCode locally during development:
 
 ```bash
-bun install
+bun run dev
 ```
 
-To run:
-
-```bash
-bun run index.ts
-```
-
-This project was created using `bun init` in bun v1.2.12. [Bun](https://bun.sh) is a fast all-in-one JavaScript runtime.
+For more information, please see the [main repository README](../../README.md).

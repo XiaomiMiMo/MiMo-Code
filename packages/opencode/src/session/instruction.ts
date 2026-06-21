@@ -24,13 +24,13 @@ const FILES = [
 // sparse and also load CLAUDE.md so its guidance isn't dropped by the first-match-wins rule.
 const CLAUDE_FALLBACK_MAX_CHARS = 500
 
-function globalFiles() {
+function globalFiles(config: Config.Info) {
   const files = []
   if (Flag.MIMOCODE_CONFIG_DIR) {
     files.push(path.join(Flag.MIMOCODE_CONFIG_DIR, "AGENTS.md"))
   }
   files.push(path.join(Global.Path.config, "AGENTS.md"))
-  if (!Flag.MIMOCODE_DISABLE_CLAUDE_CODE_PROMPT) {
+  if (!Flag.MIMOCODE_DISABLE_CLAUDE_CODE_PROMPT && !config.experimental?.skip_claude_md) {
     files.push(path.join(os.homedir(), ".claude", "CLAUDE.md"))
   }
   return files
@@ -125,6 +125,7 @@ export const layer: Layer.Layer<Service, never, AppFileSystem.Service | Config.S
         const config = yield* cfg.get()
         const ctx = yield* InstanceState.context
         const paths = new Set<string>()
+        const isClaudeDisabled = Flag.MIMOCODE_DISABLE_CLAUDE_CODE_PROMPT || config.experimental?.skip_claude_md
 
         // The first project-level match wins so we don't stack AGENTS.md/CLAUDE.md from every ancestor.
         if (!Flag.MIMOCODE_DISABLE_PROJECT_CONFIG) {
@@ -132,7 +133,7 @@ export const layer: Layer.Layer<Service, never, AppFileSystem.Service | Config.S
           if (agents.length > 0) {
             agents.forEach((item) => paths.add(path.resolve(item)))
             // A sparse AGENTS.md likely doesn't carry the full project guidance, so pull in CLAUDE.md too.
-            if (!Flag.MIMOCODE_DISABLE_CLAUDE_CODE_PROMPT) {
+            if (!isClaudeDisabled) {
               const content = (yield* Effect.forEach(agents, read, { concurrency: 8 })).join("").trim()
               if (content.length < CLAUDE_FALLBACK_MAX_CHARS) {
                 const claude = yield* fs.findUp("CLAUDE.md", ctx.directory, ctx.worktree)
@@ -140,7 +141,8 @@ export const layer: Layer.Layer<Service, never, AppFileSystem.Service | Config.S
               }
             }
           } else {
-            for (const file of FILES) {
+            const filesToSearch = ["AGENTS.md", ...(isClaudeDisabled ? [] : ["CLAUDE.md"]), "CONTEXT.md"]
+            for (const file of filesToSearch) {
               if (file === "AGENTS.md") continue
               const matches = yield* fs.findUp(file, ctx.directory, ctx.worktree)
               if (matches.length > 0) {
@@ -151,7 +153,9 @@ export const layer: Layer.Layer<Service, never, AppFileSystem.Service | Config.S
           }
         }
 
-        for (const file of globalFiles()) {
+        // We want stable ordering for resolving cache hits etc, so we sort project paths
+        const sortedPaths = Array.from(paths).sort()
+        for (const file of globalFiles(config)) {
           if (yield* fs.existsSafe(file)) {
             paths.add(path.resolve(file))
             break

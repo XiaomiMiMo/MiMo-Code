@@ -414,6 +414,8 @@ export function QuestionPrompt(props: { request: QuestionRequest }) {
                         textColor={theme.text}
                         focusedTextColor={theme.text}
                         cursorColor={theme.primary}
+                        selectionFg={theme.text}
+                        selectionBg={theme.backgroundElement}
                         keyBindings={bindings()}
                       />
                     </box>

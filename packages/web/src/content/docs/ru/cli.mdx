@@ -360,7 +360,7 @@ opencode run --attach http://localhost:4096 "Explain async/await in JavaScript"
 opencode serve
 ```
 
-При этом запускается HTTP-сервер, который обеспечивает доступ API к функциям opencode без интерфейса TUI. Установите `OPENCODE_SERVER_PASSWORD`, чтобы включить базовую аутентификацию HTTP (имя пользователя по умолчанию — `opencode`).
+При этом запускается HTTP-сервер, который обеспечивает доступ API к функциям opencode без интерфейса TUI. Установите `MIMOCODE_SERVER_PASSWORD`, чтобы включить базовую аутентификацию HTTP (имя пользователя по умолчанию — `opencode`).
 
 #### Флаги
 
@@ -456,7 +456,7 @@ opencode import https://opncd.ai/s/abc123
 opencode web
 ```
 
-При этом запускается HTTP-сервер и открывается веб-браузер для доступа к opencode через веб-интерфейс. Установите `OPENCODE_SERVER_PASSWORD`, чтобы включить базовую аутентификацию HTTP (имя пользователя по умолчанию — `opencode`).
+При этом запускается HTTP-сервер и открывается веб-браузер для доступа к opencode через веб-интерфейс. Установите `MIMOCODE_SERVER_PASSWORD`, чтобы включить базовую аутентификацию HTTP (имя пользователя по умолчанию — `opencode`).
 
 #### Флаги
 
@@ -555,30 +555,30 @@ opencode можно настроить с помощью переменных с
 
 | Переменная                            | Тип                 | Описание                                                                         |
 | ------------------------------------- | ------------------- | -------------------------------------------------------------------------------- |
-| `OPENCODE_AUTO_SHARE`                 | логическое значение | Автоматически делиться сеансами                                                  |
-| `OPENCODE_GIT_BASH_PATH`              | строка              | Путь к исполняемому файлу Git Bash в Windows                                     |
-| `OPENCODE_CONFIG`                     | строка              | Путь к файлу конфигурации                                                        |
-| `OPENCODE_TUI_CONFIG`                 | строка              | Путь к файлу конфигурации TUI                                                    |
-| `OPENCODE_CONFIG_DIR`                 | строка              | Путь к каталогу конфигурации                                                     |
-| `OPENCODE_CONFIG_CONTENT`             | строка              | Встроенное содержимое конфигурации json                                          |
-| `OPENCODE_DISABLE_AUTOUPDATE`         | логическое значение | Отключить автоматическую проверку обновлений                                     |
-| `OPENCODE_DISABLE_PRUNE`              | логическое значение | Отключить удаление старых данных                                                 |
-| `OPENCODE_DISABLE_TERMINAL_TITLE`     | логическое значение | Отключить автоматическое обновление заголовка терминала                          |
-| `OPENCODE_PERMISSION`                 | строка              | Встроенная конфигурация разрешений json                                          |
-| `OPENCODE_DISABLE_DEFAULT_PLUGINS`    | логическое значение | Отключить плагины по умолчанию                                                   |
-| `OPENCODE_DISABLE_LSP_DOWNLOAD`       | логическое значение | Отключить автоматическую загрузку LSP-сервера                                    |
-| `OPENCODE_ENABLE_EXPERIMENTAL_MODELS` | логическое значение | Включить экспериментальные модели                                                |
-| `OPENCODE_DISABLE_AUTOCOMPACT`        | логическое значение | Отключить автоматическое сжатие контекста                                        |
-| `OPENCODE_DISABLE_CLAUDE_CODE`        | логическое значение | Отключить чтение из `.claude` (подсказка + навыки)                               |
-| `OPENCODE_DISABLE_CLAUDE_CODE_PROMPT` | логическое значение | Отключить чтение `~/.claude/CLAUDE.md`                                           |
-| `OPENCODE_DISABLE_CLAUDE_CODE_SKILLS` | логическое значение | Отключить загрузку `.claude/skills`                                              |
-| `OPENCODE_DISABLE_MODELS_FETCH`       | логическое значение | Отключить получение моделей из удаленных источников                              |
-| `OPENCODE_FAKE_VCS`                   | строка              | Поддельный поставщик VCS для целей тестирования                                  |
-| `OPENCODE_CLIENT`                     | строка              | Идентификатор клиента (по умолчанию `cli`)                                       |
-| `OPENCODE_ENABLE_EXA`                 | логическое значение | Включить инструменты веб-поиска Exa                                              |
-| `OPENCODE_SERVER_PASSWORD`            | строка              | Включить базовую аутентификацию для `serve`/`web`                                |
-| `OPENCODE_SERVER_USERNAME`            | строка              | Переопределить имя пользователя базовой аутентификации (по умолчанию `opencode`) |
-| `OPENCODE_MODELS_URL`                 | строка              | Пользовательский URL-адрес для получения конфигурации модели                     |
+| `MIMOCODE_AUTO_SHARE`                 | логическое значение | Автоматически делиться сеансами                                                  |
+| `MIMOCODE_GIT_BASH_PATH`              | строка              | Путь к исполняемому файлу Git Bash в Windows                                     |
+| `MIMOCODE_CONFIG`                     | строка              | Путь к файлу конфигурации                                                        |
+| `MIMOCODE_TUI_CONFIG`                 | строка              | Путь к файлу конфигурации TUI                                                    |
+| `MIMOCODE_CONFIG_DIR`                 | строка              | Путь к каталогу конфигурации                                                     |
+| `MIMOCODE_CONFIG_CONTENT`             | строка              | Встроенное содержимое конфигурации json                                          |
+| `MIMOCODE_DISABLE_AUTOUPDATE`         | логическое значение | Отключить автоматическую проверку обновлений                                     |
+| `MIMOCODE_DISABLE_PRUNE`              | логическое значение | Отключить удаление старых данных                                                 |
+| `MIMOCODE_DISABLE_TERMINAL_TITLE`     | логическое значение | Отключить автоматическое обновление заголовка терминала                          |
+| `MIMOCODE_PERMISSION`                 | строка              | Встроенная конфигурация разрешений json                                          |
+| `MIMOCODE_DISABLE_DEFAULT_PLUGINS`    | логическое значение | Отключить плагины по умолчанию                                                   |
+| `MIMOCODE_DISABLE_LSP_DOWNLOAD`       | логическое значение | Отключить автоматическую загрузку LSP-сервера                                    |
+| `MIMOCODE_ENABLE_EXPERIMENTAL_MODELS` | логическое значение | Включить экспериментальные модели                                                |
+| `MIMOCODE_DISABLE_AUTOCOMPACT`        | логическое значение | Отключить автоматическое сжатие контекста                                        |
+| `MIMOCODE_DISABLE_CLAUDE_CODE`        | логическое значение | Отключить чтение из `.claude` (подсказка + навыки)                               |
+| `MIMOCODE_DISABLE_CLAUDE_CODE_PROMPT` | логическое значение | Отключить чтение `~/.claude/CLAUDE.md`                                           |
+| `MIMOCODE_DISABLE_CLAUDE_CODE_SKILLS` | логическое значение | Отключить загрузку `.claude/skills`                                              |
+| `MIMOCODE_DISABLE_MODELS_FETCH`       | логическое значение | Отключить получение моделей из удаленных источников                              |
+| `MIMOCODE_FAKE_VCS`                   | строка              | Поддельный поставщик VCS для целей тестирования                                  |
+| `MIMOCODE_CLIENT`                     | строка              | Идентификатор клиента (по умолчанию `cli`)                                       |
+| `MIMOCODE_ENABLE_EXA`                 | логическое значение | Включить инструменты веб-поиска Exa                                              |
+| `MIMOCODE_SERVER_PASSWORD`            | строка              | Включить базовую аутентификацию для `serve`/`web`                                |
+| `MIMOCODE_SERVER_USERNAME`            | строка              | Переопределить имя пользователя базовой аутентификации (по умолчанию `opencode`) |
+| `MIMOCODE_MODELS_URL`                 | строка              | Пользовательский URL-адрес для получения конфигурации модели                     |
 
 ---
 
@@ -588,16 +588,16 @@ opencode можно настроить с помощью переменных с
 
 | Переменная                                      | Тип                 | Описание                                               |
 | ----------------------------------------------- | ------------------- | ------------------------------------------------------ |
-| `OPENCODE_EXPERIMENTAL`                         | логическое значение | Включить все экспериментальные функции                 |
-| `OPENCODE_EXPERIMENTAL_ICON_DISCOVERY`          | логическое значение | Включить обнаружение значков                           |
-| `OPENCODE_EXPERIMENTAL_DISABLE_COPY_ON_SELECT`  | логическое значение | Отключить копирование при выборе в TUI                 |
-| `OPENCODE_EXPERIMENTAL_BASH_DEFAULT_TIMEOUT_MS` | число               | Таймаут по умолчанию для команд bash в мс              |
-| `OPENCODE_EXPERIMENTAL_OUTPUT_TOKEN_MAX`        | число               | Максимальное количество токенов вывода для ответов LLM |
-| `OPENCODE_EXPERIMENTAL_FILEWATCHER`             | логическое значение | Включить просмотр файлов для всего каталога            |
-| `OPENCODE_EXPERIMENTAL_OXFMT`                   | логическое значение | Включить форматтер oxfmt                               |
-| `OPENCODE_EXPERIMENTAL_LSP_TOOL`                | логическое значение | Включить экспериментальный инструмент LSP              |
-| `OPENCODE_EXPERIMENTAL_DISABLE_FILEWATCHER`     | логическое значение | Отключить просмотрщик файлов                           |
-| `OPENCODE_EXPERIMENTAL_EXA`                     | логическое значение | Включить экспериментальные функции Exa                 |
-| `OPENCODE_EXPERIMENTAL_LSP_TY`                  | логическое значение | Включить TY LSP для файлов python                      |
-| `OPENCODE_EXPERIMENTAL_MARKDOWN`                | логическое значение | Включить экспериментальные функции Markdown            |
-| `OPENCODE_EXPERIMENTAL_PLAN_MODE`               | логическое значение | Включить режим плана                                   |
+| `MIMOCODE_EXPERIMENTAL`                         | логическое значение | Включить все экспериментальные функции                 |
+| `MIMOCODE_EXPERIMENTAL_ICON_DISCOVERY`          | логическое значение | Включить обнаружение значков                           |
+| `MIMOCODE_EXPERIMENTAL_DISABLE_COPY_ON_SELECT`  | логическое значение | Отключить копирование при выборе в TUI                 |
+| `MIMOCODE_EXPERIMENTAL_BASH_DEFAULT_TIMEOUT_MS` | число               | Таймаут по умолчанию для команд bash в мс              |
+| `MIMOCODE_EXPERIMENTAL_OUTPUT_TOKEN_MAX`        | число               | Максимальное количество токенов вывода для ответов LLM |
+| `MIMOCODE_EXPERIMENTAL_FILEWATCHER`             | логическое значение | Включить просмотр файлов для всего каталога            |
+| `MIMOCODE_EXPERIMENTAL_OXFMT`                   | логическое значение | Включить форматтер oxfmt                               |
+| `MIMOCODE_EXPERIMENTAL_LSP_TOOL`                | логическое значение | Включить экспериментальный инструмент LSP              |
+| `MIMOCODE_EXPERIMENTAL_DISABLE_FILEWATCHER`     | логическое значение | Отключить просмотрщик файлов                           |
+| `MIMOCODE_EXPERIMENTAL_EXA`                     | логическое значение | Включить экспериментальные функции Exa                 |
+| `MIMOCODE_EXPERIMENTAL_LSP_TY`                  | логическое значение | Включить TY LSP для файлов python                      |
+| `MIMOCODE_EXPERIMENTAL_MARKDOWN`                | логическое значение | Включить экспериментальные функции Markdown            |
+| `MIMOCODE_EXPERIMENTAL_PLAN_MODE`               | логическое значение | Включить режим плана                                   |

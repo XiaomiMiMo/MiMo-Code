@@ -19,7 +19,7 @@ Eklentileri yüklemenin iki yolu vardır.
 
 JavaScript veya TypeScript dosyalarını eklenti dizinine yerleştirin.
 
-- `.opencode/plugins/` - Proje düzeyinde eklentiler
+- `.mimocode/plugins/` - Proje düzeyinde eklentiler
 - `~/.config/opencode/plugins/` - Genel eklentiler
 
 Bu dizinlerdeki dosyalar başlangıçta otomatik olarak yüklenir.
@@ -30,9 +30,9 @@ Bu dizinlerdeki dosyalar başlangıçta otomatik olarak yüklenir.
 
 Yapılandırma dosyanızda npm paketlerini belirtin.
 
-```json title="opencode.json"
+```json title="mimocode.jsonc"
 {
-  "$schema": "https://opencode.ai/config.json",
+  "$schema": "https://mimocode.ai/config.json",
   "plugin": ["opencode-helicone-session", "opencode-wakatime", "@my-org/custom-plugin"]
 }
 ```
@@ -55,10 +55,10 @@ Hem normal hem de kapsamlı npm paketleri desteklenir.
 
 Eklentiler tüm kaynaklardan yüklenir ve tüm kancalar sırayla çalışır. Yükleme sırası şöyledir:
 
-1. Global config (`~/.config/opencode/opencode.json`)
-2. Project config (`opencode.json`)
+1. Global config (`~/.config/opencode/mimocode.jsonc`)
+2. Project config (`mimocode.jsonc`)
 3. Global eklenti dizini (`~/.config/opencode/plugins/`)
-4. Proje eklenti dizini (`.opencode/plugins/`)
+4. Proje eklenti dizini (`.mimocode/plugins/`)
 
 Aynı ad ve sürüme sahip yinelenen npm paketleri bir kez yüklenir. Ancak benzer adlara sahip bir yerel eklenti ve bir npm eklentisinin her ikisi de ayrı ayrı yüklenir.
 
@@ -74,7 +74,7 @@ Eklenti, bir veya daha fazla eklenti işlevini dışa aktaran bir **JavaScript/T
 
 Yerel eklentiler ve özel araçlar harici npm paketlerini kullanabilir. İhtiyacınız olan bağımlılıkları içeren config dizininize bir `package.json` ekleyin.
 
-```json title=".opencode/package.json"
+```json title=".mimocode/package.json"
 {
   "dependencies": {
     "shescape": "^2.1.0"
@@ -84,7 +84,7 @@ Yerel eklentiler ve özel araçlar harici npm paketlerini kullanabilir. İhtiyac
 
 OpenCode bunları yüklemek için başlangıçta `bun install` komutunu çalıştırır. Eklentileriniz ve araçlarınız daha sonra bunları içe aktarabilir.
 
-```ts title=".opencode/plugins/my-plugin.ts"
+```ts title=".mimocode/plugins/my-plugin.ts"
 import { escape } from "shescape"
 
 export const MyPlugin = async (ctx) => {
@@ -102,7 +102,7 @@ export const MyPlugin = async (ctx) => {
 
 ### Temel yapı
 
-```js title=".opencode/plugins/example.js"
+```js title=".mimocode/plugins/example.js"
 export const MyPlugin = async ({ project, client, $, directory, worktree }) => {
   console.log("Plugin initialized!")
 
@@ -217,7 +217,7 @@ OpenCode'u genişletmek için kullanabileceğiniz bazı eklenti örneklerini bur
 
 Belirli olaylar meydana geldiğinde bildirim gönderin:
 
-```js title=".opencode/plugins/notification.js"
+```js title=".mimocode/plugins/notification.js"
 export const NotificationPlugin = async ({ project, client, $, directory, worktree }) => {
   return {
     event: async ({ event }) => {
@@ -242,7 +242,7 @@ OpenCode masaüstü uygulamasını kullanıyorsanız yanıt hazır olduğunda ve
 
 OpenCode'un `.env` dosyalarını okumasını önleyin:
 
-```javascript title=".opencode/plugins/env-protection.js"
+```javascript title=".mimocode/plugins/env-protection.js"
 export const EnvProtection = async ({ project, client, $, directory, worktree }) => {
   return {
     "tool.execute.before": async (input, output) => {
@@ -260,7 +260,7 @@ export const EnvProtection = async ({ project, client, $, directory, worktree })
 
 Ortam değişkenlerini tüm kabuk yürütmeye (AI araçları ve kullanıcı terminalleri) enjekte edin:
 
-```javascript title=".opencode/plugins/inject-env.js"
+```javascript title=".mimocode/plugins/inject-env.js"
 export const InjectEnvPlugin = async () => {
   return {
     "shell.env": async (input, output) => {
@@ -277,7 +277,7 @@ export const InjectEnvPlugin = async () => {
 
 Eklentiler ayrıca OpenCode'a özel araçlar da ekleyebilir:
 
-```ts title=".opencode/plugins/custom-tools.ts"
+```ts title=".mimocode/plugins/custom-tools.ts"
 import { type Plugin, tool } from "@mimo-ai/plugin"
 
 export const CustomToolsPlugin: Plugin = async (ctx) => {
@@ -316,7 +316,7 @@ Eğer bir eklenti aracı yerleşik bir araçla aynı adı kullanırsa, eklenti a
 
 Yapılandırılmış günlük kaydı için `console.log` yerine `client.app.log()` kullanın:
 
-```ts title=".opencode/plugins/my-plugin.ts"
+```ts title=".mimocode/plugins/my-plugin.ts"
 export const MyPlugin = async ({ client }) => {
   await client.app.log({
     body: {
@@ -329,7 +329,7 @@ export const MyPlugin = async ({ client }) => {
 }
 ```
 
-Seviyeler: `debug`, `info`, `warn`, `error`. Ayrıntılar için [SDK belgelerine](https://opencode.ai/docs/sdk) bakın.
+Seviyeler: `debug`, `info`, `warn`, `error`. Ayrıntılar için [SDK belgelerine](https://mimocode.ai/docs/sdk) bakın.
 
 ---
 
@@ -337,7 +337,7 @@ Seviyeler: `debug`, `info`, `warn`, `error`. Ayrıntılar için [SDK belgelerine
 
 Bir oturum sıkıştırıldığında içerilen bağlamı özelleştirin:
 
-```ts title=".opencode/plugins/compaction.ts"
+```ts title=".mimocode/plugins/compaction.ts"
 import type { Plugin } from "@mimo-ai/plugin"
 
 export const CompactionPlugin: Plugin = async (ctx) => {
@@ -361,7 +361,7 @@ Include any state that should persist across compaction:
 
 Ayrıca `output.prompt` ayarını yaparak sıkıştırma istemini tamamen değiştirebilirsiniz:
 
-```ts title=".opencode/plugins/custom-compaction.ts"
+```ts title=".mimocode/plugins/custom-compaction.ts"
 import type { Plugin } from "@mimo-ai/plugin"
 
 export const CustomCompactionPlugin: Plugin = async (ctx) => {
