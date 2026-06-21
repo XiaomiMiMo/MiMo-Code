@@ -60,32 +60,3 @@ export async function getEnvInfo() {
     },
   }
 }
-
-export function getEnvTelemetry() {
-  const cpus = os.cpus()
-
-  return {
-    os: {
-      platform: os.platform(),
-      arch: os.arch(),
-      release: os.release(),
-    },
-    cpu: {
-      model: cpus[0]?.model ?? "unknown",
-      count: cpus.length,
-    },
-    memory: {
-      total_bytes: os.totalmem(),
-    },
-    runtime: {
-      bun_version: Bun.version,
-      node_version: process.versions.node,
-      timezone: timezone(),
-      locale: locale(),
-    },
-    mimocode: {
-      version: InstallationVersion,
-      channel: InstallationChannel,
-    },
-  }
-}
