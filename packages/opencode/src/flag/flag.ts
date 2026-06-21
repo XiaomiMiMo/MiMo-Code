@@ -68,6 +68,13 @@ export const Flag = {
   MIMOCODE_OUTPUT_LENGTH_CONTINUATION_LIMIT: number("MIMOCODE_OUTPUT_LENGTH_CONTINUATION_LIMIT") ?? 3,
   MIMOCODE_INVALID_OUTPUT_CONTINUATION_LIMIT: number("MIMOCODE_INVALID_OUTPUT_CONTINUATION_LIMIT") ?? 2,
 
+  // Sliding-window n-gram repetition detection for streamed reasoning + text.
+  // An n-gram of size N appearing REPEAT_THRESHOLD times within the last
+  // WINDOW_TOKENS tokens triggers recovery (remind → replan → terminate).
+  MIMOCODE_TEXT_NGRAM_N: number("MIMOCODE_TEXT_NGRAM_N") ?? 6,
+  MIMOCODE_TEXT_REPEAT_THRESHOLD: number("MIMOCODE_TEXT_REPEAT_THRESHOLD") ?? 3,
+  MIMOCODE_TEXT_WINDOW_TOKENS: number("MIMOCODE_TEXT_WINDOW_TOKENS") ?? 500,
+
   // Caps applied to image attachments before a prompt is sent. Both default to
   // undefined (no limit). MIMOCODE_MAX_PROMPT_IMAGES bounds how many images may
   // be sent per request (oldest excess images are dropped); MIMOCODE_MAX_PROMPT_IMAGE_SIZE

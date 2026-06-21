@@ -80,7 +80,7 @@ export interface Interface {
     auto: boolean
     overflow?: boolean
     agentID?: string
-  }) => Effect.Effect<"continue" | "stop">
+  }) => Effect.Effect<"continue" | "stop" | "text-repeat">
   readonly create: (input: {
     sessionID: SessionID
     agent: string
@@ -370,6 +370,8 @@ export const layer: Layer.Layer<
         yield* session.updateMessage(processor.message)
         return "stop"
       }
+
+      if (result === "text-repeat") return "stop"
 
       if (compactionPart && selected.tail_start_id && compactionPart.tail_start_id !== selected.tail_start_id) {
         yield* session.updatePart({

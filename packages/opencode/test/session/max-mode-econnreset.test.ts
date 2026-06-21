@@ -1,8 +1,13 @@
 import { describe, expect, test } from "bun:test"
 import { Effect } from "effect"
 import * as Stream from "effect/Stream"
-import { runCandidate, judge, type MaxStepInput } from "../../src/session/max-mode"
+import { runCandidate, judge, type Candidate, type MaxStepInput } from "../../src/session/max-mode"
 import type { LLM } from "../../src/session/llm"
+
+function expectCandidate(value: Candidate | null | "text-repeat"): Candidate {
+  if (!value || value === "text-repeat") throw new Error(`expected candidate, got ${String(value)}`)
+  return value
+}
 
 /**
  * Integration tests for the ECONNRESET fix: drive the REAL runCandidate / judge
@@ -73,16 +78,15 @@ describe("max-mode ECONNRESET handling (integration)", () => {
       ],
     })
 
-    const candidate = await Effect.runPromise(runCandidate(baseInput(llm), 0))
+    const candidate = expectCandidate(await Effect.runPromise(runCandidate(baseInput(llm), 0)))
 
-    expect(candidate).not.toBeNull()
     expect(attempts()).toBe(3) // 2 failed + 1 success
     // fresh accumulator: NO "PARTIAL " leaked from the failed attempts
-    expect(candidate!.text).toBe("final answer")
-    expect(candidate!.reasoning).toBe("think")
-    expect(candidate!.toolCalls).toHaveLength(1)
-    expect(candidate!.toolCalls[0].toolName).toBe("read")
-    expect(candidate!.finishReason).toBe("tool-calls")
+    expect(candidate.text).toBe("final answer")
+    expect(candidate.reasoning).toBe("think")
+    expect(candidate.toolCalls).toHaveLength(1)
+    expect(candidate.toolCalls[0].toolName).toBe("read")
+    expect(candidate.finishReason).toBe("tool-calls")
   })
 
   test("candidate gives up (returns null) on a non-transient error part", async () => {
@@ -194,8 +198,7 @@ describe("max-mode defect handling (SSE timeout surfaces as Cause.die)", () => {
 
     expect(exit._tag).toBe("Success")
     if (exit._tag === "Success") {
-      expect(exit.value).not.toBeNull()
-      expect(exit.value!.text).toBe("recovered")
+      expect(expectCandidate(exit.value).text).toBe("recovered")
     }
     expect(attempts()).toBe(3) // 2 defect attempts + 1 success
   })
