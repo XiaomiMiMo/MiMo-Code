@@ -32,10 +32,17 @@ export const AcpCommand = cmd({
       // Wait for providers to be fully loaded after potential DB migration.
       // Without this, the first request may race with provider initialization
       // and fall back to Provider.sort() which picks a paid model.
+      let providersReady = false
       for (let i = 0; i < 10; i++) {
         const resp = await sdk.config.providers({ directory: args.cwd }, { throwOnError: false })
-        if (resp.data?.providers?.length) break
+        if (resp.data?.providers?.length) {
+          providersReady = true
+          break
+        }
         await new Promise((r) => setTimeout(r, 500))
+      }
+      if (!providersReady) {
+        log.warn("providers not loaded within 5s, proceeding anyway")
       }
 
       const input = new WritableStream<Uint8Array>({
