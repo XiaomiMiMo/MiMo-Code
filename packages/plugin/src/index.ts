@@ -299,6 +299,126 @@ export type ActorPostStopRegistration =
   | ActorPostStopHook
   | { matcher?: ActorMatcher; run: ActorPostStopHook }
 
+/**
+ * Wire-format part inside a trajectory. Mirrors MessageV2.Part with full
+ * field-level fidelity for replay: `id`, `time`, `metadata`, `source`,
+ * `attachments`, `tokens`, `raw`, etc. are all preserved.
+ *
+ * Common discriminators and notable fields are documented below; consumers
+ * can read any field via the index signature for forward-compat with new
+ * part types.
+ */
+export type TrajectoryPart = {
+  /** Discriminator: text | reasoning | tool | file | agent | subtask | compaction | checkpoint | step-start | step-finish | retry | patch | snapshot | … */
+  type: string
+  /** Stable PartID — present on all runtime parts. */
+  id?: string
+  sessionID?: string
+  messageID?: string
+  /** Free-form metadata stored on text/reasoning/tool parts. */
+  metadata?: Record<string, unknown>
+  /** Tool parts: nested ToolState (status, input, output, error, attachments, time, raw, …). */
+  state?: Record<string, unknown>
+  /** Tool call ID for tool parts. */
+  callID?: string
+  /** Tool name for tool parts. */
+  tool?: string
+  /** File parts: data: URLs are summarized to "[data-url:mime[:filename]]"; other URLs untouched. */
+  url?: string
+  mime?: string
+  filename?: string
+  /** Text parts: visible content; reasoning parts: thought content. */
+  text?: string
+  synthetic?: boolean
+  ignored?: boolean
+  /** Step-finish: reason / cost / tokens / snapshot. */
+  reason?: string
+  cost?: number
+  tokens?: Record<string, unknown>
+  /** Patch parts: full file list (not just count) for replay. */
+  files?: string[] | number
+  hash?: string
+  /** Compaction parts. */
+  auto?: boolean
+  overflow?: boolean
+  tail_start_id?: string
+  /** Checkpoint parts. */
+  checkpointDir?: string
+  checkpointNumber?: number
+  coveredUpTo?: string
+  /** Subtask parts. */
+  prompt?: string
+  description?: string
+  agent?: string
+  command?: string
+  model?: { providerID: string; modelID: string; variant?: string }
+  /** Agent / file parts: source span pointing back at the originating prompt slice. */
+  source?: Record<string, unknown>
+  /** Retry parts. */
+  attempt?: number
+  error?: unknown
+  /** Step-start / snapshot parts. */
+  snapshot?: string
+  /** Timing for parts that record start/end. */
+  time?: { start?: number; end?: number; created?: number; compacted?: number }
+  [key: string]: unknown
+}
+
+/**
+ * Wire-format message inside a trajectory. Mirrors MessageV2.User and
+ * MessageV2.Assistant with full field-level fidelity for replay: `model`,
+ * `tools`, `format`, `tokens`, `cost`, `modelID`, `providerID`, `path`,
+ * `provenance`, `summary`, `error`, `finish`, `structured`, `parentID`, etc.
+ *
+ * `created` is hoisted from `time.created` for convenience; `time` is also
+ * preserved on the object.
+ */
+export type TrajectoryMessage = {
+  role: "user" | "assistant"
+  id: string
+  sessionID?: string
+  agentID?: string
+  agent: string
+  /** Hoisted from time.created for convenience. The full `time` object is also present. */
+  created: number
+  time?: { created: number; completed?: number }
+  parts: TrajectoryPart[]
+  /** User: the system prompt override the user pinned to this turn (rare). */
+  system?: string
+  /** User: per-turn model selection (providerID/modelID/variant). */
+  model?: { providerID: string; modelID: string; variant?: string }
+  /** User: per-turn tool allowlist override. */
+  tools?: Record<string, boolean>
+  /** User: structured-output format request. */
+  format?: { type: string; [key: string]: unknown }
+  /** User: provenance for hook-injected synthetic messages. */
+  provenance?: { hookPhase: string; hookIteration: number; pluginNames: string[]; hookIDs: string[] }
+  /** Either role: condensed summary used by compaction/checkpoint. */
+  summary?: unknown
+  /** Assistant: parent user-message ID this turn replied to. */
+  parentID?: string
+  /** Assistant: model identifiers (separate from User.model for cross-turn mismatches). */
+  modelID?: string
+  providerID?: string
+  /** Assistant: deprecated mode field, still emitted for replay. */
+  mode?: string
+  /** Assistant: variant alias. */
+  variant?: string
+  /** Assistant: working-directory snapshot at turn start. */
+  path?: { cwd: string; root: string }
+  /** Assistant: total cost in USD for this turn. */
+  cost?: number
+  /** Assistant: token usage breakdown (input/output/reasoning/cache). */
+  tokens?: { total?: number; input: number; output: number; reasoning: number; cache: { read: number; write: number } }
+  /** Assistant: structured-output payload (when format=json_schema). */
+  structured?: unknown
+  /** Assistant: finish reason ("stop" | "length" | "tool-calls" | "cancelled" | …). */
+  finish?: string
+  /** Assistant: serialized error blob (NamedError, AbortedError, etc.). Preserved as-is for replay. */
+  error?: unknown
+  [key: string]: unknown
+}
+
 export interface Hooks {
   event?: (input: { event: Event }) => Promise<void>
   config?: (input: Config) => Promise<void>
@@ -425,4 +545,69 @@ export interface Hooks {
    * Default matcher excludes BUILT_IN_AGENTS.
    */
   "actor.postStop"?: ActorPostStopRegistration
+  /**
+   * Fires once when SessionPrompt.runLoop starts (before the first LLM step).
+   * Fires for every agent slice — main and any subagent that drives its own runLoop.
+   * Set `output.cancel = true` to abort the run without calling the model.
+   */
+  "session.pre"?: (
+    input: { sessionID: string; agentID: string; task_id?: string },
+    output: { cancel?: boolean; cancelReason?: string },
+  ) => Promise<void>
+  /**
+   * Fires once when SessionPrompt.runLoop finishes — guaranteed to fire even on
+   * thrown failures / interruptions (wired via Effect.onExit, not the success path).
+   * `outcome` is "cancelled" when either session.pre or any session.userQuery.pre
+   * set `output.cancel = true`; "error" on Effect failure or model error;
+   * "completed" otherwise.
+   */
+  "session.post"?: (
+    input: {
+      sessionID: string
+      agentID: string
+      task_id?: string
+      outcome: "completed" | "error" | "cancelled"
+      error?: string
+      finalText?: string
+      assistantMessageID?: string
+      /** Full raw agent slice: user text, synthetic reminders, tool calls/results, reasoning, etc. */
+      trajectory: TrajectoryMessage[]
+    },
+    output: {},
+  ) => Promise<void>
+  /**
+   * Fires immediately before each LLM step in SessionPrompt.runLoop.
+   * `step` increments per loop iteration, NOT per user message — a single user
+   * turn typically spans several steps (tool round-trips, retries, continuations).
+   * Set `output.cancel = true` to skip the model call; the step short-circuits and
+   * the surrounding session ends with `outcome: "cancelled"`.
+   */
+  "session.userQuery.pre"?: (
+    input: { sessionID: string; agentID: string; step: number; messageID: string; query: string },
+    output: { cancel?: boolean; cancelReason?: string },
+  ) => Promise<void>
+  /**
+   * Fires immediately after each LLM step in SessionPrompt.runLoop — guaranteed
+   * to fire even when handle.process / MaxMode.runMaxStep yield a failure
+   * (wired via Effect.onExit). `error` is populated from the failure cause in
+   * that case; otherwise from the assistant message's recorded error.
+   */
+  "session.userQuery.post"?: (
+    input: {
+      sessionID: string
+      agentID: string
+      step: number
+      messageID: string
+      /** Non-synthetic user text only (summary). See `trajectory` for the full raw slice. */
+      query: string
+      assistantMessageID: string
+      finish?: string
+      error?: string
+      /** Non-synthetic assistant text / structured output (summary). See `trajectory`. */
+      finalText?: string
+      /** Raw messages through this step (includes synthetic reminders, tools, reasoning). */
+      trajectory: TrajectoryMessage[]
+    },
+    output: {},
+  ) => Promise<void>
 }
