@@ -31,4 +31,16 @@ describe("waitForProviders", () => {
     const result = await waitForProviders(poll, { maxAttempts: 2, intervalMs: 10 })
     expect(result).toBe(false)
   })
+
+  test("handles poll rejection without crashing", async () => {
+    let calls = 0
+    const poll = () => {
+      calls++
+      if (calls < 3) return Promise.reject(new Error("DB migration in progress"))
+      return Promise.resolve({ data: { providers: [{ id: "mimo" }] } })
+    }
+    const result = await waitForProviders(poll, { maxAttempts: 5, intervalMs: 10 })
+    expect(result).toBe(true)
+    expect(calls).toBe(3)
+  })
 })
