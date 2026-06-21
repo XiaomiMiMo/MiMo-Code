@@ -38,6 +38,11 @@ import {
   normalizeForLoopDetection,
   detectTextLoop,
 } from "../session/prompt/text-loop-recovery"
+import {
+  TEXT_NGRAM_MAX_RECOVERY,
+  TEXT_NGRAM_RECOVERY_REMIND,
+  TEXT_NGRAM_RECOVERY_REPLAN,
+} from "../session/prompt/text-ngram-detection"
 import { composeSkillsBlock } from "@/skill/compose/extract"
 import { ToolRegistry } from "../tool"
 import { MCP } from "../mcp"
@@ -1883,6 +1888,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
 
         const textLoopBuffer: string[] = []
         let textLoopRecoveryAttempts = 0
+        let textNgramRecoveryAttempts = 0
 
         // Contract (T05): on finish="length", inject a continuation nudge ONLY for
         // plain text. If any non-providerExecuted client tool part exists we bail
@@ -2227,6 +2233,48 @@ NOTE: At any point in time through this workflow you should feel free to ask the
               "</system-reminder>",
             ].join("\n"),
           } satisfies MessageV2.TextPart)
+          return true
+        })
+
+        // Sliding-window n-gram repetition recovery. Symmetric across main and
+        // fork branches: 1st hit injects REMIND, 2nd hit injects REPLAN, 3rd
+        // hit (>= TEXT_NGRAM_MAX_RECOVERY) writes an error and signals break.
+        const handleTextRepeat = Effect.fn("SessionPrompt.handleTextRepeat")(function* (input: {
+          lastUser: MessageV2.User
+        }) {
+          if (textNgramRecoveryAttempts >= TEXT_NGRAM_MAX_RECOVERY) {
+            yield* slog.info("text n-gram: max recovery exceeded, terminating")
+            yield* bus.publish(Session.Event.Error, {
+              sessionID,
+              error: new NamedError.Unknown({
+                message: `Text repetition detected: repeated n-grams after ${TEXT_NGRAM_MAX_RECOVERY} recovery attempts. Session terminated.`,
+              }).toObject(),
+            })
+            return false
+          }
+          const recoveryText =
+            textNgramRecoveryAttempts === 0 ? TEXT_NGRAM_RECOVERY_REMIND : TEXT_NGRAM_RECOVERY_REPLAN
+          const reentry = yield* sessions.updateMessage({
+            id: MessageID.ascending(),
+            role: "user" as const,
+            sessionID,
+            agentID: input.lastUser.agentID,
+            agent: input.lastUser.agent,
+            model: input.lastUser.model,
+            tools: input.lastUser.tools,
+            format: input.lastUser.format,
+            time: { created: Date.now() },
+          })
+          yield* sessions.updatePart({
+            id: PartID.ascending(),
+            messageID: reentry.id,
+            sessionID,
+            type: "text",
+            synthetic: true,
+            text: recoveryText,
+          } satisfies MessageV2.TextPart)
+          textNgramRecoveryAttempts++
+          yield* slog.info("text n-gram: recovery injected", { attempt: textNgramRecoveryAttempts })
           return true
         })
 
@@ -2882,6 +2930,11 @@ NOTE: At any point in time through this workflow you should feel free to ask the
                 return "continue" as const
               }
 
+              if (result === "text-repeat") {
+                if (yield* handleTextRepeat({ lastUser })) return "continue" as const
+                return "break" as const
+              }
+
               if (structured !== undefined) {
                 handle.message.structured = structured
                 handle.message.finish = handle.message.finish ?? "stop"
@@ -3086,6 +3139,11 @@ NOTE: At any point in time through this workflow you should feel free to ask the
               (yield* autoContinueOutputLength({ lastUser, assistant: handle.message }))
             ) {
               return "continue" as const
+            }
+
+            if (result === "text-repeat") {
+              if (yield* handleTextRepeat({ lastUser })) return "continue" as const
+              return "break" as const
             }
 
             if (structured !== undefined) {

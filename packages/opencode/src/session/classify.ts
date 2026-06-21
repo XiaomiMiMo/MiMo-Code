@@ -34,7 +34,7 @@ export function classifyAssistantStep(input: {
   parts: MessageV2.Part[]
   phase: "existing-assistant" | "after-process"
   // Reserved for T01–T05 (stop/overflow control flow stays in runLoop for T00).
-  processResult?: "continue" | "stop" | "overflow"
+  processResult?: "continue" | "stop" | "overflow" | "text-repeat"
 }): StepClassification {
   const assistant = input.assistant
 
