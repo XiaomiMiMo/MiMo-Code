@@ -38,6 +38,7 @@ import { ACPSessionManager } from "./session"
 import type { ACPConfig } from "./types"
 import { Provider } from "../provider"
 import { ModelID, ProviderID } from "../provider/schema"
+import { resolveDefaultModel } from "./resolve-model"
 import { Agent as AgentModule } from "../agent/agent"
 import { AppRuntime } from "@/effect/app-runtime"
 import { Installation } from "@/installation"
@@ -1563,12 +1564,8 @@ async function defaultModel(config: ACPConfig, cwd?: string): Promise<{ provider
       return []
     })
 
-  if (specified && providers.length) {
-    const provider = providers.find((p) => p.id === specified.providerID)
-    if (provider && provider.models[specified.modelID]) return specified
-  }
-
-  if (specified && !providers.length) return specified
+  const resolved = resolveDefaultModel(specified, providers)
+  if (resolved) return resolved
 
   const opencodeProvider = providers.find((p) => p.id === "opencode")
   if (opencodeProvider) {
