@@ -29,6 +29,15 @@ export const AcpCommand = cmd({
         baseUrl: `http://${server.hostname}:${server.port}`,
       })
 
+      // Wait for providers to be fully loaded after potential DB migration.
+      // Without this, the first request may race with provider initialization
+      // and fall back to Provider.sort() which picks a paid model.
+      for (let i = 0; i < 10; i++) {
+        const resp = await sdk.config.providers({ directory: args.cwd }, { throwOnError: false })
+        if (resp.data?.providers?.length) break
+        await new Promise((r) => setTimeout(r, 500))
+      }
+
       const input = new WritableStream<Uint8Array>({
         write(chunk) {
           return new Promise<void>((resolve, reject) => {
