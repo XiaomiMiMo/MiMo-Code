@@ -10,7 +10,8 @@ import { ModelID, ProviderID } from "../provider/schema"
  */
 export function resolveDefaultModel(
   specified: { providerID: ProviderID; modelID: ModelID } | undefined,
-  providers: Array<{ id: string; models: Record<string, unknown> }>,
+  // Kept in signature for future validation (e.g. warn if provider not found)
+  _providers: Array<{ id: string; models: Record<string, unknown> }>,
 ): { providerID: ProviderID; modelID: ModelID } | undefined {
   if (specified) return specified
   return undefined
