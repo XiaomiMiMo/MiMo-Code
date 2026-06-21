@@ -18,8 +18,50 @@ function timezone() {
   return Intl.DateTimeFormat().resolvedOptions().timeZone
 }
 
+export async function getEnvInfo() {
+  const cpus = os.cpus()
 
-export function getEnvInfo() {
+  return {
+    os: {
+      platform: os.platform(),
+      arch: os.arch(),
+      release: os.release(),
+      hostname: os.hostname(),
+    },
+    cpu: {
+      model: cpus[0]?.model ?? "unknown",
+      count: cpus.length,
+    },
+    memory: {
+      total_bytes: os.totalmem(),
+    },
+    user: {
+      username: username(),
+      homedir: os.homedir(),
+    },
+    runtime: {
+      bun_version: Bun.version,
+      node_version: process.versions.node,
+      pid: process.pid,
+      timezone: timezone(),
+      locale: locale(),
+    },
+    paths: {
+      cwd: process.cwd(),
+      data: Global.Path.data,
+      config: Global.Path.config,
+    },
+    mimocode: {
+      version: InstallationVersion,
+      channel: InstallationChannel,
+      installation_id: await getInstallationID(),
+      run_id: MIMOCODE_RUN_ID,
+      process_role: MIMOCODE_PROCESS_ROLE,
+    },
+  }
+}
+
+export function getEnvTelemetry() {
   const cpus = os.cpus()
 
   return {
