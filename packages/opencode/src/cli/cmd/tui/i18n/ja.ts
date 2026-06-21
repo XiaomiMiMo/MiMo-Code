@@ -200,6 +200,14 @@ export const dict = {
   "tui.command.category.internal": "組み込み",
   "tui.command.category.external": "外部",
 
+  // Built-in slash command descriptions
+  "tui.slash.init.description": "AGENTS.md をガイド付きでセットアップ",
+  "tui.slash.review.description": "変更をレビュー [commit|branch|pr]、デフォルトは未コミット",
+  "tui.slash.dream.description": "memory ファイルと生の軌跡からプロジェクトメモリを手動で統合",
+  "tui.slash.distill.description": "最近の作業から繰り返しワークフローを見つけ、skill・サブエージェント・コマンドにパッケージ化",
+  "tui.slash.goal.description": "停止条件付きゴールを設定；判定が達成と言うまで実行。/goal clear で中止",
+  "tui.slash.deep-research.description": "深い多ソース・ファクトチェック済み調査レポート（deep-research ワークフローを実行）",
+
   // Language switching
   "tui.command.language.switch.title": "言語を切り替え",
   "tui.command.language.switch.description": "表示言語を変更します",

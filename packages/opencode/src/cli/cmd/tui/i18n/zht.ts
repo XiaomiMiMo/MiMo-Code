@@ -176,6 +176,14 @@ export const dict = {
   "tui.command.category.internal": "內建",
   "tui.command.category.external": "第三方",
 
+  // Built-in slash command descriptions
+  "tui.slash.init.description": "引導式 AGENTS.md 設定",
+  "tui.slash.review.description": "審查變更 [commit|branch|pr]，預設未提交的變更",
+  "tui.slash.dream.description": "從 memory 檔案與原始軌跡中手動整合專案記憶",
+  "tui.slash.distill.description": "在最近工作中發現重複流程，打包為 skill、子智慧代理或命令",
+  "tui.slash.goal.description": "設定終止條件目標；執行直到判定達成。使用 /goal clear 中止",
+  "tui.slash.deep-research.description": "深度多來源、事實核查的研究報告（執行 deep-research 工作流程）",
+
   // Language switching
   "tui.command.language.switch.title": "切換語言",
   "tui.command.language.switch.description": "變更顯示語言",
