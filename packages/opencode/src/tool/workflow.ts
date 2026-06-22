@@ -3,10 +3,8 @@ import DESCRIPTION from "./workflow.txt"
 import z from "zod"
 import { Effect, Fiber } from "effect"
 import { Config } from "../config"
-import { Bus } from "@/bus"
 import { workflowRef } from "@/workflow/runtime-ref"
 import { BuiltinWorkflow } from "@/workflow/builtin"
-import { WorkflowLog, WorkflowPhase } from "@/workflow/events"
 import type { SessionID } from "../session/schema"
 
 const id = "workflow"
@@ -61,11 +59,30 @@ export const parameters = z.discriminatedUnion("operation", [
 type TranscriptEntry = { kind: "phase" | "log"; text: string }
 type Metadata = { runID?: string; status?: string; transcript?: TranscriptEntry[] }
 
-export const WorkflowTool = Tool.define<typeof parameters, Metadata, Config.Service | Bus.Service>(
+// Bound the transcript that gets surfaced to the model (tool output) AND persisted
+// to part-state metadata AND streamed in each flush. A chatty workflow
+// (deep-research emits a phase + log per source) can otherwise feed tens of KB into
+// the model's context, grow the session file without bound, and — because each
+// flush pushes a full snapshot through ctx.metadata — make streaming O(N²) in event
+// count. Capping the snapshot to head + tail keeps every flush O(1) (so total
+// streamed bytes are O(run duration), not O(N²)) and the persisted/displayed view
+// bounded, while still showing the start and the most-recent activity.
+const TRANSCRIPT_HEAD = 40
+const TRANSCRIPT_TAIL = 160
+function capTranscript(t: readonly TranscriptEntry[]): TranscriptEntry[] {
+  if (t.length <= TRANSCRIPT_HEAD + TRANSCRIPT_TAIL + 1) return t.slice()
+  const omitted = t.length - TRANSCRIPT_HEAD - TRANSCRIPT_TAIL
+  return [
+    ...t.slice(0, TRANSCRIPT_HEAD),
+    { kind: "log", text: `…(${omitted} lines omitted)` },
+    ...t.slice(t.length - TRANSCRIPT_TAIL),
+  ]
+}
+
+export const WorkflowTool = Tool.define<typeof parameters, Metadata, Config.Service>(
   id,
   Effect.gen(function* () {
     const config = yield* Config.Service
-    const bus = yield* Bus.Service
 
     // Resolve the WorkflowRuntime through the late-bound workflowRef rather than as
     // a Layer dependency: pulling WorkflowRuntime.Service in here would push that
@@ -122,6 +139,9 @@ export const WorkflowTool = Tool.define<typeof parameters, Metadata, Config.Serv
           workspace: input.workspace,
           maxConcurrentAgents: cfg.workflow?.maxConcurrentAgents,
           scriptDeadlineMs: cfg.workflow?.scriptDeadlineMs,
+          // Only the async (background) path relies on the inbox notification; the
+          // sync path below returns the result inline, so suppress the duplicate.
+          notifyOnTerminal: input.async === true,
         })
         const runID = started.runID
         const label = input.name ?? "inline"
@@ -142,52 +162,44 @@ export const WorkflowTool = Tool.define<typeof parameters, Metadata, Config.Serv
         // Default sync path: block until terminal so the model + user see phase
         // and log() events as the tool's own message stream (skill-like) instead
         // of a bare run_id followed by silence until the next turn drains the
-        // inbox. The transcript flushes to part-state metadata as events arrive
-        // — the TUI re-renders each delta via the existing message.part.delta
-        // path so the chat shows phases / log lines live in the main agent's
-        // conversation.
-        const transcript: TranscriptEntry[] = []
+        // inbox. We read the transcript from the runtime's authoritative per-run
+        // buffer (populated synchronously by the guest hooks) rather than
+        // subscribing to the bus: that avoids the subscribe-after-start head race,
+        // cross-event reordering, the post-wait tail race, and any subscription
+        // leak on interrupt. The buffer flushes to part-state metadata as it grows
+        // — the TUI re-renders each delta via the existing message.part.delta path.
         yield* ctx.metadata({
           metadata: { runID, status: "running", transcript: [] } satisfies Metadata,
         })
 
-        const unsubPhase = yield* bus.subscribeCallback(WorkflowPhase, (evt) => {
-          if (evt.properties.runID !== runID) return
-          transcript.push({ kind: "phase", text: evt.properties.title })
-        })
-        const unsubLog = yield* bus.subscribeCallback(WorkflowLog, (evt) => {
-          if (evt.properties.runID !== runID) return
-          transcript.push({ kind: "log", text: evt.properties.message })
-        })
-
-        // A 250ms flush loop reads the buffer and pushes a snapshot through
-        // ctx.metadata. Going through metadata (rather than e.g. publishing our
-        // own bus event) reuses the existing per-part-state delta channel and
-        // means TUI consumers don't need a new subscription path. Snapshot copy
-        // (slice()) keeps the rendered view stable against later pushes.
-        let lastFlushedLen = 0
+        // A 250ms flush loop reads the runtime's transcript and pushes a CAPPED
+        // snapshot through ctx.metadata (reusing the per-part-state delta channel,
+        // so TUI consumers need no new subscription). The cap keeps each delta
+        // bounded regardless of event count. forkScoped binds the fiber to the
+        // execute scope below, so it is interrupted on completion OR interrupt.
+        let lastLen = 0
         const flushFiber = yield* Effect.forkScoped(
           Effect.gen(function* () {
             while (true) {
               yield* Effect.sleep("250 millis")
-              if (transcript.length === lastFlushedLen) continue
-              lastFlushedLen = transcript.length
+              const t = yield* runtime.transcript({ runID })
+              if (t.length === lastLen) continue
+              lastLen = t.length
               yield* ctx.metadata({
-                metadata: { runID, status: "running", transcript: transcript.slice() } satisfies Metadata,
+                metadata: { runID, status: "running", transcript: capTranscript(t) } satisfies Metadata,
               })
             }
           }),
         )
 
         const outcome = yield* runtime.wait({ runID })
-        unsubPhase()
-        unsubLog()
         yield* Fiber.interrupt(flushFiber)
 
-        const finalTranscript = transcript.slice()
-        const lines = finalTranscript.map((e) =>
-          e.kind === "phase" ? `▸ ${e.text}` : `  ${e.text}`,
-        )
+        // The guest hooks append synchronously and complete before the script
+        // returns (which resolves wait()), so this snapshot is the full, ordered
+        // transcript. Cap it for both the model-facing output and persisted metadata.
+        const finalTranscript = capTranscript(yield* runtime.transcript({ runID }))
+        const lines = finalTranscript.map((e) => (e.kind === "phase" ? `▸ ${e.text}` : `  ${e.text}`))
         if (outcome.status === "completed") {
           const result = JSON.stringify(outcome.result ?? null)
           const truncated = result.length > 4000 ? result.slice(0, 4000) + " …(truncated)" : result
