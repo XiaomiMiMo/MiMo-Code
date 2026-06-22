@@ -20,18 +20,17 @@ const cache = new Map<string, Promise<InstanceContext>>()
 const project = makeRuntime(Project.Service, Project.defaultLayer)
 
 const FORBIDDEN_ROOTS = new Set([
-  "/etc", "/proc", "/sys", "/dev", "/boot", "/root",
-  "/private/etc",
+  "/etc", "/proc", "/sys", "/dev", "/boot", "/root", "/var",
+  "/private/etc", "/private/var",
 ])
 
 function assertSafeDirectory(directory: string): void {
-  const resolved = AppFileSystem.resolve(directory)
-  if (resolved === pathParse(resolved).root) {
-    throw new Error(`Access denied: filesystem root is not a valid project directory`)
+  if (directory === pathParse(directory).root) {
+    throw new Error("Access denied: filesystem root is not a valid project directory")
   }
   for (const forbidden of FORBIDDEN_ROOTS) {
-    if (resolved === forbidden || AppFileSystem.contains(forbidden, resolved)) {
-      throw new Error(`Access denied: '${resolved}' is a system directory`)
+    if (directory === forbidden || AppFileSystem.contains(forbidden, directory)) {
+      throw new Error("Access denied: target is a protected system directory")
     }
   }
 }
