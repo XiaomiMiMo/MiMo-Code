@@ -17,6 +17,11 @@ permissions:
 jobs:
   unit:
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
+    name: unit (shard ${{ matrix.shard }}/4)
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -29,15 +34,10 @@ jobs:
           git config --global user.email "ci@mimo.ai"
           git config --global user.name "mimo-ci"
 
-      - name: Cache Turbo
-        uses: actions/cache@v4
-        with:
-          path: node_modules/.cache/turbo
-          key: turbo-${{ runner.os }}-${{ hashFiles('turbo.json', '**/package.json') }}-${{ github.sha }}
-          restore-keys: |
-            turbo-${{ runner.os }}-${{ hashFiles('turbo.json', '**/package.json') }}-
-            turbo-${{ runner.os }}-
+      - name: Build dependencies
+        run: bun turbo build --output-logs=errors-only
 
-      - name: Run unit tests
+      - name: Run unit tests (shard ${{ matrix.shard }}/4)
         timeout-minutes: 20
-        run: bun turbo test --output-logs=errors-only --log-order=grouped --log-prefix=task
+        working-directory: packages/opencode
+        run: bun test --timeout 30000 --shard ${{ matrix.shard }}/4
