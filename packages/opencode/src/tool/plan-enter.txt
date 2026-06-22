@@ -1,8 +1,8 @@
-Use this tool to suggest switching to plan agent when the user's request would benefit from planning before implementation.
+Request to switch into plan mode for structured planning before implementation.
 
-If they explicitly mention wanting to create a plan ALWAYS call this tool first.
+This tool is always present regardless of current mode. It is only effective outside of plan mode — calling it while already in plan mode will return an error.
 
-This tool will ask the user if they want to switch to plan agent.
+If the user explicitly mentions wanting to create a plan, ALWAYS call this tool first.
 
 Call this tool when:
 - The user's request is complex and would benefit from planning first
@@ -10,5 +10,7 @@ Call this tool when:
 - The task involves multiple files or significant architectural decisions
 
 Do NOT call this tool:
+- If you are already in plan mode
 - For simple, straightforward tasks
 - When the user explicitly wants immediate implementation
+- If you are in compose mode (use compose:plan skill instead)

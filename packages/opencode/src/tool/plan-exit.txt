@@ -1,6 +1,6 @@
-Use this tool when you have completed the planning phase and are ready to exit plan agent.
+Request to exit plan mode and switch to build agent for implementation.
 
-This tool will ask the user if they want to switch to build agent to start implementing the plan.
+This tool is always present regardless of current mode. It is only effective in plan mode — calling it from any other mode will return an error.
 
 Call this tool:
 - After you have written a complete plan to the plan file
@@ -8,6 +8,7 @@ Call this tool:
 - When you are confident the plan is ready for implementation
 
 Do NOT call this tool:
+- If you are not currently in plan mode
 - Before you have created or finalized the plan
 - If you still have unanswered questions about the implementation
 - If the user has indicated they want to continue planning

@@ -419,6 +419,14 @@ export const dict: Record<string, string> = {
   "tui.dialog.login.flow.invalid_code": "Invalid Code, please retry",
   "tui.dialog.login.flow.copied": "Copied",
 
+  // Question i18n — plan_enter
+  "tui.question.plan_enter.question": "Would you like to switch to plan mode for structured planning?",
+  "tui.question.plan_enter.header": "Plan",
+  "tui.question.plan_enter.option.0.label": "Yes",
+  "tui.question.plan_enter.option.0.description": "Switch to plan agent for read-only planning",
+  "tui.question.plan_enter.option.1.label": "No",
+  "tui.question.plan_enter.option.1.description": "Stay in current mode",
+
   // Question i18n — plan_exit
   "tui.question.plan_exit.question": "Plan at {{plan}} is complete. Would you like to switch to the build agent and start implementing?",
   "tui.question.plan_exit.header": "Plan",

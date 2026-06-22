@@ -49,3 +49,20 @@ test("*: deny with no edit/write rule — write disabled (wildcard-match)", () =
   expect(disabled.has("write")).toBe(true)
   expect(disabled.has("edit")).toBe(true)
 })
+
+test("plan_enter/plan_exit are not disabled under default *: allow", () => {
+  const rs = ruleset({ "*": "allow", question: "deny" })
+  const disabled = Permission.disabled(["plan_enter", "plan_exit", "question", "bash"], rs)
+  expect(disabled.has("plan_enter")).toBe(false)
+  expect(disabled.has("plan_exit")).toBe(false)
+  expect(disabled.has("question")).toBe(true)
+  expect(disabled.has("bash")).toBe(false)
+})
+
+test("plan_enter/plan_exit disabled only by explicit deny", () => {
+  const rs = ruleset({ "*": "allow", plan_enter: "deny", plan_exit: "deny" })
+  const disabled = Permission.disabled(["plan_enter", "plan_exit", "bash"], rs)
+  expect(disabled.has("plan_enter")).toBe(true)
+  expect(disabled.has("plan_exit")).toBe(true)
+  expect(disabled.has("bash")).toBe(false)
+})

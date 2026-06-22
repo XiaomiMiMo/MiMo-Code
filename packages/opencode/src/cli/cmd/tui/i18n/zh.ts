@@ -408,6 +408,14 @@ export const dict = {
   "tui.dialog.login.flow.invalid_code": "Code 无效，请重试",
   "tui.dialog.login.flow.copied": "已复制",
 
+  // Question i18n — plan_enter
+  "tui.question.plan_enter.question": "是否切换到 plan 模式进行结构化规划？",
+  "tui.question.plan_enter.header": "进入计划",
+  "tui.question.plan_enter.option.0.label": "是",
+  "tui.question.plan_enter.option.0.description": "切换到 plan 智能体进行只读规划",
+  "tui.question.plan_enter.option.1.label": "否",
+  "tui.question.plan_enter.option.1.description": "留在当前模式",
+
   // Question i18n — plan_exit
   "tui.question.plan_exit.question": "{{plan}} 处的计划已完成。是否切换到 build 智能体开始实现？",
   "tui.question.plan_exit.header": "退出计划",

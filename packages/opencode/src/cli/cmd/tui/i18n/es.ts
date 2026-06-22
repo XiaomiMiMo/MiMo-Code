@@ -454,6 +454,14 @@ export const dict = {
   "tui.command.plugins.list.title": "Plugins",
   "tui.command.plugins.install.title": "Instalar plugin",
 
+  // Question i18n — plan_enter
+  "tui.question.plan_enter.question": "¿Desea cambiar al modo plan para una planificación estructurada?",
+  "tui.question.plan_enter.header": "Entrar al plan",
+  "tui.question.plan_enter.option.0.label": "Sí",
+  "tui.question.plan_enter.option.0.description": "Cambiar al agente plan para planificación de solo lectura",
+  "tui.question.plan_enter.option.1.label": "No",
+  "tui.question.plan_enter.option.1.description": "Permanecer en el modo actual",
+
   // Question i18n — plan_exit
   "tui.question.plan_exit.question": "El plan en {{plan}} está completo. ¿Desea cambiar al agente build para comenzar la implementación?",
   "tui.question.plan_exit.header": "Salir del plan",

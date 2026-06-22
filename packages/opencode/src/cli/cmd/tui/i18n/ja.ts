@@ -416,6 +416,14 @@ export const dict = {
   "cli.providers.mimo_login.decrypt_retry": "復号に失敗しました、再試行してください（残り {remaining} 回）",
   "cli.providers.mimo_login.decrypt_exhausted": "復号に失敗しました、最大再試行回数に達しました",
 
+  // Question i18n — plan_enter
+  "tui.question.plan_enter.question": "構造化された計画のために plan モードに切り替えますか？",
+  "tui.question.plan_enter.header": "計画開始",
+  "tui.question.plan_enter.option.0.label": "はい",
+  "tui.question.plan_enter.option.0.description": "読み取り専用の計画のために plan エージェントに切り替え",
+  "tui.question.plan_enter.option.1.label": "いいえ",
+  "tui.question.plan_enter.option.1.description": "現在のモードにとどまる",
+
   // Question i18n — plan_exit
   "tui.question.plan_exit.question": "{{plan}} の計画が完了しました。build エージェントに切り替えて実装を開始しますか？",
   "tui.question.plan_exit.header": "計画終了",

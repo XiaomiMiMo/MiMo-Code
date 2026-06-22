@@ -468,6 +468,14 @@ export const dict = {
   "cli.providers.mimo_login.decrypt_retry": "Échec du déchiffrement, veuillez réessayer ({remaining} tentatives restantes)",
   "cli.providers.mimo_login.decrypt_exhausted": "Échec du déchiffrement, nombre maximal de tentatives atteint",
 
+  // Question i18n — plan_enter
+  "tui.question.plan_enter.question": "Voulez-vous basculer en mode plan pour une planification structurée ?",
+  "tui.question.plan_enter.header": "Entrer dans le plan",
+  "tui.question.plan_enter.option.0.label": "Oui",
+  "tui.question.plan_enter.option.0.description": "Basculer vers l'agent plan pour une planification en lecture seule",
+  "tui.question.plan_enter.option.1.label": "Non",
+  "tui.question.plan_enter.option.1.description": "Rester dans le mode actuel",
+
   // Question i18n — plan_exit
   "tui.question.plan_exit.question": "Le plan {{plan}} est terminé. Voulez-vous basculer vers l'agent build pour commencer l'implémentation ?",
   "tui.question.plan_exit.header": "Quitter le plan",

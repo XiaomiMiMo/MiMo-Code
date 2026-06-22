@@ -75,6 +75,23 @@ test("plan agent denies edits except .mimocode/plans/*", async () => {
   })
 })
 
+test("plan_enter and plan_exit are allowed (not hidden) for all primary agents", async () => {
+  await using tmp = await tmpdir()
+  await Instance.provide({
+    directory: tmp.path,
+    fn: async () => {
+      const agents = await load(tmp.path, (svc) => svc.list())
+      const primaryAgents = agents.filter((a) => a.mode === "primary")
+      expect(primaryAgents.length).toBeGreaterThanOrEqual(3)
+      for (const agent of primaryAgents) {
+        const disabled = Permission.disabled(["plan_enter", "plan_exit"], agent.permission)
+        expect(disabled.has("plan_enter")).toBe(false)
+        expect(disabled.has("plan_exit")).toBe(false)
+      }
+    },
+  })
+})
+
 test("explore agent denies edit and write", async () => {
   await using tmp = await tmpdir()
   await Instance.provide({

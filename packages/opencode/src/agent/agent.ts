@@ -96,8 +96,6 @@ export const layer = Layer.effect(
             ...Object.fromEntries(whitelistedDirs.map((dir) => [dir, "allow"])),
           },
           question: "deny",
-          plan_enter: "deny",
-          plan_exit: "deny",
           // mirrors github.com/github/gitignore Node.gitignore pattern for .env files
           read: {
             "*": "allow",
@@ -119,7 +117,6 @@ export const layer = Layer.effect(
               defaults,
               Permission.fromConfig({
                 question: "allow",
-                plan_enter: "allow",
               }),
               user,
             ),
@@ -141,7 +138,6 @@ export const layer = Layer.effect(
                     defaults,
                     Permission.fromConfig({
                       question: "allow",
-                      plan_enter: "allow",
                     }),
                     user,
                   ),
@@ -159,7 +155,6 @@ export const layer = Layer.effect(
               defaults,
               Permission.fromConfig({
                 question: "allow",
-                plan_exit: "allow",
                 external_directory: {
                   [path.join(Global.Path.data, "plans", "*")]: "allow",
                 },
@@ -183,7 +178,6 @@ export const layer = Layer.effect(
               defaults,
               Permission.fromConfig({
                 question: "allow",
-                skill: "allow",
               }),
               user,
             ),

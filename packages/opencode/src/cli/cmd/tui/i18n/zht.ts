@@ -377,6 +377,14 @@ export const dict = {
   "tui.command.plugins.list.title": "外掛",
   "tui.command.plugins.install.title": "安裝外掛",
 
+  // Question i18n — plan_enter
+  "tui.question.plan_enter.question": "是否切換到 plan 模式進行結構化規劃？",
+  "tui.question.plan_enter.header": "進入計劃",
+  "tui.question.plan_enter.option.0.label": "是",
+  "tui.question.plan_enter.option.0.description": "切換到 plan 智慧代理進行唯讀規劃",
+  "tui.question.plan_enter.option.1.label": "否",
+  "tui.question.plan_enter.option.1.description": "留在當前模式",
+
   // Question i18n — plan_exit
   "tui.question.plan_exit.question": "{{plan}} 的計劃已完成。是否切換到 build 智慧代理開始實作？",
   "tui.question.plan_exit.header": "退出計劃",

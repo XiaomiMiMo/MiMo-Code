@@ -480,6 +480,14 @@ export const dict = {
   "cli.providers.mimo_login.decrypt_retry": "Ошибка расшифровки, повторите попытку (осталось попыток: {remaining})",
   "cli.providers.mimo_login.decrypt_exhausted": "Ошибка расшифровки, превышено максимальное число попыток",
 
+  // Question i18n — plan_enter
+  "tui.question.plan_enter.question": "Переключиться в режим plan для структурированного планирования?",
+  "tui.question.plan_enter.header": "Вход в план",
+  "tui.question.plan_enter.option.0.label": "Да",
+  "tui.question.plan_enter.option.0.description": "Переключиться на агента plan для планирования в режиме чтения",
+  "tui.question.plan_enter.option.1.label": "Нет",
+  "tui.question.plan_enter.option.1.description": "Остаться в текущем режиме",
+
   // Question i18n — plan_exit
   "tui.question.plan_exit.question": "План {{plan}} завершён. Переключиться на агента build и начать реализацию?",
   "tui.question.plan_exit.header": "Выход из плана",
