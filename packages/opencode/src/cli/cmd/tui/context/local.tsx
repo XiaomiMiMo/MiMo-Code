@@ -310,6 +310,10 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
             }
           })
         },
+        clear(agentName: string) {
+          setModelStore("model", agentName, undefined!)
+          save()
+        },
         toggleFavorite(model: { providerID: string; modelID: string }) {
           batch(() => {
             if (!isModelValid(model)) {
@@ -441,6 +445,10 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
             message: `Agent ${value.name}'s configured model ${value.model.providerID}/${value.model.modelID} is not valid`,
             duration: 3000,
           })
+      } else {
+        // Clear stale per-agent override so memo falls through to
+        // agent.config or global fallback instead of a stale value
+        model.clear(value.name)
       }
     })
 

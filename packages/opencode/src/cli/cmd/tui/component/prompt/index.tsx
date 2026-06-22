@@ -521,7 +521,10 @@ export function Prompt(props: PromptProps) {
       if (msg.agent && isPrimaryAgent) {
         // Keep command line --agent if specified.
         if (!args.agent) local.agent.set(msg.agent)
-        if (msg.model) {
+        // Only restore model from history if the agent has no configured model.
+        // The agent-change effect in local.tsx handles the agent.model case.
+        const currentAgent = local.agent.current()
+        if (msg.model && !currentAgent?.model) {
           local.model.set(msg.model)
           local.model.variant.set(msg.model.variant)
         }
