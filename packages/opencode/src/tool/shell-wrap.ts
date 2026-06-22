@@ -7,7 +7,8 @@ export const shellInputSchema = z.object({
     [
       "Multi-line shell-style script. Each non-blank line is one command; commands run sequentially and stop on first failure.",
       'Quoting: "..." preserves literal newlines and processes \\" \\\\ escapes; \'...\' is verbatim.',
-      "<<EOF heredoc bodies are fully verbatim (no escape, no $vars).",
+      "<<EOF heredoc bodies are fully verbatim (no escape, no $vars); the delimiter may be quoted (<<'EOF', <<\"EOF\") or use <<-.",
+      "Use REAL line breaks between commands and inside heredoc bodies — a literal \\n (backslash-n) is not a newline.",
       "# starts a line comment to end-of-line (quoted # is literal).",
       "Variables ($VAR, ${VAR}) are preserved as literal text — no expansion.",
       "See the tool description for the verb table.",
@@ -69,7 +70,25 @@ export function shellWrap<P extends z.ZodType, M extends Tool.Metadata>(
             metadata: { commands: 0, success: 0 } as Tool.Metadata,
           }
         }
-        const parseExit = yield* Effect.exit(shell.parse(args.script))
+        // Strict parse first. If it fails, try a best-effort rescue: a script
+        // authored as a JSON string sometimes arrives with a DOUBLED backslash
+        // (JSON `\\n`) where a real newline was meant (JSON `\n`), collapsing a
+        // multi-line script onto one physical line so the parser can't see its
+        // structure. Repair literal \n / \t back to real control chars and
+        // re-parse; only adopt the result if THAT succeeds. A notice then teaches
+        // the model to emit real newlines next time.
+        let rescued = false
+        let parseExit = yield* Effect.exit(shell.parse(args.script))
+        if (parseExit._tag === "Failure") {
+          const repaired = repairJsonEscapes(args.script)
+          if (repaired !== undefined) {
+            const retry = yield* Effect.exit(shell.parse(repaired))
+            if (retry._tag === "Success") {
+              parseExit = retry
+              rescued = true
+            }
+          }
+        }
         if (parseExit._tag === "Failure") {
           const err = Cause.squash(parseExit.cause)
           const body = formatParseError(def.id, err)
@@ -88,6 +107,7 @@ export function shellWrap<P extends z.ZodType, M extends Tool.Metadata>(
           }
         }
         const blocks: string[] = []
+        if (rescued) blocks.push(formatNotice(rescueNoticeBody(def.id)))
         let lastMetadata: Tool.Metadata = {}
         let success = 0
         for (let i = 0; i < parsedList.length; i++) {
@@ -161,6 +181,30 @@ function describeFailure(cause: Cause.Cause<unknown>): string {
 
 function formatFailedCommandNoVerb(body: string): string {
   return `<command failed="true">\n${body}\n</command>`
+}
+
+function formatNotice(body: string): string {
+  return `<notice>\n${body}\n</notice>`
+}
+
+// Best-effort repair of the JSON double-escape: the model meant a real newline
+// (JSON `\n`) but emitted a doubled backslash (JSON `\\n`), which arrives here as
+// the literal two characters backslash-n. Turn literal \n / \t back into real
+// control chars so a script collapsed onto one physical line can re-parse.
+// Returns undefined when there's nothing to repair, so the caller skips the retry
+// and reports the original error. Only ever used when the strict parse FAILED and
+// the repaired re-parse SUCCEEDS — that bounds the blast radius: a heredoc body's
+// intentional literal \n is left alone whenever the strict parse already succeeds.
+function repairJsonEscapes(script: string): string | undefined {
+  if (!/\\[nt]/.test(script)) return undefined
+  return script.replace(/\\n/g, "\n").replace(/\\t/g, "\t")
+}
+
+function rescueNoticeBody(toolId: string): string {
+  return [
+    `${toolId}: your script had no real line breaks — literal \\n / \\t were read as newlines/tabs.`,
+    `Emit REAL line breaks in the JSON string (JSON \\n), not a doubled backslash (\\\\n).`,
+  ].join("\n")
 }
 
 function shellTeachingBody(toolId: string): string {

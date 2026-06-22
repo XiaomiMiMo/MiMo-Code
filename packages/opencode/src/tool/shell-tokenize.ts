@@ -17,6 +17,32 @@ function heredocPlaceholder(n: number) {
   return `\x00HD${n}\x00`
 }
 
+// Parse a heredoc opener at `start` (where script[start] and start+1 are `<<`).
+// Tolerates the common bash forms a model naturally reaches for — an optional
+// `-`, surrounding whitespace, and a quoted delimiter:
+//   <<EOF   <<-EOF   << EOF   <<'EOF'   <<"EOF"   <<-'EOF'
+// The quotes are stripped; the closing line still matches the bare marker (as in
+// bash). Returns the marker name and the index just past it (after the closing
+// quote, if any), or null when there is no valid marker — in which case the
+// caller falls through to the operator-reject path. Rejecting <<'EOF' here was
+// the original "unsupported shell operator: <" failure.
+function parseHeredocMarker(script: string, start: number): { marker: string; end: number } | null {
+  let j = start + 2
+  if (script[j] === "-") j++
+  while (script[j] === " " || script[j] === "\t") j++
+  const quote = script[j] === "'" || script[j] === '"' ? script[j] : null
+  if (quote) j++
+  const markerStart = j
+  if (!(j < script.length && /[A-Za-z_]/.test(script[j]))) return null
+  while (j < script.length && /[A-Za-z0-9_]/.test(script[j])) j++
+  const marker = script.slice(markerStart, j)
+  if (quote) {
+    if (script[j] !== quote) return null
+    j++
+  }
+  return { marker, end: j }
+}
+
 type HeredocResult =
   | { ok: true; stripped: string; bodies: string[] }
   | { ok: false; error: ParseError }
@@ -71,16 +97,14 @@ function extractHeredocs(script: string): HeredocResult {
         continue
       }
 
-      // Try to read a marker name starting at i+2
-      let j = i + 2
-      const markerStart = j
-      // Marker must start with letter or underscore
-      if (j < script.length && /[A-Za-z_]/.test(script[j])) {
-        while (j < script.length && /[A-Za-z0-9_]/.test(script[j])) j++
-        const marker = script.slice(markerStart, j)
+      // Read the heredoc marker, tolerating optional `-`, surrounding whitespace,
+      // and a quoted delimiter (<<'EOF' / <<"EOF" / <<-EOF / << EOF).
+      const opener = parseHeredocMarker(script, i)
+      if (opener) {
+        const marker = opener.marker
 
         // After marker: only optional whitespace, then newline (or EOF)
-        let k = j
+        let k = opener.end
         while (k < script.length && (script[k] === " " || script[k] === "\t")) k++
 
         if (k < script.length && script[k] !== "\n") {

@@ -255,3 +255,81 @@ describe("shellWrap: nested discriminator (task-style)", () => {
     expect(result.output).not.toContain("[object Object]")
   })
 })
+
+describe("shellWrap: JSON double-escape rescue", () => {
+  // A parser that chokes when the script arrives collapsed onto one physical line
+  // via literal backslash-n (the JSON double-escape), but parses fine once real
+  // newlines are restored — mirroring how the real tokenizer behaves.
+  function makeNewlineSensitiveTool(record: { calls: z.infer<typeof params>[] }): Tool.Def<typeof params> {
+    return {
+      ...makeRecordingTool(record),
+      shell: {
+        description: "shell description",
+        parse: (script) => {
+          if (/\\n/.test(script))
+            return Effect.fail({ kind: "unsupported-operator", line: 1, detail: "literal backslash-n" })
+          return Effect.succeed(
+            script
+              .split("\n")
+              .filter((l) => l.trim() !== "")
+              .map((line) => {
+                const tokens = line.trim().split(/\s+/)
+                return { operation: tokens[1], value: tokens[2] } as z.infer<typeof params>
+              }),
+          )
+        },
+      },
+    }
+  }
+
+  test("literal \\n collapsed script is repaired, re-parsed, and runs with a notice", async () => {
+    const record = { calls: [] as z.infer<typeof params>[] }
+    const wrapped = shellWrap(makeNewlineSensitiveTool(record))
+    const result = await runtime.runPromise(
+      wrapped.execute({ script: "synthetic create A\\nsynthetic update B" }, stubCtx()),
+    )
+    expect(record.calls).toEqual([
+      { operation: "create", value: "A" },
+      { operation: "update", value: "B" },
+    ])
+    expect(result.output).toContain("<notice>")
+    expect(result.output).toContain("REAL line breaks")
+    expect(result.output.match(/<command/g)?.length).toBe(2)
+    expect(result.metadata).toEqual({ operation: "update", commands: 2, success: 2 })
+  })
+
+  test("nothing to repair → original parse error, no notice", async () => {
+    const record = { calls: [] as z.infer<typeof params>[] }
+    const wrapped = shellWrap({
+      ...makeRecordingTool(record),
+      shell: {
+        description: "shell description",
+        parse: () => Effect.fail({ kind: "unsupported-operator", line: 1, detail: "always fails" }),
+      },
+    })
+    const result = await runtime.runPromise(wrapped.execute({ script: "synthetic create A" }, stubCtx()))
+    expect(record.calls).toEqual([])
+    expect(result.output).toContain('<command failed="true">')
+    expect(result.output).not.toContain("<notice>")
+    expect(result.output).toContain("always fails")
+  })
+
+  test("repair attempted but re-parse still fails → original error, no notice", async () => {
+    const record = { calls: [] as z.infer<typeof params>[] }
+    const wrapped = shellWrap({
+      ...makeRecordingTool(record),
+      shell: {
+        description: "shell description",
+        parse: () => Effect.fail({ kind: "unsupported-operator", line: 1, detail: "still broken" }),
+      },
+    })
+    // Script carries literal \n so repair runs, but parse fails regardless.
+    const result = await runtime.runPromise(
+      wrapped.execute({ script: "synthetic create A\\nsynthetic update B" }, stubCtx()),
+    )
+    expect(record.calls).toEqual([])
+    expect(result.output).toContain('<command failed="true">')
+    expect(result.output).not.toContain("<notice>")
+    expect(result.output).toContain("still broken")
+  })
+})
