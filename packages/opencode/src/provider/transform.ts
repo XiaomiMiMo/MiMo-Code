@@ -283,24 +283,24 @@ function applyCaching(msgs: ModelMessage[], model: Provider.Model): ModelMessage
     },
   }
 
-  // Strategy: place cache breakpoints at stable prefix boundaries (max 4 allowed by Anthropic)
-  // 1. Last system message — system prompt never changes
-  // 2. Midpoint of conversation history — long prefix second-level cache
-  // 3. Message before the last user message — stable history boundary
+  // Strategy: prefix cache is longest-common-prefix based, so the only marker
+  // that grows the cached prefix every turn is one pinned to the *end* of the
+  // request. We place two stable breakpoints (max 4 allowed by Anthropic):
+  // 1. Last system message — the immutable prompt prefix.
+  // 2. The last message — "rolling head". Writing the cache up to the current
+  //    tail makes the entire history a cache *read* on the next turn.
+  //
+  // We deliberately do NOT place markers at a drifting midpoint or at
+  // before-last-user: those indices shift every turn, land on assistant/tool
+  // messages (silently dropped by openai-compatible proxies), and spend the
+  // breakpoint budget without ever caching the tail. See internal/docs/cache-policy.md.
   const targets: ModelMessage[] = []
 
   const systemMsgs = msgs.filter((msg) => msg.role === "system")
   if (systemMsgs.length > 0) targets.push(systemMsgs[systemMsgs.length - 1])
 
   const nonSystem = msgs.filter((msg) => msg.role !== "system")
-  const lastUserIdx = nonSystem.findLastIndex((msg) => msg.role === "user")
-  if (lastUserIdx >= 1) {
-    targets.push(nonSystem[lastUserIdx - 1])
-    const midpoint = Math.floor(lastUserIdx / 2)
-    if (midpoint > 0 && midpoint < lastUserIdx - 1) targets.push(nonSystem[midpoint])
-  } else if (lastUserIdx === 0) {
-    targets.push(nonSystem[0])
-  }
+  if (nonSystem.length > 0) targets.push(nonSystem[nonSystem.length - 1])
 
   for (const msg of unique(targets)) {
     const useMessageLevelOptions =

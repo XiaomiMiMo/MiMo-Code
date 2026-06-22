@@ -2172,6 +2172,36 @@ describe("ProviderTransform.message - cache control on gateway", () => {
 
     expect(result[0].providerOptions).toBeUndefined()
   })
+
+  test("multi-turn anthropic pins breakpoints to last system + last message only", () => {
+    const model = createModel({
+      providerID: "anthropic",
+      api: { id: "claude-sonnet-4", url: "https://api.anthropic.com", npm: "@ai-sdk/anthropic" },
+    })
+    const msgs = [
+      { role: "system", content: "You are a helpful assistant" },
+      { role: "user", content: "first question" },
+      { role: "assistant", content: "first answer" },
+      { role: "user", content: "second question" },
+      { role: "assistant", content: "second answer" },
+      { role: "user", content: "third question" },
+    ] as any[]
+
+    const result = ProviderTransform.message(msgs, model, {}) as any[]
+
+    // Only the last system message and the last message carry a breakpoint.
+    const marked = result
+      .map((msg, index) => ({ index, role: msg.role, hasCache: !!msg.providerOptions?.anthropic?.cacheControl }))
+      .filter((m) => m.hasCache)
+
+    expect(marked).toEqual([
+      { index: 0, role: "system", hasCache: true },
+      { index: 5, role: "user", hasCache: true },
+    ])
+    // No drifting midpoint / before-last-user markers on intermediate assistant turns.
+    expect(result[2].providerOptions?.anthropic).toBeUndefined()
+    expect(result[4].providerOptions?.anthropic).toBeUndefined()
+  })
 })
 
 describe("ProviderTransform.variants", () => {
