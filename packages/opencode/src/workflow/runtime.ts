@@ -355,6 +355,9 @@ export const layer = Layer.effect(
         entry.status = "cancelled"
         yield* Deferred.succeed(entry.deferred, { status: "cancelled" })
         yield* bus.publish(WorkflowFinished, { sessionID: entry.sessionID, runID: entry.runID, status: "cancelled" })
+        // Evict the cancelled entry after a grace period so status/wait
+        // callers can still read the terminal outcome briefly.
+        setTimeout(() => runs.delete(entry.runID), 30_000)
       })
 
     const waitFor = (childRunID: string) =>
@@ -1066,6 +1069,9 @@ export const layer = Layer.effect(
               content: `Workflow completed. run_id: ${runID}\n` + JSON.stringify(result.success ?? null).slice(0, 4000),
             })
             .pipe(Effect.ignore)
+          // Evict the completed entry after a grace period so status/wait
+          // callers can still read the terminal outcome briefly.
+          setTimeout(() => runs.delete(runID), 30_000)
           return
         }
         // Non-success terminal: reclaim in-flight agents + worktrees so a
@@ -1089,6 +1095,8 @@ export const layer = Layer.effect(
             content: `Workflow failed. run_id: ${runID}\nerror: ${error}`,
           })
           .pipe(Effect.ignore)
+        // Evict the failed entry after a grace period.
+        setTimeout(() => runs.delete(runID), 30_000)
       })
 
       entry.fiber = yield* work.pipe(Effect.forkIn(scope))

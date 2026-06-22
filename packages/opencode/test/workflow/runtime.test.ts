@@ -354,6 +354,38 @@ describe("WorkflowRuntime cancel cascade", () => {
     ),
     20000,
   )
+
+  it.live("cancelled run is evicted from the runs Map after grace period", () =>
+    provideTmpdirServer(
+      Effect.fnUntraced(function* ({ llm }) {
+        const runtime = yield* WorkflowRuntime.Service
+        const session = yield* Session.Service
+        const parent = yield* session.create({
+          title: "wf cancel eviction",
+          permission: [{ permission: "*", pattern: "*", action: "allow" }],
+        })
+        yield* llm.hang
+        const script = [
+          `export const meta = { name: "t", description: "d" }`,
+          `return await agent("a")`,
+        ].join("\n")
+        const { runID } = yield* runtime.start({ script, sessionID: parent.id, parentActorID: "main", model: ref })
+        yield* Effect.sleep("250 millis")
+        yield* runtime.cancel({ runID })
+
+        // Immediately after cancel, status should be "cancelled" (still in Map)
+        const s1 = yield* runtime.status({ runID })
+        expect(s1.status).toBe("cancelled")
+
+        // After the 30s grace period, the entry should be evicted
+        yield* Effect.sleep("31 seconds")
+        const s2 = yield* runtime.status({ runID })
+        expect(s2.status).toBe("unknown")
+      }),
+      { git: true, config: providerCfg },
+    ),
+    45000,
+  )
 })
 
 describe("WorkflowRuntime concurrency clamp", () => {
