@@ -217,15 +217,24 @@ export function resolvePluginProviders(input: {
   return result
 }
 
-// Dynamically load the optional free-login entry (src/ext/free-login.ts), if
-// present. Returns its handler when available, otherwise undefined. Computed
-// path so builds without the extension still resolve cleanly.
+// Dynamically load the optional free-login entry from the overlay manifest. The
+// build step generates src/ext/_manifest.ts with a static import of free-login,
+// so the bundler embeds it; importing by fixed specifier works inside Bun
+// single-file executables where filesystem scans do not. Falls back to a direct
+// file import for dev runs (no build). Returns undefined when absent.
 async function loadFreeLogin(): Promise<(() => Promise<void>) | undefined> {
+  const fromModule = (mod: Record<string, unknown> | undefined) =>
+    mod && typeof mod.mimoFreeLogin === "function" ? (mod.mimoFreeLogin as () => Promise<void>) : undefined
+  try {
+    // @ts-ignore optional generated overlay manifest; absent in open-source source tree
+    const manifest = (await import("../../ext/_manifest")) as { modules?: Record<string, Record<string, unknown>> }
+    const direct = fromModule(manifest.modules?.["free-login"])
+    if (direct) return direct
+  } catch {}
   const file = path.join(import.meta.dir, "..", "..", "ext", "free-login.ts")
   if (!fs.existsSync(file)) return undefined
   try {
-    const mod = await import(/* @vite-ignore */ pathToFileURL(file).href)
-    return typeof mod.mimoFreeLogin === "function" ? mod.mimoFreeLogin : undefined
+    return fromModule(await import(/* @vite-ignore */ pathToFileURL(file).href))
   } catch {
     return undefined
   }
