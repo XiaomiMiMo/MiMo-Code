@@ -129,18 +129,38 @@ describe("tool.write", () => {
   })
 
   describe("file permissions", () => {
-    it.live("sets file permissions when writing sensitive data", () =>
-      provideTmpdirInstance((dir) =>
-        Effect.gen(function* () {
-          const filepath = path.join(dir, "sensitive.json")
-          yield* run({ filePath: filepath, content: JSON.stringify({ secret: "data" }) })
+    const base = 0o666
 
-          if (process.platform !== "win32") {
-            const stats = yield* Effect.promise(() => fs.stat(filepath))
-            expect(stats.mode & 0o777).toBe(0o644)
-          }
-        }),
-      ),
+    const writeAndCheckMode = (dir: string, umask: number, expected: number) =>
+      Effect.gen(function* () {
+        if (process.platform === "win32" || typeof process.umask !== "function") return
+        const filepath = path.join(dir, "sensitive.json")
+        yield* Effect.acquireUseRelease(
+          Effect.sync(() => process.umask(umask)),
+          () =>
+            Effect.gen(function* () {
+              yield* run({ filePath: filepath, content: JSON.stringify({ secret: "data" }) })
+              const stats = yield* Effect.promise(() => fs.stat(filepath))
+              expect(stats.mode & 0o777).toBe(expected)
+            }),
+          (prev) => Effect.sync(() => process.umask(prev)),
+        )
+      })
+
+    it.live("base mode is 0o666 before umask masking", () =>
+      provideTmpdirInstance((dir) => writeAndCheckMode(dir, 0o000, base)),
+    )
+    it.live("respects umask 0o022 → 0o644", () =>
+      provideTmpdirInstance((dir) => writeAndCheckMode(dir, 0o022, base & ~0o022)),
+    )
+    it.live("respects corner umask 0o027 → 0o640", () =>
+      provideTmpdirInstance((dir) => writeAndCheckMode(dir, 0o027, base & ~0o027)),
+    )
+    it.live("respects umask 0o077 → 0o600", () =>
+      provideTmpdirInstance((dir) => writeAndCheckMode(dir, 0o077, base & ~0o077)),
+    )
+    it.live("0o777 fully masks the 0o666 base mode", () =>
+      provideTmpdirInstance((dir) => writeAndCheckMode(dir, 0o777, base & ~0o777)),
     )
   })
 
