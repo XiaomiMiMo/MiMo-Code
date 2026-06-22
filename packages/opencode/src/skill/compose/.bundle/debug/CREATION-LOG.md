@@ -54,7 +54,7 @@ Framework designed to resist rationalization under pressure:
 
 ## Testing Approach
 
-Created 4 validation tests following skills/meta/testing-skills-with-subagents:
+Created 4 validation tests following TDD-for-skills methodology (compose:tdd):
 
 ### Test 1: Academic Context (No Pressure)
 - Simple bug, no time pressure
