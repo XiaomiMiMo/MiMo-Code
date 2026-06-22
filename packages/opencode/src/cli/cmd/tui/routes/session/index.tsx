@@ -50,6 +50,7 @@ import type { ActorTool } from "@/tool/actor"
 import type { TaskTool } from "@/tool/task"
 import type { QuestionTool } from "@/tool/question"
 import type { SkillTool } from "@/tool/skill"
+import type { WorkflowTool } from "@/tool/workflow"
 import { useKeyboard, useRenderer, useTerminalDimensions, type JSX } from "@opentui/solid"
 import { useSDK } from "@tui/context/sdk"
 import { useCommandDialog } from "@tui/component/dialog-command"
@@ -1729,6 +1730,9 @@ function ToolPart(props: { last: boolean; part: ToolPart; message: AssistantMess
         <Match when={props.part.tool === "skill"}>
           <Skill {...toolprops} />
         </Match>
+        <Match when={props.part.tool === "workflow"}>
+          <Workflow {...toolprops} />
+        </Match>
         <Match when={props.part.tool === "plan_exit"}>
           <PlanExit {...toolprops} />
         </Match>
@@ -1824,6 +1828,61 @@ function WorkItemTask(props: ToolProps<typeof TaskTool>) {
   return (
     <InlineTool icon="#" pending="Updating tasks..." complete={true} part={props.part}>
       task {summary()}
+    </InlineTool>
+  )
+}
+
+// Inline renderer for the dynamic-workflow `workflow` tool. The tool is
+// fire-and-forget — `run` returns immediately with a runID while the actual
+// workflow runs in background and emits `workflow.started/phase/finished` bus
+// events that sync.tsx upserts into store.workflow[runID]. Without this
+// renderer the call falls through to GenericTool and the user sees only the 3
+// truncated lines of "Workflow started. run_id: ...". Here we look up the live
+// run row and surface phase + counters that update as events flow in, mirroring
+// the DialogWorkflows row format.
+function Workflow(props: ToolProps<typeof WorkflowTool>) {
+  const sync = useSync()
+
+  const operation = createMemo(() => {
+    const op = (props.input as { operation?: string }).operation
+    return typeof op === "string" ? op : "run"
+  })
+
+  const runID = createMemo(() => (props.metadata.runID as string | undefined) ?? (props.input as { run_id?: string }).run_id)
+
+  const run = createMemo(() => {
+    const id = runID()
+    if (!id) return undefined
+    return sync.data.workflow[id]
+  })
+
+  // Spinner reflects the WORKFLOW's status, not the tool call's: `run` returns
+  // immediately so the tool part flips to "completed" within milliseconds while
+  // the workflow itself is still active for minutes.
+  const isRunning = createMemo(() => {
+    const r = run()
+    if (r) return r.status === "running"
+    return props.part.state.status === "running"
+  })
+
+  const summary = createMemo(() => {
+    const op = operation()
+    const r = run()
+    const id = runID()
+    if (op !== "run") {
+      return `workflow ${op}${id ? ` ${id}` : ""}`
+    }
+    if (!r) {
+      const name = (props.input as { name?: string }).name
+      return `workflow run${name ? ` ${name}` : ""}`
+    }
+    const phase = r.currentPhase ?? "-"
+    return `workflow ${r.name} · ${r.status} · ${phase} · ${r.succeeded}✓ ${r.failed}✗ ${r.running}⟳`
+  })
+
+  return (
+    <InlineTool icon="⚡" spinner={isRunning()} pending="Starting workflow..." complete={true} part={props.part}>
+      {summary()}
     </InlineTool>
   )
 }
