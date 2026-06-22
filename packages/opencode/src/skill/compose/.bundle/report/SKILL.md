@@ -14,7 +14,7 @@ Consolidate a feature's spec history into a single human-readable final report. 
 
 **Announce at start:** "I'm using the report skill to write the final report for this feature."
 
-**Save reports to:** `<docs-dir>/reports/<feature-name>.md`, where `<docs-dir>` is the compose docs directory from the `<compose_docs_dir>` block in your prompt (defaults to `docs/compose`)
+**Save reports to:** the `reports/` directory given in the `<compose_docs_dir>` block of your prompt, as `<feature-name>.md`
 - No date in filename — the report is overwritten in place when the feature evolves
 - Git history tracks revisions
 - User preferences for report location override this default
