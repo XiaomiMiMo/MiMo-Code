@@ -7,6 +7,7 @@ import { Log } from "@/util"
 import { LocalContext } from "../util"
 import * as Project from "./project"
 import { WorkspaceContext } from "@/control-plane/workspace-context"
+import { parse as pathParse } from "path"
 
 export interface InstanceContext {
   directory: string
@@ -17,6 +18,23 @@ export interface InstanceContext {
 const context = LocalContext.create<InstanceContext>("instance")
 const cache = new Map<string, Promise<InstanceContext>>()
 const project = makeRuntime(Project.Service, Project.defaultLayer)
+
+const FORBIDDEN_ROOTS = new Set([
+  "/etc", "/proc", "/sys", "/dev", "/boot", "/root",
+  "/private/etc",
+])
+
+function assertSafeDirectory(directory: string): void {
+  const resolved = AppFileSystem.resolve(directory)
+  if (resolved === pathParse(resolved).root) {
+    throw new Error(`Access denied: filesystem root is not a valid project directory`)
+  }
+  for (const forbidden of FORBIDDEN_ROOTS) {
+    if (resolved === forbidden || AppFileSystem.contains(forbidden, resolved)) {
+      throw new Error(`Access denied: '${resolved}' is a system directory`)
+    }
+  }
+}
 
 const disposal = {
   all: undefined as Promise<void> | undefined,
@@ -57,6 +75,7 @@ function track(directory: string, next: Promise<InstanceContext>) {
 export const Instance = {
   async provide<R>(input: { directory: string; init?: () => Promise<any>; fn: () => R }): Promise<R> {
     const directory = AppFileSystem.resolve(input.directory)
+    assertSafeDirectory(directory)
     let existing = cache.get(directory)
     if (!existing) {
       Log.Default.info("creating instance", { directory })

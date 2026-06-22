@@ -9,7 +9,6 @@ import { InstanceBootstrap } from "@/project/bootstrap"
 import { Instance } from "@/project/instance"
 import { lazy } from "@/util/lazy"
 import { Filesystem } from "@/util"
-import { isValidProjectDirectory } from "../middleware"
 import { ConfigApi, configHandlers } from "./config"
 import { PermissionApi, permissionHandlers } from "./permission"
 import { ProjectApi, projectHandlers } from "./project"
@@ -102,17 +101,11 @@ const instance = HttpRouter.middleware()(
         const workspace = query.workspace || undefined
         const directory = Filesystem.resolve(decode(raw))
 
-        if (!Flag.MIMOCODE_SERVER_PASSWORD) {
-          const cwd = Filesystem.resolve(process.cwd())
-          if (!Filesystem.contains(cwd, directory)) {
-            return yield* new DirectoryAccessDenied({
-              message: "Access denied: directory must be within project root on unauthenticated servers",
-            })
-          }
-        }
-
-        if (!isValidProjectDirectory(directory)) {
-          return yield* new DirectoryAccessDenied({ message: "Access denied: invalid project directory" })
+        const cwd = Filesystem.resolve(process.cwd())
+        if (!Filesystem.contains(cwd, directory)) {
+          return yield* new DirectoryAccessDenied({
+            message: "Access denied: directory must be within the server's working directory",
+          })
         }
 
         const ctx = yield* Effect.promise(() =>
