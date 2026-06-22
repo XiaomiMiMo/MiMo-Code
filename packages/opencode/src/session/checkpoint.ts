@@ -1113,17 +1113,19 @@ export const layer: Layer.Layer<
       const recentUserPerMsg = caps.recent_user_per_msg ?? 2_000
       const recentUserEntries: string[] = []
       if (recentUserCap > 0) {
-        // Pull a window large enough that the token budget (not the page limit)
-        // is what bounds the section. Floor of 200; otherwise scale to the cap
-        // assuming a conservative ~50 tokens/msg so a long session of many tiny
-        // prompts still lets FIFO evict on the budget rather than the page edge.
-        const pageLimit = Math.max(200, Math.ceil(recentUserCap / 50))
+        // Fixed page ceiling sized comfortably above the token budget: at the
+        // 2K per-msg cap, 200 msgs ≈ 400K tokens, far past any recent_user cap,
+        // so the token loop below — not this limit — is what bounds the section.
+        // The only way 200 msgs could underflow the budget is hundreds of sub-
+        // 80-token prompts ("ok"/"continue"), which carry no anchors worth
+        // paging deeper for. Keeping a constant avoids a magic tokens/msg
+        // heuristic and a larger fetch+hydrate on every checkpoint.
         // Exclude rebuild/compaction boundary messages: insertRebuildBoundary
         // writes a role:"user" row carrying a checkpoint part + synthetic text
         // holding the *previous* rebuild context. Re-ingesting it would fold
         // each prior rebuild back in recursively (fractal bloat). userMsgText
         // also drops synthetic text parts as a second guard.
-        const userMsgs = MessageV2.page({ sessionID, agentID: "main", limit: pageLimit }).items.filter(
+        const userMsgs = MessageV2.page({ sessionID, agentID: "main", limit: 200 }).items.filter(
           (m) =>
             m.info.role === "user" &&
             !m.parts.some((p) => p.type === "tool" || p.type === "checkpoint" || p.type === "compaction"),
