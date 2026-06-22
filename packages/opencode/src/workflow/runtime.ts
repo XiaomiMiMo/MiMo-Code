@@ -990,6 +990,11 @@ export const layer = Layer.effect(
                 lineage: [...lineage, childName],
                 depth: depth + 1,
                 maxDepth,
+                // A child is awaited inline here (waitFor below) and its outcome is
+                // consumed by the parent script — never deliver a separate inbox
+                // notification to the parent actor, regardless of the root run's
+                // sync/async mode. Only top-level async runs notify.
+                notifyOnTerminal: false,
               },
               childRunID,
               isInlineScript(spec) ? "inline" : spec,
