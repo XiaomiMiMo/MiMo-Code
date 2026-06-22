@@ -491,8 +491,7 @@ export const layer = Layer.effect(
           : path.join(ctx.worktree, docsConfigured)
         const composeDocsBlock = [
           "<compose_docs_dir>",
-          `Save compose skill outputs (specs, plans, reports) under this directory instead of the default \`docs/compose\`:`,
-          `  ${docsDir}`,
+          `Save compose skill outputs under this directory: ${docsDir}`,
           `Specs go in \`${path.join(docsDir, "specs")}\`, plans in \`${path.join(docsDir, "plans")}\`, reports in \`${path.join(docsDir, "reports")}\`.`,
           "</compose_docs_dir>",
         ].join("\n")
