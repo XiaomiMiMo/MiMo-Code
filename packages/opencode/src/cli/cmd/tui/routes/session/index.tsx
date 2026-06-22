@@ -50,6 +50,7 @@ import type { ActorTool } from "@/tool/actor"
 import type { TaskTool } from "@/tool/task"
 import type { QuestionTool } from "@/tool/question"
 import type { SkillTool } from "@/tool/skill"
+import type { WorkflowTool } from "@/tool/workflow"
 import { useKeyboard, useRenderer, useTerminalDimensions, type JSX } from "@opentui/solid"
 import { useSDK } from "@tui/context/sdk"
 import { useCommandDialog } from "@tui/component/dialog-command"
@@ -1729,6 +1730,9 @@ function ToolPart(props: { last: boolean; part: ToolPart; message: AssistantMess
         <Match when={props.part.tool === "skill"}>
           <Skill {...toolprops} />
         </Match>
+        <Match when={props.part.tool === "workflow"}>
+          <Workflow {...toolprops} />
+        </Match>
         <Match when={props.part.tool === "plan_exit"}>
           <PlanExit {...toolprops} />
         </Match>
@@ -1824,6 +1828,81 @@ function WorkItemTask(props: ToolProps<typeof TaskTool>) {
   return (
     <InlineTool icon="#" pending="Updating tasks..." complete={true} part={props.part}>
       task {summary()}
+    </InlineTool>
+  )
+}
+
+// Inline renderer for the dynamic-workflow `workflow` tool. The "run" op blocks
+// until terminal and streams a transcript (phase transitions + log() messages)
+// into part-state metadata via ctx.metadata; the tool's `Workflow` view here
+// reads metadata.transcript reactively (each ctx.metadata call fires a
+// message.part.delta) and renders it as multi-line chat content alongside the
+// live header from sync.data.workflow[runID]. That way phase/log events show
+// up in the main agent's conversation as the workflow runs, not as a single
+// silent line that only updates once the run finishes.
+function Workflow(props: ToolProps<typeof WorkflowTool>) {
+  const sync = useSync()
+
+  const operation = createMemo(() => {
+    const op = (props.input as { operation?: string }).operation
+    return typeof op === "string" ? op : "run"
+  })
+
+  const runID = createMemo(
+    () => (props.metadata.runID as string | undefined) ?? (props.input as { run_id?: string }).run_id,
+  )
+
+  const run = createMemo(() => {
+    const id = runID()
+    if (!id) return undefined
+    return sync.data.workflow[id]
+  })
+
+  // Spinner is true while EITHER side reports running — the tool part stays
+  // running until execute() returns (the whole workflow duration, since we
+  // block), and the bus-fed run row independently reports "running" until the
+  // workflow.finished event lands. Either signal alone is enough.
+  const isRunning = createMemo(() => {
+    if (props.part.state.status === "running") return true
+    const r = run()
+    return r?.status === "running"
+  })
+
+  const transcript = createMemo(() => {
+    const t = (props.metadata as { transcript?: { kind: "phase" | "log"; text: string }[] }).transcript
+    return Array.isArray(t) ? t : []
+  })
+
+  const content = createMemo(() => {
+    const op = operation()
+    const r = run()
+    const id = runID()
+    if (op !== "run") {
+      return `workflow ${op}${id ? ` ${id}` : ""}`
+    }
+    const lines: string[] = []
+    const name = r?.name ?? (props.input as { name?: string }).name ?? "inline"
+    const status = r?.status ?? (props.metadata.status as string | undefined)
+    const phase = r?.currentPhase
+    const counters = r ? `${r.succeeded}✓ ${r.failed}✗ ${r.running}⟳` : ""
+    const head = [
+      `workflow ${name}`,
+      status ? `· ${status}` : "",
+      phase ? `· ${phase}` : "",
+      counters ? `· ${counters}` : "",
+    ]
+      .filter(Boolean)
+      .join(" ")
+    lines.push(head)
+    for (const e of transcript()) {
+      lines.push(e.kind === "phase" ? `↳ phase: ${e.text}` : `  ${e.text}`)
+    }
+    return lines.join("\n")
+  })
+
+  return (
+    <InlineTool icon="⚡" spinner={isRunning()} pending="Starting workflow..." complete={true} part={props.part}>
+      {content()}
     </InlineTool>
   )
 }

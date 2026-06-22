@@ -48,6 +48,13 @@ export type RunOutcome =
   | { status: "failed"; error: string }
   | { status: "cancelled" }
 
+/** One ordered transcript line. The runtime appends these synchronously from the
+ * guest's phase()/log() hooks (in-process QuickJS, same thread), so the array is
+ * the authoritative program-order record — no bus delivery race, no cross-event
+ * reordering. Consumers (the workflow tool's sync path) read it instead of
+ * subscribing to WorkflowPhase/WorkflowLog. */
+export type WorkflowTranscriptEntry = { kind: "phase" | "log"; text: string }
+
 interface RunEntry {
   runID: string
   sessionID: SessionID
@@ -69,6 +76,11 @@ interface RunEntry {
   // run re-warns. See resolveAgentModel.
   warnedModelRefs: Set<string>
   currentPhase: string | undefined
+  // Ordered phase/log transcript, appended synchronously by the guest hooks. The
+  // sync workflow-tool path reads this (via the `transcript` accessor) rather than
+  // subscribing to the bus, which removes the subscribe-after-start head race, the
+  // two-PubSub reordering, the post-wait tail race, and the subscription leak.
+  transcript: WorkflowTranscriptEntry[]
 }
 
 interface StartInput {
@@ -109,6 +121,12 @@ interface StartInput {
   depth?: number
   /** Max nesting depth before workflow() throws. Defaults to config (8). */
   maxDepth?: number
+  /** When the run reaches a terminal state, send an actor_notification to the
+   * parent's inbox (the legacy fire-and-forget contract). Defaults to true. The
+   * workflow tool's SYNC path sets this false: it blocks on wait() and returns the
+   * result as its own tool output, so a parent inbox notification would surface a
+   * DUPLICATE completion (and duplicate error text) on the next turn. */
+  notifyOnTerminal?: boolean
 }
 
 /** Options the guest may pass to `agent(prompt, opts?)`. */
@@ -134,6 +152,7 @@ export interface Interface {
     runID: string
   }) => Effect.Effect<{ status: RunStatus | "unknown"; agentCount: number; currentPhase?: string }>
   readonly wait: (input: { runID: string; timeoutMs?: number }) => Effect.Effect<RunOutcome>
+  readonly transcript: (input: { runID: string }) => Effect.Effect<readonly WorkflowTranscriptEntry[]>
   readonly cancel: (input: { runID: string }) => Effect.Effect<void>
   readonly list: (input?: { sessionID?: SessionID }) => Effect.Effect<RunSummary[]>
   readonly resume: (input: { runID: string; agentTimeoutMs?: number }) => Effect.Effect<{ runID: string; resumed: boolean }>
@@ -395,6 +414,7 @@ export const layer = Layer.effect(
         capWarned: false,
         warnedModelRefs: new Set<string>(),
         currentPhase: undefined,
+        transcript: [],
       }
       runs.set(runID, entry)
       // Stamp a sha256 of the FULL script body (the exact bytes writeScript persists
@@ -874,6 +894,7 @@ export const layer = Layer.effect(
 
       const phase: HostFn = (title: unknown) => {
         entry.currentPhase = String(title)
+        entry.transcript.push({ kind: "phase", text: String(title) })
         Effect.runFork(WorkflowPersistence.recordPhase({ runID, phase: String(title) }).pipe(Effect.ignore))
         Effect.runFork(WorkflowPersistence.appendJournal(runID, { t: "phase", title: String(title), pass }).pipe(Effect.ignore))
         Effect.runFork(bus.publish(WorkflowPhase, { sessionID: input.sessionID, runID, title: String(title) }))
@@ -881,6 +902,7 @@ export const layer = Layer.effect(
       }
 
       const logHook: HostFn = (message: unknown) => {
+        entry.transcript.push({ kind: "log", text: String(message) })
         Effect.runFork(WorkflowPersistence.appendJournal(runID, { t: "log", msg: String(message), pass }).pipe(Effect.ignore))
         Effect.runFork(bus.publish(WorkflowLog, { sessionID: input.sessionID, runID, message: String(message) }))
         return undefined
@@ -968,6 +990,11 @@ export const layer = Layer.effect(
                 lineage: [...lineage, childName],
                 depth: depth + 1,
                 maxDepth,
+                // A child is awaited inline here (waitFor below) and its outcome is
+                // consumed by the parent script — never deliver a separate inbox
+                // notification to the parent actor, regardless of the root run's
+                // sync/async mode. Only top-level async runs notify.
+                notifyOnTerminal: false,
               },
               childRunID,
               isInlineScript(spec) ? "inline" : spec,
@@ -1055,17 +1082,19 @@ export const layer = Layer.effect(
           // same way background actors notify on terminal (see actor/spawn.ts
           // forkWork.notify). Fire-and-forget: a notify failure (e.g. parent row
           // gone) must never fail the run, and wait-ers are already unblocked
-          // above by Deferred.succeed.
-          yield* inbox
-            .send({
-              receiverSessionID: input.sessionID,
-              receiverActorID: input.parentActorID,
-              senderSessionID: input.sessionID,
-              senderActorID: "workflow",
-              type: "actor_notification",
-              content: `Workflow completed. run_id: ${runID}\n` + JSON.stringify(result.success ?? null).slice(0, 4000),
-            })
-            .pipe(Effect.ignore)
+          // above by Deferred.succeed. Skipped when notifyOnTerminal === false (the
+          // tool's sync path returns the result inline; a notify would duplicate it).
+          if (input.notifyOnTerminal !== false)
+            yield* inbox
+              .send({
+                receiverSessionID: input.sessionID,
+                receiverActorID: input.parentActorID,
+                senderSessionID: input.sessionID,
+                senderActorID: "workflow",
+                type: "actor_notification",
+                content: `Workflow completed. run_id: ${runID}\n` + JSON.stringify(result.success ?? null).slice(0, 4000),
+              })
+              .pipe(Effect.ignore)
           return
         }
         // Non-success terminal: reclaim in-flight agents + worktrees so a
@@ -1079,16 +1108,17 @@ export const layer = Layer.effect(
         yield* WorkflowPersistence.recordTerminal({ runID, status: "failed", error }).pipe(Effect.ignore)
         yield* Deferred.succeed(deferred, { status: "failed", error })
         yield* bus.publish(WorkflowFinished, { sessionID: input.sessionID, runID, status: "failed", error })
-        yield* inbox
-          .send({
-            receiverSessionID: input.sessionID,
-            receiverActorID: input.parentActorID,
-            senderSessionID: input.sessionID,
-            senderActorID: "workflow",
-            type: "actor_notification",
-            content: `Workflow failed. run_id: ${runID}\nerror: ${error}`,
-          })
-          .pipe(Effect.ignore)
+        if (input.notifyOnTerminal !== false)
+          yield* inbox
+            .send({
+              receiverSessionID: input.sessionID,
+              receiverActorID: input.parentActorID,
+              senderSessionID: input.sessionID,
+              senderActorID: "workflow",
+              type: "actor_notification",
+              content: `Workflow failed. run_id: ${runID}\nerror: ${error}`,
+            })
+            .pipe(Effect.ignore)
       })
 
       entry.fiber = yield* work.pipe(Effect.forkIn(scope))
@@ -1110,6 +1140,11 @@ export const layer = Layer.effect(
         agentCount: entry.agentCount,
         ...(entry.currentPhase !== undefined ? { currentPhase: entry.currentPhase } : {}),
       }
+    })
+
+    const transcript = Effect.fn("WorkflowRuntime.transcript")(function* (input: { runID: string }) {
+      const entry = runs.get(input.runID)
+      return entry ? entry.transcript.slice() : []
     })
 
     const wait = Effect.fn("WorkflowRuntime.wait")(function* (input: { runID: string; timeoutMs?: number }) {
@@ -1209,7 +1244,7 @@ export const layer = Layer.effect(
       }).pipe(Effect.ensuring(Effect.sync(() => lock[Symbol.dispose]())))
     })
 
-    const impl = Service.of({ start, status, wait, cancel, list, resume })
+    const impl = Service.of({ start, status, wait, transcript, cancel, list, resume })
     // Late-bind the impl so the `workflow` tool can resolve it without forcing a
     // WorkflowRuntime.Service requirement onto ToolRegistry.layer. See
     // runtime-ref.ts for rationale.

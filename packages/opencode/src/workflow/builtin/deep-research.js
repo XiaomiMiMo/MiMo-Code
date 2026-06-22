@@ -203,6 +203,13 @@ const perLine = await pipeline(
   }),
 
   found => {
+    // Stage 1 returns null when the search agent failed (over-cap, schema
+    // reject, no-deliverable, etc.). pipeline() pipes that null straight here,
+    // so guard before touching .hits — otherwise a single search miss crashes
+    // the whole run with `cannot read property 'hits' of null` at line 207.
+    // Returning null here drops this line's slot; perLine.flat().filter(Boolean)
+    // at line 251 already prunes nulls when collecting `sources`.
+    if (!found) return null
     const byFit = [...found.hits].sort((a, b) => FIT_RANK[a.fit] - FIT_RANK[b.fit])
     const fresh = byFit.filter(h => {
       const key = canonURL(h.url)
