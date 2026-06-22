@@ -1,39 +1,39 @@
 #!/usr/bin/env bash
-set -euo pipefail
-APP=mimocode
+设置 -euo pipefail
+APP=模拟代码
 
-MUTED='\033[0;2m'
+静音=''\033[0;2m'
 RED='\033[0;31m'
-ORANGE='\033[38;5;214m'
-NC='\033[0m' # No Color
+橙色='\033[38;5;214m'
+NC=''\033[0m'' # 无颜色
 
-usage() {
-    cat <<EOF
-MiMoCode Installer
+用法() {
+    猫 <<EOF
+MiMoCode 安装程序
 
-Usage: install.sh [options]
+用法：install.sh [选项]
 
-Options:
-    -h, --help              Display this help message
-    -v, --version <version> Install a specific version (e.g., 0.1.0)
-    -b, --binary <path>     Install from a local binary instead of downloading
-        --no-modify-path    Don't modify shell config files (.zshrc, .bashrc, etc.)
+选项：
+    -h, --help              显示此帮助消息
+    -v, --version 
+    -b, --binary 
+        --no-modify-path    不修改 shell 配置文件 (.zshrc, .bashrc, 等等)
 
-Examples:
+示例：
     curl -fsSL https://mimo.xiaomi.com/install | bash
     curl -fsSL https://mimo.xiaomi.com/install | bash -s -- --version 0.1.0
     ./install --binary /path/to/mimo
-EOF
+文件结束
 }
 
-requested_version=${VERSION:-}
+请求的版本=${版本:-}
 no_modify_path=false
-binary_path=""
+二进制路径=""
 
-while [[ $# -gt 0 ]]; do
-    case "$1" in
-        -h|--help)
-            usage
+当 [[ $# -gt 0 ]]; do
+    情况 "$1" 在
+        -h|--帮助)
+            用法
             exit 0
             ;;
         -v|--version)
