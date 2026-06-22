@@ -47,6 +47,39 @@ function truncate(s: string, max: number): string {
   return s.length <= max ? s : s.slice(0, max - 60) + "\n... (truncated, full body at file)"
 }
 
+/**
+ * Truncate verbatim user input that exceeds per-message cap. Keeps head (~60%)
+ * + tail (~30%) with an elision marker pointing at messageID for full recall
+ * via the history tool's operation=around. ~4 chars/token approximation matches
+ * Token.estimate.
+ */
+function truncateVerbatimUserMsg(text: string, capTokens: number, messageID: string): string {
+  if (Token.estimate(text) <= capTokens) return text
+  // slice() cuts on UTF-16 code units, which can split a surrogate pair at the
+  // boundary; trim a dangling high surrogate off the head and a leading low
+  // surrogate off the tail so emoji / non-BMP chars don't render as garbage.
+  const head = text.slice(0, Math.floor(capTokens * 0.6) * 4).replace(/[\uD800-\uDBFF]$/, "")
+  const tail = text.slice(-Math.floor(capTokens * 0.3) * 4).replace(/^[\uDC00-\uDFFF]/, "")
+  const elidedTokens = Token.estimate(text) - Token.estimate(head) - Token.estimate(tail)
+  return [
+    head,
+    `[…elided ${elidedTokens} tokens; messageID=${messageID}; use the history tool with operation=around to fetch full content]`,
+    tail,
+  ].join("\n")
+}
+
+/**
+ * Concatenate text-typed parts of a user message into a single string. Skips
+ * tool/file/image/etc. parts and synthetic text (e.g. rebuild-boundary content
+ * injected by insertRebuildBoundary) — only true user prose contributes.
+ */
+function userMsgText(parts: Array<{ type: string; text?: string; synthetic?: boolean }>): string {
+  return parts
+    .filter((p) => p.type === "text" && !p.synthetic && typeof p.text === "string" && p.text.length > 0)
+    .map((p) => p.text!)
+    .join("\n")
+}
+
 function autonomousLoopReminder(): string {
   return [
     "<system-reminder>",
@@ -1073,13 +1106,52 @@ export const layer: Layer.Layer<
 
       const actors = yield* actorRegistry.listActive()
 
-      // Bail early if absolutely nothing to push: no tasks, no memory content, no live actors.
+      // Pull recent user messages (verbatim, FIFO-bounded). Done before the
+      // early-bail check so a session whose only signal is "user typed N
+      // prompts" still emits the section.
+      const recentUserCap = caps.recent_user ?? 16_000
+      const recentUserPerMsg = caps.recent_user_per_msg ?? 2_000
+      const recentUserEntries: string[] = []
+      if (recentUserCap > 0) {
+        // Fixed page ceiling sized comfortably above the token budget: at the
+        // 2K per-msg cap, 200 msgs ≈ 400K tokens, far past any recent_user cap,
+        // so the token loop below — not this limit — is what bounds the section.
+        // The only way 200 msgs could underflow the budget is hundreds of sub-
+        // 80-token prompts ("ok"/"continue"), which carry no anchors worth
+        // paging deeper for. Keeping a constant avoids a magic tokens/msg
+        // heuristic and a larger fetch+hydrate on every checkpoint.
+        // Exclude rebuild/compaction boundary messages: insertRebuildBoundary
+        // writes a role:"user" row carrying a checkpoint part + synthetic text
+        // holding the *previous* rebuild context. Re-ingesting it would fold
+        // each prior rebuild back in recursively (fractal bloat). userMsgText
+        // also drops synthetic text parts as a second guard.
+        const userMsgs = MessageV2.page({ sessionID, agentID: "main", limit: 200 }).items.filter(
+          (m) =>
+            m.info.role === "user" &&
+            !m.parts.some((p) => p.type === "tool" || p.type === "checkpoint" || p.type === "compaction"),
+        )
+        // Iterate most-recent backward so FIFO drops oldest when total cap hits.
+        let remaining = recentUserCap
+        for (let i = userMsgs.length - 1; i >= 0; i--) {
+          const rawText = userMsgText(userMsgs[i].parts)
+          if (!rawText.trim()) continue
+          const entry = truncateVerbatimUserMsg(rawText, recentUserPerMsg, userMsgs[i].info.id)
+          const cost = Token.estimate(entry)
+          if (remaining - cost < 0) break
+          recentUserEntries.unshift(entry)
+          remaining -= cost
+        }
+      }
+
+      // Bail early if absolutely nothing to push: no tasks, no memory content, no live actors,
+      // no user messages.
       if (
         tasks.length === 0 &&
         !checkpointText.trim() &&
         !memoryText.trim() &&
         !globalText.trim() &&
-        actors.length === 0
+        actors.length === 0 &&
+        recentUserEntries.length === 0
       ) {
         return ""
       }
@@ -1140,6 +1212,16 @@ export const layer: Layer.Layer<
           lines.push(line)
           actorBudget -= cost
         }
+        lines.push("")
+      }
+
+      // Section 6.5: recent user input (verbatim, FIFO, budget-bounded).
+      // Preserves original user prose from the live DB — writer summaries
+      // paraphrase user commands, losing anchors like exact flags or pasted
+      // content. (entries computed earlier so the early-bail guard sees them.)
+      if (recentUserEntries.length > 0) {
+        lines.push("## Recent user input (verbatim)")
+        lines.push(...recentUserEntries)
         lines.push("")
       }
 
