@@ -55,8 +55,11 @@ function truncate(s: string, max: number): string {
  */
 function truncateVerbatimUserMsg(text: string, capTokens: number, messageID: string): string {
   if (Token.estimate(text) <= capTokens) return text
-  const head = text.slice(0, Math.floor(capTokens * 0.6) * 4)
-  const tail = text.slice(-Math.floor(capTokens * 0.3) * 4)
+  // slice() cuts on UTF-16 code units, which can split a surrogate pair at the
+  // boundary; trim a dangling high surrogate off the head and a leading low
+  // surrogate off the tail so emoji / non-BMP chars don't render as garbage.
+  const head = text.slice(0, Math.floor(capTokens * 0.6) * 4).replace(/[\uD800-\uDBFF]$/, "")
+  const tail = text.slice(-Math.floor(capTokens * 0.3) * 4).replace(/^[\uDC00-\uDFFF]/, "")
   const elidedTokens = Token.estimate(text) - Token.estimate(head) - Token.estimate(tail)
   return [
     head,
@@ -67,11 +70,12 @@ function truncateVerbatimUserMsg(text: string, capTokens: number, messageID: str
 
 /**
  * Concatenate text-typed parts of a user message into a single string. Skips
- * tool/file/image/etc. parts — only true user prose contributes.
+ * tool/file/image/etc. parts and synthetic text (e.g. rebuild-boundary content
+ * injected by insertRebuildBoundary) — only true user prose contributes.
  */
-function userMsgText(parts: Array<{ type: string; text?: string }>): string {
+function userMsgText(parts: Array<{ type: string; text?: string; synthetic?: boolean }>): string {
   return parts
-    .filter((p) => p.type === "text" && typeof p.text === "string" && p.text.length > 0)
+    .filter((p) => p.type === "text" && !p.synthetic && typeof p.text === "string" && p.text.length > 0)
     .map((p) => p.text!)
     .join("\n")
 }
@@ -1109,18 +1113,27 @@ export const layer: Layer.Layer<
       const recentUserPerMsg = caps.recent_user_per_msg ?? 2_000
       const recentUserEntries: string[] = []
       if (recentUserCap > 0) {
-        // page() with limit=200 + agentID:"main" returns asc-time main slice.
-        // 200 covers the 16K budget at 2K/msg max; total token guard kicks in
-        // first in practice.
-        const userMsgs = MessageV2.page({ sessionID, agentID: "main", limit: 200 }).items.filter(
-          (m) => m.info.role === "user" && !m.parts.some((p) => p.type === "tool"),
+        // Pull a window large enough that the token budget (not the page limit)
+        // is what bounds the section. Floor of 200; otherwise scale to the cap
+        // assuming a conservative ~50 tokens/msg so a long session of many tiny
+        // prompts still lets FIFO evict on the budget rather than the page edge.
+        const pageLimit = Math.max(200, Math.ceil(recentUserCap / 50))
+        // Exclude rebuild/compaction boundary messages: insertRebuildBoundary
+        // writes a role:"user" row carrying a checkpoint part + synthetic text
+        // holding the *previous* rebuild context. Re-ingesting it would fold
+        // each prior rebuild back in recursively (fractal bloat). userMsgText
+        // also drops synthetic text parts as a second guard.
+        const userMsgs = MessageV2.page({ sessionID, agentID: "main", limit: pageLimit }).items.filter(
+          (m) =>
+            m.info.role === "user" &&
+            !m.parts.some((p) => p.type === "tool" || p.type === "checkpoint" || p.type === "compaction"),
         )
         // Iterate most-recent backward so FIFO drops oldest when total cap hits.
         let remaining = recentUserCap
         for (let i = userMsgs.length - 1; i >= 0; i--) {
           const rawText = userMsgText(userMsgs[i].parts)
           if (!rawText.trim()) continue
-          const entry = `[U${i + 1}] ${truncateVerbatimUserMsg(rawText, recentUserPerMsg, userMsgs[i].info.id)}`
+          const entry = truncateVerbatimUserMsg(rawText, recentUserPerMsg, userMsgs[i].info.id)
           const cost = Token.estimate(entry)
           if (remaining - cost < 0) break
           recentUserEntries.unshift(entry)
