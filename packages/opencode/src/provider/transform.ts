@@ -283,24 +283,31 @@ function applyCaching(msgs: ModelMessage[], model: Provider.Model): ModelMessage
     },
   }
 
-  // Strategy: prefix cache is longest-common-prefix based, so the only marker
-  // that grows the cached prefix every turn is one pinned to the *end* of the
-  // request. We place two stable breakpoints (max 4 allowed by Anthropic):
+  // Strategy: prefix caching is longest-common-prefix based with a backward
+  // lookback window (Anthropic walks back ~20 blocks from a breakpoint to find
+  // a prior write). The markers that grow the cached prefix are pinned to the
+  // *tail* of the request. We place up to three stable breakpoints (Anthropic
+  // allows max 4):
   // 1. Last system message — the immutable prompt prefix.
-  // 2. The last message — "rolling head". Writing the cache up to the current
-  //    tail makes the entire history a cache *read* on the next turn.
-  //
-  // We deliberately do NOT place markers at a drifting midpoint or at
-  // before-last-user: those indices shift every turn, land on assistant/tool
-  // messages (silently dropped by openai-compatible proxies), and spend the
-  // breakpoint budget without ever caching the tail. See internal/docs/cache-policy.md.
+  // 2+3. The last TWO messages — a "rolling double buffer". Each turn marks
+  //      messages[-2] and messages[-1]; next turn the old [-1] is now [-2] and
+  //      still carries its marker, so the lookback gets a cache READ hit, while
+  //      the new [-1] is the WRITE for the turn after. One marker alone breaks
+  //      when an agentic turn appends >20 content blocks (tool spam pushes the
+  //      prior write outside the lookback window) or when a tool-call retry /
+  //      interrupt discards the last message — the second marker survives both.
+  //      A third tail marker would write a segment never read independently, so
+  //      two is the minimum that covers the old-tail/new-tail boundary.
+  // We deliberately do NOT mark a drifting midpoint or a fixed before-last-user
+  // INDEX: those shift every turn without tracking the tail. See
+  // internal/docs/cache-policy.md.
   const targets: ModelMessage[] = []
 
   const systemMsgs = msgs.filter((msg) => msg.role === "system")
   if (systemMsgs.length > 0) targets.push(systemMsgs[systemMsgs.length - 1])
 
   const nonSystem = msgs.filter((msg) => msg.role !== "system")
-  if (nonSystem.length > 0) targets.push(nonSystem[nonSystem.length - 1])
+  for (const msg of nonSystem.slice(-2)) targets.push(msg)
 
   for (const msg of unique(targets)) {
     const useMessageLevelOptions =
@@ -448,6 +455,30 @@ export function message(msgs: ModelMessage[], model: Provider.Model, options: Re
   }
 
   return msgs
+}
+
+// Place a cache breakpoint on the tool definitions. The cache hierarchy is
+// `tools` → `system` → `messages`, so marking the LAST tool caches the entire
+// tool-schema block (often several KB) as a stable prefix that sits in front of
+// the system + message caches. Tools are passed to the SDK separately from
+// `message()` and never go through its providerID→SDK-key remap, so we write
+// the marker under the SDK key directly. Tool registration order is stable
+// (insertion order of the tools record), so "last tool" is deterministic.
+export function tools<T extends Record<string, any>>(tools: T, model: Provider.Model): T {
+  if (!supportsCacheMarkers(model)) return tools
+  const names = Object.keys(tools)
+  if (names.length === 0) return tools
+
+  const ttl = model.cachePromptTTL === "1h" ? { ttl: "1h" as const } : {}
+  const marker = iife(() => {
+    if (model.api.npm === "@ai-sdk/amazon-bedrock") return { bedrock: { cachePoint: { type: "default" } } }
+    const key = sdkKey(model.api.npm) ?? model.providerID
+    return { [key]: { cacheControl: { type: "ephemeral", ...ttl } } }
+  })
+
+  const last = tools[names[names.length - 1]]
+  last.providerOptions = mergeDeep(last.providerOptions ?? {}, marker)
+  return tools
 }
 
 export function temperature(model: Provider.Model) {

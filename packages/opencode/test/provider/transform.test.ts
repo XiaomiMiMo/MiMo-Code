@@ -2173,7 +2173,7 @@ describe("ProviderTransform.message - cache control on gateway", () => {
     expect(result[0].providerOptions).toBeUndefined()
   })
 
-  test("multi-turn anthropic pins breakpoints to last system + last message only", () => {
+  test("multi-turn anthropic pins breakpoints to last system + last two messages", () => {
     const model = createModel({
       providerID: "anthropic",
       api: { id: "claude-sonnet-4", url: "https://api.anthropic.com", npm: "@ai-sdk/anthropic" },
@@ -2189,18 +2189,91 @@ describe("ProviderTransform.message - cache control on gateway", () => {
 
     const result = ProviderTransform.message(msgs, model, {}) as any[]
 
-    // Only the last system message and the last message carry a breakpoint.
+    // The last system message plus the last TWO messages carry a breakpoint
+    // (rolling double buffer): the prior turn's tail marker survives as the
+    // read point while the new tail marker is the next write.
     const marked = result
       .map((msg, index) => ({ index, role: msg.role, hasCache: !!msg.providerOptions?.anthropic?.cacheControl }))
       .filter((m) => m.hasCache)
 
     expect(marked).toEqual([
       { index: 0, role: "system", hasCache: true },
+      { index: 4, role: "assistant", hasCache: true },
       { index: 5, role: "user", hasCache: true },
     ])
-    // No drifting midpoint / before-last-user markers on intermediate assistant turns.
+    // No drifting midpoint marker on earlier turns.
     expect(result[2].providerOptions?.anthropic).toBeUndefined()
-    expect(result[4].providerOptions?.anthropic).toBeUndefined()
+    expect(result[3].providerOptions?.anthropic).toBeUndefined()
+  })
+})
+
+describe("ProviderTransform.tools", () => {
+  const createModel = (overrides: Partial<any> = {}): any => ({
+    id: "test/test-model",
+    providerID: "test",
+    api: { id: "test-model", url: "https://api.test.com", npm: "@ai-sdk/openai" },
+    name: "Test Model",
+    ...overrides,
+  })
+
+  test("marks the last tool for anthropic", () => {
+    const model = createModel({
+      providerID: "anthropic",
+      api: { id: "claude-sonnet-4", url: "https://api.anthropic.com", npm: "@ai-sdk/anthropic" },
+    })
+    const tools = { read: {}, write: {}, bash: {} } as Record<string, any>
+
+    const result = ProviderTransform.tools(tools, model)
+
+    expect(result.read.providerOptions).toBeUndefined()
+    expect(result.write.providerOptions).toBeUndefined()
+    expect(result.bash.providerOptions).toEqual({ anthropic: { cacheControl: { type: "ephemeral" } } })
+  })
+
+  test("threads cachePromptTTL 1h into the tool marker", () => {
+    const model = createModel({
+      providerID: "anthropic",
+      api: { id: "claude-sonnet-4", url: "https://api.anthropic.com", npm: "@ai-sdk/anthropic" },
+      cachePromptTTL: "1h",
+    })
+    const tools = { read: {}, bash: {} } as Record<string, any>
+
+    const result = ProviderTransform.tools(tools, model)
+
+    expect(result.bash.providerOptions).toEqual({ anthropic: { cacheControl: { type: "ephemeral", ttl: "1h" } } })
+  })
+
+  test("uses cachePoint shape for bedrock", () => {
+    const model = createModel({
+      providerID: "amazon-bedrock",
+      api: { id: "anthropic.claude-sonnet-4", url: "https://api.test.com", npm: "@ai-sdk/amazon-bedrock" },
+    })
+    const tools = { read: {}, bash: {} } as Record<string, any>
+
+    const result = ProviderTransform.tools(tools, model)
+
+    expect(result.bash.providerOptions).toEqual({ bedrock: { cachePoint: { type: "default" } } })
+  })
+
+  test("no marker for providers that do not support cache markers", () => {
+    const model = createModel({
+      providerID: "openai",
+      api: { id: "gpt-4", url: "https://api.openai.com", npm: "@ai-sdk/openai" },
+    })
+    const tools = { read: {}, bash: {} } as Record<string, any>
+
+    const result = ProviderTransform.tools(tools, model)
+
+    expect(result.read.providerOptions).toBeUndefined()
+    expect(result.bash.providerOptions).toBeUndefined()
+  })
+
+  test("no-op on empty tools", () => {
+    const model = createModel({
+      providerID: "anthropic",
+      api: { id: "claude-sonnet-4", url: "https://api.anthropic.com", npm: "@ai-sdk/anthropic" },
+    })
+    expect(ProviderTransform.tools({}, model)).toEqual({})
   })
 })
 
