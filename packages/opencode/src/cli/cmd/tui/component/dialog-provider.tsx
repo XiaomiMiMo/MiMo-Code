@@ -44,12 +44,16 @@ export function createDialogProviderOptions() {
           async onSelect() {
             if (consoleManaged) return
 
-            const methods = sync.data.provider_auth[provider.id] ?? [
-              {
-                type: "api",
-                label: "API key",
-              },
-            ]
+            const stored = sync.data.provider_auth[provider.id]
+            const methods: ProviderAuthMethod[] =
+              stored && stored.length > 0
+                ? stored
+                : [
+                    {
+                      type: "api",
+                      label: "API key",
+                    },
+                  ]
             let index: number | null = 0
             if (methods.length > 1) {
               index = await new Promise<number | null>((resolve) => {
