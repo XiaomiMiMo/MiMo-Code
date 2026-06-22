@@ -1,10 +1,12 @@
 import * as Tool from "./tool"
 import DESCRIPTION from "./workflow.txt"
 import z from "zod"
-import { Effect } from "effect"
+import { Effect, Fiber } from "effect"
 import { Config } from "../config"
+import { Bus } from "@/bus"
 import { workflowRef } from "@/workflow/runtime-ref"
 import { BuiltinWorkflow } from "@/workflow/builtin"
+import { WorkflowLog, WorkflowPhase } from "@/workflow/events"
 import type { SessionID } from "../session/schema"
 
 const id = "workflow"
@@ -32,6 +34,12 @@ const runSchema = z.strictObject({
     .describe(
       "(optional) Absolute dir the script's file primitives (readFile/writeFile/glob/exists) are jailed to. Defaults to the project worktree.",
     ),
+  async: z
+    .boolean()
+    .optional()
+    .describe(
+      "(optional) When true, return a run_id immediately and let the workflow run in the background; the result arrives later as an inbox notification. Default false: block until terminal and return the transcript inline (skill-like semantics, recommended for short workflows).",
+    ),
 })
 const statusSchema = z.strictObject({ operation: z.literal("status"), run_id: z.string().min(1) })
 const waitSchema = z.strictObject({
@@ -50,12 +58,14 @@ export const parameters = z.discriminatedUnion("operation", [
   resumeSchema,
 ])
 
-type Metadata = { runID?: string; status?: string }
+type TranscriptEntry = { kind: "phase" | "log"; text: string }
+type Metadata = { runID?: string; status?: string; transcript?: TranscriptEntry[] }
 
-export const WorkflowTool = Tool.define<typeof parameters, Metadata, Config.Service>(
+export const WorkflowTool = Tool.define<typeof parameters, Metadata, Config.Service | Bus.Service>(
   id,
   Effect.gen(function* () {
     const config = yield* Config.Service
+    const bus = yield* Bus.Service
 
     // Resolve the WorkflowRuntime through the late-bound workflowRef rather than as
     // a Layer dependency: pulling WorkflowRuntime.Service in here would push that
@@ -113,10 +123,96 @@ export const WorkflowTool = Tool.define<typeof parameters, Metadata, Config.Serv
           maxConcurrentAgents: cfg.workflow?.maxConcurrentAgents,
           scriptDeadlineMs: cfg.workflow?.scriptDeadlineMs,
         })
+        const runID = started.runID
+        const label = input.name ?? "inline"
+
+        // Async opt-out: legacy fire-and-forget semantic. Returns the run_id
+        // immediately and lets the workflow keep running in the background; the
+        // terminal result arrives later as an inbox notification on the parent's
+        // next turn. Use this for very long workflows (deep-research, etc.) where
+        // blocking the agent's turn for the full duration is undesirable.
+        if (input.async === true) {
+          return {
+            title: "workflow started",
+            output: `Workflow started in background. run_id: ${runID}\nThe result will be delivered as a notification when complete.`,
+            metadata: { runID, status: "running" } satisfies Metadata,
+          }
+        }
+
+        // Default sync path: block until terminal so the model + user see phase
+        // and log() events as the tool's own message stream (skill-like) instead
+        // of a bare run_id followed by silence until the next turn drains the
+        // inbox. The transcript flushes to part-state metadata as events arrive
+        // — the TUI re-renders each delta via the existing message.part.delta
+        // path so the chat shows phases / log lines live in the main agent's
+        // conversation.
+        const transcript: TranscriptEntry[] = []
+        yield* ctx.metadata({
+          metadata: { runID, status: "running", transcript: [] } satisfies Metadata,
+        })
+
+        const unsubPhase = yield* bus.subscribeCallback(WorkflowPhase, (evt) => {
+          if (evt.properties.runID !== runID) return
+          transcript.push({ kind: "phase", text: evt.properties.title })
+        })
+        const unsubLog = yield* bus.subscribeCallback(WorkflowLog, (evt) => {
+          if (evt.properties.runID !== runID) return
+          transcript.push({ kind: "log", text: evt.properties.message })
+        })
+
+        // A 250ms flush loop reads the buffer and pushes a snapshot through
+        // ctx.metadata. Going through metadata (rather than e.g. publishing our
+        // own bus event) reuses the existing per-part-state delta channel and
+        // means TUI consumers don't need a new subscription path. Snapshot copy
+        // (slice()) keeps the rendered view stable against later pushes.
+        let lastFlushedLen = 0
+        const flushFiber = yield* Effect.forkScoped(
+          Effect.gen(function* () {
+            while (true) {
+              yield* Effect.sleep("250 millis")
+              if (transcript.length === lastFlushedLen) continue
+              lastFlushedLen = transcript.length
+              yield* ctx.metadata({
+                metadata: { runID, status: "running", transcript: transcript.slice() } satisfies Metadata,
+              })
+            }
+          }),
+        )
+
+        const outcome = yield* runtime.wait({ runID })
+        unsubPhase()
+        unsubLog()
+        yield* Fiber.interrupt(flushFiber)
+
+        const finalTranscript = transcript.slice()
+        const lines = finalTranscript.map((e) =>
+          e.kind === "phase" ? `▸ ${e.text}` : `  ${e.text}`,
+        )
+        if (outcome.status === "completed") {
+          const result = JSON.stringify(outcome.result ?? null)
+          const truncated = result.length > 4000 ? result.slice(0, 4000) + " …(truncated)" : result
+          return {
+            title: `workflow ${label} completed`,
+            output:
+              (lines.length ? lines.join("\n") + "\n\n" : "") +
+              `Result: ${truncated}\nrun_id: ${runID}`,
+            metadata: { runID, status: "completed", transcript: finalTranscript } satisfies Metadata,
+          }
+        }
+        if (outcome.status === "failed") {
+          return {
+            title: `workflow ${label} failed`,
+            output:
+              (lines.length ? lines.join("\n") + "\n\n" : "") +
+              `Error: ${outcome.error}\nrun_id: ${runID}`,
+            metadata: { runID, status: "failed", transcript: finalTranscript } satisfies Metadata,
+          }
+        }
         return {
-          title: "workflow started",
-          output: `Workflow started. run_id: ${started.runID}\nThe result will be delivered as a notification when complete.`,
-          metadata: { runID: started.runID } satisfies Metadata,
+          title: `workflow ${label} cancelled`,
+          output:
+            (lines.length ? lines.join("\n") + "\n\n" : "") + `Cancelled.\nrun_id: ${runID}`,
+          metadata: { runID, status: "cancelled", transcript: finalTranscript } satisfies Metadata,
         }
       }
       if (input.operation === "status") {
@@ -158,7 +254,8 @@ export const WorkflowTool = Tool.define<typeof parameters, Metadata, Config.Serv
     return {
       description: DESCRIPTION,
       parameters,
-      execute: (input: z.infer<typeof parameters>, ctx: Tool.Context<Metadata>) => run(input, ctx).pipe(Effect.orDie),
+      execute: (input: z.infer<typeof parameters>, ctx: Tool.Context<Metadata>) =>
+        run(input, ctx).pipe(Effect.scoped, Effect.orDie),
     } satisfies Tool.DefWithoutID<typeof parameters, Metadata>
   }),
 )

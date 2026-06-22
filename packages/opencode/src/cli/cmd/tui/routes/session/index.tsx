@@ -1832,14 +1832,14 @@ function WorkItemTask(props: ToolProps<typeof TaskTool>) {
   )
 }
 
-// Inline renderer for the dynamic-workflow `workflow` tool. The tool is
-// fire-and-forget — `run` returns immediately with a runID while the actual
-// workflow runs in background and emits `workflow.started/phase/finished` bus
-// events that sync.tsx upserts into store.workflow[runID]. Without this
-// renderer the call falls through to GenericTool and the user sees only the 3
-// truncated lines of "Workflow started. run_id: ...". Here we look up the live
-// run row and surface phase + counters that update as events flow in, mirroring
-// the DialogWorkflows row format.
+// Inline renderer for the dynamic-workflow `workflow` tool. The "run" op blocks
+// until terminal and streams a transcript (phase transitions + log() messages)
+// into part-state metadata via ctx.metadata; the tool's `Workflow` view here
+// reads metadata.transcript reactively (each ctx.metadata call fires a
+// message.part.delta) and renders it as multi-line chat content alongside the
+// live header from sync.data.workflow[runID]. That way phase/log events show
+// up in the main agent's conversation as the workflow runs, not as a single
+// silent line that only updates once the run finishes.
 function Workflow(props: ToolProps<typeof WorkflowTool>) {
   const sync = useSync()
 
@@ -1848,7 +1848,9 @@ function Workflow(props: ToolProps<typeof WorkflowTool>) {
     return typeof op === "string" ? op : "run"
   })
 
-  const runID = createMemo(() => (props.metadata.runID as string | undefined) ?? (props.input as { run_id?: string }).run_id)
+  const runID = createMemo(
+    () => (props.metadata.runID as string | undefined) ?? (props.input as { run_id?: string }).run_id,
+  )
 
   const run = createMemo(() => {
     const id = runID()
@@ -1856,33 +1858,51 @@ function Workflow(props: ToolProps<typeof WorkflowTool>) {
     return sync.data.workflow[id]
   })
 
-  // Spinner reflects the WORKFLOW's status, not the tool call's: `run` returns
-  // immediately so the tool part flips to "completed" within milliseconds while
-  // the workflow itself is still active for minutes.
+  // Spinner is true while EITHER side reports running — the tool part stays
+  // running until execute() returns (the whole workflow duration, since we
+  // block), and the bus-fed run row independently reports "running" until the
+  // workflow.finished event lands. Either signal alone is enough.
   const isRunning = createMemo(() => {
+    if (props.part.state.status === "running") return true
     const r = run()
-    if (r) return r.status === "running"
-    return props.part.state.status === "running"
+    return r?.status === "running"
   })
 
-  const summary = createMemo(() => {
+  const transcript = createMemo(() => {
+    const t = (props.metadata as { transcript?: { kind: "phase" | "log"; text: string }[] }).transcript
+    return Array.isArray(t) ? t : []
+  })
+
+  const content = createMemo(() => {
     const op = operation()
     const r = run()
     const id = runID()
     if (op !== "run") {
       return `workflow ${op}${id ? ` ${id}` : ""}`
     }
-    if (!r) {
-      const name = (props.input as { name?: string }).name
-      return `workflow run${name ? ` ${name}` : ""}`
+    const lines: string[] = []
+    const name = r?.name ?? (props.input as { name?: string }).name ?? "inline"
+    const status = r?.status ?? (props.metadata.status as string | undefined)
+    const phase = r?.currentPhase
+    const counters = r ? `${r.succeeded}✓ ${r.failed}✗ ${r.running}⟳` : ""
+    const head = [
+      `workflow ${name}`,
+      status ? `· ${status}` : "",
+      phase ? `· ${phase}` : "",
+      counters ? `· ${counters}` : "",
+    ]
+      .filter(Boolean)
+      .join(" ")
+    lines.push(head)
+    for (const e of transcript()) {
+      lines.push(e.kind === "phase" ? `↳ phase: ${e.text}` : `  ${e.text}`)
     }
-    const phase = r.currentPhase ?? "-"
-    return `workflow ${r.name} · ${r.status} · ${phase} · ${r.succeeded}✓ ${r.failed}✗ ${r.running}⟳`
+    return lines.join("\n")
   })
 
   return (
     <InlineTool icon="⚡" spinner={isRunning()} pending="Starting workflow..." complete={true} part={props.part}>
-      {summary()}
+      {content()}
     </InlineTool>
   )
 }
