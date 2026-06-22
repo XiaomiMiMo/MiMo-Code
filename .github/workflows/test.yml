@@ -35,7 +35,7 @@ jobs:
           git config --global user.name "mimo-ci"
 
       - name: Run unit tests (shard ${{ matrix.shard }})
-        timeout-minutes: 20
+        timeout-minutes: 8
         working-directory: packages/opencode
         run: bun run test:ci --shard=${{ matrix.shard }}
 
