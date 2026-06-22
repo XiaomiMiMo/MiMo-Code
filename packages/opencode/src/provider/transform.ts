@@ -298,16 +298,30 @@ function applyCaching(msgs: ModelMessage[], model: Provider.Model): ModelMessage
   //      interrupt discards the last message — the second marker survives both.
   //      A third tail marker would write a segment never read independently, so
   //      two is the minimum that covers the old-tail/new-tail boundary.
+  //
+  //      Role matters on the openai-compatible proxy path: those proxies
+  //      silently DROP cache_control on assistant messages (see
+  //      internal/docs/cache-policy.md — 1170 assistant markers, 0 cached). A
+  //      blind last-2 would often land a marker on an assistant turn and lose
+  //      it, collapsing the double buffer back to a single (or zero) effective
+  //      marker. For providers that take message-level markers (Anthropic,
+  //      Bedrock) assistant markers are honored, so we take the last 2 outright.
+  //      For everyone else we take the last 2 *cacheable* messages (user/tool),
+  //      skipping assistant turns so both markers survive.
   // We deliberately do NOT mark a drifting midpoint or a fixed before-last-user
-  // INDEX: those shift every turn without tracking the tail. See
-  // internal/docs/cache-policy.md.
+  // INDEX: those shift every turn without tracking the tail.
   const targets: ModelMessage[] = []
 
   const systemMsgs = msgs.filter((msg) => msg.role === "system")
   if (systemMsgs.length > 0) targets.push(systemMsgs[systemMsgs.length - 1])
 
+  const assistantMarkersHonored =
+    model.providerID === "anthropic" ||
+    model.providerID.includes("bedrock") ||
+    model.api.npm === "@ai-sdk/amazon-bedrock"
   const nonSystem = msgs.filter((msg) => msg.role !== "system")
-  for (const msg of nonSystem.slice(-2)) targets.push(msg)
+  const cacheable = assistantMarkersHonored ? nonSystem : nonSystem.filter((msg) => msg.role !== "assistant")
+  for (const msg of cacheable.slice(-2)) targets.push(msg)
 
   for (const msg of unique(targets)) {
     const useMessageLevelOptions =

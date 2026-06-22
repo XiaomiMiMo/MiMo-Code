@@ -2205,6 +2205,36 @@ describe("ProviderTransform.message - cache control on gateway", () => {
     expect(result[2].providerOptions?.anthropic).toBeUndefined()
     expect(result[3].providerOptions?.anthropic).toBeUndefined()
   })
+
+  test("non-anthropic content-level path skips assistant turns so both markers survive", () => {
+    // Providers that place markers at content level (e.g. OpenRouter / proxies)
+    // can have cache_control on assistant messages silently dropped, so a blind
+    // last-2 would lose a marker when the tail is [..., user, assistant]. The
+    // selector must pick the last 2 cacheable (user/tool) messages instead.
+    const model = createModel({
+      providerID: "openrouter",
+      api: { id: "anthropic/claude-sonnet-4", url: "https://openrouter.ai/api", npm: "@openrouter/ai-sdk-provider" },
+    })
+    const msgs = [
+      { role: "system", content: [{ type: "text", text: "sys" }] },
+      { role: "user", content: [{ type: "text", text: "first question" }] },
+      { role: "assistant", content: [{ type: "text", text: "first answer" }] },
+      { role: "user", content: [{ type: "text", text: "second question" }] },
+      { role: "assistant", content: [{ type: "text", text: "second answer" }] },
+    ] as any[]
+
+    const result = ProviderTransform.message(msgs, model, {}) as any[]
+
+    const hasMarker = (msg: any) =>
+      !!msg.providerOptions?.openrouter ||
+      msg.content?.some?.((c: any) => c.providerOptions?.openrouter)
+
+    // The two user turns (index 1, 3) are marked; the assistant turns are not.
+    expect(hasMarker(result[1])).toBe(true)
+    expect(hasMarker(result[3])).toBe(true)
+    expect(hasMarker(result[2])).toBe(false)
+    expect(hasMarker(result[4])).toBe(false)
+  })
 })
 
 describe("ProviderTransform.tools", () => {
