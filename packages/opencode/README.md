@@ -57,7 +57,7 @@ Test infrastructure lives in `test/`:
 ./script/build.ts --single
 
 # Output location
-./dist/opencode-<platform>/bin/opencode
+./dist/mimocode-<platform>/bin/mimo
 ```
 
 ## Architecture
