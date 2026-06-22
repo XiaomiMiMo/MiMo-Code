@@ -46,21 +46,34 @@ describe("Filesystem.contains", () => {
  *
  * This is a SEPARATE code path from ReadTool, which has its own checks.
  */
-describe("File.read path traversal protection", () => {
-  test("rejects ../ traversal attempting to read /etc/passwd", async () => {
-    await using tmp = await tmpdir({
-      init: async (dir) => {
-        await Bun.write(path.join(dir, "allowed.txt"), "allowed content")
-      },
-    })
-
-    await Instance.provide({
-      directory: tmp.path,
-      fn: async () => {
-        await expect(read("../../../etc/passwd")).rejects.toThrow("Access denied: path escapes project directory")
-      },
-    })
+// These traversal tests need tmpdirs outside any git repo so project detection
+// sets worktree="/" (the non-git sentinel). Otherwise containsPath falls through
+// to the worktree check and allows paths within the parent repo.
+function withTmpdirOutsideGit<T>(fn: () => Promise<T>): Promise<T> {
+  const prev = process.env["MIMOCODE_TEST_TMPDIR_ROOT"]
+  delete process.env["MIMOCODE_TEST_TMPDIR_ROOT"]
+  return fn().finally(() => {
+    if (prev !== undefined) process.env["MIMOCODE_TEST_TMPDIR_ROOT"] = prev
+    else delete process.env["MIMOCODE_TEST_TMPDIR_ROOT"]
   })
+}
+
+describe("File.read path traversal protection", () => {
+  test("rejects ../ traversal attempting to read /etc/passwd", () =>
+    withTmpdirOutsideGit(async () => {
+      await using tmp = await tmpdir({
+        init: async (dir) => {
+          await Bun.write(path.join(dir, "allowed.txt"), "allowed content")
+        },
+      })
+
+      await Instance.provide({
+        directory: tmp.path,
+        fn: async () => {
+          await expect(read("../../../etc/passwd")).rejects.toThrow("Access denied: path escapes project directory")
+        },
+      })
+    }))
 
   test("rejects deeply nested traversal", async () => {
     await using tmp = await tmpdir()
@@ -93,16 +106,17 @@ describe("File.read path traversal protection", () => {
 })
 
 describe("File.list path traversal protection", () => {
-  test("rejects ../ traversal attempting to list /etc", async () => {
-    await using tmp = await tmpdir()
+  test("rejects ../ traversal attempting to list /etc", () =>
+    withTmpdirOutsideGit(async () => {
+      await using tmp = await tmpdir()
 
-    await Instance.provide({
-      directory: tmp.path,
-      fn: async () => {
-        await expect(list("../../../etc")).rejects.toThrow("Access denied: path escapes project directory")
-      },
-    })
-  })
+      await Instance.provide({
+        directory: tmp.path,
+        fn: async () => {
+          await expect(list("../../../etc")).rejects.toThrow("Access denied: path escapes project directory")
+        },
+      })
+    }))
 
   test("allows valid subdirectory listing", async () => {
     await using tmp = await tmpdir({

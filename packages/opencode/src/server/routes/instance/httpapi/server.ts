@@ -101,11 +101,13 @@ const instance = HttpRouter.middleware()(
         const workspace = query.workspace || undefined
         const directory = Filesystem.resolve(decode(raw))
 
-        const cwd = Filesystem.resolve(process.cwd())
-        if (!Filesystem.contains(cwd, directory)) {
-          return yield* new DirectoryAccessDenied({
-            message: "Access denied: directory must be within the server's working directory",
-          })
+        if (!Flag.MIMOCODE_SERVER_PASSWORD) {
+          const cwd = Filesystem.resolve(process.cwd())
+          if (!Filesystem.contains(cwd, directory)) {
+            return yield* new DirectoryAccessDenied({
+              message: "Access denied: directory must be within the server's working directory",
+            })
+          }
         }
 
         const ctx = yield* Effect.promise(() =>
