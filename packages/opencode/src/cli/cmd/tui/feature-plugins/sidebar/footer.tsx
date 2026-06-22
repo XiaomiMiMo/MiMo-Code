@@ -48,7 +48,7 @@ function View(props: { api: TuiPluginApi }) {
                 ✕
               </text>
             </box>
-            <text fg={theme().textMuted}>MiMoCode includes free models so you can start immediately.</text>
+            <text fg={theme().textMuted}>Scaffold includes free models so you can start immediately.</text>
             <text fg={theme().textMuted}>
               Connect from 75+ providers to use other models, including Claude, GPT, Gemini etc
             </text>
@@ -64,10 +64,7 @@ function View(props: { api: TuiPluginApi }) {
         <span style={{ fg: theme().text }}>{path().name}</span>
       </text>
       <text fg={theme().textMuted}>
-        <span style={{ fg: theme().success }}>•</span> <b>MiMo</b>
-        <span style={{ fg: theme().text }}>
-          <b>Code</b>
-        </span>{" "}
+        <span style={{ fg: theme().success }}>•</span> <b>Scaffold</b>{" "}
         <span>{props.api.app.version}</span>
       </text>
     </box>
