@@ -80,10 +80,10 @@ export const persistentRetrySchedule = Schedule.exponential("500 millis", 2).pip
 /**
  * Memory-system instructions appended to the main agent's system prompt.
  *
- * Teaches the agent its v8.1 ownership of the memory system:
- * - MEMORY.md (project-scoped): writer is sole curator + agent edits for
- *   project-level user-stated rules
- * - checkpoint.md (session-scoped): writer EXCLUSIVE; agent never edits
+ * Teaches the agent its memory-system ownership:
+ * - MEMORY.md (project-scoped): writer EXCLUSIVE; agent reads/searches only
+ * - checkpoint.md (session-scoped): writer EXCLUSIVE; agent reads/searches only
+ * - notes.md (session-scoped): agent's only direct memory write channel
  * - tasks/<id>/progress.md: writer-derived splitover from session-level
  *   progress.md; not LLM-written. Subagents handed a task may read but
  *   should not write.
@@ -111,18 +111,9 @@ You have a persistent file-based memory system. Four file types:
 
 The checkpoint writer is the sole curator of the structured files. You don't maintain them mid-task — the writer extracts everything from the conversation at checkpoint events.
 
-## When to Edit MEMORY.md directly
-
-You may Edit MEMORY.md when:
-- User states a project-level rule that should hold across sessions → ## Rules
-- User states a project-level architectural decision → ## Architecture decisions
-- A clearly durable cross-session fact emerges that you want available immediately, before the next checkpoint → ## Discovered durable knowledge
-
-These are exceptions, not the norm. The writer covers most extraction at checkpoint time.
-
 ## Notes scratchpad
 
-You have a single legal scratchpad at \`${path.join(sessionMemoryDir, "notes.md")}\`. Append entries to it when you want to record:
+Your only legal memory write path is \`${path.join(sessionMemoryDir, "notes.md")}\`. Append entries to it when you want to record:
 
 - A quote (from the user, an article, a known engineer) that has lasting value but isn't a task-specific decision
 - An unresolved question — something you noticed but won't answer this turn
@@ -151,6 +142,7 @@ If your spawn prompt didn't include this format (e.g., explore/title/summary age
 
 ## What NOT to do
 
+- Don't Edit MEMORY.md or global/MEMORY.md — those are the writer's domain.
 - Don't Edit checkpoint.md — that's the writer's domain.
 - Don't create memory files other than notes.md (no learning.md, no scratch.md). Use notes.md for any free-form entry.
 - Don't ask the user about something memory may already record — search first via Grep / Read.
@@ -252,9 +244,9 @@ const live: Layer.Layer<
           .join("\n"),
       )
 
-      // v5: memory-instructions section. Teaches the main agent how/where/when
-      // to maintain `MEMORY.md` and `checkpoint.md` directly via Edit. Project
-      // ID is resolved from the ALS-bound Instance with a safe fallback to
+      // Memory-instructions section. Teaches the main agent that notes.md is
+      // its only direct memory write path; structured memory is writer-owned.
+      // Project ID is resolved from the ALS-bound Instance with a safe fallback to
       // `ProjectID.global` (mirrors the pattern in session/checkpoint.ts so the
       // path the prompt advertises matches the path the writer actually writes).
       // Skip for system-spawned actors (e.g. checkpoint-writer): they shouldn't
@@ -269,11 +261,9 @@ const live: Layer.Layer<
             catch: () => undefined,
           }).pipe(Effect.orElseSucceed(() => undefined))) ?? ProjectID.global
         // Bootstrap the memory.md → MEMORY.md migration at session start so a
-        // legacy lowercase file is renamed before the agent's first direct
-        // Edit/Write (which would otherwise miss it on a case-sensitive FS, or
-        // create an uppercase sibling and orphan the legacy content). The two
-        // checkpoint-flow call sites cover the writer/rebuild paths; this covers
-        // the "agent edits MEMORY.md before any checkpoint" path. Idempotent.
+        // legacy lowercase file is renamed before the read-side path is shown.
+        // The checkpoint-flow call sites cover the writer/rebuild paths; this
+        // keeps the main prompt's canonical path from orphaning legacy content.
         yield* Effect.promise(() => migrateProjectMemory(projectID)).pipe(Effect.ignore)
         system.push(buildMemoryInstructions(SessionID.make(input.sessionID), projectID, yield* memory.root()))
       }

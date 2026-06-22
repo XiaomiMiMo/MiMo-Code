@@ -13,6 +13,7 @@ import { Bus } from "../../src/bus"
 import { BusEvent } from "../../src/bus/bus-event"
 import { Truncate } from "../../src/tool"
 import { SessionID, MessageID } from "../../src/session/schema"
+import { Global } from "../../src/global"
 
 const ctx = {
   sessionID: SessionID.make("ses_test-edit-session"),
@@ -155,6 +156,34 @@ describe("tool.edit", () => {
   })
 
   describe("editing existing files", () => {
+    test("rejects main agent edits to project MEMORY.md", async () => {
+      await using tmp = await tmpdir()
+      const filepath = path.join(Global.Path.data, "memory", "projects", "global", "MEMORY.md")
+      await fs.mkdir(path.dirname(filepath), { recursive: true })
+      await fs.writeFile(filepath, "old memory", "utf-8")
+
+      await Instance.provide({
+        directory: tmp.path,
+        fn: async () => {
+          const edit = await resolve()
+          await expect(
+            Effect.runPromise(
+              edit.execute(
+                {
+                  filePath: filepath,
+                  oldString: "old memory",
+                  newString: "new memory",
+                },
+                ctx,
+              ),
+            ),
+          ).rejects.toThrow(/only write notes\.md/)
+
+          expect(await fs.readFile(filepath, "utf-8")).toBe("old memory")
+        },
+      })
+    })
+
     test("replaces text in existing file", async () => {
       await using tmp = await tmpdir()
       const filepath = path.join(tmp.path, "existing.txt")
