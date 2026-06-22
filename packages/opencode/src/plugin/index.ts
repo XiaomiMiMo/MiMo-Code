@@ -266,25 +266,36 @@ export const layer = Layer.effect(
           }
         }
 
-        // Optional local extensions live in src/ext/. The directory may be
-        // absent; when present, every *Plugin-named export is auto-loaded at
-        // runtime. Never referenced statically, so builds work with or without it.
-        const extDir = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "ext")
-        const extFiles = fs.existsSync(extDir)
-          ? fs.readdirSync(extDir).filter((f) => f.endsWith(".ts") && !f.endsWith(".d.ts"))
-          : []
-        for (const entry of extFiles) {
-          const file = path.join(extDir, entry)
-          const name = entry.replace(/\.ts$/, "")
-          const mod = yield* Effect.tryPromise({
-            try: () => import(/* @vite-ignore */ pathToFileURL(file).href),
-            catch: (err) => log.error("failed to import extension", { name, error: err }),
-          }).pipe(Effect.option)
-          if (mod._tag !== "Some") continue
+        // Load optional local extensions under src/ext/. Prefers the generated
+        // _manifest.ts (a fixed import specifier resolves inside Bun single-file
+        // executables, where filesystem scans do not); falls back to a directory
+        // scan for unbundled runs. Each *Plugin-named export is registered.
+        const extModules: Record<string, Record<string, unknown>> = {}
+        // @ts-ignore generated manifest; may not exist at type-check time
+        const manifest = yield* Effect.tryPromise(() => import("../ext/_manifest")).pipe(Effect.option)
+        if (manifest._tag === "Some") {
+          Object.assign(
+            extModules,
+            (manifest.value as { modules?: Record<string, Record<string, unknown>> }).modules ?? {},
+          )
+        } else {
+          const extDir = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "ext")
+          const extFiles = fs.existsSync(extDir)
+            ? fs.readdirSync(extDir).filter((f) => f.endsWith(".ts") && !f.endsWith(".d.ts") && f !== "_manifest.ts")
+            : []
+          for (const entry of extFiles) {
+            const mod = yield* Effect.tryPromise({
+              try: () => import(/* @vite-ignore */ pathToFileURL(path.join(extDir, entry)).href),
+              catch: (err) => log.error("failed to import extension", { name: entry, error: err }),
+            }).pipe(Effect.option)
+            if (mod._tag === "Some") extModules[entry.replace(/\.ts$/, "")] = mod.value as Record<string, unknown>
+          }
+        }
+        for (const [name, value] of Object.entries(extModules)) {
           // Only treat *Plugin-named function exports as plugins. Other modules
           // (e.g. a CLI helper export) are not plugins and must not be invoked
           // as plugin factories.
-          const overlay = Object.entries(mod.value as Record<string, unknown>).find(
+          const overlay = Object.entries(value).find(
             ([exportName, v]) => typeof v === "function" && exportName.endsWith("Plugin"),
           )?.[1] as PluginInstance | undefined
           if (!overlay) continue

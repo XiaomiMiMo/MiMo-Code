@@ -217,18 +217,46 @@ export function resolvePluginProviders(input: {
   return result
 }
 
-// Dynamically load the optional free-login entry (src/ext/free-login.ts), if
-// present. Returns its handler when available, otherwise undefined. Computed
-// path so builds without the extension still resolve cleanly.
-async function loadFreeLogin(): Promise<(() => Promise<void>) | undefined> {
-  const file = path.join(import.meta.dir, "..", "..", "ext", "free-login.ts")
-  if (!fs.existsSync(file)) return undefined
+// Optional login extension contributed by a local module under src/ext/. The
+// module declares which provider id/aliases it handles, how it appears in the
+// interactive menu, and the handler to run. Resolves to undefined when no such
+// module is present.
+type LoginExtension = {
+  id: string
+  aliases?: string[]
+  menu?: { label: string; hint?: string }
+  run: () => Promise<void>
+}
+
+function toLoginExtension(mod: Record<string, unknown> | undefined): LoginExtension | undefined {
+  const value = mod?.loginExtension
+  if (!value || typeof value !== "object") return undefined
+  const ext = value as Partial<LoginExtension>
+  if (typeof ext.id !== "string" || typeof ext.run !== "function") return undefined
+  return ext as LoginExtension
+}
+
+// Resolve the optional login extension. Prefers the generated src/ext/_manifest.ts
+// (a fixed import specifier resolves inside Bun single-file executables, where
+// filesystem scans do not); falls back to a directory scan for unbundled runs.
+async function loadLoginExtension(): Promise<LoginExtension | undefined> {
   try {
-    const mod = await import(/* @vite-ignore */ pathToFileURL(file).href)
-    return typeof mod.mimoFreeLogin === "function" ? mod.mimoFreeLogin : undefined
-  } catch {
-    return undefined
+    // @ts-ignore generated manifest; may not exist at type-check time
+    const manifest = (await import("../../ext/_manifest")) as { modules?: Record<string, Record<string, unknown>> }
+    for (const mod of Object.values(manifest.modules ?? {})) {
+      const ext = toLoginExtension(mod)
+      if (ext) return ext
+    }
+  } catch {}
+  const extDir = path.join(import.meta.dir, "..", "..", "ext")
+  if (!fs.existsSync(extDir)) return undefined
+  for (const entry of fs.readdirSync(extDir).filter((f) => f.endsWith(".ts") && !f.endsWith(".d.ts"))) {
+    try {
+      const ext = toLoginExtension(await import(/* @vite-ignore */ pathToFileURL(path.join(extDir, entry)).href))
+      if (ext) return ext
+    } catch {}
   }
+  return undefined
 }
 
 async function mimoLogin() {
@@ -499,13 +527,14 @@ export const ProvidersLoginCommand = cmd({
           })),
         ]
 
-        const freeLogin = await loadFreeLogin()
+        const loginExt = await loadLoginExtension()
+        const loginExtIds = loginExt ? [loginExt.id, ...(loginExt.aliases ?? [])] : []
         let provider: string
         if (args.provider === "xiaomi") {
           await mimoLogin()
           return
-        } else if ((args.provider === "mimo" || args.provider === "mimo-free") && freeLogin) {
-          await freeLogin()
+        } else if (loginExt && args.provider && loginExtIds.includes(args.provider)) {
+          await loginExt.run()
           return
         } else if (args.provider) {
           const input = args.provider
@@ -522,8 +551,8 @@ export const ProvidersLoginCommand = cmd({
             message: t("cli.providers.select"),
             options: [
               { label: "MiMo", value: "xiaomi", hint: t("cli.providers.mimo.recommended_hint") },
-              ...(freeLogin
-                ? [{ label: "MiMo Auto (free)", value: "mimo-free", hint: t("cli.providers.mimo_free.hint") }]
+              ...(loginExt?.menu
+                ? [{ label: loginExt.menu.label, value: loginExt.id, hint: loginExt.menu.hint }]
                 : []),
               { label: t("cli.providers.other"), value: "__other__" },
             ],
@@ -535,8 +564,8 @@ export const ProvidersLoginCommand = cmd({
             return
           }
 
-          if (choice === "mimo-free" && freeLogin) {
-            await freeLogin()
+          if (loginExt && choice === loginExt.id) {
+            await loginExt.run()
             return
           }
 
