@@ -16,7 +16,7 @@ Assume they are a skilled developer, but know almost nothing about our toolset o
 
 **Context:** If working in an isolated worktree, it should have been created via the `compose:worktree` skill at execution time.
 
-**Save plans to:** `docs/compose/plans/YYYY-MM-DD-<feature-name>.md`
+**Save plans to:** `<docs-dir>/plans/YYYY-MM-DD-<feature-name>.md`, where `<docs-dir>` is the compose docs directory given in the `<compose_docs_dir>` block of your prompt (defaults to `docs/compose`).
 - (User preferences for plan location override this default)
 
 ## Scope Check

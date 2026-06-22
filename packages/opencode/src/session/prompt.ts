@@ -54,7 +54,7 @@ import * as CrossSpawnSpawner from "@/effect/cross-spawn-spawner"
 import * as Stream from "effect/Stream"
 import { Command } from "../command"
 import { pathToFileURL, fileURLToPath } from "url"
-import { ConfigMarkdown } from "../config"
+import { ConfigMarkdown, ConfigCompose } from "../config"
 import { SessionSummary } from "./summary"
 import { NamedError } from "@mimo-ai/shared/util/error"
 import { SessionProcessor } from "./processor"
@@ -484,12 +484,28 @@ export const layer = Layer.effect(
       )
       if (composeModeMsg) {
         const composeModeBlock = composeSkillsBlock()
+        const ctx = yield* InstanceState.context
+        const docsConfigured = (yield* config.get()).compose?.docs ?? ConfigCompose.DEFAULT_DOCS_DIR
+        const docsDir = path.isAbsolute(docsConfigured)
+          ? docsConfigured
+          : path.join(ctx.worktree, docsConfigured)
+        const composeDocsBlock = [
+          "<compose_docs_dir>",
+          `Save compose skill outputs (specs, plans, reports) under this directory instead of the default \`docs/compose\`:`,
+          `  ${docsDir}`,
+          `Specs go in \`${path.join(docsDir, "specs")}\`, plans in \`${path.join(docsDir, "plans")}\`, reports in \`${path.join(docsDir, "reports")}\`.`,
+          "</compose_docs_dir>",
+        ].join("\n")
         composeModeMsg.parts.unshift({
           id: PartID.ascending(),
           messageID: composeModeMsg.info.id,
           sessionID: composeModeMsg.info.sessionID,
           type: "text",
-          text: PROMPT_COMPOSE + (composeModeBlock ? "\n\n" + composeModeBlock : ""),
+          text:
+            PROMPT_COMPOSE +
+            (composeModeBlock ? "\n\n" + composeModeBlock : "") +
+            "\n\n" +
+            composeDocsBlock,
           synthetic: true,
         })
       }
