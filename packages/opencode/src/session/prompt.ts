@@ -3051,10 +3051,10 @@ NOTE: At any point in time through this workflow you should feel free to ask the
               // MessageV2.User.system for logging/replay); llm.stream itself uses prebuiltSystem.
               system: additions,
               prebuiltSystem,
-              messages: [...modelMsgs, ...(isLastStep ? [{ role: "assistant" as const, content: MAX_STEPS }] : [])],
+              messages: [...modelMsgs, ...(isLastStep ? [{ role: "user" as const, content: MAX_STEPS }] : [])],
               tools,
               model,
-              toolChoice: format.type === "json_schema" ? ("required" as const) : undefined,
+              toolChoice: isLastStep ? ("none" as const) : format.type === "json_schema" ? ("required" as const) : undefined,
               agentID: lastUser.agentID,
             }
 
