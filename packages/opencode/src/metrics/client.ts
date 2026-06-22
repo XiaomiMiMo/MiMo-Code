@@ -1,7 +1,7 @@
 export const ENDPOINT = "https://tracking.miui.com/track/v4/o"
 export const APP_ID = "31000402765"
 
-export type EventType = "model_call" | "tool_call" | "agent_request"
+export type EventType = "model_call" | "tool_call" | "agent_request" | (string & {})
 
 export type Header = {
   event: EventType
@@ -35,6 +35,6 @@ export async function postEvents(payload: Envelope[]): Promise<void> {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify(payload),
-    signal: AbortSignal.timeout(5000),
+    signal: AbortSignal.timeout(60000),
   }).catch(() => {})
 }
