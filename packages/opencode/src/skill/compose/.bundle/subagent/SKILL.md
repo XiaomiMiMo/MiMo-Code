@@ -130,6 +130,23 @@ passes, mark the bound task done with `task done <TID>`.
 A structured `pass` without verifiable evidence (test name, command output, or
 `file:line`) does not satisfy the gate — treat it as `fail`. Prose is not evidence.
 
+## Pre-Flight Plan Review
+
+Before dispatching Task 1, scan the entire plan once for conflicts:
+
+- Tasks that contradict each other or the plan's Global Constraints
+- Anything the plan explicitly mandates that a reviewer would flag as a defect
+  (e.g. a test that asserts nothing, verbatim duplication of a logic block)
+- Ambiguous or inconsistent interface contracts between tasks
+
+Present everything you find to your human partner as one batched question —
+each finding beside the plan text that mandates it, asking which governs —
+before execution begins. Do not interrupt mid-plan with one finding at a time.
+If the scan is clean, proceed without comment.
+
+Use `compose:ask` for the batched question. If no user is available, resolve
+contradictions conservatively (strictest interpretation) and continue.
+
 ## Model Selection
 
 Use the least powerful model that can handle each role to conserve cost and increase speed.
