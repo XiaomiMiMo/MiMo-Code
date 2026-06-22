@@ -54,10 +54,10 @@ Every report MUST use this structure:
 feature: <feature-name>
 status: delivered
 specs:
-  - <docs-dir>/specs/<spec-1>.md
-  - <docs-dir>/specs/<spec-2>.md
+  - <path to spec file, in the specs/ dir from <compose_docs_dir>>
+  - <path to another spec file>
 plans:
-  - <docs-dir>/plans/<plan>.md
+  - <path to plan file, in the plans/ dir from <compose_docs_dir>>
 branch: <branch-name>
 commits: <first-sha>..<last-sha>
 ---
