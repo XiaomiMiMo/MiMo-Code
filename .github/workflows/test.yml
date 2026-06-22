@@ -20,8 +20,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3, 4]
-    name: unit (shard ${{ matrix.shard }}/4)
+        shard: ["1/4", "2/4", "3/4", "4/4"]
+    name: unit (shard ${{ matrix.shard }})
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -34,10 +34,7 @@ jobs:
           git config --global user.email "ci@mimo.ai"
           git config --global user.name "mimo-ci"
 
-      - name: Build dependencies
-        run: bun turbo build --output-logs=errors-only
-
-      - name: Run unit tests (shard ${{ matrix.shard }}/4)
+      - name: Run unit tests (shard ${{ matrix.shard }})
         timeout-minutes: 20
         working-directory: packages/opencode
-        run: bun test --timeout 30000 --shard ${{ matrix.shard }}/4
+        run: bun test --timeout 30000 --shard ${{ matrix.shard }}
