@@ -37,7 +37,7 @@ jobs:
       - name: Run unit tests (shard ${{ matrix.shard }})
         timeout-minutes: 8
         working-directory: packages/opencode
-        run: bun run test:ci --shard=${{ matrix.shard }}
+        run: bun run test:ci --shard ${{ matrix.shard }}
 
       - name: Upload JUnit
         if: always()
