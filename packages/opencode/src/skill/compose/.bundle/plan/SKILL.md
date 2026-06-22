@@ -34,6 +34,15 @@ Before defining tasks, map out which files will be created or modified and what 
 
 This structure informs the task decomposition. Each task should produce self-contained changes that make sense independently.
 
+## Task Right-Sizing
+
+A task is the smallest unit that carries its own test cycle and is worth a
+fresh reviewer's gate. When drawing task boundaries:
+
+- Fold setup, configuration, scaffolding, and documentation steps into the task whose deliverable needs them
+- Split only where a reviewer could meaningfully reject one task while approving its neighbor
+- Each task ends with an independently testable deliverable
+
 ## Bite-Sized Task Granularity
 
 **Each step is one action (2-5 minutes):**
@@ -58,6 +67,13 @@ This structure informs the task decomposition. Each task should produce self-con
 
 **Tech Stack:** [Key technologies/libraries]
 
+## Global Constraints
+
+[Project-wide requirements that bind EVERY task — version floors, dependency
+limits, naming and copy rules, platform requirements, exact values. One line
+each, copied verbatim from the spec. Implementers and reviewers downstream
+implicitly inherit this section without being told individually.]
+
 ---
 ```
 
@@ -75,6 +91,12 @@ This structure informs the task decomposition. Each task should produce self-con
 - Create: `exact/path/to/file.py`
 - Modify: `exact/path/to/existing.py:123-145`
 - Test: `tests/exact/path/to/test.py`
+
+**Interfaces:**
+- Consumes: [what this task uses from earlier tasks — exact signatures, types]
+- Produces: [what later tasks rely on — exact function names, parameter and
+  return types. An implementer sees only its own task; this block is how it
+  learns the names and types neighboring tasks use.]
 
 - [ ] **Step 1: Write the failing test**
 

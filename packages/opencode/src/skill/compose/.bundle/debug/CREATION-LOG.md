@@ -4,7 +4,7 @@ Reference example of extracting, structuring, and bulletproofing a critical skil
 
 ## Source Material
 
-Extracted debugging framework from `~/.claude/CLAUDE.md`:
+Extracted debugging framework from project configuration:
 - 4-phase systematic process (Investigation → Pattern Analysis → Hypothesis → Implementation)
 - Core mandate: ALWAYS find root cause, NEVER fix symptoms
 - Rules designed to resist time pressure and rationalization
@@ -54,7 +54,7 @@ Framework designed to resist rationalization under pressure:
 
 ## Testing Approach
 
-Created 4 validation tests following skills/meta/testing-skills-with-subagents:
+Created 4 validation tests following TDD-for-skills methodology (compose:tdd):
 
 ### Test 1: Academic Context (No Pressure)
 - Simple bug, no time pressure
@@ -99,7 +99,7 @@ Bulletproof skill that:
 
 ## Key Insight
 
-**Most important bulletproofing:** Anti-patterns section showing exact shortcuts that feel justified in the moment. When Claude thinks "I'll just add this one quick fix", seeing that exact pattern listed as wrong creates cognitive friction.
+**Most important bulletproofing:** Anti-patterns section showing exact shortcuts that feel justified in the moment. When the agent thinks "I'll just add this one quick fix", seeing that exact pattern listed as wrong creates cognitive friction.
 
 ## Usage Example
 
