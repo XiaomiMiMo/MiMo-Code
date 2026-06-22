@@ -9,27 +9,39 @@ import { Ripgrep } from "../../src/file/ripgrep"
 const run = <A>(effect: Effect.Effect<A, unknown, Ripgrep.Service>) =>
   effect.pipe(Effect.provide(Ripgrep.defaultLayer), Effect.runPromise)
 
-describe("file.ripgrep", () => {
-  test("defaults to include hidden", async () => {
-    await using tmp = await tmpdir({
-      init: async (dir) => {
-        await Bun.write(path.join(dir, "visible.txt"), "hello")
-        await fs.mkdir(path.join(dir, ".mimocode"), { recursive: true })
-        await Bun.write(path.join(dir, ".mimocode", "thing.json"), "{}")
-      },
-    })
-
-    const files = await run(
-      Ripgrep.Service.use((rg) =>
-        rg.files({ cwd: tmp.path }).pipe(
-          Stream.runCollect,
-          Effect.map((c) => [...c]),
-        ),
-      ),
-    )
-    expect(files.includes("visible.txt")).toBe(true)
-    expect(files.includes(path.join(".mimocode", "thing.json"))).toBe(true)
+// Ripgrep respects parent .gitignore. When tmpdirs are under the repo,
+// patterns like `.mimocode/` in root .gitignore affect test results.
+function withTmpdirOutsideGit<T>(fn: () => Promise<T>): Promise<T> {
+  const prev = process.env["MIMOCODE_TEST_TMPDIR_ROOT"]
+  delete process.env["MIMOCODE_TEST_TMPDIR_ROOT"]
+  return fn().finally(() => {
+    if (prev !== undefined) process.env["MIMOCODE_TEST_TMPDIR_ROOT"] = prev
+    else delete process.env["MIMOCODE_TEST_TMPDIR_ROOT"]
   })
+}
+
+describe("file.ripgrep", () => {
+  test("defaults to include hidden", () =>
+    withTmpdirOutsideGit(async () => {
+      await using tmp = await tmpdir({
+        init: async (dir) => {
+          await Bun.write(path.join(dir, "visible.txt"), "hello")
+          await fs.mkdir(path.join(dir, ".mimocode"), { recursive: true })
+          await Bun.write(path.join(dir, ".mimocode", "thing.json"), "{}")
+        },
+      })
+
+      const files = await run(
+        Ripgrep.Service.use((rg) =>
+          rg.files({ cwd: tmp.path }).pipe(
+            Stream.runCollect,
+            Effect.map((c) => [...c]),
+          ),
+        ),
+      )
+      expect(files.includes("visible.txt")).toBe(true)
+      expect(files.includes(path.join(".mimocode", "thing.json"))).toBe(true)
+    }))
 
   test("hidden false excludes hidden", async () => {
     await using tmp = await tmpdir({

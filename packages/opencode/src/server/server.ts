@@ -62,9 +62,9 @@ function create(opts: { cors?: string[] }) {
         new Hono()
           .use(InstanceMiddleware())
           .route("/experimental/workspace", WorkspaceRoutes())
-          .use(WorkspaceRouterMiddleware(runtime.upgradeWebSocket)),
+          .use(WorkspaceRouterMiddleware(runtime.upgradeWebSocket))
+          .route("/", InstanceRoutes(runtime.upgradeWebSocket)),
       )
-      .route("/", InstanceRoutes(runtime.upgradeWebSocket))
       .route("/", UIRoutes()),
     runtime,
   }

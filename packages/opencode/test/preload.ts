@@ -10,10 +10,9 @@ import { afterAll } from "bun:test"
 const dir = path.join(os.tmpdir(), "mimocode-test-data-" + process.pid)
 await fs.mkdir(dir, { recursive: true })
 
-// Route fixture tmpdirs under this per-PID dir so the afterAll rm below
-// transitively cleans up any fixtures whose Symbol.asyncDispose didn't run
-// (e.g. when bun test is killed/crashes/timeouts mid-run).
-const fixtureRoot = path.join(dir, "fixtures")
+// Route fixture tmpdirs under cwd so they pass the InstanceMiddleware cwd
+// containment check (security: unauthenticated servers restrict directory to cwd subtree).
+const fixtureRoot = path.join(process.cwd(), ".mimocode-test-fixtures-" + process.pid)
 await fs.mkdir(fixtureRoot, { recursive: true })
 process.env["MIMOCODE_TEST_TMPDIR_ROOT"] = fixtureRoot
 afterAll(async () => {
@@ -21,19 +20,20 @@ afterAll(async () => {
   Database.close()
   const busy = (error: unknown) =>
     typeof error === "object" && error !== null && "code" in error && error.code === "EBUSY"
-  const rm = async (left: number): Promise<void> => {
+  const rm = async (target: string, left: number): Promise<void> => {
     Bun.gc(true)
     await sleep(100)
-    return fs.rm(dir, { recursive: true, force: true }).catch((error) => {
+    return fs.rm(target, { recursive: true, force: true }).catch((error) => {
       if (!busy(error)) throw error
       if (left <= 1) throw error
-      return rm(left - 1)
+      return rm(target, left - 1)
     })
   }
 
   // Windows can keep SQLite WAL handles alive until GC finalizers run, so we
   // force GC and retry teardown to avoid flaky EBUSY in test cleanup.
-  await rm(30)
+  await rm(dir, 30)
+  await rm(fixtureRoot, 30)
 })
 
 process.env["XDG_DATA_HOME"] = path.join(dir, "share")

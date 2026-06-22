@@ -6,7 +6,6 @@ import { Filesystem } from "../../src/util"
 import { File } from "../../src/file"
 import { Instance } from "../../src/project/instance"
 import { provideInstance, tmpdir } from "../fixture/fixture"
-import { isValidProjectDirectory } from "../../src/server/routes/instance/middleware"
 
 const run = <A, E>(eff: Effect.Effect<A, E, File.Service>) =>
   Effect.runPromise(provideInstance(Instance.directory)(eff.pipe(Effect.provide(File.defaultLayer))))
@@ -47,21 +46,34 @@ describe("Filesystem.contains", () => {
  *
  * This is a SEPARATE code path from ReadTool, which has its own checks.
  */
-describe("File.read path traversal protection", () => {
-  test("rejects ../ traversal attempting to read /etc/passwd", async () => {
-    await using tmp = await tmpdir({
-      init: async (dir) => {
-        await Bun.write(path.join(dir, "allowed.txt"), "allowed content")
-      },
-    })
-
-    await Instance.provide({
-      directory: tmp.path,
-      fn: async () => {
-        await expect(read("../../../etc/passwd")).rejects.toThrow("Access denied: path escapes project directory")
-      },
-    })
+// These traversal tests need tmpdirs outside any git repo so project detection
+// sets worktree="/" (the non-git sentinel). Otherwise containsPath falls through
+// to the worktree check and allows paths within the parent repo.
+function withTmpdirOutsideGit<T>(fn: () => Promise<T>): Promise<T> {
+  const prev = process.env["MIMOCODE_TEST_TMPDIR_ROOT"]
+  delete process.env["MIMOCODE_TEST_TMPDIR_ROOT"]
+  return fn().finally(() => {
+    if (prev !== undefined) process.env["MIMOCODE_TEST_TMPDIR_ROOT"] = prev
+    else delete process.env["MIMOCODE_TEST_TMPDIR_ROOT"]
   })
+}
+
+describe("File.read path traversal protection", () => {
+  test("rejects ../ traversal attempting to read /etc/passwd", () =>
+    withTmpdirOutsideGit(async () => {
+      await using tmp = await tmpdir({
+        init: async (dir) => {
+          await Bun.write(path.join(dir, "allowed.txt"), "allowed content")
+        },
+      })
+
+      await Instance.provide({
+        directory: tmp.path,
+        fn: async () => {
+          await expect(read("../../../etc/passwd")).rejects.toThrow("Access denied: path escapes project directory")
+        },
+      })
+    }))
 
   test("rejects deeply nested traversal", async () => {
     await using tmp = await tmpdir()
@@ -94,16 +106,17 @@ describe("File.read path traversal protection", () => {
 })
 
 describe("File.list path traversal protection", () => {
-  test("rejects ../ traversal attempting to list /etc", async () => {
-    await using tmp = await tmpdir()
+  test("rejects ../ traversal attempting to list /etc", () =>
+    withTmpdirOutsideGit(async () => {
+      await using tmp = await tmpdir()
 
-    await Instance.provide({
-      directory: tmp.path,
-      fn: async () => {
-        await expect(list("../../../etc")).rejects.toThrow("Access denied: path escapes project directory")
-      },
-    })
-  })
+      await Instance.provide({
+        directory: tmp.path,
+        fn: async () => {
+          await expect(list("../../../etc")).rejects.toThrow("Access denied: path escapes project directory")
+        },
+      })
+    }))
 
   test("allows valid subdirectory listing", async () => {
     await using tmp = await tmpdir({
@@ -204,47 +217,35 @@ describe("Instance.containsPath", () => {
   })
 })
 
-describe("isValidProjectDirectory", () => {
-  test("rejects system paths", () => {
-    expect(isValidProjectDirectory("/etc")).toBe(false)
-    expect(isValidProjectDirectory("/etc/nginx")).toBe(false)
-    expect(isValidProjectDirectory("/proc")).toBe(false)
-    expect(isValidProjectDirectory("/sys")).toBe(false)
-    expect(isValidProjectDirectory("/var")).toBe(false)
-    expect(isValidProjectDirectory("/dev")).toBe(false)
-    expect(isValidProjectDirectory("/root")).toBe(false)
-    expect(isValidProjectDirectory("/boot")).toBe(false)
-    expect(isValidProjectDirectory("/usr")).toBe(false)
-    expect(isValidProjectDirectory("/bin")).toBe(false)
-    expect(isValidProjectDirectory("/sbin")).toBe(false)
-    expect(isValidProjectDirectory("/lib")).toBe(false)
-    expect(isValidProjectDirectory("/tmp")).toBe(false)
-  })
-
-  test("allows current working directory", () => {
-    expect(isValidProjectDirectory(process.cwd())).toBe(true)
-  })
-
-  test("allows subdirectories of cwd", () => {
-    expect(isValidProjectDirectory(path.join(process.cwd(), "src"))).toBe(true)
-    expect(isValidProjectDirectory(path.join(process.cwd(), "packages/opencode"))).toBe(true)
-  })
-
-  test("allows directories with project markers", async () => {
-    await using tmp = await tmpdir({
-      init: async (dir) => {
-        await fs.mkdir(path.join(dir, ".git"))
-      },
-    })
-    expect(isValidProjectDirectory(tmp.path)).toBe(true)
-  })
-
-  test("rejects arbitrary paths without project markers", async () => {
-    await using tmp = await tmpdir()
-    // tmpdir creates a dir outside cwd, no .git
-    const outsideCwd = !path.resolve(tmp.path).startsWith(path.resolve(process.cwd()))
-    if (outsideCwd) {
-      expect(isValidProjectDirectory(tmp.path)).toBe(false)
+describe("Instance.provide directory safety", () => {
+  test("rejects system paths containing secrets", async () => {
+    const systemPaths = ["/etc", "/etc/nginx", "/etc/shadow", "/proc", "/sys", "/dev", "/root", "/boot"]
+    for (const dir of systemPaths) {
+      await expect(
+        Instance.provide({ directory: dir, fn: () => {} }),
+      ).rejects.toThrow("Access denied")
     }
+  })
+
+  test("rejects filesystem root", async () => {
+    await expect(
+      Instance.provide({ directory: "/", fn: () => {} }),
+    ).rejects.toThrow("Access denied")
+  })
+
+  test("allows valid project directory", async () => {
+    await using tmp = await tmpdir({ git: true })
+    await expect(
+      Instance.provide({ directory: tmp.path, fn: () => Instance.directory }),
+    ).resolves.toBe(tmp.path)
+  })
+
+  test("allows subdirectory of a valid project", async () => {
+    await using tmp = await tmpdir({ git: true })
+    const sub = path.join(tmp.path, "packages", "lib")
+    await fs.mkdir(sub, { recursive: true })
+    await expect(
+      Instance.provide({ directory: sub, fn: () => Instance.directory }),
+    ).resolves.toBe(sub)
   })
 })
