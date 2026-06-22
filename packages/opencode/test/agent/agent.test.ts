@@ -75,6 +75,56 @@ test("plan agent denies edits except .mimocode/plans/*", async () => {
   })
 })
 
+test("plan agent allows only read-only bash commands by default", async () => {
+  await using tmp = await tmpdir()
+  await Instance.provide({
+    directory: tmp.path,
+    fn: async () => {
+      const plan = await load(tmp.path, (svc) => svc.get("plan"))
+      expect(plan).toBeDefined()
+
+      for (const pattern of [
+        "mkdir test",
+        "touch output.txt",
+        "echo test > output.txt",
+        "cat package.json; touch out.txt",
+        "cat package.json\ntouch out.txt",
+        "cat package.json & touch out.txt",
+        "cat package.json > out.txt",
+        "cat package.json>out.txt",
+        "cat package.json `touch out.txt`",
+        "cat package.json $(touch out.txt)",
+        "cat <(touch out.txt)",
+        "cat package.json <(touch out.txt)",
+        "cat < <(touch out.txt)",
+        "grep foo file > out.txt",
+        "rg needle src >> out.txt",
+        "rg needle src>>out.txt",
+        "ls && touch out.txt",
+        "cat package.json | tee out.txt",
+        "rg needle src | tee out.txt",
+        "find . -delete",
+        "find . -delete -print",
+        "find . -exec rm {} \\;",
+        "find . -execdir rm {} \\;",
+        "find . -print0 | xargs rm -f",
+        "git diff --output=out.patch",
+        "git diff --output out.patch",
+        "git diff | tee out.patch",
+        "git status && rm -rf x",
+        "Get-Content package.json; Set-Content out.txt",
+        "Get-Content package.json | Set-Content out.txt",
+      ]) {
+        expect(Permission.evaluate("bash", pattern, plan!.permission).action).toBe("deny")
+      }
+
+      for (const pattern of ["ls -la", "git status --short", "rg needle src", "Get-ChildItem ."]) {
+        expect(Permission.evaluate("bash", pattern, plan!.permission).action).toBe("allow")
+      }
+    },
+  })
+})
+
 test("explore agent denies edit and write", async () => {
   await using tmp = await tmpdir()
   await Instance.provide({
