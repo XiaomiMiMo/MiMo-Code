@@ -488,7 +488,7 @@ export const layer = Layer.effect(
         const composeCfg = (yield* config.get()).compose
         const docsConfigured = composeCfg?.docs ?? ConfigCompose.DEFAULT_DOCS_DIR
         const docsDir =
-          path.isAbsolute(docsConfigured) || composeCfg?.docs_absolute !== false
+          path.isAbsolute(docsConfigured) || composeCfg?.docs_absolute === true
             ? path.resolve(ctx.worktree, docsConfigured)
             : docsConfigured
         const composeDocsBlock = [
