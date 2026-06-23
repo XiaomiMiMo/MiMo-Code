@@ -5,6 +5,7 @@ import * as Tool from "./tool"
 import TurndownService from "turndown"
 import DESCRIPTION from "./webfetch.txt"
 import { isImageAttachment } from "@/util/media"
+import { assertSafeUrl } from "@/util/ssrf"
 
 const MAX_RESPONSE_SIZE = 5 * 1024 * 1024 // 5MB
 const DEFAULT_TIMEOUT = 30 * 1000 // 30 seconds
@@ -33,6 +34,8 @@ export const WebFetchTool = Tool.define(
           if (!params.url.startsWith("http://") && !params.url.startsWith("https://")) {
             throw new Error("URL must start with http:// or https://")
           }
+
+          yield* Effect.promise(() => assertSafeUrl(params.url))
 
           yield* ctx.ask({
             permission: "webfetch",
@@ -89,6 +92,12 @@ export const WebFetchTool = Tool.define(
             ),
             Effect.timeoutOrElse({ duration: timeout, orElse: () => Effect.die(new Error("Request timed out")) }),
           )
+
+          // Block SSRF via redirect: if the response was redirected, validate final URL
+          const source = (response as any).source as Response | undefined
+          if (source?.url && source.url !== params.url) {
+            yield* Effect.promise(() => assertSafeUrl(source.url))
+          }
 
           // Check content length
           const contentLength = response.headers["content-length"]

@@ -30,6 +30,7 @@ import { lazy } from "@/util/lazy"
 import { Bus } from "@/bus"
 import { NamedError } from "@mimo-ai/shared/util/error"
 import { jsonRequest, runRequest } from "./trace"
+import { RateLimitMiddleware } from "../../rate-limit"
 
 const log = Log.create({ service: "server" })
 
@@ -698,8 +699,9 @@ export const SessionRoutes = lazy(() =>
               .number()
               .int()
               .min(0)
+              .max(1000)
               .optional()
-              .meta({ description: "Maximum number of messages to return" }),
+              .meta({ description: "Maximum number of messages to return (max 1000)" }),
             before: z
               .string()
               .optional()
@@ -744,7 +746,7 @@ export const SessionRoutes = lazy(() =>
             Effect.gen(function* () {
               const session = yield* Session.Service
               yield* session.get(sessionID)
-              return yield* session.messages({ sessionID, agentID })
+              return yield* session.messages({ sessionID, agentID, limit: 1000 })
             }),
           )
           return c.json(messages)
@@ -1008,6 +1010,7 @@ export const SessionRoutes = lazy(() =>
     )
     .post(
       "/:sessionID/prompt_async",
+      RateLimitMiddleware({ windowMs: 60_000, max: 20, keyPrefix: "prompt_async" }),
       describeRoute({
         summary: "Send async message",
         description:
@@ -1122,6 +1125,7 @@ export const SessionRoutes = lazy(() =>
     )
     .post(
       "/:sessionID/shell",
+      RateLimitMiddleware({ windowMs: 60_000, max: 20, keyPrefix: "shell" }),
       describeRoute({
         summary: "Run shell command",
         description: "Execute a shell command within the session context and return the AI's response.",

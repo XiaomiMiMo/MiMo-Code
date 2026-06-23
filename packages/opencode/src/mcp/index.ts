@@ -18,6 +18,7 @@ import { Installation } from "../installation"
 import { InstallationVersion } from "../installation/version"
 import { withTimeout } from "@/util/timeout"
 import { AppFileSystem } from "@mimo-ai/shared/filesystem"
+import { assertSafeUrl } from "@/util/ssrf"
 import { McpOAuthProvider } from "./oauth-provider"
 import { McpOAuthCallback } from "./oauth-callback"
 import { McpAuth } from "./auth"
@@ -287,6 +288,11 @@ export const layer = Layer.effect(
       key: string,
       mcp: ConfigMCP.Info & { type: "remote" },
     ) {
+      yield* Effect.tryPromise({
+        try: () => assertSafeUrl(mcp.url),
+        catch: (e) => new Error(e instanceof Error ? e.message : String(e)),
+      }).pipe(Effect.orDie)
+
       const oauthDisabled = mcp.oauth === false
       const oauthConfig = typeof mcp.oauth === "object" ? mcp.oauth : undefined
       let authProvider: McpOAuthProvider | undefined
@@ -744,6 +750,11 @@ export const layer = Layer.effect(
       if (!mcpConfig) throw new Error(`MCP server ${mcpName} not found or disabled`)
       if (mcpConfig.type !== "remote") throw new Error(`MCP server ${mcpName} is not a remote server`)
       if (mcpConfig.oauth === false) throw new Error(`MCP server ${mcpName} has OAuth explicitly disabled`)
+
+      yield* Effect.tryPromise({
+        try: () => assertSafeUrl(mcpConfig.url),
+        catch: (e) => new Error(e instanceof Error ? e.message : String(e)),
+      }).pipe(Effect.orDie)
 
       // OAuth config is optional - if not provided, we'll use auto-discovery
       const oauthConfig = typeof mcpConfig.oauth === "object" ? mcpConfig.oauth : undefined
