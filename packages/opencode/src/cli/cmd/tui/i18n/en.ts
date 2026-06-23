@@ -264,6 +264,8 @@ export const dict: Record<string, string> = {
   "tui.consent.revoked": "Free-model agreement revoked — you'll be asked to agree again",
   "tui.dialog.select.placeholder": "Search",
   "tui.dialog.model.login_hint": "Tip: run /login to sign in before switching models",
+  "provider.name.mimo": "MiMo",
+  "tui.model.mimo_auto.name": "MiMo Auto (MiMo-V2.5, limited-time free)",
   "tui.dialog.token_plan.title": "Subscribe to a Token Plan or wait in queue",
   "tui.dialog.token_plan.line1": "In free mode, requests are currently queued. For stable, high-quality service,",
   "tui.dialog.token_plan.subscribe": "subscribe to ",

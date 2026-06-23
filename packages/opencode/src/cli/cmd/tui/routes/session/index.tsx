@@ -375,8 +375,11 @@ export function Session() {
     const seen = kv.get(QUEUE_TOKEN_PLAN_LAST_SEEN_AT)
     if (typeof seen === "number" && Date.now() - seen < QUEUE_TOKEN_PLAN_WINDOW) return
 
-    kv.set(QUEUE_TOKEN_PLAN_LAST_SEEN_AT, Date.now())
-    void DialogTokenPlan.show(dialog)
+    // Record the 24h cooldown only after the user dismisses, so a show() that
+    // fails (or never reaches the user) doesn't silently burn the whole day.
+    void DialogTokenPlan.show(dialog).then(() => {
+      kv.set(QUEUE_TOKEN_PLAN_LAST_SEEN_AT, Date.now())
+    })
   })
 
   function moveFirstChild() {
@@ -1367,7 +1370,11 @@ function AssistantMessage(props: { message: AssistantMessage; parts: Part[]; las
   const t = useLanguage().t
   const [copyHover, setCopyHover] = createSignal(false)
   const messages = createMemo(() => sync.data.message[props.message.sessionID]?.[props.message.agentID ?? "main"] ?? [])
-  const model = createMemo(() => Model.name(ctx.providers(), props.message.providerID, props.message.modelID))
+  const model = createMemo(() =>
+    props.message.modelID === "mimo-auto"
+      ? t("tui.model.mimo_auto.name")
+      : Model.name(ctx.providers(), props.message.providerID, props.message.modelID),
+  )
 
   const final = createMemo(() => {
     return props.message.finish && props.message.finish !== "tool-calls"

@@ -12,6 +12,7 @@ import { useToast, type ToastContext } from "../ui/toast"
 import { DialogPrompt } from "../ui/dialog-prompt"
 import { useLanguage } from "@tui/context/language"
 import * as Model from "../util/model"
+import { PROVIDER_PRIORITY } from "@/util/provider-priority"
 import * as fuzzysort from "fuzzysort"
 
 const ADD_MODEL_SENTINEL = "__add_model__"
@@ -36,6 +37,8 @@ export function DialogModel(props: { providerID?: string }) {
   const providers = createDialogProviderOptions()
   const t = useLanguage().t
   const providerName = (p: { id: string; name: string }) => t("provider.name." + p.id) || p.name
+  const modelName = (providerID: string, modelID: string) =>
+    modelID === "mimo-auto" ? t("tui.model.mimo_auto.name") : Model.name(sync.data.provider, providerID, modelID)
 
   const showExtra = createMemo(() => connected() && !props.providerID)
 
@@ -56,7 +59,7 @@ export function DialogModel(props: { providerID?: string }) {
           {
             key: item,
             value: { providerID: provider.id, modelID: model.id },
-            title: Model.name(sync.data.provider, provider.id, model.id),
+            title: modelName(provider.id, model.id),
             category,
             disabled: provider.id === "opencode" && model.id.includes("-nano"),
             footer: model.cost?.input === 0 && provider.id === "opencode" ? "Free" : undefined,
@@ -80,7 +83,8 @@ export function DialogModel(props: { providerID?: string }) {
       sync.data.provider,
       sortBy(
         (provider) => provider.id !== "opencode",
-        (provider) => provider.name,
+        (provider) => PROVIDER_PRIORITY[provider.id] ?? 99,
+        (provider) => providerName(provider),
       ),
       flatMap((provider) => {
         // The free mimo-auto model is surfaced as the top entry of the Xiaomi
@@ -94,9 +98,7 @@ export function DialogModel(props: { providerID?: string }) {
           map(([model, info]) => ({
             value: { providerID: provider.id, modelID: model },
             title: info.name ?? model,
-            description: favorites.some((item) => item.providerID === provider.id && item.modelID === model)
-              ? "(Favorite)"
-              : undefined,
+            description: undefined as string | undefined,
             category: connected() ? providerName(provider) : undefined,
             disabled: provider.id === "opencode" && model.includes("-nano"),
             footer: info.cost?.input === 0 && provider.id === "opencode" ? "Free" : undefined,
@@ -104,6 +106,14 @@ export function DialogModel(props: { providerID?: string }) {
               onSelect(provider.id, model)
             },
           })),
+          // Favorites live in their own section, so don't repeat them here.
+          // Recents intentionally still appear in their provider group.
+          filter((x) => {
+            if (!showSections) return true
+            return !favorites.some(
+              (item) => item.providerID === x.value.providerID && item.modelID === x.value.modelID,
+            )
+          }),
           sortBy(
             (x) => x.footer !== "Free",
             (x) => x.title,
@@ -117,7 +127,7 @@ export function DialogModel(props: { providerID?: string }) {
             ? [
                 {
                   value: { providerID: "mimo", modelID: "mimo-auto" },
-                  title: Model.name(sync.data.provider, "mimo", "mimo-auto"),
+                  title: modelName("mimo", "mimo-auto"),
                   description: undefined as string | undefined,
                   category: connected() ? providerName(provider) : undefined,
                   disabled: false,

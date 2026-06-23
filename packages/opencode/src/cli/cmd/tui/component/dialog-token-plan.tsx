@@ -3,6 +3,8 @@ import open from "open"
 import { useKeyboard } from "@opentui/solid"
 import { useTheme } from "@tui/context/theme"
 import { useLanguage } from "@tui/context/language"
+import { useToast } from "@tui/ui/toast"
+import * as Clipboard from "@tui/util/clipboard"
 import { useDialog, type DialogContext } from "@tui/ui/dialog"
 
 const TOKEN_PLAN_URL = "https://platform.xiaomimimo.com/token-plan"
@@ -13,14 +15,22 @@ export function DialogTokenPlan(props: { onClose?: () => void }) {
   const dialog = useDialog()
   const { theme } = useTheme()
   const t = useLanguage().t
+  const toast = useToast()
 
   const close = () => {
     dialog.clear()
     props.onClose?.()
   }
 
+  const openLink = () => {
+    open(TOKEN_PLAN_URL).catch(() => {
+      Clipboard.copy(TOKEN_PLAN_URL).catch(() => {})
+      toast.show({ message: TOKEN_PLAN_URL, variant: "info" })
+    })
+  }
+
   useKeyboard((evt) => {
-    if (evt.name === "return") close()
+    if (evt.name === "return" || evt.name === "escape") close()
   })
 
   return (
@@ -40,7 +50,7 @@ export function DialogTokenPlan(props: { onClose?: () => void }) {
           <text
             fg={theme.primary}
             attributes={TextAttributes.UNDERLINE}
-            onMouseUp={() => open(TOKEN_PLAN_URL).catch(() => {})}
+            onMouseUp={() => openLink()}
           >
             {t("tui.dialog.token_plan.link")}
           </text>

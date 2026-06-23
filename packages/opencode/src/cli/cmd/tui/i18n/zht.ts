@@ -253,6 +253,8 @@ export const dict = {
   "tui.consent.revoked": "已撤銷免費模型協議 — 下次使用時將再次請求同意",
   "tui.dialog.select.placeholder": "搜尋",
   "tui.dialog.model.login_hint": "提示：先 /login 登入再切換模型",
+  "provider.name.mimo": "MiMo",
+  "tui.model.mimo_auto.name": "MiMo Auto（MiMo-V2.5 限免中）",
   "tui.dialog.token_plan.title": "訂閱token plan或排隊等待",
   "tui.dialog.token_plan.line1": "免費模式下目前需要排隊等待，若想穩定取得高品質服務，",
   "tui.dialog.token_plan.subscribe": "歡迎訂閱 ",
