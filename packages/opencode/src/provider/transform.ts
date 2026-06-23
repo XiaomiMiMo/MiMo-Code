@@ -292,22 +292,22 @@ function applyCaching(msgs: ModelMessage[], model: Provider.Model): ModelMessage
   // 2+3. The last TWO messages — a "rolling double buffer". Each turn marks
   //      messages[-2] and messages[-1]; next turn the old [-1] is now [-2] and
   //      still carries its marker, so the lookback gets a cache READ hit, while
-  //      the new [-1] is the WRITE for the turn after. One marker alone breaks
-  //      when an agentic turn appends >20 content blocks (tool spam pushes the
-  //      prior write outside the lookback window) or when a tool-call retry /
-  //      interrupt discards the last message — the second marker survives both.
-  //      A third tail marker would write a segment never read independently, so
-  //      two is the minimum that covers the old-tail/new-tail boundary.
+  //      the new [-1] is the WRITE for the turn after.
   //
-  //      Role matters on the openai-compatible proxy path: those proxies
-  //      silently DROP cache_control on assistant messages (see
-  //      internal/docs/cache-policy.md — 1170 assistant markers, 0 cached). A
-  //      blind last-2 would often land a marker on an assistant turn and lose
-  //      it, collapsing the double buffer back to a single (or zero) effective
-  //      marker. For providers that take message-level markers (Anthropic,
-  //      Bedrock) assistant markers are honored, so we take the last 2 outright.
-  //      For everyone else we take the last 2 *cacheable* messages (user/tool),
-  //      skipping assistant turns so both markers survive.
+  //      Why two and not one: the second (next-to-last) marker is the safety
+  //      net for the tail boundary. When the last message is removed — a
+  //      tool-call retry, a Ctrl-C, or the user editing/deleting their latest
+  //      message — a lone tail marker disappears with it, and how much of the
+  //      surrounding prefix the provider then evicts depends on the upstream
+  //      (Anthropic) KV-cache implementation. The next-to-last marker is a
+  //      still-present, further-back write the next lookback can land on, so the
+  //      worst case degrades to "recompute only the removed message" instead of
+  //      "recompute the whole history". It also covers turns that append >20
+  //      blocks (tool spam pushes the prior write outside the lookback window).
+  //      Cost is ~equal to a single marker: the two adjacent breakpoints write
+  //      roughly the same incremental bytes as one, split in two, and a hit
+  //      never rewrites. A third marker would write a segment never read
+  //      independently, so two is the minimum that covers the boundary.
   // We deliberately do NOT mark a drifting midpoint or a fixed before-last-user
   // INDEX: those shift every turn without tracking the tail.
   const targets: ModelMessage[] = []
@@ -315,13 +315,8 @@ function applyCaching(msgs: ModelMessage[], model: Provider.Model): ModelMessage
   const systemMsgs = msgs.filter((msg) => msg.role === "system")
   if (systemMsgs.length > 0) targets.push(systemMsgs[systemMsgs.length - 1])
 
-  const assistantMarkersHonored =
-    model.providerID === "anthropic" ||
-    model.providerID.includes("bedrock") ||
-    model.api.npm === "@ai-sdk/amazon-bedrock"
   const nonSystem = msgs.filter((msg) => msg.role !== "system")
-  const cacheable = assistantMarkersHonored ? nonSystem : nonSystem.filter((msg) => msg.role !== "assistant")
-  for (const msg of cacheable.slice(-2)) targets.push(msg)
+  for (const msg of nonSystem.slice(-2)) targets.push(msg)
 
   for (const msg of unique(targets)) {
     const useMessageLevelOptions =
