@@ -1,5 +1,6 @@
 import z from "zod"
 import { Effect } from "effect"
+import { HttpClient } from "effect/unstable/http"
 import * as Tool from "./tool"
 import TurndownService from "turndown"
 import DESCRIPTION from "./webfetch.txt"
@@ -22,6 +23,7 @@ const parameters = z.object({
 export const WebFetchTool = Tool.define(
   "webfetch",
   Effect.gen(function* () {
+    yield* HttpClient.HttpClient
     return {
       description: DESCRIPTION,
       parameters,
