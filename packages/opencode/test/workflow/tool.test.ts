@@ -428,7 +428,7 @@ describe("WorkflowTool run", () => {
     // Real agent loop + an inner workflow spawn through the full stack legitimately
     // exceeds the 5s default on a cold provider/server warmup (it's order-dependent
     // otherwise — green only when a prior test warms the layer). Give it headroom.
-    30000,
+    60000,
   )
 
   it.live("run op accepts an explicit workspace and the script's file ops are jailed to it", () =>
