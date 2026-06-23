@@ -150,7 +150,7 @@ Implementer subagents report one of four statuses. Handle each appropriately:
 ```
 You: I'm using Subagent-Driven Development to execute this plan.
 
-[Read plan file once: docs/compose/plans/feature-plan.md]
+[Read plan file once: plans/feature-plan.md]
 [Extract all 5 tasks with full text and context]
 [Create a task per plan task with `task create`, capturing each TID]
 

@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import { loadComposeBundle } from "../../src/skill/compose/bundle.macro"
+import { ConfigCompose } from "../../src/config"
 
 const bundle = loadComposeBundle()
 
@@ -137,5 +138,37 @@ describe("compose spec-anchored review contract", () => {
         expect(md).not.toMatch(/operation:\s*run/)
       }
     })
+  })
+})
+
+describe("compose docs dir resolution", () => {
+  const worktree = "/repo/root"
+
+  test("relative docs is passed through verbatim by default", () => {
+    expect(ConfigCompose.resolveDocsDir(worktree, { docs: "docs/compose" })).toBe("docs/compose")
+  })
+
+  test("relative docs is anchored to worktree when docs_absolute is true", () => {
+    expect(ConfigCompose.resolveDocsDir(worktree, { docs: "docs/compose", docs_absolute: true })).toBe(
+      "/repo/root/docs/compose",
+    )
+  })
+
+  test("absolute docs ignores worktree regardless of docs_absolute", () => {
+    expect(ConfigCompose.resolveDocsDir(worktree, { docs: "/abs/docs" })).toBe("/abs/docs")
+    expect(ConfigCompose.resolveDocsDir(worktree, { docs: "/abs/docs", docs_absolute: true })).toBe("/abs/docs")
+  })
+
+  test("default docs dir is used when config is absent", () => {
+    expect(ConfigCompose.resolveDocsDir(worktree, undefined)).toBe(ConfigCompose.DEFAULT_DOCS_DIR)
+  })
+
+  test("skill example workflows do not hardcode the default docs/compose prefix", () => {
+    const offenders = Object.entries(bundle).flatMap(([skill, files]) =>
+      Object.entries(files)
+        .filter(([, content]) => content.includes("docs/compose"))
+        .map(([rel]) => `${skill}/${rel}`),
+    )
+    expect(offenders).toEqual([])
   })
 })

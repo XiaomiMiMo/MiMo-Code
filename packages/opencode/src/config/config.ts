@@ -27,6 +27,7 @@ import { InstanceRef } from "@/effect/instance-ref"
 import { zod, ZodOverride } from "@/util/effect-zod"
 import { ConfigAgent } from "./agent"
 import { ConfigCommand } from "./command"
+import { ConfigCompose } from "./compose"
 import { ConfigFormatter } from "./formatter"
 import { ConfigHistory } from "./history"
 import { ConfigLayout } from "./layout"
@@ -104,6 +105,7 @@ const InfoSchema = Schema.Struct({
     description: "Command configuration, see https://opencode.ai/docs/commands",
   }),
   skills: Schema.optional(ConfigSkills.Info).annotate({ description: "Additional skill folder paths" }),
+  compose: Schema.optional(ConfigCompose.Info).annotate({ description: "Compose mode configuration" }),
   watcher: Schema.optional(
     Schema.Struct({
       ignore: Schema.optional(Schema.mutable(Schema.Array(Schema.String))),

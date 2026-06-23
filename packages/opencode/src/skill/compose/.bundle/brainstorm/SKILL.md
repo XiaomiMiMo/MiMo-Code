@@ -33,7 +33,7 @@ You MUST create a task for each of these items and complete them in order:
 3. **Ask clarifying questions** — one at a time, understand purpose/constraints/success criteria
 4. **Propose 2-3 approaches** — with trade-offs and your recommendation
 5. **Present design** — in sections scaled to their complexity, get user approval after each section
-6. **Write design doc** (optional, multi-step features only) — save to `docs/compose/specs/YYYY-MM-DD-<topic>-design.md` and commit. For single-step fixes or small changes, keep the design in conversation context only.
+6. **Write design doc** (optional, multi-step features only) — save to the `specs/` directory given in the `<compose_docs_dir>` block of your prompt, as `YYYY-MM-DD-<topic>-design.md`, and commit. For single-step fixes or small changes, keep the design in conversation context only.
 7. **Spec self-review** (if doc written) — quick inline check for placeholders, contradictions, ambiguity, scope (see below)
 8. **User reviews written spec** (if doc written) — ask user to review the spec file before proceeding
 9. **Transition to implementation** — invoke compose:plan to create implementation plan
@@ -105,7 +105,7 @@ You MUST create a task for each of these items and complete them in order:
 **Documentation (optional, multi-step features only):**
 
 For features with multiple tasks or significant architectural decisions:
-- Write the validated design (spec) to `docs/compose/specs/YYYY-MM-DD-<topic>-design.md`
+- Write the validated design (spec) to the `specs/` directory given in `<compose_docs_dir>`, as `YYYY-MM-DD-<topic>-design.md`
   - (User preferences for spec location override this default)
 - Use elements-of-style:writing-clearly-and-concisely skill if available
 - Commit the design document to git
