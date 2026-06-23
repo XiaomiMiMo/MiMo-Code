@@ -204,6 +204,7 @@ function rescueNoticeBody(toolId: string): string {
   return [
     `${toolId}: your script had no real line breaks — literal \\n / \\t were read as newlines/tabs.`,
     `Emit REAL line breaks in the JSON string (JSON \\n), not a doubled backslash (\\\\n).`,
+    `If you meant a LITERAL \\n / \\t inside a quoted string, it was rewritten too — double-escape it (\\\\\\\\n) so it survives.`,
   ].join("\n")
 }
 

@@ -314,6 +314,16 @@ describe("shellWrap: JSON double-escape rescue", () => {
     expect(result.output).toContain("always fails")
   })
 
+  test("rescue notice warns that a literal \\n inside a string may have been rewritten", async () => {
+    const record = { calls: [] as z.infer<typeof params>[] }
+    const wrapped = shellWrap(makeNewlineSensitiveTool(record))
+    const result = await runtime.runPromise(
+      wrapped.execute({ script: "synthetic create A\\nsynthetic update B" }, stubCtx()),
+    )
+    expect(result.output).toContain("<notice>")
+    expect(result.output).toContain("LITERAL")
+  })
+
   test("repair attempted but re-parse still fails → original error, no notice", async () => {
     const record = { calls: [] as z.infer<typeof params>[] }
     const wrapped = shellWrap({

@@ -26,6 +26,10 @@ function heredocPlaceholder(n: number) {
 // quote, if any), or null when there is no valid marker — in which case the
 // caller falls through to the operator-reject path. Rejecting <<'EOF' here was
 // the original "unsupported shell operator: <" failure.
+// Heredoc marker name: starts with a letter/underscore, then word chars (bash-like).
+const HEREDOC_MARKER_HEAD = /[A-Za-z_]/
+const HEREDOC_MARKER_TAIL = /[A-Za-z0-9_]/
+
 function parseHeredocMarker(script: string, start: number): { marker: string; end: number } | null {
   let j = start + 2
   if (script[j] === "-") j++
@@ -33,8 +37,8 @@ function parseHeredocMarker(script: string, start: number): { marker: string; en
   const quote = script[j] === "'" || script[j] === '"' ? script[j] : null
   if (quote) j++
   const markerStart = j
-  if (!(j < script.length && /[A-Za-z_]/.test(script[j]))) return null
-  while (j < script.length && /[A-Za-z0-9_]/.test(script[j])) j++
+  if (!(j < script.length && HEREDOC_MARKER_HEAD.test(script[j]))) return null
+  while (j < script.length && HEREDOC_MARKER_TAIL.test(script[j])) j++
   const marker = script.slice(markerStart, j)
   if (quote) {
     if (script[j] !== quote) return null
