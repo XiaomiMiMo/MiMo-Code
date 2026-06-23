@@ -84,14 +84,16 @@ describe("Worktree", () => {
     )
 
     it.live("throws NotGitError for non-git directories", () =>
-      provideTmpdirInstance(() =>
-        Effect.gen(function* () {
-          const svc = yield* Worktree.Service
-          const exit = yield* Effect.exit(svc.makeWorktreeInfo())
+      provideTmpdirInstance(
+        () =>
+          Effect.gen(function* () {
+            const svc = yield* Worktree.Service
+            const exit = yield* Effect.exit(svc.makeWorktreeInfo())
 
-          expect(Exit.isFailure(exit)).toBe(true)
-          if (Exit.isFailure(exit)) expect(Cause.squash(exit.cause)).toBeInstanceOf(Worktree.NotGitError)
-        }),
+            expect(Exit.isFailure(exit)).toBe(true)
+            if (Exit.isFailure(exit)) expect(Cause.squash(exit.cause)).toBeInstanceOf(Worktree.NotGitError)
+          }),
+        { outsideGit: true },
       ),
     )
   })
