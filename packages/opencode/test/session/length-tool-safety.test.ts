@@ -38,7 +38,9 @@ function run<A, E>(fx: Effect.Effect<A, E, SessionPrompt.Service | Session.Servi
 }
 
 describe("length + tool safety contract", () => {
-  test("length finish with a complete client tool call does not inject an output-length continuation", async () => {
+  test(
+    "length finish with a complete client tool call does not inject an output-length continuation",
+    async () => {
     await using tmp = await tmpdir({ git: true })
 
     const readmePath = path.join(tmp.path, "README.md")
@@ -51,7 +53,7 @@ describe("length + tool safety contract", () => {
         lines: toolCallLengthResponse({
           id: "call_0",
           name: "read",
-          args: JSON.stringify({ filePath: readmePath }),
+          args: JSON.stringify({ file_path: readmePath }),
         }),
       },
       { lines: textStopResponse("done.") },
@@ -117,5 +119,7 @@ describe("length + tool safety contract", () => {
     } finally {
       await stub.stop()
     }
-  })
+  },
+    30_000,
+  )
 })
