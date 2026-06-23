@@ -486,11 +486,7 @@ export const layer = Layer.effect(
         const composeModeBlock = composeSkillsBlock()
         const ctx = yield* InstanceState.context
         const composeCfg = (yield* config.get()).compose
-        const docsConfigured = composeCfg?.docs ?? ConfigCompose.DEFAULT_DOCS_DIR
-        const docsDir =
-          path.isAbsolute(docsConfigured) || composeCfg?.docs_absolute === true
-            ? path.resolve(ctx.worktree, docsConfigured)
-            : docsConfigured
+        const docsDir = ConfigCompose.resolveDocsDir(ctx.worktree, composeCfg)
         const composeDocsBlock = [
           "<compose_docs_dir>",
           `Save compose skill outputs: specs in \`${path.join(docsDir, "specs")}\`, plans in \`${path.join(docsDir, "plans")}\`, reports in \`${path.join(docsDir, "reports")}\`.`,

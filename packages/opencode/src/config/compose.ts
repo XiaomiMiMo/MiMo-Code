@@ -1,10 +1,11 @@
 import { Schema } from "effect"
+import path from "path"
 import { zod } from "@/util/effect-zod"
 import { withStatics } from "@/util/schema"
 
 export const Info = Schema.Struct({
   docs: Schema.optional(Schema.String).annotate({
-    description: "Directory where compose skills save specs, plans, and reports. Relative paths resolve against the project root. Defaults to docs/compose.",
+    description: "Directory where compose skills save specs, plans, and reports. Relative paths are passed to the agent prompt verbatim; set docs_absolute: true to anchor them to the project root. Defaults to docs/compose.",
   }),
   docs_absolute: Schema.optional(Schema.Boolean).annotate({
     description:
@@ -15,5 +16,11 @@ export const Info = Schema.Struct({
 export type Info = Schema.Schema.Type<typeof Info>
 
 export const DEFAULT_DOCS_DIR = "docs/compose"
+
+export function resolveDocsDir(worktree: string, cfg?: Info) {
+  const configured = cfg?.docs ?? DEFAULT_DOCS_DIR
+  if (path.isAbsolute(configured) || cfg?.docs_absolute === true) return path.resolve(worktree, configured)
+  return configured
+}
 
 export * as ConfigCompose from "./compose"
