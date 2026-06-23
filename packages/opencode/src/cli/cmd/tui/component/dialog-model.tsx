@@ -47,6 +47,11 @@ export function DialogModel(props: { providerID?: string }) {
     const showSections = showExtra() && needle.length === 0
     const favorites = connected() ? local.model.favorite() : []
     const recents = local.model.recent()
+    // A model already shown in the Favorites/Recent shortcut sections must not
+    // appear again in its provider group (show each model at most once).
+    const inShortcuts = (providerID: string, modelID: string) =>
+      favorites.some((item) => item.providerID === providerID && item.modelID === modelID) ||
+      recents.some((item) => item.providerID === providerID && item.modelID === modelID)
 
     function toOptions(items: typeof favorites, category: string) {
       if (!showSections) return []
@@ -106,23 +111,22 @@ export function DialogModel(props: { providerID?: string }) {
               onSelect(provider.id, model)
             },
           })),
-          // Favorites live in their own section, so don't repeat them here.
-          // Recents intentionally still appear in their provider group.
+          // Favorites/recents live in their own sections; don't repeat them here.
           filter((x) => {
             if (!showSections) return true
-            return !favorites.some(
-              (item) => item.providerID === x.value.providerID && item.modelID === x.value.modelID,
-            )
+            return !inShortcuts(x.value.providerID, x.value.modelID)
           }),
           sortBy(
             (x) => x.footer !== "Free",
             (x) => x.title,
           ),
         )
-        // Prepend the free mimo-auto model to the Xiaomi group when it's loaded.
+        // Prepend the free mimo-auto model to the Xiaomi group when it's loaded
+        // and not already surfaced in the Favorites/Recent sections.
         const free =
           provider.id === "xiaomi" &&
           (!props.providerID || props.providerID === provider.id) &&
+          (!showSections || !inShortcuts("mimo", "mimo-auto")) &&
           sync.data.provider.some((p) => p.id === "mimo" && "mimo-auto" in p.models)
             ? [
                 {
