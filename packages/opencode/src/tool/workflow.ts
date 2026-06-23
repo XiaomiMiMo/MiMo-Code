@@ -3,11 +3,24 @@ import DESCRIPTION from "./workflow.txt"
 import z from "zod"
 import { Effect, Fiber } from "effect"
 import { Config } from "../config"
+import { ConfigCompose } from "../config"
+import { InstanceState } from "@/effect"
 import { workflowRef } from "@/workflow/runtime-ref"
 import { BuiltinWorkflow } from "@/workflow/builtin"
 import type { SessionID } from "../session/schema"
 
 const id = "workflow"
+
+// Mirror compose.js arg normalization: a bare task string OR a JSON string both
+// collapse to an object. Used so host-side docs-dir injection can merge into args
+// regardless of how the caller serialized them.
+function parseComposeArgString(raw: string): Record<string, unknown> {
+  try {
+    const parsed = JSON.parse(raw)
+    if (typeof parsed === "object" && parsed !== null) return parsed as Record<string, unknown>
+  } catch {}
+  return { task: raw }
+}
 
 const runSchema = z.strictObject({
   operation: z.literal("run"),
@@ -111,6 +124,25 @@ export const WorkflowTool = Tool.define<typeof parameters, Metadata, Config.Serv
       return Effect.succeed(runtime)
     }
 
+    // Thread the operator-configured compose docs dir into the `compose` built-in's
+    // args, mirroring the `<compose_docs_dir>` block prompt.ts injects for the
+    // interactive compose agent. The compose guest reads `args._composeDocsDir` and
+    // tells its plan/report subagents where to write specs/plans/reports. We
+    // normalize args the same way compose.js does (object | JSON-string | bare task
+    // string) so the injection survives the AI-SDK string-serialization boundary.
+    const enrichComposeArgs = (raw: unknown) =>
+      Effect.gen(function* () {
+        const ctx = yield* InstanceState.context
+        const docs = ConfigCompose.resolveDocsDir(ctx.worktree, (yield* config.get()).compose)
+        const base =
+          typeof raw === "object" && raw !== null
+            ? (raw as Record<string, unknown>)
+            : typeof raw === "string"
+              ? parseComposeArgString(raw)
+              : {}
+        return { ...base, _composeDocsDir: docs }
+      })
+
     const run = Effect.fn("WorkflowTool.execute")(function* (
       input: z.infer<typeof parameters>,
       ctx: Tool.Context<Metadata>,
@@ -145,7 +177,7 @@ export const WorkflowTool = Tool.define<typeof parameters, Metadata, Config.Serv
           script,
           sessionID: ctx.sessionID as SessionID,
           parentActorID: ctx.agent ?? "main",
-          args: input.args,
+          args: input.name === "compose" ? yield* enrichComposeArgs(input.args) : input.args,
           workspace: input.workspace,
           maxConcurrentAgents: cfg.workflow?.maxConcurrentAgents,
           scriptDeadlineMs: cfg.workflow?.scriptDeadlineMs,
