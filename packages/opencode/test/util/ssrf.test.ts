@@ -100,12 +100,12 @@ describe("safeFetch", () => {
   test("follows safe redirects", async () => {
     const server = Bun.serve({
       port: 0,
-      fetch(req) {
+      fetch(req): Response {
         const url = new URL(req.url)
         if (url.pathname === "/redirect") {
           return new Response(null, {
             status: 302,
-            headers: { Location: `http://127.0.0.1:${server.port}/final` },
+            headers: { Location: `http://127.0.0.1:${url.port}/final` },
           })
         }
         return new Response("ok")
@@ -123,10 +123,11 @@ describe("safeFetch", () => {
   test("rejects too many redirects", async () => {
     const server = Bun.serve({
       port: 0,
-      fetch(req) {
+      fetch(req): Response {
+        const url = new URL(req.url)
         return new Response(null, {
           status: 302,
-          headers: { Location: `http://127.0.0.1:${server.port}/loop` },
+          headers: { Location: `http://127.0.0.1:${url.port}/loop` },
         })
       },
     })
