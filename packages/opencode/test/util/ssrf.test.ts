@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test"
+import { describe, expect, test, mock, afterEach } from "bun:test"
 import { assertSafeUrl, safeFetch } from "../../src/util/ssrf"
 
 describe("assertSafeUrl", () => {
@@ -80,61 +80,42 @@ describe("assertSafeUrl", () => {
 })
 
 describe("safeFetch", () => {
+  const originalFetch = globalThis.fetch
+
+  afterEach(() => {
+    globalThis.fetch = originalFetch
+  })
+
   test("blocks redirect to private IP", async () => {
-    const server = Bun.serve({
-      port: 0,
-      fetch(req) {
-        return new Response(null, {
-          status: 302,
-          headers: { Location: "http://169.254.169.254/latest/meta-data/" },
-        })
-      },
-    })
-    try {
-      await expect(safeFetch(`http://127.0.0.1:${server.port}/`)).rejects.toThrow("SSRF protection")
-    } finally {
-      server.stop()
-    }
+    globalThis.fetch = mock(async () => new Response(null, {
+      status: 302,
+      headers: { Location: "http://169.254.169.254/latest/meta-data/" },
+    })) as any
+    await expect(safeFetch("http://127.0.0.1:8080/")).rejects.toThrow("SSRF protection")
   })
 
   test("follows safe redirects", async () => {
-    const server = Bun.serve({
-      port: 0,
-      fetch(req): Response {
-        const url = new URL(req.url)
-        if (url.pathname === "/redirect") {
-          return new Response(null, {
-            status: 302,
-            headers: { Location: `http://127.0.0.1:${url.port}/final` },
-          })
-        }
-        return new Response("ok")
-      },
-    })
-    try {
-      const res = await safeFetch(`http://127.0.0.1:${server.port}/redirect`)
-      expect(res.status).toBe(200)
-      expect(await res.text()).toBe("ok")
-    } finally {
-      server.stop()
-    }
+    let callCount = 0
+    globalThis.fetch = mock(async () => {
+      callCount++
+      if (callCount === 1) {
+        return new Response(null, {
+          status: 302,
+          headers: { Location: "http://127.0.0.1:9090/final" },
+        })
+      }
+      return new Response("ok", { status: 200 })
+    }) as any
+    const res = await safeFetch("http://127.0.0.1:8080/redirect")
+    expect(res.status).toBe(200)
+    expect(await res.text()).toBe("ok")
   })
 
   test("rejects too many redirects", async () => {
-    const server = Bun.serve({
-      port: 0,
-      fetch(req): Response {
-        const url = new URL(req.url)
-        return new Response(null, {
-          status: 302,
-          headers: { Location: `http://127.0.0.1:${url.port}/loop` },
-        })
-      },
-    })
-    try {
-      await expect(safeFetch(`http://127.0.0.1:${server.port}/loop`)).rejects.toThrow("too many redirects")
-    } finally {
-      server.stop()
-    }
+    globalThis.fetch = mock(async () => new Response(null, {
+      status: 302,
+      headers: { Location: "http://127.0.0.1:8080/loop" },
+    })) as any
+    await expect(safeFetch("http://127.0.0.1:8080/loop")).rejects.toThrow("too many redirects")
   })
 })
