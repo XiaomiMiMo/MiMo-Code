@@ -1,5 +1,6 @@
 import { PlanExitTool } from "./plan"
 import { GoalTool } from "./goal"
+import { Goal } from "../session/goal"
 import { Session } from "../session"
 import { QuestionTool } from "./question"
 import { BashTool, bashDescription } from "./bash"
@@ -538,6 +539,13 @@ export const defaultLayer = Layer.suspend(() =>
     Layer.provide(Agent.defaultLayer),
     Layer.provide(Session.defaultLayer),
     Layer.provide(Provider.defaultLayer),
+    // scaffold PI-62 hotfix: GoalTool (builtin) requires @opencode/SessionGoal at
+    // registry build time. Provide the SAME Goal.defaultLayer reference used in
+    // app-runtime.ts and session/prompt.ts — Effect memoizes by reference within a
+    // single root build, so all three share ONE Goal instance (the goalGate in
+    // prompt.ts reads the goal this tool sets). Without this the main TUI crashes
+    // on start with "Service not found: @opencode/SessionGoal".
+    Layer.provide(Goal.defaultLayer),
     Layer.provide(LSP.defaultLayer),
     Layer.provide(Instruction.defaultLayer),
     Layer.provide(AppFileSystem.defaultLayer),
