@@ -87,7 +87,7 @@ export const dict = {
   "tui.tips.command_palette":
     "Pulsa {highlight}Ctrl+P{/highlight} para ver todas las acciones y comandos disponibles",
   "tui.tips.login":
-    "Ejecuta {highlight}/login{/highlight} para iniciar sesión y usar tu plan de tokens",
+    "Ejecuta {highlight}/login{/highlight} para iniciar sesión y usar un Token Plan o configurar tu propia API key",
   "tui.tips.connect":
     "Ejecuta {highlight}/connect{/highlight} para elegir tu proveedor LLM y añadir claves API",
   "tui.tips.leader":
@@ -326,6 +326,15 @@ export const dict = {
   "tui.command.consent.revoke.title": "Revocar el acuerdo de modelo gratuito",
   "tui.consent.revoked": "Acuerdo de modelo gratuito revocado: se te pedirá aceptarlo de nuevo",
   "tui.dialog.select.placeholder": "Buscar",
+  "tui.dialog.model.login_hint": "Consejo: ejecuta /login para iniciar sesión antes de cambiar de modelo",
+  "tui.dialog.token_plan.title": "Suscríbete a un Token Plan o espera en la cola",
+  "tui.dialog.token_plan.line1":
+    "En el modo gratuito, las solicitudes están en cola. Para un servicio estable y de calidad,",
+  "tui.dialog.token_plan.subscribe": "suscríbete a ",
+  "tui.dialog.token_plan.link": "MiMo Token Plan",
+  "tui.dialog.token_plan.link_suffix": ".",
+  "tui.dialog.token_plan.line3": "También puedes ejecutar /login para configurar tu propia clave API.",
+  "tui.dialog.token_plan.confirm": "Entendido",
   "tui.dialog.select.no_results": "No se encontraron resultados",
   "tui.dialog.prompt.placeholder": "Introduce texto",
   "tui.dialog.prompt.busy": "Trabajando...",

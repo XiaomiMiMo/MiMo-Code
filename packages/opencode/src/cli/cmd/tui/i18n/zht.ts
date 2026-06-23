@@ -22,6 +22,9 @@ export const dict = {
   "language.th": "ไทย",
   "language.tr": "Türkçe",
 
+  // Provider display names
+  "provider.name.xiaomi": "小米",
+
   // Prompt placeholders
   "tui.prompt.placeholder.normal": '問點什麼…… "{{example}}"',
   "tui.prompt.placeholder.shell": '執行指令…… "{{example}}"',
@@ -69,7 +72,7 @@ export const dict = {
   "tui.tips.export": "按 {highlight}Ctrl+X X{/highlight} 或 {highlight}/export{/highlight} 把對話儲存為 Markdown",
   "tui.tips.copy_last": "按 {highlight}Ctrl+X Y{/highlight} 將助理最後一條訊息複製到剪貼簿",
   "tui.tips.command_palette": "按 {highlight}Ctrl+P{/highlight} 檢視所有可用動作與指令",
-  "tui.tips.login": "執行 {highlight}/login{/highlight} 登入使用 Token 套餐",
+  "tui.tips.login": "執行 {highlight}/login{/highlight} 登入使用 Token Plan或配置自己的API key",
   "tui.tips.connect": "執行 {highlight}/connect{/highlight} 選擇 LLM 服務商並新增 API 金鑰",
   "tui.tips.leader": "前導鍵是 {highlight}Ctrl+X{/highlight}，搭配其他按鍵可快速觸發動作",
   "tui.tips.f2": "按 {highlight}F2{/highlight} 在最近使用的模型之間快速切換",
@@ -249,6 +252,14 @@ export const dict = {
   "tui.command.consent.revoke.title": "撤銷免費模型協議",
   "tui.consent.revoked": "已撤銷免費模型協議 — 下次使用時將再次請求同意",
   "tui.dialog.select.placeholder": "搜尋",
+  "tui.dialog.model.login_hint": "提示：先 /login 登入再切換模型",
+  "tui.dialog.token_plan.title": "訂閱token plan或排隊等待",
+  "tui.dialog.token_plan.line1": "免費模式下目前需要排隊等待，若想穩定取得高品質服務，",
+  "tui.dialog.token_plan.subscribe": "歡迎訂閱 ",
+  "tui.dialog.token_plan.link": "MiMo Token Plan",
+  "tui.dialog.token_plan.link_suffix": "。",
+  "tui.dialog.token_plan.line3": "你也可以透過 /login 來設定自己的 API key。",
+  "tui.dialog.token_plan.confirm": "知道了",
   "tui.dialog.select.no_results": "找不到結果",
   "tui.dialog.prompt.placeholder": "輸入文字",
   "tui.dialog.prompt.busy": "處理中...",

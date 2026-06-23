@@ -18,6 +18,9 @@ export const dict: Record<string, string> = {
   "language.th": "ไทย",
   "language.tr": "Türkçe",
 
+  // Provider display names (override server-provided names per locale)
+  "provider.name.xiaomi": "Xiaomi",
+
   // Prompt placeholders
   "tui.prompt.placeholder.normal": "Type your message... (type / for commands)",
   "tui.prompt.placeholder.shell": 'Run a command... "{{example}}"',
@@ -73,7 +76,7 @@ export const dict: Record<string, string> = {
     "Press {highlight}Ctrl+X X{/highlight} or {highlight}/export{/highlight} to save the conversation as Markdown",
   "tui.tips.copy_last": "Press {highlight}Ctrl+X Y{/highlight} to copy the assistant's last message to clipboard",
   "tui.tips.command_palette": "Press {highlight}Ctrl+P{/highlight} to see all available actions and commands",
-  "tui.tips.login": "Run {highlight}/login{/highlight} to sign in and use your token plan",
+  "tui.tips.login": "Run {highlight}/login{/highlight} to sign in and use a Token Plan or configure your own API key",
   "tui.tips.connect": "Run {highlight}/connect{/highlight} to choose your LLM provider and add API keys",
   "tui.tips.leader": "The leader key is {highlight}Ctrl+X{/highlight}; combine with other keys for quick actions",
   "tui.tips.f2": "Press {highlight}F2{/highlight} to quickly switch between recently used models",
@@ -260,6 +263,14 @@ export const dict: Record<string, string> = {
   "tui.command.consent.revoke.title": "Revoke free-model agreement",
   "tui.consent.revoked": "Free-model agreement revoked — you'll be asked to agree again",
   "tui.dialog.select.placeholder": "Search",
+  "tui.dialog.model.login_hint": "Tip: run /login to sign in before switching models",
+  "tui.dialog.token_plan.title": "Subscribe to a Token Plan or wait in queue",
+  "tui.dialog.token_plan.line1": "In free mode, requests are currently queued. For stable, high-quality service,",
+  "tui.dialog.token_plan.subscribe": "subscribe to ",
+  "tui.dialog.token_plan.link": "MiMo Token Plan",
+  "tui.dialog.token_plan.link_suffix": ".",
+  "tui.dialog.token_plan.line3": "You can also run /login to configure your own API key.",
+  "tui.dialog.token_plan.confirm": "Got it",
   "tui.dialog.select.no_results": "No results found",
   "tui.dialog.prompt.placeholder": "Enter text",
   "tui.dialog.prompt.busy": "Working...",

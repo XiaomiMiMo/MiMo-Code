@@ -19,5 +19,6 @@ export function name(
   providerID: string,
   modelID: string,
 ) {
+  if (modelID === "mimo-auto") return "MiMo Auto（MiMo-V2.5 限免中）"
   return get(list, providerID, modelID)?.name ?? modelID
 }

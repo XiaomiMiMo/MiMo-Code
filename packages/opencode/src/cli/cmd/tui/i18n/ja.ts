@@ -22,6 +22,9 @@ export const dict = {
   "language.th": "ไทย",
   "language.tr": "Türkçe",
 
+  // Provider display names
+  "provider.name.xiaomi": "シャオミ",
+
   // Prompt placeholders
   "tui.prompt.placeholder.normal": '何でも聞いてください... "{{example}}"',
   "tui.prompt.placeholder.shell": 'コマンドを実行... "{{example}}"',
@@ -77,7 +80,7 @@ export const dict = {
   "tui.tips.copy_last":
     "{highlight}Ctrl+X Y{/highlight} でアシスタントの最後のメッセージをクリップボードにコピーします",
   "tui.tips.command_palette": "{highlight}Ctrl+P{/highlight} で利用可能なすべてのコマンドを表示します",
-  "tui.tips.login": "{highlight}/login{/highlight} でサインインしてトークンプランを利用します",
+  "tui.tips.login": "{highlight}/login{/highlight} でサインインして Token Plan を利用するか、独自の API キーを設定します",
   "tui.tips.connect": "{highlight}/connect{/highlight} で LLM プロバイダを選択して API キーを追加します",
   "tui.tips.leader": "リーダーキーは {highlight}Ctrl+X{/highlight}。他のキーと組み合わせてクイック操作ができます",
   "tui.tips.f2": "{highlight}F2{/highlight} で最近使ったモデルを素早く切り替えます",
@@ -263,6 +266,15 @@ export const dict = {
   "tui.command.consent.revoke.title": "無料モデルの同意を取り消す",
   "tui.consent.revoked": "無料モデルの同意を取り消しました — 次回利用時に再度同意を求めます",
   "tui.dialog.select.placeholder": "検索",
+  "tui.dialog.model.login_hint": "ヒント：モデルを切り替える前に /login でログインしてください",
+  "tui.dialog.token_plan.title": "Token Plan を購読するか順番待ち",
+  "tui.dialog.token_plan.line1":
+    "無料モードでは現在順番待ちが必要です。安定した高品質なサービスをご利用いただくには、",
+  "tui.dialog.token_plan.subscribe": "",
+  "tui.dialog.token_plan.link": "MiMo Token Plan",
+  "tui.dialog.token_plan.link_suffix": " のご購読をおすすめします。",
+  "tui.dialog.token_plan.line3": "/login で独自の API キーを設定することもできます。",
+  "tui.dialog.token_plan.confirm": "了解",
   "tui.dialog.select.no_results": "結果が見つかりません",
   "tui.dialog.prompt.placeholder": "テキストを入力",
   "tui.dialog.prompt.busy": "処理中...",

@@ -22,6 +22,9 @@ export const dict = {
   "language.th": "ไทย",
   "language.tr": "Türkçe",
 
+  // Provider display names
+  "provider.name.xiaomi": "Сяоми",
+
   // Prompt placeholders
   "tui.prompt.placeholder.normal": 'Спросите что угодно... "{{example}}"',
   "tui.prompt.placeholder.shell": 'Выполните команду... "{{example}}"',
@@ -87,7 +90,7 @@ export const dict = {
   "tui.tips.command_palette":
     "Нажмите {highlight}Ctrl+P{/highlight}, чтобы посмотреть все доступные действия и команды",
   "tui.tips.login":
-    "Выполните {highlight}/login{/highlight}, чтобы войти и использовать ваш тарифный план токенов",
+    "Выполните {highlight}/login{/highlight}, чтобы войти и использовать Token Plan или настроить собственный API-ключ",
   "tui.tips.connect":
     "Выполните {highlight}/connect{/highlight}, чтобы выбрать LLM-провайдера и добавить API-ключи",
   "tui.tips.leader":
@@ -330,6 +333,15 @@ export const dict = {
   "tui.command.consent.revoke.title": "Отозвать согласие на бесплатную модель",
   "tui.consent.revoked": "Согласие на бесплатную модель отозвано — потребуется принять снова",
   "tui.dialog.select.placeholder": "Поиск",
+  "tui.dialog.model.login_hint": "Подсказка: выполните /login для входа перед сменой модели",
+  "tui.dialog.token_plan.title": "Оформите Token Plan или подождите в очереди",
+  "tui.dialog.token_plan.line1":
+    "В бесплатном режиме запросы сейчас в очереди. Для стабильного и качественного сервиса",
+  "tui.dialog.token_plan.subscribe": "оформите ",
+  "tui.dialog.token_plan.link": "MiMo Token Plan",
+  "tui.dialog.token_plan.link_suffix": ".",
+  "tui.dialog.token_plan.line3": "Вы также можете выполнить /login, чтобы настроить собственный API-ключ.",
+  "tui.dialog.token_plan.confirm": "Понятно",
   "tui.dialog.select.no_results": "Ничего не найдено",
   "tui.dialog.prompt.placeholder": "Введите текст",
   "tui.dialog.prompt.busy": "Выполняется...",
