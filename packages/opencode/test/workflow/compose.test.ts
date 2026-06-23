@@ -15,7 +15,7 @@ describe("compose script structure", () => {
     expect(parsed.ok).toBe(true)
   })
 
-  test("declares schemas for every phase", () => {
+  test("declares schemas for every structured phase", () => {
     const script = composeScript()
     expect(script).toContain("BRAINSTORM_SHAPE")
     expect(script).toContain("CLASSIFY_SHAPE")
@@ -23,14 +23,26 @@ describe("compose script structure", () => {
     expect(script).toContain("INTEGRATE_SHAPE")
     expect(script).toContain("VERIFY_SHAPE")
     expect(script).toContain("REVIEW_SHAPE")
-    expect(script).toContain("ITERATION_REPORT_SHAPE")
-    expect(script).toContain("FINAL_REPORT_SHAPE")
     expect(script).toContain("MERGE_SHAPE")
+  })
+
+  test("design and report phases write files via agent (no output schema)", () => {
+    const script = composeScript()
+    // The design-write and report agents must NOT use a schema (a schema biases the
+    // agent into emitting JSON instead of writing the file). They are dispatched by
+    // label and gated by exists().
+    expect(script).toContain('label: "design:"')
+    expect(script).toContain('label: "design-extract:"')
+    expect(script).toContain("exists(SPEC_PATH)")
+    expect(script).toContain("exists(PLAN_PATH)")
+    expect(script).toContain("exists(REPORT_PATH)")
   })
 })
 
 // Default agent stub that drives a clean happy path. Implement/fix agents return a
-// `_worktree` (changed) so the integrate path is exercised. Override per-test.
+// `_worktree` (changed) so the integrate path is exercised. Design-write and report
+// agents have no schema (they write files); the harness's exists() returns true to
+// simulate the agent having written them. Override per-test.
 const happyAgent = (prompt: string, opts?: any) => {
   const o = opts as any
   if (o?.schema?.properties?.context) return { context: { projectType: "Bun TS", conventions: [], recentChanges: [], relevantFiles: [] }, assumptions: [] }
@@ -39,19 +51,23 @@ const happyAgent = (prompt: string, opts?: any) => {
   if (o?.schema?.properties?.merged) return { merged: [{ taskId: "t1", branch: "b", sha: "s" }], conflicts: [], skipped_pristine: [] }
   if (o?.schema?.properties?.allPassed) return { typecheck: "ok", tests: { passed: 1, failed: 0 }, build: "ok", allPassed: true }
   if (o?.schema?.properties?.readyToMerge) return { critical: [], important: [], minor: [], readyToMerge: true }
-  if (o?.schema?.properties?.iteration) return { iteration: 1, what_changed: "x" }
-  if (o?.schema?.properties?.path) return { path: "docs/compose/reports/x.md", sha: "rsha" }
   if (o?.schema?.properties?.committed) return { committed: true, sha: "abc", action: "commit" }
   if (o?.label && String(o.label).startsWith("implement")) return { _worktree: { branch: "wt-" + o.label, directory: "/tmp/" + o.label, changed: true } }
   if (o?.label && String(o.label).startsWith("fix")) return { _worktree: { branch: "wt-" + o.label, directory: "/tmp/" + o.label, changed: true } }
   return "ok"
 }
 
-const runCompose = async (args: unknown, agentImpl: (prompt: string, opts?: any) => unknown = happyAgent) => {
+const runCompose = async (
+  args: unknown,
+  agentImpl: (prompt: string, opts?: any) => unknown = happyAgent,
+  opts?: { exists?: (p: string) => boolean },
+) => {
   const parsed = parseMeta(composeScript())
   if (!parsed.ok) throw new Error(parsed.error)
   const calls: { prompt: string; opts?: any }[] = []
   const phases: string[] = []
+  const written: string[] = []
+  const existsImpl = opts?.exists ?? (() => true)
   const hooks = {
     agent: async (prompt: unknown, opts?: unknown) => {
       const p = String(prompt)
@@ -63,13 +79,13 @@ const runCompose = async (args: unknown, agentImpl: (prompt: string, opts?: any)
     log: () => undefined,
     workflow: async () => null,
     readFile: async () => null,
-    writeFile: async () => undefined,
-    exists: async () => false,
+    writeFile: async (p: unknown) => { written.push(String(p)) },
+    exists: async (p: unknown) => existsImpl(String(p)),
     glob: async () => [],
   }
   const body = `globalThis.args = ${JSON.stringify(args)};\n` + parsed.body
   const result = await evalScript(body, hooks)
-  return { result, calls, phases }
+  return { result, calls, phases, written }
 }
 
 describe("compose phase 0: Brainstorm", () => {
@@ -89,19 +105,46 @@ describe("compose phase 0: Brainstorm", () => {
 })
 
 describe("compose docs dir injection", () => {
-  test("design + report prompts carry the configured docs dir", async () => {
+  test("design-write + report prompts carry the configured docs dir", async () => {
     const { calls } = await runCompose({ task: "x", type: "feature", _composeDocsDir: "custom/docs" })
-    const design = calls.find((c) => c.opts?.schema?.properties?.tasks)
-    expect(design!.prompt).toContain("custom/docs/specs")
-    expect(design!.prompt).toContain("custom/docs/plans")
-    const report = calls.find((c) => c.opts?.schema?.properties?.path)
+    const designWrite = calls.find((c) => c.opts?.label && String(c.opts.label).startsWith("design:"))
+    expect(designWrite!.prompt).toContain("custom/docs/specs")
+    expect(designWrite!.prompt).toContain("custom/docs/plans")
+    const report = calls.find((c) => c.opts?.label === "final-report")
     expect(report!.prompt).toContain("custom/docs/reports")
   })
 
   test("defaults to docs/compose when host did not inject", async () => {
     const { calls } = await runCompose({ task: "x", type: "feature" })
-    const design = calls.find((c) => c.opts?.schema?.properties?.tasks)
-    expect(design!.prompt).toContain("docs/compose/specs")
+    const designWrite = calls.find((c) => c.opts?.label && String(c.opts.label).startsWith("design:"))
+    expect(designWrite!.prompt).toContain("docs/compose/specs")
+  })
+})
+
+describe("compose docs are written by the AGENT, gated by the workflow", () => {
+  test("design dispatches a write agent (no schema) then a structured extract agent", async () => {
+    const { calls } = await runCompose({ task: "x", type: "feature" })
+    const write = calls.find((c) => c.opts?.label && String(c.opts.label).startsWith("design:"))
+    const extract = calls.find((c) => c.opts?.label && String(c.opts.label).startsWith("design-extract:"))
+    expect(write).toBeDefined()
+    expect(write!.opts.schema).toBeUndefined() // agent must be free to use write tool
+    expect(write!.prompt).toContain("write")
+    expect(extract).toBeDefined()
+    expect(extract!.opts.schema?.properties?.tasks).toBeDefined() // extraction is structured
+  })
+
+  test("when agent skips the write, workflow re-dispatches the design agent (does not write files itself)", async () => {
+    let designWrites = 0
+    const { written } = await runCompose(
+      { task: "x", type: "feature" },
+      (prompt, opts) => {
+        if (opts?.label && String(opts.label).startsWith("design:")) designWrites++
+        return happyAgent(prompt, opts)
+      },
+      { exists: () => false }, // simulate: files never appear
+    )
+    expect(designWrites).toBe(2) // initial + one re-dispatch
+    expect(written).toHaveLength(0) // the WORKFLOW never writes files — only agents do
   })
 })
 
@@ -132,31 +175,30 @@ describe("compose phase 2: Design", () => {
     ["refactor", "compose:plan"],
     ["bugfix", "compose:debug"],
     ["feedback", "compose:feedback"],
-  ])("type=%s routes to %s", async (type, skill) => {
+  ])("type=%s routes the design-write agent to %s", async (type, skill) => {
     const { calls } = await runCompose({ task: "x", type }, (prompt, opts) => {
       if (opts?.schema?.properties?.context) return { context: { projectType: "x", conventions: [], recentChanges: [], relevantFiles: [] }, assumptions: [] }
       if (opts?.schema?.properties?.tasks) return { tasks: [{ id: "t1", description: "d", acceptance: "a" }] }
-      return null
+      return "ok"
     })
-    const designCall = calls.find((c) => c.opts?.schema?.properties?.tasks)
-    expect(designCall).toBeDefined()
-    expect(designCall!.prompt).toContain(skill)
+    const designWrite = calls.find((c) => c.opts?.label && String(c.opts.label).startsWith("design:"))
+    expect(designWrite).toBeDefined()
+    expect(designWrite!.prompt).toContain(skill)
   })
 
-  test("design returning null surfaces design-failed", async () => {
+  test("extract returning null surfaces design-failed", async () => {
     const { result } = await runCompose({ task: "x", type: "feature" }, (prompt, opts) => {
       if (opts?.schema?.properties?.context) return { context: { projectType: "x", conventions: [], recentChanges: [], relevantFiles: [] }, assumptions: [] }
-      return null
+      if (opts?.schema?.properties?.tasks) return null // extraction fails
+      return "ok"
     })
     expect(result).toMatchObject({ error: "design-failed" })
   })
 })
 
 describe("compose phase 3: parallelism, dependencies, worktrees", () => {
-  test("independent tasks land in one batch dispatched in parallel with worktree isolation", async () => {
-    let maxConcurrent = 0
-    let active = 0
-    const { result, calls } = await runCompose({ task: "x", type: "feature" }, (prompt, opts) => {
+  test("independent tasks land in one batch dispatched in parallel; worktree isolation opt-in", async () => {
+    const { result, calls } = await runCompose({ task: "x", type: "feature", isolate_worktrees: true }, (prompt, opts) => {
       if (opts?.schema?.properties?.context) return { context: { projectType: "x", conventions: [], recentChanges: [], relevantFiles: [] }, assumptions: [] }
       if (opts?.schema?.properties?.tasks) return { tasks: [
         { id: "T1", description: "d", acceptance: "a", dependsOn: [] },
@@ -167,19 +209,23 @@ describe("compose phase 3: parallelism, dependencies, worktrees", () => {
       if (opts?.schema?.properties?.merged) return { merged: [], conflicts: [], skipped_pristine: [] }
       if (opts?.schema?.properties?.allPassed) return { typecheck: "ok", tests: { passed: 1, failed: 0 }, build: "ok", allPassed: true }
       if (opts?.schema?.properties?.readyToMerge) return { critical: [], important: [], minor: [], readyToMerge: true }
-      if (opts?.schema?.properties?.iteration) return { iteration: 1, what_changed: "x" }
-      if (opts?.schema?.properties?.path) return { path: "p", sha: "s" }
       if (opts?.schema?.properties?.committed) return { committed: true, sha: "abc", action: "commit" }
-      if (opts?.label && String(opts.label).startsWith("implement")) {
-        active++; maxConcurrent = Math.max(maxConcurrent, active); active--
-        return { _worktree: { branch: "b", directory: "/tmp/d", changed: true } }
-      }
+      if (opts?.label && String(opts.label).startsWith("implement")) return { _worktree: { branch: "b", directory: "/tmp/d", changed: true } }
       return "ok"
     })
     expect((result as any).batches).toEqual([["T1", "T2", "T3", "T4"]])
     const implCalls = calls.filter((c) => c.opts?.label && String(c.opts.label).startsWith("implement:"))
     expect(implCalls).toHaveLength(4)
     for (const c of implCalls) expect(c.opts.isolation).toBe("worktree")
+  })
+
+  test("default mode (no isolate_worktrees) runs implement WITHOUT worktree isolation and skips integrate", async () => {
+    const { result, calls } = await runCompose({ task: "x", type: "feature" })
+    const implCalls = calls.filter((c) => c.opts?.label && String(c.opts.label).startsWith("implement:"))
+    expect(implCalls.length).toBeGreaterThan(0)
+    for (const c of implCalls) expect(c.opts.isolation).toBeUndefined() // runs in main workspace
+    expect(calls.find((c) => c.opts?.label === "integrate")).toBeUndefined() // nothing to integrate
+    expect(result).not.toMatchObject({ error: expect.anything() })
   })
 
   test("dependency chain produces sequential batches in order", async () => {
@@ -208,8 +254,8 @@ describe("compose phase 3: parallelism, dependencies, worktrees", () => {
     expect((result as any).cycleNodes).toEqual(expect.arrayContaining(["T1", "T2"]))
   })
 
-  test("integrate agent dispatched with kept worktrees", async () => {
-    const { calls } = await runCompose({ task: "x", type: "feature" })
+  test("integrate agent dispatched with kept worktrees when isolated", async () => {
+    const { calls } = await runCompose({ task: "x", type: "feature", isolate_worktrees: true })
     const integrate = calls.find((c) => c.opts?.label === "integrate")
     expect(integrate).toBeDefined()
     expect(integrate!.opts.schema.properties.merged).toBeDefined()
@@ -262,13 +308,16 @@ describe("compose phase 3: TDD loop", () => {
     expect(debugCalls).toBe(2)
   })
 
-  test("one successful iteration writes one iteration-report", async () => {
+  test("one successful iteration writes one iteration-report (agent dispatched by label, no schema)", async () => {
     let reportCalls = 0
-    await runCompose({ task: "x", type: "feature" }, (prompt, opts) => {
-      if (opts?.schema?.properties?.iteration) { reportCalls++; return { iteration: 1, what_changed: "x" } }
+    const { calls } = await runCompose({ task: "x", type: "feature" }, (prompt, opts) => {
+      if (opts?.label && String(opts.label).startsWith("iteration-report:")) reportCalls++
       return happyAgent(prompt, opts)
     })
     expect(reportCalls).toBe(1)
+    const ir = calls.find((c) => c.opts?.label && String(c.opts.label).startsWith("iteration-report:"))
+    expect(ir!.opts.schema).toBeUndefined() // report agent writes a file, not JSON
+    expect(ir!.prompt).toContain("write")
   })
 })
 
@@ -288,7 +337,7 @@ describe("compose phases 4-5: Review + Fix loop", () => {
 
   test("review critical, fix succeeds on iteration 1 → exits loop, merges", async () => {
     let reviewCalls = 0
-    const { result, calls } = await runCompose({ task: "x", type: "feature" }, (prompt, opts) => {
+    const { result, calls } = await runCompose({ task: "x", type: "feature", isolate_worktrees: true }, (prompt, opts) => {
       if (opts?.schema?.properties?.readyToMerge) {
         reviewCalls++
         return reviewCalls === 1
@@ -326,8 +375,8 @@ describe("compose phase 6: Final report", () => {
 
   test("skip_report short-circuits iteration + final report writes", async () => {
     const { calls } = await runCompose({ task: "x", type: "feature", skip_report: true })
-    expect(calls.find((c) => c.opts?.schema?.properties?.iteration)).toBeUndefined()
-    expect(calls.find((c) => c.opts?.schema?.properties?.path)).toBeUndefined()
+    expect(calls.find((c) => c.opts?.label && String(c.opts.label).startsWith("iteration-report:"))).toBeUndefined()
+    expect(calls.find((c) => c.opts?.label === "final-report")).toBeUndefined()
   })
 })
 

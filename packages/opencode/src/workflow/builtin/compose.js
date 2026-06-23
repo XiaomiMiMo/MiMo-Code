@@ -119,30 +119,6 @@ const REVIEW_SHAPE = {
   },
 }
 
-const ITERATION_REPORT_SHAPE = {
-  type: "object",
-  required: ["iteration", "what_changed"],
-  properties: {
-    iteration: { type: "number" },
-    what_changed: { type: "string" },
-    files_added: { type: "array", items: { type: "string" } },
-    files_modified: { type: "array", items: { type: "string" } },
-    tests_passed: { type: "number" },
-    tests_failed: { type: "number" },
-    notes: { type: "string" },
-  },
-}
-
-const FINAL_REPORT_SHAPE = {
-  type: "object",
-  required: ["path"],
-  properties: {
-    path: { type: "string" },
-    sha: { type: "string" },
-    summary: { type: "string" },
-  },
-}
-
 const MERGE_SHAPE = {
   type: "object",
   required: ["committed", "action"],
@@ -174,6 +150,11 @@ const VALID_TYPES = ["feature", "bugfix", "refactor", "feedback"]
 const argType = typeof _argsObj.type === "string" ? _argsObj.type : ""
 const SKIP_BRAINSTORM = _argsObj.skip_brainstorm === true
 const SKIP_REPORT = _argsObj.skip_report === true
+// Per-task worktree isolation is OPT-IN. Default OFF: implement/fix agents run in
+// the main workspace so their writes materialize directly (and verify sees them).
+// The worktree-isolation runtime path can leave tasks "pristine" (writes not landing
+// in the worktree) in some environments; opt in only when that path is known-good.
+const ISOLATE = _argsObj.isolate_worktrees === true
 const MAX_CONCURRENT =
   typeof _argsObj.maxConcurrent === "number" && _argsObj.maxConcurrent > 0 ? _argsObj.maxConcurrent : DEFAULT_MAX_CONCURRENT
 
@@ -265,23 +246,50 @@ const SKILL_BY_TYPE = {
 // ---------------------------------------------------------------------------
 phase("Design")
 const designSkill = SKILL_BY_TYPE[type] || "compose:plan"
-const design = await agent(
-  "Apply the `" + designSkill + "` skill to the task below. Use the `skill` tool to load the skill before working.\n\n" +
+const SPEC_PATH = SPECS_DIR + "/" + FEATURE_NAME + ".md"
+const PLAN_PATH = PLANS_DIR + "/" + FEATURE_NAME + ".md"
+
+// Step 1 — the AGENT writes the spec + plan files. The workflow does NOT write
+// them; it only gates on existence and re-dispatches the agent if it skipped the
+// write. No `schema` here so the agent is free to use its write/skill tools and
+// isn't biased into emitting JSON instead of doing the work.
+const runDesignWrite = (sharpen) => agent(
+  "Apply the `" + designSkill + "` skill to the task below. Use the `skill` tool to load the skill FIRST, then follow it.\n\n" +
   docsBlock + "\n\n" +
   "## Task\n" + TASK + "\n\n" +
   "## Project context (from brainstorm)\n" + contextDigest + "\n\n" +
-  "## What to produce\n" +
-  "Write the spec/plan to the docs dirs above per the skill, then return a task list of bite-sized work items, " +
-  "each with id, description, and acceptance criteria. Optionally list the files each task touches.\n" +
-  "Mark independent tasks with empty `dependsOn`. Mark a task that needs another committed first with that task's id in `dependsOn`. " +
-  "No cycles in dependsOn.\n\n" +
+  "## Your deliverable (REQUIRED — this is the whole job)\n" +
+  "Use the `write` tool to create BOTH of these files on disk:\n" +
+  "1. Spec: `" + SPEC_PATH + "`\n" +
+  "2. Plan: `" + PLAN_PATH + "` — a bite-sized task list per the skill, each task with id, description, acceptance, optional files, and `dependsOn` (empty for independent tasks; a prerequisite task id otherwise; no cycles).\n\n" +
+  (sharpen ? "## You did NOT write the required files last time. Write them NOW with the write tool before finishing.\n\n" : "") +
+  "Do the writes with the `write` tool. Do not just describe them.",
+  { label: "design:" + type, phase: "Design" }
+)
+await runDesignWrite(false)
+// Gate: the agent owns the writes; the workflow only verifies they happened and
+// re-dispatches the agent once if not. The workflow itself never writes the files.
+if (!(await exists(SPEC_PATH)) || !(await exists(PLAN_PATH))) {
+  await runDesignWrite(true)
+}
+const specWritten = await exists(SPEC_PATH)
+const planWritten = await exists(PLAN_PATH)
+
+// Step 2 — structured extraction: a separate agent reads the plan the previous
+// agent wrote and returns the machine-usable task list. Schema lives here, where
+// JSON-only is exactly what we want — no file work expected in this call.
+const design = await agent(
+  "Read the implementation plan at `" + PLAN_PATH + "` (use the `read` tool) and extract its task list.\n\n" +
+  (planWritten ? "" : "## The plan file is missing — derive the task list from the task below instead.\n## Task\n" + TASK + "\n\n") +
+  "Return a task list of bite-sized work items, each with id, description, acceptance, optional files, and `dependsOn` " +
+  "(empty for independent tasks; a prerequisite task id otherwise; no cycles).\n\n" +
   "Return structured output only.",
-  { label: "design:" + type, phase: "Design", schema: DESIGN_SHAPE }
+  { label: "design-extract:" + type, phase: "Design", schema: DESIGN_SHAPE }
 )
 if (!design) {
-  return { error: "design-failed", type, classification, brainstorm }
+  return { error: "design-failed", type, classification, brainstorm, docs: { specWritten, planWritten } }
 }
-log("Designed " + design.tasks.length + " task(s) using " + designSkill)
+log("Designed " + design.tasks.length + " task(s) using " + designSkill + " (spec=" + specWritten + " plan=" + planWritten + ")")
 
 // Topo-sort (Kahn) over design.tasks by dependsOn → ordered batches.
 const topoSort = (tasks) => {
@@ -327,8 +335,12 @@ const runImplementTask = (task, failuresOrEmpty) => agent(
   "## Your work item (" + task.id + ")\n" + task.description + "\nAcceptance: " + task.acceptance +
   (task.files && task.files.length ? "\nFiles: " + task.files.join(", ") : "") + "\n\n" +
   (failuresOrEmpty ? "## Verify failures from previous attempt — focus on these\n" + failuresOrEmpty + "\n\n" : "") +
-  "Write the failing test first, then the minimal code to pass, then refactor. Commit your work inside this worktree.",
-  { label: "implement:" + task.id, phase: "Implement", isolation: "worktree" }
+  "Write the failing test first (use the `write` tool), then the minimal code to pass, then refactor. " +
+  "Actually create the source and test files on disk with the `write` tool — do not just describe them. " +
+  (ISOLATE ? "Commit your work inside this worktree." : "Commit your work in the workspace."),
+  ISOLATE
+    ? { label: "implement:" + task.id, phase: "Implement", isolation: "worktree" }
+    : { label: "implement:" + task.id, phase: "Implement" }
 )
 
 const runIntegrate = (kept) => agent(
@@ -344,9 +356,10 @@ const runIntegrate = (kept) => agent(
 const runVerify = () => agent(
   "Run the project's verification commands and report the outcome.\n\n" +
   "## Steps\n" +
-  "1. Inspect AGENTS.md / CLAUDE.md / package.json for the project's verify commands (typecheck, test, build).\n" +
-  "2. Run them via the Bash tool, in the right directory (e.g. `packages/<x>/` not the repo root if AGENTS.md says so).\n" +
-  "3. Capture passed/failed test counts. Summarize failures concisely if any.\n\n" +
+  "1. First run `pwd` and `ls` to confirm your working directory and that the project's source/test files are actually present here. The implemented code lives in THIS workspace — verify from the workspace root (or the package subdir AGENTS.md specifies), never from a stale or temp cwd.\n" +
+  "2. Inspect AGENTS.md / CLAUDE.md / package.json for the project's verify commands (typecheck, test, build).\n" +
+  "3. Run them via the Bash tool from the correct directory. If a command reports 'file not found' or 0 tests, you are in the wrong directory — `cd` to where the files are and re-run before reporting.\n" +
+  "4. Capture passed/failed test counts. Summarize failures concisely if any.\n\n" +
   "Return structured output only.",
   { label: "verify", phase: "Verify", schema: VERIFY_SHAPE }
 )
@@ -358,20 +371,23 @@ const runDebug = (failures) => agent(
   { label: "debug", phase: "Implement" }
 )
 
-const runIterationReport = (iteration, verifyResult) => {
-  if (SKIP_REPORT) return Promise.resolve(null)
-  return agent(
+const runIterationReport = async (iteration, verifyResult) => {
+  if (SKIP_REPORT) return null
+  // The agent writes the markdown report file. No schema — a schema would bias the
+  // agent into emitting JSON instead of doing the write. The workflow only verifies
+  // the file exists afterward.
+  await agent(
     "Apply the `compose:report` skill in per-iteration mode. Use the `skill` tool to load it first.\n\n" +
     docsBlock + "\n\n" +
-    "## Report file (overwrite-in-place, accumulate Journey Log)\n" + REPORT_PATH + "\n\n" +
+    "## Report file you MUST write (overwrite-in-place, accumulate Journey Log)\n" + REPORT_PATH + "\n\n" +
     "## Iteration\n" + iteration + "\n\n" +
     "## Overall task\n" + TASK + "\n\n" +
     "## Verify result\n" + JSON.stringify(verifyResult) + "\n\n" +
-    "Read the existing report if present, update sections, append a Journey Log entry for this iteration, and overwrite the file. " +
-    "Keep it brief.\n\n" +
-    "Return structured output only.",
-    { label: "iteration-report:" + iteration, phase: "Report", schema: ITERATION_REPORT_SHAPE }
+    "Read the existing report if present (use `read`), update sections, append a Journey Log entry for this iteration, " +
+    "and write the file with the `write` tool. Keep it brief. Writing the file is the deliverable — do not just describe it.",
+    { label: "iteration-report:" + iteration, phase: "Report" }
   )
+  return { iteration, written: await exists(REPORT_PATH) }
 }
 
 // Dispatch a batch of tasks in parallel, each isolated in its own worktree, then
@@ -388,17 +404,25 @@ const runBatch = async (batchIds, failuresOrEmpty) => {
     for (let j = 0; j < chunk.length; j++) {
       const t = chunk[j]
       const r = results[j]
-      const wt = r && typeof r === "object" ? r._worktree : null
-      if (wt && wt.changed) {
-        kept.push({ taskId: t.id, _worktree: wt })
-        perTaskResults.push({ taskId: t.id, status: "ok", branch: wt.branch })
-      } else if (r === null) {
-        perTaskResults.push({ taskId: t.id, status: "failed" })
+      if (ISOLATE) {
+        const wt = r && typeof r === "object" ? r._worktree : null
+        if (wt && wt.changed) {
+          kept.push({ taskId: t.id, _worktree: wt })
+          perTaskResults.push({ taskId: t.id, status: "ok", branch: wt.branch })
+        } else if (r === null) {
+          perTaskResults.push({ taskId: t.id, status: "failed" })
+        } else {
+          perTaskResults.push({ taskId: t.id, status: "pristine" })
+        }
       } else {
-        perTaskResults.push({ taskId: t.id, status: "pristine" })
+        // Non-isolated: the agent wrote directly into the main workspace. A non-null
+        // result means it ran; failure surfaces as null. No worktree to integrate.
+        perTaskResults.push({ taskId: t.id, status: r === null ? "failed" : "ok" })
       }
     }
   }
+  // Integrate only when isolated worktrees were kept. In non-isolated mode the work
+  // already lives in the main workspace, so there is nothing to merge.
   const integrate = kept.length
     ? await runIntegrate(kept)
     : { merged: [], conflicts: [], skipped_pristine: perTaskResults.filter((r) => r.status !== "ok").map((r) => r.taskId) }
@@ -471,8 +495,8 @@ const runFixTask = (finding, i) => agent(
   "Address the CRITICAL review finding below. Apply the `compose:tdd` skill to fix it with tests where possible. " +
   "Use the `skill` tool to load it first.\n\n" +
   "## Critical finding (" + (i + 1) + ")\n" + finding + "\n\n" +
-  "Fix it and commit inside this worktree.",
-  { label: "fix:" + i, phase: "Fix", isolation: "worktree" }
+  "Fix it with the `write`/`edit` tools and commit " + (ISOLATE ? "inside this worktree." : "in the workspace."),
+  ISOLATE ? { label: "fix:" + i, phase: "Fix", isolation: "worktree" } : { label: "fix:" + i, phase: "Fix" }
 )
 
 phase("Review")
@@ -494,12 +518,16 @@ if (review.critical && review.critical.length > 0) {
       const results = await parallel(chunk.map((finding, k) => () => runFixTask(finding, i + k)))
       for (let j = 0; j < chunk.length; j++) {
         const r = results[j]
-        const wt = r && typeof r === "object" ? r._worktree : null
-        if (wt && wt.changed) {
-          kept.push({ taskId: "fix-" + (i + j), _worktree: wt })
-          perTaskResults.push({ taskId: "fix-" + (i + j), status: "ok", branch: wt.branch })
+        if (ISOLATE) {
+          const wt = r && typeof r === "object" ? r._worktree : null
+          if (wt && wt.changed) {
+            kept.push({ taskId: "fix-" + (i + j), _worktree: wt })
+            perTaskResults.push({ taskId: "fix-" + (i + j), status: "ok", branch: wt.branch })
+          } else {
+            perTaskResults.push({ taskId: "fix-" + (i + j), status: r === null ? "failed" : "pristine" })
+          }
         } else {
-          perTaskResults.push({ taskId: "fix-" + (i + j), status: r === null ? "failed" : "pristine" })
+          perTaskResults.push({ taskId: "fix-" + (i + j), status: r === null ? "failed" : "ok" })
         }
       }
     }
@@ -538,20 +566,31 @@ if (review.critical && review.critical.length > 0) {
 let finalReport = null
 if (!SKIP_REPORT) {
   phase("Report")
-  finalReport = await agent(
+  // The agent writes the consolidated final report file; the workflow only gates
+  // on existence. No schema — writing the markdown is the deliverable.
+  await agent(
     "Apply the `compose:report` skill in FINAL consolidation mode. Use the `skill` tool to load it first.\n\n" +
     docsBlock + "\n\n" +
-    "## Report file (read the in-progress per-iteration file, overwrite with canonical final state)\n" + REPORT_PATH + "\n\n" +
+    "## Report file you MUST write (read the in-progress per-iteration file, overwrite with canonical final state)\n" + REPORT_PATH + "\n\n" +
     "## Overall task\n" + TASK + "\n\n" +
     "## Run history\n" +
     "verifyHistory: " + JSON.stringify(verifyHistory) + "\n" +
     "implementHistory: " + JSON.stringify(implementHistory) + "\n" +
     "reviewFixAttempts: " + reviewFixAttempts + "\n\n" +
     "Produce the final-state report (What Was Built / Architecture / Design Decisions / Usage / Verification / Journey Log / Source Materials). " +
-    "Distill the Journey Log to at most 5 entries. Commit the report file.\n\n" +
-    "Return structured output only.",
-    { label: "final-report", phase: "Report", schema: FINAL_REPORT_SHAPE }
+    "Distill the Journey Log to at most 5 entries. Write the file with the `write` tool, then commit it. " +
+    "Writing the file is the deliverable — do not just describe it.",
+    { label: "final-report", phase: "Report" }
   )
+  // Re-dispatch once if the agent skipped the write.
+  if (!(await exists(REPORT_PATH))) {
+    await agent(
+      "The final report file `" + REPORT_PATH + "` does not exist yet. Apply `compose:report` and WRITE it now with the `write` tool " +
+      "(What Was Built / Architecture / Design Decisions / Usage / Verification / Journey Log / Source Materials) for the task: " + TASK,
+      { label: "final-report-retry", phase: "Report" }
+    )
+  }
+  finalReport = { path: REPORT_PATH, written: await exists(REPORT_PATH) }
 }
 
 // ---------------------------------------------------------------------------
