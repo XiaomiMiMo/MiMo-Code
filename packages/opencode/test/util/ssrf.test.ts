@@ -1,5 +1,5 @@
-import { describe, expect, test } from "bun:test"
-import { assertSafeUrl } from "../../src/util/ssrf"
+import { describe, expect, test, mock } from "bun:test"
+import { assertSafeUrl, safeFetch } from "../../src/util/ssrf"
 
 describe("assertSafeUrl", () => {
   describe("blocks private IPv4", () => {
@@ -76,5 +76,64 @@ describe("assertSafeUrl", () => {
         "SSRF protection: DNS resolution failed",
       )
     })
+  })
+})
+
+describe("safeFetch", () => {
+  test("blocks redirect to private IP", async () => {
+    const server = Bun.serve({
+      port: 0,
+      fetch(req) {
+        return new Response(null, {
+          status: 302,
+          headers: { Location: "http://169.254.169.254/latest/meta-data/" },
+        })
+      },
+    })
+    try {
+      await expect(safeFetch(`http://127.0.0.1:${server.port}/`)).rejects.toThrow("SSRF protection")
+    } finally {
+      server.stop()
+    }
+  })
+
+  test("follows safe redirects", async () => {
+    const server = Bun.serve({
+      port: 0,
+      fetch(req) {
+        const url = new URL(req.url)
+        if (url.pathname === "/redirect") {
+          return new Response(null, {
+            status: 302,
+            headers: { Location: `http://127.0.0.1:${server.port}/final` },
+          })
+        }
+        return new Response("ok")
+      },
+    })
+    try {
+      const res = await safeFetch(`http://127.0.0.1:${server.port}/redirect`)
+      expect(res.status).toBe(200)
+      expect(await res.text()).toBe("ok")
+    } finally {
+      server.stop()
+    }
+  })
+
+  test("rejects too many redirects", async () => {
+    const server = Bun.serve({
+      port: 0,
+      fetch(req) {
+        return new Response(null, {
+          status: 302,
+          headers: { Location: `http://127.0.0.1:${server.port}/loop` },
+        })
+      },
+    })
+    try {
+      await expect(safeFetch(`http://127.0.0.1:${server.port}/loop`)).rejects.toThrow("too many redirects")
+    } finally {
+      server.stop()
+    }
   })
 })

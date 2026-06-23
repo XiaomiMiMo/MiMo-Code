@@ -214,7 +214,7 @@ export default new Hono<{ Bindings: Env }>()
   .post("/feishu", async (c) => {
     const rawBody = await c.req.text()
 
-    const body = JSON.parse(rawBody) as {
+    let body: {
       challenge?: string
       event?: {
         message?: {
@@ -225,6 +225,11 @@ export default new Hono<{ Bindings: Env }>()
           content?: string
         }
       }
+    }
+    try {
+      body = JSON.parse(rawBody)
+    } catch {
+      return c.text("Invalid JSON body", 400)
     }
 
     // Challenge requests during setup don't require signature verification
@@ -237,6 +242,14 @@ export default new Hono<{ Bindings: Env }>()
     if (!signature || !timestamp || !nonce) {
       return c.text("Missing signature headers", 403)
     }
+
+    // Reject stale timestamps (±5 min window)
+    const ts = parseInt(timestamp, 10)
+    const now = Math.floor(Date.now() / 1000)
+    if (isNaN(ts) || Math.abs(now - ts) > 300) {
+      return c.text("Timestamp expired", 403)
+    }
+
     const encryptKey = Resource.FEISHU_APP_SECRET.value
     const payload = timestamp + nonce + encryptKey + rawBody
     const hash = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(payload))

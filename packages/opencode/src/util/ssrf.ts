@@ -53,6 +53,25 @@ function isBlockedIPv6(ip: string): boolean {
   return false
 }
 
+const MAX_REDIRECTS = 5
+
+export async function safeFetch(url: string, init?: RequestInit): Promise<Response> {
+  await assertSafeUrl(url)
+  let currentUrl = url
+  for (let i = 0; i < MAX_REDIRECTS; i++) {
+    const response = await fetch(currentUrl, { ...init, redirect: "manual" })
+    if (response.status >= 300 && response.status < 400) {
+      const location = response.headers.get("location")
+      if (!location) return response
+      currentUrl = new URL(location, currentUrl).toString()
+      await assertSafeUrl(currentUrl)
+      continue
+    }
+    return response
+  }
+  throw new Error("SSRF protection: too many redirects")
+}
+
 export async function assertSafeUrl(url: string): Promise<void> {
   const parsed = new URL(url)
   const hostname = parsed.hostname.replace(/^\[|\]$/g, "")

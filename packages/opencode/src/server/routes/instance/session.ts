@@ -746,7 +746,7 @@ export const SessionRoutes = lazy(() =>
             Effect.gen(function* () {
               const session = yield* Session.Service
               yield* session.get(sessionID)
-              return yield* session.messages({ sessionID, agentID, limit: 100 })
+              return yield* session.messages({ sessionID, agentID, limit: 1000 })
             }),
           )
           return c.json(messages)
