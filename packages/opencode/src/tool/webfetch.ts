@@ -1,11 +1,11 @@
 import z from "zod"
 import { Effect } from "effect"
-import { HttpClient } from "effect/unstable/http"
+import { HttpClient, HttpClientRequest } from "effect/unstable/http"
 import * as Tool from "./tool"
 import TurndownService from "turndown"
 import DESCRIPTION from "./webfetch.txt"
 import { isImageAttachment } from "@/util/media"
-import { safeFetch } from "@/util/ssrf"
+import { assertSafeUrl } from "@/util/ssrf"
 
 const MAX_RESPONSE_SIZE = 5 * 1024 * 1024 // 5MB
 const DEFAULT_TIMEOUT = 30 * 1000 // 30 seconds
@@ -23,7 +23,9 @@ const parameters = z.object({
 export const WebFetchTool = Tool.define(
   "webfetch",
   Effect.gen(function* () {
-    yield* HttpClient.HttpClient
+    const http = yield* HttpClient.HttpClient
+    const httpOk = HttpClient.filterStatusOk(http)
+
     return {
       description: DESCRIPTION,
       parameters,
@@ -32,6 +34,8 @@ export const WebFetchTool = Tool.define(
           if (!params.url.startsWith("http://") && !params.url.startsWith("https://")) {
             throw new Error("URL must start with http:// or https://")
           }
+
+          yield* Effect.promise(() => assertSafeUrl(params.url))
 
           yield* ctx.ask({
             permission: "webfetch",
@@ -63,47 +67,50 @@ export const WebFetchTool = Tool.define(
               acceptHeader =
                 "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8"
           }
-          const headers: Record<string, string> = {
+          const headers = {
             "User-Agent":
               "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36",
             Accept: acceptHeader,
             "Accept-Language": "en-US,en;q=0.9",
           }
 
-          const controller = new AbortController()
-          const timeoutId = setTimeout(() => controller.abort(), timeout)
+          const request = HttpClientRequest.get(params.url).pipe(HttpClientRequest.setHeaders(headers))
 
-          const response = yield* Effect.tryPromise({
-            try: async () => {
-              let res = await safeFetch(params.url, { headers, signal: controller.signal })
-              // Retry with honest UA if blocked by Cloudflare bot detection
-              if (res.status === 403 && res.headers.get("cf-mitigated") === "challenge") {
-                res = await safeFetch(params.url, {
-                  headers: { ...headers, "User-Agent": "mimocode" },
-                  signal: controller.signal,
-                })
-              }
-              if (!res.ok) throw new Error(`HTTP error: ${res.status} ${res.statusText}`)
-              return res
-            },
-            catch: (e) => {
-              if (e instanceof Error && e.name === "AbortError") return new Error("Request timed out")
-              return e instanceof Error ? e : new Error(String(e))
-            },
-          }).pipe(Effect.tap(() => Effect.sync(() => clearTimeout(timeoutId))))
+          // Retry with honest UA if blocked by Cloudflare bot detection (TLS fingerprint mismatch)
+          const response = yield* httpOk.execute(request).pipe(
+            Effect.catchIf(
+              (err) =>
+                err.reason._tag === "StatusCodeError" &&
+                err.reason.response.status === 403 &&
+                err.reason.response.headers["cf-mitigated"] === "challenge",
+              () =>
+                httpOk.execute(
+                  HttpClientRequest.get(params.url).pipe(
+                    HttpClientRequest.setHeaders({ ...headers, "User-Agent": "mimocode" }),
+                  ),
+                ),
+            ),
+            Effect.timeoutOrElse({ duration: timeout, orElse: () => Effect.die(new Error("Request timed out")) }),
+          )
+
+          // Block SSRF via redirect: if the response was redirected, validate final URL
+          const source = (response as any).source as Response | undefined
+          if (source?.url && source.url !== params.url) {
+            yield* Effect.promise(() => assertSafeUrl(source.url))
+          }
 
           // Check content length
-          const contentLength = response.headers.get("content-length")
+          const contentLength = response.headers["content-length"]
           if (contentLength && parseInt(contentLength) > MAX_RESPONSE_SIZE) {
             throw new Error("Response too large (exceeds 5MB limit)")
           }
 
-          const arrayBuffer = yield* Effect.promise(() => response.arrayBuffer())
+          const arrayBuffer = yield* response.arrayBuffer
           if (arrayBuffer.byteLength > MAX_RESPONSE_SIZE) {
             throw new Error("Response too large (exceeds 5MB limit)")
           }
 
-          const contentType = response.headers.get("content-type") || ""
+          const contentType = response.headers["content-type"] || ""
           const mime = contentType.split(";")[0]?.trim().toLowerCase() || ""
           const title = `${params.url} (${contentType})`
 
