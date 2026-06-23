@@ -1,4 +1,5 @@
 import { PlanExitTool } from "./plan"
+import { GoalTool } from "./goal"
 import { Session } from "../session"
 import { QuestionTool } from "./question"
 import { BashTool, bashDescription } from "./bash"
@@ -159,7 +160,8 @@ export const layer = Layer.effect(
     const viewimage = yield* ViewImageTool
     const question = yield* QuestionTool
     const lsptool = yield* LspTool
-    const planexit = yield* PlanExitTool
+    const plan = yield* PlanExitTool
+    const goaltool = yield* GoalTool
     const webfetch = yield* WebFetchTool
     const websearch = yield* WebSearchTool
     const bash = yield* BashTool
@@ -270,7 +272,8 @@ export const layer = Layer.effect(
           patch: Tool.init(patchtool),
           question: Tool.init(question),
           lsp: Tool.init(lsptool),
-          planexit: Tool.init(planexit),
+          plan: Tool.init(plan),
+          goal: Tool.init(goaltool),
           memory: Tool.init(memorytool),
           history: Tool.init(historytool),
           task: Tool.init(tasktool),
@@ -302,7 +305,8 @@ export const layer = Layer.effect(
             tool.skill,
             tool.patch,
             ...(Flag.MIMOCODE_EXPERIMENTAL_LSP_TOOL ? [tool.lsp] : []),
-            tool.planexit,
+            tool.plan,
+            tool.goal,
             tool.memory,
             tool.history,
             tool.task,
