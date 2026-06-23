@@ -1,4 +1,4 @@
-import { describe, expect, test, mock, afterEach } from "bun:test"
+import { describe, expect, test } from "bun:test"
 import { assertSafeUrl, safeFetch } from "../../src/util/ssrf"
 
 describe("assertSafeUrl", () => {
@@ -80,23 +80,17 @@ describe("assertSafeUrl", () => {
 })
 
 describe("safeFetch", () => {
-  const originalFetch = globalThis.fetch
-
-  afterEach(() => {
-    globalThis.fetch = originalFetch
-  })
-
   test("blocks redirect to private IP", async () => {
-    globalThis.fetch = mock(async () => new Response(null, {
+    const mockFetch = async () => new Response(null, {
       status: 302,
       headers: { Location: "http://169.254.169.254/latest/meta-data/" },
-    })) as any
-    await expect(safeFetch("http://127.0.0.1:8080/")).rejects.toThrow("SSRF protection")
+    })
+    await expect(safeFetch("http://127.0.0.1:8080/", undefined, mockFetch as any)).rejects.toThrow("SSRF protection")
   })
 
   test("follows safe redirects", async () => {
     let callCount = 0
-    globalThis.fetch = mock(async () => {
+    const mockFetch = async () => {
       callCount++
       if (callCount === 1) {
         return new Response(null, {
@@ -105,17 +99,17 @@ describe("safeFetch", () => {
         })
       }
       return new Response("ok", { status: 200 })
-    }) as any
-    const res = await safeFetch("http://127.0.0.1:8080/redirect")
+    }
+    const res = await safeFetch("http://127.0.0.1:8080/redirect", undefined, mockFetch as any)
     expect(res.status).toBe(200)
     expect(await res.text()).toBe("ok")
   })
 
   test("rejects too many redirects", async () => {
-    globalThis.fetch = mock(async () => new Response(null, {
+    const mockFetch = async () => new Response(null, {
       status: 302,
       headers: { Location: "http://127.0.0.1:8080/loop" },
-    })) as any
-    await expect(safeFetch("http://127.0.0.1:8080/loop")).rejects.toThrow("too many redirects")
+    })
+    await expect(safeFetch("http://127.0.0.1:8080/loop", undefined, mockFetch as any)).rejects.toThrow("too many redirects")
   })
 })

@@ -55,11 +55,15 @@ function isBlockedIPv6(ip: string): boolean {
 
 const MAX_REDIRECTS = 5
 
-export async function safeFetch(url: string, init?: RequestInit): Promise<Response> {
+export async function safeFetch(
+  url: string,
+  init?: RequestInit,
+  fetchImpl: typeof fetch = fetch,
+): Promise<Response> {
   await assertSafeUrl(url)
   let currentUrl = url
   for (let i = 0; i < MAX_REDIRECTS; i++) {
-    const response = await fetch(currentUrl, { ...init, redirect: "manual" })
+    const response = await fetchImpl(currentUrl, { ...init, redirect: "manual" })
     if (response.status >= 300 && response.status < 400) {
       const location = response.headers.get("location")
       if (!location) return response
