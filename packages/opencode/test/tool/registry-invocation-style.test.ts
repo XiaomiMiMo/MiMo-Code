@@ -83,8 +83,8 @@ describe("ToolRegistry.tools: invocation style resolution", () => {
           const read = tools.find((t) => t.id === "read")
           expect(read).toBeDefined()
           const schema = read!.parameters as any
-          // Original `read` parameters has filePath; shell wrap would expose `script`
-          expect(schema.shape?.filePath ?? schema._def?.shape?.filePath).toBeDefined()
+          // Original `read` parameters has file_path; shell wrap would expose `script`
+          expect(schema.shape?.file_path ?? schema._def?.shape?.file_path).toBeDefined()
           expect(schema.shape?.script ?? schema._def?.shape?.script).toBeUndefined()
         }),
       { config: { tool: { invocation_style_by_tool: { read: "shell" } } } },

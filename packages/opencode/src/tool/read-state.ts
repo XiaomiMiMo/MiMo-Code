@@ -31,8 +31,8 @@ export function assertFileRead(ctx: Tool.Context, targetPath: string, toolId: st
       if (part.type !== "tool") continue
       if (part.tool !== "read") continue
       if (part.state.status !== "completed") continue
-      const input = part.state.input as { filePath?: unknown } | undefined
-      const fp = input?.filePath
+      const input = part.state.input as { file_path?: unknown } | undefined
+      const fp = input?.file_path
       if (typeof fp !== "string") continue
       if (canon(ctx.sessionID, fp) === target) return
     }

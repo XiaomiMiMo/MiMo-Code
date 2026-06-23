@@ -35,11 +35,11 @@ Usage notes:
     When interactive is set, the terminal will be handed to the user for direct interaction. The command will NOT time out while waiting for user input. Do NOT set interactive for commands that can run unattended.
 
   - Avoid using Bash with the `find`, `grep`, `cat`, `head`, `tail`, `sed`, `awk`, or `echo` commands, unless explicitly instructed or when these commands are truly necessary for the task. Instead, always prefer using the dedicated tools for these commands:
-    - File search: Use Glob (NOT find or ls)
-    - Content search: Use Grep (NOT grep or rg)
-    - Read files: Use Read (NOT cat/head/tail)
-    - Edit files: Use Edit (NOT sed/awk)
-    - Write files: Use Write (NOT echo >/cat <<EOF)
+    - File search: Use `glob` (NOT find or ls)
+    - Content search: Use `grep` tool (NOT grep or rg)
+    - Read files: Use `read` tool (NOT cat/head/tail)
+    - Edit files: Use `edit` tool (NOT sed/awk)
+    - Write files: Use `write` tool (NOT echo >/cat <<EOF)
     - Communication: Output text directly (NOT echo/printf)
   - When issuing multiple commands:
     - If the commands are independent and can run in parallel, make multiple Bash tool calls in a single message. For example, if you need to run "git status" and "git diff", send a single message with two Bash tool calls in parallel.

@@ -306,7 +306,7 @@ describe("spawn no-deadlock (F56)", () => {
           // ctx.ask({permission:"edit"}). Under "*":"ask" this would hang for a
           // normal agent; the fix denies it clean. Turn 2: a final text so that
           // if the tool-call path somehow returns control, the loop can end.
-          yield* llm.tool("write", { filePath: "notes.txt", content: "hello" })
+          yield* llm.tool("write", { file_path: "notes.txt", content: "hello" })
           yield* llm.text("done")
 
           // context:"none" keeps the test self-contained (no ForkContext capture).

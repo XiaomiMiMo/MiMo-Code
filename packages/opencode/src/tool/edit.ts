@@ -47,10 +47,10 @@ function lock(filePath: string) {
 }
 
 const Parameters = z.object({
-  filePath: z.string().describe("The absolute path to the file to modify"),
-  oldString: z.string().describe("The text to replace"),
-  newString: z.string().describe("The text to replace it with (must be different from oldString)"),
-  replaceAll: z.boolean().optional().describe("Replace all occurrences of oldString (default false)"),
+  file_path: z.string().describe("The absolute path to the file to modify"),
+  old_string: z.string().describe("The text to replace"),
+  new_string: z.string().describe("The text to replace it with (must be different from old_string)"),
+  replace_all: z.boolean().optional().describe("Replace all occurrences of old_string (default false)"),
 })
 
 export const EditTool = Tool.define(
@@ -66,23 +66,23 @@ export const EditTool = Tool.define(
       parameters: Parameters,
       execute: (params: z.infer<typeof Parameters>, ctx: Tool.Context) =>
         Effect.gen(function* () {
-          if (!params.filePath) {
-            throw new Error("filePath is required")
+          if (!params.file_path) {
+            throw new Error("file_path is required")
           }
 
-          if (params.oldString === params.newString) {
-            throw new Error("No changes to apply: oldString and newString are identical.")
+          if (params.old_string === params.new_string) {
+            throw new Error("No changes to apply: old_string and new_string are identical.")
           }
 
-          const filePath = path.isAbsolute(params.filePath)
-            ? params.filePath
-            : path.join(SessionCwd.get(ctx.sessionID), params.filePath)
+          const filePath = path.isAbsolute(params.file_path)
+            ? params.file_path
+            : path.join(SessionCwd.get(ctx.sessionID), params.file_path)
           yield* assertWriteAllowed(ctx, filePath)
 
           // The "create new file" branch (oldString === "") is effectively a
           // write, so a prior Read isn't meaningful there. For real edits we
           // require Read first so the model is operating on current contents.
-          if (params.oldString !== "") {
+          if (params.old_string !== "") {
             assertFileRead(ctx, filePath, "edit")
           }
 
@@ -91,15 +91,15 @@ export const EditTool = Tool.define(
           let contentNew = ""
           yield* lock(filePath).withPermits(1)(
             Effect.gen(function* () {
-              if (params.oldString === "") {
+              if (params.old_string === "") {
                 const existed = yield* afs.existsSafe(filePath)
-                contentNew = params.newString
+                contentNew = params.new_string
                 diff = trimDiff(createTwoFilesPatch(filePath, filePath, contentOld, contentNew))
                 yield* askEditUnlessMemory(ctx, filePath, {
                   patterns: [path.relative(Instance.worktree, filePath)],
                   diff,
                 })
-                yield* afs.writeWithDirs(filePath, params.newString)
+                yield* afs.writeWithDirs(filePath, params.new_string)
                 yield* format.file(filePath)
                 yield* bus.publish(File.Event.Edited, { file: filePath })
                 yield* bus.publish(FileWatcher.Event.Updated, {
@@ -115,10 +115,10 @@ export const EditTool = Tool.define(
               contentOld = yield* afs.readFileString(filePath)
 
               const ending = detectLineEnding(contentOld)
-              const old = convertToLineEnding(normalizeLineEndings(params.oldString), ending)
-              const next = convertToLineEnding(normalizeLineEndings(params.newString), ending)
+              const old = convertToLineEnding(normalizeLineEndings(params.old_string), ending)
+              const next = convertToLineEnding(normalizeLineEndings(params.new_string), ending)
 
-              contentNew = replace(contentOld, old, next, params.replaceAll)
+              contentNew = replace(contentOld, old, next, params.replace_all)
 
               diff = trimDiff(
                 createTwoFilesPatch(
@@ -655,7 +655,7 @@ export function trimDiff(diff: string): string {
 
 export function replace(content: string, oldString: string, newString: string, replaceAll = false): string {
   if (oldString === newString) {
-    throw new Error("No changes to apply: oldString and newString are identical.")
+    throw new Error("No changes to apply: old_string and new_string are identical.")
   }
 
   let notFound = true
@@ -686,8 +686,8 @@ export function replace(content: string, oldString: string, newString: string, r
 
   if (notFound) {
     throw new Error(
-      "Could not find oldString in the file. It must match exactly, including whitespace, indentation, and line endings.",
+      "Could not find old_string in the file. It must match exactly, including whitespace, indentation, and line endings.",
     )
   }
-  throw new Error("Found multiple matches for oldString. Provide more surrounding context to make the match unique.")
+  throw new Error("Found multiple matches for old_string. Provide more surrounding context to make the match unique.")
 }
