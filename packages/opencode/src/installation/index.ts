@@ -248,14 +248,16 @@ export const layer: Layer.Layer<Service, never, HttpClient.HttpClient | ChildPro
         // }
 
         if (detectedMethod === "curl") {
-          const headers = yield* text([
-            "curl",
-            "-sI",
-            "https://github.com/XiaomiMiMo/MiMo-Code/releases/latest",
-          ])
-          const match = headers.match(/^location:.*\/tag\/v([0-9][^\s/]*)/im)
-          if (match) return match[1]
-          return yield* Effect.die(new Error("failed to resolve latest version from GitHub releases redirect"))
+          // Resolve the latest version from FDS, matching the source the install
+          // script downloads from (fast in mainland China). Override base via
+          // MIMO_FDS_BASE to mirror the install script.
+          const base = (process.env.MIMO_FDS_BASE || "https://mimocode.cnbj1.mi-fds.com/mimocode/mimocode").replace(
+            /\/+$/,
+            "",
+          )
+          const version = (yield* text(["curl", "-fsSL", `${base}/releases/latest`])).trim().replace(/^v/, "")
+          if (version) return version
+          return yield* Effect.die(new Error("failed to resolve latest version from FDS"))
         }
 
         if (detectedMethod === "npm" || detectedMethod === "bun" || detectedMethod === "pnpm") {
