@@ -15,6 +15,7 @@ import * as Clipboard from "@tui/util/clipboard"
 import { useToast, type ToastContext } from "../ui/toast"
 import { isConsoleManagedProvider } from "@tui/util/provider-origin"
 import { isPopularProvider, PROVIDER_PRIORITY } from "@/util/provider-priority"
+import { useLanguage } from "@tui/context/language"
 
 export function createDialogProviderOptions() {
   const sync = useSync()
@@ -22,6 +23,7 @@ export function createDialogProviderOptions() {
   const sdk = useSDK()
   const toast = useToast()
   const { theme } = useTheme()
+  const t = useLanguage().t
   const options = createMemo(() => {
     const list = pipe(
       sync.data.provider_next.all,
@@ -31,7 +33,7 @@ export function createDialogProviderOptions() {
         const connected = sync.data.provider_next.connected.includes(provider.id)
 
         return {
-          title: provider.name,
+          title: t("provider.name." + provider.id) || provider.name,
           value: provider.id,
           description: {
             anthropic: "(API key)",

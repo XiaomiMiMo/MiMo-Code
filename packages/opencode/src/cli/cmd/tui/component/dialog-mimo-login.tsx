@@ -45,31 +45,6 @@ export function DialogMimoLogin() {
           ))
         },
       },
-      // Free "mimo-auto" channel: only offered when its provider is actually
-      // loaded (i.e. the private src/private/ overlay is present). In the
-      // open-source build the provider never loads, so this option is hidden.
-      ...(sync.data.provider.some((p) => p.id === "mimo")
-        ? [
-            {
-              title: t("tui.dialog.login.mimo_free"),
-              value: "mimo-free",
-              description: t("tui.dialog.login.mimo_free.desc"),
-              category: "Recommended",
-              onSelect: async () => {
-                await sync.bootstrap()
-                const mimo = sync.data.provider.find((p) => p.id === "mimo")
-                if (!mimo || !("mimo-auto" in mimo.models)) {
-                  toast.show({ message: t("tui.dialog.login.mimo_free.unavailable"), variant: "error" })
-                  dialog.clear()
-                  return
-                }
-                local.model.set({ providerID: "mimo", modelID: "mimo-auto" }, { recent: true })
-                toast.show({ message: t("tui.dialog.login.mimo_free.success"), variant: "info" })
-                dialog.clear()
-              },
-            },
-          ]
-        : []),
       {
         title: t("tui.dialog.login.import_claude"),
         value: "import_claude",

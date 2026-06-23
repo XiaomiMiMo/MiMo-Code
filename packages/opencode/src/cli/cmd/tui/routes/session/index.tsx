@@ -90,6 +90,7 @@ import { getScrollAcceleration } from "../../util/scroll"
 import { nextThinkingMode, reasoningSummary, useThinkingMode, type ThinkingMode } from "../../context/thinking"
 import { TuiPluginRuntime } from "../../plugin"
 import { DialogGoUpsell } from "../../component/dialog-go-upsell"
+import { DialogTokenPlan } from "../../component/dialog-token-plan"
 import { SessionRetry } from "@/session/retry"
 import { getRevertDiffFiles } from "../../util/revert-diff"
 
@@ -98,6 +99,9 @@ addDefaultParsers(parsers.parsers)
 const GO_UPSELL_LAST_SEEN_AT = "go_upsell_last_seen_at"
 const GO_UPSELL_DONT_SHOW = "go_upsell_dont_show"
 const GO_UPSELL_WINDOW = 86_400_000 // 24 hrs
+
+const QUEUE_TOKEN_PLAN_LAST_SEEN_AT = "queue_token_plan_last_seen_at"
+const QUEUE_TOKEN_PLAN_WINDOW = 86_400_000 // 24 hrs
 
 const context = createContext<{
   width: number
@@ -357,6 +361,26 @@ export function Session() {
   }
 
   const local = useLocal()
+
+  // Free "mimo-auto" channel: on a rate-limit / queue ("too many requests"),
+  // nudge the user toward a Token Plan — at most once per 24h.
+  event.on("session.status", (evt) => {
+    if (evt.properties.sessionID !== route.sessionID) return
+    if (evt.properties.status.type !== "retry") return
+    if (!SessionRetry.isRateLimitMessage(evt.properties.status.message)) return
+    const model = local.model.current()
+    if (!model || model.providerID !== "mimo" || model.modelID !== "mimo-auto") return
+    if (dialog.stack.length > 0) return
+
+    const seen = kv.get(QUEUE_TOKEN_PLAN_LAST_SEEN_AT)
+    if (typeof seen === "number" && Date.now() - seen < QUEUE_TOKEN_PLAN_WINDOW) return
+
+    // Record the 24h cooldown only after the user dismisses, so a show() that
+    // fails (or never reaches the user) doesn't silently burn the whole day.
+    void DialogTokenPlan.show(dialog).then(() => {
+      kv.set(QUEUE_TOKEN_PLAN_LAST_SEEN_AT, Date.now())
+    })
+  })
 
   function moveFirstChild() {
     const list = actors().filter((a) => a.mode === "subagent")
@@ -1346,7 +1370,11 @@ function AssistantMessage(props: { message: AssistantMessage; parts: Part[]; las
   const t = useLanguage().t
   const [copyHover, setCopyHover] = createSignal(false)
   const messages = createMemo(() => sync.data.message[props.message.sessionID]?.[props.message.agentID ?? "main"] ?? [])
-  const model = createMemo(() => Model.name(ctx.providers(), props.message.providerID, props.message.modelID))
+  const model = createMemo(() =>
+    props.message.modelID === "mimo-auto"
+      ? t("tui.model.mimo_auto.name")
+      : Model.name(ctx.providers(), props.message.providerID, props.message.modelID),
+  )
 
   const final = createMemo(() => {
     return props.message.finish && props.message.finish !== "tool-calls"
