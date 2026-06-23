@@ -7,7 +7,6 @@ const BLOCKED_HOSTNAMES = new Set([
 ])
 
 const BLOCKED_IPV4_PREFIXES = [
-  "127.", // loopback
   "10.", // private class A
   "0.", // current network
 ]
@@ -38,10 +37,8 @@ function isBlockedIPv4(ip: string): boolean {
 
 function isBlockedIPv6(ip: string): boolean {
   const normalized = ip.toLowerCase()
-  if (normalized === "::1") return true
   if (normalized.startsWith("fe80:")) return true // link-local
   if (normalized.startsWith("fc") || normalized.startsWith("fd")) return true // ULA
-  if (normalized === "::ffff:127.0.0.1") return true
   // IPv4-mapped IPv6 in dotted-decimal form (::ffff:a.b.c.d)
   const mapped = normalized.match(/^::ffff:(\d+\.\d+\.\d+\.\d+)$/)
   if (mapped) return isBlockedIPv4(mapped[1]!)
