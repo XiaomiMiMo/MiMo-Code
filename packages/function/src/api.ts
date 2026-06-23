@@ -18,6 +18,10 @@ export class SyncServer extends DurableObject<Env> {
     super(ctx, env)
   }
   async fetch() {
+    const secret = await this.getSecret()
+    if (!secret) {
+      return new Response("Not found", { status: 404 })
+    }
     console.log("SyncServer subscribe")
 
     const webSocketPair = new WebSocketPair()
@@ -77,6 +81,8 @@ export class SyncServer extends DurableObject<Env> {
   }
 
   public async getData() {
+    const secret = await this.getSecret()
+    if (!secret) return []
     const data = (await this.ctx.storage.list()) as Map<string, any>
     return Array.from(data.entries())
       .filter(([key, _]) => key.startsWith("session/"))
@@ -116,6 +122,10 @@ export class SyncServer extends DurableObject<Env> {
 export default new Hono<{ Bindings: Env }>()
   .get("/", (c) => c.text("Hello, world!"))
   .post("/share_create", async (c) => {
+    const authHeader = c.req.header("authorization")
+    if (!authHeader || authHeader !== `Bearer ${Resource.ADMIN_SECRET.value}`) {
+      return c.text("Unauthorized", 401)
+    }
     const body = await c.req.json<{ sessionID: string }>()
     const sessionID = body.sessionID
     const short = SyncServer.shortName(sessionID)
@@ -202,7 +212,25 @@ export default new Hono<{ Bindings: Env }>()
     return c.json({ info, messages })
   })
   .post("/feishu", async (c) => {
-    const body = (await c.req.json()) as {
+    const rawBody = await c.req.text()
+
+    // Verify Feishu webhook signature (skip for challenge requests during setup)
+    const signature = c.req.header("x-lark-signature")
+    const timestamp = c.req.header("x-lark-request-timestamp")
+    const nonce = c.req.header("x-lark-request-nonce")
+    if (signature && timestamp && nonce) {
+      const encryptKey = Resource.FEISHU_APP_SECRET.value
+      const payload = timestamp + nonce + encryptKey + rawBody
+      const hash = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(payload))
+      const expected = Array.from(new Uint8Array(hash))
+        .map((b) => b.toString(16).padStart(2, "0"))
+        .join("")
+      if (expected !== signature) {
+        return c.text("Invalid signature", 403)
+      }
+    }
+
+    const body = JSON.parse(rawBody) as {
       challenge?: string
       event?: {
         message?: {
@@ -214,7 +242,7 @@ export default new Hono<{ Bindings: Env }>()
         }
       }
     }
-    console.log(JSON.stringify(body, null, 2))
+    console.log("feishu webhook:", body.event?.message?.message_id ?? "challenge")
     const challenge = body.challenge
     if (challenge) return c.json({ challenge })
 
