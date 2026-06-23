@@ -13,6 +13,7 @@ import { TaskTool } from "./task"
 import { WorkflowTool } from "./workflow"
 import { WebFetchTool } from "./webfetch"
 import { WriteTool } from "./write"
+import { NotebookEditTool } from "./notebook-edit"
 import { InvalidTool } from "./invalid"
 import { SkillTool } from "./skill"
 import * as Tool from "./tool"
@@ -132,6 +133,7 @@ export const layer = Layer.effect(
     const codesearch = yield* CodeSearchTool
     const globtool = yield* GlobTool
     const writetool = yield* WriteTool
+    const notebookedit = yield* NotebookEditTool
     const edit = yield* EditTool
     const greptool = yield* GrepTool
     const patchtool = yield* ApplyPatchTool
@@ -212,6 +214,7 @@ export const layer = Layer.effect(
           grep: Tool.init(greptool),
           edit: Tool.init(edit),
           write: Tool.init(writetool),
+          notebookedit: Tool.init(notebookedit),
           actor: Tool.init(actor),
           fetch: Tool.init(webfetch),
           search: Tool.init(websearch),
@@ -240,6 +243,7 @@ export const layer = Layer.effect(
             tool.grep,
             tool.edit,
             tool.write,
+            tool.notebookedit,
             tool.actor,
             tool.fetch,
             tool.search,
