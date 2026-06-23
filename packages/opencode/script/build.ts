@@ -310,6 +310,24 @@ if (Script.release) {
     }
   }
   await $`gh release upload v${Script.version} ./dist/*.zip ./dist/*.tar.gz --clobber --repo ${process.env.GH_REPO}`
+
+  // Also publish to Xiaomi FDS (fast download in mainland China; the install
+  // script reads from there). Skipped when credentials are absent so local
+  // release builds still work.
+  if (process.env.MIMO_FDS_AK && process.env.MIMO_FDS_SK) {
+    const { uploadFile } = await import("./fds-upload.ts")
+    const archives = fs.readdirSync("dist").filter((f) => f.endsWith(".zip") || f.endsWith(".tar.gz"))
+    for (const file of archives) {
+      await uploadFile(`dist/${file}`, `releases/v${Script.version}/${file}`)
+      console.log(`Uploaded to FDS: releases/v${Script.version}/${file}`)
+    }
+    const tmpLatest = "dist/_latest.txt"
+    await Bun.write(tmpLatest, Script.version)
+    await uploadFile(tmpLatest, "releases/latest", "text/plain")
+    console.log(`Uploaded to FDS: releases/latest -> ${Script.version}`)
+  } else {
+    console.log("Skipping FDS upload (MIMO_FDS_AK / MIMO_FDS_SK not set)")
+  }
 }
 
 export { binaries }
