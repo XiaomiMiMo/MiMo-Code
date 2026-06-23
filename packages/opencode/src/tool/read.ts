@@ -21,7 +21,7 @@ const MAX_BYTES_LABEL = `${MAX_BYTES / 1024} KB`
 const SAMPLE_BYTES = 4096
 
 const parameters = z.object({
-  filePath: z.string().describe("The absolute path to the file or directory to read"),
+  file_path: z.string().describe("The absolute path to the file or directory to read"),
   offset: z.coerce.number().describe("The line number to start reading from (1-indexed)").optional(),
   limit: z.coerce.number().describe("The maximum number of lines to read (defaults to 2000)").optional(),
 })
@@ -146,7 +146,7 @@ export const ReadTool = Tool.define(
         return yield* Effect.fail(new Error("offset must be greater than or equal to 1"))
       }
 
-      let filepath = params.filePath
+      let filepath = params.file_path
       if (!path.isAbsolute(filepath)) {
         filepath = path.resolve(SessionCwd.get(ctx.sessionID), filepath)
       }

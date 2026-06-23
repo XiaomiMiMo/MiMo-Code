@@ -58,7 +58,7 @@ type ToolCtx = typeof baseCtx & {
   ask: (input: AskInput) => Effect.Effect<void>
 }
 
-const execute = async (params: { patchText: string }, ctx: ToolCtx) => {
+const execute = async (params: { patch_text: string }, ctx: ToolCtx) => {
   const info = await runtime.runPromise(ApplyPatchTool)
   const tool = await runtime.runPromise(info.init())
   return Effect.runPromise(tool.execute(params, ctx))
@@ -78,20 +78,20 @@ const makeCtx = () => {
 }
 
 describe("tool.apply_patch freeform", () => {
-  test("requires patchText", async () => {
+  test("requires patch_text", async () => {
     const { ctx } = makeCtx()
-    await expect(execute({ patchText: "" }, ctx)).rejects.toThrow("patchText is required")
+    await expect(execute({ patch_text: "" }, ctx)).rejects.toThrow("patch_text is required")
   })
 
   test("rejects invalid patch format", async () => {
     const { ctx } = makeCtx()
-    await expect(execute({ patchText: "invalid patch" }, ctx)).rejects.toThrow("apply_patch verification failed")
+    await expect(execute({ patch_text: "invalid patch" }, ctx)).rejects.toThrow("apply_patch verification failed")
   })
 
   test("rejects empty patch", async () => {
     const { ctx } = makeCtx()
     const emptyPatch = "*** Begin Patch\n*** End Patch"
-    await expect(execute({ patchText: emptyPatch }, ctx)).rejects.toThrow("patch rejected: empty patch")
+    await expect(execute({ patch_text: emptyPatch }, ctx)).rejects.toThrow("patch rejected: empty patch")
   })
 
   test("applies add/update/delete in one patch", async () => {
@@ -109,7 +109,7 @@ describe("tool.apply_patch freeform", () => {
         const patchText =
           "*** Begin Patch\n*** Add File: nested/new.txt\n+created\n*** Delete File: delete.txt\n*** Update File: modify.txt\n@@\n-line2\n+changed\n*** End Patch"
 
-        const result = await execute({ patchText }, ctx)
+        const result = await execute({ patch_text: patchText }, ctx)
 
         expect(result.title).toBe("3 files")
         expect(result.output).toContain("Success. Updated the following files")
@@ -160,7 +160,7 @@ describe("tool.apply_patch freeform", () => {
         const patchText =
           "*** Begin Patch\n*** Update File: old/name.txt\n*** Move to: renamed/dir/name.txt\n@@\n-old content\n+new content\n*** End Patch"
 
-        await execute({ patchText }, ctx)
+        await execute({ patch_text: patchText }, ctx)
 
         expect(calls.length).toBe(1)
         const permissionCall = calls[0]
@@ -189,7 +189,7 @@ describe("tool.apply_patch freeform", () => {
         const patchText =
           "*** Begin Patch\n*** Update File: multi.txt\n@@\n-line2\n+changed2\n@@\n-line4\n+changed4\n*** End Patch"
 
-        await execute({ patchText }, ctx)
+        await execute({ patch_text: patchText }, ctx)
 
         expect(await fs.readFile(target, "utf-8")).toBe("line1\nchanged2\nline3\nchanged4\n")
       },
@@ -208,7 +208,7 @@ describe("tool.apply_patch freeform", () => {
 
         const patchText = "*** Begin Patch\n*** Update File: insert_only.txt\n@@\n alpha\n+beta\n omega\n*** End Patch"
 
-        await execute({ patchText }, ctx)
+        await execute({ patch_text: patchText }, ctx)
 
         expect(await fs.readFile(target, "utf-8")).toBe("alpha\nbeta\nomega\n")
       },
@@ -228,7 +228,7 @@ describe("tool.apply_patch freeform", () => {
         const patchText =
           "*** Begin Patch\n*** Update File: no_newline.txt\n@@\n-no newline at end\n+first line\n+second line\n*** End Patch"
 
-        await execute({ patchText }, ctx)
+        await execute({ patch_text: patchText }, ctx)
 
         const contents = await fs.readFile(target, "utf-8")
         expect(contents.endsWith("\n")).toBe(true)
@@ -251,7 +251,7 @@ describe("tool.apply_patch freeform", () => {
         const patchText =
           "*** Begin Patch\n*** Update File: old/name.txt\n*** Move to: renamed/dir/name.txt\n@@\n-old content\n+new content\n*** End Patch"
 
-        await execute({ patchText }, ctx)
+        await execute({ patch_text: patchText }, ctx)
 
         const moved = path.join(fixture.path, "renamed", "dir", "name.txt")
         await expect(fs.readFile(original, "utf-8")).rejects.toThrow()
@@ -277,7 +277,7 @@ describe("tool.apply_patch freeform", () => {
         const patchText =
           "*** Begin Patch\n*** Update File: old/name.txt\n*** Move to: renamed/dir/name.txt\n@@\n-from\n+new\n*** End Patch"
 
-        await execute({ patchText }, ctx)
+        await execute({ patch_text: patchText }, ctx)
 
         await expect(fs.readFile(original, "utf-8")).rejects.toThrow()
         expect(await fs.readFile(destination, "utf-8")).toBe("new\n")
@@ -297,7 +297,7 @@ describe("tool.apply_patch freeform", () => {
 
         const patchText = "*** Begin Patch\n*** Add File: duplicate.txt\n+new content\n*** End Patch"
 
-        await execute({ patchText }, ctx)
+        await execute({ patch_text: patchText }, ctx)
         expect(await fs.readFile(target, "utf-8")).toBe("new content\n")
       },
     })
@@ -312,7 +312,7 @@ describe("tool.apply_patch freeform", () => {
       fn: async () => {
         const patchText = "*** Begin Patch\n*** Update File: missing.txt\n@@\n-nope\n+better\n*** End Patch"
 
-        await expect(execute({ patchText }, ctx)).rejects.toThrow(
+        await expect(execute({ patch_text: patchText }, ctx)).rejects.toThrow(
           "apply_patch verification failed: Failed to read file to update",
         )
       },
@@ -328,7 +328,7 @@ describe("tool.apply_patch freeform", () => {
       fn: async () => {
         const patchText = "*** Begin Patch\n*** Delete File: missing.txt\n*** End Patch"
 
-        await expect(execute({ patchText }, ctx)).rejects.toThrow()
+        await expect(execute({ patch_text: patchText }, ctx)).rejects.toThrow()
       },
     })
   })
@@ -345,7 +345,7 @@ describe("tool.apply_patch freeform", () => {
 
         const patchText = "*** Begin Patch\n*** Delete File: dir\n*** End Patch"
 
-        await expect(execute({ patchText }, ctx)).rejects.toThrow()
+        await expect(execute({ patch_text: patchText }, ctx)).rejects.toThrow()
       },
     })
   })
@@ -359,7 +359,7 @@ describe("tool.apply_patch freeform", () => {
       fn: async () => {
         const patchText = "*** Begin Patch\n*** Frobnicate File: foo\n*** End Patch"
 
-        await expect(execute({ patchText }, ctx)).rejects.toThrow("apply_patch verification failed")
+        await expect(execute({ patch_text: patchText }, ctx)).rejects.toThrow("apply_patch verification failed")
       },
     })
   })
@@ -376,7 +376,7 @@ describe("tool.apply_patch freeform", () => {
 
         const patchText = "*** Begin Patch\n*** Update File: modify.txt\n@@\n-missing\n+changed\n*** End Patch"
 
-        await expect(execute({ patchText }, ctx)).rejects.toThrow("apply_patch verification failed")
+        await expect(execute({ patch_text: patchText }, ctx)).rejects.toThrow("apply_patch verification failed")
         expect(await fs.readFile(target, "utf-8")).toBe("line1\nline2\n")
       },
     })
@@ -392,7 +392,7 @@ describe("tool.apply_patch freeform", () => {
         const patchText =
           "*** Begin Patch\n*** Add File: created.txt\n+hello\n*** Update File: missing.txt\n@@\n-old\n+new\n*** End Patch"
 
-        await expect(execute({ patchText }, ctx)).rejects.toThrow()
+        await expect(execute({ patch_text: patchText }, ctx)).rejects.toThrow()
 
         const createdPath = path.join(fixture.path, "created.txt")
         await expect(fs.readFile(createdPath, "utf-8")).rejects.toThrow()
@@ -412,7 +412,7 @@ describe("tool.apply_patch freeform", () => {
 
         const patchText = "*** Begin Patch\n*** Update File: tail.txt\n@@\n-last\n+end\n*** End of File\n*** End Patch"
 
-        await execute({ patchText }, ctx)
+        await execute({ patch_text: patchText }, ctx)
         expect(await fs.readFile(target, "utf-8")).toBe("alpha\nend\n")
       },
     })
@@ -430,7 +430,7 @@ describe("tool.apply_patch freeform", () => {
 
         const patchText = "*** Begin Patch\n*** Update File: two_chunks.txt\n@@\n-b\n+B\n\n-d\n+D\n*** End Patch"
 
-        await expect(execute({ patchText }, ctx)).rejects.toThrow()
+        await expect(execute({ patch_text: patchText }, ctx)).rejects.toThrow()
         expect(await fs.readFile(target, "utf-8")).toBe("a\nb\nc\nd\n")
       },
     })
@@ -448,7 +448,7 @@ describe("tool.apply_patch freeform", () => {
 
         const patchText = "*** Begin Patch\n*** Update File: multi_ctx.txt\n@@ fn b\n-x=10\n+x=11\n*** End Patch"
 
-        await execute({ patchText }, ctx)
+        await execute({ patch_text: patchText }, ctx)
         expect(await fs.readFile(target, "utf-8")).toBe("fn a\nx=10\ny=2\nfn b\nx=11\ny=20\n")
       },
     })
@@ -469,7 +469,7 @@ describe("tool.apply_patch freeform", () => {
         const patchText =
           "*** Begin Patch\n*** Update File: eof_anchor.txt\n@@\n-marker\n-end\n+marker-changed\n+end\n*** End of File\n*** End Patch"
 
-        await execute({ patchText }, ctx)
+        await execute({ patch_text: patchText }, ctx)
         // First marker unchanged, second marker changed
         expect(await fs.readFile(target, "utf-8")).toBe("start\nmarker\nmiddle\nmarker-changed\nend\n")
       },
@@ -490,7 +490,7 @@ describe("tool.apply_patch freeform", () => {
 *** End Patch
 EOF`
 
-        await execute({ patchText }, ctx)
+        await execute({ patch_text: patchText }, ctx)
         const content = await fs.readFile(path.join(fixture.path, "heredoc_test.txt"), "utf-8")
         expect(content).toBe("heredoc content\n")
       },
@@ -511,7 +511,7 @@ EOF`
 *** End Patch
 EOF`
 
-        await execute({ patchText }, ctx)
+        await execute({ patch_text: patchText }, ctx)
         const content = await fs.readFile(path.join(fixture.path, "heredoc_no_cat.txt"), "utf-8")
         expect(content).toBe("no cat prefix\n")
       },
@@ -532,7 +532,7 @@ EOF`
         // Patch doesn't have trailing spaces - should still match via rstrip pass
         const patchText = "*** Begin Patch\n*** Update File: trailing_ws.txt\n@@\n-line2\n+changed\n*** End Patch"
 
-        await execute({ patchText }, ctx)
+        await execute({ patch_text: patchText }, ctx)
         expect(await fs.readFile(target, "utf-8")).toBe("line1  \nchanged\nline3   \n")
       },
     })
@@ -552,7 +552,7 @@ EOF`
         // Patch without leading spaces - should match via trim pass
         const patchText = "*** Begin Patch\n*** Update File: leading_ws.txt\n@@\n-line2\n+changed\n*** End Patch"
 
-        await execute({ patchText }, ctx)
+        await execute({ patch_text: patchText }, ctx)
         expect(await fs.readFile(target, "utf-8")).toBe("  line1\nchanged\n  line3\n")
       },
     })
@@ -577,7 +577,7 @@ EOF`
         const patchText =
           '*** Begin Patch\n*** Update File: unicode.txt\n@@\n-He said "hello"\n+He said "hi"\n*** End Patch'
 
-        await execute({ patchText }, ctx)
+        await execute({ patch_text: patchText }, ctx)
         // Result has ASCII quotes because that's what the patch specifies
         expect(await fs.readFile(target, "utf-8")).toBe(`He said "hi"\nsome${emDash}dash\nend\n`)
       },
@@ -599,7 +599,7 @@ describe("tool.apply_patch memory-path-guard", () => {
     await Instance.provide({
       directory: fixture.path,
       fn: async () => {
-        await expect(execute({ patchText }, ctx)).rejects.toThrow(/reserved for the checkpoint-writer/)
+        await expect(execute({ patch_text: patchText }, ctx)).rejects.toThrow(/reserved for the checkpoint-writer/)
       },
     })
   })
@@ -618,7 +618,7 @@ describe("tool.apply_patch memory-path-guard", () => {
       directory: fixture.path,
       fn: async () => {
         // must NOT throw the memory-guard rejection; the write itself is allowed
-        await execute({ patchText }, ctx)
+        await execute({ patch_text: patchText }, ctx)
         expect(calls).toHaveLength(0)
       },
     })

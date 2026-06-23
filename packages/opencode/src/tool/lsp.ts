@@ -31,16 +31,16 @@ export const LspTool = Tool.define(
       description: DESCRIPTION,
       parameters: z.object({
         operation: z.enum(operations).describe("The LSP operation to perform"),
-        filePath: z.string().describe("The absolute or relative path to the file"),
+        file_path: z.string().describe("The absolute or relative path to the file"),
         line: z.number().int().min(1).describe("The line number (1-based, as shown in editors)"),
         character: z.number().int().min(1).describe("The character offset (1-based, as shown in editors)"),
       }),
       execute: (
-        args: { operation: (typeof operations)[number]; filePath: string; line: number; character: number },
+        args: { operation: (typeof operations)[number]; file_path: string; line: number; character: number },
         ctx: Tool.Context,
       ) =>
         Effect.gen(function* () {
-          const file = path.isAbsolute(args.filePath) ? args.filePath : path.join(Instance.directory, args.filePath)
+          const file = path.isAbsolute(args.file_path) ? args.file_path : path.join(Instance.directory, args.file_path)
           yield* assertExternalDirectoryEffect(ctx, file)
           yield* ctx.ask({ permission: "lsp", patterns: ["*"], always: ["*"], metadata: {} })
 

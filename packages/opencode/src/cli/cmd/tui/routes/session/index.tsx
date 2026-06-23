@@ -2210,7 +2210,7 @@ function Write(props: ToolProps<typeof WriteTool>) {
     <Switch>
       <Match when={props.metadata.diagnostics !== undefined}>
         <BlockTool
-          title={"# Wrote " + normalizePath(props.input.filePath!)}
+          title={"# Wrote " + normalizePath(props.input.file_path!)}
           part={props.part}
           onClick={collapsed() ? () => setExpanded((prev) => !prev) : undefined}
         >
@@ -2226,7 +2226,7 @@ function Write(props: ToolProps<typeof WriteTool>) {
               <code
                 conceal={false}
                 fg={theme.text}
-                filetype={filetype(props.input.filePath!)}
+                filetype={filetype(props.input.file_path!)}
                 syntaxStyle={syntax()}
                 content={code()}
               />
@@ -2235,12 +2235,12 @@ function Write(props: ToolProps<typeof WriteTool>) {
               <text fg={theme.textMuted}>Click to collapse</text>
             </Show>
           </Show>
-          <Diagnostics diagnostics={props.metadata.diagnostics} filePath={props.input.filePath ?? ""} />
+          <Diagnostics diagnostics={props.metadata.diagnostics} filePath={props.input.file_path ?? ""} />
         </BlockTool>
       </Match>
       <Match when={true}>
-        <InlineTool icon="←" pending="Preparing write..." complete={props.input.filePath} part={props.part}>
-          Write {normalizePath(props.input.filePath!)}
+        <InlineTool icon="←" pending="Preparing write..." complete={props.input.file_path} part={props.part}>
+          Write {normalizePath(props.input.file_path!)}
         </InlineTool>
       </Match>
     </Switch>
@@ -2273,11 +2273,11 @@ function Read(props: ToolProps<typeof ReadTool>) {
       <InlineTool
         icon="→"
         pending="Reading file..."
-        complete={props.input.filePath}
+        complete={props.input.file_path}
         spinner={isRunning()}
         part={props.part}
       >
-        Read {normalizePath(props.input.filePath!)} {input(props.input, ["filePath"])}
+        Read {normalizePath(props.input.file_path!)} {input(props.input, ["file_path"])}
       </InlineTool>
       <For each={loaded()}>
         {(filepath) => (
@@ -2432,14 +2432,14 @@ function Edit(props: ToolProps<typeof EditTool>) {
     return ctx.width > 120 ? "split" : "unified"
   })
 
-  const ft = createMemo(() => filetype(props.input.filePath))
+  const ft = createMemo(() => filetype(props.input.file_path))
 
   const diffContent = createMemo(() => props.metadata.diff)
 
   return (
     <Switch>
       <Match when={props.metadata.diff !== undefined}>
-        <BlockTool title={"← Edit " + normalizePath(props.input.filePath!)} part={props.part}>
+        <BlockTool title={"← Edit " + normalizePath(props.input.file_path!)} part={props.part}>
           <box paddingLeft={1}>
             <diff
               diff={diffContent()}
@@ -2461,12 +2461,12 @@ function Edit(props: ToolProps<typeof EditTool>) {
               removedLineNumberBg={theme.diffRemovedLineNumberBg}
             />
           </box>
-          <Diagnostics diagnostics={props.metadata.diagnostics} filePath={props.input.filePath ?? ""} />
+          <Diagnostics diagnostics={props.metadata.diagnostics} filePath={props.input.file_path ?? ""} />
         </BlockTool>
       </Match>
       <Match when={true}>
-        <InlineTool icon="←" pending="Preparing edit..." complete={props.input.filePath} part={props.part}>
-          Edit {normalizePath(props.input.filePath!)} {input({ replaceAll: props.input.replaceAll })}
+        <InlineTool icon="←" pending="Preparing edit..." complete={props.input.file_path} part={props.part}>
+          Edit {normalizePath(props.input.file_path!)} {input({ replace_all: props.input.replace_all })}
         </InlineTool>
       </Match>
     </Switch>

@@ -12,7 +12,7 @@ Supported operations:
 - outgoingCalls: Find all functions/methods called by the function at a position
 
 All operations require:
-- filePath: The file to operate on
+- file_path: The file to operate on
 - line: The line number (1-based, as shown in editors)
 - character: The character offset (1-based, as shown in editors)
 

@@ -15,19 +15,19 @@ import { assertFileRead } from "./read-state"
 import { trimDiff } from "./edit"
 
 const Parameters = z.object({
-  notebookPath: z.string().describe("The absolute path to the .ipynb file to modify"),
-  cellId: z
+  notebook_path: z.string().describe("The absolute path to the .ipynb file to modify"),
+  cell_id: z
     .string()
     .optional()
     .describe(
       "Cell id from the Read tool's <cell id=\"...\"> output. Required for replace/delete; for insert, the new cell is added after this cell (or at the beginning if omitted).",
     ),
-  newSource: z.string().optional().describe("The cell's new content. Required for replace and insert; ignored for delete."),
-  cellType: z
+  new_source: z.string().optional().describe("The cell's new content. Required for replace and insert; ignored for delete."),
+  cell_type: z
     .enum(["code", "markdown"])
     .optional()
     .describe("Cell type. Required for insert; for replace, defaults to the existing cell's type."),
-  editMode: z
+  edit_mode: z
     .enum(["replace", "insert", "delete"])
     .optional()
     .describe("Operation to perform. Defaults to replace."),
@@ -94,25 +94,25 @@ export const NotebookEditTool = Tool.define(
       parameters: Parameters,
       execute: (params: z.infer<typeof Parameters>, ctx: Tool.Context) =>
         Effect.gen(function* () {
-          const editMode = params.editMode ?? "replace"
+          const editMode = params.edit_mode ?? "replace"
 
-          if (!params.notebookPath) throw new Error("notebookPath is required")
-          if (path.extname(params.notebookPath) !== ".ipynb") {
-            throw new Error("notebookPath must point to a .ipynb file")
+          if (!params.notebook_path) throw new Error("notebook_path is required")
+          if (path.extname(params.notebook_path) !== ".ipynb") {
+            throw new Error("notebook_path must point to a .ipynb file")
           }
 
-          const notebookPath = path.isAbsolute(params.notebookPath)
-            ? params.notebookPath
-            : path.join(SessionCwd.get(ctx.sessionID), params.notebookPath)
+          const notebookPath = path.isAbsolute(params.notebook_path)
+            ? params.notebook_path
+            : path.join(SessionCwd.get(ctx.sessionID), params.notebook_path)
 
-          if (editMode !== "insert" && !params.cellId) {
-            throw new Error(`cellId is required when editMode is "${editMode}"`)
+          if (editMode !== "insert" && !params.cell_id) {
+            throw new Error(`cell_id is required when edit_mode is "${editMode}"`)
           }
-          if ((editMode === "replace" || editMode === "insert") && params.newSource === undefined) {
-            throw new Error(`newSource is required when editMode is "${editMode}"`)
+          if ((editMode === "replace" || editMode === "insert") && params.new_source === undefined) {
+            throw new Error(`new_source is required when edit_mode is "${editMode}"`)
           }
-          if (editMode === "insert" && !params.cellType) {
-            throw new Error('cellType is required when editMode is "insert"')
+          if (editMode === "insert" && !params.cell_type) {
+            throw new Error('cell_type is required when edit_mode is "insert"')
           }
 
           yield* assertWriteAllowed(ctx, notebookPath)
@@ -168,11 +168,11 @@ export const NotebookEditTool = Tool.define(
           let title = ""
 
           if (editMode === "replace") {
-            const idx = findIndex(params.cellId!)
-            if (idx === -1) throw cellNotFound(params.cellId!)
+            const idx = findIndex(params.cell_id!)
+            if (idx === -1) throw cellNotFound(params.cell_id!)
             const target = notebook.cells[idx]
-            const nextType = params.cellType ?? (target.cell_type === "raw" ? "code" : target.cell_type)
-            const replaced = buildCell(nextType, params.newSource ?? "", target.id ?? params.cellId!)
+            const nextType = params.cell_type ?? (target.cell_type === "raw" ? "code" : target.cell_type)
+            const replaced = buildCell(nextType, params.new_source ?? "", target.id ?? params.cell_id!)
             if (target.cell_type === "code" && nextType === "code") {
               replaced.outputs = target.outputs ?? []
               replaced.execution_count = target.execution_count ?? null
@@ -183,22 +183,22 @@ export const NotebookEditTool = Tool.define(
             notebook.cells[idx] = replaced
             title = `replace cell ${target.id ?? `#${idx}`}`
           } else if (editMode === "delete") {
-            const idx = findIndex(params.cellId!)
-            if (idx === -1) throw cellNotFound(params.cellId!)
+            const idx = findIndex(params.cell_id!)
+            if (idx === -1) throw cellNotFound(params.cell_id!)
             notebook.cells.splice(idx, 1)
-            title = `delete cell ${params.cellId}`
+            title = `delete cell ${params.cell_id}`
           } else {
             // insert
             const newId = generateCellId(existingIds)
-            const cell = buildCell(params.cellType!, params.newSource ?? "", newId)
-            if (!params.cellId) {
+            const cell = buildCell(params.cell_type!, params.new_source ?? "", newId)
+            if (!params.cell_id) {
               notebook.cells.unshift(cell)
               title = `insert cell at start`
             } else {
-              const idx = findIndex(params.cellId)
-              if (idx === -1) throw cellNotFound(params.cellId)
+              const idx = findIndex(params.cell_id)
+              if (idx === -1) throw cellNotFound(params.cell_id)
               notebook.cells.splice(idx + 1, 0, cell)
-              title = `insert cell after ${params.cellId}`
+              title = `insert cell after ${params.cell_id}`
             }
           }
 
@@ -216,7 +216,7 @@ export const NotebookEditTool = Tool.define(
 
           return {
             title: `${path.relative(Instance.worktree, notebookPath)} — ${title}`,
-            metadata: { diff, editMode, cellId: params.cellId },
+            metadata: { diff, edit_mode: editMode, cell_id: params.cell_id },
             output: `Notebook updated: ${editMode} on ${path.relative(Instance.worktree, notebookPath)}.`,
           }
         }).pipe(Effect.orDie),

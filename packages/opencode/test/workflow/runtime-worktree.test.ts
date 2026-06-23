@@ -38,7 +38,7 @@ describe("WorkflowRuntime worktree isolation", () => {
           permission: [{ permission: "*", pattern: "*", action: "allow" }],
         })
         // The single agent writes a relative file (one tool call), then ends its turn.
-        yield* llm.tool("write", { filePath: "port.rs", content: "// rust" })
+        yield* llm.tool("write", { file_path: "port.rs", content: "// rust" })
         yield* llm.text("done")
         // A worktree is a fresh checkout of HEAD; uncommitted files (like the
         // fixture's mimocode.json provider config) do NOT propagate. Commit it so
@@ -120,9 +120,9 @@ describe("WorkflowRuntime worktree isolation", () => {
         // that distinct worktrees keep them from clobbering each other.
         const isA = (h: { body: unknown }) => JSON.stringify(h.body).includes("WF_TASK_ONE")
         const isB = (h: { body: unknown }) => JSON.stringify(h.body).includes("WF_TASK_TWO")
-        yield* llm.toolMatch(isA, "write", { filePath: "port.rs", content: "// one" })
+        yield* llm.toolMatch(isA, "write", { file_path: "port.rs", content: "// one" })
         yield* llm.textMatch(isA, "done")
-        yield* llm.toolMatch(isB, "write", { filePath: "port.rs", content: "// two" })
+        yield* llm.toolMatch(isB, "write", { file_path: "port.rs", content: "// two" })
         yield* llm.textMatch(isB, "done")
         yield* Effect.promise(() => $`git add -A && git commit -q -m wf-config`.cwd(dir).quiet().nothrow())
         const script = [

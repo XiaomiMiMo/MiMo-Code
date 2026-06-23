@@ -18,7 +18,7 @@ import { Format } from "../format"
 import { Global } from "../global"
 
 const PatchParams = z.object({
-  patchText: z.string().describe("The full patch text that describes all changes to be made"),
+  patch_text: z.string().describe("The full patch text that describes all changes to be made"),
 })
 
 export const ApplyPatchTool = Tool.define(
@@ -30,21 +30,21 @@ export const ApplyPatchTool = Tool.define(
     const bus = yield* Bus.Service
 
     const run = Effect.fn("ApplyPatchTool.execute")(function* (params: z.infer<typeof PatchParams>, ctx: Tool.Context) {
-      if (!params.patchText) {
-        return yield* Effect.fail(new Error("patchText is required"))
+      if (!params.patch_text) {
+        return yield* Effect.fail(new Error("patch_text is required"))
       }
 
       // Parse the patch to get hunks
       let hunks: Patch.Hunk[]
       try {
-        const parseResult = Patch.parsePatch(params.patchText)
+        const parseResult = Patch.parsePatch(params.patch_text)
         hunks = parseResult.hunks
       } catch (error) {
         return yield* Effect.fail(new Error(`apply_patch verification failed: ${error}`))
       }
 
       if (hunks.length === 0) {
-        const normalized = params.patchText.replace(/\r\n/g, "\n").replace(/\r/g, "\n").trim()
+        const normalized = params.patch_text.replace(/\r\n/g, "\n").replace(/\r/g, "\n").trim()
         if (normalized === "*** Begin Patch\n*** End Patch") {
           return yield* Effect.fail(new Error("patch rejected: empty patch"))
         }
