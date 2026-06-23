@@ -5,6 +5,7 @@ import path from "path"
 import { LSP } from "../lsp"
 import DESCRIPTION from "./lsp.txt"
 import { Instance } from "../project/instance"
+import { SessionCwd } from "./session-cwd"
 import { pathToFileURL } from "url"
 import { assertExternalDirectoryEffect } from "./external-directory"
 import { AppFileSystem } from "@mimo-ai/shared/filesystem"
@@ -40,7 +41,7 @@ export const LspTool = Tool.define(
         ctx: Tool.Context,
       ) =>
         Effect.gen(function* () {
-          const file = path.isAbsolute(args.filePath) ? args.filePath : path.join(Instance.directory, args.filePath)
+          const file = path.isAbsolute(args.filePath) ? args.filePath : path.join(SessionCwd.get(ctx.sessionID), args.filePath)
           yield* assertExternalDirectoryEffect(ctx, file)
           yield* ctx.ask({ permission: "lsp", patterns: ["*"], always: ["*"], metadata: {} })
 
