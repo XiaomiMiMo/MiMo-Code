@@ -257,31 +257,50 @@ function supportsCacheMarkers(model: Provider.Model): boolean {
   return false
 }
 
-function applyCaching(msgs: ModelMessage[], model: Provider.Model): ModelMessage[] {
-  // Only Anthropic and OpenRouter expose a cache-control TTL in their AI SDK;
-  // the other providers ignore an unknown `ttl` field, so we only thread it
-  // into those two branches. Default (unset) stays the provider 5m default.
+// The cache-control marker shape differs per provider/SDK. This is the single
+// source of truth, keyed by the SDK provider-options namespace. `applyCaching`
+// attaches the whole object (keyed by stored providerID) and lets `message()`
+// remap the active provider's namespace to its SDK key; `tools()` (which
+// bypasses that remap) resolves a single namespace up front via `cacheMarkerFor`.
+// Only Anthropic and OpenRouter expose a TTL in their AI SDK — the others ignore
+// an unknown `ttl`, so we thread it only there.
+function cacheMarkerOptions(model: Provider.Model) {
   const ttl = model.cachePromptTTL === "1h" ? { ttl: "1h" as const } : {}
-  const providerOptions = {
-    anthropic: {
-      cacheControl: { type: "ephemeral", ...ttl },
-    },
-    openrouter: {
-      cacheControl: { type: "ephemeral", ...ttl },
-    },
-    bedrock: {
-      cachePoint: { type: "default" },
-    },
-    openaiCompatible: {
-      cache_control: { type: "ephemeral" },
-    },
-    copilot: {
-      copilot_cache_control: { type: "ephemeral" },
-    },
-    alibaba: {
-      cacheControl: { type: "ephemeral" },
-    },
+  return {
+    anthropic: { cacheControl: { type: "ephemeral", ...ttl } },
+    openrouter: { cacheControl: { type: "ephemeral", ...ttl } },
+    bedrock: { cachePoint: { type: "default" } },
+    openaiCompatible: { cache_control: { type: "ephemeral" } },
+    copilot: { copilot_cache_control: { type: "ephemeral" } },
+    alibaba: { cacheControl: { type: "ephemeral" } },
   }
+}
+
+// Resolve the marker for a single model, already keyed under the SDK namespace
+// the AI SDK expects — i.e. the remap that `message()` performs for messages,
+// done up front. Used by `tools()`, whose tools never pass through `message()`.
+// Returns undefined for providers that don't take inline markers (callers gate
+// on `supportsCacheMarkers` first, so this is just a type-safety fallback).
+function cacheMarkerFor(model: Provider.Model): Record<string, unknown> | undefined {
+  const shapes = cacheMarkerOptions(model)
+  const ns: keyof typeof shapes | undefined =
+    model.api.npm === "@ai-sdk/anthropic" || model.api.npm === "@ai-sdk/google-vertex/anthropic"
+      ? "anthropic"
+      : model.api.npm === "@openrouter/ai-sdk-provider"
+        ? "openrouter"
+        : model.api.npm === "@ai-sdk/amazon-bedrock"
+          ? "bedrock"
+          : model.api.npm === "@ai-sdk/github-copilot"
+            ? "copilot"
+            : model.api.npm === "@ai-sdk/alibaba"
+              ? "alibaba"
+              : undefined
+  if (!ns) return undefined
+  return { [ns]: shapes[ns] }
+}
+
+function applyCaching(msgs: ModelMessage[], model: Provider.Model): ModelMessage[] {
+  const providerOptions = cacheMarkerOptions(model)
 
   // Strategy: prefix caching is longest-common-prefix based with a backward
   // lookback window (Anthropic walks back ~20 blocks from a breakpoint to find
@@ -470,20 +489,15 @@ export function message(msgs: ModelMessage[], model: Provider.Model, options: Re
 // `tools` → `system` → `messages`, so marking the LAST tool caches the entire
 // tool-schema block (often several KB) as a stable prefix that sits in front of
 // the system + message caches. Tools are passed to the SDK separately from
-// `message()` and never go through its providerID→SDK-key remap, so we write
-// the marker under the SDK key directly. Tool registration order is stable
+// `message()` and never go through its providerID→SDK-key remap, so we resolve
+// the SDK-keyed marker via `cacheMarkerFor`. Tool registration order is stable
 // (insertion order of the tools record), so "last tool" is deterministic.
 export function tools<T extends Record<string, any>>(tools: T, model: Provider.Model): T {
   if (!supportsCacheMarkers(model)) return tools
+  const marker = cacheMarkerFor(model)
+  if (!marker) return tools
   const names = Object.keys(tools)
   if (names.length === 0) return tools
-
-  const ttl = model.cachePromptTTL === "1h" ? { ttl: "1h" as const } : {}
-  const marker = iife(() => {
-    if (model.api.npm === "@ai-sdk/amazon-bedrock") return { bedrock: { cachePoint: { type: "default" } } }
-    const key = sdkKey(model.api.npm) ?? model.providerID
-    return { [key]: { cacheControl: { type: "ephemeral", ...ttl } } }
-  })
 
   const last = tools[names[names.length - 1]]
   last.providerOptions = mergeDeep(last.providerOptions ?? {}, marker)

@@ -2284,6 +2284,18 @@ describe("ProviderTransform.tools", () => {
     expect(result.bash.providerOptions).toEqual({ bedrock: { cachePoint: { type: "default" } } })
   })
 
+  test("uses copilot_cache_control shape for github-copilot", () => {
+    const model = createModel({
+      providerID: "github-copilot",
+      api: { id: "claude-sonnet-4", url: "https://api.githubcopilot.com", npm: "@ai-sdk/github-copilot" },
+    })
+    const tools = { read: {}, bash: {} } as Record<string, any>
+
+    const result = ProviderTransform.tools(tools, model)
+
+    expect(result.bash.providerOptions).toEqual({ copilot: { copilot_cache_control: { type: "ephemeral" } } })
+  })
+
   test("no marker for providers that do not support cache markers", () => {
     const model = createModel({
       providerID: "openai",
