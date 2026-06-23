@@ -88,6 +88,6 @@ export async function assertSafeUrl(url: string): Promise<void> {
     }
   } catch (e: any) {
     if (e.message?.startsWith("SSRF protection:")) throw e
-    // DNS resolution failed — allow the request to proceed (will fail at fetch time)
+    throw new Error(`SSRF protection: DNS resolution failed for "${hostname}"`)
   }
 }

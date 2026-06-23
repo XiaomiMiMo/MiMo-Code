@@ -214,22 +214,6 @@ export default new Hono<{ Bindings: Env }>()
   .post("/feishu", async (c) => {
     const rawBody = await c.req.text()
 
-    // Verify Feishu webhook signature (skip for challenge requests during setup)
-    const signature = c.req.header("x-lark-signature")
-    const timestamp = c.req.header("x-lark-request-timestamp")
-    const nonce = c.req.header("x-lark-request-nonce")
-    if (signature && timestamp && nonce) {
-      const encryptKey = Resource.FEISHU_APP_SECRET.value
-      const payload = timestamp + nonce + encryptKey + rawBody
-      const hash = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(payload))
-      const expected = Array.from(new Uint8Array(hash))
-        .map((b) => b.toString(16).padStart(2, "0"))
-        .join("")
-      if (expected !== signature) {
-        return c.text("Invalid signature", 403)
-      }
-    }
-
     const body = JSON.parse(rawBody) as {
       challenge?: string
       event?: {
@@ -242,9 +226,28 @@ export default new Hono<{ Bindings: Env }>()
         }
       }
     }
-    console.log("feishu webhook:", body.event?.message?.message_id ?? "challenge")
-    const challenge = body.challenge
-    if (challenge) return c.json({ challenge })
+
+    // Challenge requests during setup don't require signature verification
+    if (body.challenge) return c.json({ challenge: body.challenge })
+
+    // All non-challenge requests must have a valid signature
+    const signature = c.req.header("x-lark-signature")
+    const timestamp = c.req.header("x-lark-request-timestamp")
+    const nonce = c.req.header("x-lark-request-nonce")
+    if (!signature || !timestamp || !nonce) {
+      return c.text("Missing signature headers", 403)
+    }
+    const encryptKey = Resource.FEISHU_APP_SECRET.value
+    const payload = timestamp + nonce + encryptKey + rawBody
+    const hash = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(payload))
+    const expected = Array.from(new Uint8Array(hash))
+      .map((b) => b.toString(16).padStart(2, "0"))
+      .join("")
+    if (expected !== signature) {
+      return c.text("Invalid signature", 403)
+    }
+
+    console.log("feishu webhook:", body.event?.message?.message_id ?? "unknown")
 
     const content = body.event?.message?.content
     const parsed =
