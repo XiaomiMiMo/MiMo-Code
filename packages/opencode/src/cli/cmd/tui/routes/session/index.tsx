@@ -1790,7 +1790,7 @@ function PlanExit(props: ToolProps<any>) {
   return (
     <>
       <InlineTool icon="⚙" pending="Asking..." complete={true} part={props.part} dismissed={dismissed()}>
-        plan_exit
+        {" "}plan_exit
       </InlineTool>
       <Show when={feedback()}>
         <box paddingLeft={6}>
@@ -1819,7 +1819,7 @@ function GenericTool(props: ToolProps<any>) {
       when={props.output && ctx.showGenericToolOutput()}
       fallback={
         <InlineTool icon="⚙" pending="Writing command..." complete={true} part={props.part}>
-          {props.tool} {input(props.input)}
+          {" "}{props.tool} {input(props.input)}
         </InlineTool>
       }
     >
