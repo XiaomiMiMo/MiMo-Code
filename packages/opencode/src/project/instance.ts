@@ -7,6 +7,7 @@ import { Log } from "@/util"
 import { LocalContext } from "../util"
 import * as Project from "./project"
 import { WorkspaceContext } from "@/control-plane/workspace-context"
+import { homedir } from "os"
 import { parse as pathParse } from "path"
 
 export interface InstanceContext {
@@ -19,17 +20,30 @@ const context = LocalContext.create<InstanceContext>("instance")
 const cache = new Map<string, Promise<InstanceContext>>()
 const project = makeRuntime(Project.Service, Project.defaultLayer)
 
-const FORBIDDEN_ROOTS = new Set([
-  "/etc", "/proc", "/sys", "/dev", "/boot", "/root", "/var",
-  "/private/etc", "/private/var",
+const FORBIDDEN_TREES = new Set([
+  "/etc", "/proc", "/sys", "/dev", "/boot",
+  "/private/etc",
 ])
+
+const FORBIDDEN_DIRECTORIES = new Set(
+  [
+    "/var",
+    "/private/var",
+    AppFileSystem.resolve(process.env.HOME ?? process.env.USERPROFILE ?? homedir()),
+  ].filter((dir) => dir !== pathParse(dir).root),
+)
 
 function assertSafeDirectory(directory: string): void {
   if (directory === pathParse(directory).root) {
     throw new Error("Access denied: filesystem root is not a valid project directory")
   }
-  for (const forbidden of FORBIDDEN_ROOTS) {
+  for (const forbidden of FORBIDDEN_TREES) {
     if (directory === forbidden || AppFileSystem.contains(forbidden, directory)) {
+      throw new Error("Access denied: target is a protected system directory")
+    }
+  }
+  for (const forbidden of FORBIDDEN_DIRECTORIES) {
+    if (directory === forbidden) {
       throw new Error("Access denied: target is a protected system directory")
     }
   }

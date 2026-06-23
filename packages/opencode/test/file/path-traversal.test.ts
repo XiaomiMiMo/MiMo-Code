@@ -1,5 +1,6 @@
 import { test, expect, describe } from "bun:test"
 import { Effect } from "effect"
+import os from "os"
 import path from "path"
 import fs from "fs/promises"
 import { Filesystem } from "../../src/util"
@@ -219,11 +220,27 @@ describe("Instance.containsPath", () => {
 
 describe("Instance.provide directory safety", () => {
   test("rejects system paths containing secrets", async () => {
-    const systemPaths = ["/etc", "/etc/nginx", "/etc/shadow", "/proc", "/sys", "/dev", "/root", "/boot"]
+    const systemPaths = ["/etc", "/etc/nginx", "/etc/shadow", "/proc", "/sys", "/dev", "/boot"]
     for (const dir of systemPaths) {
       await expect(
         Instance.provide({ directory: dir, fn: () => {} }),
       ).rejects.toThrow("Access denied")
+    }
+  })
+
+  test("rejects home directory itself but allows a project under home", async () => {
+    const home = Filesystem.resolve(process.env.HOME ?? process.env.USERPROFILE ?? os.homedir())
+    await expect(
+      Instance.provide({ directory: home, fn: () => {} }),
+    ).rejects.toThrow("Access denied")
+
+    const dir = await fs.mkdtemp(path.join(home, "mimo-home-project-"))
+    try {
+      await expect(
+        Instance.provide({ directory: dir, fn: () => Instance.directory }),
+      ).resolves.toBe(dir)
+    } finally {
+      await fs.rm(dir, { recursive: true, force: true })
     }
   })
 
