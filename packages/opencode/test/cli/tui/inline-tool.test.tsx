@@ -1,19 +1,19 @@
 /**
- * @file InlineTool / GenericTool 空格渲染测试
+ * @file InlineTool / GenericTool spacing render test
  *
- * 验证：
- * 1. `input()` 格式化函数输出正确
- * 2. 源码中 GenericTool / PlanExit 的 children 包含前导空格
- * 3. 其他使用 InlineTool 的组件不受影响
+ * Verify:
+ * 1. `input()` formatter function output is correct
+ * 2. GenericTool / PlanExit children contain leading space in source code
+ * 3. Other InlineTool components are not affected
  *
- * 注：opentui 渲染器不暴露文本内容提取 API，
- *     因此 UI 渲染层的验证通过源码结构检查 + 类型检查 + 手动测试覆盖。
+ * Note: opentui renderer does not expose text content extraction API,
+ *       so UI rendering layer verification is through source code structure check + type check + manual testing.
  */
 import { describe, expect, test } from "bun:test"
 import fs from "fs"
 import path from "path"
 
-// ── input() 格式化函数（从 session/index.tsx 提取） ──────────────
+// ── input() formatter function (extracted from session/index.tsx) ──────────────
 function input(input: Record<string, any>, omit?: string[]): string {
   const primitives = Object.entries(input).filter(([key, value]) => {
     if (omit?.includes(key)) return false
@@ -27,10 +27,10 @@ describe("input() formatter", () => {
   test("formats memory search args correctly", () => {
     const result = input({
       operation: "search",
-      query: "个人设定 偏好 风格 规范 习惯",
+      query: "test query",
       scope: "global",
     })
-    expect(result).toBe("[operation=search, query=个人设定 偏好 风格 规范 习惯, scope=global]")
+    expect(result).toBe("[operation=search, query=test query, scope=global]")
   })
 
   test("formats simple string args", () => {
@@ -49,7 +49,7 @@ describe("input() formatter", () => {
   })
 })
 
-// ── 源码结构验证 ──────────────────────────────────────────────────
+// ── Source code structure verification ──────────────────────────────────────────
 const SESSION_FILE = path.resolve(__dirname, "../../../src/cli/cmd/tui/routes/session/index.tsx")
 
 function getSessionSource(): string {
@@ -67,28 +67,28 @@ describe("GenericTool source code spacing", () => {
   test("GenericTool children should have leading space expression", () => {
     source = source || getSessionSource()
 
-    // 找到 GenericTool 的 InlineTool 调用
+    // Find GenericTool InlineTool call
     const genericToolMatch = source.match(
       /<InlineTool icon="⚙" pending="Writing command\.\.\."[^>]*>\s*\n\s*([\s\S]*?)\s*<\/InlineTool>/,
     )
     expect(genericToolMatch).not.toBeNull()
 
     const children = genericToolMatch![1].trim()
-    // children 应该以 {" "} 开头
+    // children should start with {" "}
     expect(children).toMatch(/^\{" "\}/)
   })
 
   test("PlanExit children should have leading space expression", () => {
     source = source || getSessionSource()
 
-    // 找到 PlanExit 的 InlineTool 调用
+    // Find PlanExit InlineTool call
     const planExitMatch = source.match(
       /<InlineTool icon="⚙" pending="Asking\.\.\."[^>]*>\s*\n\s*([\s\S]*?)\s*<\/InlineTool>/,
     )
     expect(planExitMatch).not.toBeNull()
 
     const children = planExitMatch![1].trim()
-    // children 应该以 {" "} 开头
+    // children should start with {" "}
     expect(children).toMatch(/^\{" "\}/)
   })
 })
@@ -110,7 +110,7 @@ describe("Other InlineTool components should NOT be affected", () => {
     expect(skillMatch).not.toBeNull()
 
     const children = skillMatch![1].trim()
-    // children 应该以 Skill 开头，不带前导 {" "}
+    // children should start with Skill, without leading {" "}
     expect(children).toMatch(/^Skill/)
     expect(children).not.toMatch(/^\{" "\}/)
   })
@@ -206,12 +206,12 @@ describe("Other InlineTool components should NOT be affected", () => {
   })
 })
 
-// ── InlineTool 渲染逻辑验证 ──────────────────────────────────────
+// ── InlineTool render logic verification ──────────────────────────────────────
 describe("InlineTool render logic", () => {
   test("icon and children separated by space in source", () => {
     const source = getSessionSource()
 
-    // 验证 InlineTool 的渲染模板中 icon 和 children 之间有空格
+    // Verify InlineTool render template has space between icon and children
     const renderMatch = source.match(
       /<span style=\{\{ fg: props\.iconColor \}\}>\{props\.icon\}<\/span>\s*\{props\.children\}/,
     )
