@@ -257,50 +257,85 @@ function supportsCacheMarkers(model: Provider.Model): boolean {
   return false
 }
 
-function applyCaching(msgs: ModelMessage[], model: Provider.Model): ModelMessage[] {
-  // Only Anthropic and OpenRouter expose a cache-control TTL in their AI SDK;
-  // the other providers ignore an unknown `ttl` field, so we only thread it
-  // into those two branches. Default (unset) stays the provider 5m default.
+// The cache-control marker shape differs per provider/SDK. This is the single
+// source of truth, keyed by the SDK provider-options namespace. `applyCaching`
+// attaches the whole object (keyed by stored providerID) and lets `message()`
+// remap the active provider's namespace to its SDK key; `tools()` (which
+// bypasses that remap) resolves a single namespace up front via `cacheMarkerFor`.
+// Only Anthropic and OpenRouter expose a TTL in their AI SDK — the others ignore
+// an unknown `ttl`, so we thread it only there.
+function cacheMarkerOptions(model: Provider.Model) {
   const ttl = model.cachePromptTTL === "1h" ? { ttl: "1h" as const } : {}
-  const providerOptions = {
-    anthropic: {
-      cacheControl: { type: "ephemeral", ...ttl },
-    },
-    openrouter: {
-      cacheControl: { type: "ephemeral", ...ttl },
-    },
-    bedrock: {
-      cachePoint: { type: "default" },
-    },
-    openaiCompatible: {
-      cache_control: { type: "ephemeral" },
-    },
-    copilot: {
-      copilot_cache_control: { type: "ephemeral" },
-    },
-    alibaba: {
-      cacheControl: { type: "ephemeral" },
-    },
+  return {
+    anthropic: { cacheControl: { type: "ephemeral", ...ttl } },
+    openrouter: { cacheControl: { type: "ephemeral", ...ttl } },
+    bedrock: { cachePoint: { type: "default" } },
+    openaiCompatible: { cache_control: { type: "ephemeral" } },
+    copilot: { copilot_cache_control: { type: "ephemeral" } },
+    alibaba: { cacheControl: { type: "ephemeral" } },
   }
+}
 
-  // Strategy: place cache breakpoints at stable prefix boundaries (max 4 allowed by Anthropic)
-  // 1. Last system message — system prompt never changes
-  // 2. Midpoint of conversation history — long prefix second-level cache
-  // 3. Message before the last user message — stable history boundary
+// Resolve the marker for a single model, already keyed under the SDK namespace
+// the AI SDK expects — i.e. the remap that `message()` performs for messages,
+// done up front. Used by `tools()`, whose tools never pass through `message()`.
+// Returns undefined for providers that don't take inline markers (callers gate
+// on `supportsCacheMarkers` first, so this is just a type-safety fallback).
+function cacheMarkerFor(model: Provider.Model): Record<string, unknown> | undefined {
+  const shapes = cacheMarkerOptions(model)
+  const ns: keyof typeof shapes | undefined =
+    model.api.npm === "@ai-sdk/anthropic" || model.api.npm === "@ai-sdk/google-vertex/anthropic"
+      ? "anthropic"
+      : model.api.npm === "@openrouter/ai-sdk-provider"
+        ? "openrouter"
+        : model.api.npm === "@ai-sdk/amazon-bedrock"
+          ? "bedrock"
+          : model.api.npm === "@ai-sdk/github-copilot"
+            ? "copilot"
+            : model.api.npm === "@ai-sdk/alibaba"
+              ? "alibaba"
+              : undefined
+  if (!ns) return undefined
+  return { [ns]: shapes[ns] }
+}
+
+function applyCaching(msgs: ModelMessage[], model: Provider.Model): ModelMessage[] {
+  const providerOptions = cacheMarkerOptions(model)
+
+  // Strategy: prefix caching is longest-common-prefix based with a backward
+  // lookback window (Anthropic walks back ~20 blocks from a breakpoint to find
+  // a prior write). The markers that grow the cached prefix are pinned to the
+  // *tail* of the request. We place up to three stable breakpoints (Anthropic
+  // allows max 4):
+  // 1. Last system message — the immutable prompt prefix.
+  // 2+3. The last TWO messages — a "rolling double buffer". Each turn marks
+  //      messages[-2] and messages[-1]; next turn the old [-1] is now [-2] and
+  //      still carries its marker, so the lookback gets a cache READ hit, while
+  //      the new [-1] is the WRITE for the turn after.
+  //
+  //      Why two and not one: the second (next-to-last) marker is the safety
+  //      net for the tail boundary. When the last message is removed — a
+  //      tool-call retry, a Ctrl-C, or the user editing/deleting their latest
+  //      message — a lone tail marker disappears with it, and how much of the
+  //      surrounding prefix the provider then evicts depends on the upstream
+  //      (Anthropic) KV-cache implementation. The next-to-last marker is a
+  //      still-present, further-back write the next lookback can land on, so the
+  //      worst case degrades to "recompute only the removed message" instead of
+  //      "recompute the whole history". It also covers turns that append >20
+  //      blocks (tool spam pushes the prior write outside the lookback window).
+  //      Cost is ~equal to a single marker: the two adjacent breakpoints write
+  //      roughly the same incremental bytes as one, split in two, and a hit
+  //      never rewrites. A third marker would write a segment never read
+  //      independently, so two is the minimum that covers the boundary.
+  // We deliberately do NOT mark a drifting midpoint or a fixed before-last-user
+  // INDEX: those shift every turn without tracking the tail.
   const targets: ModelMessage[] = []
 
   const systemMsgs = msgs.filter((msg) => msg.role === "system")
   if (systemMsgs.length > 0) targets.push(systemMsgs[systemMsgs.length - 1])
 
   const nonSystem = msgs.filter((msg) => msg.role !== "system")
-  const lastUserIdx = nonSystem.findLastIndex((msg) => msg.role === "user")
-  if (lastUserIdx >= 1) {
-    targets.push(nonSystem[lastUserIdx - 1])
-    const midpoint = Math.floor(lastUserIdx / 2)
-    if (midpoint > 0 && midpoint < lastUserIdx - 1) targets.push(nonSystem[midpoint])
-  } else if (lastUserIdx === 0) {
-    targets.push(nonSystem[0])
-  }
+  for (const msg of nonSystem.slice(-2)) targets.push(msg)
 
   for (const msg of unique(targets)) {
     const useMessageLevelOptions =
@@ -448,6 +483,25 @@ export function message(msgs: ModelMessage[], model: Provider.Model, options: Re
   }
 
   return msgs
+}
+
+// Place a cache breakpoint on the tool definitions. The cache hierarchy is
+// `tools` → `system` → `messages`, so marking the LAST tool caches the entire
+// tool-schema block (often several KB) as a stable prefix that sits in front of
+// the system + message caches. Tools are passed to the SDK separately from
+// `message()` and never go through its providerID→SDK-key remap, so we resolve
+// the SDK-keyed marker via `cacheMarkerFor`. Tool registration order is stable
+// (insertion order of the tools record), so "last tool" is deterministic.
+export function tools<T extends Record<string, any>>(tools: T, model: Provider.Model): T {
+  if (!supportsCacheMarkers(model)) return tools
+  const marker = cacheMarkerFor(model)
+  if (!marker) return tools
+  const names = Object.keys(tools)
+  if (names.length === 0) return tools
+
+  const last = tools[names[names.length - 1]]
+  last.providerOptions = mergeDeep(last.providerOptions ?? {}, marker)
+  return tools
 }
 
 export function temperature(model: Provider.Model) {

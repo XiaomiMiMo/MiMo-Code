@@ -2172,6 +2172,150 @@ describe("ProviderTransform.message - cache control on gateway", () => {
 
     expect(result[0].providerOptions).toBeUndefined()
   })
+
+  test("multi-turn anthropic pins breakpoints to last system + last two messages", () => {
+    const model = createModel({
+      providerID: "anthropic",
+      api: { id: "claude-sonnet-4", url: "https://api.anthropic.com", npm: "@ai-sdk/anthropic" },
+    })
+    const msgs = [
+      { role: "system", content: "You are a helpful assistant" },
+      { role: "user", content: "first question" },
+      { role: "assistant", content: "first answer" },
+      { role: "user", content: "second question" },
+      { role: "assistant", content: "second answer" },
+      { role: "user", content: "third question" },
+    ] as any[]
+
+    const result = ProviderTransform.message(msgs, model, {}) as any[]
+
+    // The last system message plus the last TWO messages carry a breakpoint
+    // (rolling double buffer): the prior turn's tail marker survives as the
+    // read point while the new tail marker is the next write.
+    const marked = result
+      .map((msg, index) => ({ index, role: msg.role, hasCache: !!msg.providerOptions?.anthropic?.cacheControl }))
+      .filter((m) => m.hasCache)
+
+    expect(marked).toEqual([
+      { index: 0, role: "system", hasCache: true },
+      { index: 4, role: "assistant", hasCache: true },
+      { index: 5, role: "user", hasCache: true },
+    ])
+    // No drifting midpoint marker on earlier turns.
+    expect(result[2].providerOptions?.anthropic).toBeUndefined()
+    expect(result[3].providerOptions?.anthropic).toBeUndefined()
+  })
+
+  test("content-level provider marks the last two messages regardless of role", () => {
+    // Providers that reach applyCaching honor message-level markers (incl.
+    // assistant), so the double-tail marks the last two messages by position.
+    const model = createModel({
+      providerID: "openrouter",
+      api: { id: "anthropic/claude-sonnet-4", url: "https://openrouter.ai/api", npm: "@openrouter/ai-sdk-provider" },
+    })
+    const msgs = [
+      { role: "system", content: [{ type: "text", text: "sys" }] },
+      { role: "user", content: [{ type: "text", text: "first question" }] },
+      { role: "assistant", content: [{ type: "text", text: "first answer" }] },
+      { role: "user", content: [{ type: "text", text: "second question" }] },
+      { role: "assistant", content: [{ type: "text", text: "second answer" }] },
+    ] as any[]
+
+    const result = ProviderTransform.message(msgs, model, {}) as any[]
+
+    const hasMarker = (msg: any) =>
+      !!msg.providerOptions?.openrouter ||
+      msg.content?.some?.((c: any) => c.providerOptions?.openrouter)
+
+    // The last two messages (index 3 user, 4 assistant) are both marked.
+    expect(hasMarker(result[3])).toBe(true)
+    expect(hasMarker(result[4])).toBe(true)
+    // Earlier turns are not.
+    expect(hasMarker(result[1])).toBe(false)
+    expect(hasMarker(result[2])).toBe(false)
+  })
+})
+
+describe("ProviderTransform.tools", () => {
+  const createModel = (overrides: Partial<any> = {}): any => ({
+    id: "test/test-model",
+    providerID: "test",
+    api: { id: "test-model", url: "https://api.test.com", npm: "@ai-sdk/openai" },
+    name: "Test Model",
+    ...overrides,
+  })
+
+  test("marks the last tool for anthropic", () => {
+    const model = createModel({
+      providerID: "anthropic",
+      api: { id: "claude-sonnet-4", url: "https://api.anthropic.com", npm: "@ai-sdk/anthropic" },
+    })
+    const tools = { read: {}, write: {}, bash: {} } as Record<string, any>
+
+    const result = ProviderTransform.tools(tools, model)
+
+    expect(result.read.providerOptions).toBeUndefined()
+    expect(result.write.providerOptions).toBeUndefined()
+    expect(result.bash.providerOptions).toEqual({ anthropic: { cacheControl: { type: "ephemeral" } } })
+  })
+
+  test("threads cachePromptTTL 1h into the tool marker", () => {
+    const model = createModel({
+      providerID: "anthropic",
+      api: { id: "claude-sonnet-4", url: "https://api.anthropic.com", npm: "@ai-sdk/anthropic" },
+      cachePromptTTL: "1h",
+    })
+    const tools = { read: {}, bash: {} } as Record<string, any>
+
+    const result = ProviderTransform.tools(tools, model)
+
+    expect(result.bash.providerOptions).toEqual({ anthropic: { cacheControl: { type: "ephemeral", ttl: "1h" } } })
+  })
+
+  test("uses cachePoint shape for bedrock", () => {
+    const model = createModel({
+      providerID: "amazon-bedrock",
+      api: { id: "anthropic.claude-sonnet-4", url: "https://api.test.com", npm: "@ai-sdk/amazon-bedrock" },
+    })
+    const tools = { read: {}, bash: {} } as Record<string, any>
+
+    const result = ProviderTransform.tools(tools, model)
+
+    expect(result.bash.providerOptions).toEqual({ bedrock: { cachePoint: { type: "default" } } })
+  })
+
+  test("uses copilot_cache_control shape for github-copilot", () => {
+    const model = createModel({
+      providerID: "github-copilot",
+      api: { id: "claude-sonnet-4", url: "https://api.githubcopilot.com", npm: "@ai-sdk/github-copilot" },
+    })
+    const tools = { read: {}, bash: {} } as Record<string, any>
+
+    const result = ProviderTransform.tools(tools, model)
+
+    expect(result.bash.providerOptions).toEqual({ copilot: { copilot_cache_control: { type: "ephemeral" } } })
+  })
+
+  test("no marker for providers that do not support cache markers", () => {
+    const model = createModel({
+      providerID: "openai",
+      api: { id: "gpt-4", url: "https://api.openai.com", npm: "@ai-sdk/openai" },
+    })
+    const tools = { read: {}, bash: {} } as Record<string, any>
+
+    const result = ProviderTransform.tools(tools, model)
+
+    expect(result.read.providerOptions).toBeUndefined()
+    expect(result.bash.providerOptions).toBeUndefined()
+  })
+
+  test("no-op on empty tools", () => {
+    const model = createModel({
+      providerID: "anthropic",
+      api: { id: "claude-sonnet-4", url: "https://api.anthropic.com", npm: "@ai-sdk/anthropic" },
+    })
+    expect(ProviderTransform.tools({}, model)).toEqual({})
+  })
 })
 
 describe("ProviderTransform.variants", () => {
