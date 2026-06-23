@@ -42,9 +42,17 @@ function isBlockedIPv6(ip: string): boolean {
   if (normalized.startsWith("fe80:")) return true // link-local
   if (normalized.startsWith("fc") || normalized.startsWith("fd")) return true // ULA
   if (normalized === "::ffff:127.0.0.1") return true
-  // IPv4-mapped IPv6 — extract the IPv4 portion
+  // IPv4-mapped IPv6 in dotted-decimal form (::ffff:a.b.c.d)
   const mapped = normalized.match(/^::ffff:(\d+\.\d+\.\d+\.\d+)$/)
   if (mapped) return isBlockedIPv4(mapped[1]!)
+  // IPv4-mapped IPv6 in hex form (::ffff:HHHH:HHHH) — URL parsers normalize to this
+  const hexMapped = normalized.match(/^::ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})$/)
+  if (hexMapped) {
+    const hi = parseInt(hexMapped[1]!, 16)
+    const lo = parseInt(hexMapped[2]!, 16)
+    const ipv4 = `${(hi >> 8) & 0xff}.${hi & 0xff}.${(lo >> 8) & 0xff}.${lo & 0xff}`
+    return isBlockedIPv4(ipv4)
+  }
   return false
 }
 
