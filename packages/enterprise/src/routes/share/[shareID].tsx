@@ -126,14 +126,10 @@ export default function () {
           return <NotFound />
         }
         console.error(error)
-        const details = error instanceof Error ? (error.stack ?? error.message) : String(error)
         return (
           <div class="min-h-screen w-full bg-background-base text-text-base flex flex-col items-center justify-center gap-4 p-6 text-center">
             <p class="text-16-medium">Unable to render this share.</p>
-            <p class="text-14-regular text-text-weaker">Check the console for more details.</p>
-            <pre class="text-12-mono text-left whitespace-pre-wrap break-words w-full max-w-200 bg-background-stronger rounded-md p-4">
-              {details}
-            </pre>
+            <p class="text-14-regular text-text-weaker">An unexpected error occurred. Please try again later.</p>
           </div>
         )
       }}

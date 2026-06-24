@@ -1,17 +1,23 @@
 import { marked } from "marked"
 import { codeToHtml } from "shiki"
 import markedShiki from "marked-shiki"
+import DOMPurify from "dompurify"
 import { createOverflow, useShareMessages } from "./common"
 import { CopyButton } from "./copy-button"
 import { createResource, createSignal } from "solid-js"
 import style from "./content-markdown.module.css"
 
+function escapeAttr(s: string): string {
+  return s.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+}
+
 const markedWithShiki = marked.use(
   {
     renderer: {
       link({ href, title, text }) {
-        const titleAttr = title ? ` title="${title}"` : ""
-        return `<a href="${href}"${titleAttr} target="_blank" rel="noopener noreferrer">${text}</a>`
+        const safeHref = escapeAttr(href)
+        const titleAttr = title ? ` title="${escapeAttr(title)}"` : ""
+        return `<a href="${safeHref}"${titleAttr} target="_blank" rel="noopener noreferrer">${text}</a>`
       },
     },
   },
@@ -37,7 +43,11 @@ export function ContentMarkdown(props: Props) {
   const [html] = createResource(
     () => strip(props.text),
     async (markdown) => {
-      return markedWithShiki.parse(markdown)
+      const raw = await markedWithShiki.parse(markdown)
+      return DOMPurify.sanitize(raw, {
+        FORBID_TAGS: ["style"],
+        FORBID_ATTR: ["onerror", "onload", "onclick", "onmouseover"],
+      })
     },
   )
   const [expanded, setExpanded] = createSignal(false)

@@ -352,20 +352,12 @@ export class Agent implements ACPAgent {
               ]
 
               if (kind === "edit") {
-                const input = part.state.input
-                const filePath = typeof input["filePath"] === "string" ? input["filePath"] : ""
-                const oldText = typeof input["oldString"] === "string" ? input["oldString"] : ""
-                const newText =
-                  typeof input["newString"] === "string"
-                    ? input["newString"]
-                    : typeof input["content"] === "string"
-                      ? input["content"]
-                      : ""
+                const diff = editDiffContent(part.state.input)
                 content.push({
                   type: "diff",
-                  path: filePath,
-                  oldText,
-                  newText,
+                  path: diff.path,
+                  oldText: diff.oldText,
+                  newText: diff.newText,
                 })
               }
 
@@ -856,20 +848,12 @@ export class Agent implements ACPAgent {
             ]
 
             if (kind === "edit") {
-              const input = part.state.input
-              const filePath = typeof input["filePath"] === "string" ? input["filePath"] : ""
-              const oldText = typeof input["oldString"] === "string" ? input["oldString"] : ""
-              const newText =
-                typeof input["newString"] === "string"
-                  ? input["newString"]
-                  : typeof input["content"] === "string"
-                    ? input["content"]
-                    : ""
+              const diff = editDiffContent(part.state.input)
               content.push({
                 type: "diff",
-                path: filePath,
-                oldText,
-                newText,
+                path: diff.path,
+                oldText: diff.oldText,
+                newText: diff.newText,
               })
             }
 
@@ -1519,16 +1503,36 @@ function toToolKind(toolName: string): ToolKind {
   }
 }
 
+function stringField(input: Record<string, any>, ...keys: string[]): string {
+  for (const key of keys) {
+    const value = input[key]
+    if (typeof value === "string") return value
+  }
+  return ""
+}
+
+function editDiffContent(input: Record<string, any>): { path: string; oldText: string; newText: string } {
+  return {
+    path: stringField(input, "file_path", "filePath"),
+    oldText: stringField(input, "old_string", "oldString"),
+    newText: stringField(input, "new_string", "newString", "content"),
+  }
+}
+
 function toLocations(toolName: string, input: Record<string, any>): { path: string }[] {
   const tool = toolName.toLocaleLowerCase()
   switch (tool) {
     case "read":
-    case "edit":
     case "write":
-      return input["filePath"] ? [{ path: input["filePath"] }] : []
+    case "edit":
+    case "multiedit":
+    case "lsp":
+      const filePath = stringField(input, "file_path", "filePath")
+      return filePath ? [{ path: filePath }] : []
     case "glob":
     case "grep":
-      return input["path"] ? [{ path: input["path"] }] : []
+      const target = stringField(input, "path")
+      return target ? [{ path: target }] : []
     case "bash":
       return []
     default:

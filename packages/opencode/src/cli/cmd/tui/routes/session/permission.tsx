@@ -222,8 +222,14 @@ export function PermissionPrompt(props: { request: PermissionRequest }) {
             }
 
             if (permission === "read") {
-              const raw = data.filePath
-              const filePath = typeof raw === "string" ? raw : ""
+              const fromInput =
+                typeof data.file_path === "string"
+                  ? data.file_path
+                  : typeof data.filePath === "string"
+                    ? data.filePath
+                    : ""
+              const fromPattern = typeof props.request.patterns?.[0] === "string" ? props.request.patterns[0] : ""
+              const filePath = fromInput || fromPattern
               return {
                 icon: "→",
                 title: `Read ${normalizePath(filePath)}`,

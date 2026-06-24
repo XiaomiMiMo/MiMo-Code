@@ -87,7 +87,7 @@ describe("classifier routing — integration", () => {
     await using tmp = await tmpdir({ git: true })
     const readmePath = path.join(tmp.path, "README.md")
     const stub = startScriptedLLMServer([
-      { lines: toolCallResponse({ id: "call_0", name: "read", args: JSON.stringify({ filePath: readmePath }) }) },
+      { lines: toolCallResponse({ id: "call_0", name: "read", args: JSON.stringify({ file_path: readmePath }) }) },
       { lines: textStopResponse("done.") },
     ])
     try {
@@ -156,7 +156,7 @@ describe("classifier routing — integration", () => {
     const stub = startScriptedLLMServer([
       // Pending client tool part + finish_reason "stop": must continue despite
       // json_schema mode, instead of breaking with StructuredOutputError.
-      { lines: toolCallStopResponse({ id: "call_0", name: "read", args: JSON.stringify({ filePath: readmePath }) }) },
+      { lines: toolCallStopResponse({ id: "call_0", name: "read", args: JSON.stringify({ file_path: readmePath }) }) },
       { lines: textStopResponse("plain text terminates the loop") },
     ])
     try {

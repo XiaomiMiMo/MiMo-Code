@@ -1,5 +1,6 @@
-import { describe, expect, test } from "bun:test"
+import { afterEach, beforeEach, describe, expect, test } from "bun:test"
 import { Effect, Layer, ManagedRuntime } from "effect"
+import fs from "fs/promises"
 import os from "os"
 import path from "path"
 import { Shell } from "../../src/shell/shell"
@@ -89,6 +90,40 @@ const forms = (dir: string) => {
   const root = slash.replace(/^[A-Za-z]:/, "")
   return Array.from(new Set([full, slash, root, root.toLowerCase()]))
 }
+
+// Non-login zsh still reads ~/.zshenv from the developer machine, which can emit
+// startup noise into bash tool stdout (e.g. a missing ~/.cargo/env). Point ZDOTDIR
+// at an empty directory so shell output matches what the tests assert on.
+let zdotdirCleanup: (() => Promise<void>) | undefined
+
+async function isolateZshDotfiles() {
+  if (process.platform === "win32") return
+  Shell.acceptable.reset()
+  if (Shell.name(Shell.acceptable()) !== "zsh") return
+
+  const zdotdir = path.join(os.tmpdir(), `mimocode-zdotdir-${Math.random().toString(36).slice(2)}`)
+  await fs.mkdir(zdotdir, { recursive: true })
+  const prev = process.env.ZDOTDIR
+  process.env.ZDOTDIR = zdotdir
+  zdotdirCleanup = async () => {
+    if (prev === undefined) delete process.env.ZDOTDIR
+    else process.env.ZDOTDIR = prev
+    await fs.rm(zdotdir, { recursive: true, force: true }).catch(() => {})
+  }
+}
+
+async function restoreZshDotfiles() {
+  await zdotdirCleanup?.()
+  zdotdirCleanup = undefined
+}
+
+beforeEach(async () => {
+  await isolateZshDotfiles()
+})
+
+afterEach(async () => {
+  await restoreZshDotfiles()
+})
 
 const withShell = (item: { label: string; shell: string }, fn: () => Promise<void>) => async () => {
   const prev = process.env.SHELL
@@ -674,7 +709,9 @@ describe("tool.bash permissions", () => {
   }
 
   each("asks for external_directory permission when cd to parent", async () => {
-    await using tmp = await tmpdir()
+    // git: true keeps worktree scoped to tmp.path; otherwise project detection
+    // walks up to the repo root and treats sibling fixture dirs as in-worktree.
+    await using tmp = await tmpdir({ git: true })
     await Instance.provide({
       directory: tmp.path,
       fn: async () => {
@@ -834,7 +871,7 @@ describe("tool.bash permissions", () => {
         await Bun.write(path.join(dir, "outside.txt"), "x")
       },
     })
-    await using tmp = await tmpdir()
+    await using tmp = await tmpdir({ git: true })
     await Instance.provide({
       directory: tmp.path,
       fn: async () => {

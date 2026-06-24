@@ -97,7 +97,17 @@ export async function listen(opts: {
   mdns?: boolean
   mdnsDomain?: string
   cors?: string[]
+  noAuth?: boolean
 }): Promise<Listener> {
+  const isLoopback =
+    opts.hostname === "127.0.0.1" || opts.hostname === "localhost" || opts.hostname === "::1"
+  if (!isLoopback && !Flag.MIMOCODE_SERVER_PASSWORD && !opts.noAuth) {
+    throw new Error(
+      "Refusing to bind to non-loopback address without MIMOCODE_SERVER_PASSWORD. " +
+        "Set the environment variable or pass noAuth to explicitly allow unauthenticated access.",
+    )
+  }
+
   const built = create(opts)
   const server = await built.runtime.listen(opts)
 

@@ -9,7 +9,7 @@ import { Flag } from "../../src/flag/flag"
 import { Filesystem } from "../../src/util"
 import { Log } from "../../src/util"
 import { resetDatabase } from "../fixture/db"
-import { provideInstance, tmpdir } from "../fixture/fixture"
+import { provideInstance, tmpdir, withTmpdirOutsideGit } from "../fixture/fixture"
 
 void Log.init({ print: false })
 
@@ -26,11 +26,9 @@ const authHeader = `Basic ${Buffer.from(`mimocode:${TEST_PASSWORD}`).toString("b
 describe("project.initGit endpoint", () => {
   test("initializes git and reloads immediately", async () => {
     const prevFlag = (Flag as any).MIMOCODE_SERVER_PASSWORD
-    const prevRoot = process.env["MIMOCODE_TEST_TMPDIR_ROOT"]
     ;(Flag as any).MIMOCODE_SERVER_PASSWORD = TEST_PASSWORD
-    delete process.env["MIMOCODE_TEST_TMPDIR_ROOT"]
     try {
-      await using tmp = await tmpdir()
+      await using tmp = await tmpdir({ outsideGit: true })
       const app = Server.Default().app
       const seen: { directory?: string; payload: { type: string } }[] = []
       const fn = (evt: { directory?: string; payload: { type: string } }) => {
@@ -89,8 +87,6 @@ describe("project.initGit endpoint", () => {
       }
     } finally {
       ;(Flag as any).MIMOCODE_SERVER_PASSWORD = prevFlag
-      if (prevRoot !== undefined) process.env["MIMOCODE_TEST_TMPDIR_ROOT"] = prevRoot
-      else delete process.env["MIMOCODE_TEST_TMPDIR_ROOT"]
     }
   })
 

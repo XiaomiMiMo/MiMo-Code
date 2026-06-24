@@ -6,6 +6,17 @@ import DESCRIPTION from "./multiedit.txt"
 import path from "path"
 import { Instance } from "../project/instance"
 
+const EditEntry = z.object({
+  old_string: z.string().describe("The text to replace"),
+  new_string: z.string().describe("The text to replace it with (must be different from old_string)"),
+  replace_all: z.boolean().optional().describe("Replace all occurrences of old_string (default false)"),
+})
+
+const Parameters = z.object({
+  file_path: z.string().describe("The absolute path to the file to modify"),
+  edits: z.array(EditEntry).describe("Array of edit operations to perform sequentially on the file"),
+})
+
 export const MultiEditTool = Tool.define(
   "multiedit",
   Effect.gen(function* () {
@@ -14,42 +25,24 @@ export const MultiEditTool = Tool.define(
 
     return {
       description: DESCRIPTION,
-      parameters: z.object({
-        filePath: z.string().describe("The absolute path to the file to modify"),
-        edits: z
-          .array(
-            z.object({
-              filePath: z.string().describe("The absolute path to the file to modify"),
-              oldString: z.string().describe("The text to replace"),
-              newString: z.string().describe("The text to replace it with (must be different from oldString)"),
-              replaceAll: z.boolean().optional().describe("Replace all occurrences of oldString (default false)"),
-            }),
-          )
-          .describe("Array of edit operations to perform sequentially on the file"),
-      }),
-      execute: (
-        params: {
-          filePath: string
-          edits: Array<{ filePath: string; oldString: string; newString: string; replaceAll?: boolean }>
-        },
-        ctx: Tool.Context,
-      ) =>
+      parameters: Parameters,
+      execute: (params: z.infer<typeof Parameters>, ctx: Tool.Context) =>
         Effect.gen(function* () {
           const results = []
           for (const [, entry] of params.edits.entries()) {
             const result = yield* edit.execute(
               {
-                filePath: params.filePath,
-                oldString: entry.oldString,
-                newString: entry.newString,
-                replaceAll: entry.replaceAll,
+                file_path: params.file_path,
+                old_string: entry.old_string,
+                new_string: entry.new_string,
+                replace_all: entry.replace_all,
               },
               ctx,
             )
             results.push(result)
           }
           return {
-            title: path.relative(Instance.worktree, params.filePath),
+            title: path.relative(Instance.worktree, params.file_path),
             metadata: {
               results: results.map((r) => r.metadata),
             },

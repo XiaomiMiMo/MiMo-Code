@@ -30,7 +30,7 @@ describe("lsp.spawn", () => {
             }
           }),
         ),
-      { config: { lsp: true } },
+      { config: { lsp: true }, git: true },
     ),
   )
 

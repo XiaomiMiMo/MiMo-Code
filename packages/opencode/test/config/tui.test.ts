@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, expect, test } from "bun:test"
 import path from "path"
 import fs from "fs/promises"
-import { tmpdir } from "../fixture/fixture"
+import { tmpdir, withTmpdirOutsideGit } from "../fixture/fixture"
 import { Instance } from "../../src/project/instance"
 import { TuiConfig } from "../../src/cli/cmd/tui/config/tui"
 import { Config } from "../../src/config"
@@ -38,7 +38,7 @@ afterEach(async () => {
 })
 
 test("keeps server and tui plugin merge semantics aligned", async () => {
-  await using tmp = await tmpdir({
+  await using tmp = await tmpdir({ outsideGit: true,
     init: async (dir) => {
       const local = path.join(dir, ".mimocode")
       await fs.mkdir(local, { recursive: true })
@@ -109,7 +109,7 @@ test("keeps server and tui plugin merge semantics aligned", async () => {
 })
 
 test("loads tui config with the same precedence order as server config paths", async () => {
-  await using tmp = await tmpdir({
+  await using tmp = await tmpdir({ outsideGit: true,
     init: async (dir) => {
       await Bun.write(path.join(Global.Path.config, "tui.json"), JSON.stringify({ theme: "global" }, null, 2))
       await Bun.write(path.join(dir, "tui.json"), JSON.stringify({ theme: "project" }, null, 2))
@@ -127,7 +127,7 @@ test("loads tui config with the same precedence order as server config paths", a
 })
 
 test("migrates tui-specific keys from mimocode.json when tui.json does not exist", async () => {
-  await using tmp = await tmpdir({
+  await using tmp = await tmpdir({ outsideGit: true,
     init: async (dir) => {
       await Bun.write(
         path.join(dir, "mimocode.json"),
@@ -162,7 +162,7 @@ test("migrates tui-specific keys from mimocode.json when tui.json does not exist
 })
 
 test("migrates project legacy tui keys even when global tui.json already exists", async () => {
-  await using tmp = await tmpdir({
+  await using tmp = await tmpdir({ outsideGit: true,
     init: async (dir) => {
       await Bun.write(path.join(Global.Path.config, "tui.json"), JSON.stringify({ theme: "global" }, null, 2))
       await Bun.write(
@@ -190,7 +190,7 @@ test("migrates project legacy tui keys even when global tui.json already exists"
 })
 
 test("drops unknown legacy tui keys during migration", async () => {
-  await using tmp = await tmpdir({
+  await using tmp = await tmpdir({ outsideGit: true,
     init: async (dir) => {
       await Bun.write(
         path.join(dir, "mimocode.json"),
@@ -217,7 +217,7 @@ test("drops unknown legacy tui keys during migration", async () => {
 })
 
 test("skips migration when mimocode.jsonc is syntactically invalid", async () => {
-  await using tmp = await tmpdir({
+  await using tmp = await tmpdir({ outsideGit: true,
     init: async (dir) => {
       await Bun.write(
         path.join(dir, "mimocode.jsonc"),
@@ -241,7 +241,7 @@ test("skips migration when mimocode.jsonc is syntactically invalid", async () =>
 })
 
 test("skips migration when tui.json already exists", async () => {
-  await using tmp = await tmpdir({
+  await using tmp = await tmpdir({ outsideGit: true,
     init: async (dir) => {
       await Bun.write(path.join(dir, "mimocode.json"), JSON.stringify({ theme: "legacy" }, null, 2))
       await Bun.write(path.join(dir, "tui.json"), JSON.stringify({ diff_style: "stacked" }, null, 2))
@@ -259,7 +259,7 @@ test("skips migration when tui.json already exists", async () => {
 
 // Skip: root bypasses file permissions, so chmod 0o444 is ineffective
 test.skip("continues loading tui config when legacy source cannot be stripped", async () => {
-  await using tmp = await tmpdir({
+  await using tmp = await tmpdir({ outsideGit: true,
     init: async (dir) => {
       await Bun.write(path.join(dir, "mimocode.json"), JSON.stringify({ theme: "readonly-theme" }, null, 2))
     },
@@ -281,7 +281,7 @@ test.skip("continues loading tui config when legacy source cannot be stripped", 
 })
 
 test("migration backup preserves JSONC comments", async () => {
-  await using tmp = await tmpdir({
+  await using tmp = await tmpdir({ outsideGit: true,
     init: async (dir) => {
       await Bun.write(
         path.join(dir, "mimocode.jsonc"),
@@ -306,7 +306,7 @@ test("migration backup preserves JSONC comments", async () => {
 })
 
 test("migrates legacy tui keys across multiple mimocode.json levels", async () => {
-  await using tmp = await tmpdir({
+  await using tmp = await tmpdir({ outsideGit: true,
     init: async (dir) => {
       const nested = path.join(dir, "apps", "client")
       await fs.mkdir(nested, { recursive: true })
@@ -321,7 +321,7 @@ test("migrates legacy tui keys across multiple mimocode.json levels", async () =
 })
 
 test("flattens nested tui key inside tui.json", async () => {
-  await using tmp = await tmpdir({
+  await using tmp = await tmpdir({ outsideGit: true,
     init: async (dir) => {
       await Bun.write(
         path.join(dir, "tui.json"),
@@ -341,7 +341,7 @@ test("flattens nested tui key inside tui.json", async () => {
 })
 
 test("top-level keys in tui.json take precedence over nested tui key", async () => {
-  await using tmp = await tmpdir({
+  await using tmp = await tmpdir({ outsideGit: true,
     init: async (dir) => {
       await Bun.write(
         path.join(dir, "tui.json"),
@@ -359,7 +359,7 @@ test("top-level keys in tui.json take precedence over nested tui key", async () 
 })
 
 test("project config takes precedence over MIMOCODE_TUI_CONFIG (matches MIMOCODE_CONFIG)", async () => {
-  await using tmp = await tmpdir({
+  await using tmp = await tmpdir({ outsideGit: true,
     init: async (dir) => {
       await Bun.write(path.join(dir, "tui.json"), JSON.stringify({ theme: "project", diff_style: "auto" }))
       const custom = path.join(dir, "custom-tui.json")
@@ -376,7 +376,7 @@ test("project config takes precedence over MIMOCODE_TUI_CONFIG (matches MIMOCODE
 })
 
 test("merges keybind overrides across precedence layers", async () => {
-  await using tmp = await tmpdir({
+  await using tmp = await tmpdir({ outsideGit: true,
     init: async (dir) => {
       await Bun.write(path.join(Global.Path.config, "tui.json"), JSON.stringify({ keybinds: { app_exit: "ctrl+q" } }))
       await Bun.write(path.join(dir, "tui.json"), JSON.stringify({ keybinds: { theme_list: "ctrl+k" } }))
@@ -388,14 +388,14 @@ test("merges keybind overrides across precedence layers", async () => {
 })
 
 wintest("defaults Ctrl+Z to input undo on Windows", async () => {
-  await using tmp = await tmpdir()
+  await using tmp = await tmpdir({ outsideGit: true })
   const config = await getTuiConfig(tmp.path)
   expect(config.keybinds?.terminal_suspend).toBe("none")
   expect(config.keybinds?.input_undo).toBe("ctrl+z,ctrl+-,super+z")
 })
 
 wintest("keeps explicit input undo overrides on Windows", async () => {
-  await using tmp = await tmpdir({
+  await using tmp = await tmpdir({ outsideGit: true,
     init: async (dir) => {
       await Bun.write(path.join(dir, "tui.json"), JSON.stringify({ keybinds: { input_undo: "ctrl+y" } }))
     },
@@ -406,7 +406,7 @@ wintest("keeps explicit input undo overrides on Windows", async () => {
 })
 
 wintest("ignores terminal suspend bindings on Windows", async () => {
-  await using tmp = await tmpdir({
+  await using tmp = await tmpdir({ outsideGit: true,
     init: async (dir) => {
       await Bun.write(path.join(dir, "tui.json"), JSON.stringify({ keybinds: { terminal_suspend: "alt+z" } }))
     },
@@ -418,7 +418,7 @@ wintest("ignores terminal suspend bindings on Windows", async () => {
 })
 
 test("MIMOCODE_TUI_CONFIG provides settings when no project config exists", async () => {
-  await using tmp = await tmpdir({
+  await using tmp = await tmpdir({ outsideGit: true,
     init: async (dir) => {
       const custom = path.join(dir, "custom-tui.json")
       await Bun.write(custom, JSON.stringify({ theme: "from-env", diff_style: "stacked" }))
@@ -431,7 +431,7 @@ test("MIMOCODE_TUI_CONFIG provides settings when no project config exists", asyn
 })
 
 test("does not derive tui path from MIMOCODE_CONFIG", async () => {
-  await using tmp = await tmpdir({
+  await using tmp = await tmpdir({ outsideGit: true,
     init: async (dir) => {
       const customDir = path.join(dir, "custom")
       await fs.mkdir(customDir, { recursive: true })
@@ -448,7 +448,7 @@ test("applies env and file substitutions in tui.json", async () => {
   const original = process.env.TUI_THEME_TEST
   process.env.TUI_THEME_TEST = "env-theme"
   try {
-    await using tmp = await tmpdir({
+    await using tmp = await tmpdir({ outsideGit: true,
       init: async (dir) => {
         await Bun.write(path.join(dir, "keybind.txt"), "ctrl+q")
         await Bun.write(
@@ -470,7 +470,7 @@ test("applies env and file substitutions in tui.json", async () => {
 })
 
 test("applies file substitutions when first identical token is in a commented line", async () => {
-  await using tmp = await tmpdir({
+  await using tmp = await tmpdir({ outsideGit: true,
     init: async (dir) => {
       await Bun.write(path.join(dir, "theme.txt"), "resolved-theme")
       await Bun.write(
@@ -487,7 +487,7 @@ test("applies file substitutions when first identical token is in a commented li
 })
 
 test("loads .mimocode/tui.json", async () => {
-  await using tmp = await tmpdir({
+  await using tmp = await tmpdir({ outsideGit: true,
     init: async (dir) => {
       await fs.mkdir(path.join(dir, ".mimocode"), { recursive: true })
       await Bun.write(path.join(dir, ".mimocode", "tui.json"), JSON.stringify({ diff_style: "stacked" }, null, 2))
@@ -498,7 +498,7 @@ test("loads .mimocode/tui.json", async () => {
 })
 
 test("supports tuple plugin specs with options in tui.json", async () => {
-  await using tmp = await tmpdir({
+  await using tmp = await tmpdir({ outsideGit: true,
     init: async (dir) => {
       await Bun.write(
         path.join(dir, "tui.json"),
@@ -521,7 +521,7 @@ test("supports tuple plugin specs with options in tui.json", async () => {
 })
 
 test("deduplicates tuple plugin specs by name with higher precedence winning", async () => {
-  await using tmp = await tmpdir({
+  await using tmp = await tmpdir({ outsideGit: true,
     init: async (dir) => {
       await Bun.write(
         path.join(Global.Path.config, "tui.json"),
@@ -561,7 +561,7 @@ test("deduplicates tuple plugin specs by name with higher precedence winning", a
 })
 
 test("tracks global and local plugin metadata in merged tui config", async () => {
-  await using tmp = await tmpdir({
+  await using tmp = await tmpdir({ outsideGit: true,
     init: async (dir) => {
       await Bun.write(
         path.join(Global.Path.config, "tui.json"),
@@ -595,7 +595,7 @@ test("tracks global and local plugin metadata in merged tui config", async () =>
 })
 
 test("merges plugin_enabled flags across config layers", async () => {
-  await using tmp = await tmpdir({
+  await using tmp = await tmpdir({ outsideGit: true,
     init: async (dir) => {
       await Bun.write(
         path.join(Global.Path.config, "tui.json"),

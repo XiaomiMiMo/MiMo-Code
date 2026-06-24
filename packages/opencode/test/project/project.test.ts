@@ -3,7 +3,7 @@ import { Project } from "../../src/project"
 import { Log } from "../../src/util"
 import { $ } from "bun"
 import path from "path"
-import { tmpdir } from "../fixture/fixture"
+import { tmpdir, withTmpdirOutsideGit } from "../fixture/fixture"
 import { GlobalBus } from "../../src/bus/global"
 import { ProjectID } from "../../src/project/schema"
 import { Effect, Layer, Stream } from "effect"
@@ -103,11 +103,13 @@ describe("Project.fromDirectory", () => {
     expect(await Bun.file(idFile).exists()).toBe(true)
   })
 
-  test("returns global for non-git directory", async () => {
-    await using tmp = await tmpdir()
-    const { project } = await run((svc) => svc.fromDirectory(tmp.path))
-    expect(project.id).toBe(ProjectID.global)
-  })
+  test("returns global for non-git directory", () =>
+    withTmpdirOutsideGit(async () => {
+      await using tmp = await tmpdir()
+      const { project } = await run((svc) => svc.fromDirectory(tmp.path))
+      expect(project.id).toBe(ProjectID.global)
+    }),
+  )
 
   test("disables vcs when .git is anchored at $HOME", async () => {
     await using tmp = await tmpdir()

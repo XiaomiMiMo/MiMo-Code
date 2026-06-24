@@ -25,11 +25,17 @@ async function waitReady() {
       reject(new Error("timed out waiting for worktree.ready"))
     }, 10_000)
 
-    function on(evt: { directory?: string; payload: { type: string; properties: { name: string; branch: string } } }) {
+    function on(evt: { directory?: string; payload: { type: string; properties: { name?: string; branch?: string; message?: string } } }) {
+      if (evt.payload.type === Worktree.Event.Failed.type) {
+        clearTimeout(timer)
+        GlobalBus.off("event", on)
+        reject(new Error(evt.payload.properties.message ?? "worktree bootstrap failed"))
+        return
+      }
       if (evt.payload.type !== Worktree.Event.Ready.type) return
       clearTimeout(timer)
       GlobalBus.off("event", on)
-      resolve(evt.payload.properties)
+      resolve({ name: evt.payload.properties.name!, branch: evt.payload.properties.branch! })
     }
 
     GlobalBus.on("event", on)
@@ -52,7 +58,7 @@ describe("Worktree", () => {
             expect(info.branch).toBe(`mimocode/${info.name}`)
             expect(info.directory).toContain(info.name)
           }),
-        { git: true },
+        { git: true, outsideGit: true },
       ),
     )
 
@@ -66,7 +72,7 @@ describe("Worktree", () => {
             expect(info.name).toBe("my-feature")
             expect(info.branch).toBe("mimocode/my-feature")
           }),
-        { git: true },
+        { git: true, outsideGit: true },
       ),
     )
 
@@ -79,19 +85,21 @@ describe("Worktree", () => {
 
             expect(info.name).toBe("my-feature-branch")
           }),
-        { git: true },
+        { git: true, outsideGit: true },
       ),
     )
 
     it.live("throws NotGitError for non-git directories", () =>
-      provideTmpdirInstance(() =>
-        Effect.gen(function* () {
-          const svc = yield* Worktree.Service
-          const exit = yield* Effect.exit(svc.makeWorktreeInfo())
+      provideTmpdirInstance(
+        () =>
+          Effect.gen(function* () {
+            const svc = yield* Worktree.Service
+            const exit = yield* Effect.exit(svc.makeWorktreeInfo())
 
-          expect(Exit.isFailure(exit)).toBe(true)
-          if (Exit.isFailure(exit)) expect(Cause.squash(exit.cause)).toBeInstanceOf(Worktree.NotGitError)
-        }),
+            expect(Exit.isFailure(exit)).toBe(true)
+            if (Exit.isFailure(exit)) expect(Cause.squash(exit.cause)).toBeInstanceOf(Worktree.NotGitError)
+          }),
+        { outsideGit: true },
       ),
     )
   })
@@ -102,18 +110,17 @@ describe("Worktree", () => {
         () =>
           Effect.gen(function* () {
             const svc = yield* Worktree.Service
-            const info = yield* svc.create()
+            const info = yield* svc.makeWorktreeInfo()
+            yield* svc.createFromInfo(info)
 
             expect(info.name).toBeDefined()
             expect(info.branch).toStartWith("mimocode/")
             expect(info.directory).toBeDefined()
 
-            yield* Effect.promise(() => Bun.sleep(1000))
-
             const ok = yield* svc.remove({ directory: info.directory })
             expect(ok).toBe(true)
           }),
-        { git: true },
+        { git: true, outsideGit: true },
       ),
     )
 
@@ -140,7 +147,7 @@ describe("Worktree", () => {
             yield* Effect.promise(() => Bun.sleep(100))
             yield* svc.remove({ directory: info.directory })
           }),
-        { git: true },
+        { git: true, outsideGit: true },
       ),
     )
 
@@ -160,7 +167,7 @@ describe("Worktree", () => {
             yield* Effect.promise(() => Bun.sleep(100))
             yield* svc.remove({ directory: info.directory })
           }),
-        { git: true },
+        { git: true, outsideGit: true },
       ),
     )
   })
@@ -181,7 +188,7 @@ describe("Worktree", () => {
 
             yield* svc.remove({ directory: info.directory })
           }),
-        { git: true },
+        { git: true, outsideGit: true },
       ),
     )
   })
@@ -195,7 +202,7 @@ describe("Worktree", () => {
             const ok = yield* svc.remove({ directory: path.join(dir, "does-not-exist") })
             expect(ok).toBe(true)
           }),
-        { git: true },
+        { git: true, outsideGit: true },
       ),
     )
 
@@ -208,6 +215,7 @@ describe("Worktree", () => {
           expect(Exit.isFailure(exit)).toBe(true)
           if (Exit.isFailure(exit)) expect(Cause.squash(exit.cause)).toBeInstanceOf(Worktree.NotGitError)
         }),
+        { outsideGit: true },
       ),
     )
   })
