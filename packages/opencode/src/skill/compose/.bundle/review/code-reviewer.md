@@ -22,6 +22,10 @@ tool's own description. Use a title like "Review code changes" with this prompt:
 
     ## Git Range to Review
 
+    [If the work was done in an isolated worktree, add a line here: "Run all
+    commands from `<worktree path>` — `cd` there first." Omit this if there's no
+    separate worktree; the current checkout is correct by default.]
+
     **Base:** {BASE_SHA}
     **Head:** {HEAD_SHA}
 
@@ -129,6 +133,9 @@ tool's own description. Use a title like "Review code changes" with this prompt:
 - `{PLAN_OR_REQUIREMENTS}` — what it should do (plan file path, task text, or requirements)
 - `{BASE_SHA}` — starting commit
 - `{HEAD_SHA}` — ending commit
+
+If the work was done in an isolated worktree, also add a `cd <worktree path>`
+instruction to the Git Range section; otherwise the current checkout is correct.
 
 **Reviewer returns:** Strengths, Issues (Critical / Important / Minor), Recommendations, Assessment
 

@@ -52,6 +52,14 @@ This is how each task's spec-compliance review works. It replaces a single
 prose review with intent-grounded implementation and a two-phase, evidence-gated
 verdict.
 
+**Working directory (only if isolated).** Subagents run with fresh context and start
+in the repo root. If `compose:worktree` set up an isolated worktree, the work does NOT
+live there — tell every subagent to `cd` into the worktree first (fill the
+implementer's `Work from:` line, and add the `cd` note the reviewer prompts describe).
+Otherwise there's nothing to do: the current checkout is correct and you can leave
+those lines out. When a worktree IS in use and you forget, a reviewer's `git diff` and
+tests run against the wrong checkout and the verdict is meaningless.
+
 **1. Create and bind a task before dispatching.** Before the implementer runs, create
 a work-item with the `task` tool (`task create "<plan task summary>"`) and capture its
 TID. Dispatch the implementer bound to that task by passing `--task <TID>` on the actor
@@ -65,7 +73,9 @@ implementer prompt's `## Intent (from spec)` block (see `./implementer-prompt.md
 The implementer never reads the spec itself — you hand it exactly the sections its
 task covers, with the scope boundary intact.
 
-**3. Run the spec reviewer in two phases** (see `./spec-reviewer-prompt.md`):
+**3. Run the spec reviewer in two phases** (see `./spec-reviewer-prompt.md`).
+If an isolated worktree is in use, add the `cd <worktree>` instruction to each
+dispatch (see the working-directory note above):
 - **Phase 1:** dispatch with the covered spec section text + `git diff` ONLY. Do NOT
   include the implementer's report — its claims anchor the reviewer toward confirming
   what was reported and away from spotting silent omissions. Phase 1 returns a
