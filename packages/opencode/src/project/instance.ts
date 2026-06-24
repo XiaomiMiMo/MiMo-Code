@@ -20,8 +20,8 @@ const cache = new Map<string, Promise<InstanceContext>>()
 const project = makeRuntime(Project.Service, Project.defaultLayer)
 
 const FORBIDDEN_ROOTS = new Set([
-  "/etc", "/proc", "/sys", "/dev", "/boot", "/root", "/var",
-  "/private/etc", "/private/var",
+  "/etc", "/proc", "/sys", "/dev", "/boot",
+  "/private/etc",
 ])
 
 function assertSafeDirectory(directory: string): void {
