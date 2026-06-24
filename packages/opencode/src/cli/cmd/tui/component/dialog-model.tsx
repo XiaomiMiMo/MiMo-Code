@@ -89,12 +89,13 @@ export function DialogModel(props: { providerID?: string }) {
     const mimoProvider = sync.data.provider.find((p) => p.id === "mimo")
     const xiaomiProvider = sync.data.provider.find((p) => p.id === "xiaomi")
     const pinnedCategory = xiaomiProvider?.name ?? "MiMo"
-    const showPinned = connected() && showSections && !props.providerID
+    // Show pinned section when not scoped to a specific provider
+    const showPinned = connected() && !props.providerID
 
     const pinnedOptions = showPinned
       ? [
           // mimo-free model
-          ...(mimoProvider && "mimo-auto" in mimoProvider.models && !inShortcuts("mimo", "mimo-auto")
+          ...(mimoProvider && "mimo-auto" in mimoProvider.models && (!showSections || !inShortcuts("mimo", "mimo-auto"))
             ? [
                 {
                   value: { providerID: "mimo", modelID: "mimo-auto" },
@@ -126,7 +127,7 @@ export function DialogModel(props: { providerID?: string }) {
                     onSelect(xiaomiProvider.id, model)
                   },
                 })),
-                filter((x) => !inShortcuts(x.value.providerID, x.value.modelID)),
+                filter((x) => !showSections || !inShortcuts(x.value.providerID, x.value.modelID)),
               )
             : []),
         ]
@@ -134,7 +135,8 @@ export function DialogModel(props: { providerID?: string }) {
 
     const providerOptions = pipe(
       sync.data.provider,
-      filter((provider) => provider.id !== "xiaomi" && provider.id !== "mimo"),
+      // Exclude xiaomi/mimo from regular list only when pinned section is shown
+      filter((provider) => !showPinned || (provider.id !== "xiaomi" && provider.id !== "mimo")),
       sortBy(
         (provider) => provider.id !== "opencode",
         (provider) => PROVIDER_PRIORITY[provider.id] ?? 99,
@@ -199,6 +201,7 @@ export function DialogModel(props: { providerID?: string }) {
 
     if (needle) {
       return [
+        ...fuzzysort.go(needle, pinnedOptions, { keys: ["title", "category"] }).map((x) => x.obj),
         ...fuzzysort.go(needle, providerOptions, { keys: ["title", "category"] }).map((x) => x.obj),
         ...fuzzysort.go(needle, popularProviders, { keys: ["title"] }).map((x) => x.obj),
       ]
