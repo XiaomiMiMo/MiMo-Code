@@ -316,7 +316,6 @@ export const dict = {
   "tui.consent.revoked": "Accord du modèle gratuit révoqué — vous devrez l'accepter à nouveau",
   "tui.dialog.select.placeholder": "Rechercher",
   "tui.dialog.model.login_hint": "Astuce : exécutez /login pour vous connecter avant de changer de modèle",
-  "provider.name.mimo": "MiMo",
   "tui.model.mimo_auto.name": "MiMo Auto (MiMo-V2.5, gratuit pour une durée limitée)",
   "tui.dialog.token_plan.title": "Abonnez-vous à un Token Plan ou patientez dans la file",
   "tui.dialog.token_plan.line1":

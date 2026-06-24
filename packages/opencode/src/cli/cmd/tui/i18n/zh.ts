@@ -22,9 +22,6 @@ export const dict = {
   "language.th": "ไทย",
   "language.tr": "Türkçe",
 
-  // Provider display names
-  "provider.name.xiaomi": "小米",
-
   // Prompt placeholders
   "tui.prompt.placeholder.normal": "输入消息...(输入/唤起命令)",
   "tui.prompt.placeholder.shell": '执行命令…… "{{example}}"',
@@ -253,7 +250,6 @@ export const dict = {
   "tui.consent.revoked": "已撤销免费模型协议 — 下次使用时将再次请求同意",
   "tui.dialog.select.placeholder": "搜索",
   "tui.dialog.model.login_hint": "提示：先 /login 登录再切换模型",
-  "provider.name.mimo": "MiMo",
   "tui.model.mimo_auto.name": "MiMo Auto（MiMo-V2.5 限免中）",
   "tui.dialog.token_plan.title": "订阅token plan或排队等待",
   "tui.dialog.token_plan.line1": "免费模式下当前需要排队等待，如果想要稳定获取高质量服务，",

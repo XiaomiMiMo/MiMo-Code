@@ -234,7 +234,7 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
           const provider = sync.data.provider.find((x) => x.id === value.providerID)
           const info = provider?.models[value.modelID]
           return {
-            provider: t("provider.name." + value.providerID) || provider?.name || value.providerID,
+            provider: provider?.name || value.providerID,
             model:
               value.modelID === "mimo-auto"
                 ? t("tui.model.mimo_auto.name")
