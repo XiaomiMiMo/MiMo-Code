@@ -33,9 +33,11 @@ function assertSafeDirectory(directory: string): void {
   if (resolved === pathParse(resolved).root) {
     throw new Error("Access denied: filesystem root is not a valid project directory")
   }
-  for (const prefix of FORBIDDEN_PREFIXES) {
-    if (resolved === prefix || resolved.startsWith(`${prefix}/`)) {
-      throw new Error("Access denied: target is a protected system directory")
+  if (process.platform !== "win32") {
+    for (const prefix of FORBIDDEN_PREFIXES) {
+      if (resolved === prefix || resolved.startsWith(`${prefix}/`)) {
+        throw new Error("Access denied: target is a protected system directory")
+      }
     }
   }
 }
