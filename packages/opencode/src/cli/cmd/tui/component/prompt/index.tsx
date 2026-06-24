@@ -45,6 +45,7 @@ import { DialogWorkspaceCreate, restoreWorkspaceSession } from "../dialog-worksp
 import { DialogWorkspaceUnavailable } from "../dialog-workspace-unavailable"
 import { DialogAgreement, FREE_AGREEMENT_KEY, FREE_MODEL_IDS } from "../dialog-agreement"
 import { useArgs } from "@tui/context/args"
+import { createPromptSubmitGuard } from "./submit-guard"
 
 export type PromptProps = {
   sessionID?: string
@@ -117,6 +118,7 @@ export function Prompt(props: PromptProps) {
   const dialog = useDialog()
   const toast = useToast()
   const status = createMemo(() => sync.data.session_status?.[props.sessionID ?? ""] ?? { type: "idle" })
+  const submitGuard = createPromptSubmitGuard()
   const history = usePromptHistory()
   const stash = usePromptStash()
   const command = useCommandDialog()
@@ -431,6 +433,7 @@ export function Prompt(props: PromptProps) {
     on(
       () => status().type,
       (type, prev) => {
+        submitGuard.update(type)
         if (type !== "idle") {
           // A new run started (or the session went non-idle): invalidate any
           // in-flight prediction and hide a stale suggestion.
@@ -1161,6 +1164,8 @@ export function Prompt(props: PromptProps) {
           })),
       })
     } else {
+      if (!submitGuard.tryStart(status().type)) return false
+      setTimeout(() => submitGuard.releaseIfUnstarted(status().type), 5000)
       sdk.client.session
         .promptAsync({
           sessionID,
@@ -1179,6 +1184,7 @@ export function Prompt(props: PromptProps) {
           ],
         })
         .catch((err) => {
+          submitGuard.fail()
           toast.show({
             message: err instanceof Error ? err.message : "Failed to send message",
             variant: "error",
