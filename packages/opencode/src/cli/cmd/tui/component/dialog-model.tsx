@@ -64,7 +64,8 @@ export function DialogModel(props: { providerID?: string }) {
             key: item,
             value: { providerID: provider.id, modelID: model.id },
             title: modelName(provider.id, model.id),
-            description: provider.name,
+            // Hide provider name for mimo-auto to avoid redundancy
+            description: item.modelID === "mimo-auto" ? undefined : provider.name,
             category,
             disabled: provider.id === "opencode" && model.id.includes("-nano"),
             footer: model.cost?.input === 0 && provider.id === "opencode" ? "Free" : undefined,
