@@ -95,7 +95,7 @@ export function DialogModel(props: { providerID?: string }) {
     const pinnedOptions = showPinned
       ? [
           // mimo-free model
-          ...(mimoProvider && "mimo-auto" in mimoProvider.models && (!showSections || !inShortcuts("mimo", "mimo-auto"))
+          ...(mimoProvider && "mimo-auto" in mimoProvider.models && mimoProvider.models["mimo-auto"].status !== "deprecated" && (!showSections || !inShortcuts("mimo", "mimo-auto"))
             ? [
                 {
                   value: { providerID: "mimo", modelID: "mimo-auto" },
