@@ -84,21 +84,21 @@ export function DialogModel(props: { providerID?: string }) {
       "Recent",
     )
 
-    // Xiaomi provider and mimo-free pinned at top (after favorites/recents)
+    // mimo-free and xiaomi provider pinned at top (after favorites/recents)
+    const mimoProvider = sync.data.provider.find((p) => p.id === "mimo")
     const xiaomiProvider = sync.data.provider.find((p) => p.id === "xiaomi")
-    const mimoFreeAvailable = sync.data.provider.some((p) => p.id === "mimo" && "mimo-auto" in p.models)
-    const pinnedOptions = xiaomiProvider && connected() && showSections
+    const showPinned = connected() && showSections && !props.providerID
+
+    const pinnedOptions = showPinned
       ? [
           // mimo-free model
-          ...((!props.providerID || props.providerID === "mimo") &&
-          (!showSections || !inShortcuts("mimo", "mimo-auto")) &&
-          mimoFreeAvailable
+          ...(mimoProvider && "mimo-auto" in mimoProvider.models && !inShortcuts("mimo", "mimo-auto")
             ? [
                 {
                   value: { providerID: "mimo", modelID: "mimo-auto" },
                   title: modelName("mimo", "mimo-auto"),
                   description: undefined as string | undefined,
-                  category: xiaomiProvider.name,
+                  category: "Xiaomi",
                   disabled: false,
                   footer: undefined as "Free" | undefined,
                   onSelect() {
@@ -108,24 +108,25 @@ export function DialogModel(props: { providerID?: string }) {
               ]
             : []),
           // xiaomi provider models
-          ...pipe(
-            xiaomiProvider.models,
-            entries(),
-            filter(([_, info]) => info.status !== "deprecated"),
-            filter(([_, info]) => (props.providerID ? info.providerID === props.providerID : true)),
-            map(([model, info]) => ({
-              value: { providerID: xiaomiProvider.id, modelID: model },
-              title: info.name ?? model,
-              description: undefined as string | undefined,
-              category: xiaomiProvider.name,
-              disabled: false,
-              footer: undefined as "Free" | undefined,
-              onSelect() {
-                onSelect(xiaomiProvider.id, model)
-              },
-            })),
-            filter((x) => !showSections || !inShortcuts(x.value.providerID, x.value.modelID)),
-          ),
+          ...(xiaomiProvider
+            ? pipe(
+                xiaomiProvider.models,
+                entries(),
+                filter(([_, info]) => info.status !== "deprecated"),
+                map(([model, info]) => ({
+                  value: { providerID: xiaomiProvider.id, modelID: model },
+                  title: info.name ?? model,
+                  description: undefined as string | undefined,
+                  category: xiaomiProvider.name,
+                  disabled: false,
+                  footer: undefined as "Free" | undefined,
+                  onSelect() {
+                    onSelect(xiaomiProvider.id, model)
+                  },
+                })),
+                filter((x) => !inShortcuts(x.value.providerID, x.value.modelID)),
+              )
+            : []),
         ]
       : []
 
