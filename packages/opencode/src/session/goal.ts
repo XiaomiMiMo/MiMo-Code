@@ -43,6 +43,22 @@ export type Verdict = z.infer<typeof Verdict>
  * the latest judge verdict. `goal` undefined means there is no active goal
  * (cleared / satisfied / impossible). Mirrors session/status.ts's Event.Status.
  */
+/**
+ * scaffold PI-79 #1: explicit, measurable outcome of a goalGate stop-decision.
+ * The gate "fails open" (lets a stop through despite an unsatisfied goal) in two
+ * MALFUNCTION/safety-valve cases — `judge_error` (judge call threw) and
+ * `react_cap` (re-entry counter hit MAX_GOAL_REACT) — plus the legitimate judge
+ * escape `impossible`. Previously these were `slog.warn`-only: a silent no-op
+ * the scaffold side could not count. Surfacing them on the bus lets a plugin
+ * translate to `pipeline.gate_result{gate:"goal"}` and a dashboard compute the
+ * fail-open ratio (Фаза O). `satisfied` = genuine pass (judge said ok).
+ */
+export const GateOutcome = z.object({
+  result: z.enum(["satisfied", "fail_open", "impossible"]),
+  reason: z.enum(["satisfied", "judge_error", "react_cap", "impossible"]),
+})
+export type GateOutcome = z.infer<typeof GateOutcome>
+
 export const Event = {
   Updated: BusEvent.define(
     "session.goal",
@@ -55,6 +71,8 @@ export const Event = {
         messageID: z.string().optional(),
         error: z.boolean().optional(),
       }).optional(),
+      /** scaffold PI-79 #1: measurable gate outcome for fail-open observability. */
+      gate: GateOutcome.optional(),
     }),
   ),
 }
@@ -147,14 +165,23 @@ export const layer = Layer.effect(
       model: { providerID: ProviderID; modelID: ModelID }
     }) {
       const cfg = yield* config.get()
-      const resolved = yield* provider.getModel(input.model.providerID, input.model.modelID)
+      // scaffold PI-79 #4: the judge defaults to the SAME model as the working
+      // agent (input.model) — a self-evaluation with correlated blind spots. An
+      // operator can point the judge at a separate, colder model via
+      // experimental.goalJudgeModel ("provider/model" slug). Falls back to
+      // input.model, so DEFAULT behavior is unchanged. A different/cheaper judge
+      // reduces the optimism bias on the stop-decision.
+      const judgeModel = cfg.experimental?.goalJudgeModel
+        ? Provider.parseModel(cfg.experimental.goalJudgeModel)
+        : input.model
+      const resolved = yield* provider.getModel(judgeModel.providerID, judgeModel.modelID)
       const language = yield* provider.getLanguage(resolved)
       const tracer = cfg.experimental?.openTelemetry
         ? Option.getOrUndefined(yield* Effect.serviceOption(OtelTracer.OtelTracer))
         : undefined
 
-      const authInfo = yield* auth.get(input.model.providerID).pipe(Effect.orDie)
-      const isOpenaiOauth = input.model.providerID === "openai" && authInfo?.type === "oauth"
+      const authInfo = yield* auth.get(judgeModel.providerID).pipe(Effect.orDie)
+      const isOpenaiOauth = judgeModel.providerID === "openai" && authInfo?.type === "oauth"
 
       // Convert the conversation to native model messages so the judge sees the
       // real tool calls/results/images — same context the working agent had.

@@ -446,6 +446,10 @@ const InfoSchema = Schema.Struct({
         description:
           "Predict the user's likely next prompt after each turn and show it as inline ghost text (Tab to accept). Enabled by default; set to false to disable.",
       }),
+      goalJudgeModel: Schema.optional(Schema.String).annotate({
+        description:
+          "scaffold PI-79 #4: model the goalGate judge uses to verify a stop-condition, as a 'provider/model' slug (e.g. 'openai/gpt-5.4-mini'). Defaults to the working agent's model — i.e. self-evaluation. Set a separate, colder/cheaper model to reduce optimism bias on the stop-decision.",
+      }),
       maxMode: Schema.optional(
         Schema.Struct({
           candidates: Schema.optional(PositiveInt).annotate({

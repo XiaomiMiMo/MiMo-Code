@@ -3273,6 +3273,16 @@ NOTE: At any point in time through this workflow you should feel free to ask the
               sessionID,
               impossible: verdict.impossible === true,
             })
+            // scaffold PI-79 #1: classify the stop so the fail-open no-op becomes
+            // measurable. judge_error (judge threw → judgeFailed) and impossible
+            // (judge escape) both let a stop through without a genuine pass; only
+            // a real verdict.ok is `satisfied`.
+            const gate: Goal.GateOutcome =
+              "judgeFailed" in verdict
+                ? { result: "fail_open", reason: "judge_error" }
+                : verdict.impossible
+                  ? { result: "impossible", reason: "impossible" }
+                  : { result: "satisfied", reason: "satisfied" }
             // Publish the final verdict (goal cleared) so the TUI can render the
             // ✓/⊘ result line before the indicator disappears. goal.clear also
             // publishes goal:undefined, but the TUI keeps lastVerdict sticky.
@@ -3285,6 +3295,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
                 messageID: judgedMessageID,
                 error: "judgeFailed" in verdict ? true : undefined,
               },
+              gate,
             })
             yield* goal.clear(sessionID)
             return false
@@ -3297,10 +3308,13 @@ NOTE: At any point in time through this workflow you should feel free to ask the
               condition: active.condition,
               count,
             })
+            // scaffold PI-79 #1: re-entry cap is a safety valve that fails open —
+            // surface it as such so a dashboard can count caps vs genuine passes.
             yield* bus.publish(Goal.Event.Updated, {
               sessionID,
               goal: undefined,
               lastVerdict: { ...verdict, attempt: count, messageID: judgedMessageID },
+              gate: { result: "fail_open", reason: "react_cap" },
             })
             yield* goal.clear(sessionID)
             return false
