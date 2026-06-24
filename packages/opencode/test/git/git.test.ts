@@ -4,7 +4,7 @@ import fs from "fs/promises"
 import path from "path"
 import { ManagedRuntime } from "effect"
 import { Git } from "../../src/git"
-import { tmpdir } from "../fixture/fixture"
+import { tmpdir, withTmpdirOutsideGit } from "../fixture/fixture"
 
 const weird = process.platform === "win32" ? "space file.txt" : "tab\tfile.txt"
 
@@ -29,7 +29,7 @@ describe("Git", () => {
   })
 
   test("branch() returns undefined for non-git directories", async () => {
-    await using tmp = await tmpdir()
+    await using tmp = await tmpdir({ outsideGit: true })
 
     await withGit(async (rt) => {
       const branch = await rt.runPromise(Git.Service.use((git) => git.branch(tmp.path)))

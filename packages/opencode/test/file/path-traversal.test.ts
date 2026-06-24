@@ -5,7 +5,7 @@ import fs from "fs/promises"
 import { Filesystem } from "../../src/util"
 import { File } from "../../src/file"
 import { Instance } from "../../src/project/instance"
-import { provideInstance, tmpdir } from "../fixture/fixture"
+import { provideInstance, tmpdir, withTmpdirOutsideGit } from "../fixture/fixture"
 
 const run = <A, E>(eff: Effect.Effect<A, E, File.Service>) =>
   Effect.runPromise(provideInstance(Instance.directory)(eff.pipe(Effect.provide(File.defaultLayer))))
@@ -49,14 +49,6 @@ describe("Filesystem.contains", () => {
 // These traversal tests need tmpdirs outside any git repo so project detection
 // sets worktree="/" (the non-git sentinel). Otherwise containsPath falls through
 // to the worktree check and allows paths within the parent repo.
-function withTmpdirOutsideGit<T>(fn: () => Promise<T>): Promise<T> {
-  const prev = process.env["MIMOCODE_TEST_TMPDIR_ROOT"]
-  delete process.env["MIMOCODE_TEST_TMPDIR_ROOT"]
-  return fn().finally(() => {
-    if (prev !== undefined) process.env["MIMOCODE_TEST_TMPDIR_ROOT"] = prev
-    else delete process.env["MIMOCODE_TEST_TMPDIR_ROOT"]
-  })
-}
 
 describe("File.read path traversal protection", () => {
   test("rejects ../ traversal attempting to read /etc/passwd", () =>

@@ -33,14 +33,24 @@ const it = testEffect(
 
 describe("renderRebuildContext v3", () => {
   it.live("returns empty when no memory or tasks", () =>
-    provideTmpdirInstance(() =>
-      Effect.gen(function* () {
-        const cp = yield* SessionCheckpoint.Service
-        const session = yield* Session.Service
-        const sess = yield* session.create({ title: "Test" })
-        const out = yield* cp.renderRebuildContext(sess.id)
-        expect(out).toBe("")
-      }),
+    provideTmpdirInstance(
+      () =>
+        Effect.gen(function* () {
+          const cp = yield* SessionCheckpoint.Service
+          const memory = yield* Memory.Service
+          const session = yield* Session.Service
+          const root = yield* memory.root()
+          yield* Effect.promise(() =>
+            Promise.all([
+              fs.rm(path.join(root, "global"), { recursive: true, force: true }).catch(() => undefined),
+              fs.rm(path.join(root, "projects"), { recursive: true, force: true }).catch(() => undefined),
+            ]),
+          )
+          const sess = yield* session.create({ title: "Test" })
+          const out = yield* cp.renderRebuildContext(sess.id)
+          expect(out).toBe("")
+        }),
+      { outsideGit: true, config: { checkpoint: { push_caps: { recent_user: 0 } } } },
     ),
   )
 
@@ -71,10 +81,11 @@ describe("renderRebuildContext v3", () => {
         const session = yield* Session.Service
         const sess = yield* session.create({ title: "Test" })
         const root = yield* memory.root()
-        const projDir = path.join(root, "projects", "global")
+        const projectID = Instance.project.id
+        const projDir = path.join(root, "projects", projectID)
         yield* Effect.promise(() => fs.mkdir(projDir, { recursive: true }))
         yield* Effect.promise(() =>
-          fs.writeFile(path.join(projDir, "memory.md"), "用 Bun 不用 npm"),
+          fs.writeFile(path.join(projDir, "MEMORY.md"), "用 Bun 不用 npm"),
         )
 
         const out = yield* cp.renderRebuildContext(sess.id)

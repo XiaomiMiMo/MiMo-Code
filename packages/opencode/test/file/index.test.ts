@@ -6,7 +6,7 @@ import fs from "fs/promises"
 import { File } from "../../src/file"
 import { Instance } from "../../src/project/instance"
 import { Filesystem } from "../../src/util"
-import { provideInstance, tmpdir } from "../fixture/fixture"
+import { provideInstance, tmpdir, withTmpdirOutsideGit } from "../fixture/fixture"
 
 afterEach(async () => {
   await Instance.disposeAll()
@@ -15,14 +15,6 @@ afterEach(async () => {
 // Tests that verify path traversal rejection need tmpdirs outside any git repo.
 // Otherwise project detection finds the parent .git, sets worktree to the repo
 // root, and containsPath allows "../" paths that stay within the worktree.
-function withTmpdirOutsideGit<T>(fn: () => Promise<T>): Promise<T> {
-  const prev = process.env["MIMOCODE_TEST_TMPDIR_ROOT"]
-  delete process.env["MIMOCODE_TEST_TMPDIR_ROOT"]
-  return fn().finally(() => {
-    if (prev !== undefined) process.env["MIMOCODE_TEST_TMPDIR_ROOT"] = prev
-    else delete process.env["MIMOCODE_TEST_TMPDIR_ROOT"]
-  })
-}
 
 const init = () => run(File.Service.use((svc) => svc.init()))
 const run = <A, E>(eff: Effect.Effect<A, E, File.Service>) =>
