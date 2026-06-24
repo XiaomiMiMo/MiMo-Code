@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, test } from "bun:test"
+import { afterEach, beforeAll, afterAll, describe, expect, test } from "bun:test"
 import { Effect, Exit, Cause } from "effect"
 import { Log } from "../../src/util"
 import { Instance } from "../../src/project/instance"
@@ -8,6 +8,7 @@ import { WorkflowPersistence } from "../../src/workflow/persistence"
 import { WorkflowRuntime } from "../../src/workflow/runtime"
 import { workflowRef } from "../../src/workflow/runtime-ref"
 import { provideTmpdirServer, tmpdir } from "../fixture/fixture"
+import { Flag } from "../../src/flag/flag"
 import { testEffect } from "../lib/effect"
 import { makeLayer, ref, providerCfg } from "../workflow/lib"
 
@@ -198,27 +199,29 @@ const it = testEffect(makeLayer())
 // cached replay, zero-spawn resume) are covered in the warmed-up
 // test/workflow/runtime.test.ts suite.
 describe("workflows routes — live runtime", () => {
+  const TEST_PASSWORD = "wf-live-test"
+  const auth = `Basic ${Buffer.from(`mimocode:${TEST_PASSWORD}`).toString("base64")}`
+  let prevFlag: any
+  beforeAll(() => {
+    prevFlag = (Flag as any).MIMOCODE_SERVER_PASSWORD
+    ;(Flag as any).MIMOCODE_SERVER_PASSWORD = TEST_PASSWORD
+  })
+  afterAll(() => {
+    ;(Flag as any).MIMOCODE_SERVER_PASSWORD = prevFlag
+  })
+
   it.live("POST /workflows/:runID/resume reaches the LIVE runtime (resumed: false for an unknown run)", () =>
     provideTmpdirServer(
       Effect.fnUntraced(function* ({ dir }) {
-        // #given the workflow runtime IS live (the layer set the late-bound ref) —
-        // this is what distinguishes this from the degenerate test above, where the
-        // ref is undefined and the route returns early without calling resume().
         expect(workflowRef.current).toBeDefined()
 
-        // #when — POST resume over the REAL route for a runID with no persisted run.
-        // Use a valid minted-shape runID (wf_ + 26 base62) so it passes the param
-        // validator and genuinely reaches the live runtime.resume(), which loads no
-        // row and returns { resumed: false }. (async wrapper normalizes Hono's
-        // `Promise<Response> | Response` overload for Effect.promise.)
         const response = yield* Effect.promise(async () =>
           Server.Default().app.request(`/workflows/wf_00000000000000000000000000/resume`, {
             method: "POST",
-            headers: { "x-mimocode-directory": dir },
+            headers: { "x-mimocode-directory": dir, "authorization": auth },
           }),
         )
 
-        // #then — the live runtime's real verdict flows back through the HTTP route.
         expect(response.status).toBe(200)
         expect(yield* Effect.promise(() => response.json())).toEqual({
           runID: "wf_00000000000000000000000000",
@@ -252,7 +255,7 @@ describe("workflows routes — live runtime", () => {
         const response = yield* Effect.promise(async () =>
           Server.Default().app.request(`/workflows?sessionID=${parent.id}`, {
             method: "GET",
-            headers: { "x-mimocode-directory": dir },
+            headers: { "x-mimocode-directory": dir, "authorization": auth },
           }),
         )
         expect(response.status).toBe(200)

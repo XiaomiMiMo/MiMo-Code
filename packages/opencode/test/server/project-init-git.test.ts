@@ -9,7 +9,7 @@ import { Flag } from "../../src/flag/flag"
 import { Filesystem } from "../../src/util"
 import { Log } from "../../src/util"
 import { resetDatabase } from "../fixture/db"
-import { provideInstance, tmpdir } from "../fixture/fixture"
+import { provideInstance, tmpdir, withServerAuth } from "../fixture/fixture"
 
 void Log.init({ print: false })
 
@@ -94,48 +94,51 @@ describe("project.initGit endpoint", () => {
     }
   })
 
-  test("does not reload when the project is already git", async () => {
-    await using tmp = await tmpdir({ git: true })
-    const app = Server.Default().app
-    const seen: { directory?: string; payload: { type: string } }[] = []
-    const fn = (evt: { directory?: string; payload: { type: string } }) => {
-      seen.push(evt)
-    }
-    const reload = Instance.reload
-    const reloadSpy = spyOn(Instance, "reload").mockImplementation((input) => reload(input))
-    GlobalBus.on("event", fn)
+  test("does not reload when the project is already git", () =>
+    withServerAuth(async (auth) => {
+      await using tmp = await tmpdir({ git: true })
+      const app = Server.Default().app
+      const seen: { directory?: string; payload: { type: string } }[] = []
+      const fn = (evt: { directory?: string; payload: { type: string } }) => {
+        seen.push(evt)
+      }
+      const reload = Instance.reload
+      const reloadSpy = spyOn(Instance, "reload").mockImplementation((input) => reload(input))
+      GlobalBus.on("event", fn)
 
-    try {
-      const init = await app.request("/project/git/init", {
-        method: "POST",
-        headers: {
-          "x-mimocode-directory": tmp.path,
-        },
-      })
-      expect(init.status).toBe(200)
-      expect(await init.json()).toMatchObject({
-        vcs: "git",
-        worktree: tmp.path,
-      })
-      expect(
-        seen.filter((evt) => evt.directory === tmp.path && evt.payload.type === "server.instance.disposed").length,
-      ).toBe(0)
-      expect(reloadSpy).toHaveBeenCalledTimes(0)
+      try {
+        const init = await app.request("/project/git/init", {
+          method: "POST",
+          headers: {
+            "x-mimocode-directory": tmp.path,
+            "authorization": auth,
+          },
+        })
+        expect(init.status).toBe(200)
+        expect(await init.json()).toMatchObject({
+          vcs: "git",
+          worktree: tmp.path,
+        })
+        expect(
+          seen.filter((evt) => evt.directory === tmp.path && evt.payload.type === "server.instance.disposed").length,
+        ).toBe(0)
+        expect(reloadSpy).toHaveBeenCalledTimes(0)
 
-      const current = await app.request("/project/current", {
-        headers: {
-          "x-mimocode-directory": tmp.path,
-        },
-      })
-      expect(current.status).toBe(200)
-      expect(await current.json()).toMatchObject({
-        vcs: "git",
-        worktree: tmp.path,
-      })
-    } finally {
-      await Instance.disposeAll()
-      reloadSpy.mockRestore()
-      GlobalBus.off("event", fn)
-    }
-  })
+        const current = await app.request("/project/current", {
+          headers: {
+            "x-mimocode-directory": tmp.path,
+            "authorization": auth,
+          },
+        })
+        expect(current.status).toBe(200)
+        expect(await current.json()).toMatchObject({
+          vcs: "git",
+          worktree: tmp.path,
+        })
+      } finally {
+        await Instance.disposeAll()
+        reloadSpy.mockRestore()
+        GlobalBus.off("event", fn)
+      }
+    }))
 })

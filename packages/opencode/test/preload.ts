@@ -10,11 +10,6 @@ import { afterAll } from "bun:test"
 const dir = path.join(os.tmpdir(), "mimocode-test-data-" + process.pid)
 await fs.mkdir(dir, { recursive: true })
 
-// Route fixture tmpdirs under cwd so they pass the InstanceMiddleware cwd
-// containment check (security: unauthenticated servers restrict directory to cwd subtree).
-const fixtureRoot = path.join(process.cwd(), ".mimocode-test-fixtures-" + process.pid)
-await fs.mkdir(fixtureRoot, { recursive: true })
-process.env["MIMOCODE_TEST_TMPDIR_ROOT"] = fixtureRoot
 afterAll(async () => {
   const { Database } = await import("../src/storage")
   Database.close()
@@ -33,7 +28,6 @@ afterAll(async () => {
   // Windows can keep SQLite WAL handles alive until GC finalizers run, so we
   // force GC and retry teardown to avoid flaky EBUSY in test cleanup.
   await rm(dir, 30)
-  await rm(fixtureRoot, 30)
 })
 
 process.env["XDG_DATA_HOME"] = path.join(dir, "share")

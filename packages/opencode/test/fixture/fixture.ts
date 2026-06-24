@@ -9,6 +9,7 @@ import type * as Scope from "effect/Scope"
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process"
 import type { Config } from "../../src/config"
 import { InstanceRef } from "../../src/effect/instance-ref"
+import { Flag } from "../../src/flag/flag"
 import { Instance } from "../../src/project/instance"
 import { TestLLMServer } from "../lib/llm-server"
 
@@ -212,5 +213,23 @@ export function provideTmpdirServer<A, E, R>(
       git: options?.git,
       config: options?.config?.(llm.url),
     })
+  })
+}
+
+/**
+ * Temporarily sets Flag.MIMOCODE_SERVER_PASSWORD so that the InstanceMiddleware
+ * cwd containment check is bypassed. Use in server tests that pass a directory
+ * (via query param or header) pointing to a tmpdir outside process.cwd().
+ *
+ * Returns the auth header string to include in app.request() calls.
+ */
+const SERVER_TEST_PASSWORD = "server-test"
+const SERVER_TEST_AUTH = `Basic ${Buffer.from(`mimocode:${SERVER_TEST_PASSWORD}`).toString("base64")}`
+
+export function withServerAuth<T>(fn: (auth: string) => Promise<T>): Promise<T> {
+  const prev = (Flag as any).MIMOCODE_SERVER_PASSWORD
+  ;(Flag as any).MIMOCODE_SERVER_PASSWORD = SERVER_TEST_PASSWORD
+  return fn(SERVER_TEST_AUTH).finally(() => {
+    ;(Flag as any).MIMOCODE_SERVER_PASSWORD = prev
   })
 }

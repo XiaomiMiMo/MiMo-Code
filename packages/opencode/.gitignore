@@ -7,4 +7,3 @@ src/provider/models-snapshot.js
 src/provider/models-snapshot.d.ts
 script/build-*.ts
 temporary-*.md
-.mimocode-test-fixtures-*
