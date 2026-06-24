@@ -87,6 +87,7 @@ export function DialogModel(props: { providerID?: string }) {
     // mimo-free and xiaomi provider pinned at top (after favorites/recents)
     const mimoProvider = sync.data.provider.find((p) => p.id === "mimo")
     const xiaomiProvider = sync.data.provider.find((p) => p.id === "xiaomi")
+    const pinnedCategory = xiaomiProvider?.name ?? "MiMo"
     const showPinned = connected() && showSections && !props.providerID
 
     const pinnedOptions = showPinned
@@ -98,7 +99,7 @@ export function DialogModel(props: { providerID?: string }) {
                   value: { providerID: "mimo", modelID: "mimo-auto" },
                   title: modelName("mimo", "mimo-auto"),
                   description: undefined as string | undefined,
-                  category: "Xiaomi",
+                  category: pinnedCategory,
                   disabled: false,
                   footer: undefined as "Free" | undefined,
                   onSelect() {
@@ -117,7 +118,7 @@ export function DialogModel(props: { providerID?: string }) {
                   value: { providerID: xiaomiProvider.id, modelID: model },
                   title: info.name ?? model,
                   description: undefined as string | undefined,
-                  category: xiaomiProvider.name,
+                  category: pinnedCategory,
                   disabled: false,
                   footer: undefined as "Free" | undefined,
                   onSelect() {
