@@ -1,5 +1,6 @@
 import { PartID } from "@/session/schema"
 import type { PromptInfo } from "./history"
+import { widthToStringIndex } from "./offset"
 
 type Item = PromptInfo["parts"][number]
 
@@ -16,19 +17,8 @@ export function assign(part: Item): Item & { id: PartID } {
 }
 
 // Editor extmark offsets are display-WIDTH based (a wide CJK char counts as 2),
-// while plainText is a JS UTF-16 string (a CJK char is 1 unit). Convert a
-// width offset into the matching UTF-16 string index so .slice lines up.
-function widthToStringIndex(text: string, widthOffset: number): number {
-  let width = 0
-  let index = 0
-  for (const ch of text) {
-    if (width >= widthOffset) break
-    width += Bun.stringWidth(ch)
-    index += ch.length
-  }
-  return index
-}
-
+// while plainText is a JS UTF-16 string (a CJK char is 1 unit). widthToStringIndex
+// converts a width offset into the matching UTF-16 string index so .slice lines up.
 // Replace each placeholder span (given in width-based offsets) in the editor
 // plainText with its real pasted content. Marks are applied right-to-left so
 // earlier offsets stay valid as the string is rewritten.
