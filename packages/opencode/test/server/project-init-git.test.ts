@@ -91,7 +91,7 @@ describe("project.initGit endpoint", () => {
   })
 
   test("does not reload when the project is already git", async () => {
-    await using tmp = await tmpdir({ git: true })
+    await using tmp = await tmpdir({ git: true, root: "cwd" })
     const app = Server.Default().app
     const seen: { directory?: string; payload: { type: string } }[] = []
     const fn = (evt: { directory?: string; payload: { type: string } }) => {

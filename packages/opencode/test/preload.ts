@@ -2,17 +2,79 @@
 // xdg-basedir reads env vars at import time, so we must set these first
 import os from "os"
 import path from "path"
+import { constants as fsConstants } from "fs"
 import fs from "fs/promises"
 import { setTimeout as sleep } from "node:timers/promises"
 import { afterAll } from "bun:test"
 
-// Set XDG env vars FIRST, before any src/ imports
-const dir = path.join(os.tmpdir(), "mimocode-test-data-" + process.pid)
+const forbiddenFixtureRoots = ["/etc", "/proc", "/sys", "/dev", "/boot", "/private/etc"]
+
+function containsPath(parent: string, child: string) {
+  const relative = path.relative(path.resolve(parent), path.resolve(child))
+  return relative === "" || (!!relative && !relative.startsWith("..") && !path.isAbsolute(relative))
+}
+
+async function findGitRoot(directory: string): Promise<string | undefined> {
+  const current = path.resolve(directory)
+  const hasGitDir = await fs
+    .stat(path.join(current, ".git"))
+    .then(() => true)
+    .catch(() => false)
+  if (hasGitDir) return current
+  const parent = path.dirname(current)
+  if (parent === current) return undefined
+  return findGitRoot(parent)
+}
+
+async function gitFreeParent(directory: string): Promise<string> {
+  const root = await findGitRoot(directory)
+  if (!root) return path.resolve(directory)
+  const parent = path.dirname(root)
+  if (parent === root) return parent
+  return gitFreeParent(parent)
+}
+
+async function isWritableDirectory(directory: string) {
+  const isDirectory = await fs
+    .stat(directory)
+    .then((stat) => stat.isDirectory())
+    .catch(() => false)
+  if (!isDirectory) return false
+  return fs
+    .access(directory, fsConstants.W_OK)
+    .then(() => true)
+    .catch(() => false)
+}
+
+async function isFixtureBaseBlocked(candidate: string) {
+  const resolved = path.resolve(candidate)
+  if (resolved === path.parse(resolved).root) return true
+  if (await findGitRoot(resolved)) return true
+  if (forbiddenFixtureRoots.some((forbidden) => containsPath(forbidden, resolved))) return true
+  return !(await isWritableDirectory(resolved))
+}
+
+async function fixtureBase() {
+  const candidates = await Promise.all(
+    [os.tmpdir(), os.homedir(), await gitFreeParent(process.cwd())].map(async (candidate) => ({
+      candidate,
+      blocked: await isFixtureBaseBlocked(candidate),
+    })),
+  )
+  const selected = candidates.find((candidate) => !candidate.blocked)
+  return selected?.candidate ?? os.tmpdir()
+}
+
+// Set XDG env vars FIRST, before any src/ imports. Keep the process-wide data
+// root outside the repo checkout and unsafe system roots because worktree
+// bootstrap creates real project instances under Global.Path.data.
+const base = await fixtureBase()
+const dir = path.join(base, "mimocode-test-data-" + process.pid)
 await fs.mkdir(dir, { recursive: true })
 
-// Route fixture tmpdirs under cwd so they pass the InstanceMiddleware cwd
-// containment check (security: unauthenticated servers restrict directory to cwd subtree).
-const fixtureRoot = path.join(process.cwd(), ".mimocode-test-fixtures-" + process.pid)
+// Default fixture tmpdirs should not inherit the repository checkout's worktree.
+// HTTP route tests that need cwd containment opt into root: "cwd".
+const fixtureRoot = path.join(base, ".mimocode-test-fixtures-" + process.pid)
 await fs.mkdir(fixtureRoot, { recursive: true })
 process.env["MIMOCODE_TEST_TMPDIR_ROOT"] = fixtureRoot
 afterAll(async () => {

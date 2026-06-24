@@ -33,7 +33,7 @@ describe("ErrorMiddleware → BusyError mapping", () => {
 
 describe("POST /session/:sessionID/message busy-runner behavior", () => {
   test("returns 409 when session main runner is already busy", async () => {
-    await using tmp = await tmpdir({})
+    await using tmp = await tmpdir({ git: true, root: "cwd" })
 
     const status = await Instance.provide({
       directory: tmp.path,
@@ -84,7 +84,7 @@ describe("POST /session/:sessionID/message busy-runner behavior", () => {
   })
 
   test("POST /:sessionID/abort frees runner; subsequent POST is no longer rejected with 409", async () => {
-    await using tmp = await tmpdir({})
+    await using tmp = await tmpdir({ git: true, root: "cwd" })
 
     const result = await Instance.provide({
       directory: tmp.path,

@@ -64,18 +64,29 @@ async function stop(dir: string) {
   await $`git fsmonitor--daemon stop`.cwd(dir).quiet().nothrow()
 }
 
+// Unauthenticated HTTP route tests must use a fixture under cwd because the
+// server rejects directories outside the checkout. node_modules is gitignored,
+// and git:true fixtures create their own .git so VCS detection stops there.
+const cwdFixtureRoot = () => path.join(process.cwd(), "node_modules", ".mimocode-cwd-fixtures")
+
+function tmpdirBase(root?: "cwd") {
+  if (root === "cwd") return cwdFixtureRoot()
+  return process.env["MIMOCODE_TEST_TMPDIR_ROOT"] ?? os.tmpdir()
+}
+
 type TmpDirOptions<T> = {
   git?: boolean
   outsideGit?: boolean
   config?: Partial<Config.Info>
   init?: (dir: string) => Promise<T>
   dispose?: (dir: string) => Promise<T>
+  root?: "cwd"
 }
 export async function tmpdir<T>(options?: TmpDirOptions<T>) {
   const prevRoot = options?.outsideGit ? process.env["MIMOCODE_TEST_TMPDIR_ROOT"] : undefined
   if (options?.outsideGit) process.env["MIMOCODE_TEST_TMPDIR_ROOT"] = outsideGitTmpRoot()
   const dirpath = sanitizePath(
-    path.join(process.env["MIMOCODE_TEST_TMPDIR_ROOT"] ?? os.tmpdir(), "mimocode-test-" + Math.random().toString(36).slice(2)),
+    path.join(tmpdirBase(options?.root), "mimocode-test-" + Math.random().toString(36).slice(2)),
   )
   await fs.mkdir(dirpath, { recursive: true })
   if (options?.git) {
@@ -116,8 +127,15 @@ export async function tmpdir<T>(options?: TmpDirOptions<T>) {
   return result
 }
 
+type ScopedTmpDirOptions = {
+  git?: boolean
+  config?: Partial<Config.Info>
+  outsideGit?: boolean
+  root?: "cwd"
+}
+
 /** Effectful scoped tmpdir. Cleaned up when the scope closes. Make sure these stay in sync */
-export function tmpdirScoped(options?: { git?: boolean; config?: Partial<Config.Info>; outsideGit?: boolean }) {
+export function tmpdirScoped(options?: ScopedTmpDirOptions) {
   return Effect.gen(function* () {
     const prevRoot = options?.outsideGit ? process.env["MIMOCODE_TEST_TMPDIR_ROOT"] : undefined
     if (options?.outsideGit) process.env["MIMOCODE_TEST_TMPDIR_ROOT"] = outsideGitTmpRoot()
@@ -132,7 +150,7 @@ export function tmpdirScoped(options?: { git?: boolean; config?: Partial<Config.
 
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner
     const dirpath = sanitizePath(
-      path.join(process.env["MIMOCODE_TEST_TMPDIR_ROOT"] ?? os.tmpdir(), "mimocode-test-" + Math.random().toString(36).slice(2)),
+      path.join(tmpdirBase(options?.root), "mimocode-test-" + Math.random().toString(36).slice(2)),
     )
     yield* Effect.promise(() => fs.mkdir(dirpath, { recursive: true }))
     const dir = sanitizePath(yield* Effect.promise(() => fs.realpath(dirpath)))
@@ -183,7 +201,7 @@ export const provideInstance =
 
 export function provideTmpdirInstance<A, E, R>(
   self: (path: string) => Effect.Effect<A, E, R>,
-  options?: { git?: boolean; config?: Partial<Config.Info>; outsideGit?: boolean },
+  options?: ScopedTmpDirOptions,
 ) {
   return Effect.gen(function* () {
     const path = yield* tmpdirScoped(options)
@@ -207,7 +225,7 @@ export function provideTmpdirInstance<A, E, R>(
 
 export function provideTmpdirServer<A, E, R>(
   self: (input: { dir: string; llm: TestLLMServer["Service"] }) => Effect.Effect<A, E, R>,
-  options?: { git?: boolean; config?: (url: string) => Partial<Config.Info> },
+  options?: { git?: boolean; config?: (url: string) => Partial<Config.Info>; root?: "cwd" },
 ): Effect.Effect<
   A,
   E | PlatformError.PlatformError,
@@ -218,6 +236,7 @@ export function provideTmpdirServer<A, E, R>(
     return yield* provideTmpdirInstance((dir) => self({ dir, llm }), {
       git: options?.git,
       config: options?.config?.(llm.url),
+      root: options?.root,
     })
   })
 }

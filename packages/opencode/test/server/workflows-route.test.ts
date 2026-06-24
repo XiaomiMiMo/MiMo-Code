@@ -225,7 +225,7 @@ describe("workflows routes — live runtime", () => {
           resumed: false,
         })
       }),
-      { git: true, config: providerCfg },
+      { git: true, config: providerCfg, root: "cwd" },
     ),
   )
 
@@ -269,7 +269,7 @@ describe("workflows routes — live runtime", () => {
         expect(row!.status).toBe("completed")
         expect(row!.succeeded).toBeGreaterThanOrEqual(1)
       }),
-      { git: true, config: providerCfg },
+      { git: true, config: providerCfg, root: "cwd" },
     ),
     // Headroom over the default 5s: this exercises a full Instance bootstrap +
     // a real runtime run + an HTTP round-trip, and runs alongside the heavy
