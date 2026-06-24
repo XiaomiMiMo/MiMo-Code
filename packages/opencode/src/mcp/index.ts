@@ -504,6 +504,7 @@ export const layer = Layer.effect(
         const cfg = yield* cfgSvc.get()
         const bridge = yield* EffectBridge.make()
         const config = cfg.mcp ?? {}
+        const origins = cfg.mcp_origins ?? {}
         const s: State = {
           status: {},
           clients: {},
@@ -521,6 +522,14 @@ export const layer = Layer.effect(
 
               if (mcp.enabled === false) {
                 s.status[key] = { status: "disabled" }
+                return
+              }
+
+              // Claude Code (.claude.json) servers register lazily: they stay
+              // "pending" until explicitly connected, so importing a Claude
+              // config does not auto-spawn every local MCP server on startup.
+              if (origins[key]?.type === "claude") {
+                s.status[key] = { status: "pending" }
                 return
               }
 
