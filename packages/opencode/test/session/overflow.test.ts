@@ -137,40 +137,34 @@ describe("isOverflow", () => {
     expect(isOverflow({ cfg, tokens, model })).toBe(false)
   })
 
-  // ─── Bug reproduction tests ───────────────────────────────────────────
-  // These tests demonstrate that when limit.input is set, isOverflow()
-  // does not subtract any headroom for the next model response. This means
-  // compaction only triggers AFTER we've already consumed the full input
-  // budget, leaving zero room for the next API call's output tokens.
+  // ─── Headroom reservation tests ───────────────────────────────────────
+  // These tests verify that when limit.input is set, isOverflow() correctly
+  // reserves headroom for the next model response (outputReserve), just as
+  // it does when using the full context window.
   //
-  // Compare: without limit.input, usable = context - output (reserves space).
-  // With limit.input, usable = limit.input (reserves nothing).
+  // Without this reservation, compaction would only trigger AFTER consuming
+  // the full input budget, leaving zero room for the next API call's output
+  // tokens — causing the model call to fail.
   //
   // Related issues: #10634, #8089, #11086, #12621
   // Open PRs: #6875, #12924
 
-  test("BUG: no headroom when limit.input is set — compaction should trigger near boundary but does not", () => {
+  test("headroom reserved when limit.input is set — compaction triggers near boundary", () => {
     // Simulate Claude with prompt caching: input limit = 200K, output limit = 32K
     const model = createModel({ context: 200_000, input: 200_000, output: 32_000 })
     const cfg = mockCfg()
 
-    // We've used 198K tokens total. Only 2K under the input limit.
-    // On the next turn, the full conversation (198K) becomes input,
-    // plus the model needs room to generate output — this WILL overflow.
+    // We've used 198K tokens total. With limit.input = 200K and outputReserve
+    // = 20K, usable = 200K - 20K - 20K(reserved) = 160K.
+    // 198K > 160K = true → compaction correctly triggered.
     const tokens = { input: 180_000, output: 15_000, reasoning: 0, cache: { read: 3_000, write: 0 } } as any
-    // count = 180K + 3K + 15K = 198K
-    // usable = limit.input = 200K (no output subtracted!)
-    // 198K > 200K = false → no compaction triggered
 
-    // WITHOUT limit.input: usable = 200K - 32K = 168K, and 198K > 168K = true ✓
-    // WITH limit.input: usable = 200K, and 198K > 200K = false ✗
-
-    // With 198K used and only 2K headroom, the next turn will overflow.
-    // Compaction MUST trigger here.
+    // With 198K used and only 2K headroom before the input limit, the next
+    // turn will overflow. Compaction MUST trigger here.
     expect(isOverflow({ cfg, tokens, model })).toBe(true)
   })
 
-  test("BUG: without limit.input, same token count correctly triggers compaction", () => {
+  test("without limit.input, same token count correctly triggers compaction", () => {
     // Same model but without limit.input — uses context - output instead
     const model = createModel({ context: 200_000, output: 32_000 })
     const cfg = mockCfg()
@@ -184,7 +178,7 @@ describe("isOverflow", () => {
     expect(isOverflow({ cfg, tokens, model })).toBe(true) // ← Correct: headroom is reserved
   })
 
-  test("BUG: asymmetry — limit.input model allows 30K more usage before compaction than equivalent model without it", () => {
+  test("symmetric: limit.input and context-only models agree on overflow when both reserve headroom", () => {
     // Two models with identical context/output limits, differing only in limit.input
     const withInputLimit = createModel({ context: 200_000, input: 200_000, output: 32_000 })
     const withoutInputLimit = createModel({ context: 200_000, output: 32_000 })

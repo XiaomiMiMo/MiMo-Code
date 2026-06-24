@@ -19,7 +19,7 @@ export function usable(input: { cfg: Config.Info; model: Provider.Model }) {
   const outputReserve = Math.min(ProviderTransform.maxOutputTokens(input.model), OUTPUT_CAP)
 
   return input.model.limit.input
-    ? Math.max(0, input.model.limit.input - reserved)
+    ? Math.max(0, input.model.limit.input - outputReserve - reserved)
     : Math.max(0, context - outputReserve - reserved)
 }
 
