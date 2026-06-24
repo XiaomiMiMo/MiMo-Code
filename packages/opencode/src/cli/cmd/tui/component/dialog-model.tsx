@@ -112,23 +112,41 @@ export function DialogModel(props: { providerID?: string }) {
             : []),
           // xiaomi provider models
           ...(xiaomiProvider
-            ? pipe(
-                xiaomiProvider.models,
-                entries(),
-                filter(([_, info]) => info.status !== "deprecated"),
-                map(([model, info]) => ({
-                  value: { providerID: xiaomiProvider.id, modelID: model },
-                  title: info.name ?? model,
-                  description: undefined as string | undefined,
-                  category: pinnedCategory,
-                  disabled: false,
-                  footer: undefined as "Free" | undefined,
-                  onSelect() {
-                    onSelect(xiaomiProvider.id, model)
-                  },
-                })),
-                filter((x) => !showSections || !inShortcuts(x.value.providerID, x.value.modelID)),
-              )
+            ? [
+                ...pipe(
+                  xiaomiProvider.models,
+                  entries(),
+                  filter(([_, info]) => info.status !== "deprecated"),
+                  map(([model, info]) => ({
+                    value: { providerID: xiaomiProvider.id, modelID: model },
+                    title: info.name ?? model,
+                    description: undefined as string | undefined,
+                    category: pinnedCategory,
+                    disabled: false,
+                    footer: undefined as "Free" | undefined,
+                    onSelect() {
+                      onSelect(xiaomiProvider.id, model)
+                    },
+                  })),
+                  filter((x) => !showSections || !inShortcuts(x.value.providerID, x.value.modelID)),
+                ),
+                // "+ Add model" for config-sourced providers
+                ...(xiaomiProvider.source === "config"
+                  ? [
+                      {
+                        value: { providerID: xiaomiProvider.id, modelID: ADD_MODEL_SENTINEL },
+                        title: "+ Add model",
+                        description: undefined,
+                        category: pinnedCategory,
+                        disabled: false,
+                        footer: undefined as "Free" | undefined,
+                        onSelect() {
+                          void runAddModelWizard({ dialog, sdk, sync, toast, providerID: xiaomiProvider.id })
+                        },
+                      },
+                    ]
+                  : []),
+              ]
             : []),
         ]
       : []
