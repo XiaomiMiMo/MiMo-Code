@@ -698,6 +698,11 @@ export const ActorTool = Tool.define(
         // under the parent. Actor.spawn handles registry registration, forking
         // the agent loop, and sending inbox notifications on terminal — replacing
         // the legacy session.create + manual fork path that lived here pre-Task-29.
+        // Seed sessionId/model onto the tool part up-front. If the spawn fails
+        // before the actor signals `onReady` (e.g. the actor service is
+        // unavailable or the model is unresolvable), this metadata is still
+        // preserved on the resulting error tool state.
+        yield* ctx.metadata({ title: op.description, metadata: { sessionId: ctx.sessionID, model } })
         const actor = yield* requireActor()
         const spawnResult = yield* actor.spawn({
           mode: "subagent",
