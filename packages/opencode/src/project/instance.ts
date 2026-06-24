@@ -28,6 +28,7 @@ function assertSafeDirectory(directory: string): void {
   if (directory === pathParse(directory).root) {
     throw new Error("Access denied: filesystem root is not a valid project directory")
   }
+  if (process.platform === "win32") return
   for (const forbidden of FORBIDDEN_ROOTS) {
     if (directory === forbidden || AppFileSystem.contains(forbidden, directory)) {
       throw new Error("Access denied: target is a protected system directory")
