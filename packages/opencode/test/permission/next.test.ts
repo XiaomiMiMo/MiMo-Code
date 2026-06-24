@@ -527,6 +527,31 @@ it.live("ask - resolves immediately when action is allow", () =>
   ),
 )
 
+it.live("ask - manual approval ignores allow rules", () =>
+  withDir({ git: true }, () =>
+    Effect.gen(function* () {
+      const fiber = yield* ask({
+        id: PermissionID.make("per_manual_allow"),
+        sessionID: SessionID.make("session_test"),
+        permission: "bash",
+        patterns: ["rm -rf ./tmp"],
+        metadata: { requiresManualApproval: true },
+        always: [],
+        ruleset: [{ permission: "bash", pattern: "*", action: "allow" }],
+      }).pipe(Effect.forkScoped)
+
+      const items = yield* waitForPending(1)
+      expect(items[0]).toMatchObject({
+        id: PermissionID.make("per_manual_allow"),
+        metadata: { requiresManualApproval: true },
+      })
+
+      yield* reply({ requestID: PermissionID.make("per_manual_allow"), reply: "once" })
+      yield* Fiber.join(fiber)
+    }),
+  ),
+)
+
 it.live("ask - throws DeniedError when action is deny", () =>
   withDir({ git: true }, () =>
     Effect.gen(function* () {

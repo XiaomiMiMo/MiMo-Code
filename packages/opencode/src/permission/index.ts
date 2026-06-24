@@ -72,6 +72,10 @@ export class Approval extends Schema.Class<Approval>("PermissionApproval")({
   static readonly zod = zod(this)
 }
 
+export function requiresManualApproval(metadata: Record<string, unknown>) {
+  return metadata.requiresManualApproval === true
+}
+
 export const Event = {
   Asked: BusEvent.define("permission.asked", Request.zod),
   Replied: BusEvent.define(
@@ -185,6 +189,7 @@ export const layer = Layer.effect(
       const { approved, pending } = yield* InstanceState.get(state)
       const { ruleset, ...request } = input
       let needsAsk = false
+      const manual = requiresManualApproval(request.metadata)
 
       for (const pattern of request.patterns) {
         const rule = evaluate(request.permission, pattern, ruleset, approved)
@@ -194,7 +199,7 @@ export const layer = Layer.effect(
             ruleset: ruleset.filter((rule) => Wildcard.match(request.permission, rule.permission)),
           })
         }
-        if (rule.action === "allow") continue
+        if (rule.action === "allow" && !manual) continue
         needsAsk = true
       }
 

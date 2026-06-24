@@ -27,9 +27,13 @@ const MAX_METADATA_LENGTH = 30_000
 const DEFAULT_TIMEOUT = Flag.MIMOCODE_EXPERIMENTAL_BASH_DEFAULT_TIMEOUT_MS || 2 * 60 * 1000
 const PS = new Set(["powershell", "pwsh"])
 const CWD = new Set(["cd", "push-location", "set-location"])
+const DESTRUCTIVE = new Set(["rm", "rmdir", "rd", "del", "erase", "remove-item"])
+const PACKAGE_REMOVE = new Set(["remove", "rm", "un", "uninstall", "unlink"])
 const FILES = new Set([
   ...CWD,
   "rm",
+  "rmdir",
+  "rd",
   "cp",
   "mv",
   "mkdir",
@@ -83,6 +87,7 @@ type Scan = {
   dirs: Set<string>
   patterns: Set<string>
   always: Set<string>
+  requiresManualApproval: boolean
 }
 
 type Chunk = {
@@ -141,6 +146,25 @@ function unquote(text: string) {
   const last = text[text.length - 1]
   if ((first === '"' || first === "'") && first === last) return text.slice(1, -1)
   return text
+}
+
+function normalized(tokens: string[]) {
+  return tokens.map((token) => unquote(token).toLowerCase())
+}
+
+function packageRemoval(tokens: string[]) {
+  const list = normalized(tokens)
+  const command = list[0]
+  if (command !== "npm" && command !== "pnpm" && command !== "bun" && command !== "yarn") return false
+  const args = list.slice(1).filter((token) => !token.startsWith("-"))
+  if (command === "yarn" && args[0] === "global") return PACKAGE_REMOVE.has(args[1] ?? "")
+  return PACKAGE_REMOVE.has(args[0] ?? "")
+}
+
+function requiresManualApproval(tokens: string[]) {
+  const command = normalized(tokens)[0]
+  if (command && DESTRUCTIVE.has(command)) return true
+  return packageRemoval(tokens)
 }
 
 function home(text: string) {
@@ -301,8 +325,10 @@ const ask = Effect.fn("BashTool.ask")(function* (ctx: Tool.Context, scan: Scan) 
   yield* ctx.ask({
     permission: "bash",
     patterns: Array.from(scan.patterns),
-    always: Array.from(scan.always),
-    metadata: {},
+    always: scan.requiresManualApproval ? [] : Array.from(scan.always),
+    metadata: scan.requiresManualApproval
+      ? { requiresManualApproval: true, reason: "destructive_shell_command" }
+      : {},
   })
 })
 
@@ -395,12 +421,14 @@ export const BashTool = Tool.define(
         dirs: new Set<string>(),
         patterns: new Set<string>(),
         always: new Set<string>(),
+        requiresManualApproval: false,
       }
 
       for (const node of commands(root)) {
         const command = parts(node)
         const tokens = command.map((item) => item.text)
         const cmd = ps ? tokens[0]?.toLowerCase() : tokens[0]
+        const manual = requiresManualApproval(tokens)
 
         if (cmd && FILES.has(cmd)) {
           for (const arg of pathArgs(command, ps)) {
@@ -414,6 +442,10 @@ export const BashTool = Tool.define(
 
         if (tokens.length && (!cmd || !CWD.has(cmd))) {
           scan.patterns.add(source(node))
+          if (manual) {
+            scan.requiresManualApproval = true
+            continue
+          }
           scan.always.add(BashArity.prefix(tokens).join(" ") + " *")
         }
       }
