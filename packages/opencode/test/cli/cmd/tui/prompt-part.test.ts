@@ -81,6 +81,16 @@ describe("expandPlaceholders", () => {
     expect(result).toBe("你好AAA 世界BBB 末")
   })
 
+  test("expands a placeholder that sits on its own line after CJK", () => {
+    const v = "[Pasted ~3 lines]"
+    // User typed CJK on line 1, pasted on line 2, typed CJK on line 3:
+    //   "你好\n" + v + " " + "\n世界"
+    // Editor offsets count "\n" as width 1: 你好=4, \n=5, so the placeholder starts at width 5.
+    const plain = `你好\n${v} \n世界`
+    const result = expandPlaceholders(plain, [{ start: 5, end: 5 + v.length, text: "CONTENT" }])
+    expect(result).toBe("你好\nCONTENT \n世界")
+  })
+
   test("returns input unchanged when there are no placeholders", () => {
     expect(expandPlaceholders("你好世界", [])).toBe("你好世界")
   })

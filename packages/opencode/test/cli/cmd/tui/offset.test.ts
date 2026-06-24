@@ -30,6 +30,43 @@ describe("offset conversion", () => {
     }
   })
 
+  test("counts a newline as width 1 (matching the editor, not Bun.stringWidth)", () => {
+    // The editor advances its width offset by 1 per "\n", but Bun.stringWidth("\n")
+    // is 0. The converters must follow the editor, otherwise every newline before an
+    // offset desyncs the two coordinate systems by one.
+    // "你好\n[" — 你好=4, \n=1, so "[" sits at width 5 / string index 3
+    expect(stringIndexToWidth("你好\n[", 3)).toBe(5)
+    expect(widthToStringIndex("你好\n[", 5)).toBe(3)
+  })
+
+  test("round-trips across newlines and CJK together", () => {
+    const text = "你好\n世界\nA"
+    let index = 0
+    for (const ch of text) {
+      const width = stringIndexToWidth(text, index)
+      expect(widthToStringIndex(text, width)).toBe(index)
+      index += ch.length
+    }
+  })
+
+  test("counts a tab as width 2 (matching the editor, not Bun.stringWidth)", () => {
+    // The editor advances its width offset by 2 per "\t", but Bun.stringWidth("\t")
+    // is 0. Pasted code often contains tabs, so the converters must follow the editor.
+    // "ab\tc" — ab=2, \t=2, so "c" sits at width 4 / string index 3
+    expect(stringIndexToWidth("ab\tc", 3)).toBe(4)
+    expect(widthToStringIndex("ab\tc", 4)).toBe(3)
+  })
+
+  test("round-trips across tabs, newlines and CJK together", () => {
+    const text = "你好\t世界\nA\tB"
+    let index = 0
+    for (const ch of text) {
+      const width = stringIndexToWidth(text, index)
+      expect(widthToStringIndex(text, width)).toBe(index)
+      index += ch.length
+    }
+  })
+
   test("round-trips across supplementary-plane (emoji) code-point boundaries", () => {
     // 😀 is one code point but 2 UTF-16 units and display width 2. The converters
     // are only contracted to agree on real code-point boundaries (the editor never
