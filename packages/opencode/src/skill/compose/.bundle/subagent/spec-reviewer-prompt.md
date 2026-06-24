@@ -32,6 +32,10 @@ ask for one.
 
 ## Git range to review
 
+[If the work was done in an isolated worktree, add a line here: "Run all commands
+from `<worktree path>` — `cd` there first." Omit this if there's no separate
+worktree; the current checkout is correct by default.]
+
 **Base:** {BASE_SHA}
 **Head:** {HEAD_SHA}
 
@@ -105,7 +109,9 @@ phase-1 re-review after the implementer acts, not here.
 - [Sn · "<claim>"] downgraded: <report's justification> — was: <prior status>
 ~~~
 
-**Placeholders:** `{BASE_SHA}`, `{HEAD_SHA}` — commit range for this task.
+**Placeholders:** `{BASE_SHA}`, `{HEAD_SHA}` — commit range for this task. If an
+isolated worktree was used, also add a `cd <worktree path>` instruction (see the
+note in the Git range section); otherwise the current checkout is correct.
 
 **Reviewer returns:** structured Status + per-claim verdicts. The controller gates on
 this (see `compose:subagent`): the task is not complete while any in-scope claim is
