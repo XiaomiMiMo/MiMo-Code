@@ -389,9 +389,9 @@ export class Global extends HeyApiClient {
   }
 
   /**
-   * Upgrade opencode
+   * Upgrade MiMoCode
    *
-   * Upgrade opencode to the specified version or latest if not specified.
+   * Upgrade MiMoCode to the specified version or latest if not specified.
    */
   public upgrade<ThrowOnError extends boolean = false>(
     parameters?: {
