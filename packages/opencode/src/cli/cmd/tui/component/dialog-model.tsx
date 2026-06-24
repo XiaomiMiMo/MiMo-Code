@@ -84,17 +84,60 @@ export function DialogModel(props: { providerID?: string }) {
       "Recent",
     )
 
+    // Xiaomi provider and mimo-free pinned at top (after favorites/recents)
+    const xiaomiProvider = sync.data.provider.find((p) => p.id === "xiaomi")
+    const mimoFreeAvailable = sync.data.provider.some((p) => p.id === "mimo" && "mimo-auto" in p.models)
+    const pinnedOptions = xiaomiProvider && connected() && showSections
+      ? [
+          // mimo-free model
+          ...((!props.providerID || props.providerID === "mimo") &&
+          (!showSections || !inShortcuts("mimo", "mimo-auto")) &&
+          mimoFreeAvailable
+            ? [
+                {
+                  value: { providerID: "mimo", modelID: "mimo-auto" },
+                  title: modelName("mimo", "mimo-auto"),
+                  description: undefined as string | undefined,
+                  category: xiaomiProvider.name,
+                  disabled: false,
+                  footer: undefined as "Free" | undefined,
+                  onSelect() {
+                    onSelect("mimo", "mimo-auto")
+                  },
+                },
+              ]
+            : []),
+          // xiaomi provider models
+          ...pipe(
+            xiaomiProvider.models,
+            entries(),
+            filter(([_, info]) => info.status !== "deprecated"),
+            filter(([_, info]) => (props.providerID ? info.providerID === props.providerID : true)),
+            map(([model, info]) => ({
+              value: { providerID: xiaomiProvider.id, modelID: model },
+              title: info.name ?? model,
+              description: undefined as string | undefined,
+              category: xiaomiProvider.name,
+              disabled: false,
+              footer: undefined as "Free" | undefined,
+              onSelect() {
+                onSelect(xiaomiProvider.id, model)
+              },
+            })),
+            filter((x) => !showSections || !inShortcuts(x.value.providerID, x.value.modelID)),
+          ),
+        ]
+      : []
+
     const providerOptions = pipe(
       sync.data.provider,
+      filter((provider) => provider.id !== "xiaomi" && provider.id !== "mimo"),
       sortBy(
         (provider) => provider.id !== "opencode",
         (provider) => PROVIDER_PRIORITY[provider.id] ?? 99,
         (provider) => provider.name,
       ),
       flatMap((provider) => {
-        // The free mimo-auto model is surfaced as the top entry of the Xiaomi
-        // group below, so the mimo provider never renders its own section.
-        if (provider.id === "mimo") return []
         const models = pipe(
           provider.models,
           entries(),
@@ -121,31 +164,9 @@ export function DialogModel(props: { providerID?: string }) {
             (x) => x.title,
           ),
         )
-        // Prepend the free mimo-auto model to the Xiaomi group when it's loaded
-        // and not already surfaced in the Favorites/Recent sections.
-        const free =
-          provider.id === "xiaomi" &&
-          (!props.providerID || props.providerID === provider.id) &&
-          (!showSections || !inShortcuts("mimo", "mimo-auto")) &&
-          sync.data.provider.some((p) => p.id === "mimo" && "mimo-auto" in p.models)
-            ? [
-                {
-                  value: { providerID: "mimo", modelID: "mimo-auto" },
-                  title: modelName("mimo", "mimo-auto"),
-                  description: undefined as string | undefined,
-                  category: connected() ? provider.name : undefined,
-                  disabled: false,
-                  footer: undefined as "Free" | undefined,
-                  onSelect() {
-                    onSelect("mimo", "mimo-auto")
-                  },
-                },
-              ]
-            : []
-        if (provider.source !== "config") return [...free, ...models]
-        if (props.providerID && props.providerID !== provider.id) return [...free, ...models]
+        if (provider.source !== "config") return models
+        if (props.providerID && props.providerID !== provider.id) return models
         return [
-          ...free,
           ...models,
           {
             value: { providerID: provider.id, modelID: ADD_MODEL_SENTINEL },
@@ -180,7 +201,7 @@ export function DialogModel(props: { providerID?: string }) {
       ]
     }
 
-    return [...favoriteOptions, ...recentOptions, ...providerOptions, ...popularProviders]
+    return [...favoriteOptions, ...recentOptions, ...pinnedOptions, ...providerOptions, ...popularProviders]
   })
 
   const provider = createMemo(() =>
