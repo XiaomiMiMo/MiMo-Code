@@ -8,6 +8,7 @@ import { MemoryFtsTable } from "@/memory/fts.sql"
 import { TaskRegistry } from "@/task/registry"
 import { ActorRegistry } from "@/actor/registry"
 import type { AgentOutcome, ForkContext } from "@/actor/spawn"
+import { Actor } from "@/actor/spawn"
 import { spawnRef } from "@/actor/spawn-ref"
 import { prefixCaptureRef } from "./prefix-capture-ref"
 import { Database, and, eq, or } from "@/storage"
@@ -18,7 +19,7 @@ import * as Session from "./session"
 import { MessageV2 } from "./message-v2"
 import { SessionID, MessageID, PartID } from "./schema"
 import { Log, Token } from "../util"
-import { Effect, Layer, Deferred, Context, Scope } from "effect"
+import { Effect, Layer, Deferred, Context, Scope, Option } from "effect"
 import { makeRuntime } from "@/effect/run-service"
 import type { ActorPromptOps } from "@/tool/actor"
 import type { ProviderID, ModelID } from "../provider/schema"
@@ -655,7 +656,11 @@ export const layer: Layer.Layer<
       //
       // Resolved via spawnRef rather than `yield* Actor.Service` to break the
       // (Actor → SessionPrompt → SessionCheckpoint → Actor) layer cycle.
-      const actor = spawnRef.current
+      // Prefer the Actor service from the live Effect context (always present
+      // when running under AppRuntime), falling back to the late-bound spawnRef.
+      // The context lookup is robust against spawnRef going stale when a memoized
+      // Actor layer is torn down by instance disposal elsewhere in the process.
+      const actor = Option.getOrElse(yield* Effect.serviceOption(Actor.Service), () => spawnRef.current)
       if (!actor) {
         log.warn("tryStartCheckpointWriter skipping — Actor service unavailable", { sessionID: input.sessionID })
         return "skipped" as const
