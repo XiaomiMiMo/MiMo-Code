@@ -16,7 +16,7 @@ import { MessageID, PartID } from "@/session/schema"
 import { createStore, produce, unwrap } from "solid-js/store"
 import { useKeybind } from "@tui/context/keybind"
 import { usePromptHistory, type PromptInfo } from "./history"
-import { assign } from "./part"
+import { assign, expandPlaceholders } from "./part"
 import { usePromptStash } from "./stash"
 import { DialogStash } from "../dialog-stash"
 import { type AutocompleteRef, Autocomplete } from "./autocomplete"
@@ -1091,23 +1091,20 @@ export function Prompt(props: PromptProps) {
     }
 
     const messageID = MessageID.ascending()
-    let inputText = store.prompt.input
 
-    // Expand pasted text inline before submitting
-    const allExtmarks = input.extmarks.getAllForTypeId(promptPartTypeId)
-    const sortedExtmarks = allExtmarks.sort((a: { start: number }, b: { start: number }) => b.start - a.start)
-
-    for (const extmark of sortedExtmarks) {
-      const partIndex = store.extmarkToPartIndex.get(extmark.id)
-      if (partIndex !== undefined) {
+    // Expand pasted text inline before submitting. Extmark offsets are
+    // display-width based while plainText is UTF-16, so expandPlaceholders
+    // bridges the two coordinate systems (otherwise CJK content desyncs them).
+    const marks = input.extmarks
+      .getAllForTypeId(promptPartTypeId)
+      .flatMap((extmark: { id: number; start: number; end: number }) => {
+        const partIndex = store.extmarkToPartIndex.get(extmark.id)
+        if (partIndex === undefined) return []
         const part = store.prompt.parts[partIndex]
-        if (part?.type === "text" && part.text) {
-          const before = inputText.slice(0, extmark.start)
-          const after = inputText.slice(extmark.end)
-          inputText = before + part.text + after
-        }
-      }
-    }
+        if (part?.type !== "text" || !part.text) return []
+        return [{ start: extmark.start, end: extmark.end, text: part.text }]
+      })
+    const inputText = expandPlaceholders(store.prompt.input, marks)
 
     // Filter out text parts (pasted content) since they're now expanded inline
     const nonTextParts = store.prompt.parts.filter((part) => part.type !== "text")

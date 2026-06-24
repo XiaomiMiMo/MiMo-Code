@@ -17,6 +17,8 @@ import { useTerminalDimensions } from "@opentui/solid"
 import { Locale } from "@/util"
 import type { PromptInfo } from "./history"
 import { useFrecency } from "./frecency"
+import { detectTrigger } from "./autocomplete-detect"
+import { charAfterCursor } from "./offset"
 
 function removeLineRange(input: string) {
   const hashIndex = input.lastIndexOf("#")
@@ -158,8 +160,7 @@ export function Autocomplete(props: {
     const input = props.input()
     const currentCursorOffset = input.cursorOffset
 
-    const charAfterCursor = props.value.at(currentCursorOffset)
-    const needsSpace = charAfterCursor !== " "
+    const needsSpace = charAfterCursor(props.value, currentCursorOffset) !== " "
     const append = prefix + text + (needsSpace ? " " : "")
 
     input.cursorOffset = store.index
@@ -531,32 +532,12 @@ export function Autocomplete(props: {
           return
         }
 
-        // Check if autocomplete should reopen (e.g., after backspace deleted a space)
-        const offset = props.input().cursorOffset
-        if (offset === 0) return
-
-        // Check for "/" at position 0 - reopen slash commands
-        if (value.startsWith("/") && !value.slice(0, offset).match(/\s/)) {
-          show("/")
-          setStore("index", 0)
-          return
-        }
-
-        // Check for "@" (files) or "$" (agents) trigger - find the nearest one before
-        // the cursor with no whitespace between it and the cursor.
-        const text = value.slice(0, offset)
-        const atIdx = text.lastIndexOf("@")
-        const dollarIdx = text.lastIndexOf("$")
-        const idx = Math.max(atIdx, dollarIdx)
-        if (idx === -1) return
-
-        const trigger = idx === dollarIdx ? "$" : "@"
-        const between = text.slice(idx)
-        const before = idx === 0 ? undefined : value[idx - 1]
-        if ((before === undefined || /\s/.test(before)) && !between.match(/\s/)) {
-          show(trigger)
-          setStore("index", idx)
-        }
+        // Check if autocomplete should reopen (e.g., after backspace deleted a space).
+        // detectTrigger works in width coordinates so CJK before/after the trigger stays correct.
+        const trigger = detectTrigger(value, props.input().cursorOffset)
+        if (!trigger) return
+        show(trigger.kind)
+        setStore("index", trigger.index)
       },
       onKeyDown(e: KeyEvent) {
         if (store.visible) {
