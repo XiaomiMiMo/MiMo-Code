@@ -36,7 +36,6 @@ export function DialogModel(props: { providerID?: string }) {
   const connected = useConnected()
   const providers = createDialogProviderOptions()
   const t = useLanguage().t
-  const providerName = (p: { id: string; name: string }) => t("provider.name." + p.id) || p.name
   const modelName = (providerID: string, modelID: string) =>
     modelID === "mimo-auto" ? t("tui.model.mimo_auto.name") : Model.name(sync.data.provider, providerID, modelID)
 
@@ -65,7 +64,7 @@ export function DialogModel(props: { providerID?: string }) {
             key: item,
             value: { providerID: provider.id, modelID: model.id },
             title: modelName(provider.id, model.id),
-            description: providerName(provider),
+            description: provider.name,
             category,
             disabled: provider.id === "opencode" && model.id.includes("-nano"),
             footer: model.cost?.input === 0 && provider.id === "opencode" ? "Free" : undefined,
@@ -90,7 +89,7 @@ export function DialogModel(props: { providerID?: string }) {
       sortBy(
         (provider) => provider.id !== "opencode",
         (provider) => PROVIDER_PRIORITY[provider.id] ?? 99,
-        (provider) => providerName(provider),
+        (provider) => provider.name,
       ),
       flatMap((provider) => {
         // The free mimo-auto model is surfaced as the top entry of the Xiaomi
@@ -105,7 +104,7 @@ export function DialogModel(props: { providerID?: string }) {
             value: { providerID: provider.id, modelID: model },
             title: info.name ?? model,
             description: undefined as string | undefined,
-            category: connected() ? providerName(provider) : undefined,
+            category: connected() ? provider.name : undefined,
             disabled: provider.id === "opencode" && model.includes("-nano"),
             footer: info.cost?.input === 0 && provider.id === "opencode" ? "Free" : undefined,
             onSelect() {
@@ -134,7 +133,7 @@ export function DialogModel(props: { providerID?: string }) {
                   value: { providerID: "mimo", modelID: "mimo-auto" },
                   title: modelName("mimo", "mimo-auto"),
                   description: undefined as string | undefined,
-                  category: connected() ? providerName(provider) : undefined,
+                  category: connected() ? provider.name : undefined,
                   disabled: false,
                   footer: undefined as "Free" | undefined,
                   onSelect() {
@@ -152,7 +151,7 @@ export function DialogModel(props: { providerID?: string }) {
             value: { providerID: provider.id, modelID: ADD_MODEL_SENTINEL },
             title: "+ Add model",
             description: undefined,
-            category: connected() ? providerName(provider) : undefined,
+            category: connected() ? provider.name : undefined,
             disabled: false,
             footer: undefined as "Free" | undefined,
             onSelect() {
@@ -191,7 +190,7 @@ export function DialogModel(props: { providerID?: string }) {
   const title = createMemo(() => {
     const value = provider()
     if (!value) return "Select model"
-    return providerName(value)
+    return value.name
   })
 
   function onSelect(providerID: string, modelID: string) {

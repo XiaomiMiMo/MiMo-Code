@@ -33,7 +33,7 @@ export function createDialogProviderOptions() {
         const connected = sync.data.provider_next.connected.includes(provider.id)
 
         return {
-          title: t("provider.name." + provider.id) || provider.name,
+          title: provider.name,
           value: provider.id,
           description: {
             anthropic: "(API key)",
