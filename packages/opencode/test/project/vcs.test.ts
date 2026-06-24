@@ -104,7 +104,7 @@ describeVcs("Vcs", () => {
   })
 
   test("branch() returns undefined for non-git directories", async () => {
-    await using tmp = await tmpdir()
+    await using tmp = await tmpdir({ outsideGit: true })
 
     await withVcs(tmp.path, async () => {
       const branch = await AppRuntime.runPromise(
