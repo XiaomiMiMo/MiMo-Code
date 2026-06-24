@@ -30,6 +30,11 @@ describe("detectTrigger", () => {
     expect(detectTrigger("你好 @fo", 8)).toEqual({ kind: "@", index: 5 })
   })
 
+  test("returns width-based index for a $ trigger preceded by CJK", () => {
+    // "你好 $ag" — same geometry as the @ case but for the agent trigger.
+    expect(detectTrigger("你好 $ag", 8)).toEqual({ kind: "$", index: 5 })
+  })
+
   test("does not over-read past the cursor when CJK follows the trigger", () => {
     // "你好 @x尾巴", cursor right after "@x": 你好(4)+space(1)+@x(2) = width 7 (string index 5).
     // There is no whitespace between @ and the cursor, so it must still trigger,

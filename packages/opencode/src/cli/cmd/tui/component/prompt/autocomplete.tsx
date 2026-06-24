@@ -18,7 +18,7 @@ import { Locale } from "@/util"
 import type { PromptInfo } from "./history"
 import { useFrecency } from "./frecency"
 import { detectTrigger } from "./autocomplete-detect"
-import { widthToStringIndex } from "./offset"
+import { charAfterCursor } from "./offset"
 
 function removeLineRange(input: string) {
   const hashIndex = input.lastIndexOf("#")
@@ -160,8 +160,7 @@ export function Autocomplete(props: {
     const input = props.input()
     const currentCursorOffset = input.cursorOffset
 
-    const charAfterCursor = props.value.at(widthToStringIndex(props.value, currentCursorOffset))
-    const needsSpace = charAfterCursor !== " "
+    const needsSpace = charAfterCursor(props.value, currentCursorOffset) !== " "
     const append = prefix + text + (needsSpace ? " " : "")
 
     input.cursorOffset = store.index

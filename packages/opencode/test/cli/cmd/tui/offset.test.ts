@@ -1,5 +1,9 @@
 import { describe, expect, test } from "bun:test"
-import { stringIndexToWidth, widthToStringIndex } from "../../../../src/cli/cmd/tui/component/prompt/offset"
+import {
+  charAfterCursor,
+  stringIndexToWidth,
+  widthToStringIndex,
+} from "../../../../src/cli/cmd/tui/component/prompt/offset"
 
 // The editor uses display-width offsets (a wide CJK char counts as 2 columns)
 // while plainText is a JS UTF-16 string (a CJK char is 1 unit). These helpers
@@ -24,5 +28,37 @@ describe("offset conversion", () => {
       const width = stringIndexToWidth(text, i)
       expect(widthToStringIndex(text, width)).toBe(i)
     }
+  })
+
+  test("round-trips across supplementary-plane (emoji) code-point boundaries", () => {
+    // 😀 is one code point but 2 UTF-16 units and display width 2. The converters
+    // are only contracted to agree on real code-point boundaries (the editor never
+    // emits an offset that splits a surrogate pair), so iterate by code point.
+    const text = "a😀好b"
+    let index = 0
+    for (const ch of text) {
+      const width = stringIndexToWidth(text, index)
+      expect(widthToStringIndex(text, width)).toBe(index)
+      index += ch.length
+    }
+  })
+})
+
+describe("charAfterCursor", () => {
+  test("reads the char right after the cursor in pure ascii", () => {
+    // "ab cd", cursor (width 2) sits before the space
+    expect(charAfterCursor("ab cd", 2)).toBe(" ")
+  })
+
+  test("reads the correct char when CJK precedes the cursor", () => {
+    // "你好 x" — cursor after 你好 (width 4) must land on the space, not be shifted
+    // by the width/UTF-16 mismatch.
+    expect(charAfterCursor("你好 x", 4)).toBe(" ")
+    // cursor after "你好 " (width 5) lands on "x"
+    expect(charAfterCursor("你好 x", 5)).toBe("x")
+  })
+
+  test("returns undefined at end of input", () => {
+    expect(charAfterCursor("你好", 4)).toBeUndefined()
   })
 })
