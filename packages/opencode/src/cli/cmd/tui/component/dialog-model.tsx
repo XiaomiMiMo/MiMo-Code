@@ -4,7 +4,8 @@ import { useSync } from "@tui/context/sync"
 import { map, pipe, flatMap, entries, filter, sortBy, take } from "remeda"
 import { DialogSelect } from "@tui/ui/dialog-select"
 import { useDialog, type DialogContext } from "@tui/ui/dialog"
-import { createDialogProviderOptions, DialogProvider } from "./dialog-provider"
+import { createDialogProviderOptions } from "./dialog-provider"
+import { DialogMimoLogin } from "./dialog-mimo-login"
 import { DialogVariant } from "./dialog-variant"
 import { useKeybind } from "../context/keybind"
 import { useSDK } from "../context/sdk"
@@ -259,9 +260,9 @@ export function DialogModel(props: { providerID?: string }) {
       keybind={[
         {
           keybind: keybind.all.model_provider_list?.[0],
-          title: connected() ? "Connect provider" : "View all providers",
+          title: "Connect provider",
           onTrigger() {
-            dialog.replace(() => <DialogProvider />)
+            dialog.replace(() => <DialogMimoLogin />)
           },
         },
         {
