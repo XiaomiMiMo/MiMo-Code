@@ -702,7 +702,14 @@ export const layer = Layer.effect(
           concurrency: "unbounded",
           discard: true,
         })
-        yield* state.cancelActor(sessionID, actorID)
+        // Bound the work-fiber interrupt. cancelActor interrupts the actor's runner
+        // and awaits its full unwind; a fiber stuck unwinding (e.g. blocked on a
+        // hung LLM response stream) would otherwise hang the entire cancel sweep
+        // indefinitely. The interrupt signal is delivered regardless — we just stop
+        // awaiting completion after a grace period and let it finish detached. The
+        // registry status below still records the cancellation, which is the
+        // observable contract callers (and the cancel cascade) rely on.
+        yield* state.cancelActor(sessionID, actorID).pipe(Effect.timeout("5 seconds"), Effect.ignore)
         yield* actorReg
           .updateStatus(sessionID, actorID, { status: "idle", lastOutcome: "cancelled" })
           .pipe(Effect.ignore)

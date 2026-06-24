@@ -59,6 +59,10 @@ interface RunEntry {
   runID: string
   sessionID: SessionID
   status: RunStatus
+  // Set true the moment cancellation begins (before reclaim). Spawn sites check
+  // this so a queued agent that acquires a freed permit mid-cancel bails instead
+  // of spawning a new orphan actor.
+  cancelling: boolean
   deferred: Deferred.Deferred<RunOutcome>
   fiber: Fiber.Fiber<void> | undefined
   childActorIDs: Set<string>
@@ -367,6 +371,11 @@ export const layer = Layer.effect(
     const cancelEntry = (entry: RunEntry): Effect.Effect<void> =>
       Effect.gen(function* () {
         if (entry.status !== "running") return
+        // Mark cancelling BEFORE reclaim. Reclaiming a started child frees its
+        // semaphore permit, which lets a queued sibling acquire it; the cancelling
+        // flag makes that sibling bail (see globalSemLocal.run) instead of spawning
+        // a new orphan actor that would race the reclaim (and could hang cancel).
+        entry.cancelling = true
         yield* reclaim(entry)
         yield* flushNow(entry)
         yield* WorkflowPersistence.recordTerminal({ runID: entry.runID, status: "cancelled" }).pipe(Effect.ignore)
@@ -401,6 +410,7 @@ export const layer = Layer.effect(
         runID,
         sessionID: input.sessionID,
         status: "running",
+        cancelling: false,
         deferred,
         fiber: undefined,
         childActorIDs: new Set<string>(),
@@ -843,6 +853,10 @@ export const layer = Layer.effect(
             // happens AFTER the slot is released, so file IO never holds a slot.
             const result = await sem.run(async () =>
               globalSemLocal.run(async () => {
+                // The run is being cancelled and this agent only just acquired a
+                // permit (freed by a sibling's reclaim). Bail before spawning so we
+                // don't create an orphan actor that escapes the cancel sweep.
+                if (entry.cancelling) return null
                 if (entry.agentCount >= lifecycleCap) {
                   warnCapOnce()
                   publishAgentFailed(o, "over-cap")
@@ -876,6 +890,9 @@ export const layer = Layer.effect(
         }
         return sem.run(async () =>
           globalSemLocal.run(async () => {
+            // See the shared-tree path: bail if the run is cancelling so a
+            // late-acquiring queued agent doesn't spawn an orphan.
+            if (entry.cancelling) return null
             if (entry.agentCount >= lifecycleCap) {
               warnCapOnce()
               publishAgentFailed(o, "over-cap")

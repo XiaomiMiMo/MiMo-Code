@@ -350,7 +350,12 @@ describe("WorkflowRuntime cancel cascade", () => {
         // on each. An orphan (never reclaimed) would have lastOutcome unset here.
         expect(children.filter((a) => a.lastOutcome !== "cancelled")).toEqual([])
       }),
-      { git: true, config: providerCfg },
+      // Pin the concurrency ceiling BELOW the 8-way fan-out so some children run
+      // (in-flight at cancel) while the rest are semaphore-queued — deterministic
+      // on any host (the default is min(16, 2×cores), which varies). This exercises
+      // the cancel path that frees a started child's permit, lets a queued sibling
+      // acquire it, and must NOT spawn a new orphan (it bails on entry.cancelling).
+      { git: true, config: (url: string) => ({ ...providerCfg(url), workflow: { maxConcurrentAgents: 2 } }) },
     ),
     20000,
   )
