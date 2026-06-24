@@ -25,7 +25,6 @@ const FORBIDDEN_PREFIXES = [
   "/sys",
   "/dev",
   "/boot",
-  "/root",
   "/private/etc",
 ] as const
 
