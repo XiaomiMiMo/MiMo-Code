@@ -452,6 +452,33 @@ it.live("static loop returns assistant text through local provider", () =>
   ),
 )
 
+it.live("injects orchestrator system prompt for agent 'orchestrator'", () =>
+  provideTmpdirServer(
+    Effect.fnUntraced(function* ({ llm }) {
+      const prompt = yield* SessionPrompt.Service
+      const sessions = yield* Session.Service
+      const session = yield* sessions.create({
+        title: "Orchestrator",
+        permission: [{ permission: "*", pattern: "*", action: "allow" }],
+      })
+
+      yield* prompt.prompt({
+        sessionID: session.id,
+        agent: "orchestrator",
+        noReply: true,
+        parts: [{ type: "text", text: "kick things off" }],
+      })
+
+      yield* llm.text("ok")
+      yield* prompt.loop({ sessionID: session.id })
+
+      const inputs = yield* llm.inputs
+      expect(JSON.stringify(inputs)).toContain("session create")
+    }),
+    { git: true, config: providerCfg },
+  ),
+)
+
 it.live("static loop consumes queued replies across turns", () =>
   provideTmpdirServer(
     Effect.fnUntraced(function* ({ llm }) {
