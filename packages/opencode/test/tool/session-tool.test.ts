@@ -1,6 +1,7 @@
 import { afterEach, describe, expect } from "bun:test"
 import { Effect, Layer } from "effect"
 import { Agent } from "../../src/agent/agent"
+import { Actor } from "../../src/actor/spawn"
 import { ActorRegistry } from "../../src/actor/registry"
 import { Bus } from "../../src/bus"
 import { TuiEvent } from "../../src/cli/cmd/tui/event"
@@ -31,6 +32,9 @@ const it = testEffect(
     Agent.defaultLayer,
     CrossSpawnSpawner.defaultLayer,
     Bus.defaultLayer,
+    // Actor.defaultLayer populates spawnRef.current, which the session tool's
+    // cancel branch reads via requireActor(). Without it cancel fails fast.
+    Actor.defaultLayer,
   ),
 )
 
@@ -111,17 +115,81 @@ describe("session tool", () => {
     ),
   )
 
-  it.live("unimplemented verbs fail (list/cancel are stubs)", () =>
+  it.live("list returns each child session id, title, agent and status", () =>
     provideTmpdirInstance(() =>
       Effect.gen(function* () {
         const sessions = yield* Session.Service
         const parent = yield* sessions.create({ title: "Parent" })
+
         const info = yield* SessionTool
         const tool = yield* info.init()
-        const exit = yield* Effect.exit(
-          tool.execute({ operation: { action: "list" } }, ctx(parent.id)),
+
+        const a = yield* tool.execute(
+          { operation: { action: "create", task: "task A", mode: "build", title: "Alpha" } },
+          ctx(parent.id),
         )
-        expect(exit._tag).toBe("Failure")
+        const b = yield* tool.execute(
+          { operation: { action: "create", task: "task B", mode: "compose", title: "Beta" } },
+          ctx(parent.id),
+        )
+        const idA = a.metadata.sessionID!
+        const idB = b.metadata.sessionID!
+
+        const result = yield* tool.execute({ operation: { action: "list" } }, ctx(parent.id))
+
+        expect(result.title).toBe("Child sessions: 2")
+        expect(result.output).toContain(idA)
+        expect(result.output).toContain(idB)
+        expect(result.output).toContain("Alpha")
+        expect(result.output).toContain("Beta")
+        // agent (the NL "mode") is surfaced from the actor row.
+        expect(result.output).toContain("build")
+        expect(result.output).toContain("compose")
+      }),
+    ),
+  )
+
+  it.live("list returns an empty message when there are no children", () =>
+    provideTmpdirInstance(() =>
+      Effect.gen(function* () {
+        const sessions = yield* Session.Service
+        const parent = yield* sessions.create({ title: "Lonely" })
+        const info = yield* SessionTool
+        const tool = yield* info.init()
+        const result = yield* tool.execute({ operation: { action: "list" } }, ctx(parent.id))
+        expect(result.title).toBe("Child sessions: 0")
+        expect(result.output).toBe("No child sessions.")
+      }),
+    ),
+  )
+
+  it.live("cancel stops a child and the registry reflects a cancelled outcome", () =>
+    provideTmpdirInstance(() =>
+      Effect.gen(function* () {
+        const sessions = yield* Session.Service
+        const actorReg = yield* ActorRegistry.Service
+        const parent = yield* sessions.create({ title: "Parent" })
+
+        const info = yield* SessionTool
+        const tool = yield* info.init()
+        const created = yield* tool.execute(
+          { operation: { action: "create", task: "cancel me", mode: "build", title: "Doomed" } },
+          ctx(parent.id),
+        )
+        const childID = created.metadata.sessionID!
+
+        const result = yield* tool.execute(
+          { operation: { action: "cancel", sessionID: childID } },
+          ctx(parent.id),
+        )
+        expect(result.metadata.sessionID).toBe(childID)
+        expect(result.output).toContain(childID)
+
+        // cancel sets the registry row to idle/cancelled (Actor.cancel →
+        // ActorRegistry.updateStatus). Peer actorID === sessionID === childID.
+        const actor = yield* actorReg.get(SessionID.make(childID), childID)
+        expect(actor!.status).toBe("idle")
+        expect(actor!.lastOutcome).toBe("cancelled")
       }),
     ),
   )

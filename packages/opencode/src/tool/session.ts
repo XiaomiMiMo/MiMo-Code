@@ -7,6 +7,7 @@ import { Effect } from "effect"
 import { Session } from "@/session"
 import { SessionPrompt } from "@/session/prompt"
 import { ActorRegistry } from "@/actor/registry"
+import { spawnRef } from "@/actor/spawn-ref"
 import { Bus } from "@/bus"
 import { TuiEvent } from "@/cli/cmd/tui/event"
 import type { SessionID } from "../session/schema"
@@ -198,6 +199,20 @@ export const SessionTool = Tool.define<typeof parameters, Metadata, Deps>(
     const actorReg = yield* ActorRegistry.Service
     const bus = yield* Bus.Service
 
+    // Resolve the Actor service through the late-bound spawnRef rather than as a
+    // Layer dependency: pulling Actor.Service into Deps would create a layer
+    // cycle (Actor → SessionPrompt → ToolRegistry → tool/session → Actor) that
+    // Effect cannot satisfy. The ref is populated by Actor.layer's initialiser
+    // (see actor/spawn-ref.ts). Same pattern as tool/actor.ts.
+    const requireActor = () =>
+      spawnRef.current
+        ? Effect.succeed(spawnRef.current)
+        : Effect.fail(
+            new Error(
+              "Actor service unavailable — Actor.defaultLayer must be running for session cancel",
+            ),
+          )
+
     const run = Effect.fn("SessionTool.execute")(function* (input: SessionInput, ctx: Tool.Context<Metadata>) {
       const op = input.operation
 
@@ -249,7 +264,40 @@ export const SessionTool = Tool.define<typeof parameters, Metadata, Deps>(
         }
       }
 
-      return yield* Effect.fail(new Error(`session: verb "${op.action}" not yet implemented`))
+      if (op.action === "list") {
+        // Peers register with session_id === their own child.id (see
+        // Actor.spawnPeer / the create branch above), so listByParent —
+        // which filters on session_id === orchestrator id — never matches
+        // them. The reliable parent link is the Session row's parentID, set
+        // to ctx.sessionID at create time. Enrich each child with its actor
+        // row (mode/agent/status) keyed by sessionID === actorID === child.id.
+        const children = yield* sessions.children(ctx.sessionID as SessionID)
+        if (children.length === 0)
+          return { title: "Child sessions: 0", output: "No child sessions.", metadata: {} as Metadata }
+        const lines = yield* Effect.forEach(children, (child) =>
+          actorReg.get(child.id, child.id).pipe(
+            Effect.map((actor) =>
+              `${child.id} — ${child.title} — ${actor?.agent ?? "?"} — ${actor?.status ?? "unknown"}`,
+            ),
+          ),
+        )
+        return { title: `Child sessions: ${children.length}`, output: lines.join("\n"), metadata: {} as Metadata }
+      }
+
+      if (op.action === "cancel") {
+        const actor = yield* requireActor()
+        yield* actor.cancel(op.sessionID as SessionID, op.sessionID, "graceful")
+        return {
+          title: `Cancelled ${op.sessionID}`,
+          output: `Requested cancellation of session ${op.sessionID}.`,
+          metadata: { sessionID: op.sessionID } as Metadata,
+        }
+      }
+
+      // Exhaustive: every action in the discriminated union is handled above,
+      // so `op` is `never` here. This guards against a future verb being added
+      // to the union without a matching branch.
+      return yield* Effect.fail(new Error(`session: unhandled verb ${JSON.stringify(op)}`))
     })
 
     return {
