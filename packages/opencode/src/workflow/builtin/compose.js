@@ -34,6 +34,8 @@ const BRAINSTORM_SHAPE = {
       },
     },
     assumptions: { type: "array", items: { type: "string" } },
+    amends: { type: "string" },
+    existingDocs: { type: "array", items: { type: "string" } },
     notes: { type: "string" },
   },
 }
@@ -182,6 +184,22 @@ const REPORT_PATH = REPORTS_DIR + "/" + FEATURE_NAME + ".md"
 // ---------------------------------------------------------------------------
 phase("Brainstorm")
 const SYNTHETIC_CONTEXT = { projectType: "unknown", conventions: [], recentChanges: [], relevantFiles: [] }
+// Surface any prior compose artifacts so brainstorm can detect an AMENDMENT (a
+// change to an existing feature) vs new work — enabling incremental re-runs that
+// reuse the existing spec/plan instead of regenerating everything. The workflow
+// only lists the files; the agent reads + judges.
+const existingDocs = [
+  ...(await glob(SPECS_DIR + "/*.md")),
+  ...(await glob(PLANS_DIR + "/*.md")),
+  ...(await glob(REPORTS_DIR + "/*.md")),
+]
+const existingDocsBlock = existingDocs.length
+  ? "\n## Existing compose artifacts (this project has prior compose work)\n" +
+    existingDocs.map((p) => "- " + p).join("\n") + "\n" +
+    "If the task below is a CHANGE/ADDITION to a feature documented above, READ the relevant spec/plan (use the `read` tool) " +
+    "and treat this as an AMENDMENT: set `amends` to that feature's name and list the docs you used in `existingDocs`. " +
+    "If the task is unrelated/new, leave `amends` empty.\n"
+  : ""
 let brainstorm
 if (SKIP_BRAINSTORM) {
   brainstorm = { context: SYNTHETIC_CONTEXT, assumptions: [] }
@@ -190,6 +208,7 @@ if (SKIP_BRAINSTORM) {
     "Apply the `compose:brainstorm` skill in AUTONOMOUS mode — no user is available. Use the `skill` tool to load it first.\n\n" +
     "Per the skill's autonomous override: do STEP 1 ONLY (context recon). Do NOT present a design, ask questions, write a spec, or wait for approval.\n\n" +
     "## Task\n" + TASK + "\n\n" +
+    existingDocsBlock +
     "## What to gather\n" +
     "- Read AGENTS.md / CLAUDE.md / README.md if present\n" +
     "- Skim recent commits (`git log --oneline -20`)\n" +
@@ -206,7 +225,8 @@ const contextDigest =
   "Conventions:\n" + (brainstorm.context.conventions || []).map((c) => "- " + c).join("\n") + "\n" +
   "Recent changes:\n" + (brainstorm.context.recentChanges || []).map((c) => "- " + c).join("\n") + "\n" +
   "Relevant files:\n" + (brainstorm.context.relevantFiles || []).map((f) => "- " + f).join("\n") +
-  ((brainstorm.assumptions && brainstorm.assumptions.length) ? "\nAssumptions:\n" + brainstorm.assumptions.map((a) => "- " + a).join("\n") : "")
+  ((brainstorm.assumptions && brainstorm.assumptions.length) ? "\nAssumptions:\n" + brainstorm.assumptions.map((a) => "- " + a).join("\n") : "") +
+  ((brainstorm.amends && typeof brainstorm.amends === "string") ? "\nAmends existing feature: " + brainstorm.amends : "")
 
 // ---------------------------------------------------------------------------
 // Type resolution (no separate Classify phase)
@@ -243,22 +263,32 @@ phase("Design")
 const designSkill = SKILL_BY_TYPE[type] || "compose:plan"
 const SPEC_PATH = SPECS_DIR + "/" + FEATURE_NAME + ".md"
 const PLAN_PATH = PLANS_DIR + "/" + FEATURE_NAME + ".md"
+// Amendment: brainstorm flagged this as a change to an existing feature. Design
+// edits the existing spec/plan in place and re-runs only the affected tasks,
+// instead of regenerating everything.
+const AMENDS = brainstorm && typeof brainstorm.amends === "string" ? brainstorm.amends.trim() : ""
 
-// Step 1 — the AGENT writes the spec + plan files. The workflow does NOT write
-// them; it only gates on existence and re-dispatches the agent if it skipped the
-// write. No `schema` here so the agent is free to use its write/skill tools and
-// isn't biased into emitting JSON instead of doing the work.
+// Step 1 — the AGENT writes (or amends) the spec + plan files. The workflow does
+// NOT write them; it only gates on existence and re-dispatches if skipped. No
+// `schema` here so the agent is free to use its write/skill tools.
 const runDesignWrite = (sharpen) => agent(
   "Apply the `" + designSkill + "` skill to the task below. Use the `skill` tool to load the skill FIRST, then follow it.\n\n" +
   docsBlock + "\n\n" +
   "## Task\n" + TASK + "\n\n" +
   "## Project context (from brainstorm)\n" + contextDigest + "\n\n" +
-  "## Your deliverable (REQUIRED — this is the whole job)\n" +
-  "Use the `write` tool to create BOTH of these files on disk:\n" +
-  "1. Spec: `" + SPEC_PATH + "`\n" +
-  "2. Plan: `" + PLAN_PATH + "` — a bite-sized task list per the skill, each task with id, description, acceptance, optional files, and `dependsOn` (empty for independent tasks; a prerequisite task id otherwise; no cycles).\n\n" +
-  (sharpen ? "## You did NOT write the required files last time. Write them NOW with the write tool before finishing.\n\n" : "") +
-  "Do the writes with the `write` tool. Do not just describe them.",
+  (AMENDS
+    ? "## This is an AMENDMENT to an existing feature: " + AMENDS + "\n" +
+      "Use `glob`/`read` to find that feature's existing spec under `" + SPECS_DIR + "` and plan under `" + PLANS_DIR + "`. " +
+      "EDIT them IN PLACE (write back to the SAME file paths) to reflect ONLY the change in the task above — do NOT rewrite from scratch. " +
+      "In the plan, the task list must then contain ONLY the tasks that need to be (re-)implemented for this change, PLUS any tasks that " +
+      "depend on them. Tasks unaffected by the change MUST be omitted from the actionable list — they are reused as-is.\n\n" +
+      "Write the updated files with the `write` tool. Do not just describe them.\n"
+    : "## Your deliverable (REQUIRED — this is the whole job)\n" +
+      "Use the `write` tool to create BOTH of these files on disk:\n" +
+      "1. Spec: `" + SPEC_PATH + "`\n" +
+      "2. Plan: `" + PLAN_PATH + "` — a bite-sized task list per the skill, each task with id, description, acceptance, optional files, and `dependsOn` (empty for independent tasks; a prerequisite task id otherwise; no cycles).\n\n" +
+      (sharpen ? "## You did NOT write the required files last time. Write them NOW with the write tool before finishing.\n\n" : "") +
+      "Do the writes with the `write` tool. Do not just describe them."),
   { label: "design:" + type, phase: "Design" }
 )
 await runDesignWrite(false)
@@ -288,6 +318,7 @@ const planWritten = (await glob(PLANS_DIR + "/*.md")).length > 0
 const design = await agent(
   "Read the implementation plan markdown in `" + PLANS_DIR + "` (use the `read` tool; if multiple files, read the most recent) and extract its task list.\n\n" +
   (planWritten ? "" : "## No plan file found — derive the task list from the task below instead.\n## Task\n" + TASK + "\n\n") +
+  (AMENDS ? "## Amendment\nThis run amends the existing feature \"" + AMENDS + "\". Return ONLY the tasks that need to be (re-)implemented for the current change (plus their dependents). OMIT tasks that are unaffected — they are reused as-is.\n\n" : "") +
   "## Output contract (STRICT)\n" +
   "Call the `StructuredOutput` tool EXACTLY ONCE with a JSON object matching the schema. " +
   "Do NOT reply with prose, markdown, XML, or a code block — those do not count and will be rejected. " +

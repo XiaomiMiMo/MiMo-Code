@@ -75,7 +75,7 @@ const happyAgent = (prompt: string, opts?: any) => {
 const runCompose = async (
   args: unknown,
   agentImpl: (prompt: string, opts?: any) => unknown = happyAgent,
-  opts?: { exists?: (p: string) => boolean; globEmpty?: boolean },
+  opts?: { exists?: (p: string) => boolean; globEmpty?: boolean; glob?: (pattern: string) => string[] },
 ) => {
   const parsed = parseMeta(composeScript())
   if (!parsed.ok) throw new Error(parsed.error)
@@ -85,8 +85,9 @@ const runCompose = async (
   const existsImpl = opts?.exists ?? (() => true)
   // The design gate globs SPECS_DIR/PLANS_DIR for *.md. By default simulate the
   // agent having written a doc (one match), so the gate passes. globEmpty:true
-  // simulates the agent never writing → the gate re-dispatches.
-  const globImpl = (pattern: string) => (opts?.globEmpty ? [] : [pattern.replace("*.md", "x.md")])
+  // simulates the agent never writing → the gate re-dispatches. A custom glob
+  // override simulates pre-existing docs (for amend tests).
+  const globImpl = opts?.glob ?? ((pattern: string) => (opts?.globEmpty ? [] : [pattern.replace("*.md", "x.md")]))
   const hooks = {
     agent: async (prompt: unknown, opts?: unknown) => {
       const p = String(prompt)
@@ -505,5 +506,61 @@ describe("compose E2E smoke", () => {
     for (const p of phases) if (firstSeen.indexOf(p) < 0) firstSeen.push(p)
     expect(firstSeen).toEqual(["Brainstorm", "Design", "Implement", "Verify", "Report", "Review", "Merge"])
     expect((result as any).merge?.committed).toBe(true)
+  })
+})
+
+describe("compose incremental amend", () => {
+  const withExistingDocs = (p: string) =>
+    p.includes("/specs") ? ["docs/compose/specs/strutil.md"] : p.includes("/plans") ? ["docs/compose/plans/strutil.md"] : []
+
+  test("brainstorm is given the list of existing compose docs", async () => {
+    const { calls } = await runCompose(
+      { task: "change the truncate ellipsis to a unicode … in the strutil lib" },
+      happyAgent,
+      { glob: withExistingDocs },
+    )
+    const bs = calls.find((c) => c.opts?.label === "brainstorm")
+    expect(bs!.prompt).toContain("strutil.md")
+    expect(bs!.prompt.toLowerCase()).toContain("existing")
+  })
+
+  test("when brainstorm flags an amendment, design-write is told to amend the existing plan", async () => {
+    const { calls } = await runCompose(
+      { task: "change truncate ellipsis to unicode …" },
+      (prompt, opts) => {
+        if (opts?.schema?.properties?.context)
+          return { context: { projectType: "x", conventions: [], recentChanges: [], relevantFiles: [] }, assumptions: [], amends: "strutil", existingDocs: ["docs/compose/plans/strutil.md"] }
+        return happyAgent(prompt, opts)
+      },
+      { glob: withExistingDocs },
+    )
+    const write = calls.find((c) => c.opts?.label && String(c.opts.label).startsWith("design:"))
+    expect(write!.prompt).toContain("AMENDMENT")
+    expect(write!.prompt).toContain("strutil")
+  })
+
+  test("amend: design-extract returning only the changed task drives a single implement", async () => {
+    const { calls } = await runCompose(
+      { task: "change truncate ellipsis" },
+      (prompt, opts) => {
+        if (opts?.schema?.properties?.context)
+          return { context: { projectType: "x", conventions: [], recentChanges: [], relevantFiles: [] }, assumptions: [], amends: "strutil" }
+        if (opts?.schema?.properties?.tasks) return { tasks: [{ id: "T-truncate", description: "update ellipsis", acceptance: "uses …", dependsOn: [] }] }
+        return happyAgent(prompt, opts)
+      },
+      { glob: withExistingDocs },
+    )
+    const impl = calls.filter((c) => c.opts?.label && String(c.opts.label).startsWith("implement:"))
+    expect(impl).toHaveLength(1)
+    // amend reuses existing docs → no redundant second design-write
+    const writes = calls.filter((c) => c.opts?.label && String(c.opts.label).startsWith("design:"))
+    expect(writes).toHaveLength(1)
+  })
+
+  test("non-amend (empty amends) keeps the normal create-spec/plan prompt", async () => {
+    const { calls } = await runCompose({ task: "x", type: "feature" })
+    const write = calls.find((c) => c.opts?.label && String(c.opts.label).startsWith("design:"))
+    expect(write!.prompt).not.toContain("AMENDMENT")
+    expect(write!.prompt).toContain("create BOTH of these files")
   })
 })
