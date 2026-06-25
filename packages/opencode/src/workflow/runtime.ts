@@ -174,7 +174,14 @@ export interface Interface {
   readonly start: (input: StartInput) => Effect.Effect<{ runID: string }>
   readonly status: (input: {
     runID: string
-  }) => Effect.Effect<{ status: RunStatus | "unknown"; agentCount: number; currentPhase?: string }>
+  }) => Effect.Effect<{
+    status: RunStatus | "unknown"
+    agentCount: number
+    running: number
+    succeeded: number
+    failed: number
+    currentPhase?: string
+  }>
   readonly wait: (input: { runID: string; timeoutMs?: number }) => Effect.Effect<RunOutcome>
   readonly transcript: (input: { runID: string }) => Effect.Effect<readonly WorkflowTranscriptEntry[]>
   readonly structure: (input: { runID: string }) => Effect.Effect<WorkflowStructure>
@@ -1208,10 +1215,13 @@ export const layer = Layer.effect(
 
     const status = Effect.fn("WorkflowRuntime.status")(function* (input: { runID: string }) {
       const entry = runs.get(input.runID)
-      if (!entry) return { status: "unknown" as const, agentCount: 0 }
+      if (!entry) return { status: "unknown" as const, agentCount: 0, running: 0, succeeded: 0, failed: 0 }
       return {
         status: entry.status,
         agentCount: entry.agentCount,
+        running: entry.running,
+        succeeded: entry.succeeded,
+        failed: entry.failed,
         ...(entry.currentPhase !== undefined ? { currentPhase: entry.currentPhase } : {}),
       }
     })

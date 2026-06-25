@@ -1912,6 +1912,21 @@ function Workflow(props: ToolProps<typeof WorkflowTool>) {
   const name = createMemo(() => run()?.name ?? (props.input as { name?: string }).name ?? "inline")
   const status = createMemo(() => run()?.status ?? (props.metadata.status as string | undefined))
 
+  // Counters/phase prefer the live metadata streamed by the tool's 250ms flush
+  // loop, falling back to the bus run row. The bus row only learns counters via
+  // loadWorkflows polling (which only the /workflows dialog runs), so during a run
+  // the inline panel would otherwise sit at 0✓ 0✗ 0⟳ — the streamed metadata is
+  // the authoritative live source for this in-conversation view.
+  const counters = createMemo(() => {
+    const m = (props.metadata as { counters?: { running: number; succeeded: number; failed: number } }).counters
+    if (m) return m
+    const r = run()
+    return r ? { running: r.running, succeeded: r.succeeded, failed: r.failed } : undefined
+  })
+  const currentPhase = createMemo(
+    () => (props.metadata as { currentPhase?: string }).currentPhase ?? run()?.currentPhase,
+  )
+
   // Non-"run" ops (status/wait/cancel/resume) are one-shot control calls with no
   // live transcript — keep them as a compact inline line.
   return (
@@ -1923,7 +1938,8 @@ function Workflow(props: ToolProps<typeof WorkflowTool>) {
       <WorkflowPanel
         name={name()}
         status={status()}
-        run={run()}
+        counters={counters()}
+        currentPhase={currentPhase()}
         transcript={transcript()}
         running={isRunning()}
         part={props.part}
@@ -1943,7 +1959,8 @@ const WORKFLOW_PANEL_TAIL = 12
 function WorkflowPanel(props: {
   name: string
   status?: string
-  run?: { succeeded: number; failed: number; running: number; currentPhase?: string }
+  counters?: { succeeded: number; failed: number; running: number }
+  currentPhase?: string
   transcript: { kind: "phase" | "log"; text: string }[]
   running: boolean
   part: ToolPart
@@ -1991,13 +2008,13 @@ function WorkflowPanel(props: {
             {props.status}
           </text>
         </Show>
-        <Show when={props.run?.currentPhase}>
-          <text fg={theme.textMuted}>· {props.run!.currentPhase}</text>
+        <Show when={props.currentPhase}>
+          <text fg={theme.textMuted}>· {props.currentPhase}</text>
         </Show>
-        <Show when={props.run}>
-          <text fg={theme.success}>{props.run!.succeeded}✓</text>
-          <text fg={props.run!.failed > 0 ? theme.error : theme.textMuted}>{props.run!.failed}✗</text>
-          <text fg={props.run!.running > 0 ? theme.warning : theme.textMuted}>{props.run!.running}⟳</text>
+        <Show when={props.counters}>
+          <text fg={theme.success}>{props.counters!.succeeded}✓</text>
+          <text fg={props.counters!.failed > 0 ? theme.error : theme.textMuted}>{props.counters!.failed}✗</text>
+          <text fg={props.counters!.running > 0 ? theme.warning : theme.textMuted}>{props.counters!.running}⟳</text>
         </Show>
       </box>
       <Show
