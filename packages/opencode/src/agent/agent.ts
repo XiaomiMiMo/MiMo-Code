@@ -37,6 +37,10 @@ export const Info = z
     temperature: z.number().optional(),
     color: z.string().optional(),
     permission: Permission.Ruleset.zod,
+    // Non-overridable rules appended AFTER the user/session permissions during
+    // runtime evaluation (see runtimePermission). Use for agent invariants that
+    // config must not be able to relax — e.g. plan mode's edit/write block.
+    hardPermission: Permission.Ruleset.zod.optional(),
     model: z
       .object({
         modelID: ModelID.zod,
@@ -72,6 +76,14 @@ export interface Interface {
 type State = Omit<Interface, "generate">
 
 export class Service extends Context.Service<Service, Interface>()("@opencode/Agent") {}
+
+// Merge an agent's permission with the user/session ruleset, then re-append the
+// agent's hardPermission so those invariants win over any allow rule a user or
+// session approval could introduce. Every permission-evaluation site routes
+// through this — there is no per-agent name special-casing.
+export function runtimePermission(agent: Info, permission?: Permission.Ruleset) {
+  return Permission.merge(agent.permission, permission ?? [], agent.hardPermission ?? [])
+}
 
 export const layer = Layer.effect(
   Service,
@@ -158,14 +170,28 @@ export const layer = Layer.effect(
                 external_directory: {
                   [path.join(Global.Path.data, "plans", "*")]: "allow",
                 },
-                edit: {
-                  "*": "deny",
-                  [path.join(".mimocode", "plans", "*.md")]: "allow",
-                  [path.relative(Instance.worktree, path.join(Global.Path.data, path.join("plans", "*.md")))]: "allow",
-                },
               }),
               user,
             ),
+            // Plan mode's one hard invariant: writes to non-plan files are
+            // blocked and user/session config must NOT be able to relax it.
+            // Re-appended after the user merge by runtimePermission so it always
+            // wins. (Every write tool — write/edit/multiedit/apply_patch/
+            // notebook_edit — funnels through ctx.ask({ permission: "edit" }),
+            // so this single rule governs all file writes.) Deliberately scoped
+            // to edit only: bash/change_directory/workflow are left to the
+            // model's own read-only discipline + plan prompt, matching the
+            // project's "trust the model, permission layer is a backstop"
+            // stance. The "*":"deny" carries a non-"*" allow exception, so the
+            // edit tool stays in the schema (no tool-list mutation on mode
+            // switch, see PR #1207).
+            hardPermission: Permission.fromConfig({
+              edit: {
+                "*": "deny",
+                [path.join(".mimocode", "plans", "*.md")]: "allow",
+                [path.relative(Instance.worktree, path.join(Global.Path.data, path.join("plans", "*.md")))]: "allow",
+              },
+            }),
             mode: "primary",
             native: true,
           },
