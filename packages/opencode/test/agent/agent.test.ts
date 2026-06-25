@@ -936,3 +936,72 @@ itTool.live("compose's tool list contains apply_patch on GPT-5+ but not on Claud
     }),
   ),
 )
+
+// Prefix-cache stability invariant (general guard).
+//
+// Switching between primary agents (build/plan/compose/...) mid-session must
+// NOT change the set of tools the model sees, or Anthropic's prefix cache for
+// the whole prior conversation is invalidated (see PR #1207, which made
+// plan_enter/plan_exit "always visible" for this exact reason).
+//
+// A tool disappears from the schema only when resolveTools() drops it via
+// Permission.disabled(runtimePermission(agent)) — i.e. when the agent's
+// last-matching rule for that tool is exactly {"*":"deny"}. This test resolves
+// the real registered tool universe and asserts EVERY primary agent strips the
+// SAME set as build. If a future change gives any primary agent a bare
+// "*":"deny" (e.g. someone "hardens" plan by denying bash outright), this fails
+// immediately — no manual audit required.
+itTool.live("all primary agents expose an identical tool schema (prefix-cache stability)", () =>
+  provideTmpdirInstance((dir) =>
+    Effect.gen(function* () {
+      const agents = yield* Agent.Service
+      const registry = yield* ToolRegistry.Service
+      const model = { modelID: ModelID.make("claude-opus-4-7"), providerID: ProviderID.make("anthropic") }
+
+      const build = yield* agents.get("build")
+      const universe = (yield* registry.tools({ ...model, agent: build })).map((t) => t.id)
+      const baseline = Permission.disabled(universe, Agent.runtimePermission(build, []))
+
+      const primaries = (yield* agents.list()).filter((a) => a.mode === "primary" && a.native)
+      expect(primaries.map((a) => a.name)).toContain("plan")
+
+      for (const agent of primaries) {
+        const stripped = Permission.disabled(universe, Agent.runtimePermission(agent, []))
+        expect({ agent: agent.name, stripped: [...stripped].sort() }).toEqual({
+          agent: agent.name,
+          stripped: [...baseline].sort(),
+        })
+      }
+    }),
+  ),
+)
+
+// Same invariant must hold even when user/session config tries to relax or
+// tighten a hard-restricted tool: hardPermission re-application must not turn a
+// "stay visible" rule into a schema-stripping one. A session "*":"deny" on bash
+// would strip it everywhere (that's the user's own choice, applied uniformly),
+// but plan's hardPermission ("ask") must never ADD bash to plan's stripped set
+// relative to build under the same session ruleset.
+itTool.live("plan never strips MORE tools than build under the same session ruleset", () =>
+  provideTmpdirInstance((dir) =>
+    Effect.gen(function* () {
+      const agents = yield* Agent.Service
+      const registry = yield* ToolRegistry.Service
+      const model = { modelID: ModelID.make("claude-opus-4-7"), providerID: ProviderID.make("anthropic") }
+      const session = [
+        { permission: "bash", pattern: "*", action: "allow" as const },
+        { permission: "edit", pattern: "*", action: "allow" as const },
+      ]
+
+      const build = yield* agents.get("build")
+      const plan = yield* agents.get("plan")
+      const universe = (yield* registry.tools({ ...model, agent: build })).map((t) => t.id)
+
+      const buildStripped = Permission.disabled(universe, Agent.runtimePermission(build, session))
+      const planStripped = Permission.disabled(universe, Agent.runtimePermission(plan, session))
+      for (const id of planStripped) {
+        expect(buildStripped.has(id)).toBe(true)
+      }
+    }),
+  ),
+)
