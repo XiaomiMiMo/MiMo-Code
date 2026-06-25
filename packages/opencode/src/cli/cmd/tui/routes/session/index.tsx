@@ -1417,6 +1417,14 @@ function AssistantMessage(props: { message: AssistantMessage; parts: Part[]; las
     return { icon: "⟳", fg: theme.warning, label: `Judge [round ${v.attempt}]: not met` }
   })
 
+  // Both the `actor` and `workflow` tools spawn agents that register as
+  // subagents in this session, so the `session_child_first` keybind opens the
+  // Subagents panel for either. Advertise it with copy matching the tool that
+  // produced the message; a mixed message falls back to the generic subagent
+  // wording.
+  const hasActorPart = createMemo(() => props.parts.some((x) => x.type === "tool" && x.tool === "actor"))
+  const hasWorkflowPart = createMemo(() => props.parts.some((x) => x.type === "tool" && x.tool === "workflow"))
+
   return (
     <>
       <For each={props.parts}>
@@ -1434,11 +1442,11 @@ function AssistantMessage(props: { message: AssistantMessage; parts: Part[]; las
           )
         }}
       </For>
-      <Show when={props.parts.some((x) => x.type === "tool" && x.tool === "actor")}>
+      <Show when={hasActorPart() || hasWorkflowPart()}>
         <box paddingTop={1} paddingLeft={3}>
           <text fg={theme.text}>
             {keybind.print("session_child_first")}
-            <span style={{ fg: theme.textMuted }}> view subagents</span>
+            <span style={{ fg: theme.textMuted }}>{hasWorkflowPart() ? " view workflow agents" : " view subagents"}</span>
           </text>
         </box>
       </Show>
