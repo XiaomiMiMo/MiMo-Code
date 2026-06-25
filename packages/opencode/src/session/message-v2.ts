@@ -680,7 +680,7 @@ export const toModelMessagesEffect = Effect.fnUntraced(function* (
       }
       result.push(userMessage)
       for (const part of msg.parts) {
-        if (part.type === "text" && !part.ignored)
+        if (part.type === "text" && !part.ignored && part.text.length > 0)
           userMessage.parts.push({
             type: "text",
             text: part.text,
@@ -742,7 +742,7 @@ export const toModelMessagesEffect = Effect.fnUntraced(function* (
         parts: [],
       }
       for (const part of msg.parts) {
-        if (part.type === "text")
+        if (part.type === "text" && part.text.length > 0)
           assistantMessage.parts.push({
             type: "text",
             text: part.text,
