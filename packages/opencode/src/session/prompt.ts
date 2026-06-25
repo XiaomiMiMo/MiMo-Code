@@ -184,6 +184,7 @@ const PREDICT_NUDGE = `Based on the conversation above, write the user's most li
 
 const OUTPUT_LENGTH_CONTINUATION_LIMIT = Flag.MIMOCODE_OUTPUT_LENGTH_CONTINUATION_LIMIT
 const INVALID_OUTPUT_CONTINUATION_LIMIT = Flag.MIMOCODE_INVALID_OUTPUT_CONTINUATION_LIMIT
+const TEXT_TOOL_CALL_RETRY_LIMIT = Flag.MIMOCODE_TEXT_TOOL_CALL_RETRY_LIMIT
 
 const log = Log.create({ service: "session.prompt" })
 
@@ -1816,6 +1817,10 @@ NOTE: At any point in time through this workflow you should feel free to ask the
         // 与 invalidContinuations（generic invalid）分离，互不污染。局部于 runLoop，
         // 新一轮用户 turn 自动归零。
         let structuredRetries = 0
+        // Bounded retries for text-form tool calls (model wrote a tool call as
+        // prose text instead of a structured tool_use). Local to runLoop so each
+        // fresh user turn starts clean.
+        let textToolCallRetries = 0
         const resolvedAgentID = agentID ?? "main"
         // Tracks plugin-driven cancellation (session.pre OR any session.userQuery.pre)
         // so session.post reports outcome="cancelled" instead of "error".
@@ -2204,6 +2209,69 @@ NOTE: At any point in time through this workflow you should feel free to ask the
           return true
         })
 
+        // Text-form tool call recovery. The model serialized a tool call as prose
+        // text instead of a structured tool_use (a degraded state under large
+        // context). The bad assistant turn is DISCARDED from history by setting
+        // assistant.error (toModelMessages skips a message whose info.error is
+        // set, message-v2.ts), so it can neither strand the conversation on an
+        // assistant turn (provider prefill rejection) nor poison later context.
+        // We then retry the request (caller does `continue`, no new message). On
+        // exhaustion the error stays terminal. Returns true ⇒ continue; false ⇒ break.
+        const autoRetryTextToolCall = Effect.fn("SessionPrompt.autoRetryTextToolCall")(function* (input: {
+          lastUser: MessageV2.User
+          assistant: MessageV2.Assistant
+        }) {
+          // Already discarded on a prior pass — let classify fall through to
+          // `failed` instead of re-detecting and burning another retry.
+          if (input.assistant.error) return false
+          // Discard the bad turn from request history: toModelMessages skips a
+          // message whose info.error is set, so it can neither strand the
+          // conversation on an assistant turn nor poison later context.
+          input.assistant.error = new MessageV2.TextToolCallError({
+            message: "Model emitted a tool call as text instead of a structured tool call.",
+          }).toObject()
+          yield* sessions.updateMessage(input.assistant)
+          if (textToolCallRetries >= TEXT_TOOL_CALL_RETRY_LIMIT) {
+            yield* bus.publish(Session.Event.Error, {
+              sessionID: input.assistant.sessionID,
+              error: input.assistant.error,
+            })
+            return false
+          }
+          textToolCallRetries++
+          yield* slog.info("retrying text-form tool call", { attempt: textToolCallRetries })
+          // Append a synthetic user turn so the discarded assistant becomes stale
+          // (classify staleness guard) AND the loop reaches generation — mirrors
+          // autoRetryStructuredOutput. Without this the loop re-enters, re-detects
+          // the same turn, and burns retries with zero model calls.
+          const msg = yield* sessions.updateMessage({
+            id: MessageID.ascending(),
+            role: "user" as const,
+            sessionID: input.lastUser.sessionID,
+            agentID: input.lastUser.agentID,
+            agent: input.lastUser.agent,
+            model: input.lastUser.model,
+            tools: input.lastUser.tools,
+            format: input.lastUser.format,
+            time: { created: Date.now() },
+          })
+          yield* sessions.updatePart({
+            id: PartID.ascending(),
+            messageID: msg.id,
+            sessionID: msg.sessionID,
+            type: "text",
+            synthetic: true,
+            text: [
+              "<system-reminder>",
+              "Your previous response wrote a tool call as plain text instead of invoking the tool.",
+              "Re-issue it through the real tool channel — emit a structured tool call, not text.",
+              "Do not paste the tool call as text again.",
+              "</system-reminder>",
+            ].join("\n"),
+          } satisfies MessageV2.TextPart)
+          return true
+        })
+
         // json_schema mode but the model never produced structured output (plain
         // text stop, empty, think-only, or any other non-tool terminal). Retry up
         // to lastUser.format.retryCount with a repair nudge; on exhaustion write a
@@ -2445,6 +2513,11 @@ NOTE: At any point in time through this workflow you should feel free to ask the
             if (classification.type === "failed") {
               yield* writeModelError({ assistant: lastAssistant, reason: classification.reason })
               yield* slog.info("exiting loop", { classification: classification.type, reason: classification.reason })
+              break
+            }
+            if (classification.type === "text-tool-call") {
+              if (yield* autoRetryTextToolCall({ lastUser, assistant: lastAssistant })) continue
+              yield* slog.info("exiting loop", { classification: classification.type })
               break
             }
             if (classification.type === "think-only" || classification.type === "invalid") {
@@ -2982,6 +3055,10 @@ NOTE: At any point in time through this workflow you should feel free to ask the
                 yield* writeModelError({ assistant: handle.message, reason: forkClassification.reason })
                 return "break" as const
               }
+              if (forkClassification.type === "text-tool-call") {
+                if (yield* autoRetryTextToolCall({ lastUser, assistant: handle.message })) return "continue" as const
+                return "break" as const
+              }
               if (forkClassification.type !== "continue" && !handle.message.error && format.type === "json_schema") {
                 if (yield* autoRetryStructuredOutput({ lastUser, assistant: handle.message }))
                   return "continue" as const
@@ -3191,6 +3268,10 @@ NOTE: At any point in time through this workflow you should feel free to ask the
             }
             if (classification.type === "failed") {
               yield* writeModelError({ assistant: handle.message, reason: classification.reason })
+              return "break" as const
+            }
+            if (classification.type === "text-tool-call") {
+              if (yield* autoRetryTextToolCall({ lastUser, assistant: handle.message })) return "continue" as const
               return "break" as const
             }
             if (classification.type !== "continue" && !handle.message.error && format.type === "json_schema") {

@@ -57,6 +57,40 @@ function chat(text: string) {
   })
 }
 
+// Like chat() but lets the caller pick the finish_reason. Used to simulate a
+// degraded turn: content is tool-call markup TEXT while finish_reason claims
+// "tool_calls" — yet no structured tool_calls field is emitted (the model
+// wrote the call as prose).
+function chatFinish(text: string, finishReason: string) {
+  const payload =
+    [
+      `data: ${JSON.stringify({
+        id: "chatcmpl-1",
+        object: "chat.completion.chunk",
+        choices: [{ delta: { role: "assistant" } }],
+      })}`,
+      `data: ${JSON.stringify({
+        id: "chatcmpl-1",
+        object: "chat.completion.chunk",
+        choices: [{ delta: { content: text } }],
+      })}`,
+      `data: ${JSON.stringify({
+        id: "chatcmpl-1",
+        object: "chat.completion.chunk",
+        choices: [{ delta: {}, finish_reason: finishReason }],
+      })}`,
+      "data: [DONE]",
+    ].join("\n\n") + "\n\n"
+
+  const encoder = new TextEncoder()
+  return new ReadableStream<Uint8Array>({
+    start(ctrl) {
+      ctrl.enqueue(encoder.encode(payload))
+      ctrl.close()
+    },
+  })
+}
+
 function hanging(ready: () => void) {
   const encoder = new TextEncoder()
   let timer: ReturnType<typeof setTimeout> | undefined
@@ -405,6 +439,96 @@ describe("session.prompt regression", () => {
               if (last?.info.role === "assistant") {
                 expect(last.info.error?.name).toBe("MessageAbortedError")
               }
+            }),
+          ),
+      })
+    } finally {
+      void server.stop(true)
+    }
+  })
+
+  test("text-form tool call is discarded and the request is regenerated", async () => {
+    let calls = 0
+    const server = Bun.serve({
+      port: 0,
+      fetch(req) {
+        const url = new URL(req.url)
+        if (!url.pathname.endsWith("/chat/completions")) {
+          return new Response("not found", { status: 404 })
+        }
+        calls++
+        // Call 1: degraded turn — tool call written as TEXT, finish "tool_calls",
+        // no structured tool_calls field. Call 2: clean recovery text.
+        const body =
+          calls === 1
+            ? chatFinish(
+                'call\n<invoke name="bash">\n<parameter name="command">ls</parameter>\n</invoke>',
+                "tool_calls",
+              )
+            : chat("recovered: here is the answer")
+        return new Response(body, {
+          status: 200,
+          headers: { "Content-Type": "text/event-stream" },
+        })
+      },
+    })
+
+    try {
+      await using tmp = await tmpdir({
+        git: true,
+        init: async (dir) => {
+          await Bun.write(
+            path.join(dir, "mimocode.json"),
+            JSON.stringify({
+              $schema: "https://opencode.ai/config.json",
+              enabled_providers: ["alibaba"],
+              provider: {
+                alibaba: {
+                  options: {
+                    apiKey: "test-key",
+                    baseURL: `${server.url.origin}/v1`,
+                  },
+                },
+              },
+              agent: {
+                build: {
+                  model: "alibaba/qwen-plus",
+                },
+              },
+            }),
+          )
+        },
+      })
+
+      await Instance.provide({
+        directory: tmp.path,
+        fn: () =>
+          run(
+            Effect.gen(function* () {
+              const prompt = yield* SessionPrompt.Service
+              const sessions = yield* Session.Service
+              const session = yield* sessions.create({ title: "text-tool-call retry" })
+              const result = yield* prompt.prompt({
+                sessionID: session.id,
+                agent: "build",
+                parts: [{ type: "text", text: "do something" }],
+              })
+
+              // Proof the retry REGENERATED: the model was called a second time
+              // (the original bug burned the counter with calls === 1).
+              expect(calls).toBe(2)
+              // Final answer is the recovered text, not the discarded markup.
+              expect(result.info.role).toBe("assistant")
+              expect(
+                result.parts.some((part) => part.type === "text" && part.text.includes("recovered")),
+              ).toBe(true)
+
+              // The discarded degraded turn carries the TextToolCallError marker.
+              const msgs = yield* sessions.messages({ sessionID: session.id })
+              const discarded = msgs.find(
+                (msg) => msg.info.role === "assistant" && msg.info.error?.name === "TextToolCallError",
+              )
+              expect(discarded).toBeDefined()
             }),
           ),
       })

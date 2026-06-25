@@ -494,6 +494,13 @@ export type InvalidOutputError = {
   }
 }
 
+export type TextToolCallError = {
+  name: "TextToolCallError"
+  data: {
+    message: string
+  }
+}
+
 export type ContentFilterError = {
   name: "ContentFilterError"
   data: {
@@ -536,6 +543,7 @@ export type EventSessionError = {
       | StructuredOutputError
       | ContextOverflowError
       | InvalidOutputError
+      | TextToolCallError
       | ContentFilterError
       | ModelError
       | ApiError
@@ -966,6 +974,7 @@ export type AssistantMessage = {
     | StructuredOutputError
     | ContextOverflowError
     | InvalidOutputError
+    | TextToolCallError
     | ContentFilterError
     | ModelError
     | ApiError
