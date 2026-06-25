@@ -187,14 +187,18 @@ export const layer = Layer.effect(
       let needsAsk = false
 
       for (const pattern of request.patterns) {
-        const rule = evaluate(request.permission, pattern, ruleset, approved)
-        log.info("evaluated", { permission: request.permission, pattern, action: rule })
-        if (rule.action === "deny") {
+        // Evaluate the ruleset ALONE first. An explicit deny here must win
+        // outright — a persisted approval (e.g. an edit approved "always" in
+        // build mode) must NOT be able to out-rank it. Only once the ruleset
+        // itself does not deny do we let approvals upgrade an "ask" to "allow".
+        const ruleAction = evaluate(request.permission, pattern, ruleset).action
+        if (ruleAction === "deny") {
           return yield* new DeniedError({
             ruleset: ruleset.filter((rule) => Wildcard.match(request.permission, rule.permission)),
           })
         }
-        if (rule.action === "allow") continue
+        if (ruleAction === "allow") continue
+        if (evaluate(request.permission, pattern, approved).action === "allow") continue
         needsAsk = true
       }
 
