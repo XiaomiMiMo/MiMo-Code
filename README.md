@@ -213,11 +213,14 @@ be prompted each time, you can opt in by allowing it in your config:
 }
 ```
 
-**Understand the risk before enabling this.** The temp directory is world-writable and
-shared with every other process and user on the machine. Auto-allowing it means the model
-can read and write there without confirmation, which widens your exposure to predictable
-temp-path / symlink tricks (e.g. another process pre-creating `/tmp/foo` as a symlink to a
-sensitive file). Only opt in for environments you trust, and keep the allowlist narrow.
+**This setting has known risks — use it at your own risk.** The temp directory is
+world-writable and shared with every other process and user on the machine. Auto-allowing
+it means the model can read and write there without confirmation, which widens your exposure
+to predictable temp-path / symlink tricks (e.g. another process pre-creating `/tmp/foo` as a
+symlink to a sensitive file). It is only recommended for single-user, controlled environments
+or inside a container. If you enable it, you are responsible for this configuration: any
+problem arising from reads or writes under the temp directory is your own responsibility.
+Keep the allowlist as narrow as possible.
 
 **macOS note.** Permission patterns match the literal path with no symlink resolution.
 On macOS `/tmp` is a symlink to `/private/tmp`, and `os.tmpdir()` (what many tools actually
