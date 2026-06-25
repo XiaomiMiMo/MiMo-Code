@@ -1,0 +1,4 @@
+session create <task...> [--mode build|compose] [--model <ref>] [--title <t>]   # spawn a background child session
+session list                                                                    # list child sessions (id, title, mode, status)
+session switch <sessionID>                                                       # move the user's frontend panel to a session
+session cancel <sessionID>                                                       # stop a child session

@@ -1,0 +1,1 @@
+Create and manage child sessions (Orchestrator only). Each child runs in its own session with its own mode and model. Verbs: create, switch, list, cancel.
