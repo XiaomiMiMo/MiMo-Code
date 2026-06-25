@@ -699,6 +699,11 @@ export const ActorTool = Tool.define(
         // the agent loop, and sending inbox notifications on terminal — replacing
         // the legacy session.create + manual fork path that lived here pre-Task-29.
         const actor = yield* requireActor()
+        // If the spawning agent declares a subagentToolAllowlist (e.g. plan
+        // mode), force it onto the spawned subagent so delegated work cannot
+        // escape the parent's restrictions. Data-driven — no agent-name check.
+        const parentAgent = ctx.agent ? yield* agent.get(ctx.agent) : undefined
+        const forcedSubagentTools = parentAgent?.subagentToolAllowlist
         const spawnResult = yield* actor.spawn({
           mode: "subagent",
           sessionID: ctx.sessionID,
@@ -706,7 +711,11 @@ export const ActorTool = Tool.define(
           description: op.description,
           task: prompt,
           context: op.context ?? "none",
-          tools: next.toolAllowlist ? [...next.toolAllowlist] : "INHERIT",
+          tools: forcedSubagentTools
+            ? [...forcedSubagentTools]
+            : next.toolAllowlist
+              ? [...next.toolAllowlist]
+              : "INHERIT",
           model,
           background,
           task_id: effectiveTaskId,

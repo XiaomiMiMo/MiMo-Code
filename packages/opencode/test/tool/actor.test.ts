@@ -281,6 +281,41 @@ describe("tool.actor", () => {
     ),
   )
 
+  it.live("plan agent spawns subagents with the read-only allowlist", () =>
+    provideTmpdirInstance(() =>
+      Effect.gen(function* () {
+        const spawns: SpawnInput[] = []
+        yield* installMockSpawn((input) => spawns.push(input))
+        const { chat, assistant } = yield* seed()
+        const tool = yield* ActorTool
+        const def = yield* tool.init()
+
+        yield* def.execute(
+          {
+            operation: {
+              action: "run",
+              description: "research",
+              prompt: "investigate without changing files",
+              subagent_type: "explore",
+            },
+          },
+          {
+            sessionID: chat.id,
+            messageID: assistant.id,
+            agent: "plan",
+            abort: new AbortController().signal,
+            extra: {},
+            messages: [],
+            metadata: () => Effect.void,
+            ask: () => Effect.void,
+          },
+        )
+
+        expect(spawns[0]?.tools).toEqual(Agent.READONLY_TOOLS)
+      }),
+    ),
+  )
+
   it.live("execute asks by default and skips checks when bypassed", () =>
     provideTmpdirInstance(() =>
       Effect.gen(function* () {
