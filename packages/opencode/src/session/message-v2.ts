@@ -61,6 +61,7 @@ export const ContextOverflowError = NamedError.create(
   z.object({ message: z.string(), responseBody: z.string().optional() }),
 )
 export const InvalidOutputError = NamedError.create("InvalidOutputError", z.object({ message: z.string() }))
+export const TextToolCallError = NamedError.create("TextToolCallError", z.object({ message: z.string() }))
 export const ContentFilterError = NamedError.create("ContentFilterError", z.object({ message: z.string() }))
 export const ModelError = NamedError.create("ModelError", z.object({ message: z.string() }))
 
@@ -445,6 +446,7 @@ export const Assistant = Base.extend({
       StructuredOutputError.Schema,
       ContextOverflowError.Schema,
       InvalidOutputError.Schema,
+      TextToolCallError.Schema,
       ContentFilterError.Schema,
       ModelError.Schema,
       APIError.Schema,

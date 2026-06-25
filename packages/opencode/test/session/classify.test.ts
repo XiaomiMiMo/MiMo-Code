@@ -332,4 +332,36 @@ describe("classifyAssistantStep", () => {
     })
     expect(result).toEqual({ type: "failed", reason: "APIError" })
   })
+
+  describe("text-form tool call", () => {
+    test("finish=tool-calls + no tool part + tool-call markup in text => text-tool-call", () => {
+      const result = classifyAssistantStep({
+        phase: "after-process",
+        lastUser,
+        assistant: assistantInfo("m-2", { finish: "tool-calls" }),
+        parts: [textPart("m-2", 'call\n<invoke name="bash">\n<parameter name="command">ls</parameter>\n</invoke>')],
+      })
+      expect(result.type).toBe("text-tool-call")
+    })
+
+    test("finish=tool-calls WITH a real tool part => continue (not text-tool-call)", () => {
+      const result = classifyAssistantStep({
+        phase: "after-process",
+        lastUser,
+        assistant: assistantInfo("m-2", { finish: "tool-calls" }),
+        parts: [toolPart("m-2")],
+      })
+      expect(result.type).toBe("continue")
+    })
+
+    test("finish=tool-calls + text without markup => continue (plain tool-calls)", () => {
+      const result = classifyAssistantStep({
+        phase: "after-process",
+        lastUser,
+        assistant: assistantInfo("m-2", { finish: "tool-calls" }),
+        parts: [textPart("m-2", "just some normal prose, no tool markup")],
+      })
+      expect(result.type).toBe("continue")
+    })
+  })
 })
