@@ -1023,6 +1023,11 @@ export const SessionRoutes = lazy(() =>
               c,
               SessionPrompt.Service.use((svc) => svc.prompt({ ...body, sessionID })),
             )
+            // Safety invariant: no await/yield between this write and the
+            // clearInterval below (reached synchronously via finally) — else the
+            // interval could fire and append a stray space AFTER the JSON,
+            // breaking the "JSON is the whole body" contract. Leading spaces are
+            // JSON-insignificant; a trailing one would not be.
             void stream.write(JSON.stringify(msg))
           } finally {
             clearInterval(heartbeat)
