@@ -35,7 +35,6 @@ import path from "path"
 import { Global } from "./global"
 import { JsonMigration } from "./storage"
 import { Database } from "./storage"
-import { ClaudeImport } from "./session/claude-import"
 import { errorMessage } from "./util/error"
 import { PluginCommand } from "./cli/cmd/plug"
 import { Heap } from "./cli/heap"
@@ -152,18 +151,6 @@ const cli = yargs(args)
         }
       }
       process.stderr.write("Database migration complete." + EOL)
-    }
-
-    // Idempotently import Claude Code sessions into SQLite. Runs once per process
-    // tree (the env guard is inherited by spawned children) and is best-effort:
-    // a failure here must never block command startup.
-    if (!process.env.MIMOCODE_DISABLE_CLAUDE_IMPORT && !process.env.MIMOCODE_CLAUDE_IMPORTED) {
-      process.env.MIMOCODE_CLAUDE_IMPORTED = "1"
-      try {
-        await ClaudeImport.run()
-      } catch (e) {
-        Log.Default.warn("claude-import failed", { e: errorMessage(e) })
-      }
     }
   })
   .usage("")
