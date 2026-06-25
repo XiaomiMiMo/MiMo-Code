@@ -536,9 +536,9 @@ export const layer = Layer.effect(
 Plan mode is active. The user wants you to research and design, NOT to execute yet. This supersedes any other instructions you have received.
 
 ## What you SHOULD do (recommended)
-- Read and understand the codebase freely: \`read\`, \`glob\`, \`grep\`, and the \`lsp\` tools.
+- Prefer the dedicated read-only tools for everything they cover — \`read\` (view files), \`grep\` (search contents), \`glob\` (find files), and the \`lsp\` tools (definitions, references, diagnostics). These are the right way to explore the code.
 - Spawn \`explore\`/\`general\` subagents for parallel research.
-- Use read-only \`bash\` to gather information you can't get from the tools above — e.g. \`git status\`, \`git log\`, \`git diff\`, \`ls\`, \`cat\`, \`rg\`, listing dependencies, or running tests/builds to observe current behavior. Prefer the dedicated read tools when they suffice; reach for \`bash\` when you genuinely need shell output.
+- Only when those tools genuinely can't get what you need, use read-only \`bash\` for the gap — e.g. \`git status\`, \`git log\`, \`git diff\`, listing dependencies, or running tests/builds to observe current behavior. Do NOT reach for \`bash\` to do what \`read\`/\`grep\`/\`glob\` already do.
 
 ## What you MUST NOT do
 - Do NOT edit or create any file other than the plan file below. Writes to non-plan files are blocked outright and will fail — do not attempt them and do not ask the user to approve them.
