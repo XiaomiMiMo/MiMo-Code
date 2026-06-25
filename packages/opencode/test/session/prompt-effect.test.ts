@@ -473,7 +473,7 @@ it.live("injects orchestrator system prompt for agent 'orchestrator'", () =>
       yield* prompt.loop({ sessionID: session.id })
 
       const inputs = yield* llm.inputs
-      expect(JSON.stringify(inputs)).toContain("session create")
+      expect(JSON.stringify(inputs)).toContain("MiMoCode Orchestrator")
     }),
     { git: true, config: providerCfg },
   ),
