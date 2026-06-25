@@ -6,6 +6,15 @@ import { SessionID } from "../../src/session/schema"
 import { ProjectID } from "../../src/project/schema"
 import { notesPath, globalMemoryPath, memoryPath, migrateProjectMemory } from "../../src/session/checkpoint-paths"
 
+async function sameFile(a: string, b: string) {
+  const [aStat, bStat] = await Promise.all([
+    fs.stat(a).catch(() => undefined),
+    fs.stat(b).catch(() => undefined),
+  ])
+  if (!aStat || !bStat) return false
+  return aStat.dev === bStat.dev && aStat.ino === bStat.ino
+}
+
 describe("notesPath (F14)", () => {
   test("resolves to <data>/memory/sessions/<sid>/notes.md", () => {
     const sid = SessionID.make("ses_test_xyz")
@@ -33,7 +42,7 @@ describe("migrateProjectMemory", () => {
     await migrateProjectMemory(pid)
 
     expect(await Bun.file(upper).text()).toBe("legacy content")
-    expect(await Bun.file(lower).exists()).toBe(false)
+    if (!(await sameFile(lower, upper))) expect(await Bun.file(lower).exists()).toBe(false)
     await fs.rm(dir, { recursive: true, force: true })
   })
 
@@ -44,7 +53,7 @@ describe("migrateProjectMemory", () => {
     const lower = path.join(dir, "memory.md")
     await fs.mkdir(dir, { recursive: true })
     await fs.writeFile(upper, "new content")
-    await fs.writeFile(lower, "stale legacy")
+    if (!(await sameFile(lower, upper))) await fs.writeFile(lower, "stale legacy")
 
     await migrateProjectMemory(pid)
 
@@ -72,7 +81,7 @@ describe("migrateProjectMemory", () => {
     const results = await Promise.allSettled([migrateProjectMemory(pid), migrateProjectMemory(pid)])
     expect(results.every((r) => r.status === "fulfilled")).toBe(true)
     expect(await Bun.file(upper).text()).toBe("legacy content")
-    expect(await Bun.file(lower).exists()).toBe(false)
+    if (!(await sameFile(lower, upper))) expect(await Bun.file(lower).exists()).toBe(false)
     await fs.rm(dir, { recursive: true, force: true })
   })
 })

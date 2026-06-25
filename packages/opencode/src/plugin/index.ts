@@ -266,25 +266,36 @@ export const layer = Layer.effect(
           }
         }
 
-        // Optional local extensions live in src/ext/. The directory may be
-        // absent; when present, every *Plugin-named export is auto-loaded at
-        // runtime. Never referenced statically, so builds work with or without it.
-        const extDir = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "ext")
-        const extFiles = fs.existsSync(extDir)
-          ? fs.readdirSync(extDir).filter((f) => f.endsWith(".ts") && !f.endsWith(".d.ts"))
-          : []
-        for (const entry of extFiles) {
-          const file = path.join(extDir, entry)
-          const name = entry.replace(/\.ts$/, "")
-          const mod = yield* Effect.tryPromise({
-            try: () => import(/* @vite-ignore */ pathToFileURL(file).href),
-            catch: (err) => log.error("failed to import extension", { name, error: err }),
-          }).pipe(Effect.option)
-          if (mod._tag !== "Some") continue
+        // Load optional local extensions under src/ext/. Prefers the generated
+        // _manifest.ts (a fixed import specifier resolves inside Bun single-file
+        // executables, where filesystem scans do not); falls back to a directory
+        // scan for unbundled runs. Each *Plugin-named export is registered.
+        const extModules: Record<string, Record<string, unknown>> = {}
+        // @ts-ignore generated manifest; may not exist at type-check time
+        const manifest = yield* Effect.tryPromise(() => import("../ext/_manifest")).pipe(Effect.option)
+        if (manifest._tag === "Some") {
+          Object.assign(
+            extModules,
+            (manifest.value as { modules?: Record<string, Record<string, unknown>> }).modules ?? {},
+          )
+        } else {
+          const extDir = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "ext")
+          const extFiles = fs.existsSync(extDir)
+            ? fs.readdirSync(extDir).filter((f) => f.endsWith(".ts") && !f.endsWith(".d.ts") && f !== "_manifest.ts")
+            : []
+          for (const entry of extFiles) {
+            const mod = yield* Effect.tryPromise({
+              try: () => import(/* @vite-ignore */ pathToFileURL(path.join(extDir, entry)).href),
+              catch: (err) => log.error("failed to import extension", { name: entry, error: err }),
+            }).pipe(Effect.option)
+            if (mod._tag === "Some") extModules[entry.replace(/\.ts$/, "")] = mod.value as Record<string, unknown>
+          }
+        }
+        for (const [name, value] of Object.entries(extModules)) {
           // Only treat *Plugin-named function exports as plugins. Other modules
           // (e.g. a CLI helper export) are not plugins and must not be invoked
           // as plugin factories.
-          const overlay = Object.entries(mod.value as Record<string, unknown>).find(
+          const overlay = Object.entries(value).find(
             ([exportName, v]) => typeof v === "function" && exportName.endsWith("Plugin"),
           )?.[1] as PluginInstance | undefined
           if (!overlay) continue
@@ -542,6 +553,10 @@ export const layer = Layer.effect(
       return yield* aggregateDecision(input, "actor.postStop")
     })
 
+    const HOOK_TIMEOUT_MS = 5000
+    const CIRCUIT_BREAKER_THRESHOLD = 3
+    const hookFailures = new Map<string, number>()
+
     const trigger = Effect.fn("Plugin.trigger")(function* <
       Name extends TriggerName,
       Input = Parameters<Required<Hooks>[Name]>[0],
@@ -550,10 +565,51 @@ export const layer = Layer.effect(
       if (!name) return output
       const s = yield* InstanceState.get(state)
       const fh = yield* InstanceState.get(fileHookState)
-      for (const hook of [...s.hooks, ...fh.hooks]) {
-        const fn = hook[name] as any
+
+      for (const entry of s.hooksWithMeta) {
+        const fn = entry.hook[name] as any
         if (!fn) continue
         yield* Effect.promise(async () => fn(input, output))
+      }
+
+      for (const entry of fh.meta) {
+        const fn = entry.hook[name] as any
+        if (!fn) continue
+        const hookID = entry.hookIDFor(name)
+
+        if ((hookFailures.get(hookID) ?? 0) >= CIRCUIT_BREAKER_THRESHOLD) {
+          log.warn("hook circuit-breaker open, skipping", { hook: hookID })
+          continue
+        }
+
+        const snapshot = structuredClone(output)
+        const failed = yield* Effect.tryPromise({
+          try: async () => {
+            await Promise.race([
+              Promise.resolve(fn(input, output)),
+              new Promise<never>((_, reject) =>
+                setTimeout(() => reject(new Error(`hook timed out after ${HOOK_TIMEOUT_MS}ms`)), HOOK_TIMEOUT_MS),
+              ),
+            ])
+          },
+          catch: (err) => err,
+        }).pipe(
+          Effect.map(() => false),
+          Effect.catch((err) => {
+            Object.assign(output as any, snapshot)
+            const count = (hookFailures.get(hookID) ?? 0) + 1
+            hookFailures.set(hookID, count)
+            log.error("file hook failed, output rolled back", {
+              hook: hookID,
+              event: name,
+              error: errorMessage(err),
+              consecutiveFailures: count,
+              circuitOpen: count >= CIRCUIT_BREAKER_THRESHOLD,
+            })
+            return Effect.succeed(true)
+          }),
+        )
+        if (!failed) hookFailures.delete(hookID)
       }
       return output
     })

@@ -746,6 +746,42 @@ it.live("reply - always persists approval and resolves", () =>
   }),
 )
 
+it.live("ask - persisted approval does not override ruleset deny", () =>
+  Effect.gen(function* () {
+    const dir = yield* tmpdirScoped({ git: true })
+    const run = withProvided(dir)
+
+    // Session 1: approve edit "*" "always" — persists into the approved ruleset.
+    const fiber = yield* ask({
+      id: PermissionID.make("per_deny_test"),
+      sessionID: SessionID.make("session_approve"),
+      permission: "edit",
+      patterns: ["src/file.ts"],
+      metadata: {},
+      always: ["*"],
+      ruleset: [],
+    }).pipe(run, Effect.forkScoped)
+
+    yield* waitForPending(1).pipe(run)
+    yield* reply({ requestID: PermissionID.make("per_deny_test"), reply: "always" }).pipe(run)
+    yield* Fiber.join(fiber)
+
+    // Session 2: a ruleset that DENIES edit must win outright — the persisted
+    // "always" approval from session 1 must not upgrade it to allow.
+    const err = yield* fail(
+      ask({
+        sessionID: SessionID.make("session_deny"),
+        permission: "edit",
+        patterns: ["src/file.ts"],
+        metadata: {},
+        always: [],
+        ruleset: [{ permission: "edit", pattern: "*", action: "deny" }],
+      }).pipe(run),
+    )
+    expect(err).toBeInstanceOf(Permission.DeniedError)
+  }),
+)
+
 it.live("reply - reject cancels all pending for same session", () =>
   withDir({ git: true }, () =>
     Effect.gen(function* () {

@@ -3,33 +3,37 @@ import { Effect } from "effect"
 import * as Stream from "effect/Stream"
 import fs from "fs/promises"
 import path from "path"
-import { tmpdir } from "../fixture/fixture"
+import { tmpdir, withTmpdirOutsideGit } from "../fixture/fixture"
 import { Ripgrep } from "../../src/file/ripgrep"
 
 const run = <A>(effect: Effect.Effect<A, unknown, Ripgrep.Service>) =>
   effect.pipe(Effect.provide(Ripgrep.defaultLayer), Effect.runPromise)
 
-describe("file.ripgrep", () => {
-  test("defaults to include hidden", async () => {
-    await using tmp = await tmpdir({
-      init: async (dir) => {
-        await Bun.write(path.join(dir, "visible.txt"), "hello")
-        await fs.mkdir(path.join(dir, ".mimocode"), { recursive: true })
-        await Bun.write(path.join(dir, ".mimocode", "thing.json"), "{}")
-      },
-    })
+// Ripgrep respects parent .gitignore. When tmpdirs are under the repo,
+// patterns like `.mimocode/` in root .gitignore affect test results.
 
-    const files = await run(
-      Ripgrep.Service.use((rg) =>
-        rg.files({ cwd: tmp.path }).pipe(
-          Stream.runCollect,
-          Effect.map((c) => [...c]),
+describe("file.ripgrep", () => {
+  test("defaults to include hidden", () =>
+    withTmpdirOutsideGit(async () => {
+      await using tmp = await tmpdir({
+        init: async (dir) => {
+          await Bun.write(path.join(dir, "visible.txt"), "hello")
+          await fs.mkdir(path.join(dir, ".mimocode"), { recursive: true })
+          await Bun.write(path.join(dir, ".mimocode", "thing.json"), "{}")
+        },
+      })
+
+      const files = await run(
+        Ripgrep.Service.use((rg) =>
+          rg.files({ cwd: tmp.path }).pipe(
+            Stream.runCollect,
+            Effect.map((c) => [...c]),
+          ),
         ),
-      ),
-    )
-    expect(files.includes("visible.txt")).toBe(true)
-    expect(files.includes(path.join(".mimocode", "thing.json"))).toBe(true)
-  })
+      )
+      expect(files.includes("visible.txt")).toBe(true)
+      expect(files.includes(path.join(".mimocode", "thing.json"))).toBe(true)
+    }))
 
   test("hidden false excludes hidden", async () => {
     await using tmp = await tmpdir({

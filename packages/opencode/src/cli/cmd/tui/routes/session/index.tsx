@@ -50,6 +50,7 @@ import type { ActorTool } from "@/tool/actor"
 import type { TaskTool } from "@/tool/task"
 import type { QuestionTool } from "@/tool/question"
 import type { SkillTool } from "@/tool/skill"
+import type { WorkflowTool } from "@/tool/workflow"
 import { useKeyboard, useRenderer, useTerminalDimensions, type JSX } from "@opentui/solid"
 import { useSDK } from "@tui/context/sdk"
 import { useCommandDialog } from "@tui/component/dialog-command"
@@ -89,6 +90,7 @@ import { getScrollAcceleration } from "../../util/scroll"
 import { nextThinkingMode, reasoningSummary, useThinkingMode, type ThinkingMode } from "../../context/thinking"
 import { TuiPluginRuntime } from "../../plugin"
 import { DialogGoUpsell } from "../../component/dialog-go-upsell"
+import { DialogTokenPlan } from "../../component/dialog-token-plan"
 import { SessionRetry } from "@/session/retry"
 import { getRevertDiffFiles } from "../../util/revert-diff"
 
@@ -97,6 +99,9 @@ addDefaultParsers(parsers.parsers)
 const GO_UPSELL_LAST_SEEN_AT = "go_upsell_last_seen_at"
 const GO_UPSELL_DONT_SHOW = "go_upsell_dont_show"
 const GO_UPSELL_WINDOW = 86_400_000 // 24 hrs
+
+const QUEUE_TOKEN_PLAN_LAST_SEEN_AT = "queue_token_plan_last_seen_at"
+const QUEUE_TOKEN_PLAN_WINDOW = 86_400_000 // 24 hrs
 
 const context = createContext<{
   width: number
@@ -356,6 +361,26 @@ export function Session() {
   }
 
   const local = useLocal()
+
+  // Free "mimo-auto" channel: on a rate-limit / queue ("too many requests"),
+  // nudge the user toward a Token Plan — at most once per 24h.
+  event.on("session.status", (evt) => {
+    if (evt.properties.sessionID !== route.sessionID) return
+    if (evt.properties.status.type !== "retry") return
+    if (!SessionRetry.isRateLimitMessage(evt.properties.status.message)) return
+    const model = local.model.current()
+    if (!model || model.providerID !== "mimo" || model.modelID !== "mimo-auto") return
+    if (dialog.stack.length > 0) return
+
+    const seen = kv.get(QUEUE_TOKEN_PLAN_LAST_SEEN_AT)
+    if (typeof seen === "number" && Date.now() - seen < QUEUE_TOKEN_PLAN_WINDOW) return
+
+    // Record the 24h cooldown only after the user dismisses, so a show() that
+    // fails (or never reaches the user) doesn't silently burn the whole day.
+    void DialogTokenPlan.show(dialog).then(() => {
+      kv.set(QUEUE_TOKEN_PLAN_LAST_SEEN_AT, Date.now())
+    })
+  })
 
   function moveFirstChild() {
     const list = actors().filter((a) => a.mode === "subagent")
@@ -1345,7 +1370,11 @@ function AssistantMessage(props: { message: AssistantMessage; parts: Part[]; las
   const t = useLanguage().t
   const [copyHover, setCopyHover] = createSignal(false)
   const messages = createMemo(() => sync.data.message[props.message.sessionID]?.[props.message.agentID ?? "main"] ?? [])
-  const model = createMemo(() => Model.name(ctx.providers(), props.message.providerID, props.message.modelID))
+  const model = createMemo(() =>
+    props.message.modelID === "mimo-auto"
+      ? t("tui.model.mimo_auto.name")
+      : Model.name(ctx.providers(), props.message.providerID, props.message.modelID),
+  )
 
   const final = createMemo(() => {
     return props.message.finish && props.message.finish !== "tool-calls"
@@ -1388,6 +1417,14 @@ function AssistantMessage(props: { message: AssistantMessage; parts: Part[]; las
     return { icon: "⟳", fg: theme.warning, label: `Judge [round ${v.attempt}]: not met` }
   })
 
+  // Both the `actor` and `workflow` tools spawn agents that register as
+  // subagents in this session, so the `session_child_first` keybind opens the
+  // Subagents panel for either. Advertise it with copy matching the tool that
+  // produced the message; a mixed message falls back to the generic subagent
+  // wording.
+  const hasActorPart = createMemo(() => props.parts.some((x) => x.type === "tool" && x.tool === "actor"))
+  const hasWorkflowPart = createMemo(() => props.parts.some((x) => x.type === "tool" && x.tool === "workflow"))
+
   return (
     <>
       <For each={props.parts}>
@@ -1405,11 +1442,11 @@ function AssistantMessage(props: { message: AssistantMessage; parts: Part[]; las
           )
         }}
       </For>
-      <Show when={props.parts.some((x) => x.type === "tool" && x.tool === "actor")}>
+      <Show when={hasActorPart() || hasWorkflowPart()}>
         <box paddingTop={1} paddingLeft={3}>
           <text fg={theme.text}>
             {keybind.print("session_child_first")}
-            <span style={{ fg: theme.textMuted }}> view subagents</span>
+            <span style={{ fg: theme.textMuted }}>{hasWorkflowPart() ? " view workflow agents" : " view subagents"}</span>
           </text>
         </box>
       </Show>
@@ -1729,6 +1766,9 @@ function ToolPart(props: { last: boolean; part: ToolPart; message: AssistantMess
         <Match when={props.part.tool === "skill"}>
           <Skill {...toolprops} />
         </Match>
+        <Match when={props.part.tool === "workflow"}>
+          <Workflow {...toolprops} />
+        </Match>
         <Match when={props.part.tool === "plan_exit"}>
           <PlanExit {...toolprops} />
         </Match>
@@ -1824,6 +1864,81 @@ function WorkItemTask(props: ToolProps<typeof TaskTool>) {
   return (
     <InlineTool icon="#" pending="Updating tasks..." complete={true} part={props.part}>
       task {summary()}
+    </InlineTool>
+  )
+}
+
+// Inline renderer for the dynamic-workflow `workflow` tool. The "run" op blocks
+// until terminal and streams a transcript (phase transitions + log() messages)
+// into part-state metadata via ctx.metadata; the tool's `Workflow` view here
+// reads metadata.transcript reactively (each ctx.metadata call fires a
+// message.part.delta) and renders it as multi-line chat content alongside the
+// live header from sync.data.workflow[runID]. That way phase/log events show
+// up in the main agent's conversation as the workflow runs, not as a single
+// silent line that only updates once the run finishes.
+function Workflow(props: ToolProps<typeof WorkflowTool>) {
+  const sync = useSync()
+
+  const operation = createMemo(() => {
+    const op = (props.input as { operation?: string }).operation
+    return typeof op === "string" ? op : "run"
+  })
+
+  const runID = createMemo(
+    () => (props.metadata.runID as string | undefined) ?? (props.input as { run_id?: string }).run_id,
+  )
+
+  const run = createMemo(() => {
+    const id = runID()
+    if (!id) return undefined
+    return sync.data.workflow[id]
+  })
+
+  // Spinner is true while EITHER side reports running — the tool part stays
+  // running until execute() returns (the whole workflow duration, since we
+  // block), and the bus-fed run row independently reports "running" until the
+  // workflow.finished event lands. Either signal alone is enough.
+  const isRunning = createMemo(() => {
+    if (props.part.state.status === "running") return true
+    const r = run()
+    return r?.status === "running"
+  })
+
+  const transcript = createMemo(() => {
+    const t = (props.metadata as { transcript?: { kind: "phase" | "log"; text: string }[] }).transcript
+    return Array.isArray(t) ? t : []
+  })
+
+  const content = createMemo(() => {
+    const op = operation()
+    const r = run()
+    const id = runID()
+    if (op !== "run") {
+      return `workflow ${op}${id ? ` ${id}` : ""}`
+    }
+    const lines: string[] = []
+    const name = r?.name ?? (props.input as { name?: string }).name ?? "inline"
+    const status = r?.status ?? (props.metadata.status as string | undefined)
+    const phase = r?.currentPhase
+    const counters = r ? `${r.succeeded}✓ ${r.failed}✗ ${r.running}⟳` : ""
+    const head = [
+      `workflow ${name}`,
+      status ? `· ${status}` : "",
+      phase ? `· ${phase}` : "",
+      counters ? `· ${counters}` : "",
+    ]
+      .filter(Boolean)
+      .join(" ")
+    lines.push(head)
+    for (const e of transcript()) {
+      lines.push(e.kind === "phase" ? `↳ phase: ${e.text}` : `  ${e.text}`)
+    }
+    return lines.join("\n")
+  })
+
+  return (
+    <InlineTool icon="⚡" spinner={isRunning()} pending="Starting workflow..." complete={true} part={props.part}>
+      {content()}
     </InlineTool>
   )
 }
@@ -2103,7 +2218,7 @@ function Write(props: ToolProps<typeof WriteTool>) {
     <Switch>
       <Match when={props.metadata.diagnostics !== undefined}>
         <BlockTool
-          title={"# Wrote " + normalizePath(props.input.filePath!)}
+          title={"# Wrote " + normalizePath(props.input.file_path!)}
           part={props.part}
           onClick={collapsed() ? () => setExpanded((prev) => !prev) : undefined}
         >
@@ -2119,7 +2234,7 @@ function Write(props: ToolProps<typeof WriteTool>) {
               <code
                 conceal={false}
                 fg={theme.text}
-                filetype={filetype(props.input.filePath!)}
+                filetype={filetype(props.input.file_path!)}
                 syntaxStyle={syntax()}
                 content={code()}
               />
@@ -2128,12 +2243,12 @@ function Write(props: ToolProps<typeof WriteTool>) {
               <text fg={theme.textMuted}>Click to collapse</text>
             </Show>
           </Show>
-          <Diagnostics diagnostics={props.metadata.diagnostics} filePath={props.input.filePath ?? ""} />
+          <Diagnostics diagnostics={props.metadata.diagnostics} filePath={props.input.file_path ?? ""} />
         </BlockTool>
       </Match>
       <Match when={true}>
-        <InlineTool icon="←" pending="Preparing write..." complete={props.input.filePath} part={props.part}>
-          Write {normalizePath(props.input.filePath!)}
+        <InlineTool icon="←" pending="Preparing write..." complete={props.input.file_path} part={props.part}>
+          Write {normalizePath(props.input.file_path!)}
         </InlineTool>
       </Match>
     </Switch>
@@ -2166,11 +2281,11 @@ function Read(props: ToolProps<typeof ReadTool>) {
       <InlineTool
         icon="→"
         pending="Reading file..."
-        complete={props.input.filePath}
+        complete={props.input.file_path}
         spinner={isRunning()}
         part={props.part}
       >
-        Read {normalizePath(props.input.filePath!)} {input(props.input, ["filePath"])}
+        Read {normalizePath(props.input.file_path!)} {input(props.input, ["file_path"])}
       </InlineTool>
       <For each={loaded()}>
         {(filepath) => (
@@ -2325,14 +2440,14 @@ function Edit(props: ToolProps<typeof EditTool>) {
     return ctx.width > 120 ? "split" : "unified"
   })
 
-  const ft = createMemo(() => filetype(props.input.filePath))
+  const ft = createMemo(() => filetype(props.input.file_path))
 
   const diffContent = createMemo(() => props.metadata.diff)
 
   return (
     <Switch>
       <Match when={props.metadata.diff !== undefined}>
-        <BlockTool title={"← Edit " + normalizePath(props.input.filePath!)} part={props.part}>
+        <BlockTool title={"← Edit " + normalizePath(props.input.file_path!)} part={props.part}>
           <box paddingLeft={1}>
             <diff
               diff={diffContent()}
@@ -2354,12 +2469,12 @@ function Edit(props: ToolProps<typeof EditTool>) {
               removedLineNumberBg={theme.diffRemovedLineNumberBg}
             />
           </box>
-          <Diagnostics diagnostics={props.metadata.diagnostics} filePath={props.input.filePath ?? ""} />
+          <Diagnostics diagnostics={props.metadata.diagnostics} filePath={props.input.file_path ?? ""} />
         </BlockTool>
       </Match>
       <Match when={true}>
-        <InlineTool icon="←" pending="Preparing edit..." complete={props.input.filePath} part={props.part}>
-          Edit {normalizePath(props.input.filePath!)} {input({ replaceAll: props.input.replaceAll })}
+        <InlineTool icon="←" pending="Preparing edit..." complete={props.input.file_path} part={props.part}>
+          Edit {normalizePath(props.input.file_path!)} {input({ replace_all: props.input.replace_all })}
         </InlineTool>
       </Match>
     </Switch>

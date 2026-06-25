@@ -16,23 +16,9 @@ Execute plan by dispatching fresh subagent per task, with two-stage review after
 
 ## When to Use
 
-```dot
-digraph when_to_use {
-    "Have implementation plan?" [shape=diamond];
-    "Tasks mostly independent?" [shape=diamond];
-    "Stay in this session?" [shape=diamond];
-    "compose:subagent" [shape=box];
-    "compose:execute" [shape=box];
-    "Manual execution or brainstorm first" [shape=box];
-
-    "Have implementation plan?" -> "Tasks mostly independent?" [label="yes"];
-    "Have implementation plan?" -> "Manual execution or brainstorm first" [label="no"];
-    "Tasks mostly independent?" -> "Stay in this session?" [label="yes"];
-    "Tasks mostly independent?" -> "Manual execution or brainstorm first" [label="no - tightly coupled"];
-    "Stay in this session?" -> "compose:subagent" [label="yes"];
-    "Stay in this session?" -> "compose:execute" [label="no - parallel session"];
-}
-```
+1. Have implementation plan? — No → brainstorm first or manual execution
+2. Tasks mostly independent? — No (tightly coupled) → brainstorm first or manual execution
+3. Stay in this session? — Yes → **compose:subagent** / No → compose:execute (parallel session)
 
 **vs. Executing Plans (parallel session):**
 - Same session (no context switch)
@@ -42,61 +28,37 @@ digraph when_to_use {
 
 ## The Process
 
-```dot
-digraph process {
-    rankdir=TB;
+**Setup:** Read plan → extract all tasks with full text → note context → create a task per plan task (`task create`)
 
-    subgraph cluster_per_task {
-        label="Per Task";
-        "Inject covered spec as Intent, dispatch implementer (./implementer-prompt.md)" [shape=box label="Create+bind task (--task <TID>, auto-starts), inject Intent, dispatch implementer (./implementer-prompt.md)"];
-        "Implementer subagent asks questions?" [shape=diamond];
-        "Answer questions, provide context" [shape=box];
-        "Implementer subagent implements, tests, commits, self-reviews" [shape=box];
-        "Dispatch spec reviewer phase 1 (spec + diff only, no report)" [shape=box];
-        "Phase 1 flagged anything?" [shape=diamond];
-        "Dispatch spec reviewer phase 2 (report explains flags, downgrade-only)" [shape=box];
-        "Gate: all in-scope claims pass with evidence?" [shape=diamond];
-        "Implementer subagent fixes failing/unverifiable claims" [shape=box];
-        "Dispatch code quality reviewer subagent (./code-quality-reviewer-prompt.md)" [shape=box];
-        "Code quality reviewer subagent approves?" [shape=diamond];
-        "Implementer subagent fixes quality issues" [shape=box];
-        "Mark task done (task done <TID>)" [shape=box];
-    }
+**Per Task:**
 
-    "Read plan, extract all tasks with full text, note context, create a task per plan task (task create)" [shape=box];
-    "More tasks remain?" [shape=diamond];
-    "Dispatch final code reviewer subagent for entire implementation" [shape=box];
-    "Use compose:merge" [shape=box style=filled fillcolor=lightgreen];
+- **Dispatch implementer** — create+bind task (`--task <TID>`, auto-starts), inject covered spec as Intent, dispatch (`./implementer-prompt.md`)
+- **Implementer asks questions?** — Yes → answer, provide context, re-dispatch implementer
+- **Implementer implements** — tests, commits, self-reviews
+- **Spec review phase 1** — dispatch with spec + diff only, no report
+- **Phase 1 flagged anything?** — Yes → dispatch phase 2 (report explains flags, downgrade-only)
+- **Spec gate: all in-scope claims pass with evidence?** — No → implementer fixes → back to spec review phase 1
+- **Code quality review** — dispatch reviewer (`./code-quality-reviewer-prompt.md`)
+- **Quality approved?** — No → implementer fixes → back to code quality review
+- **Mark task done** — `task done <TID>`
 
-    "Read plan, extract all tasks with full text, note context, create a task per plan task (task create)" -> "Inject covered spec as Intent, dispatch implementer (./implementer-prompt.md)";
-    "Inject covered spec as Intent, dispatch implementer (./implementer-prompt.md)" -> "Implementer subagent asks questions?";
-    "Implementer subagent asks questions?" -> "Answer questions, provide context" [label="yes"];
-    "Answer questions, provide context" -> "Inject covered spec as Intent, dispatch implementer (./implementer-prompt.md)";
-    "Implementer subagent asks questions?" -> "Implementer subagent implements, tests, commits, self-reviews" [label="no"];
-    "Implementer subagent implements, tests, commits, self-reviews" -> "Dispatch spec reviewer phase 1 (spec + diff only, no report)";
-    "Dispatch spec reviewer phase 1 (spec + diff only, no report)" -> "Phase 1 flagged anything?";
-    "Phase 1 flagged anything?" -> "Dispatch spec reviewer phase 2 (report explains flags, downgrade-only)" [label="yes"];
-    "Phase 1 flagged anything?" -> "Gate: all in-scope claims pass with evidence?" [label="no"];
-    "Dispatch spec reviewer phase 2 (report explains flags, downgrade-only)" -> "Gate: all in-scope claims pass with evidence?";
-    "Gate: all in-scope claims pass with evidence?" -> "Implementer subagent fixes failing/unverifiable claims" [label="no"];
-    "Implementer subagent fixes failing/unverifiable claims" -> "Dispatch spec reviewer phase 1 (spec + diff only, no report)" [label="re-review"];
-    "Gate: all in-scope claims pass with evidence?" -> "Dispatch code quality reviewer subagent (./code-quality-reviewer-prompt.md)" [label="yes"];
-    "Dispatch code quality reviewer subagent (./code-quality-reviewer-prompt.md)" -> "Code quality reviewer subagent approves?";
-    "Code quality reviewer subagent approves?" -> "Implementer subagent fixes quality issues" [label="no"];
-    "Implementer subagent fixes quality issues" -> "Dispatch code quality reviewer subagent (./code-quality-reviewer-prompt.md)" [label="re-review"];
-    "Code quality reviewer subagent approves?" -> "Mark task done (task done <TID>)" [label="yes"];
-    "Mark task done (task done <TID>)" -> "More tasks remain?";
-    "More tasks remain?" -> "Inject covered spec as Intent, dispatch implementer (./implementer-prompt.md)" [label="yes"];
-    "More tasks remain?" -> "Dispatch final code reviewer subagent for entire implementation" [label="no"];
-    "Dispatch final code reviewer subagent for entire implementation" -> "Use compose:merge";
-}
-```
+**More tasks remain?** — Yes → next task (dispatch implementer)
+
+**Finish:** Dispatch final code reviewer for entire implementation → **compose:merge**
 
 ## Spec-Anchored Review Gate
 
 This is how each task's spec-compliance review works. It replaces a single
 prose review with intent-grounded implementation and a two-phase, evidence-gated
 verdict.
+
+**Working directory (only if isolated).** Subagents run with fresh context and start
+in the repo root. If `compose:worktree` set up an isolated worktree, the work does NOT
+live there — tell every subagent to `cd` into the worktree first (fill the
+implementer's `Work from:` line, and add the `cd` note the reviewer prompts describe).
+Otherwise there's nothing to do: the current checkout is correct and you can leave
+those lines out. When a worktree IS in use and you forget, a reviewer's `git diff` and
+tests run against the wrong checkout and the verdict is meaningless.
 
 **1. Create and bind a task before dispatching.** Before the implementer runs, create
 a work-item with the `task` tool (`task create "<plan task summary>"`) and capture its
@@ -111,7 +73,9 @@ implementer prompt's `## Intent (from spec)` block (see `./implementer-prompt.md
 The implementer never reads the spec itself — you hand it exactly the sections its
 task covers, with the scope boundary intact.
 
-**3. Run the spec reviewer in two phases** (see `./spec-reviewer-prompt.md`):
+**3. Run the spec reviewer in two phases** (see `./spec-reviewer-prompt.md`).
+If an isolated worktree is in use, add the `cd <worktree>` instruction to each
+dispatch (see the working-directory note above):
 - **Phase 1:** dispatch with the covered spec section text + `git diff` ONLY. Do NOT
   include the implementer's report — its claims anchor the reviewer toward confirming
   what was reported and away from spotting silent omissions. Phase 1 returns a
@@ -129,6 +93,23 @@ passes, mark the bound task done with `task done <TID>`.
 
 A structured `pass` without verifiable evidence (test name, command output, or
 `file:line`) does not satisfy the gate — treat it as `fail`. Prose is not evidence.
+
+## Pre-Flight Plan Review
+
+Before dispatching Task 1, scan the entire plan once for conflicts:
+
+- Tasks that contradict each other or the plan's Global Constraints
+- Anything the plan explicitly mandates that a reviewer would flag as a defect
+  (e.g. a test that asserts nothing, verbatim duplication of a logic block)
+- Ambiguous or inconsistent interface contracts between tasks
+
+Present everything you find to your human partner as one batched question —
+each finding beside the plan text that mandates it, asking which governs —
+before execution begins. Do not interrupt mid-plan with one finding at a time.
+If the scan is clean, proceed without comment.
+
+Use `compose:ask` for the batched question. If no user is available, resolve
+contradictions conservatively (strictest interpretation) and continue.
 
 ## Model Selection
 
@@ -179,7 +160,7 @@ Implementer subagents report one of four statuses. Handle each appropriately:
 ```
 You: I'm using Subagent-Driven Development to execute this plan.
 
-[Read plan file once: docs/compose/plans/feature-plan.md]
+[Read plan file once: plans/feature-plan.md]
 [Extract all 5 tasks with full text and context]
 [Create a task per plan task with `task create`, capturing each TID]
 

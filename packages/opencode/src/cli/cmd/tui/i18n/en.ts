@@ -73,7 +73,7 @@ export const dict: Record<string, string> = {
     "Press {highlight}Ctrl+X X{/highlight} or {highlight}/export{/highlight} to save the conversation as Markdown",
   "tui.tips.copy_last": "Press {highlight}Ctrl+X Y{/highlight} to copy the assistant's last message to clipboard",
   "tui.tips.command_palette": "Press {highlight}Ctrl+P{/highlight} to see all available actions and commands",
-  "tui.tips.login": "Run {highlight}/login{/highlight} to sign in and use your token plan",
+  "tui.tips.login": "Run {highlight}/login{/highlight} to sign in and use a Token Plan or configure your own API key",
   "tui.tips.connect": "Run {highlight}/connect{/highlight} to choose your LLM provider and add API keys",
   "tui.tips.leader": "The leader key is {highlight}Ctrl+X{/highlight}; combine with other keys for quick actions",
   "tui.tips.f2": "Press {highlight}F2{/highlight} to quickly switch between recently used models",
@@ -183,6 +183,18 @@ export const dict: Record<string, string> = {
   "tui.command.category.internal": "Internal",
   "tui.command.category.external": "External",
 
+  // Built-in slash command descriptions
+  "tui.slash.init.description": "guided AGENTS.md setup",
+  "tui.slash.review.description": "review changes [commit|branch|pr], defaults to uncommitted",
+  "tui.slash.dream.description":
+    "manually consolidate project memory from memory files and raw trajectory",
+  "tui.slash.distill.description":
+    "find repeated workflows in recent work and package them into skills, subagents, or commands",
+  "tui.slash.goal.description":
+    "set a stop-condition goal; runs until a judge says it's met. /goal clear to abort",
+  "tui.slash.deep-research.description":
+    "deep multi-source, fact-checked research report (runs the deep-research workflow)",
+
   // Language switching
   "tui.command.language.switch.title": "Switch language",
   "tui.command.language.switch.description": "Change the display language",
@@ -248,6 +260,15 @@ export const dict: Record<string, string> = {
   "tui.command.consent.revoke.title": "Revoke free-model agreement",
   "tui.consent.revoked": "Free-model agreement revoked — you'll be asked to agree again",
   "tui.dialog.select.placeholder": "Search",
+  "tui.dialog.model.login_hint": "Tip: run /login to sign in before switching models",
+  "tui.model.mimo_auto.name": "MiMo Auto (MiMo-V2.5, limited-time free)",
+  "tui.dialog.token_plan.title": "Subscribe to a Token Plan or wait in queue",
+  "tui.dialog.token_plan.line1": "In free mode, requests are currently queued. For stable, high-quality service,",
+  "tui.dialog.token_plan.subscribe": "subscribe to ",
+  "tui.dialog.token_plan.link": "MiMo Token Plan",
+  "tui.dialog.token_plan.link_suffix": ".",
+  "tui.dialog.token_plan.line3": "You can also run /login to configure your own API key.",
+  "tui.dialog.token_plan.confirm": "Got it",
   "tui.dialog.select.no_results": "No results found",
   "tui.dialog.prompt.placeholder": "Enter text",
   "tui.dialog.prompt.busy": "Working...",
@@ -406,6 +427,14 @@ export const dict: Record<string, string> = {
   "tui.dialog.login.flow.waiting": "Waiting for browser authorization...",
   "tui.dialog.login.flow.invalid_code": "Invalid Code, please retry",
   "tui.dialog.login.flow.copied": "Copied",
+
+  // Question i18n — plan_enter
+  "tui.question.plan_enter.question": "Would you like to switch to plan mode for structured planning?",
+  "tui.question.plan_enter.header": "Plan",
+  "tui.question.plan_enter.option.0.label": "Yes",
+  "tui.question.plan_enter.option.0.description": "Switch to plan agent for read-only planning",
+  "tui.question.plan_enter.option.1.label": "No",
+  "tui.question.plan_enter.option.1.description": "Stay in current mode",
 
   // Question i18n — plan_exit
   "tui.question.plan_exit.question": "Plan at {{plan}} is complete. Would you like to switch to the build agent and start implementing?",

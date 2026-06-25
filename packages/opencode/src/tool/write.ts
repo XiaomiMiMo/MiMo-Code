@@ -29,13 +29,13 @@ export const WriteTool = Tool.define(
       description: DESCRIPTION,
       parameters: z.object({
         content: z.string().describe("The content to write to the file"),
-        filePath: z.string().describe("The absolute path to the file to write (must be absolute, not relative)"),
+        file_path: z.string().describe("The absolute path to the file to write (must be absolute, not relative)"),
       }),
-      execute: (params: { content: string; filePath: string }, ctx: Tool.Context) =>
+      execute: (params: { content: string; file_path: string }, ctx: Tool.Context) =>
         Effect.gen(function* () {
-          const filepath = path.isAbsolute(params.filePath)
-            ? params.filePath
-            : path.join(SessionCwd.get(ctx.sessionID), params.filePath)
+          const filepath = path.isAbsolute(params.file_path)
+            ? params.file_path
+            : path.join(SessionCwd.get(ctx.sessionID), params.file_path)
           yield* assertWriteAllowed(ctx, filepath)
 
           const exists = yield* fs.existsSafe(filepath)

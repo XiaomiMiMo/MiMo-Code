@@ -69,7 +69,7 @@ export const dict = {
   "tui.tips.export": "按 {highlight}Ctrl+X X{/highlight} 或 {highlight}/export{/highlight} 把会话保存为 Markdown",
   "tui.tips.copy_last": "按 {highlight}Ctrl+X Y{/highlight} 把助手最后一条消息复制到剪贴板",
   "tui.tips.command_palette": "按 {highlight}Ctrl+P{/highlight} 查看所有可用动作和命令",
-  "tui.tips.login": "运行 {highlight}/login{/highlight} 登录使用 Token 套餐",
+  "tui.tips.login": "运行 {highlight}/login{/highlight} 登录使用Token Plan或配置自己的API key",
   "tui.tips.connect": "运行 {highlight}/connect{/highlight} 选择 LLM 服务商并添加 API key",
   "tui.tips.leader": "前导键是 {highlight}Ctrl+X{/highlight}，搭配其他键可快速触发动作",
   "tui.tips.f2": "按 {highlight}F2{/highlight} 在最近使用的模型之间快速切换",
@@ -176,6 +176,14 @@ export const dict = {
   "tui.command.category.internal": "内置",
   "tui.command.category.external": "第三方",
 
+  // Built-in slash command descriptions
+  "tui.slash.init.description": "引导式 AGENTS.md 设置",
+  "tui.slash.review.description": "审查变更 [commit|branch|pr]，默认未提交的变更",
+  "tui.slash.dream.description": "从 memory 文件与原始轨迹中手动整合项目记忆",
+  "tui.slash.distill.description": "在最近工作中发现重复流程，打包为 skill、子智能体或命令",
+  "tui.slash.goal.description": "设置终止条件目标；运行直到判定达成。使用 /goal clear 中止",
+  "tui.slash.deep-research.description": "深度多来源、事实核查的研究报告（运行 deep-research 工作流）",
+
   // Language switching
   "tui.command.language.switch.title": "切换语言",
   "tui.command.language.switch.description": "更改显示语言",
@@ -241,6 +249,15 @@ export const dict = {
   "tui.command.consent.revoke.title": "撤销免费模型协议",
   "tui.consent.revoked": "已撤销免费模型协议 — 下次使用时将再次请求同意",
   "tui.dialog.select.placeholder": "搜索",
+  "tui.dialog.model.login_hint": "提示：先 /login 登录再切换模型",
+  "tui.model.mimo_auto.name": "MiMo Auto（MiMo-V2.5 限免中）",
+  "tui.dialog.token_plan.title": "订阅token plan或排队等待",
+  "tui.dialog.token_plan.line1": "免费模式下当前需要排队等待，如果想要稳定获取高质量服务，",
+  "tui.dialog.token_plan.subscribe": "欢迎订阅 ",
+  "tui.dialog.token_plan.link": "MiMo Token Plan",
+  "tui.dialog.token_plan.link_suffix": "。",
+  "tui.dialog.token_plan.line3": "你也可以通过 /login 来配置自己的 API key。",
+  "tui.dialog.token_plan.confirm": "知道了",
   "tui.dialog.select.no_results": "未找到结果",
   "tui.dialog.prompt.placeholder": "输入文本",
   "tui.dialog.prompt.busy": "处理中...",
@@ -399,6 +416,14 @@ export const dict = {
   "tui.dialog.login.flow.waiting": "等待浏览器授权中...",
   "tui.dialog.login.flow.invalid_code": "Code 无效，请重试",
   "tui.dialog.login.flow.copied": "已复制",
+
+  // Question i18n — plan_enter
+  "tui.question.plan_enter.question": "是否切换到 plan 模式进行结构化规划？",
+  "tui.question.plan_enter.header": "进入计划",
+  "tui.question.plan_enter.option.0.label": "是",
+  "tui.question.plan_enter.option.0.description": "切换到 plan 智能体进行只读规划",
+  "tui.question.plan_enter.option.1.label": "否",
+  "tui.question.plan_enter.option.1.description": "留在当前模式",
 
   // Question i18n — plan_exit
   "tui.question.plan_exit.question": "{{plan}} 处的计划已完成。是否切换到 build 智能体开始实现？",

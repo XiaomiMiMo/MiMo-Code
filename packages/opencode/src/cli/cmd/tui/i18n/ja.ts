@@ -77,7 +77,7 @@ export const dict = {
   "tui.tips.copy_last":
     "{highlight}Ctrl+X Y{/highlight} でアシスタントの最後のメッセージをクリップボードにコピーします",
   "tui.tips.command_palette": "{highlight}Ctrl+P{/highlight} で利用可能なすべてのコマンドを表示します",
-  "tui.tips.login": "{highlight}/login{/highlight} でサインインしてトークンプランを利用します",
+  "tui.tips.login": "{highlight}/login{/highlight} でサインインして Token Plan を利用するか、独自の API キーを設定します",
   "tui.tips.connect": "{highlight}/connect{/highlight} で LLM プロバイダを選択して API キーを追加します",
   "tui.tips.leader": "リーダーキーは {highlight}Ctrl+X{/highlight}。他のキーと組み合わせてクイック操作ができます",
   "tui.tips.f2": "{highlight}F2{/highlight} で最近使ったモデルを素早く切り替えます",
@@ -200,6 +200,14 @@ export const dict = {
   "tui.command.category.internal": "組み込み",
   "tui.command.category.external": "外部",
 
+  // Built-in slash command descriptions
+  "tui.slash.init.description": "AGENTS.md をガイド付きでセットアップ",
+  "tui.slash.review.description": "変更をレビュー [commit|branch|pr]、デフォルトは未コミット",
+  "tui.slash.dream.description": "memory ファイルと生の軌跡からプロジェクトメモリを手動で統合",
+  "tui.slash.distill.description": "最近の作業から繰り返しワークフローを見つけ、skill・サブエージェント・コマンドにパッケージ化",
+  "tui.slash.goal.description": "停止条件付きゴールを設定；判定が達成と言うまで実行。/goal clear で中止",
+  "tui.slash.deep-research.description": "深い多ソース・ファクトチェック済み調査レポート（deep-research ワークフローを実行）",
+
   // Language switching
   "tui.command.language.switch.title": "言語を切り替え",
   "tui.command.language.switch.description": "表示言語を変更します",
@@ -255,6 +263,16 @@ export const dict = {
   "tui.command.consent.revoke.title": "無料モデルの同意を取り消す",
   "tui.consent.revoked": "無料モデルの同意を取り消しました — 次回利用時に再度同意を求めます",
   "tui.dialog.select.placeholder": "検索",
+  "tui.dialog.model.login_hint": "ヒント：モデルを切り替える前に /login でログインしてください",
+  "tui.model.mimo_auto.name": "MiMo Auto（MiMo-V2.5 期間限定無料）",
+  "tui.dialog.token_plan.title": "Token Plan を購読するか順番待ち",
+  "tui.dialog.token_plan.line1":
+    "無料モードでは現在順番待ちが必要です。安定した高品質なサービスをご利用いただくには、",
+  "tui.dialog.token_plan.subscribe": "",
+  "tui.dialog.token_plan.link": "MiMo Token Plan",
+  "tui.dialog.token_plan.link_suffix": " のご購読をおすすめします。",
+  "tui.dialog.token_plan.line3": "/login で独自の API キーを設定することもできます。",
+  "tui.dialog.token_plan.confirm": "了解",
   "tui.dialog.select.no_results": "結果が見つかりません",
   "tui.dialog.prompt.placeholder": "テキストを入力",
   "tui.dialog.prompt.busy": "処理中...",
@@ -407,6 +425,14 @@ export const dict = {
     "ログイン不要 — そのまま mimo を実行できます。有料/上位モデルを利用する場合は MiMo ブラウザログインを選択してください。",
   "cli.providers.mimo_login.decrypt_retry": "復号に失敗しました、再試行してください（残り {remaining} 回）",
   "cli.providers.mimo_login.decrypt_exhausted": "復号に失敗しました、最大再試行回数に達しました",
+
+  // Question i18n — plan_enter
+  "tui.question.plan_enter.question": "構造化された計画のために plan モードに切り替えますか？",
+  "tui.question.plan_enter.header": "計画開始",
+  "tui.question.plan_enter.option.0.label": "はい",
+  "tui.question.plan_enter.option.0.description": "読み取り専用の計画のために plan エージェントに切り替え",
+  "tui.question.plan_enter.option.1.label": "いいえ",
+  "tui.question.plan_enter.option.1.description": "現在のモードにとどまる",
 
   // Question i18n — plan_exit
   "tui.question.plan_exit.question": "{{plan}} の計画が完了しました。build エージェントに切り替えて実装を開始しますか？",

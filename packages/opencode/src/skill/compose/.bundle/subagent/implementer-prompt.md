@@ -49,7 +49,9 @@ it this prompt:
     5. Self-review (see below)
     6. Report back
 
-    Work from: [directory]
+    [If an isolated worktree was set up for this task, add: "Work from: <worktree
+    path> — `cd` here before running any git, test, or build command." Omit this line
+    entirely if there's no separate worktree; the current checkout is correct.]
 
     **While you work:** If you encounter something unexpected or unclear, **ask questions**.
     It's always OK to pause and clarify. Don't guess or make assumptions.

@@ -1,5 +1,7 @@
 import { afterEach, describe, expect } from "bun:test"
 import { Effect, Layer } from "effect"
+import * as fs from "fs/promises"
+import path from "path"
 import { Bus } from "../../src/bus"
 import { Config } from "../../src/config"
 import { Memory } from "../../src/memory"
@@ -70,31 +72,44 @@ async function seedUserMessage(sessionID: SessionID, text: string) {
 describe("SessionCheckpoint.insertRebuildBoundary", () => {
   it.live(
     "insertRebuildBoundary returns false and inserts nothing when rebuild context is empty",
-    provideTmpdirInstance(() =>
-      Effect.gen(function* () {
-        const ssn = yield* SessionNs.Service
-        const cp = yield* SessionCheckpoint.Service
-        const info = yield* ssn.create({})
+    provideTmpdirInstance(
+      () =>
+        Effect.gen(function* () {
+          const ssn = yield* SessionNs.Service
+          const cp = yield* SessionCheckpoint.Service
+          const memory = yield* Memory.Service
+          const root = yield* memory.root()
+          yield* Effect.promise(() =>
+            Promise.all([
+              fs.rm(path.join(root, "global"), { recursive: true, force: true }).catch(() => undefined),
+              fs.rm(path.join(root, "projects"), { recursive: true, force: true }).catch(() => undefined),
+            ]),
+          )
+          const info = yield* ssn.create({})
 
-        const m1 = yield* Effect.promise(() => seedUserMessage(info.id, "turn one"))
-        const _m2 = yield* Effect.promise(() => seedUserMessage(info.id, "turn two"))
-        const m3 = yield* Effect.promise(() => seedUserMessage(info.id, "turn three"))
+          const m1 = yield* Effect.promise(() => seedUserMessage(info.id, "turn one"))
+          const _m2 = yield* Effect.promise(() => seedUserMessage(info.id, "turn two"))
+          const m3 = yield* Effect.promise(() => seedUserMessage(info.id, "turn three"))
 
-        // No checkpoint file → renderRebuildContext is empty → helper returns false, inserts nothing.
-        const insertedNoCtx = yield* cp.insertRebuildBoundary({
-          sessionID: info.id,
-          boundary: m3.id,
-          agent: "build",
-          model: { providerID: "anthropic", modelID: "claude" },
-        })
-        expect(insertedNoCtx).toBe(false)
+          // No checkpoint file → renderRebuildContext is empty → helper returns false, inserts nothing.
+          // recent_user disabled here: the verbatim-user-input section's whole point is to make a
+          // user-only-signal session emit non-empty context, so it must be opted out to assert the
+          // "nothing to push" semantics this test targets.
+          const insertedNoCtx = yield* cp.insertRebuildBoundary({
+            sessionID: info.id,
+            boundary: m3.id,
+            agent: "build",
+            model: { providerID: "anthropic", modelID: "claude" },
+          })
+          expect(insertedNoCtx).toBe(false)
 
-        const after = yield* ssn.messages({ sessionID: info.id })
-        // Every original message still present — nothing deleted.
-        expect(after.some((m) => m.info.id === m1.id)).toBe(true)
-        expect(after.some((m) => m.info.id === m3.id)).toBe(true)
-        expect(after.length).toBe(3)
-      }),
+          const after = yield* ssn.messages({ sessionID: info.id })
+          // Every original message still present — nothing deleted.
+          expect(after.some((m) => m.info.id === m1.id)).toBe(true)
+          expect(after.some((m) => m.info.id === m3.id)).toBe(true)
+          expect(after.length).toBe(3)
+        }),
+      { outsideGit: true, config: { checkpoint: { push_caps: { recent_user: 0 } } } },
     ),
   )
 })

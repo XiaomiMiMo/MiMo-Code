@@ -1,4 +1,4 @@
-import { PlanExitTool } from "./plan"
+import { PlanEnterTool, PlanExitTool } from "./plan"
 import { Session } from "../session"
 import { QuestionTool } from "./question"
 import { BashTool } from "./bash"
@@ -13,6 +13,7 @@ import { TaskTool } from "./task"
 import { WorkflowTool } from "./workflow"
 import { WebFetchTool } from "./webfetch"
 import { WriteTool } from "./write"
+import { NotebookEditTool } from "./notebook-edit"
 import { InvalidTool } from "./invalid"
 import { SkillTool } from "./skill"
 import * as Tool from "./tool"
@@ -124,13 +125,15 @@ export const layer = Layer.effect(
     const read = yield* ReadTool
     const question = yield* QuestionTool
     const lsptool = yield* LspTool
-    const plan = yield* PlanExitTool
+    const planexit = yield* PlanExitTool
+    const planenter = yield* PlanEnterTool
     const webfetch = yield* WebFetchTool
     const websearch = yield* WebSearchTool
     const bash = yield* BashTool
     const codesearch = yield* CodeSearchTool
     const globtool = yield* GlobTool
     const writetool = yield* WriteTool
+    const notebookedit = yield* NotebookEditTool
     const edit = yield* EditTool
     const greptool = yield* GrepTool
     const patchtool = yield* ApplyPatchTool
@@ -211,6 +214,7 @@ export const layer = Layer.effect(
           grep: Tool.init(greptool),
           edit: Tool.init(edit),
           write: Tool.init(writetool),
+          notebookedit: Tool.init(notebookedit),
           actor: Tool.init(actor),
           fetch: Tool.init(webfetch),
           search: Tool.init(websearch),
@@ -220,7 +224,8 @@ export const layer = Layer.effect(
           changedir: Tool.init(changedirtool),
           question: Tool.init(question),
           lsp: Tool.init(lsptool),
-          plan: Tool.init(plan),
+          planexit: Tool.init(planexit),
+          planenter: Tool.init(planenter),
           memory: Tool.init(memorytool),
           history: Tool.init(historytool),
           task: Tool.init(tasktool),
@@ -238,6 +243,7 @@ export const layer = Layer.effect(
             tool.grep,
             tool.edit,
             tool.write,
+            tool.notebookedit,
             tool.actor,
             tool.fetch,
             tool.search,
@@ -246,7 +252,8 @@ export const layer = Layer.effect(
             tool.patch,
             tool.changedir,
             ...(Flag.MIMOCODE_EXPERIMENTAL_LSP_TOOL ? [tool.lsp] : []),
-            tool.plan,
+            tool.planexit,
+            tool.planenter,
             tool.memory,
             tool.history,
             tool.task,

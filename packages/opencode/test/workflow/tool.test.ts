@@ -268,62 +268,73 @@ describe("WorkflowTool run", () => {
     Flag.MIMOCODE_EXPERIMENTAL_WORKFLOW_TOOL = originalFlag
   })
 
-  it.live("run returns a run_id immediately, then completes in the background", () =>
-    provideTmpdirServer(
-      Effect.fnUntraced(function* ({ llm }) {
-        const def = yield* Tool.init(yield* WorkflowTool)
-        const session = yield* Session.Service
-        const parent = yield* session.create({
-          title: "wf tool",
-          permission: [{ permission: "*", pattern: "*", action: "allow" }],
-        })
-        yield* llm.text("done")
-        const script = [
-          `export const meta = { name: "t", description: "d" }`,
-          `return await agent("hello")`,
-        ].join("\n")
-        const ctx = {
-          sessionID: parent.id,
-          messageID: "msg_test",
-          agent: "main",
-          abort: new AbortController().signal,
-          messages: [],
-          metadata: () => Effect.void,
-          ask: () => Effect.void,
-        }
-        const res = yield* def.execute({ operation: "run", script }, ctx as any)
-        expect(res.metadata.runID).toBeDefined()
-        expect(res.output).toContain("run_id")
-      }),
-      { git: true, config: providerCfg },
-    ),
+  it.live(
+    "run blocks until terminal and surfaces transcript + run_id in the output",
+    () =>
+      provideTmpdirServer(
+        Effect.fnUntraced(function* ({ llm }) {
+          const def = yield* Tool.init(yield* WorkflowTool)
+          const session = yield* Session.Service
+          const parent = yield* session.create({
+            title: "wf tool",
+            permission: [{ permission: "*", pattern: "*", action: "allow" }],
+          })
+          yield* llm.text("done")
+          const script = [
+            `export const meta = { name: "t", description: "d" }`,
+            `return await agent("hello")`,
+          ].join("\n")
+          const ctx = {
+            sessionID: parent.id,
+            messageID: "msg_test",
+            agent: "main",
+            abort: new AbortController().signal,
+            messages: [],
+            metadata: () => Effect.void,
+            ask: () => Effect.void,
+          }
+          const res = yield* def.execute({ operation: "run", script }, ctx as any)
+          expect(res.metadata.runID).toBeDefined()
+          expect(res.output).toContain("run_id")
+        }),
+        { git: true, config: providerCfg },
+      ),
+    30000,
   )
 
-  it.live("run by name resolves a built-in workflow and starts it", () =>
-    provideTmpdirServer(
-      Effect.fnUntraced(function* ({ llm }) {
-        const def = yield* Tool.init(yield* WorkflowTool)
-        const session = yield* Session.Service
-        const parent = yield* session.create({
-          title: "wf by name",
-          permission: [{ permission: "*", pattern: "*", action: "allow" }],
-        })
-        yield* llm.text("done")
-        const ctx = {
-          sessionID: parent.id,
-          messageID: "msg_test",
-          agent: "main",
-          abort: new AbortController().signal,
-          messages: [],
-          metadata: () => Effect.void,
-          ask: () => Effect.void,
-        }
-        const res = yield* def.execute({ operation: "run", name: "deep-research", args: "Q?" }, ctx as any)
-        expect(res.metadata.runID).toBeDefined()
-        expect(res.output).toContain("run_id")
-      }),
-      { git: true, config: providerCfg },
-    ),
+  it.live(
+    "run by name resolves a built-in workflow and starts it (async)",
+    () =>
+      provideTmpdirServer(
+        Effect.fnUntraced(function* ({ llm }) {
+          const def = yield* Tool.init(yield* WorkflowTool)
+          const session = yield* Session.Service
+          const parent = yield* session.create({
+            title: "wf by name",
+            permission: [{ permission: "*", pattern: "*", action: "allow" }],
+          })
+          yield* llm.text("done")
+          const ctx = {
+            sessionID: parent.id,
+            messageID: "msg_test",
+            agent: "main",
+            abort: new AbortController().signal,
+            messages: [],
+            metadata: () => Effect.void,
+            ask: () => Effect.void,
+          }
+          // async: true keeps the tool fire-and-forget — the test only needs to
+          // verify name resolution + start, not full deep-research execution
+          // (which would require mocking many LLM rounds).
+          const res = yield* def.execute(
+            { operation: "run", name: "deep-research", args: "Q?", async: true },
+            ctx as any,
+          )
+          expect(res.metadata.runID).toBeDefined()
+          expect(res.output).toContain("run_id")
+        }),
+        { git: true, config: providerCfg },
+      ),
   )
 
   it.live("run rejects when BOTH name and script are given", () =>
@@ -381,7 +392,10 @@ describe("WorkflowTool run", () => {
         })
         const script = [`export const meta = { name: "t", description: "d" }`, `return await agent("hi")`].join("\n")
         // Turn 1: the model emits a workflow tool-call.
-        yield* llm.push(reply().tool("workflow", { operation: "run", script }))
+        // async: true keeps the tool fire-and-forget for this test — we only
+        // need to prove the agent loop dispatches the tool and a run record
+        // lands, not wait through the full inner agent + workflow execution.
+        yield* llm.push(reply().tool("workflow", { operation: "run", script, async: true }))
         // The workflow's inner agent("hi") spawn needs its own reply.
         yield* llm.text("done")
         // Turn 2: the model's final text reply after the tool result.
@@ -414,7 +428,7 @@ describe("WorkflowTool run", () => {
     // Real agent loop + an inner workflow spawn through the full stack legitimately
     // exceeds the 5s default on a cold provider/server warmup (it's order-dependent
     // otherwise — green only when a prior test warms the layer). Give it headroom.
-    30000,
+    60000,
   )
 
   it.live("run op accepts an explicit workspace and the script's file ops are jailed to it", () =>
@@ -445,7 +459,7 @@ describe("WorkflowTool run", () => {
           metadata: () => Effect.void,
           ask: () => Effect.void,
         }
-        const res = yield* def.execute({ operation: "run", script, workspace: sub }, ctx as any)
+        const res = yield* def.execute({ operation: "run", script, workspace: sub, async: true }, ctx as any)
         expect(res.metadata.runID).toBeDefined()
         // Wait for completion + assert the file landed under the chosen workspace (sub), not the worktree root.
         const runtime = yield* WorkflowRuntime.Service

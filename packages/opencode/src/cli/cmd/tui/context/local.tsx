@@ -12,6 +12,8 @@ import { useArgs } from "./args"
 import { useSDK } from "./sdk"
 import { RGBA } from "@opentui/core"
 import { Filesystem } from "@/util"
+import * as Model from "../util/model"
+import { useLanguage } from "@tui/context/language"
 
 export function parseModel(model: string) {
   const [providerID, ...rest] = model.split("/")
@@ -27,6 +29,7 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
     const sync = useSync()
     const sdk = useSDK()
     const toast = useToast()
+    const t = useLanguage().t
 
     function isModelValid(model: { providerID: string; modelID: string }) {
       const provider = sync.data.provider.find((x) => x.id === model.providerID)
@@ -231,8 +234,11 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
           const provider = sync.data.provider.find((x) => x.id === value.providerID)
           const info = provider?.models[value.modelID]
           return {
-            provider: provider?.name ?? value.providerID,
-            model: value.modelID === "mimo-auto" ? "MiMo Auto（MiMo-V2.5 限免中）" : (info?.name ?? value.modelID),
+            provider: provider?.name || value.providerID,
+            model:
+              value.modelID === "mimo-auto"
+                ? t("tui.model.mimo_auto.name")
+                : Model.name(sync.data.provider, value.providerID, value.modelID),
             reasoning: info?.capabilities?.reasoning ?? false,
           }
         }),

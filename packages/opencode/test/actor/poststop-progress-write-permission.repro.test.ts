@@ -317,7 +317,7 @@ describe("postStop progress.md is gated by the subagent's write permission", () 
         // file missing and re-prompts with output.continue=true.
         yield* llm.text("**Status**: success\n**Summary**: did the work (forgot the journal)")
         // Turn 2 (postStop re-entry): obey the nudge — write the 5-section file.
-        yield* llm.tool("write", { filePath: target, content: FIVE_SECTION_BODY })
+        yield* llm.tool("write", { file_path: target, content: FIVE_SECTION_BODY })
         // Turn 2 still needs a terminal assistant message after the tool result.
         yield* llm.text("**Status**: success\n**Summary**: wrote progress.md")
         // Slack for any additional postStop iterations.

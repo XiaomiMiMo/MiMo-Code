@@ -230,6 +230,7 @@ describe("Instruction.system", () => {
       },
     })
     await using projectTmp = await tmpdir({
+      git: true,
       init: async (dir) => {
         await Bun.write(path.join(dir, "AGENTS.md"), "# Project Instructions")
       },

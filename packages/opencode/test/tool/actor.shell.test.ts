@@ -40,6 +40,22 @@ describe("actor.shell.parse: spawn variants", () => {
     expect(cmd.operation.prompt).toContain("C:\\Users")
     expect(cmd.operation.prompt).toContain("$foo")
   })
+
+  test("run with quoted heredoc delimiter <<'PROMPT' parses (original parse-error repro)", async () => {
+    const script = [
+      `actor run general "Implement Task 1" <<'PROMPT'`,
+      `Add submodule fields to workspace_repos.`,
+      `Columns: parent_workspace_repo_id, submodule_path.`,
+      `PROMPT`,
+    ].join("\n")
+    const out = await parse(script)
+    const cmd = out[0] as { operation: { action: string; subagent_type: string; prompt: string } }
+    expect(cmd.operation.action).toBe("run")
+    expect(cmd.operation.subagent_type).toBe("general")
+    expect(cmd.operation.prompt).toBe(
+      "Add submodule fields to workspace_repos.\nColumns: parent_workspace_repo_id, submodule_path.",
+    )
+  })
 })
 
 describe("actor.shell.parse: --model flag", () => {

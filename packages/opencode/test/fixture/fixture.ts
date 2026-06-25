@@ -44,6 +44,21 @@ export async function cleanupTmpdir(dir: string, cleanup = clean) {
   })
 }
 
+function outsideGitTmpRoot() {
+  if (process.platform === "win32") return os.tmpdir()
+  return "/tmp"
+}
+
+/** Tmpdirs under cwd inherit the parent repo's worktree; use this when tests need a non-git project. */
+export function withTmpdirOutsideGit<T>(fn: () => Promise<T>): Promise<T> {
+  const prev = process.env["MIMOCODE_TEST_TMPDIR_ROOT"]
+  process.env["MIMOCODE_TEST_TMPDIR_ROOT"] = outsideGitTmpRoot()
+  return fn().finally(() => {
+    if (prev !== undefined) process.env["MIMOCODE_TEST_TMPDIR_ROOT"] = prev
+    else delete process.env["MIMOCODE_TEST_TMPDIR_ROOT"]
+  })
+}
+
 async function stop(dir: string) {
   if (!(await exists(dir))) return
   await $`git fsmonitor--daemon stop`.cwd(dir).quiet().nothrow()
@@ -51,11 +66,14 @@ async function stop(dir: string) {
 
 type TmpDirOptions<T> = {
   git?: boolean
+  outsideGit?: boolean
   config?: Partial<Config.Info>
   init?: (dir: string) => Promise<T>
   dispose?: (dir: string) => Promise<T>
 }
 export async function tmpdir<T>(options?: TmpDirOptions<T>) {
+  const prevRoot = options?.outsideGit ? process.env["MIMOCODE_TEST_TMPDIR_ROOT"] : undefined
+  if (options?.outsideGit) process.env["MIMOCODE_TEST_TMPDIR_ROOT"] = outsideGitTmpRoot()
   const dirpath = sanitizePath(
     path.join(process.env["MIMOCODE_TEST_TMPDIR_ROOT"] ?? os.tmpdir(), "mimocode-test-" + Math.random().toString(36).slice(2)),
   )
@@ -86,6 +104,10 @@ export async function tmpdir<T>(options?: TmpDirOptions<T>) {
       } finally {
         if (options?.git) await stop(realpath).catch(() => undefined)
         await cleanupTmpdir(realpath)
+        if (options?.outsideGit) {
+          if (prevRoot !== undefined) process.env["MIMOCODE_TEST_TMPDIR_ROOT"] = prevRoot
+          else delete process.env["MIMOCODE_TEST_TMPDIR_ROOT"]
+        }
       }
     },
     path: realpath,
@@ -95,8 +117,19 @@ export async function tmpdir<T>(options?: TmpDirOptions<T>) {
 }
 
 /** Effectful scoped tmpdir. Cleaned up when the scope closes. Make sure these stay in sync */
-export function tmpdirScoped(options?: { git?: boolean; config?: Partial<Config.Info> }) {
+export function tmpdirScoped(options?: { git?: boolean; config?: Partial<Config.Info>; outsideGit?: boolean }) {
   return Effect.gen(function* () {
+    const prevRoot = options?.outsideGit ? process.env["MIMOCODE_TEST_TMPDIR_ROOT"] : undefined
+    if (options?.outsideGit) process.env["MIMOCODE_TEST_TMPDIR_ROOT"] = outsideGitTmpRoot()
+    if (options?.outsideGit) {
+      yield* Effect.addFinalizer(() =>
+        Effect.sync(() => {
+          if (prevRoot !== undefined) process.env["MIMOCODE_TEST_TMPDIR_ROOT"] = prevRoot
+          else delete process.env["MIMOCODE_TEST_TMPDIR_ROOT"]
+        }),
+      )
+    }
+
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner
     const dirpath = sanitizePath(
       path.join(process.env["MIMOCODE_TEST_TMPDIR_ROOT"] ?? os.tmpdir(), "mimocode-test-" + Math.random().toString(36).slice(2)),
@@ -150,7 +183,7 @@ export const provideInstance =
 
 export function provideTmpdirInstance<A, E, R>(
   self: (path: string) => Effect.Effect<A, E, R>,
-  options?: { git?: boolean; config?: Partial<Config.Info> },
+  options?: { git?: boolean; config?: Partial<Config.Info>; outsideGit?: boolean },
 ) {
   return Effect.gen(function* () {
     const path = yield* tmpdirScoped(options)

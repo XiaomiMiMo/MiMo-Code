@@ -67,6 +67,14 @@ export const Flag = {
   MIMOCODE_DISABLE_MOUSE: truthy("MIMOCODE_DISABLE_MOUSE"),
   MIMOCODE_OUTPUT_LENGTH_CONTINUATION_LIMIT: number("MIMOCODE_OUTPUT_LENGTH_CONTINUATION_LIMIT") ?? 3,
   MIMOCODE_INVALID_OUTPUT_CONTINUATION_LIMIT: number("MIMOCODE_INVALID_OUTPUT_CONTINUATION_LIMIT") ?? 2,
+  MIMOCODE_TEXT_TOOL_CALL_RETRY_LIMIT: number("MIMOCODE_TEXT_TOOL_CALL_RETRY_LIMIT") ?? 2,
+
+  // Sliding-window n-gram repetition detection for streamed reasoning + text.
+  // An n-gram of size N appearing REPEAT_THRESHOLD times within the last
+  // WINDOW_TOKENS tokens triggers recovery (remind → replan → terminate).
+  MIMOCODE_TEXT_NGRAM_N: number("MIMOCODE_TEXT_NGRAM_N") ?? 6,
+  MIMOCODE_TEXT_REPEAT_THRESHOLD: number("MIMOCODE_TEXT_REPEAT_THRESHOLD") ?? 3,
+  MIMOCODE_TEXT_WINDOW_TOKENS: number("MIMOCODE_TEXT_WINDOW_TOKENS") ?? 500,
 
   // Caps applied to image attachments before a prompt is sent. Both default to
   // undefined (no limit). MIMOCODE_MAX_PROMPT_IMAGES bounds how many images may
@@ -145,8 +153,18 @@ export const Flag = {
 
   // Evaluated at access time (not module load) because tests, the CLI, and
   // external tooling set these env vars at runtime.
+
+  // Disables compose-agent-internal skills (e.g. compose:plan, compose:review,
+  // compose:tdd). These are hidden workflow-orchestration skills only visible
+  // to the compose agent and are NOT part of builtin skills.
   get MIMOCODE_DISABLE_COMPOSE_SKILLS() {
     return truthy("MIMOCODE_DISABLE_COMPOSE_SKILLS")
+  },
+  // Disables user-facing builtin skills shipped with the binary (e.g.
+  // self-extend). Does not affect compose skills — the two sets are
+  // independent and non-overlapping.
+  get MIMOCODE_DISABLE_BUILTIN_SKILLS() {
+    return truthy("MIMOCODE_DISABLE_BUILTIN_SKILLS")
   },
   get MIMOCODE_DISABLE_PROJECT_CONFIG() {
     return truthy("MIMOCODE_DISABLE_PROJECT_CONFIG")

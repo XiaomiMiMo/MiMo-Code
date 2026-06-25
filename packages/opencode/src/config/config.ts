@@ -27,6 +27,7 @@ import { InstanceRef } from "@/effect/instance-ref"
 import { zod, ZodOverride } from "@/util/effect-zod"
 import { ConfigAgent } from "./agent"
 import { ConfigCommand } from "./command"
+import { ConfigCompose } from "./compose"
 import { ConfigFormatter } from "./formatter"
 import { ConfigHistory } from "./history"
 import { ConfigLayout } from "./layout"
@@ -104,6 +105,7 @@ const InfoSchema = Schema.Struct({
     description: "Command configuration, see https://opencode.ai/docs/commands",
   }),
   skills: Schema.optional(ConfigSkills.Info).annotate({ description: "Additional skill folder paths" }),
+  compose: Schema.optional(ConfigCompose.Info).annotate({ description: "Compose mode configuration" }),
   watcher: Schema.optional(
     Schema.Struct({
       ignore: Schema.optional(Schema.mutable(Schema.Array(Schema.String))),
@@ -299,6 +301,12 @@ const InfoSchema = Schema.Struct({
           }),
           open_notes: Schema.optional(PositiveInt).annotate({
             description: "Token cap for §11 Open notes section of checkpoint.md (writer-side budget validation). Default: 800.",
+          }),
+          recent_user: Schema.optional(NonNegativeInt).annotate({
+            description: "Token cap for the recent user input section (verbatim user messages from the live DB, FIFO eviction). Default: 16000. Set 0 to disable.",
+          }),
+          recent_user_per_msg: Schema.optional(PositiveInt).annotate({
+            description: "Per-message cap inside recent user input section; oversized messages get head/tail truncation with messageID elision marker. Default: 2000.",
           }),
         }),
       ).annotate({

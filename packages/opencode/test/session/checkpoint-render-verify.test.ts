@@ -85,7 +85,7 @@ describe("v5 verify (visual)", () => {
         const root = yield* memory.root()
         const sessDir = path.join(root, "sessions", sess.id)
         const taskDir = path.join(root, "sessions", sess.id, "tasks", t2.id)
-        const projDir = path.join(root, "projects", "global")
+        const projDir = path.join(root, "projects", Instance.project.id)
 
         yield* Effect.promise(async () => {
           await fs.mkdir(sessDir, { recursive: true })

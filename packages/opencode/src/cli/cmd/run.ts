@@ -103,9 +103,9 @@ function grep(info: ToolProps<typeof GrepTool>) {
 }
 
 function read(info: ToolProps<typeof ReadTool>) {
-  const file = normalizePath(info.input.filePath)
+  const file = normalizePath(info.input.file_path)
   const pairs = Object.entries(info.input).filter(([key, value]) => {
-    if (key === "filePath") return false
+    if (key === "file_path") return false
     return typeof value === "string" || typeof value === "number" || typeof value === "boolean"
   })
   const description = pairs.length ? `[${pairs.map(([key, value]) => `${key}=${value}`).join(", ")}]` : undefined
@@ -120,7 +120,7 @@ function write(info: ToolProps<typeof WriteTool>) {
   block(
     {
       icon: "←",
-      title: `Write ${normalizePath(info.input.filePath)}`,
+      title: `Write ${normalizePath(info.input.file_path)}`,
     },
     info.part.state.status === "completed" ? info.part.state.output : undefined,
   )
@@ -134,7 +134,7 @@ function webfetch(info: ToolProps<typeof WebFetchTool>) {
 }
 
 function edit(info: ToolProps<typeof EditTool>) {
-  const title = normalizePath(info.input.filePath)
+  const title = normalizePath(info.input.file_path)
   const diff = info.metadata.diff
   block(
     {

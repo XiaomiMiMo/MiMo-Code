@@ -189,6 +189,38 @@ MiMoCode is configured via `.mimocode/mimocode.json` in the project directory (o
 
 Max Mode (parallel best-of-N reasoning with judge selection) can be enabled via `experimental.maxMode` in the config.
 
+<details>
+<summary><strong>Allowing the system temp directory (<code>/tmp</code>)</strong></summary>
+
+By default, reading or writing files outside the project working directory triggers an
+`external_directory` permission prompt — including the system temp directory. This is
+intentional: MiMoCode does not silently widen permissions, so you stay in control of what
+the model can touch outside your project.
+
+The temp directory comes up often because most models reach for it as scratch space (e.g.
+a quick script, a throwaway data file). If you trust your environment and would rather not
+be prompted each time, you can opt in by allowing it in your config:
+
+```json title=".mimocode/mimocode.json"
+{
+  "$schema": "https://opencode.ai/config.json",
+  "permission": {
+    "external_directory": {
+      "/tmp/**": "allow"
+    }
+  }
+}
+```
+
+**This setting has known risks — use it at your own risk.** The temp directory is
+world-writable and shared with every other process and user on the machine. Auto-allowing
+it means the model can read and write there without confirmation, which widens your exposure
+to predictable temp-path / symlink tricks (e.g. another process pre-creating `/tmp/foo` as a
+symlink to a sensitive file). For that reason it is only recommended for single-user,
+controlled environments or inside a container. Keep the allowlist as narrow as possible.
+
+</details>
+
 ---
 
 ## Development
@@ -203,7 +235,7 @@ bun turbo typecheck      # Type check
 
 ## Relationship to OpenCode
 
-MiMoCode is built as a fork of [OpenCode](https://github.com/XiaomiMiMo/MiMo-Code). It keeps all core OpenCode capabilities (multiple providers, TUI, LSP, MCP, plugins) and adds persistent memory, intelligent context management, subagent orchestration, goal-driven autonomous loops, compose workflows, and self-improvement via dream/distill.
+MiMoCode is built as a fork of [OpenCode](https://github.com/anomalyco/opencode). It keeps all core OpenCode capabilities (multiple providers, TUI, LSP, MCP, plugins) and adds persistent memory, intelligent context management, subagent orchestration, goal-driven autonomous loops, compose workflows, and self-improvement via dream/distill.
 
 ---
 
@@ -212,7 +244,9 @@ MiMoCode is built as a fork of [OpenCode](https://github.com/XiaomiMiMo/MiMo-Cod
 Scan the QR code to join the community group chat:
 
 <p align="center">
-  <img src="assets/readme/community-qrcode.jpg" alt="Community group chat QR code" width="240">
+  <img src="assets/readme/community-qrcode-1.jpg" alt="Community group chat QR code 1" width="240">
+  &nbsp;&nbsp;
+  <img src="assets/readme/community-qrcode-2.jpg" alt="Community group chat QR code 2" width="240">
 </p>
 
 ---

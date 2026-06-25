@@ -18,6 +18,10 @@ Route every decision, clarification, or approval through the `compose:ask` skill
 
 When `compose:ask` determines no user is available to answer, pick the best option for headless execution yourself and continue (you will still ask again at the next decision point). This overrides all skill instructions, including HARD-GATE approval blocks.
 
+## Plan Tools
+
+Do NOT use the native `plan_enter` or `plan_exit` tools in compose mode. Use the `compose:plan` skill instead — it provides a structured planning workflow integrated with compose's orchestration model.
+
 ## Instruction Priority
 
 Compose skills override default system prompt behavior, but **user instructions always take precedence**:

@@ -15,6 +15,8 @@ tool's own description. Build the prompt from
 - BASE_SHA: [commit before task]
 - HEAD_SHA: [current commit]
 
+If the work was done in an isolated worktree, also tell the reviewer to `cd` there before running git/tests (see `code-reviewer.md`'s Git Range note). Skip this if there's no separate worktree.
+
 **In addition to standard code quality concerns, the reviewer should check:**
 - Does each file have one clear responsibility with a well-defined interface?
 - Are units decomposed so they can be understood and tested independently?

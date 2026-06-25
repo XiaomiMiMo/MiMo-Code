@@ -34,10 +34,24 @@ export const WebCommand = cmd({
   builder: (yargs) => withNetworkOptions(yargs),
   describe: "start mimocode server and open web interface",
   handler: async (args) => {
+    const opts = await resolveNetworkOptions(args)
+    const isLoopback = opts.hostname === "127.0.0.1" || opts.hostname === "localhost" || opts.hostname === "::1"
+
+    if (!isLoopback && !Flag.MIMOCODE_SERVER_PASSWORD && !opts.noAuth) {
+      UI.println(
+        UI.Style.TEXT_DANGER_BOLD +
+          "ERROR: Binding to non-loopback address without MIMOCODE_SERVER_PASSWORD is not allowed.",
+      )
+      UI.println(
+        UI.Style.TEXT_DANGER_BOLD + "Set MIMOCODE_SERVER_PASSWORD or pass --no-auth to override (DANGEROUS).",
+      )
+      process.exit(1)
+    }
+
     if (!Flag.MIMOCODE_SERVER_PASSWORD) {
       UI.println(UI.Style.TEXT_WARNING_BOLD + "!  MIMOCODE_SERVER_PASSWORD is not set; server is unsecured.")
     }
-    const opts = await resolveNetworkOptions(args)
+
     const server = await Server.listen(opts)
     UI.empty()
     UI.println(UI.logo("  "))

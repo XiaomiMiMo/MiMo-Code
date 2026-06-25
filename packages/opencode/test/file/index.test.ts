@@ -6,11 +6,15 @@ import fs from "fs/promises"
 import { File } from "../../src/file"
 import { Instance } from "../../src/project/instance"
 import { Filesystem } from "../../src/util"
-import { provideInstance, tmpdir } from "../fixture/fixture"
+import { provideInstance, tmpdir, withTmpdirOutsideGit } from "../fixture/fixture"
 
 afterEach(async () => {
   await Instance.disposeAll()
 })
+
+// Tests that verify path traversal rejection need tmpdirs outside any git repo.
+// Otherwise project detection finds the parent .git, sets worktree to the repo
+// root, and containsPath allows "../" paths that stay within the worktree.
 
 const init = () => run(File.Service.use((svc) => svc.init()))
 const run = <A, E>(eff: Effect.Effect<A, E, File.Service>) =>
@@ -384,27 +388,29 @@ describe("file/index Filesystem patterns", () => {
   })
 
   describe("Path security", () => {
-    test("throws for paths outside project directory", async () => {
-      await using tmp = await tmpdir()
+    test("throws for paths outside project directory", () =>
+      withTmpdirOutsideGit(async () => {
+        await using tmp = await tmpdir()
 
-      await Instance.provide({
-        directory: tmp.path,
-        fn: async () => {
-          await expect(read("../outside.txt")).rejects.toThrow("Access denied")
-        },
-      })
-    })
+        await Instance.provide({
+          directory: tmp.path,
+          fn: async () => {
+            await expect(read("../outside.txt")).rejects.toThrow("Access denied")
+          },
+        })
+      }))
 
-    test("throws for paths outside project directory", async () => {
-      await using tmp = await tmpdir()
+    test("throws for paths outside project directory", () =>
+      withTmpdirOutsideGit(async () => {
+        await using tmp = await tmpdir()
 
-      await Instance.provide({
-        directory: tmp.path,
-        fn: async () => {
-          await expect(read("../outside.txt")).rejects.toThrow("Access denied")
-        },
-      })
-    })
+        await Instance.provide({
+          directory: tmp.path,
+          fn: async () => {
+            await expect(read("../outside.txt")).rejects.toThrow("Access denied")
+          },
+        })
+      }))
   })
 
   describe("status()", () => {
@@ -488,17 +494,18 @@ describe("file/index Filesystem patterns", () => {
       })
     })
 
-    test("returns empty for non-git project", async () => {
-      await using tmp = await tmpdir()
+    test("returns empty for non-git project", () =>
+      withTmpdirOutsideGit(async () => {
+        await using tmp = await tmpdir()
 
-      await Instance.provide({
-        directory: tmp.path,
-        fn: async () => {
-          const result = await status()
-          expect(result).toEqual([])
-        },
-      })
-    })
+        await Instance.provide({
+          directory: tmp.path,
+          fn: async () => {
+            const result = await status()
+            expect(result).toEqual([])
+          },
+        })
+      }))
 
     test("returns empty for clean repo", async () => {
       await using tmp = await tmpdir({ git: true })

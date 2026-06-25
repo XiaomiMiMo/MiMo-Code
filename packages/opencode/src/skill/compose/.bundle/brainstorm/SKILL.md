@@ -33,42 +33,22 @@ You MUST create a task for each of these items and complete them in order:
 3. **Ask clarifying questions** — one at a time, understand purpose/constraints/success criteria
 4. **Propose 2-3 approaches** — with trade-offs and your recommendation
 5. **Present design** — in sections scaled to their complexity, get user approval after each section
-6. **Write design doc** (optional, multi-step features only) — save to `docs/compose/specs/YYYY-MM-DD-<topic>-design.md` and commit. For single-step fixes or small changes, keep the design in conversation context only.
+6. **Write design doc** (optional, multi-step features only) — save to the `specs/` directory given in the `<compose_docs_dir>` block of your prompt, as `YYYY-MM-DD-<topic>-design.md`, and commit. For single-step fixes or small changes, keep the design in conversation context only.
 7. **Spec self-review** (if doc written) — quick inline check for placeholders, contradictions, ambiguity, scope (see below)
 8. **User reviews written spec** (if doc written) — ask user to review the spec file before proceeding
 9. **Transition to implementation** — invoke compose:plan to create implementation plan
 
 ## Process Flow
 
-```dot
-digraph brainstorm {
-    "Explore project context" [shape=box];
-    "Visual questions ahead?" [shape=diamond];
-    "Offer Visual Companion\n(own message, no other content)" [shape=box];
-    "Ask clarifying questions" [shape=box];
-    "Propose 2-3 approaches" [shape=box];
-    "Present design sections" [shape=box];
-    "User approves design?" [shape=diamond];
-    "Write design doc" [shape=box];
-    "Spec self-review\n(fix inline)" [shape=box];
-    "User reviews spec?" [shape=diamond];
-    "Invoke compose:plan" [shape=doublecircle];
-
-    "Explore project context" -> "Visual questions ahead?";
-    "Visual questions ahead?" -> "Offer Visual Companion\n(own message, no other content)" [label="yes"];
-    "Visual questions ahead?" -> "Ask clarifying questions" [label="no"];
-    "Offer Visual Companion\n(own message, no other content)" -> "Ask clarifying questions";
-    "Ask clarifying questions" -> "Propose 2-3 approaches";
-    "Propose 2-3 approaches" -> "Present design sections";
-    "Present design sections" -> "User approves design?";
-    "User approves design?" -> "Present design sections" [label="no, revise"];
-    "User approves design?" -> "Write design doc" [label="yes"];
-    "Write design doc" -> "Spec self-review\n(fix inline)";
-    "Spec self-review\n(fix inline)" -> "User reviews spec?";
-    "User reviews spec?" -> "Write design doc" [label="changes requested"];
-    "User reviews spec?" -> "Invoke compose:plan" [label="approved"];
-}
-```
+- **Explore project context**
+- **Visual questions ahead?** — Yes → offer Visual Companion (own message, no other content)
+- **Ask clarifying questions**
+- **Propose 2-3 approaches**
+- **Present design sections**
+- **User approves design?** — No → revise, back to present design sections
+- **Write design doc**
+- **Spec self-review** (fix inline)
+- **User reviews spec?** — Changes requested → back to write design doc / Approved → **invoke compose:plan**
 
 **The terminal state is invoking compose:plan.** Do NOT invoke frontend-design, mcp-builder, or any other implementation skill. The ONLY skill you invoke after brainstorming is compose:plan.
 
@@ -125,7 +105,7 @@ digraph brainstorm {
 **Documentation (optional, multi-step features only):**
 
 For features with multiple tasks or significant architectural decisions:
-- Write the validated design (spec) to `docs/compose/specs/YYYY-MM-DD-<topic>-design.md`
+- Write the validated design (spec) to the `specs/` directory given in `<compose_docs_dir>`, as `YYYY-MM-DD-<topic>-design.md`
   - (User preferences for spec location override this default)
 - Use elements-of-style:writing-clearly-and-concisely skill if available
 - Commit the design document to git

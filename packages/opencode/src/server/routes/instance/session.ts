@@ -30,8 +30,17 @@ import { lazy } from "@/util/lazy"
 import { Bus } from "@/bus"
 import { NamedError } from "@mimo-ai/shared/util/error"
 import { jsonRequest, runRequest } from "./trace"
+import { RateLimitMiddleware } from "../../rate-limit"
 
 const log = Log.create({ service: "server" })
+
+// Cadence of the keep-alive whitespace written on the POST /:sessionID/message
+// stream while a turn is in flight. Matches the 10s SSE heartbeat in
+// event.ts/global.ts. Read per-request (not memoized) so it can be tuned at
+// runtime; smaller values are useful in tests.
+function promptHeartbeatIntervalMs() {
+  return Number(process.env["MIMOCODE_PROMPT_HEARTBEAT_INTERVAL_MS"]) || 10_000
+}
 
 function taskToTodo(t: Task) {
   const status =
@@ -698,8 +707,9 @@ export const SessionRoutes = lazy(() =>
               .number()
               .int()
               .min(0)
+              .max(1000)
               .optional()
-              .meta({ description: "Maximum number of messages to return" }),
+              .meta({ description: "Maximum number of messages to return (max 1000)" }),
             before: z
               .string()
               .optional()
@@ -744,7 +754,7 @@ export const SessionRoutes = lazy(() =>
             Effect.gen(function* () {
               const session = yield* Session.Service
               yield* session.get(sessionID)
-              return yield* session.messages({ sessionID, agentID })
+              return yield* session.messages({ sessionID, agentID, limit: 1000 })
             }),
           )
           return c.json(messages)
@@ -993,14 +1003,34 @@ export const SessionRoutes = lazy(() =>
             return
           }
           signal.addEventListener("abort", onClientDisconnect, { once: true })
+          // Keep the response alive while the turn is in flight. A turn can sit
+          // silent for a long time — most notably while the `question` tool
+          // blocks on an un-timed Deferred waiting for a human reply (the Bun
+          // server itself never times out: adapter.bun.ts idleTimeout:0). A
+          // client with its own request timeout (e.g. the external `mimo run`
+          // driver's per-turn budget) would otherwise see a dead connection and
+          // abort with "error sending request for url". Periodic whitespace
+          // resets the client's idle timer; whitespace is JSON-insignificant,
+          // so the trailing JSON.stringify(msg) still parses as the whole body
+          // (clients JSON.parse the full body, which tolerates leading
+          // whitespace). Mirrors the 10s SSE heartbeat in event.ts/global.ts.
+          const heartbeat = setInterval(() => {
+            void stream.write(" ")
+          }, promptHeartbeatIntervalMs())
           try {
             const msg = await runRequest(
               "SessionRoutes.prompt",
               c,
               SessionPrompt.Service.use((svc) => svc.prompt({ ...body, sessionID })),
             )
+            // Safety invariant: no await/yield between this write and the
+            // clearInterval below (reached synchronously via finally) — else the
+            // interval could fire and append a stray space AFTER the JSON,
+            // breaking the "JSON is the whole body" contract. Leading spaces are
+            // JSON-insignificant; a trailing one would not be.
             void stream.write(JSON.stringify(msg))
           } finally {
+            clearInterval(heartbeat)
             signal.removeEventListener("abort", onClientDisconnect)
           }
         })
@@ -1008,6 +1038,7 @@ export const SessionRoutes = lazy(() =>
     )
     .post(
       "/:sessionID/prompt_async",
+      RateLimitMiddleware({ windowMs: 60_000, max: 20, keyPrefix: "prompt_async" }),
       describeRoute({
         summary: "Send async message",
         description:
@@ -1122,6 +1153,7 @@ export const SessionRoutes = lazy(() =>
     )
     .post(
       "/:sessionID/shell",
+      RateLimitMiddleware({ windowMs: 60_000, max: 20, keyPrefix: "shell" }),
       describeRoute({
         summary: "Run shell command",
         description: "Execute a shell command within the session context and return the AI's response.",

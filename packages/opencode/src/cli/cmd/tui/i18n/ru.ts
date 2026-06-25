@@ -87,7 +87,7 @@ export const dict = {
   "tui.tips.command_palette":
     "Нажмите {highlight}Ctrl+P{/highlight}, чтобы посмотреть все доступные действия и команды",
   "tui.tips.login":
-    "Выполните {highlight}/login{/highlight}, чтобы войти и использовать ваш тарифный план токенов",
+    "Выполните {highlight}/login{/highlight}, чтобы войти и использовать Token Plan или настроить собственный API-ключ",
   "tui.tips.connect":
     "Выполните {highlight}/connect{/highlight}, чтобы выбрать LLM-провайдера и добавить API-ключи",
   "tui.tips.leader":
@@ -262,6 +262,18 @@ export const dict = {
   "tui.command.category.internal": "Внутренние",
   "tui.command.category.external": "Внешние",
 
+  // Built-in slash command descriptions
+  "tui.slash.init.description": "пошаговая настройка AGENTS.md",
+  "tui.slash.review.description": "просмотр изменений [commit|branch|pr], по умолчанию незакоммиченные",
+  "tui.slash.dream.description":
+    "вручную консолидировать память проекта из memory-файлов и сырой траектории",
+  "tui.slash.distill.description":
+    "найти повторяющиеся workflow в недавней работе и упаковать их в skills, субагентов или команды",
+  "tui.slash.goal.description":
+    "задать цель с условием остановки; выполняется, пока судья не подтвердит. /goal clear для отмены",
+  "tui.slash.deep-research.description":
+    "глубокий многоисточниковый проверенный отчёт (запускает workflow deep-research)",
+
   // Language switching
   "tui.command.language.switch.title": "Сменить язык",
   "tui.command.language.switch.description": "Изменить язык интерфейса",
@@ -318,6 +330,16 @@ export const dict = {
   "tui.command.consent.revoke.title": "Отозвать согласие на бесплатную модель",
   "tui.consent.revoked": "Согласие на бесплатную модель отозвано — потребуется принять снова",
   "tui.dialog.select.placeholder": "Поиск",
+  "tui.dialog.model.login_hint": "Подсказка: выполните /login для входа перед сменой модели",
+  "tui.model.mimo_auto.name": "MiMo Auto (MiMo-V2.5, временно бесплатно)",
+  "tui.dialog.token_plan.title": "Оформите Token Plan или подождите в очереди",
+  "tui.dialog.token_plan.line1":
+    "В бесплатном режиме запросы сейчас в очереди. Для стабильного и качественного сервиса",
+  "tui.dialog.token_plan.subscribe": "оформите ",
+  "tui.dialog.token_plan.link": "MiMo Token Plan",
+  "tui.dialog.token_plan.link_suffix": ".",
+  "tui.dialog.token_plan.line3": "Вы также можете выполнить /login, чтобы настроить собственный API-ключ.",
+  "tui.dialog.token_plan.confirm": "Понятно",
   "tui.dialog.select.no_results": "Ничего не найдено",
   "tui.dialog.prompt.placeholder": "Введите текст",
   "tui.dialog.prompt.busy": "Выполняется...",
@@ -467,6 +489,14 @@ export const dict = {
     "Вход не требуется — просто запустите mimo. Для платных/премиум-моделей выберите вход через браузер MiMo.",
   "cli.providers.mimo_login.decrypt_retry": "Ошибка расшифровки, повторите попытку (осталось попыток: {remaining})",
   "cli.providers.mimo_login.decrypt_exhausted": "Ошибка расшифровки, превышено максимальное число попыток",
+
+  // Question i18n — plan_enter
+  "tui.question.plan_enter.question": "Переключиться в режим plan для структурированного планирования?",
+  "tui.question.plan_enter.header": "Вход в план",
+  "tui.question.plan_enter.option.0.label": "Да",
+  "tui.question.plan_enter.option.0.description": "Переключиться на агента plan для планирования в режиме чтения",
+  "tui.question.plan_enter.option.1.label": "Нет",
+  "tui.question.plan_enter.option.1.description": "Остаться в текущем режиме",
 
   // Question i18n — plan_exit
   "tui.question.plan_exit.question": "План {{plan}} завершён. Переключиться на агента build и начать реализацию?",

@@ -9,6 +9,18 @@ export type Err = ReturnType<NamedError["toObject"]>
 // literal error string kind of sucks, but it is the simplest for now.
 export const GO_UPSELL_MESSAGE = "Free usage exceeded, subscribe to Go https://opencode.ai/go"
 
+// Shared with the TUI: does this retry status message indicate a rate-limit /
+// queue ("too many requests" / HTTP 429) condition? retryable() normalizes
+// every 429 variant into a message containing one of these substrings.
+export function isRateLimitMessage(message: string): boolean {
+  const lower = message.toLowerCase()
+  return (
+    lower.includes("too many requests") ||
+    lower.includes("rate limit") ||
+    lower.includes("rate increased too quickly")
+  )
+}
+
 export const RETRY_INITIAL_DELAY = 2000
 export const RETRY_BACKOFF_FACTOR = 2
 export const RETRY_MAX_DELAY_NO_HEADERS = 30_000 // 30 seconds

@@ -87,7 +87,7 @@ export const dict = {
   "tui.tips.command_palette":
     "Pulsa {highlight}Ctrl+P{/highlight} para ver todas las acciones y comandos disponibles",
   "tui.tips.login":
-    "Ejecuta {highlight}/login{/highlight} para iniciar sesión y usar tu plan de tokens",
+    "Ejecuta {highlight}/login{/highlight} para iniciar sesión y usar un Token Plan o configurar tu propia API key",
   "tui.tips.connect":
     "Ejecuta {highlight}/connect{/highlight} para elegir tu proveedor LLM y añadir claves API",
   "tui.tips.leader":
@@ -259,6 +259,18 @@ export const dict = {
   "tui.command.category.internal": "Interno",
   "tui.command.category.external": "Externo",
 
+  // Built-in slash command descriptions
+  "tui.slash.init.description": "configuración guiada de AGENTS.md",
+  "tui.slash.review.description": "revisar cambios [commit|branch|pr], por defecto sin confirmar",
+  "tui.slash.dream.description":
+    "consolidar manualmente la memoria del proyecto desde archivos memory y la trayectoria en bruto",
+  "tui.slash.distill.description":
+    "encontrar flujos repetidos en el trabajo reciente y empaquetarlos en skills, subagentes o comandos",
+  "tui.slash.goal.description":
+    "definir un objetivo con condición de parada; se ejecuta hasta que un juez confirme. /goal clear para abortar",
+  "tui.slash.deep-research.description":
+    "informe de investigación profunda multi-fuente y verificado (ejecuta el workflow deep-research)",
+
   // Language switching
   "tui.command.language.switch.title": "Cambiar idioma",
   "tui.command.language.switch.description": "Cambiar el idioma de la interfaz",
@@ -314,6 +326,16 @@ export const dict = {
   "tui.command.consent.revoke.title": "Revocar el acuerdo de modelo gratuito",
   "tui.consent.revoked": "Acuerdo de modelo gratuito revocado: se te pedirá aceptarlo de nuevo",
   "tui.dialog.select.placeholder": "Buscar",
+  "tui.dialog.model.login_hint": "Consejo: ejecuta /login para iniciar sesión antes de cambiar de modelo",
+  "tui.model.mimo_auto.name": "MiMo Auto (MiMo-V2.5, gratis por tiempo limitado)",
+  "tui.dialog.token_plan.title": "Suscríbete a un Token Plan o espera en la cola",
+  "tui.dialog.token_plan.line1":
+    "En el modo gratuito, las solicitudes están en cola. Para un servicio estable y de calidad,",
+  "tui.dialog.token_plan.subscribe": "suscríbete a ",
+  "tui.dialog.token_plan.link": "MiMo Token Plan",
+  "tui.dialog.token_plan.link_suffix": ".",
+  "tui.dialog.token_plan.line3": "También puedes ejecutar /login para configurar tu propia clave API.",
+  "tui.dialog.token_plan.confirm": "Entendido",
   "tui.dialog.select.no_results": "No se encontraron resultados",
   "tui.dialog.prompt.placeholder": "Introduce texto",
   "tui.dialog.prompt.busy": "Trabajando...",
@@ -441,6 +463,14 @@ export const dict = {
   "tui.command.tips.toggle.hide": "Ocultar sugerencias",
   "tui.command.plugins.list.title": "Plugins",
   "tui.command.plugins.install.title": "Instalar plugin",
+
+  // Question i18n — plan_enter
+  "tui.question.plan_enter.question": "¿Desea cambiar al modo plan para una planificación estructurada?",
+  "tui.question.plan_enter.header": "Entrar al plan",
+  "tui.question.plan_enter.option.0.label": "Sí",
+  "tui.question.plan_enter.option.0.description": "Cambiar al agente plan para planificación de solo lectura",
+  "tui.question.plan_enter.option.1.label": "No",
+  "tui.question.plan_enter.option.1.description": "Permanecer en el modo actual",
 
   // Question i18n — plan_exit
   "tui.question.plan_exit.question": "El plan en {{plan}} está completo. ¿Desea cambiar al agente build para comenzar la implementación?",

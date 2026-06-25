@@ -16,7 +16,7 @@ Assume they are a skilled developer, but know almost nothing about our toolset o
 
 **Context:** If working in an isolated worktree, it should have been created via the `compose:worktree` skill at execution time.
 
-**Save plans to:** `docs/compose/plans/YYYY-MM-DD-<feature-name>.md`
+**Save plans to:** the `plans/` directory given in the `<compose_docs_dir>` block of your prompt, as `YYYY-MM-DD-<feature-name>.md`.
 - (User preferences for plan location override this default)
 
 ## Scope Check
@@ -33,6 +33,15 @@ Before defining tasks, map out which files will be created or modified and what 
 - In existing codebases, follow established patterns. If the codebase uses large files, don't unilaterally restructure - but if a file you're modifying has grown unwieldy, including a split in the plan is reasonable.
 
 This structure informs the task decomposition. Each task should produce self-contained changes that make sense independently.
+
+## Task Right-Sizing
+
+A task is the smallest unit that carries its own test cycle and is worth a
+fresh reviewer's gate. When drawing task boundaries:
+
+- Fold setup, configuration, scaffolding, and documentation steps into the task whose deliverable needs them
+- Split only where a reviewer could meaningfully reject one task while approving its neighbor
+- Each task ends with an independently testable deliverable
 
 ## Bite-Sized Task Granularity
 
@@ -58,6 +67,13 @@ This structure informs the task decomposition. Each task should produce self-con
 
 **Tech Stack:** [Key technologies/libraries]
 
+## Global Constraints
+
+[Project-wide requirements that bind EVERY task — version floors, dependency
+limits, naming and copy rules, platform requirements, exact values. One line
+each, copied verbatim from the spec. Implementers and reviewers downstream
+implicitly inherit this section without being told individually.]
+
 ---
 ```
 
@@ -75,6 +91,12 @@ This structure informs the task decomposition. Each task should produce self-con
 - Create: `exact/path/to/file.py`
 - Modify: `exact/path/to/existing.py:123-145`
 - Test: `tests/exact/path/to/test.py`
+
+**Interfaces:**
+- Consumes: [what this task uses from earlier tasks — exact signatures, types]
+- Produces: [what later tasks rely on — exact function names, parameter and
+  return types. An implementer sees only its own task; this block is how it
+  learns the names and types neighboring tasks use.]
 
 - [ ] **Step 1: Write the failing test**
 

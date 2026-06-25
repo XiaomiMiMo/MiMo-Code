@@ -60,17 +60,91 @@ test("build agent has correct default properties", async () => {
   })
 })
 
-test("plan agent denies edits except .mimocode/plans/*", async () => {
+test("plan denies edits except plan files (via runtimePermission)", async () => {
   await using tmp = await tmpdir()
   await Instance.provide({
     directory: tmp.path,
     fn: async () => {
       const plan = await load(tmp.path, (svc) => svc.get("plan"))
       expect(plan).toBeDefined()
-      // Wildcard is denied
-      expect(evalPerm(plan, "edit")).toBe("deny")
-      // But specific path is allowed
-      expect(Permission.evaluate("edit", ".mimocode/plans/foo.md", plan!.permission).action).toBe("allow")
+      const rt = Agent.runtimePermission(plan!, [])
+      expect(Permission.evaluate("edit", "*", rt).action).toBe("deny")
+      expect(Permission.evaluate("edit", ".mimocode/plans/foo.md", rt).action).toBe("allow")
+    },
+  })
+})
+
+test("plan edit deny is a backstop: user/session config cannot relax it", async () => {
+  await using tmp = await tmpdir({ config: { permission: { edit: "allow" } } })
+  await Instance.provide({
+    directory: tmp.path,
+    fn: async () => {
+      const plan = await load(tmp.path, (svc) => svc.get("plan"))
+      const rt = Agent.runtimePermission(plan!, [{ permission: "edit", pattern: "*", action: "allow" }])
+      // config allow + session allow both lose to hardPermission's deny.
+      expect(Permission.evaluate("edit", "src/file.ts", rt).action).toBe("deny")
+      // plan files still writable.
+      expect(Permission.evaluate("edit", ".mimocode/plans/foo.md", rt).action).toBe("allow")
+    },
+  })
+})
+
+test("plan keeps the edit tool in the schema — not stripped", async () => {
+  await using tmp = await tmpdir()
+  await Instance.provide({
+    directory: tmp.path,
+    fn: async () => {
+      const plan = await load(tmp.path, (svc) => svc.get("plan"))
+      const rt = Agent.runtimePermission(plan!, [])
+      // edit carries a non-"*" allow exception, so it is NOT disabled — no
+      // tool-list mutation on mode switch (PR #1207).
+      expect(Permission.disabled(["edit", "write", "bash"], rt)).toEqual(new Set())
+    },
+  })
+})
+
+test("plan does not restrict bash/change_directory/workflow", async () => {
+  await using tmp = await tmpdir()
+  await Instance.provide({
+    directory: tmp.path,
+    fn: async () => {
+      const plan = await load(tmp.path, (svc) => svc.get("plan"))
+      const rt = Agent.runtimePermission(plan!, [])
+      // These are left to the model's discipline; the permission layer is a
+      // backstop for writes only.
+      expect(Permission.evaluate("bash", "ls", rt).action).not.toBe("deny")
+      expect(Permission.evaluate("change_directory", "/tmp", rt).action).not.toBe("deny")
+      expect(Permission.evaluate("workflow", "*", rt).action).not.toBe("deny")
+    },
+  })
+})
+
+test("build agent unaffected — no hardPermission", async () => {
+  await using tmp = await tmpdir()
+  await Instance.provide({
+    directory: tmp.path,
+    fn: async () => {
+      const build = await load(tmp.path, (svc) => svc.get("build"))
+      expect(build!.hardPermission).toBeUndefined()
+      const rt = Agent.runtimePermission(build!, [])
+      expect(Permission.evaluate("edit", "src/file.ts", rt).action).not.toBe("deny")
+    },
+  })
+})
+
+test("plan_enter and plan_exit are allowed (not hidden) for all primary agents", async () => {
+  await using tmp = await tmpdir()
+  await Instance.provide({
+    directory: tmp.path,
+    fn: async () => {
+      const agents = await load(tmp.path, (svc) => svc.list())
+      const primaryAgents = agents.filter((a) => a.mode === "primary")
+      expect(primaryAgents.length).toBeGreaterThanOrEqual(3)
+      for (const agent of primaryAgents) {
+        const disabled = Permission.disabled(["plan_enter", "plan_exit"], agent.permission)
+        expect(disabled.has("plan_enter")).toBe(false)
+        expect(disabled.has("plan_exit")).toBe(false)
+      }
     },
   })
 })

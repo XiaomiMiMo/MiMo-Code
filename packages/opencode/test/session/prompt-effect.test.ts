@@ -1244,12 +1244,18 @@ unix(
       provideTmpdirInstance(
         (_dir) =>
           Effect.gen(function* () {
-            const { prompt, run, chat } = yield* boot()
+            const { prompt, run, sessions, chat } = yield* boot()
 
             const sh = yield* prompt
               .shell({ sessionID: chat.id, agent: "build", command: "sleep 30" })
               .pipe(Effect.forkChild)
-            yield* Effect.sleep(50)
+            yield* Effect.gen(function* () {
+              while (true) {
+                const msgs = yield* sessions.messages({ sessionID: chat.id })
+                if (msgs.some((m) => m.info.role === "assistant")) return
+                yield* Effect.sleep(10)
+              }
+            }).pipe(Effect.timeout(5000))
 
             yield* prompt.cancel(chat.id)
 
@@ -1281,12 +1287,18 @@ unix(
       provideTmpdirInstance(
         (_dir) =>
           Effect.gen(function* () {
-            const { prompt, chat } = yield* boot()
+            const { prompt, sessions, chat } = yield* boot()
 
             const sh = yield* prompt
               .shell({ sessionID: chat.id, agent: "build", command: "trap '' TERM; sleep 30" })
               .pipe(Effect.forkChild)
-            yield* Effect.sleep(50)
+            yield* Effect.gen(function* () {
+              while (true) {
+                const msgs = yield* sessions.messages({ sessionID: chat.id })
+                if (msgs.some((m) => m.info.role === "assistant")) return
+                yield* Effect.sleep(10)
+              }
+            }).pipe(Effect.timeout(5000))
 
             yield* prompt.cancel(chat.id)
 

@@ -270,4 +270,40 @@ describe("shell-tokenize: heredoc", () => {
     const out = await tokenizeOk(script)
     expect(out[0].tokens.at(-1)).toBe("")
   })
+
+  test("single-quoted delimiter <<'EOF' parses, body verbatim", async () => {
+    const script = ["task revise T1 <<'EOF'", "line 1", "$x and 'quotes'", "EOF"].join("\n")
+    const out = await tokenizeOk(script)
+    expect(out).toEqual([{ line: 1, tokens: ["task", "revise", "T1", "line 1\n$x and 'quotes'"] }])
+  })
+
+  test('double-quoted delimiter <<"EOF" parses', async () => {
+    const script = ['task revise T1 <<"EOF"', "body", "EOF"].join("\n")
+    const out = await tokenizeOk(script)
+    expect(out[0].tokens.at(-1)).toBe("body")
+  })
+
+  test("<<-EOF dash form parses", async () => {
+    const script = ["task revise T1 <<-EOF", "body", "EOF"].join("\n")
+    const out = await tokenizeOk(script)
+    expect(out[0].tokens.at(-1)).toBe("body")
+  })
+
+  test("<< EOF leading whitespace before marker parses", async () => {
+    const script = ["task revise T1 << EOF", "body", "EOF"].join("\n")
+    const out = await tokenizeOk(script)
+    expect(out[0].tokens.at(-1)).toBe("body")
+  })
+
+  test("combined <<-'EOF' parses", async () => {
+    const script = ["task revise T1 <<-'EOF'", "body", "EOF"].join("\n")
+    const out = await tokenizeOk(script)
+    expect(out[0].tokens.at(-1)).toBe("body")
+  })
+
+  test("closing marker matches the bare name even when the delimiter was quoted", async () => {
+    const script = ["task revise T1 <<'END'", "keep 'END' inside", "END"].join("\n")
+    const out = await tokenizeOk(script)
+    expect(out[0].tokens.at(-1)).toBe("keep 'END' inside")
+  })
 })
