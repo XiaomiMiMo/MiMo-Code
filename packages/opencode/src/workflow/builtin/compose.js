@@ -171,12 +171,15 @@ const docsBlock =
   "</compose_docs_dir>"
 
 // Slug for the per-run report filename. feature_name overrides; else slugify task.
+// Strip trailing dashes AFTER the length cap too, so a 60-char cut that lands on a
+// separator doesn't leave an ugly trailing "-" in the filename.
 const FEATURE_NAME =
-  (typeof _argsObj.feature_name === "string" && _argsObj.feature_name ? _argsObj.feature_name : TASK)
+  ((typeof _argsObj.feature_name === "string" && _argsObj.feature_name ? _argsObj.feature_name : TASK)
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/^-+|-+$/g, "")
-    .slice(0, 60) || "compose-run"
+    .slice(0, 60)
+    .replace(/-+$/, "")) || "compose-run"
 const REPORT_PATH = REPORTS_DIR + "/" + FEATURE_NAME + ".md"
 
 // ---------------------------------------------------------------------------
@@ -269,21 +272,35 @@ const runDesignWrite = (sharpen) => agent(
 await runDesignWrite(false)
 // Gate: the agent owns the writes; the workflow only verifies they happened and
 // re-dispatches the agent once if not. The workflow itself never writes the files.
-if (!(await exists(SPEC_PATH)) || !(await exists(PLAN_PATH))) {
+// Robustness: the agent may write under a slightly different leaf name than our
+// computed slug (model-chosen filename, trailing-dash drift, etc.). So treat the
+// gate as "did ANY .md land in the specs and plans dirs", not an exact-path match —
+// this avoids a redundant, expensive re-dispatch when the files are actually there.
+const docsPresent = async () => {
+  const specs = await glob(SPECS_DIR + "/*.md")
+  const plans = await glob(PLANS_DIR + "/*.md")
+  return specs.length > 0 && plans.length > 0
+}
+if (!(await docsPresent())) {
   await runDesignWrite(true)
 }
-const specWritten = await exists(SPEC_PATH)
-const planWritten = await exists(PLAN_PATH)
+const specWritten = (await glob(SPECS_DIR + "/*.md")).length > 0
+const planWritten = (await glob(PLANS_DIR + "/*.md")).length > 0
 
 // Step 2 — structured extraction: a separate agent reads the plan the previous
 // agent wrote and returns the machine-usable task list. Schema lives here, where
-// JSON-only is exactly what we want — no file work expected in this call.
+// JSON-only is exactly what we want — no file work expected in this call. The
+// prompt FORCES a direct StructuredOutput tool call: the model otherwise tends to
+// answer with prose/markdown/XML, which fails schema validation and triggers a
+// slow retry loop (each round-trip is a full model call).
 const design = await agent(
-  "Read the implementation plan at `" + PLAN_PATH + "` (use the `read` tool) and extract its task list.\n\n" +
-  (planWritten ? "" : "## The plan file is missing — derive the task list from the task below instead.\n## Task\n" + TASK + "\n\n") +
-  "Return a task list of bite-sized work items, each with id, description, acceptance, optional files, and `dependsOn` " +
-  "(empty for independent tasks; a prerequisite task id otherwise; no cycles).\n\n" +
-  "Return structured output only.",
+  "Read the implementation plan markdown in `" + PLANS_DIR + "` (use the `read` tool; if multiple files, read the most recent) and extract its task list.\n\n" +
+  (planWritten ? "" : "## No plan file found — derive the task list from the task below instead.\n## Task\n" + TASK + "\n\n") +
+  "## Output contract (STRICT)\n" +
+  "Call the `StructuredOutput` tool EXACTLY ONCE with a JSON object matching the schema. " +
+  "Do NOT reply with prose, markdown, XML, or a code block — those do not count and will be rejected. " +
+  "The JSON has a `tasks` array; each task: id, description, acceptance, optional files[], and dependsOn[] " +
+  "(empty for independent tasks; a prerequisite task id otherwise; no cycles).",
   { label: "design-extract:" + type, phase: "Design", schema: DESIGN_SHAPE }
 )
 if (!design) {

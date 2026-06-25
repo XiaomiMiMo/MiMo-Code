@@ -30,12 +30,15 @@ describe("compose script structure", () => {
     const script = composeScript()
     // The design-write and report agents must NOT use a schema (a schema biases the
     // agent into emitting JSON instead of writing the file). They are dispatched by
-    // label and gated by exists().
+    // label and gated by glob (specs/plans) / exists (report).
     expect(script).toContain('label: "design:"')
     expect(script).toContain('label: "design-extract:"')
-    expect(script).toContain("exists(SPEC_PATH)")
-    expect(script).toContain("exists(PLAN_PATH)")
+    expect(script).toContain("glob(SPECS_DIR")
+    expect(script).toContain("glob(PLANS_DIR")
     expect(script).toContain("exists(REPORT_PATH)")
+    // The extract agent must force a direct StructuredOutput tool call (avoids the
+    // prose→retry loop that stalled the Design phase).
+    expect(script).toContain("StructuredOutput")
   })
 })
 
@@ -60,7 +63,7 @@ const happyAgent = (prompt: string, opts?: any) => {
 const runCompose = async (
   args: unknown,
   agentImpl: (prompt: string, opts?: any) => unknown = happyAgent,
-  opts?: { exists?: (p: string) => boolean },
+  opts?: { exists?: (p: string) => boolean; globEmpty?: boolean },
 ) => {
   const parsed = parseMeta(composeScript())
   if (!parsed.ok) throw new Error(parsed.error)
@@ -68,6 +71,10 @@ const runCompose = async (
   const phases: string[] = []
   const written: string[] = []
   const existsImpl = opts?.exists ?? (() => true)
+  // The design gate globs SPECS_DIR/PLANS_DIR for *.md. By default simulate the
+  // agent having written a doc (one match), so the gate passes. globEmpty:true
+  // simulates the agent never writing → the gate re-dispatches.
+  const globImpl = (pattern: string) => (opts?.globEmpty ? [] : [pattern.replace("*.md", "x.md")])
   const hooks = {
     agent: async (prompt: unknown, opts?: unknown) => {
       const p = String(prompt)
@@ -81,7 +88,7 @@ const runCompose = async (
     readFile: async () => null,
     writeFile: async (p: unknown) => { written.push(String(p)) },
     exists: async (p: unknown) => existsImpl(String(p)),
-    glob: async () => [],
+    glob: async (p: unknown) => globImpl(String(p)),
   }
   const body = `globalThis.args = ${JSON.stringify(args)};\n` + parsed.body
   const result = await evalScript(body, hooks)
@@ -141,7 +148,7 @@ describe("compose docs are written by the AGENT, gated by the workflow", () => {
         if (opts?.label && String(opts.label).startsWith("design:")) designWrites++
         return happyAgent(prompt, opts)
       },
-      { exists: () => false }, // simulate: files never appear
+      { globEmpty: true, exists: () => false }, // simulate: docs never appear
     )
     expect(designWrites).toBe(2) // initial + one re-dispatch
     expect(written).toHaveLength(0) // the WORKFLOW never writes files — only agents do
