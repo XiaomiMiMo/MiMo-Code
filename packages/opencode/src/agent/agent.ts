@@ -189,17 +189,32 @@ export const layer = Layer.effect(
               defaults,
               Permission.fromConfig({
                 question: "allow",
-                external_directory: {
-                  [path.join(Global.Path.data, "plans", "*")]: "allow",
-                },
-                edit: {
-                  "*": "deny",
-                  [path.join(".mimocode", "plans", "*.md")]: "allow",
-                  [path.relative(Instance.worktree, path.join(Global.Path.data, path.join("plans", "*.md")))]: "allow",
-                },
               }),
               user,
             ),
+            // Invariants user/session config must not relax. Re-appended after
+            // the user merge by runtimePermission. CRITICAL: every rule here
+            // must keep its tool IN the schema — use "ask" or a deny WITH a
+            // non-"*" allow exception. A bare {"*":"deny"} would strip the tool
+            // (Permission.disabled) and mutate the tool list on mode switch,
+            // breaking prefix cache (see PR #1207). task is intentionally left
+            // at allow so plan can spawn research subagents (constrained to
+            // read-only via subagentToolAllowlist below).
+            hardPermission: Permission.fromConfig({
+              plan_exit: "allow",
+              bash: "ask",
+              change_directory: "ask",
+              workflow: "ask",
+              external_directory: {
+                [path.join(Global.Path.data, "plans", "*")]: "allow",
+              },
+              edit: {
+                "*": "deny",
+                [path.join(".mimocode", "plans", "*.md")]: "allow",
+                [path.relative(Instance.worktree, path.join(Global.Path.data, path.join("plans", "*.md")))]: "allow",
+              },
+            }),
+            subagentToolAllowlist: READONLY_TOOLS,
             mode: "primary",
             native: true,
           },

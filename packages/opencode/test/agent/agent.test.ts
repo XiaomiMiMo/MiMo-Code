@@ -60,17 +60,77 @@ test("build agent has correct default properties", async () => {
   })
 })
 
-test("plan agent denies edits except .mimocode/plans/*", async () => {
+test("plan denies edits except plan files (via runtimePermission)", async () => {
   await using tmp = await tmpdir()
   await Instance.provide({
     directory: tmp.path,
     fn: async () => {
       const plan = await load(tmp.path, (svc) => svc.get("plan"))
-      expect(plan).toBeDefined()
-      // Wildcard is denied
-      expect(evalPerm(plan, "edit")).toBe("deny")
-      // But specific path is allowed
-      expect(Permission.evaluate("edit", ".mimocode/plans/foo.md", plan!.permission).action).toBe("allow")
+      const rt = Agent.runtimePermission(plan!, [])
+      expect(Permission.evaluate("edit", "*", rt).action).toBe("deny")
+      expect(Permission.evaluate("edit", ".mimocode/plans/foo.md", rt).action).toBe("allow")
+    },
+  })
+})
+
+test("plan keeps every tool in the schema — no tool removed", async () => {
+  await using tmp = await tmpdir()
+  await Instance.provide({
+    directory: tmp.path,
+    fn: async () => {
+      const plan = await load(tmp.path, (svc) => svc.get("plan"))
+      const rt = Agent.runtimePermission(plan!, [])
+      // edit/bash/task/change_directory/workflow must all stay visible.
+      expect(
+        Permission.disabled(["edit", "write", "bash", "task", "change_directory", "workflow"], rt),
+      ).toEqual(new Set())
+    },
+  })
+})
+
+test("plan: bash/change_directory/workflow are ask, task stays allow", async () => {
+  await using tmp = await tmpdir()
+  await Instance.provide({
+    directory: tmp.path,
+    fn: async () => {
+      const plan = await load(tmp.path, (svc) => svc.get("plan"))
+      const rt = Agent.runtimePermission(plan!, [])
+      expect(Permission.evaluate("bash", "echo x > f", rt).action).toBe("ask")
+      expect(Permission.evaluate("change_directory", "/tmp", rt).action).toBe("ask")
+      expect(Permission.evaluate("workflow", "*", rt).action).toBe("ask")
+      expect(Permission.evaluate("task", "*", rt).action).toBe("allow")
+      expect(plan!.subagentToolAllowlist).toEqual(Agent.READONLY_TOOLS)
+    },
+  })
+})
+
+test("plan hardPermission wins over session/config allow", async () => {
+  await using tmp = await tmpdir({ config: { permission: { bash: "allow", edit: "allow" } } })
+  await Instance.provide({
+    directory: tmp.path,
+    fn: async () => {
+      const plan = await load(tmp.path, (svc) => svc.get("plan"))
+      const rt = Agent.runtimePermission(plan!, [
+        { permission: "bash", pattern: "*", action: "allow" },
+        { permission: "edit", pattern: "*", action: "allow" },
+      ])
+      expect(Permission.evaluate("edit", "src/file.ts", rt).action).toBe("deny")
+      expect(Permission.evaluate("bash", "echo x > f", rt).action).toBe("ask")
+      // even with config allow, edit tool stays in schema and write still denied
+      expect(Permission.disabled(["edit", "bash"], rt)).toEqual(new Set())
+    },
+  })
+})
+
+test("build agent unaffected — no hardPermission", async () => {
+  await using tmp = await tmpdir()
+  await Instance.provide({
+    directory: tmp.path,
+    fn: async () => {
+      const build = await load(tmp.path, (svc) => svc.get("build"))
+      expect(build!.hardPermission).toBeUndefined()
+      const rt = Agent.runtimePermission(build!, [])
+      expect(Permission.evaluate("bash", "echo x", rt).action).not.toBe("deny")
     },
   })
 })
