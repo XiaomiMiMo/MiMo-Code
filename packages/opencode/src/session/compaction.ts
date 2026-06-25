@@ -21,6 +21,11 @@ import { fn } from "@/util/fn"
 
 const log = Log.create({ service: "session.compaction" })
 
+// Maximum number of messages per session to prevent memory leaks in long-running sessions
+// See: https://github.com/XiaomiMiMo/MiMo-Code/issues/1221
+export const MAX_MESSAGES_PER_SESSION = 1000
+const warnedSessions = new Set<string>()
+
 export const Event = {
   Compacted: BusEvent.define(
     "session.compacted",
@@ -233,6 +238,18 @@ export const layer: Layer.Layer<
       overflow?: boolean
       agentID?: string
     }) {
+      // Log message count for debugging long-running session memory issues
+      // See: https://github.com/XiaomiMiMo/MiMo-Code/issues/1221
+      if (input.messages.length > MAX_MESSAGES_PER_SESSION && !warnedSessions.has(input.sessionID)) {
+        warnedSessions.add(input.sessionID)
+        log.warn("session.message-limit-exceeded", {
+          sessionID: input.sessionID,
+          messageCount: input.messages.length,
+          limit: MAX_MESSAGES_PER_SESSION,
+          suggestion: "Consider starting a new session or running /compact",
+        })
+      }
+
       const parent = input.messages.findLast((m) => m.info.id === input.parentID)
       if (!parent || parent.info.role !== "user") {
         throw new Error(`Compaction parent must be a user message: ${input.parentID}`)
