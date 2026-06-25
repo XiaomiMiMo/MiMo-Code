@@ -101,6 +101,8 @@ export const dict = {
   "tui.tips.jump_last":
     "Pulsa {highlight}Ctrl+Alt+G{/highlight} o {highlight}End{/highlight} para ir al mensaje más reciente",
   "tui.tips.newline":
+    "Pulsa {highlight}Ctrl+J{/highlight} para añadir saltos de línea en la entrada",
+  "tui.tips.newline_kitty":
     "Pulsa {highlight}Shift+Enter{/highlight} o {highlight}Ctrl+J{/highlight} para añadir saltos de línea en la entrada",
   "tui.tips.clear_input":
     "Pulsa {highlight}Ctrl+C{/highlight} mientras escribes para vaciar el campo de entrada",

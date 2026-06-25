@@ -84,7 +84,8 @@ export const dict: Record<string, string> = {
     "Press {highlight}Ctrl+G{/highlight} or {highlight}Home{/highlight} to jump to the beginning of the conversation",
   "tui.tips.jump_last":
     "Press {highlight}Ctrl+Alt+G{/highlight} or {highlight}End{/highlight} to jump to the most recent message",
-  "tui.tips.newline": "Press {highlight}Shift+Enter{/highlight} or {highlight}Ctrl+J{/highlight} to add newlines in your prompt",
+  "tui.tips.newline": "Press {highlight}Ctrl+J{/highlight} to add newlines in your prompt",
+  "tui.tips.newline_kitty": "Press {highlight}Shift+Enter{/highlight} or {highlight}Ctrl+J{/highlight} to add newlines in your prompt",
   "tui.tips.clear_input": "Press {highlight}Ctrl+C{/highlight} when typing to clear the input field",
   "tui.tips.escape": "Press {highlight}Escape{/highlight} to stop the AI mid-response",
   "tui.tips.plan_agent": "Switch to {highlight}Plan{/highlight} agent to get suggestions without making actual changes",
