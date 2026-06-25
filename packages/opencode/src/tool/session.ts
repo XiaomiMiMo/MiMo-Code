@@ -5,8 +5,8 @@ import { tokenize } from "./shell-tokenize"
 import z from "zod"
 import { Effect } from "effect"
 import { Session } from "@/session"
-import { SessionPrompt } from "@/session/prompt"
 import { ActorRegistry } from "@/actor/registry"
+import { Provider } from "@/provider"
 import { spawnRef } from "@/actor/spawn-ref"
 import { Bus } from "@/bus"
 import { TuiEvent } from "@/cli/cmd/tui/event"
@@ -78,7 +78,7 @@ type Metadata = {
   sessionID?: string
 }
 
-type Deps = Session.Service | SessionPrompt.Service | ActorRegistry.Service | Bus.Service
+type Deps = Session.Service | ActorRegistry.Service | Provider.Service
 
 function parseSessionScript(script: string): Effect.Effect<SessionOperation[], unknown> {
   return Effect.gen(function* () {
@@ -195,68 +195,58 @@ export const SessionTool = Tool.define<typeof parameters, Metadata, Deps>(
   id,
   Effect.gen(function* () {
     const sessions = yield* Session.Service
-    const prompt = yield* SessionPrompt.Service
     const actorReg = yield* ActorRegistry.Service
-    const bus = yield* Bus.Service
+    const provider = yield* Provider.Service
 
     // Resolve the Actor service through the late-bound spawnRef rather than as a
     // Layer dependency: pulling Actor.Service into Deps would create a layer
     // cycle (Actor → SessionPrompt → ToolRegistry → tool/session → Actor) that
     // Effect cannot satisfy. The ref is populated by Actor.layer's initialiser
     // (see actor/spawn-ref.ts). Same pattern as tool/actor.ts.
-    const requireActor = () =>
-      spawnRef.current
-        ? Effect.succeed(spawnRef.current)
-        : Effect.fail(
-            new Error(
-              "Actor service unavailable — Actor.defaultLayer must be running for session cancel",
-            ),
-          )
+    const requireActor = () => {
+      const a = spawnRef.current
+      if (!a) {
+        return Effect.fail(
+          new Error(
+            "Actor service unavailable — Actor.defaultLayer must be running for the session tool to spawn or cancel sessions",
+          ),
+        )
+      }
+      return Effect.succeed(a)
+    }
 
     const run = Effect.fn("SessionTool.execute")(function* (input: SessionInput, ctx: Tool.Context<Metadata>) {
       const op = input.operation
 
       if (op.action === "create") {
-        const title = op.title ?? op.task.slice(0, 40)
-        const child = yield* sessions.create({
-          parentID: ctx.sessionID as SessionID,
-          title,
-        })
-        yield* actorReg.register({
-          sessionID: child.id,
-          actorID: child.id,
+        const actor = yield* requireActor()
+        const model = op.model
+          ? yield* provider
+              .resolveModelRef(op.model, undefined)
+              .pipe(Effect.map((m) => ({ modelID: m.id, providerID: m.providerID })))
+          : undefined
+        const result = yield* actor.spawn({
           mode: "peer",
-          parentActorID: ctx.actorID,
-          agent: op.mode ?? "build",
-          description: title,
-          contextMode: "none",
-          contextWatermark: undefined,
-          background: true,
-          lifecycle: "persistent",
+          sessionID: ctx.sessionID as SessionID,
+          agentType: op.mode ?? "build",
+          task: op.task,
+          description: op.title ?? op.task.slice(0, 40),
+          context: "none",
           tools: "INHERIT",
+          ...(model ? { model } : {}),
+          background: true,
+          parentActorID: ctx.actorID,
+          lifecycle: "persistent",
         })
-        // Background fork — the child's first turn must outlive this tool call.
-        // spawnPeer uses Effect.forkIn(its long-lived Actor scope); the session
-        // tool has no such scope, so forkDetach (attached to the global scope, so
-        // it keeps running after this tool's fiber terminates) is the equivalent
-        // fire-and-forget primitive. (effect 4 beta has no `forkDaemon`.)
-        yield* prompt
-          .prompt({
-            sessionID: child.id,
-            agent: op.mode ?? "build",
-            ...(op.model ? { modelRef: op.model } : {}),
-            parts: [{ type: "text", text: op.task }],
-          })
-          .pipe(Effect.forkDetach)
         return {
-          title: `Session created: ${child.id}`,
-          output: `Created child session ${child.id} (mode: ${op.mode ?? "build"}). Running in the background.`,
-          metadata: { sessionID: child.id } as Metadata,
+          title: `Session created: ${result.sessionID}`,
+          output: `Created child session ${result.sessionID} (mode: ${op.mode ?? "build"}). Running in the background.`,
+          metadata: { sessionID: result.sessionID } as Metadata,
         }
       }
 
       if (op.action === "switch") {
-        yield* bus.publish(TuiEvent.SessionSelect, { sessionID: op.sessionID as SessionID })
+        yield* Effect.promise(() => Bus.publish(TuiEvent.SessionSelect, { sessionID: op.sessionID as SessionID }))
         return {
           title: `Switched to ${op.sessionID}`,
           output: `Requested the UI navigate to session ${op.sessionID}.`,

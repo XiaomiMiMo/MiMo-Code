@@ -7,8 +7,8 @@ import { Bus } from "../../src/bus"
 import { TuiEvent } from "../../src/cli/cmd/tui/event"
 import * as CrossSpawnSpawner from "../../src/effect/cross-spawn-spawner"
 import { Instance } from "../../src/project/instance"
+import { Provider } from "../../src/provider"
 import { Session } from "../../src/session"
-import { SessionPrompt } from "../../src/session/prompt"
 import { MessageID, SessionID } from "../../src/session/schema"
 import { Truncate } from "../../src/tool"
 import { SessionTool } from "../../src/tool/session"
@@ -19,21 +19,21 @@ afterEach(async () => {
   await Instance.disposeAll()
 })
 
-// SessionPrompt.defaultLayer is self-contained — it provides its own copies of
-// Session / ActorRegistry / Truncate / Agent internally. We list the ones the
-// test body (and Tool.define's init) also need at top level; Effect memoizes the
-// shared singleton layers so there is one Session DB / one ActorRegistry.
+// The session tool resolves Session / ActorRegistry / Provider as Layer deps and
+// the Actor service via the late-bound spawnRef (populated by Actor.defaultLayer).
+// `create` now goes through Actor.spawn({ mode: "peer" }), which itself creates
+// the child session, registers the peer, and background-forks the first turn.
 const it = testEffect(
   Layer.mergeAll(
-    SessionPrompt.defaultLayer,
     Session.defaultLayer,
     ActorRegistry.defaultLayer,
+    Provider.defaultLayer,
     Truncate.defaultLayer,
     Agent.defaultLayer,
     CrossSpawnSpawner.defaultLayer,
     Bus.defaultLayer,
     // Actor.defaultLayer populates spawnRef.current, which the session tool's
-    // cancel branch reads via requireActor(). Without it cancel fails fast.
+    // create/cancel branches read via requireActor(). Without it they fail fast.
     Actor.defaultLayer,
   ),
 )
@@ -94,12 +94,14 @@ describe("session tool", () => {
     provideTmpdirInstance(() =>
       Effect.gen(function* () {
         const sessions = yield* Session.Service
-        const bus = yield* Bus.Service
         const parent = yield* sessions.create({ title: "Parent" })
         const target = yield* sessions.create({ title: "Target" })
 
+        // The tool publishes via the module-level Bus.publish (the production
+        // path the TUI route uses — tui.ts:379), NOT the instance Bus.Service.
+        // Subscribe through the matching module-level Bus.subscribe.
         const seen: string[] = []
-        yield* bus.subscribeCallback(TuiEvent.SessionSelect, (event) => seen.push(event.properties.sessionID))
+        const unsub = Bus.subscribe(TuiEvent.SessionSelect, (event) => seen.push(event.properties.sessionID))
 
         const info = yield* SessionTool
         const tool = yield* info.init()
@@ -108,6 +110,7 @@ describe("session tool", () => {
           ctx(parent.id),
         )
 
+        unsub()
         expect(seen).toEqual([target.id])
         expect(result.metadata.sessionID).toBe(target.id)
         expect(result.output).toContain(target.id)
@@ -140,8 +143,11 @@ describe("session tool", () => {
         expect(result.title).toBe("Child sessions: 2")
         expect(result.output).toContain(idA)
         expect(result.output).toContain(idB)
-        expect(result.output).toContain("Alpha")
-        expect(result.output).toContain("Beta")
+        // spawnPeer titles the child session `${agentType}: ${task.slice(0,40)}`
+        // (the create `title`/`description` becomes the actor description, not the
+        // session title), so the listed titles reflect the task, not Alpha/Beta.
+        expect(result.output).toContain("task A")
+        expect(result.output).toContain("task B")
         // agent (the NL "mode") is surfaced from the actor row.
         expect(result.output).toContain("build")
         expect(result.output).toContain("compose")
