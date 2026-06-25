@@ -187,7 +187,12 @@ export const layer = Layer.effect(
       let needsAsk = false
 
       for (const pattern of request.patterns) {
-        const rule = evaluate(request.permission, pattern, ruleset, approved)
+        // Evaluate the ruleset ALONE first. A persisted "always" approval must
+        // never override an explicit deny — otherwise an edit approved in build
+        // mode would leak through plan mode's `edit: deny`. So deny short-circuits
+        // before approvals are consulted, and approvals can only upgrade an
+        // otherwise-`ask` outcome to allow.
+        const rule = evaluate(request.permission, pattern, ruleset)
         log.info("evaluated", { permission: request.permission, pattern, action: rule })
         if (rule.action === "deny") {
           return yield* new DeniedError({
@@ -195,6 +200,7 @@ export const layer = Layer.effect(
           })
         }
         if (rule.action === "allow") continue
+        if (evaluate(request.permission, pattern, approved).action === "allow") continue
         needsAsk = true
       }
 
