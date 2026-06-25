@@ -8929,6 +8929,25 @@
         },
         "required": ["name", "data"]
       },
+      "TextToolCallError": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "const": "TextToolCallError"
+          },
+          "data": {
+            "type": "object",
+            "properties": {
+              "message": {
+                "type": "string"
+              }
+            },
+            "required": ["message"]
+          }
+        },
+        "required": ["name", "data"]
+      },
       "ContentFilterError": {
         "type": "object",
         "properties": {
@@ -9049,6 +9068,9 @@
                   },
                   {
                     "$ref": "#/components/schemas/InvalidOutputError"
+                  },
+                  {
+                    "$ref": "#/components/schemas/TextToolCallError"
                   },
                   {
                     "$ref": "#/components/schemas/ContentFilterError"
@@ -10792,6 +10814,9 @@
               },
               {
                 "$ref": "#/components/schemas/InvalidOutputError"
+              },
+              {
+                "$ref": "#/components/schemas/TextToolCallError"
               },
               {
                 "$ref": "#/components/schemas/ContentFilterError"
