@@ -1012,17 +1012,23 @@ export const layer: Layer.Layer<
                 continue
               }
 
-              const outcome = yield* Effect.tryPromise({
-                try: () =>
-                  t.execute!(call.input, {
-                    toolCallId: call.toolCallId,
-                    messages: input.messages,
-                    abortSignal: ctrl.signal,
-                  }),
-                catch: (e) => e,
+              // PI-103+: run execute() as an Effect directly (not via tryPromise) so
+              // permission.ask()'s Deferred.await() shares the same fiber scheduler.
+              // Effect.tryPromise bridged the Effect through a Promise thenable, which
+              // caused RejectedError→Die (via Effect.orDie) to silently hang the fiber
+              // rather than propagate back to failToolCall. Direct yield keeps Deferred
+              // operations in the same scheduler context and lets catchCauseIf extract
+              // the original error (RejectedError) from any Die for instanceof checks.
+              const outcome = yield* t.execute!(call.input, {
+                toolCallId: call.toolCallId,
+                messages: input.messages,
+                abortSignal: ctrl.signal,
               }).pipe(
                 Effect.map((output) => ({ ok: true as const, output })),
-                Effect.catch((error) => Effect.succeed({ ok: false as const, error })),
+                Effect.catchCauseIf(
+                  (cause) => !Cause.hasInterruptsOnly(cause),
+                  (cause) => Effect.succeed({ ok: false as const, error: Cause.squash(cause) }),
+                ),
               )
 
               if (!outcome.ok) {
