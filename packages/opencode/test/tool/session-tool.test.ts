@@ -2,6 +2,8 @@ import { afterEach, describe, expect } from "bun:test"
 import { Effect, Layer } from "effect"
 import { Agent } from "../../src/agent/agent"
 import { ActorRegistry } from "../../src/actor/registry"
+import { Bus } from "../../src/bus"
+import { TuiEvent } from "../../src/cli/cmd/tui/event"
 import * as CrossSpawnSpawner from "../../src/effect/cross-spawn-spawner"
 import { Instance } from "../../src/project/instance"
 import { Session } from "../../src/session"
@@ -28,6 +30,7 @@ const it = testEffect(
     Truncate.defaultLayer,
     Agent.defaultLayer,
     CrossSpawnSpawner.defaultLayer,
+    Bus.defaultLayer,
   ),
 )
 
@@ -83,7 +86,32 @@ describe("session tool", () => {
     ),
   )
 
-  it.live("unimplemented verbs fail (switch/list/cancel are stubs)", () =>
+  it.live("switch publishes TuiEvent.SessionSelect with the target sessionID", () =>
+    provideTmpdirInstance(() =>
+      Effect.gen(function* () {
+        const sessions = yield* Session.Service
+        const bus = yield* Bus.Service
+        const parent = yield* sessions.create({ title: "Parent" })
+        const target = yield* sessions.create({ title: "Target" })
+
+        const seen: string[] = []
+        yield* bus.subscribeCallback(TuiEvent.SessionSelect, (event) => seen.push(event.properties.sessionID))
+
+        const info = yield* SessionTool
+        const tool = yield* info.init()
+        const result = yield* tool.execute(
+          { operation: { action: "switch", sessionID: target.id } },
+          ctx(parent.id),
+        )
+
+        expect(seen).toEqual([target.id])
+        expect(result.metadata.sessionID).toBe(target.id)
+        expect(result.output).toContain(target.id)
+      }),
+    ),
+  )
+
+  it.live("unimplemented verbs fail (list/cancel are stubs)", () =>
     provideTmpdirInstance(() =>
       Effect.gen(function* () {
         const sessions = yield* Session.Service

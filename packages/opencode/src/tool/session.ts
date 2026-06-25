@@ -7,6 +7,8 @@ import { Effect } from "effect"
 import { Session } from "@/session"
 import { SessionPrompt } from "@/session/prompt"
 import { ActorRegistry } from "@/actor/registry"
+import { Bus } from "@/bus"
+import { TuiEvent } from "@/cli/cmd/tui/event"
 import type { SessionID } from "../session/schema"
 
 const KNOWN_VERBS = ["create", "switch", "list", "cancel"]
@@ -75,7 +77,7 @@ type Metadata = {
   sessionID?: string
 }
 
-type Deps = Session.Service | SessionPrompt.Service | ActorRegistry.Service
+type Deps = Session.Service | SessionPrompt.Service | ActorRegistry.Service | Bus.Service
 
 function parseSessionScript(script: string): Effect.Effect<SessionOperation[], unknown> {
   return Effect.gen(function* () {
@@ -194,6 +196,7 @@ export const SessionTool = Tool.define<typeof parameters, Metadata, Deps>(
     const sessions = yield* Session.Service
     const prompt = yield* SessionPrompt.Service
     const actorReg = yield* ActorRegistry.Service
+    const bus = yield* Bus.Service
 
     const run = Effect.fn("SessionTool.execute")(function* (input: SessionInput, ctx: Tool.Context<Metadata>) {
       const op = input.operation
@@ -234,6 +237,15 @@ export const SessionTool = Tool.define<typeof parameters, Metadata, Deps>(
           title: `Session created: ${child.id}`,
           output: `Created child session ${child.id} (mode: ${op.mode ?? "build"}). Running in the background.`,
           metadata: { sessionID: child.id } as Metadata,
+        }
+      }
+
+      if (op.action === "switch") {
+        yield* bus.publish(TuiEvent.SessionSelect, { sessionID: op.sessionID as SessionID })
+        return {
+          title: `Switched to ${op.sessionID}`,
+          output: `Requested the UI navigate to session ${op.sessionID}.`,
+          metadata: { sessionID: op.sessionID } as Metadata,
         }
       }
 
