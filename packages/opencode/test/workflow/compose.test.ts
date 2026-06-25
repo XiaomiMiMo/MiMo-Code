@@ -31,6 +31,13 @@ describe("compose script structure", () => {
     expect(script).not.toContain("CLASSIFY_SHAPE")
   })
 
+  test("each phase applies its compose skill (verify included)", () => {
+    const script = composeScript()
+    for (const skill of ["compose:brainstorm", "compose:debug", "compose:feedback", "compose:plan", "compose:tdd", "compose:review", "compose:report", "compose:merge", "compose:verify"]) {
+      expect(script).toContain(skill)
+    }
+  })
+
   test("design and report phases write files via agent (no output schema)", () => {
     const script = composeScript()
     // The design-write and report agents must NOT use a schema (a schema biases the
@@ -260,6 +267,52 @@ describe("compose phase 3: parallelism, dependencies, worktrees", () => {
     for (const c of implCalls) expect(c.opts.isolation).toBeUndefined() // runs in main workspace
     expect(calls.find((c) => c.opts?.label === "integrate")).toBeUndefined() // nothing to integrate
     expect(result).not.toMatchObject({ error: expect.anything() })
+  })
+
+  test("default mode runs implement tasks SEQUENTIALLY (no same-workspace parallel conflicts)", async () => {
+    let active = 0
+    let maxConcurrent = 0
+    const agentImpl = async (prompt: string, opts?: any) => {
+      if (opts?.label && String(opts.label).startsWith("implement:")) {
+        active++
+        maxConcurrent = Math.max(maxConcurrent, active)
+        await new Promise((r) => setTimeout(r, 5)) // hold the slot so overlap is observable
+        active--
+        return "ok"
+      }
+      if (opts?.schema?.properties?.context) return { context: { projectType: "x", conventions: [], recentChanges: [], relevantFiles: [] }, assumptions: [] }
+      if (opts?.schema?.properties?.tasks) return { tasks: [
+        { id: "T1", description: "d", acceptance: "a", dependsOn: [] },
+        { id: "T2", description: "d", acceptance: "a", dependsOn: [] },
+        { id: "T3", description: "d", acceptance: "a", dependsOn: [] },
+      ] }
+      return happyAgent(prompt, opts)
+    }
+    await runCompose({ task: "x", type: "feature" }, agentImpl)
+    expect(maxConcurrent).toBe(1) // sequential in default (same-workspace) mode
+  })
+
+  test("isolated mode runs independent implement tasks CONCURRENTLY", async () => {
+    let active = 0
+    let maxConcurrent = 0
+    const agentImpl = async (prompt: string, opts?: any) => {
+      if (opts?.label && String(opts.label).startsWith("implement:")) {
+        active++
+        maxConcurrent = Math.max(maxConcurrent, active)
+        await new Promise((r) => setTimeout(r, 5))
+        active--
+        return { _worktree: { branch: "b", directory: "/tmp/d", changed: true } }
+      }
+      if (opts?.schema?.properties?.context) return { context: { projectType: "x", conventions: [], recentChanges: [], relevantFiles: [] }, assumptions: [] }
+      if (opts?.schema?.properties?.tasks) return { tasks: [
+        { id: "T1", description: "d", acceptance: "a", dependsOn: [] },
+        { id: "T2", description: "d", acceptance: "a", dependsOn: [] },
+        { id: "T3", description: "d", acceptance: "a", dependsOn: [] },
+      ] }
+      return happyAgent(prompt, opts)
+    }
+    await runCompose({ task: "x", type: "feature", isolate_worktrees: true }, agentImpl)
+    expect(maxConcurrent).toBeGreaterThan(1) // parallel when each task has its own worktree
   })
 
   test("dependency chain produces sequential batches in order", async () => {

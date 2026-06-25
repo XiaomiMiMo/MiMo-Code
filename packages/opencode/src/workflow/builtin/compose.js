@@ -371,13 +371,15 @@ const runIntegrate = (kept) => agent(
 )
 
 const runVerify = () => agent(
-  "Run the project's verification commands and report the outcome.\n\n" +
-  "## Steps\n" +
+  "Apply the `compose:verify` skill. Use the `skill` tool to load it FIRST, then follow its discipline " +
+  "(the Iron Law: no completion claim without fresh verification evidence — run the real commands, read the full output, " +
+  "never trust 'should pass' or an agent's self-report).\n\n" +
+  "## Run the project's verification commands and report the outcome\n" +
   "1. First run `pwd` and `ls` to confirm your working directory and that the project's source/test files are actually present here. The implemented code lives in THIS workspace — verify from the workspace root (or the package subdir AGENTS.md specifies), never from a stale or temp cwd.\n" +
   "2. Inspect AGENTS.md / CLAUDE.md / package.json for the project's verify commands (typecheck, test, build).\n" +
   "3. Run them via the Bash tool from the correct directory. If a command reports 'file not found' or 0 tests, you are in the wrong directory — `cd` to where the files are and re-run before reporting.\n" +
-  "4. Capture passed/failed test counts. Summarize failures concisely if any.\n\n" +
-  "Return structured output only.",
+  "4. Capture passed/failed test counts from the ACTUAL command output. Summarize failures concisely if any.\n\n" +
+  "Return structured output only — and it must reflect the real command output, not an assumption.",
   { label: "verify", phase: "Verify", schema: VERIFY_SHAPE }
 )
 
@@ -411,10 +413,14 @@ const runIterationReport = async (iteration, verifyResult) => {
 // integrate the kept worktrees. Returns { perTaskResults, integrate }.
 const runBatch = async (batchIds, failuresOrEmpty) => {
   const tasks = batchIds.map((id) => taskById[id])
-  const limit = Math.min(MAX_CONCURRENT, tasks.length)
-  // Soft per-batch cap: chunk so no more than `limit` run at once.
   const perTaskResults = []
   const kept = []
+  // Concurrency model (aligned with the compose skill): only run implement tasks
+  // CONCURRENTLY when each task is isolated in its own worktree. In the default
+  // (non-isolated) mode all tasks write to the SAME workspace, so the original
+  // compose:subagent skill forbids parallel implementation (file conflicts) — run
+  // them one at a time. parallel() here is gated on ISOLATE for exactly that reason.
+  const limit = ISOLATE ? Math.min(MAX_CONCURRENT, tasks.length) : 1
   for (let i = 0; i < tasks.length; i += limit) {
     const chunk = tasks.slice(i, i + limit)
     const results = await parallel(chunk.map((t) => () => runImplementTask(t, failuresOrEmpty)))
@@ -526,7 +532,9 @@ if (review.critical && review.critical.length > 0) {
   phase("Fix")
   for (let attempt = 0; attempt < MAX_REVIEW_FIX_ATTEMPTS; attempt++) {
     reviewFixAttempts = attempt + 1
-    const limit = Math.min(MAX_CONCURRENT, review.critical.length)
+    // Same concurrency rule as implement: parallel only when worktree-isolated;
+    // otherwise fixes share the workspace → run sequentially to avoid conflicts.
+    const limit = ISOLATE ? Math.min(MAX_CONCURRENT, review.critical.length) : 1
     const perTaskResults = []
     const kept = []
     const criticals = review.critical
@@ -648,8 +656,8 @@ return {
   finalReport,
   merge,
   stats: {
-    agents: verifyHistory.length + tddAttempts + reviewFixAttempts + 4, // brainstorm + classify + design + review + merge
-    phases: 8,
+    agents: verifyHistory.length + tddAttempts + reviewFixAttempts + 4, // brainstorm + design-write + design-extract + review + merge (approx)
+    phases: 7,
     parallelBatches: batches.length,
     durationMs: 0, // QuickJS guest has no Date; host can compute from journal if needed
   },
