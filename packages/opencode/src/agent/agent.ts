@@ -37,6 +37,14 @@ export const Info = z
     temperature: z.number().optional(),
     color: z.string().optional(),
     permission: Permission.Ruleset.zod,
+    // Non-overridable rules appended AFTER user/session permissions during
+    // runtime evaluation (see runtimePermission). Use for agent invariants that
+    // config must not be able to relax — e.g. plan mode's write restrictions.
+    hardPermission: Permission.Ruleset.zod.optional(),
+    // Tool allowlist forced on any subagent this agent spawns (overrides the
+    // spawned agent's own toolAllowlist / INHERIT). Plan mode uses it to keep
+    // delegated work read-only.
+    subagentToolAllowlist: z.array(z.string()).optional(),
     model: z
       .object({
         modelID: ModelID.zod,
@@ -72,6 +80,32 @@ export interface Interface {
 type State = Omit<Interface, "generate">
 
 export class Service extends Context.Service<Service, Interface>()("@opencode/Agent") {}
+
+// Tools that cannot mutate the workspace. Source of truth for plan mode's
+// subagentToolAllowlist. (Intentionally NOT shared with the explore agent's
+// inline list: explore allows read-only `bash` for shell exploration, which a
+// plan subagent must not have — they are different contracts that happen to
+// overlap.)
+export const READONLY_TOOLS = [
+  "read",
+  "glob",
+  "grep",
+  "list",
+  "webfetch",
+  "websearch",
+  "codesearch",
+  "memory",
+  "history",
+  "lsp",
+]
+
+// Merge an agent's permission with the user/session ruleset, then re-append the
+// agent's hardPermission so those invariants win over any allow rule a user or
+// session approval could introduce. Every permission-evaluation site routes
+// through this — there is no per-agent name special-casing.
+export function runtimePermission(agent: Info, permission?: Permission.Ruleset) {
+  return Permission.merge(agent.permission, permission ?? [], agent.hardPermission ?? [])
+}
 
 export const layer = Layer.effect(
   Service,
