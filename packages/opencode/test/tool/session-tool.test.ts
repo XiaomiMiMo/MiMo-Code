@@ -200,6 +200,87 @@ describe("session tool", () => {
   )
 })
 
+// End-to-end proof that BOTH invocation schemas drive the tool identically:
+// the shell form (shell.parse → execute) and the JSON form (execute on a
+// structured operation) each create a real peer child session.
+describe("session tool dual-schema (shell + JSON) end-to-end", () => {
+  it.live("shell form: parse('session create ...') then execute creates a peer child", () =>
+    provideTmpdirInstance(() =>
+      Effect.gen(function* () {
+        const sessions = yield* Session.Service
+        const actorReg = yield* ActorRegistry.Service
+        const parent = yield* sessions.create({ title: "Parent" })
+
+        const info = yield* SessionTool
+        const tool = yield* info.init()
+
+        // Drive the SHELL schema: a raw script string through shell.parse.
+        const ops = yield* tool.shell!.parse("session create build a login page --mode compose --title Login")
+        expect(ops).toHaveLength(1)
+        expect(ops[0]).toEqual({
+          operation: { action: "create", task: "build a login page", mode: "compose", title: "Login" },
+        })
+
+        // Feed the parsed op to execute — the same entry the JSON form uses.
+        const result = yield* tool.execute(ops[0], ctx(parent.id))
+        const childID = result.metadata.sessionID
+        expect(childID).toBeDefined()
+
+        const child = yield* sessions.get(SessionID.make(childID!))
+        expect(child.parentID).toBe(parent.id)
+        const actor = yield* actorReg.get(SessionID.make(childID!), childID!)
+        expect(actor!.mode).toBe("peer")
+        expect(actor!.agent).toBe("compose")
+      }),
+    ),
+  )
+
+  it.live("JSON form: execute on a structured operation creates a peer child", () =>
+    provideTmpdirInstance(() =>
+      Effect.gen(function* () {
+        const sessions = yield* Session.Service
+        const actorReg = yield* ActorRegistry.Service
+        const parent = yield* sessions.create({ title: "Parent" })
+
+        const info = yield* SessionTool
+        const tool = yield* info.init()
+
+        // Drive the JSON schema: a structured operation object straight to execute.
+        const result = yield* tool.execute(
+          { operation: { action: "create", task: "write tests", mode: "build" } },
+          ctx(parent.id),
+        )
+        const childID = result.metadata.sessionID
+        expect(childID).toBeDefined()
+
+        const child = yield* sessions.get(SessionID.make(childID!))
+        expect(child.parentID).toBe(parent.id)
+        const actor = yield* actorReg.get(SessionID.make(childID!), childID!)
+        expect(actor!.mode).toBe("peer")
+        expect(actor!.agent).toBe("build")
+      }),
+    ),
+  )
+
+  it.live("shell form: parses every verb (create/list/switch/cancel)", () =>
+    provideTmpdirInstance(() =>
+      Effect.gen(function* () {
+        const info = yield* SessionTool
+        const tool = yield* info.init()
+        const parse = (s: string) => tool.shell!.parse(s)
+
+        expect(yield* parse("session list")).toEqual([{ operation: { action: "list" } }])
+        expect(yield* parse("session switch ses_abc")).toEqual([
+          { operation: { action: "switch", sessionID: "ses_abc" } },
+        ])
+        expect(yield* parse("session cancel ses_xyz")).toEqual([
+          { operation: { action: "cancel", sessionID: "ses_xyz" } },
+        ])
+      }),
+    ),
+  )
+})
+
 import { test } from "bun:test"
 import { recoverSessionArgs } from "../../src/tool/session"
 
