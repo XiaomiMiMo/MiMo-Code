@@ -100,6 +100,32 @@ function parseSessionScript(script: string): Effect.Effect<SessionOperation[], u
   })
 }
 
+// Recover a shell-mode session call shaped like the JSON args (no `script`):
+// a stringified/nested `operation`, or the common bare `{task}` create.
+// Conservative — only the unambiguous create-from-task is synthesized; anything
+// else passes through (nested) or returns undefined (→ teach JSON). Mirrors
+// recoverTaskArgs in tool/task.ts.
+export function recoverSessionArgs(rawArgs: unknown): SessionOperation | undefined {
+  if (rawArgs == null || typeof rawArgs !== "object") return undefined
+  let obj = rawArgs as Record<string, unknown>
+  if (typeof obj.operation === "string") {
+    try {
+      const inner = JSON.parse(obj.operation)
+      if (inner && typeof inner === "object" && !Array.isArray(inner)) obj = { operation: inner }
+    } catch {}
+  }
+  if (obj.operation && typeof obj.operation === "object" && !Array.isArray(obj.operation))
+    return { operation: obj.operation } as SessionOperation
+  if (typeof obj.task === "string") {
+    const op: Record<string, unknown> = { action: "create", task: obj.task }
+    if (obj.mode === "build" || obj.mode === "compose") op.mode = obj.mode
+    if (typeof obj.model === "string") op.model = obj.model
+    if (typeof obj.title === "string") op.title = obj.title
+    return { operation: op } as SessionOperation
+  }
+  return undefined
+}
+
 // Extract a fixed set of `--name value` / `--name=value` string flags from a
 // verb's args, leaving positionals in `rest`. A value flag with no value
 // (`--mode` at end, or `--mode=`) sets `error` rather than silently dropping —
@@ -301,6 +327,7 @@ export const SessionTool = Tool.define<typeof parameters, Metadata, Deps>(
       shell: {
         description: SHELL_DESCRIPTION,
         parse: parseSessionScript,
+        recover: recoverSessionArgs,
       },
     } satisfies Tool.DefWithoutID<typeof parameters, Metadata>
   }),

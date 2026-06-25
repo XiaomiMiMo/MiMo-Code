@@ -1,4 +1,44 @@
-session create <task...> [--mode build|compose] [--model <ref>] [--title <t>]   # spawn a background child session
-session list                                                                    # list child sessions (id, title, mode, status)
-session switch <sessionID>                                                       # move the user's frontend panel to a session
-session cancel <sessionID>                                                       # stop a child session
+Child-session orchestration tool (shell form, Orchestrator mode only). Each
+child runs in its own session id with its own mode, model, task panel, and
+memory. Verbs: create | switch | list | cancel.
+
+# Script structure
+#   - Multi-line: one command per non-blank line, set-e on first failure
+#   - "double" quotes preserve literal LF and process \" \\ escapes
+#   - 'single' quotes are verbatim
+#   - # starts a line comment to end-of-line (quoted # is literal text)
+
+# create — spawn a background child session (task text is positional, 1+ words):
+    session create write a file hello.txt containing the word world
+    session create implement email/password login --mode build
+    session create design the billing schema --mode compose --model standard --title Billing
+    # --mode  build|compose   (default build)
+    # --model <ref>           model group/tier name, or literal provider/model
+    # --title <t>             session title (defaults to the task prefix)
+
+# multi-line task via heredoc (verbatim — no escaping needed for " \ $ #):
+    session create <<EOF
+    Implement auth
+    - email/password
+    - oauth (google, github)
+    EOF
+
+# inspect:
+    session list                       # this Orchestrator's children: id, title, mode, status
+
+# navigate the user's frontend panel:
+    session switch ses_...             # Orchestrator-only; a child cannot switch back
+
+# stop a child:
+    session cancel ses_...
+
+# multi-command (one per line, set-e on first failure) — fan out several children:
+    session create implement the parser --mode build
+    session create write the integration tests --mode build
+    session create draft the API docs --mode compose
+
+# Relay (separate tool): talk to a running child via the actor tool —
+#   actor send --session <childSessionID> "<message>"   (the child replies back to you)
+
+# Don't dump the child list in your reply — `session list` already renders it.
+# Just summarize which child you created or what changed.

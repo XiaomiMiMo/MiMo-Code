@@ -199,3 +199,42 @@ describe("session tool", () => {
     ),
   )
 })
+
+import { test } from "bun:test"
+import { recoverSessionArgs } from "../../src/tool/session"
+
+describe("recoverSessionArgs", () => {
+  test("salvages a bare {task} into a create operation", () => {
+    expect(recoverSessionArgs({ task: "build a login page" })).toEqual({
+      operation: { action: "create", task: "build a login page" },
+    })
+  })
+
+  test("carries mode/model/title on a bare create", () => {
+    expect(recoverSessionArgs({ task: "x", mode: "compose", model: "standard", title: "T" })).toEqual({
+      operation: { action: "create", task: "x", mode: "compose", model: "standard", title: "T" },
+    })
+  })
+
+  test("parses a stringified operation", () => {
+    expect(recoverSessionArgs({ operation: '{"action":"list"}' })).toEqual({ operation: { action: "list" } })
+  })
+
+  test("passes through an already-nested operation", () => {
+    expect(recoverSessionArgs({ operation: { action: "switch", sessionID: "ses_x" } })).toEqual({
+      operation: { action: "switch", sessionID: "ses_x" },
+    })
+  })
+
+  test("returns undefined for unrecoverable input", () => {
+    expect(recoverSessionArgs({ foo: "bar" })).toBeUndefined()
+    expect(recoverSessionArgs(null)).toBeUndefined()
+    expect(recoverSessionArgs("nope")).toBeUndefined()
+  })
+
+  test("ignores an invalid mode on a bare create", () => {
+    expect(recoverSessionArgs({ task: "x", mode: "plan" })).toEqual({
+      operation: { action: "create", task: "x" },
+    })
+  })
+})

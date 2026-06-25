@@ -1,1 +1,49 @@
-Create and manage child sessions (Orchestrator only). Each child runs in its own session with its own mode and model. Verbs: create, switch, list, cancel.
+Child-session orchestration tool (Orchestrator mode only). Create and manage
+full child sessions, each running in its OWN session id with its own mode,
+model, task panel, and memory. Use this to coordinate many independent tasks
+from a single Orchestrator session instead of doing everything inline.
+
+JSON calls always wrap the action in an `operation` object — see examples below.
+
+## Operations
+
+- create:   spawn a new child session that runs in the BACKGROUND. `task` required
+            (the child's first-turn prompt). optional: `mode` (build|compose,
+            default build), `model` (group/tier name or literal provider/model),
+            `title`. Returns the child session id.
+- switch:   move the user's frontend panel to a session. `sessionID` required.
+            Use after `list` to resolve which child the user meant in natural
+            language, then switch to it. (Orchestrator-only — a child cannot
+            switch back; the user returns manually via the session-parent keybind.)
+- list:     enumerate this Orchestrator's child sessions (id, title, mode, status).
+- cancel:   stop a running child session. `sessionID` required.
+
+## JSON examples
+
+{"operation":{"action":"create","task":"Implement email/password login","mode":"build"}}
+{"operation":{"action":"create","task":"Design the billing schema","mode":"compose","model":"standard","title":"Billing"}}
+{"operation":{"action":"list"}}
+{"operation":{"action":"switch","sessionID":"ses_..."}}
+{"operation":{"action":"cancel","sessionID":"ses_..."}}
+
+## How to operate
+
+- Delegate each substantial, independent piece of work to its own child via
+  `create`. One main-line task = one child. Pick `mode: "compose"` for work that
+  benefits from the structured compose workflow, otherwise `mode: "build"`.
+- Children run concurrently in the background; you keep your turn free to talk to
+  the user or dispatch more children.
+- Relay between the user and a child with `actor send --session <childSessionID>`
+  (full-duplex; the child replies via a notification back to you).
+- Keep your own `task` panel as a dispatch ledger — one task per child you create.
+
+## When to use
+
+Use `session create` when a request is a real, self-contained unit of work worth
+its own session (a feature, a bug, a refactor). For trivial inline answers, just
+respond directly — you are a full-capability session and have every normal tool.
+
+## Don't repeat in your reply
+
+Do not dump the child-session list in your reply — `session list` already renders
+it. Summarize which child you created or what changed.
