@@ -50,7 +50,7 @@ export const dict = {
   "tui.tips.shell_prefix":
     "Начните сообщение с {highlight}!{/highlight}, чтобы выполнить shell-команду напрямую (например, {highlight}!ls -la{/highlight})",
   "tui.tips.tab_agent":
-    "Нажмите {highlight}Tab{/highlight} или {highlight}Shift+Tab{/highlight}, чтобы переключаться между агентами Build, Plan и Compose",
+    "Нажмите {highlight}Tab{/highlight} или {highlight}Shift+Tab{/highlight}, чтобы переключаться между агентами Build, Plan, Compose и Orchestrator",
   "tui.tips.theme_mode":
     "Выполните {highlight}/dark{/highlight} для тёмного режима или {highlight}/light{/highlight} для светлого",
   "tui.tips.doc": "Выполните {highlight}/doc{/highlight}, чтобы открыть пользовательскую документацию",
