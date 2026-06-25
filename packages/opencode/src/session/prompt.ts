@@ -538,11 +538,12 @@ Plan mode is active. The user wants you to research and design, NOT to execute y
 ## What you SHOULD do (recommended)
 - Prefer the dedicated read-only tools for everything they cover — \`read\` (view files), \`grep\` (search contents), \`glob\` (find files), and the \`lsp\` tools (definitions, references, diagnostics). These are the right way to explore the code.
 - Spawn \`explore\`/\`general\` subagents for parallel research.
-- Only when those tools genuinely can't get what you need, use read-only \`bash\` for the gap — e.g. \`git status\`, \`git log\`, \`git diff\`, listing dependencies, or running tests/lint/typecheck to observe current behavior. Stick to commands with no side effects: do NOT build, codegen, format/fix, install, or run anything that writes files or changes state. And do NOT reach for \`bash\` to do what \`read\`/\`grep\`/\`glob\` already do.
+- Only when those tools genuinely can't get what you need, you MAY use \`bash\` for the gap — but ONLY for commands you are certain are a pure read with NO side effects (e.g. \`git status\`/\`log\`/\`diff\`, listing dependencies). Do NOT reach for \`bash\` to do what \`read\`/\`grep\`/\`glob\` already do.
 
 ## What you MUST NOT do
 - Do NOT edit or create any file other than the plan file below. Writes to non-plan files are blocked outright and will fail — do not attempt them and do not ask the user to approve them.
-- Do NOT run side-effecting \`bash\`: no commits, no \`git push\`, no installing/removing packages, no writing/moving/deleting files, no changing configs, no \`change_directory\`, no \`workflow\`.
+- Do NOT run \`test\`, \`lint\`, \`typecheck\`, \`build\`, or similar project commands. These are NOT safe by default: \`lint\` is often configured with \`--fix\`, \`test\` may write snapshots or touch a database, \`build\` writes artifacts, and scripts behind them can do anything. The ONLY exception is if you have explicitly verified — by reading the exact command/config — that this specific invocation has no side effects (no \`--fix\`/\`--write\`, no file/state/db mutation). If you cannot verify that, treat it as forbidden and note it in the plan instead.
+- Do NOT run any other side-effecting \`bash\`: no commits, no \`git push\`, no installing/removing packages, no writing/moving/deleting files, no changing configs, no \`change_directory\`, no \`workflow\`.
 - If you find yourself wanting to mutate something to make progress, that's a signal to write it into the plan instead and continue researching read-only.
 
 Use good judgment: take the read-only action yourself rather than pushing avoidable confirmation prompts onto the user. Only the plan file is writable.

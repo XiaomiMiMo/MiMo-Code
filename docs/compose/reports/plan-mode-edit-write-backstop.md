@@ -61,11 +61,13 @@ Three focused changes:
 3. **Explicit plan prompt** (`src/session/prompt.ts`). Replaced the vague
    "no non-readonly tools / READ-ONLY actions only" reminder with explicit
    guidance — prefer the dedicated read-only tools (`read`/`grep`/`glob`/`lsp`),
-   and use read-only `bash` only for the gap they can't cover (`git status`/`log`/
-   `diff`, dependency listing, side-effect-free `test`/`lint`/`typecheck`) — plus
-   an explicit forbidden list (writes to non-plan files are hard-blocked; no
-   build/codegen/format/install, no commits, no `change_directory`, no
-   `workflow`). It also tells the model to take the
+   and use `bash` only for the gap they can't cover and only when certain it is a
+   pure read (`git status`/`log`/`diff`). The forbidden list is explicit and
+   strict: writes to non-plan files are hard-blocked; `test`/`lint`/`typecheck`/
+   `build` are forbidden by default (lint may be `--fix`, test may write
+   snapshots/db, build writes artifacts) UNLESS the model has verified the exact
+   invocation has no side effects; no commits, no install, no `change_directory`,
+   no `workflow`. It also tells the model to take the
    read-only action itself rather than push avoidable confirmation prompts onto the
    user. This is the **model-adherence layer** that complements the permission
    backstop.
