@@ -210,6 +210,23 @@ export const layer = Layer.effect(
             mode: "primary",
             native: true,
           },
+          orchestrator: {
+            name: "orchestrator",
+            color: "#7fb3d5",
+            description:
+              "Orchestrator mode. One session coordinates many child sessions; use the `session` tool to create/switch/list/cancel children running in their own mode and model.",
+            options: {},
+            permission: Permission.merge(
+              defaults,
+              Permission.fromConfig({
+                question: "allow",
+              }),
+              user,
+            ),
+            toolAllowlist: ["session", "task", "read", "grep", "glob", "list", "memory", "actor", "question", "skill"],
+            mode: "primary",
+            native: true,
+          },
           general: {
             name: "general",
             color: "#aac4e1",
@@ -451,6 +468,7 @@ export const layer = Layer.effect(
               [(x) => x.name === "build", "desc"],
               [(x) => x.name === "plan", "desc"],
               [(x) => x.name === "compose", "desc"],
+              [(x) => x.name === "orchestrator", "desc"],
               [(x) => x.name === "max", "desc"],
               [(x) => x.name, "asc"],
             ),
