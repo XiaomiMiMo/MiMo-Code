@@ -795,6 +795,26 @@ test(
   ),
 )
 
+test(
+  "remote MCP can connect to a user-configured Docker bridge address",
+  withInstance({}, (mcp) =>
+    Effect.gen(function* () {
+      lastCreatedClientName = "docker-bridge"
+      const serverState = getOrCreateClientState("docker-bridge")
+
+      const addResult = yield* mcp.add("docker-bridge", {
+        type: "remote",
+        url: "http://172.17.0.1:3845/mcp",
+        oauth: false,
+      })
+
+      const serverStatus = (addResult.status as any)["docker-bridge"] ?? addResult.status
+      expect(serverStatus.status).toBe("connected")
+      expect(serverState.listToolsCalls).toBe(1)
+    }),
+  ),
+)
+
 // ========================================================================
 // Test: transport leak — failed remote transports not closed (#19168)
 // ========================================================================

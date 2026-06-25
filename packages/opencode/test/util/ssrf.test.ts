@@ -70,6 +70,26 @@ describe("assertSafeUrl", () => {
     })
   })
 
+  describe("allowPrivateNetwork option", () => {
+    test("allows explicitly trusted RFC1918 endpoints", async () => {
+      await expect(assertSafeUrl("http://10.0.0.1/", { allowPrivateNetwork: true })).resolves.toBeUndefined()
+      await expect(assertSafeUrl("http://172.17.0.1/", { allowPrivateNetwork: true })).resolves.toBeUndefined()
+      await expect(assertSafeUrl("http://192.168.1.10/", { allowPrivateNetwork: true })).resolves.toBeUndefined()
+    })
+
+    test("still blocks metadata and link-local endpoints", async () => {
+      await expect(assertSafeUrl("http://169.254.169.254/", { allowPrivateNetwork: true })).rejects.toThrow(
+        "SSRF protection",
+      )
+      await expect(assertSafeUrl("http://100.100.100.200/", { allowPrivateNetwork: true })).rejects.toThrow(
+        "SSRF protection",
+      )
+      await expect(assertSafeUrl("http://metadata.google.internal/", { allowPrivateNetwork: true })).rejects.toThrow(
+        "SSRF protection",
+      )
+    })
+  })
+
   describe("DNS fail-closed", () => {
     test("rejects unresolvable hostnames", async () => {
       await expect(assertSafeUrl("http://this-domain-definitely-does-not-exist-xyz123.invalid/")).rejects.toThrow(

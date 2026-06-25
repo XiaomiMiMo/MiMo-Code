@@ -289,7 +289,7 @@ export const layer = Layer.effect(
       mcp: ConfigMCP.Info & { type: "remote" },
     ) {
       yield* Effect.tryPromise({
-        try: () => assertSafeUrl(mcp.url),
+        try: () => assertSafeUrl(mcp.url, { allowPrivateNetwork: true }),
         catch: (e) => new Error(e instanceof Error ? e.message : String(e)),
       }).pipe(Effect.orDie)
 
