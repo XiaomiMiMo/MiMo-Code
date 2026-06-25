@@ -1909,37 +1909,118 @@ function Workflow(props: ToolProps<typeof WorkflowTool>) {
     return Array.isArray(t) ? t : []
   })
 
-  const content = createMemo(() => {
-    const op = operation()
-    const r = run()
-    const id = runID()
-    if (op !== "run") {
-      return `workflow ${op}${id ? ` ${id}` : ""}`
-    }
-    const lines: string[] = []
-    const name = r?.name ?? (props.input as { name?: string }).name ?? "inline"
-    const status = r?.status ?? (props.metadata.status as string | undefined)
-    const phase = r?.currentPhase
-    const counters = r ? `${r.succeeded}✓ ${r.failed}✗ ${r.running}⟳` : ""
-    const head = [
-      `workflow ${name}`,
-      status ? `· ${status}` : "",
-      phase ? `· ${phase}` : "",
-      counters ? `· ${counters}` : "",
-    ]
-      .filter(Boolean)
-      .join(" ")
-    lines.push(head)
-    for (const e of transcript()) {
-      lines.push(e.kind === "phase" ? `↳ phase: ${e.text}` : `  ${e.text}`)
-    }
-    return lines.join("\n")
+  const name = createMemo(() => run()?.name ?? (props.input as { name?: string }).name ?? "inline")
+  const status = createMemo(() => run()?.status ?? (props.metadata.status as string | undefined))
+
+  // Non-"run" ops (status/wait/cancel/resume) are one-shot control calls with no
+  // live transcript — keep them as a compact inline line.
+  return (
+    <Show when={operation() === "run"} fallback={
+      <InlineTool icon="⚡" spinner={isRunning()} pending="Starting workflow..." complete={true} part={props.part}>
+        {`workflow ${operation()}${runID() ? ` ${runID()}` : ""}`}
+      </InlineTool>
+    }>
+      <WorkflowPanel
+        name={name()}
+        status={status()}
+        run={run()}
+        transcript={transcript()}
+        running={isRunning()}
+        part={props.part}
+      />
+    </Show>
+  )
+}
+
+// Bold panel for a `workflow run`. The transcript (phase + log lines streamed
+// every 250ms into part metadata) is the run's live activity — agents spawning,
+// per-source hits, facts checked. The old renderer dumped it all as one muted-
+// gray InlineTool blob, so a busy run read as "stuck". Here phases are bold
+// accent section headers, logs render in readable text, and a running run shows
+// a spinner on its current phase so progress is always visible.
+function WorkflowPanel(props: {
+  name: string
+  status?: string
+  run?: { succeeded: number; failed: number; running: number; currentPhase?: string }
+  transcript: { kind: "phase" | "log"; text: string }[]
+  running: boolean
+  part: ToolPart
+}) {
+  const { theme } = useTheme()
+  const renderer = useRenderer()
+  const [collapsed, setCollapsed] = createSignal(false)
+
+  const statusColor = createMemo(() => {
+    const s = props.status
+    if (s === "completed") return theme.success
+    if (s === "failed") return theme.error
+    if (s === "cancelled") return theme.textMuted
+    return theme.warning
   })
 
+  const entries = createMemo(() => (collapsed() ? [] : props.transcript))
+
   return (
-    <InlineTool icon="⚡" spinner={isRunning()} pending="Starting workflow..." complete={true} part={props.part}>
-      {content()}
-    </InlineTool>
+    <box
+      border={["left"]}
+      paddingTop={1}
+      paddingBottom={1}
+      paddingLeft={2}
+      marginTop={1}
+      gap={1}
+      backgroundColor={theme.backgroundPanel}
+      customBorderChars={SplitBorder.customBorderChars}
+      borderColor={statusColor()}
+      onMouseUp={() => {
+        if (renderer.getSelection()?.getSelectedText()) return
+        setCollapsed((p) => !p)
+      }}
+    >
+      <box flexDirection="row" gap={1} paddingLeft={3}>
+        <Show when={props.running} fallback={<text fg={theme.accent} attributes={TextAttributes.BOLD}>⚡</text>}>
+          <spinner frames={["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]} interval={80} color={theme.accent} />
+        </Show>
+        <text attributes={TextAttributes.BOLD} fg={theme.accent}>
+          {props.name}
+        </text>
+        <Show when={props.status}>
+          <text fg={statusColor()} attributes={TextAttributes.BOLD}>
+            {props.status}
+          </text>
+        </Show>
+        <Show when={props.run?.currentPhase}>
+          <text fg={theme.textMuted}>· {props.run!.currentPhase}</text>
+        </Show>
+        <Show when={props.run}>
+          <text fg={theme.success}>{props.run!.succeeded}✓</text>
+          <text fg={props.run!.failed > 0 ? theme.error : theme.textMuted}>{props.run!.failed}✗</text>
+          <text fg={props.run!.running > 0 ? theme.warning : theme.textMuted}>{props.run!.running}⟳</text>
+        </Show>
+      </box>
+      <Show
+        when={!collapsed()}
+        fallback={
+          <text paddingLeft={3} fg={theme.textMuted}>
+            {props.transcript.length} lines · click to expand
+          </text>
+        }
+      >
+        <box paddingLeft={3}>
+          <For each={entries()}>
+            {(e) => (
+              <Show
+                when={e.kind === "phase"}
+                fallback={<text fg={theme.text}>{e.text}</text>}
+              >
+                <text fg={theme.accent} attributes={TextAttributes.BOLD}>
+                  ▸ {e.text}
+                </text>
+              </Show>
+            )}
+          </For>
+        </box>
+      </Show>
+    </box>
   )
 }
 
