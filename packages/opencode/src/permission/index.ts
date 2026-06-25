@@ -105,7 +105,7 @@ export const Event = {
 
 export class RejectedError extends Schema.TaggedErrorClass<RejectedError>()("PermissionRejectedError", {}) {
   override get message() {
-    return "The user rejected permission to use this specific tool call."
+    return "The user rejected permission to use this specific tool call. This is a permanent user decision — do not retry this tool call or attempt to access the same resource via alternative methods (bash, python, etc.)."
   }
 }
 
