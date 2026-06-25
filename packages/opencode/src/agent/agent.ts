@@ -19,6 +19,7 @@ import { Permission } from "@/permission"
 import { mergeDeep, pipe, sortBy, values } from "remeda"
 import { Global } from "@/global"
 import path from "path"
+import os from "os"
 import { Plugin } from "@/plugin"
 import { Skill } from "../skill"
 import { Effect, Context, Layer } from "effect"
@@ -55,6 +56,15 @@ export const Info = z
   })
 export type Info = z.infer<typeof Info>
 
+// Glob patterns for system temp directories that are auto-allowed for read/write
+// without prompting. Covers the literal /tmp, its macOS symlink target /private/tmp,
+// and the platform temp dir from os.tmpdir() (e.g. /var/folders/.../T on macOS,
+// %TEMP% on Windows). Permission matching uses the literal path, so all forms are
+// listed. Users can override with an explicit deny in their permission config.
+export function tmpDirAllowGlobs() {
+  return [...new Set(["/tmp", "/private/tmp", os.tmpdir()])].map((dir) => path.join(dir, "*"))
+}
+
 export interface Interface {
   readonly get: (agent: string) => Effect.Effect<Info>
   readonly list: () => Effect.Effect<Info[]>
@@ -86,7 +96,11 @@ export const layer = Layer.effect(
       Effect.fn("Agent.state")(function* (_ctx) {
         const cfg = yield* config.get()
         const skillDirs = yield* skill.dirs()
-        const whitelistedDirs = [Truncate.GLOB, ...skillDirs.map((dir) => path.join(dir, "*"))]
+        const whitelistedDirs = [
+          Truncate.GLOB,
+          ...skillDirs.map((dir) => path.join(dir, "*")),
+          ...tmpDirAllowGlobs(),
+        ]
 
         const defaults = Permission.fromConfig({
           "*": "allow",
