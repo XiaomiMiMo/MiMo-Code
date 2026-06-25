@@ -11,7 +11,7 @@ import { Instance } from "../project/instance"
 import { assertExternalDirectoryEffect } from "./external-directory"
 import { SessionCwd } from "./session-cwd"
 import { Instruction } from "../session/instruction"
-import { isImageAttachment, isPdfAttachment, sniffAttachmentMime } from "@/util/media"
+import { isAudioAttachment, isImageAttachment, isPdfAttachment, sniffAttachmentMime } from "@/util/media"
 
 const DEFAULT_READ_LIMIT = 2000
 const MAX_LINE_LENGTH = 2000
@@ -208,9 +208,13 @@ export const ReadTool = Tool.define(
       const sample = yield* readSample(filepath, Number(stat.size), SAMPLE_BYTES)
 
       const mime = sniffAttachmentMime(sample, AppFileSystem.mimeType(filepath))
-      if (isImageAttachment(mime) || isPdfAttachment(mime)) {
+      if (isImageAttachment(mime) || isPdfAttachment(mime) || isAudioAttachment(mime)) {
         const bytes = yield* fs.readFile(filepath)
-        const msg = isPdfAttachment(mime) ? "PDF read successfully" : "Image read successfully"
+        const msg = isPdfAttachment(mime)
+          ? "PDF read successfully"
+          : isAudioAttachment(mime)
+            ? "Audio read successfully"
+            : "Image read successfully"
         return {
           title,
           output: msg,

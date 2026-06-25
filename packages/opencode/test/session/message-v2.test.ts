@@ -363,6 +363,107 @@ describe("session.message-v2.toModelMessage", () => {
     ])
   })
 
+  test("extracts tool-result audio into a user message for openai models", async () => {
+    const audioModel: Provider.Model = {
+      ...model,
+      capabilities: {
+        ...model.capabilities,
+        input: {
+          ...model.capabilities.input,
+          audio: true,
+        },
+      },
+    }
+    const userID = "m-user-audio"
+    const assistantID = "m-assistant-audio"
+
+    const input: MessageV2.WithParts[] = [
+      {
+        info: userInfo(userID),
+        parts: [
+          {
+            ...basePart(userID, "u1-audio"),
+            type: "text",
+            text: "read audio",
+          },
+        ] as MessageV2.Part[],
+      },
+      {
+        info: assistantInfo(assistantID, userID),
+        parts: [
+          {
+            ...basePart(assistantID, "a1-audio"),
+            type: "tool",
+            callID: "call-audio-1",
+            tool: "read",
+            state: {
+              status: "completed",
+              input: { filePath: "/tmp/voice.mp3" },
+              output: "Audio read successfully",
+              title: "Read",
+              metadata: {},
+              time: { start: 0, end: 1 },
+              attachments: [
+                {
+                  ...basePart(assistantID, "file-audio-1"),
+                  type: "file",
+                  mime: "audio/mpeg",
+                  filename: "voice.mp3",
+                  url: "data:audio/mpeg;base64,SUQz",
+                },
+              ],
+            },
+          },
+        ] as MessageV2.Part[],
+      },
+    ]
+
+    expect(await MessageV2.toModelMessages(input, audioModel)).toStrictEqual([
+      {
+        role: "user",
+        content: [{ type: "text", text: "read audio" }],
+      },
+      {
+        role: "assistant",
+        content: [
+          {
+            type: "tool-call",
+            toolCallId: "call-audio-1",
+            toolName: "read",
+            input: { filePath: "/tmp/voice.mp3" },
+            providerExecuted: undefined,
+          },
+        ],
+      },
+      {
+        role: "tool",
+        content: [
+          {
+            type: "tool-result",
+            toolCallId: "call-audio-1",
+            toolName: "read",
+            output: {
+              type: "text",
+              value: "Audio read successfully",
+            },
+          },
+        ],
+      },
+      {
+        role: "user",
+        content: [
+          { type: "text", text: MessageV2.SYNTHETIC_ATTACHMENT_PROMPT },
+          {
+            type: "file",
+            mediaType: "audio/mpeg",
+            filename: "voice.mp3",
+            data: "data:audio/mpeg;base64,SUQz",
+          },
+        ],
+      },
+    ])
+  })
+
   test("preserves jpeg tool-result media for anthropic models", async () => {
     const anthropicModel: Provider.Model = {
       ...model,

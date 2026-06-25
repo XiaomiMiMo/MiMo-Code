@@ -25,7 +25,7 @@ interface FetchDecompressionError extends Error {
   path: string
 }
 
-export const SYNTHETIC_ATTACHMENT_PROMPT = "Attached image(s) from tool result:"
+export const SYNTHETIC_ATTACHMENT_PROMPT = "Attached media from tool result:"
 export { isMedia }
 
 export const OutputLengthError = NamedError.create("MessageOutputLengthError", z.object({}))
