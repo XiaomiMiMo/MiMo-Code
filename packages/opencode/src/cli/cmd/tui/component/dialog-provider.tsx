@@ -15,6 +15,7 @@ import * as Clipboard from "@tui/util/clipboard"
 import { useToast, type ToastContext } from "../ui/toast"
 import { isConsoleManagedProvider } from "@tui/util/provider-origin"
 import { isPopularProvider, PROVIDER_PRIORITY } from "@/util/provider-priority"
+import { useLanguage } from "@tui/context/language"
 
 export function createDialogProviderOptions() {
   const sync = useSync()
@@ -164,17 +165,18 @@ export async function runCustomProviderWizard(opts: {
   toast: ToastContext
 }) {
   const { dialog, sdk, sync, toast } = opts
+  const t = useLanguage().t
 
   function step(n: number, total: number, title: string, placeholder?: string, value?: string) {
     return DialogPrompt.show(dialog, `${title} (${n}/${total})`, { placeholder, value })
   }
 
-  const providerIDRaw = await step(1, 6, "Provider id", "e.g. mimorouter")
+  const providerIDRaw = await step(1, 6, t("tui.dialog.provider.id"), "e.g. mimorouter")
   if (providerIDRaw === null) return
   const providerID = providerIDRaw.trim()
   if (!providerID) return
 
-  const nameRaw = await step(2, 6, "Display name", "e.g. MiMo Router", providerID)
+  const nameRaw = await step(2, 6, t("tui.dialog.provider.name"), "e.g. MiMo Router", providerID)
   if (nameRaw === null) return
   const name = nameRaw.trim() || providerID
 
@@ -249,6 +251,7 @@ function AutoMethod(props: AutoMethodProps) {
   const dialog = useDialog()
   const sync = useSync()
   const toast = useToast()
+  const t = useLanguage().t
 
   useKeyboard((evt) => {
     if (evt.name === "c" && !evt.ctrl && !evt.meta) {
@@ -287,7 +290,7 @@ function AutoMethod(props: AutoMethodProps) {
         <Link href={props.authorization.url} fg={theme.primary} />
         <text fg={theme.textMuted}>{props.authorization.instructions}</text>
       </box>
-      <text fg={theme.textMuted}>Waiting for authorization...</text>
+      <text fg={theme.textMuted}>{t("tui.dialog.provider.waiting_auth")}</text>
       <text fg={theme.text}>
         c <span style={{ fg: theme.textMuted }}>copy</span>
       </text>
@@ -307,11 +310,12 @@ function CodeMethod(props: CodeMethodProps) {
   const sync = useSync()
   const dialog = useDialog()
   const [error, setError] = createSignal(false)
+  const t = useLanguage().t
 
   return (
     <DialogPrompt
       title={props.title}
-      placeholder="Authorization code"
+      placeholder={t("tui.dialog.provider.auth_code")}
       onConfirm={async (value) => {
         const { error } = await sdk.client.provider.oauth.callback({
           providerID: props.providerID,
