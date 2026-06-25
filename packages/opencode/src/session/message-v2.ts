@@ -11,7 +11,7 @@ import { MessageTable, PartTable, SessionTable } from "./session.sql"
 import { ProviderError } from "@/provider"
 import { iife } from "@/util/iife"
 import { errorMessage } from "@/util/error"
-import { isMedia } from "@/util/media"
+import { isMedia, isSupportedMediaAttachment } from "@/util/media"
 import type { SystemError } from "bun"
 import type { Provider } from "@/provider"
 import { ModelID, ProviderID } from "@/provider/schema"
@@ -612,6 +612,14 @@ function providerMeta(metadata: Record<string, any> | undefined) {
   return Object.keys(rest).length > 0 ? rest : undefined
 }
 
+function unsupportedImageAttachmentText(input: { mime: string; filename?: string }) {
+  return `[Unsupported image attachment omitted: ${input.filename ?? "file"} (${input.mime})]`
+}
+
+function isUnsupportedImageAttachment(mime: string) {
+  return mime.startsWith("image/") && !isSupportedMediaAttachment(mime)
+}
+
 export const toModelMessagesEffect = Effect.fnUntraced(function* (
   input: WithParts[],
   model: Provider.Model,
@@ -689,7 +697,12 @@ export const toModelMessagesEffect = Effect.fnUntraced(function* (
           })
         // text/plain and directory files are converted into text parts, ignore them
         if (part.type === "file" && part.mime !== "text/plain" && part.mime !== "application/x-directory") {
-          if (options?.stripMedia && isMedia(part.mime)) {
+          if (isUnsupportedImageAttachment(part.mime)) {
+            userMessage.parts.push({
+              type: "text",
+              text: unsupportedImageAttachmentText(part),
+            })
+          } else if (options?.stripMedia && isMedia(part.mime)) {
             userMessage.parts.push({
               type: "text",
               text: `[Attached ${part.mime}: ${part.filename ?? "file"}]`,
@@ -757,17 +770,24 @@ export const toModelMessagesEffect = Effect.fnUntraced(function* (
         if (part.type === "tool") {
           toolNames.add(part.tool)
           if (part.state.status === "completed") {
-            const outputText = part.state.time.compacted ? "[Old tool result content cleared]" : part.state.output
             const attachments = part.state.time.compacted || options?.stripMedia ? [] : (part.state.attachments ?? [])
+            const unsupportedImageAttachments = attachments.filter((a) => isUnsupportedImageAttachment(a.mime))
+            const supportedAttachments = attachments.filter((a) => !isUnsupportedImageAttachment(a.mime))
+            const outputText = [
+              part.state.time.compacted ? "[Old tool result content cleared]" : part.state.output,
+              unsupportedImageAttachments.map(unsupportedImageAttachmentText).join("\n"),
+            ]
+              .filter((item) => item.length > 0)
+              .join("\n\n")
 
             // For providers that don't support media in tool results, extract media files
             // (images, PDFs) to be sent as a separate user message
-            const mediaAttachments = attachments.filter((a) => isMedia(a.mime))
-            const nonMediaAttachments = attachments.filter((a) => !isMedia(a.mime))
+            const mediaAttachments = supportedAttachments.filter((a) => isMedia(a.mime))
+            const nonMediaAttachments = supportedAttachments.filter((a) => !isMedia(a.mime))
             if (!supportsMediaInToolResults && mediaAttachments.length > 0) {
               media.push(...mediaAttachments)
             }
-            const finalAttachments = supportsMediaInToolResults ? attachments : nonMediaAttachments
+            const finalAttachments = supportsMediaInToolResults ? supportedAttachments : nonMediaAttachments
 
             const output =
               finalAttachments.length > 0
