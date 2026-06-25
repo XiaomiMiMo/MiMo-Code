@@ -34,6 +34,14 @@ import { RateLimitMiddleware } from "../../rate-limit"
 
 const log = Log.create({ service: "server" })
 
+// Cadence of the keep-alive whitespace written on the POST /:sessionID/message
+// stream while a turn is in flight. Matches the 10s SSE heartbeat in
+// event.ts/global.ts. Read per-request (not memoized) so it can be tuned at
+// runtime; smaller values are useful in tests.
+function promptHeartbeatIntervalMs() {
+  return Number(process.env["MIMOCODE_PROMPT_HEARTBEAT_INTERVAL_MS"]) || 10_000
+}
+
 function taskToTodo(t: Task) {
   const status =
     t.status === "in_progress"
@@ -995,14 +1003,34 @@ export const SessionRoutes = lazy(() =>
             return
           }
           signal.addEventListener("abort", onClientDisconnect, { once: true })
+          // Keep the response alive while the turn is in flight. A turn can sit
+          // silent for a long time — most notably while the `question` tool
+          // blocks on an un-timed Deferred waiting for a human reply (the Bun
+          // server itself never times out: adapter.bun.ts idleTimeout:0). A
+          // client with its own request timeout (e.g. the external `mimo run`
+          // driver's per-turn budget) would otherwise see a dead connection and
+          // abort with "error sending request for url". Periodic whitespace
+          // resets the client's idle timer; whitespace is JSON-insignificant,
+          // so the trailing JSON.stringify(msg) still parses as the whole body
+          // (clients JSON.parse the full body, which tolerates leading
+          // whitespace). Mirrors the 10s SSE heartbeat in event.ts/global.ts.
+          const heartbeat = setInterval(() => {
+            void stream.write(" ")
+          }, promptHeartbeatIntervalMs())
           try {
             const msg = await runRequest(
               "SessionRoutes.prompt",
               c,
               SessionPrompt.Service.use((svc) => svc.prompt({ ...body, sessionID })),
             )
+            // Safety invariant: no await/yield between this write and the
+            // clearInterval below (reached synchronously via finally) — else the
+            // interval could fire and append a stray space AFTER the JSON,
+            // breaking the "JSON is the whole body" contract. Leading spaces are
+            // JSON-insignificant; a trailing one would not be.
             void stream.write(JSON.stringify(msg))
           } finally {
+            clearInterval(heartbeat)
             signal.removeEventListener("abort", onClientDisconnect)
           }
         })
