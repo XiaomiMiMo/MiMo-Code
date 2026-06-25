@@ -82,22 +82,17 @@ type State = Omit<Interface, "generate">
 export class Service extends Context.Service<Service, Interface>()("@opencode/Agent") {}
 
 // Tools that cannot mutate the workspace. Source of truth for plan mode's
-// subagentToolAllowlist. (Intentionally NOT shared with the explore agent's
-// inline list: explore allows read-only `bash` for shell exploration, which a
-// plan subagent must not have — they are different contracts that happen to
-// overlap.)
-export const READONLY_TOOLS = [
-  "read",
-  "glob",
-  "grep",
-  "list",
-  "webfetch",
-  "websearch",
-  "codesearch",
-  "memory",
-  "history",
-  "lsp",
-]
+// subagentToolAllowlist. Every entry must be a tool that is UNCONDITIONALLY in
+// the default registry (guarded by a subset test). Gated tools are excluded on
+// purpose: websearch/codesearch only register for opencode/xiaomi providers or
+// under MIMOCODE_ENABLE_EXA, and lsp behind MIMOCODE_EXPERIMENTAL_LSP_TOOL — in
+// the default environment they're absent, so allowing them here would just hand
+// a subagent a tool name that doesn't exist. ("list" was never a real
+// tool id.) Add an entry back only if its tool graduates to always-on.
+// (Intentionally NOT shared with the explore agent's inline list: explore
+// allows read-only `bash` for shell exploration, which a plan subagent must not
+// have — different contracts that happen to overlap.)
+export const READONLY_TOOLS = ["read", "glob", "grep", "webfetch", "memory", "history"]
 
 // Merge an agent's permission with the user/session ruleset, then re-append the
 // agent's hardPermission so those invariants win over any allow rule a user or

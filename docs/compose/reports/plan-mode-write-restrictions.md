@@ -39,7 +39,14 @@ Three layers cooperate:
    - `subagentToolAllowlist?: string[]` — tool allowlist forced on any subagent
      this agent spawns.
    - `READONLY_TOOLS` — exported constant, the read-only toolset plan forces on
-     its subagents.
+     its subagents: `read, glob, grep, webfetch, memory, history`. Only tools
+     that are *unconditionally* in the default registry are listed. Gated tools
+     are deliberately excluded — `websearch`/`codesearch` register only for
+     opencode/xiaomi providers or under `MIMOCODE_ENABLE_EXA`, and `lsp` only
+     under `MIMOCODE_EXPERIMENTAL_LSP_TOOL`; in the default environment they're
+     absent, so allowing them would hand a subagent a non-existent tool name.
+     (`list` is not a real tool id.) A subset-guard test asserts every entry
+     resolves in the real registry, so the list fails loudly on drift.
 
 2. **`runtimePermission(agent, sessionPermission)`** (`src/agent/agent.ts`):
    `Permission.merge(agent.permission, sessionPermission ?? [], agent.hardPermission ?? [])`.
@@ -101,7 +108,7 @@ User/session config cannot relax these — `hardPermission` is applied last.
 
 ## Verification
 
-139 tests pass across `test/agent/agent.test.ts`, `test/permission/next.test.ts`,
+140 tests pass across `test/agent/agent.test.ts`, `test/permission/next.test.ts`,
 `test/tool/actor.test.ts`; `bun typecheck` clean. Key coverage:
 
 - Persisted approval cannot override ruleset deny (`next.test.ts`).
@@ -113,6 +120,10 @@ User/session config cannot relax these — `hardPermission` is applied last.
   `Permission.disabled(runtimePermission(agent))`. Manually verified to FAIL when
   plan's `bash:"ask"` is regressed to `bash:"deny"` — so it catches any future bare
   deny that would mutate the tool list.
+- **`READONLY_TOOLS` ⊆ registry guard** (`agent.test.ts`): asserts every entry
+  resolves to a real registered tool for the build agent. This caught three stale
+  entries during review (`list` never existed; `websearch`/`codesearch`/`lsp` are
+  gated and absent by default) — they were removed.
 - Plan-spawned subagent receives exactly `READONLY_TOOLS` (`actor.test.ts`).
 
 ## Journey Log

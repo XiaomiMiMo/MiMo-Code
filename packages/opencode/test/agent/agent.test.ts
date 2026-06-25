@@ -1005,3 +1005,26 @@ itTool.live("plan never strips MORE tools than build under the same session rule
     }),
   ),
 )
+
+// READONLY_TOOLS is a security boundary (the toolset plan forces onto spawned
+// subagents). If a tool is renamed/removed in the registry, a stale entry here
+// would silently hand a subagent a non-existent tool name. Assert the list is a
+// subset of the real registered tool universe so drift fails loudly.
+itTool.live("READONLY_TOOLS are all real registered tools", () =>
+  provideTmpdirInstance((dir) =>
+    Effect.gen(function* () {
+      const agents = yield* Agent.Service
+      const registry = yield* ToolRegistry.Service
+      const build = yield* agents.get("build")
+      const universe = new Set(
+        (yield* registry.tools({
+          modelID: ModelID.make("claude-opus-4-7"),
+          providerID: ProviderID.make("anthropic"),
+          agent: build,
+        })).map((t) => t.id),
+      )
+      const missing = Agent.READONLY_TOOLS.filter((id) => !universe.has(id))
+      expect(missing).toEqual([])
+    }),
+  ),
+)
