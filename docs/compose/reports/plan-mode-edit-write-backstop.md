@@ -1,10 +1,10 @@
 ---
 feature: plan-mode-edit-write-backstop
-status: delivered (draft PR)
+status: delivered (PR #1330)
 specs: []
 plans: []
 branch: fix/plan-mode-edit-write-backstop
-commits: 9c8f950..ee9c003
+commits: 9c8f950..HEAD
 related: docs/compose/reports/plan-mode-write-restrictions.md (PR #1324, kept as draft for comparison)
 ---
 
@@ -148,7 +148,6 @@ permission layer.
 - **MCP write tools** are outside all of this — MCP calls don't route through the
   `edit` permission key. Pre-existing, orthogonal, theoretical write vector in
   plan mode. Track separately.
-- Both this branch and PR #1324 are left as **draft PRs** for human experts to
-  compare the "minimal backstop" vs "active gate" approaches.
-</content>
-</invoke>
+- This branch is **PR #1330** (ready for review); PR #1324 (the "active gate"
+  approach) is kept as a **draft** for human experts to compare the "minimal
+  backstop" vs "active gate" approaches.
