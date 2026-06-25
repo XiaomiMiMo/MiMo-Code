@@ -189,6 +189,44 @@ MiMoCode is configured via `.mimocode/mimocode.json` in the project directory (o
 
 Max Mode (parallel best-of-N reasoning with judge selection) can be enabled via `experimental.maxMode` in the config.
 
+<details>
+<summary><strong>Allowing the system temp directory (<code>/tmp</code>)</strong></summary>
+
+By default, reading or writing files outside the project working directory triggers an
+`external_directory` permission prompt — including the system temp directory. This is
+intentional: MiMoCode does not silently widen permissions, so you stay in control of what
+the model can touch outside your project.
+
+The temp directory comes up often because most models reach for it as scratch space (e.g.
+a quick script, a throwaway data file). If you trust your environment and would rather not
+be prompted each time, you can opt in by allowing it in your config:
+
+```json title=".mimocode/mimocode.json"
+{
+  "$schema": "https://opencode.ai/config.json",
+  "permission": {
+    "external_directory": {
+      "/tmp/**": "allow",
+      "/private/tmp/**": "allow"
+    }
+  }
+}
+```
+
+**Understand the risk before enabling this.** The temp directory is world-writable and
+shared with every other process and user on the machine. Auto-allowing it means the model
+can read and write there without confirmation, which widens your exposure to predictable
+temp-path / symlink tricks (e.g. another process pre-creating `/tmp/foo` as a symlink to a
+sensitive file). Only opt in for environments you trust, and keep the allowlist narrow.
+
+**macOS note.** Permission patterns match the literal path with no symlink resolution.
+On macOS `/tmp` is a symlink to `/private/tmp`, and `os.tmpdir()` (what many tools actually
+use) resolves to a path under `/var/folders/.../T`. List every form you want to allow — at
+minimum `/tmp/**` and `/private/tmp/**`, plus the `/var/folders/...` path if your tools
+rely on `os.tmpdir()`. On Linux `os.tmpdir()` is `/tmp`, so `/tmp/**` is enough.
+
+</details>
+
 ---
 
 ## Development

@@ -189,6 +189,38 @@ export PULSE_SERVER=tcp:127.0.0.1:4713
 
 Max Mode（并行 best-of-N 推理 + 裁判选优）可通过配置中的 `experimental.maxMode` 开启。
 
+<details>
+<summary><strong>允许访问系统临时目录（<code>/tmp</code>）</strong></summary>
+
+默认情况下，读写项目工作目录之外的文件会触发 `external_directory` 权限询问——系统临时目录也不例外。
+这是有意为之：MiMoCode 不会静默放宽权限，你始终掌控模型在项目之外能触碰什么。
+
+临时目录之所以经常被用到，是因为多数模型习惯把它当作临时工作空间（比如临时脚本、一次性数据文件）。
+如果你信任所处环境、不想每次都被询问，可以在配置中主动放行：
+
+```json title=".mimocode/mimocode.json"
+{
+  "$schema": "https://opencode.ai/config.json",
+  "permission": {
+    "external_directory": {
+      "/tmp/**": "allow",
+      "/private/tmp/**": "allow"
+    }
+  }
+}
+```
+
+**开启前请理解风险。** 临时目录对所有用户和进程可写，与机器上的其他进程共享。自动放行意味着模型
+无需确认即可在其中读写，这会扩大你对“可预测临时路径 / 软链替换”一类攻击的暴露面（例如其他进程提前
+把 `/tmp/foo` 创建为指向敏感文件的软链）。仅在你信任的环境中开启，并尽量缩小放行范围。
+
+**macOS 注意事项。** 权限模式按字面路径匹配，不做软链解析。macOS 上 `/tmp` 是指向 `/private/tmp`
+的软链，而 `os.tmpdir()`（许多工具实际使用的临时目录）解析为 `/var/folders/.../T` 下的路径。请把你想
+放行的每种写法都列出来——至少包括 `/tmp/**` 和 `/private/tmp/**`，如果你的工具依赖 `os.tmpdir()`
+还需加上对应的 `/var/folders/...` 路径。Linux 上 `os.tmpdir()` 就是 `/tmp`，因此 `/tmp/**` 即可。
+
+</details>
+
 ---
 
 ## 开发
