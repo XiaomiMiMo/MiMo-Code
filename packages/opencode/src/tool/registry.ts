@@ -351,13 +351,11 @@ export const layer = Layer.effect(
         filtered = filtered.filter((tool) => tool.id === "invalid" || allowed.has(tool.id))
       }
 
-      // The `session` tool is orchestrator-only. Agents WITH an allowlist already
-      // gate on it above (only orchestrator lists "session"). Agents WITHOUT an
-      // allowlist (build/plan/compose) get ALL builtins, so they would otherwise
-      // leak `session` — drop it here unless the agent explicitly allows it.
-      filtered = filtered.filter(
-        (tool) => tool.id !== "session" || (input.agent.toolAllowlist?.includes("session") ?? false),
-      )
+      // The `session` tool is orchestrator-only. Orchestrator is a
+      // full-capability agent (no toolAllowlist), so gate on the agent name
+      // rather than an allowlist: every other agent — primaries without an
+      // allowlist (build/plan/compose) and subagents — must not see `session`.
+      filtered = filtered.filter((tool) => tool.id !== "session" || input.agent.name === "orchestrator")
 
       const cfg = yield* config.get()
       const resolveStyle = (toolId: string): "json" | "shell" => resolveInvocationStyle(cfg.tool, toolId)

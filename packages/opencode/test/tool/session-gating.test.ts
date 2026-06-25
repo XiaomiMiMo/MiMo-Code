@@ -16,13 +16,13 @@ afterEach(async () => {
   await Instance.disposeAll()
 })
 
-// [S6]: the `session` tool is orchestrator-only. The orchestrator agent lists
-// "session" in its toolAllowlist (so the allowlist filter keeps it). build/plan/
-// compose have NO allowlist — they receive ALL builtins, so an explicit gate in
-// ToolRegistry.tools drops "session" for them. These two assertions pin both
-// halves of that gate.
+// [S6]: the `session` tool is orchestrator-only, gated by agent NAME in
+// ToolRegistry.tools (orchestrator is a full-capability agent with no
+// toolAllowlist). build/plan/compose and all subagents must not see it. These
+// assertions pin both halves of that gate, plus that orchestrator still
+// receives the full builtin toolset (edit/bash), i.e. it is not restricted.
 describe("ToolRegistry.tools: session tool orchestrator gating", () => {
-  it.live("orchestrator sees the session tool", () =>
+  it.live("orchestrator sees the session tool AND the full toolset", () =>
     provideTmpdirInstance(() =>
       Effect.gen(function* () {
         const reg = yield* ToolRegistry.Service
@@ -34,7 +34,11 @@ describe("ToolRegistry.tools: session tool orchestrator gating", () => {
           modelID: ModelID.make("opencode/claude-sonnet-4-6"),
           agent: orchestrator,
         })
-        expect(tools.map((t) => t.id)).toContain("session")
+        const ids = tools.map((t) => t.id)
+        expect(ids).toContain("session")
+        // full-capability: it also gets the normal editing/exec tools
+        expect(ids).toContain("edit")
+        expect(ids).toContain("bash")
       }),
     ),
   )

@@ -214,7 +214,7 @@ export const layer = Layer.effect(
             name: "orchestrator",
             color: "#7fb3d5",
             description:
-              "Orchestrator mode. One session coordinates many child sessions; use the `session` tool to create/switch/list/cancel children running in their own mode and model.",
+              "Orchestrator mode. A full-capability session that ALSO coordinates many child sessions; use the `session` tool to create/switch/list/cancel children running in their own mode and model.",
             options: {},
             permission: Permission.merge(
               defaults,
@@ -223,7 +223,6 @@ export const layer = Layer.effect(
               }),
               user,
             ),
-            toolAllowlist: ["session", "task", "read", "grep", "glob", "memory", "actor", "question", "skill"],
             mode: "primary",
             native: true,
           },

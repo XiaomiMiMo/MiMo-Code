@@ -13,7 +13,7 @@ afterEach(async () => {
   await Instance.disposeAll()
 })
 
-test("orchestrator agent is a native primary with scheduler toolset", async () => {
+test("orchestrator agent is a native, full-capability primary (no tool restriction)", async () => {
   await using tmp = await tmpdir()
   await Instance.provide({
     directory: tmp.path,
@@ -23,10 +23,9 @@ test("orchestrator agent is a native primary with scheduler toolset", async () =
       expect(orchestrator?.name).toBe("orchestrator")
       expect(orchestrator?.mode).toBe("primary")
       expect(orchestrator?.native).toBe(true)
-      expect(orchestrator?.toolAllowlist).toContain("session")
-      expect(orchestrator?.toolAllowlist).not.toContain("edit")
-      expect(orchestrator?.toolAllowlist).not.toContain("write")
-      expect(orchestrator?.toolAllowlist).not.toContain("bash")
+      // Full-capability: NOT restricted by a toolAllowlist (it gets the same
+      // tools as build, plus the orchestrator-only `session` tool gated by name).
+      expect(orchestrator?.toolAllowlist).toBeUndefined()
     },
   })
 })
