@@ -1,6 +1,6 @@
 import { useDialog } from "@tui/ui/dialog"
-import { DialogConfirm } from "@tui/ui/dialog-confirm"
 import { DialogSelect, type DialogSelectOption } from "@tui/ui/dialog-select"
+import { DialogWorkflowDetail } from "@tui/component/dialog-workflow-detail"
 import { useRoute } from "@tui/context/route"
 import { useSync } from "@tui/context/sync"
 import { createMemo, onCleanup, onMount } from "solid-js"
@@ -39,22 +39,9 @@ export function DialogWorkflows() {
     return list.map((r) => ({
       title: `${r.name}  ${r.status}  ${r.currentPhase ?? "-"}  ${r.succeeded}✓ ${r.failed}✗ ${r.running}⟳`,
       value: r.runID,
-      onSelect: async (d) => {
-        // Resume an incomplete run; completed runs just close.
-        if (r.status === "running" || r.status === "failed" || r.status === "cancelled") {
-          // Re-running re-executes the workflow (cost / side effects), so confirm first.
-          // DialogConfirm.show replaces this dialog with the confirm dialog and clears
-          // itself on confirm/cancel, so no explicit d.clear() is needed here.
-          const ok = await DialogConfirm.show(
-            d,
-            "Resume workflow",
-            `Re-run "${r.name}"? This re-executes the workflow and may incur cost.`,
-          )
-          if (ok === true) void sync.resumeWorkflow(r.runID)
-          return
-        }
-        d.clear()
-      },
+      // Primary action: open the full detail view (tree + transcript). Resume of an
+      // incomplete run is now a secondary action reachable from inside that view.
+      onSelect: (d) => DialogWorkflowDetail.show(d, r.runID),
     }))
   })
 

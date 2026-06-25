@@ -3,18 +3,39 @@ import { useTheme } from "@tui/context/theme"
 import { TextAttributes } from "@opentui/core"
 import { createMemo, onCleanup, onMount, For, Show } from "solid-js"
 import { WorkflowTree } from "@tui/component/workflow-tree"
+import { DialogConfirm } from "@tui/ui/dialog-confirm"
+import type { DialogContext } from "@tui/ui/dialog"
 
 // Full single-run view: header (name + status + counters + current phase), the
 // structure tree (primary), and the flat phase/log transcript (secondary). Loads
 // both on mount and polls while the run is still running. Works for sync and async
 // runs identically — the panel is just a window onto the run's live state.
-export function DialogWorkflowDetail(props: { runID: string; onOpenChild?: (childRunID: string) => void }) {
+export function DialogWorkflowDetail(props: {
+  runID: string
+  onOpenChild?: (childRunID: string) => void
+  dialog?: DialogContext
+}) {
   const sync = useSync()
   const { theme } = useTheme()
 
   const run = createMemo(() => sync.data.workflow[props.runID])
   const transcript = createMemo(() => sync.data.workflowTranscript[props.runID] ?? [])
   const structure = createMemo(() => sync.data.workflowStructure[props.runID] ?? [])
+
+  const resumable = createMemo(() => {
+    const s = run()?.status
+    return s === "running" || s === "failed" || s === "cancelled"
+  })
+  const resume = async () => {
+    const d = props.dialog
+    if (!d) return
+    const ok = await DialogConfirm.show(
+      d,
+      "Resume workflow",
+      `Re-run "${run()?.name ?? props.runID}"? This re-executes the workflow and may incur cost.`,
+    )
+    if (ok === true) void sync.resumeWorkflow(props.runID)
+  }
 
   onMount(() => {
     sync.loadWorkflowTranscript(props.runID)
@@ -55,6 +76,11 @@ export function DialogWorkflowDetail(props: { runID: string; onOpenChild?: (chil
           <text fg={run()!.failed > 0 ? theme.error : theme.textMuted}>{run()!.failed}✗</text>
           <text fg={run()!.running > 0 ? theme.warning : theme.textMuted}>{run()!.running}⟳</text>
         </Show>
+        <Show when={resumable() && props.dialog}>
+          <text fg={theme.markdownLink} onMouseUp={() => void resume()}>
+            ↻ resume
+          </text>
+        </Show>
       </box>
       <WorkflowTree nodes={structure()} onOpenChild={props.onOpenChild} />
       <Show when={transcript().length > 0}>
@@ -76,4 +102,16 @@ export function DialogWorkflowDetail(props: { runID: string; onOpenChild?: (chil
       </Show>
     </box>
   )
+}
+
+// Open the detail view, replacing the current dialog (mirrors DialogConfirm.show).
+// A nested-workflow node drills down by re-opening this dialog for the child runID.
+DialogWorkflowDetail.show = (dialog: DialogContext, runID: string) => {
+  dialog.replace(() => (
+    <DialogWorkflowDetail
+      runID={runID}
+      dialog={dialog}
+      onOpenChild={(childRunID) => DialogWorkflowDetail.show(dialog, childRunID)}
+    />
+  ))
 }
