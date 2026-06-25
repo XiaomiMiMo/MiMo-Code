@@ -1027,7 +1027,6 @@ function App(props: { onSnapshot?: () => Promise<string[]> }) {
     const abort = new AbortController()
     void (async () => {
       renderer.suspend()
-      renderer.currentRenderBuffer.clear()
       let exitCode = 1
       let output = ""
       try {
