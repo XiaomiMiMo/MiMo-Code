@@ -1937,7 +1937,9 @@ function Workflow(props: ToolProps<typeof WorkflowTool>) {
 // per-source hits, facts checked. The old renderer dumped it all as one muted-
 // gray InlineTool blob, so a busy run read as "stuck". Here phases are bold
 // accent section headers, logs render in readable text, and a running run shows
-// a spinner on its current phase so progress is always visible.
+// a spinner on its current phase so progress is always visible. Bounded to the
+// last N lines in the conversation flow; full history lives in the detail dialog.
+const WORKFLOW_PANEL_TAIL = 12
 function WorkflowPanel(props: {
   name: string
   status?: string
@@ -1958,7 +1960,8 @@ function WorkflowPanel(props: {
     return theme.warning
   })
 
-  const entries = createMemo(() => (collapsed() ? [] : props.transcript))
+  const hiddenCount = createMemo(() => Math.max(0, props.transcript.length - WORKFLOW_PANEL_TAIL))
+  const entries = createMemo(() => (collapsed() ? [] : props.transcript.slice(-WORKFLOW_PANEL_TAIL)))
 
   return (
     <box
@@ -2006,6 +2009,9 @@ function WorkflowPanel(props: {
         }
       >
         <box paddingLeft={3}>
+          <Show when={hiddenCount() > 0}>
+            <text fg={theme.textMuted}>+{hiddenCount()} earlier lines · open detail for full history</text>
+          </Show>
           <For each={entries()}>
             {(e) => (
               <Show
