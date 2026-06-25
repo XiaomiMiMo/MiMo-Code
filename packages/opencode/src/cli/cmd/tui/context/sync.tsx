@@ -63,6 +63,28 @@ export type WorkflowRun = {
   updatedAt?: number
 }
 
+// Mirror of the runtime's WorkflowNode union (server route serializes it as
+// z.array(z.any())). The single TUI-side definition reused by the detail dialog
+// and the tree renderer.
+export type WorkflowNode =
+  | { type: "phase"; id: string; title: string }
+  | {
+      type: "agent"
+      id: string
+      phaseId?: string
+      label?: string
+      agentType: string
+      status: "running" | "succeeded" | "failed"
+    }
+  | {
+      type: "workflow"
+      id: string
+      phaseId?: string
+      childRunID: string
+      name: string
+      status: "running" | "completed" | "failed" | "cancelled"
+    }
+
 /**
  * TUI-side view of a session's stop-condition goal (server event `session.goal`).
  * `condition` is the active goal (undefined once cleared/satisfied/impossible).
@@ -185,6 +207,12 @@ export const { use: useSync, provider: SyncProvider } = createSimpleContext({
       workflow: {
         [runID: string]: WorkflowRun
       }
+      workflowTranscript: {
+        [runID: string]: { kind: "phase" | "log"; text: string }[]
+      }
+      workflowStructure: {
+        [runID: string]: WorkflowNode[]
+      }
     }>({
       provider_next: {
         all: [],
@@ -218,6 +246,8 @@ export const { use: useSync, provider: SyncProvider } = createSimpleContext({
       vcs: undefined,
       actor: {},
       workflow: {},
+      workflowTranscript: {},
+      workflowStructure: {},
     })
 
     const event = useEvent()
@@ -821,6 +851,18 @@ export const { use: useSync, provider: SyncProvider } = createSimpleContext({
       },
       resumeWorkflow(runID: string) {
         return sdk.client.workflow.resume({ runID })
+      },
+      loadWorkflowTranscript(runID: string) {
+        void sdk.client.workflow.transcript({ runID }).then((res) => {
+          const t = (res.data as { transcript?: { kind: "phase" | "log"; text: string }[] } | undefined)?.transcript
+          if (Array.isArray(t)) setStore("workflowTranscript", runID, t)
+        })
+      },
+      loadWorkflowStructure(runID: string) {
+        void sdk.client.workflow.structure({ runID }).then((res) => {
+          const n = (res.data as { nodes?: WorkflowNode[] } | undefined)?.nodes
+          if (Array.isArray(n)) setStore("workflowStructure", runID, n)
+        })
       },
     }
     return result

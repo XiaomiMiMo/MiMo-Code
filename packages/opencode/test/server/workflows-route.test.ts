@@ -276,4 +276,53 @@ describe("workflows routes — live runtime", () => {
     // live workflow/server suites where CI load can push past 5s.
     15000,
   )
+
+  it.live("GET /workflows/:runID/transcript and /structure return the run's full data", () =>
+    provideTmpdirServer(
+      Effect.fnUntraced(function* ({ dir, llm }) {
+        const runtime = yield* WorkflowRuntime.Service
+        const session = yield* Session.Service
+        const parent = yield* session.create({
+          title: "wf route detail",
+          permission: [{ permission: "*", pattern: "*", action: "allow" }],
+        })
+        yield* llm.text("done")
+        const script = [
+          `export const meta = { name: "t", description: "d" }`,
+          `phase("Plan")`,
+          `return await agent("x")`,
+        ].join("\n")
+        const { runID } = yield* runtime.start({ script, sessionID: parent.id, parentActorID: "main", model: ref })
+        const outcome = yield* runtime.wait({ runID, timeoutMs: 8000 })
+        expect(outcome.status).toBe("completed")
+
+        const tRes = yield* Effect.promise(async () =>
+          Server.Default().app.request(`/workflows/${runID}/transcript`, {
+            method: "GET",
+            headers: { "x-mimocode-directory": dir },
+          }),
+        )
+        expect(tRes.status).toBe(200)
+        const tBody = (yield* Effect.promise(() => tRes.json())) as {
+          runID: string
+          transcript: { kind: string; text: string }[]
+        }
+        expect(tBody.runID).toBe(runID)
+        expect(tBody.transcript.some((e) => e.kind === "phase")).toBe(true)
+
+        const sRes = yield* Effect.promise(async () =>
+          Server.Default().app.request(`/workflows/${runID}/structure`, {
+            method: "GET",
+            headers: { "x-mimocode-directory": dir },
+          }),
+        )
+        expect(sRes.status).toBe(200)
+        const sBody = (yield* Effect.promise(() => sRes.json())) as { runID: string; nodes: { type: string }[] }
+        expect(sBody.runID).toBe(runID)
+        expect(sBody.nodes.some((n) => n.type === "agent")).toBe(true)
+      }),
+      { git: true, config: providerCfg },
+    ),
+    15000,
+  )
 })
