@@ -2205,8 +2205,15 @@ NOTE: At any point in time through this workflow you should feel free to ask the
         // We then retry the request (caller does `continue`, no new message). On
         // exhaustion the error stays terminal. Returns true ⇒ continue; false ⇒ break.
         const autoRetryTextToolCall = Effect.fn("SessionPrompt.autoRetryTextToolCall")(function* (input: {
+          lastUser: MessageV2.User
           assistant: MessageV2.Assistant
         }) {
+          // Already discarded on a prior pass — let classify fall through to
+          // `failed` instead of re-detecting and burning another retry.
+          if (input.assistant.error) return false
+          // Discard the bad turn from request history: toModelMessages skips a
+          // message whose info.error is set, so it can neither strand the
+          // conversation on an assistant turn nor poison later context.
           input.assistant.error = new MessageV2.TextToolCallError({
             message: "Model emitted a tool call as text instead of a structured tool call.",
           }).toObject()
@@ -2220,6 +2227,35 @@ NOTE: At any point in time through this workflow you should feel free to ask the
           }
           textToolCallRetries++
           yield* slog.info("retrying text-form tool call", { attempt: textToolCallRetries })
+          // Append a synthetic user turn so the discarded assistant becomes stale
+          // (classify staleness guard) AND the loop reaches generation — mirrors
+          // autoRetryStructuredOutput. Without this the loop re-enters, re-detects
+          // the same turn, and burns retries with zero model calls.
+          const msg = yield* sessions.updateMessage({
+            id: MessageID.ascending(),
+            role: "user" as const,
+            sessionID: input.lastUser.sessionID,
+            agentID: input.lastUser.agentID,
+            agent: input.lastUser.agent,
+            model: input.lastUser.model,
+            tools: input.lastUser.tools,
+            format: input.lastUser.format,
+            time: { created: Date.now() },
+          })
+          yield* sessions.updatePart({
+            id: PartID.ascending(),
+            messageID: msg.id,
+            sessionID: msg.sessionID,
+            type: "text",
+            synthetic: true,
+            text: [
+              "<system-reminder>",
+              "Your previous response wrote a tool call as plain text instead of invoking the tool.",
+              "Re-issue it through the real tool channel — emit a structured tool call, not text.",
+              "Do not paste the tool call as text again.",
+              "</system-reminder>",
+            ].join("\n"),
+          } satisfies MessageV2.TextPart)
           return true
         })
 
@@ -2467,7 +2503,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
               break
             }
             if (classification.type === "text-tool-call") {
-              if (yield* autoRetryTextToolCall({ assistant: lastAssistant })) continue
+              if (yield* autoRetryTextToolCall({ lastUser, assistant: lastAssistant })) continue
               yield* slog.info("exiting loop", { classification: classification.type })
               break
             }
@@ -3007,7 +3043,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
                 return "break" as const
               }
               if (forkClassification.type === "text-tool-call") {
-                if (yield* autoRetryTextToolCall({ assistant: handle.message })) return "continue" as const
+                if (yield* autoRetryTextToolCall({ lastUser, assistant: handle.message })) return "continue" as const
                 return "break" as const
               }
               if (forkClassification.type !== "continue" && !handle.message.error && format.type === "json_schema") {
@@ -3222,7 +3258,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
               return "break" as const
             }
             if (classification.type === "text-tool-call") {
-              if (yield* autoRetryTextToolCall({ assistant: handle.message })) return "continue" as const
+              if (yield* autoRetryTextToolCall({ lastUser, assistant: handle.message })) return "continue" as const
               return "break" as const
             }
             if (classification.type !== "continue" && !handle.message.error && format.type === "json_schema") {
