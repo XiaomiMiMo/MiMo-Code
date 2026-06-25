@@ -223,7 +223,7 @@ export const layer = Layer.effect(
               }),
               user,
             ),
-            toolAllowlist: ["session", "task", "read", "grep", "glob", "list", "memory", "actor", "question", "skill"],
+            toolAllowlist: ["session", "task", "read", "grep", "glob", "memory", "actor", "question", "skill"],
             mode: "primary",
             native: true,
           },

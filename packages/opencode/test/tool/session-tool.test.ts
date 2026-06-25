@@ -143,11 +143,10 @@ describe("session tool", () => {
         expect(result.title).toBe("Child sessions: 2")
         expect(result.output).toContain(idA)
         expect(result.output).toContain(idB)
-        // spawnPeer titles the child session `${agentType}: ${task.slice(0,40)}`
-        // (the create `title`/`description` becomes the actor description, not the
-        // session title), so the listed titles reflect the task, not Alpha/Beta.
-        expect(result.output).toContain("task A")
-        expect(result.output).toContain("task B")
+        // create overwrites spawnPeer's default `${agentType}: ${task}` title
+        // with the explicit --title, so the listing shows Alpha/Beta.
+        expect(result.output).toContain("Alpha")
+        expect(result.output).toContain("Beta")
         // agent (the NL "mode") is surfaced from the actor row.
         expect(result.output).toContain("build")
         expect(result.output).toContain("compose")

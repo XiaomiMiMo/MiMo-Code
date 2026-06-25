@@ -238,6 +238,10 @@ export const SessionTool = Tool.define<typeof parameters, Metadata, Deps>(
           parentActorID: ctx.actorID,
           lifecycle: "persistent",
         })
+        // spawnPeer titles the child session `${agentType}: ${task}`; honor an
+        // explicit --title by overwriting it so `session list` shows what the
+        // orchestrator asked for.
+        if (op.title) yield* sessions.setTitle({ sessionID: result.sessionID, title: op.title })
         return {
           title: `Session created: ${result.sessionID}`,
           output: `Created child session ${result.sessionID} (mode: ${op.mode ?? "build"}). Running in the background.`,
