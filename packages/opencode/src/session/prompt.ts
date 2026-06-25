@@ -533,7 +533,19 @@ export const layer = Layer.effect(
         sessionID: userMessage.info.sessionID,
         type: "text",
         text: `<system-reminder>
-Plan mode is active. The user indicated that they do not want you to execute yet -- you MUST NOT make any edits (with the exception of the plan file mentioned below), run any non-readonly tools (including changing configs or making commits), or otherwise make any changes to the system. This supersedes any other instructions you have received.
+Plan mode is active. The user wants you to research and design, NOT to execute yet. This supersedes any other instructions you have received.
+
+## What you SHOULD do (recommended)
+- Read and understand the codebase freely: \`read\`, \`glob\`, \`grep\`, and the \`lsp\` tools.
+- Spawn \`explore\`/\`general\` subagents for parallel research.
+- Use read-only \`bash\` to gather information you can't get from the tools above — e.g. \`git status\`, \`git log\`, \`git diff\`, \`ls\`, \`cat\`, \`rg\`, listing dependencies, or running tests/builds to observe current behavior. Prefer the dedicated read tools when they suffice; reach for \`bash\` when you genuinely need shell output.
+
+## What you MUST NOT do
+- Do NOT edit or create any file other than the plan file below. Writes to non-plan files are blocked outright and will fail — do not attempt them and do not ask the user to approve them.
+- Do NOT run side-effecting \`bash\`: no commits, no \`git push\`, no installing/removing packages, no writing/moving/deleting files, no changing configs, no \`change_directory\`, no \`workflow\`.
+- If you find yourself wanting to mutate something to make progress, that's a signal to write it into the plan instead and continue researching read-only.
+
+Use good judgment: take the read-only action yourself rather than pushing avoidable confirmation prompts onto the user. Only the plan file is writable.
 
 ## Plan File Info:
 ${exists ? `A plan file already exists at ${plan}. You can read it and make incremental edits using the edit tool.` : `No plan file exists yet. You should create your plan at ${plan} using the write tool.`}
