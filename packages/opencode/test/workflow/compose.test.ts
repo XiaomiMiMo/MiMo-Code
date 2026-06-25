@@ -18,12 +18,17 @@ describe("compose script structure", () => {
   test("declares schemas for every structured phase", () => {
     const script = composeScript()
     expect(script).toContain("BRAINSTORM_SHAPE")
-    expect(script).toContain("CLASSIFY_SHAPE")
     expect(script).toContain("DESIGN_SHAPE")
     expect(script).toContain("INTEGRATE_SHAPE")
     expect(script).toContain("VERIFY_SHAPE")
     expect(script).toContain("REVIEW_SHAPE")
     expect(script).toContain("MERGE_SHAPE")
+  })
+
+  test("has no separate Classify phase (type resolved inline)", () => {
+    const script = composeScript()
+    expect(script).not.toContain('phase("Classify")')
+    expect(script).not.toContain("CLASSIFY_SHAPE")
   })
 
   test("design and report phases write files via agent (no output schema)", () => {
@@ -155,24 +160,29 @@ describe("compose docs are written by the AGENT, gated by the workflow", () => {
   })
 })
 
-describe("compose phase 1: Classify", () => {
-  test("calls classifier when args.type absent", async () => {
-    const { calls } = await runCompose({ task: "fix the foo regression" }, (prompt, opts) => {
-      if (opts?.schema?.properties?.context) return { context: { projectType: "x", conventions: [], recentChanges: [], relevantFiles: [] }, assumptions: [] }
-      if (opts?.schema?.properties?.type) return { type: "bugfix", confidence: "high", reasoning: "regression keyword" }
-      return null
-    })
-    const classifyCall = calls.find((c) => c.opts?.schema?.properties?.type)
-    expect(classifyCall).toBeDefined()
-    expect(classifyCall!.prompt).toContain("fix the foo regression")
+describe("compose type resolution (no Classify phase)", () => {
+  test("no classifier agent is ever dispatched", async () => {
+    const { calls } = await runCompose({ task: "fix the foo regression" })
+    // There must be no classify agent (no agent with a {type,confidence,reasoning} schema).
+    expect(calls.find((c) => c.opts?.schema?.properties?.type && c.opts?.schema?.properties?.confidence)).toBeUndefined()
   })
 
-  test("skips classifier when args.type provided", async () => {
-    const { calls } = await runCompose({ task: "implement bar", type: "feature" }, (prompt, opts) => {
-      if (opts?.schema?.properties?.context) return { context: { projectType: "x", conventions: [], recentChanges: [], relevantFiles: [] }, assumptions: [] }
-      return null
-    })
-    expect(calls.find((c) => c.opts?.schema?.properties?.type)).toBeUndefined()
+  test("heuristic routes a bug task to compose:debug without an LLM classify call", async () => {
+    const { calls } = await runCompose({ task: "fix the foo regression that crashes on startup" })
+    const designWrite = calls.find((c) => c.opts?.label && String(c.opts.label).startsWith("design:"))
+    expect(designWrite!.prompt).toContain("compose:debug")
+  })
+
+  test("explicit args.type is honored", async () => {
+    const { calls } = await runCompose({ task: "implement bar", type: "feedback" })
+    const designWrite = calls.find((c) => c.opts?.label && String(c.opts.label).startsWith("design:"))
+    expect(designWrite!.prompt).toContain("compose:feedback")
+  })
+
+  test("default (no keyword, no args.type) routes to compose:plan", async () => {
+    const { calls } = await runCompose({ task: "implement a brand new widget gallery" })
+    const designWrite = calls.find((c) => c.opts?.label && String(c.opts.label).startsWith("design:"))
+    expect(designWrite!.prompt).toContain("compose:plan")
   })
 })
 
@@ -200,6 +210,23 @@ describe("compose phase 2: Design", () => {
       return "ok"
     })
     expect(result).toMatchObject({ error: "design-failed" })
+  })
+
+  test("tasks with missing/blank ids get backfilled (no implement:undefined label)", async () => {
+    const { calls, result } = await runCompose({ task: "x", type: "feature" }, (prompt, opts) => {
+      if (opts?.schema?.properties?.tasks) return { tasks: [
+        { description: "first", acceptance: "a" },        // no id
+        { id: "", description: "second", acceptance: "a" }, // blank id
+        { id: "T2", description: "third", acceptance: "a" }, // real id
+      ] }
+      return happyAgent(prompt, opts)
+    })
+    // No implement label may contain "undefined".
+    const implLabels = calls.filter((c) => c.opts?.label && String(c.opts.label).startsWith("implement:")).map((c) => String(c.opts.label))
+    expect(implLabels.length).toBeGreaterThan(0)
+    for (const l of implLabels) expect(l).not.toContain("undefined")
+    // Every designed task ends up with a non-empty id.
+    for (const t of (result as any).design.tasks) expect(typeof t.id === "string" && t.id.length > 0).toBe(true)
   })
 })
 
@@ -412,13 +439,13 @@ describe("compose phase 7: Merge + final shape", () => {
 })
 
 describe("compose E2E smoke", () => {
-  test("happy path runs phases in order (Brainstorm→Classify→Design→Implement→Verify→Report→Review→Merge)", async () => {
+  test("happy path runs phases in order (Brainstorm→Design→Implement→Verify→Report→Review→Merge)", async () => {
     const { result, phases } = await runCompose({ task: "ship a feature", type: "feature" })
     // First occurrence of each phase, in order. The iteration report (Report) fires
     // inside the TDD loop on a successful verify, before Phase 4 Review (spec [S3] 3f).
     const firstSeen: string[] = []
     for (const p of phases) if (firstSeen.indexOf(p) < 0) firstSeen.push(p)
-    expect(firstSeen).toEqual(["Brainstorm", "Classify", "Design", "Implement", "Verify", "Report", "Review", "Merge"])
+    expect(firstSeen).toEqual(["Brainstorm", "Design", "Implement", "Verify", "Report", "Review", "Merge"])
     expect((result as any).merge?.committed).toBe(true)
   })
 })

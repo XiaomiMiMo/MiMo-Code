@@ -3,12 +3,11 @@ export const meta = {
   description:
     "Autonomous compose pipeline — brainstorms context, designs (spec/plan), implements via parallel per-task worktrees with TDD, verifies, reviews, reports, and merges. Bounded retry, never-ask mode.",
   whenToUse:
-    "Use to drive a feature, bugfix, refactor, or review-feedback task through the full compose flow without user prompting. Pass args.task = the user's request. Optionally args.type to skip classification, args.feature_name for the report filename, args.skip_brainstorm / args.skip_report to drop those phases, args.maxConcurrent to bound per-batch parallelism.",
+    "Use to drive a feature, bugfix, refactor, or review-feedback task through the full compose flow without user prompting. Pass args.task = the user's request. Optionally args.type to set the task type (feature/bugfix/refactor/feedback; otherwise inferred), args.feature_name for the report filename, args.skip_brainstorm / args.skip_report to drop those phases, args.maxConcurrent to bound per-batch parallelism.",
   phases: [
     { title: "Brainstorm", detail: "Context recon (never-ask): conventions, recent changes, relevant files" },
-    { title: "Classify", detail: "Decide task type (feature/bugfix/refactor/feedback)" },
     { title: "Design", detail: "Apply compose:plan, compose:debug, or compose:feedback; emit task list with deps" },
-    { title: "Implement", detail: "Topo-sorted batches, each task in its own worktree (compose:tdd), then integrate" },
+    { title: "Implement", detail: "Topo-sorted batches (compose:tdd), then integrate" },
     { title: "Verify", detail: "Run project verify commands; structured pass/fail" },
     { title: "Review", detail: "compose:review for critical/important/minor issues" },
     { title: "Report", detail: "compose:report per-iteration + final consolidated report" },
@@ -36,16 +35,6 @@ const BRAINSTORM_SHAPE = {
     },
     assumptions: { type: "array", items: { type: "string" } },
     notes: { type: "string" },
-  },
-}
-
-const CLASSIFY_SHAPE = {
-  type: "object",
-  required: ["type", "confidence", "reasoning"],
-  properties: {
-    type: { enum: ["feature", "bugfix", "refactor", "feedback"] },
-    confidence: { enum: ["high", "medium", "low"] },
-    reasoning: { type: "string" },
   },
 }
 
@@ -214,27 +203,24 @@ const contextDigest =
   ((brainstorm.assumptions && brainstorm.assumptions.length) ? "\nAssumptions:\n" + brainstorm.assumptions.map((a) => "- " + a).join("\n") : "")
 
 // ---------------------------------------------------------------------------
-// Phase 1 — Classify
+// Type resolution (no separate Classify phase)
 // ---------------------------------------------------------------------------
-phase("Classify")
+// First-principles: picking the design skill is a low-risk, reversible routing
+// decision the later Design/Implement phases can self-correct — it does NOT
+// warrant its own LLM phase (the original compose flow has no classifier; it goes
+// brainstorm → compose:plan). So: honor an explicit args.type; otherwise default
+// to "feature" (→ compose:plan) and let a cheap keyword heuristic divert obvious
+// bugfix / PR-feedback tasks. The design agent re-judges with full context anyway.
 let classification = null
 let type
 if (VALID_TYPES.indexOf(argType) >= 0) {
   type = argType
 } else {
-  classification = await agent(
-    "Classify the task below into exactly one of: feature, bugfix, refactor, feedback.\n\n" +
-    "## Task\n" + TASK + "\n\n" +
-    "## Definitions\n" +
-    "- feature: net-new capability or user-visible behavior\n" +
-    "- bugfix: existing behavior is broken; root-cause + fix\n" +
-    "- refactor: restructure without behavior change\n" +
-    "- feedback: address PR review or user-reported issues against an existing change\n\n" +
-    "Return structured output only.",
-    { label: "classify", phase: "Classify", schema: CLASSIFY_SHAPE, model: "lite" }
-  )
-  type = classification && classification.type ? classification.type : "feature"
-  log("Classified as " + type + (classification ? " (" + classification.confidence + ")" : " (default)"))
+  const t = TASK.toLowerCase()
+  if (/\b(pr|review)\b.*\b(feedback|comment|address)\b|address .*\bfeedback\b/.test(t)) type = "feedback"
+  else if (/\b(bug|broken|regression|crash|fails?|incorrect|wrong|error)\b/.test(t)) type = "bugfix"
+  else type = "feature"
+  log("Resolved type=" + type + " (heuristic; no classify phase)")
 }
 
 const SKILL_BY_TYPE = {
@@ -305,6 +291,20 @@ const design = await agent(
 )
 if (!design) {
   return { error: "design-failed", type, classification, brainstorm, docs: { specWritten, planWritten } }
+}
+// Normalize task ids: the extract agent sometimes returns tasks with a missing or
+// blank `id` (schema validation can let an empty string through), which then shows
+// up as "implement:undefined" in labels and breaks dependsOn wiring. Backfill any
+// missing/duplicate id with a synthetic Tn so labels, topo-sort, and deps are stable.
+{
+  const seen = Object.create(null)
+  let n = 0
+  for (const t of design.tasks) {
+    n++
+    const raw = typeof t.id === "string" ? t.id.trim() : ""
+    t.id = raw && !seen[raw] ? raw : "T" + n
+    seen[t.id] = true
+  }
 }
 log("Designed " + design.tasks.length + " task(s) using " + designSkill + " (spec=" + specWritten + " plan=" + planWritten + ")")
 

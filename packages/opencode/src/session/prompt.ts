@@ -649,6 +649,13 @@ NOTE: At any point in time through this workflow you should feel free to ask the
         return new Set(actor.tools)
       })
       const whitelist = yield* whitelistFor()
+      // Whether a permission ask must be non-interactive (fail clean, never hang):
+      // true for system-spawned background actors — checkpoint-writer/dream/distill
+      // AND any background actor such as compose workflow subagents (spawned as
+      // "general" + background:true). Computed once per tool execution.
+      const askNonInteractive = input.agentID
+        ? yield* actorRegistry.isSystemSpawned(input.session.id, input.agentID)
+        : SYSTEM_SPAWNED_AGENT_TYPES.has(input.agent.name)
       const rejectionFor = (toolID: string) => ({
         title: "Tool not permitted",
         output: `The "${toolID}" tool is not in this actor's whitelist. Allowed tools: ${
@@ -690,8 +697,9 @@ NOTE: At any point in time through this workflow you should feel free to ask the
                 tool: { messageID: input.processor.message.id, callID: options.toolCallId },
                 ruleset: Agent.runtimePermission(input.agent, input.session.permission),
                 // System-spawned background agents (checkpoint-writer, dream, distill)
-                // have no human to answer a permission prompt — fail clean, don't hang.
-                interactive: !SYSTEM_SPAWNED_AGENT_TYPES.has(input.agent.name),
+                // AND any background actor (e.g. compose workflow subagents) have no
+                // human to answer a permission prompt — fail clean, don't hang.
+                interactive: !askNonInteractive,
               },
               options.abortSignal,
             )
