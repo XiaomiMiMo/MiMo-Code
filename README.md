@@ -206,8 +206,7 @@ be prompted each time, you can opt in by allowing it in your config:
   "$schema": "https://opencode.ai/config.json",
   "permission": {
     "external_directory": {
-      "/tmp/**": "allow",
-      "/private/tmp/**": "allow"
+      "/tmp/**": "allow"
     }
   }
 }
@@ -217,16 +216,8 @@ be prompted each time, you can opt in by allowing it in your config:
 world-writable and shared with every other process and user on the machine. Auto-allowing
 it means the model can read and write there without confirmation, which widens your exposure
 to predictable temp-path / symlink tricks (e.g. another process pre-creating `/tmp/foo` as a
-symlink to a sensitive file). It is only recommended for single-user, controlled environments
-or inside a container. If you enable it, you are responsible for this configuration: any
-problem arising from reads or writes under the temp directory is your own responsibility.
-Keep the allowlist as narrow as possible.
-
-**macOS note.** Permission patterns match the literal path with no symlink resolution.
-On macOS `/tmp` is a symlink to `/private/tmp`, and `os.tmpdir()` (what many tools actually
-use) resolves to a path under `/var/folders/.../T`. List every form you want to allow — at
-minimum `/tmp/**` and `/private/tmp/**`, plus the `/var/folders/...` path if your tools
-rely on `os.tmpdir()`. On Linux `os.tmpdir()` is `/tmp`, so `/tmp/**` is enough.
+symlink to a sensitive file). For that reason it is only recommended for single-user,
+controlled environments or inside a container. Keep the allowlist as narrow as possible.
 
 </details>
 
