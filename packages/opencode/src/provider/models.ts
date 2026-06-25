@@ -169,12 +169,12 @@ export async function refresh(force = false) {
   })
 }
 
+export let modelsRefreshTimer: ReturnType<typeof setInterval> | undefined
+
 if (!Flag.MIMOCODE_DISABLE_MODELS_FETCH && !process.argv.includes("--get-yargs-completions")) {
   void refresh()
-  setInterval(
-    async () => {
-      await refresh()
-    },
-    60 * 1000 * 60,
-  ).unref()
+  modelsRefreshTimer = setInterval(() => {
+    void refresh()
+  }, 60 * 60 * 1000)
+  modelsRefreshTimer.unref()
 }
