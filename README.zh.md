@@ -189,6 +189,33 @@ export PULSE_SERVER=tcp:127.0.0.1:4713
 
 Max Mode（并行 best-of-N 推理 + 裁判选优）可通过配置中的 `experimental.maxMode` 开启。
 
+<details>
+<summary><strong>允许访问系统临时目录（<code>/tmp</code>）</strong></summary>
+
+默认情况下，读写项目工作目录之外的文件会触发 `external_directory` 权限询问——系统临时目录也不例外。
+这是有意为之：MiMoCode 不会静默放宽权限，你始终掌控模型在项目之外能触碰什么。
+
+临时目录之所以经常被用到，是因为多数模型习惯把它当作临时工作空间（比如临时脚本、一次性数据文件）。
+如果你信任所处环境、不想每次都被询问，可以在配置中主动放行：
+
+```json title=".mimocode/mimocode.json"
+{
+  "$schema": "https://opencode.ai/config.json",
+  "permission": {
+    "external_directory": {
+      "/tmp/**": "allow"
+    }
+  }
+}
+```
+
+**此设置存在已知风险——使用风险由你自行承担。** 临时目录对所有用户和进程可写，与机器上的其他进程
+共享。自动放行意味着模型无需确认即可在其中读写，这会扩大你对“可预测临时路径 / 软链替换”一类攻击的
+暴露面（例如其他进程提前把 `/tmp/foo` 创建为指向敏感文件的软链）。因此仅建议在单人、可控的环境或
+容器内使用。请尽量缩小放行范围。
+
+</details>
+
 ---
 
 ## 开发
