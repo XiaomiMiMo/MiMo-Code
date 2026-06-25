@@ -3,6 +3,7 @@ import { lazy } from "../../../../util/lazy.js"
 import { tmpdir } from "os"
 import path from "path"
 import fs from "fs/promises"
+import type { Writable } from "stream"
 import * as Filesystem from "../../../../util/filesystem"
 import * as Process from "../../../../util/process"
 
@@ -34,6 +35,37 @@ function writeOsc52(text: string): void {
 export interface Content {
   data: string
   mime: string
+}
+
+export async function writeClipboardProcess(
+  label: string,
+  proc: { stdin?: Writable | null; exited: Promise<number> },
+  text: string,
+): Promise<void> {
+  const stdin = proc.stdin
+  if (!stdin) throw new Error(`${label} clipboard stdin unavailable`)
+  const input = stdin
+
+  const code = await Promise.all([
+    new Promise<void>((resolve, reject) => {
+      function cleanup() {
+        input.removeListener("error", onError)
+      }
+      function onError(error: Error) {
+        cleanup()
+        reject(error)
+      }
+
+      input.once("error", onError)
+      input.end(text, () => {
+        cleanup()
+        resolve()
+      })
+    }),
+    proc.exited,
+  ]).then((result) => result[1])
+
+  if (code !== 0) throw new Error(`${label} clipboard command failed with code ${code}`)
 }
 
 // Checks clipboard for images first, then falls back to text.
@@ -118,7 +150,7 @@ const getCopyMethod = lazy(async () => {
     console.log("clipboard: using osascript")
     return async (text: string) => {
       const escaped = text.replace(/\\/g, "\\\\").replace(/"/g, '\\"')
-      await Process.run(["osascript", "-e", `set the clipboard to "${escaped}"`], { nothrow: true })
+      await Process.run(["osascript", "-e", `set the clipboard to "${escaped}"`])
     }
   }
 
@@ -127,10 +159,7 @@ const getCopyMethod = lazy(async () => {
       console.log("clipboard: using wl-copy")
       return async (text: string) => {
         const proc = Process.spawn(["wl-copy"], { stdin: "pipe", stdout: "ignore", stderr: "ignore" })
-        if (!proc.stdin) return
-        proc.stdin.write(text)
-        proc.stdin.end()
-        await proc.exited.catch(() => {})
+        await writeClipboardProcess("wl-copy", proc, text)
       }
     }
     if (which("xclip")) {
@@ -141,10 +170,7 @@ const getCopyMethod = lazy(async () => {
           stdout: "ignore",
           stderr: "ignore",
         })
-        if (!proc.stdin) return
-        proc.stdin.write(text)
-        proc.stdin.end()
-        await proc.exited.catch(() => {})
+        await writeClipboardProcess("xclip", proc, text)
       }
     }
     if (which("xsel")) {
@@ -155,10 +181,7 @@ const getCopyMethod = lazy(async () => {
           stdout: "ignore",
           stderr: "ignore",
         })
-        if (!proc.stdin) return
-        proc.stdin.write(text)
-        proc.stdin.end()
-        await proc.exited.catch(() => {})
+        await writeClipboardProcess("xsel", proc, text)
       }
     }
   }
@@ -182,17 +205,14 @@ const getCopyMethod = lazy(async () => {
         },
       )
 
-      if (!proc.stdin) return
-      proc.stdin.write(text)
-      proc.stdin.end()
-      await proc.exited.catch(() => {})
+      await writeClipboardProcess("powershell", proc, text)
     }
   }
 
   console.log("clipboard: no native support")
   return async (text: string) => {
     const clipboardy = await getClipboardy()
-    await clipboardy.write(text).catch(() => {})
+    await clipboardy.write(text)
   }
 })
 
