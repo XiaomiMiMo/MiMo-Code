@@ -55,6 +55,26 @@ export type RunOutcome =
  * subscribing to WorkflowPhase/WorkflowLog. */
 export type WorkflowTranscriptEntry = { kind: "phase" | "log"; text: string }
 
+// Observability-only structure tree for one run, recorded in the agent()/phase()/
+// workflow() host hooks. Each agent/workflow node is attributed to the phase
+// current at call time (known synchronously inside the hook — no timing guess).
+// This NEVER touches journal keys / occ counts / resume: adding or removing it
+// changes no run outcome. parallel/pipeline batch grouping is intentionally not
+// recorded (pure-guest helpers, no AsyncLocalStorage in QuickJS) — agents are
+// siblings under their phase.
+export type WorkflowNode =
+  | { type: "phase"; id: string; title: string }
+  | { type: "agent"; id: string; phaseId?: string; label?: string; agentType: string; status: "running" | "succeeded" | "failed" }
+  | {
+      type: "workflow"
+      id: string
+      phaseId?: string
+      childRunID: string
+      name: string
+      status: "running" | "completed" | "failed" | "cancelled"
+    }
+export type WorkflowStructure = { nodes: WorkflowNode[] }
+
 interface RunEntry {
   runID: string
   sessionID: SessionID
@@ -81,6 +101,10 @@ interface RunEntry {
   // subscribing to the bus, which removes the subscribe-after-start head race, the
   // two-PubSub reordering, the post-wait tail race, and the subscription leak.
   transcript: WorkflowTranscriptEntry[]
+  // Observability-only structure nodes (phase/agent/workflow), program-ordered.
+  structure: WorkflowNode[]
+  // Id of the phase node current at the time of the next agent()/workflow() call.
+  currentPhaseId: string | undefined
 }
 
 interface StartInput {
@@ -153,6 +177,7 @@ export interface Interface {
   }) => Effect.Effect<{ status: RunStatus | "unknown"; agentCount: number; currentPhase?: string }>
   readonly wait: (input: { runID: string; timeoutMs?: number }) => Effect.Effect<RunOutcome>
   readonly transcript: (input: { runID: string }) => Effect.Effect<readonly WorkflowTranscriptEntry[]>
+  readonly structure: (input: { runID: string }) => Effect.Effect<WorkflowStructure>
   readonly cancel: (input: { runID: string }) => Effect.Effect<void>
   readonly list: (input?: { sessionID?: SessionID }) => Effect.Effect<RunSummary[]>
   readonly resume: (input: { runID: string; agentTimeoutMs?: number }) => Effect.Effect<{ runID: string; resumed: boolean }>
@@ -415,6 +440,8 @@ export const layer = Layer.effect(
         warnedModelRefs: new Set<string>(),
         currentPhase: undefined,
         transcript: [],
+        structure: [],
+        currentPhaseId: undefined,
       }
       runs.set(runID, entry)
       // Stamp a sha256 of the FULL script body (the exact bytes writeScript persists
@@ -815,9 +842,16 @@ export const layer = Layer.effect(
         return { _worktree: wt, result: value }
       }
 
-      const agent: HostFn = (prompt: unknown, opts?: unknown) => {
+      const agentImpl = (prompt: unknown, opts?: unknown, nodeId?: string) => {
         const o = (opts ?? {}) as AgentOpts
         const promptStr = String(prompt)
+        // Flip the observability node (if any) recorded by the `agent` wrapper for
+        // THIS call. Called at the same points that bump succeeded/failed counters.
+        const markAgentNode = (status: "succeeded" | "failed") => {
+          if (!nodeId) return
+          const node = entry.structure.find((n) => n.id === nodeId)
+          if (node && node.type === "agent") node.status = status
+        }
         // Isolated agents are never journaled in v1 (their deliverable is a
         // worktree the journal can't reconstruct) — always spawn.
         if (o.isolation !== "worktree") {
@@ -835,6 +869,7 @@ export const layer = Layer.effect(
             // cap on replays alone). Outcome counter DOES climb so the live view
             // reflects reality as replay proceeds.
             entry.succeeded++
+            markAgentNode("succeeded")
             scheduleFlush(entry)
             return Promise.resolve(journal.results.get(key))
           }
@@ -859,6 +894,7 @@ export const layer = Layer.effect(
                 return spawnShared(actor, promptStr, o, resolvedModel)
               }),
             )
+            markAgentNode(result === null ? "failed" : "succeeded")
             // Cache successful results only (null = failure/spawn-reject/killed →
             // not journaled → re-runs on resume, self-heal). SYNCHRONOUS append so
             // the result is durable the instant it resolves: a mid-run process exit
@@ -879,6 +915,7 @@ export const layer = Layer.effect(
             if (entry.agentCount >= lifecycleCap) {
               warnCapOnce()
               publishAgentFailed(o, "over-cap")
+              markAgentNode("failed")
               return null
             }
             entry.agentCount++
@@ -887,14 +924,40 @@ export const layer = Layer.effect(
             // Resolve the guest's model ref host-side (isolated agents aren't
             // journaled, so there's no key to keep stable here). Never-throws.
             const resolvedModel = await bridge.promise(resolveAgentModel(o.model, input.model, entry.warnedModelRefs))
-            return spawnIsolated(actor, promptStr, o, resolvedModel)
+            const value = await spawnIsolated(actor, promptStr, o, resolvedModel)
+            markAgentNode(value === null ? "failed" : "succeeded")
+            return value
           }),
         )
+      }
+
+      // Observability: record a structure node at agent() call time, attributed to
+      // the current phase. Status starts "running" and is flipped to succeeded/failed
+      // at the SAME sites that bump the succeeded/failed counters (markAgentNode),
+      // keyed by this node id. We deliberately do NOT wrap or tap the returned host
+      // promise: the sandbox's asyncify-free sync-promise bridge counts pending jobs
+      // to drive its pump, so an extra Promise.resolve().then() perturbs settle timing
+      // and corrupts counters. The hook returns the host promise untouched.
+      const agent: HostFn = (prompt: unknown, opts?: unknown) => {
+        const o = (opts ?? {}) as AgentOpts
+        const nodeId = "a" + entry.structure.length
+        entry.structure.push({
+          type: "agent",
+          id: nodeId,
+          phaseId: entry.currentPhaseId,
+          label: o.label,
+          agentType: o.agentType ?? "general",
+          status: "running",
+        })
+        return agentImpl(prompt, opts, nodeId)
       }
 
       const phase: HostFn = (title: unknown) => {
         entry.currentPhase = String(title)
         entry.transcript.push({ kind: "phase", text: String(title) })
+        const phaseId = "p" + entry.structure.length
+        entry.structure.push({ type: "phase", id: phaseId, title: String(title) })
+        entry.currentPhaseId = phaseId
         Effect.runFork(WorkflowPersistence.recordPhase({ runID, phase: String(title) }).pipe(Effect.ignore))
         Effect.runFork(WorkflowPersistence.appendJournal(runID, { t: "phase", title: String(title), pass }).pipe(Effect.ignore))
         Effect.runFork(bus.publish(WorkflowPhase, { sessionID: input.sessionID, runID, title: String(title) }))
@@ -968,6 +1031,15 @@ export const layer = Layer.effect(
               )
             }
             entry.childRunIDs.add(childRunID)
+            const wfNodeId = "w" + entry.structure.length
+            entry.structure.push({
+              type: "workflow",
+              id: wfNodeId,
+              phaseId: entry.currentPhaseId,
+              childRunID,
+              name: isInlineScript(spec) ? "inline" : spec,
+              status: "running",
+            })
             // The child is an independent sub-run: it gets its own per-run lifecycle
             // cap + per-agent timeout (defaults), deliberately NOT inherited from the
             // parent. Tree-wide concurrency is bounded by the global semaphore,
@@ -1000,6 +1072,8 @@ export const layer = Layer.effect(
               isInlineScript(spec) ? "inline" : spec,
             )
             const childOutcome = yield* waitFor(childRunID)
+            const wfNode = entry.structure.find((n) => n.id === wfNodeId)
+            if (wfNode && wfNode.type === "workflow") wfNode.status = childOutcome.status
             // Structural faults (cycle / depth / unknown-name) are workflow-wiring
             // BUGS, not runtime conditions — propagate them loud instead of degrading
             // to null like a child's runtime failure, so the fault surfaces at the root
@@ -1147,6 +1221,11 @@ export const layer = Layer.effect(
       return entry ? entry.transcript.slice() : []
     })
 
+    const structure = Effect.fn("WorkflowRuntime.structure")(function* (input: { runID: string }) {
+      const entry = runs.get(input.runID)
+      return { nodes: entry ? entry.structure.slice() : [] } satisfies WorkflowStructure
+    })
+
     const wait = Effect.fn("WorkflowRuntime.wait")(function* (input: { runID: string; timeoutMs?: number }) {
       const entry = runs.get(input.runID)
       if (!entry) return { status: "failed" as const, error: `unknown runID ${input.runID}` }
@@ -1244,7 +1323,7 @@ export const layer = Layer.effect(
       }).pipe(Effect.ensuring(Effect.sync(() => lock[Symbol.dispose]())))
     })
 
-    const impl = Service.of({ start, status, wait, transcript, cancel, list, resume })
+    const impl = Service.of({ start, status, wait, transcript, structure, cancel, list, resume })
     // Late-bind the impl so the `workflow` tool can resolve it without forcing a
     // WorkflowRuntime.Service requirement onto ToolRegistry.layer. See
     // runtime-ref.ts for rationale.

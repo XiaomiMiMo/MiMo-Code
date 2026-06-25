@@ -1076,3 +1076,42 @@ describe("WorkflowRuntime persists agentTimeoutMs across resume (TUI-style)", ()
     ),
   )
 })
+
+describe("WorkflowRuntime structure tree", () => {
+  it.live("records phase + agent nodes attributed to the current phase", () =>
+    provideTmpdirServer(
+      Effect.fnUntraced(function* ({ llm }) {
+        const runtime = yield* WorkflowRuntime.Service
+        const session = yield* Session.Service
+        const parent = yield* session.create({
+          title: "wf structure",
+          permission: [{ permission: "*", pattern: "*", action: "allow" }],
+        })
+        yield* llm.text("done")
+        yield* llm.text("done")
+        const script = [
+          `export const meta = { name: "t", description: "d" }`,
+          `phase("Plan")`,
+          `await agent("a", { label: "la" })`,
+          `await agent("b")`,
+          `return null`,
+        ].join("\n")
+        const { runID } = yield* runtime.start({ script, sessionID: parent.id, parentActorID: "main", model: ref })
+        const outcome = yield* runtime.wait({ runID })
+        expect(outcome.status).toBe("completed")
+        const s = yield* runtime.structure({ runID })
+        expect(s.nodes.filter((n) => n.type === "phase").map((n) => (n as { title: string }).title)).toEqual(["Plan"])
+        const agents = s.nodes.filter((n) => n.type === "agent") as {
+          phaseId?: string
+          status: string
+          label?: string
+        }[]
+        expect(agents).toHaveLength(2)
+        expect(agents.every((a) => a.phaseId === "p0")).toBe(true)
+        expect(agents.every((a) => a.status === "succeeded")).toBe(true)
+        expect(agents[0].label).toBe("la")
+      }),
+      { git: true, config: providerCfg },
+    ),
+  )
+})
