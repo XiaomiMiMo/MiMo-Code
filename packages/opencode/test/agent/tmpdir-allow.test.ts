@@ -29,6 +29,21 @@ describe("Agent tmpDirAllowGlobs", () => {
     expect(Permission.evaluate("external_directory", path.join(os.tmpdir(), "x.txt"), ruleset).action).toBe("allow")
   })
 
+  // The external_directory ask sends the PARENT-DIR glob (path.dirname(target) + "/*"),
+  // not the raw file path (see tool/external-directory.ts). Assert against that shape so
+  // the nesting guarantee is exercised the way production actually evaluates it.
+  test("the parent-dir glob shape sent by external_directory resolves to allow", () => {
+    const ruleset = Permission.fromConfig({
+      external_directory: {
+        "*": "ask",
+        ...Object.fromEntries(tmpDirAllowGlobs().map((dir) => [dir, "allow"])),
+      },
+    })
+    expect(Permission.evaluate("external_directory", "/tmp/*", ruleset).action).toBe("allow")
+    expect(Permission.evaluate("external_directory", "/tmp/sub/*", ruleset).action).toBe("allow")
+    expect(Permission.evaluate("external_directory", "/private/tmp/x/*", ruleset).action).toBe("allow")
+  })
+
   test("user deny overrides the temp allow", () => {
     const ruleset = Permission.merge(
       Permission.fromConfig({
