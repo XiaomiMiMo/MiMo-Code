@@ -3,11 +3,11 @@ export const meta = {
   description:
     "Autonomous compose pipeline — brainstorms context, designs (spec/plan), implements via parallel per-task worktrees with TDD, verifies, reviews, reports, and merges. Bounded retry, never-ask mode.",
   whenToUse:
-    "Use to drive a feature, bugfix, refactor, or review-feedback task through the full compose flow without user prompting. Pass args.task = the user's request. Optionally args.type to set the task type (feature/bugfix/refactor/feedback; otherwise inferred), args.feature_name for the report filename, args.skip_brainstorm / args.skip_report to drop those phases, args.maxConcurrent to bound per-batch parallelism.",
+    "Use to drive a feature, bugfix, refactor, or review-feedback task through the full compose flow without user prompting. Pass args.task = the user's request. Optionally args.type to set the task type (feature/bugfix/refactor/feedback; otherwise inferred), args.feature_name for the report filename, args.skip_brainstorm / args.skip_report to drop those phases, args.maxConcurrent to bound per-batch parallelism. Independent tasks auto-run in parallel, each in its own worktree, then merge back; pass args.isolate_worktrees=false to force all-sequential or =true to force isolation.",
   phases: [
     { title: "Brainstorm", detail: "Context recon (never-ask): conventions, recent changes, relevant files" },
     { title: "Design", detail: "Apply compose:plan, compose:debug, or compose:feedback; emit task list with deps" },
-    { title: "Implement", detail: "Topo-sorted batches (compose:tdd), then integrate" },
+    { title: "Implement", detail: "Topo-sorted batches; independent tasks parallelize in per-task worktrees, then integrate" },
     { title: "Verify", detail: "Run project verify commands; structured pass/fail" },
     { title: "Review", detail: "compose:review for critical/important/minor issues" },
     { title: "Report", detail: "compose:report per-iteration + final consolidated report" },
@@ -139,11 +139,17 @@ const VALID_TYPES = ["feature", "bugfix", "refactor", "feedback"]
 const argType = typeof _argsObj.type === "string" ? _argsObj.type : ""
 const SKIP_BRAINSTORM = _argsObj.skip_brainstorm === true
 const SKIP_REPORT = _argsObj.skip_report === true
-// Per-task worktree isolation is OPT-IN. Default OFF: implement/fix agents run in
-// the main workspace so their writes materialize directly (and verify sees them).
-// The worktree-isolation runtime path can leave tasks "pristine" (writes not landing
-// in the worktree) in some environments; opt in only when that path is known-good.
-const ISOLATE = _argsObj.isolate_worktrees === true
+// Per-batch worktree isolation. Independent tasks that would run concurrently MUST
+// be isolated (parallel writes to one workspace conflict) — the runtime creates a
+// worktree per task, the agent works in it, and an integrate agent merges it back.
+// Decision is per batch: auto-isolate a batch iff it runs >1 task; a single-task
+// batch stays sequential in the main workspace. args.isolate_worktrees forces it:
+// true = always isolate, false = never. (Runtime worktree path verified by
+// test/workflow/runtime-worktree.test.ts; not opt-in-off anymore.)
+const ISOLATE_OVERRIDE =
+  _argsObj.isolate_worktrees === true ? true : _argsObj.isolate_worktrees === false ? false : undefined
+const isolateBatch = (batchIds) =>
+  ISOLATE_OVERRIDE === true ? true : ISOLATE_OVERRIDE === false ? false : batchIds.length > 1
 const MAX_CONCURRENT =
   typeof _argsObj.maxConcurrent === "number" && _argsObj.maxConcurrent > 0 ? _argsObj.maxConcurrent : DEFAULT_MAX_CONCURRENT
 
@@ -346,7 +352,7 @@ const TASKS_DIGEST = design.tasks.map((t, i) => (i + 1) + ". " + t.id + ": " + t
 // ---------------------------------------------------------------------------
 // Helpers: implement (per-task, worktree), integrate, verify, debug, report
 // ---------------------------------------------------------------------------
-const runImplementTask = (task, failuresOrEmpty) => agent(
+const runImplementTask = (task, failuresOrEmpty, isolate) => agent(
   "Apply the `compose:tdd` skill. Use the `skill` tool to load it before working.\n\n" +
   "## Overall task\n" + TASK + "\n\n" +
   "## Your work item (" + task.id + ")\n" + task.description + "\nAcceptance: " + task.acceptance +
@@ -354,8 +360,8 @@ const runImplementTask = (task, failuresOrEmpty) => agent(
   (failuresOrEmpty ? "## Verify failures from previous attempt — focus on these\n" + failuresOrEmpty + "\n\n" : "") +
   "Write the failing test first (use the `write` tool), then the minimal code to pass, then refactor. " +
   "Actually create the source and test files on disk with the `write` tool — do not just describe them. " +
-  (ISOLATE ? "Commit your work inside this worktree." : "Commit your work in the workspace."),
-  ISOLATE
+  (isolate ? "Commit your work inside this worktree." : "Commit your work in the workspace."),
+  isolate
     ? { label: "implement:" + task.id, phase: "Implement", isolation: "worktree" }
     : { label: "implement:" + task.id, phase: "Implement" }
 )
@@ -415,15 +421,15 @@ const runBatch = async (batchIds, failuresOrEmpty) => {
   const tasks = batchIds.map((id) => taskById[id])
   const perTaskResults = []
   const kept = []
-  // Concurrency model (aligned with the compose skill): only run implement tasks
-  // CONCURRENTLY when each task is isolated in its own worktree. In the default
-  // (non-isolated) mode all tasks write to the SAME workspace, so the original
-  // compose:subagent skill forbids parallel implementation (file conflicts) — run
-  // them one at a time. parallel() here is gated on ISOLATE for exactly that reason.
+  // Per-batch isolation: a batch with >1 independent task auto-isolates (worktree
+  // per task) so they can run CONCURRENTLY without clobbering the shared workspace;
+  // a single-task batch stays sequential in the main workspace. args.isolate_worktrees
+  // forces either way. parallel() is gated on ISOLATE for exactly this reason.
+  const ISOLATE = isolateBatch(batchIds)
   const limit = ISOLATE ? Math.min(MAX_CONCURRENT, tasks.length) : 1
   for (let i = 0; i < tasks.length; i += limit) {
     const chunk = tasks.slice(i, i + limit)
-    const results = await parallel(chunk.map((t) => () => runImplementTask(t, failuresOrEmpty)))
+    const results = await parallel(chunk.map((t) => () => runImplementTask(t, failuresOrEmpty, ISOLATE)))
     for (let j = 0; j < chunk.length; j++) {
       const t = chunk[j]
       const r = results[j]
@@ -514,12 +520,12 @@ const runReview = () => agent(
   { label: "review", phase: "Review", schema: REVIEW_SHAPE }
 )
 
-const runFixTask = (finding, i) => agent(
+const runFixTask = (finding, i, isolate) => agent(
   "Address the CRITICAL review finding below. Apply the `compose:tdd` skill to fix it with tests where possible. " +
   "Use the `skill` tool to load it first.\n\n" +
   "## Critical finding (" + (i + 1) + ")\n" + finding + "\n\n" +
-  "Fix it with the `write`/`edit` tools and commit " + (ISOLATE ? "inside this worktree." : "in the workspace."),
-  ISOLATE ? { label: "fix:" + i, phase: "Fix", isolation: "worktree" } : { label: "fix:" + i, phase: "Fix" }
+  "Fix it with the `write`/`edit` tools and commit " + (isolate ? "inside this worktree." : "in the workspace."),
+  isolate ? { label: "fix:" + i, phase: "Fix", isolation: "worktree" } : { label: "fix:" + i, phase: "Fix" }
 )
 
 phase("Review")
@@ -532,15 +538,16 @@ if (review.critical && review.critical.length > 0) {
   phase("Fix")
   for (let attempt = 0; attempt < MAX_REVIEW_FIX_ATTEMPTS; attempt++) {
     reviewFixAttempts = attempt + 1
-    // Same concurrency rule as implement: parallel only when worktree-isolated;
-    // otherwise fixes share the workspace → run sequentially to avoid conflicts.
+    // Same per-batch rule as implement: isolate (worktree per fix) when >1 critical
+    // fix would run concurrently, or when forced; otherwise sequential in main workspace.
+    const ISOLATE = isolateBatch(review.critical.map((_, i) => "fix-" + i))
     const limit = ISOLATE ? Math.min(MAX_CONCURRENT, review.critical.length) : 1
     const perTaskResults = []
     const kept = []
     const criticals = review.critical
     for (let i = 0; i < criticals.length; i += limit) {
       const chunk = criticals.slice(i, i + limit)
-      const results = await parallel(chunk.map((finding, k) => () => runFixTask(finding, i + k)))
+      const results = await parallel(chunk.map((finding, k) => () => runFixTask(finding, i + k, ISOLATE)))
       for (let j = 0; j < chunk.length; j++) {
         const r = results[j]
         if (ISOLATE) {

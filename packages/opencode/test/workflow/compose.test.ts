@@ -238,8 +238,8 @@ describe("compose phase 2: Design", () => {
 })
 
 describe("compose phase 3: parallelism, dependencies, worktrees", () => {
-  test("independent tasks land in one batch dispatched in parallel; worktree isolation opt-in", async () => {
-    const { result, calls } = await runCompose({ task: "x", type: "feature", isolate_worktrees: true }, (prompt, opts) => {
+  test("multiple independent tasks AUTO-isolate (worktree per task), no flag needed", async () => {
+    const { result, calls } = await runCompose({ task: "x", type: "feature" }, (prompt, opts) => {
       if (opts?.schema?.properties?.context) return { context: { projectType: "x", conventions: [], recentChanges: [], relevantFiles: [] }, assumptions: [] }
       if (opts?.schema?.properties?.tasks) return { tasks: [
         { id: "T1", description: "d", acceptance: "a", dependsOn: [] },
@@ -257,26 +257,29 @@ describe("compose phase 3: parallelism, dependencies, worktrees", () => {
     expect((result as any).batches).toEqual([["T1", "T2", "T3", "T4"]])
     const implCalls = calls.filter((c) => c.opts?.label && String(c.opts.label).startsWith("implement:"))
     expect(implCalls).toHaveLength(4)
-    for (const c of implCalls) expect(c.opts.isolation).toBe("worktree")
+    for (const c of implCalls) expect(c.opts.isolation).toBe("worktree") // auto, no flag
+    expect(calls.find((c) => c.opts?.label === "integrate")).toBeDefined()
   })
 
-  test("default mode (no isolate_worktrees) runs implement WITHOUT worktree isolation and skips integrate", async () => {
-    const { result, calls } = await runCompose({ task: "x", type: "feature" })
+  test("a single-task batch stays sequential, no isolation, no integrate (auto)", async () => {
+    const { calls } = await runCompose({ task: "x", type: "feature" }, (prompt, opts) => {
+      if (opts?.schema?.properties?.tasks) return { tasks: [{ id: "T1", description: "d", acceptance: "a", dependsOn: [] }] }
+      return happyAgent(prompt, opts)
+    })
     const implCalls = calls.filter((c) => c.opts?.label && String(c.opts.label).startsWith("implement:"))
-    expect(implCalls.length).toBeGreaterThan(0)
-    for (const c of implCalls) expect(c.opts.isolation).toBeUndefined() // runs in main workspace
-    expect(calls.find((c) => c.opts?.label === "integrate")).toBeUndefined() // nothing to integrate
-    expect(result).not.toMatchObject({ error: expect.anything() })
+    expect(implCalls).toHaveLength(1)
+    expect(implCalls[0].opts.isolation).toBeUndefined()
+    expect(calls.find((c) => c.opts?.label === "integrate")).toBeUndefined()
   })
 
-  test("default mode runs implement tasks SEQUENTIALLY (no same-workspace parallel conflicts)", async () => {
+  test("args.isolate_worktrees:false forces all-sequential, no isolation even for a multi-task batch", async () => {
     let active = 0
     let maxConcurrent = 0
     const agentImpl = async (prompt: string, opts?: any) => {
       if (opts?.label && String(opts.label).startsWith("implement:")) {
         active++
         maxConcurrent = Math.max(maxConcurrent, active)
-        await new Promise((r) => setTimeout(r, 5)) // hold the slot so overlap is observable
+        await new Promise((r) => setTimeout(r, 5))
         active--
         return "ok"
       }
@@ -288,11 +291,13 @@ describe("compose phase 3: parallelism, dependencies, worktrees", () => {
       ] }
       return happyAgent(prompt, opts)
     }
-    await runCompose({ task: "x", type: "feature" }, agentImpl)
-    expect(maxConcurrent).toBe(1) // sequential in default (same-workspace) mode
+    const { calls } = await runCompose({ task: "x", type: "feature", isolate_worktrees: false }, agentImpl)
+    const implCalls = calls.filter((c) => c.opts?.label && String(c.opts.label).startsWith("implement:"))
+    for (const c of implCalls) expect(c.opts.isolation).toBeUndefined()
+    expect(maxConcurrent).toBe(1) // forced sequential
   })
 
-  test("isolated mode runs independent implement tasks CONCURRENTLY", async () => {
+  test("auto-isolated independent tasks run CONCURRENTLY (worktree per task)", async () => {
     let active = 0
     let maxConcurrent = 0
     const agentImpl = async (prompt: string, opts?: any) => {
@@ -311,8 +316,8 @@ describe("compose phase 3: parallelism, dependencies, worktrees", () => {
       ] }
       return happyAgent(prompt, opts)
     }
-    await runCompose({ task: "x", type: "feature", isolate_worktrees: true }, agentImpl)
-    expect(maxConcurrent).toBeGreaterThan(1) // parallel when each task has its own worktree
+    await runCompose({ task: "x", type: "feature" }, agentImpl) // no flag — auto
+    expect(maxConcurrent).toBeGreaterThan(1)
   })
 
   test("dependency chain produces sequential batches in order", async () => {
