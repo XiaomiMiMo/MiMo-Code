@@ -29,12 +29,12 @@ export function DialogMessage(props: {
 
   return (
     <DialogSelect
-      title="Message Actions"
+      title={t("tui.dialog.message.actions")}
       options={[
         {
-          title: "Revert",
+          title: t("tui.dialog.message.revert"),
           value: "session.revert",
-          description: "undo messages and file changes",
+          description: t("tui.dialog.message.revert_description"),
           onSelect: (dialog) => {
             const msg = message()
             if (!msg) return
@@ -63,9 +63,9 @@ export function DialogMessage(props: {
           },
         },
         {
-          title: "Copy",
+          title: t("tui.dialog.message.copy"),
           value: "message.copy",
-          description: "message text to clipboard",
+          description: t("tui.dialog.message.copy_description"),
           onSelect: async (dialog) => {
             const msg = message()
             if (!msg) return

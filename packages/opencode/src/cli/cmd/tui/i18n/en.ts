@@ -497,4 +497,9 @@ export const dict: Record<string, string> = {
   "tui.dialog.variant.select": "Select variant",
   "tui.dialog.message.fork": "Fork",
   "tui.dialog.message.fork_description": "create a new session",
+  "tui.dialog.message.actions": "Message Actions",
+  "tui.dialog.message.revert": "Revert",
+  "tui.dialog.message.revert_description": "undo messages and file changes",
+  "tui.dialog.message.copy": "Copy",
+  "tui.dialog.message.copy_description": "message text to clipboard",
 }

@@ -486,4 +486,9 @@ export const dict = {
   "tui.dialog.variant.select": "选择变体",
   "tui.dialog.message.fork": "派生",
   "tui.dialog.message.fork_description": "创建新会话",
+  "tui.dialog.message.actions": "消息操作",
+  "tui.dialog.message.revert": "撤销",
+  "tui.dialog.message.revert_description": "撤销消息和文件更改",
+  "tui.dialog.message.copy": "复制",
+  "tui.dialog.message.copy_description": "复制消息文本到剪贴板",
 } satisfies Partial<Record<Keys, string>>
