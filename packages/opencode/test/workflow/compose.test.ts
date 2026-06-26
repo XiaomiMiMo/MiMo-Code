@@ -609,3 +609,51 @@ describe("compose brainstorm robustness", () => {
     expect((result as any).type).toBe("feature")
   })
 })
+
+describe("compose phase I/O chaining", () => {
+  test("brainstorm prompt self-conducts Socratic Q&A + approaches (autonomous)", () => {
+    const s = composeScript()
+    expect(s).toContain("self-conduct the dialogue")
+    expect(s).toContain("selfQA")
+    expect(s).toContain("approaches")
+    expect(s).toContain("chosenApproach")
+  })
+
+  test("brainstorm is NOT downgraded to lite model anymore", () => {
+    const s = composeScript()
+    // the brainstorm agent opts must not pin model:"lite"
+    expect(s).not.toMatch(/label: "brainstorm"[^}]*model: "lite"/)
+  })
+
+  test("implement carries Intent (chosen approach) and TASKS_DIGEST is gone", () => {
+    const s = composeScript()
+    expect(s).toContain("Intent (from design")
+    expect(s).not.toContain("TASKS_DIGEST")
+  })
+
+  test("review is two-stage: spec-compliance before code-quality, with git diff", () => {
+    const s = composeScript()
+    expect(s).toContain("TWO STAGES")
+    expect(s).toMatch(/Stage 1 — Spec compliance/i)
+    expect(s).toMatch(/Stage 2 — Code quality/i)
+    expect(s).toContain("git diff")
+  })
+
+  test("merge prompt receives what-was-built + review outcome", () => {
+    const s = composeScript()
+    expect(s).toContain("What was built")
+    expect(s).toContain("Review outcome")
+  })
+
+  test("brainstorm self-Q&A reasoning flows into the design prompt at runtime", async () => {
+    const { calls } = await runCompose({ task: "x", type: "feature" }, (prompt, opts) => {
+      if (opts?.schema?.properties?.context)
+        return { context: { projectType: "p", conventions: [], recentChanges: [], relevantFiles: [] }, assumptions: [],
+                 approaches: [{ name: "A1", tradeoffs: "fast" }], chosenApproach: "A1", chosenRationale: "simplest" }
+      return happyAgent(prompt, opts)
+    })
+    const designWrite = calls.find((c) => c.opts?.label && String(c.opts.label).startsWith("design:"))!
+    expect(designWrite.prompt).toContain("Chosen approach: A1")
+    expect(designWrite.prompt).toContain("simplest")
+  })
+})

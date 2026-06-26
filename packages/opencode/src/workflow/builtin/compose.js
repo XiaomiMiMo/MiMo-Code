@@ -34,6 +34,11 @@ const BRAINSTORM_SHAPE = {
       },
     },
     assumptions: { type: "array", items: { type: "string" } },
+    selfQA: { type: "array", items: { type: "object", properties: { question: { type: "string" }, answer: { type: "string" } } } },
+    approaches: { type: "array", items: { type: "object", properties: { name: { type: "string" }, tradeoffs: { type: "string" } } } },
+    chosenApproach: { type: "string" },
+    chosenRationale: { type: "string" },
+    openQuestions: { type: "array", items: { type: "string" } },
     amends: { type: "string" },
     existingDocs: { type: "array", items: { type: "string" } },
     notes: { type: "string" },
@@ -206,18 +211,23 @@ if (SKIP_BRAINSTORM) {
   brainstorm = { context: SYNTHETIC_CONTEXT, assumptions: [] }
 } else {
   brainstorm = await agent(
-    "Apply the `compose:brainstorm` skill in AUTONOMOUS mode — no user is available. Use the `skill` tool to load it first.\n\n" +
-    "Per the skill's autonomous override: do STEP 1 ONLY (context recon). Do NOT present a design, ask questions, write a spec, or wait for approval.\n\n" +
+    "Apply the `compose:brainstorm` skill in AUTONOMOUS mode — no user is available to answer. Use the `skill` tool to load it first.\n\n" +
+    "## Autonomous brainstorming — self-conduct the dialogue (do NOT stop at context recon)\n" +
+    "'No user' means you ask and answer the questions YOURSELF; it does NOT mean skip the thinking. Run the real brainstorm:\n" +
+    "1. Explore project context (files, docs, recent commits, layout) and note assumptions.\n" +
+    "2. Pose the clarifying questions you WOULD ask a user, and answer each from the context/your best judgment (record as selfQA).\n" +
+    "3. Propose 2-3 distinct approaches with trade-offs (record as approaches).\n" +
+    "4. Pick ONE and justify it (chosenApproach + chosenRationale). Note any unresolved openQuestions.\n" +
+    "Do NOT present a design to a user, do NOT wait for approval, do NOT write a spec here — that is Design's job. " +
+    "This reasoning is the KEY input Design consumes, so capture it fully in the structured output.\n\n" +
     "## Task\n" + TASK + "\n\n" +
     existingDocsBlock +
-    "## What to gather\n" +
+    "## Context to gather\n" +
     "- Read AGENTS.md / CLAUDE.md / README.md if present\n" +
     "- Skim recent commits (`git log --oneline -20`)\n" +
-    "- Map top-level directory layout\n" +
-    "- Identify files clearly relevant to the task\n" +
-    "- Note any reasonable assumptions you are making (so Design sees them)\n\n" +
+    "- Map top-level directory layout; identify files relevant to the task\n\n" +
     "Return structured output only.",
-    { label: "brainstorm", phase: "Brainstorm", schema: BRAINSTORM_SHAPE, model: "lite" }
+    { label: "brainstorm", phase: "Brainstorm", schema: BRAINSTORM_SHAPE }
   )
   if (!brainstorm || !brainstorm.context) brainstorm = { context: SYNTHETIC_CONTEXT, assumptions: [] }
 }
@@ -228,6 +238,10 @@ const contextDigest =
   "Recent changes:\n" + _arr(brainstorm.context.recentChanges).map((c) => "- " + c).join("\n") + "\n" +
   "Relevant files:\n" + _arr(brainstorm.context.relevantFiles).map((f) => "- " + f).join("\n") +
   (_arr(brainstorm.assumptions).length ? "\nAssumptions:\n" + _arr(brainstorm.assumptions).map((a) => "- " + a).join("\n") : "") +
+  (_arr(brainstorm.selfQA).length ? "\nSelf-Q&A (brainstorm reasoning):\n" + _arr(brainstorm.selfQA).map((q) => "- Q: " + (q && q.question) + "\n  A: " + (q && q.answer)).join("\n") : "") +
+  (_arr(brainstorm.approaches).length ? "\nApproaches considered:\n" + _arr(brainstorm.approaches).map((a) => "- " + (a && a.name) + " — " + (a && a.tradeoffs)).join("\n") : "") +
+  ((brainstorm.chosenApproach && typeof brainstorm.chosenApproach === "string") ? "\nChosen approach: " + brainstorm.chosenApproach + (brainstorm.chosenRationale ? " (because: " + brainstorm.chosenRationale + ")" : "") : "") +
+  (_arr(brainstorm.openQuestions).length ? "\nOpen questions:\n" + _arr(brainstorm.openQuestions).map((q) => "- " + q).join("\n") : "") +
   ((brainstorm.amends && typeof brainstorm.amends === "string") ? "\nAmends existing feature: " + brainstorm.amends : "")
 
 // ---------------------------------------------------------------------------
@@ -387,7 +401,14 @@ const batches = topo.batches
 const taskById = Object.create(null)
 for (const t of design.tasks) taskById[t.id] = t
 
-const TASKS_DIGEST = design.tasks.map((t, i) => (i + 1) + ". " + t.id + ": " + t.description + " — " + t.acceptance).join("\n")
+// Intent carried from brainstorm/design into each implementer so it builds toward
+// the CHOSEN approach, not its own re-derivation. Plan path lets it read the spec.
+const intentBlock =
+  ((brainstorm.chosenApproach && typeof brainstorm.chosenApproach === "string")
+    ? "## Intent (from design — build toward THIS approach)\n" + brainstorm.chosenApproach +
+      (brainstorm.chosenRationale ? "\nRationale: " + brainstorm.chosenRationale : "") + "\n" +
+      "Spec/plan for the whole feature: `" + SPEC_PATH + "` / `" + PLAN_PATH + "` (read if you need fuller context).\n\n"
+    : "")
 
 // ---------------------------------------------------------------------------
 // Helpers: implement (per-task, worktree), integrate, verify, debug, report
@@ -395,6 +416,7 @@ const TASKS_DIGEST = design.tasks.map((t, i) => (i + 1) + ". " + t.id + ": " + t
 const runImplementTask = (task, failuresOrEmpty, isolate) => agent(
   "Apply the `compose:tdd` skill. Use the `skill` tool to load it before working.\n\n" +
   "## Overall task\n" + TASK + "\n\n" +
+  intentBlock +
   "## Your work item (" + task.id + ")\n" + task.description + "\nAcceptance: " + task.acceptance +
   (task.files && task.files.length ? "\nFiles: " + task.files.join(", ") : "") + "\n\n" +
   (failuresOrEmpty ? "## Verify failures from previous attempt — focus on these\n" + failuresOrEmpty + "\n\n" : "") +
@@ -550,12 +572,22 @@ for (let attempt = 0; attempt < MAX_TDD_ATTEMPTS; attempt++) {
 // ---------------------------------------------------------------------------
 // Phase 4 — Review  +  Phase 5 — Fix loop (≤2 attempts)
 // ---------------------------------------------------------------------------
+const IMPLEMENTED_DIGEST = design.tasks.map((t) => "- " + t.id + ": " + t.description + " (acceptance: " + t.acceptance + ")").join("\n")
 const runReview = () => agent(
-  "Apply the `compose:review` skill. Use the `skill` tool to load it before working.\n\n" +
-  "## Task context\n" + TASK + "\n\n" +
+  "Apply the `compose:review` skill. Use the `skill` tool to load it FIRST, then follow it.\n\n" +
+  "Review the implemented change in TWO STAGES, spec-compliance BEFORE code-quality (this mirrors compose:subagent's two-stage gate):\n" +
+  "### Stage 1 — Spec compliance (evidence-gated)\n" +
+  "Run `git diff` (e.g. `git diff HEAD~<n>..HEAD`, or against the run's base) to see EXACTLY what changed, and read the changed files. " +
+  "For each acceptance criterion below, confirm with evidence from the diff/tests that it is met. Anything unmet or unverifiable is a CRITICAL finding. " +
+  "Do this from the diff + spec ALONE first — do not assume the implementer's claims are correct.\n" +
+  "### Stage 2 — Code quality\n" +
+  "Only once spec compliance holds, review the diff for quality: correctness bugs, missing error handling at real boundaries, tests that don't test, dead code, simplification.\n\n" +
+  "## Overall task\n" + TASK + "\n\n" +
+  intentBlock +
+  "## What was implemented (acceptance criteria to verify)\n" + IMPLEMENTED_DIGEST + "\n\n" +
   "## What to produce\n" +
-  "Triage findings into critical (must fix before merge), important (should fix), and minor (nits). " +
-  "Set readyToMerge=true only if critical is empty.\n\n" +
+  "Triage findings into critical (must fix before merge — includes ANY unmet spec/acceptance), important (should fix), and minor (nits). " +
+  "Set readyToMerge=true ONLY if critical is empty AND every acceptance criterion is met with evidence.\n\n" +
   "Return structured output only.",
   { label: "review", phase: "Review", schema: REVIEW_SHAPE }
 )
@@ -648,7 +680,8 @@ if (!SKIP_REPORT) {
     "## Run history\n" +
     "verifyHistory: " + JSON.stringify(verifyHistory) + "\n" +
     "implementHistory: " + JSON.stringify(implementHistory) + "\n" +
-    "reviewFixAttempts: " + reviewFixAttempts + "\n\n" +
+    "reviewFixAttempts: " + reviewFixAttempts + "\n" +
+    "review: " + JSON.stringify(review) + "\n\n" +
     "Produce the final-state report (What Was Built / Architecture / Design Decisions / Usage / Verification / Journey Log / Source Materials). " +
     "Distill the Journey Log to at most 5 entries. Write the file with the `write` tool, then commit it. " +
     "Writing the file is the deliverable — do not just describe it.",
@@ -672,6 +705,12 @@ phase("Merge")
 const merge = await agent(
   "Apply the `compose:merge` skill. Use the `skill` tool to load it before working.\n\n" +
   "## Task\n" + TASK + "\n\n" +
+  "## What was built (use this for the commit/PR message)\n" + IMPLEMENTED_DIGEST + "\n\n" +
+  ((review && (_arr(review.important).length || _arr(review.minor).length))
+    ? "## Review outcome (critical cleared; note any deferred items)\n" +
+      (_arr(review.important).length ? "Important (should follow up):\n" + _arr(review.important).map((x) => "- " + x).join("\n") + "\n" : "") +
+      (_arr(review.minor).length ? "Minor (nits):\n" + _arr(review.minor).map((x) => "- " + x).join("\n") + "\n" : "") + "\n"
+    : "") +
   "Commit the changes. If the branch tracks a remote and a PR is appropriate, push and open one.\n" +
   "Pick the smallest action that satisfies the goal:\n" +
   "- `commit`: just record locally\n" +
