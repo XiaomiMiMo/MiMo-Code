@@ -401,7 +401,7 @@ export function PermissionPrompt(props: { request: PermissionRequest }) {
             if (permission === "doom_loop") {
               return {
                 icon: "⟳",
-                title: "Continue after repeated failures",
+                title: t("tui.permission.doom_loop_title"),
                 body: (
                   <box paddingLeft={1}>
                     <text fg={theme.textMuted}>{t("tui.permission.doom_loop_hint")}</text>

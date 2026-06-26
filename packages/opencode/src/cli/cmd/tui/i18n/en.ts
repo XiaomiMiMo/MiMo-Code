@@ -478,6 +478,7 @@ export const dict: Record<string, string> = {
   "tui.dialog.model.name_hint": "shown in model picker",
   "tui.permission.no_diff": "No diff provided",
   "tui.permission.allow_patterns": "This will allow the following patterns until MiMoCode is restarted",
+  "tui.permission.doom_loop_title": "Continue after repeated failures",
   "tui.permission.doom_loop_hint": "This keeps the session running despite repeated failures.",
   "tui.permission.always_allow": "Always allow",
   "tui.permission.shell_command": "Shell command",

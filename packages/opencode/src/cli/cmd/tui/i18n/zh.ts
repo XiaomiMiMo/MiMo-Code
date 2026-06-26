@@ -467,6 +467,7 @@ export const dict = {
   "tui.dialog.model.name_hint": "在模型选择器中显示",
   "tui.permission.no_diff": "未提供 diff",
   "tui.permission.allow_patterns": "以下模式将被允许，直到 MiMoCode 重启",
+  "tui.permission.doom_loop_title": "反复失败后继续",
   "tui.permission.doom_loop_hint": "即使反复失败也保持会话运行。",
   "tui.permission.always_allow": "始终允许",
   "tui.permission.shell_command": "Shell 命令",
