@@ -1475,6 +1475,9 @@ function AssistantMessage(props: { message: AssistantMessage; parts: Part[]; las
           )
         }}
       </For>
+      <Show when={props.message.structured !== undefined && props.message.structured !== null}>
+        <StructuredOutput value={props.message.structured} />
+      </Show>
       <Show when={hasActorPart() || hasWorkflowPart()}>
         <box paddingTop={1} paddingLeft={3}>
           <text fg={theme.text}>
@@ -1585,6 +1588,42 @@ function ErrorBlock(props: { error: MessageError }) {
           </text>
         </box>
       </Show>
+    </box>
+  )
+}
+
+// Structured output is a message-level field (AssistantMessage.structured), not a
+// part, so the parts loop never shows it. Agents called with a schema (common in
+// workflows) put their whole answer here — render it as syntax-highlighted JSON so
+// it's not invisible. Collapsible for large payloads.
+function StructuredOutput(props: { value: unknown }) {
+  const { theme, syntax } = useTheme()
+  const [collapsed, setCollapsed] = createSignal(false)
+  const json = createMemo(() => {
+    try {
+      return JSON.stringify(props.value, null, 2)
+    } catch {
+      return String(props.value)
+    }
+  })
+  const lineCount = createMemo(() => json().split("\n").length)
+  const overflow = createMemo(() => lineCount() > 20)
+  const shown = createMemo(() => (collapsed() ? json().split("\n").slice(0, 20).join("\n") + "\n…" : json()))
+  return (
+    <box paddingLeft={3} marginTop={1} flexDirection="column" flexShrink={0}>
+      <box flexDirection="row" gap={1} onMouseUp={() => overflow() && setCollapsed((p) => !p)}>
+        <text fg={theme.accent} attributes={TextAttributes.BOLD}>
+          ⊟ structured output
+        </text>
+        <Show when={overflow()}>
+          <text fg={theme.textMuted}>
+            · {lineCount()} lines{collapsed() ? " · click to expand" : ""}
+          </text>
+        </Show>
+      </box>
+      <box marginTop={1}>
+        <code filetype="json" drawUnstyledText={false} syntaxStyle={syntax()} content={shown()} fg={theme.text} />
+      </box>
     </box>
   )
 }
