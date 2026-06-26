@@ -484,4 +484,6 @@ export const dict = {
   "tui.dialog.org.switch": "切换组织",
   "tui.dialog.agent.select": "选择智能体",
   "tui.dialog.variant.select": "选择变体",
+  "tui.dialog.message.fork": "派生",
+  "tui.dialog.message.fork_description": "创建新会话",
 } satisfies Partial<Record<Keys, string>>

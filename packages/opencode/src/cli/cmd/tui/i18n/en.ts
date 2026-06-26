@@ -495,4 +495,6 @@ export const dict: Record<string, string> = {
   "tui.dialog.org.switch": "Switch org",
   "tui.dialog.agent.select": "Select agent",
   "tui.dialog.variant.select": "Select variant",
+  "tui.dialog.message.fork": "Fork",
+  "tui.dialog.message.fork_description": "create a new session",
 }
