@@ -104,19 +104,22 @@ export type WorkflowStructure = { nodes: WorkflowNode[] }
 // Short, display-only summary of an agent's deliverable for the structure tree.
 // A deliverable is a string (prose finalText) or a structured object; a worktree
 // deliverable is wrapped as { _worktree, result }. We flatten to one line and cap
-// length — purely observability, never fed to the model.
-const RESULT_SUMMARY_MAX = 140
+// length — purely observability, never fed to the model. Capped generously so the
+// card shows a substantial chunk of the response (the full trace is one ↗ away).
+const RESULT_SUMMARY_MAX = 600
 function summarizeAgentResult(result: unknown): string | undefined {
   if (result === null || result === undefined) return undefined
   const unwrapped =
     typeof result === "object" && result !== null && "_worktree" in result
       ? (result as { result?: unknown }).result ?? result
       : result
-  const text = typeof unwrapped === "string" ? unwrapped : JSON.stringify(unwrapped)
+  const text = typeof unwrapped === "string" ? unwrapped : JSON.stringify(unwrapped, null, 2)
   if (!text) return undefined
-  const flat = text.replace(/\s+/g, " ").trim()
-  if (!flat) return undefined
-  return flat.length > RESULT_SUMMARY_MAX ? flat.slice(0, RESULT_SUMMARY_MAX - 1) + "…" : flat
+  // Preserve line breaks (collapse only runs of spaces/tabs) so a multi-paragraph
+  // response renders as readable text in the card, then cap total length.
+  const trimmed = text.replace(/[ \t]+/g, " ").replace(/\n{3,}/g, "\n\n").trim()
+  if (!trimmed) return undefined
+  return trimmed.length > RESULT_SUMMARY_MAX ? trimmed.slice(0, RESULT_SUMMARY_MAX - 1) + "…" : trimmed
 }
 
 interface RunEntry {

@@ -1,28 +1,18 @@
 import { useTheme } from "@tui/context/theme"
 import { TextAttributes } from "@opentui/core"
-import { For, Show } from "solid-js"
+import { For, Show, createSignal } from "solid-js"
 import type { WorkflowNode } from "@tui/context/sync"
+import { SplitBorder } from "@tui/component/border"
+import { Spinner } from "@tui/component/spinner"
 
 type AgentNode = Extract<WorkflowNode, { type: "agent" }>
 type WfNode = Extract<WorkflowNode, { type: "workflow" }>
 type PhaseNode = Extract<WorkflowNode, { type: "phase" }>
 
-// Flatten the program-ordered node list into indented rows: phases at depth 0,
-// agents/workflows at depth 1 under their phase (depth 0 when no phase yet).
-function layout(nodes: WorkflowNode[]) {
-  return nodes.map((node) => ({ depth: node.type === "phase" ? 0 : node.phaseId ? 1 : 0, node }))
-}
-
 function glyph(status: string) {
   if (status === "succeeded" || status === "completed") return "✓"
   if (status === "failed" || status === "cancelled") return "✗"
-  if (status === "running") return "⟳"
   return "○"
-}
-
-function truncate(s: string, n: number) {
-  const flat = s.replace(/\s+/g, " ").trim()
-  return flat.length > n ? flat.slice(0, n - 1) + "…" : flat
 }
 
 // One-line meta tag for an agent call's parameters: model · tools · schema ·
@@ -30,99 +20,156 @@ function truncate(s: string, n: number) {
 function agentMeta(n: AgentNode) {
   const parts: string[] = []
   if (n.model) parts.push(n.model)
-  if (n.tools && n.tools.length) parts.push(`tools:${n.tools.length}`)
+  if (n.tools && n.tools.length) parts.push(`${n.tools.length} tools`)
   if (n.schema) parts.push("schema")
   if (n.isolation) parts.push("isolated")
   if (n.durationMs !== undefined) parts.push(`${(n.durationMs / 1000).toFixed(1)}s`)
   return parts.join(" · ")
 }
 
+// A single agent rendered as a message-style card: a status-colored left spine
+// (the TUI's SplitBorder idiom), a header (spinner/glyph + name + meta + open),
+// the full prompt, and the result (or live activity while running). Click → open
+// that subagent's full conversation.
+function AgentCard(props: {
+  node: AgentNode
+  onOpenAgent?: (actorID: string) => void
+  liveActivity?: (actorID: string) => string | undefined
+}) {
+  const { theme } = useTheme()
+  const [hover, setHover] = createSignal(false)
+  const n = () => props.node
+  const running = () => n().status === "running"
+  const spine = () =>
+    n().status === "succeeded" ? theme.success : n().status === "failed" ? theme.error : theme.warning
+  const clickable = () => Boolean(n().actorID && props.onOpenAgent)
+  const live = () => (running() && n().actorID && props.liveActivity ? props.liveActivity(n().actorID!) : undefined)
+
+  return (
+    <box
+      {...SplitBorder}
+      border={["left"]}
+      borderColor={spine()}
+      marginTop={1}
+      paddingLeft={2}
+      paddingTop={1}
+      paddingBottom={1}
+      gap={1}
+      backgroundColor={hover() && clickable() ? theme.backgroundElement : theme.backgroundPanel}
+      onMouseOver={() => setHover(true)}
+      onMouseOut={() => setHover(false)}
+      onMouseUp={() => {
+        const a = n()
+        if (a.actorID) props.onOpenAgent?.(a.actorID)
+      }}
+    >
+      <box flexDirection="row" gap={1} alignItems="center">
+        <Show when={running()} fallback={<text fg={spine()} attributes={TextAttributes.BOLD}>{glyph(n().status)}</text>}>
+          <Spinner color={spine()} />
+        </Show>
+        <text attributes={TextAttributes.BOLD} fg={theme.text}>
+          {n().label ?? n().agentType}
+        </text>
+        <Show when={agentMeta(n())}>
+          <text fg={theme.textMuted}>{agentMeta(n())}</text>
+        </Show>
+        <box flexGrow={1} />
+        <Show when={clickable()}>
+          <text fg={hover() ? theme.text : theme.markdownLink}>open ↗</text>
+        </Show>
+      </box>
+
+      <box paddingLeft={2}>
+        <text fg={theme.textMuted} wrapMode="word">
+          {n().prompt}
+        </text>
+      </box>
+
+      <Show when={live()}>
+        <box paddingLeft={2} flexDirection="row" gap={1}>
+          <text fg={theme.warning}>↳</text>
+          <text fg={theme.warning} wrapMode="word">
+            {live()}
+          </text>
+        </box>
+      </Show>
+      <Show when={!running() && n().resultSummary}>
+        <box paddingLeft={2} flexDirection="row" gap={1}>
+          <text fg={theme.success}>↳</text>
+          <text fg={theme.text} wrapMode="word">
+            {n().resultSummary}
+          </text>
+        </box>
+      </Show>
+    </box>
+  )
+}
+
+function WorkflowCard(props: { node: WfNode; onOpenChild?: (childRunID: string) => void }) {
+  const { theme } = useTheme()
+  const [hover, setHover] = createSignal(false)
+  const spine = () =>
+    props.node.status === "completed"
+      ? theme.success
+      : props.node.status === "failed" || props.node.status === "cancelled"
+        ? theme.error
+        : theme.warning
+  return (
+    <box
+      {...SplitBorder}
+      border={["left"]}
+      borderColor={spine()}
+      marginTop={1}
+      paddingLeft={2}
+      paddingTop={1}
+      paddingBottom={1}
+      backgroundColor={hover() ? theme.backgroundElement : theme.backgroundPanel}
+      onMouseOver={() => setHover(true)}
+      onMouseOut={() => setHover(false)}
+      onMouseUp={() => props.onOpenChild?.(props.node.childRunID)}
+    >
+      <box flexDirection="row" gap={1}>
+        <text fg={theme.accent} attributes={TextAttributes.BOLD}>
+          ⧉ {props.node.name}
+        </text>
+        <text fg={theme.textMuted}>sub-workflow · {props.node.status}</text>
+        <box flexGrow={1} />
+        <text fg={hover() ? theme.text : theme.markdownLink}>open ↗</text>
+      </box>
+    </box>
+  )
+}
+
 export function WorkflowTree(props: {
   nodes: WorkflowNode[]
   onOpenChild?: (childRunID: string) => void
   onOpenAgent?: (actorID: string) => void
-  // Resolve a running agent's latest activity (e.g. "⚙ websearch" / latest text)
-  // from its live subagent message stream. Provided by the page that has sync.
   liveActivity?: (actorID: string) => string | undefined
 }) {
   const { theme } = useTheme()
-  const statusColor = (s: string) =>
-    s === "succeeded" || s === "completed"
-      ? theme.success
-      : s === "failed" || s === "cancelled"
-        ? theme.error
-        : s === "running"
-          ? theme.warning
-          : theme.textMuted
-  // The bottom info line for an agent: running → its live activity; settled → its
-  // result summary. Returns the text + whether it's "live" (for coloring).
-  const detail = (n: AgentNode): { text: string; live: boolean } | undefined => {
-    if (n.status === "running") {
-      const act = n.actorID && props.liveActivity ? props.liveActivity(n.actorID) : undefined
-      return act ? { text: act, live: true } : undefined
-    }
-    if (n.resultSummary) return { text: `→ ${n.resultSummary}`, live: false }
-    return undefined
-  }
-  const rows = () => layout(props.nodes)
   return (
     <box flexDirection="column">
-      <Show when={rows().length === 0}>
-        <text fg={theme.textMuted}>(no structure yet)</text>
+      <Show when={props.nodes.length === 0}>
+        <text fg={theme.textMuted}>(no activity yet)</text>
       </Show>
-      <For each={rows()}>
-        {(row) => (
-          <box paddingLeft={row.depth * 2} flexDirection="column">
-            <Show when={row.node.type === "phase"}>
-              <text attributes={TextAttributes.BOLD} fg={theme.accent}>
-                ▸ {(row.node as PhaseNode).title}
-              </text>
-            </Show>
-
-            <Show when={row.node.type === "agent"}>
-              {/* line 1: glyph + name + meta(model/tools/schema/duration). The name
-                  is clickable (→ that subagent's full conversation) once the agent
-                  has spawned (actorID present) and a handler is provided. */}
-              <box flexDirection="row" gap={1}>
-                <text fg={statusColor((row.node as AgentNode).status)}>{glyph((row.node as AgentNode).status)}</text>
-                <text
-                  attributes={TextAttributes.BOLD}
-                  fg={(row.node as AgentNode).actorID && props.onOpenAgent ? theme.markdownLink : theme.text}
-                  onMouseUp={() => {
-                    const a = row.node as AgentNode
-                    if (a.actorID) props.onOpenAgent?.(a.actorID)
-                  }}
-                >
-                  {(row.node as AgentNode).label ?? (row.node as AgentNode).agentType}
-                  {(row.node as AgentNode).actorID && props.onOpenAgent ? " ↗" : ""}
+      <For each={props.nodes}>
+        {(node) => (
+          <>
+            <Show when={node.type === "phase"}>
+              <box marginTop={1} flexDirection="row" gap={1} alignItems="center">
+                <text attributes={TextAttributes.BOLD} fg={theme.accent}>
+                  ◆ {(node as PhaseNode).title}
                 </text>
-                <Show when={agentMeta(row.node as AgentNode)}>
-                  <text fg={theme.textMuted}>{agentMeta(row.node as AgentNode)}</text>
-                </Show>
+                <box flexGrow={1} borderColor={theme.borderSubtle} border={["bottom"]} />
               </box>
-              {/* line 2: the prompt (the call's primary parameter), indented + dimmed */}
-              <box paddingLeft={2}>
-                <text fg={theme.textMuted}>{truncate((row.node as AgentNode).prompt, 100)}</text>
-              </box>
-              {/* line 3: running → live activity; settled → result summary */}
-              <Show when={detail(row.node as AgentNode)}>
-                {(d) => (
-                  <box paddingLeft={2}>
-                    <text fg={d().live ? theme.warning : theme.text}>{truncate(d().text, 100)}</text>
-                  </box>
-                )}
-              </Show>
             </Show>
-
-            <Show when={row.node.type === "workflow"}>
-              <text
-                fg={theme.markdownLink}
-                onMouseUp={() => props.onOpenChild?.((row.node as WfNode).childRunID)}
-              >
-                ▸ workflow: {(row.node as WfNode).name} ↗
-              </text>
+            <Show when={node.type === "agent"}>
+              <AgentCard node={node as AgentNode} onOpenAgent={props.onOpenAgent} liveActivity={props.liveActivity} />
             </Show>
-          </box>
+            <Show when={node.type === "workflow"}>
+              <WorkflowCard node={node as WfNode} onOpenChild={props.onOpenChild} />
+            </Show>
+          </>
         )}
       </For>
     </box>
