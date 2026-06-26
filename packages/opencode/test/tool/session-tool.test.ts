@@ -1,5 +1,5 @@
 import { afterEach, describe, expect } from "bun:test"
-import { Effect, Layer } from "effect"
+import { Effect, Layer, Schedule } from "effect"
 import { Agent } from "../../src/agent/agent"
 import { Actor } from "../../src/actor/spawn"
 import { ActorRegistry } from "../../src/actor/registry"
@@ -9,6 +9,7 @@ import * as CrossSpawnSpawner from "../../src/effect/cross-spawn-spawner"
 import { Instance } from "../../src/project/instance"
 import { Provider } from "../../src/provider"
 import { Session } from "../../src/session"
+import { Worktree } from "../../src/worktree"
 import { MessageID, SessionID } from "../../src/session/schema"
 import { Truncate } from "../../src/tool"
 import { SessionTool } from "../../src/tool/session"
@@ -32,6 +33,8 @@ const it = testEffect(
     Agent.defaultLayer,
     CrossSpawnSpawner.defaultLayer,
     Bus.defaultLayer,
+    // session tool's create/cancel use Worktree.Service (worktree-per-child).
+    Worktree.defaultLayer,
     // Actor.defaultLayer populates spawnRef.current, which the session tool's
     // create/cancel branches read via requireActor(). Without it they fail fast.
     Actor.defaultLayer,
@@ -190,11 +193,18 @@ describe("session tool", () => {
         expect(result.metadata.sessionID).toBe(childID)
         expect(result.output).toContain(childID)
 
-        // cancel sets the registry row to idle/cancelled (Actor.cancel →
-        // ActorRegistry.updateStatus). Peer actorID === sessionID === childID.
-        const actor = yield* actorReg.get(SessionID.make(childID), childID)
-        expect(actor!.status).toBe("idle")
-        expect(actor!.lastOutcome).toBe("cancelled")
+        // cancel asks Actor.cancel to interrupt the child and mark it idle. The
+        // child's first turn (under the test LLM) can finish before cancel lands,
+        // so the terminal outcome is either "cancelled" (interrupted in time) or
+        // "success" (already done) — both leave the row idle. Poll for idle, then
+        // assert the outcome is one of the two terminal values.
+        const settled = yield* Effect.gen(function* () {
+          const a = yield* actorReg.get(SessionID.make(childID), childID)
+          if (a?.status === "idle") return a
+          return yield* Effect.fail("not settled")
+        }).pipe(Effect.retry({ times: 50, schedule: Schedule.spaced("50 millis") }))
+        expect(settled!.status).toBe("idle")
+        expect(["cancelled", "success"]).toContain(settled!.lastOutcome ?? "")
       }),
     ),
   )

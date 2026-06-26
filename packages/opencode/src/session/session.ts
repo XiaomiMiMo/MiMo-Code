@@ -189,6 +189,7 @@ export const CreateInput = z
     contextFrom: SessionID.zod.optional(),
     contextWatermark: MessageID.zod.optional(),
     title: z.string().optional(),
+    directory: z.string().optional(),
     permission: Info.shape.permission,
     workspaceID: WorkspaceID.zod.optional(),
   })
@@ -579,10 +580,11 @@ export const layer: Layer.Layer<Service, never, Bus.Service | Storage.Service | 
       contextFrom?: SessionID
       contextWatermark?: MessageID
       title?: string
+      directory?: string
       permission?: Permission.Ruleset
       workspaceID?: WorkspaceID
     }) {
-      const directory = yield* InstanceState.directory
+      const directory = input?.directory ?? (yield* InstanceState.directory)
       const workspace = yield* InstanceState.workspaceID
       return yield* createNext({
         parentID: input?.parentID,

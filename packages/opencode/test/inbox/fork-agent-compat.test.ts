@@ -50,6 +50,7 @@ import { Truncate } from "../../src/tool"
 import { ActorRegistry } from "../../src/actor/registry"
 import { ActorWaiter } from "../../src/actor/waiter"
 import { Actor } from "../../src/actor/spawn"
+import { Worktree } from "../../src/worktree"
 import { Memory } from "../../src/memory"
 import { History } from "../../src/history"
 import { Team } from "../../src/team"
@@ -199,6 +200,7 @@ function makeLayer() {
     inbox,
     Actor.layer.pipe(
       Layer.provideMerge(prompt),
+      Layer.provide(Worktree.defaultLayer),
       Layer.provideMerge(taskRegistry),
       Layer.provide(TaskRegistry.defaultLayer),
     Layer.provide(SchedulerDefaultLayer),

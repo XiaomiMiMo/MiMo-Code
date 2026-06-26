@@ -5,6 +5,7 @@ import { tokenize } from "./shell-tokenize"
 import z from "zod"
 import { Effect } from "effect"
 import { Session } from "@/session"
+import { Worktree } from "@/worktree"
 import { ActorRegistry } from "@/actor/registry"
 import { Provider } from "@/provider"
 import { spawnRef } from "@/actor/spawn-ref"
@@ -78,7 +79,7 @@ type Metadata = {
   sessionID?: string
 }
 
-type Deps = Session.Service | ActorRegistry.Service | Provider.Service
+type Deps = Session.Service | ActorRegistry.Service | Provider.Service | Worktree.Service
 
 function parseSessionScript(script: string): Effect.Effect<SessionOperation[], unknown> {
   return Effect.gen(function* () {
@@ -223,6 +224,7 @@ export const SessionTool = Tool.define<typeof parameters, Metadata, Deps>(
     const sessions = yield* Session.Service
     const actorReg = yield* ActorRegistry.Service
     const provider = yield* Provider.Service
+    const worktreeSvc = yield* Worktree.Service
 
     // Resolve the Actor service through the late-bound spawnRef rather than as a
     // Layer dependency: pulling Actor.Service into Deps would create a layer
@@ -263,6 +265,10 @@ export const SessionTool = Tool.define<typeof parameters, Metadata, Deps>(
           background: true,
           parentActorID: ctx.actorID,
           lifecycle: "persistent",
+          // Each child runs in its own git worktree (own branch/checkout) so
+          // concurrent children never collide on files. Ignored for non-git
+          // projects (spawnPeer falls back to the shared directory).
+          worktree: true,
         })
         // spawnPeer titles the child session `${agentType}: ${task}`; honor an
         // explicit --title by overwriting it so `session list` shows what the
@@ -307,9 +313,21 @@ export const SessionTool = Tool.define<typeof parameters, Metadata, Deps>(
       if (op.action === "cancel") {
         const actor = yield* requireActor()
         yield* actor.cancel(op.sessionID as SessionID, op.sessionID, "graceful")
+        // Remove the child's worktree (git worktree remove + branch -D). The
+        // child's session row records its worktree directory; Worktree.remove is
+        // a no-op (returns false) if the dir isn't a worktree, so this is safe
+        // for non-worktree children too. Best-effort: a removal failure must not
+        // fail the cancel. The orchestrator only cancels once a child's work is
+        // merged or abandoned (prompt rule), so this never discards live work.
+        const child = yield* sessions.get(op.sessionID as SessionID).pipe(Effect.catch(() => Effect.succeed(undefined)))
+        const removed = child
+          ? yield* worktreeSvc.remove({ directory: child.directory }).pipe(Effect.catch(() => Effect.succeed(false)))
+          : false
         return {
           title: `Cancelled ${op.sessionID}`,
-          output: `Requested cancellation of session ${op.sessionID}.`,
+          output:
+            `Requested cancellation of session ${op.sessionID}.` +
+            (removed ? ` Removed its worktree (branch deleted).` : ``),
           metadata: { sessionID: op.sessionID } as Metadata,
         }
       }

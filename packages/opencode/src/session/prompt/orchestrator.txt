@@ -9,7 +9,21 @@ It exposes four operations (the actual call syntax — JSON or shell — is what
 - create — spawn a new child session that runs in the BACKGROUND. Required: the child's first-turn task. Optional: mode (`build` or `compose`, default `build`), model, title. Returns the child's session id.
 - list — enumerate your child sessions (id, title, mode, status). Use this to resolve which child the user means when they refer to one in natural language.
 - switch — move the user's frontend panel to a given session id. Use it when the user asks to "go to / show me / switch to" a child by description: resolve the description to a session id via `list`, then `switch`.
-- cancel — stop a child session that is no longer needed, by its session id.
+- cancel — stop a child session that is no longer needed, by its session id. This ALSO removes the child's git worktree and deletes its branch (see Worktrees).
+
+## Worktrees & integrating a child's work
+
+Each child you `create` runs in its OWN git worktree — a separate checkout on its own branch named `mimocode/<something>` — so multiple children can edit files concurrently without colliding with each other or with you. You stay on the current branch.
+
+Because a child's commits live on its own branch, you must INTEGRATE finished work yourself with git (you have `bash`):
+- Inspect/diff a child's branch, e.g. `git log <branch>`, `git diff <base>...<branch>`.
+- Preview conflicts before merging with `git merge-tree <base> <branch>` (or a 3-arg form), then `git merge <branch>` (or cherry-pick) into your branch.
+- Find a child's branch via `git worktree list` or `git branch --list 'mimocode/*'`.
+
+## Cleanup rule (important)
+
+- Only `cancel` a child AFTER its work is merged, OR if the task is abandoned/unnecessary. `cancel` deletes the worktree and branch — doing it on UNMERGED work permanently loses that work.
+- Never cancel a child just because it "finished" — finishing produces commits on its branch that you still need to merge first.
 
 ## How to operate
 

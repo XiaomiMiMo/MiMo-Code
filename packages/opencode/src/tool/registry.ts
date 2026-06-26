@@ -24,6 +24,7 @@ import { type ToolContext as PluginToolContext, type ToolDefinition } from "@mim
 import z from "zod"
 import { Plugin } from "../plugin"
 import { Provider } from "../provider"
+import { Worktree } from "../worktree"
 import { ProviderID, type ModelID } from "../provider/schema"
 import { WebSearchTool } from "./websearch"
 import { CodeSearchTool } from "./codesearch"
@@ -429,7 +430,7 @@ export const defaultLayer = Layer.suspend(() =>
     Layer.provide(CrossSpawnSpawner.defaultLayer),
     Layer.provide(Ripgrep.defaultLayer),
     Layer.provide(Truncate.defaultLayer),
-    Layer.provide(Layer.mergeAll(ActorRegistry.defaultLayer, ActorWaiter.defaultLayer)),
+    Layer.provide(Layer.mergeAll(ActorRegistry.defaultLayer, ActorWaiter.defaultLayer, Worktree.defaultLayer)),
     Layer.provide(Team.defaultLayer),
     Layer.provide(
       Layer.mergeAll(
