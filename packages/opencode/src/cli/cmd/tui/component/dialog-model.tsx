@@ -142,7 +142,7 @@ export function DialogModel(props: { providerID?: string }) {
                         disabled: false,
                         footer: undefined as "Free" | undefined,
                         onSelect() {
-                          void runAddModelWizard({ dialog, sdk, sync, toast, providerID: xiaomiProvider.id })
+                          void runAddModelWizard({ dialog, sdk, sync, toast, providerID: xiaomiProvider.id, t })
                         },
                       },
                     ]
@@ -204,7 +204,7 @@ export function DialogModel(props: { providerID?: string }) {
             disabled: false,
             footer: undefined as "Free" | undefined,
             onSelect() {
-              void runAddModelWizard({ dialog, sdk, sync, toast, providerID: provider.id })
+              void runAddModelWizard({ dialog, sdk, sync, toast, providerID: provider.id, t })
             },
           },
         ]
@@ -295,9 +295,9 @@ async function runAddModelWizard(opts: {
   sync: ReturnType<typeof useSync>
   toast: ToastContext
   providerID: string
+  t: (key: string) => string
 }) {
-  const { dialog, sdk, sync, toast, providerID } = opts
-  const t = useLanguage().t
+  const { dialog, sdk, sync, toast, providerID, t } = opts
 
   function step(n: number, total: number, title: string, placeholder?: string, value?: string) {
     return DialogPrompt.show(dialog, `${title} (${n}/${total})`, { placeholder, value })

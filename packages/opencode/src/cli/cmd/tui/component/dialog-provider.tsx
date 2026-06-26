@@ -23,6 +23,7 @@ export function createDialogProviderOptions() {
   const sdk = useSDK()
   const toast = useToast()
   const { theme } = useTheme()
+  const t = useLanguage().t
   const options = createMemo(() => {
     const list = pipe(
       sync.data.provider_next.all,
@@ -145,7 +146,7 @@ export function createDialogProviderOptions() {
         category: "Other",
         gutter: undefined,
         async onSelect() {
-          await runCustomProviderWizard({ dialog, sdk, sync, toast })
+          await runCustomProviderWizard({ dialog, sdk, sync, toast, t })
         },
       },
     ]
@@ -163,9 +164,9 @@ export async function runCustomProviderWizard(opts: {
   sdk: ReturnType<typeof useSDK>
   sync: ReturnType<typeof useSync>
   toast: ToastContext
+  t: (key: string) => string
 }) {
-  const { dialog, sdk, sync, toast } = opts
-  const t = useLanguage().t
+  const { dialog, sdk, sync, toast, t } = opts
 
   function step(n: number, total: number, title: string, placeholder?: string, value?: string) {
     return DialogPrompt.show(dialog, `${title} (${n}/${total})`, { placeholder, value })
