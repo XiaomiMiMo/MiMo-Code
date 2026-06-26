@@ -6,17 +6,15 @@ import { UI } from "../ui"
 import { ModelsDev } from "../../provider"
 import { map, pipe, sortBy, values } from "remeda"
 import path from "path"
-import fs from "fs"
-import { pathToFileURL } from "url"
 import os from "os"
 import { Config } from "../../config"
 import { Global } from "../../global"
 import { Plugin } from "../../plugin"
+import { MimoFree } from "../../plugin/mimo-free"
 import { t } from "../i18n"
 import { Instance } from "../../project/instance"
 import type { Hooks } from "@mimo-ai/plugin"
 import { Process } from "../../util"
-import { PROVIDER_PRIORITY } from "../../util/provider-priority"
 import { text } from "node:stream/consumers"
 import { Effect } from "effect"
 import * as readline from "readline"
@@ -217,46 +215,28 @@ export function resolvePluginProviders(input: {
   return result
 }
 
-// Optional login extension contributed by a local module under src/ext/. The
-// module declares which provider id/aliases it handles, how it appears in the
-// interactive menu, and the handler to run. Resolves to undefined when no such
-// module is present.
-type LoginExtension = {
-  id: string
-  aliases?: string[]
-  menu?: { label: string; hint?: string }
-  run: () => Promise<void>
-}
-
-function toLoginExtension(mod: Record<string, unknown> | undefined): LoginExtension | undefined {
-  const value = mod?.loginExtension
-  if (!value || typeof value !== "object") return undefined
-  const ext = value as Partial<LoginExtension>
-  if (typeof ext.id !== "string" || typeof ext.run !== "function") return undefined
-  return ext as LoginExtension
-}
-
-// Resolve the optional login extension. Prefers the generated src/ext/_manifest.ts
-// (a fixed import specifier resolves inside Bun single-file executables, where
-// filesystem scans do not); falls back to a directory scan for unbundled runs.
-async function loadLoginExtension(): Promise<LoginExtension | undefined> {
+async function mimoFreeLogin() {
+  const spinner = prompts.spinner()
+  spinner.start(t("cli.providers.mimo_free.verifying"))
   try {
-    // @ts-ignore generated manifest; may not exist at type-check time
-    const manifest = (await import("../../ext/_manifest")) as { modules?: Record<string, Record<string, unknown>> }
-    for (const mod of Object.values(manifest.modules ?? {})) {
-      const ext = toLoginExtension(mod)
-      if (ext) return ext
-    }
-  } catch {}
-  const extDir = path.join(import.meta.dir, "..", "..", "ext")
-  if (!fs.existsSync(extDir)) return undefined
-  for (const entry of fs.readdirSync(extDir).filter((f) => f.endsWith(".ts") && !f.endsWith(".d.ts"))) {
-    try {
-      const ext = toLoginExtension(await import(/* @vite-ignore */ pathToFileURL(path.join(extDir, entry)).href))
-      if (ext) return ext
-    } catch {}
+    const { fingerprint, exp } = await MimoFree.verify()
+    spinner.stop(t("cli.providers.mimo_free.ready"))
+    const expDate = new Date(exp).toISOString()
+    prompts.log.success(t("cli.providers.mimo_free.default_set"))
+    prompts.log.info(
+      [
+        `Endpoint:    ${MimoFree.chatBaseUrl}/chat`,
+        `Fingerprint: ${fingerprint.slice(0, 12)}…${fingerprint.slice(-4)}`,
+        `Token exp:   ${expDate}`,
+      ].join("\n"),
+    )
+    prompts.log.info(t("cli.providers.mimo_free.usage_hint"))
+    prompts.outro("Done")
+  } catch (err) {
+    spinner.stop(t("cli.providers.mimo_free.failed"), 1)
+    prompts.log.error(err instanceof Error ? err.message : String(err))
+    prompts.outro("Done")
   }
-  return undefined
 }
 
 async function mimoLogin() {
@@ -496,7 +476,15 @@ export const ProvidersLoginCommand = cmd({
           }),
         )
 
-        const priority = PROVIDER_PRIORITY
+        const priority: Record<string, number> = {
+          opencode: 0,
+          openai: 1,
+          "github-copilot": 2,
+          google: 3,
+          anthropic: 4,
+          openrouter: 5,
+          vercel: 6,
+        }
         const pluginProviders = resolvePluginProviders({
           hooks,
           existingProviders: providers,
@@ -516,6 +504,7 @@ export const ProvidersLoginCommand = cmd({
               label: x.name,
               value: x.id,
               hint: {
+                opencode: "recommended",
                 openai: "ChatGPT Plus/Pro or API key",
               }[x.id],
             })),
@@ -527,14 +516,12 @@ export const ProvidersLoginCommand = cmd({
           })),
         ]
 
-        const loginExt = await loadLoginExtension()
-        const loginExtIds = loginExt ? [loginExt.id, ...(loginExt.aliases ?? [])] : []
         let provider: string
         if (args.provider === "xiaomi") {
           await mimoLogin()
           return
-        } else if (loginExt && args.provider && loginExtIds.includes(args.provider)) {
-          await loginExt.run()
+        } else if (args.provider === "mimo" || args.provider === "mimo-free") {
+          await mimoFreeLogin()
           return
         } else if (args.provider) {
           const input = args.provider
@@ -551,9 +538,7 @@ export const ProvidersLoginCommand = cmd({
             message: t("cli.providers.select"),
             options: [
               { label: "MiMo", value: "xiaomi", hint: t("cli.providers.mimo.recommended_hint") },
-              ...(loginExt?.menu
-                ? [{ label: loginExt.menu.label, value: loginExt.id, hint: loginExt.menu.hint }]
-                : []),
+              { label: "MiMo Auto (free)", value: "mimo-free", hint: t("cli.providers.mimo_free.hint") },
               { label: t("cli.providers.other"), value: "__other__" },
             ],
           })
@@ -564,8 +549,8 @@ export const ProvidersLoginCommand = cmd({
             return
           }
 
-          if (loginExt && choice === loginExt.id) {
-            await loginExt.run()
+          if (choice === "mimo-free") {
+            await mimoFreeLogin()
             return
           }
 

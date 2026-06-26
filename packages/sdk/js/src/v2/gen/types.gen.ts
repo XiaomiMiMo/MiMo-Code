@@ -579,6 +579,7 @@ export type SessionStatus =
   | {
       type: "busy"
       message?: string
+      startedAt?: number
     }
 
 export type EventSessionStatus = {

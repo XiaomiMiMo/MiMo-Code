@@ -15,6 +15,7 @@ import { Instance } from "../project/instance"
 import { Log } from "../util"
 import { Protected } from "./protected"
 import { Ripgrep } from "./ripgrep"
+import { Config } from "../config"
 
 export const Info = z
   .object({
@@ -346,6 +347,7 @@ export const layer = Layer.effect(
     const rg = yield* Ripgrep.Service
     const git = yield* Git.Service
     const scope = yield* Scope.Scope
+    const config = yield* Config.Service
 
     const state = yield* InstanceState.make<State>(
       Effect.fn("File.state")(() =>
@@ -553,7 +555,10 @@ export const layer = Layer.effect(
         }
       }
 
-      const content = yield* appFs.readFileString(full).pipe(
+      const cfg = yield* config.get()
+      const encoding = cfg.files?.encoding || "utf-8"
+
+      const content = yield* appFs.readFileStringWithEncoding(full, encoding).pipe(
         Effect.map((s) => s.trim()),
         Effect.catch(() => Effect.succeed("")),
       )
@@ -582,12 +587,14 @@ export const layer = Layer.effect(
       const exclude = [".git", ".DS_Store"]
       let ignored = (_: string) => false
       if (ctx.project.vcs === "git") {
+        const cfg = yield* config.get()
+        const encoding = cfg.files?.encoding || "utf-8"
         const ig = ignore()
         const gitignore = path.join(ctx.worktree, ".gitignore")
-        const gitignoreText = yield* appFs.readFileString(gitignore).pipe(Effect.catch(() => Effect.succeed("")))
+        const gitignoreText = yield* appFs.readFileStringWithEncoding(gitignore, encoding).pipe(Effect.catch(() => Effect.succeed("")))
         if (gitignoreText) ig.add(gitignoreText)
         const ignoreFile = path.join(ctx.worktree, ".ignore")
-        const ignoreText = yield* appFs.readFileString(ignoreFile).pipe(Effect.catch(() => Effect.succeed("")))
+        const ignoreText = yield* appFs.readFileStringWithEncoding(ignoreFile, encoding).pipe(Effect.catch(() => Effect.succeed("")))
         if (ignoreText) ig.add(ignoreText)
         ignored = ig.ignores.bind(ig)
       }
@@ -659,6 +666,7 @@ export const defaultLayer = layer.pipe(
   Layer.provide(Ripgrep.defaultLayer),
   Layer.provide(AppFileSystem.defaultLayer),
   Layer.provide(Git.defaultLayer),
+  Layer.provide(Config.defaultLayer),
 )
 
 export * as File from "."

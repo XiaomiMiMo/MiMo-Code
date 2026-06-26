@@ -19,6 +19,7 @@ export const Info = z
     z.object({
       type: z.literal("busy"),
       message: z.string().optional(),
+      startedAt: z.number().optional(),
     }),
   ])
   .meta({
@@ -71,6 +72,9 @@ export const layer = Layer.effect(
 
     const set = Effect.fn("SessionStatus.set")(function* (sessionID: SessionID, status: Info) {
       const data = yield* InstanceState.get(state)
+      if (status.type === "busy" && !status.startedAt) {
+        status.startedAt = Date.now()
+      }
       yield* bus.publish(Event.Status, { sessionID, status })
       if (status.type === "idle") {
         yield* bus.publish(Event.Idle, { sessionID })

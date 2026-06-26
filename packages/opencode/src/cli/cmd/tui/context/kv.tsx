@@ -70,16 +70,6 @@ export const { use: useKV, provider: KVProvider } = createSimpleContext({
             console.error("Failed to write KV state", { filePath, error })
           })
       },
-      delete(key: string) {
-        setStore(key, undefined)
-        const snapshot = structuredClone(unwrap(store))
-        delete snapshot[key]
-        write = write
-          .then(() => Flock.withLock(lock, () => writeSnapshot(snapshot)))
-          .catch((error) => {
-            console.error("Failed to write KV state", { filePath, error })
-          })
-      },
     }
     return result
   },

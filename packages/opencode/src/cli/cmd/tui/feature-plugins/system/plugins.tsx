@@ -11,14 +11,14 @@ const key = Keybind.parse("space").at(0)
 const add = Keybind.parse("shift+i").at(0)
 const tab = Keybind.parse("tab").at(0)
 
-function state(api: TuiPluginApi, item: TuiPluginStatus) {
+function state(api: TuiPluginApi, item: TuiPluginStatus, t: (key: string, params?: Record<string, string | number | boolean>) => string) {
   if (!item.enabled) {
-    return <span style={{ fg: api.theme.current.textMuted }}>disabled</span>
+    return <span style={{ fg: api.theme.current.textMuted }}>{t("tui.plugins.state.disabled")}</span>
   }
 
   return (
     <span style={{ fg: item.active ? api.theme.current.success : api.theme.current.error }}>
-      {item.active ? "active" : "inactive"}
+      {item.active ? t("tui.plugins.state.active") : t("tui.plugins.state.inactive")}
     </span>
   )
 }
@@ -28,10 +28,10 @@ function source(spec: string) {
   return fileURLToPath(spec)
 }
 
-function meta(item: TuiPluginStatus, width: number) {
+function meta(item: TuiPluginStatus, width: number, t: (key: string, params?: Record<string, string | number | boolean>) => string) {
   if (item.source === "internal") {
-    if (width >= 120) return "Built-in plugin"
-    return "Built-in"
+    if (width >= 120) return t("tui.plugins.meta.builtin_long")
+    return t("tui.plugins.meta.builtin")
   }
   const next = source(item.spec)
   if (next) return next
@@ -41,6 +41,7 @@ function meta(item: TuiPluginStatus, width: number) {
 function Install(props: { api: TuiPluginApi }) {
   const [global, setGlobal] = createSignal(false)
   const [busy, setBusy] = createSignal(false)
+  const t = useLanguage().t
 
   useKeyboard((evt) => {
     if (evt.name !== "tab") return
@@ -52,10 +53,10 @@ function Install(props: { api: TuiPluginApi }) {
 
   return (
     <props.api.ui.DialogPrompt
-      title="Install plugin"
-      placeholder="npm package name"
+      title={t("tui.plugins.install.title")}
+      placeholder={t("tui.plugins.install.placeholder")}
       busy={busy()}
-      busyText="Installing plugin..."
+      busyText={t("tui.plugins.install.busy")}
       description={() => (
         <box flexDirection="row" gap={1}>
           <text fg={props.api.theme.current.textMuted}>scope:</text>
@@ -63,7 +64,7 @@ function Install(props: { api: TuiPluginApi }) {
             {global() ? "global" : "local"}
           </text>
           <Show when={!busy()}>
-            <text fg={props.api.theme.current.textMuted}>({Keybind.toString(tab)} toggle)</text>
+            <text fg={props.api.theme.current.textMuted}>{t("tui.plugins.scope.toggle", { key: Keybind.toString(tab) })}</text>
           </Show>
         </box>
       )}
@@ -138,13 +139,13 @@ function Install(props: { api: TuiPluginApi }) {
   )
 }
 
-function row(api: TuiPluginApi, item: TuiPluginStatus, width: number): DialogSelectOption<string> {
+function row(api: TuiPluginApi, item: TuiPluginStatus, width: number, t: (key: string, params?: Record<string, string | number | boolean>) => string): DialogSelectOption<string> {
   return {
     title: item.id,
     value: item.id,
     category: item.source === "internal" ? "Internal" : "External",
-    description: meta(item, width),
-    footer: state(api, item),
+    description: meta(item, width, t),
+    footer: state(api, item, t),
     disabled: item.id === id,
   }
 }
@@ -158,6 +159,7 @@ function View(props: { api: TuiPluginApi }) {
   const [list, setList] = createSignal(props.api.plugins.list())
   const [cur, setCur] = createSignal<string | undefined>()
   const [lock, setLock] = createSignal(false)
+  const t = useLanguage().t
 
   createEffect(() => {
     const width = size().width
@@ -180,7 +182,7 @@ function View(props: { api: TuiPluginApi }) {
         if (x !== y) return x - y
         return a.id.localeCompare(b.id)
       })
-      .map((item) => row(props.api, item, size().width)),
+      .map((item) => row(props.api, item, size().width, t)),
   )
 
   const flip = (x: string) => {
@@ -206,13 +208,13 @@ function View(props: { api: TuiPluginApi }) {
 
   return (
     <DialogSelect
-      title="Plugins"
+      title={t("tui.plugins.view.title")}
       options={rows()}
       current={cur()}
       onMove={(item) => setCur(item.value)}
       keybind={[
         {
-          title: "toggle",
+          title: t("tui.plugins.view.toggle"),
           keybind: key,
           disabled: lock(),
           onTrigger: (item) => {
@@ -221,7 +223,7 @@ function View(props: { api: TuiPluginApi }) {
           },
         },
         {
-          title: "install",
+          title: t("tui.plugins.view.install"),
           keybind: add,
           disabled: lock(),
           onTrigger: () => {

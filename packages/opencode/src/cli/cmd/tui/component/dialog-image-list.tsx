@@ -9,10 +9,13 @@ import { createResource, onCleanup } from "solid-js"
 import path from "path"
 import os from "os"
 import fs from "fs/promises"
+import { BUILTIN_BGS } from "./bg-registry"
+import { useTheme } from "../context/theme"
 
 const BG_DIR = path.join(Global.Path.config, "backgrounds")
 const IMAGE_EXT = new Set([".png", ".jpg", ".jpeg"])
 const NONE_VALUE = "__mimocode_image_none__"
+export const SOLID_VALUE = "__mimocode_image_solid__"
 const IMPORT_VALUE = "__mimocode_image_import__"
 
 async function listBackgrounds() {
@@ -41,6 +44,26 @@ export function DialogImageList() {
   onCleanup(() => {
     if (!confirmed) kv.set("background_image", initial)
   })
+
+  const hexColor = /^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/
+
+  const pickColor = async () => {
+    const current = kv.get("background_color")
+    const raw = await DialogPrompt.show(dialog, t("tui.dialog.image.solid"), {
+      placeholder: t("tui.dialog.image.solid.prompt"),
+      value: typeof current === "string" && hexColor.test(current) ? current : "#1a1b26",
+    })
+    if (raw === null) return
+    const color = raw.trim()
+    if (!hexColor.test(color)) {
+      toast.show({ message: t("tui.dialog.image.solid.invalid"), variant: "error" })
+      return
+    }
+    kv.set("background_color", color)
+    kv.set("background_image", SOLID_VALUE)
+    confirmed = true
+    dialog.clear()
+  }
 
   const importImage = async () => {
     const raw = await DialogPrompt.show(dialog, t("tui.dialog.image.import.title"), {
@@ -79,6 +102,10 @@ export function DialogImageList() {
       },
     ]
     for (const f of files() ?? []) list.push({ title: f, value: f })
+    for (const bg of BUILTIN_BGS) {
+      list.push({ title: t(bg.i18nKey), value: bg.value })
+    }
+    list.push({ title: t("tui.dialog.image.solid"), value: SOLID_VALUE })
     list.push({ title: t("tui.dialog.image.none"), value: NONE_VALUE })
     return list
   }
@@ -89,15 +116,14 @@ export function DialogImageList() {
       options={options()}
       current={initial}
       onMove={(opt) => {
-        if (opt.value === IMPORT_VALUE) return
-        if (opt.value === NONE_VALUE) {
-          kv.set("background_image", undefined)
-          return
-        }
-        kv.set("background_image", opt.value)
+        // 只在 onSelect 确认时才实际切换背景，避免方向键预览导致动画组件频繁卸载/挂载引起黑屏
       }}
       onSelect={(opt) => {
         if (opt.value === IMPORT_VALUE) return
+        if (opt.value === SOLID_VALUE) {
+          void pickColor()
+          return
+        }
         if (opt.value === NONE_VALUE) {
           kv.set("background_image", undefined)
         } else {

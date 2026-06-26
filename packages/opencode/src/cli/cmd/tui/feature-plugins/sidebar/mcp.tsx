@@ -1,11 +1,13 @@
 import type { TuiPlugin, TuiPluginApi, TuiPluginModule } from "@mimo-ai/plugin/tui"
 import { createMemo, For, Match, Show, Switch, createSignal } from "solid-js"
+import { useLanguage } from "@tui/context/language"
 
 const id = "internal:sidebar-mcp"
 
 function View(props: { api: TuiPluginApi }) {
   const [open, setOpen] = createSignal(true)
   const theme = () => props.api.theme.current
+  const t = useLanguage().t
   const list = createMemo(() => props.api.state.mcp())
   const on = createMemo(() => list().filter((item) => item.status === "connected").length)
   const bad = createMemo(
@@ -34,11 +36,11 @@ function View(props: { api: TuiPluginApi }) {
             <text fg={theme().text}>{open() ? "▼" : "▶"}</text>
           </Show>
           <text fg={theme().text}>
-            <b>MCP</b>
+            <b>{t("tui.mcp.label")}</b>
             <Show when={!open()}>
               <span style={{ fg: theme().textMuted }}>
                 {" "}
-                ({on()} active{bad() > 0 ? `, ${bad()} error${bad() > 1 ? "s" : ""}` : ""})
+                ({on()} {t("tui.mcp.active_count")}{bad() > 0 ? `, ${bad()} ${bad() > 1 ? t("tui.mcp.error_count_plural") : t("tui.mcp.error_count")}` : ""})
               </span>
             </Show>
           </text>
@@ -59,14 +61,14 @@ function View(props: { api: TuiPluginApi }) {
                   {item.name}{" "}
                   <span style={{ fg: theme().textMuted }}>
                     <Switch fallback={item.status}>
-                      <Match when={item.status === "connected"}>Connected</Match>
+                      <Match when={item.status === "connected"}>{t("tui.mcp.connected")}</Match>
                       <Match when={item.status === "failed"}>
                         <i>{item.error}</i>
                       </Match>
-                      <Match when={(item.status as string) === "pending"}>Pending approval</Match>
-                      <Match when={item.status === "disabled"}>Disabled</Match>
-                      <Match when={item.status === "needs_auth"}>Needs auth</Match>
-                      <Match when={item.status === "needs_client_registration"}>Needs client ID</Match>
+                      <Match when={(item.status as string) === "pending"}>{t("tui.mcp.pending")}</Match>
+                      <Match when={item.status === "disabled"}>{t("tui.mcp.disabled")}</Match>
+                      <Match when={item.status === "needs_auth"}>{t("tui.mcp.needs_auth")}</Match>
+                      <Match when={item.status === "needs_client_registration"}>{t("tui.mcp.needs_client_id")}</Match>
                     </Switch>
                   </span>
                 </text>

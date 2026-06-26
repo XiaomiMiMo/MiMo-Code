@@ -50,7 +50,6 @@ import type { ActorTool } from "@/tool/actor"
 import type { TaskTool } from "@/tool/task"
 import type { QuestionTool } from "@/tool/question"
 import type { SkillTool } from "@/tool/skill"
-import type { WorkflowTool } from "@/tool/workflow"
 import { useKeyboard, useRenderer, useTerminalDimensions, type JSX } from "@opentui/solid"
 import { useSDK } from "@tui/context/sdk"
 import { useCommandDialog } from "@tui/component/dialog-command"
@@ -90,18 +89,19 @@ import { getScrollAcceleration } from "../../util/scroll"
 import { nextThinkingMode, reasoningSummary, useThinkingMode, type ThinkingMode } from "../../context/thinking"
 import { TuiPluginRuntime } from "../../plugin"
 import { DialogGoUpsell } from "../../component/dialog-go-upsell"
-import { DialogTokenPlan } from "../../component/dialog-token-plan"
 import { SessionRetry } from "@/session/retry"
 import { getRevertDiffFiles } from "../../util/revert-diff"
+import { BackgroundImage } from "../../component/background-image"
+import { StarryBackground } from "../../component/starry-background"
+import { BUILTIN_BGS, EFFECT_VALUES } from "../../component/bg-registry"
+import { SOLID_VALUE } from "../../component/dialog-image-list"
+import { isPlainTerminal } from "../../util/terminal"
 
 addDefaultParsers(parsers.parsers)
 
 const GO_UPSELL_LAST_SEEN_AT = "go_upsell_last_seen_at"
 const GO_UPSELL_DONT_SHOW = "go_upsell_dont_show"
 const GO_UPSELL_WINDOW = 86_400_000 // 24 hrs
-
-const QUEUE_TOKEN_PLAN_LAST_SEEN_AT = "queue_token_plan_last_seen_at"
-const QUEUE_TOKEN_PLAN_WINDOW = 86_400_000 // 24 hrs
 
 const context = createContext<{
   width: number
@@ -135,6 +135,13 @@ export function Session() {
   const kv = useKV()
   const { theme } = useTheme()
   const promptRef = usePromptRef()
+  const plainTerminal = isPlainTerminal()
+  const bgImagePath = createMemo(() => {
+    const filename = kv.get("background_image")
+    if (!filename || typeof filename !== "string") return undefined
+    if (filename === SOLID_VALUE || EFFECT_VALUES.has(filename)) return filename
+    return path.join(Global.Path.config, "backgrounds", filename)
+  })
   const session = createMemo(() => sync.session.get(route.sessionID))
   const currentAgentID = useCurrentAgentID()
   const actors = createMemo(() => sync.data.actor[route.sessionID] ?? [])
@@ -362,26 +369,6 @@ export function Session() {
 
   const local = useLocal()
 
-  // Free "mimo-auto" channel: on a rate-limit / queue ("too many requests"),
-  // nudge the user toward a Token Plan — at most once per 24h.
-  event.on("session.status", (evt) => {
-    if (evt.properties.sessionID !== route.sessionID) return
-    if (evt.properties.status.type !== "retry") return
-    if (!SessionRetry.isRateLimitMessage(evt.properties.status.message)) return
-    const model = local.model.current()
-    if (!model || model.providerID !== "mimo" || model.modelID !== "mimo-auto") return
-    if (dialog.stack.length > 0) return
-
-    const seen = kv.get(QUEUE_TOKEN_PLAN_LAST_SEEN_AT)
-    if (typeof seen === "number" && Date.now() - seen < QUEUE_TOKEN_PLAN_WINDOW) return
-
-    // Record the 24h cooldown only after the user dismisses, so a show() that
-    // fails (or never reaches the user) doesn't silently burn the whole day.
-    void DialogTokenPlan.show(dialog).then(() => {
-      kv.set(QUEUE_TOKEN_PLAN_LAST_SEEN_AT, Date.now())
-    })
-  })
-
   function moveFirstChild() {
     const list = actors().filter((a) => a.mode === "subagent")
     if (list.length === 0) {
@@ -423,8 +410,8 @@ export function Session() {
       onSelect: async (dialog) => {
         const copy = (url: string) =>
           Clipboard.copy(url)
-            .then(() => toast.show({ message: "Share URL copied to clipboard!", variant: "success" }))
-            .catch(() => toast.show({ message: "Failed to copy URL to clipboard", variant: "error" }))
+            .then(() => toast.show({ message: t("tui.toast.copied_to_clipboard"), variant: "success" }))
+            .catch(() => toast.show({ message: t("tui.error.copy_url_failed"), variant: "error" }))
         const url = session()?.share?.url
         if (url) {
           await copy(url)
@@ -432,7 +419,7 @@ export function Session() {
           return
         }
         if (!kv.get("share_consent", false)) {
-          const ok = await DialogConfirm.show(dialog, "Share Session", "Are you sure you want to share it?")
+          const ok = await DialogConfirm.show(dialog, t("tui.dialog.share.title"), t("tui.dialog.share.body"))
           if (ok !== true) return
           kv.set("share_consent", true)
         }
@@ -443,7 +430,7 @@ export function Session() {
           .then((res) => copy(res.data!.share!.url))
           .catch((error) => {
             toast.show({
-              message: error instanceof Error ? error.message : "Failed to share session",
+              message: error instanceof Error ? error.message : t("tui.error.share_failed"),
               variant: "error",
             })
           })
@@ -549,10 +536,10 @@ export function Session() {
           .unshare({
             sessionID: route.sessionID,
           })
-          .then(() => toast.show({ message: "Session unshared successfully", variant: "success" }))
+          .then(() => toast.show({ message: t("tui.command.session.unshare.title"), variant: "success" }))
           .catch((error) => {
             toast.show({
-              message: error instanceof Error ? error.message : "Failed to unshare session",
+              message: error instanceof Error ? error.message : t("tui.error.unshare_failed"),
               variant: "error",
             })
           })
@@ -886,8 +873,8 @@ export function Session() {
         }
 
         Clipboard.copy(text)
-          .then(() => toast.show({ message: "Message copied to clipboard!", variant: "success" }))
-          .catch(() => toast.show({ message: "Failed to copy to clipboard", variant: "error" }))
+          .then(() => toast.show({ message: t("tui.toast.copied_to_clipboard"), variant: "success" }))
+          .catch(() => toast.show({ message: t("tui.error.copy_clipboard_failed"), variant: "error" }))
         dialog.clear()
       },
     },
@@ -914,9 +901,9 @@ export function Session() {
             },
           )
           await Clipboard.copy(transcript)
-          toast.show({ message: "Session transcript copied to clipboard!", variant: "success" })
+          toast.show({ message: t("tui.toast.copied_to_clipboard"), variant: "success" })
         } catch {
-          toast.show({ message: "Failed to copy session transcript", variant: "error" })
+          toast.show({ message: t("tui.error.copy_transcript_failed"), variant: "error" })
         }
         dialog.clear()
       },
@@ -975,10 +962,10 @@ export function Session() {
               await Filesystem.write(filepath, result)
             }
 
-            toast.show({ message: `Session exported to ${filename}`, variant: "success" })
+            toast.show({ message: t("tui.toast.exported", { filename }), variant: "success" })
           }
         } catch {
-          toast.show({ message: "Failed to export session", variant: "error" })
+          toast.show({ message: t("tui.error.export_failed"), variant: "error" })
         }
         dialog.clear()
       },
@@ -1086,7 +1073,15 @@ export function Session() {
         tui: tuiConfig,
       }}
     >
-      <box flexDirection="row">
+      <Show when={!plainTerminal}>
+        <Show when={bgImagePath() === SOLID_VALUE}>
+          <box position="absolute" top={0} left={0} width="100%" height="100%" zIndex={0} backgroundColor={kv.get("background_color") ?? theme.background} />
+        </Show>
+        <Show when={bgImagePath() !== undefined && bgImagePath() !== SOLID_VALUE && !EFFECT_VALUES.has(bgImagePath() as string)}>
+          <BackgroundImage path={bgImagePath()!} />
+        </Show>
+      </Show>
+      <box flexDirection="row" zIndex={1}>
         <box flexGrow={1} paddingBottom={1} paddingLeft={2} paddingRight={2} gap={1} onMouse={onWheel}>
           <Show when={session()}>
             <scrollbox
@@ -1364,17 +1359,10 @@ function AssistantMessage(props: { message: AssistantMessage; parts: Part[]; las
   const ctx = use()
   const local = useLocal()
   const { theme } = useTheme()
-  const sync = useSync()
-  const toast = useToast()
-  const renderer = useRenderer()
   const t = useLanguage().t
-  const [copyHover, setCopyHover] = createSignal(false)
+  const sync = useSync()
   const messages = createMemo(() => sync.data.message[props.message.sessionID]?.[props.message.agentID ?? "main"] ?? [])
-  const model = createMemo(() =>
-    props.message.modelID === "mimo-auto"
-      ? t("tui.model.mimo_auto.name")
-      : Model.name(ctx.providers(), props.message.providerID, props.message.modelID),
-  )
+  const model = createMemo(() => Model.name(ctx.providers(), props.message.providerID, props.message.modelID))
 
   const final = createMemo(() => {
     return props.message.finish && props.message.finish !== "tool-calls"
@@ -1390,19 +1378,6 @@ function AssistantMessage(props: { message: AssistantMessage; parts: Part[]; las
 
   const keybind = useKeybind()
 
-  const handleCopy = () => {
-    if (renderer.getSelection()?.getSelectedText()) return
-    const text = props.parts
-      .filter((p) => p.type === "text")
-      .map((p) => (p as TextPart).text)
-      .join("\n")
-      .trim()
-    if (!text) return
-    Clipboard.copy(text)
-      .then(() => toast.show({ message: t("tui.toast.copied_to_clipboard"), variant: "success" }))
-      .catch(() => toast.show({ message: "Failed to copy to clipboard", variant: "error" }))
-  }
-
   // Goal judge verdict for this specific turn, if the stop-condition judge
   // evaluated it. Rendered as a foldable per-turn marker so the user can trace
   // back which turn failed the check — without polluting the message stream.
@@ -1416,14 +1391,6 @@ function AssistantMessage(props: { message: AssistantMessage; parts: Part[]; las
     if (v.impossible) return { icon: "⊘", fg: theme.error, label: "Judge: impossible" }
     return { icon: "⟳", fg: theme.warning, label: `Judge [round ${v.attempt}]: not met` }
   })
-
-  // Both the `actor` and `workflow` tools spawn agents that register as
-  // subagents in this session, so the `session_child_first` keybind opens the
-  // Subagents panel for either. Advertise it with copy matching the tool that
-  // produced the message; a mixed message falls back to the generic subagent
-  // wording.
-  const hasActorPart = createMemo(() => props.parts.some((x) => x.type === "tool" && x.tool === "actor"))
-  const hasWorkflowPart = createMemo(() => props.parts.some((x) => x.type === "tool" && x.tool === "workflow"))
 
   return (
     <>
@@ -1442,11 +1409,11 @@ function AssistantMessage(props: { message: AssistantMessage; parts: Part[]; las
           )
         }}
       </For>
-      <Show when={hasActorPart() || hasWorkflowPart()}>
+      <Show when={props.parts.some((x) => x.type === "tool" && x.tool === "actor")}>
         <box paddingTop={1} paddingLeft={3}>
           <text fg={theme.text}>
             {keybind.print("session_child_first")}
-            <span style={{ fg: theme.textMuted }}>{hasWorkflowPart() ? " view workflow agents" : " view subagents"}</span>
+            <span style={{ fg: theme.textMuted }}>{t("tui.session.view_subagents")}</span>
           </text>
         </box>
       </Show>
@@ -1455,8 +1422,8 @@ function AssistantMessage(props: { message: AssistantMessage; parts: Part[]; las
       </Show>
       <Switch>
         <Match when={props.last || final() || props.message.error?.name === "MessageAbortedError"}>
-          <box paddingLeft={3} flexDirection="row" justifyContent="space-between" marginTop={1}>
-            <text>
+          <box paddingLeft={3}>
+            <text marginTop={1}>
               <span
                 style={{
                   fg:
@@ -1467,24 +1434,15 @@ function AssistantMessage(props: { message: AssistantMessage; parts: Part[]; las
               >
                 ▣{" "}
               </span>{" "}
-              <span style={{ fg: theme.text }}>{Locale.titlecase(props.message.mode)}</span>
+              <span style={{ fg: theme.text }}>{t(`tui.agent.name.${props.message.mode}`) || Locale.titlecase(props.message.mode)}</span>
               <span style={{ fg: theme.textMuted }}> · {model()}</span>
               <Show when={duration()}>
                 <span style={{ fg: theme.textMuted }}> · {Locale.duration(duration())}</span>
               </Show>
               <Show when={props.message.error?.name === "MessageAbortedError"}>
-                <span style={{ fg: theme.textMuted }}> · interrupted</span>
+                <span style={{ fg: theme.textMuted }}> · {t("tui.message.interrupted")}</span>
               </Show>
             </text>
-            <Show when={props.message.time.completed}>
-              <box
-                onMouseOver={() => setCopyHover(true)}
-                onMouseOut={() => setCopyHover(false)}
-                onMouseUp={handleCopy}
-              >
-                <text fg={copyHover() ? theme.text : theme.textMuted}>⎘ copy</text>
-              </box>
-            </Show>
           </box>
         </Match>
       </Switch>
@@ -1519,9 +1477,9 @@ const PART_MAPPING = {
 
 type MessageError = NonNullable<AssistantMessage["error"]>
 
-function errorBody(error: MessageError): string {
+function errorBody(error: MessageError, t: (key: string) => string): string {
   if (error.name === "MessageOutputLengthError") return "Output length limit reached"
-  return (error.data as { message?: string }).message ?? "Unknown error"
+  return (error.data as { message?: string }).message ?? t("tui.toast.unknown_error")
 }
 
 function errorMeta(error: MessageError): string | undefined {
@@ -1538,12 +1496,13 @@ function errorMeta(error: MessageError): string | undefined {
 
 function ErrorBlock(props: { error: MessageError }) {
   const { theme } = useTheme()
+  const { t } = useLanguage()
   const meta = createMemo(() => errorMeta(props.error))
   return (
     <box flexDirection="column" paddingLeft={3} marginTop={1}>
       <text fg={theme.error} wrapMode="word">
         <span style={{ fg: theme.error }}>✗  </span>
-        {errorBody(props.error)}
+        {errorBody(props.error, t)}
       </text>
       <Show when={meta()}>
         <box paddingLeft={3}>
@@ -1615,6 +1574,7 @@ function ReasoningHeader(props: {
   duration?: string
 }) {
   const { theme } = useTheme()
+  const t = useLanguage().t
   const fg = () =>
     props.open
       ? RGBA.fromValues(theme.warning.r, theme.warning.g, theme.warning.b, theme.thinkingOpacity)
@@ -1624,7 +1584,9 @@ function ReasoningHeader(props: {
     <Switch>
       <Match when={!props.done}>
         <box flexDirection="row">
-          <Spinner color={fg()}>{props.title ? "Thinking: " + props.title : "Thinking"}</Spinner>
+          <Spinner color={fg()}>
+            {props.title ? t("tui.reasoning.thinking_with_title", { title: props.title }) : t("tui.reasoning.thinking")}
+          </Spinner>
         </box>
       </Match>
       <Match when={true}>
@@ -1632,16 +1594,15 @@ function ReasoningHeader(props: {
           <Show when={props.toggleable}>
             <span>{props.open ? "- " : "+ "}</span>
           </Show>
-          <span>Thought</span>
           <Show when={props.title || props.duration}>
-            <span>: </span>
+            <span>{t("tui.reasoning.thought_with_title", { title: props.title ?? "" })}</span>
           </Show>
-          <Show when={props.title}>
-            <span>{props.title}</span>
+          <Show when={!props.title && !props.duration}>
+            <span>{t("tui.reasoning.thought")}</span>
           </Show>
           <Show when={props.duration}>
             <span>
-              {props.title ? " · " : ""}
+              {" · "}
               {props.duration}
             </span>
           </Show>
@@ -1766,9 +1727,6 @@ function ToolPart(props: { last: boolean; part: ToolPart; message: AssistantMess
         <Match when={props.part.tool === "skill"}>
           <Skill {...toolprops} />
         </Match>
-        <Match when={props.part.tool === "workflow"}>
-          <Workflow {...toolprops} />
-        </Match>
         <Match when={props.part.tool === "plan_exit"}>
           <PlanExit {...toolprops} />
         </Match>
@@ -1811,6 +1769,7 @@ function PlanExit(props: ToolProps<any>) {
 
 function GenericTool(props: ToolProps<any>) {
   const { theme } = useTheme()
+  const t = useLanguage().t
   const ctx = use()
   const output = createMemo(() => props.output?.trim() ?? "")
   const [expanded, setExpanded] = createSignal(false)
@@ -1839,7 +1798,7 @@ function GenericTool(props: ToolProps<any>) {
         <box gap={1}>
           <text fg={theme.text}>{limited()}</text>
           <Show when={overflow()}>
-            <text fg={theme.textMuted}>{expanded() ? "Click to collapse" : "Click to expand"}</text>
+            <text fg={theme.textMuted}>{expanded() ? t("tui.tool.click_to_collapse") : t("tui.tool.click_to_expand")}</text>
           </Show>
         </box>
       </BlockTool>
@@ -1864,81 +1823,6 @@ function WorkItemTask(props: ToolProps<typeof TaskTool>) {
   return (
     <InlineTool icon="#" pending="Updating tasks..." complete={true} part={props.part}>
       task {summary()}
-    </InlineTool>
-  )
-}
-
-// Inline renderer for the dynamic-workflow `workflow` tool. The "run" op blocks
-// until terminal and streams a transcript (phase transitions + log() messages)
-// into part-state metadata via ctx.metadata; the tool's `Workflow` view here
-// reads metadata.transcript reactively (each ctx.metadata call fires a
-// message.part.delta) and renders it as multi-line chat content alongside the
-// live header from sync.data.workflow[runID]. That way phase/log events show
-// up in the main agent's conversation as the workflow runs, not as a single
-// silent line that only updates once the run finishes.
-function Workflow(props: ToolProps<typeof WorkflowTool>) {
-  const sync = useSync()
-
-  const operation = createMemo(() => {
-    const op = (props.input as { operation?: string }).operation
-    return typeof op === "string" ? op : "run"
-  })
-
-  const runID = createMemo(
-    () => (props.metadata.runID as string | undefined) ?? (props.input as { run_id?: string }).run_id,
-  )
-
-  const run = createMemo(() => {
-    const id = runID()
-    if (!id) return undefined
-    return sync.data.workflow[id]
-  })
-
-  // Spinner is true while EITHER side reports running — the tool part stays
-  // running until execute() returns (the whole workflow duration, since we
-  // block), and the bus-fed run row independently reports "running" until the
-  // workflow.finished event lands. Either signal alone is enough.
-  const isRunning = createMemo(() => {
-    if (props.part.state.status === "running") return true
-    const r = run()
-    return r?.status === "running"
-  })
-
-  const transcript = createMemo(() => {
-    const t = (props.metadata as { transcript?: { kind: "phase" | "log"; text: string }[] }).transcript
-    return Array.isArray(t) ? t : []
-  })
-
-  const content = createMemo(() => {
-    const op = operation()
-    const r = run()
-    const id = runID()
-    if (op !== "run") {
-      return `workflow ${op}${id ? ` ${id}` : ""}`
-    }
-    const lines: string[] = []
-    const name = r?.name ?? (props.input as { name?: string }).name ?? "inline"
-    const status = r?.status ?? (props.metadata.status as string | undefined)
-    const phase = r?.currentPhase
-    const counters = r ? `${r.succeeded}✓ ${r.failed}✗ ${r.running}⟳` : ""
-    const head = [
-      `workflow ${name}`,
-      status ? `· ${status}` : "",
-      phase ? `· ${phase}` : "",
-      counters ? `· ${counters}` : "",
-    ]
-      .filter(Boolean)
-      .join(" ")
-    lines.push(head)
-    for (const e of transcript()) {
-      lines.push(e.kind === "phase" ? `↳ phase: ${e.text}` : `  ${e.text}`)
-    }
-    return lines.join("\n")
-  })
-
-  return (
-    <InlineTool icon="⚡" spinner={isRunning()} pending="Starting workflow..." complete={true} part={props.part}>
-      {content()}
     </InlineTool>
   )
 }
@@ -2018,14 +1902,6 @@ function InlineTool(props: {
       error()?.includes("user dismissed"),
   )
 
-  // Agent-recoverable failures (bad args, malformed call, unknown task/actor id)
-  // are flagged on the error state. Render them muted (struck through, no red
-  // block) like denials — the agent self-corrects; the user needn't be alarmed.
-  const recoverable = createMemo(() => {
-    const state = props.part.state
-    return state.status === "error" && state.metadata?.recoverable === true
-  })
-
   return (
     <box
       marginTop={margin()}
@@ -2064,14 +1940,14 @@ function InlineTool(props: {
           <Spinner color={fg()} children={props.children} />
         </Match>
         <Match when={true}>
-          <text paddingLeft={3} fg={fg()} attributes={denied() || recoverable() || props.dismissed ? TextAttributes.STRIKETHROUGH : undefined}>
+          <text paddingLeft={3} fg={fg()} attributes={denied() || props.dismissed ? TextAttributes.STRIKETHROUGH : undefined}>
             <Show fallback={<>~ {props.pending}</>} when={props.complete}>
               <span style={{ fg: props.iconColor }}>{props.icon}</span> {props.children}
             </Show>
           </text>
         </Match>
       </Switch>
-      <Show when={error() && !denied() && !recoverable()}>
+      <Show when={error() && !denied()}>
         <CollapsibleError error={error()!} paddingLeft={3} />
       </Show>
     </box>
@@ -2139,6 +2015,7 @@ function hasLongDisplayLine(content: string) {
 
 function Bash(props: ToolProps<typeof BashTool>) {
   const { theme } = useTheme()
+  const t = useLanguage().t
   const sync = useSync()
   const isRunning = createMemo(() => props.part.state.status === "running")
   const output = createMemo(() => stripAnsi(props.metadata.output?.trim() ?? ""))
@@ -2190,7 +2067,7 @@ function Bash(props: ToolProps<typeof BashTool>) {
               <text fg={theme.text}>{limited()}</text>
             </Show>
             <Show when={overflow()}>
-              <text fg={theme.textMuted}>{expanded() ? "Click to collapse" : "Click to expand"}</text>
+              <text fg={theme.textMuted}>{expanded() ? t("tui.tool.click_to_collapse") : t("tui.tool.click_to_expand")}</text>
             </Show>
           </box>
         </BlockTool>
@@ -2206,6 +2083,7 @@ function Bash(props: ToolProps<typeof BashTool>) {
 
 function Write(props: ToolProps<typeof WriteTool>) {
   const { theme, syntax } = useTheme()
+  const t = useLanguage().t
   const [expanded, setExpanded] = createSignal(false)
   const code = createMemo(() => {
     if (!props.input.content) return ""
@@ -2218,7 +2096,7 @@ function Write(props: ToolProps<typeof WriteTool>) {
     <Switch>
       <Match when={props.metadata.diagnostics !== undefined}>
         <BlockTool
-          title={"# Wrote " + normalizePath(props.input.file_path!)}
+          title={"# Wrote " + normalizePath(props.input.filePath!)}
           part={props.part}
           onClick={collapsed() ? () => setExpanded((prev) => !prev) : undefined}
         >
@@ -2226,7 +2104,7 @@ function Write(props: ToolProps<typeof WriteTool>) {
             when={!collapsed() || expanded()}
             fallback={
               <text fg={theme.textMuted}>
-                Click to expand ({lineCount()} {lineCount() === 1 ? "line" : "lines"})
+                {t("tui.tool.click_to_expand_lines", { count: lineCount(), word: lineCount() === 1 ? t("tui.tool.line") : t("tui.tool.lines") })}
               </text>
             }
           >
@@ -2234,21 +2112,21 @@ function Write(props: ToolProps<typeof WriteTool>) {
               <code
                 conceal={false}
                 fg={theme.text}
-                filetype={filetype(props.input.file_path!)}
+                filetype={filetype(props.input.filePath!)}
                 syntaxStyle={syntax()}
                 content={code()}
               />
             </line_number>
             <Show when={collapsed()}>
-              <text fg={theme.textMuted}>Click to collapse</text>
+              <text fg={theme.textMuted}>{t("tui.tool.click_to_collapse")}</text>
             </Show>
           </Show>
-          <Diagnostics diagnostics={props.metadata.diagnostics} filePath={props.input.file_path ?? ""} />
+          <Diagnostics diagnostics={props.metadata.diagnostics} filePath={props.input.filePath ?? ""} />
         </BlockTool>
       </Match>
       <Match when={true}>
-        <InlineTool icon="←" pending="Preparing write..." complete={props.input.file_path} part={props.part}>
-          Write {normalizePath(props.input.file_path!)}
+        <InlineTool icon="←" pending="Preparing write..." complete={props.input.filePath} part={props.part}>
+          Write {normalizePath(props.input.filePath!)}
         </InlineTool>
       </Match>
     </Switch>
@@ -2281,11 +2159,11 @@ function Read(props: ToolProps<typeof ReadTool>) {
       <InlineTool
         icon="→"
         pending="Reading file..."
-        complete={props.input.file_path}
+        complete={props.input.filePath}
         spinner={isRunning()}
         part={props.part}
       >
-        Read {normalizePath(props.input.file_path!)} {input(props.input, ["file_path"])}
+        Read {normalizePath(props.input.filePath!)} {input(props.input, ["filePath"])}
       </InlineTool>
       <For each={loaded()}>
         {(filepath) => (
@@ -2340,26 +2218,26 @@ function WebSearch(props: ToolProps<typeof WebSearchTool>) {
 function Task(props: ToolProps<typeof ActorTool>) {
   const route = useRoute()
   const sync = useSync()
+  const { t } = useLanguage()
 
-  const input = createMemo(() => {
-    const raw = props.input as Partial<{ operation: { description: string; subagent_type: string } } & {
-      description: string
-      subagent_type: string
-    }>
-    return (raw?.operation ?? raw) as Partial<{ description: string; subagent_type: string }>
+  // Spawn-shaped view: the Task display is meaningful only for run/spawn calls
+  // (the only actions that create a delegated child session). status/wait/cancel
+  // end up here with these fields undefined and the early returns below render empty.
+  const raw = props.input as Partial<{ operation: { description: string; subagent_type: string } } & {
+    description: string
+    subagent_type: string
+  }>
+  const input: Partial<{ description: string; subagent_type: string }> = raw?.operation ?? raw
+
+  const targetSession = props.metadata.sessionId
+  const targetBucket = (props.metadata.actorId as string | undefined) ?? "main"
+
+  onMount(() => {
+    if (targetSession && !sync.data.message[targetSession]?.[targetBucket]?.length)
+      void sync.session.sync(targetSession)
   })
 
-  const targetSession = createMemo(() => props.metadata.sessionId as string | undefined)
-  const targetBucket = createMemo(() => (props.metadata.actorId as string | undefined) ?? "main")
-
-  createEffect(() => {
-    const session = targetSession()
-    const bucket = targetBucket()
-    if (session && !sync.data.message[session]?.[bucket]?.length)
-      void sync.session.sync(session)
-  })
-
-  const messages = createMemo(() => sync.data.message[targetSession() ?? ""]?.[targetBucket()] ?? [])
+  const messages = createMemo(() => sync.data.message[targetSession ?? ""]?.[targetBucket] ?? [])
 
   const tools = createMemo(() => {
     return messages().flatMap((msg) =>
@@ -2383,8 +2261,9 @@ function Task(props: ToolProps<typeof ActorTool>) {
   })
 
   const content = createMemo(() => {
-    if (!input().description) return ""
-    let content = [`${Locale.titlecase(input().subagent_type ?? "General")} Task — ${input().description}`]
+    if (!input.description) return ""
+    const agentName = t(`tui.agent.name.${input.subagent_type ?? "general"}`) || Locale.titlecase(input.subagent_type ?? "General")
+    let content = [`${t("tui.permission.task_title", { type: agentName })} — ${input.description}`]
 
     if (isRunning() && tools().length > 0) {
       // content[0] += ` · ${tools().length} toolcalls`
@@ -2406,22 +2285,24 @@ function Task(props: ToolProps<typeof ActorTool>) {
     <InlineTool
       icon="│"
       spinner={isRunning()}
-      complete={input().description}
+      complete={input.description}
       pending="Delegating..."
       part={props.part}
       onClick={() => {
-        const session = targetSession()
-        if (!session) return
-        const actor = targetBucket()
+        const targetSession = props.metadata.sessionId
+        const targetActor = props.metadata.actorId as string | undefined
+        if (!targetSession) return
         if (
           route.data.type === "session" &&
-          session === route.data.sessionID &&
-          actor !== "main"
+          targetSession === route.data.sessionID &&
+          targetActor
         ) {
-          route.navigate({ ...route.data, agentID: actor })
+          // Subagent mode (shared sessionID): switch the agent slice in place.
+          route.navigate({ ...route.data, agentID: targetActor })
           return
         }
-        route.navigate({ type: "session", sessionID: session, agentID: actor !== "main" ? actor : undefined })
+        // Peer mode (different sessionID): navigate to peer's session, viewing its slice.
+        route.navigate({ type: "session", sessionID: targetSession, agentID: targetActor })
       }}
     >
       {content()}
@@ -2440,14 +2321,14 @@ function Edit(props: ToolProps<typeof EditTool>) {
     return ctx.width > 120 ? "split" : "unified"
   })
 
-  const ft = createMemo(() => filetype(props.input.file_path))
+  const ft = createMemo(() => filetype(props.input.filePath))
 
   const diffContent = createMemo(() => props.metadata.diff)
 
   return (
     <Switch>
       <Match when={props.metadata.diff !== undefined}>
-        <BlockTool title={"← Edit " + normalizePath(props.input.file_path!)} part={props.part}>
+        <BlockTool title={"← Edit " + normalizePath(props.input.filePath!)} part={props.part}>
           <box paddingLeft={1}>
             <diff
               diff={diffContent()}
@@ -2469,12 +2350,12 @@ function Edit(props: ToolProps<typeof EditTool>) {
               removedLineNumberBg={theme.diffRemovedLineNumberBg}
             />
           </box>
-          <Diagnostics diagnostics={props.metadata.diagnostics} filePath={props.input.file_path ?? ""} />
+          <Diagnostics diagnostics={props.metadata.diagnostics} filePath={props.input.filePath ?? ""} />
         </BlockTool>
       </Match>
       <Match when={true}>
-        <InlineTool icon="←" pending="Preparing edit..." complete={props.input.file_path} part={props.part}>
-          Edit {normalizePath(props.input.file_path!)} {input({ replace_all: props.input.replace_all })}
+        <InlineTool icon="←" pending="Preparing edit..." complete={props.input.filePath} part={props.part}>
+          Edit {normalizePath(props.input.filePath!)} {input({ replaceAll: props.input.replaceAll })}
         </InlineTool>
       </Match>
     </Switch>
@@ -2484,6 +2365,7 @@ function Edit(props: ToolProps<typeof EditTool>) {
 function ApplyPatch(props: ToolProps<typeof ApplyPatchTool>) {
   const ctx = use()
   const { theme, syntax } = useTheme()
+  const t = useLanguage().t
   const [expanded, setExpanded] = createSignal<string[]>([])
 
   const files = createMemo(() => props.metadata.files ?? [])
@@ -2550,7 +2432,7 @@ function ApplyPatch(props: ToolProps<typeof ApplyPatchTool>) {
                   when={file.type !== "delete"}
                   fallback={
                     <text fg={theme.diffRemoved}>
-                      -{file.deletions} line{file.deletions !== 1 ? "s" : ""}
+                      -{file.deletions} {file.deletions === 1 ? t("tui.tool.line") : t("tui.tool.lines")}
                     </text>
                   }
                 >
@@ -2558,13 +2440,13 @@ function ApplyPatch(props: ToolProps<typeof ApplyPatchTool>) {
                     when={!collapsed() || open()}
                     fallback={
                       <text fg={theme.textMuted}>
-                        Click to expand ({count()} change{count() !== 1 ? "s" : ""})
+                        {t("tui.tool.click_to_expand_changes", { count: count(), plural: count() !== 1 ? "s" : "" })}
                       </text>
                     }
                   >
                     <Diff diff={file.patch} filePath={file.filePath} />
                     <Show when={collapsed()}>
-                      <text fg={theme.textMuted}>Click to collapse</text>
+                      <text fg={theme.textMuted}>{t("tui.tool.click_to_collapse")}</text>
                     </Show>
                   </Show>
                   <Diagnostics diagnostics={props.metadata.diagnostics} filePath={file.movePath ?? file.filePath} />
@@ -2576,7 +2458,7 @@ function ApplyPatch(props: ToolProps<typeof ApplyPatchTool>) {
       </Match>
       <Match when={true}>
         <InlineTool icon="%" pending="Preparing patch..." complete={false} part={props.part}>
-          Patch
+          {"Patch"}
         </InlineTool>
       </Match>
     </Switch>
@@ -2618,8 +2500,9 @@ function Question(props: ToolProps<typeof QuestionTool>) {
 }
 
 function Skill(props: ToolProps<typeof SkillTool>) {
+  const { t } = useLanguage()
   return (
-    <InlineTool icon="→" pending="Loading skill..." complete={props.input.name} part={props.part}>
+    <InlineTool icon="→" pending={t("tui.dialog.skill.loading")} complete={props.input.name} part={props.part}>
       Skill "{props.input.name}"
     </InlineTool>
   )

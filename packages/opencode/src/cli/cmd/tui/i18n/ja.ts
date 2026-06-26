@@ -29,11 +29,6 @@ export const dict = {
   "tui.home.placeholder.example.todo": "コードベース内の TODO を修正",
   "tui.home.placeholder.example.stack": "このプロジェクトの技術スタックは？",
   "tui.home.placeholder.example.tests": "壊れたテストを修正",
-  "tui.home.agreement.prefix": "MiMoCode をご利用いただくことで、",
-  "tui.home.agreement.terms": "利用規約",
-  "tui.home.agreement.separator": "および",
-  "tui.home.agreement.privacy": "プライバシーポリシー",
-  "tui.home.agreement.suffix": "に同意したものとみなされます",
 
   // Prompt bottom hints (trigger characters)
   "tui.prompt.hint.attach_file": "ファイル添付",
@@ -77,7 +72,7 @@ export const dict = {
   "tui.tips.copy_last":
     "{highlight}Ctrl+X Y{/highlight} でアシスタントの最後のメッセージをクリップボードにコピーします",
   "tui.tips.command_palette": "{highlight}Ctrl+P{/highlight} で利用可能なすべてのコマンドを表示します",
-  "tui.tips.login": "{highlight}/login{/highlight} でサインインして Token Plan を利用するか、独自の API キーを設定します",
+  "tui.tips.login": "{highlight}/login{/highlight} でサインインしてトークンプランを利用します",
   "tui.tips.connect": "{highlight}/connect{/highlight} で LLM プロバイダを選択して API キーを追加します",
   "tui.tips.leader": "リーダーキーは {highlight}Ctrl+X{/highlight}。他のキーと組み合わせてクイック操作ができます",
   "tui.tips.f2": "{highlight}F2{/highlight} で最近使ったモデルを素早く切り替えます",
@@ -200,14 +195,6 @@ export const dict = {
   "tui.command.category.internal": "組み込み",
   "tui.command.category.external": "外部",
 
-  // Built-in slash command descriptions
-  "tui.slash.init.description": "AGENTS.md をガイド付きでセットアップ",
-  "tui.slash.review.description": "変更をレビュー [commit|branch|pr]、デフォルトは未コミット",
-  "tui.slash.dream.description": "memory ファイルと生の軌跡からプロジェクトメモリを手動で統合",
-  "tui.slash.distill.description": "最近の作業から繰り返しワークフローを見つけ、skill・サブエージェント・コマンドにパッケージ化",
-  "tui.slash.goal.description": "停止条件付きゴールを設定；判定が達成と言うまで実行。/goal clear で中止",
-  "tui.slash.deep-research.description": "深い多ソース・ファクトチェック済み調査レポート（deep-research ワークフローを実行）",
-
   // Language switching
   "tui.command.language.switch.title": "言語を切り替え",
   "tui.command.language.switch.description": "表示言語を変更します",
@@ -226,11 +213,12 @@ export const dict = {
   "tui.command.model.cycle_favorite_reverse.title": "お気に入りを逆循環",
   "tui.command.agent.list.title": "エージェントを切り替え",
   "tui.command.mcp.list.title": "MCP を切り替え",
-  "tui.command.never_ask.title_on": "質問しない：オン（自動判断、権限リクエストは除く） — クリックでオフに",
-  "tui.command.never_ask.title_off": "質問しない：オフ — クリックでオンに（自動判断、権限リクエストは除く）",
+  "tui.command.never_ask.title_on": "質問しない：オン — オフにする（再び質問する）",
+  "tui.command.never_ask.title_off": "質問しない：オフ — オンにする（質問せず自分で判断）",
   "tui.command.never_ask.toast_on":
-    "質問しないをオンにしました — あなたに質問せず、オフにする（/never-ask）まで自分で最適な選択肢を選びます。権限リクエストは引き続きあなたの承認が必要です。",
+    "質問しないをオンにしました — あなたに質問せず、オフにする（/never-ask-questions）まで自分で最適な選択肢を選びます。権限リクエストは引き続きあなたの承認が必要です。",
   "tui.command.never_ask.toast_off": "質問しないをオフにしました — 判断ポイントで再びあなたに質問します。",
+  "tui.never_ask.badge": "質問しない：ON",
   "tui.command.agent.cycle.title": "エージェントを循環",
   "tui.command.variant.cycle.title": "バリアントを循環",
   "tui.command.variant.list.title": "モデルバリアントを切り替え",
@@ -257,22 +245,7 @@ export const dict = {
   "tui.dialog.ok": "OK",
   "tui.dialog.confirm.cancel": "キャンセル",
   "tui.dialog.confirm.confirm": "確認",
-  "tui.dialog.agreement.title": "利用規約とプライバシー",
-  "tui.dialog.agreement.message": "内容を確認し、同意のうえで続行してください。",
-  "tui.dialog.agreement.confirm": "同意して続行",
-  "tui.command.consent.revoke.title": "無料モデルの同意を取り消す",
-  "tui.consent.revoked": "無料モデルの同意を取り消しました — 次回利用時に再度同意を求めます",
   "tui.dialog.select.placeholder": "検索",
-  "tui.dialog.model.login_hint": "ヒント：モデルを切り替える前に /login でログインしてください",
-  "tui.model.mimo_auto.name": "MiMo Auto（MiMo-V2.5 期間限定無料）",
-  "tui.dialog.token_plan.title": "Token Plan を購読するか順番待ち",
-  "tui.dialog.token_plan.line1":
-    "無料モードでは現在順番待ちが必要です。安定した高品質なサービスをご利用いただくには、",
-  "tui.dialog.token_plan.subscribe": "",
-  "tui.dialog.token_plan.link": "MiMo Token Plan",
-  "tui.dialog.token_plan.link_suffix": " のご購読をおすすめします。",
-  "tui.dialog.token_plan.line3": "/login で独自の API キーを設定することもできます。",
-  "tui.dialog.token_plan.confirm": "了解",
   "tui.dialog.select.no_results": "結果が見つかりません",
   "tui.dialog.prompt.placeholder": "テキストを入力",
   "tui.dialog.prompt.busy": "処理中...",
@@ -292,13 +265,6 @@ export const dict = {
   "tui.dialog.export.hint.options_action": "オプション",
   "tui.toast.copied_to_clipboard": "クリップボードにコピーしました",
   "tui.toast.instructions_loaded": "{{files}} を読み込みました",
-  "tui.toast.update_available.title": "アップデートがあります",
-  "tui.toast.update_available.confirm": "新しいバージョン v{{version}} が利用可能です。今すぐ更新しますか？",
-  "tui.toast.update_available.updating": "v{{version}} に更新中...",
-  "tui.toast.update_available.failed": "更新に失敗しました",
-  "tui.toast.update_available.success": "MiMoCode v{{version}} に更新しました。アプリケーションを再起動してください。",
-  "tui.toast.updated.title": "自動更新済み",
-  "tui.toast.updated.message": "パッチ更新を自動適用しました：v{{version}}。再起動後に有効になります。設定で autoupdate: false を指定すると無効にできます。",
   "tui.sidebar.instructions": "インストラクション",
   "tui.sidebar.cwd": "作業ディレクトリ",
   "tui.toast.unknown_error": "不明なエラーが発生しました",
@@ -315,6 +281,9 @@ export const dict = {
   "tui.command.app.toggle.diffwrap.disable": "diff の折り返しを無効化",
   "tui.command.app.toggle.diffwrap.enable": "diff の折り返しを有効化",
   "tui.command.logout.toast": "ログアウトしました",
+  "tui.command.config.reload.title": "設定を再読み込み",
+  "tui.command.config.reload.description": "プロジェクト設定、プロバイダー、プラグインを再読み込み",
+  "tui.command.config.reload.toast": "設定を再読み込みしました",
 
   // Session-level commands
   "tui.command.session.share.title": "セッションを共有",
@@ -380,12 +349,7 @@ export const dict = {
   "tui.command.voice.control.title": "音声制御を切り替え（マルチモーダル）",
   "tui.command.voice.control.title_on": "音声制御：有効（マルチモーダル） — クリックで無効化",
   "tui.command.voice.control.title_off": "音声制御：無効（高速ASR） — クリックで有効化",
-  "tui.voice.error.no_auth": "/connect で MiMo アカウントに接続するか、voice.asr_model で別のプロバイダーを設定してください",
-  "tui.voice.error.no_auth_provider": "音声プロバイダー「{{provider}}」が認証されていません。apiKey を確認してください",
-  "tui.voice.error.provider_not_found": "プロバイダー「{{provider}}」が利用できません — /connect で接続するか、カスタムエンドポイントの場合は設定で models を宣言してください",
-  "tui.voice.error.no_url": "プロバイダー「{{provider}}」に baseURL が設定されていません — options.baseURL を指定してください",
-  "tui.voice.error.no_device": "マイク/オーディオデバイスが見つかりません — システムのオーディオ設定を確認してください",
-  "tui.voice.error.recorder_failed": "録音に失敗しました",
+  "tui.voice.error.no_auth": "まず MiMo アカウントにログインしてください",
   "tui.voice.error.no_recorder": "録音ツールが見つかりません。sox をインストールしてください",
   "tui.voice.error.too_short": "録音時間が短すぎます",
   "tui.voice.error.network": "文字起こしに失敗しました。ネットワークを確認してください",
@@ -404,13 +368,6 @@ export const dict = {
   "tui.dialog.login.mimo_free.desc": "ログイン不要の匿名無料チャネル",
   "tui.dialog.login.mimo_free.success": "MiMo Auto (free) の準備完了 — デフォルトモデルを mimo/mimo-auto に設定しました",
   "tui.dialog.login.mimo_free.unavailable": "MiMo Auto (free) プロバイダーが読み込まれていません",
-  "tui.dialog.login.flow.title": "MiMo ログイン",
-  "tui.dialog.login.flow.placeholder": "コードを貼り付け（またはブラウザコールバックを待機）",
-  "tui.dialog.login.flow.busy": "ログイン中...",
-  "tui.dialog.login.flow.manual_hint": "ブラウザが開きませんか？下のリンクをクリックしてコピー：",
-  "tui.dialog.login.flow.waiting": "ブラウザの認証を待機中...",
-  "tui.dialog.login.flow.invalid_code": "コードが無効です。再試行してください",
-  "tui.dialog.login.flow.copied": "コピー済み",
 
   // CLI: providers command (auth login)
   "cli.providers.select": "プロバイダーを選択",
@@ -426,14 +383,6 @@ export const dict = {
   "cli.providers.mimo_login.decrypt_retry": "復号に失敗しました、再試行してください（残り {remaining} 回）",
   "cli.providers.mimo_login.decrypt_exhausted": "復号に失敗しました、最大再試行回数に達しました",
 
-  // Question i18n — plan_enter
-  "tui.question.plan_enter.question": "構造化された計画のために plan モードに切り替えますか？",
-  "tui.question.plan_enter.header": "計画開始",
-  "tui.question.plan_enter.option.0.label": "はい",
-  "tui.question.plan_enter.option.0.description": "読み取り専用の計画のために plan エージェントに切り替え",
-  "tui.question.plan_enter.option.1.label": "いいえ",
-  "tui.question.plan_enter.option.1.description": "現在のモードにとどまる",
-
   // Question i18n — plan_exit
   "tui.question.plan_exit.question": "{{plan}} の計画が完了しました。build エージェントに切り替えて実装を開始しますか？",
   "tui.question.plan_exit.header": "計画終了",
@@ -445,19 +394,45 @@ export const dict = {
   // Session badges
   "tui.session.badge.auto": "自動",
 
-  // Workspace trust
-  "trust.title": "ワークスペースにアクセス中：",
-  "trust.safety_check": "安全確認：これはあなたが作成した、または信頼しているプロジェクトですか？（自分のコード、有名なオープンソースプロジェクト、チームの作業など）。そうでない場合は、まずこのフォルダの内容を確認してください。",
-  "trust.capabilities": "MiMo Code はここでファイルの読み取り、編集、実行が可能になります。",
-  "trust.plugin_warn": "このディレクトリに悪意あるプラグインが存在する場合、任意のコードを実行し、ファイルを読み取り、変更、または流出させる可能性があります。",
-  "trust.option.yes": "はい、このフォルダを信頼します",
-  "trust.option.no": "いいえ、終了",
-  "trust.dangerous.title_home": "警告：ホームディレクトリを開こうとしています。",
-  "trust.dangerous.title_root": "警告：ファイルシステムのルートを開こうとしています。",
-  "trust.dangerous.body_home": "モデルがホームフォルダ配下のすべての個人ファイル（SSH鍵、認証情報、ブラウザプロファイルなど）にアクセスできるようになります。",
-  "trust.dangerous.body_root": "モデルがファイルシステム全体（システムファイル、全ユーザーデータ、認証情報、このマシン上のすべて）にアクセスできるようになります。",
-  "trust.dangerous.advice_home": "明確な理由がない限り、ホームディレクトリ全体を信頼しないでください。",
-  "trust.dangerous.advice_root": "明確な理由がない限り、ファイルシステムのルートを信頼しないでください。",
-  "trust.dangerous.option.yes": "リスクを理解した上で、今回のみ信頼する",
-  "trust.dangerous.option.no": "終了（推奨）",
+  // Retry display
+  "tui.prompt.retry.retrying": "再試行中",
+  "tui.prompt.retry.inDuration": "{{duration}}後",
+  "tui.prompt.retry.attempt": "第{{attempt}}回",
+
+  // Agent names
+  "tui.agent.name.build": "ビルド",
+  "tui.agent.name.plan": "プラン",
+  "tui.agent.name.compose": "コンポーズ",
+
+  // Variant names
+  "tui.variant.name.high": "高",
+  "tui.variant.name.medium": "中",
+  "tui.variant.name.low": "低",
+  "tui.variant.name.xhigh": "超高",
+  "tui.variant.name.max": "最大",
+
+  // Variant dialog
+  "tui.dialog.variant.title": "バリアント",
+  "tui.dialog.variant.default": "デフォルト",
+  "tui.dialog.variant.high": "高",
+  "tui.dialog.variant.medium": "中",
+  "tui.dialog.variant.low": "低",
+
+  // Skill dialog
+  "tui.dialog.skill.loading": "スキルを読み込み中...",
+
+  // Error messages
+  "tui.error.copy_url_failed": "URLのクリップボードへのコピーに失敗しました",
+  "tui.error.share_failed": "セッションの共有に失敗しました",
+  "tui.error.unshare_failed": "共有の解除に失敗しました",
+  "tui.error.copy_clipboard_failed": "クリップボードへのコピーに失敗しました",
+  "tui.error.copy_transcript_failed": "セッション記録のコピーに失敗しました",
+  "tui.error.export_failed": "セッションのエクスポートに失敗しました",
+  "tui.error.workspace_adaptor_failed": "ワークスペースアダプターの読み込みに失敗しました",
+  "tui.error.workspace_create_failed": "ワークスペースセッションの作成に失敗しました",
+  "tui.error.worktree_create_failed": "ワークツリーの作成に失敗しました",
+  "tui.error.send_message_failed": "メッセージの送信に失敗しました",
+  "tui.error.delete_workspace_failed": "ワークスペースの削除に失敗しました",
+  "tui.error.delete_session_failed": "セッションの削除に失敗しました",
+
 } satisfies Partial<Record<Keys, string>>

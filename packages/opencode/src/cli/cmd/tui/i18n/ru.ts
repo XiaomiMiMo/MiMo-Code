@@ -29,11 +29,6 @@ export const dict = {
   "tui.home.placeholder.example.todo": "Исправь TODO в кодовой базе",
   "tui.home.placeholder.example.stack": "Какой технологический стек у этого проекта?",
   "tui.home.placeholder.example.tests": "Почини сломанные тесты",
-  "tui.home.agreement.prefix": "Используя MiMoCode, вы соглашаетесь с нашими ",
-  "tui.home.agreement.terms": "Условиями использования",
-  "tui.home.agreement.separator": " и ",
-  "tui.home.agreement.privacy": "Политикой конфиденциальности",
-  "tui.home.agreement.suffix": "",
 
   // Prompt bottom hints (trigger characters)
   "tui.prompt.hint.attach_file": "прикрепить файл",
@@ -87,7 +82,7 @@ export const dict = {
   "tui.tips.command_palette":
     "Нажмите {highlight}Ctrl+P{/highlight}, чтобы посмотреть все доступные действия и команды",
   "tui.tips.login":
-    "Выполните {highlight}/login{/highlight}, чтобы войти и использовать Token Plan или настроить собственный API-ключ",
+    "Выполните {highlight}/login{/highlight}, чтобы войти и использовать ваш тарифный план токенов",
   "tui.tips.connect":
     "Выполните {highlight}/connect{/highlight}, чтобы выбрать LLM-провайдера и добавить API-ключи",
   "tui.tips.leader":
@@ -262,18 +257,6 @@ export const dict = {
   "tui.command.category.internal": "Внутренние",
   "tui.command.category.external": "Внешние",
 
-  // Built-in slash command descriptions
-  "tui.slash.init.description": "пошаговая настройка AGENTS.md",
-  "tui.slash.review.description": "просмотр изменений [commit|branch|pr], по умолчанию незакоммиченные",
-  "tui.slash.dream.description":
-    "вручную консолидировать память проекта из memory-файлов и сырой траектории",
-  "tui.slash.distill.description":
-    "найти повторяющиеся workflow в недавней работе и упаковать их в skills, субагентов или команды",
-  "tui.slash.goal.description":
-    "задать цель с условием остановки; выполняется, пока судья не подтвердит. /goal clear для отмены",
-  "tui.slash.deep-research.description":
-    "глубокий многоисточниковый проверенный отчёт (запускает workflow deep-research)",
-
   // Language switching
   "tui.command.language.switch.title": "Сменить язык",
   "tui.command.language.switch.description": "Изменить язык интерфейса",
@@ -292,11 +275,12 @@ export const dict = {
   "tui.command.model.cycle_favorite_reverse.title": "Цикл избранных моделей (в обратном порядке)",
   "tui.command.agent.list.title": "Сменить агента",
   "tui.command.mcp.list.title": "Переключить MCP",
-  "tui.command.never_ask.title_on": "Без вопросов: ВКЛ (авто-решение, кроме запросов разрешений) — нажмите для выключения",
-  "tui.command.never_ask.title_off": "Без вопросов: ВЫКЛ — нажмите для включения (авто-решение, кроме запросов разрешений)",
+  "tui.command.never_ask.title_on": "Без вопросов: ВКЛ — выключить (снова спрашивать)",
+  "tui.command.never_ask.title_off": "Без вопросов: ВЫКЛ — включить (решать без вопросов)",
   "tui.command.never_ask.toast_on":
-    "Без вопросов ВКЛ — я не буду спрашивать; сам выберу лучший вариант, пока вы не выключите (/never-ask). Запросы разрешений по-прежнему требуют вашего подтверждения.",
+    "Без вопросов ВКЛ — я не буду спрашивать; сам выберу лучший вариант, пока вы не выключите (/never-ask-questions). Запросы разрешений по-прежнему требуют вашего подтверждения.",
   "tui.command.never_ask.toast_off": "Без вопросов ВЫКЛ — я снова буду спрашивать вас в точках принятия решений.",
+  "tui.never_ask.badge": "Без вопросов: ВКЛ",
   "tui.command.agent.cycle.title": "Цикл агентов",
   "tui.command.variant.cycle.title": "Цикл вариантов",
   "tui.command.variant.list.title": "Сменить вариант модели",
@@ -324,22 +308,7 @@ export const dict = {
   "tui.dialog.ok": "OK",
   "tui.dialog.confirm.cancel": "Отмена",
   "tui.dialog.confirm.confirm": "Подтвердить",
-  "tui.dialog.agreement.title": "Условия и конфиденциальность",
-  "tui.dialog.agreement.message": "Ознакомьтесь и примите их, чтобы продолжить.",
-  "tui.dialog.agreement.confirm": "Принять и продолжить",
-  "tui.command.consent.revoke.title": "Отозвать согласие на бесплатную модель",
-  "tui.consent.revoked": "Согласие на бесплатную модель отозвано — потребуется принять снова",
   "tui.dialog.select.placeholder": "Поиск",
-  "tui.dialog.model.login_hint": "Подсказка: выполните /login для входа перед сменой модели",
-  "tui.model.mimo_auto.name": "MiMo Auto (MiMo-V2.5, временно бесплатно)",
-  "tui.dialog.token_plan.title": "Оформите Token Plan или подождите в очереди",
-  "tui.dialog.token_plan.line1":
-    "В бесплатном режиме запросы сейчас в очереди. Для стабильного и качественного сервиса",
-  "tui.dialog.token_plan.subscribe": "оформите ",
-  "tui.dialog.token_plan.link": "MiMo Token Plan",
-  "tui.dialog.token_plan.link_suffix": ".",
-  "tui.dialog.token_plan.line3": "Вы также можете выполнить /login, чтобы настроить собственный API-ключ.",
-  "tui.dialog.token_plan.confirm": "Понятно",
   "tui.dialog.select.no_results": "Ничего не найдено",
   "tui.dialog.prompt.placeholder": "Введите текст",
   "tui.dialog.prompt.busy": "Выполняется...",
@@ -359,13 +328,6 @@ export const dict = {
   "tui.dialog.export.hint.options_action": "для параметров",
   "tui.toast.copied_to_clipboard": "Скопировано в буфер обмена",
   "tui.toast.instructions_loaded": "Загружено {{files}}",
-  "tui.toast.update_available.title": "Доступно обновление",
-  "tui.toast.update_available.confirm": "Доступна новая версия v{{version}}. Обновить сейчас?",
-  "tui.toast.update_available.updating": "Обновление до v{{version}}...",
-  "tui.toast.update_available.failed": "Не удалось обновить",
-  "tui.toast.update_available.success": "Обновлено до MiMoCode v{{version}}. Пожалуйста, перезапустите приложение.",
-  "tui.toast.updated.title": "Автообновление выполнено",
-  "tui.toast.updated.message": "Патч применён автоматически: v{{version}}. Перезапустите для использования новой версии. Отключите через autoupdate: false в конфигурации.",
   "tui.sidebar.instructions": "Инструкции",
   "tui.sidebar.cwd": "Рабочий каталог",
   "tui.toast.unknown_error": "Произошла неизвестная ошибка",
@@ -382,6 +344,9 @@ export const dict = {
   "tui.command.app.toggle.diffwrap.disable": "Отключить перенос строк в diff",
   "tui.command.app.toggle.diffwrap.enable": "Включить перенос строк в diff",
   "tui.command.logout.toast": "Вы вышли из аккаунта",
+  "tui.command.config.reload.title": "Перезагрузить конфиг",
+  "tui.command.config.reload.description": "Перезагрузить конфигурацию проекта, провайдеров и плагины",
+  "tui.command.config.reload.toast": "Конфиг перезагружен",
 
   // Session-level commands
   "tui.command.session.share.title": "Поделиться сессией",
@@ -444,12 +409,7 @@ export const dict = {
   "tui.command.voice.control.title": "Переключить голосовое управление (мультимодальное)",
   "tui.command.voice.control.title_on": "Голосовое управление: включено (мультимодальное) — нажмите для отключения",
   "tui.command.voice.control.title_off": "Голосовое управление: отключено (быстрый ASR) — нажмите для включения",
-  "tui.voice.error.no_auth": "Используйте /connect для подключения к MiMo или настройте voice.asr_model для другого провайдера",
-  "tui.voice.error.no_auth_provider": "Голосовой провайдер \"{{provider}}\" не авторизован, проверьте его apiKey",
-  "tui.voice.error.provider_not_found": "Провайдер \"{{provider}}\" недоступен — /connect для аутентификации, или объявите models в конфигурации для пользовательских эндпоинтов",
-  "tui.voice.error.no_url": "У провайдера \"{{provider}}\" не настроен baseURL — укажите options.baseURL в конфигурации",
-  "tui.voice.error.no_device": "Микрофон/аудиоустройство не найдено — проверьте настройки звука системы",
-  "tui.voice.error.recorder_failed": "Ошибка записи",
+  "tui.voice.error.no_auth": "Сначала войдите в аккаунт MiMo",
   "tui.voice.error.no_recorder": "Инструмент записи не найден, установите sox",
   "tui.voice.error.too_short": "Запись слишком короткая",
   "tui.voice.error.network": "Ошибка транскрипции, проверьте сеть",
@@ -468,13 +428,6 @@ export const dict = {
   "tui.dialog.login.mimo_free.desc": "Анонимный бесплатный канал — вход не требуется",
   "tui.dialog.login.mimo_free.success": "MiMo Auto (free) готов — модель по умолчанию: mimo/mimo-auto",
   "tui.dialog.login.mimo_free.unavailable": "Провайдер MiMo Auto (free) не загружен",
-  "tui.dialog.login.flow.title": "Вход в MiMo",
-  "tui.dialog.login.flow.placeholder": "Вставьте код (или дождитесь обратного вызова браузера)",
-  "tui.dialog.login.flow.busy": "Вход...",
-  "tui.dialog.login.flow.manual_hint": "Браузер не открылся? Нажмите на ссылку ниже, чтобы скопировать:",
-  "tui.dialog.login.flow.waiting": "Ожидание авторизации в браузере...",
-  "tui.dialog.login.flow.invalid_code": "Неверный код, попробуйте ещё раз",
-  "tui.dialog.login.flow.copied": "Скопировано",
 
   // CLI: providers command (auth login)
   "cli.providers.select": "Выберите провайдера",
@@ -490,14 +443,6 @@ export const dict = {
   "cli.providers.mimo_login.decrypt_retry": "Ошибка расшифровки, повторите попытку (осталось попыток: {remaining})",
   "cli.providers.mimo_login.decrypt_exhausted": "Ошибка расшифровки, превышено максимальное число попыток",
 
-  // Question i18n — plan_enter
-  "tui.question.plan_enter.question": "Переключиться в режим plan для структурированного планирования?",
-  "tui.question.plan_enter.header": "Вход в план",
-  "tui.question.plan_enter.option.0.label": "Да",
-  "tui.question.plan_enter.option.0.description": "Переключиться на агента plan для планирования в режиме чтения",
-  "tui.question.plan_enter.option.1.label": "Нет",
-  "tui.question.plan_enter.option.1.description": "Остаться в текущем режиме",
-
   // Question i18n — plan_exit
   "tui.question.plan_exit.question": "План {{plan}} завершён. Переключиться на агента build и начать реализацию?",
   "tui.question.plan_exit.header": "Выход из плана",
@@ -509,19 +454,31 @@ export const dict = {
   // Session badges
   "tui.session.badge.auto": "Авто",
 
-  // Workspace trust
-  "trust.title": "Доступ к рабочему пространству:",
-  "trust.safety_check": "Проверка безопасности: это проект, который вы создали или которому доверяете? (Ваш собственный код, известный open source проект или работа вашей команды). Если нет, сначала проверьте содержимое этой папки.",
-  "trust.capabilities": "MiMo Code сможет читать, редактировать и выполнять файлы здесь.",
-  "trust.plugin_warn": "Если в этом каталоге есть вредоносные плагины, они могут выполнять произвольный код, читать, изменять или похищать ваши файлы.",
-  "trust.option.yes": "Да, я доверяю этой папке",
-  "trust.option.no": "Нет, выйти",
-  "trust.dangerous.title_home": "ВНИМАНИЕ: Вы собираетесь открыть ДОМАШНИЙ КАТАЛОГ.",
-  "trust.dangerous.title_root": "ВНИМАНИЕ: Вы собираетесь открыть КОРЕНЬ ФАЙЛОВОЙ СИСТЕМЫ.",
-  "trust.dangerous.body_home": "Модель получит доступ ко ВСЕМ вашим личным файлам — SSH-ключам, учётным данным, профилям браузера и всему содержимому домашней папки.",
-  "trust.dangerous.body_root": "Модель получит доступ ко ВСЕЙ файловой системе — системным файлам, данным всех пользователей, учётным данным и всему на этой машине.",
-  "trust.dangerous.advice_home": "Если нет весомой причины, НЕ доверяйте всему домашнему каталогу.",
-  "trust.dangerous.advice_root": "Если нет весомой причины, НЕ доверяйте корню файловой системы.",
-  "trust.dangerous.option.yes": "Я понимаю риски, доверять только в этой сессии",
-  "trust.dangerous.option.no": "Выйти (рекомендуется)",
+  // Retry display
+  "tui.prompt.retry.retrying": "повторная попытка",
+  "tui.prompt.retry.inDuration": "через {{duration}}",
+  "tui.prompt.retry.attempt": "попытка #{{attempt}}",
+
+  // Agent names
+  "tui.agent.name.build": "Сборка",
+  "tui.agent.name.plan": "План",
+  "tui.agent.name.compose": "Композиция",
+
+  // Variant names
+  "tui.variant.name.high": "Высокий",
+  "tui.variant.name.medium": "Средний",
+  "tui.variant.name.low": "Низкий",
+  "tui.variant.name.xhigh": "Сверхвысокий",
+  "tui.variant.name.max": "Максимум",
+
+  // Variant dialog
+  "tui.dialog.variant.title": "Вариант",
+  "tui.dialog.variant.default": "По умолчанию",
+  "tui.dialog.variant.high": "Высокий",
+  "tui.dialog.variant.medium": "Средний",
+  "tui.dialog.variant.low": "Низкий",
+
+  // Skill dialog
+  "tui.dialog.skill.loading": "Загрузка навыка...",
+
 } satisfies Partial<Record<Keys, string>>

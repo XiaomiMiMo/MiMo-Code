@@ -5,6 +5,7 @@ import { createSignal } from "solid-js"
 import { InstallationVersion } from "@/installation/version"
 import { win32FlushInputBuffer } from "../win32"
 import { getScrollAcceleration } from "../util/scroll"
+import { useLanguage } from "@tui/context/language"
 
 export function ErrorComponent(props: {
   error: Error
@@ -30,6 +31,7 @@ export function ErrorComponent(props: {
     }
   })
   const [copied, setCopied] = createSignal(false)
+  const t = useLanguage().t
 
   const issueURL = new URL("https://github.com/anomalyco/opencode/issues/new?template=bug-report.yml")
 
@@ -65,22 +67,22 @@ export function ErrorComponent(props: {
     <box flexDirection="column" gap={1} backgroundColor={colors.bg}>
       <box flexDirection="row" gap={1} alignItems="center">
         <text attributes={TextAttributes.BOLD} fg={colors.text}>
-          Please report an issue.
+          {t("tui.error.report_issue")}
         </text>
         <box onMouseUp={copyIssueURL} backgroundColor={colors.primary} padding={1}>
           <text attributes={TextAttributes.BOLD} fg={colors.bg}>
-            Copy issue URL (exception info pre-filled)
+            {t("tui.error.copy_url")}
           </text>
         </box>
-        {copied() && <text fg={colors.muted}>Successfully copied</text>}
+        {copied() && <text fg={colors.muted}>{t("tui.error.copied")}</text>}
       </box>
       <box flexDirection="row" gap={2} alignItems="center">
-        <text fg={colors.text}>A fatal error occurred!</text>
+        <text fg={colors.text}>{t("tui.error.fatal")}</text>
         <box onMouseUp={props.reset} backgroundColor={colors.primary} padding={1}>
-          <text fg={colors.bg}>Reset TUI</text>
+          <text fg={colors.bg}>{t("tui.error.reset_tui")}</text>
         </box>
         <box onMouseUp={handleExit} backgroundColor={colors.primary} padding={1}>
-          <text fg={colors.bg}>Exit</text>
+          <text fg={colors.bg}>{t("tui.error.exit")}</text>
         </box>
       </box>
       <scrollbox height={Math.floor(term().height * 0.7)} scrollAcceleration={getScrollAcceleration()}>

@@ -7,6 +7,7 @@ import { useDialog, type DialogContext } from "@tui/ui/dialog"
 import { Link } from "@tui/ui/link"
 import { GoLogo } from "./logo"
 import { BgPulse, type BgPulseMask } from "./bg-pulse"
+import { useLanguage } from "@tui/context/language"
 
 const GO_URL = "https://opencode.ai/go"
 const PAD_X = 3
@@ -31,6 +32,7 @@ export function DialogGoUpsell(props: DialogGoUpsellProps) {
   const dialog = useDialog()
   const { theme } = useTheme()
   const fg = selectedForeground(theme)
+  const { t } = useLanguage()
   const [selected, setSelected] = createSignal<"dismiss" | "subscribe">("subscribe")
   const [center, setCenter] = createSignal<{ x: number; y: number } | undefined>()
   const [masks, setMasks] = createSignal<BgPulseMask[]>([])
@@ -90,21 +92,21 @@ export function DialogGoUpsell(props: DialogGoUpsellProps) {
       <box paddingLeft={PAD_X} paddingRight={PAD_X} paddingBottom={1} gap={1}>
         <box ref={(item: BoxRenderable) => (headingBox = item)} flexDirection="row" justifyContent="space-between">
           <text attributes={TextAttributes.BOLD} fg={theme.text}>
-            Free limit reached
+            {t("tui.dialog.go_upsell.title")}
           </text>
           <text fg={theme.textMuted} onMouseUp={() => dialog.clear()}>
-            esc
+            {t("tui.dialog.close_hint")}
           </text>
         </box>
         <box ref={(item: BoxRenderable) => (descBox = item)} gap={0}>
           <box flexDirection="row">
-            <text fg={theme.textMuted}>Subscribe to </text>
+            <text fg={theme.textMuted}>{t("tui.dialog.go_upsell.subscribe")}</text>
             <text attributes={TextAttributes.BOLD} fg={theme.textMuted}>
-              OpenCode Go
+              {t("tui.dialog.go_upsell.product")}
             </text>
-            <text fg={theme.textMuted}> for reliable access to the</text>
+            <text fg={theme.textMuted}>{t("tui.dialog.go_upsell.description")}</text>
           </box>
-          <text fg={theme.textMuted}>best open-source models, starting at $5/month.</text>
+          <text fg={theme.textMuted}>{t("tui.dialog.go_upsell.price")}</text>
         </box>
         <box alignItems="center" gap={1} paddingBottom={1}>
           <box ref={(item: BoxRenderable) => (logoBox = item)}>
@@ -124,7 +126,7 @@ export function DialogGoUpsell(props: DialogGoUpsellProps) {
               fg={selected() === "dismiss" ? fg : theme.textMuted}
               attributes={selected() === "dismiss" ? TextAttributes.BOLD : undefined}
             >
-              don't show again
+              {t("tui.dialog.go_upsell.dont_show")}
             </text>
           </box>
           <box
@@ -138,7 +140,7 @@ export function DialogGoUpsell(props: DialogGoUpsellProps) {
               fg={selected() === "subscribe" ? fg : theme.text}
               attributes={selected() === "subscribe" ? TextAttributes.BOLD : undefined}
             >
-              subscribe
+              {t("tui.dialog.go_upsell.subscribe_btn")}
             </text>
           </box>
         </box>

@@ -424,6 +424,13 @@ const InfoSchema = Schema.Struct({
       }),
     }),
   ).annotate({ description: "Dynamic workflow runtime settings." }),
+  files: Schema.optional(
+    Schema.Struct({
+      encoding: Schema.optional(Schema.String).annotate({
+        description: "Default encoding for reading text files. Defaults to 'utf-8'. Use 'gbk' for Chinese Windows files.",
+      }),
+    }),
+  ).annotate({ description: "File system configuration." }),
 })
 
 // Schema.Struct produces readonly types by default, but the service code

@@ -9762,6 +9762,9 @@
               },
               "message": {
                 "type": "string"
+              },
+              "startedAt": {
+                "type": "number"
               }
             },
             "required": ["type"]

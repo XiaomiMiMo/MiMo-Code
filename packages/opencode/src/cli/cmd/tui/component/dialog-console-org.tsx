@@ -4,6 +4,7 @@ import { useSDK } from "@tui/context/sdk"
 import { useDialog } from "@tui/ui/dialog"
 import { useToast } from "@tui/ui/toast"
 import { useTheme } from "@tui/context/theme"
+import { useLanguage } from "@tui/context/language"
 import type { ExperimentalConsoleListOrgsResponse } from "@mimo-ai/sdk/v2"
 
 type OrgOption = ExperimentalConsoleListOrgsResponse["orgs"][number]
@@ -23,6 +24,7 @@ export function DialogConsoleOrg() {
   const sdk = useSDK()
   const dialog = useDialog()
   const toast = useToast()
+  const { t } = useLanguage()
   const { theme } = useTheme()
 
   const [orgs] = createResource(async () => {
@@ -37,7 +39,7 @@ export function DialogConsoleOrg() {
     if (listed === undefined) {
       return [
         {
-          title: "Loading orgs...",
+          title: t("tui.dialog.org.loading"),
           value: "loading",
           onSelect: () => {},
         },

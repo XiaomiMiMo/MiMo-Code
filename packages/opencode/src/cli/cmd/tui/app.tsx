@@ -34,6 +34,7 @@ import { DialogWorktree } from "@tui/component/dialog-worktree"
 import { DialogThemeList } from "@tui/component/dialog-theme-list"
 import { DialogImageList } from "@tui/component/dialog-image-list"
 import { DialogLogoDesign } from "@tui/component/dialog-logo-design"
+import { DialogExperts } from "@tui/component/dialog-experts"
 import { DialogHelp } from "./ui/dialog-help"
 import { CommandProvider, useCommandDialog } from "@tui/component/dialog-command"
 import { DialogAgent } from "@tui/component/dialog-agent"
@@ -360,7 +361,7 @@ function App(props: { onSnapshot?: () => Promise<string[]> }) {
         if (!providerID || !modelID)
           return toast.show({
             variant: "warning",
-            message: `Invalid model format: ${args.model}`,
+            message: t("tui.error.invalid_model", { model: args.model }),
             duration: 3000,
           })
         local.model.set({ providerID, modelID }, { recent: true })
@@ -388,7 +389,7 @@ function App(props: { onSnapshot?: () => Promise<string[]> }) {
           if (result.data?.id) {
             route.navigate({ type: "session", sessionID: result.data.id })
           } else {
-            toast.show({ message: "Failed to fork session", variant: "error" })
+            toast.show({ message: t("tui.error.fork_failed"), variant: "error" })
           }
         })
       } else {
@@ -408,7 +409,7 @@ function App(props: { onSnapshot?: () => Promise<string[]> }) {
       if (result.data?.id) {
         route.navigate({ type: "session", sessionID: result.data.id })
       } else {
-        toast.show({ message: "Failed to fork session", variant: "error" })
+        toast.show({ message: t("tui.error.fork_failed"), variant: "error" })
       }
     })
   })
@@ -417,7 +418,7 @@ function App(props: { onSnapshot?: () => Promise<string[]> }) {
   const connected = useConnected()
 
   // Seed never-ask from the launch flag once connected (the server starts with
-  // it off; this mirrors --never-ask to the question service).
+  // it off; this mirrors --never-ask-questions to the question service).
   let seededNeverAsk = false
   createEffect(() => {
     if (seededNeverAsk || !args.neverAsk || !connected()) return
@@ -541,7 +542,8 @@ function App(props: { onSnapshot?: () => Promise<string[]> }) {
       value: "question.never_ask.toggle",
       category: "agent",
       slash: {
-        name: "never-ask",
+        name: "never-ask-questions",
+        aliases: ["never-ask"],
       },
       onSelect: () => {
         const next = !local.neverAsk.current()
@@ -674,6 +676,21 @@ function App(props: { onSnapshot?: () => Promise<string[]> }) {
       category: "system",
     },
     {
+      title: t("tui.command.config.reload.title"),
+      description: t("tui.command.config.reload.description"),
+      value: "config.reload",
+      slash: {
+        name: "reload",
+        aliases: ["refresh"],
+      },
+      onSelect: async (dialog) => {
+        await sync.bootstrap({ fatal: false })
+        toast.show({ message: t("tui.command.config.reload.toast"), variant: "info" })
+        dialog.clear()
+      },
+      category: "system",
+    },
+    {
       title: t("tui.command.worktree.list.title"),
       value: "worktree.list",
       slash: {
@@ -700,11 +717,24 @@ function App(props: { onSnapshot?: () => Promise<string[]> }) {
     {
       title: t("tui.command.image.switch.title"),
       value: "background.switch",
+      keybind: "background_switch",
       slash: {
         name: "background",
       },
       onSelect: () => {
         dialog.replace(() => <DialogImageList />)
+      },
+      category: "system",
+    },
+    {
+      title: t("tui.command.experts.switch.title"),
+      value: "experts.list",
+      slash: {
+        name: "expert",
+        aliases: ["experts"],
+      },
+      onSelect: () => {
+        dialog.replace(() => <DialogExperts />)
       },
       category: "system",
     },
@@ -813,7 +843,7 @@ function App(props: { onSnapshot?: () => Promise<string[]> }) {
         const files = await props.onSnapshot?.()
         toast.show({
           variant: "info",
-          message: `Heap snapshot written to ${files?.join(", ")}`,
+          message: t("tui.heap_snapshot.written", { files: files?.join(", ") ?? "?" }),
           duration: 5000,
         })
         dialog.clear()
@@ -829,7 +859,6 @@ function App(props: { onSnapshot?: () => Promise<string[]> }) {
       onSelect: () => {
         process.once("SIGCONT", () => {
           renderer.resume()
-          renderer.currentRenderBuffer.clear()
         })
 
         renderer.suspend()
@@ -940,7 +969,7 @@ function App(props: { onSnapshot?: () => Promise<string[]> }) {
       route.navigate({ type: "home" })
       toast.show({
         variant: "info",
-        message: "The current session was deleted",
+        message: t("tui.session.deleted"),
       })
     }
   })
@@ -965,8 +994,8 @@ function App(props: { onSnapshot?: () => Promise<string[]> }) {
 
     const choice = await DialogConfirm.show(
       dialog,
-      t("tui.toast.update_available.title"),
-      t("tui.toast.update_available.confirm", { version }),
+      t("tui.update.available.title"),
+      t("tui.update.available.message", { version }),
       "skip",
     )
 
@@ -979,7 +1008,7 @@ function App(props: { onSnapshot?: () => Promise<string[]> }) {
 
     toast.show({
       variant: "info",
-      message: t("tui.toast.update_available.updating", { version }),
+      message: t("tui.update.in_progress", { version }),
       duration: 30000,
     })
 
@@ -988,8 +1017,8 @@ function App(props: { onSnapshot?: () => Promise<string[]> }) {
     if (result.error || !result.data?.success) {
       toast.show({
         variant: "error",
-        title: t("tui.toast.update_available.title"),
-        message: t("tui.toast.update_available.failed"),
+        title: t("tui.update.failed.title"),
+        message: t("tui.update.failed.message"),
         duration: 10000,
       })
       return
@@ -997,20 +1026,11 @@ function App(props: { onSnapshot?: () => Promise<string[]> }) {
 
     await DialogAlert.show(
       dialog,
-      t("tui.toast.update_available.title"),
-      t("tui.toast.update_available.success", { version: result.data.version }),
+      t("tui.update.complete.title"),
+      t("tui.update.complete.message", { version: result.data.version }),
     )
 
     void exit()
-  })
-
-  event.on("installation.updated", (evt) => {
-    toast.show({
-      variant: "success",
-      title: t("tui.toast.updated.title"),
-      message: t("tui.toast.updated.message", { version: evt.properties.version }),
-      duration: 10000,
-    })
   })
 
   // Handle interactive bash commands: suspend TUI, let user interact directly in terminal
@@ -1020,7 +1040,7 @@ function App(props: { onSnapshot?: () => Promise<string[]> }) {
     const id = typeof props.id === "string" ? props.id : undefined
     const command = typeof props.command === "string" ? props.command : undefined
     const cwd = typeof props.cwd === "string" ? props.cwd : undefined
-    const description = typeof props.description === "string" ? props.description : "(interactive)"
+    const description = typeof props.description === "string" ? props.description : t("tui.bash.interactive")
     const env = props.env && typeof props.env === "object" ? (props.env as Record<string, string>) : undefined
     if (!id || !command || !cwd) return
 
@@ -1051,7 +1071,6 @@ function App(props: { onSnapshot?: () => Promise<string[]> }) {
       } finally {
         renderer.currentRenderBuffer.clear()
         renderer.resume()
-        renderer.currentRenderBuffer.clear()
         renderer.requestRender()
       }
 
@@ -1075,7 +1094,7 @@ function App(props: { onSnapshot?: () => Promise<string[]> }) {
         } catch (retryErr: any) {
           toast.show({
             variant: "error",
-            message: `Interactive command reply failed: ${retryErr?.message ?? "unknown"}`,
+            message: t("tui.error.interactive_reply_failed", { error: retryErr?.message ?? "unknown" }),
           })
         }
       }

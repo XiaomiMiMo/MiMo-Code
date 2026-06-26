@@ -11,6 +11,7 @@ import { allocImageId, detectImageProtocol, kittyClear, kittyDisplay } from "../
 const HALF_BLOCK = "▀"
 const PROTOCOL = detectImageProtocol()
 const IMAGE_ALPHA = 0.45
+const IMAGE_EXT = new Set([".png", ".jpg", ".jpeg"])
 
 type Pixels = {
   data: Uint8Array | Buffer
@@ -34,15 +35,50 @@ async function decode(filePath: string): Promise<Pixels | undefined> {
   return undefined
 }
 
-function sample(p: Pixels, sx: number, sy: number) {
-  const x = Math.min(p.width - 1, Math.max(0, Math.floor(sx)))
-  const y = Math.min(p.height - 1, Math.max(0, Math.floor(sy)))
-  const i = (y * p.width + x) * 4
+function pixelAt(p: Pixels, x: number, y: number) {
+  const cx = Math.max(0, Math.min(p.width - 1, Math.floor(x)))
+  const cy = Math.max(0, Math.min(p.height - 1, Math.floor(y)))
+  const i = (cy * p.width + cx) * 4
   return {
     r: p.data[i] ?? 0,
     g: p.data[i + 1] ?? 0,
     b: p.data[i + 2] ?? 0,
     a: p.data[i + 3] ?? 255,
+  }
+}
+
+function lerp(a: number, b: number, t: number) {
+  return a + (b - a) * t
+}
+
+function sample(p: Pixels, sx: number, sy: number) {
+  const x0 = Math.floor(sx)
+  const y0 = Math.floor(sy)
+  const x1 = x0 + 1
+  const y1 = y0 + 1
+  const fx = sx - x0
+  const fy = sy - y0
+
+  const tl = pixelAt(p, x0, y0)
+  const tr = pixelAt(p, x1, y0)
+  const bl = pixelAt(p, x0, y1)
+  const br = pixelAt(p, x1, y1)
+
+  const topR = lerp(tl.r, tr.r, fx)
+  const topG = lerp(tl.g, tr.g, fx)
+  const topB = lerp(tl.b, tr.b, fx)
+  const topA = lerp(tl.a, tr.a, fx)
+
+  const botR = lerp(bl.r, br.r, fx)
+  const botG = lerp(bl.g, br.g, fx)
+  const botB = lerp(bl.b, br.b, fx)
+  const botA = lerp(bl.a, br.a, fx)
+
+  return {
+    r: Math.round(lerp(topR, botR, fy)),
+    g: Math.round(lerp(topG, botG, fy)),
+    b: Math.round(lerp(topB, botB, fy)),
+    a: Math.round(lerp(topA, botA, fy)),
   }
 }
 
@@ -75,7 +111,7 @@ function StyledBackgroundText(props: { content: () => StyledText | undefined }) 
 }
 
 export function BackgroundImage(props: { path: string }) {
-  const kitty = createMemo(() => PROTOCOL === "kitty" && path.extname(props.path).toLowerCase() === ".png")
+  const kitty = createMemo(() => PROTOCOL === "kitty" && IMAGE_EXT.has(path.extname(props.path).toLowerCase()))
   return (
     <Show when={kitty()} fallback={<BackgroundImageHalfBlock path={props.path} />}>
       <BackgroundImageKitty path={props.path} />

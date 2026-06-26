@@ -14,7 +14,7 @@ Consolidate a feature's spec history into a single human-readable final report. 
 
 **Announce at start:** "I'm using the report skill to write the final report for this feature."
 
-**Save reports to:** the `reports/` directory given in the `<compose_docs_dir>` block of your prompt, as `<feature-name>.md`
+**Save reports to:** `docs/compose/reports/<feature-name>.md`
 - No date in filename — the report is overwritten in place when the feature evolves
 - Git history tracks revisions
 - User preferences for report location override this default
@@ -54,10 +54,10 @@ Every report MUST use this structure:
 feature: <feature-name>
 status: delivered
 specs:
-  - <spec-1-path>
-  - <spec-2-path>
+  - docs/compose/specs/<spec-1>.md
+  - docs/compose/specs/<spec-2>.md
 plans:
-  - <plan-path>
+  - docs/compose/plans/<plan>.md
 branch: <branch-name>
 commits: <first-sha>..<last-sha>
 ---

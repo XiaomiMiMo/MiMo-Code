@@ -16,7 +16,7 @@ import { MessageID, PartID } from "@/session/schema"
 import { createStore, produce, unwrap } from "solid-js/store"
 import { useKeybind } from "@tui/context/keybind"
 import { usePromptHistory, type PromptInfo } from "./history"
-import { assign, expandPlaceholders } from "./part"
+import { assign } from "./part"
 import { usePromptStash } from "./stash"
 import { DialogStash } from "../dialog-stash"
 import { type AutocompleteRef, Autocomplete } from "./autocomplete"
@@ -43,7 +43,6 @@ import { useTextareaKeybindings } from "../textarea-keybindings"
 import { DialogSkill } from "../dialog-skill"
 import { DialogWorkspaceCreate, restoreWorkspaceSession } from "../dialog-workspace-create"
 import { DialogWorkspaceUnavailable } from "../dialog-workspace-unavailable"
-import { DialogAgreement, FREE_AGREEMENT_KEY, FREE_MODEL_IDS } from "../dialog-agreement"
 import { useArgs } from "@tui/context/args"
 
 export type PromptProps = {
@@ -126,9 +125,8 @@ export function Prompt(props: PromptProps) {
   const kv = useKV()
   const animationsEnabled = createMemo(() => kv.get("animations_enabled", true))
   const voiceEnabled = createMemo(() => kv.get("voice_enabled", false))
-  const voiceSendEnabled = createMemo(() => kv.get("voice_send_command", false))
+  const voiceSendEnabled = createMemo(() => kv.get("voice_send_command", true))
   const voiceControlEnabled = createMemo(() => kv.get("voice_control_enabled", false))
-  const currentProviderLabel = createMemo(() => local.model.parsed().provider)
   const [voiceState, setVoiceState] = createSignal<"idle" | "listening" | "speaking" | "processing" | "finishing">(
     activeVoice ? (activeVoice.pending > 0 ? "processing" : "listening") : "idle",
   )
@@ -228,24 +226,18 @@ export function Prompt(props: PromptProps) {
       return
     }
     if (state === "finishing") return
-    // Start streaming — only validate the active mode's provider
-    const voiceConfig = sync.data.config.voice
-    const resolved = Voice.resolveVoiceConfig(voiceConfig)
-    const activeConfig = voiceControlEnabled() ? resolved.control : resolved.asr
-    const creds = Voice.resolveCredentials(sync.data.provider, activeConfig)
-    if ("error" in creds) {
-      const vars = { provider: creds.providerID, model: creds.model }
-      const msg = !voiceConfig ? t("tui.voice.error.no_auth")
-        : creds.error === "not_found" ? t("tui.voice.error.provider_not_found", vars)
-        : creds.error === "no_url" ? t("tui.voice.error.no_url", vars)
-        : t("tui.voice.error.no_auth_provider", vars)
-      toast.show({ message: msg, variant: "error" })
+    // Start streaming
+    const xiaomi = sync.data.provider.find((p) => p.id === "xiaomi")
+    if (!xiaomi?.key) {
+      toast.show({ message: t("tui.voice.error.no_auth"), variant: "error" })
       return
     }
     if (!Voice.isAvailable()) {
       toast.show({ message: t("tui.voice.error.no_recorder"), variant: "error" })
       return
     }
+    const apiKey = xiaomi.key
+    const baseUrl = (xiaomi.options?.baseURL as string) || "https://api.xiaomimimo.com/v1"
 
     const av: NonNullable<typeof activeVoice> = {
       handle: undefined!,
@@ -277,9 +269,8 @@ export function Prompt(props: PromptProps) {
 
               const ctrl = await Voice.processVoiceControl({
                 audio: segment.audio,
-                apiKey: creds.apiKey,
-                baseUrl: creds.baseUrl,
-                model: resolved.control.model,
+                apiKey,
+                baseUrl,
                 currentText,
                 currentAgent,
                 availableAgents,
@@ -301,17 +292,15 @@ export function Prompt(props: PromptProps) {
               }
             } finally {
               av.pending--
-              if (activeVoice === av && voiceState() !== "speaking")
-                av.setState(av.pending > 0 ? "processing" : "listening")
+              if (activeVoice === av) av.setState("listening")
               if (!activeVoice && av.pending <= 0) av.setState("idle")
             }
           }).catch(() => {})
         } else {
           Voice.transcribeAudio({
             audio: segment.audio,
-            apiKey: creds.apiKey,
-            baseUrl: creds.baseUrl,
-            model: resolved.asr.model,
+            apiKey,
+            baseUrl,
           }).then((text) => {
             if (text) {
               if (voiceSendEnabled() && Voice.SEND_RE.test(text.replace(/[\s。.!！？?，,]+$/g, "").trim())) {
@@ -323,13 +312,11 @@ export function Prompt(props: PromptProps) {
               av.showError(t("tui.voice.error.network"))
             }
             av.pending--
-            if (activeVoice === av && voiceState() !== "speaking")
-              av.setState(av.pending > 0 ? "processing" : "listening")
+            if (activeVoice === av) av.setState("listening")
             if (!activeVoice && av.pending <= 0) av.setState("idle")
           }).catch(() => {
             av.pending--
-            if (activeVoice === av && voiceState() !== "speaking")
-              av.setState(av.pending > 0 ? "processing" : "listening")
+            if (activeVoice === av) av.setState("listening")
             if (!activeVoice && av.pending <= 0) av.setState("idle")
           })
         }
@@ -337,13 +324,8 @@ export function Prompt(props: PromptProps) {
       onActiveChange: (active) => {
         if (active && activeVoice === av) av.setState("speaking")
       },
-      onError: (err) => {
-        const msg = err.message || ""
-        if (msg.includes("no default audio") || msg.includes("not found") || msg.includes("Cannot open") || msg.includes("ALSA")) {
-          av.showError(t("tui.voice.error.no_device"))
-        } else {
-          av.showError(`${t("tui.voice.error.recorder_failed")}: ${msg}`)
-        }
+      onError: () => {
+        av.showError(t("tui.voice.error.no_recorder"))
         activeVoice = undefined
         av.setState("idle")
       },
@@ -396,7 +378,7 @@ export function Prompt(props: PromptProps) {
 
   createEffect(() => {
     if (props.disabled) input.cursorColor = theme.backgroundElement
-    if (!props.disabled) input.cursorColor = theme.text
+    if (!props.disabled) input.cursorColor = theme.textMuted
   })
 
   const lastUserMessage = createMemo(() => {
@@ -708,23 +690,6 @@ export function Prompt(props: PromptProps) {
         },
       },
       {
-        title: t("tui.command.consent.revoke.title"),
-        value: "consent.revoke",
-        category: "prompt",
-        slash: {
-          name: "revoke-consent",
-        },
-        onSelect: (dialog) => {
-          kv.delete(FREE_AGREEMENT_KEY)
-          dialog.clear()
-          toast.show({
-            message: t("tui.consent.revoked"),
-            variant: "info",
-            duration: 3000,
-          })
-        },
-      },
-      {
         title: voiceEnabled() ? t("tui.command.voice.toggle.title_on") : t("tui.command.voice.toggle.title_off"),
         value: "voice.toggle",
         category: "prompt",
@@ -994,13 +959,7 @@ export function Prompt(props: PromptProps) {
     },
   ])
 
-  // While the free-model agreement dialog is open, ignore any further submit()
-  // calls. Enter triggers submit twice (the input_submit keybind plus the
-  // textarea's deferred onSubmit), and without this guard the deferred call can
-  // interleave with the post-accept re-submit and drop the user's message.
-  let agreementPending = false
   async function submit() {
-    if (agreementPending) return false
     setGhost("")
     // IME: double-defer may fire before onContentChange flushes the last
     // composed character (e.g. Korean hangul) to the store, so read
@@ -1025,25 +984,6 @@ export function Prompt(props: PromptProps) {
       return false
     }
 
-    // Free models require a one-time acknowledgment of the terms and privacy
-    // policy. Gate submission until the user accepts; the flag is stored in KV.
-    const isFreeModel = FREE_MODEL_IDS.has(selectedModel.modelID)
-    if (isFreeModel && !kv.get(FREE_AGREEMENT_KEY)) {
-      agreementPending = true
-      DialogAgreement.show(dialog, {
-        onConfirm: () => {
-          kv.set(FREE_AGREEMENT_KEY, true)
-          void submit()
-        },
-        // Fires on any dismissal (confirm, cancel, esc, click-outside). Reset
-        // the guard here so submission is unblocked once the dialog is gone.
-        onClose: () => {
-          agreementPending = false
-        },
-      })
-      return false
-    }
-
     const workspaceSession = props.sessionID ? sync.session.get(props.sessionID) : undefined
     const workspaceID = workspaceSession?.workspaceID
     const workspaceStatus = workspaceID ? (project.workspace.status(workspaceID) ?? "error") : undefined
@@ -1060,6 +1000,7 @@ export function Prompt(props: PromptProps) {
                     sync,
                     project,
                     toast,
+                    t,
                     workspaceID: nextWorkspaceID,
                     sessionID: props.sessionID!,
                   })
@@ -1091,20 +1032,23 @@ export function Prompt(props: PromptProps) {
     }
 
     const messageID = MessageID.ascending()
+    let inputText = store.prompt.input
 
-    // Expand pasted text inline before submitting. Extmark offsets are
-    // display-width based while plainText is UTF-16, so expandPlaceholders
-    // bridges the two coordinate systems (otherwise CJK content desyncs them).
-    const marks = input.extmarks
-      .getAllForTypeId(promptPartTypeId)
-      .flatMap((extmark: { id: number; start: number; end: number }) => {
-        const partIndex = store.extmarkToPartIndex.get(extmark.id)
-        if (partIndex === undefined) return []
+    // Expand pasted text inline before submitting
+    const allExtmarks = input.extmarks.getAllForTypeId(promptPartTypeId)
+    const sortedExtmarks = allExtmarks.sort((a: { start: number }, b: { start: number }) => b.start - a.start)
+
+    for (const extmark of sortedExtmarks) {
+      const partIndex = store.extmarkToPartIndex.get(extmark.id)
+      if (partIndex !== undefined) {
         const part = store.prompt.parts[partIndex]
-        if (part?.type !== "text" || !part.text) return []
-        return [{ start: extmark.start, end: extmark.end, text: part.text }]
-      })
-    const inputText = expandPlaceholders(store.prompt.input, marks)
+        if (part?.type === "text" && part.text) {
+          const before = inputText.slice(0, extmark.start)
+          const after = inputText.slice(extmark.end)
+          inputText = before + part.text + after
+        }
+      }
+    }
 
     // Filter out text parts (pasted content) since they're now expanded inline
     const nonTextParts = store.prompt.parts.filter((part) => part.type !== "text")
@@ -1180,7 +1124,7 @@ export function Prompt(props: PromptProps) {
         })
         .catch((err) => {
           toast.show({
-            message: err instanceof Error ? err.message : "Failed to send message",
+            message: err instanceof Error ? err.message : t("tui.error.send_message_failed"),
             variant: "error",
           })
         })
@@ -1490,15 +1434,21 @@ export function Prompt(props: PromptProps) {
                   e.preventDefault()
                   return
                 }
-                // Handle Ctrl+V for terminals that forward it to the app as a raw
-                // keypress (common on macOS/Linux). The textarea has no built-in
-                // paste action, so without this nothing gets inserted. Terminals
-                // that handle paste natively (e.g. Windows Terminal 1.25+) emit a
-                // bracketed paste instead and never reach this path.
+                // Check clipboard for images before terminal-handled paste runs.
+                // This helps terminals that forward Ctrl+V to the app; Windows
+                // Terminal 1.25+ usually handles Ctrl+V before this path.
                 if (keybind.match("input_paste", e)) {
-                  e.preventDefault()
-                  await pasteFromClipboard()
-                  return
+                  const content = await Clipboard.read()
+                  if (content?.mime.startsWith("image/")) {
+                    e.preventDefault()
+                    await pasteAttachment({
+                      filename: "clipboard",
+                      mime: content.mime,
+                      content: content.data,
+                    })
+                    return
+                  }
+                  // If no image, let the default paste behavior continue
                 }
                 if (keybind.match("input_clear", e) && store.prompt.input !== "") {
                   input.clear()
@@ -1615,12 +1565,12 @@ export function Prompt(props: PromptProps) {
                 setTimeout(() => {
                   // setTimeout is a workaround and needs to be addressed properly
                   if (!input || input.isDestroyed) return
-                  input.cursorColor = theme.text
+                  input.cursorColor = theme.textMuted
                 }, 0)
               }}
               onMouseDown={(r: MouseEvent) => r.target?.focus()}
               focusedBackgroundColor={theme.backgroundElement}
-              cursorColor={theme.text}
+              cursorColor={theme.accent}
               syntaxStyle={syntax()}
             />
             <box flexDirection="row" flexShrink={0} paddingTop={1} gap={1} justifyContent="space-between">
@@ -1629,28 +1579,22 @@ export function Prompt(props: PromptProps) {
                   {(agent) => (
                     <>
                       <text fg={fadeColor(highlight(), agentMetaAlpha())}>
-                        {store.mode === "shell" ? "Shell" : Locale.titlecase(agent().name)}
+                        {store.mode === "shell" ? "Shell" : (t(`tui.agent.name.${agent().name}`) || Locale.titlecase(agent().name))}
                       </text>
                       <Show when={store.mode === "normal"}>
                         <box flexDirection="row" gap={1}>
                           <text fg={fadeColor(theme.textMuted, modelMetaAlpha())}>·</text>
                           <text
                             flexShrink={0}
-                            fg={fadeColor(keybind.leader ? theme.textMuted : theme.text, modelMetaAlpha())}
+                            fg={fadeColor(keybind.leader ? theme.textMuted : theme.textMuted, modelMetaAlpha())}
                           >
                             {local.model.parsed().model}
                           </text>
-                          {/* Hide provider label for mimo-auto since model name already contains "MiMo" */}
-                          <Show when={!(local.model.current()?.providerID === "mimo" && local.model.current()?.modelID === "mimo-auto")}>
-                            <text fg={fadeColor(theme.textMuted, modelMetaAlpha())}>
-                              {currentProviderLabel()}
-                            </text>
-                          </Show>
                           <Show when={showVariant()}>
                             <text fg={fadeColor(theme.textMuted, variantMetaAlpha())}>·</text>
                             <text>
                               <span style={{ fg: fadeColor(theme.warning, variantMetaAlpha()), bold: true }}>
-                                {local.model.variant.current()}
+                                {t(`tui.variant.name.${local.model.variant.current()}`) || local.model.variant.current()}
                               </span>
                             </text>
                           </Show>
@@ -1661,7 +1605,7 @@ export function Prompt(props: PromptProps) {
                 </Show>
                 <Show when={local.neverAsk.current()}>
                   <text>
-                    <span style={{ fg: theme.error, bold: true }}>«never-ask»</span>
+                    <span style={{ fg: theme.error, bold: true }}>{t("tui.never_ask.badge")}</span>
                   </text>
                 </Show>
               </box>
@@ -1745,10 +1689,27 @@ export function Prompt(props: PromptProps) {
                     const s = status()
                     return s.type === "busy" ? s.message : undefined
                   })
+                  const busyStartedAt = createMemo(() => {
+                    const s = status()
+                    return s.type === "busy" ? s.startedAt : undefined
+                  })
+                  const [elapsed, setElapsed] = createSignal(0)
+                  onMount(() => {
+                    const timer = setInterval(() => {
+                      const started = busyStartedAt()
+                      if (started) setElapsed(Math.floor((Date.now() - started) / 1000))
+                    }, 1000)
+                    onCleanup(() => clearInterval(timer))
+                  })
                   return (
-                    <Show when={busyMessage()}>
-                      <text fg={theme.textMuted}>{busyMessage()}</text>
-                    </Show>
+                    <>
+                      <Show when={busyMessage()}>
+                        <text fg={theme.textMuted}>{busyMessage()}</text>
+                      </Show>
+                      <Show when={busyStartedAt() && elapsed() > 0}>
+                        <text fg={theme.textMuted}>{formatDuration(elapsed())}</text>
+                      </Show>
+                    </>
                   )
                 })()}
                 <box flexDirection="row" gap={1} flexShrink={0}>
@@ -1782,11 +1743,18 @@ export function Prompt(props: PromptProps) {
                         clearInterval(timer)
                       })
                     })
+                    const retryMessageMap: Record<string, string> = {
+                      "Too Many Requests": t("tui.error.too_many_requests"),
+                      "Provider is overloaded": t("tui.error.provider_overloaded"),
+                      "Rate Limited": t("tui.error.rate_limited"),
+                      "Transient network error": t("tui.error.transient_network"),
+                    }
+                    const translateRetryMessage = (msg: string) => retryMessageMap[msg] ?? msg
                     const handleMessageClick = () => {
                       const r = retry()
                       if (!r) return
                       if (isTruncated()) {
-                        void DialogAlert.show(dialog, "Retry Error", r.message)
+                        void DialogAlert.show(dialog, t("tui.error.retry_title"), translateRetryMessage(r.message))
                       }
                     }
 
@@ -1794,9 +1762,11 @@ export function Prompt(props: PromptProps) {
                       const r = retry()
                       if (!r) return ""
                       const baseMessage = message()
-                      const truncatedHint = isTruncated() ? " (click to expand)" : ""
+                      const truncatedHint = isTruncated() ? t("tui.prompt.truncated.expand") : ""
                       const duration = formatDuration(seconds())
-                      const retryInfo = ` [retrying ${duration ? `in ${duration} ` : ""}attempt #${r.attempt}]`
+                      const retryInfo = duration
+                        ? ` [${t("tui.prompt.retry.retrying")} ${t("tui.prompt.retry.inDuration", { duration })} ${t("tui.prompt.retry.attempt", { attempt: r.attempt })}]`
+                        : ` [${t("tui.prompt.retry.retrying")} ${t("tui.prompt.retry.attempt", { attempt: r.attempt })}]`
                       return baseMessage + truncatedHint + retryInfo
                     }
 
@@ -1810,10 +1780,10 @@ export function Prompt(props: PromptProps) {
                   })()}
                 </box>
               </box>
-              <text fg={store.interrupt > 0 ? theme.primary : theme.text}>
-                esc{" "}
+              <text fg={store.interrupt > 0 ? theme.primary : theme.textMuted}>
+                {t("tui.prompt.hint.esc")}{" "}
                 <span style={{ fg: store.interrupt > 0 ? theme.primary : theme.textMuted }}>
-                  {store.interrupt > 0 ? "again to interrupt" : "interrupt"}
+                  {store.interrupt > 0 ? t("tui.prompt.hint.interrupt_again") : t("tui.prompt.hint.interrupt")}
                 </span>
               </text>
             </box>
@@ -1830,23 +1800,23 @@ export function Prompt(props: PromptProps) {
                         </text>
                       )}
                     </Show>
-                    <text fg={theme.text}>
+                    <text fg={theme.textMuted}>
                       {keybind.print("agent_cycle")} <span style={{ fg: theme.textMuted }}>{t("tui.prompt.hint.switch_mode")}</span>
                     </text>
-                    <text fg={theme.text}>
+                    <text fg={theme.textMuted}>
                       {keybind.print("command_list")}{" "}
                       <span style={{ fg: theme.textMuted }}>{t("tui.prompt.hint.settings")}</span>
                     </text>
                   </box>
                   <Show when={status().type === "idle"}>
                     <box gap={2} flexDirection="row">
-                      <text fg={theme.text}>
+                      <text fg={theme.textMuted}>
                         @ <span style={{ fg: theme.textMuted }}>{t("tui.prompt.hint.attach_file")}</span>
                       </text>
-                      <text fg={theme.text}>
+                      <text fg={theme.textMuted}>
                         $ <span style={{ fg: theme.textMuted }}>{t("tui.prompt.hint.subagent")}</span>
                       </text>
-                      <text fg={theme.text}>
+                      <text fg={theme.textMuted}>
                         / <span style={{ fg: theme.textMuted }}>{t("tui.prompt.hint.commands")}</span>
                       </text>
                     </box>
@@ -1854,8 +1824,8 @@ export function Prompt(props: PromptProps) {
                 </Match>
                 <Match when={store.mode === "shell"}>
                   <box flexGrow={1} flexDirection="row" justifyContent="flex-end">
-                    <text fg={theme.text}>
-                      esc <span style={{ fg: theme.textMuted }}>exit shell mode</span>
+                    <text fg={theme.textMuted}>
+                      esc <span style={{ fg: theme.textMuted }}>{t("tui.shell.exit")}</span>
                     </text>
                   </box>
                 </Match>

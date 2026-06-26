@@ -34,6 +34,7 @@ export namespace AppFileSystem {
     readonly globUp: (pattern: string, start: string, stop?: string) => Effect.Effect<string[], Error>
     readonly glob: (pattern: string, options?: Glob.Options) => Effect.Effect<string[], Error>
     readonly globMatch: (pattern: string, filepath: string) => boolean
+    readonly readFileStringWithEncoding: (path: string, encoding: string) => Effect.Effect<string, Error>
   }
 
   export class Service extends Context.Service<Service, Interface>()("@opencode/FileSystem") {}
@@ -160,6 +161,15 @@ export namespace AppFileSystem {
         return result
       })
 
+      const readFileStringWithEncoding = Effect.fn("FileSystem.readFileStringWithEncoding")(
+        function* (filePath: string, encoding: string) {
+          return yield* Effect.tryPromise({
+            try: () => NFS.readFile(filePath, { encoding: encoding as BufferEncoding }),
+            catch: (cause) => new FileSystemError({ method: "readFileStringWithEncoding", cause }),
+          })
+        },
+      )
+
       return Service.of({
         ...fs,
         existsSafe,
@@ -175,6 +185,7 @@ export namespace AppFileSystem {
         globUp,
         glob,
         globMatch: Glob.match,
+        readFileStringWithEncoding,
       })
     }),
   )

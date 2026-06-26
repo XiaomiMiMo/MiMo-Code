@@ -13,6 +13,7 @@ import { ReadTool } from "../../src/tool/read"
 import { Truncate } from "../../src/tool"
 import { Tool } from "../../src/tool"
 import { Filesystem } from "../../src/util"
+import { Config } from "../../src/config"
 import { provideInstance, tmpdirScoped } from "../fixture/fixture"
 import { testEffect } from "../lib/effect"
 
@@ -37,6 +38,7 @@ const it = testEffect(
   Layer.mergeAll(
     Agent.defaultLayer,
     AppFileSystem.defaultLayer,
+    Config.defaultLayer,
     CrossSpawnSpawner.defaultLayer,
     Instruction.defaultLayer,
     LSP.defaultLayer,

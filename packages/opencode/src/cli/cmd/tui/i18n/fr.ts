@@ -29,11 +29,6 @@ export const dict = {
   "tui.home.placeholder.example.todo": "Corriger un TODO dans le code",
   "tui.home.placeholder.example.stack": "Quelle est la stack technique de ce projet ?",
   "tui.home.placeholder.example.tests": "Réparer les tests cassés",
-  "tui.home.agreement.prefix": "En utilisant MiMoCode, vous acceptez nos ",
-  "tui.home.agreement.terms": "Conditions d'utilisation",
-  "tui.home.agreement.separator": " et notre ",
-  "tui.home.agreement.privacy": "Politique de confidentialité",
-  "tui.home.agreement.suffix": "",
 
   // Prompt bottom hints (trigger characters)
   "tui.prompt.hint.attach_file": "joindre un fichier",
@@ -85,7 +80,7 @@ export const dict = {
   "tui.tips.command_palette":
     "Appuyez sur {highlight}Ctrl+P{/highlight} pour voir toutes les actions et commandes disponibles",
   "tui.tips.login":
-    "Exécutez {highlight}/login{/highlight} pour vous connecter et utiliser un Token Plan ou configurer votre propre clé API",
+    "Exécutez {highlight}/login{/highlight} pour vous connecter et utiliser votre forfait de tokens",
   "tui.tips.connect":
     "Exécutez {highlight}/connect{/highlight} pour choisir votre fournisseur LLM et ajouter des clés API",
   "tui.tips.leader":
@@ -247,18 +242,6 @@ export const dict = {
   "tui.command.category.internal": "Interne",
   "tui.command.category.external": "Externe",
 
-  // Built-in slash command descriptions
-  "tui.slash.init.description": "configuration guidée de AGENTS.md",
-  "tui.slash.review.description": "revoir les changements [commit|branch|pr], par défaut non commités",
-  "tui.slash.dream.description":
-    "consolider manuellement la mémoire du projet à partir des fichiers memory et de la trajectoire brute",
-  "tui.slash.distill.description":
-    "trouver les workflows répétés dans le travail récent et les empaqueter en skills, sous-agents ou commandes",
-  "tui.slash.goal.description":
-    "définir un objectif avec condition d'arrêt ; s'exécute jusqu'à ce qu'un juge confirme. /goal clear pour annuler",
-  "tui.slash.deep-research.description":
-    "rapport de recherche approfondi multi-sources et vérifié (exécute le workflow deep-research)",
-
   // Language switching
   "tui.command.language.switch.title": "Changer de langue",
   "tui.command.language.switch.description": "Modifier la langue d'affichage",
@@ -277,11 +260,12 @@ export const dict = {
   "tui.command.model.cycle_favorite_reverse.title": "Favoris (inverse)",
   "tui.command.agent.list.title": "Changer d'agent",
   "tui.command.mcp.list.title": "Activer/désactiver MCP",
-  "tui.command.never_ask.title_on": "Sans questions : ACTIVÉ (auto-décider, autorisations exclues) — cliquer pour désactiver",
-  "tui.command.never_ask.title_off": "Sans questions : DÉSACTIVÉ — cliquer pour activer (auto-décider, autorisations exclues)",
+  "tui.command.never_ask.title_on": "Sans questions : ACTIVÉ — désactiver (me redemander)",
+  "tui.command.never_ask.title_off": "Sans questions : DÉSACTIVÉ — activer (décider sans demander)",
   "tui.command.never_ask.toast_on":
-    "Sans questions ACTIVÉ — je ne te demanderai rien ; je choisirai moi-même la meilleure option jusqu'à ce que tu le désactives (/never-ask). Les demandes d'autorisation nécessitent toujours ton approbation.",
+    "Sans questions ACTIVÉ — je ne te demanderai rien ; je choisirai moi-même la meilleure option jusqu'à ce que tu le désactives (/never-ask-questions). Les demandes d'autorisation nécessitent toujours ton approbation.",
   "tui.command.never_ask.toast_off": "Sans questions DÉSACTIVÉ — je te redemanderai aux points de décision.",
+  "tui.never_ask.badge": "Sans questions : ON",
   "tui.command.agent.cycle.title": "Cycle d'agents",
   "tui.command.variant.cycle.title": "Cycle de variantes",
   "tui.command.variant.list.title": "Changer de variante de modèle",
@@ -309,22 +293,7 @@ export const dict = {
   "tui.dialog.ok": "OK",
   "tui.dialog.confirm.cancel": "Annuler",
   "tui.dialog.confirm.confirm": "Confirmer",
-  "tui.dialog.agreement.title": "Conditions et confidentialité",
-  "tui.dialog.agreement.message": "Veuillez les lire et les accepter pour continuer.",
-  "tui.dialog.agreement.confirm": "Accepter et continuer",
-  "tui.command.consent.revoke.title": "Révoquer l'accord du modèle gratuit",
-  "tui.consent.revoked": "Accord du modèle gratuit révoqué — vous devrez l'accepter à nouveau",
   "tui.dialog.select.placeholder": "Rechercher",
-  "tui.dialog.model.login_hint": "Astuce : exécutez /login pour vous connecter avant de changer de modèle",
-  "tui.model.mimo_auto.name": "MiMo Auto (MiMo-V2.5, gratuit pour une durée limitée)",
-  "tui.dialog.token_plan.title": "Abonnez-vous à un Token Plan ou patientez dans la file",
-  "tui.dialog.token_plan.line1":
-    "En mode gratuit, les requêtes sont mises en file d'attente. Pour un service stable et de qualité,",
-  "tui.dialog.token_plan.subscribe": "abonnez-vous à ",
-  "tui.dialog.token_plan.link": "MiMo Token Plan",
-  "tui.dialog.token_plan.link_suffix": ".",
-  "tui.dialog.token_plan.line3": "Vous pouvez aussi exécuter /login pour configurer votre propre clé API.",
-  "tui.dialog.token_plan.confirm": "Compris",
   "tui.dialog.select.no_results": "Aucun résultat trouvé",
   "tui.dialog.prompt.placeholder": "Saisir du texte",
   "tui.dialog.prompt.busy": "Traitement...",
@@ -344,13 +313,6 @@ export const dict = {
   "tui.dialog.export.hint.options_action": "pour les options",
   "tui.toast.copied_to_clipboard": "Copié dans le presse-papiers",
   "tui.toast.instructions_loaded": "Chargé {{files}}",
-  "tui.toast.update_available.title": "Mise à jour disponible",
-  "tui.toast.update_available.confirm": "La nouvelle version v{{version}} est disponible. Voulez-vous mettre à jour maintenant ?",
-  "tui.toast.update_available.updating": "Mise à jour vers v{{version}}...",
-  "tui.toast.update_available.failed": "La mise à jour a échoué",
-  "tui.toast.update_available.success": "Mis à jour vers MiMoCode v{{version}}. Veuillez redémarrer l'application.",
-  "tui.toast.updated.title": "Mis à jour automatiquement",
-  "tui.toast.updated.message": "Correctif appliqué automatiquement : v{{version}}. Redémarrez pour utiliser la nouvelle version. Désactivez avec autoupdate: false dans la configuration.",
   "tui.sidebar.instructions": "Instructions",
   "tui.sidebar.cwd": "Répertoire de travail",
   "tui.toast.unknown_error": "Une erreur inconnue s'est produite",
@@ -367,6 +329,9 @@ export const dict = {
   "tui.command.app.toggle.diffwrap.disable": "Désactiver le retour à la ligne des diffs",
   "tui.command.app.toggle.diffwrap.enable": "Activer le retour à la ligne des diffs",
   "tui.command.logout.toast": "Déconnecté",
+  "tui.command.config.reload.title": "Recharger la config",
+  "tui.command.config.reload.description": "Recharger la configuration, les fournisseurs et les plugins",
+  "tui.command.config.reload.toast": "Configuration rechargée",
 
   // Session-level commands
   "tui.command.session.share.title": "Partager la session",
@@ -432,12 +397,7 @@ export const dict = {
   "tui.command.voice.control.title": "Basculer le contrôle vocal (multimodal)",
   "tui.command.voice.control.title_on": "Contrôle vocal : activé (multimodal) — cliquer pour désactiver",
   "tui.command.voice.control.title_off": "Contrôle vocal : désactivé (ASR rapide) — cliquer pour activer",
-  "tui.voice.error.no_auth": "Utilisez /connect pour vous connecter à MiMo, ou configurez voice.asr_model pour un autre fournisseur",
-  "tui.voice.error.no_auth_provider": "Le fournisseur vocal \"{{provider}}\" n'est pas authentifié, vérifiez son apiKey",
-  "tui.voice.error.provider_not_found": "Fournisseur \"{{provider}}\" indisponible — /connect pour s'authentifier, ou déclarez models dans la config pour les endpoints personnalisés",
-  "tui.voice.error.no_url": "Le fournisseur \"{{provider}}\" n'a pas de baseURL configuré — définissez options.baseURL dans la configuration",
-  "tui.voice.error.no_device": "Aucun microphone/appareil audio trouvé — vérifiez les paramètres audio du système",
-  "tui.voice.error.recorder_failed": "L'enregistrement a échoué",
+  "tui.voice.error.no_auth": "Veuillez d'abord vous connecter à MiMo",
   "tui.voice.error.no_recorder": "Aucun outil d'enregistrement trouvé, installez sox",
   "tui.voice.error.too_short": "Enregistrement trop court",
   "tui.voice.error.network": "La transcription a échoué, vérifiez votre réseau",
@@ -456,13 +416,6 @@ export const dict = {
   "tui.dialog.login.mimo_free.desc": "Canal anonyme gratuit — aucune connexion requise",
   "tui.dialog.login.mimo_free.success": "MiMo Auto (free) est prêt — modèle par défaut défini sur mimo/mimo-auto",
   "tui.dialog.login.mimo_free.unavailable": "Fournisseur MiMo Auto (free) non chargé",
-  "tui.dialog.login.flow.title": "Connexion MiMo",
-  "tui.dialog.login.flow.placeholder": "Collez le code (ou attendez le rappel du navigateur)",
-  "tui.dialog.login.flow.busy": "Connexion en cours...",
-  "tui.dialog.login.flow.manual_hint": "Le navigateur ne s'est pas ouvert ? Cliquez sur le lien ci-dessous pour copier :",
-  "tui.dialog.login.flow.waiting": "En attente de l'autorisation du navigateur...",
-  "tui.dialog.login.flow.invalid_code": "Code invalide, veuillez réessayer",
-  "tui.dialog.login.flow.copied": "Copié",
 
   // CLI: providers command (auth login)
   "cli.providers.select": "Sélectionner un fournisseur",
@@ -478,14 +431,6 @@ export const dict = {
   "cli.providers.mimo_login.decrypt_retry": "Échec du déchiffrement, veuillez réessayer ({remaining} tentatives restantes)",
   "cli.providers.mimo_login.decrypt_exhausted": "Échec du déchiffrement, nombre maximal de tentatives atteint",
 
-  // Question i18n — plan_enter
-  "tui.question.plan_enter.question": "Voulez-vous basculer en mode plan pour une planification structurée ?",
-  "tui.question.plan_enter.header": "Entrer dans le plan",
-  "tui.question.plan_enter.option.0.label": "Oui",
-  "tui.question.plan_enter.option.0.description": "Basculer vers l'agent plan pour une planification en lecture seule",
-  "tui.question.plan_enter.option.1.label": "Non",
-  "tui.question.plan_enter.option.1.description": "Rester dans le mode actuel",
-
   // Question i18n — plan_exit
   "tui.question.plan_exit.question": "Le plan {{plan}} est terminé. Voulez-vous basculer vers l'agent build pour commencer l'implémentation ?",
   "tui.question.plan_exit.header": "Quitter le plan",
@@ -497,19 +442,31 @@ export const dict = {
   // Session badges
   "tui.session.badge.auto": "Auto",
 
-  // Workspace trust
-  "trust.title": "Accès à l'espace de travail :",
-  "trust.safety_check": "Vérification rapide : est-ce un projet que vous avez créé ou auquel vous faites confiance ? (Votre propre code, un projet open source reconnu ou un travail de votre équipe). Sinon, prenez un moment pour examiner le contenu de ce dossier.",
-  "trust.capabilities": "MiMo Code pourra lire, modifier et exécuter des fichiers ici.",
-  "trust.plugin_warn": "Si des plugins malveillants existent dans ce répertoire, ils peuvent exécuter du code arbitraire, lire, modifier ou exfiltrer vos fichiers.",
-  "trust.option.yes": "Oui, je fais confiance à ce dossier",
-  "trust.option.no": "Non, quitter",
-  "trust.dangerous.title_home": "ATTENTION : Vous êtes sur le point d'ouvrir votre RÉPERTOIRE PERSONNEL.",
-  "trust.dangerous.title_root": "ATTENTION : Vous êtes sur le point d'ouvrir la RACINE DU SYSTÈME DE FICHIERS.",
-  "trust.dangerous.body_home": "Le modèle aura accès à TOUS vos fichiers personnels — clés SSH, identifiants, profils de navigateur et tout le contenu de votre dossier personnel.",
-  "trust.dangerous.body_root": "Le modèle aura accès à l'ENSEMBLE du système de fichiers — fichiers système, données de tous les utilisateurs, identifiants et tout sur cette machine.",
-  "trust.dangerous.advice_home": "Sauf raison très spécifique, NE faites PAS confiance à l'intégralité de votre répertoire personnel.",
-  "trust.dangerous.advice_root": "Sauf raison très spécifique, NE faites PAS confiance à la racine du système de fichiers.",
-  "trust.dangerous.option.yes": "Je comprends les risques, faire confiance pour cette session",
-  "trust.dangerous.option.no": "Quitter (recommandé)",
+  // Retry display
+  "tui.prompt.retry.retrying": "nouvelle tentative",
+  "tui.prompt.retry.inDuration": "dans {{duration}}",
+  "tui.prompt.retry.attempt": "tentative #{{attempt}}",
+
+  // Agent names
+  "tui.agent.name.build": "Construction",
+  "tui.agent.name.plan": "Plan",
+  "tui.agent.name.compose": "Composition",
+
+  // Variant names
+  "tui.variant.name.high": "Élevé",
+  "tui.variant.name.medium": "Moyen",
+  "tui.variant.name.low": "Bas",
+  "tui.variant.name.xhigh": "Très élevé",
+  "tui.variant.name.max": "Maximum",
+
+  // Variant dialog
+  "tui.dialog.variant.title": "Variante",
+  "tui.dialog.variant.default": "Par défaut",
+  "tui.dialog.variant.high": "Élevé",
+  "tui.dialog.variant.medium": "Moyen",
+  "tui.dialog.variant.low": "Bas",
+
+  // Skill dialog
+  "tui.dialog.skill.loading": "Chargement de la compétence...",
+
 } satisfies Partial<Record<Keys, string>>

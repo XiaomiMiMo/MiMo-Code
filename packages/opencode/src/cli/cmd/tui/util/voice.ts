@@ -1,53 +1,7 @@
-import { Log, Process } from "@/util"
+import { Process } from "@/util"
 import { which } from "@/util/which"
 import { RealtimeVAD, type VADSegment } from "./vad"
 import z from "zod"
-
-const log = Log.create({ service: "tui.voice" })
-
-const DEFAULT_ASR_MODEL = "xiaomi/mimo-v2.5-asr"
-const DEFAULT_CONTROL_MODEL = "xiaomi/mimo-v2.5"
-
-export type VoiceProviderConfig = {
-  providerID: string
-  model: string
-}
-
-export type VoiceCredentials = { apiKey: string; baseUrl: string }
-export type VoiceCredentialError = { error: "not_found" | "no_key" | "no_url"; providerID: string; model: string }
-
-export function resolveCredentials(
-  providers: Array<{ id: string; key?: string; options: Record<string, unknown>; models: Record<string, { api: { url: string } }> }>,
-  config: VoiceProviderConfig,
-): VoiceCredentials | VoiceCredentialError {
-  const provider = providers.find((p) => p.id === config.providerID)
-  if (!provider) return { error: "not_found", providerID: config.providerID, model: config.model }
-  const apiKey = provider.key || (provider.options?.apiKey as string | undefined)
-  if (!apiKey) return { error: "no_key", providerID: config.providerID, model: config.model }
-  const baseUrl = (provider.options?.baseURL as string)
-    || Object.values(provider.models)[0]?.api?.url
-    || (config.providerID === "xiaomi" ? "https://api.xiaomimimo.com/v1" : undefined)
-  if (!baseUrl) return { error: "no_url", providerID: config.providerID, model: config.model }
-  return { apiKey, baseUrl }
-}
-
-export function resolveVoiceConfig(voiceConfig?: { asr_model?: string; control_model?: string }): {
-  asr: VoiceProviderConfig
-  control: VoiceProviderConfig
-} {
-  const asrModelID = voiceConfig?.asr_model || DEFAULT_ASR_MODEL
-  const controlModelID = voiceConfig?.control_model || DEFAULT_CONTROL_MODEL
-  return {
-    asr: parseModelID(asrModelID),
-    control: parseModelID(controlModelID),
-  }
-}
-
-function parseModelID(modelID: string): VoiceProviderConfig {
-  const slashIndex = modelID.indexOf("/")
-  if (slashIndex < 1) return { providerID: "xiaomi", model: modelID }
-  return { providerID: modelID.slice(0, slashIndex), model: modelID.slice(slashIndex + 1) }
-}
 
 type Recorder = {
   cmd: string
@@ -119,36 +73,14 @@ export function startStreaming(opts: {
   const recorder = detectRecorder()
   if (!recorder) return null
 
-  log.info("recording started", { recorder: recorder.cmd })
   const vad = new RealtimeVAD({ onSegment: opts.onSegment, onActiveChange: opts.onActiveChange })
   const proc = Process.spawn([recorder.cmd, ...recorder.pipeArgs()], {
     stdin: "ignore",
     stdout: "pipe",
-    stderr: "pipe",
+    stderr: "ignore",
   })
 
   const handle: StreamingHandle = { proc, vad, startTime: Date.now(), aborted: false, reading: Promise.resolve() }
-
-  const stderrChunks: Buffer[] = []
-  if (proc.stderr) {
-    ;(async () => {
-      for await (const chunk of proc.stderr as AsyncIterable<Buffer>) {
-        stderrChunks.push(chunk)
-      }
-    })().catch(() => {})
-  }
-
-  proc.exited
-    .then((code) => {
-      if (code !== 0 && !handle.aborted) {
-        handle.aborted = true
-        const stderrText = Buffer.concat(stderrChunks).toString().trim()
-        const msg = stderrText || `Recorder exited with code ${code}`
-        log.warn("recorder exited with error", { code, stderr: stderrText })
-        opts.onError?.(new Error(msg))
-      }
-    })
-    .catch(() => {})
 
   handle.reading = (async () => {
     await vad.init()
@@ -172,8 +104,6 @@ export function startStreaming(opts: {
       }
     }
   })().catch((err) => {
-    if (handle.aborted) return
-    handle.aborted = true
     proc.kill("SIGINT")
     opts.onError?.(err instanceof Error ? err : new Error(String(err)))
   })
@@ -188,21 +118,16 @@ export async function stopStreaming(handle: StreamingHandle) {
   await handle.reading
   handle.vad.flush()
   handle.vad.destroy()
-  log.info("recording stopped", { duration: Date.now() - handle.startTime })
 }
 
-// Xiaomi ASR uses a proprietary data-URL audio format and asr_options field, not the standard OpenAI input_audio schema.
 export async function transcribeAudio(opts: {
   audio: Int16Array
   apiKey: string
   baseUrl: string
-  model?: string
 }): Promise<string | null> {
-  const model = opts.model || "mimo-v2.5-asr"
-  const samples = opts.audio.length
-  log.debug("transcribe request", { model, samples })
   const wavBuffer = encodeWav(opts.audio)
   const base64 = Buffer.from(wavBuffer).toString("base64")
+  const dataUrl = `data:audio/wav;base64,${base64}`
   const url = `${opts.baseUrl.replace(/\/+$/, "")}/chat/completions`
 
   const controller = new AbortController()
@@ -212,28 +137,22 @@ export async function transcribeAudio(opts: {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      "Authorization": `Bearer ${opts.apiKey}`,
+      "api-key": opts.apiKey,
       "X-Mimo-Source": "mimocode-cli",
     },
     body: JSON.stringify({
-      model,
-      messages: [{ role: "user", content: [{ type: "input_audio", input_audio: { data: `data:audio/wav;base64,${base64}` } }] }],
+      model: "mimo-v2.5-asr",
+      messages: [{ role: "user", content: [{ type: "input_audio", input_audio: { data: dataUrl } }] }],
       asr_options: { language: "auto" },
     }),
     signal: controller.signal,
   }).catch(() => null)
 
   clearTimeout(timeout)
-  if (!res || !res.ok) {
-    const body = await res?.text().catch(() => "")
-    log.warn("transcribe failed", { model, status: res?.status, body })
-    return null
-  }
+  if (!res || !res.ok) return null
   try {
     const data = (await res.json()) as { choices?: Array<{ message?: { content?: string } }> }
-    const text = data.choices?.[0]?.message?.content?.trim() || null
-    log.debug("transcribe result", { model, length: text?.length ?? 0 })
-    return text
+    return data.choices?.[0]?.message?.content?.trim() || null
   } catch {
     return null
   }
@@ -383,17 +302,14 @@ export async function processVoiceControl(opts: {
   audio: Int16Array
   apiKey: string
   baseUrl: string
-  model?: string
   currentText: string
   currentAgent: string
   availableAgents: string[]
   sendEnabled?: boolean
 }): Promise<VoiceControlResult | null> {
-  const model = opts.model || "mimo-v2.5"
-  const samples = opts.audio.length
-  log.debug("voice control request", { model, samples, agent: opts.currentAgent })
   const wavBuffer = encodeWav(opts.audio)
   const base64 = Buffer.from(wavBuffer).toString("base64")
+  const dataUrl = `data:audio/wav;base64,${base64}`
   const url = `${opts.baseUrl.replace(/\/+$/, "")}/chat/completions`
 
   const userContext = JSON.stringify({
@@ -411,18 +327,18 @@ export async function processVoiceControl(opts: {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      "Authorization": `Bearer ${opts.apiKey}`,
+      "api-key": opts.apiKey,
       "X-Mimo-Source": "mimocode-cli",
     },
     body: JSON.stringify({
-      model,
+      model: "mimo-v2.5",
       messages: [
         { role: "system", content: VOICE_CONTROL_SYSTEM_PROMPT },
         {
           role: "user",
           content: [
             { type: "text", text: userContext },
-            { type: "input_audio", input_audio: { data: base64, format: "wav" } },
+            { type: "input_audio", input_audio: { data: dataUrl } },
           ],
         },
       ],
@@ -432,18 +348,12 @@ export async function processVoiceControl(opts: {
   }).catch(() => null)
 
   clearTimeout(timeout)
-  if (!res || !res.ok) {
-    const body = await res?.text().catch(() => "")
-    log.warn("voice control failed", { model, status: res?.status, body })
-    return null
-  }
+  if (!res || !res.ok) return null
   try {
     const data = (await res.json()) as { choices?: Array<{ message?: { content?: string } }> }
     const content = data.choices?.[0]?.message?.content
     if (!content) return null
-    const result = parseVoiceControl(content)
-    log.debug("voice control result", { model, actions: result?.actions.length ?? 0 })
-    return result
+    return parseVoiceControl(content)
   } catch {
     return null
   }

@@ -10,6 +10,7 @@ import { errorData, errorMessage } from "@/util/error"
 import * as Log from "@/util/log"
 import { useSDK } from "../context/sdk"
 import { useToast } from "../ui/toast"
+import { useLanguage } from "@tui/context/language"
 
 type Adaptor = {
   type: string
@@ -34,6 +35,7 @@ export async function openWorkspaceSession(input: {
   sdk: ReturnType<typeof useSDK>
   sync: ReturnType<typeof useSync>
   toast: ReturnType<typeof useToast>
+  t: (key: string, params?: Record<string, string>) => string
   workspaceID: string
 }) {
   const client = scoped(input.sdk, input.sync, input.workspaceID)
@@ -51,7 +53,7 @@ export async function openWorkspaceSession(input: {
     })
     if (!result) {
       input.toast.show({
-        message: "Failed to create workspace session",
+        message: input.t("tui.error.workspace_create_failed"),
         variant: "error",
       })
       return
@@ -75,7 +77,7 @@ export async function openWorkspaceSession(input: {
         status: result.response?.status,
       })
       input.toast.show({
-        message: "Failed to create workspace session",
+        message: input.t("tui.error.workspace_create_failed"),
         variant: "error",
       })
       return
@@ -100,6 +102,7 @@ export async function restoreWorkspaceSession(input: {
   sync: ReturnType<typeof useSync>
   project: ReturnType<typeof useProject>
   toast: ReturnType<typeof useToast>
+  t: (key: string, params?: Record<string, string>) => string
   workspaceID: string
   sessionID: string
   done?: () => void
@@ -126,7 +129,7 @@ export async function restoreWorkspaceSession(input: {
       error: result?.error ? errorData(result.error) : undefined,
     })
     input.toast.show({
-      message: `Failed to restore session: ${errorMessage(result?.error ?? "no response")}`,
+      message: input.t("tui.toast.restore_failed", { msg: errorMessage(result?.error ?? "no response") }),
       variant: "error",
     })
     return
@@ -161,7 +164,7 @@ export async function restoreWorkspaceSession(input: {
   })
 
   input.toast.show({
-    message: "Session restored into the new workspace",
+    message: input.t("tui.toast.workspace_restored"),
     variant: "success",
   })
   input.done?.()
@@ -175,6 +178,7 @@ export function DialogWorkspaceCreate(props: { onSelect: (workspaceID: string) =
   const project = useProject()
   const sdk = useSDK()
   const toast = useToast()
+  const { t } = useLanguage()
   const [creating, setCreating] = createSignal<string>()
   const [adaptors, setAdaptors] = createSignal<Adaptor[]>()
 
@@ -190,7 +194,7 @@ export function DialogWorkspaceCreate(props: { onSelect: (workspaceID: string) =
         .catch(() => undefined)
       if (!res) {
         toast.show({
-          message: "Failed to load workspace adaptors",
+          message: t("tui.error.workspace_adaptor_failed"),
           variant: "error",
         })
         return
@@ -204,9 +208,9 @@ export function DialogWorkspaceCreate(props: { onSelect: (workspaceID: string) =
     if (type) {
       return [
         {
-          title: `Creating ${type} workspace...`,
+          title: t("tui.dialog.workspace_create.creating", { type }),
           value: "creating" as const,
-          description: "This can take a while for remote environments",
+          description: t("tui.dialog.workspace_create.creating_desc"),
         },
       ]
     }
@@ -214,9 +218,9 @@ export function DialogWorkspaceCreate(props: { onSelect: (workspaceID: string) =
     if (!list) {
       return [
         {
-          title: "Loading workspaces...",
+          title: t("tui.dialog.workspace_create.loading"),
           value: "loading" as const,
-          description: "Fetching available workspace adaptors",
+          description: t("tui.dialog.workspace_create.loading_desc"),
         },
       ]
     }

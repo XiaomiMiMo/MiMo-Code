@@ -1,10 +1,13 @@
 import { Prompt, type PromptRef } from "@tui/component/prompt"
-import { createEffect, createMemo, createSignal, Show } from "solid-js"
+import { createEffect, createMemo, createSignal, For, Match, Show, Switch } from "solid-js"
 import path from "path"
 import { Logo } from "../component/logo"
 import { logoThin, logos, type LogoKey } from "@/cli/logo"
-import { StarryBackground } from "../component/starry-background"
 import { BackgroundImage } from "../component/background-image"
+import { StarryBackground } from "../component/starry-background"
+import { BUILTIN_BGS, EFFECT_VALUES } from "../component/bg-registry"
+import { SOLID_VALUE } from "../component/dialog-image-list"
+import { useTheme } from "../context/theme"
 import { useProject } from "../context/project"
 import { useSync } from "../context/sync"
 import { Toast } from "../ui/toast"
@@ -30,10 +33,12 @@ export function Home() {
   const local = useLocal()
   const kv = useKV()
   const t = useLanguage().t
+  const { theme } = useTheme()
   const plainTerminal = isPlainTerminal()
   const bgImagePath = createMemo(() => {
     const filename = kv.get("background_image")
     if (!filename || typeof filename !== "string") return undefined
+    if (filename === SOLID_VALUE || EFFECT_VALUES.has(filename)) return filename
     return path.join(Global.Path.config, "backgrounds", filename)
   })
   const logoKey = createMemo(() => {
@@ -83,8 +88,21 @@ export function Home() {
   return (
     <>
       <Show when={!plainTerminal}>
-        <Show when={bgImagePath()} fallback={<StarryBackground meteor={showMeteor} />}>
-          {(p) => <BackgroundImage path={p()} />}
+        <Show when={bgImagePath() === SOLID_VALUE}>
+          <box position="absolute" top={0} left={0} width="100%" height="100%" zIndex={0} backgroundColor={kv.get("background_color") ?? theme.background} />
+        </Show>
+        <For each={BUILTIN_BGS}>
+          {(bg) => (
+            <Show when={bgImagePath() === bg.value}>
+              <bg.component />
+            </Show>
+          )}
+        </For>
+        <Show when={bgImagePath() !== undefined && bgImagePath() !== SOLID_VALUE && !EFFECT_VALUES.has(bgImagePath() as string)}>
+          <BackgroundImage path={bgImagePath()!} />
+        </Show>
+        <Show when={!bgImagePath()}>
+          <StarryBackground meteor={showMeteor} />
         </Show>
       </Show>
       <box flexGrow={1} alignItems="center" paddingLeft={8} paddingRight={8} zIndex={1}>

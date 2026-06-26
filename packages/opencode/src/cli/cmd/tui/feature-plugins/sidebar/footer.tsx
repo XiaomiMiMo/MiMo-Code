@@ -1,11 +1,13 @@
 import type { TuiPlugin, TuiPluginApi, TuiPluginModule } from "@mimo-ai/plugin/tui"
 import { createMemo, Show } from "solid-js"
 import { Global } from "@/global"
+import { useLanguage } from "@tui/context/language"
 
 const id = "internal:sidebar-footer"
 
 function View(props: { api: TuiPluginApi }) {
   const theme = () => props.api.theme.current
+  const t = useLanguage().t
   const has = createMemo(() =>
     props.api.state.provider.some(
       (item) => item.id !== "opencode" || Object.values(item.models).some((model) => model.cost?.input !== 0),
@@ -42,18 +44,18 @@ function View(props: { api: TuiPluginApi }) {
           <box flexGrow={1} gap={1}>
             <box flexDirection="row" justifyContent="space-between">
               <text fg={theme().text}>
-                <b>Getting started</b>
+                <b>{t("tui.sidebar.getting_started")}</b>
               </text>
               <text fg={theme().textMuted} onMouseDown={() => props.api.kv.set("dismissed_getting_started", true)}>
                 ✕
               </text>
             </box>
-            <text fg={theme().textMuted}>MiMoCode includes free models so you can start immediately.</text>
+            <text fg={theme().textMuted}>{t("tui.sidebar.free_models_desc")}</text>
             <text fg={theme().textMuted}>
-              Connect from 75+ providers to use other models, including Claude, GPT, Gemini etc
+              {t("tui.sidebar.connect_providers_desc")}
             </text>
             <box flexDirection="row" gap={1} justifyContent="space-between">
-              <text fg={theme().text}>Connect provider</text>
+              <text fg={theme().text}>{t("tui.sidebar.connect_provider")}</text>
               <text fg={theme().textMuted}>/connect</text>
             </box>
           </box>

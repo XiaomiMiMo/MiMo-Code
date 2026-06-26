@@ -5,6 +5,7 @@ import { useSDK } from "../context/sdk"
 import { useSync } from "@tui/context/sync"
 import { useRoute } from "@tui/context/route"
 import { useToast } from "../ui/toast"
+import { useLanguage } from "../context/language"
 import path from "path"
 
 const CREATE_SENTINEL = "__create_worktree__"
@@ -15,6 +16,7 @@ export function DialogWorktree() {
   const sync = useSync()
   const route = useRoute()
   const toast = useToast()
+  const { t } = useLanguage()
   const [worktrees, setWorktrees] = createSignal<string[]>()
   const [busy, setBusy] = createSignal<string>()
 
@@ -32,7 +34,7 @@ export function DialogWorktree() {
 
     const list = worktrees()
     if (!list) {
-      return [{ title: "Loading worktrees...", value: "__loading__" }]
+      return [{ title: t("tui.dialog.worktree.loading"), value: "__loading__" }]
     }
 
     const items = list.map((dir) => ({
@@ -62,10 +64,10 @@ export function DialogWorktree() {
   }
 
   async function create() {
-    setBusy("Creating worktree...")
+    setBusy(t("tui.dialog.worktree.switching"))
     const result = await sdk.client.worktree.create().catch(() => undefined)
     if (!result?.data) {
-      toast.show({ message: "Failed to create worktree", variant: "error" })
+      toast.show({ message: t("tui.error.worktree_create_failed"), variant: "error" })
       setBusy(undefined)
       return
     }
