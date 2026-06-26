@@ -1490,6 +1490,11 @@ export function Prompt(props: PromptProps) {
                   e.preventDefault()
                   return
                 }
+                if (!autocomplete.visible && keybind.match("command_list", e)) {
+                  e.preventDefault()
+                  command.show()
+                  return
+                }
                 // Handle Ctrl+V for terminals that forward it to the app as a raw
                 // keypress (common on macOS/Linux). The textarea has no built-in
                 // paste action, so without this nothing gets inserted. Terminals
@@ -1616,6 +1621,7 @@ export function Prompt(props: PromptProps) {
                   // setTimeout is a workaround and needs to be addressed properly
                   if (!input || input.isDestroyed) return
                   input.cursorColor = theme.text
+                  if (props.visible !== false && dialog.stack.length === 0 && !input.focused) input.focus()
                 }, 0)
               }}
               onMouseDown={(r: MouseEvent) => r.target?.focus()}
