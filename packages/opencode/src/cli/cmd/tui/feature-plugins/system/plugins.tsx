@@ -41,6 +41,7 @@ function meta(item: TuiPluginStatus, width: number) {
 function Install(props: { api: TuiPluginApi }) {
   const [global, setGlobal] = createSignal(false)
   const [busy, setBusy] = createSignal(false)
+  const t = useLanguage().t
 
   useKeyboard((evt) => {
     if (evt.name !== "tab") return
@@ -52,7 +53,7 @@ function Install(props: { api: TuiPluginApi }) {
 
   return (
     <props.api.ui.DialogPrompt
-      title="Install plugin"
+      title={t("tui.command.plugins.install.title")}
       placeholder="npm package name"
       busy={busy()}
       busyText="Installing plugin..."

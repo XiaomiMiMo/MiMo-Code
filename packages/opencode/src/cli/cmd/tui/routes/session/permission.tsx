@@ -17,6 +17,7 @@ import { Global } from "@/global"
 import { useDialog } from "../../ui/dialog"
 import { getScrollAcceleration } from "../../util/scroll"
 import { useTuiConfig } from "../../context/tui-config"
+import { useLanguage } from "@tui/context/language"
 
 type PermissionStage = "permission" | "always" | "reject"
 
@@ -52,6 +53,7 @@ function EditBody(props: { request: PermissionRequest }) {
   const syntax = themeState.syntax
   const config = useTuiConfig()
   const dimensions = useTerminalDimensions()
+  const t = useLanguage().t
 
   const filepath = createMemo(() => (props.request.metadata?.filepath as string) ?? "")
   const diff = createMemo(() => (props.request.metadata?.diff as string) ?? "")
@@ -101,7 +103,7 @@ function EditBody(props: { request: PermissionRequest }) {
       </Show>
       <Show when={!diff()}>
         <box paddingLeft={1}>
-          <text fg={theme.textMuted}>No diff provided</text>
+          <text fg={theme.textMuted}>{t("tui.permission.no_diff")}</text>
         </box>
       </Show>
     </box>
@@ -132,6 +134,7 @@ function TextBody(props: { title: string; description?: string; icon?: string })
 export function PermissionPrompt(props: { request: PermissionRequest }) {
   const sdk = useSDK()
   const sync = useSync()
+  const t = useLanguage().t
   const [store, setStore] = createStore({
     stage: "permission" as PermissionStage,
   })
@@ -156,7 +159,7 @@ export function PermissionPrompt(props: { request: PermissionRequest }) {
     <Switch>
       <Match when={store.stage === "always"}>
         <Prompt
-          title="Always allow"
+          title={t("tui.permission.always_allow")}
           body={
             <Switch>
               <Match when={props.request.always.length === 1 && props.request.always[0] === "*"}>
@@ -164,7 +167,7 @@ export function PermissionPrompt(props: { request: PermissionRequest }) {
               </Match>
               <Match when={true}>
                 <box paddingLeft={1} gap={1}>
-                  <text fg={theme.textMuted}>This will allow the following patterns until MiMoCode is restarted</text>
+                  <text fg={theme.textMuted}>{t("tui.permission.allow_patterns")}</text>
                   <box>
                     <For each={props.request.always}>
                       {(pattern) => (
@@ -291,7 +294,7 @@ export function PermissionPrompt(props: { request: PermissionRequest }) {
 
             if (permission === "bash") {
               const title =
-                typeof data.description === "string" && data.description ? data.description : "Shell command"
+                typeof data.description === "string" && data.description ? data.description : t("tui.permission.shell_command")
               const command = typeof data.command === "string" ? data.command : ""
               return {
                 icon: "#",
@@ -398,10 +401,10 @@ export function PermissionPrompt(props: { request: PermissionRequest }) {
             if (permission === "doom_loop") {
               return {
                 icon: "⟳",
-                title: "Continue after repeated failures",
+                title: t("tui.permission.doom_loop_title"),
                 body: (
                   <box paddingLeft={1}>
-                    <text fg={theme.textMuted}>This keeps the session running despite repeated failures.</text>
+                    <text fg={theme.textMuted}>{t("tui.permission.doom_loop_hint")}</text>
                   </box>
                 ),
               }
@@ -424,7 +427,7 @@ export function PermissionPrompt(props: { request: PermissionRequest }) {
             <box flexDirection="column" gap={0}>
               <box flexDirection="row" gap={1} flexShrink={0}>
                 <text fg={theme.warning}>{"△"}</text>
-                <text fg={theme.text}>Permission required</text>
+                <text fg={theme.text}>{t("tui.permission.required")}</text>
               </box>
               <box flexDirection="row" gap={1} paddingLeft={2} flexShrink={0}>
                 <text fg={theme.textMuted} flexShrink={0}>
@@ -437,10 +440,10 @@ export function PermissionPrompt(props: { request: PermissionRequest }) {
 
           const body = (
             <Prompt
-              title="Permission required"
+              title={t("tui.permission.required")}
               header={header()}
               body={current.body}
-              options={{ once: "Allow once", always: "Allow always", reject: "Reject" }}
+              options={{ once: t("tui.permission.once"), always: t("tui.permission.always"), reject: t("tui.permission.reject") }}
               escapeKey="reject"
               fullscreen
               onSelect={(option) => {
@@ -482,6 +485,7 @@ function RejectPrompt(props: { onConfirm: (message: string) => void; onCancel: (
   const dimensions = useTerminalDimensions()
   const narrow = createMemo(() => dimensions().width < 80)
   const dialog = useDialog()
+  const t = useLanguage().t
 
   useKeyboard((evt) => {
     if (dialog.stack.length > 0) return
@@ -507,7 +511,7 @@ function RejectPrompt(props: { onConfirm: (message: string) => void; onCancel: (
       <box gap={1} paddingLeft={1} paddingRight={3} paddingTop={1} paddingBottom={1}>
         <box flexDirection="row" gap={1} paddingLeft={1}>
           <text fg={theme.error}>{"△"}</text>
-          <text fg={theme.text}>Reject permission</text>
+          <text fg={theme.text}>{t("tui.permission.reject")}</text>
         </box>
         <box paddingLeft={1}>
           <text fg={theme.textMuted}>Tell MiMoCode what to do differently</text>

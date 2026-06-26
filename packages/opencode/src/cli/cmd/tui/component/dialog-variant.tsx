@@ -2,10 +2,12 @@ import { createMemo } from "solid-js"
 import { useLocal } from "@tui/context/local"
 import { DialogSelect } from "@tui/ui/dialog-select"
 import { useDialog } from "@tui/ui/dialog"
+import { useLanguage } from "@tui/context/language"
 
 export function DialogVariant() {
   const local = useLocal()
   const dialog = useDialog()
+  const t = useLanguage().t
 
   const options = createMemo(() => {
     return [
@@ -31,7 +33,7 @@ export function DialogVariant() {
   return (
     <DialogSelect<string>
       options={options()}
-      title={"Select variant"}
+      title={t("tui.dialog.variant.select")}
       current={local.model.variant.selected()}
       flat={true}
     />

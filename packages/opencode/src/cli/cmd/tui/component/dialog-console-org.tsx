@@ -5,6 +5,7 @@ import { useDialog } from "@tui/ui/dialog"
 import { useToast } from "@tui/ui/toast"
 import { useTheme } from "@tui/context/theme"
 import type { ExperimentalConsoleListOrgsResponse } from "@mimo-ai/sdk/v2"
+import { useLanguage } from "@tui/context/language"
 
 type OrgOption = ExperimentalConsoleListOrgsResponse["orgs"][number]
 
@@ -24,6 +25,7 @@ export function DialogConsoleOrg() {
   const dialog = useDialog()
   const toast = useToast()
   const { theme } = useTheme()
+  const t = useLanguage().t
 
   const [orgs] = createResource(async () => {
     const result = await sdk.client.experimental.console.listOrgs({}, { throwOnError: true })
@@ -99,5 +101,5 @@ export function DialogConsoleOrg() {
       }))
   })
 
-  return <DialogSelect<string | OrgOption> title="Switch org" options={options()} current={current()} />
+  return <DialogSelect<string | OrgOption> title={t("tui.dialog.org.switch")} options={options()} current={current()} />
 }
