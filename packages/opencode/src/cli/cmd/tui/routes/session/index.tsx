@@ -2041,6 +2041,12 @@ function Workflow(props: ToolProps<typeof WorkflowTool>) {
 // a spinner on its current phase so progress is always visible. Bounded to the
 // last N lines in the conversation flow; full history lives in the detail dialog.
 const WORKFLOW_PANEL_TAIL = 12
+
+// WorkflowPage is conditionally rendered (fallback of the conversation Show), so it
+// fully unmounts when you navigate into a subagent and remounts on return — which
+// would reset its scrollbox to the top. Remember the last scroll offset per runID
+// here so returning restores the position, like the persistent conversation scroll.
+const workflowScrollByRun = new Map<string, number>()
 function WorkflowPanel(props: {
   name: string
   status?: string
@@ -2166,6 +2172,14 @@ function WorkflowPage(props: {
   const renderer = useRenderer()
   const tuiConfig = useTuiConfig()
   const scrollAcceleration = createMemo(() => getScrollAcceleration(tuiConfig))
+  let pageScroll: ScrollBoxRenderable | undefined
+  // Capture the runID ONCE at construction. props.runID tracks the route signal,
+  // which is already cleared (undefined) by the time onCleanup runs during unmount —
+  // so saving under props.runID there would key on undefined and lose the position.
+  const runIDStable = props.runID
+  const rememberScroll = () => {
+    if (pageScroll) workflowScrollByRun.set(runIDStable, pageScroll.scrollTop)
+  }
 
   const run = createMemo(() => sync.data.workflow[props.runID])
 
@@ -2192,11 +2206,27 @@ function WorkflowPage(props: {
   onMount(() => {
     sync.loadWorkflowTranscript(props.runID)
     sync.loadWorkflowStructure(props.runID)
+    // Restore the scroll position saved when we last left this run's page. Deferred
+    // so the cards (from the persisted structure store) are laid out first, giving
+    // scrollTo a real scrollHeight to land within. Retry briefly in case the async
+    // structure load hasn't repopulated the viewport on the very first frame.
+    const saved = workflowScrollByRun.get(runIDStable)
+    if (saved) {
+      let tries = 0
+      const restore = () => {
+        if (pageScroll) pageScroll.scrollTop = saved
+        if (++tries < 5 && (pageScroll?.scrollTop ?? 0) < saved - 1) setTimeout(restore, 60)
+      }
+      setTimeout(restore, 0)
+    }
     const interval = setInterval(() => {
       sync.loadWorkflowStructure(props.runID)
       if (run()?.status === "running") sync.loadWorkflowTranscript(props.runID)
     }, 1000)
-    onCleanup(() => clearInterval(interval))
+    onCleanup(() => {
+      clearInterval(interval)
+      rememberScroll()
+    })
   })
 
   const statusColor = createMemo(() => {
@@ -2257,7 +2287,11 @@ function WorkflowPage(props: {
           </Show>
         </box>
       </Show>
-      <scrollbox flexGrow={1} scrollAcceleration={scrollAcceleration()}>
+      <scrollbox
+        ref={(r) => (pageScroll = r)}
+        flexGrow={1}
+        scrollAcceleration={scrollAcceleration()}
+      >
         <WorkflowTree
           nodes={structure()}
           onOpenChild={props.onOpenChild}
