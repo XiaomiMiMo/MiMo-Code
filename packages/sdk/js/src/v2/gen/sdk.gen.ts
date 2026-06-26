@@ -209,6 +209,8 @@ import type {
   VcsGetResponses,
   WorkflowListResponses,
   WorkflowResumeResponses,
+  WorkflowStructureResponses,
+  WorkflowTranscriptResponses,
   WorktreeCreateErrors,
   WorktreeCreateInput,
   WorktreeCreateResponses,
@@ -3038,6 +3040,70 @@ export class Workflow extends HeyApiClient {
     )
     return (options?.client ?? this.client).post<WorkflowResumeResponses, unknown, ThrowOnError>({
       url: "/workflows/{runID}/resume",
+      ...options,
+      ...params,
+    })
+  }
+
+  /**
+   * Get a workflow run's full transcript
+   *
+   * Return the complete ordered phase/log transcript for one run, straight from the runtime's in-memory buffer (uncapped, unlike the tool-part metadata copy). Empty when the runtime is down or the run is unknown.
+   */
+  public transcript<ThrowOnError extends boolean = false>(
+    parameters: {
+      runID: string
+      directory?: string
+      workspace?: string
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "path", key: "runID" },
+            { in: "query", key: "directory" },
+            { in: "query", key: "workspace" },
+          ],
+        },
+      ],
+    )
+    return (options?.client ?? this.client).get<WorkflowTranscriptResponses, unknown, ThrowOnError>({
+      url: "/workflows/{runID}/transcript",
+      ...options,
+      ...params,
+    })
+  }
+
+  /**
+   * Get a workflow run's structure tree
+   *
+   * Return the observability-only structure tree (phase/agent/workflow nodes with live status) for one run. Empty when the runtime is down or the run is unknown.
+   */
+  public structure<ThrowOnError extends boolean = false>(
+    parameters: {
+      runID: string
+      directory?: string
+      workspace?: string
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "path", key: "runID" },
+            { in: "query", key: "directory" },
+            { in: "query", key: "workspace" },
+          ],
+        },
+      ],
+    )
+    return (options?.client ?? this.client).get<WorkflowStructureResponses, unknown, ThrowOnError>({
+      url: "/workflows/{runID}/structure",
       ...options,
       ...params,
     })

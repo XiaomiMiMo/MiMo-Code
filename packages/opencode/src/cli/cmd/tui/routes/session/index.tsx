@@ -8,7 +8,6 @@ import {
   Match,
   on,
   onCleanup,
-  onMount,
   Show,
   Switch,
   useContext,
@@ -65,6 +64,7 @@ import { DialogTimeline } from "./dialog-timeline"
 import { DialogForkFromTimeline } from "./dialog-fork-from-timeline"
 import { DialogSessionRename } from "../../component/dialog-session-rename"
 import { Sidebar } from "./sidebar"
+import { WorkflowTree } from "@tui/component/workflow-tree"
 import { SubagentFooter } from "./subagent-footer.tsx"
 import { DialogSubagent } from "./dialog-subagent.tsx"
 import { Flag } from "@/flag/flag"
@@ -184,6 +184,12 @@ export function Session() {
   const [diffWrapMode] = kv.signal<"word" | "none">("diff_wrap_mode", "word")
   const [_animationsEnabled, _setAnimationsEnabled] = kv.signal("animations_enabled", true)
   const [showGenericToolOutput, setShowGenericToolOutput] = kv.signal("generic_tool_output_visibility", false)
+
+  // The workflow run shown as a FULL-SCREEN page (replacing the message stream),
+  // mirroring how agentID renders a subagent's conversation. Driven by the route so
+  // it's a real navigable view, not a side panel.
+  const workflowRunID = createMemo(() => route.workflowRunID)
+  const fromWorkflowRunID = createMemo(() => route.fromWorkflowRunID)
 
   const wide = createMemo(() => dimensions().width > 120)
   const sidebarVisible = createMemo(() => {
@@ -389,7 +395,7 @@ export function Session() {
       return
     }
     if (fullRoute.data.type !== "session") return
-    navigate({ ...fullRoute.data, agentID: list[0].actor_id })
+    navigate({ ...fullRoute.data, agentID: list[0].actor_id, fromWorkflowRunID: undefined })
   }
 
   function moveChild(direction: 1 | -1) {
@@ -404,7 +410,7 @@ export function Session() {
           ? 0
           : list.length - 1
         : (idx + direction + list.length) % list.length
-    navigate({ ...fullRoute.data, agentID: list[next].actor_id })
+    navigate({ ...fullRoute.data, agentID: list[next].actor_id, fromWorkflowRunID: undefined })
   }
 
   const command = useCommandDialog()
@@ -1000,8 +1006,20 @@ export function Session() {
       keybind: "session_parent",
       category: "session",
       hidden: true,
-      enabled: currentAgentID() !== "main" || !!session()?.parentID,
+      enabled: currentAgentID() !== "main" || !!workflowRunID() || !!session()?.parentID,
       onSelect: (dialog) => {
+        // Workflow page → back to the conversation (parallels agentID → main).
+        if (fullRoute.data.type === "session" && workflowRunID()) {
+          navigate({ ...fullRoute.data, workflowRunID: undefined })
+          dialog.clear()
+          return
+        }
+        // Agent opened FROM a workflow page → back returns to that workflow.
+        if (fullRoute.data.type === "session" && currentAgentID() !== "main" && fromWorkflowRunID()) {
+          navigate({ ...fullRoute.data, agentID: undefined, fromWorkflowRunID: undefined, workflowRunID: fromWorkflowRunID() })
+          dialog.clear()
+          return
+        }
         if (fullRoute.data.type === "session" && currentAgentID() !== "main") {
           navigate({ ...fullRoute.data, agentID: undefined })
           dialog.clear()
@@ -1088,6 +1106,19 @@ export function Session() {
     >
       <box flexDirection="row">
         <box flexGrow={1} paddingBottom={1} paddingLeft={2} paddingRight={2} gap={1} onMouse={onWheel}>
+          <Show
+            when={!workflowRunID()}
+            fallback={
+              <WorkflowPage
+                runID={workflowRunID()!}
+                onBack={() => navigate({ ...route, workflowRunID: undefined })}
+                onOpenAgent={(actorID) =>
+                  navigate({ ...route, workflowRunID: undefined, agentID: actorID, fromWorkflowRunID: workflowRunID() })
+                }
+                onOpenChild={(childRunID) => navigate({ ...route, workflowRunID: childRunID })}
+              />
+            }
+          >
           <Show when={session()}>
             <scrollbox
               ref={(r) => (scroll = r)}
@@ -1237,6 +1268,7 @@ export function Session() {
                 </TuiPluginRuntime.Slot>
               </Show>
             </box>
+          </Show>
           </Show>
           <Toast />
         </box>
@@ -1429,6 +1461,10 @@ function AssistantMessage(props: { message: AssistantMessage; parts: Part[]; las
     <>
       <For each={props.parts}>
         {(part, index) => {
+          // The StructuredOutput tool call is the mechanism that produces
+          // message.structured; we render that value as a dedicated colored block
+          // below, so skip the redundant gray one-liner tool part here.
+          if (part.type === "tool" && part.tool === "StructuredOutput") return null
           const component = createMemo(() => PART_MAPPING[part.type as keyof typeof PART_MAPPING])
           return (
             <Show when={component()}>
@@ -1442,6 +1478,9 @@ function AssistantMessage(props: { message: AssistantMessage; parts: Part[]; las
           )
         }}
       </For>
+      <Show when={props.message.structured !== undefined && props.message.structured !== null}>
+        <StructuredOutput value={props.message.structured} />
+      </Show>
       <Show when={hasActorPart() || hasWorkflowPart()}>
         <box paddingTop={1} paddingLeft={3}>
           <text fg={theme.text}>
@@ -1552,6 +1591,42 @@ function ErrorBlock(props: { error: MessageError }) {
           </text>
         </box>
       </Show>
+    </box>
+  )
+}
+
+// Structured output is a message-level field (AssistantMessage.structured), not a
+// part, so the parts loop never shows it. Agents called with a schema (common in
+// workflows) put their whole answer here — render it as syntax-highlighted JSON so
+// it's not invisible. Collapsible for large payloads.
+function StructuredOutput(props: { value: unknown }) {
+  const { theme, syntax } = useTheme()
+  const [collapsed, setCollapsed] = createSignal(false)
+  const json = createMemo(() => {
+    try {
+      return JSON.stringify(props.value, null, 2)
+    } catch {
+      return String(props.value)
+    }
+  })
+  const lineCount = createMemo(() => json().split("\n").length)
+  const overflow = createMemo(() => lineCount() > 20)
+  const shown = createMemo(() => (collapsed() ? json().split("\n").slice(0, 20).join("\n") + "\n…" : json()))
+  return (
+    <box paddingLeft={3} marginTop={1} flexDirection="column" flexShrink={0}>
+      <box flexDirection="row" gap={1} onMouseUp={() => overflow() && setCollapsed((p) => !p)}>
+        <text fg={theme.accent} attributes={TextAttributes.BOLD}>
+          ⊟ structured output
+        </text>
+        <Show when={overflow()}>
+          <text fg={theme.textMuted}>
+            · {lineCount()} lines{collapsed() ? " · click to expand" : ""}
+          </text>
+        </Show>
+      </box>
+      <box marginTop={1}>
+        <code filetype="json" drawUnstyledText={false} syntaxStyle={syntax()} content={shown()} fg={theme.text} />
+      </box>
     </box>
   )
 }
@@ -1878,6 +1953,7 @@ function WorkItemTask(props: ToolProps<typeof TaskTool>) {
 // silent line that only updates once the run finishes.
 function Workflow(props: ToolProps<typeof WorkflowTool>) {
   const sync = useSync()
+  const fullRoute = useRoute()
 
   const operation = createMemo(() => {
     const op = (props.input as { operation?: string }).operation
@@ -1909,37 +1985,342 @@ function Workflow(props: ToolProps<typeof WorkflowTool>) {
     return Array.isArray(t) ? t : []
   })
 
-  const content = createMemo(() => {
-    const op = operation()
+  const name = createMemo(() => run()?.name ?? (props.input as { name?: string }).name ?? "inline")
+  const status = createMemo(() => run()?.status ?? (props.metadata.status as string | undefined))
+
+  // Counters/phase prefer the live metadata streamed by the tool's 250ms flush
+  // loop, falling back to the bus run row. The bus row only learns counters via
+  // loadWorkflows polling (which only the /workflows dialog runs), so during a run
+  // the inline panel would otherwise sit at 0✓ 0✗ 0⟳ — the streamed metadata is
+  // the authoritative live source for this in-conversation view.
+  const counters = createMemo(() => {
+    const m = (props.metadata as { counters?: { running: number; succeeded: number; failed: number } }).counters
+    if (m) return m
     const r = run()
-    const id = runID()
-    if (op !== "run") {
-      return `workflow ${op}${id ? ` ${id}` : ""}`
-    }
-    const lines: string[] = []
-    const name = r?.name ?? (props.input as { name?: string }).name ?? "inline"
-    const status = r?.status ?? (props.metadata.status as string | undefined)
-    const phase = r?.currentPhase
-    const counters = r ? `${r.succeeded}✓ ${r.failed}✗ ${r.running}⟳` : ""
-    const head = [
-      `workflow ${name}`,
-      status ? `· ${status}` : "",
-      phase ? `· ${phase}` : "",
-      counters ? `· ${counters}` : "",
-    ]
-      .filter(Boolean)
-      .join(" ")
-    lines.push(head)
-    for (const e of transcript()) {
-      lines.push(e.kind === "phase" ? `↳ phase: ${e.text}` : `  ${e.text}`)
-    }
-    return lines.join("\n")
+    return r ? { running: r.running, succeeded: r.succeeded, failed: r.failed } : undefined
+  })
+  const currentPhase = createMemo(
+    () => (props.metadata as { currentPhase?: string }).currentPhase ?? run()?.currentPhase,
+  )
+
+  // Non-"run" ops (status/wait/cancel/resume) are one-shot control calls with no
+  // live transcript — keep them as a compact inline line.
+  return (
+    <Show when={operation() === "run"} fallback={
+      <InlineTool icon="⚡" spinner={isRunning()} pending="Starting workflow..." complete={true} part={props.part}>
+        {`workflow ${operation()}${runID() ? ` ${runID()}` : ""}`}
+      </InlineTool>
+    }>
+      <WorkflowPanel
+        name={name()}
+        status={status()}
+        counters={counters()}
+        currentPhase={currentPhase()}
+        transcript={transcript()}
+        running={isRunning()}
+        part={props.part}
+        onOpen={
+          runID() && fullRoute.data.type === "session"
+            ? () => {
+                const d = fullRoute.data
+                if (d.type === "session") fullRoute.navigate({ ...d, workflowRunID: runID() })
+              }
+            : undefined
+        }
+      />
+    </Show>
+  )
+}
+
+// Bold panel for a `workflow run`. The transcript (phase + log lines streamed
+// every 250ms into part metadata) is the run's live activity — agents spawning,
+// per-source hits, facts checked. The old renderer dumped it all as one muted-
+// gray InlineTool blob, so a busy run read as "stuck". Here phases are bold
+// accent section headers, logs render in readable text, and a running run shows
+// a spinner on its current phase so progress is always visible. Bounded to the
+// last N lines in the conversation flow; full history lives in the detail dialog.
+const WORKFLOW_PANEL_TAIL = 12
+
+// WorkflowPage is conditionally rendered (fallback of the conversation Show), so it
+// fully unmounts when you navigate into a subagent and remounts on return — which
+// would reset its scrollbox to the top. Remember the last scroll offset per runID
+// here so returning restores the position, like the persistent conversation scroll.
+const workflowScrollByRun = new Map<string, number>()
+function WorkflowPanel(props: {
+  name: string
+  status?: string
+  counters?: { succeeded: number; failed: number; running: number }
+  currentPhase?: string
+  transcript: { kind: "phase" | "log"; text: string }[]
+  running: boolean
+  part: ToolPart
+  onOpen?: () => void
+}) {
+  const { theme } = useTheme()
+  const renderer = useRenderer()
+  const [collapsed, setCollapsed] = createSignal(false)
+  const [openHover, setOpenHover] = createSignal(false)
+
+  const statusColor = createMemo(() => {
+    const s = props.status
+    if (s === "completed") return theme.success
+    if (s === "failed") return theme.error
+    if (s === "cancelled") return theme.textMuted
+    return theme.warning
   })
 
+  const hiddenCount = createMemo(() => Math.max(0, props.transcript.length - WORKFLOW_PANEL_TAIL))
+  const entries = createMemo(() => (collapsed() ? [] : props.transcript.slice(-WORKFLOW_PANEL_TAIL)))
+
   return (
-    <InlineTool icon="⚡" spinner={isRunning()} pending="Starting workflow..." complete={true} part={props.part}>
-      {content()}
-    </InlineTool>
+    <box
+      border={["left"]}
+      paddingTop={1}
+      paddingBottom={1}
+      paddingLeft={2}
+      marginTop={1}
+      gap={1}
+      backgroundColor={theme.backgroundPanel}
+      customBorderChars={SplitBorder.customBorderChars}
+      borderColor={statusColor()}
+      onMouseUp={() => {
+        if (renderer.getSelection()?.getSelectedText()) return
+        setCollapsed((p) => !p)
+      }}
+    >
+      <box flexDirection="row" gap={1} paddingLeft={3}>
+        <Show when={props.running} fallback={<text fg={theme.accent} attributes={TextAttributes.BOLD}>⚡</text>}>
+          <spinner frames={["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]} interval={80} color={theme.accent} />
+        </Show>
+        <text attributes={TextAttributes.BOLD} fg={theme.accent}>
+          {props.name}
+        </text>
+        <Show when={props.status}>
+          <text fg={statusColor()} attributes={TextAttributes.BOLD}>
+            {props.status}
+          </text>
+        </Show>
+        <Show when={props.currentPhase}>
+          <text fg={theme.textMuted}>· {props.currentPhase}</text>
+        </Show>
+        <Show when={props.counters}>
+          <text fg={theme.success}>{props.counters!.succeeded}✓</text>
+          <text fg={props.counters!.failed > 0 ? theme.error : theme.textMuted}>{props.counters!.failed}✗</text>
+          <text fg={props.counters!.running > 0 ? theme.warning : theme.textMuted}>{props.counters!.running}⟳</text>
+        </Show>
+        <Show when={props.onOpen}>
+          <box flexGrow={1} />
+          <text
+            fg={openHover() ? theme.text : theme.markdownLink}
+            onMouseOver={() => setOpenHover(true)}
+            onMouseOut={() => setOpenHover(false)}
+            onMouseUp={(evt) => {
+              evt.stopPropagation()
+              if (renderer.getSelection()?.getSelectedText()) return
+              props.onOpen?.()
+            }}
+          >
+            open ↗
+          </text>
+        </Show>
+      </box>
+      <Show
+        when={!collapsed()}
+        fallback={
+          <text paddingLeft={3} fg={theme.textMuted}>
+            {props.transcript.length} lines · click to expand
+          </text>
+        }
+      >
+        <box paddingLeft={3}>
+          <Show when={hiddenCount() > 0}>
+            <text fg={theme.textMuted}>+{hiddenCount()} earlier lines · open detail for full history</text>
+          </Show>
+          <For each={entries()}>
+            {(e) => (
+              <Show
+                when={e.kind === "phase"}
+                fallback={<text fg={theme.text}>{e.text}</text>}
+              >
+                <text fg={theme.accent} attributes={TextAttributes.BOLD}>
+                  ▸ {e.text}
+                </text>
+              </Show>
+            )}
+          </For>
+        </box>
+      </Show>
+    </box>
+  )
+}
+
+// Full-screen workflow detail page: occupies the conversation column (like a
+// subagent view) and shows one run's structure tree + transcript, live while
+// running. An agent row navigates to that subagent's full conversation; a nested
+// workflow row drills into the child run; "Main" returns to the conversation.
+function WorkflowPage(props: {
+  runID: string
+  onBack: () => void
+  onOpenAgent: (actorID: string) => void
+  onOpenChild: (childRunID: string) => void
+}) {
+  const sync = useSync()
+  const dialog = useDialog()
+  const keybind = useKeybind()
+  const { theme } = useTheme()
+  const renderer = useRenderer()
+  const tuiConfig = useTuiConfig()
+  const scrollAcceleration = createMemo(() => getScrollAcceleration(tuiConfig))
+  let pageScroll: ScrollBoxRenderable | undefined
+
+  const run = createMemo(() => sync.data.workflow[props.runID])
+
+  // Describe what a running subagent is currently doing, from its live message
+  // stream (last message's last meaningful part): a tool call → "⚙ <tool>", else
+  // the latest text snippet. Returns undefined when nothing's streamed yet.
+  const liveActivity = (actorID: string): string | undefined => {
+    const sid = run()?.sessionID
+    if (!sid) return undefined
+    const msgs = sync.data.message[sid]?.[actorID]
+    const last = msgs?.[msgs.length - 1]
+    if (!last) return undefined
+    const parts = sync.data.part[last.id] ?? []
+    for (let i = parts.length - 1; i >= 0; i--) {
+      const p = parts[i] as { type?: string; tool?: string; text?: string }
+      if (p.type === "tool" && p.tool) return `⚙ ${p.tool}`
+      if (p.type === "text" && p.text) return p.text
+    }
+    return undefined
+  }
+  const transcript = createMemo(() => sync.data.workflowTranscript[props.runID] ?? [])
+  const structure = createMemo(() => sync.data.workflowStructure[props.runID] ?? [])
+
+  // Keyed on props.runID so a parent→child sub-workflow navigation (which does NOT
+  // remount this component, since the <Show> fallback stays mounted while
+  // workflowRunID is merely a different value) re-loads the new run's data, restores
+  // its scroll, and re-arms the poll. The effect's onCleanup runs with `runID` bound
+  // to the run being LEFT, so it saves that run's scroll under the correct key —
+  // unlike reading props.runID at unmount, which is already stale.
+  createEffect(
+    on(
+      () => props.runID,
+      (runID) => {
+        sync.loadWorkflowTranscript(runID)
+        sync.loadWorkflowStructure(runID)
+        // Restore the scroll position saved when we last left this run's page.
+        // Deferred + retried so the cards (from the persisted structure store) are
+        // laid out first, giving scrollTop a real range to land within.
+        const saved = workflowScrollByRun.get(runID)
+        if (saved) {
+          let tries = 0
+          const restore = () => {
+            if (pageScroll) pageScroll.scrollTop = saved
+            if (++tries < 5 && (pageScroll?.scrollTop ?? 0) < saved - 1) setTimeout(restore, 60)
+          }
+          setTimeout(restore, 0)
+        } else if (pageScroll) {
+          pageScroll.scrollTop = 0
+        }
+        const interval = setInterval(() => {
+          sync.loadWorkflowStructure(runID)
+          sync.loadWorkflowTranscript(runID)
+        }, 1000)
+        onCleanup(() => {
+          clearInterval(interval)
+          if (pageScroll) workflowScrollByRun.set(runID, pageScroll.scrollTop)
+        })
+      },
+    ),
+  )
+
+  const statusColor = createMemo(() => {
+    const s = run()?.status
+    if (s === "completed") return theme.success
+    if (s === "failed") return theme.error
+    if (s === "cancelled") return theme.textMuted
+    return theme.warning
+  })
+
+  const resumable = createMemo(() => {
+    const s = run()?.status
+    return s === "running" || s === "failed" || s === "cancelled"
+  })
+  const resume = async () => {
+    const ok = await DialogConfirm.show(
+      dialog,
+      "Resume workflow",
+      `Re-run "${run()?.name ?? props.runID}"? This re-executes the workflow and may incur cost.`,
+    )
+    if (ok === true) void sync.resumeWorkflow(props.runID)
+  }
+
+  return (
+    <box flexGrow={1} gap={1}>
+      <box flexDirection="row" gap={1} flexShrink={0}>
+        <text
+          fg={theme.text}
+          onMouseUp={() => {
+            if (renderer.getSelection()?.getSelectedText()) return
+            props.onBack()
+          }}
+        >
+          ‹ Main <span style={{ fg: theme.textMuted }}>{keybind.print("session_parent")}</span>
+        </text>
+        <box flexGrow={1} />
+        <text attributes={TextAttributes.BOLD} fg={theme.accent}>
+          {run()?.name ?? props.runID}
+        </text>
+        <Show when={run()?.status}>
+          <text attributes={TextAttributes.BOLD} fg={statusColor()}>
+            {run()!.status}
+          </text>
+        </Show>
+      </box>
+      <Show when={run()}>
+        <box flexDirection="row" gap={1} flexShrink={0}>
+          <Show when={run()!.currentPhase}>
+            <text fg={theme.textMuted}>{run()!.currentPhase}</text>
+          </Show>
+          <text fg={theme.success}>{run()!.succeeded}✓</text>
+          <text fg={run()!.failed > 0 ? theme.error : theme.textMuted}>{run()!.failed}✗</text>
+          <text fg={run()!.running > 0 ? theme.warning : theme.textMuted}>{run()!.running}⟳</text>
+          <Show when={resumable()}>
+            <text fg={theme.markdownLink} onMouseUp={() => void resume()}>
+              ↻ resume
+            </text>
+          </Show>
+        </box>
+      </Show>
+      <scrollbox
+        ref={(r) => (pageScroll = r)}
+        flexGrow={1}
+        scrollAcceleration={scrollAcceleration()}
+      >
+        <WorkflowTree
+          nodes={structure()}
+          onOpenChild={props.onOpenChild}
+          onOpenAgent={props.onOpenAgent}
+          liveActivity={liveActivity}
+        />
+        <Show when={transcript().length > 0}>
+          <box paddingTop={1}>
+            <text fg={theme.textMuted}>transcript</text>
+            <For each={transcript()}>
+              {(e) => (
+                <Show when={e.kind === "phase"} fallback={<text fg={theme.text}>{e.text}</text>}>
+                  <text attributes={TextAttributes.BOLD} fg={theme.accent}>
+                    ▸ {e.text}
+                  </text>
+                </Show>
+              )}
+            </For>
+          </box>
+        </Show>
+        <Show when={run()?.error}>
+          <text fg={theme.error}>{run()!.error}</text>
+        </Show>
+      </scrollbox>
+    </box>
   )
 }
 

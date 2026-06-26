@@ -111,7 +111,8 @@ export function SubagentFooter() {
               backgroundColor={hover() === "parent" ? theme.backgroundElement : theme.backgroundPanel}
             >
               <text fg={theme.text}>
-                Main <span style={{ fg: theme.textMuted }}>{keybind.print("session_parent")}</span>
+                {route.fromWorkflowRunID ? "Workflow" : "Main"}{" "}
+                <span style={{ fg: theme.textMuted }}>{keybind.print("session_parent")}</span>
               </text>
             </box>
             <box

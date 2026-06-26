@@ -90,6 +90,41 @@ describe("workflows routes", () => {
     })
   }
 
+  // ── Regression: read routes must accept a NESTED child runID ──────────────
+  // A top-level run is `wf_` + 26 base62; a nested workflow() child is `wf_` + 64
+  // hex (sha256). The transcript/structure routes previously validated only the
+  // 26-char form, so every nested-workflow detail page got a 400 and rendered blank.
+  // The routes short-circuit to empty when the runtime is absent, so a 200 here
+  // proves the param validator ACCEPTED the 64-hex id (a regression would 400).
+  const childRunID = "wf_" + "a".repeat(64)
+  for (const path of [`/workflows/${childRunID}/transcript`, `/workflows/${childRunID}/structure`]) {
+    test(`GET ${path} accepts a 64-hex child runID (200, not 400)`, async () => {
+      await using tmp = await tmpdir({ git: true })
+      await Instance.provide({
+        directory: tmp.path,
+        fn: async () => {
+          workflowRef.current = undefined
+          const response = await Server.Default().app.request(path, { method: "GET" })
+          expect(response.status).toBe(200)
+        },
+      })
+    })
+  }
+
+  for (const path of ["/workflows/wf_..%2F..%2Fetc/transcript", "/workflows/not-a-run/structure"]) {
+    test(`GET ${path} still REJECTS a malformed runID (400)`, async () => {
+      await using tmp = await tmpdir({ git: true })
+      await Instance.provide({
+        directory: tmp.path,
+        fn: async () => {
+          workflowRef.current = undefined
+          const response = await Server.Default().app.request(path, { method: "GET" })
+          expect(response.status).toBe(400)
+        },
+      })
+    })
+  }
+
   // ── P0 (MR104 #3): GET /workflows must NOT leak all-session runs ──────────
   test("GET /workflows with NO sessionID returns 400 (does not list all runs)", async () => {
     await using tmp = await tmpdir({ git: true })
@@ -274,6 +309,55 @@ describe("workflows routes — live runtime", () => {
     // Headroom over the default 5s: this exercises a full Instance bootstrap +
     // a real runtime run + an HTTP round-trip, and runs alongside the heavy
     // live workflow/server suites where CI load can push past 5s.
+    15000,
+  )
+
+  it.live("GET /workflows/:runID/transcript and /structure return the run's full data", () =>
+    provideTmpdirServer(
+      Effect.fnUntraced(function* ({ dir, llm }) {
+        const runtime = yield* WorkflowRuntime.Service
+        const session = yield* Session.Service
+        const parent = yield* session.create({
+          title: "wf route detail",
+          permission: [{ permission: "*", pattern: "*", action: "allow" }],
+        })
+        yield* llm.text("done")
+        const script = [
+          `export const meta = { name: "t", description: "d" }`,
+          `phase("Plan")`,
+          `return await agent("x")`,
+        ].join("\n")
+        const { runID } = yield* runtime.start({ script, sessionID: parent.id, parentActorID: "main", model: ref })
+        const outcome = yield* runtime.wait({ runID, timeoutMs: 8000 })
+        expect(outcome.status).toBe("completed")
+
+        const tRes = yield* Effect.promise(async () =>
+          Server.Default().app.request(`/workflows/${runID}/transcript`, {
+            method: "GET",
+            headers: { "x-mimocode-directory": dir },
+          }),
+        )
+        expect(tRes.status).toBe(200)
+        const tBody = (yield* Effect.promise(() => tRes.json())) as {
+          runID: string
+          transcript: { kind: string; text: string }[]
+        }
+        expect(tBody.runID).toBe(runID)
+        expect(tBody.transcript.some((e) => e.kind === "phase")).toBe(true)
+
+        const sRes = yield* Effect.promise(async () =>
+          Server.Default().app.request(`/workflows/${runID}/structure`, {
+            method: "GET",
+            headers: { "x-mimocode-directory": dir },
+          }),
+        )
+        expect(sRes.status).toBe(200)
+        const sBody = (yield* Effect.promise(() => sRes.json())) as { runID: string; nodes: { type: string }[] }
+        expect(sBody.runID).toBe(runID)
+        expect(sBody.nodes.some((n) => n.type === "agent")).toBe(true)
+      }),
+      { git: true, config: providerCfg },
+    ),
     15000,
   )
 })

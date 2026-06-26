@@ -12,6 +12,13 @@ export type SessionRoute = {
   type: "session"
   sessionID: string
   agentID?: string
+  /** When set, the session view renders the full-screen workflow detail page for
+   * this run (replacing the message stream), mirroring how agentID renders a
+   * subagent's conversation. Cleared to return to the main conversation. */
+  workflowRunID?: string
+  /** When an agent (agentID) was opened FROM a workflow page, this records that
+   * origin run so "back" returns to the workflow rather than the main conversation. */
+  fromWorkflowRunID?: string
   prompt?: PromptInfo
 }
 
