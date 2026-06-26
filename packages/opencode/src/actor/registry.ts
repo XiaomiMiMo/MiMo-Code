@@ -308,7 +308,12 @@ export const layer: Layer.Layer<Service, never, Bus.Service> = Layer.effect(
       if (actorID === "main") return false
       const actor = yield* get(sessionID, actorID)
       if (!actor) return false
-      return SYSTEM_SPAWNED_AGENT_TYPES.has(actor.agent)
+      // System-spawned by agent type (checkpoint-writer/dream/distill) OR any
+      // background actor: both have no human attached to answer a permission
+      // prompt. Workflow subagents (e.g. compose) spawn with background:true and
+      // agentType "general", so the type check alone misses them — include
+      // background so their permission asks fail clean instead of hanging.
+      return SYSTEM_SPAWNED_AGENT_TYPES.has(actor.agent) || actor.background
     })
 
     const allocateActorID = Effect.fn("ActorRegistry.allocateActorID")(function* (
