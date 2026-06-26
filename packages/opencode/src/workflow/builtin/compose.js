@@ -248,7 +248,7 @@ if (VALID_TYPES.indexOf(argType) >= 0) {
   if (/\b(pr|review)\b.*\b(feedback|comment|address)\b|address .*\bfeedback\b/.test(t)) type = "feedback"
   else if (/\b(bug|broken|regression|crash|fails?|incorrect|wrong|error)\b/.test(t)) type = "bugfix"
   else type = "feature"
-  log("Resolved type=" + type + " (heuristic; no classify phase)")
+  log("Task type: " + type)
 }
 
 const SKILL_BY_TYPE = {
