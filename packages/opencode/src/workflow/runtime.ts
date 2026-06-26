@@ -638,6 +638,7 @@ export const layer = Layer.effect(
         prompt: string,
         o: AgentOpts,
         resolvedModel: { providerID: ProviderID; modelID: ModelID } | undefined,
+        onActorID?: (id: string) => void,
       ) => {
         // COUNTER INVARIANT: running++ exactly once BEFORE the spawn attempt, and
         // running-- + (succeeded XOR failed)++ exactly once AFTER it settles. The
@@ -674,7 +675,10 @@ export const layer = Layer.effect(
                 // fiber detaches. A cancel racing this spawn would otherwise miss
                 // it (the child runs detached in the actor scope, so interrupting
                 // the workflow fiber can't stop it) and leak an orphan. MR104 #2.
-                onActorID: (id) => entry.childActorIDs.add(id),
+                onActorID: (id) => {
+                  entry.childActorIDs.add(id)
+                  onActorID?.(id)
+                },
                 ...(o.schema ? { format: { type: "json_schema" as const, schema: o.schema, retryCount: 2 } } : {}),
               })
               actorID = spawned.actorID
@@ -729,6 +733,7 @@ export const layer = Layer.effect(
         prompt: string,
         o: AgentOpts,
         resolvedModel: { providerID: ProviderID; modelID: ModelID } | undefined,
+        onActorID?: (id: string) => void,
       ) => {
         // Failure-reason refs (parallel to spawnShared); see there for rationale.
         let reason: FailReason = "actor-error"
@@ -795,7 +800,10 @@ export const layer = Layer.effect(
                     // Same MR104 #2 fix as spawnShared: register the child in the
                     // reclaim set synchronously inside the spawn Effect, before its
                     // work fiber detaches, so a racing cancel never orphans it.
-                    onActorID: (id) => entry.childActorIDs.add(id),
+                    onActorID: (id) => {
+                      entry.childActorIDs.add(id)
+                      onActorID?.(id)
+                    },
                     ...(o.schema ? { format: { type: "json_schema" as const, schema: o.schema, retryCount: 2 } } : {}),
                   })
                   actorIDOut = s.actorID
@@ -890,6 +898,13 @@ export const layer = Layer.effect(
             if (actorID && node.actorID === undefined) node.actorID = actorID
           }
         }
+        // Fill the node's actorID the instant the child actor is minted (BEFORE it
+        // settles), so the TUI can offer "open this agent" while it's still running.
+        const setActorID = (actorID: string) => {
+          if (!nodeId) return
+          const node = entry.structure.find((n) => n.id === nodeId)
+          if (node && node.type === "agent" && node.actorID === undefined) node.actorID = actorID
+        }
         // Isolated agents are never journaled in v1 (their deliverable is a
         // worktree the journal can't reconstruct) — always spawn.
         if (o.isolation !== "worktree") {
@@ -929,7 +944,7 @@ export const layer = Layer.effect(
                 // resolved struct, so resume keys stay stable across config changes).
                 // Never-throws: an unknown group falls back to input.model.
                 const resolvedModel = await bridge.promise(resolveAgentModel(o.model, input.model, entry.warnedModelRefs))
-                return spawnShared(actor, promptStr, o, resolvedModel)
+                return spawnShared(actor, promptStr, o, resolvedModel, setActorID)
               }),
             )
             markAgentNode(result === null ? "failed" : "succeeded")
@@ -962,7 +977,7 @@ export const layer = Layer.effect(
             // Resolve the guest's model ref host-side (isolated agents aren't
             // journaled, so there's no key to keep stable here). Never-throws.
             const resolvedModel = await bridge.promise(resolveAgentModel(o.model, input.model, entry.warnedModelRefs))
-            const value = await spawnIsolated(actor, promptStr, o, resolvedModel)
+            const value = await spawnIsolated(actor, promptStr, o, resolvedModel, setActorID)
             markAgentNode(value === null ? "failed" : "succeeded")
             return value
           }),

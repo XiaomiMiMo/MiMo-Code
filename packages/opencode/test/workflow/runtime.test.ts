@@ -1107,6 +1107,7 @@ describe("WorkflowRuntime structure tree", () => {
           label?: string
           prompt?: string
           durationMs?: number
+          actorID?: string
         }[]
         expect(agents).toHaveLength(2)
         expect(agents.every((a) => a.phaseId === "p0")).toBe(true)
@@ -1117,6 +1118,8 @@ describe("WorkflowRuntime structure tree", () => {
         expect(agents[0].prompt).toBe("a")
         expect(agents[1].prompt).toBe("b")
         expect(agents.every((a) => typeof a.durationMs === "number")).toBe(true)
+        // actorID is captured so the TUI can navigate to the spawned subagent.
+        expect(agents.every((a) => typeof a.actorID === "string" && a.actorID.length > 0)).toBe(true)
       }),
       { git: true, config: providerCfg },
     ),

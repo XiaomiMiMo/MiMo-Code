@@ -37,7 +37,11 @@ function agentMeta(n: AgentNode) {
   return parts.join(" · ")
 }
 
-export function WorkflowTree(props: { nodes: WorkflowNode[]; onOpenChild?: (childRunID: string) => void }) {
+export function WorkflowTree(props: {
+  nodes: WorkflowNode[]
+  onOpenChild?: (childRunID: string) => void
+  onOpenAgent?: (actorID: string) => void
+}) {
   const { theme } = useTheme()
   const statusColor = (s: string) =>
     s === "succeeded" || s === "completed"
@@ -63,11 +67,21 @@ export function WorkflowTree(props: { nodes: WorkflowNode[]; onOpenChild?: (chil
             </Show>
 
             <Show when={row.node.type === "agent"}>
-              {/* line 1: glyph + name + meta(model/tools/schema/duration) */}
+              {/* line 1: glyph + name + meta(model/tools/schema/duration). The name
+                  is clickable (→ that subagent's full conversation) once the agent
+                  has spawned (actorID present) and a handler is provided. */}
               <box flexDirection="row" gap={1}>
                 <text fg={statusColor((row.node as AgentNode).status)}>{glyph((row.node as AgentNode).status)}</text>
-                <text attributes={TextAttributes.BOLD} fg={theme.text}>
+                <text
+                  attributes={TextAttributes.BOLD}
+                  fg={(row.node as AgentNode).actorID && props.onOpenAgent ? theme.markdownLink : theme.text}
+                  onMouseUp={() => {
+                    const a = row.node as AgentNode
+                    if (a.actorID) props.onOpenAgent?.(a.actorID)
+                  }}
+                >
                   {(row.node as AgentNode).label ?? (row.node as AgentNode).agentType}
+                  {(row.node as AgentNode).actorID && props.onOpenAgent ? " ↗" : ""}
                 </text>
                 <Show when={agentMeta(row.node as AgentNode)}>
                   <text fg={theme.textMuted}>{agentMeta(row.node as AgentNode)}</text>

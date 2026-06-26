@@ -65,6 +65,7 @@ import { DialogTimeline } from "./dialog-timeline"
 import { DialogForkFromTimeline } from "./dialog-fork-from-timeline"
 import { DialogSessionRename } from "../../component/dialog-session-rename"
 import { Sidebar } from "./sidebar"
+import { WorkflowTree } from "@tui/component/workflow-tree"
 import { SubagentFooter } from "./subagent-footer.tsx"
 import { DialogSubagent } from "./dialog-subagent.tsx"
 import { Flag } from "@/flag/flag"
@@ -184,6 +185,15 @@ export function Session() {
   const [diffWrapMode] = kv.signal<"word" | "none">("diff_wrap_mode", "word")
   const [_animationsEnabled, _setAnimationsEnabled] = kv.signal("animations_enabled", true)
   const [showGenericToolOutput, setShowGenericToolOutput] = kv.signal("generic_tool_output_visibility", false)
+
+  // The workflow run whose detail panel is open beside the conversation (a
+  // persistent column, NOT an overlay). Set by selecting a run in /workflows;
+  // cleared by closing the panel. Session-scoped so each session has its own.
+  const [workflowPanelRunID, setWorkflowPanelRunID] = kv.signal<string | undefined>(
+    `workflow_panel:${route.sessionID}`,
+    undefined,
+  )
+  const workflowPanelVisible = createMemo(() => Boolean(workflowPanelRunID()) && wide())
 
   const wide = createMemo(() => dimensions().width > 120)
   const sidebarVisible = createMemo(() => {
@@ -1240,6 +1250,12 @@ export function Session() {
           </Show>
           <Toast />
         </box>
+        <Show when={workflowPanelVisible()}>
+          <WorkflowDetailPanel
+            runID={workflowPanelRunID()!}
+            onClose={() => setWorkflowPanelRunID(() => undefined)}
+          />
+        </Show>
         <Show when={sidebarVisible()}>
           <Switch>
             <Match when={wide()}>
@@ -2043,6 +2059,131 @@ function WorkflowPanel(props: {
           </For>
         </box>
       </Show>
+    </box>
+  )
+}
+
+// Persistent (non-overlay) workflow detail panel: a full-height column beside the
+// conversation showing one run's structure tree + transcript, live-updating while
+// running. Clicking an agent row navigates to that subagent's full conversation;
+// a nested-workflow row swaps the panel to the child run.
+function WorkflowDetailPanel(props: { runID: string; onClose: () => void }) {
+  const sync = useSync()
+  const route = useRoute()
+  const dialog = useDialog()
+  const { theme } = useTheme()
+  const renderer = useRenderer()
+
+  const run = createMemo(() => sync.data.workflow[props.runID])
+  const transcript = createMemo(() => sync.data.workflowTranscript[props.runID] ?? [])
+  const structure = createMemo(() => sync.data.workflowStructure[props.runID] ?? [])
+
+  onMount(() => {
+    sync.loadWorkflowTranscript(props.runID)
+    sync.loadWorkflowStructure(props.runID)
+    const interval = setInterval(() => {
+      sync.loadWorkflowStructure(props.runID)
+      if (run()?.status === "running") sync.loadWorkflowTranscript(props.runID)
+    }, 1000)
+    onCleanup(() => clearInterval(interval))
+  })
+
+  const statusColor = createMemo(() => {
+    const s = run()?.status
+    if (s === "completed") return theme.success
+    if (s === "failed") return theme.error
+    if (s === "cancelled") return theme.textMuted
+    return theme.warning
+  })
+
+  const resumable = createMemo(() => {
+    const s = run()?.status
+    return s === "running" || s === "failed" || s === "cancelled"
+  })
+  const resume = async () => {
+    const ok = await DialogConfirm.show(
+      dialog,
+      "Resume workflow",
+      `Re-run "${run()?.name ?? props.runID}"? This re-executes the workflow and may incur cost.`,
+    )
+    if (ok === true) void sync.resumeWorkflow(props.runID)
+  }
+
+  // Navigate the main view to a subagent's own conversation (workflow agents
+  // register as mode:"subagent" actors in this session). Mirrors DialogSubagent.
+  const openAgent = (actorID: string) => {
+    if (route.data.type === "session") route.navigate({ ...route.data, agentID: actorID })
+  }
+
+  return (
+    <box
+      backgroundColor={theme.backgroundPanel}
+      width={56}
+      height="100%"
+      paddingTop={1}
+      paddingBottom={1}
+      paddingLeft={2}
+      paddingRight={2}
+    >
+      <box flexDirection="row" gap={1} flexShrink={0}>
+        <text attributes={TextAttributes.BOLD} fg={theme.accent}>
+          {run()?.name ?? props.runID}
+        </text>
+        <Show when={run()?.status}>
+          <text attributes={TextAttributes.BOLD} fg={statusColor()}>
+            {run()!.status}
+          </text>
+        </Show>
+        <box flexGrow={1} />
+        <text
+          fg={theme.textMuted}
+          onMouseUp={() => {
+            if (renderer.getSelection()?.getSelectedText()) return
+            props.onClose()
+          }}
+        >
+          ✕
+        </text>
+      </box>
+      <Show when={run()}>
+        <box flexDirection="row" gap={1} flexShrink={0}>
+          <Show when={run()!.currentPhase}>
+            <text fg={theme.textMuted}>{run()!.currentPhase}</text>
+          </Show>
+          <text fg={theme.success}>{run()!.succeeded}✓</text>
+          <text fg={run()!.failed > 0 ? theme.error : theme.textMuted}>{run()!.failed}✗</text>
+          <text fg={run()!.running > 0 ? theme.warning : theme.textMuted}>{run()!.running}⟳</text>
+          <Show when={resumable()}>
+            <text fg={theme.markdownLink} onMouseUp={() => void resume()}>
+              ↻ resume
+            </text>
+          </Show>
+        </box>
+      </Show>
+      <scrollbox flexGrow={1} paddingTop={1}>
+        <WorkflowTree
+          nodes={structure()}
+          onOpenChild={(childRunID) => sync.loadWorkflowStructure(childRunID)}
+          onOpenAgent={openAgent}
+        />
+        <Show when={transcript().length > 0}>
+          <box paddingTop={1}>
+            <text fg={theme.textMuted}>transcript</text>
+            <For each={transcript()}>
+              {(e) => (
+                <Show when={e.kind === "phase"} fallback={<text fg={theme.text}>{e.text}</text>}>
+                  <text attributes={TextAttributes.BOLD} fg={theme.accent}>
+                    ▸ {e.text}
+                  </text>
+                </Show>
+              )}
+            </For>
+          </box>
+        </Show>
+        <Show when={run()?.error}>
+          <text fg={theme.error}>{run()!.error}</text>
+        </Show>
+      </scrollbox>
     </box>
   )
 }

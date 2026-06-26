@@ -1,14 +1,15 @@
 import { useDialog } from "@tui/ui/dialog"
 import { DialogSelect, type DialogSelectOption } from "@tui/ui/dialog-select"
-import { DialogWorkflowDetail } from "@tui/component/dialog-workflow-detail"
 import { useRoute } from "@tui/context/route"
 import { useSync } from "@tui/context/sync"
+import { useKV } from "@tui/context/kv"
 import { createMemo, onCleanup, onMount } from "solid-js"
 
 export function DialogWorkflows() {
   const dialog = useDialog()
   const route = useRoute()
   const sync = useSync()
+  const kv = useKV()
 
   const currentSessionID = createMemo(() => (route.data.type === "session" ? route.data.sessionID : undefined))
 
@@ -39,9 +40,13 @@ export function DialogWorkflows() {
     return list.map((r) => ({
       title: `${r.name}  ${r.status}  ${r.currentPhase ?? "-"}  ${r.succeeded}✓ ${r.failed}✗ ${r.running}⟳`,
       value: r.runID,
-      // Primary action: open the full detail view (tree + transcript). Resume of an
-      // incomplete run is now a secondary action reachable from inside that view.
-      onSelect: (d) => DialogWorkflowDetail.show(d, r.runID),
+      // Open the run in the persistent detail PANEL beside the conversation (a
+      // session-scoped KV key the session route reads), not an overlay dialog.
+      onSelect: (d) => {
+        const sid = currentSessionID()
+        if (sid) kv.set(`workflow_panel:${sid}`, r.runID)
+        d.clear()
+      },
     }))
   })
 
