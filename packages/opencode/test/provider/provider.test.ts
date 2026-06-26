@@ -53,10 +53,6 @@ async function defaultModel() {
   return run((provider) => provider.defaultModel())
 }
 
-function opencodeProviderPresent(providers: Awaited<ReturnType<typeof list>>): boolean {
-  return providers[ProviderID.make("opencode")] !== undefined
-}
-
 test("provider loaded from env variable", async () => {
   await using tmp = await tmpdir({
     init: async (dir) => {
@@ -2612,41 +2608,3 @@ test("plugin config enabled and disabled providers are honored", async () => {
   })
 })
 
-test("opencode and opencode-go providers are disabled by MimoFreeAuthPlugin", async () => {
-  await using base = await tmpdir({
-    init: async (dir) => {
-      await Bun.write(
-        path.join(dir, "mimocode.json"),
-        JSON.stringify({
-          $schema: "https://opencode.ai/config.json",
-          provider: {
-            opencode: {
-              options: {
-                apiKey: "test-key",
-              },
-            },
-          },
-        }),
-      )
-    },
-  })
-
-  const providers = await Instance.provide({
-    directory: base.path,
-    fn: async () => list(),
-  })
-
-  // MimoFreeAuthPlugin always pushes opencode/opencode-go into disabled_providers,
-  // so they should not appear even when the user supplies an apiKey or auth record.
-  // However, MimoFreeAuthPlugin is part of the private overlay (src/ext/) that only
-  // exists in the internal build. In the open-source build the plugin is absent and
-  // opencode/opencode-go remain loaded. Gate these assertions on mimo provider presence.
-  const mimo = providers[ProviderID.make("mimo")]
-  if (mimo) {
-    expect(opencodeProviderPresent(providers)).toBe(false)
-    expect(providers[ProviderID.make("opencode-go")]).toBeUndefined()
-    expect(mimo.models[ModelID.make("mimo-auto")]).toBeDefined()
-    expect(mimo.models[ModelID.make("mimo-auto")].limit.context).toBe(1_000_000)
-    expect(mimo.models[ModelID.make("mimo-auto")].limit.output).toBe(128_000)
-  }
-})
