@@ -1123,7 +1123,7 @@ describe("session.llm.stream", () => {
         expect(body.messages).toStrictEqual([
           {
             role: "user",
-            content: [{ cache_control: { type: "ephemeral" }, type: "text", text: "Can you check whether there are any PDF files in my home directory?" }],
+            content: [{ type: "text", text: "Can you check whether there are any PDF files in my home directory?" }],
           },
           {
             role: "assistant",
@@ -1143,6 +1143,7 @@ describe("session.llm.stream", () => {
                 id: "toolu_01APxrADs7VozN8uWzw9WwHr",
                 name: "glob",
                 input: { pattern: "**/*.pdf", path: "/root" },
+                cache_control: { type: "ephemeral" },
               },
             ],
           },
@@ -1158,6 +1159,7 @@ describe("session.llm.stream", () => {
                 type: "tool_result",
                 tool_use_id: "toolu_01APxrADs7VozN8uWzw9WwHr",
                 content: "No files found",
+                cache_control: { type: "ephemeral" },
               },
             ],
           },

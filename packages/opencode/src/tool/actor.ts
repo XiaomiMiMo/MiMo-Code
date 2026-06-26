@@ -665,14 +665,24 @@ export const ActorTool = Tool.define(
         if (msg.info.role !== "assistant") return yield* Effect.fail(new Error("Not an assistant message"))
 
         const modelRef = op.model ?? next.modelRef
+        // Emit metadata with the parsed modelRef BEFORE resolveModelRef can
+        // fail, so the error tool state preserves sessionId/model when the
+        // referenced model does not exist. resolveModelRef failures otherwise
+        // short-circuit before onReady fires, leaving the failed tool state
+        // metadata-less and breaking TUI navigation into the failed subtask.
+        const fallbackModel = modelRef
+          ? Provider.parseModel(modelRef)
+          : (next.model ?? { modelID: msg.info.modelID, providerID: msg.info.providerID })
+        yield* ctx.metadata({
+          title: op.description,
+          metadata: { sessionId: ctx.sessionID, model: fallbackModel },
+        })
+
         const model = modelRef
           ? yield* provider
               .resolveModelRef(modelRef, msg.info.providerID)
               .pipe(Effect.map((m) => ({ modelID: m.id, providerID: m.providerID })))
-          : (next.model ?? {
-              modelID: msg.info.modelID,
-              providerID: msg.info.providerID,
-            })
+          : fallbackModel
 
         // Validate task_id by reference at execute time (NOT in the schema, so a
         // bad value degrades instead of hard-failing the call). A malformed shape

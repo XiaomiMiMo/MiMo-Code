@@ -235,7 +235,7 @@ test(
   ),
 )
 
-test("Claude Code local MCP server is pending until explicitly connected", async () => {
+test("Claude Code local MCP server connects automatically on startup", async () => {
   await using tmp = await tmpdir({
     init: async (dir) => {
       await Bun.write(
@@ -258,11 +258,6 @@ test("Claude Code local MCP server is pending until explicitly connected", async
       await Effect.runPromise(
         MCP.Service.use((mcp) =>
           Effect.gen(function* () {
-            expect((yield* mcp.status()).filesystem).toEqual({ status: "pending" })
-            expect(clientCreateCount).toBe(0)
-
-            yield* mcp.connect("filesystem")
-
             expect((yield* mcp.status()).filesystem).toEqual({ status: "connected" })
             expect(clientCreateCount).toBe(1)
           }),
