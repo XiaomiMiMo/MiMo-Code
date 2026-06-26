@@ -239,7 +239,6 @@ const contextDigest =
 // brainstorm → compose:plan). So: honor an explicit args.type; otherwise default
 // to "feature" (→ compose:plan) and let a cheap keyword heuristic divert obvious
 // bugfix / PR-feedback tasks. The design agent re-judges with full context anyway.
-let classification = null
 let type
 if (VALID_TYPES.indexOf(argType) >= 0) {
   type = argType
@@ -337,7 +336,7 @@ const design = await agent(
   { label: "design-extract:" + type, phase: "Design", schema: DESIGN_SHAPE }
 )
 if (!design) {
-  return { error: "design-failed", type, classification, brainstorm, docs: { specWritten, planWritten } }
+  return { error: "design-failed", type, brainstorm, docs: { specWritten, planWritten } }
 }
 // Normalize task ids: the extract agent sometimes returns tasks with a missing or
 // blank `id` (schema validation can let an empty string through), which then shows
@@ -382,7 +381,7 @@ const topoSort = (tasks) => {
 }
 const topo = topoSort(design.tasks)
 if (topo.error) {
-  return { error: "design-cycle", cycleNodes: topo.cycleNodes, type, classification, brainstorm, design }
+  return { error: "design-cycle", cycleNodes: topo.cycleNodes, type, brainstorm, design }
 }
 const batches = topo.batches
 const taskById = Object.create(null)
@@ -542,7 +541,7 @@ for (let attempt = 0; attempt < MAX_TDD_ATTEMPTS; attempt++) {
     break
   }
   if (attempt + 1 === MAX_TDD_ATTEMPTS) {
-    return { error: "verify-exhausted", type, classification, brainstorm, design, batches, verifyHistory, implementHistory, attempts: MAX_TDD_ATTEMPTS }
+    return { error: "verify-exhausted", type, brainstorm, design, batches, verifyHistory, implementHistory, attempts: MAX_TDD_ATTEMPTS }
   }
   phase("Implement")
   await runDebug((verify ? (verify.failures || "verify returned no detail") : "verify agent failed (null)") + conflictText)
@@ -627,7 +626,7 @@ if (review.critical && review.critical.length > 0) {
   if (review.critical && review.critical.length > 0) {
     return {
       readyToMerge: false,
-      type, classification, brainstorm, design, batches, verifyHistory, implementHistory, fixHistory, review,
+      type, brainstorm, design, batches, verifyHistory, implementHistory, fixHistory, review,
       attempts: { tdd: tddAttempts, reviewFix: reviewFixAttempts },
     }
   }
@@ -684,7 +683,7 @@ const merge = await agent(
 if (!merge || !merge.committed) {
   return {
     error: "merge-failed",
-    type, classification, brainstorm, design, batches, verifyHistory, implementHistory, review, finalReport,
+    type, brainstorm, design, batches, verifyHistory, implementHistory, review, finalReport,
     merge: merge || { committed: false, action: "none" },
     attempts: { tdd: tddAttempts, reviewFix: reviewFixAttempts },
   }
@@ -693,7 +692,6 @@ if (!merge || !merge.committed) {
 return {
   brainstorm,
   type,
-  classification,
   design,
   batches,
   implementHistory,
