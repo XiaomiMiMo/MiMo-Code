@@ -74,6 +74,13 @@ export type WorkflowNode =
       phaseId?: string
       label?: string
       agentType: string
+      prompt: string
+      model?: string
+      tools?: string[]
+      schema?: boolean
+      isolation?: boolean
+      actorID?: string
+      durationMs?: number
       status: "running" | "succeeded" | "failed"
     }
   | {
@@ -82,6 +89,7 @@ export type WorkflowNode =
       phaseId?: string
       childRunID: string
       name: string
+      args?: unknown
       status: "running" | "completed" | "failed" | "cancelled"
     }
 

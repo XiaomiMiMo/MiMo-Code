@@ -64,13 +64,36 @@ export type WorkflowTranscriptEntry = { kind: "phase" | "log"; text: string }
 // siblings under their phase.
 export type WorkflowNode =
   | { type: "phase"; id: string; title: string }
-  | { type: "agent"; id: string; phaseId?: string; label?: string; agentType: string; status: "running" | "succeeded" | "failed" }
+  | {
+      type: "agent"
+      id: string
+      phaseId?: string
+      label?: string
+      agentType: string
+      /** The prompt the guest passed to agent() — the call's primary parameter. */
+      prompt: string
+      /** Resolved-ref model the call requested (undefined = run default). */
+      model?: string
+      /** Tool allowlist the call passed, if any. */
+      tools?: string[]
+      /** Whether the call requested structured output (a schema was passed). */
+      schema?: boolean
+      /** Whether the call ran in an isolated worktree. */
+      isolation?: boolean
+      /** The spawned child actor id (filled once spawned; absent for cache hits / over-cap). */
+      actorID?: string
+      /** Wall-clock duration in ms (filled when the call settles). */
+      durationMs?: number
+      status: "running" | "succeeded" | "failed"
+    }
   | {
       type: "workflow"
       id: string
       phaseId?: string
       childRunID: string
       name: string
+      /** The args the guest passed to workflow() (JSON), for parity with agent params. */
+      args?: unknown
       status: "running" | "completed" | "failed" | "cancelled"
     }
 export type WorkflowStructure = { nodes: WorkflowNode[] }
@@ -849,15 +872,23 @@ export const layer = Layer.effect(
         return { _worktree: wt, result: value }
       }
 
+      // Per-call start times (host wall-clock) for the observability nodes' durationMs.
+      // Host-side only — never read by the guest, so it doesn't affect determinism/replay.
+      const nodeStart = new Map<string, number>()
       const agentImpl = (prompt: unknown, opts?: unknown, nodeId?: string) => {
         const o = (opts ?? {}) as AgentOpts
         const promptStr = String(prompt)
         // Flip the observability node (if any) recorded by the `agent` wrapper for
         // THIS call. Called at the same points that bump succeeded/failed counters.
-        const markAgentNode = (status: "succeeded" | "failed") => {
+        const markAgentNode = (status: "succeeded" | "failed", actorID?: string) => {
           if (!nodeId) return
           const node = entry.structure.find((n) => n.id === nodeId)
-          if (node && node.type === "agent") node.status = status
+          if (node && node.type === "agent") {
+            node.status = status
+            const start = nodeStart.get(nodeId)
+            if (start !== undefined) node.durationMs = Date.now() - start
+            if (actorID && node.actorID === undefined) node.actorID = actorID
+          }
         }
         // Isolated agents are never journaled in v1 (their deliverable is a
         // worktree the journal can't reconstruct) — always spawn.
@@ -954,8 +985,14 @@ export const layer = Layer.effect(
           phaseId: entry.currentPhaseId,
           label: o.label,
           agentType: o.agentType ?? "general",
+          prompt: String(prompt),
+          ...(o.model !== undefined ? { model: o.model } : {}),
+          ...(o.tools ? { tools: [...o.tools] } : {}),
+          ...(o.schema ? { schema: true } : {}),
+          ...(o.isolation === "worktree" ? { isolation: true } : {}),
           status: "running",
         })
+        nodeStart.set(nodeId, Date.now())
         return agentImpl(prompt, opts, nodeId)
       }
 
@@ -1045,6 +1082,7 @@ export const layer = Layer.effect(
               phaseId: entry.currentPhaseId,
               childRunID,
               name: isInlineScript(spec) ? "inline" : spec,
+              ...(childArgs !== undefined ? { args: childArgs } : {}),
               status: "running",
             })
             // The child is an independent sub-run: it gets its own per-run lifecycle

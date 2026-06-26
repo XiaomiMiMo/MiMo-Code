@@ -1105,11 +1105,18 @@ describe("WorkflowRuntime structure tree", () => {
           phaseId?: string
           status: string
           label?: string
+          prompt?: string
+          durationMs?: number
         }[]
         expect(agents).toHaveLength(2)
         expect(agents.every((a) => a.phaseId === "p0")).toBe(true)
         expect(agents.every((a) => a.status === "succeeded")).toBe(true)
         expect(agents[0].label).toBe("la")
+        // Each agent call records its parameters (prompt) + duration — the user's
+        // core requirement that every agent call surface its params.
+        expect(agents[0].prompt).toBe("a")
+        expect(agents[1].prompt).toBe("b")
+        expect(agents.every((a) => typeof a.durationMs === "number")).toBe(true)
       }),
       { git: true, config: providerCfg },
     ),
