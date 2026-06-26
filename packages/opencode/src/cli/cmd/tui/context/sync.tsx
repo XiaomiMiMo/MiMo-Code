@@ -864,13 +864,18 @@ export const { use: useSync, provider: SyncProvider } = createSimpleContext({
       loadWorkflowTranscript(runID: string) {
         void sdk.client.workflow.transcript({ runID }).then((res) => {
           const t = (res.data as { transcript?: { kind: "phase" | "log"; text: string }[] } | undefined)?.transcript
-          if (Array.isArray(t)) setStore("workflowTranscript", runID, t)
+          // reconcile so the 1s poll merges into the existing array (append-only,
+          // stable by index) instead of swapping in all-new refs every tick.
+          if (Array.isArray(t)) setStore("workflowTranscript", runID, reconcile(t))
         })
       },
       loadWorkflowStructure(runID: string) {
         void sdk.client.workflow.structure({ runID }).then((res) => {
           const n = (res.data as { nodes?: WorkflowNode[] } | undefined)?.nodes
-          if (Array.isArray(n)) setStore("workflowStructure", runID, n)
+          // reconcile keyed by node id so unchanged cards keep their object identity
+          // across the 1s poll — otherwise <For> (ref-keyed) remounts every card each
+          // tick, dropping hover state and flickering.
+          if (Array.isArray(n)) setStore("workflowStructure", runID, reconcile(n, { key: "id" }))
         })
       },
     }

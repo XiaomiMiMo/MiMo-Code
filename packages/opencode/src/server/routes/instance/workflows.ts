@@ -7,6 +7,15 @@ import { workflowRef } from "@/workflow/runtime-ref"
 import { jsonRequest } from "./trace"
 import type { SessionID } from "@/session/schema"
 
+// Read-only routes (transcript/structure) accept BOTH runID shapes: a top-level
+// run is `wf_` + 26 base62 (Identifier.descending), a nested child workflow is
+// `wf_` + 64 hex (sha256 of parent runID + key, see runtime.ts). The resume route
+// keeps the strict 26-char form because only top-level runs are resumable AND it
+// builds a filesystem path from the id; these read routes only do an in-memory
+// runtime map lookup, so the wider (still traversal-proof — no `.`/`/`) charset is
+// safe here.
+const READ_RUN_ID = /^wf_(?:[0-9A-Za-z]{26}|[0-9a-f]{64})$/
+
 export const WorkflowRoutes = lazy(() =>
   new Hono()
     .get(
@@ -92,7 +101,7 @@ export const WorkflowRoutes = lazy(() =>
           },
         },
       }),
-      validator("param", z.object({ runID: z.string().regex(/^wf_[0-9A-Za-z]{26}$/, "invalid workflow runID") })),
+      validator("param", z.object({ runID: z.string().regex(READ_RUN_ID, "invalid workflow runID") })),
       async (c) =>
         jsonRequest("WorkflowRoutes.transcript", c, function* () {
           const runtime = workflowRef.current
@@ -120,7 +129,7 @@ export const WorkflowRoutes = lazy(() =>
           },
         },
       }),
-      validator("param", z.object({ runID: z.string().regex(/^wf_[0-9A-Za-z]{26}$/, "invalid workflow runID") })),
+      validator("param", z.object({ runID: z.string().regex(READ_RUN_ID, "invalid workflow runID") })),
       async (c) =>
         jsonRequest("WorkflowRoutes.structure", c, function* () {
           const runtime = workflowRef.current

@@ -113,7 +113,15 @@ function summarizeAgentResult(result: unknown): string | undefined {
     typeof result === "object" && result !== null && "_worktree" in result
       ? (result as { result?: unknown }).result ?? result
       : result
-  const text = typeof unwrapped === "string" ? unwrapped : JSON.stringify(unwrapped, null, 2)
+  // JSON.stringify can throw (cycles, BigInt). This runs on the host settle path
+  // inside markAgentNode, so a throw would escape into the run — guard it: a result
+  // we can't summarize just yields no summary, never breaks the agent.
+  let text: string
+  try {
+    text = typeof unwrapped === "string" ? unwrapped : JSON.stringify(unwrapped, null, 2)
+  } catch {
+    return undefined
+  }
   if (!text) return undefined
   // Preserve line breaks (collapse only runs of spaces/tabs) so a multi-paragraph
   // response renders as readable text in the card, then cap total length.

@@ -8,7 +8,6 @@ import {
   Match,
   on,
   onCleanup,
-  onMount,
   Show,
   Switch,
   useContext,
@@ -396,7 +395,7 @@ export function Session() {
       return
     }
     if (fullRoute.data.type !== "session") return
-    navigate({ ...fullRoute.data, agentID: list[0].actor_id })
+    navigate({ ...fullRoute.data, agentID: list[0].actor_id, fromWorkflowRunID: undefined })
   }
 
   function moveChild(direction: 1 | -1) {
@@ -411,7 +410,7 @@ export function Session() {
           ? 0
           : list.length - 1
         : (idx + direction + list.length) % list.length
-    navigate({ ...fullRoute.data, agentID: list[next].actor_id })
+    navigate({ ...fullRoute.data, agentID: list[next].actor_id, fromWorkflowRunID: undefined })
   }
 
   const command = useCommandDialog()
@@ -2173,13 +2172,6 @@ function WorkflowPage(props: {
   const tuiConfig = useTuiConfig()
   const scrollAcceleration = createMemo(() => getScrollAcceleration(tuiConfig))
   let pageScroll: ScrollBoxRenderable | undefined
-  // Capture the runID ONCE at construction. props.runID tracks the route signal,
-  // which is already cleared (undefined) by the time onCleanup runs during unmount —
-  // so saving under props.runID there would key on undefined and lose the position.
-  const runIDStable = props.runID
-  const rememberScroll = () => {
-    if (pageScroll) workflowScrollByRun.set(runIDStable, pageScroll.scrollTop)
-  }
 
   const run = createMemo(() => sync.data.workflow[props.runID])
 
@@ -2203,31 +2195,43 @@ function WorkflowPage(props: {
   const transcript = createMemo(() => sync.data.workflowTranscript[props.runID] ?? [])
   const structure = createMemo(() => sync.data.workflowStructure[props.runID] ?? [])
 
-  onMount(() => {
-    sync.loadWorkflowTranscript(props.runID)
-    sync.loadWorkflowStructure(props.runID)
-    // Restore the scroll position saved when we last left this run's page. Deferred
-    // so the cards (from the persisted structure store) are laid out first, giving
-    // scrollTo a real scrollHeight to land within. Retry briefly in case the async
-    // structure load hasn't repopulated the viewport on the very first frame.
-    const saved = workflowScrollByRun.get(runIDStable)
-    if (saved) {
-      let tries = 0
-      const restore = () => {
-        if (pageScroll) pageScroll.scrollTop = saved
-        if (++tries < 5 && (pageScroll?.scrollTop ?? 0) < saved - 1) setTimeout(restore, 60)
-      }
-      setTimeout(restore, 0)
-    }
-    const interval = setInterval(() => {
-      sync.loadWorkflowStructure(props.runID)
-      if (run()?.status === "running") sync.loadWorkflowTranscript(props.runID)
-    }, 1000)
-    onCleanup(() => {
-      clearInterval(interval)
-      rememberScroll()
-    })
-  })
+  // Keyed on props.runID so a parent→child sub-workflow navigation (which does NOT
+  // remount this component, since the <Show> fallback stays mounted while
+  // workflowRunID is merely a different value) re-loads the new run's data, restores
+  // its scroll, and re-arms the poll. The effect's onCleanup runs with `runID` bound
+  // to the run being LEFT, so it saves that run's scroll under the correct key —
+  // unlike reading props.runID at unmount, which is already stale.
+  createEffect(
+    on(
+      () => props.runID,
+      (runID) => {
+        sync.loadWorkflowTranscript(runID)
+        sync.loadWorkflowStructure(runID)
+        // Restore the scroll position saved when we last left this run's page.
+        // Deferred + retried so the cards (from the persisted structure store) are
+        // laid out first, giving scrollTop a real range to land within.
+        const saved = workflowScrollByRun.get(runID)
+        if (saved) {
+          let tries = 0
+          const restore = () => {
+            if (pageScroll) pageScroll.scrollTop = saved
+            if (++tries < 5 && (pageScroll?.scrollTop ?? 0) < saved - 1) setTimeout(restore, 60)
+          }
+          setTimeout(restore, 0)
+        } else if (pageScroll) {
+          pageScroll.scrollTop = 0
+        }
+        const interval = setInterval(() => {
+          sync.loadWorkflowStructure(runID)
+          sync.loadWorkflowTranscript(runID)
+        }, 1000)
+        onCleanup(() => {
+          clearInterval(interval)
+          if (pageScroll) workflowScrollByRun.set(runID, pageScroll.scrollTop)
+        })
+      },
+    ),
+  )
 
   const statusColor = createMemo(() => {
     const s = run()?.status
