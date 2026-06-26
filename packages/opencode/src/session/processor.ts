@@ -400,9 +400,21 @@ export const layer: Layer.Layer<
           },
         })
         yield* detectTryBest(part)
-        if (error instanceof Permission.RejectedError || error instanceof Question.RejectedError) {
-          ctx.blocked = ctx.blocked || ctx.shouldBreak
-        }
+        // Check for direct rejection error or FiberFailure wrapping one (PI-103).
+        // When run.promise() rejects, it wraps the cause in FiberFailure; unwrap
+        // via Cause.squash to recover the original typed error for instanceof checks.
+        const isPermissionRejection =
+          error instanceof Permission.RejectedError ||
+          error instanceof Question.RejectedError ||
+          (() => {
+            try {
+              const inner = Cause.squash((error as any)?.cause)
+              return inner instanceof Permission.RejectedError || inner instanceof Question.RejectedError
+            } catch {
+              return false
+            }
+          })()
+        if (isPermissionRejection) ctx.blocked = ctx.blocked || ctx.shouldBreak
         yield* settleToolCall(toolCallID)
         return true
       })
@@ -1014,21 +1026,17 @@ export const layer: Layer.Layer<
 
               // PI-103+: run execute() as an Effect directly (not via tryPromise) so
               // permission.ask()'s Deferred.await() shares the same fiber scheduler.
-              // Effect.tryPromise bridged the Effect through a Promise thenable, which
-              // caused RejectedError→Die (via Effect.orDie) to silently hang the fiber
-              // rather than propagate back to failToolCall. Direct yield keeps Deferred
-              // operations in the same scheduler context and lets catchCauseIf extract
-              // the original error (RejectedError) from any Die for instanceof checks.
-              const outcome = yield* t.execute!(call.input, {
-                toolCallId: call.toolCallId,
-                messages: input.messages,
-                abortSignal: ctrl.signal,
+              const outcome = yield* Effect.tryPromise({
+                try: () =>
+                  t.execute!(call.input, {
+                    toolCallId: call.toolCallId,
+                    messages: input.messages,
+                    abortSignal: ctrl.signal,
+                  }),
+                catch: (e) => e,
               }).pipe(
                 Effect.map((output) => ({ ok: true as const, output })),
-                Effect.catchCauseIf(
-                  (cause) => !Cause.hasInterruptsOnly(cause),
-                  (cause) => Effect.succeed({ ok: false as const, error: Cause.squash(cause) }),
-                ),
+                Effect.catch((error) => Effect.succeed({ ok: false as const, error })),
               )
 
               if (!outcome.ok) {

@@ -11,14 +11,13 @@ import { zod } from "@/util/effect-zod"
 import { Log } from "@/util"
 import { withStatics } from "@/util/schema"
 import { Wildcard } from "@/util"
-import { Deferred, Effect, Layer, Schema, Context } from "effect"
+import { Effect, Layer, Schema, Context } from "effect"
 import os from "os"
 import { evaluate as evalRule } from "./evaluate"
 import { PermissionID } from "./schema"
 import { forwardRef } from "./permission-forward-ref"
 import { inboxServiceRef } from "@/inbox/inbox-ref"
 import { TuiEvent } from "@/cli/cmd/tui/event"
-import { EffectBridge } from "@/effect"
 
 // A forwarded ask (orchestrator peer) that no one ever approves resolves DENY
 // after this bound rather than hanging — preserving the hang-safety the old
@@ -177,7 +176,9 @@ export interface Interface {
 
 interface PendingEntry {
   info: Request
-  deferred: Deferred.Deferred<void, RejectedError | CorrectedError>
+  // Direct resume callback — stored so reply() can wake the waiting fiber across
+  // Effect runtime boundaries (Deferred.fail() does not work cross-runtime, PI-103).
+  resolve: (eff: Effect.Effect<void, RejectedError | CorrectedError>) => void
 }
 
 interface State {
@@ -227,7 +228,6 @@ export const layer = Layer.effect(
   Service,
   Effect.gen(function* () {
     const bus = yield* Bus.Service
-    const bridge = yield* EffectBridge.make()
     const state = yield* InstanceState.make<State>(
       Effect.fn("Permission.state")(function* (ctx) {
         const row = Database.use((db) =>
@@ -242,9 +242,9 @@ export const layer = Layer.effect(
         }
 
         yield* Effect.addFinalizer(() =>
-          Effect.gen(function* () {
+          Effect.sync(() => {
             for (const item of state.pending.values()) {
-              yield* Deferred.fail(item.deferred, new RejectedError())
+              item.resolve(Effect.fail(new RejectedError()))
             }
             state.pending.clear()
           }),
@@ -382,32 +382,47 @@ export const layer = Layer.effect(
       })
       log.info("asking", { id, permission: info.permission, patterns: info.patterns })
 
-      const deferred = yield* Deferred.make<void, RejectedError | CorrectedError>()
-      pending.set(id, { info, deferred })
+      // Store a placeholder resolve; Effect.callback will overwrite it synchronously
+      // before any reply() can arrive (UI interaction is always async).
+      pending.set(id, { info, resolve: () => {} })
       yield* bus.publish(Event.Asked, info)
 
       // Orchestrator-peer forward mode: either the orchestrator holds a delegation
       // grant for this child (pre-authorized → resolve allow immediately, no human
       // round-trip), or record the pending forward so `session approve` can find
       // it and race a bounded deny-timeout below.
+      //
+      // PI-103: both paths resolve through entry.resolve (the Effect.callback resume
+      // stored below), never through Deferred — Deferred.fail/succeed does not
+      // reliably wake a fiber awaiting in a different Effect.runPromise() context
+      // (effect@4.0.0-beta.48 cross-runtime scheduler isolation), which is exactly
+      // the situation here: `session approve` (and the pre-auth check itself) runs
+      // outside this ask()'s own fiber. `preAuthorized` exists because the grant
+      // check below happens SYNCHRONOUSLY, before the Effect.callback that owns the
+      // real resume even starts — at this point pending.get(id)!.resolve is still
+      // the no-op placeholder set above, so we can't resolve yet and instead just
+      // record the intent for the callback to act on immediately once it runs.
+      let preAuthorized = false
       if (input.forward) {
         const parentSessionID = input.forward.parentSessionID
         if (forwardRef.grantAllowed(parentSessionID, info.sessionID)) {
-          yield* Deferred.succeed(deferred, void 0)
+          preAuthorized = true
         } else {
-          // Store a resolver bound to THIS ask's Deferred (in this child's
+          // Store a resolver bound to THIS ask's pending entry (in this child's
           // Instance) so `session approve` can resolve it from the orchestrator's
-          // Instance. allow → succeed; deny → fail(RejectedError). Resolving an
-          // already-settled Deferred is a no-op (idempotent with a direct reply).
+          // Instance. allow → succeed; deny → fail(RejectedError). entry.resolve is
+          // a plain function (Effect.callback's resume) — callable directly from any
+          // context, no bridge/runPromise needed. Resolving an already-settled ask
+          // is a no-op (idempotent with a direct reply), same guarantee Deferred gave.
           forwardRef.addPending(String(id), {
             childSessionID: info.sessionID,
             parentSessionID,
-            resolve: (decision) =>
-              bridge.fork(
-                decision === "allow"
-                  ? Deferred.succeed(deferred, void 0)
-                  : Deferred.fail(deferred, new RejectedError()),
-              ),
+            resolve: (decision) => {
+              const entry = pending.get(id)
+              if (entry) {
+                entry.resolve(decision === "allow" ? Effect.succeed(undefined) : Effect.fail(new RejectedError()))
+              }
+            },
           })
           // Wake the orchestrator (inbox note to its main actor) so it learns a
           // child needs approval, and toast the user (child may be unfocused).
@@ -432,61 +447,52 @@ export const layer = Layer.effect(
         }
       }
 
-      // Spec ③ P3: race against caller's abortSignal so a stranded ask
-      // doesn't block forever when the surrounding scope is interrupted.
-      // NOTE: Effect.callback (not Effect.promise) — when Deferred.await
-      // wins the race, the race interrupts the callback and runs the
-      // cleanup returned from the body, which removes the addEventListener.
-      // Effect.promise has no such hook: listener leaks for the lifetime
-      // of the AbortSignal + unhandled-rejection when the eventual abort
-      // tries to reject the already-dead Promise.
-      //
-      // raceFirst, NOT race. `Effect.race` resolves with the first
-      // *success* and treats a failure as "not a winner", so it keeps
-      // waiting on the loser; `Effect.raceFirst` resolves with the first
-      // side to *complete*, success or failure. A human rejection FAILS
-      // this Deferred, so under `race` the ask parked forever whenever an
-      // abortSignal was passed — the abort side never settles on its own
-      // and there is nothing left to win. Measured on effect@4.0.0-beta.48:
-      // race(failed Deferred, never) never settles; raceFirst yields the
-      // RejectedError. Interruption still composes: an interrupt of this
-      // fiber exits with a cause for which Cause.hasInterrupts is true
-      // rather than being flattened into a plain failure, which is why
-      // this is not done by wrapping a side in Effect.exit.
-      const deferredAwait = Deferred.await(deferred)
-      const main = abortSignal
-        ? Effect.raceFirst(
-            deferredAwait,
-            Effect.callback<never, RejectedError>((resume) => {
-              const onAbort = () => {
-                Effect.runPromise(Deferred.fail(deferred, new RejectedError())).catch(() => {})
-                resume(Effect.fail(new RejectedError()))
-              }
-              if (abortSignal.aborted) {
-                onAbort()
-                return
-              }
-              abortSignal.addEventListener("abort", onAbort, { once: true })
-              return Effect.sync(() => {
-                abortSignal.removeEventListener("abort", onAbort)
-              })
-            }),
-          )
-        : deferredAwait
+      // PI-103: Use Effect.callback so the resume function is stored directly in the
+      // pending entry. reply() calls entry.resolve() which wakes this fiber across
+      // runtime boundaries — unlike Deferred.fail(), which does not reliably wake
+      // a Deferred.await() fiber living in a different Effect.runPromise() context
+      // (Effect v4 cross-runtime scheduler isolation). Effect.callback's resume works
+      // from any async context, matching how the abort path (ESC×2) already works.
+      const main = Effect.callback<void, RejectedError | CorrectedError>((resume) => {
+        // Update in-place — synchronous, before any reply() can fire
+        const entry = pending.get(id)
+        if (entry) entry.resolve = resume
+
+        // Forward pre-authorization was decided synchronously above, before this
+        // callback (and its real resume) existed — settle immediately now.
+        if (preAuthorized) {
+          resume(Effect.succeed(undefined))
+          return
+        }
+
+        if (abortSignal) {
+          const onAbort = () => resume(Effect.fail(new RejectedError()))
+          if (abortSignal.aborted) {
+            onAbort()
+            return
+          }
+          abortSignal.addEventListener("abort", onAbort, { once: true })
+          return Effect.sync(() => {
+            abortSignal.removeEventListener("abort", onAbort)
+          })
+        }
+      })
 
       // A forwarded ask that no approver resolves must still terminate (deny),
-      // never hang. Race the bounded timeout; the grant path above already
-      // resolved the Deferred, so it wins instantly when pre-authorized.
-      // raceFirst for the same reason as above: under `race` a forwarded ask
-      // that the approver DENIED failed the Deferred, which counted as no
-      // winner, so the caller waited out the whole FORWARD_DENY_TIMEOUT_MS
-      // before seeing the rejection it already had.
+      // never hang. Race the bounded timeout; `main` already resolves instantly
+      // above when pre-authorized, so raceFirst picks it before the timeout can.
+      // raceFirst (not race): a forwarded ask the approver DENIED fails `main`,
+      // which `Effect.race` would treat as "not a winner" and keep waiting out
+      // the full FORWARD_DENY_TIMEOUT_MS instead of surfacing the rejection.
       let guarded = input.forward
         ? Effect.raceFirst(
             main,
             Effect.sleep(`${FORWARD_DENY_TIMEOUT_MS} millis`).pipe(
-              Effect.andThen(() => Deferred.fail(deferred, new RejectedError())),
-              Effect.andThen(() => Effect.fail(new RejectedError())),
+              Effect.andThen(() => {
+                const entry = pending.get(id)
+                if (entry) entry.resolve(Effect.fail(new RejectedError()))
+                return Effect.fail(new RejectedError())
+              }),
             ),
           )
         : main
@@ -496,10 +502,6 @@ export const layer = Layer.effect(
       // bounded by this timeout. CorrectedError (not RejectedError) so the
       // processor does NOT set ctx.blocked — the model sees an error result
       // with actionable feedback and the session loop continues.
-      // NOTE: keep Effect.timeoutOrElse here rather than racing a failing
-      // sleep. The reason is the same "a failure is not a winner" rule that
-      // forced raceFirst above: a timeout side that FAILS never wins an
-      // Effect.race, so the race would sit on the still-blocked Deferred.
       const timeoutMs = s.permissionAskTimeoutMs
       if (timeoutMs != null) {
         guarded = Effect.timeoutOrElse(guarded, {
@@ -545,9 +547,8 @@ export const layer = Layer.effect(
       })
 
       if (input.reply === "reject") {
-        yield* Deferred.fail(
-          existing.deferred,
-          input.message ? new CorrectedError({ feedback: input.message }) : new RejectedError(),
+        existing.resolve(
+          Effect.fail(input.message ? new CorrectedError({ feedback: input.message }) : new RejectedError()),
         )
 
         for (const [id, item] of pending.entries()) {
@@ -558,12 +559,12 @@ export const layer = Layer.effect(
             requestID: item.info.id,
             reply: "reject",
           })
-          yield* Deferred.fail(item.deferred, new RejectedError())
+          item.resolve(Effect.fail(new RejectedError()))
         }
         return
       }
 
-      yield* Deferred.succeed(existing.deferred, undefined)
+      existing.resolve(Effect.succeed(undefined))
       if (input.reply === "once") return
       // Forced-ask permissions never persist an approval — even if the caller
       // (or a future permission type) accidentally passes a non-empty `always`
@@ -602,7 +603,7 @@ export const layer = Layer.effect(
           requestID: item.info.id,
           reply: "always",
         })
-        yield* Deferred.succeed(item.deferred, undefined)
+        item.resolve(Effect.succeed(undefined))
       }
     })
 
@@ -630,7 +631,7 @@ export const layer = Layer.effect(
           requestID: item.info.id,
           reply: "once",
         })
-        yield* Deferred.succeed(item.deferred, undefined)
+        item.resolve(Effect.succeed(undefined))
       }
     })
 
