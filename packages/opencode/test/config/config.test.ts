@@ -452,6 +452,38 @@ test("preserves env variables when adding $schema to config", async () => {
   }
 })
 
+test("adds MiMo schema URL to config without $schema", async () => {
+  await using tmp = await tmpdir({
+    init: async (dir) => {
+      await Filesystem.write(
+        path.join(dir, "mimocode.jsonc"),
+        JSON.stringify({
+          provider: {
+            custom: {
+              name: "Custom",
+              models: {
+                "custom-model": {
+                  name: "Custom Model",
+                },
+              },
+            },
+          },
+        }),
+      )
+    },
+  })
+  await Instance.provide({
+    directory: tmp.path,
+    fn: async () => {
+      await load()
+      const content = await Filesystem.readText(path.join(tmp.path, "mimocode.jsonc"))
+
+      expect(content).toContain('"$schema": "https://mimo.xiaomi.com/mimocode/config.json"')
+      expect(content).not.toContain("https://opencode.ai/config.json")
+    },
+  })
+})
+
 test("resolves env templates in account config with account token", async () => {
   const originalControlToken = process.env["MIMOCODE_CONSOLE_TOKEN"]
 
