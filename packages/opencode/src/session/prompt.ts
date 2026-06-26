@@ -651,13 +651,17 @@ NOTE: At any point in time through this workflow you should feel free to ask the
       const whitelist = yield* whitelistFor()
       // Whether a permission ask must be non-interactive (fail clean, never hang):
       // true for system-spawned actors (checkpoint-writer/dream/distill) AND any
-      // background actor such as compose workflow subagents (spawned as
-      // "general" + background:true).  isSystemSpawned only checks agent type;
-      // we also test the background flag so workflow subagents that aren't
-      // checkpoint-writer/dream/distill don't hang on permission prompts.
-      const askNonInteractive = input.agentID
-        ? (yield* actorRegistry.isSystemSpawned(input.session.id, input.agentID)) ||
-          (yield* Effect.map(actorRegistry.get(input.session.id, input.agentID), (a) => a?.background === true))
+      // background actor such as compose workflow subagents (spawned as "general"
+      // + background:true). Scoped to THIS permission decision on purpose — not
+      // folded into the shared isSystemSpawned, which also gates memory
+      // instructions and checkpoint self-triggering for user background actors.
+      // Fall back to the agent-name check if the actor row is missing (race /
+      // unregistered) so a system actor can't slip through as interactive.
+      const askActor = input.agentID
+        ? yield* actorRegistry.get(input.session.id, input.agentID)
+        : undefined
+      const askNonInteractive = askActor
+        ? SYSTEM_SPAWNED_AGENT_TYPES.has(askActor.agent) || askActor.background
         : SYSTEM_SPAWNED_AGENT_TYPES.has(input.agent.name)
       const rejectionFor = (toolID: string) => ({
         title: "Tool not permitted",

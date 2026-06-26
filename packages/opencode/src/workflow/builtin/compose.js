@@ -349,7 +349,7 @@ const design = await agent(
   "(empty for independent tasks; a prerequisite task id otherwise; no cycles).",
   { label: "design-extract:" + type, phase: "Design", schema: DESIGN_SHAPE }
 )
-if (!design) {
+if (!design || !Array.isArray(design.tasks) || design.tasks.length === 0) {
   return { error: "design-failed", type, brainstorm, docs: { specWritten, planWritten } }
 }
 // Normalize task ids: the extract agent sometimes returns tasks with a missing or

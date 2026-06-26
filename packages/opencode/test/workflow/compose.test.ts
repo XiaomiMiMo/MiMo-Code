@@ -220,6 +220,15 @@ describe("compose phase 2: Design", () => {
     expect(result).toMatchObject({ error: "design-failed" })
   })
 
+  test("extract returning a truthy object without a tasks array surfaces design-failed (no crash)", async () => {
+    const { result } = await runCompose({ task: "x", type: "feature" }, (prompt, opts) => {
+      if (opts?.schema?.properties?.context) return { context: { projectType: "x", conventions: [], recentChanges: [], relevantFiles: [] }, assumptions: [] }
+      if (opts?.schema?.properties?.tasks) return { notes: "oops, no tasks field" } // truthy but malformed
+      return "ok"
+    })
+    expect(result).toMatchObject({ error: "design-failed" })
+  })
+
   test("tasks with missing/blank ids get backfilled (no implement:undefined label)", async () => {
     const { calls, result } = await runCompose({ task: "x", type: "feature" }, (prompt, opts) => {
       if (opts?.schema?.properties?.tasks) return { tasks: [
