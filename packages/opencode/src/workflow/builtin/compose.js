@@ -188,10 +188,11 @@ const SYNTHETIC_CONTEXT = { projectType: "unknown", conventions: [], recentChang
 // change to an existing feature) vs new work — enabling incremental re-runs that
 // reuse the existing spec/plan instead of regenerating everything. The workflow
 // only lists the files; the agent reads + judges.
+const _globArr = async (pat) => { const r = await glob(pat); return Array.isArray(r) ? r : [] }
 const existingDocs = [
-  ...(await glob(SPECS_DIR + "/*.md")),
-  ...(await glob(PLANS_DIR + "/*.md")),
-  ...(await glob(REPORTS_DIR + "/*.md")),
+  ...(await _globArr(SPECS_DIR + "/*.md")),
+  ...(await _globArr(PLANS_DIR + "/*.md")),
+  ...(await _globArr(REPORTS_DIR + "/*.md")),
 ]
 const existingDocsBlock = existingDocs.length
   ? "\n## Existing compose artifacts (this project has prior compose work)\n" +
@@ -220,12 +221,13 @@ if (SKIP_BRAINSTORM) {
   )
   if (!brainstorm || !brainstorm.context) brainstorm = { context: SYNTHETIC_CONTEXT, assumptions: [] }
 }
+const _arr = (v) => (Array.isArray(v) ? v : [])
 const contextDigest =
   "Project: " + brainstorm.context.projectType + "\n" +
-  "Conventions:\n" + (brainstorm.context.conventions || []).map((c) => "- " + c).join("\n") + "\n" +
-  "Recent changes:\n" + (brainstorm.context.recentChanges || []).map((c) => "- " + c).join("\n") + "\n" +
-  "Relevant files:\n" + (brainstorm.context.relevantFiles || []).map((f) => "- " + f).join("\n") +
-  ((brainstorm.assumptions && brainstorm.assumptions.length) ? "\nAssumptions:\n" + brainstorm.assumptions.map((a) => "- " + a).join("\n") : "") +
+  "Conventions:\n" + _arr(brainstorm.context.conventions).map((c) => "- " + c).join("\n") + "\n" +
+  "Recent changes:\n" + _arr(brainstorm.context.recentChanges).map((c) => "- " + c).join("\n") + "\n" +
+  "Relevant files:\n" + _arr(brainstorm.context.relevantFiles).map((f) => "- " + f).join("\n") +
+  (_arr(brainstorm.assumptions).length ? "\nAssumptions:\n" + _arr(brainstorm.assumptions).map((a) => "- " + a).join("\n") : "") +
   ((brainstorm.amends && typeof brainstorm.amends === "string") ? "\nAmends existing feature: " + brainstorm.amends : "")
 
 // ---------------------------------------------------------------------------
@@ -282,6 +284,14 @@ const runDesignWrite = (sharpen) => agent(
       "EDIT them IN PLACE (write back to the SAME file paths) to reflect ONLY the change in the task above — do NOT rewrite from scratch. " +
       "In the plan, the task list must then contain ONLY the tasks that need to be (re-)implemented for this change, PLUS any tasks that " +
       "depend on them. Tasks unaffected by the change MUST be omitted from the actionable list — they are reused as-is.\n\n" +
+      "## Scope the work to the actual change (CRITICAL)\n" +
+      "First assess the MAGNITUDE of this change: small (one spot / a few lines), medium (a few related tasks), " +
+      "or large (a foundational refactor touching many modules). Make the plan's actionable task list MATCH that magnitude:\n" +
+      "- Small change → ONE task (or zero, if the code already satisfies it). Do NOT split one small change into multiple tasks.\n" +
+      "- Medium → only the genuinely distinct tasks the change requires, plus their dependents.\n" +
+      "- Large refactor → re-decompose into as many independent tasks as the work truly needs.\n" +
+      "NEVER emit two near-identical or duplicate tasks for the same change. One distinct unit of work = exactly one task. " +
+      "The number of tasks must reflect the real scope — it is not fixed.\n\n" +
       "Write the updated files with the `write` tool. Do not just describe them.\n"
     : "## Your deliverable (REQUIRED — this is the whole job)\n" +
       "Use the `write` tool to create BOTH of these files on disk:\n" +
@@ -318,7 +328,7 @@ const planWritten = (await glob(PLANS_DIR + "/*.md")).length > 0
 const design = await agent(
   "Read the implementation plan markdown in `" + PLANS_DIR + "` (use the `read` tool; if multiple files, read the most recent) and extract its task list.\n\n" +
   (planWritten ? "" : "## No plan file found — derive the task list from the task below instead.\n## Task\n" + TASK + "\n\n") +
-  (AMENDS ? "## Amendment\nThis run amends the existing feature \"" + AMENDS + "\". Return ONLY the tasks that need to be (re-)implemented for the current change (plus their dependents). OMIT tasks that are unaffected — they are reused as-is.\n\n" : "") +
+  (AMENDS ? "## Amendment\nThis run amends the existing feature \"" + AMENDS + "\". Return the SMALLEST set of tasks that covers the actual change (plus their dependents). One distinct unit of work = exactly one task — do NOT return duplicate or near-identical tasks, and do NOT split a single small change across multiple tasks. OMIT every task unaffected by this change — they are reused as-is.\n\n" : "") +
   "## Output contract (STRICT)\n" +
   "Call the `StructuredOutput` tool EXACTLY ONCE with a JSON object matching the schema. " +
   "Do NOT reply with prose, markdown, XML, or a code block — those do not count and will be rejected. " +

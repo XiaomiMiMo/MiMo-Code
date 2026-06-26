@@ -564,3 +564,48 @@ describe("compose incremental amend", () => {
     expect(write!.prompt).toContain("create BOTH of these files")
   })
 })
+
+describe("compose amend scope-aware fan-out", () => {
+  const existing = (p: string) =>
+    p.includes("/plans") ? ["docs/compose/plans/strutil.md"] : p.includes("/specs") ? ["docs/compose/specs/strutil.md"] : []
+  const amendAgent = (prompt: string, opts?: any) => {
+    if (opts?.schema?.properties?.context)
+      return { context: { projectType: "x", conventions: [], recentChanges: [], relevantFiles: [] }, assumptions: [], amends: "strutil" }
+    return happyAgent(prompt, opts)
+  }
+
+  test("amend design-write prompt instructs scope assessment + forbids duplicate tasks", async () => {
+    const { calls } = await runCompose({ task: "change truncate ellipsis to unicode …" }, amendAgent, { glob: existing })
+    const write = calls.find((c) => c.opts?.label && String(c.opts.label).startsWith("design:"))!
+    expect(write.prompt.toLowerCase()).toContain("scope")
+    expect(write.prompt.toLowerCase()).toContain("magnitude")
+    expect(write.prompt).toMatch(/NEVER emit two near-identical or duplicate tasks/i)
+  })
+
+  test("amend extract prompt forbids duplicate/near-identical tasks and sizes to the change", async () => {
+    const { calls } = await runCompose({ task: "change truncate ellipsis" }, amendAgent, { glob: existing })
+    const extract = calls.find((c) => c.opts?.label && String(c.opts.label).startsWith("design-extract:"))!
+    expect(extract.prompt).toMatch(/SMALLEST set of tasks/i)
+    expect(extract.prompt).toMatch(/do NOT return duplicate or near-identical tasks/i)
+  })
+
+  test("non-amend design-write has no scope-assessment block", async () => {
+    const { calls } = await runCompose({ task: "x", type: "feature" })
+    const write = calls.find((c) => c.opts?.label && String(c.opts.label).startsWith("design:"))!
+    expect(write.prompt).not.toContain("assess the MAGNITUDE")
+  })
+})
+
+describe("compose brainstorm robustness", () => {
+  test("non-array brainstorm fields (string conventions etc.) do not crash the script", async () => {
+    const { result } = await runCompose({ task: "x", type: "feature" }, (prompt, opts) => {
+      if (opts?.schema?.properties?.context)
+        // Malformed: fields that should be arrays come back as strings/undefined.
+        return { context: { projectType: "p", conventions: "a, b", recentChanges: undefined, relevantFiles: "x.js" }, assumptions: "none" }
+      return happyAgent(prompt, opts)
+    })
+    // Must reach a normal terminal shape, not throw / reject the script.
+    expect(result).toBeDefined()
+    expect((result as any).type).toBe("feature")
+  })
+})
