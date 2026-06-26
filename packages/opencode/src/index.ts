@@ -86,7 +86,7 @@ const cli = yargs(args)
     choices: ["DEBUG", "INFO", "WARN", "ERROR"],
   })
   .option("pure", {
-    describe: "run without external plugins",
+    describe: "run without external plugins and compatibility skills",
     type: "boolean",
   })
   .middleware(async (opts) => {

@@ -154,6 +154,7 @@ const discoverSkills = Effect.fnUntraced(function* (
   worktree: string,
 ) {
   const state: ScanState = { matches: new Set(), dirs: new Set() }
+  const cfg = yield* config.get()
 
   // Extract builtin skills to disk first (user skills with same name override)
   if (!Flag.MIMOCODE_DISABLE_BUILTIN_SKILLS) {
@@ -175,7 +176,7 @@ const discoverSkills = Effect.fnUntraced(function* (
     }
   }
 
-  if (!Flag.MIMOCODE_DISABLE_EXTERNAL_SKILLS) {
+  if (!Flag.MIMOCODE_PURE && !Flag.MIMOCODE_DISABLE_EXTERNAL_SKILLS && cfg.skills?.external !== false) {
     const externalDirs = EXTERNAL_DIRS.filter((dir) => {
       if (dir === ".claude" && Flag.MIMOCODE_DISABLE_CLAUDE_CODE_SKILLS) return false
       if (dir === ".codex" && Flag.MIMOCODE_DISABLE_CODEX_SKILLS) return false
@@ -203,7 +204,6 @@ const discoverSkills = Effect.fnUntraced(function* (
     yield* scan(state, dir, MIMOCODE_SKILL_PATTERN)
   }
 
-  const cfg = yield* config.get()
   for (const item of cfg.skills?.paths ?? []) {
     const expanded = item.startsWith("~/") ? path.join(os.homedir(), item.slice(2)) : item
     const dir = path.isAbsolute(expanded) ? expanded : path.join(directory, expanded)
