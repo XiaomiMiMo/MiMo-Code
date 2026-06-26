@@ -84,6 +84,9 @@ export type WorkflowNode =
       actorID?: string
       /** Wall-clock duration in ms (filled when the call settles). */
       durationMs?: number
+      /** Short summary of the agent's deliverable (the value agent() resolved to),
+       * so the tree shows what it actually produced — not just that it finished. */
+      resultSummary?: string
       status: "running" | "succeeded" | "failed"
     }
   | {
@@ -97,6 +100,24 @@ export type WorkflowNode =
       status: "running" | "completed" | "failed" | "cancelled"
     }
 export type WorkflowStructure = { nodes: WorkflowNode[] }
+
+// Short, display-only summary of an agent's deliverable for the structure tree.
+// A deliverable is a string (prose finalText) or a structured object; a worktree
+// deliverable is wrapped as { _worktree, result }. We flatten to one line and cap
+// length — purely observability, never fed to the model.
+const RESULT_SUMMARY_MAX = 140
+function summarizeAgentResult(result: unknown): string | undefined {
+  if (result === null || result === undefined) return undefined
+  const unwrapped =
+    typeof result === "object" && result !== null && "_worktree" in result
+      ? (result as { result?: unknown }).result ?? result
+      : result
+  const text = typeof unwrapped === "string" ? unwrapped : JSON.stringify(unwrapped)
+  if (!text) return undefined
+  const flat = text.replace(/\s+/g, " ").trim()
+  if (!flat) return undefined
+  return flat.length > RESULT_SUMMARY_MAX ? flat.slice(0, RESULT_SUMMARY_MAX - 1) + "…" : flat
+}
 
 interface RunEntry {
   runID: string
@@ -888,7 +909,9 @@ export const layer = Layer.effect(
         const promptStr = String(prompt)
         // Flip the observability node (if any) recorded by the `agent` wrapper for
         // THIS call. Called at the same points that bump succeeded/failed counters.
-        const markAgentNode = (status: "succeeded" | "failed", actorID?: string) => {
+        // `result` is the agent's deliverable (string / structured object / null);
+        // we stash a short summary on the node so the tree shows what it produced.
+        const markAgentNode = (status: "succeeded" | "failed", result?: unknown, actorID?: string) => {
           if (!nodeId) return
           const node = entry.structure.find((n) => n.id === nodeId)
           if (node && node.type === "agent") {
@@ -896,6 +919,8 @@ export const layer = Layer.effect(
             const start = nodeStart.get(nodeId)
             if (start !== undefined) node.durationMs = Date.now() - start
             if (actorID && node.actorID === undefined) node.actorID = actorID
+            const summary = summarizeAgentResult(result)
+            if (summary !== undefined) node.resultSummary = summary
           }
         }
         // Fill the node's actorID the instant the child actor is minted (BEFORE it
@@ -922,7 +947,7 @@ export const layer = Layer.effect(
             // cap on replays alone). Outcome counter DOES climb so the live view
             // reflects reality as replay proceeds.
             entry.succeeded++
-            markAgentNode("succeeded")
+            markAgentNode("succeeded", journal.results.get(key))
             scheduleFlush(entry)
             return Promise.resolve(journal.results.get(key))
           }
@@ -947,7 +972,7 @@ export const layer = Layer.effect(
                 return spawnShared(actor, promptStr, o, resolvedModel, setActorID)
               }),
             )
-            markAgentNode(result === null ? "failed" : "succeeded")
+            markAgentNode(result === null ? "failed" : "succeeded", result)
             // Cache successful results only (null = failure/spawn-reject/killed →
             // not journaled → re-runs on resume, self-heal). SYNCHRONOUS append so
             // the result is durable the instant it resolves: a mid-run process exit
@@ -978,7 +1003,7 @@ export const layer = Layer.effect(
             // journaled, so there's no key to keep stable here). Never-throws.
             const resolvedModel = await bridge.promise(resolveAgentModel(o.model, input.model, entry.warnedModelRefs))
             const value = await spawnIsolated(actor, promptStr, o, resolvedModel, setActorID)
-            markAgentNode(value === null ? "failed" : "succeeded")
+            markAgentNode(value === null ? "failed" : "succeeded", value)
             return value
           }),
         )

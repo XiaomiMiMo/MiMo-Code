@@ -41,6 +41,9 @@ export function WorkflowTree(props: {
   nodes: WorkflowNode[]
   onOpenChild?: (childRunID: string) => void
   onOpenAgent?: (actorID: string) => void
+  // Resolve a running agent's latest activity (e.g. "⚙ websearch" / latest text)
+  // from its live subagent message stream. Provided by the page that has sync.
+  liveActivity?: (actorID: string) => string | undefined
 }) {
   const { theme } = useTheme()
   const statusColor = (s: string) =>
@@ -51,6 +54,16 @@ export function WorkflowTree(props: {
         : s === "running"
           ? theme.warning
           : theme.textMuted
+  // The bottom info line for an agent: running → its live activity; settled → its
+  // result summary. Returns the text + whether it's "live" (for coloring).
+  const detail = (n: AgentNode): { text: string; live: boolean } | undefined => {
+    if (n.status === "running") {
+      const act = n.actorID && props.liveActivity ? props.liveActivity(n.actorID) : undefined
+      return act ? { text: act, live: true } : undefined
+    }
+    if (n.resultSummary) return { text: `→ ${n.resultSummary}`, live: false }
+    return undefined
+  }
   const rows = () => layout(props.nodes)
   return (
     <box flexDirection="column">
@@ -91,6 +104,14 @@ export function WorkflowTree(props: {
               <box paddingLeft={2}>
                 <text fg={theme.textMuted}>{truncate((row.node as AgentNode).prompt, 100)}</text>
               </box>
+              {/* line 3: running → live activity; settled → result summary */}
+              <Show when={detail(row.node as AgentNode)}>
+                {(d) => (
+                  <box paddingLeft={2}>
+                    <text fg={d().live ? theme.warning : theme.text}>{truncate(d().text, 100)}</text>
+                  </box>
+                )}
+              </Show>
             </Show>
 
             <Show when={row.node.type === "workflow"}>

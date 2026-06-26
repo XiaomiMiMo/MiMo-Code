@@ -81,6 +81,7 @@ export type WorkflowNode =
       isolation?: boolean
       actorID?: string
       durationMs?: number
+      resultSummary?: string
       status: "running" | "succeeded" | "failed"
     }
   | {

@@ -2090,6 +2090,24 @@ function WorkflowPage(props: {
   const scrollAcceleration = createMemo(() => getScrollAcceleration(tuiConfig))
 
   const run = createMemo(() => sync.data.workflow[props.runID])
+
+  // Describe what a running subagent is currently doing, from its live message
+  // stream (last message's last meaningful part): a tool call → "⚙ <tool>", else
+  // the latest text snippet. Returns undefined when nothing's streamed yet.
+  const liveActivity = (actorID: string): string | undefined => {
+    const sid = run()?.sessionID
+    if (!sid) return undefined
+    const msgs = sync.data.message[sid]?.[actorID]
+    const last = msgs?.[msgs.length - 1]
+    if (!last) return undefined
+    const parts = sync.data.part[last.id] ?? []
+    for (let i = parts.length - 1; i >= 0; i--) {
+      const p = parts[i] as { type?: string; tool?: string; text?: string }
+      if (p.type === "tool" && p.tool) return `⚙ ${p.tool}`
+      if (p.type === "text" && p.text) return p.text
+    }
+    return undefined
+  }
   const transcript = createMemo(() => sync.data.workflowTranscript[props.runID] ?? [])
   const structure = createMemo(() => sync.data.workflowStructure[props.runID] ?? [])
 
@@ -2162,7 +2180,12 @@ function WorkflowPage(props: {
         </box>
       </Show>
       <scrollbox flexGrow={1} scrollAcceleration={scrollAcceleration()}>
-        <WorkflowTree nodes={structure()} onOpenChild={props.onOpenChild} onOpenAgent={props.onOpenAgent} />
+        <WorkflowTree
+          nodes={structure()}
+          onOpenChild={props.onOpenChild}
+          onOpenAgent={props.onOpenAgent}
+          liveActivity={liveActivity}
+        />
         <Show when={transcript().length > 0}>
           <box paddingTop={1}>
             <text fg={theme.textMuted}>transcript</text>
