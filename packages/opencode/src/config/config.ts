@@ -46,6 +46,7 @@ import { ConfigVariable } from "./variable"
 import { Npm } from "@/npm"
 
 const log = Log.create({ service: "config" })
+export const SCHEMA_URL = "https://mimo.xiaomi.com/mimocode/config.json"
 
 // Custom merge function that concatenates array fields instead of replacing them
 function mergeConfigConcatArrays(target: Info, source: Info): Info {
@@ -513,6 +514,11 @@ function writable(info: Info) {
   return next
 }
 
+function withDefaultSchema(info: Info): Info {
+  if (info.$schema) return info
+  return { $schema: SCHEMA_URL, ...info }
+}
+
 export const ConfigDirectoryTypoError = NamedError.create(
   "ConfigDirectoryTypoError",
   z.object({
@@ -557,8 +563,8 @@ export const layer = Layer.effect(
 
       yield* Effect.promise(() => resolveLoadedPlugins(data, options.path))
       if (!data.$schema) {
-        data.$schema = "https://opencode.ai/config.json"
-        const updated = text.replace(/^\s*\{/, '{\n  "$schema": "https://opencode.ai/config.json",')
+        data.$schema = SCHEMA_URL
+        const updated = text.replace(/^\s*\{/, `{\n  "$schema": "${SCHEMA_URL}",`)
         yield* fs.writeFileString(options.path, updated).pipe(Effect.catch(() => Effect.void))
       }
       return data
@@ -586,7 +592,7 @@ export const layer = Layer.effect(
             .then(async (mod) => {
               const { provider, model, ...rest } = mod.default
               if (provider && model) result.model = `${provider}/${model}`
-              result["$schema"] = "https://opencode.ai/config.json"
+              result["$schema"] = SCHEMA_URL
               result = mergeDeep(result, rest)
               await fsNode.writeFile(path.join(Global.Path.config, "config.json"), JSON.stringify(result, null, 2))
               await fsNode.unlink(legacy)
@@ -736,7 +742,7 @@ export const layer = Layer.effect(
             }
             const wellknown = (yield* Effect.promise(() => response.json())) as { config?: Record<string, unknown> }
             const remoteConfig = wellknown.config ?? {}
-            if (!remoteConfig.$schema) remoteConfig.$schema = "https://opencode.ai/config.json"
+            if (!remoteConfig.$schema) remoteConfig.$schema = SCHEMA_URL
             const source = `${url}/.well-known/opencode`
             const next = yield* loadConfig(JSON.stringify(remoteConfig), {
               dir: path.dirname(source),
@@ -1008,11 +1014,12 @@ export const layer = Layer.effect(
       let next: Info
       if (!file.endsWith(".jsonc")) {
         const existing = ConfigParse.schema(Info, ConfigParse.jsonc(before, file), file)
-        const merged = mergeDeep(writable(existing), writable(config))
+        const merged = withDefaultSchema(mergeDeep(writable(existing), writable(config)))
         yield* fs.writeFileString(file, JSON.stringify(merged, null, 2)).pipe(Effect.orDie)
         next = merged
       } else {
-        const updated = patchJsonc(before, writable(config))
+        const existing = ConfigParse.schema(Info, ConfigParse.jsonc(before, file), file)
+        const updated = patchJsonc(before, existing.$schema ? writable(config) : withDefaultSchema(writable(config)))
         next = ConfigParse.schema(Info, ConfigParse.jsonc(updated, file), file)
         yield* fs.writeFileString(file, updated).pipe(Effect.orDie)
       }

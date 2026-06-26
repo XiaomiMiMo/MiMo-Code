@@ -55,6 +55,8 @@ const it = testEffect(layer)
 const load = () => Effect.runPromise(Config.Service.use((svc) => svc.get()).pipe(Effect.scoped, Effect.provide(layer)))
 const save = (config: Config.Info) =>
   Effect.runPromise(Config.Service.use((svc) => svc.update(config)).pipe(Effect.scoped, Effect.provide(layer)))
+const saveGlobal = (config: Config.Info) =>
+  Effect.runPromise(Config.Service.use((svc) => svc.updateGlobal(config)).pipe(Effect.scoped, Effect.provide(layer)))
 const clear = (wait = false) =>
   Effect.runPromise(Config.Service.use((svc) => svc.invalidate(wait)).pipe(Effect.scoped, Effect.provide(layer)))
 const listDirs = () =>
@@ -440,7 +442,7 @@ test("preserves env variables when adding $schema to config", async () => {
         const content = await Filesystem.readText(path.join(tmp.path, "mimocode.json"))
         expect(content).toContain("{env:PRESERVE_VAR}")
         expect(content).not.toContain("secret_value")
-        expect(content).toContain("$schema")
+        expect(JSON.parse(content).$schema).toBe(Config.SCHEMA_URL)
       },
     })
   } finally {
@@ -449,6 +451,34 @@ test("preserves env variables when adding $schema to config", async () => {
     } else {
       delete process.env["PRESERVE_VAR"]
     }
+  }
+})
+
+test("global config updates create mimocode schema", async () => {
+  await using tmp = await tmpdir()
+  const prev = Global.Path.config
+  ;(Global.Path as { config: string }).config = tmp.path
+  await clear(true)
+
+  try {
+    await saveGlobal({
+      provider: {
+        custom: {
+          name: "Custom",
+          npm: "@ai-sdk/openai-compatible",
+          models: {
+            model: {
+              name: "Model",
+            },
+          },
+        },
+      },
+    })
+
+    expect(JSON.parse(await Filesystem.readText(path.join(tmp.path, "mimocode.jsonc"))).$schema).toBe(Config.SCHEMA_URL)
+  } finally {
+    ;(Global.Path as { config: string }).config = prev
+    await clear(true)
   }
 })
 
