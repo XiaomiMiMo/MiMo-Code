@@ -1462,6 +1462,10 @@ function AssistantMessage(props: { message: AssistantMessage; parts: Part[]; las
     <>
       <For each={props.parts}>
         {(part, index) => {
+          // The StructuredOutput tool call is the mechanism that produces
+          // message.structured; we render that value as a dedicated colored block
+          // below, so skip the redundant gray one-liner tool part here.
+          if (part.type === "tool" && part.tool === "StructuredOutput") return null
           const component = createMemo(() => PART_MAPPING[part.type as keyof typeof PART_MAPPING])
           return (
             <Show when={component()}>
