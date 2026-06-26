@@ -186,14 +186,10 @@ export function Session() {
   const [_animationsEnabled, _setAnimationsEnabled] = kv.signal("animations_enabled", true)
   const [showGenericToolOutput, setShowGenericToolOutput] = kv.signal("generic_tool_output_visibility", false)
 
-  // The workflow run whose detail panel is open beside the conversation (a
-  // persistent column, NOT an overlay). Set by selecting a run in /workflows;
-  // cleared by closing the panel. Session-scoped so each session has its own.
-  const [workflowPanelRunID, setWorkflowPanelRunID] = kv.signal<string | undefined>(
-    `workflow_panel:${route.sessionID}`,
-    undefined,
-  )
-  const workflowPanelVisible = createMemo(() => Boolean(workflowPanelRunID()) && wide())
+  // The workflow run shown as a FULL-SCREEN page (replacing the message stream),
+  // mirroring how agentID renders a subagent's conversation. Driven by the route so
+  // it's a real navigable view, not a side panel.
+  const workflowRunID = createMemo(() => route.workflowRunID)
 
   const wide = createMemo(() => dimensions().width > 120)
   const sidebarVisible = createMemo(() => {
@@ -1010,8 +1006,14 @@ export function Session() {
       keybind: "session_parent",
       category: "session",
       hidden: true,
-      enabled: currentAgentID() !== "main" || !!session()?.parentID,
+      enabled: currentAgentID() !== "main" || !!workflowRunID() || !!session()?.parentID,
       onSelect: (dialog) => {
+        // Workflow page → back to the conversation (parallels agentID → main).
+        if (fullRoute.data.type === "session" && workflowRunID()) {
+          navigate({ ...fullRoute.data, workflowRunID: undefined })
+          dialog.clear()
+          return
+        }
         if (fullRoute.data.type === "session" && currentAgentID() !== "main") {
           navigate({ ...fullRoute.data, agentID: undefined })
           dialog.clear()
@@ -1098,6 +1100,17 @@ export function Session() {
     >
       <box flexDirection="row">
         <box flexGrow={1} paddingBottom={1} paddingLeft={2} paddingRight={2} gap={1} onMouse={onWheel}>
+          <Show
+            when={!workflowRunID()}
+            fallback={
+              <WorkflowPage
+                runID={workflowRunID()!}
+                onBack={() => navigate({ ...route, workflowRunID: undefined })}
+                onOpenAgent={(actorID) => navigate({ ...route, workflowRunID: undefined, agentID: actorID })}
+                onOpenChild={(childRunID) => navigate({ ...route, workflowRunID: childRunID })}
+              />
+            }
+          >
           <Show when={session()}>
             <scrollbox
               ref={(r) => (scroll = r)}
@@ -1248,14 +1261,9 @@ export function Session() {
               </Show>
             </box>
           </Show>
+          </Show>
           <Toast />
         </box>
-        <Show when={workflowPanelVisible()}>
-          <WorkflowDetailPanel
-            runID={workflowPanelRunID()!}
-            onClose={() => setWorkflowPanelRunID(() => undefined)}
-          />
-        </Show>
         <Show when={sidebarVisible()}>
           <Switch>
             <Match when={wide()}>
@@ -2063,16 +2071,23 @@ function WorkflowPanel(props: {
   )
 }
 
-// Persistent (non-overlay) workflow detail panel: a full-height column beside the
-// conversation showing one run's structure tree + transcript, live-updating while
-// running. Clicking an agent row navigates to that subagent's full conversation;
-// a nested-workflow row swaps the panel to the child run.
-function WorkflowDetailPanel(props: { runID: string; onClose: () => void }) {
+// Full-screen workflow detail page: occupies the conversation column (like a
+// subagent view) and shows one run's structure tree + transcript, live while
+// running. An agent row navigates to that subagent's full conversation; a nested
+// workflow row drills into the child run; "Main" returns to the conversation.
+function WorkflowPage(props: {
+  runID: string
+  onBack: () => void
+  onOpenAgent: (actorID: string) => void
+  onOpenChild: (childRunID: string) => void
+}) {
   const sync = useSync()
-  const route = useRoute()
   const dialog = useDialog()
+  const keybind = useKeybind()
   const { theme } = useTheme()
   const renderer = useRenderer()
+  const tuiConfig = useTuiConfig()
+  const scrollAcceleration = createMemo(() => getScrollAcceleration(tuiConfig))
 
   const run = createMemo(() => sync.data.workflow[props.runID])
   const transcript = createMemo(() => sync.data.workflowTranscript[props.runID] ?? [])
@@ -2109,23 +2124,19 @@ function WorkflowDetailPanel(props: { runID: string; onClose: () => void }) {
     if (ok === true) void sync.resumeWorkflow(props.runID)
   }
 
-  // Navigate the main view to a subagent's own conversation (workflow agents
-  // register as mode:"subagent" actors in this session). Mirrors DialogSubagent.
-  const openAgent = (actorID: string) => {
-    if (route.data.type === "session") route.navigate({ ...route.data, agentID: actorID })
-  }
-
   return (
-    <box
-      backgroundColor={theme.backgroundPanel}
-      width={56}
-      height="100%"
-      paddingTop={1}
-      paddingBottom={1}
-      paddingLeft={2}
-      paddingRight={2}
-    >
+    <box flexGrow={1} gap={1}>
       <box flexDirection="row" gap={1} flexShrink={0}>
+        <text
+          fg={theme.text}
+          onMouseUp={() => {
+            if (renderer.getSelection()?.getSelectedText()) return
+            props.onBack()
+          }}
+        >
+          ‹ Main <span style={{ fg: theme.textMuted }}>{keybind.print("session_parent")}</span>
+        </text>
+        <box flexGrow={1} />
         <text attributes={TextAttributes.BOLD} fg={theme.accent}>
           {run()?.name ?? props.runID}
         </text>
@@ -2134,16 +2145,6 @@ function WorkflowDetailPanel(props: { runID: string; onClose: () => void }) {
             {run()!.status}
           </text>
         </Show>
-        <box flexGrow={1} />
-        <text
-          fg={theme.textMuted}
-          onMouseUp={() => {
-            if (renderer.getSelection()?.getSelectedText()) return
-            props.onClose()
-          }}
-        >
-          ✕
-        </text>
       </box>
       <Show when={run()}>
         <box flexDirection="row" gap={1} flexShrink={0}>
@@ -2160,12 +2161,8 @@ function WorkflowDetailPanel(props: { runID: string; onClose: () => void }) {
           </Show>
         </box>
       </Show>
-      <scrollbox flexGrow={1} paddingTop={1}>
-        <WorkflowTree
-          nodes={structure()}
-          onOpenChild={(childRunID) => sync.loadWorkflowStructure(childRunID)}
-          onOpenAgent={openAgent}
-        />
+      <scrollbox flexGrow={1} scrollAcceleration={scrollAcceleration()}>
+        <WorkflowTree nodes={structure()} onOpenChild={props.onOpenChild} onOpenAgent={props.onOpenAgent} />
         <Show when={transcript().length > 0}>
           <box paddingTop={1}>
             <text fg={theme.textMuted}>transcript</text>

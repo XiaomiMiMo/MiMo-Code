@@ -2,14 +2,12 @@ import { useDialog } from "@tui/ui/dialog"
 import { DialogSelect, type DialogSelectOption } from "@tui/ui/dialog-select"
 import { useRoute } from "@tui/context/route"
 import { useSync } from "@tui/context/sync"
-import { useKV } from "@tui/context/kv"
 import { createMemo, onCleanup, onMount } from "solid-js"
 
 export function DialogWorkflows() {
   const dialog = useDialog()
   const route = useRoute()
   const sync = useSync()
-  const kv = useKV()
 
   const currentSessionID = createMemo(() => (route.data.type === "session" ? route.data.sessionID : undefined))
 
@@ -40,11 +38,10 @@ export function DialogWorkflows() {
     return list.map((r) => ({
       title: `${r.name}  ${r.status}  ${r.currentPhase ?? "-"}  ${r.succeeded}✓ ${r.failed}✗ ${r.running}⟳`,
       value: r.runID,
-      // Open the run in the persistent detail PANEL beside the conversation (a
-      // session-scoped KV key the session route reads), not an overlay dialog.
+      // Navigate to the full-screen workflow page (replaces the conversation view,
+      // like opening a subagent). Mirrors DialogSubagent's route.navigate.
       onSelect: (d) => {
-        const sid = currentSessionID()
-        if (sid) kv.set(`workflow_panel:${sid}`, r.runID)
+        if (route.data.type === "session") route.navigate({ ...route.data, workflowRunID: r.runID })
         d.clear()
       },
     }))
