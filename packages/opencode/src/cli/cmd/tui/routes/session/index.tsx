@@ -105,6 +105,23 @@ const GO_UPSELL_WINDOW = 86_400_000 // 24 hrs
 const QUEUE_TOKEN_PLAN_LAST_SEEN_AT = "queue_token_plan_last_seen_at"
 const QUEUE_TOKEN_PLAN_WINDOW = 86_400_000 // 24 hrs
 
+type MessageScrollKeybind =
+  | "messages_page_up"
+  | "messages_page_down"
+  | "messages_half_page_up"
+  | "messages_half_page_down"
+
+const MESSAGE_SCROLL_DELTA = {
+  messages_page_up: (height: number) => -height,
+  messages_page_down: (height: number) => height,
+  messages_half_page_up: (height: number) => -height / 2,
+  messages_half_page_down: (height: number) => height / 2,
+} satisfies Record<MessageScrollKeybind, (height: number) => number>
+
+export function messageScrollDelta(keybind: MessageScrollKeybind, height: number): number {
+  return MESSAGE_SCROLL_DELTA[keybind](height)
+}
+
 const context = createContext<{
   width: number
   sessionID: string
@@ -330,7 +347,21 @@ export function Session() {
   })
 
   useKeyboard((evt) => {
-    if (currentAgentID() === "main") return
+    if (dialog.stack.length > 0 || evt.defaultPrevented) return
+    if (keybind.match("messages_page_up", evt)) {
+      evt.preventDefault()
+      scroll.scrollBy(messageScrollDelta("messages_page_up", scroll.height))
+      return
+    }
+    if (keybind.match("messages_page_down", evt)) {
+      evt.preventDefault()
+      scroll.scrollBy(messageScrollDelta("messages_page_down", scroll.height))
+      return
+    }
+  })
+
+  useKeyboard((evt) => {
+    if (!session()?.parentID && currentAgentID() === "main") return
     if (keybind.match("app_exit", evt)) {
       const status = sync.data.session_status?.[route.sessionID]
       if (status && status.type !== "idle") {
@@ -787,7 +818,7 @@ export function Session() {
       category: "session",
       hidden: true,
       onSelect: (dialog) => {
-        scroll.scrollBy(-scroll.height / 2)
+        scroll.scrollBy(messageScrollDelta("messages_page_up", scroll.height))
         dialog.clear()
       },
     },
@@ -798,7 +829,7 @@ export function Session() {
       category: "session",
       hidden: true,
       onSelect: (dialog) => {
-        scroll.scrollBy(scroll.height / 2)
+        scroll.scrollBy(messageScrollDelta("messages_page_down", scroll.height))
         dialog.clear()
       },
     },
@@ -831,7 +862,7 @@ export function Session() {
       category: "session",
       hidden: true,
       onSelect: (dialog) => {
-        scroll.scrollBy(-scroll.height / 4)
+        scroll.scrollBy(messageScrollDelta("messages_half_page_up", scroll.height))
         dialog.clear()
       },
     },
@@ -842,7 +873,7 @@ export function Session() {
       category: "session",
       hidden: true,
       onSelect: (dialog) => {
-        scroll.scrollBy(scroll.height / 4)
+        scroll.scrollBy(messageScrollDelta("messages_half_page_down", scroll.height))
         dialog.clear()
       },
     },
