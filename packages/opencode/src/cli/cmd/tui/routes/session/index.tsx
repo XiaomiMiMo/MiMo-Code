@@ -190,6 +190,7 @@ export function Session() {
   // mirroring how agentID renders a subagent's conversation. Driven by the route so
   // it's a real navigable view, not a side panel.
   const workflowRunID = createMemo(() => route.workflowRunID)
+  const fromWorkflowRunID = createMemo(() => route.fromWorkflowRunID)
 
   const wide = createMemo(() => dimensions().width > 120)
   const sidebarVisible = createMemo(() => {
@@ -1014,6 +1015,12 @@ export function Session() {
           dialog.clear()
           return
         }
+        // Agent opened FROM a workflow page → back returns to that workflow.
+        if (fullRoute.data.type === "session" && currentAgentID() !== "main" && fromWorkflowRunID()) {
+          navigate({ ...fullRoute.data, agentID: undefined, fromWorkflowRunID: undefined, workflowRunID: fromWorkflowRunID() })
+          dialog.clear()
+          return
+        }
         if (fullRoute.data.type === "session" && currentAgentID() !== "main") {
           navigate({ ...fullRoute.data, agentID: undefined })
           dialog.clear()
@@ -1106,7 +1113,9 @@ export function Session() {
               <WorkflowPage
                 runID={workflowRunID()!}
                 onBack={() => navigate({ ...route, workflowRunID: undefined })}
-                onOpenAgent={(actorID) => navigate({ ...route, workflowRunID: undefined, agentID: actorID })}
+                onOpenAgent={(actorID) =>
+                  navigate({ ...route, workflowRunID: undefined, agentID: actorID, fromWorkflowRunID: workflowRunID() })
+                }
                 onOpenChild={(childRunID) => navigate({ ...route, workflowRunID: childRunID })}
               />
             }
@@ -1902,6 +1911,7 @@ function WorkItemTask(props: ToolProps<typeof TaskTool>) {
 // silent line that only updates once the run finishes.
 function Workflow(props: ToolProps<typeof WorkflowTool>) {
   const sync = useSync()
+  const fullRoute = useRoute()
 
   const operation = createMemo(() => {
     const op = (props.input as { operation?: string }).operation
@@ -1967,6 +1977,14 @@ function Workflow(props: ToolProps<typeof WorkflowTool>) {
         transcript={transcript()}
         running={isRunning()}
         part={props.part}
+        onOpen={
+          runID() && fullRoute.data.type === "session"
+            ? () => {
+                const d = fullRoute.data
+                if (d.type === "session") fullRoute.navigate({ ...d, workflowRunID: runID() })
+              }
+            : undefined
+        }
       />
     </Show>
   )
@@ -1988,10 +2006,12 @@ function WorkflowPanel(props: {
   transcript: { kind: "phase" | "log"; text: string }[]
   running: boolean
   part: ToolPart
+  onOpen?: () => void
 }) {
   const { theme } = useTheme()
   const renderer = useRenderer()
   const [collapsed, setCollapsed] = createSignal(false)
+  const [openHover, setOpenHover] = createSignal(false)
 
   const statusColor = createMemo(() => {
     const s = props.status
@@ -2039,6 +2059,21 @@ function WorkflowPanel(props: {
           <text fg={theme.success}>{props.counters!.succeeded}✓</text>
           <text fg={props.counters!.failed > 0 ? theme.error : theme.textMuted}>{props.counters!.failed}✗</text>
           <text fg={props.counters!.running > 0 ? theme.warning : theme.textMuted}>{props.counters!.running}⟳</text>
+        </Show>
+        <Show when={props.onOpen}>
+          <box flexGrow={1} />
+          <text
+            fg={openHover() ? theme.text : theme.markdownLink}
+            onMouseOver={() => setOpenHover(true)}
+            onMouseOut={() => setOpenHover(false)}
+            onMouseUp={(evt) => {
+              evt.stopPropagation()
+              if (renderer.getSelection()?.getSelectedText()) return
+              props.onOpen?.()
+            }}
+          >
+            open ↗
+          </text>
         </Show>
       </box>
       <Show
