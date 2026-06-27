@@ -424,6 +424,37 @@ describe("tool.actor", () => {
       },
     ),
   )
+
+  it.live("execute recovers a stringified operation envelope before validation", () =>
+    provideTmpdirInstance(() =>
+      Effect.gen(function* () {
+        yield* installMockSpawn()
+        const { chat, assistant } = yield* seed()
+        const tool = yield* ActorTool
+        const def = yield* tool.init()
+
+        const result = yield* def.execute(
+          {
+            operation:
+              '{"action":"run","description":"inspect bug","prompt":"look into the cache key path","subagent_type":"general"}',
+          } as unknown as Parameters<typeof def.execute>[0],
+          {
+            sessionID: chat.id,
+            messageID: assistant.id,
+            agent: "build",
+            abort: new AbortController().signal,
+            extra: {},
+            messages: [],
+            metadata: () => Effect.void,
+            ask: () => Effect.void,
+          },
+        )
+
+        expect(result.metadata.sessionId).toBe(chat.id)
+        expect(result.metadata.actorId).toBeDefined()
+      }),
+    ),
+  )
 })
 
 describe("Actor tool subagent_type enum (F36)", () => {

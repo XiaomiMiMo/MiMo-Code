@@ -69,6 +69,24 @@ describe("task tool", () => {
     ),
   )
 
+  it.live("recovers a stringified operation envelope before validation", () =>
+    provideTmpdirInstance(() =>
+      Effect.gen(function* () {
+        const session = yield* Session.Service
+        const reg = yield* TaskRegistry.Service
+        const sess = yield* session.create({ title: "Test" })
+        yield* reg.create({ session_id: sess.id, summary: "a" })
+        const info = yield* TaskTool
+        const tool = yield* info.init()
+        const result = yield* tool.execute(
+          { operation: '{"action":"list"}' } as unknown as Parameters<typeof tool.execute>[0],
+          ctx(sess.id),
+        )
+        expect(result.metadata.count).toBe(1)
+      }),
+    ),
+  )
+
   it.live("set_status=done transitions task", () =>
     provideTmpdirInstance(() =>
       Effect.gen(function* () {

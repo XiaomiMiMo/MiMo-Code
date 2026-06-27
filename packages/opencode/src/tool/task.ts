@@ -184,6 +184,12 @@ export function recoverTaskArgs(rawArgs: unknown): TaskOperation | undefined {
   return undefined
 }
 
+function recoverTaskToolArgs(rawArgs: unknown): TaskOperation | undefined {
+  if (rawArgs == null || typeof rawArgs !== "object") return undefined
+  if (typeof (rawArgs as Record<string, unknown>).operation !== "string") return undefined
+  return recoverTaskArgs(rawArgs)
+}
+
 // Extract a fixed set of `--name value` / `--name=value` string flags and
 // boolean presence flags from a verb's args, leaving positionals in `rest`.
 // Synchronous (task's mapVerb is sync, unlike actor's Effect-returning extractor).
@@ -444,6 +450,7 @@ export const TaskTool = Tool.define<typeof parameters, Metadata, TaskRegistry.Se
     return {
       description: DESCRIPTION,
       parameters,
+      recover: recoverTaskToolArgs,
       execute: (args: z.infer<typeof parameters>, ctx: Tool.Context<Metadata>) =>
         run(args, ctx).pipe(Effect.orDie),
       shell: {
