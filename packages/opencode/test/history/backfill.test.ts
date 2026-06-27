@@ -1,4 +1,4 @@
-import { afterEach, describe, expect } from "bun:test"
+import { afterEach, beforeEach, describe, expect } from "bun:test"
 import { Effect, Layer } from "effect"
 import { Database } from "../../src/storage"
 import { HistoryFtsTable } from "../../src/history/fts.sql"
@@ -11,7 +11,11 @@ import { provideTmpdirInstance } from "../fixture/fixture"
 import { testEffect } from "../lib/effect"
 import * as CrossSpawnSpawner from "../../src/effect/cross-spawn-spawner"
 
-afterEach(async () => {
+// The test process shares a single in-memory SQLite DB (test/preload sets
+// MIMOCODE_DB=:memory:), so other suites' SessionTable/PartTable rows are visible
+// here. backfillAll() walks ALL sessions in the DB and would index those rows,
+// so wipe the relevant tables both before AND after each test.
+const wipe = () =>
   Database.use((db) => {
     db.delete(HistoryFtsTable).run()
     db.delete(PartTable).run()
@@ -19,6 +23,13 @@ afterEach(async () => {
     db.delete(SessionTable).run()
     db.delete(ProjectTable).run()
   })
+
+beforeEach(() => {
+  wipe()
+})
+
+afterEach(async () => {
+  wipe()
   await Instance.disposeAll()
 })
 
