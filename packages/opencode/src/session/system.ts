@@ -11,6 +11,8 @@ import PROMPT_KIMI from "./prompt/kimi.txt"
 
 import PROMPT_CODEX from "./prompt/codex.txt"
 import PROMPT_DEEPSEEK from "./prompt/deepseek.txt"
+import PROMPT_GLM from "./prompt/glm.txt"
+import PROMPT_MINIMAX from "./prompt/minimax.txt"
 import PROMPT_TRINITY from "./prompt/trinity.txt"
 import type { Provider } from "@/provider"
 import type { Agent } from "@/agent/agent"
@@ -31,6 +33,8 @@ export function provider(model: Provider.Model) {
   if (model.api.id.toLowerCase().includes("trinity")) return [PROMPT_TRINITY]
   if (model.api.id.toLowerCase().includes("kimi")) return [PROMPT_KIMI]
   if (model.api.id.toLowerCase().includes("deepseek")) return [PROMPT_DEEPSEEK]
+  if (model.api.id.toLowerCase().includes("glm")) return [PROMPT_GLM]
+  if (model.api.id.toLowerCase().includes("minimax")) return [PROMPT_MINIMAX]
   return [PROMPT_DEFAULT]
 }
 
