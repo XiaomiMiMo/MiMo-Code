@@ -299,6 +299,14 @@ function cacheMarkerFor(model: Provider.Model): Record<string, unknown> | undefi
   return { [ns]: shapes[ns] }
 }
 
+function supportsToolCacheMarkers(model: Provider.Model): boolean {
+  // Bedrock accepts cachePoint on messages, but providerOptions on tool
+  // definitions can make Converse return empty streams for otherwise valid
+  // prompts. Keep Bedrock cache markers message-only.
+  if (model.api.npm === "@ai-sdk/amazon-bedrock") return false
+  return supportsCacheMarkers(model)
+}
+
 function applyCaching(msgs: ModelMessage[], model: Provider.Model): ModelMessage[] {
   const providerOptions = cacheMarkerOptions(model)
 
@@ -493,7 +501,7 @@ export function message(msgs: ModelMessage[], model: Provider.Model, options: Re
 // the SDK-keyed marker via `cacheMarkerFor`. Tool registration order is stable
 // (insertion order of the tools record), so "last tool" is deterministic.
 export function tools<T extends Record<string, any>>(tools: T, model: Provider.Model): T {
-  if (!supportsCacheMarkers(model)) return tools
+  if (!supportsToolCacheMarkers(model)) return tools
   const marker = cacheMarkerFor(model)
   if (!marker) return tools
   const names = Object.keys(tools)
