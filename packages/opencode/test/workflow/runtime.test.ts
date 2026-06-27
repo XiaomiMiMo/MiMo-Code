@@ -336,8 +336,15 @@ describe("WorkflowRuntime cancel cascade", () => {
           model: ref,
           maxConcurrentAgents: 8,
         })
-        // Let the fan-out register its children, then cancel mid-flight.
-        yield* Effect.sleep("150 millis")
+        // Wait until the fan-out has registered children, then cancel mid-flight.
+        // A fixed sleep is brittle on slow systems — poll the registry instead so
+        // the cancel always lands AFTER spawns have populated childActorIDs (the
+        // pre-condition the test is asserting against).
+        for (let i = 0; i < 60; i++) {
+          const found = (yield* registry.listBySession(parent.id)).filter((a) => a.actorID !== "main")
+          if (found.length > 0) break
+          yield* Effect.sleep("50 millis")
+        }
         yield* runtime.cancel({ runID })
 
         const s = yield* runtime.status({ runID })
