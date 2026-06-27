@@ -61,6 +61,7 @@ export function hints(template: string) {
 export const Default = {
   INIT: "init",
   REVIEW: "review",
+  UNDO: "undo",
   DREAM: "dream",
   DISTILL: "distill",
   GOAL: "goal",
@@ -122,6 +123,13 @@ export const layer = Layer.effect(
         },
         subtask: true,
         hints: hints(PROMPT_REVIEW),
+      }
+      commands[Default.UNDO] = {
+        name: Default.UNDO,
+        description: "undo the latest message and its file changes",
+        source: "command",
+        template: "",
+        hints: [],
       }
       commands[Default.DREAM] = {
         name: Default.DREAM,
