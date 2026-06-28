@@ -13,7 +13,7 @@ import { errorMessage } from "../util/error"
 import { BusEvent } from "@/bus/bus-event"
 import { GlobalBus } from "@/bus/global"
 import { Git } from "@/git"
-import { Effect, Layer, Path, Scope, Context, Stream } from "effect"
+import { Effect, Layer, Path, Scope, Context, Semaphore, Stream } from "effect"
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process"
 import { NodePath } from "@effect/platform-node"
 import { AppFileSystem } from "@mimo-ai/shared/filesystem"
@@ -180,6 +180,19 @@ export const layer: Layer.Layer<
     const gitSvc = yield* Git.Service
     const project = yield* Project.Service
 
+    // Per-parent-repo lock around `git worktree add` + the `candidate` scan that
+    // picks its name. Two concurrent isolated agents on the same repo would
+    // otherwise race on .git/index.lock / .git/worktrees admin, and one's
+    // `git worktree add` would fail nondeterministically.
+    const locks = new Map<string, Semaphore.Semaphore>()
+    const lock = (key: string) => {
+      const hit = locks.get(key)
+      if (hit) return hit
+      const next = Semaphore.makeUnsafe(1)
+      locks.set(key, next)
+      return next
+    }
+
     const git = Effect.fnUntraced(
       function* (args: string[], opts?: { cwd?: string }) {
         const handle = yield* spawner.spawn(
@@ -232,9 +245,11 @@ export const layer: Layer.Layer<
 
     const setup = Effect.fnUntraced(function* (info: Info) {
       const ctx = yield* InstanceState.context
-      const created = yield* git(["worktree", "add", "--no-checkout", "-b", info.branch, info.directory], {
-        cwd: ctx.worktree,
-      })
+      const created = yield* lock(ctx.worktree).withPermits(1)(
+        git(["worktree", "add", "--no-checkout", "-b", info.branch, info.directory], {
+          cwd: ctx.worktree,
+        }),
+      )
       if (created.code !== 0) {
         throw new CreateFailedError({ message: created.stderr || created.text || "Failed to create git worktree" })
       }
