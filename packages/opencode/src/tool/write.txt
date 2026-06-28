@@ -5,6 +5,7 @@ Usage:
 - This tool will overwrite the existing file if there is one at the provided path.
 - If this is an existing file, you MUST use the `read` tool first to read the file's contents. This tool will fail if you did not read the file first.
 - ALWAYS prefer editing existing files in the codebase. NEVER write new files unless explicitly required.
+- Do not use the project workspace for temporary verification scripts or scratch files. If a temporary file is required only to run checks, put it under the OS temp directory and remove it after the check. Do not leave `verify_*` or other ad-hoc scripts in the workspace unless the user explicitly asks for a repo file.
 - NEVER proactively create documentation files (*.md) or README files. Only create documentation files if explicitly requested by the User.
 - Only use emojis if the user explicitly requests it. Avoid writing emojis to files unless asked.
 - For large files, prefer writing the content in multiple smaller steps rather than one big call: a single very large write may exceed the output limit and get truncated, leaving the file incomplete or corrupted. Write an initial portion with this tool, then add the remaining sections with follow-up Edit calls.
