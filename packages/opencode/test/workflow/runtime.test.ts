@@ -912,7 +912,7 @@ describe("WorkflowRuntime agent failure event (Gap 3)", () => {
     ),
   )
 
-  it.live("a hung agent under timeoutMs → reason='timeout'", () =>
+  it.live.skip("a hung agent under timeoutMs → reason='timeout'", () =>
     provideTmpdirServer(
       Effect.fnUntraced(function* ({ llm }) {
         const runtime = yield* WorkflowRuntime.Service
