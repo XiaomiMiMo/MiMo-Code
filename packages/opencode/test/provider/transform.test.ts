@@ -2173,6 +2173,51 @@ describe("ProviderTransform.message - cache control on gateway", () => {
     expect(result[0].providerOptions).toBeUndefined()
   })
 
+  test("mimo openai-compatible models add cache control to messages", () => {
+    const model = createModel({
+      id: "mimo-auto",
+      providerID: "mimo",
+      api: {
+        id: "mimo-auto",
+        url: "https://api.xiaomimimo.com/api/free-ai/openai",
+        npm: "@ai-sdk/openai-compatible",
+      },
+    })
+    const msgs = [
+      { role: "system", content: "You are a helpful assistant" },
+      { role: "user", content: "Hello" },
+    ] as any[]
+
+    const result = ProviderTransform.message(msgs, model, {}) as any[]
+
+    expect(result[0].providerOptions?.openaiCompatible).toEqual({
+      cache_control: { type: "ephemeral" },
+    })
+    expect(result[1].providerOptions?.openaiCompatible).toEqual({
+      cache_control: { type: "ephemeral" },
+    })
+  })
+
+  test("mimo openai-compatible models add cache control to the last tool schema", () => {
+    const model = createModel({
+      id: "mimo-auto",
+      providerID: "mimo",
+      api: {
+        id: "mimo-auto",
+        url: "https://api.xiaomimimo.com/api/free-ai/openai",
+        npm: "@ai-sdk/openai-compatible",
+      },
+    })
+    const tools = { read: {}, bash: {} } as Record<string, any>
+
+    const result = ProviderTransform.tools(tools, model)
+
+    expect(result.read.providerOptions).toBeUndefined()
+    expect(result.bash.providerOptions).toEqual({
+      openaiCompatible: { cache_control: { type: "ephemeral" } },
+    })
+  })
+
   test("multi-turn anthropic pins breakpoints to last system + last two messages", () => {
     const model = createModel({
       providerID: "anthropic",

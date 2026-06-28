@@ -235,12 +235,18 @@ function normalizeMessages(
 // markers. Pure name matching (model.api.id.includes("claude")) is fragile — a Claude
 // model behind an OpenAI-compatible proxy gets matched but markers are silently dropped.
 // See docs/cache-policy.md and upstream opencode#26786.
+function isMimoOpenAICompatible(model: Provider.Model): boolean {
+  if (model.api.npm !== "@ai-sdk/openai-compatible") return false
+  return model.providerID === "mimo" || model.providerID === "xiaomi" || model.api.url.includes("xiaomimimo.com")
+}
+
 function supportsCacheMarkers(model: Provider.Model): boolean {
   // Anthropic-only SDKs — always support inline markers
   if (model.api.npm === "@ai-sdk/anthropic" || model.api.npm === "@ai-sdk/google-vertex/anthropic") return true
   if (model.providerID === "anthropic" || model.providerID === "google-vertex-anthropic") return true
   // Bedrock cachePoint is a Converse API feature, works across model families
   if (model.api.npm === "@ai-sdk/amazon-bedrock") return true
+  if (isMimoOpenAICompatible(model)) return true
   // Multi-model providers: only Anthropic/Claude models support cache markers
   if (
     model.api.npm === "@openrouter/ai-sdk-provider" ||
@@ -294,7 +300,9 @@ function cacheMarkerFor(model: Provider.Model): Record<string, unknown> | undefi
             ? "copilot"
             : model.api.npm === "@ai-sdk/alibaba"
               ? "alibaba"
-              : undefined
+              : isMimoOpenAICompatible(model)
+                ? "openaiCompatible"
+                : undefined
   if (!ns) return undefined
   return { [ns]: shapes[ns] }
 }
