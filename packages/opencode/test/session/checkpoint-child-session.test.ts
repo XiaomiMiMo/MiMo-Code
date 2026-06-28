@@ -51,6 +51,7 @@ const pendingOutcomes: Array<Deferred.Deferred<AgentOutcome>> = []
 const recordingActor = Layer.effect(
   Actor.Service,
   Effect.gen(function* () {
+    const prevSpawnRef = spawnRef.current
     let counter = 0
     const impl = Actor.Service.of({
       spawn: (input) =>
@@ -80,7 +81,7 @@ const recordingActor = Layer.effect(
     spawnRef.current = impl
     yield* Effect.addFinalizer(() =>
       Effect.sync(() => {
-        if (spawnRef.current === impl) spawnRef.current = undefined
+        if (spawnRef.current === impl) spawnRef.current = prevSpawnRef
       }),
     )
     return impl

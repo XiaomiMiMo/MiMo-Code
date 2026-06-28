@@ -34,6 +34,7 @@ const ref = {
 const hangingActor = Layer.effect(
   Actor.Service,
   Effect.gen(function* () {
+    const prevSpawnRef = spawnRef.current
     let counter = 0
     const impl = Actor.Service.of({
       spawn: (input) =>
@@ -52,7 +53,7 @@ const hangingActor = Layer.effect(
     spawnRef.current = impl
     yield* Effect.addFinalizer(() =>
       Effect.sync(() => {
-        if (spawnRef.current === impl) spawnRef.current = undefined
+        if (spawnRef.current === impl) spawnRef.current = prevSpawnRef
       }),
     )
     return impl

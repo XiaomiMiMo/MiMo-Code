@@ -1,4 +1,4 @@
-import { afterEach, describe, expect } from "bun:test"
+import { afterEach, beforeAll, describe, expect } from "bun:test"
 import { Deferred, Effect, Layer } from "effect"
 import z from "zod"
 import { schema as transformSchema } from "../../src/provider/transform"
@@ -26,8 +26,13 @@ import { ToolRegistry } from "../../src/tool"
 import { provideTmpdirInstance } from "../fixture/fixture"
 import { testEffect } from "../lib/effect"
 
+let prevSpawnRef: typeof spawnRef.current
+beforeAll(() => {
+  prevSpawnRef = spawnRef.current
+})
+
 afterEach(async () => {
-  spawnRef.current = undefined
+  spawnRef.current = prevSpawnRef
   await Instance.disposeAll()
 })
 
