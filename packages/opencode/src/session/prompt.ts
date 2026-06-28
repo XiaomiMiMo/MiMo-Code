@@ -1256,9 +1256,21 @@ NOTE: At any point in time through this workflow you should feel free to ask the
             `,
           ],
         },
-        cmd: { args: ["/c", input.command] },
-        powershell: { args: ["-NoProfile", "-Command", input.command] },
-        pwsh: { args: ["-NoProfile", "-Command", input.command] },
+        cmd: { args: ["/c", `chcp 65001 >nul & ${input.command}`] },
+        powershell: {
+          args: [
+            "-NoProfile",
+            "-Command",
+            `$OutputEncoding = [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false);${input.command}`,
+          ],
+        },
+        pwsh: {
+          args: [
+            "-NoProfile",
+            "-Command",
+            `$OutputEncoding = [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false);${input.command}`,
+          ],
+        },
         "": { args: ["-c", input.command] },
       }
 
@@ -1273,7 +1285,11 @@ NOTE: At any point in time through this workflow you should feel free to ask the
       const cmd = ChildProcess.make(sh, args, {
         cwd,
         extendEnv: true,
-        env: { ...shellEnv.env, TERM: "dumb" },
+        env: {
+          ...shellEnv.env,
+          ...(process.platform === "win32" ? { PYTHONIOENCODING: "utf-8" } : {}),
+          TERM: "dumb",
+        },
         stdin: "ignore",
         forceKillAfter: "3 seconds",
       })

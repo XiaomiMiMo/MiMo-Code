@@ -308,7 +308,11 @@ const ask = Effect.fn("BashTool.ask")(function* (ctx: Tool.Context, scan: Scan) 
 
 function cmd(shell: string, name: string, command: string, cwd: string, env: NodeJS.ProcessEnv) {
   if (process.platform === "win32" && PS.has(name)) {
-    return ChildProcess.make(shell, ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", command], {
+    // On non-UTF-8 Windows locales (e.g. zh-CN ACP 936/GBK) PowerShell emits
+    // output in the legacy code page, which we then decode as UTF-8 and get
+    // mojibake. Force UTF-8 for both the output pipe and the console.
+    const prefixed = `$OutputEncoding = [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false);${command}`
+    return ChildProcess.make(shell, ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", prefixed], {
       cwd,
       env,
       stdin: "ignore",
@@ -316,7 +320,11 @@ function cmd(shell: string, name: string, command: string, cwd: string, env: Nod
     })
   }
 
-  return ChildProcess.make(command, [], {
+  // cmd.exe inherits the legacy code page too; switch it to UTF-8 (65001).
+  const finalCommand =
+    process.platform === "win32" && name === "cmd" ? `chcp 65001 >nul & ${command}` : command
+
+  return ChildProcess.make(finalCommand, [], {
     shell,
     cwd,
     env,
@@ -429,6 +437,10 @@ export const BashTool = Tool.define(
       )
       return {
         ...process.env,
+        // Python ignores the console code page when stdout is a pipe and falls
+        // back to the ANSI code page (GBK on zh-CN), producing mojibake. Force
+        // UTF-8 for child Python processes on Windows.
+        ...(process.platform === "win32" ? { PYTHONIOENCODING: "utf-8" } : {}),
         ...extra.env,
       }
     })
