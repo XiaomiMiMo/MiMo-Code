@@ -50,6 +50,20 @@ sudo apt install xsel
 ```
 </details>
 
+<details>
+<summary><strong>Windows：shell 输出中文（CJK）乱码</strong></summary>
+
+在系统区域为非 UTF-8 的 Windows 上（如简体中文，活动代码页为 936/GBK），命令输出里的
+中日韩字符可能显示为乱码。MiMoCode 已为 PowerShell/cmd 子进程强制开启 UTF-8 输出。
+如果在尚未覆盖的场景下仍遇到乱码，可以开启 Windows 的系统级 UTF-8 支持：
+
+**设置 → 时间和语言 → 语言和区域 → 管理语言设置 → 更改系统区域设置 →
+勾选「Beta 版: 使用 Unicode UTF-8 提供全球语言支持」→ 重启。**
+
+这会把活动代码页（ACP）切换为 UTF-8（65001），所有程序都生效，子进程不再继承旧代码页。
+注意这是系统级 Beta 开关，可能导致部分老的非 Unicode 程序显示异常，建议作为临时方案。
+</details>
+
 ---
 
 ## 核心特性

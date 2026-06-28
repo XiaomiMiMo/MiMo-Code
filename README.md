@@ -50,6 +50,23 @@ sudo apt install xsel
 ```
 </details>
 
+<details>
+<summary><strong>Windows: garbled CJK (Chinese/Japanese/Korean) output in the shell</strong></summary>
+
+On Windows with a non-UTF-8 system locale (e.g. zh-CN, whose active code page is 936/GBK),
+command output containing CJK characters may appear garbled (mojibake). MiMoCode forces
+UTF-8 output for spawned PowerShell/cmd subprocesses. If you still encounter garbled output
+in cases this does not yet cover, enable Windows' system-wide UTF-8 support:
+
+**Settings → Time & language → Language & region → Administrative language settings →
+Change system locale → check "Beta: Use Unicode UTF-8 for worldwide language support" →
+reboot.**
+
+This switches the active code page (ACP) to UTF-8 (65001) for all programs, so subprocesses
+no longer inherit the legacy code page. Note it is a system-wide Beta toggle and may cause
+some older non-Unicode programs to display incorrectly, so treat it as a workaround.
+</details>
+
 ---
 
 ## Core Features
