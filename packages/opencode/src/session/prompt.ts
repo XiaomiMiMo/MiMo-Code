@@ -1256,20 +1256,12 @@ NOTE: At any point in time through this workflow you should feel free to ask the
             `,
           ],
         },
-        cmd: { args: ["/c", `chcp 65001 >nul & ${input.command}`] },
+        cmd: { args: ["/c", `${Shell.CMD_UTF8_PREFIX}${input.command}`] },
         powershell: {
-          args: [
-            "-NoProfile",
-            "-Command",
-            `$OutputEncoding = [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false);${input.command}`,
-          ],
+          args: ["-NoProfile", "-Command", `${Shell.POWERSHELL_UTF8_PREFIX}${input.command}`],
         },
         pwsh: {
-          args: [
-            "-NoProfile",
-            "-Command",
-            `$OutputEncoding = [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false);${input.command}`,
-          ],
+          args: ["-NoProfile", "-Command", `${Shell.POWERSHELL_UTF8_PREFIX}${input.command}`],
         },
         "": { args: ["-c", input.command] },
       }

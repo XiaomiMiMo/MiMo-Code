@@ -308,10 +308,7 @@ const ask = Effect.fn("BashTool.ask")(function* (ctx: Tool.Context, scan: Scan) 
 
 function cmd(shell: string, name: string, command: string, cwd: string, env: NodeJS.ProcessEnv) {
   if (process.platform === "win32" && PS.has(name)) {
-    // On non-UTF-8 Windows locales (e.g. zh-CN ACP 936/GBK) PowerShell emits
-    // output in the legacy code page, which we then decode as UTF-8 and get
-    // mojibake. Force UTF-8 for both the output pipe and the console.
-    const prefixed = `$OutputEncoding = [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false);${command}`
+    const prefixed = `${Shell.POWERSHELL_UTF8_PREFIX}${command}`
     return ChildProcess.make(shell, ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", prefixed], {
       cwd,
       env,
@@ -320,9 +317,8 @@ function cmd(shell: string, name: string, command: string, cwd: string, env: Nod
     })
   }
 
-  // cmd.exe inherits the legacy code page too; switch it to UTF-8 (65001).
   const finalCommand =
-    process.platform === "win32" && name === "cmd" ? `chcp 65001 >nul & ${command}` : command
+    process.platform === "win32" && name === "cmd" ? `${Shell.CMD_UTF8_PREFIX}${command}` : command
 
   return ChildProcess.make(finalCommand, [], {
     shell,
