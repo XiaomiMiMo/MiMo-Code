@@ -23,6 +23,10 @@ export const TuiOptions = z.object({
     .enum(["auto", "stacked"])
     .optional()
     .describe("Control diff rendering style: 'auto' adapts to terminal width, 'stacked' always shows single column"),
+  screen_mode: z
+    .enum(["alternate-screen", "main-screen"])
+    .optional()
+    .describe("Control terminal screen mode: 'alternate-screen' uses a full-screen buffer, 'main-screen' keeps terminal scrollback available"),
   mouse: z.boolean().optional().describe("Enable or disable mouse capture (default: true)"),
 })
 
