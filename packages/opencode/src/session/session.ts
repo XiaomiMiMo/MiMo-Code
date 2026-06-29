@@ -189,7 +189,6 @@ export const CreateInput = z
     contextFrom: SessionID.zod.optional(),
     contextWatermark: MessageID.zod.optional(),
     title: z.string().optional(),
-    directory: z.string().optional(),
     permission: Info.shape.permission,
     workspaceID: WorkspaceID.zod.optional(),
   })
@@ -580,6 +579,10 @@ export const layer: Layer.Layer<Service, never, Bus.Service | Storage.Service | 
       contextFrom?: SessionID
       contextWatermark?: MessageID
       title?: string
+      // In-process only (deliberately NOT on the public CreateInput / HTTP body,
+      // where it would collide with the route's `directory` query selector). Set
+      // once at creation by an in-process caller — e.g. spawnPeer placing a child
+      // session in its own worktree dir. Defaults to the current instance dir.
       directory?: string
       permission?: Permission.Ruleset
       workspaceID?: WorkspaceID

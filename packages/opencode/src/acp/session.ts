@@ -21,7 +21,7 @@ export class ACPSessionManager {
     const session = await this.sdk.session
       .create(
         {
-          body_directory: cwd,
+          directory: cwd,
         },
         { throwOnError: true },
       )

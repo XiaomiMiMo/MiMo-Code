@@ -1763,13 +1763,12 @@ export class Session2 extends HeyApiClient {
    */
   public create<ThrowOnError extends boolean = false>(
     parameters?: {
-      query_directory?: string
+      directory?: string
       workspace?: string
       parentID?: string
       contextFrom?: string
       contextWatermark?: string
       title?: string
-      body_directory?: string
       permission?: PermissionRuleset
       workspaceID?: string
     },
@@ -1780,21 +1779,12 @@ export class Session2 extends HeyApiClient {
       [
         {
           args: [
-            {
-              in: "query",
-              key: "query_directory",
-              map: "directory",
-            },
+            { in: "query", key: "directory" },
             { in: "query", key: "workspace" },
             { in: "body", key: "parentID" },
             { in: "body", key: "contextFrom" },
             { in: "body", key: "contextWatermark" },
             { in: "body", key: "title" },
-            {
-              in: "body",
-              key: "body_directory",
-              map: "directory",
-            },
             { in: "body", key: "permission" },
             { in: "body", key: "workspaceID" },
           ],

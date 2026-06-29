@@ -4064,7 +4064,6 @@ export type SessionCreateData = {
     contextFrom?: string
     contextWatermark?: string
     title?: string
-    directory?: string
     permission?: PermissionRuleset
     workspaceID?: string
   }
