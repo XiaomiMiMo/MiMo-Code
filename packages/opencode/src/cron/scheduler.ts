@@ -78,8 +78,8 @@ export interface Interface {
   readonly start: (opts: StartOpts) => Effect.Effect<void>
   readonly stop: () => Effect.Effect<void>
   readonly add: (task: NewCronTask) => Effect.Effect<CronTask>
-  readonly remove: (id: string, opts?: { session_id?: string }) => Effect.Effect<boolean>
-  readonly rename: (id: string, prompt: string, opts?: { session_id?: string }) => Effect.Effect<boolean>
+  readonly remove: (id: string) => Effect.Effect<boolean>
+  readonly rename: (id: string, prompt: string) => Effect.Effect<boolean>
   readonly list: (filter: ListFilter) => Effect.Effect<CronTask[]>
   readonly get: (id: string, opts?: { session_id?: string }) => Effect.Effect<CronTask | null>
   readonly armLoop: (input: ArmLoopInput) => Effect.Effect<ArmLoopResult | null>
@@ -243,7 +243,7 @@ const makeImpl = (): Interface => {
       return created
     })
 
-  const removeBy = (id: string, sessionOnly: boolean) =>
+  const removeBy = (id: string) =>
     Effect.gen(function* () {
       const dir = rt?.opts.dir
       const session = getSessionCronTasks()
@@ -253,7 +253,6 @@ const makeImpl = (): Interface => {
         if (rt) rt.nextFireAt.delete(id)
         return true
       }
-      if (sessionOnly) return false
 
       const file = yield* readCronTasks(dir)
       const next = file.filter((t) => t.id !== id)
@@ -263,9 +262,9 @@ const makeImpl = (): Interface => {
       return true
     })
 
-  const remove: Interface["remove"] = (id, _opts) => removeBy(id, false)
+  const remove: Interface["remove"] = (id) => removeBy(id)
 
-  const rename: Interface["rename"] = (id, prompt, _opts) =>
+  const rename: Interface["rename"] = (id, prompt) =>
     Effect.gen(function* () {
       const dir = rt?.opts.dir
       const session = getSessionCronTasks()
@@ -289,7 +288,10 @@ const makeImpl = (): Interface => {
       const dir = rt?.opts.dir
       const file = yield* readCronTasks(dir).pipe(Effect.orElseSucceed(() => [] as CronTask[]))
       const session = getSessionCronTasks()
-      const all = [...file.map((t) => ({ ...t, durable: true as const })), ...session]
+      const all = [
+        ...file.map((t) => ({ ...t, durable: true as const })),
+        ...session.map((t) => ({ ...t, durable: false as const })),
+      ]
       return all.filter((t) => {
         if (filter.session_id && t.createdBySessionId !== filter.session_id) return false
         if (filter.kind === "loop" && t.kind !== "loop") return false
@@ -307,6 +309,7 @@ const makeImpl = (): Interface => {
 
   const armLoop: Interface["armLoop"] = (input) =>
     Effect.gen(function* () {
+      if (!rt || rt.opts.isKilled()) return null
       const cfg = rt?.cfg ?? DEFAULT_JITTER
       const now = Date.now()
       const existing = LoopState.getLoopState(input.prompt)

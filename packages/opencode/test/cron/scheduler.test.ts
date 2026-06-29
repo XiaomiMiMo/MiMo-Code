@@ -20,8 +20,8 @@ const freshDir = () => mkdtempSync(join(tmpdir(), "sched-"))
 const baseStartOpts = (dir: string, overrides: Partial<StartOpts> = {}): StartOpts => ({
   workspaceRoot: dir,
   sessionID: "ses_test",
-  isLoading: () => false,
-  isKilled: () => true, // keep ticks no-op for unit tests; we drive operations directly
+  isLoading: () => true, // keep ticks no-op for unit tests; we drive operations directly
+  isKilled: () => false,
   onFire: () => {},
   onLoopEnded: () => {},
   dir,
