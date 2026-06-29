@@ -127,6 +127,36 @@ async function readDarwinClipboardImage(): Promise<Content | undefined> {
   }
 }
 
+type ClipboardCommand = {
+  name: string
+  args: string[]
+}
+
+export function linuxClipboardReadCommands(env: NodeJS.ProcessEnv, which: (cmd: string) => string | null) {
+  return [
+    env["WAYLAND_DISPLAY"] && which("wl-paste") ? { name: "wl-paste", args: ["wl-paste", "--no-newline"] } : undefined,
+    which("xclip") ? { name: "xclip", args: ["xclip", "-selection", "clipboard", "-o"] } : undefined,
+    which("xsel") ? { name: "xsel", args: ["xsel", "--clipboard", "--output"] } : undefined,
+  ].filter((command): command is ClipboardCommand => command !== undefined)
+}
+
+export function linuxClipboardWriteCommands(env: NodeJS.ProcessEnv, which: (cmd: string) => string | null) {
+  return [
+    env["WAYLAND_DISPLAY"] && which("wl-copy") ? { name: "wl-copy", args: ["wl-copy"] } : undefined,
+    which("xclip") ? { name: "xclip", args: ["xclip", "-selection", "clipboard"] } : undefined,
+    which("xsel") ? { name: "xsel", args: ["xsel", "--clipboard", "--input"] } : undefined,
+  ].filter((command): command is ClipboardCommand => command !== undefined)
+}
+
+async function writeCommand(command: ClipboardCommand, text: string) {
+  const proc = Process.spawn(command.args, { stdin: "pipe", stdout: "ignore", stderr: "ignore" })
+  if (!proc.stdin) throw new Error(`Clipboard command ${command.name} did not open stdin`)
+  proc.stdin.write(text)
+  proc.stdin.end()
+  const code = await proc.exited
+  if (code !== 0) throw new Error(`Clipboard command ${command.name} failed with code ${code}`)
+}
+
 // Checks clipboard for images first, then falls back to text.
 //
 // On Windows prompt/ can call this from multiple paste signals because
@@ -170,6 +200,13 @@ export async function read(): Promise<Content | undefined> {
     if (x11.stdout.byteLength > 0) {
       return { data: Buffer.from(x11.stdout).toString("base64"), mime: "image/png" }
     }
+    const which = await getWhich()
+    for (const command of linuxClipboardReadCommands(process.env, which)) {
+      const result = await Process.run(command.args, { nothrow: true })
+      if (result.stdout.byteLength > 0) {
+        return { data: Buffer.from(result.stdout).toString(), mime: "text/plain" }
+      }
+    }
   }
 
   const clipboardy = await getClipboardy()
@@ -177,6 +214,7 @@ export async function read(): Promise<Content | undefined> {
   if (text) {
     return { data: text, mime: "text/plain" }
   }
+  return undefined
 }
 
 const getCopyMethod = lazy(async () => {
@@ -192,42 +230,19 @@ const getCopyMethod = lazy(async () => {
   }
 
   if (os === "linux") {
-    if (process.env["WAYLAND_DISPLAY"] && which("wl-copy")) {
-      console.log("clipboard: using wl-copy")
+    const commands = linuxClipboardWriteCommands(process.env, which)
+    if (commands.length > 0) {
+      console.log(`clipboard: using ${commands.map((command) => command.name).join(" -> ")}`)
       return async (text: string) => {
-        const proc = Process.spawn(["wl-copy"], { stdin: "pipe", stdout: "ignore", stderr: "ignore" })
-        if (!proc.stdin) return
-        proc.stdin.write(text)
-        proc.stdin.end()
-        await proc.exited.catch(() => {})
-      }
-    }
-    if (which("xclip")) {
-      console.log("clipboard: using xclip")
-      return async (text: string) => {
-        const proc = Process.spawn(["xclip", "-selection", "clipboard"], {
-          stdin: "pipe",
-          stdout: "ignore",
-          stderr: "ignore",
-        })
-        if (!proc.stdin) return
-        proc.stdin.write(text)
-        proc.stdin.end()
-        await proc.exited.catch(() => {})
-      }
-    }
-    if (which("xsel")) {
-      console.log("clipboard: using xsel")
-      return async (text: string) => {
-        const proc = Process.spawn(["xsel", "--clipboard", "--input"], {
-          stdin: "pipe",
-          stdout: "ignore",
-          stderr: "ignore",
-        })
-        if (!proc.stdin) return
-        proc.stdin.write(text)
-        proc.stdin.end()
-        await proc.exited.catch(() => {})
+        for (const command of commands) {
+          const copied = await writeCommand(command, text).then(
+            () => true,
+            () => false,
+          )
+          if (copied) return
+        }
+        const clipboardy = await getClipboardy()
+        await clipboardy.write(text).catch(() => {})
       }
     }
   }
