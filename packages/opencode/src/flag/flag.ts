@@ -154,6 +154,9 @@ export const Flag = {
   // Set MIMOCODE_EXPERIMENTAL_WORKFLOW_TOOL=false to opt out. The env-var name is
   // kept for backwards compat (long-running experiments still pass it as `1`).
   MIMOCODE_EXPERIMENTAL_WORKFLOW_TOOL: !falsy("MIMOCODE_EXPERIMENTAL_WORKFLOW_TOOL"),
+  // Defaults to ON when MIMOCODE_EXPERIMENTAL is set; otherwise opt-in via
+  // MIMOCODE_EXPERIMENTAL_CRON=1. Gates the cron/loop scheduler tool.
+  MIMOCODE_EXPERIMENTAL_CRON: MIMOCODE_EXPERIMENTAL || truthy("MIMOCODE_EXPERIMENTAL_CRON"),
   MIMOCODE_EXPERIMENTAL_MARKDOWN: !falsy("MIMOCODE_EXPERIMENTAL_MARKDOWN"),
   MIMOCODE_MODELS_URL: process.env["MIMOCODE_MODELS_URL"],
   MIMOCODE_MODELS_PATH: process.env["MIMOCODE_MODELS_PATH"],
