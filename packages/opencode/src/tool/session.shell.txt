@@ -11,10 +11,13 @@ memory. Verbs: create | switch | list | cancel | ask.
 # create — spawn a background child session (task text is positional, 1+ words):
     session create write a file hello.txt containing the word world
     session create implement email/password login --mode build
+    session create port the parser to repo B --dir /path/to/repoB --isolate
     session create design the billing schema --mode compose --model standard --title Billing
     # --mode  build|compose   (default build)
     # --model <ref>           model group/tier name, or literal provider/model
     # --title <t>             session title (defaults to the task prefix)
+    # --dir <path>            working directory the child runs in (any project or path; default orchestrator dir)
+    # --isolate               run the child in its own git worktree of --dir (concurrent edits); non-git dir => shared
 
 # multi-line task via heredoc (verbatim — no escaping needed for " \ $ #):
     session create <<EOF

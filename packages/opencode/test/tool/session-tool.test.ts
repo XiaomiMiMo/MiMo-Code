@@ -292,6 +292,18 @@ describe("session tool dual-schema (shell + JSON) end-to-end", () => {
     ),
   )
 
+  it.live("shell form: create parses --dir and --isolate", () =>
+    provideTmpdirInstance(() =>
+      Effect.gen(function* () {
+        const tool = yield* (yield* SessionTool).init()
+        const ops = yield* tool.shell!.parse("session create do the thing --mode build --dir /tmp/repoB --isolate")
+        expect(ops[0]).toEqual({
+          operation: { action: "create", task: "do the thing", mode: "build", dir: "/tmp/repoB", isolate: true },
+        })
+      }),
+    ),
+  )
+
   it.live("shell form: parses 'ask' into session_id + joined question", () =>
     provideTmpdirInstance(() =>
       Effect.gen(function* () {

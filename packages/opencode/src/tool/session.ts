@@ -155,6 +155,8 @@ const createOperation = z.strictObject({
   mode: z.enum(["build", "compose"]).optional().describe("Agent mode for the child session. Default build."),
   model: z.string().min(1).optional().describe("Model group/tier name or literal provider/model for the child."),
   title: z.string().min(1).optional().describe("Title for the child session. Defaults to the task prefix."),
+  dir: z.string().min(1).optional().describe("Working directory the child runs in (any project or path). Defaults to the orchestrator's directory."),
+  isolate: z.boolean().optional().describe("Run the child in its own git worktree of `dir` (concurrent-edit isolation). Non-git dir falls back to shared."),
 })
 
 const switchOperation = z.strictObject({
@@ -250,15 +252,22 @@ export function recoverSessionArgs(rawArgs: unknown): SessionOperation | undefin
 function extractSessionFlags(
   args: string[],
   valueFlags: string[],
-): { flags: Record<string, string>; rest: string[]; error?: string } {
+  boolFlags: string[] = [],
+): { flags: Record<string, string>; bools: Record<string, boolean>; rest: string[]; error?: string } {
   const rest: string[] = []
   const flags: Record<string, string> = {}
+  const bools: Record<string, boolean> = {}
   for (let i = 0; i < args.length; i++) {
     const a = args[i]
+    const boolName = boolFlags.find((n) => a === `--${n}`)
+    if (boolName) {
+      bools[boolName] = true
+      continue
+    }
     const valName = valueFlags.find((n) => a === `--${n}`)
     if (valName) {
       const next = args[i + 1]
-      if (next === undefined) return { flags, rest, error: `--${valName} requires a value` }
+      if (next === undefined) return { flags, bools, rest, error: `--${valName} requires a value` }
       flags[valName] = next
       i++
       continue
@@ -266,13 +275,13 @@ function extractSessionFlags(
     const eq = valueFlags.find((n) => a.startsWith(`--${n}=`))
     if (eq) {
       const v = a.slice(`--${eq}=`.length)
-      if (v === "") return { flags, rest, error: `--${eq} requires a value` }
+      if (v === "") return { flags, bools, rest, error: `--${eq} requires a value` }
       flags[eq] = v
       continue
     }
     rest.push(a)
   }
-  return { flags, rest }
+  return { flags, bools, rest }
 }
 
 function flagError(verb: string, detail: string, line: number) {
@@ -290,9 +299,10 @@ function arityError(verb: string, expected: string, args: string[], line: number
 function mapVerb(verb: string | undefined, args: string[], line: number): Effect.Effect<SessionOperation, unknown> {
   switch (verb) {
     case "create": {
-      const { flags, rest, error } = extractSessionFlags(args, ["mode", "model", "title"])
+      const { flags, bools, rest, error } = extractSessionFlags(args, ["mode", "model", "title", "dir"], ["isolate"])
       if (error) return flagError("create", error, line)
-      if (rest.length < 1) return arityError("create", "<task...> [--mode build|compose] [--model <ref>] [--title <t>]", rest, line)
+      if (rest.length < 1)
+        return arityError("create", "<task...> [--mode build|compose] [--model <ref>] [--title <t>] [--dir <path>] [--isolate]", rest, line)
       if (flags.mode && flags.mode !== "build" && flags.mode !== "compose")
         return flagError("create", `--mode must be build or compose (got '${flags.mode}')`, line)
       return Effect.succeed({
@@ -302,6 +312,8 @@ function mapVerb(verb: string | undefined, args: string[], line: number): Effect
           ...(flags.mode ? { mode: flags.mode as "build" | "compose" } : {}),
           ...(flags.model ? { model: flags.model } : {}),
           ...(flags.title ? { title: flags.title } : {}),
+          ...(flags.dir ? { dir: flags.dir } : {}),
+          ...(bools.isolate ? { isolate: true } : {}),
         },
       })
     }
