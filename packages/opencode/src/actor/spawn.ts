@@ -20,7 +20,6 @@ import { renderActorNotification } from "@/inbox/render"
 import { Plugin, HookEvent } from "@/plugin"
 import { parseReturnHeader, type ReturnStatus } from "./return-header"
 import { Log } from "@/util"
-import { Worktree } from "@/worktree"
 import { Instance, type InstanceContext } from "@/project/instance"
 import { InstanceRef } from "@/effect/instance-ref"
 
@@ -137,11 +136,12 @@ export interface SpawnInput {
   background: boolean
   parentActorID?: string
   task_id?: string // Spec ②: bound user-task ID for postStop progress.md validation
-  // Peer-only: when true, the child runs in its OWN git worktree (branch
-  // mimocode/<name>, own checkout) and its work fiber is bound to that
-  // worktree's Instance so all file tools are isolated. Orchestrator child
-  // sessions set this. Ignored for non-git projects (falls back to shared dir).
-  worktree?: boolean
+  // Peer-only: directory the child session runs in. When set, the child's work
+  // fiber is bound to that directory's Instance (via InstanceRef) so all its
+  // file tools / write boundary resolve against it — i.e. real isolation. A
+  // worktree is just such a directory; whether to CREATE one is the caller's
+  // policy (the session tool creates a worktree and passes its dir here). When
+  // unset, the child shares the spawner's directory.
   cwd?: string
   forkContext?: ForkContext // NEW
   lifecycle?: Lifecycle
@@ -196,7 +196,6 @@ export const layer = Layer.effect(
     const actorReg = yield* ActorRegistry.Service
     const agents = yield* Agent.Service
     const sessionPrompt = yield* SessionPrompt.Service
-    const worktreeSvc = yield* Worktree.Service
     const inbox = yield* Inbox.Service
     const state = yield* SessionRunState.Service
     const plugin = yield* Plugin.Service
@@ -611,19 +610,14 @@ export const layer = Layer.effect(
       })
 
     const spawnPeer = Effect.fn("Actor.spawnPeer")(function* (input: SpawnInput) {
-      // Optionally place the child in its own git worktree. Each worktree has a
-      // dedicated Instance; binding the child's work fiber to it (via instanceRef
-      // below) isolates the child's file tools / write boundary to that checkout.
-      // Best-effort: a non-git project or a worktree-creation failure falls back
-      // to the shared directory rather than failing the spawn.
-      const wt = input.worktree
-        ? yield* worktreeSvc
-            .create({ name: input.description ?? input.agentType })
-            .pipe(Effect.catch(() => Effect.succeed(undefined)))
-        : undefined
-      const instanceRef = wt
-        ? yield* Effect.promise(() =>
-            Instance.provide({ directory: wt.directory, fn: () => Instance.current }),
+      // When the caller gives the child its own directory (e.g. a worktree the
+      // session tool created), bind the child's work fiber to that directory's
+      // Instance so its file tools / write boundary are isolated there. A
+      // worktree is just a directory — spawn neither knows nor cares how it was
+      // made. Best-effort: a bad/unresolvable dir falls back to the shared dir.
+      const instanceRef = input.cwd
+        ? yield* Effect.promise(() => Instance.provide({ directory: input.cwd!, fn: () => Instance.current })).pipe(
+            Effect.catch(() => Effect.succeed(undefined)),
           )
         : undefined
 
@@ -631,7 +625,7 @@ export const layer = Layer.effect(
         parentID: input.sessionID,
         contextFrom: input.context === "full" ? input.sessionID : undefined,
         title: `${input.agentType}: ${input.task.slice(0, 40)}`,
-        ...(wt ? { directory: wt.directory } : {}),
+        ...(input.cwd ? { directory: input.cwd } : {}),
       })
       yield* actorReg.register({
         sessionID: child.id,
@@ -785,7 +779,6 @@ export const defaultLayer = Layer.suspend(() =>
     Layer.provide(Plugin.defaultLayer),
     Layer.provide(Bus.layer),
     Layer.provide(TaskRegistry.defaultLayer),
-    Layer.provide(Worktree.defaultLayer),
   ),
 )
 

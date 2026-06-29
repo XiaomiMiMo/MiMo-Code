@@ -377,6 +377,14 @@ export const SessionTool = Tool.define<typeof parameters, Metadata, Deps>(
               .resolveModelRef(op.model, undefined)
               .pipe(Effect.map((m) => ({ modelID: m.id, providerID: m.providerID })))
           : undefined
+        // Give each child its own git worktree (own branch/checkout) so concurrent
+        // children never collide on files. Worktree creation (and the non-git
+        // fallback) is OUR policy; spawn just runs the child in whatever directory
+        // we hand it via `cwd`. Best-effort: a non-git project or failure → no
+        // worktree → child shares the orchestrator's directory.
+        const wt = yield* worktreeSvc
+          .create({ name: op.title ?? op.task.slice(0, 40) })
+          .pipe(Effect.catch(() => Effect.succeed(undefined)))
         const result = yield* actor.spawn({
           mode: "peer",
           sessionID: ctx.sessionID as SessionID,
@@ -389,10 +397,7 @@ export const SessionTool = Tool.define<typeof parameters, Metadata, Deps>(
           background: true,
           parentActorID: ctx.actorID,
           lifecycle: "persistent",
-          // Each child runs in its own git worktree (own branch/checkout) so
-          // concurrent children never collide on files. Ignored for non-git
-          // projects (spawnPeer falls back to the shared directory).
-          worktree: true,
+          ...(wt ? { cwd: wt.directory } : {}),
         })
         // spawnPeer titles the child session `${agentType}: ${task}`; honor an
         // explicit --title by overwriting it so `session list` shows what the
