@@ -67,3 +67,13 @@ test("malformed cron in file is silently dropped", async () => {
   expect(back.map((t) => t.id)).toEqual(["ok"])
   rmSync(dir, { recursive: true, force: true })
 })
+
+test("writeCronTasks drops tasks with malformed cron", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "cron-"))
+  const good = { id: "g1", cron: "*/5 * * * *", prompt: "ok", createdAt: 1 }
+  const bad = { id: "b1", cron: "garbage", prompt: "no", createdAt: 2 }
+  await run(writeCronTasks([good, bad as any], dir))
+  const back = await run(readCronTasks(dir))
+  expect(back.map((t) => t.id)).toEqual(["g1"])
+  rmSync(dir, { recursive: true, force: true })
+})

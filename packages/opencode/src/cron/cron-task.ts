@@ -2,6 +2,9 @@ import { Effect, Schema } from "effect"
 import { join } from "path"
 import { mkdir, readFile, writeFile } from "fs/promises"
 import { parseCronExpression, computeNextCronRun } from "./cron-expr"
+import { Log } from "@/util"
+
+const log = Log.create({ service: "cron-task" })
 
 export const CronTask = Schema.Struct({
   id: Schema.String,
@@ -34,6 +37,14 @@ const isValidTask = (t: unknown): t is CronTask => {
   return true
 }
 
+const logDebugDropped = (phase: "read" | "write", t: unknown) => {
+  const id = (t as { id?: unknown })?.id
+  log.debug("dropped malformed cron task", {
+    phase,
+    id: typeof id === "string" ? id : "<unknown>",
+  })
+}
+
 const stripRuntime = (t: CronTask): CronTask => {
   const out: Record<string, unknown> = { ...t }
   delete out.durable
@@ -48,7 +59,11 @@ export const readCronTasks = (dir?: string) =>
       if (raw === null) return [] as CronTask[]
       const parsed = JSON.parse(raw) as { tasks?: unknown[] }
       const tasks = Array.isArray(parsed.tasks) ? parsed.tasks : []
-      return tasks.filter(isValidTask)
+      return tasks.filter((t): t is CronTask => {
+        if (isValidTask(t)) return true
+        logDebugDropped("read", t)
+        return false
+      })
     },
     catch: () => null,
   }).pipe(Effect.orElseSucceed(() => [] as CronTask[]))
@@ -56,9 +71,14 @@ export const readCronTasks = (dir?: string) =>
 export const writeCronTasks = (tasks: CronTask[], dir?: string) =>
   Effect.tryPromise({
     try: async () => {
+      const valid = tasks.filter((t) => {
+        if (isValidTask(t)) return true
+        logDebugDropped("write", t)
+        return false
+      })
       const path = getCronFilePath(dir)
       await mkdir(join(path, ".."), { recursive: true })
-      await writeFile(path, JSON.stringify({ tasks: tasks.map(stripRuntime) }, null, 2))
+      await writeFile(path, JSON.stringify({ tasks: valid.map(stripRuntime) }, null, 2))
     },
     catch: (e) => new Error(`writeCronTasks: ${e}`),
   })
