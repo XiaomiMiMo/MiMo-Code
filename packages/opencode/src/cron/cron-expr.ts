@@ -49,18 +49,18 @@ export function computeNextCronRun(expr: string, from: Date): Date | null {
   if (!f) return null
   const limit = new Date(from.getTime() + 365 * 24 * 60 * 60 * 1000)
   const d = new Date(from.getTime())
-  d.setSeconds(0, 0)
-  d.setMinutes(d.getMinutes() + 1)
+  d.setUTCSeconds(0, 0)
+  d.setUTCMinutes(d.getUTCMinutes() + 1)
   while (d <= limit) {
     if (
-      f.month.includes(d.getMonth() + 1) &&
-      f.dom.includes(d.getDate()) &&
-      f.dow.includes(d.getDay()) &&
-      f.hour.includes(d.getHours()) &&
-      f.minute.includes(d.getMinutes())
+      f.month.includes(d.getUTCMonth() + 1) &&
+      f.dom.includes(d.getUTCDate()) &&
+      f.dow.includes(d.getUTCDay()) &&
+      f.hour.includes(d.getUTCHours()) &&
+      f.minute.includes(d.getUTCMinutes())
     )
       return d
-    d.setMinutes(d.getMinutes() + 1)
+    d.setUTCMinutes(d.getUTCMinutes() + 1)
   }
   return null
 }
