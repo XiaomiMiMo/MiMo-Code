@@ -17,6 +17,11 @@ JSON calls always wrap the action in an `operation` object — see examples belo
             switch back; the user returns manually via the session-parent keybind.)
 - list:     enumerate this Orchestrator's child sessions (id, title, mode, status).
 - cancel:   stop a running child session. `sessionID` required.
+- ask:      ask a session a ONE-SHOT, READ-ONLY side question over a FROZEN
+            snapshot of its history, without disturbing its running turn.
+            `session_id` + `question` required. Returns the answer to you. The
+            answering fork may only read (read/grep/glob) — it cannot modify
+            files, run commands, or continue the session's task.
 
 ## JSON examples
 
@@ -25,6 +30,7 @@ JSON calls always wrap the action in an `operation` object — see examples belo
 {"operation":{"action":"list"}}
 {"operation":{"action":"switch","sessionID":"ses_..."}}
 {"operation":{"action":"cancel","sessionID":"ses_..."}}
+{"operation":{"action":"ask","session_id":"ses_...","question":"what is your current progress?"}}
 
 ## How to operate
 

@@ -11,6 +11,8 @@ import { Provider } from "../../src/provider"
 import { Session } from "../../src/session"
 import { Worktree } from "../../src/worktree"
 import { MessageID, SessionID } from "../../src/session/schema"
+import { ModelID } from "../../src/provider/schema"
+import { TaskRegistry } from "../../src/task/registry"
 import { Truncate } from "../../src/tool"
 import { SessionTool } from "../../src/tool/session"
 import { provideTmpdirInstance } from "../fixture/fixture"
@@ -289,6 +291,47 @@ describe("session tool dual-schema (shell + JSON) end-to-end", () => {
       }),
     ),
   )
+
+  it.live("shell form: parses 'ask' into session_id + joined question", () =>
+    provideTmpdirInstance(() =>
+      Effect.gen(function* () {
+        const info = yield* SessionTool
+        const tool = yield* info.init()
+        const parse = (s: string) => tool.shell!.parse(s)
+
+        expect(yield* parse("session ask ses_x what is your progress")).toEqual([
+          { operation: { action: "ask", session_id: "ses_x", question: "what is your progress" } },
+        ])
+        // A single-word question still parses (>= 2 positionals required).
+        expect(yield* parse("session ask ses_y summarize")).toEqual([
+          { operation: { action: "ask", session_id: "ses_y", question: "summarize" } },
+        ])
+      }),
+    ),
+  )
+
+  it.live("ask on a session with no history returns a graceful no-activity answer (no spawn)", () =>
+    provideTmpdirInstance(() =>
+      Effect.gen(function* () {
+        const sessions = yield* Session.Service
+        const target = yield* sessions.create({ title: "Empty" })
+
+        const info = yield* SessionTool
+        const tool = yield* info.init()
+        const result = yield* tool.execute(
+          { operation: { action: "ask", session_id: target.id, question: "what is your progress?" } },
+          ctx(target.id),
+        )
+
+        expect(result.title).toBe(`Asked ${target.id}`)
+        expect(result.metadata.sessionID).toBe(target.id)
+        expect(result.output).toContain("no activity yet")
+        // No child session was spawned to answer an empty target.
+        const children = yield* sessions.children(target.id)
+        expect(children).toHaveLength(0)
+      }),
+    ),
+  )
 })
 
 import { test } from "bun:test"
@@ -328,4 +371,284 @@ describe("recoverSessionArgs", () => {
       operation: { action: "create", task: "x" },
     })
   })
+})
+
+// ---------------------------------------------------------------------------
+// Functional `ask` (fork-query) end-to-end. Needs the FULL session-prompt stack
+// + a real (test) LLM so the spawned read-only fork can run a turn over the
+// frozen snapshot and return an answer. This harness mirrors fork-agent-compat:
+// SessionPrompt.layer populates prefixCaptureRef (the captor forkQuery uses),
+// and Actor.layer populates spawnRef (the actor the session tool spawns through).
+// ---------------------------------------------------------------------------
+import { NodeFileSystem } from "@effect/platform-node"
+import { FetchHttpClient } from "effect/unstable/http"
+import { Agent as AgentSvc } from "../../src/agent/agent"
+import { Command } from "../../src/command"
+import { Config } from "../../src/config"
+import { LSP } from "../../src/lsp"
+import { MCP } from "../../src/mcp"
+import { Permission } from "../../src/permission"
+import { Plugin } from "../../src/plugin"
+import { Provider as ProviderSvc } from "../../src/provider"
+import { Env } from "../../src/env"
+import { ProviderID } from "../../src/provider/schema"
+import { Question } from "../../src/question"
+import { Todo } from "../../src/session/todo"
+import { LLM } from "../../src/session/llm"
+import { AppFileSystem } from "@mimo-ai/shared/filesystem"
+import { SessionPrune } from "../../src/session/prune"
+import { SessionSummary } from "../../src/session/summary"
+import { Instruction } from "../../src/session/instruction"
+import { SessionProcessor } from "../../src/session/processor"
+import { SessionPrompt } from "../../src/session/prompt"
+import { SessionRevert } from "../../src/session/revert"
+import { SessionRunState } from "../../src/session/run-state"
+import { Goal } from "../../src/session/goal"
+import { TaskGateState } from "../../src/task/gate-state"
+import { SessionStatus } from "../../src/session/status"
+import { Skill } from "../../src/skill"
+import { SystemPrompt } from "../../src/session/system"
+import { Snapshot } from "../../src/snapshot"
+import { ToolRegistry } from "../../src/tool"
+import { ActorWaiter } from "../../src/actor/waiter"
+import { Memory } from "../../src/memory"
+import { History } from "../../src/history"
+import { Team } from "../../src/team"
+import { SessionCheckpoint } from "../../src/session/checkpoint"
+import { SessionCompaction } from "../../src/session/compaction"
+import { Auth } from "../../src/auth"
+import { MessageV2 } from "../../src/session/message-v2"
+import { Ripgrep } from "../../src/file/ripgrep"
+import { Format } from "../../src/format"
+import { provideTmpdirServer } from "../fixture/fixture"
+import { TestLLMServer } from "../lib/llm-server"
+import { Inbox } from "../../src/inbox"
+
+const askSummary = Layer.succeed(
+  SessionSummary.Service,
+  SessionSummary.Service.of({
+    summarize: () => Effect.void,
+    diff: () => Effect.succeed([]),
+    computeDiff: () => Effect.succeed([]),
+  }),
+)
+
+const askMcp = Layer.succeed(
+  MCP.Service,
+  MCP.Service.of({
+    status: () => Effect.succeed({}),
+    clients: () => Effect.succeed({}),
+    tools: () => Effect.succeed({}),
+    prompts: () => Effect.succeed({}),
+    resources: () => Effect.succeed({}),
+    add: () => Effect.succeed({ status: { status: "disabled" as const } }),
+    connect: () => Effect.void,
+    disconnect: () => Effect.void,
+    getPrompt: () => Effect.succeed(undefined),
+    readResource: () => Effect.succeed(undefined),
+    startAuth: () => Effect.die("unexpected MCP auth in ask test"),
+    authenticate: () => Effect.die("unexpected MCP auth in ask test"),
+    finishAuth: () => Effect.die("unexpected MCP auth in ask test"),
+    removeAuth: () => Effect.void,
+    supportsOAuth: () => Effect.succeed(false),
+    hasStoredTokens: () => Effect.succeed(false),
+    getAuthStatus: () => Effect.succeed("not_authenticated" as const),
+  }),
+)
+
+const askLsp = Layer.succeed(
+  LSP.Service,
+  LSP.Service.of({
+    init: () => Effect.void,
+    status: () => Effect.succeed([]),
+    hasClients: () => Effect.succeed(false),
+    touchFile: () => Effect.void,
+    diagnostics: () => Effect.succeed({}),
+    hover: () => Effect.succeed(undefined),
+    definition: () => Effect.succeed([]),
+    references: () => Effect.succeed([]),
+    implementation: () => Effect.succeed([]),
+    documentSymbol: () => Effect.succeed([]),
+    workspaceSymbol: () => Effect.succeed([]),
+    prepareCallHierarchy: () => Effect.succeed([]),
+    incomingCalls: () => Effect.succeed([]),
+    outgoingCalls: () => Effect.succeed([]),
+  }),
+)
+
+function makeAskLayer() {
+  const status = SessionStatus.layer.pipe(Layer.provideMerge(Bus.layer))
+  const runState = SessionRunState.layer.pipe(Layer.provide(status))
+  const infra = Layer.mergeAll(NodeFileSystem.layer, CrossSpawnSpawner.defaultLayer)
+  const deps = Layer.mergeAll(
+    Session.defaultLayer,
+    Snapshot.defaultLayer,
+    LLM.defaultLayer,
+    Env.defaultLayer,
+    AgentSvc.defaultLayer,
+    Command.defaultLayer,
+    Permission.defaultLayer,
+    Plugin.defaultLayer,
+    Config.defaultLayer,
+    ProviderSvc.defaultLayer,
+    askLsp,
+    askMcp,
+    AppFileSystem.defaultLayer,
+    status,
+  ).pipe(Layer.provideMerge(infra))
+  const question = Question.layer.pipe(Layer.provideMerge(deps))
+  const todo = Todo.layer.pipe(Layer.provideMerge(deps))
+  const checkpoint = SessionCheckpoint.defaultLayer
+  const taskRegistry = ActorRegistry.defaultLayer
+  const taskWaiter = ActorWaiter.defaultLayer
+  const team = Team.defaultLayer
+  const registry = ToolRegistry.layer.pipe(
+    Layer.provide(Skill.defaultLayer),
+    Layer.provide(FetchHttpClient.layer),
+    Layer.provide(CrossSpawnSpawner.defaultLayer),
+    Layer.provide(Ripgrep.defaultLayer),
+    Layer.provide(Format.defaultLayer),
+    Layer.provide(taskRegistry),
+    Layer.provide(taskWaiter),
+    Layer.provide(team),
+    Layer.provide(checkpoint),
+    Layer.provide(Memory.defaultLayer),
+    Layer.provide(History.defaultLayer),
+    Layer.provide(TaskRegistry.defaultLayer),
+    Layer.provide(Auth.defaultLayer),
+    Layer.provideMerge(todo),
+    Layer.provideMerge(question),
+    Layer.provideMerge(deps),
+  )
+  const trunc = Truncate.layer.pipe(Layer.provideMerge(deps))
+  const proc = SessionProcessor.layer.pipe(Layer.provide(askSummary), Layer.provideMerge(deps))
+  const prune = SessionPrune.layer.pipe(Layer.provide(checkpoint), Layer.provideMerge(deps))
+  const prompt = SessionPrompt.layer.pipe(
+    Layer.provide(Goal.defaultLayer),
+    Layer.provide(TaskGateState.defaultLayer),
+    Layer.provide(SessionRevert.defaultLayer),
+    Layer.provide(askSummary),
+    Layer.provide(checkpoint),
+    Layer.provide(SessionCompaction.defaultLayer),
+    Layer.provide(team),
+    Layer.provide(taskRegistry),
+    Layer.provideMerge(runState),
+    Layer.provideMerge(prune),
+    Layer.provideMerge(proc),
+    Layer.provideMerge(registry),
+    Layer.provideMerge(trunc),
+    Layer.provide(Instruction.defaultLayer),
+    Layer.provide(SystemPrompt.defaultLayer),
+    Layer.provide(Inbox.defaultLayer),
+    Layer.provideMerge(deps),
+  )
+  const inbox = Inbox.defaultLayer.pipe(Layer.provideMerge(deps))
+  // Surface the services the SessionTool's init needs (Session/ActorRegistry/
+  // Provider/Worktree = Deps, plus Truncate + Agent) alongside Actor so the test
+  // body can yield* SessionTool. provideMerge keeps them in the output context.
+  return Layer.mergeAll(
+    TestLLMServer.layer,
+    inbox,
+    Actor.layer.pipe(
+      Layer.provideMerge(prompt),
+      Layer.provideMerge(Worktree.defaultLayer),
+      Layer.provideMerge(taskRegistry),
+      Layer.provide(TaskRegistry.defaultLayer),
+      Layer.provide(Inbox.defaultLayer),
+    ),
+    trunc,
+  ).pipe(Layer.provideMerge(deps), Layer.provide(askSummary))
+}
+
+const askIt = testEffect(makeAskLayer())
+
+const askProviderCfg = (url: string) => ({
+  provider: {
+    test: {
+      name: "Test",
+      id: "test",
+      env: [],
+      npm: "@ai-sdk/openai-compatible",
+      models: {
+        "test-model": {
+          id: "test-model",
+          name: "Test Model",
+          attachment: false,
+          reasoning: false,
+          temperature: false,
+          tool_call: true,
+          release_date: "2025-01-01",
+          limit: { context: 100000, output: 10000 },
+          cost: { input: 0, output: 0 },
+          options: {},
+        },
+      },
+      options: { apiKey: "test-key", baseURL: url },
+    },
+  },
+})
+
+describe("session tool ask (fork-query) functional", () => {
+  askIt.live("ask spawns a READ-ONLY fork over a target with history and returns its answer", () =>
+    provideTmpdirServer(
+      Effect.fnUntraced(function* ({ llm }) {
+        const sessions = yield* Session.Service
+        const actorReg = yield* ActorRegistry.Service
+
+        // A target session with real main-slice history (a user message —
+        // required for buildPrefix not to bail to the empty path).
+        const target = yield* sessions.create({
+          title: "Target with history",
+          permission: [{ permission: "*", pattern: "*", action: "allow" }],
+        })
+        yield* sessions.updateMessage({
+          id: MessageID.ascending(),
+          role: "user" as const,
+          sessionID: target.id,
+          agentID: "main",
+          time: { created: Date.now() },
+          agent: "build",
+          model: { providerID: ProviderID.make("test"), modelID: ModelID.make("test-model") },
+        } as unknown as MessageV2.Info)
+
+        // The fork's single turn answers from the frozen snapshot.
+        yield* llm.text("The session is setting up a login page.")
+
+        const info = yield* SessionTool
+        const tool = yield* info.init()
+        const result = yield* tool.execute(
+          { operation: { action: "ask", session_id: target.id, question: "what is this session doing?" } },
+          ctx(target.id),
+        )
+
+        // Non-empty answer, returned to the caller; not the empty-history path.
+        expect(result.title).toBe(`Asked ${target.id}`)
+        expect(result.output.length).toBeGreaterThan(0)
+        expect(result.output).not.toContain("no activity yet")
+
+        // The fork ran in its own child session parented to the target (frozen
+        // snapshot host), so the target's own main slice is untouched.
+        const children = yield* sessions.children(target.id)
+        expect(children.length).toBe(1)
+
+        // READ-ONLY enforcement: the spawned fork actor's tool whitelist is
+        // exactly read/grep/glob — no write/edit/bash/patch. prompt.ts rejects
+        // any tool outside this list, so the fork CANNOT mutate state.
+        // READ-ONLY enforcement: the spawned fork actor's tool whitelist is
+        // exactly read/grep/glob — no write/edit/bash/patch. prompt.ts rejects
+        // any tool outside this list, so the fork CANNOT mutate state. (The
+        // child session also carries an auto-registered "main" row; the fork is
+        // the subagent row.)
+        const forkActor = (yield* actorReg.listBySession(children[0].id)).find((a) => a.mode === "subagent")
+        expect(forkActor).toBeDefined()
+        const forkTools = forkActor!.tools
+        expect(forkTools).toEqual(["read", "grep", "glob"])
+        for (const banned of ["write", "edit", "bash", "apply_patch", "notebook_edit"]) {
+          expect(forkTools).not.toContain(banned)
+        }
+      }),
+      { git: true, config: askProviderCfg },
+    ),
+    60000,
+  )
 })

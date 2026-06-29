@@ -1,6 +1,6 @@
 Child-session orchestration tool (shell form, Orchestrator mode only). Each
 child runs in its own session id with its own mode, model, task panel, and
-memory. Verbs: create | switch | list | cancel.
+memory. Verbs: create | switch | list | cancel | ask.
 
 # Script structure
 #   - Multi-line: one command per non-blank line, set-e on first failure
@@ -31,6 +31,13 @@ memory. Verbs: create | switch | list | cancel.
 
 # stop a child:
     session cancel ses_...
+
+# ask a session a one-shot, READ-ONLY side question (non-disruptive):
+    session ask ses_... what is your current progress
+    # Freezes a snapshot of that session's history and answers from it without
+    # touching its running turn. The fork can only read (read/grep/glob) — it
+    # cannot modify files, run commands, or continue the session's task. The
+    # answer is returned to you. Works on any session (running or idle).
 
 # multi-command (one per line, set-e on first failure) — fan out several children:
     session create implement the parser --mode build
