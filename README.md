@@ -69,6 +69,14 @@ some older non-Unicode programs to display incorrectly, so treat it as a workaro
 
 ---
 
+## MiMo Ecosystem
+
+Beyond MiMoCode, Xiaomi MiMo models also work in other agents and coding tools like Cursor, Cline, and Zed.
+
+**[awesome-mimo-agent](https://github.com/XiaomiMiMo/awesome-mimo-agent)** collects setup guides for using MiMo in those tools — worth a look if you want to try MiMo elsewhere. Contributions welcome: open a PR to add your own setup.
+
+---
+
 ## Core Features
 
 ### Multiple Agents

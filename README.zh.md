@@ -66,6 +66,14 @@ sudo apt install xsel
 
 ---
 
+## MiMo 生态
+
+除了 MiMoCode，小米 MiMo 模型也能在 Cursor、Cline、Zed 等各种 Agent 和编程工具里使用。
+
+**[awesome-mimo-agent](https://github.com/XiaomiMiMo/awesome-mimo-agent)** 收集了这些工具接入 MiMo 模型的配置教程，想换个工具试试 MiMo 的话可以去看看。也欢迎把你自己的接入方式提 PR 分享出来。
+
+---
+
 ## 核心特性
 
 ### 多智能体
