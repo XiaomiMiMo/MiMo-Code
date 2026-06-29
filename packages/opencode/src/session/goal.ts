@@ -30,9 +30,17 @@ export type Goal = {
   react: number
 }
 
+// scaffold v0.1.21: `impossible` is `.nullable()`, NOT `.optional()`. Under codex-OAuth
+// (gpt-5.x) the judge's generateObject response_format is sent in STRICT structured-output
+// mode, where OpenAI requires every property key to appear in `required`. An `.optional()`
+// key is omitted from `required` → backend 400 (`invalid_json_schema: Missing 'impossible'`)
+// → judge always throws → goalGate fails open → Outcome Gate is a silent no-op under the
+// production model. `.nullable()` keeps the key required (strict-compliant) while letting the
+// judge return null when not applicable; all consumers truthy-check `verdict.impossible`, so
+// null behaves like the old absent/false. Found by live PRIME-3 validation.
 export const Verdict = z.object({
   ok: z.boolean(),
-  impossible: z.boolean().optional(),
+  impossible: z.boolean().nullable(),
   reason: z.string(),
 })
 export type Verdict = z.infer<typeof Verdict>
