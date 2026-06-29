@@ -215,6 +215,7 @@ export const dict: Record<string, string> = {
   "tui.command.mcp.list.title": "Toggle MCPs",
   "tui.command.never_ask.title_on": "Never-ask: ON (auto-decide, permissions excluded) — click to turn off",
   "tui.command.never_ask.title_off": "Never-ask: OFF — click to turn on (auto-decide, permissions excluded)",
+  "tui.command.never_ask.badge": "never-ask",
   "tui.command.never_ask.toast_on":
     "Never-ask ON — I won't prompt you; I'll pick the best option myself until you turn it off (/never-ask). Permission requests still need your approval.",
   "tui.command.never_ask.toast_off": "Never-ask OFF — I'll ask you at decision points again.",

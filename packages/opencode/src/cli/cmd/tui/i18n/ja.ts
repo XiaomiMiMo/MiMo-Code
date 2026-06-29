@@ -228,6 +228,7 @@ export const dict = {
   "tui.command.mcp.list.title": "MCP を切り替え",
   "tui.command.never_ask.title_on": "質問しない：オン（自動判断、権限リクエストは除く） — クリックでオフに",
   "tui.command.never_ask.title_off": "質問しない：オフ — クリックでオンに（自動判断、権限リクエストは除く）",
+  "tui.command.never_ask.badge": "質問しない",
   "tui.command.never_ask.toast_on":
     "質問しないをオンにしました — あなたに質問せず、オフにする（/never-ask）まで自分で最適な選択肢を選びます。権限リクエストは引き続きあなたの承認が必要です。",
   "tui.command.never_ask.toast_off": "質問しないをオフにしました — 判断ポイントで再びあなたに質問します。",

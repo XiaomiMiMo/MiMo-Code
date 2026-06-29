@@ -1661,7 +1661,7 @@ export function Prompt(props: PromptProps) {
                 </Show>
                 <Show when={local.neverAsk.current()}>
                   <text>
-                    <span style={{ fg: theme.error, bold: true }}>«never-ask»</span>
+                    <span style={{ fg: theme.error, bold: true }}>«{t("tui.command.never_ask.badge")}»</span>
                   </text>
                 </Show>
               </box>

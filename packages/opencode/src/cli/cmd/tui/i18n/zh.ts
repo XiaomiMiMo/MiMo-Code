@@ -204,6 +204,7 @@ export const dict = {
   "tui.command.mcp.list.title": "切换 MCP",
   "tui.command.never_ask.title_on": "跳过提问：已开启（自动决策，权限请求除外） - 点击关闭",
   "tui.command.never_ask.title_off": "跳过提问：已关闭 - 点击开启（自动决策，权限请求除外）",
+  "tui.command.never_ask.badge": "跳过提问",
   "tui.command.never_ask.toast_on":
     "已开启跳过提问 — 我不会再向你提问，会自行选择最佳选项，直到你关闭（/never-ask）。权限请求仍需你确认。",
   "tui.command.never_ask.toast_off": "已关闭跳过提问 — 遇到决策点我会重新向你提问。",

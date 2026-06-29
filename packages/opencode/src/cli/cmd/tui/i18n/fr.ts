@@ -279,6 +279,7 @@ export const dict = {
   "tui.command.mcp.list.title": "Activer/désactiver MCP",
   "tui.command.never_ask.title_on": "Sans questions : ACTIVÉ (auto-décider, autorisations exclues) — cliquer pour désactiver",
   "tui.command.never_ask.title_off": "Sans questions : DÉSACTIVÉ — cliquer pour activer (auto-décider, autorisations exclues)",
+  "tui.command.never_ask.badge": "Sans questions",
   "tui.command.never_ask.toast_on":
     "Sans questions ACTIVÉ — je ne te demanderai rien ; je choisirai moi-même la meilleure option jusqu'à ce que tu le désactives (/never-ask). Les demandes d'autorisation nécessitent toujours ton approbation.",
   "tui.command.never_ask.toast_off": "Sans questions DÉSACTIVÉ — je te redemanderai aux points de décision.",
