@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, setDefaultTimeout } from "bun:test"
+import { existsSync } from "fs"
 import { Effect, Layer } from "effect"
 
 // These are heavy live tests: each spawns real sessions, git worktrees, and
@@ -174,6 +175,40 @@ describe("session tool", () => {
         const result = yield* tool.execute({ operation: { action: "list" } }, ctx(parent.id))
         expect(result.title).toBe("Child sessions: 0")
         expect(result.output).toBe("No child sessions.")
+      }),
+    ),
+  )
+
+  it.live("create --isolate on a git dir runs the child in a worktree of THAT dir", () =>
+    provideTmpdirInstance((dir) =>
+      Effect.gen(function* () {
+        const sessions = yield* Session.Service
+        const parent = yield* sessions.create({ title: "Parent" })
+        const tool = yield* (yield* SessionTool).init()
+        const res = yield* tool.execute(
+          { operation: { action: "create", task: "x", mode: "build", dir, isolate: true } },
+          ctx(parent.id),
+        )
+        const child = yield* sessions.get(SessionID.make(res.metadata.sessionID!))
+        expect(child.directory).not.toBe(dir) // worktree dir, distinct from --dir
+        expect(existsSync(child.directory)).toBe(true)
+      }),
+      { git: true },
+    ),
+  )
+
+  it.live("create --dir without isolate runs the child in that directory (shared)", () =>
+    provideTmpdirInstance((dir) =>
+      Effect.gen(function* () {
+        const sessions = yield* Session.Service
+        const parent = yield* sessions.create({ title: "Parent" })
+        const tool = yield* (yield* SessionTool).init()
+        const res = yield* tool.execute(
+          { operation: { action: "create", task: "x", mode: "build", dir } },
+          ctx(parent.id),
+        )
+        const child = yield* sessions.get(SessionID.make(res.metadata.sessionID!))
+        expect(child.directory).toBe(dir)
       }),
     ),
   )

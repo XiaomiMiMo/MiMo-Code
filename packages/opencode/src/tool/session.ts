@@ -6,6 +6,9 @@ import z from "zod"
 import { Effect, Deferred } from "effect"
 import { Session } from "@/session"
 import { Worktree } from "@/worktree"
+import { Instance } from "@/project/instance"
+import { InstanceRef } from "@/effect/instance-ref"
+import { InstanceState } from "@/effect"
 import { ActorRegistry } from "@/actor/registry"
 import { Provider } from "@/provider"
 import { spawnRef } from "@/actor/spawn-ref"
@@ -389,14 +392,43 @@ export const SessionTool = Tool.define<typeof parameters, Metadata, Deps>(
               .resolveModelRef(op.model, undefined)
               .pipe(Effect.map((m) => ({ modelID: m.id, providerID: m.providerID })))
           : undefined
-        // Give each child its own git worktree (own branch/checkout) so concurrent
-        // children never collide on files. Worktree creation (and the non-git
-        // fallback) is OUR policy; spawn just runs the child in whatever directory
-        // we hand it via `cwd`. Best-effort: a non-git project or failure → no
-        // worktree → child shares the orchestrator's directory.
-        const wt = yield* worktreeSvc
-          .create({ name: op.title ?? op.task.slice(0, 40) })
-          .pipe(Effect.catch(() => Effect.succeed(undefined)))
+
+        // `--dir` is where the child runs (any project/path); default is the
+        // orchestrator's own directory. `--isolate` additionally runs it in its
+        // own git worktree OF THAT dir's repo.
+        const targetDir = op.dir ?? (yield* InstanceState.directory)
+
+        let effectiveDir = targetDir
+        let isolateNotice = ""
+        if (op.isolate) {
+          // LOAD-BEARING: Worktree.create resolves against the AMBIENT Instance
+          // (InstanceState.context = (yield* InstanceRef) ?? Instance.current).
+          // To worktree a DIFFERENT dir's repo we must run it under THAT dir's
+          // Instance. Boot/cache that dir's InstanceContext (Instance.provide
+          // returns a Promise; the worktree call is an Effect), then provide it
+          // as InstanceRef — sufficient because makeWorktreeInfo/setup read only
+          // InstanceState.context. NotGitError is a synchronous throw inside an
+          // Effect.fn (a DEFECT, not a typed failure), so Effect.catch can't see
+          // it; Effect.exit captures any non-success (failure OR defect) and we
+          // degrade to shared — never fail the create.
+          const ctxResult = yield* Effect.exit(
+            Effect.promise(() => Instance.provide({ directory: targetDir, fn: () => Instance.current })),
+          )
+          const wtDir = ctxResult._tag === "Success"
+            ? yield* worktreeSvc
+                .create({ name: op.title ?? op.task.slice(0, 40) })
+                .pipe(
+                  Effect.provideService(InstanceRef, ctxResult.value),
+                  Effect.exit,
+                  Effect.map((exit) => (exit._tag === "Success" ? exit.value.directory : undefined)),
+                )
+            : undefined
+          if (wtDir) effectiveDir = wtDir
+          else
+            isolateNotice =
+              " (note: --isolate ignored — directory is not a git repo or worktree creation failed; running shared)"
+        }
+
         const result = yield* actor.spawn({
           mode: "peer",
           sessionID: ctx.sessionID as SessionID,
@@ -409,7 +441,7 @@ export const SessionTool = Tool.define<typeof parameters, Metadata, Deps>(
           background: true,
           parentActorID: ctx.actorID,
           lifecycle: "persistent",
-          ...(wt ? { cwd: wt.directory } : {}),
+          cwd: effectiveDir,
         })
         // spawnPeer titles the child session `${agentType}: ${task}`; honor an
         // explicit --title by overwriting it so `session list` shows what the
@@ -417,7 +449,10 @@ export const SessionTool = Tool.define<typeof parameters, Metadata, Deps>(
         if (op.title) yield* sessions.setTitle({ sessionID: result.sessionID, title: op.title })
         return {
           title: `Session created: ${result.sessionID}`,
-          output: `Created child session ${result.sessionID} (mode: ${op.mode ?? "build"}). Running in the background.`,
+          output:
+            `Created child session ${result.sessionID} (mode: ${op.mode ?? "build"}) in ${effectiveDir}.` +
+            (op.isolate && !isolateNotice ? ` Isolated in its own worktree.` : isolateNotice) +
+            ` Running in the background.`,
           metadata: { sessionID: result.sessionID } as Metadata,
         }
       }
