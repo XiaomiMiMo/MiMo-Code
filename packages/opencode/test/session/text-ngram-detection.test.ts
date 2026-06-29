@@ -59,4 +59,63 @@ describe("TextNgramMonitor", () => {
     expect(monitor.append(repeated)).toBe(false)
     expect(monitor.append(repeated)).toBe(true)
   })
+
+  test("ignores format-driven repetition in long markdown tables", () => {
+    const monitor = new TextNgramMonitor(6, 3, 500)
+    const table = [
+      "| Technology | Current | After Integration | Verdict |",
+      "| --- | --- | --- | --- |",
+      "| Search | Current after integration verdict needs review | Uses indexed retrieval | Stable |",
+      "| Storage | Current after integration verdict needs review | Uses durable cache | Stable |",
+      "| Billing | Current after integration verdict needs review | Uses invoice sync | Stable |",
+    ].join("\n")
+
+    expect(monitor.append(table)).toBe(false)
+  })
+
+  test("ignores format-driven repetition in long markdown lists", () => {
+    const monitor = new TextNgramMonitor(6, 3, 500)
+    const list = [
+      "  - Search: current after integration verdict needs review",
+      "  - Storage: current after integration verdict needs review",
+      "  - Billing: current after integration verdict needs review",
+    ].join("\n")
+
+    expect(monitor.append(list)).toBe(false)
+  })
+
+  test("does not treat pipe-bounded prose as a markdown table", () => {
+    const monitor = new TextNgramMonitor(6, 3, 500)
+    const repeated = "|x| the same failure keeps happening again now "
+
+    expect(monitor.append(`${repeated}${repeated}${repeated}`)).toBe(true)
+  })
+
+  test("does not ignore pipe rows without a table separator", () => {
+    const monitor = new TextNgramMonitor(6, 3, 500)
+    const row = "| Not a table | the same failure keeps happening again now |"
+
+    expect(monitor.append([row, row, row].join("\n"))).toBe(true)
+  })
+
+  test("still detects exact repeated structured rows", () => {
+    const monitor = new TextNgramMonitor(6, 3, 500)
+    const row = "| Repeat | the same failure keeps happening again now |"
+
+    expect(monitor.append([row, row, row].join("\n"))).toBe(true)
+  })
+
+  test("still detects repeated prose around structured output", () => {
+    const monitor = new TextNgramMonitor(6, 3, 500)
+    const table = [
+      "| Technology | Current | After Integration | Verdict |",
+      "| --- | --- | --- | --- |",
+      "| Search | Uses indexed retrieval | Stable |",
+      "| Storage | Uses durable cache | Stable |",
+      "| Billing | Uses invoice sync | Stable |",
+    ].join("\n")
+    const repeated = "the same failure keeps happening again now "
+
+    expect(monitor.append(`${table}\n${repeated}${repeated}${repeated}`)).toBe(true)
+  })
 })

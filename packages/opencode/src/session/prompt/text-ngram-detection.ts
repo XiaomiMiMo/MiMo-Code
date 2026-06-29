@@ -11,6 +11,41 @@ export function tokenizeForNgram(text: string): string[] {
     .filter(Boolean)
 }
 
+function isMarkdownListLine(line: string): boolean {
+  return /^\s*([-*+]|\d+[.)])\s+/.test(line)
+}
+
+function isMarkdownTableRow(line: string): boolean {
+  const trimmed = line.trim()
+  return /^\|.*\|$/.test(trimmed) && (trimmed.match(/\|/g)?.length ?? 0) >= 2
+}
+
+function isMarkdownTableSeparator(line: string): boolean {
+  return /^\|?\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)+\|?$/.test(line.trim())
+}
+
+function structuredMarkdownLineIndexes(lines: readonly string[]): Set<number> {
+  const indexes = new Set<number>()
+  lines.forEach((line, index) => {
+    if (isMarkdownListLine(line)) indexes.add(index)
+    if (!isMarkdownTableSeparator(line)) return
+    for (let i = index; i >= 0 && isMarkdownTableRow(lines[i]); i--) indexes.add(i)
+    for (let i = index + 1; i < lines.length && isMarkdownTableRow(lines[i]); i++) indexes.add(i)
+  })
+  return indexes
+}
+
+function removeStructuredMarkdownBlocks(text: string): string {
+  const lines = text.split(/\r?\n/)
+  const indexes = structuredMarkdownLineIndexes(lines)
+  if (indexes.size < 3) return text
+  const counts = new Map<string, number>()
+  lines.forEach((line, index) => {
+    if (indexes.has(index)) counts.set(line.trim(), (counts.get(line.trim()) ?? 0) + 1)
+  })
+  return lines.filter((line, index) => !indexes.has(index) || (counts.get(line.trim()) ?? 0) >= 3).join("\n")
+}
+
 export function detectRepeatedNgram(tokens: readonly string[], n: number, threshold: number): boolean {
   if (tokens.length < n || threshold < 2) return false
   const counts = new Map<string, number>()
@@ -36,7 +71,7 @@ export class TextNgramMonitor {
   append(text: string): boolean {
     if (!text) return false
     this.buffer += text
-    const all = tokenizeForNgram(this.buffer)
+    const all = tokenizeForNgram(removeStructuredMarkdownBlocks(this.buffer))
     this.tokens = all.length > this.windowTokens ? all.slice(-this.windowTokens) : all
     if (all.length > this.windowTokens * 2) this.buffer = this.tokens.join(" ")
     return detectRepeatedNgram(this.tokens, this.n, this.threshold)
