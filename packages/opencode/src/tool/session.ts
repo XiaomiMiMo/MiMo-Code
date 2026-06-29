@@ -44,7 +44,7 @@ function SIDE_QUESTION_PROMPT(question: string): string {
 // BLOCK on the outcome, return finalText. Non-interrupting: the fork runs in
 // its own child session/actor over a frozen prefix; the target's own messages
 // and actor are untouched.
-function forkQuery(deps: {
+export function forkQuery(deps: {
   sessions: Session.Interface
   provider: Provider.Interface
   actor: ActorInterface

@@ -130,6 +130,8 @@ import type {
   SessionAbortResponses,
   SessionActorsErrors,
   SessionActorsResponses,
+  SessionAskErrors,
+  SessionAskResponses,
   SessionChildrenErrors,
   SessionChildrenResponses,
   SessionCommandErrors,
@@ -1761,12 +1763,13 @@ export class Session2 extends HeyApiClient {
    */
   public create<ThrowOnError extends boolean = false>(
     parameters?: {
-      directory?: string
+      query_directory?: string
       workspace?: string
       parentID?: string
       contextFrom?: string
       contextWatermark?: string
       title?: string
+      body_directory?: string
       permission?: PermissionRuleset
       workspaceID?: string
     },
@@ -1777,12 +1780,21 @@ export class Session2 extends HeyApiClient {
       [
         {
           args: [
-            { in: "query", key: "directory" },
+            {
+              in: "query",
+              key: "query_directory",
+              map: "directory",
+            },
             { in: "query", key: "workspace" },
             { in: "body", key: "parentID" },
             { in: "body", key: "contextFrom" },
             { in: "body", key: "contextWatermark" },
             { in: "body", key: "title" },
+            {
+              in: "body",
+              key: "body_directory",
+              map: "directory",
+            },
             { in: "body", key: "permission" },
             { in: "body", key: "workspaceID" },
           ],
@@ -2281,6 +2293,45 @@ export class Session2 extends HeyApiClient {
     )
     return (options?.client ?? this.client).post<SessionSummarizeResponses, SessionSummarizeErrors, ThrowOnError>({
       url: "/session/{sessionID}/summarize",
+      ...options,
+      ...params,
+      headers: {
+        "Content-Type": "application/json",
+        ...options?.headers,
+        ...params.headers,
+      },
+    })
+  }
+
+  /**
+   * Ask session a side question
+   *
+   * Ask the session a one-shot, read-only side question over a frozen snapshot of its history and return the answer text. Does NOT inject a message into the conversation or disturb the session's turn.
+   */
+  public ask<ThrowOnError extends boolean = false>(
+    parameters: {
+      sessionID: string
+      directory?: string
+      workspace?: string
+      question?: string
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "path", key: "sessionID" },
+            { in: "query", key: "directory" },
+            { in: "query", key: "workspace" },
+            { in: "body", key: "question" },
+          ],
+        },
+      ],
+    )
+    return (options?.client ?? this.client).post<SessionAskResponses, SessionAskErrors, ThrowOnError>({
+      url: "/session/{sessionID}/ask",
       ...options,
       ...params,
       headers: {

@@ -25,6 +25,8 @@ import { Permission } from "@/permission"
 import { PermissionID } from "@/permission/schema"
 import { ModelID, ProviderID } from "@/provider/schema"
 import { Provider } from "@/provider"
+import { forkQuery } from "@/tool/session"
+import { spawnRef } from "@/actor/spawn-ref"
 import { errors } from "../../error"
 import { lazy } from "@/util/lazy"
 import { Bus } from "@/bus"
@@ -673,6 +675,55 @@ export const SessionRoutes = lazy(() =>
           })
           yield* prompt.loop({ sessionID })
           return true
+        }),
+    )
+    .post(
+      "/:sessionID/ask",
+      describeRoute({
+        summary: "Ask session a side question",
+        description:
+          "Ask the session a one-shot, read-only side question over a frozen snapshot of its history and return the answer text. Does NOT inject a message into the conversation or disturb the session's turn.",
+        operationId: "session.ask",
+        responses: {
+          200: {
+            description: "Side question answer",
+            content: {
+              "application/json": {
+                schema: resolver(z.object({ answer: z.string() })),
+              },
+            },
+          },
+          ...errors(400, 404),
+        },
+      }),
+      validator(
+        "param",
+        z.object({
+          sessionID: SessionID.zod,
+        }),
+      ),
+      validator(
+        "json",
+        z.object({
+          question: z.string().min(1),
+        }),
+      ),
+      async (c) =>
+        jsonRequest("SessionRoutes.ask", c, function* () {
+          const sessionID = c.req.valid("param").sessionID
+          const question = c.req.valid("json").question
+          const sessions = yield* Session.Service
+          const provider = yield* Provider.Service
+          // Resolve the Actor through the late-bound spawnRef rather than a layer
+          // dependency, mirroring tool/session.ts to avoid an Actor → SessionPrompt
+          // → ToolRegistry → tool/session → Actor layer cycle.
+          const actor = spawnRef.current
+          if (!actor)
+            return yield* Effect.fail(
+              new Error("Actor service unavailable — Actor.defaultLayer must be running to ask a side question"),
+            )
+          const answer = yield* forkQuery({ sessions, provider, actor }, sessionID, question)
+          return { answer }
         }),
     )
     .get(

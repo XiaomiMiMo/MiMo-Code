@@ -60,6 +60,8 @@ import { useDialog } from "../../ui/dialog"
 import { DialogMessage } from "./dialog-message"
 import type { PromptInfo } from "../../component/prompt/history"
 import { DialogConfirm } from "@tui/ui/dialog-confirm"
+import { DialogAlert } from "@tui/ui/dialog-alert"
+import { DialogPrompt } from "@tui/ui/dialog-prompt"
 import { DialogTimeline } from "./dialog-timeline"
 import { DialogForkFromTimeline } from "./dialog-fork-from-timeline"
 import { DialogSessionRename } from "../../component/dialog-session-rename"
@@ -547,6 +549,32 @@ export function Session() {
           providerID: selectedModel.providerID,
         })
         dialog.clear()
+      },
+    },
+    {
+      title: t("tui.command.session.ask.title"),
+      description: t("tui.command.session.ask.description"),
+      value: "session.ask",
+      category: "session",
+      slash: {
+        name: "btw",
+      },
+      onSelect: async (dialog) => {
+        const question = await DialogPrompt.show(dialog, "/btw", {
+          placeholder: t("tui.command.session.ask.placeholder"),
+        })
+        if (!question || !question.trim()) return
+        const res = await sdk.client.session
+          .ask({ sessionID: route.sessionID, question: question.trim() })
+          .catch((error) => {
+            toast.show({
+              message: error instanceof Error ? error.message : "Failed to ask side question",
+              variant: "error",
+            })
+            return undefined
+          })
+        if (!res) return
+        await DialogAlert.show(dialog, "/btw", res.data?.answer ?? "(no answer)")
       },
     },
     {
