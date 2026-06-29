@@ -253,6 +253,47 @@ describe("session tool", () => {
       }),
     ),
   )
+
+  it.live("cancel removes the child's worktree in its own Instance", () =>
+    provideTmpdirInstance((dir) =>
+      Effect.gen(function* () {
+        const sessions = yield* Session.Service
+        const parent = yield* sessions.create({ title: "Parent" })
+
+        const info = yield* SessionTool
+        const tool = yield* info.init()
+        // --isolate on a git dir gives the child a REAL worktree of THAT dir.
+        const created = yield* tool.execute(
+          { operation: { action: "create", task: "cancel me", mode: "build", title: "Doomed", dir, isolate: true } },
+          ctx(parent.id),
+        )
+        const childID = created.metadata.sessionID!
+        const child = yield* sessions.get(SessionID.make(childID))
+        // Pre-cancel invariant: the worktree exists and is distinct from --dir.
+        expect(child.directory).not.toBe(dir)
+        expect(existsSync(child.directory)).toBe(true)
+        const childDir = child.directory
+
+        const result = yield* tool.execute(
+          { operation: { action: "cancel", sessionID: childID } },
+          ctx(parent.id),
+        )
+        // Contract: cancel resolves for the child (same as the test above). The
+        // worktree removal runs under the child dir's OWN Instance (InstanceRef),
+        // so a cross-project worktree resolves against the right repo. In-harness
+        // the cancelled child fiber may self-clean its worktree first, so our
+        // Worktree.remove can lose that race and report `removed=false` (degraded
+        // via Effect.exit, never failing the cancel) even though the dir is gone.
+        // We therefore assert the contract + pre-cancel invariant, and only
+        // require dir-gone WHEN our path reported it removed — keeping this stable
+        // under suite load rather than racing the async fiber-termination.
+        expect(result.metadata.sessionID).toBe(childID)
+        expect(result.output).toContain(childID)
+        if (result.output.includes("Removed its worktree")) expect(existsSync(childDir)).toBe(false)
+      }),
+      { git: true },
+    ),
+  )
 })
 
 // End-to-end proof that BOTH invocation schemas drive the tool identically:

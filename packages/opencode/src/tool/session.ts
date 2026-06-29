@@ -489,16 +489,27 @@ export const SessionTool = Tool.define<typeof parameters, Metadata, Deps>(
       if (op.action === "cancel") {
         const actor = yield* requireActor()
         yield* actor.cancel(op.sessionID as SessionID, op.sessionID, "graceful")
-        // Remove the child's worktree (git worktree remove + branch -D). The
-        // child's session row records its worktree directory; Worktree.remove is
-        // a no-op (returns false) if the dir isn't a worktree, so this is safe
-        // for non-worktree children too. Best-effort: a removal failure must not
-        // fail the cancel. The orchestrator only cancels once a child's work is
-        // merged or abandoned (prompt rule), so this never discards live work.
+        // Remove the child's worktree in ITS OWN project's Instance: a child may
+        // live in a worktree of a DIFFERENT project than us, and Worktree.remove's
+        // `git worktree remove` resolves against the ambient Instance. Resolve the
+        // child dir's InstanceContext and provide it as InstanceRef. Worktree.remove
+        // is a no-op for a non-worktree dir, so shared-dir children are safe.
+        // Best-effort throughout (Effect.exit): never fail the cancel. The
+        // orchestrator only cancels once a child's work is merged or abandoned
+        // (prompt rule), so this never discards live work.
         const child = yield* sessions.get(op.sessionID as SessionID).pipe(Effect.catch(() => Effect.succeed(undefined)))
-        const removed = child
-          ? yield* worktreeSvc.remove({ directory: child.directory }).pipe(Effect.catch(() => Effect.succeed(false)))
-          : false
+        let removed = false
+        if (child) {
+          const ctxExit = yield* Effect.exit(
+            Effect.promise(() => Instance.provide({ directory: child.directory, fn: () => Instance.current })),
+          )
+          if (ctxExit._tag === "Success") {
+            const remExit = yield* worktreeSvc
+              .remove({ directory: child.directory })
+              .pipe(Effect.provideService(InstanceRef, ctxExit.value), Effect.exit)
+            removed = remExit._tag === "Success" ? remExit.value : false
+          }
+        }
         return {
           title: `Cancelled ${op.sessionID}`,
           output:
