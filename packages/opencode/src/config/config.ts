@@ -46,6 +46,8 @@ import { ConfigVariable } from "./variable"
 import { Npm } from "@/npm"
 
 const log = Log.create({ service: "config" })
+const CONFIG_SCHEMA_URL = "https://mimo.xiaomi.com/mimocode/config.json"
+const STALE_OPENCODE_SCHEMA_URL = "https://opencode.ai/config.json"
 
 // Custom merge function that concatenates array fields instead of replacing them
 function mergeConfigConcatArrays(target: Info, source: Info): Info {
@@ -560,9 +562,9 @@ export const layer = Layer.effect(
       if (!("path" in options)) return data
 
       yield* Effect.promise(() => resolveLoadedPlugins(data, options.path))
-      if (!data.$schema || data.$schema === "https://opencode.ai/config.json") {
-        data.$schema = "https://mimo.xiaomi.com/mimocode/config.json"
-        const edits = modify(text, ["$schema"], "https://mimo.xiaomi.com/mimocode/config.json", {
+      if (!data.$schema || data.$schema === STALE_OPENCODE_SCHEMA_URL) {
+        data.$schema = CONFIG_SCHEMA_URL
+        const edits = modify(text, ["$schema"], CONFIG_SCHEMA_URL, {
           formattingOptions: { insertSpaces: true, tabSize: 2 },
           isArrayInsertion: false,
         })
@@ -596,7 +598,7 @@ export const layer = Layer.effect(
             .then(async (mod) => {
               const { provider, model, ...rest } = mod.default
               if (provider && model) result.model = `${provider}/${model}`
-              result["$schema"] = "https://mimo.xiaomi.com/mimocode/config.json"
+              result["$schema"] = CONFIG_SCHEMA_URL
               result = mergeDeep(result, rest)
               await fsNode.writeFile(path.join(Global.Path.config, "config.json"), JSON.stringify(result, null, 2))
               await fsNode.unlink(legacy)
@@ -612,7 +614,7 @@ export const layer = Layer.effect(
         !existsSync(path.join(Global.Path.config, "mimocode.json")) &&
         !existsSync(globalConfigFile)
       ) {
-        const starter = '{\n  "$schema": "https://mimo.xiaomi.com/mimocode/config.json"\n}\n'
+        const starter = `{\n  "$schema": "${CONFIG_SCHEMA_URL}"\n}\n`
         yield* fs.writeFileString(globalConfigFile, starter).pipe(Effect.catch(() => Effect.void))
       }
 
@@ -757,7 +759,9 @@ export const layer = Layer.effect(
             }
             const wellknown = (yield* Effect.promise(() => response.json())) as { config?: Record<string, unknown> }
             const remoteConfig = wellknown.config ?? {}
-            if (!remoteConfig.$schema) remoteConfig.$schema = "https://mimo.xiaomi.com/mimocode/config.json"
+            if (!remoteConfig.$schema || remoteConfig.$schema === STALE_OPENCODE_SCHEMA_URL) {
+              remoteConfig.$schema = CONFIG_SCHEMA_URL
+            }
             const source = `${url}/.well-known/opencode`
             const next = yield* loadConfig(JSON.stringify(remoteConfig), {
               dir: path.dirname(source),
@@ -1000,7 +1004,10 @@ export const layer = Layer.effect(
       const file = path.join(dir, "config.json")
       const existing = yield* loadFile(file)
       yield* fs
-        .writeFileString(file, JSON.stringify(mergeDeep(writable(existing), writable(config)), null, 2))
+        .writeFileString(
+          file,
+          JSON.stringify({ ...mergeDeep(writable(existing), writable(config)), $schema: CONFIG_SCHEMA_URL }, null, 2),
+        )
         .pipe(Effect.orDie)
       yield* Effect.promise(() => Instance.dispose())
     })
@@ -1029,11 +1036,11 @@ export const layer = Layer.effect(
       let next: Info
       if (!file.endsWith(".jsonc")) {
         const existing = ConfigParse.schema(Info, ConfigParse.jsonc(before, file), file)
-        const merged = mergeDeep(writable(existing), writable(config))
+        const merged = { ...mergeDeep(writable(existing), writable(config)), $schema: CONFIG_SCHEMA_URL }
         yield* fs.writeFileString(file, JSON.stringify(merged, null, 2)).pipe(Effect.orDie)
         next = merged
       } else {
-        const updated = patchJsonc(before, writable(config))
+        const updated = patchJsonc(before, { ...writable(config), $schema: CONFIG_SCHEMA_URL })
         next = ConfigParse.schema(Info, ConfigParse.jsonc(updated, file), file)
         yield* fs.writeFileString(file, updated).pipe(Effect.orDie)
       }

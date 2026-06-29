@@ -61,6 +61,7 @@ const listDirs = () =>
   Effect.runPromise(Config.Service.use((svc) => svc.directories()).pipe(Effect.scoped, Effect.provide(layer)))
 const ready = () =>
   Effect.runPromise(Config.Service.use((svc) => svc.waitForDependencies()).pipe(Effect.scoped, Effect.provide(layer)))
+const MIMO_SCHEMA_URL = "https://mimo.xiaomi.com/mimocode/config.json"
 
 // Get managed config directory from environment (set in preload.ts)
 const managedConfigDir = process.env.MIMOCODE_TEST_MANAGED_CONFIG_DIR!
@@ -1051,10 +1052,96 @@ test("updates config and writes to file", async () => {
       const newConfig = { model: "updated/model" }
       await save(newConfig as any)
 
-      const writtenConfig = await Filesystem.readJson<{ model: string }>(path.join(tmp.path, "config.json"))
+      const writtenConfig = await Filesystem.readJson<{ $schema: string; model: string }>(
+        path.join(tmp.path, "config.json"),
+      )
+      expect(writtenConfig.$schema).toBe(MIMO_SCHEMA_URL)
       expect(writtenConfig.model).toBe("updated/model")
     },
   })
+})
+
+test("global config update writes MiMo schema", async () => {
+  await using tmp = await tmpdir()
+  const prev = Global.Path.config
+  ;(Global.Path as { config: string }).config = tmp.path
+  await clear()
+  try {
+    const updated = await Effect.runPromise(
+      Config.Service.use((svc) => svc.updateGlobal({ model: "updated/model" })).pipe(
+        Effect.scoped,
+        Effect.provide(layer),
+      ),
+    )
+
+    const writtenConfig = await Filesystem.readJson<{ $schema: string; model: string }>(
+      path.join(tmp.path, "mimocode.jsonc"),
+    )
+    expect(updated.$schema).toBe(MIMO_SCHEMA_URL)
+    expect(writtenConfig.$schema).toBe(MIMO_SCHEMA_URL)
+    expect(writtenConfig.model).toBe("updated/model")
+  } finally {
+    ;(Global.Path as { config: string }).config = prev
+    await clear()
+  }
+})
+
+test("global JSONC config update replaces stale opencode schema", async () => {
+  await using tmp = await tmpdir()
+  const prev = Global.Path.config
+  ;(Global.Path as { config: string }).config = tmp.path
+  await Filesystem.write(
+    path.join(tmp.path, "mimocode.jsonc"),
+    JSON.stringify({ $schema: "https://opencode.ai/config.json", model: "old/model" }, null, 2),
+  )
+  await clear()
+  try {
+    const updated = await Effect.runPromise(
+      Config.Service.use((svc) => svc.updateGlobal({ model: "updated/model" })).pipe(
+        Effect.scoped,
+        Effect.provide(layer),
+      ),
+    )
+
+    const writtenConfig = await Filesystem.readJson<{ $schema: string; model: string }>(
+      path.join(tmp.path, "mimocode.jsonc"),
+    )
+    expect(updated.$schema).toBe(MIMO_SCHEMA_URL)
+    expect(writtenConfig.$schema).toBe(MIMO_SCHEMA_URL)
+    expect(writtenConfig.model).toBe("updated/model")
+  } finally {
+    ;(Global.Path as { config: string }).config = prev
+    await clear()
+  }
+})
+
+test("legacy global config migration writes MiMo schema", async () => {
+  await using tmp = await tmpdir()
+  const prev = Global.Path.config
+  ;(Global.Path as { config: string }).config = tmp.path
+  await Filesystem.write(
+    path.join(tmp.path, "config"),
+    `
+provider = "openai"
+model = "gpt-4"
+`,
+  )
+  await clear()
+  try {
+    const config = await Effect.runPromise(
+      Config.Service.use((svc) => svc.getGlobal()).pipe(Effect.scoped, Effect.provide(layer)),
+    )
+    const writtenConfig = await Filesystem.readJson<{ $schema: string; model: string }>(
+      path.join(tmp.path, "config.json"),
+    )
+    expect(config.$schema).toBe(MIMO_SCHEMA_URL)
+    expect(config.model).toBe("openai/gpt-4")
+    expect(writtenConfig.$schema).toBe(MIMO_SCHEMA_URL)
+    expect(writtenConfig.model).toBe("openai/gpt-4")
+  } finally {
+    ;(Global.Path as { config: string }).config = prev
+    await clear()
+  }
 })
 
 test("gets config directories", async () => {
