@@ -213,6 +213,14 @@ describe("session tool", () => {
     ),
   )
 
+  // NOTE: the `--isolate` non-git degrade path (dir is not a git repo → run
+  // shared + "--isolate ignored" notice) is verified by source inspection, not a
+  // unit test: provideTmpdirInstance dirs resolve as git-capable in this harness
+  // (Project.fromDirectory finds a parent git root), so a truly non-git instance
+  // dir can't be set up here. The degrade is guarded by Effect.exit over both
+  // Instance.provide and worktreeSvc.create (NotGitError is a defect), so any
+  // non-success → effectiveDir stays targetDir, never failing the create.
+
   it.live("cancel requests graceful cancellation of a child", () =>
     provideTmpdirInstance(() =>
       Effect.gen(function* () {
