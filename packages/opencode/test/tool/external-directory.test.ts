@@ -3,7 +3,7 @@ import path from "path"
 import { Effect } from "effect"
 import type { Tool } from "../../src/tool"
 import { Instance } from "../../src/project/instance"
-import { assertExternalDirectory } from "../../src/tool/external-directory"
+import { assertExternalDirectory, assertWriteAllowed } from "../../src/tool/external-directory"
 import { Filesystem } from "../../src/util"
 import { tmpdir } from "../fixture/fixture"
 import type { Permission } from "../../src/permission"
@@ -118,15 +118,7 @@ describe("tool.assertExternalDirectory", () => {
   test("does NOT ask for paths under the memory root (defers to memory-path-guard)", async () => {
     const { requests, ctx } = makeCtx()
 
-    const memTarget = path.join(
-      Global.Path.data,
-      "memory",
-      "sessions",
-      "ses_test",
-      "tasks",
-      "T3",
-      "progress.md",
-    )
+    const memTarget = path.join(Global.Path.data, "memory", "sessions", "ses_test", "tasks", "T3", "progress.md")
 
     await Instance.provide({
       directory: "/tmp/project", // memTarget is OUTSIDE the project dir on purpose
@@ -204,4 +196,59 @@ describe("tool.assertExternalDirectory", () => {
       expect(req!.always).toEqual([expected])
     })
   }
+})
+
+describe("tool.assertWriteAllowed", () => {
+  test("rejects project file writes from plan mode before asking permissions", async () => {
+    const { requests, ctx } = makeCtx()
+
+    await using tmp = await tmpdir({ git: true })
+    const target = path.join(tmp.path, "src", "index.ts")
+
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () => {
+        const error = await Effect.runPromise(assertWriteAllowed({ ...ctx, agent: "plan" }, target)).then(
+          () => undefined,
+          (cause) => cause,
+        )
+
+        expect(String(error)).toContain("Plan mode can only write plan files")
+      },
+    })
+
+    expect(requests.length).toBe(0)
+  })
+
+  test("allows plan mode to write its session plan file", async () => {
+    const { requests, ctx } = makeCtx()
+
+    await using tmp = await tmpdir({ git: true })
+    const target = path.join(tmp.path, ".mimocode", "plans", "next.md")
+
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () => {
+        await Effect.runPromise(assertWriteAllowed({ ...ctx, agent: "plan" }, target))
+      },
+    })
+
+    expect(requests.length).toBe(0)
+  })
+
+  test("does not restrict build mode writes", async () => {
+    const { requests, ctx } = makeCtx()
+
+    await using tmp = await tmpdir({ git: true })
+    const target = path.join(tmp.path, "src", "index.ts")
+
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () => {
+        await Effect.runPromise(assertWriteAllowed(ctx, target))
+      },
+    })
+
+    expect(requests.length).toBe(0)
+  })
 })

@@ -16,6 +16,28 @@ type Options = {
   kind?: Kind
 }
 
+function normalizeFilePath(target: string) {
+  return process.platform === "win32" ? AppFileSystem.normalizePath(target) : path.resolve(target)
+}
+
+function isDirectMarkdownChild(target: string, dir: string) {
+  const relative = path.relative(normalizeFilePath(dir), normalizeFilePath(target))
+  return (
+    relative !== "" &&
+    !relative.startsWith("..") &&
+    !path.isAbsolute(relative) &&
+    path.dirname(relative) === "." &&
+    path.extname(relative) === ".md"
+  )
+}
+
+function isPlanWriteTarget(target: string) {
+  return (
+    isDirectMarkdownChild(target, path.join(Instance.worktree, ".mimocode", "plans")) ||
+    isDirectMarkdownChild(target, path.join(Global.Path.data, "plans"))
+  )
+}
+
 export const assertExternalDirectoryEffect = Effect.fn("Tool.assertExternalDirectory")(function* (
   ctx: Tool.Context,
   target?: string,
@@ -78,6 +100,10 @@ export const assertWriteAllowed = Effect.fn("Tool.assertWriteAllowed")(function*
   target?: string,
   options?: Options,
 ) {
+  if (ctx.agent === "plan" && target && !isPlanWriteTarget(target)) {
+    throw new Error("Plan mode can only write plan files. Switch to build mode before modifying project files.")
+  }
+
   yield* assertExternalDirectoryEffect(ctx, target, options)
   if (!target) return
 
