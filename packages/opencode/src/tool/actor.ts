@@ -718,6 +718,25 @@ export const ActorTool = Tool.define(
 
         // op.action ==="run" or "spawn" — schema guarantees
         // description / prompt / subagent_type are present and non-empty.
+        // scaffold PRIME-2: in hub mode the prime must not offload diagnosis or
+        // architecture to the general-purpose agent. Delegation is allowed only
+        // for fully-specified atomic work — `explore` for read-only gathering,
+        // `build` for a spec'd Mission Brief. `general` is the escape hatch prime
+        // reaches for to dump under-specified work, defeating the diagnostic-first
+        // loop. Reject it with an instructive error (a forcing function, visible
+        // in logs) rather than silently rewriting: explore can't run build work,
+        // so a silent swap would fail confusingly. Gated by SCAFFOLD_HUB_MODE,
+        // which scaffold sets only when a .hub/ directory is present.
+        if (process.env["SCAFFOLD_HUB_MODE"] === "1" && op.subagent_type === "general") {
+          return yield* Effect.fail(
+            new Error(
+              "В hub-режиме запрещено делегировать агенту 'general'. Диагностику и архитектурные решения делай сам. " +
+                "Для чтения/сбора фактов спавни 'explore' (read-only). Для реализации — 'build' с полным Mission Brief " +
+                "(ЗАДАЧА / ЗАЧЕМ / СКОУП / ТАБУ / КРИТЕРИЙ ГОТОВНОСТИ). general недоступен как escape hatch для неспецифицированной работы.",
+            ),
+          )
+        }
+
         //
         // Final defence line for the no-nested-delegation invariant that
         // ToolRegistry.available already enforces by masking `actor` out of every

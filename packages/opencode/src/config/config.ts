@@ -450,6 +450,10 @@ const InfoSchema = Schema.Struct({
         description:
           "scaffold PI-79 #4: model the goalGate judge uses to verify a stop-condition, as a 'provider/model' slug (e.g. 'openai/gpt-5.4-mini'). Defaults to the working agent's model — i.e. self-evaluation. Set a separate, colder/cheaper model to reduce optimism bias on the stop-decision.",
       }),
+      autoGoalCondition: Schema.optional(Schema.String).annotate({
+        description:
+          "scaffold PRIME-3: auto-arm the Outcome Gate goal for the main agent at the start of every user turn (when no goal is already active), using this condition string. Removes the dependency on prime explicitly calling the `goal` tool — enforcement becomes guaranteed instead of opt-in. Scaffold writes this only for hub-mode sessions. fail-open semantics are unchanged (a flaky judge never traps the user).",
+      }),
       maxMode: Schema.optional(
         Schema.Struct({
           candidates: Schema.optional(PositiveInt).annotate({
