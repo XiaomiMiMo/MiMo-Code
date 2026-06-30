@@ -106,6 +106,16 @@ export interface Interface {
     opts?: { via_keepalive?: boolean },
   ) => Effect.Effect<void>
   readonly nextFireTime: () => Effect.Effect<number | null>
+  /**
+   * Test-only seam: runs one iteration of the same tick body the setInterval
+   * driver calls, synchronously inside the caller's Effect. Production code
+   * does not call this — it exists so the end-to-end smoke test can drive a
+   * fire without waiting on the 1s tick cadence or smuggling in a fake clock.
+   *
+   * Honors the same gates as the live tick: returns early when not started,
+   * killed, or loading.
+   */
+  readonly tickOnce: () => Effect.Effect<void>
 }
 
 export class Scheduler extends Context.Service<Scheduler, Interface>()("@mimocode/Scheduler") {}
@@ -412,6 +422,8 @@ const makeImpl = (): Interface => {
       return Math.min(...values)
     })
 
+  const tickOnce: Interface["tickOnce"] = () => tick()
+
   return {
     start,
     stop,
@@ -425,6 +437,7 @@ const makeImpl = (): Interface => {
     incrementKeepaliveStrikes,
     endLoop,
     nextFireTime,
+    tickOnce,
   }
 }
 
