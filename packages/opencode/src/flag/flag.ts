@@ -111,6 +111,13 @@ export const Flag = {
   MIMOCODE_SERVER_USERNAME: process.env["MIMOCODE_SERVER_USERNAME"],
   MIMOCODE_ENABLE_QUESTION_TOOL: truthy("MIMOCODE_ENABLE_QUESTION_TOOL"),
 
+  // Defaults to false. The edit tool does pure exact-string matching with
+  // explicit error signals. Set MIMOCODE_ENABLE_FUZZY_EDIT=true to opt into the
+  // legacy multi-stage fuzzy fallback chain (line-trimmed / block-anchor /
+  // whitespace-normalized / indentation-flexible / etc.) when old_string fails
+  // to match exactly.
+  MIMOCODE_ENABLE_FUZZY_EDIT: truthy("MIMOCODE_ENABLE_FUZZY_EDIT"),
+
   // Experimental
   MIMOCODE_EXPERIMENTAL,
   MIMOCODE_EXPERIMENTAL_FILEWATCHER: Config.boolean("MIMOCODE_EXPERIMENTAL_FILEWATCHER").pipe(
