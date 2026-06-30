@@ -350,7 +350,20 @@ const makeImpl = (): Interface => {
       const existing = LoopState.getLoopState(input.prompt)
 
       if (existing && now - existing.startedAt >= cfg.recurringMaxAgeMs) {
-        LoopState.setLoopState({ ...existing, agedOut: true })
+        // PR #1479 finding #5: clear any prior loop task and the LoopState
+        // entry before returning null. Otherwise the previously-armed session
+        // task keeps its live nextFireAt, fires once more, the model calls
+        // armLoop again, and a fresh LoopState{startedAt:now} is created —
+        // the max-age cap is defeated and the loop runs forever.
+        const stalePrior = getSessionCronTasks().filter(
+          (t) => t.kind === "loop" && t.prompt === input.prompt,
+        )
+        if (stalePrior.length > 0) {
+          removeSessionCronTasks(stalePrior.map((p) => p.id))
+          if (rt) for (const p of stalePrior) rt.nextFireAt.delete(p.id)
+        }
+        LoopState.deleteLoopState(input.prompt)
+        rt.opts.onLoopEnded({ reason: "aged_out", prompt: input.prompt })
         return null
       }
 
@@ -379,6 +392,15 @@ const makeImpl = (): Interface => {
         kind: "loop",
         recurring: false,
       })
+
+      // PR #1479 finding #4: pin nextFireAt to the requested target so the
+      // tick skips first-sight computation. Without this, the tick falls
+      // through to oneShotJitteredNextCronRunMs which pulls fires up to 90s
+      // early on :00/:30 minute marks — a 60s armLoop landing on a :00 target
+      // could fire immediately. The pre-population also covers the secondary
+      // case where the cron expression's parse is correct but the early-pull
+      // formula is wrong for delay-based scheduling.
+      if (rt) rt.nextFireAt.set(id, target.getTime())
 
       LoopState.setLoopState({
         prompt: input.prompt,

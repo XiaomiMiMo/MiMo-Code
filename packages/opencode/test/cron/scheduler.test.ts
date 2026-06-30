@@ -11,6 +11,7 @@ import {
 } from "@/cron/scheduler"
 import { clearAllLoopStates } from "@/cron/loop-state"
 import { removeSessionCronTasks, getSessionCronTasks } from "@/cron/cron-task"
+import { DEFAULT_JITTER } from "@/cron/cron-jitter"
 
 const provided = <A, E>(eff: Effect.Effect<A, E, Scheduler>) =>
   Effect.runPromise(eff.pipe(Effect.provide(schedulerLayer)) as Effect.Effect<A, E, never>)
@@ -136,6 +137,46 @@ test("armLoop supersedes prior loop task for same prompt", async () => {
       const loops = yield* sched.list({ kind: "loop" })
       expect(loops.length).toBe(1)
       expect(loops[0]!.prompt).toBe("same")
+
+      yield* sched.stop()
+    }),
+  )
+  rmSync(dir, { recursive: true, force: true })
+})
+
+// Regression for PR #1479 finding #5: an aged-out armLoop must clear the
+// prior session task and the LoopState entry before returning null.
+// Otherwise the prior task fires once more, the model calls armLoop again,
+// and a fresh LoopState{startedAt:now} defeats the max-age cap.
+test("aged-out armLoop clears prior task + LoopState (does not rebirth)", async () => {
+  const dir = freshDir()
+  await provided(
+    Effect.gen(function* () {
+      const sched = yield* Scheduler
+      const endedEvents: Array<{ reason: string; prompt: string }> = []
+      yield* sched.start({
+        ...baseStartOpts(dir),
+        onLoopEnded: (e) => endedEvents.push({ reason: e.reason, prompt: e.prompt }),
+        jitterConfig: { ...DEFAULT_JITTER, recurringMaxAgeMs: 50 },
+      })
+
+      yield* sched.armLoop({ prompt: "agedme", delay_seconds: 600, reason_length: 0 })
+      const before = yield* sched.list({ kind: "loop" })
+      expect(before.length).toBe(1)
+
+      // Wait past the (very short) max-age window so the next armLoop trips it.
+      yield* Effect.promise(() => new Promise((r) => setTimeout(r, 80)))
+
+      const aged = yield* sched.armLoop({ prompt: "agedme", delay_seconds: 600, reason_length: 0 })
+      expect(aged).toBeNull()
+
+      // Prior session task must be gone — otherwise it would fire once more
+      // and the model could re-arm with a fresh LoopState.
+      const after = yield* sched.list({ kind: "loop" })
+      expect(after.length).toBe(0)
+
+      // loop_ended emitted with reason: "aged_out".
+      expect(endedEvents.find((e) => e.reason === "aged_out")?.prompt).toBe("agedme")
 
       yield* sched.stop()
     }),
