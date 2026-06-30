@@ -72,8 +72,8 @@ export const Flag = {
   // Consecutive-block repetition detection for streamed reasoning + text.
   // A block of at least N tokens repeating REPEAT_THRESHOLD times consecutively
   // within the last WINDOW_TOKENS tokens triggers recovery (remind → replan → terminate).
-  MIMOCODE_TEXT_NGRAM_N: number("MIMOCODE_TEXT_NGRAM_N") ?? 20,
-  MIMOCODE_TEXT_REPEAT_THRESHOLD: number("MIMOCODE_TEXT_REPEAT_THRESHOLD") ?? 3,
+  MIMOCODE_TEXT_NGRAM_N: number("MIMOCODE_TEXT_NGRAM_N") ?? 4,
+  MIMOCODE_TEXT_REPEAT_THRESHOLD: number("MIMOCODE_TEXT_REPEAT_THRESHOLD") ?? 20,
   MIMOCODE_TEXT_WINDOW_TOKENS: number("MIMOCODE_TEXT_WINDOW_TOKENS") ?? 500,
 
   // Caps applied to image attachments before a prompt is sent. Both default to
