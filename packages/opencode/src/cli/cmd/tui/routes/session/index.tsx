@@ -320,6 +320,7 @@ export function Session() {
     const scrollTop = scroll.y
 
     // Get visible messages sorted by position, filtering for valid non-synthetic, non-ignored content
+    // (a synthetic cron-origin text part is also visible — see the clock-row branch in UserMessage)
     const visibleMessages = children
       .filter((c) => {
         if (!c.id) return false
@@ -330,7 +331,14 @@ export function Session() {
         const parts = sync.data.part[message.id]
         if (!parts || !Array.isArray(parts)) return false
 
-        return parts.some((part) => part && part.type === "text" && !part.synthetic && !part.ignored)
+        return parts.some(
+          (part) =>
+            part &&
+            part.type === "text" &&
+            !part.ignored &&
+            (!part.synthetic ||
+              (part.metadata as { origin?: { kind?: string } } | undefined)?.origin?.kind === "cron"),
+        )
       })
       .sort((a, b) => a.y - b.y)
 
@@ -825,7 +833,12 @@ export function Session() {
           if (!parts || !Array.isArray(parts)) continue
 
           const hasValidTextPart = parts.some(
-            (part) => part && part.type === "text" && !part.synthetic && !part.ignored,
+            (part) =>
+              part &&
+              part.type === "text" &&
+              !part.ignored &&
+              (!part.synthetic ||
+                (part.metadata as { origin?: { kind?: string } } | undefined)?.origin?.kind === "cron"),
           )
 
           if (hasValidTextPart) {
@@ -1317,6 +1330,18 @@ function UserMessage(props: {
   const ctx = use()
   const local = useLocal()
   const text = createMemo(() => props.parts.flatMap((x) => (x.type === "text" && !x.synthetic ? [x] : []))[0])
+  // Cron-fired synthetic prompts: surface as a one-line clock row instead of
+  // hiding them. Backend (cron-bridge.ts:onFire) stores the ISO timestamp at
+  // `part.metadata.origin.firedAt`; we render that directly rather than
+  // parsing the prefix in part.text.
+  const cronFire = createMemo(() => {
+    return props.parts.flatMap((x) => {
+      if (x.type !== "text" || !x.synthetic) return []
+      const origin = (x.metadata as { origin?: { kind?: string; firedAt?: string; kindOfTask?: string } } | undefined)?.origin
+      if (origin?.kind !== "cron") return []
+      return [{ part: x, firedAt: origin.firedAt, kindOfTask: origin.kindOfTask ?? "cron" }]
+    })[0]
+  })
   const files = createMemo(() => props.parts.flatMap((x) => (x.type === "file" ? [x] : [])))
   const { theme } = useTheme()
   const [hover, setHover] = createSignal(false)
@@ -1327,6 +1352,35 @@ function UserMessage(props: {
 
   return (
     <>
+      <Show when={cronFire()}>
+        {(fire) => {
+          // Strip the "[cron fire @ ISO] " prefix from part.text to get the
+          // original prompt body. The backend prepends it for the model; the
+          // TUI renders the timestamp separately as a styled badge, so the
+          // duplication would be visual noise here.
+          const prompt = createMemo(() => {
+            const raw = fire().part.type === "text" ? fire().part.text : ""
+            return raw.replace(/^\[cron fire @ [^\]]+\]\s*/, "")
+          })
+          const stamp = createMemo(() => {
+            const iso = fire().firedAt
+            if (!iso) return ""
+            // ISO ends with `Z` (UTC). Show local HH:MM:SS for TUI readability,
+            // matching how `ctx.showTimestamps()` renders user-message times.
+            const date = new Date(iso)
+            return Number.isNaN(date.getTime()) ? iso : Locale.todayTimeOrDateTime(date.getTime())
+          })
+          return (
+            <box id={props.message.id} marginTop={props.index === 0 ? 0 : 1} paddingLeft={2} flexDirection="row" gap={1}>
+              <text fg={theme.textMuted}>
+                <span style={{ bg: theme.backgroundElement, fg: theme.primary, bold: true }}> 🕒 cron fire </span>
+                <span style={{ fg: theme.textMuted }}> {stamp()} </span>
+                <span style={{ fg: theme.text }}>— {prompt()}</span>
+              </text>
+            </box>
+          )
+        }}
+      </Show>
       <Show when={text()}>
         <box
           id={props.message.id}
