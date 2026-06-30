@@ -145,7 +145,6 @@ export function Session() {
   const questions = createMemo(() => sync.data.question[route.sessionID] ?? [])
   const visible = createMemo(
     () =>
-      !session()?.parentID &&
       currentAgentID() === "main" &&
       permissions().length === 0 &&
       questions().length === 0,
@@ -195,7 +194,6 @@ export function Session() {
 
   const wide = createMemo(() => dimensions().width > 120)
   const sidebarVisible = createMemo(() => {
-    if (session()?.parentID) return false
     if (currentAgentID() !== "main") return false
     if (sidebarOpen()) return true
     if (sidebar() === "auto" && wide()) return true
@@ -304,7 +302,7 @@ export function Session() {
   })
 
   useKeyboard((evt) => {
-    if (!session()?.parentID && currentAgentID() === "main") return
+    if (currentAgentID() === "main") return
     if (keybind.match("app_exit", evt)) {
       const status = sync.data.session_status?.[route.sessionID]
       if (status && status.type !== "idle") {
