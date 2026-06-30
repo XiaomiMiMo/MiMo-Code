@@ -26,6 +26,9 @@ import { fileSearchOutputSchema } from "./tool/file-search"
 import { imageGenerationOutputSchema } from "./tool/image-generation"
 import { convertToOpenAIResponsesInput } from "./convert-to-openai-responses-input"
 import { mapOpenAIResponseFinishReason } from "./map-openai-responses-finish-reason"
+// PI-108 DIAG (временно, 0.1.24): лог SSE event-типов для поиска события, несущего текст gpt-5.5.
+import * as fsPI108 from "node:fs"
+const PI108_LOG = "/home/pyramidheadshark/.scaffold/pi108-events.log"
 import type { OpenAIResponsesIncludeOptions, OpenAIResponsesIncludeValue } from "./openai-responses-api-types"
 import { prepareResponsesTools } from "./openai-responses-prepare-tools"
 import type { OpenAIResponsesModelId } from "./openai-responses-settings"
@@ -900,6 +903,12 @@ export class OpenAIResponsesLanguageModel implements LanguageModelV3 {
 
             // handle failed chunk parsing / validation:
             if (!chunk.success) {
+              try {
+                fsPI108.appendFileSync(
+                  PI108_LOG,
+                  "PARSE_FAIL :: " + JSON.stringify(chunk.rawValue).slice(0, 1000) + "\n",
+                )
+              } catch {}
               finishReason = {
                 unified: "error",
                 raw: undefined,
@@ -909,6 +918,16 @@ export class OpenAIResponsesLanguageModel implements LanguageModelV3 {
             }
 
             const value = chunk.value
+
+            // PI-108 DIAG (временно): лог типа каждого события + полного JSON для несущих текст/контент.
+            try {
+              const t = String((value as { type?: string })?.type ?? "?")
+              let line = t
+              if (/text|content|message|output_item|completed|incomplete/.test(t)) {
+                line += " :: " + JSON.stringify(value).slice(0, 1000)
+              }
+              fsPI108.appendFileSync(PI108_LOG, line + "\n")
+            } catch {}
 
             if (isResponseOutputItemAddedChunk(value)) {
               if (value.item.type === "function_call") {
