@@ -3917,21 +3917,23 @@ export type InjectScheduledPromptInput = {
 export const injectScheduledPrompt = (input: InjectScheduledPromptInput) =>
   Effect.gen(function* () {
     const sp = yield* Service
-    return yield* sp.prompt({
-      sessionID: input.sessionID,
-      source: "hook",
-      parts: [
-        {
-          type: "text",
-          text: input.value,
-          synthetic: input.isMeta ?? true,
-          metadata: {
-            origin: input.origin,
-            priority: input.priority ?? "later",
+    yield* Effect.asVoid(
+      sp.prompt({
+        sessionID: input.sessionID,
+        source: "hook",
+        parts: [
+          {
+            type: "text",
+            text: input.value,
+            synthetic: input.isMeta ?? true,
+            metadata: {
+              origin: input.origin,
+              priority: input.priority ?? "later",
+            },
           },
-        },
-      ],
-    })
+        ],
+      }),
+    )
   })
 
 export * as SessionPrompt from "./prompt"

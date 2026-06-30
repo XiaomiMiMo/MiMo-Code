@@ -104,7 +104,7 @@ const harness = <A>(captured: { value: CapturedPrompt[] }, work: (ctx: {
     const s = yield* Scheduler
     return yield* work({ bridge: b, scheduler: s })
   })
-  return Effect.runPromise(eff.pipe(Effect.provide(Layer.mergeAll(bridge, base))) as Effect.Effect<A, unknown, never>)
+  return Effect.runPromise(eff.pipe(Effect.provide(Layer.mergeAll(bridge, base))))
 }
 
 test("injectScheduledPrompt funnels through SessionPrompt.Service.prompt with cron origin", async () => {
@@ -220,9 +220,9 @@ test("cron-bridge double-start is idempotent (warns + ignores)", async () => {
   }
 })
 
-// Wiring assertion: the session-lifecycle hook at prompt.ts:2611 fires
-// `AppRuntime.runPromise(CronBridge.use(b => b.start(sid, root)))`. That
-// CALL only succeeds if CronBridge.defaultLayer is composed into AppLayer.
+// Wiring assertion: the session-lifecycle hook near the auto-dream / auto-distill
+// block in prompt.ts fires `AppRuntime.runPromise(CronBridge.use(b => b.start(sid, root)))`.
+// That CALL only succeeds if CronBridge.defaultLayer is composed into AppLayer.
 // We assert that the bridge layer + its transitive deps satisfy the
 // `CronBridge.use(...)` access pattern the hook performs — equivalent to
 // "AppLayer can resolve CronBridge", without booting the full AppRuntime
@@ -241,10 +241,10 @@ test("cron-bridge is resolvable via CronBridge.use (matches prompt.ts hook patte
           yield* b.start(sid, dir)
           yield* b.stop()
         }),
-      ).pipe(Effect.provide(layered)) as Effect.Effect<void, unknown, never>,
+      ).pipe(Effect.provide(layered)),
     )
     // Reaching here means CronBridge.use(...) resolved through the layer
-    // stack — the same shape prompt.ts:2611 uses on AppRuntime.
+    // stack — the same shape the prompt.ts hook uses on AppRuntime.
     expect(true).toBe(true)
   } finally {
     rmSync(dir, { recursive: true, force: true })

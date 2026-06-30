@@ -19,6 +19,7 @@ const isCronDisabled = () => {
   const v = process.env.MIMOCODE_DISABLE_CRON
   if (!v) return false
   const s = v.trim().toLowerCase()
+  // Whitespace-only env value treated as not set (matches !v above semantically).
   return s !== "" && s !== "0" && s !== "false" && s !== "no" && s !== "off"
 }
 
@@ -78,7 +79,11 @@ export const layer = Layer.effect(
           // Detached fire-and-forget on the host runtime. We cannot yield* here
           // because the setInterval tick escapes the Effect scope; the host's
           // global runtime materializes the prompt fan-out (same pattern as
-          // auto-dream at session/prompt.ts:2581-2603).
+          // auto-dream / auto-distill near the cron-bridge mount in prompt.ts).
+          //
+          // Dynamic import breaks a real module-init cycle:
+          // app-runtime.ts (imports CronBridgeDefaultLayer) → cron-bridge.ts →
+          // app-runtime.ts. A top-level import here would deadlock module init.
           import("@/effect/app-runtime")
             .then(({ AppRuntime }) =>
               AppRuntime.runPromise(
@@ -138,5 +143,3 @@ export const defaultLayer = layer.pipe(
   Layer.provide(SessionStatus.defaultLayer),
   Layer.provide(Bus.layer),
 )
-
-export * as CronBridgeModule from "./cron-bridge"
