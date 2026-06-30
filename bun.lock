@@ -639,6 +639,7 @@
     "solid-js@1.9.10": "patches/solid-js@1.9.10.patch",
     "@standard-community/standard-openapi@0.2.9": "patches/@standard-community%2Fstandard-openapi@0.2.9.patch",
     "gitlab-ai-provider@6.6.0": "patches/gitlab-ai-provider@6.6.0.patch",
+    "@opentui/core@0.1.101": "patches/@opentui%2Fcore@0.1.101.patch",
   },
   "overrides": {
     "@types/bun": "catalog:",
@@ -654,8 +655,8 @@
     "@npmcli/arborist": "9.4.0",
     "@octokit/rest": "22.0.0",
     "@openauthjs/openauth": "0.0.0-20250322224806",
-    "@opentui/core": "0.1.99",
-    "@opentui/solid": "0.1.99",
+    "@opentui/core": "0.1.101",
+    "@opentui/solid": "0.1.101",
     "@pierre/diffs": "1.1.0-beta.18",
     "@playwright/test": "1.59.1",
     "@solid-primitives/storage": "4.3.3",
