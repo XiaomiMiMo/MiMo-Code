@@ -74,12 +74,22 @@ export const layer = Layer.effect(
         // sweep itself is treated as next-turn data.
         const armedSnapshot = new Set(handle.armedThisTurn)
         handle.armedThisTurn.clear()
+        const now = Date.now()
 
         for (const loop of listLoopStates()) {
           if (armedSnapshot.has(loop.prompt)) {
             resetStrikes(loop.prompt)
             continue
           }
+          // PR #1479 finding #2: skip loops whose scheduled fire is still in
+          // the future. The sweep runs on every busy→idle edge — including
+          // unrelated user turns that have nothing to do with the loop. If we
+          // struck every quiescent loop on every turn, default budget=1 would
+          // kill a 20-min-cadence loop after the second unrelated turn, well
+          // before its tick. Only strike when the loop is overdue AND the
+          // model didn't re-arm this turn — that's the actual "model forgot
+          // its fire" signal the keepalive was designed to catch.
+          if (loop.lastScheduledFor > now) continue
           const strikes = getStrikes(loop.prompt)
           if (strikes >= budget) {
             yield* scheduler.endLoop(loop.prompt, "model_stopped", { via_keepalive: true })

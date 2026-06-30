@@ -136,8 +136,17 @@ describe("cron-bridge keepalive sweep", () => {
         expect(getStrikes("plain")).toBe(0)
         const idAfterFirstSweep = loopTasksFor("plain")[0]!.id
 
-        // Turn 1 ends without a re-arm. Sweep increments strikes to 1 and
-        // schedules a keepalive arm that supersedes the prior loop task.
+        // Simulate the loop becoming overdue (its scheduled fire time has
+        // passed but the model didn't re-arm). The fix for finding #2 only
+        // strikes loops whose lastScheduledFor < now; tests must reproduce
+        // that condition explicitly rather than relying on every sweep
+        // striking every loop indiscriminately.
+        const stateBefore = getLoopState("plain")!
+        setLoopState({ ...stateBefore, lastScheduledFor: Date.now() - 1000 })
+
+        // Turn 1 ends without a re-arm and the fire is overdue. Sweep
+        // increments strikes to 1 and schedules a keepalive arm that
+        // supersedes the prior loop task.
         yield* bridge.runKeepaliveSweep()
         expect(getStrikes("plain")).toBe(1)
         const after = loopTasksFor("plain")
@@ -155,12 +164,12 @@ describe("cron-bridge keepalive sweep", () => {
         yield* bridge.runKeepaliveSweep()
         expect(getStrikes("exhaust")).toBe(0)
 
-        // Pre-populate strikes to the budget (1). The very next sweep with no
-        // re-arm should hit the budget-exhausted branch.
+        // Pre-populate strikes to the budget (1) AND mark the loop overdue
+        // — only overdue loops are eligible for striking under the #2 fix.
         setLoopState({
           prompt: "exhaust",
           startedAt: Date.now(),
-          lastScheduledFor: Date.now() + 60_000,
+          lastScheduledFor: Date.now() - 1000,
           keepaliveStrikes: 1,
         })
         expect(getStrikes("exhaust")).toBe(1)
@@ -170,6 +179,28 @@ describe("cron-bridge keepalive sweep", () => {
         // Loop is gone and the session task was cleared by endLoop.
         expect(getLoopState("exhaust")).toBe(null)
         expect(loopTasksFor("exhaust").length).toBe(0)
+      }),
+    ),
+  )
+
+  // New regression for PR #1479 finding #2: a quiescent loop (whose fire
+  // hasn't come due yet) must not accrue strikes on unrelated user turns.
+  it.live("quiescent loop with future fire time is not struck on sweep", () =>
+    withMountedBridge(({ bridge, scheduler }) =>
+      Effect.gen(function* () {
+        yield* scheduler.armLoop({ prompt: "quiet", delay_seconds: 3000, reason_length: 0 })
+        yield* bridge.runKeepaliveSweep()           // first sweep: armed-this-turn reset
+        expect(getStrikes("quiet")).toBe(0)
+
+        // Three unrelated user turns happen, none re-arm the loop. Its fire is
+        // still 50min in the future. Under the old behavior strikes would tick
+        // up to budget and kill the loop. Under #2 fix, strikes stay 0.
+        yield* bridge.runKeepaliveSweep()
+        yield* bridge.runKeepaliveSweep()
+        yield* bridge.runKeepaliveSweep()
+        expect(getStrikes("quiet")).toBe(0)
+        expect(getLoopState("quiet")).not.toBeNull()
+        expect(loopTasksFor("quiet").length).toBe(1)
       }),
     ),
   )
@@ -205,7 +236,10 @@ describe("cron-bridge keepalive sweep", () => {
           // First sweep: armedThisTurn carries "zero" so strikes reset.
           yield* bridge.runKeepaliveSweep()
           expect(getLoopState("zero")).not.toBeNull()
-          // Second sweep with no re-arm in between: strikes=0 >= budget=0,
+          // Mark the loop overdue so the budget-exhausted branch can fire.
+          const s = getLoopState("zero")!
+          setLoopState({ ...s, lastScheduledFor: Date.now() - 1000 })
+          // Second sweep with no re-arm and overdue fire: strikes=0 >= budget=0,
           // immediate model_stopped.
           yield* bridge.runKeepaliveSweep()
           expect(getLoopState("zero")).toBe(null)
