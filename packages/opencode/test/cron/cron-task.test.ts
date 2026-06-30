@@ -34,6 +34,27 @@ test("write then read roundtrips", async () => {
   rmSync(dir, { recursive: true, force: true })
 })
 
+// Regression for PR #1479 finding #1: durable: true must survive round-trip.
+// Previously stripRuntime deleted `durable` on write, so a file-loaded task
+// came back with `durable: undefined` and the scheduler's cleanup branch
+// mis-routed it through the session-store removal path — leaving the task on
+// disk to re-fire every tick.
+test("durable: true survives write/read round-trip", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "cron-"))
+  const t = {
+    id: "d1",
+    cron: "*/5 * * * *",
+    prompt: "hi",
+    createdAt: 1,
+    recurring: true,
+    durable: true,
+  }
+  await run(writeCronTasks([t], dir))
+  const back = await run(readCronTasks(dir))
+  expect(back[0]?.durable).toBe(true)
+  rmSync(dir, { recursive: true, force: true })
+})
+
 test("session store add/get/remove", () => {
   addSessionCronTask({ id: "s1", cron: "*/5 * * * *", prompt: "x", createdAt: 1 })
   expect(getSessionCronTasks().find((t) => t.id === "s1")).toBeDefined()

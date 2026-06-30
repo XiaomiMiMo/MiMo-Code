@@ -45,9 +45,15 @@ const logDebugDropped = (phase: "read" | "write", t: unknown) => {
   })
 }
 
+// Strip ONLY truly runtime-only fields before writing to disk. `durable` was
+// previously stripped here too, which silently corrupted the on-disk shape:
+// a task written with `durable: true` round-tripped as `durable: undefined`,
+// and the scheduler's cleanup branch (which checks `task.durable === true`)
+// then mis-routed durable one-shots through the session-store removal path,
+// leaving them on disk to re-fire every tick. `agentId` stays runtime-only
+// (teammate crons are session-scoped by design).
 const stripRuntime = (t: CronTask): CronTask => {
   const out: Record<string, unknown> = { ...t }
-  delete out.durable
   delete out.agentId
   return out as CronTask
 }

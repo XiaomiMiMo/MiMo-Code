@@ -152,7 +152,10 @@ const makeImpl = (): Interface => {
       if (rt.opts.isKilled()) return
       if (rt.opts.isLoading()) return
 
-      const tasks = yield* allTasks
+      const sessionTasks = getSessionCronTasks()
+      const sessionIds = new Set(sessionTasks.map((t) => t.id))
+      const fileTasks = rt.isOwner ? yield* readCronTasks(rt.opts.dir) : []
+      const tasks = [...fileTasks, ...sessionTasks]
       const now = Date.now()
 
       for (const task of tasks) {
@@ -171,11 +174,18 @@ const makeImpl = (): Interface => {
           task.permanent !== true &&
           now - task.createdAt >= rt.cfg.recurringMaxAgeMs
 
+        // Routing is by identity (file vs session origin), not by the `durable`
+        // field: tasks written to disk before the stripRuntime fix may have
+        // `durable: undefined` even though they live on disk. Looking up
+        // session-store membership is the durable-only-on-disk signal we can
+        // actually trust.
+        const isFileTask = !sessionIds.has(task.id)
+
         rt.opts.onFire(task)
 
         if (task.recurring === true && !aged) {
           rt.nextFireAt.set(task.id, computeNextFireFor(task, now, rt.cfg))
-          if (task.durable === true) {
+          if (isFileTask) {
             rt.inFlight.add(task.id)
             yield* markCronTasksFired([task.id], now, rt.opts.dir).pipe(
               Effect.orElseSucceed(() => undefined),
@@ -187,7 +197,7 @@ const makeImpl = (): Interface => {
 
         rt.inFlight.add(task.id)
         rt.nextFireAt.delete(task.id)
-        if (task.durable === true) {
+        if (isFileTask) {
           const current = yield* readCronTasks(rt.opts.dir)
           yield* writeCronTasks(
             current.filter((t) => t.id !== task.id),
