@@ -110,3 +110,39 @@ test("loop.md with backticks gets a longer fence", async () => {
   expect(out).toMatch(/````/)
   rmSync(dir, { recursive: true, force: true })
 })
+
+// Regression for PR #1479 finding #10: sentinel caches must be per-session.
+// Without keying, Session B's first <<loop.md>> fire would return the short
+// "unchanged" reminder if Session A had cached the same content.
+test("loop.md cache does not bleed across sessions", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "sentinel-"))
+  mkdirSync(join(dir, ".mimocode"), { recursive: true })
+  writeFileSync(join(dir, ".mimocode", "loop.md"), "shared content")
+
+  const a1 = await resolveAtFireTime(LOOP_FILE_SENTINEL, dir, "ses_A")
+  expect(a1).toContain("shared content")
+
+  // Session B: must ALSO get full content on first fire.
+  const b1 = await resolveAtFireTime(LOOP_FILE_SENTINEL, dir, "ses_B")
+  expect(b1).toContain("shared content")
+  expect(b1).not.toMatch(/unchanged/)
+
+  // Session A's second fire (same content) gets the short reminder.
+  const a2 = await resolveAtFireTime(LOOP_FILE_SENTINEL, dir, "ses_A")
+  expect(a2).toMatch(/unchanged/)
+
+  rmSync(dir, { recursive: true, force: true })
+})
+
+test("autonomous-loop delivery does not bleed across sessions", async () => {
+  resetOnCompaction() // clear any anon-session state from prior tests
+  const a1 = await resolveAtFireTime(AUTONOMOUS_LOOP_SENTINEL, "/tmp/sentinel-iso", "ses_A")
+  expect(a1).toContain("autonomous loop")
+  const a2 = await resolveAtFireTime(AUTONOMOUS_LOOP_SENTINEL, "/tmp/sentinel-iso", "ses_A")
+  expect(a2).toMatch(/autonomous loop tick/)
+
+  // Session B must get the full preamble on its first fire.
+  const b1 = await resolveAtFireTime(AUTONOMOUS_LOOP_SENTINEL, "/tmp/sentinel-iso", "ses_B")
+  expect(b1).toContain("autonomous loop")
+  expect(b1.length).toBeGreaterThan(100)
+})

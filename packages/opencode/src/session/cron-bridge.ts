@@ -180,7 +180,7 @@ export const layer = Layer.effect(
               AppRuntime.runPromise(
                 Effect.gen(function* () {
                   const resolved = yield* Effect.tryPromise(() =>
-                    resolveAtFireTime(task.prompt, workspaceRoot),
+                    resolveAtFireTime(task.prompt, workspaceRoot, sessionID),
                   ).pipe(Effect.orElseSucceed(() => task.prompt))
                   // Prepend an ISO fire timestamp so both the user (TUI) and the
                   // model see when each fire happened. Recurring fires especially

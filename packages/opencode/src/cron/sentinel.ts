@@ -20,11 +20,19 @@ const isLoopFile = (s: string) => s === LOOP_FILE_SENTINEL || s === LOOP_FILE_DY
 const isDynamic = (s: string) =>
   s === LOOP_FILE_DYNAMIC_SENTINEL || s === AUTONOMOUS_LOOP_DYNAMIC_SENTINEL
 
-// Process-local caches. Survive across fires within a session so the prompt
-// prefix cache stays warm; cleared by `resetOnCompaction` because compaction
-// wipes the prefix anyway.
-let lastLoopFileContent: string | null = null
-let autonomousDelivered = false
+// PR #1479 finding #10: keep caches per-session-+-workspace, not process-global.
+// Without this, two sessions in the same process (e.g. multiple TUI windows in
+// the daemon-seam future) would interleave caches — Session B's first
+// `<<loop.md>>` fire could return LOOP_FILE_UNCHANGED_REMINDER if Session A's
+// last cached content happens to match B's loop.md, even though B's model has
+// never seen the actual content. Key on the join of sessionID + workspaceRoot
+// because the same session can be re-mounted under a different workspace
+// during recovery scenarios.
+const keyFor = (sessionID: string | undefined, workspaceRoot: string) =>
+  `${sessionID ?? "anon"}:${workspaceRoot}`
+
+const lastLoopFileContent = new Map<string, string>()
+const autonomousDelivered = new Set<string>()
 
 const AUTONOMOUS_LOOP_PREAMBLE =
   `You are in an autonomous loop. Each fire is one tick. ` +
@@ -64,19 +72,25 @@ const formatLoopFileFire = (path: string, content: string, dynamic: boolean): st
  * Pure function called by the scheduler at fire time (not at task-create time).
  * Non-sentinel strings pass through unchanged. Sentinels expand to full content
  * on first fire and short reminders on subsequent fires, preserving the prefix
- * cache when loop.md is unchanged.
+ * cache when loop.md is unchanged. Caches are keyed by sessionID+workspaceRoot
+ * so two sessions in the same process don't share state.
  */
-export const resolveAtFireTime = async (stored: string, workspaceRoot: string): Promise<string> => {
+export const resolveAtFireTime = async (
+  stored: string,
+  workspaceRoot: string,
+  sessionID?: string,
+): Promise<string> => {
+  const key = keyFor(sessionID, workspaceRoot)
   if (isAutonomous(stored)) {
-    if (autonomousDelivered) return AUTONOMOUS_LOOP_SHORT_REMINDER
-    autonomousDelivered = true
+    if (autonomousDelivered.has(key)) return AUTONOMOUS_LOOP_SHORT_REMINDER
+    autonomousDelivered.add(key)
     return AUTONOMOUS_LOOP_PREAMBLE
   }
   if (isLoopFile(stored)) {
     const file = await readLoopFile(workspaceRoot)
     if (!file) return LOOP_FILE_ABSENT_REMINDER
-    if (lastLoopFileContent === file.content) return LOOP_FILE_UNCHANGED_REMINDER
-    lastLoopFileContent = file.content
+    if (lastLoopFileContent.get(key) === file.content) return LOOP_FILE_UNCHANGED_REMINDER
+    lastLoopFileContent.set(key, file.content)
     return formatLoopFileFire(file.path, file.content, isDynamic(stored))
   }
   return stored
@@ -85,8 +99,19 @@ export const resolveAtFireTime = async (stored: string, workspaceRoot: string): 
 /**
  * Wired into the `/compact` post-hook. Compaction drops the prompt prefix, so
  * the next fire must re-send full content rather than the short reminder.
+ * Pass a sessionID to scope the reset; omit to reset all keys (kept for the
+ * existing /compact callsite that doesn't have per-session granularity yet).
  */
-export const resetOnCompaction = (): void => {
-  lastLoopFileContent = null
-  autonomousDelivered = false
+export const resetOnCompaction = (sessionID?: string): void => {
+  if (sessionID === undefined) {
+    lastLoopFileContent.clear()
+    autonomousDelivered.clear()
+    return
+  }
+  for (const k of [...lastLoopFileContent.keys()]) {
+    if (k.startsWith(`${sessionID}:`)) lastLoopFileContent.delete(k)
+  }
+  for (const k of [...autonomousDelivered]) {
+    if (k.startsWith(`${sessionID}:`)) autonomousDelivered.delete(k)
+  }
 }
