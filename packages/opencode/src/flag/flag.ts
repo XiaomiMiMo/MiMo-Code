@@ -131,6 +131,21 @@ export const Flag = {
     copy === undefined ? process.platform === "win32" : truthy("MIMOCODE_EXPERIMENTAL_DISABLE_COPY_ON_SELECT"),
   MIMOCODE_ENABLE_EXA: truthy("MIMOCODE_ENABLE_EXA") || MIMOCODE_EXPERIMENTAL || truthy("MIMOCODE_EXPERIMENTAL_EXA"),
   MIMOCODE_EXPERIMENTAL_BASH_DEFAULT_TIMEOUT_MS: number("MIMOCODE_EXPERIMENTAL_BASH_DEFAULT_TIMEOUT_MS"),
+  // Token-efficient post-cleanse: strip ANSI / fold \r progress bars / redact
+  // secrets / elide super-long lines from bash tool output before it is
+  // returned to the model. Only applies when the output fits inline — if the
+  // output spills to a truncation file, cleaning is skipped so the on-disk
+  // archive stays raw. Off by default. Set to 1/true to opt in.
+  MIMOCODE_EXPERIMENTAL_TOKEN_EFFICIENCY: truthy("MIMOCODE_EXPERIMENTAL_TOKEN_EFFICIENCY"),
+  // Tunables for the token-efficient post-cleanse pipeline (see
+  // src/tool/bash_token_efficient_pipeline.ts). Positive integers only;
+  // unset / non-positive values fall back to the documented defaults.
+  //   MAX_LINE_CHARS   threshold above which a single line is elided  (default 500)
+  //   LINE_HEAD_KEEP   chars kept from the head of an elided line     (default 160)
+  //   NEVER_WORSE_MARGIN  bytes the cleaned output must beat the raw  (default 0)
+  MIMOCODE_EXPERIMENTAL_TOKEN_EFFICIENCY_MAX_LINE_CHARS: number("MIMOCODE_EXPERIMENTAL_TOKEN_EFFICIENCY_MAX_LINE_CHARS") ?? 500,
+  MIMOCODE_EXPERIMENTAL_TOKEN_EFFICIENCY_LINE_HEAD_KEEP: number("MIMOCODE_EXPERIMENTAL_TOKEN_EFFICIENCY_LINE_HEAD_KEEP") ?? 160,
+  MIMOCODE_EXPERIMENTAL_TOKEN_EFFICIENCY_NEVER_WORSE_MARGIN: number("MIMOCODE_EXPERIMENTAL_TOKEN_EFFICIENCY_NEVER_WORSE_MARGIN") ?? 0,
   MIMOCODE_EXPERIMENTAL_OUTPUT_TOKEN_MAX: number("MIMOCODE_EXPERIMENTAL_OUTPUT_TOKEN_MAX"),
   MIMOCODE_EXPERIMENTAL_OXFMT: MIMOCODE_EXPERIMENTAL || truthy("MIMOCODE_EXPERIMENTAL_OXFMT"),
   MIMOCODE_EXPERIMENTAL_LSP_TY: truthy("MIMOCODE_EXPERIMENTAL_LSP_TY"),
