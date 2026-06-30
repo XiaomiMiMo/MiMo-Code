@@ -4,6 +4,12 @@ export type CronFields = {
   dom: number[]
   month: number[]
   dow: number[]
+  // Vixie cron semantics: when both dom and dow are restricted (neither is `*`)
+  // the predicate is OR — fire on the day-of-month OR the day-of-week.
+  // When one is `*` the predicate is AND (i.e. the restricted field alone
+  // narrows fires). These flags record whether each field was originally `*`.
+  domStar: boolean
+  dowStar: boolean
 }
 
 const FIELD_RANGES: [number, number][] = [
@@ -30,6 +36,8 @@ function expandField(token: string, [lo, hi]: [number, number]): number[] | null
   return [...out].sort((a, b) => a - b)
 }
 
+const isStar = (token: string) => token === "*" || token === "*/1"
+
 export function parseCronExpression(expr: string): CronFields | null {
   const parts = expr.trim().split(/\s+/)
   if (parts.length !== 5) return null
@@ -41,6 +49,8 @@ export function parseCronExpression(expr: string): CronFields | null {
     dom: fields[2]!,
     month: fields[3]!,
     dow: fields[4]!,
+    domStar: isStar(parts[2]!),
+    dowStar: isStar(parts[4]!),
   }
 }
 
@@ -52,10 +62,13 @@ export function computeNextCronRun(expr: string, from: Date): Date | null {
   d.setUTCSeconds(0, 0)
   d.setUTCMinutes(d.getUTCMinutes() + 1)
   while (d <= limit) {
+    const dayMatches =
+      f.domStar || f.dowStar
+        ? f.dom.includes(d.getUTCDate()) && f.dow.includes(d.getUTCDay())
+        : f.dom.includes(d.getUTCDate()) || f.dow.includes(d.getUTCDay())
     if (
       f.month.includes(d.getUTCMonth() + 1) &&
-      f.dom.includes(d.getUTCDate()) &&
-      f.dow.includes(d.getUTCDay()) &&
+      dayMatches &&
       f.hour.includes(d.getUTCHours()) &&
       f.minute.includes(d.getUTCMinutes())
     )
