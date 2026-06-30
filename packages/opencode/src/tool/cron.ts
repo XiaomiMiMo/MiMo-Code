@@ -367,7 +367,7 @@ export const CronTool = Tool.define<typeof parameters, Metadata, Scheduler>(
       }
 
       if (op.action === "get") {
-        const t = yield* scheduler.get(op.id)
+        const t = yield* scheduler.get(op.id, op.session_id ? { session_id: op.session_id } : undefined)
         if (!t)
           return {
             title: `Job ${op.id}: not found`,
@@ -382,7 +382,7 @@ export const CronTool = Tool.define<typeof parameters, Metadata, Scheduler>(
       }
 
       if (op.action === "delete") {
-        const removed = yield* scheduler.remove(op.id)
+        const removed = yield* scheduler.remove(op.id, op.session_id ? { session_id: op.session_id } : undefined)
         return {
           title: removed ? `Cancelled ${op.id}` : `${op.id} not found`,
           output: removed ? `Cancelled ${op.id}` : `No job ${op.id} to cancel.`,
@@ -391,7 +391,11 @@ export const CronTool = Tool.define<typeof parameters, Metadata, Scheduler>(
       }
 
       // rename
-      const renamed = yield* scheduler.rename(op.id, op.prompt)
+      const renamed = yield* scheduler.rename(
+        op.id,
+        op.prompt,
+        op.session_id ? { session_id: op.session_id } : undefined,
+      )
       return {
         title: renamed ? `Renamed ${op.id}` : `${op.id} not found`,
         output: renamed ? `Renamed prompt body` : `No job ${op.id} to rename.`,

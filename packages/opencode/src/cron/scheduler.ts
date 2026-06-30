@@ -93,8 +93,8 @@ export interface Interface {
   readonly start: (opts: StartOpts) => Effect.Effect<void>
   readonly stop: () => Effect.Effect<void>
   readonly add: (task: NewCronTask) => Effect.Effect<CronTask>
-  readonly remove: (id: string) => Effect.Effect<boolean>
-  readonly rename: (id: string, prompt: string) => Effect.Effect<boolean>
+  readonly remove: (id: string, opts?: { session_id?: string }) => Effect.Effect<boolean>
+  readonly rename: (id: string, prompt: string, opts?: { session_id?: string }) => Effect.Effect<boolean>
   readonly list: (filter: ListFilter) => Effect.Effect<CronTask[]>
   readonly get: (id: string, opts?: { session_id?: string }) => Effect.Effect<CronTask | null>
   readonly armLoop: (input: ArmLoopInput) => Effect.Effect<ArmLoopResult | null>
@@ -159,6 +159,15 @@ const makeImpl = (): Interface => {
       const now = Date.now()
 
       for (const task of tasks) {
+        // PR #1479 finding #8: re-check the idle gate between fires. The
+        // tick-entry check at :153 only covers the first task; a second
+        // due task in the same tick would inject its prompt before the
+        // first injection's busy transition is observable on the bus,
+        // double-loading the session. Breaking on isLoading() here lets
+        // the deferred fires retry on the next 1s tick once the session
+        // is genuinely idle again.
+        if (rt.opts.isLoading()) break
+        if (rt.opts.isKilled()) break
         if (rt.inFlight.has(task.id)) continue
 
         if (!rt.nextFireAt.has(task.id)) {
@@ -278,8 +287,27 @@ const makeImpl = (): Interface => {
       return created
     })
 
-  const removeBy = (id: string) =>
+  // Internal helper: returns the task with this id, optionally restricted to
+  // tasks that the named session created. PR #1479 finding #9: the cron tool
+  // accepts --session on get/delete/rename but the scheduler ignored it;
+  // any session could read/cancel another's job by id. When session_id is
+  // supplied we now match on createdBySessionId before any action.
+  const findById = (id: string, session_id?: string) =>
     Effect.gen(function* () {
+      const dir = rt?.opts.dir
+      const sessionTasks = getSessionCronTasks()
+      const file = rt ? yield* readCronTasks(dir) : []
+      const all = [...file, ...sessionTasks]
+      const t = all.find((x) => x.id === id)
+      if (!t) return null
+      if (session_id && t.createdBySessionId && t.createdBySessionId !== session_id) return null
+      return t
+    })
+
+  const removeBy = (id: string, session_id?: string) =>
+    Effect.gen(function* () {
+      const target = yield* findById(id, session_id)
+      if (!target) return false
       const dir = rt?.opts.dir
       const session = getSessionCronTasks()
       const inSession = session.some((t) => t.id === id)
@@ -297,10 +325,12 @@ const makeImpl = (): Interface => {
       return true
     })
 
-  const remove: Interface["remove"] = (id) => removeBy(id)
+  const remove: Interface["remove"] = (id, opts) => removeBy(id, opts?.session_id)
 
-  const rename: Interface["rename"] = (id, prompt) =>
+  const rename: Interface["rename"] = (id, prompt, opts) =>
     Effect.gen(function* () {
+      const target = yield* findById(id, opts?.session_id)
+      if (!target) return false
       const dir = rt?.opts.dir
       const session = getSessionCronTasks()
       const found = session.find((t) => t.id === id)
@@ -336,11 +366,7 @@ const makeImpl = (): Interface => {
       })
     })
 
-  const get: Interface["get"] = (id, _opts) =>
-    Effect.gen(function* () {
-      const all = yield* list({})
-      return all.find((t) => t.id === id) ?? null
-    })
+  const get: Interface["get"] = (id, opts) => findById(id, opts?.session_id)
 
   const armLoop: Interface["armLoop"] = (input) =>
     Effect.gen(function* () {
