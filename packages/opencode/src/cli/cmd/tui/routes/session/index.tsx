@@ -140,7 +140,16 @@ export function Session() {
   const session = createMemo(() => sync.session.get(route.sessionID))
   const currentAgentID = useCurrentAgentID()
   const actors = createMemo(() => sync.data.actor[route.sessionID] ?? [])
-  const messages = createMemo(() => sync.data.message[route.sessionID]?.[currentAgentID()] ?? [])
+  const messages = createMemo(() => {
+    const buckets = sync.data.message[route.sessionID]
+    const agentID = currentAgentID()
+    // A peer child runs its own turns under agentID == its own sessionID
+    // (spawn.ts), so its messages bucket under [sessionID] not ["main"]. When
+    // attaching to such a child at "main", fall back to its own-id bucket so the
+    // full session renders instead of an empty "main" view.
+    if (agentID === "main" && !buckets?.["main"]?.length) return buckets?.[route.sessionID] ?? []
+    return buckets?.[agentID] ?? []
+  })
   const permissions = createMemo(() => sync.data.permission[route.sessionID] ?? [])
   const questions = createMemo(() => sync.data.question[route.sessionID] ?? [])
   const visible = createMemo(
@@ -1281,7 +1290,7 @@ export function Session() {
               <Show when={permissions().length === 0 && questions().length > 0}>
                 <QuestionPrompt request={questions()[0]} />
               </Show>
-              <Show when={session()?.parentID || currentAgentID() !== "main"}>
+              <Show when={currentAgentID() !== "main"}>
                 <SubagentFooter />
               </Show>
               <Show when={visible()}>
