@@ -22,6 +22,7 @@ import { Effect, Stream } from "effect"
 import { ChildProcess } from "effect/unstable/process"
 import { ChildProcessSpawner } from "effect/unstable/process/ChildProcessSpawner"
 import * as BashInteractive from "./bash-interactive"
+import * as BashTokenEfficient from "./bash_token_efficient_pipeline"
 
 const MAX_METADATA_LENGTH = 30_000
 const DEFAULT_TIMEOUT = Flag.MIMOCODE_EXPERIMENTAL_BASH_DEFAULT_TIMEOUT_MS || 2 * 60 * 1000
@@ -568,7 +569,24 @@ export const BashTool = Tool.define(
         file = yield* trunc.write(raw)
       }
 
-      let output = end.text
+      // Token-efficient post-cleanse: RTK-style ANSI strip / progress fold /
+      // secret redact / long-line elide. Only applied when no tool storage is
+      // involved — once the output spills to a truncation file, the on-disk
+      // archive stays raw and cleaning is skipped to keep the inline preview
+      // consistent with the archive.
+      const cleaned =
+        !file && Flag.MIMOCODE_EXPERIMENTAL_TOKEN_EFFICIENCY
+          ? BashTokenEfficient.clean(end.text, { command: input.command })
+          : null
+      if (cleaned && cleaned.bytesOut < cleaned.bytesIn) {
+        log.info("bash output cleaned", {
+          bytesIn: cleaned.bytesIn,
+          bytesOut: cleaned.bytesOut,
+          saved: cleaned.bytesIn - cleaned.bytesOut,
+        })
+      }
+
+      let output = cleaned?.text ?? end.text
       if (!output) output = "(no output)"
 
       if (cut && file) {
