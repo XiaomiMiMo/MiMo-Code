@@ -17,6 +17,13 @@ function number(key: string) {
   return Number.isInteger(parsed) && parsed > 0 ? parsed : undefined
 }
 
+function nonNegativeNumber(key: string) {
+  const value = process.env[key]
+  if (!value) return undefined
+  const parsed = Number(value)
+  return Number.isInteger(parsed) && parsed >= 0 ? parsed : undefined
+}
+
 const MIMOCODE_EXPERIMENTAL = truthy("MIMOCODE_EXPERIMENTAL")
 
 // Defaults to false. When enabled, mimocode runs in pure-mimo mode:
@@ -157,6 +164,18 @@ export const Flag = {
   // Defaults to ON when MIMOCODE_EXPERIMENTAL is set; otherwise opt-in via
   // MIMOCODE_EXPERIMENTAL_CRON=1. Gates the cron/loop scheduler tool.
   MIMOCODE_EXPERIMENTAL_CRON: MIMOCODE_EXPERIMENTAL || truthy("MIMOCODE_EXPERIMENTAL_CRON"),
+  // Keepalive contract for self-paced loops (spec [S8]). Budget = how many
+  // "forget" turns the model gets before the loop is declared model_stopped;
+  // delay seconds = the auto-arm horizon used for the keepalive fire. Budget
+  // accepts 0 (end immediately on the first turn without a re-arm) for tests
+  // and aggressive policies. Both are getters so tests can flip the env var
+  // between cases without restarting the process.
+  get MIMOCODE_LOOP_KEEPALIVE_BUDGET() {
+    return nonNegativeNumber("MIMOCODE_LOOP_KEEPALIVE_BUDGET") ?? 1
+  },
+  get MIMOCODE_LOOP_KEEPALIVE_DELAY_S() {
+    return number("MIMOCODE_LOOP_KEEPALIVE_DELAY_S") ?? 1200
+  },
   MIMOCODE_EXPERIMENTAL_MARKDOWN: !falsy("MIMOCODE_EXPERIMENTAL_MARKDOWN"),
   MIMOCODE_MODELS_URL: process.env["MIMOCODE_MODELS_URL"],
   MIMOCODE_MODELS_PATH: process.env["MIMOCODE_MODELS_PATH"],

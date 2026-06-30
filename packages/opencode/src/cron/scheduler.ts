@@ -42,6 +42,15 @@ export type StartOpts = {
   isKilled: () => boolean
   onFire: (task: CronTask) => void
   onLoopEnded: (e: LoopEndedEvent) => void
+  /**
+   * Fires when the model successfully re-arms a loop via `armLoop` from a
+   * model-driven turn. The bridge uses this to track which loop prompts the
+   * model touched during a turn so the busy→idle keepalive sweep knows whose
+   * strikes to reset. Keepalive-driven auto-arms set `viaKeepalive: true` on
+   * `armLoop` so this callback is NOT invoked for them — otherwise the
+   * keepalive fire would itself appear to "re-arm" and clear strikes.
+   */
+  onArmLoop?: (prompt: string) => void
   dir?: string
   jitterConfig?: JitterConfig
 }
@@ -65,6 +74,12 @@ export type ArmLoopInput = {
   prompt: string
   delay_seconds: number
   reason_length: number
+  /**
+   * Marks this arm as a bridge-driven keepalive auto-fire. When true the
+   * scheduler skips invoking `StartOpts.onArmLoop` so the bridge does not
+   * treat this arm as a model re-arm.
+   */
+  viaKeepalive?: boolean
 }
 
 export type ArmLoopResult = {
@@ -351,6 +366,8 @@ const makeImpl = (): Interface => {
         lastScheduledFor: target.getTime(),
         keepaliveStrikes: existing?.keepaliveStrikes ?? 0,
       })
+
+      if (!input.viaKeepalive && rt?.opts.onArmLoop) rt.opts.onArmLoop(input.prompt)
 
       return {
         scheduledFor: target.getTime(),
