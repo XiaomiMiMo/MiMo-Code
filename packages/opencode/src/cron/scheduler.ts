@@ -9,6 +9,7 @@ import {
   addSessionCronTask,
   removeSessionCronTasks,
   markCronTasksFired,
+  findMissedTasks,
 } from "./cron-task"
 import {
   type JitterConfig,
@@ -237,6 +238,25 @@ const makeImpl = (): Interface => {
         isOwner,
       }
       log.info("scheduler.start", { sessionID: opts.sessionID, isOwner })
+
+      // PR #1479 bonus: surface durable one-shot tasks that fired-overdue
+      // while the scheduler was down (e.g. machine off through a 9am
+      // reminder). findMissedTasks was exported + unit-tested but had no
+      // callers in src — the documented catch-up behavior was dead code.
+      // We only surface as the lock owner: a non-owner would double-emit
+      // missed-task notifications if it later took over the lock.
+      if (isOwner) {
+        const all = yield* readCronTasks(opts.dir)
+        const missed = findMissedTasks(all, Date.now())
+        for (const task of missed) {
+          opts.onFire(task)
+          // Remove durable one-shot from disk after surfacing so it doesn't
+          // re-surface on the next start.
+          const remaining = (yield* readCronTasks(opts.dir)).filter((t) => t.id !== task.id)
+          yield* writeCronTasks(remaining, opts.dir).pipe(Effect.orElseSucceed(() => undefined))
+        }
+        if (missed.length > 0) log.info("missed_tasks_surfaced", { count: missed.length })
+      }
 
       const runTick = () => {
         if (!rt) return
