@@ -1,0 +1,51 @@
+diff --git a/index-xsfpee0k.js b/index-xsfpee0k.js
+index 964cc24e3051ec8d4aeac37b68eed747b433d1b5..c23087fe4b14a38c926cb5a68348bb703f691014 100644
+--- a/index-xsfpee0k.js
++++ b/index-xsfpee0k.js
+@@ -9914,7 +9914,9 @@ class ExtmarksController {
+         return;
+       }
+       this.originalDeleteCharBackward();
+-      this.adjustExtmarksAfterDeletion(targetOffset, 1);
++      const _delOffset = this.editorView.getVisualCursor().offset;
++      const _delLen = currentOffset - _delOffset;
++      if (_delLen > 0) this.adjustExtmarksAfterDeletion(_delOffset, _delLen);
+     };
+     this.editBuffer.deleteChar = () => {
+       if (this.destroyed) {
+@@ -9946,8 +9948,14 @@ class ExtmarksController {
+         this.updateHighlights();
+         return;
+       }
++      const _t = this.editBuffer.getText();
++      let _wo = 0, _fw = 1;
++      for (const _c of _t) {
++        if (_wo >= currentOffset) { _fw = _c === '\n' ? 1 : (Bun.stringWidth(_c) || 1); break; }
++        _wo += _c === '\n' ? 1 : (Bun.stringWidth(_c) || 1);
++      }
+       this.originalDeleteChar();
+-      this.adjustExtmarksAfterDeletion(targetOffset, 1);
++      this.adjustExtmarksAfterDeletion(targetOffset, _fw);
+     };
+     this.editBuffer.deleteRange = (startLine, startCol, endLine, endCol) => {
+       if (this.destroyed) {
+@@ -9999,7 +10007,8 @@ class ExtmarksController {
+       this.saveSnapshot();
+       const currentOffset = this.editorView.getVisualCursor().offset;
+       this.originalInsertText(text);
+-      this.adjustExtmarksAfterInsertion(currentOffset, text.length);
++      let _tw = 0; for (const _c of text) _tw += _c === '\n' ? 1 : (Bun.stringWidth(_c) || 1);
++      if (_tw > 0) this.adjustExtmarksAfterInsertion(currentOffset, _tw);
+     };
+     this.editBuffer.insertChar = (char) => {
+       if (this.destroyed) {
+@@ -10009,7 +10018,8 @@ class ExtmarksController {
+       this.saveSnapshot();
+       const currentOffset = this.editorView.getVisualCursor().offset;
+       this.originalInsertChar(char);
+-      this.adjustExtmarksAfterInsertion(currentOffset, 1);
++      const _cw = Bun.stringWidth(char) || 1;
++      this.adjustExtmarksAfterInsertion(currentOffset, _cw);
+     };
+     this.editBuffer.setText = (text) => {
+       if (this.destroyed) {

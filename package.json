@@ -34,8 +34,8 @@
       "@types/cross-spawn": "6.0.6",
       "@octokit/rest": "22.0.0",
       "@hono/zod-validator": "0.4.2",
-      "@opentui/core": "0.1.99",
-      "@opentui/solid": "0.1.99",
+      "@opentui/core": "0.1.101",
+      "@opentui/solid": "0.1.101",
       "ulid": "3.0.1",
       "@kobalte/core": "0.13.11",
       "@types/luxon": "3.7.1",
@@ -130,6 +130,7 @@
     "@npmcli/agent@4.0.0": "patches/@npmcli%2Fagent@4.0.0.patch",
     "@standard-community/standard-openapi@0.2.9": "patches/@standard-community%2Fstandard-openapi@0.2.9.patch",
     "solid-js@1.9.10": "patches/solid-js@1.9.10.patch",
-    "gitlab-ai-provider@6.6.0": "patches/gitlab-ai-provider@6.6.0.patch"
+    "gitlab-ai-provider@6.6.0": "patches/gitlab-ai-provider@6.6.0.patch",
+    "@opentui/core@0.1.101": "patches/@opentui%2Fcore@0.1.101.patch"
   }
 }
