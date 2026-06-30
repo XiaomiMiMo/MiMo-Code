@@ -80,4 +80,17 @@ describe("extmark CJK adjustment (patch)", () => {
     expect(mark.start).toBe(10)
     expect(mark.end).toBe(20)
   })
+
+  test("deleteChar works when cursor is past UTF-16 length but within display width", () => {
+    // "中中中" = UTF-16 length 3, display width 6
+    // Cursor at offset 4 (before 3rd char): 4 >= 3 in old code would skip adjustment
+    const { buf, view, extmarks, typeId } = setup()
+    buf.insertText("中中中end")
+    extmarks.create({ start: 9, end: 19, typeId, virtual: true })
+    view.setCursorByOffset(4)
+    buf.deleteChar()
+    const mark = extmarks.getAll()[0]
+    expect(mark.start).toBe(7)
+    expect(mark.end).toBe(17)
+  })
 })
