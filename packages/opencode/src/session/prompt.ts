@@ -3875,4 +3875,48 @@ const argsRegex = /(?:\[Image\s+\d+\]|"[^"]*"|'[^']*'|[^\s"']+)/gi
 const placeholderRegex = /\$(\d+)/g
 const quoteTrimRegex = /^["']|["']$/g
 
+/**
+ * Fire seam for scheduled prompts (T18, spec [S5]).
+ *
+ * Funnels a cron/loop fire through the SAME entry point typed user prompts use:
+ * `SessionPrompt.Service.prompt`. The synthetic part carries `synthetic: true`
+ * (mimocode convention for `isMeta`) so transcript-preview surfaces can hide it,
+ * and `metadata.origin = { kind: "cron", taskId, kindOfTask }` so the TUI can
+ * render a clock icon. Sentinel expansion is intentionally NOT done here — T19
+ * will wrap `value` before this call.
+ */
+export type ScheduledPromptOrigin = {
+  kind: "cron"
+  taskId: string
+  kindOfTask: "cron" | "loop"
+}
+
+export type InjectScheduledPromptInput = {
+  sessionID: SessionID
+  value: string
+  origin: ScheduledPromptOrigin
+  priority?: "later" | "next" | "now"
+  isMeta?: boolean
+}
+
+export const injectScheduledPrompt = (input: InjectScheduledPromptInput) =>
+  Effect.gen(function* () {
+    const sp = yield* Service
+    return yield* sp.prompt({
+      sessionID: input.sessionID,
+      source: "hook",
+      parts: [
+        {
+          type: "text",
+          text: input.value,
+          synthetic: input.isMeta ?? true,
+          metadata: {
+            origin: input.origin,
+            priority: input.priority ?? "later",
+          },
+        },
+      ],
+    })
+  })
+
 export * as SessionPrompt from "./prompt"
