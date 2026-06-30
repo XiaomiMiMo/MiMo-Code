@@ -69,10 +69,10 @@ export const Flag = {
   MIMOCODE_INVALID_OUTPUT_CONTINUATION_LIMIT: number("MIMOCODE_INVALID_OUTPUT_CONTINUATION_LIMIT") ?? 2,
   MIMOCODE_TEXT_TOOL_CALL_RETRY_LIMIT: number("MIMOCODE_TEXT_TOOL_CALL_RETRY_LIMIT") ?? 2,
 
-  // Sliding-window n-gram repetition detection for streamed reasoning + text.
-  // An n-gram of size N appearing REPEAT_THRESHOLD times within the last
-  // WINDOW_TOKENS tokens triggers recovery (remind → replan → terminate).
-  MIMOCODE_TEXT_NGRAM_N: number("MIMOCODE_TEXT_NGRAM_N") ?? 6,
+  // Consecutive-block repetition detection for streamed reasoning + text.
+  // A block of at least N tokens repeating REPEAT_THRESHOLD times consecutively
+  // within the last WINDOW_TOKENS tokens triggers recovery (remind → replan → terminate).
+  MIMOCODE_TEXT_NGRAM_N: number("MIMOCODE_TEXT_NGRAM_N") ?? 20,
   MIMOCODE_TEXT_REPEAT_THRESHOLD: number("MIMOCODE_TEXT_REPEAT_THRESHOLD") ?? 3,
   MIMOCODE_TEXT_WINDOW_TOKENS: number("MIMOCODE_TEXT_WINDOW_TOKENS") ?? 500,
 

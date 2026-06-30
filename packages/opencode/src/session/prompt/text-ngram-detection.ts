@@ -23,6 +23,33 @@ export function detectRepeatedNgram(tokens: readonly string[], n: number, thresh
   return false
 }
 
+export function detectConsecutiveRepeat(
+  tokens: readonly string[],
+  minBlockSize: number,
+  threshold: number,
+  minDistinct: number = 3,
+): boolean {
+  if (threshold < 2 || tokens.length < minBlockSize * threshold) return false
+  const maxPeriod = Math.floor(tokens.length / threshold)
+  for (let p = minBlockSize; p <= maxPeriod; p++) {
+    let run = 0
+    for (let i = 0; i <= tokens.length - p - 1; i++) {
+      if (tokens[i] === tokens[i + p]) {
+        run++
+        if (run >= p * (threshold - 1)) {
+          const blockStart = i - run + 1
+          const distinct = new Set(tokens.slice(blockStart, blockStart + p)).size
+          if (distinct >= minDistinct) return true
+          run = 0
+        }
+      } else {
+        run = 0
+      }
+    }
+  }
+  return false
+}
+
 export class TextNgramMonitor {
   private buffer = ""
   private tokens: string[] = []
@@ -31,6 +58,7 @@ export class TextNgramMonitor {
     private readonly n: number,
     private readonly threshold: number,
     private readonly windowTokens: number,
+    private readonly minDistinct: number = 3,
   ) {}
 
   append(text: string): boolean {
@@ -39,7 +67,7 @@ export class TextNgramMonitor {
     const all = tokenizeForNgram(this.buffer)
     this.tokens = all.length > this.windowTokens ? all.slice(-this.windowTokens) : all
     if (all.length > this.windowTokens * 2) this.buffer = this.tokens.join(" ")
-    return detectRepeatedNgram(this.tokens, this.n, this.threshold)
+    return detectConsecutiveRepeat(this.tokens, this.n, this.threshold, this.minDistinct)
   }
 
   reset() {
