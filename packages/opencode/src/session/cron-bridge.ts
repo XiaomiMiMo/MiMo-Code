@@ -1,6 +1,7 @@
 import { Context, Effect, Layer } from "effect"
 import { Scheduler, defaultLayer as SchedulerDefaultLayer, type LoopEndedEvent } from "@/cron/scheduler"
 import type { CronTask } from "@/cron/cron-task"
+import { resolveAtFireTime } from "@/cron/sentinel"
 import { injectScheduledPrompt } from "./prompt"
 import { SessionStatus } from "./status"
 import { Bus } from "@/bus"
@@ -87,16 +88,21 @@ export const layer = Layer.effect(
           import("@/effect/app-runtime")
             .then(({ AppRuntime }) =>
               AppRuntime.runPromise(
-                injectScheduledPrompt({
-                  sessionID,
-                  value: task.prompt,
-                  origin: {
-                    kind: "cron",
-                    taskId: task.id,
-                    kindOfTask: task.kind ?? "cron",
-                  },
-                  priority: "later",
-                  isMeta: true,
+                Effect.gen(function* () {
+                  const value = yield* Effect.tryPromise(() =>
+                    resolveAtFireTime(task.prompt, workspaceRoot),
+                  ).pipe(Effect.orElseSucceed(() => task.prompt))
+                  yield* injectScheduledPrompt({
+                    sessionID,
+                    value,
+                    origin: {
+                      kind: "cron",
+                      taskId: task.id,
+                      kindOfTask: task.kind ?? "cron",
+                    },
+                    priority: "later",
+                    isMeta: true,
+                  })
                 }),
               ),
             )
