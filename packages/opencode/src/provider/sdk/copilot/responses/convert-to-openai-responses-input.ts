@@ -258,6 +258,16 @@ export async function convertToOpenAIResponsesInput({
                     input.push(reasoningMessages[reasoningId])
                   } else {
                     reasoningMessage.summary.push(...summaryParts)
+                    // PI-108: encrypted_content приходит позже (output_item.done), а не на первой
+                    // summary-части (read-side: reasoningEncryptedContent = activeItem.encryptedContent ?? null).
+                    // Без захвата на append reasoning-итем остаётся encrypted_content:null → под store:false
+                    // backend не валидирует reasoning → "reasoning part rs_… not found" / server_error (gpt-5.5).
+                    if (
+                      providerOptions?.reasoningEncryptedContent != null &&
+                      reasoningMessage.encrypted_content == null
+                    ) {
+                      reasoningMessage.encrypted_content = providerOptions.reasoningEncryptedContent
+                    }
                   }
                 }
               } else {
