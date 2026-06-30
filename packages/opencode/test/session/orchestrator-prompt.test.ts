@@ -13,4 +13,11 @@ describe("orchestrator prompt", () => {
     expect(PROMPT_ORCHESTRATOR).toContain("dir")
     expect(PROMPT_ORCHESTRATOR).toContain("isolate")
   })
+
+  test("teaches no-poll + interrupt/resume lifecycle (session-lifecycle spec)", () => {
+    // Pin so the lifecycle guidance can't be silently dropped.
+    expect(PROMPT_ORCHESTRATOR).toContain("don't poll")
+    expect(PROMPT_ORCHESTRATOR).toContain("session cancel")
+    expect(PROMPT_ORCHESTRATOR).toContain("resume")
+  })
 })

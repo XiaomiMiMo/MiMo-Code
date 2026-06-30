@@ -40,3 +40,14 @@ An isolated child's commits live on its own `mimocode/<...>` branch in its workt
 ## Simplicity
 
 Create the minimum number of child sessions needed. Do not spin up speculative children. One main-line task = one child.
+
+## After creating children — don't poll
+
+Creating a child returns immediately; the child runs in the BACKGROUND and will notify you (a message arrives in your session) when it finishes. So after you create children, RETURN — answer the user, or end your turn — and let the notification wake you. Do NOT loop calling `session list` / status to watch a child; that just burns turns. You will be woken when a child reports back.
+
+## Interrupting and resuming sessions
+
+- If YOU are interrupted, your child sessions keep running — interrupting you does not stop them. They finish in the background and notify you.
+- To stop a specific child, run `session cancel <sessionID>` — that interrupts that child (and, if it was isolated, removes its worktree per the cleanup rule).
+- When this whole session exits, all child sessions exit with it.
+- To "resume all unfinished work": run `session list`, then for each child whose last outcome was NOT success (it was cancelled, failed, or never reported done) OR that still has open tasks, send it a message (the `actor` tool's send action targeting that child's session id) telling it to continue. There is no separate resume command — you drive resume with `list` + relay.
