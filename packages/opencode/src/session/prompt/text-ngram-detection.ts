@@ -6,7 +6,7 @@ export function tokenizeForNgram(text: string): string[] {
   return text
     .toLowerCase()
     .replace(/\s+/g, " ")
-    .replace(/([　-〿㐀-䶿一-鿿豈-﫿＀-￯])/g, " $1 ")
+    .replace(/([　-ヿ㐀-䶿一-鿿豈-﫿＀-￯])/g, " $1 ")
     .trim()
     .split(" ")
     .filter(Boolean)
