@@ -4,6 +4,7 @@ import {
   canonical,
   normalizeInput,
   repairToolCall,
+  rescueMalformedJson,
   resolveName,
 } from "../../src/util/tool-compat"
 
@@ -184,6 +185,62 @@ describe("util.tool-compat", () => {
       })
 
       expect(repaired).toBeUndefined()
+    })
+  })
+
+  describe("rescueMalformedJson", () => {
+    test("returns undefined for empty input", () => {
+      expect(rescueMalformedJson("")).toBeUndefined()
+      expect(rescueMalformedJson("   ")).toBeUndefined()
+    })
+
+    test("returns undefined for already-valid JSON", () => {
+      expect(rescueMalformedJson('{"key":"value"}')).toBeUndefined()
+      expect(rescueMalformedJson('{"a":1,"b":true}')).toBeUndefined()
+    })
+
+    test("escapes literal newlines inside string values", () => {
+      const raw = '{"new_string":"line1\nline2"}'
+      const result = rescueMalformedJson(raw)
+      expect(result).toBeDefined()
+      const parsed = JSON.parse(result!)
+      expect(parsed.new_string).toBe("line1\nline2")
+    })
+
+    test("escapes literal carriage returns inside string values", () => {
+      const raw = '{"content":"a\r\nb"}'
+      const result = rescueMalformedJson(raw)
+      expect(result).toBeDefined()
+      const parsed = JSON.parse(result!)
+      expect(parsed.content).toContain("a")
+      expect(parsed.content).toContain("b")
+    })
+
+    test("doubles lone backslashes from LaTeX sequences", () => {
+      // \s is not a valid JSON escape char, so \sum triggers a rescue
+      const raw = '{"content":"\\sum_{i=0}^{n}"}'
+      const result = rescueMalformedJson(raw)
+      expect(result).toBeDefined()
+      const parsed = JSON.parse(result!)
+      expect(parsed.content).toContain("sum")
+    })
+
+    test("preserves valid JSON escape sequences untouched", () => {
+      // \\n in source is an already-valid escaped backslash+n — no rescue needed
+      expect(rescueMalformedJson('{"msg":"hello\\nworld"}')).toBeUndefined()
+    })
+
+    test("handles multi-line LaTeX content across several lines", () => {
+      const raw = `{"new_string":"The formula is \\frac{1}{2}\nwhere n is an integer."}`
+      const result = rescueMalformedJson(raw)
+      expect(result).toBeDefined()
+      const parsed = JSON.parse(result!)
+      expect(parsed.new_string).toContain("formula")
+      expect(parsed.new_string).toContain("integer")
+    })
+
+    test("returns undefined for truly unrecoverable JSON", () => {
+      expect(rescueMalformedJson('{"key": unquoted}')).toBeUndefined()
     })
   })
 })

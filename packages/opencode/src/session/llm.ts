@@ -581,6 +581,11 @@ const live: Layer.Layer<
               input: repaired.input,
             }
           }
+          const rescued = ToolCompat.rescueMalformedJson(failed.toolCall.input)
+          if (rescued !== undefined) {
+            l.info("rescued malformed tool call JSON", { tool: failed.toolCall.toolName })
+            return { ...failed.toolCall, input: rescued }
+          }
           return {
             ...failed.toolCall,
             input: JSON.stringify({
