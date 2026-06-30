@@ -231,10 +231,10 @@ function makeHttp() {
   return Layer.mergeAll(
     TestLLMServer.layer,
     SessionPrompt.layer.pipe(
-    Layer.provide(Goal.defaultLayer),
+      Layer.provide(Goal.defaultLayer),
       Layer.provide(TaskGateState.defaultLayer),
       Layer.provide(TaskRegistry.defaultLayer),
-    Layer.provide(SchedulerDefaultLayer),
+      Layer.provide(SchedulerDefaultLayer),
       Layer.provide(SessionRevert.defaultLayer),
       Layer.provide(summary),
       Layer.provide(checkpoint),

@@ -183,7 +183,7 @@ function makeLayer() {
       Layer.provideMerge(prompt),
       Layer.provideMerge(taskRegistry),
       Layer.provide(TaskRegistry.defaultLayer),
-    Layer.provide(SchedulerDefaultLayer),
+      Layer.provide(SchedulerDefaultLayer),
       Layer.provide(Inbox.defaultLayer),
     ),
   ).pipe(Layer.provide(summary))
