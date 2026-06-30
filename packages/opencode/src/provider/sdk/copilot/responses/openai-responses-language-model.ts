@@ -1178,6 +1178,25 @@ export class OpenAIResponsesLanguageModel implements LanguageModelV3 {
                   },
                 })
               } else if (value.item.type === "message") {
+                // PI-108 слой C: если текст НЕ пришёл стримом (response.output_text.delta),
+                // gpt-5.5/codex доставляет его в content[] финального message-item. Извлекаем,
+                // иначе text-part пустой → classify.ts:91 "empty output".
+                if (!currentTextId && value.item.content) {
+                  const finalText = value.item.content
+                    .filter((c) => c?.type === "output_text" && typeof c.text === "string")
+                    .map((c) => c.text)
+                    .join("")
+                  if (finalText.length > 0) {
+                    const id = value.item.id
+                    controller.enqueue({
+                      type: "text-start",
+                      id,
+                      providerMetadata: { openai: { itemId: value.item.id } },
+                    })
+                    controller.enqueue({ type: "text-delta", id, delta: finalText })
+                    controller.enqueue({ type: "text-end", id })
+                  }
+                }
                 if (currentTextId) {
                   controller.enqueue({
                     type: "text-end",
@@ -1491,6 +1510,17 @@ const responseOutputItemAddedSchema = z.object({
     z.object({
       type: z.literal("message"),
       id: z.string(),
+      // PI-108 слой C: финальный message-item несёт текст в content[]. Без этого поля
+      // текст из финального output_item.done терялся (схема отбрасывала content) →
+      // если не было output_text.delta, text-part пустой → classify "empty output".
+      content: z
+        .array(
+          z.object({
+            type: z.string(),
+            text: z.string().nullish(),
+          }),
+        )
+        .nullish(),
     }),
     z.object({
       type: z.literal("reasoning"),
