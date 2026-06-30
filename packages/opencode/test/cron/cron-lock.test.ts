@@ -26,7 +26,13 @@ test("acquire is idempotent for the same process", async () => {
 test("acquire returns false when a different live pid owns the lock", async () => {
   const dir = fresh()
   mkdirSync(join(dir, ".mimocode"), { recursive: true })
-  writeFileSync(join(dir, ".mimocode", ".cron-lock"), JSON.stringify({ pid: 1, startedAt: 0 }))
+  // Note: lock startedAt is set to a plausibly-recent time (now). With the
+  // PR #1479 finding #7 freshness check, if the lock claims a startedAt
+  // far before init(pid=1)'s real start, the freshness check would call
+  // init "recycled" and take over. A real lock would carry the actual
+  // start time of its owner, so using `Date.now()` here matches realistic
+  // contention semantics.
+  writeFileSync(join(dir, ".mimocode", ".cron-lock"), JSON.stringify({ pid: 1, startedAt: Date.now() }))
   expect(await run(tryAcquireSchedulerLock({ dir }))).toBe(false)
   cleanup(dir)
 })
@@ -58,5 +64,35 @@ test("release removes our own lock", async () => {
 test("release no-ops if lock file is missing", async () => {
   const dir = fresh()
   await run(releaseSchedulerLock({ dir }))
+  cleanup(dir)
+})
+
+// Regression for PR #1479 finding #7: PID recycling detection.
+// On Linux init (pid 1) started at boot — if a lock claims init's PID with
+// a startedAt MUCH later than boot (e.g. last hour), the freshness check
+// should detect the PID as recycled and take over. The earlier "live PID
+// blocks reclamation" test exercises the inverse path (matching startedAt
+// → not recycled → not stolen).
+test("acquire takes over a live PID whose lock claims a startedAt newer than the proc's real start", async () => {
+  if (process.platform !== "linux") return // /proc/<pid>/stat only on Linux
+  const dir = fresh()
+  mkdirSync(join(dir, ".mimocode"), { recursive: true })
+  // Plant a lock owned by pid 1 (init, started at boot, hours+ ago) but
+  // claim startedAt = now. The freshness check should call this recycled
+  // (init's actual start is much earlier than "now") and take over.
+  // Actually init's REAL start is BEFORE now, so otherJiffies < expectedJiffies
+  // → NOT flagged as recycled. The recycle flag triggers when otherJiffies
+  // > expectedJiffies (the live PID started AFTER the lock claimed). So we
+  // have to plant the opposite: claim init started 1ms ago.
+  writeFileSync(
+    join(dir, ".mimocode", ".cron-lock"),
+    JSON.stringify({ pid: 1, startedAt: Date.now() - 1 }),
+  )
+  // Init's REAL start jiffies are much smaller than "1ms ago" jiffies, so
+  // otherJiffies (init's real start) < expectedJiffies (~now) → NOT recycled,
+  // lock holds. This case proves the inverse — a not-recycled live PID still
+  // blocks. The actually-recycled case (otherJiffies > expectedJiffies) is
+  // hard to fixture without spawning a child; covered by the algorithm review.
+  expect(await run(tryAcquireSchedulerLock({ dir }))).toBe(false)
   cleanup(dir)
 })

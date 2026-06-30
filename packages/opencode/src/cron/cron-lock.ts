@@ -1,6 +1,6 @@
 import { Effect } from "effect"
 import { join } from "path"
-import { mkdir, readFile, unlink, writeFile, open } from "fs/promises"
+import { mkdir, readFile, rename, unlink, writeFile, open } from "fs/promises"
 import { Log } from "@/util"
 
 const log = Log.create({ service: "cron-lock" })
@@ -29,11 +29,62 @@ const parseLockInfo = (raw: string): LockInfo | null => {
   return out
 }
 
-const isPidAlive = (pid: number): boolean =>
+// Read a Linux pid's start time (jiffies since boot, field 22 of /proc/<pid>/stat).
+// Returns null on non-Linux, on read failure, or on parse failure. The caller
+// uses this to detect PID recycling: if /proc reports a start time AFTER what's
+// stored in the lock, the original owner died and the PID was reassigned.
+const readPidStartJiffies = (pid: number): number | null => {
+  if (process.platform !== "linux") return null
+  return Effect.runSync(
+    Effect.try({
+      try: () => {
+        const raw = require("fs").readFileSync(`/proc/${pid}/stat`, "utf-8") as string
+        // The comm field (field 2) is parenthesised and may contain spaces; skip past the last `)`.
+        const lastParen = raw.lastIndexOf(")")
+        if (lastParen < 0) return null as number | null
+        const rest = raw.slice(lastParen + 2).split(/\s+/)
+        // After the comm field, indexing is 0=state(3), so starttime(22) is at rest[19].
+        const jiffies = parseInt(rest[19] ?? "", 10)
+        return Number.isFinite(jiffies) ? jiffies : null
+      },
+      catch: () => null as number | null,
+    }).pipe(Effect.orElseSucceed(() => null as number | null)),
+  )
+}
+
+let selfStartJiffies: number | null | undefined = undefined
+const getSelfStartJiffies = (): number | null => {
+  if (selfStartJiffies === undefined) selfStartJiffies = readPidStartJiffies(process.pid)
+  return selfStartJiffies
+}
+
+// True if the pid in the lock genuinely names the live process that wrote it.
+// PR #1479 finding #7: process.kill(pid, 0) alone says "some process with this
+// PID is alive" — a recycled PID would falsely report the lock as held. By
+// comparing /proc/<pid>/stat starttime to a calibrated reference, we can detect
+// recycling. Calibration: when we wrote PROC_STARTED_AT for our own lock, we
+// also know our own /proc starttime. If the OTHER pid's starttime now reads
+// LATER than what our wall-clock reference implies, the PID is recycled.
+const isPidAlive = (pid: number, lockStartedAtMs: number): boolean =>
   Effect.runSync(
     Effect.try({
       try: () => {
         process.kill(pid, 0)
+        // Liveness probe says yes. Now check for PID recycling on Linux.
+        const otherJiffies = readPidStartJiffies(pid)
+        const selfJiffies = getSelfStartJiffies()
+        if (otherJiffies !== null && selfJiffies !== null) {
+          // Convert: ms-since-boot ≈ jiffies * (1000 / clkTck). We can't read
+          // CLK_TCK portably from Node, but we don't need absolute units — we
+          // have a known reference point (our own PROC_STARTED_AT ↔ selfJiffies)
+          // and can express the lock's startedAt in jiffies via the ratio.
+          const msPerJiffy = (Date.now() - PROC_STARTED_AT) / Math.max(1, selfJiffies)
+          const expectedJiffies = lockStartedAtMs / Math.max(0.001, msPerJiffy)
+          // If the live PID's process started measurably LATER than the lock
+          // claims, it's been recycled. Allow a 2-second slop for clock skew.
+          const slopJiffies = 2_000 / Math.max(0.001, msPerJiffy)
+          if (otherJiffies > expectedJiffies + slopJiffies) return false
+        }
         return true
       },
       catch: (e) => {
@@ -60,11 +111,20 @@ const writeLockExclusive = (path: string, info: LockInfo) =>
     catch: () => "error" as const,
   }).pipe(Effect.orElseSucceed(() => "error" as const))
 
+// PR #1479 finding #6: atomic takeover via temp-file + rename. Plain writeFile
+// is non-atomic — two booting schedulers seeing the same stale lock can both
+// overwrite, both succeed, and both think they own the lock. Writing to a
+// per-pid temp path and then atomically renaming makes the takeover serialise
+// at the rename, and re-reading after confirms self-ownership.
 const overwriteLock = (path: string, info: LockInfo) =>
   Effect.tryPromise({
     try: async () => {
-      await writeFile(path, JSON.stringify(info))
-      return true
+      const tmp = `${path}.tmp.${process.pid}`
+      await writeFile(tmp, JSON.stringify(info))
+      await rename(tmp, path)
+      const raw = await readFile(path, "utf-8").catch(() => "")
+      const round = parseLockInfo(raw)
+      return round !== null && round.pid === process.pid && round.startedAt === PROC_STARTED_AT
     },
     catch: () => false,
   }).pipe(Effect.orElseSucceed(() => false))
@@ -117,8 +177,8 @@ export const tryAcquireSchedulerLock = (opts?: { dir?: string; lockIdentity?: st
       return true
     }
 
-    if (!isPidAlive(existing.pid)) {
-      log.debug("previous owner dead; taking over", { deadPid: existing.pid })
+    if (!isPidAlive(existing.pid, existing.startedAt)) {
+      log.debug("previous owner dead or recycled; taking over", { deadPid: existing.pid })
       const ow = yield* overwriteLock(path, self)
       return ow
     }
