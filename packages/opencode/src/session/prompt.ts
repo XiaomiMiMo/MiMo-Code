@@ -3908,6 +3908,13 @@ export type ScheduledPromptOrigin = {
   kind: "cron"
   taskId: string
   kindOfTask: "cron" | "loop"
+  /**
+   * ISO-8601 timestamp of when the scheduler tick fired this task. Set by the
+   * cron bridge in `onFire`; persisted on the synthetic part's metadata so the
+   * TUI and downstream consumers can recover fire time without parsing the
+   * prepended text prefix.
+   */
+  firedAt?: string
 }
 
 export type InjectScheduledPromptInput = {

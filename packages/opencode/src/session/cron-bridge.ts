@@ -169,9 +169,16 @@ export const layer = Layer.effect(
             .then(({ AppRuntime }) =>
               AppRuntime.runPromise(
                 Effect.gen(function* () {
-                  const value = yield* Effect.tryPromise(() =>
+                  const resolved = yield* Effect.tryPromise(() =>
                     resolveAtFireTime(task.prompt, workspaceRoot),
                   ).pipe(Effect.orElseSucceed(() => task.prompt))
+                  // Prepend an ISO fire timestamp so both the user (TUI) and the
+                  // model see when each fire happened. Recurring fires especially
+                  // need this — otherwise a `*/5` reply looks identical whether it
+                  // came from the :00 tick or the :05 tick. Format kept short and
+                  // unambiguous: `[cron fire @ YYYY-MM-DDTHH:MM:SSZ] `.
+                  const firedAtISO = new Date().toISOString().replace(/\.\d{3}Z$/, "Z")
+                  const value = `[cron fire @ ${firedAtISO}] ${resolved}`
                   yield* injectScheduledPrompt({
                     sessionID,
                     value,
@@ -179,6 +186,7 @@ export const layer = Layer.effect(
                       kind: "cron",
                       taskId: task.id,
                       kindOfTask: task.kind ?? "cron",
+                      firedAt: firedAtISO,
                     },
                     priority: "later",
                     isMeta: true,

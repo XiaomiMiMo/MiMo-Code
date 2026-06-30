@@ -99,22 +99,26 @@ beforeEach(() => {
 
 const sid = SessionID.make("ses_e2e_test")
 
-// Same shape as cron-bridge's onFire callback (cron-bridge.ts:159-190): on
-// fire, call injectScheduledPrompt with the task's origin marker. Captured
-// inside an Effect so it runs against the SAME test Service stub, instead of
-// the production AppRuntime the live bridge dynamically imports.
-const fireToInject = (task: CronTask) =>
-  injectScheduledPrompt({
+// Same shape as cron-bridge's onFire callback (cron-bridge.ts:159-200): on
+// fire, prepend an ISO fire timestamp to the resolved prompt and call
+// injectScheduledPrompt with the task's origin marker plus the firedAt field.
+// Captured inside an Effect so it runs against the SAME test Service stub,
+// instead of the production AppRuntime the live bridge dynamically imports.
+const fireToInject = (task: CronTask) => {
+  const firedAtISO = new Date().toISOString().replace(/\.\d{3}Z$/, "Z")
+  return injectScheduledPrompt({
     sessionID: sid,
-    value: task.prompt,
+    value: `[cron fire @ ${firedAtISO}] ${task.prompt}`,
     origin: {
       kind: "cron",
       taskId: task.id,
       kindOfTask: task.kind ?? "cron",
+      firedAt: firedAtISO,
     },
     priority: "later",
     isMeta: true,
   })
+}
 
 describe("cron + loop end-to-end smoke", () => {
   it.live("schedule → tick → fire → cron origin lands → delete → no more fires", () =>
@@ -182,12 +186,18 @@ describe("cron + loop end-to-end smoke", () => {
         const part = input.parts[0]!
         expect(part.type).toBe("text")
         if (part.type !== "text") throw new Error("expected text part")
-        expect(part.text).toBe("check the deploy")
+        // Fire-time prefix + original prompt, e.g. "[cron fire @ 2026-06-30T15:42:00Z] check the deploy"
+        expect(part.text).toMatch(/^\[cron fire @ \d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z\] check the deploy$/)
         expect(part.synthetic).toBe(true)
-        expect(part.metadata).toMatchObject({
-          origin: { kind: "cron", taskId: created.id, kindOfTask: "cron" },
-          priority: "later",
-        })
+        const meta = part.metadata as { origin?: { firedAt?: string; kind?: string; taskId?: string; kindOfTask?: string } }
+        expect(meta.origin?.kind).toBe("cron")
+        expect(meta.origin?.taskId).toBe(created.id)
+        expect(meta.origin?.kindOfTask).toBe("cron")
+        // firedAt: ISO-8601 second-precision UTC stamp ending in Z (no millis).
+        expect(meta.origin?.firedAt).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/)
+        // Same stamp appears in both the visible prefix and the metadata.
+        expect(part.text.includes(meta.origin!.firedAt!)).toBe(true)
+        expect((part.metadata as { priority?: string }).priority).toBe("later")
 
         // Step 5: delete via Scheduler.remove — same path the `cron delete`
         // tool verb uses (cron.ts → Scheduler.remove).
