@@ -2577,7 +2577,8 @@ NOTE: At any point in time through this workflow you should feel free to ask the
             // the session layer out of the app-runtime module-init cycle
             // (prompt → app-runtime → AppLayer → SessionPrompt). Only loaded when a
             // trigger actually fires. Detached fire-and-forget on the full runtime.
-            if (dreamTrigger || distillTrigger) {
+            const needAppRuntime = dreamTrigger || distillTrigger || Flag.MIMOCODE_EXPERIMENTAL_CRON
+            if (needAppRuntime) {
               const { AppRuntime } = yield* Effect.promise(() => import("@/effect/app-runtime"))
               if (dreamTrigger) {
                 AppRuntime.runPromise(
@@ -2600,6 +2601,20 @@ NOTE: At any point in time through this workflow you should feel free to ask the
                     }),
                   ),
                 ).catch((err) => log.error("auto-distill prompt failed", { error: String(err) }))
+              }
+              // T18-bridge mount: fire CronBridge.start(sessionID, workspaceRoot)
+              // once per new top-level session boot. The bridge itself no-ops when
+              // MIMOCODE_EXPERIMENTAL_CRON is unset; the outer gate just skips the
+              // resolve cost in the common case. Mirrors auto-dream's detached
+              // dynamic-import pattern so prompt.ts stays out of the app-runtime
+              // module-init cycle. Bridge.start is idempotent via its `started`
+              // guard, and its Layer finalizer handles teardown on scope close.
+              if (Flag.MIMOCODE_EXPERIMENTAL_CRON) {
+                const workspaceRoot = (yield* InstanceState.context).worktree
+                const { CronBridge } = yield* Effect.promise(() => import("@/session/cron-bridge"))
+                AppRuntime.runPromise(
+                  CronBridge.use((b) => b.start(sessionID, workspaceRoot)),
+                ).catch((err) => log.error("cron-bridge start failed", { sessionID, error: String(err) }))
               }
             }
           }
