@@ -39,7 +39,6 @@ import { Plugin } from "../plugin"
 import BUILD_SWITCH from "../session/prompt/build-switch.txt"
 import MAX_STEPS from "../session/prompt/max-steps.txt"
 import PROMPT_COMPOSE from "../session/prompt/compose.txt"
-import PROMPT_ORCHESTRATOR from "../session/prompt/orchestrator.txt"
 import {
   RECOVERY_PROMPT_MILD,
   RECOVERY_PROMPT_STRONG,
@@ -556,20 +555,6 @@ export const layer = Layer.effect(
             (composeModeBlock ? "\n\n" + composeModeBlock : "") +
             "\n\n" +
             composeDocsBlock,
-          synthetic: true,
-        })
-      }
-
-      const orchestratorModeMsg = input.messages.find(
-        (msg) => msg.info.role === "user" && msg.info.agent === "orchestrator",
-      )
-      if (orchestratorModeMsg) {
-        orchestratorModeMsg.parts.unshift({
-          id: PartID.ascending(),
-          messageID: orchestratorModeMsg.info.id,
-          sessionID: orchestratorModeMsg.info.sessionID,
-          type: "text",
-          text: PROMPT_ORCHESTRATOR,
           synthetic: true,
         })
       }

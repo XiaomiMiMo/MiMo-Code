@@ -15,6 +15,7 @@ import PROMPT_DISTILL from "./prompt/distill.txt"
 import PROMPT_SUMMARY from "./prompt/summary.txt"
 import PROMPT_COMPACTION from "./prompt/compaction.txt"
 import PROMPT_TITLE from "./prompt/title.txt"
+import PROMPT_ORCHESTRATOR from "../session/prompt/orchestrator.txt"
 import { Permission } from "@/permission"
 import { mergeDeep, pipe, sortBy, values } from "remeda"
 import { Global } from "@/global"
@@ -214,7 +215,8 @@ export const layer = Layer.effect(
             name: "orchestrator",
             color: "#7fb3d5",
             description:
-              "Orchestrator mode. A full-capability session that ALSO coordinates many child sessions; use the `session` tool to create/switch/list/cancel children running in their own mode and model.",
+              "Orchestrator mode. A general-purpose coordinator that accomplishes goals by delegating work to child sessions; use the `session` tool to create/switch/list/cancel children running in their own mode and model.",
+            prompt: PROMPT_ORCHESTRATOR,
             options: {},
             permission: Permission.merge(
               defaults,
