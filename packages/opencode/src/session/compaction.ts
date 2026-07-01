@@ -26,6 +26,11 @@ export const Event = {
     "session.compacted",
     z.object({
       sessionID: SessionID.zod,
+      // Optional: identifies which agent slice was compacted. undefined or
+      // "main" means the main-agent compaction; any other value is a subagent
+      // slice. Subscribers that only care about the main context (e.g. the
+      // cron-bridge sentinel cache) can filter on this.
+      agentID: z.string().optional(),
     }),
   ),
 }
@@ -465,7 +470,11 @@ export const layer: Layer.Layer<
       }
 
       if (processor.message.error) return "stop"
-      if (result === "continue") yield* bus.publish(Event.Compacted, { sessionID: input.sessionID })
+      if (result === "continue")
+        yield* bus.publish(Event.Compacted, {
+          sessionID: input.sessionID,
+          ...(input.agentID ? { agentID: input.agentID } : {}),
+        })
       return result
     })
 
@@ -496,6 +505,13 @@ export const layer: Layer.Layer<
         type: "compaction",
         auto: input.auto,
         overflow: input.overflow,
+      })
+      // Boundary-insert path also drops effective context from the model's
+      // view — publish Compacted so downstream caches (cron sentinel etc)
+      // reset on their side too. Same event shape as processCompaction.
+      yield* bus.publish(Event.Compacted, {
+        sessionID: input.sessionID,
+        ...(input.agentID ? { agentID: input.agentID } : {}),
       })
     })
 
