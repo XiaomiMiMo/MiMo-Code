@@ -36,6 +36,13 @@ export interface Content {
   mime: string
 }
 
+export async function spillImage(content: { data: string; mime: string }): Promise<string> {
+  const ext = content.mime === "image/png" ? "png" : content.mime === "image/jpeg" ? "jpg" : "bin"
+  const file = path.join(tmpdir(), `opencode-paste-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${ext}`)
+  await Bun.write(file, Buffer.from(content.data, "base64"))
+  return file
+}
+
 // Checks clipboard for images first, then falls back to text.
 //
 // On Windows prompt/ can call this from multiple paste signals because
