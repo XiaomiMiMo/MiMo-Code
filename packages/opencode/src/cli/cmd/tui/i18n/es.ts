@@ -294,6 +294,7 @@ export const dict = {
   "tui.command.never_ask.toast_on":
     "Sin preguntas ACTIVADO — no te preguntaré; elegiré la mejor opción yo mismo hasta que lo desactives (/never-ask). Las solicitudes de permiso siguen requiriendo tu aprobación.",
   "tui.command.never_ask.toast_off": "Sin preguntas DESACTIVADO — volveré a preguntarte en los puntos de decisión.",
+  "tui.prompt.never_ask_indicator": "«sin preguntas»",
   "tui.command.agent.cycle.title": "Ciclo de agentes",
   "tui.command.variant.cycle.title": "Ciclo de variantes",
   "tui.command.variant.list.title": "Cambiar variante de modelo",
