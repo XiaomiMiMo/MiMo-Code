@@ -1,10 +1,12 @@
 import { Effect, Layer, Redacted, Schema } from "effect"
+import nodePath from "path"
 import { HttpApiBuilder, HttpApiMiddleware, HttpApiSecurity } from "effect/unstable/httpapi"
 import { HttpRouter, HttpServer, HttpServerRequest } from "effect/unstable/http"
 import { AppRuntime } from "@/effect/app-runtime"
 import { InstanceRef, WorkspaceRef } from "@/effect/instance-ref"
 import { Observability } from "@/effect"
 import { Flag } from "@/flag/flag"
+import { Global } from "@/global"
 import { InstanceBootstrap } from "@/project/bootstrap"
 import { Instance } from "@/project/instance"
 import { lazy } from "@/util/lazy"
@@ -103,7 +105,8 @@ const instance = HttpRouter.middleware()(
 
         if (!Flag.MIMOCODE_SERVER_PASSWORD) {
           const cwd = Filesystem.resolve(process.cwd())
-          if (!Filesystem.contains(cwd, directory)) {
+          const worktreeRoot = Filesystem.resolve(nodePath.join(Global.Path.data, "worktree"))
+          if (!Filesystem.contains(cwd, directory) && !Filesystem.contains(worktreeRoot, directory)) {
             return yield* new DirectoryAccessDenied({
               message: "Access denied: directory must be within the server's working directory",
             })

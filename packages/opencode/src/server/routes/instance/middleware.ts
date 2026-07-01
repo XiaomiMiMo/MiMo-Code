@@ -1,4 +1,5 @@
 import type { MiddlewareHandler } from "hono"
+import path from "path"
 import { Instance } from "@/project/instance"
 import { InstanceBootstrap } from "@/project/bootstrap"
 import { AppRuntime } from "@/effect/app-runtime"
@@ -6,6 +7,7 @@ import { AppFileSystem } from "@mimo-ai/shared/filesystem"
 import { WorkspaceContext } from "@/control-plane/workspace-context"
 import { WorkspaceID } from "@/control-plane/schema"
 import { Flag } from "@/flag/flag"
+import { Global } from "@/global"
 import { Filesystem } from "@/util"
 
 export function InstanceMiddleware(workspaceID?: WorkspaceID): MiddlewareHandler {
@@ -23,7 +25,8 @@ export function InstanceMiddleware(workspaceID?: WorkspaceID): MiddlewareHandler
 
     if (!Flag.MIMOCODE_SERVER_PASSWORD) {
       const cwd = Filesystem.resolve(process.cwd())
-      if (!Filesystem.contains(cwd, directory)) {
+      const worktreeRoot = Filesystem.resolve(path.join(Global.Path.data, "worktree"))
+      if (!Filesystem.contains(cwd, directory) && !Filesystem.contains(worktreeRoot, directory)) {
         return c.json({ error: "Access denied: directory must be within the server's working directory" }, 403)
       }
     }
