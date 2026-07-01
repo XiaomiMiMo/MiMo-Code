@@ -1028,6 +1028,9 @@ function App(props: { onSnapshot?: () => Promise<string[]> }) {
     void (async () => {
       renderer.suspend()
       renderer.currentRenderBuffer.clear()
+      // Clear alternate screen buffer so child processes that enter alt screen
+      // (e.g. Go TUI tools like glab) don't see stale TUI content
+      process.stdout.write("\x1b[?1049h\x1b[2J\x1b[?1049l")
       let exitCode = 1
       let output = ""
       try {
