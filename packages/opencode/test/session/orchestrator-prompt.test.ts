@@ -15,6 +15,23 @@ describe("orchestrator prompt", () => {
     expect(PROMPT_ORCHESTRATOR).toMatch(/delegat/i)
   })
 
+  test("states identity positively without the 'NOT a coding agent' negation", () => {
+    // T2 acceptance: the identity must be POSITIVE. The redundant negation
+    // "You are NOT a coding agent" must not reappear.
+    expect(PROMPT_ORCHESTRATOR).not.toContain("NOT a coding agent")
+  })
+
+  test("frames BOTH plan and review as DELEGATED jobs, not the orchestrator's own", () => {
+    // T2 acceptance: planning HOW to implement and reviewing quality are jobs the
+    // orchestrator DELEGATES (to plan/compose and reviewer/compose children), not
+    // work it does inline. Pin that both are present and routed to children.
+    expect(PROMPT_ORCHESTRATOR).toMatch(/plan/i)
+    expect(PROMPT_ORCHESTRATOR).toMatch(/review/i)
+    expect(PROMPT_ORCHESTRATOR).toMatch(/reviewer child|compose/i)
+    // The delegation framing: these are things you delegate rather than do yourself.
+    expect(PROMPT_ORCHESTRATOR).toMatch(/delegat/i)
+  })
+
   test("teaches the per-task dir/isolate model (S13)", () => {
     // Pin the S13 guidance so it can't be silently dropped: the prompt must tell
     // the orchestrator about choosing a child's directory and isolation per task.
