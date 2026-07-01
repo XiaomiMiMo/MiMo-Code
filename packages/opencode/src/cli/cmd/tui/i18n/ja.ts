@@ -26,6 +26,7 @@ export const dict = {
   "tui.prompt.placeholder.normal": '何でも聞いてください... "{{example}}"',
   "tui.prompt.placeholder.shell": 'コマンドを実行... "{{example}}"',
   "tui.prompt.ghost": "{{prediction}}  (Tab で確定)",
+  "tui.paste.image.fallback_path": "モデルは画像に対応していないため、代わりに画像パスを挿入しました",
   "tui.home.placeholder.example.todo": "コードベース内の TODO を修正",
   "tui.home.placeholder.example.stack": "このプロジェクトの技術スタックは？",
   "tui.home.placeholder.example.tests": "壊れたテストを修正",

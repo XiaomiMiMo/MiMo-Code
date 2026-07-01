@@ -26,6 +26,7 @@ export const dict = {
   "tui.prompt.placeholder.normal": '問點什麼…… "{{example}}"',
   "tui.prompt.placeholder.shell": '執行指令…… "{{example}}"',
   "tui.prompt.ghost": "{{prediction}}  (按 Tab 採納)",
+  "tui.paste.image.fallback_path": "目前模型不支援圖片，已改為插入圖片路徑",
   "tui.home.placeholder.example.todo": "修復程式碼庫中的 TODO",
   "tui.home.placeholder.example.stack": "這個專案用了什麼技術棧？",
   "tui.home.placeholder.example.tests": "修復失敗的測試",

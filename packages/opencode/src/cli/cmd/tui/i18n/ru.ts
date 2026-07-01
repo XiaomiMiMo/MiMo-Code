@@ -26,6 +26,7 @@ export const dict = {
   "tui.prompt.placeholder.normal": 'Спросите что угодно... "{{example}}"',
   "tui.prompt.placeholder.shell": 'Выполните команду... "{{example}}"',
   "tui.prompt.ghost": "{{prediction}}  (Tab — принять)",
+  "tui.paste.image.fallback_path": "Модель не поддерживает изображения — вместо этого вставлен путь к изображению",
   "tui.home.placeholder.example.todo": "Исправь TODO в кодовой базе",
   "tui.home.placeholder.example.stack": "Какой технологический стек у этого проекта?",
   "tui.home.placeholder.example.tests": "Почини сломанные тесты",

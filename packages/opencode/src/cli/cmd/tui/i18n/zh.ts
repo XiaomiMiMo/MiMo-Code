@@ -26,6 +26,7 @@ export const dict = {
   "tui.prompt.placeholder.normal": "输入消息...(输入/唤起命令)",
   "tui.prompt.placeholder.shell": '执行命令…… "{{example}}"',
   "tui.prompt.ghost": "{{prediction}}  (按 Tab 采纳)",
+  "tui.paste.image.fallback_path": "当前模型不支持图片，已改为插入图片路径",
   "tui.home.placeholder.example.todo": "修复代码库中的 TODO",
   "tui.home.placeholder.example.stack": "这个项目用了什么技术栈？",
   "tui.home.placeholder.example.tests": "修复失败的测试",

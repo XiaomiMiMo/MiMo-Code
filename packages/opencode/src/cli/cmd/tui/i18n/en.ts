@@ -22,6 +22,7 @@ export const dict: Record<string, string> = {
   "tui.prompt.placeholder.normal": "Type your message... (type / for commands)",
   "tui.prompt.placeholder.shell": 'Run a command... "{{example}}"',
   "tui.prompt.ghost": "{{prediction}}  (Tab to accept)",
+  "tui.paste.image.fallback_path": "Model has no vision support — inserted image path instead",
   "tui.home.placeholder.example.todo": "Fix a TODO in the codebase",
   "tui.home.placeholder.example.stack": "What is the tech stack of this project?",
   "tui.home.placeholder.example.tests": "Fix broken tests",
