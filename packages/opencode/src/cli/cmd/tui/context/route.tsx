@@ -28,7 +28,21 @@ export type PluginRoute = {
   data?: Record<string, unknown>
 }
 
-export type Route = HomeRoute | SessionRoute | PluginRoute
+/**
+ * TUI grid mode (multi-session workspace). When active, the route resolves to
+ * `GridView` which renders multiple session cells arranged by a layout store.
+ * `cells` seeds the grid with existing sessions; `activeSessionID` is the cell
+ * that owns keyboard focus. Both are optional — the grid component restores
+ * the persisted layout from `~/.mimocode/grid-layout.json` on mount when
+ * neither is supplied.
+ */
+export type GridRoute = {
+  type: "grid"
+  cells?: { sessionID: string; workspaceID?: string }[]
+  activeSessionID?: string
+}
+
+export type Route = HomeRoute | SessionRoute | PluginRoute | GridRoute
 
 export const { use: useRoute, provider: RouteProvider } = createSimpleContext({
   name: "Route",

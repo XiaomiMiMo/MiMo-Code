@@ -232,4 +232,9 @@ export const Flag = {
   get MIMOCODE_CLIENT() {
     return process.env["MIMOCODE_CLIENT"] ?? "cli"
   },
+  // Phase 6: when truthy, the TUI opens directly into the grid view instead of
+  // the home/session route. Equivalent to passing `--grid` on the CLI.
+  get MIMOCODE_GRID() {
+    return truthy("MIMOCODE_GRID")
+  },
 }

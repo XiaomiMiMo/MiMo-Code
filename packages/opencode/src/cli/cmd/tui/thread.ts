@@ -170,6 +170,11 @@ export const TuiThreadCommand = cmd({
         type: "boolean",
         describe: "skip workspace trust prompt and trust the directory",
         default: false,
+      })
+      .option("grid", {
+        type: "boolean",
+        describe: "open directly into the grid view (multi-session workspace)",
+        default: false,
       }),
   handler: async (args) => {
     // Keep ENABLE_PROCESSED_INPUT cleared even if other code flips it.
@@ -309,6 +314,7 @@ export const TuiThreadCommand = cmd({
             prompt,
             fork: args.fork,
             neverAsk: args["never-ask"],
+            grid: args.grid,
           },
         })
       } finally {

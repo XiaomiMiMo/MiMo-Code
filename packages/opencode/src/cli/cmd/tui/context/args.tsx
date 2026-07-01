@@ -8,6 +8,13 @@ export interface Args {
   sessionID?: string
   fork?: boolean
   neverAsk?: boolean
+  /**
+   * Phase 6: when true, the TUI launches straight into the grid view. The
+   * grid component restores the persisted layout from
+   * `~/.mimocode/grid-layout.json` on mount by default; combine with
+   * `--session` / `--continue` to seed a single cell on first launch.
+   */
+  grid?: boolean
 }
 
 export const { use: useArgs, provider: ArgsProvider } = createSimpleContext({
