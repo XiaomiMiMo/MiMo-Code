@@ -106,3 +106,20 @@ const table = sqliteTable("session", {
 ## Type Checking
 
 - Always run `bun typecheck` from package directories (e.g., `packages/opencode`), never `tsc` directly.
+
+## Search & File Lookup Strategy
+
+优先级从高到低：
+
+1. **everything-search MCP** — 找文件路径首选，速度快、全盘索引
+2. **Grep** — 搜文件内容用，支持正则
+3. **Glob** — 按模式匹配文件名
+4. **Read** — 已知路径直接读，不要先 ls 再 Read
+
+### 执行规则
+
+- **先想后做**：收到任务 → 1句话复述 → 确认理解再动手
+- **并行调用**：多个独立 glob/grep/read 同一轮发出，不要串行
+- **最小调用**：完成简单任务 ≤ 3轮调用，每步问"能不能合并"
+- **不重复搜**：同一个地方只搜一次，记住结果
+- **不绕路**：用户问"有没有X" → 查记忆 → 没有就直接说，不要翻遍所有配置

@@ -56,7 +56,7 @@ export const MemoryTool = Tool.define(
             }
           }
           const lines = [
-            `Found ${results.length} match${results.length === 1 ? "" : "es"} (BM25-ranked, best first).`,
+            `Found ${results.length} match${results.length === 1 ? "" : "es"} (BM25 + vector search, ranked best first).`,
             `A hit here is authoritative — use it even if a parallel/sibling query returned nothing.`,
             `If you need the FULL body (snippets are truncated), Read the path.`,
             `If you need an EXACT literal (a connection string, port, token, full command line, path) and the snippet/body only paraphrases or partially shows it, the curated memory may have dropped the precise form — query the history tool for the original message, which holds it verbatim.`,

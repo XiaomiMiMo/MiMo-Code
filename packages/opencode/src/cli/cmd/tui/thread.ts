@@ -12,7 +12,7 @@ import { withNetworkOptions, resolveNetworkOptionsNoConfig } from "@/cli/network
 import { Filesystem } from "@/util"
 import type { GlobalEvent } from "@mimo-ai/sdk/v2"
 import type { EventSource } from "./context/sdk"
-import { win32DisableProcessedInput, win32InstallCtrlCGuard } from "./win32"
+import { win32DisableProcessedInput, win32InstallCtrlCGuard, disableMouseTracking } from "./win32"
 import { writeHeapSnapshot } from "v8"
 import { TuiConfig } from "./config/tui"
 import { MIMOCODE_PROCESS_ROLE, MIMOCODE_RUN_ID, ensureRunID, sanitizedProcessEnv } from "@/util/mimo-process"
@@ -248,6 +248,10 @@ export const TuiThreadCommand = cmd({
       process.on("SIGINT", () => stop())
       process.on("SIGTERM", () => stop())
 
+      // Ensure mouse tracking is disabled on any exit path (including abnormal exits).
+      // This prevents terminal garbage (SGR mouse coordinates) after crashes or kills.
+      process.on("exit", disableMouseTracking)
+
       let stopped = false
       const stop = async () => {
         if (stopped) return
@@ -255,6 +259,7 @@ export const TuiThreadCommand = cmd({
         process.off("uncaughtException", error)
         process.off("unhandledRejection", error)
         process.off("SIGUSR2", reload)
+        disableMouseTracking()
         await withTimeout(client.call("shutdown", undefined), 5000).catch((error) => {
           Log.Default.warn("worker shutdown failed", {
             error: errorMessage(error),

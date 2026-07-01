@@ -6,6 +6,7 @@ import { Database } from "../storage"
 import { Config } from "../config"
 import { reconcileMemory } from "./reconcile"
 import { buildFtsQuery } from "./fts-query"
+import { EsMemory } from "../util/es-memory"
 
 type SearchRow = {
   path: string
@@ -125,12 +126,29 @@ export const layer: Layer.Layer<Service, never, Config.Service> = Layer.effect(
         scope_id: r.scope_id,
         type: r.type,
       }))
-      if (mapped.length === 0) return []
       // Rows are ORDER BY score (best first), so mapped[0] is the top hit.
       // Always keep it; drop trailing rows below `floorRatio` of its score.
-      const topScore = mapped[0].score
-      const cutoff = floorRatio > 0 ? topScore * floorRatio : -Infinity
-      return mapped.filter((r, i) => i === 0 || r.score >= cutoff).slice(0, limit)
+      const topScore = mapped.length > 0 ? mapped[0].score : 0
+      const cutoff = mapped.length > 0 && floorRatio > 0 ? topScore * floorRatio : -Infinity
+      const ftsResults = mapped.length > 0
+        ? mapped.filter((r, i) => i === 0 || r.score >= cutoff).slice(0, limit)
+        : []
+
+      const mapEsResult = (r: { content: string; score: number; memory_type: string; record_id: string; user_id?: string }) => ({
+        path: `es_memory://${r.record_id}`,
+        snippet: r.content.length > 200 ? r.content.slice(0, 200) + "..." : r.content,
+        score: r.score,
+        scope: "es_memory",
+        scope_id: r.user_id ?? "mimocode",
+        type: r.memory_type,
+      })
+
+      const esResponse = yield* Effect.promise(() =>
+        EsMemory.searchMulti(input.query, { user_ids: ["mimocode", "kilo", "crush", "micode", "xiaoke"], top_k: limit }),
+      )
+      const esResults = esResponse?.results ? esResponse.results.map(mapEsResult) : []
+
+      return [...ftsResults, ...esResults]
     })
 
     return Service.of({

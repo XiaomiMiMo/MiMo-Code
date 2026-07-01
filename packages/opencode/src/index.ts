@@ -41,6 +41,7 @@ import { PluginCommand } from "./cli/cmd/plug"
 import { Heap } from "./cli/heap"
 import { drizzle } from "drizzle-orm/bun-sqlite"
 import { ensureProcessMetadata } from "./util/mimo-process"
+import { loadEnv, loadEnvFromMultipleDirs } from "./util/dotenv"
 
 const processMetadata = ensureProcessMetadata("main")
 
@@ -90,6 +91,12 @@ const cli = yargs(args)
     type: "boolean",
   })
   .middleware(async (opts) => {
+    loadEnvFromMultipleDirs([
+      process.cwd(),
+      Global.Path.config,
+      Global.Path.home,
+    ])
+
     if (opts.pure) {
       process.env.MIMOCODE_PURE = "1"
     }
