@@ -53,7 +53,7 @@ export const layer = Layer.effect(
     return Service.of({
       environment(model, now) {
         const project = Instance.project
-        return [
+        const base = [
           [
             `You are MiMo Code Agent, built by Xiaomi MiMo Team. You are an interactive agent that helps users with software engineering tasks. Use the instructions below and the tools available to you to assist the user.`,
             `You are powered by the model named ${model.api.id}. The exact model ID is ${model.providerID}/${model.api.id}`,
@@ -72,6 +72,16 @@ export const layer = Layer.effect(
           ].join("\n"),
           `IMPORTANT: Your response must ALWAYS strictly follow the same major language as the user.`,
         ]
+        if (!model.capabilities.input.image)
+          base.push(
+            [
+              `<vision-capability>`,
+              `You CANNOT see or interpret image content — this model has no vision support.`,
+              `Never attempt to analyze an image's visual content yourself. If a task needs image understanding, dispatch a vision-capable subagent via the actor tool (actor run <type> "<desc>" "<prompt>" --model <a vision model>), passing the image file path so the subagent can Read it.`,
+              `If instead you need a file's raw binary structure (not its visual content), use a shell tool such as \`hexdump -C <path>\`, NOT the read tool.`,
+            ].join("\n"),
+          )
+        return base
       },
 
       skills: Effect.fn("SystemPrompt.skills")(function* (agent: Agent.Info) {
