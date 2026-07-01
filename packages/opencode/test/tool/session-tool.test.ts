@@ -497,6 +497,7 @@ import { SessionSummary } from "../../src/session/summary"
 import { Instruction } from "../../src/session/instruction"
 import { SessionProcessor } from "../../src/session/processor"
 import { SessionPrompt } from "../../src/session/prompt"
+import { defaultLayer as SchedulerDefaultLayer } from "../../src/cron/scheduler"
 import { SessionRevert } from "../../src/session/revert"
 import { SessionRunState } from "../../src/session/run-state"
 import { Goal } from "../../src/session/goal"
@@ -636,6 +637,7 @@ function makeAskLayer() {
     Layer.provide(Instruction.defaultLayer),
     Layer.provide(SystemPrompt.defaultLayer),
     Layer.provide(Inbox.defaultLayer),
+    Layer.provide(SchedulerDefaultLayer),
     Layer.provideMerge(deps),
   )
   const inbox = Inbox.defaultLayer.pipe(Layer.provideMerge(deps))
