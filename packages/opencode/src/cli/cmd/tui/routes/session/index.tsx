@@ -2731,13 +2731,13 @@ function Task(props: ToolProps<typeof ActorTool>) {
   })
 
   const inputActorId = createMemo(() => {
-    const raw = props.input as Partial<{ operation: { actor_id: string; action: string } }>
-    return raw?.operation?.actor_id
+    const raw = props.input as Partial<{ operation: { actor_id: string }; actor_id: string }>
+    return raw?.operation?.actor_id ?? raw?.actor_id
   })
 
   const inputAction = createMemo(() => {
-    const raw = props.input as Partial<{ operation: { action: string } }>
-    return raw?.operation?.action
+    const raw = props.input as Partial<{ operation: { action: string }; action: string }>
+    return raw?.operation?.action ?? raw?.action
   })
 
   const actorEntry = createMemo(() => {
@@ -2819,7 +2819,8 @@ function Task(props: ToolProps<typeof ActorTool>) {
       const label = props.part.state.status === "running" ? "Cancelling" : "Cancelled"
       header = `${label} — ${desc}`
     } else if (action === "wait") {
-      header = `Waiting for — ${desc}`
+      const label = isRunning() ? "Waiting for" : "Waited for"
+      header = `${label} — ${desc}`
     } else if (action === "spawn") {
       header = `Background ${agent} Task — ${desc}`
     } else {
