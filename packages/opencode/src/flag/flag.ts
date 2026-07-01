@@ -161,9 +161,10 @@ export const Flag = {
   // Set MIMOCODE_EXPERIMENTAL_WORKFLOW_TOOL=false to opt out. The env-var name is
   // kept for backwards compat (long-running experiments still pass it as `1`).
   MIMOCODE_EXPERIMENTAL_WORKFLOW_TOOL: !falsy("MIMOCODE_EXPERIMENTAL_WORKFLOW_TOOL"),
-  // Defaults to ON when MIMOCODE_EXPERIMENTAL is set; otherwise opt-in via
-  // MIMOCODE_EXPERIMENTAL_CRON=1. Gates the cron/loop scheduler tool.
-  MIMOCODE_EXPERIMENTAL_CRON: MIMOCODE_EXPERIMENTAL || truthy("MIMOCODE_EXPERIMENTAL_CRON"),
+  // Defaults to true: cron + self-paced loop scheduling are on by default.
+  // Set MIMOCODE_EXPERIMENTAL_CRON=false to opt out. Runtime kill switch is
+  // MIMOCODE_DISABLE_CRON (checked live every tick).
+  MIMOCODE_EXPERIMENTAL_CRON: !falsy("MIMOCODE_EXPERIMENTAL_CRON"),
   // Keepalive contract for self-paced loops (spec [S8]). Budget = how many
   // "forget" turns the model gets before the loop is declared model_stopped;
   // delay seconds = the auto-arm horizon used for the keepalive fire. Budget

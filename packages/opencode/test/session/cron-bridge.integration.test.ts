@@ -3,6 +3,8 @@ import { Effect, Layer } from "effect"
 import { mkdtempSync, rmSync } from "fs"
 import { tmpdir } from "os"
 import { join } from "path"
+import { provideInstance } from "../fixture/fixture"
+import { Flag } from "@/flag/flag"
 
 import { Bus } from "@/bus"
 import { SessionStatus } from "@/session/status"
@@ -104,7 +106,16 @@ const harness = <A>(captured: { value: CapturedPrompt[] }, work: (ctx: {
     const s = yield* Scheduler
     return yield* work({ bridge: b, scheduler: s })
   })
-  return Effect.runPromise(eff.pipe(Effect.provide(Layer.mergeAll(bridge, base))))
+  // The bridge (and its downstream SessionStatus / Bus / Scheduler) use
+  // InstanceState which reads the current Instance from a fiber-local
+  // context. Wrap the whole effect with an Instance provider so those
+  // reads resolve — same shape the real AppRuntime uses when it mounts
+  // the bridge from prompt.ts.
+  const tmp = mkdtempSync(join(tmpdir(), "cron-bridge-instance-"))
+  const provided = eff.pipe(Effect.provide(Layer.mergeAll(bridge, base)))
+  return Effect.runPromise(provideInstance(tmp)(provided as Effect.Effect<A>)).finally(() => {
+    rmSync(tmp, { recursive: true, force: true })
+  })
 }
 
 test("injectScheduledPrompt funnels through SessionPrompt.Service.prompt with cron origin", async () => {
@@ -180,9 +191,10 @@ test("cron-bridge start wires Scheduler with isLoading + isKilled + onFire", asy
   }
 })
 
-test("cron-bridge is a no-op when MIMOCODE_EXPERIMENTAL_CRON is unset", async () => {
+test("cron-bridge is a no-op when MIMOCODE_EXPERIMENTAL_CRON is explicitly disabled", async () => {
   const captured: { value: CapturedPrompt[] } = { value: [] }
-  delete process.env.MIMOCODE_EXPERIMENTAL_CRON
+  const originalFlag = Flag.MIMOCODE_EXPERIMENTAL_CRON
+  ;(Flag as { MIMOCODE_EXPERIMENTAL_CRON: boolean }).MIMOCODE_EXPERIMENTAL_CRON = false
   const dir = freshDir()
   try {
     await harness(captured, ({ bridge, scheduler }) =>
@@ -200,6 +212,7 @@ test("cron-bridge is a no-op when MIMOCODE_EXPERIMENTAL_CRON is unset", async ()
       }),
     )
   } finally {
+    ;(Flag as { MIMOCODE_EXPERIMENTAL_CRON: boolean }).MIMOCODE_EXPERIMENTAL_CRON = originalFlag
     rmSync(dir, { recursive: true, force: true })
   }
 })
@@ -230,23 +243,25 @@ test("cron-bridge double-start is idempotent (warns + ignores)", async () => {
 test("cron-bridge is resolvable via CronBridge.use (matches prompt.ts hook pattern)", async () => {
   const captured: { value: CapturedPrompt[] } = { value: [] }
   const dir = freshDir()
+  const instanceDir = mkdtempSync(join(tmpdir(), "cron-bridge-instance-"))
   try {
     const capture = makeCaptureLayer(captured)
     const base = Layer.mergeAll(SchedulerDefaultLayer, SessionStatus.defaultLayer, Bus.layer, capture)
     const bridge = cronBridgeLayer.pipe(Layer.provide(base))
     const layered = Layer.mergeAll(bridge, base)
     await Effect.runPromise(
-      CronBridge.use((b) =>
-        Effect.gen(function* () {
-          yield* b.start(sid, dir)
-          yield* b.stop()
-        }),
-      ).pipe(Effect.provide(layered)),
+      provideInstance(instanceDir)(
+        CronBridge.use((b) =>
+          Effect.gen(function* () {
+            yield* b.start(sid, dir)
+            yield* b.stop()
+          }),
+        ).pipe(Effect.provide(layered)) as Effect.Effect<void>,
+      ),
     )
-    // Reaching here means CronBridge.use(...) resolved through the layer
-    // stack — the same shape the prompt.ts hook uses on AppRuntime.
     expect(true).toBe(true)
   } finally {
     rmSync(dir, { recursive: true, force: true })
+    rmSync(instanceDir, { recursive: true, force: true })
   }
 })
