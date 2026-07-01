@@ -31,7 +31,7 @@ const id = "actor"
 const MODEL_PARAM_DESCRIPTION =
   "(optional) Model for this subagent: a model group name (e.g. ultra/standard/lite) or a literal provider/model (e.g. mimo-v2.5-pro). Overrides the agent's configured model; defaults to the agent's model, else the parent's. If no model_groups are configured, the tier names resolve to the default model."
 
-const KNOWN_ACTOR_VERBS = ["run", "spawn", "status", "wait", "cancel", "send"]
+const KNOWN_ACTOR_VERBS = ["run", "spawn", "status", "wait", "cancel", "send", "models"]
 
 function levenshteinActor(a: string, b: string): number {
   const m = a.length, n = b.length
@@ -65,6 +65,7 @@ type ActorShellArgs =
   | { operation: { action: "wait"; actor_id: string; timeout_ms?: number } }
   | { operation: { action: "cancel"; actor_id: string } }
   | { operation: { action: "send"; to_actor_id: string; content: string; to_session_id?: string; type?: string } }
+  | { operation: { action: "models"; vision?: boolean; limit?: number } }
 
 function actorArityError(verb: string, expected: string, args: string[], line: number) {
   return Effect.fail({
@@ -183,6 +184,20 @@ const mapActorVerb = Effect.fn("mapActorVerb")(function* (verb: string | undefin
           content: rest[1],
           ...(flags.session ? { to_session_id: flags.session } : {}),
           ...(flags.type ? { type: flags.type } : {}),
+        },
+      } as ActorShellArgs
+    }
+    case "models": {
+      const vision = args.includes("--vision")
+      const withoutVision = args.filter((a) => a !== "--vision")
+      const { flags, rest } = yield* extractNamedFlags(withoutVision, ["limit"], line)
+      if (rest.length !== 0)
+        return yield* actorArityError("models", "[--vision] [--limit <n>]", rest, line)
+      return {
+        operation: {
+          action: "models" as const,
+          ...(vision ? { vision: true } : {}),
+          ...(flags.limit ? { limit: Number(flags.limit) } : {}),
         },
       } as ActorShellArgs
     }
@@ -444,6 +459,12 @@ export const ActorTool = Tool.define(
           ),
       })
 
+      const modelsSchema = z.strictObject({
+        action: z.literal("models"),
+        vision: z.boolean().optional().describe("(optional) If true, list only vision-capable models (models that accept image input)."),
+        limit: z.number().int().positive().optional().describe("(optional) Max number of models to return. Default 50."),
+      })
+
       const parameters = z.strictObject({
         // .meta({ type: "object" }) is REQUIRED — without it the emitted JSON
         // schema's `operation` node has only `anyOf`, no `type`, and some models
@@ -460,6 +481,7 @@ export const ActorTool = Tool.define(
             waitSchema,
             cancelSchema,
             sendSchema,
+            modelsSchema,
           ])
           .meta({ type: "object" }),
       })
@@ -614,6 +636,28 @@ export const ActorTool = Tool.define(
             output: JSON.stringify(snapshot),
             metadata: { actor_id: entry.actorID, status: "cancelled" } as Record<string, any>,
           }
+        }
+
+        if (op.action === "models") {
+          const providers = yield* provider.list()
+          const all = Object.values(providers).flatMap((info) =>
+            Object.values(info.models).map((m) => ({
+              ref: `${m.providerID}/${m.id}`,
+              name: m.name,
+              vision: m.capabilities.input.image === true,
+            })),
+          )
+          const filtered = op.vision ? all.filter((m) => m.vision) : all
+          const sorted = filtered.sort((a, b) => a.ref.localeCompare(b.ref))
+          const limit = op.limit ?? 50
+          const shown = sorted.slice(0, limit)
+          const lines = shown.map((m) => `${m.ref}${m.vision ? " (vision)" : ""}`)
+          const header = op.vision ? `Vision-capable models` : `Available models`
+          const more = sorted.length > shown.length ? `\n… and ${sorted.length - shown.length} more (raise --limit)` : ""
+          const output = shown.length === 0
+            ? (op.vision ? "No vision-capable models are configured. Configure a vision model or use an OCR tool." : "No models are configured.")
+            : `${header} (${shown.length} of ${sorted.length}):\n${lines.join("\n")}${more}\nPass any of these to actor --model.`
+          return { title: header, output, metadata: { count: shown.length, total: sorted.length, vision: !!op.vision } as Record<string, any> }
         }
 
         // op.action ==="run" or "spawn" — schema guarantees
