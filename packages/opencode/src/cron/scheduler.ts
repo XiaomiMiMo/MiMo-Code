@@ -159,14 +159,18 @@ const makeImpl = (): Interface => {
       const tasks = [...fileTasks, ...sessionTasks]
       const now = Date.now()
 
+      // Tick-local latch. Once a task fires this tick, break out and let the
+      // next 1s tick handle the rest. The earlier `if (rt.opts.isLoading())`
+      // check was insufficient: isLoading() reads handle.loading from the
+      // cron-bridge, which only flips inside an async bus-subscription
+      // callback triggered by the injection's `busy` event. onFire itself is
+      // fire-and-forget (dynamic import().then(...)), so the second iteration
+      // of this loop runs before any microtask can update handle.loading.
+      // The synchronous latch prevents same-tick double-fire deterministically.
+      let firedThisTick = false
+
       for (const task of tasks) {
-        // PR #1479 finding #8: re-check the idle gate between fires. The
-        // tick-entry check at :153 only covers the first task; a second
-        // due task in the same tick would inject its prompt before the
-        // first injection's busy transition is observable on the bus,
-        // double-loading the session. Breaking on isLoading() here lets
-        // the deferred fires retry on the next 1s tick once the session
-        // is genuinely idle again.
+        if (firedThisTick) break
         if (rt.opts.isLoading()) break
         if (rt.opts.isKilled()) break
         if (rt.inFlight.has(task.id)) continue
@@ -192,6 +196,7 @@ const makeImpl = (): Interface => {
         const isFileTask = !sessionIds.has(task.id)
 
         rt.opts.onFire(task)
+        firedThisTick = true
 
         if (task.recurring === true && !aged) {
           rt.nextFireAt.set(task.id, computeNextFireFor(task, now, rt.cfg))

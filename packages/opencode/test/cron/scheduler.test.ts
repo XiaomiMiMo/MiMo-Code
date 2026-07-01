@@ -10,7 +10,7 @@ import {
   type StartOpts,
 } from "@/cron/scheduler"
 import { clearAllLoopStates } from "@/cron/loop-state"
-import { removeSessionCronTasks, getSessionCronTasks } from "@/cron/cron-task"
+import { removeSessionCronTasks, getSessionCronTasks, addSessionCronTask } from "@/cron/cron-task"
 import { DEFAULT_JITTER } from "@/cron/cron-jitter"
 
 const provided = <A, E>(eff: Effect.Effect<A, E, Scheduler>) =>
@@ -238,5 +238,53 @@ test("endLoop cancels pending and emits loop_ended", async () => {
       yield* sched.stop()
     }),
   )
+  rmSync(dir, { recursive: true, force: true })
+})
+
+// Regression for PR #1479 finding #8 residual (re-review round). The original
+// fix added `if (rt.opts.isLoading()) break` between fires, but isLoading()
+// reads a bridge-owned flag that flips inside an async bus callback — the
+// synchronous for-loop can't observe that transition. The tick-local
+// `firedThisTick` latch is what actually blocks same-tick double-fire.
+test("same-tick double-fire: only the first due task fires per tick", async () => {
+  const dir = freshDir()
+  await provided(
+    Effect.gen(function* () {
+      const sched = yield* Scheduler
+      const fires: string[] = []
+      yield* sched.start({
+        ...baseStartOpts(dir),
+        isLoading: () => false,
+        onFire: (t) => fires.push(t.id),
+      })
+
+      const past = Date.now() - 61_000
+      addSessionCronTask({
+        id: "taskA",
+        cron: "* * * * *",
+        prompt: "A",
+        createdAt: past,
+        recurring: true,
+      })
+      addSessionCronTask({
+        id: "taskB",
+        cron: "* * * * *",
+        prompt: "B",
+        createdAt: past,
+        recurring: true,
+      })
+
+      yield* sched.tickOnce()
+      expect(fires.length).toBe(1)
+      expect(["taskA", "taskB"]).toContain(fires[0])
+
+      yield* sched.tickOnce()
+      expect(fires.length).toBe(2)
+      expect(new Set(fires)).toEqual(new Set(["taskA", "taskB"]))
+
+      yield* sched.stop()
+    }),
+  )
+  removeSessionCronTasks(["taskA", "taskB"])
   rmSync(dir, { recursive: true, force: true })
 })
