@@ -5,7 +5,7 @@ $ARGUMENTS
 
 ## What to do
 
-1. Call the `cron` tool with `{"operation":{"action":"list"}}` to enumerate every active job for this session.
+1. Call the `cron` tool's `list` verb to enumerate every active job for this session. Use whichever call form the tool's own prompt describes — the `list` action takes no required arguments.
 
 2. Render the result as an indexed table. One row per job. Columns, left to right:
    - `id` — the job's short id (so the user can reference it)
@@ -16,7 +16,7 @@ $ARGUMENTS
 
    If there are no jobs, say so on a single line and stop.
 
-3. If the user's arguments contain `cancel <id>` (or `delete <id>`, `stop <id>`, `kill <id>`), call `cron delete` with that id and report the result. Multiple ids in the same message → one `cron delete` call per id.
+3. If the user's arguments contain `cancel <id>` (or `delete <id>`, `stop <id>`, `kill <id>`), call the `cron` tool's `delete` verb with that id and report the result. Multiple ids in the same message → one delete call per id.
 
 ## Conventions
 

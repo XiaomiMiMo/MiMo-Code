@@ -1,6 +1,6 @@
 ---
 name: loop
-description: Schedule a prompt to fire on a fixed cadence (recurring loop). Use when the user asks to "run X every N minutes/hours/days", "loop X", "babysit Y", or invokes `/loop` or `/proactive` directly. Parses `[interval] <prompt>`, picks a clean cron expression, registers the job via the `cron` tool, and executes the prompt once immediately so the user sees activity without waiting for the first cron tick.
+description: Schedule a prompt to fire on a fixed cadence (recurring loop). Use when the user asks to "run X every N minutes/hours/days", "loop X", "babysit Y", "be proactive about Y every N", or invokes `/loop` directly. Parses `[interval] <prompt>`, picks a clean cron expression, registers the job via the `cron` tool, and executes the prompt once immediately so the user sees activity without waiting for the first cron tick.
 ---
 
 # /loop — schedule a recurring prompt
@@ -9,7 +9,7 @@ This skill turns a free-form `[interval] <prompt>` line into a `cron` tool call 
 
 ## 1. Parse the input
 
-The user's text is whatever appears after `/loop ` or `/proactive `. Apply the three rules below **in order** and stop at the first match.
+The user's text is whatever appears after `/loop `. Apply the three rules below **in order** and stop at the first match.
 
 1. **Leading interval token.** If the first whitespace-separated token matches the regex `^\d+[smhd]$` (case-insensitive), that token is the interval. Examples: `5m`, `2h`, `1d`, `30s`. The rest of the input is the prompt.
 
@@ -45,14 +45,7 @@ Examples of rounding messages:
 
 ## 4. Call the cron tool
 
-With the parsed `cron` expression and `prompt`, invoke:
-
-```json
-{"operation":{"action":"schedule","cron":"<expr>","prompt":"<prompt>"}}
-```
-
-- Always `durable: false` unless the user said something like "persist", "survive restart", or "save permanently".
-- Always `recurring` (the default). `--one-shot` is for `/loop` is wrong; one-shots come from natural-language scheduling, not `/loop`.
+With the parsed `cron` expression and `prompt`, invoke the `cron` tool's `schedule` verb. Use whichever call form the tool's own prompt describes — pass `cron` and `prompt` as required, leave `durable: false` (the default; only set true when the user explicitly asked the job to persist across sessions), leave it recurring (the default; one-shot is wrong for `/loop` — one-shots come from natural-language scheduling).
 
 The cron tool returns a job id. Mention it briefly so the user can cancel with `/loops cancel <id>`.
 
