@@ -56,6 +56,11 @@ export const layer = Layer.effect(
       sessionID: SessionID
       unsubscribe: () => void
       loading: boolean
+      // Set to true once the SessionStatus bus subscription has delivered
+      // at least one event. Used to decide whether to trust the seed value
+      // from status.get() vs the events we've already observed via the
+      // subscription.
+      gotFirstEvent: boolean
       armedThisTurn: Set<string>
     }
     let started: Handle | null = null
@@ -128,12 +133,20 @@ export const layer = Layer.effect(
           return
         }
 
-        // Seed isLoading from current session status (busy iff a turn is in-flight).
-        const initial = yield* status.get(sessionID)
+        // Fire-reliability race fix: install the bus subscription BEFORE
+        // reading the current status. Doing it the other way round has a
+        // window between status.get() and subscribeCallback in which a
+        // busy or idle event can be published and lost — the observed
+        // "stuck true" reports came from a busy→idle transition landing in
+        // that window on a freshly-mounted bridge, so handle.loading
+        // stayed at its seed value forever. Now events start entering the
+        // callback the moment we install it; then we reconcile the seed
+        // from status.get() only if no event has landed yet.
         const handle: Handle = {
           sessionID,
           unsubscribe: () => undefined,
-          loading: initial.type === "busy",
+          loading: false,
+          gotFirstEvent: false,
           armedThisTurn: new Set(),
         }
         started = handle
@@ -153,6 +166,7 @@ export const layer = Layer.effect(
           const wasLoading = handle.loading
           const nowLoading = e.properties.status.type === "busy"
           handle.loading = nowLoading
+          handle.gotFirstEvent = true
           if (wasLoading && !nowLoading) {
             // busy → idle: a turn just completed. Run the keepalive sweep
             // detached on the host runtime — we cannot yield* here because
@@ -165,6 +179,13 @@ export const layer = Layer.effect(
           }
         })
         handle.unsubscribe = unsubscribe
+
+        // Reconcile: if the subscription hasn't seen any events yet, seed
+        // handle.loading from the live status. If events already landed
+        // during subscribe setup, they've written the authoritative value
+        // and we leave it alone.
+        const initial = yield* status.get(sessionID)
+        if (!handle.gotFirstEvent) handle.loading = initial.type === "busy"
 
         const onFire = (task: CronTask) => {
           // Detached fire-and-forget on the host runtime. We cannot yield* here
