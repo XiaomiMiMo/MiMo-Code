@@ -994,13 +994,12 @@ export function Prompt(props: PromptProps) {
     },
   ])
 
-  // While the free-model agreement dialog is open, ignore any further submit()
-  // calls. Enter triggers submit twice (the input_submit keybind plus the
-  // textarea's deferred onSubmit), and without this guard the deferred call can
-  // interleave with the post-accept re-submit and drop the user's message.
-  let agreementPending = false
+  // Enter triggers submit twice (the input_submit keybind plus the textarea's
+  // deferred onSubmit). This lock prevents the deferred call from re-entering
+  // while a dialog or async session-creation is in progress.
+  let submitLock = false
   async function submit() {
-    if (agreementPending) return false
+    if (submitLock) return false
     setGhost("")
     // IME: double-defer may fire before onContentChange flushes the last
     // composed character (e.g. Korean hangul) to the store, so read
@@ -1029,16 +1028,14 @@ export function Prompt(props: PromptProps) {
     // policy. Gate submission until the user accepts; the flag is stored in KV.
     const isFreeModel = FREE_MODEL_IDS.has(selectedModel.modelID)
     if (isFreeModel && !kv.get(FREE_AGREEMENT_KEY)) {
-      agreementPending = true
+      submitLock = true
       DialogAgreement.show(dialog, {
         onConfirm: () => {
           kv.set(FREE_AGREEMENT_KEY, true)
           void submit()
         },
-        // Fires on any dismissal (confirm, cancel, esc, click-outside). Reset
-        // the guard here so submission is unblocked once the dialog is gone.
         onClose: () => {
-          agreementPending = false
+          submitLock = false
         },
       })
       return false
@@ -1071,6 +1068,9 @@ export function Prompt(props: PromptProps) {
       ))
       return false
     }
+
+    submitLock = true
+    try {
 
     let sessionID = props.sessionID
     if (sessionID == null) {
@@ -1207,6 +1207,10 @@ export function Prompt(props: PromptProps) {
       }, 50)
     input.clear()
     return true
+
+    } finally {
+      submitLock = false
+    }
   }
   const exit = useExit()
 
