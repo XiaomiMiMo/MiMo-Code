@@ -6,7 +6,7 @@ import { AppFileSystem } from "@mimo-ai/shared/filesystem"
 import { WorkspaceContext } from "@/control-plane/workspace-context"
 import { WorkspaceID } from "@/control-plane/schema"
 import { Flag } from "@/flag/flag"
-import { Filesystem } from "@/util"
+import { Filesystem, Global } from "@/util"
 
 export function InstanceMiddleware(workspaceID?: WorkspaceID): MiddlewareHandler {
   return async (c, next) => {
@@ -23,7 +23,8 @@ export function InstanceMiddleware(workspaceID?: WorkspaceID): MiddlewareHandler
 
     if (!Flag.MIMOCODE_SERVER_PASSWORD) {
       const cwd = Filesystem.resolve(process.cwd())
-      if (!Filesystem.contains(cwd, directory)) {
+      const dataDir = Filesystem.resolve(Global.Path.data)
+      if (!Filesystem.contains(cwd, directory) && !Filesystem.contains(dataDir, directory)) {
         return c.json({ error: "Access denied: directory must be within the server's working directory" }, 403)
       }
     }
