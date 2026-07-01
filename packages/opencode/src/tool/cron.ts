@@ -5,6 +5,7 @@ import { tokenize } from "./shell-tokenize"
 import z from "zod"
 import { Effect } from "effect"
 import { Scheduler } from "@/cron/scheduler"
+import { computeNextCronRun } from "@/cron/cron-expr"
 import type { SessionID } from "../session/schema"
 
 const KNOWN_VERBS = ["schedule", "loop", "list", "get", "delete", "cancel", "rename"]
@@ -323,10 +324,27 @@ export const CronTool = Tool.define<typeof parameters, Metadata, Scheduler>(
           recurring: !op.one_shot,
           durable: op.durable ?? false,
         })
+        // Warn if the next fire is unreasonably far away. cron's forward-only
+        // semantics silently roll past-date pinned expressions to next year
+        // (e.g. `59 14 30 6 *` scheduled after 14:59 on June 30 targets next
+        // June 30). Real month/day intervals maxing out at ~31 days, so
+        // anything > 32 days is almost certainly a user typo — surface it in
+        // the tool return so the model can double-check with the user rather
+        // than silently wait a year.
+        const nextRun = computeNextCronRun(op.cron, new Date())
+        const suspiciousDelayMs = 32 * 24 * 60 * 60 * 1000
+        const warning =
+          nextRun && nextRun.getTime() - Date.now() > suspiciousDelayMs
+            ? `\n⚠ next fire is ${nextRun.toISOString()} — cron rolls past-date expressions to the next matching window. If you meant today, cancel and re-schedule.`
+            : ""
         return {
           title: `Scheduled ${t.id}`,
-          output: `Scheduled ${t.id} (${op.cron}${op.one_shot ? ", one-shot" : ", recurring"}${op.durable ? ", durable" : ""}): ${op.prompt}`,
-          metadata: { id: t.id, kind: t.kind ?? "cron" } as Metadata,
+          output: `Scheduled ${t.id} (${op.cron}${op.one_shot ? ", one-shot" : ", recurring"}${op.durable ? ", durable" : ""}): ${op.prompt}${warning}`,
+          metadata: {
+            id: t.id,
+            kind: t.kind ?? "cron",
+            ...(nextRun ? { scheduled_for: nextRun.getTime() } : {}),
+          } as Metadata,
         }
       }
 
