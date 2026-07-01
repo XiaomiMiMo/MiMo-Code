@@ -28,6 +28,17 @@ import { createTextNgramMonitor, type TextNgramMonitor } from "./prompt/text-ngr
 const DOOM_LOOP_THRESHOLD = 3
 const log = Log.create({ service: "session.processor" })
 
+const LEAKED_MODEL_END_TOKENS = ["<eos>", "<end_of_turn>"] as const
+
+function stripLeakedModelEndTokens(text: string) {
+  let result = text
+  for (const token of LEAKED_MODEL_END_TOKENS) {
+    while (result.startsWith(token)) result = result.slice(token.length)
+    while (result.endsWith(token)) result = result.slice(0, -token.length)
+  }
+  return result
+}
+
 export type Result = "overflow" | "stop" | "continue" | "text-repeat"
 
 export type Event = LLM.Event
@@ -565,15 +576,17 @@ export const layer: Layer.Layer<
           case "text-delta":
             if (!ctx.firstTokenAt) ctx.firstTokenAt = Date.now()
             if (!ctx.currentText) return
-            ctx.currentText.text += value.text
-            checkTextNgram(value.text)
+            const text = stripLeakedModelEndTokens(value.text)
+            if (!text) return
+            ctx.currentText.text += text
+            checkTextNgram(text)
             if (value.providerMetadata) ctx.currentText.metadata = value.providerMetadata
             yield* session.updatePartDelta({
               sessionID: ctx.currentText.sessionID,
               messageID: ctx.currentText.messageID,
               partID: ctx.currentText.id,
               field: "text",
-              delta: value.text,
+              delta: text,
             })
             return
 
@@ -595,6 +608,17 @@ export const layer: Layer.Layer<
               ctx.currentText.time = { start: ctx.currentText.time?.start ?? end, end }
             }
             if (value.providerMetadata) ctx.currentText.metadata = value.providerMetadata
+            if (!ctx.currentText.text) {
+              const partID = ctx.currentText.id
+              yield* session.removePart({
+                sessionID: ctx.currentText.sessionID,
+                messageID: ctx.currentText.messageID,
+                partID,
+              })
+              ctx.stepPartIds = ctx.stepPartIds.filter((id) => id !== partID)
+              ctx.currentText = undefined
+              return
+            }
             yield* session.updatePart(ctx.currentText)
             ctx.currentText = undefined
             return
