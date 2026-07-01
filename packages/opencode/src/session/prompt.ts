@@ -16,7 +16,6 @@ import type { JSONSchema7 } from "@ai-sdk/provider"
 import { SessionPrune } from "./prune"
 import { SessionCheckpoint } from "./checkpoint"
 import { SessionCompaction } from "./compaction"
-import { resetOnCompaction as resetCronSentinelOnCompaction } from "@/cron/sentinel"
 import { computeLastMessageInfo } from "./last-message-info"
 import { pressureLevel, isOverflow as overflowCheck } from "./overflow"
 import { Config } from "@/config"
@@ -2646,9 +2645,11 @@ NOTE: At any point in time through this workflow you should feel free to ask the
               overflow: compactionPart?.overflow,
               agentID: lastUser.agentID,
             })
-            // Compaction drops the prompt prefix, so any cron-sentinel content
-            // cache must be cleared — the next fire re-sends full content.
-            resetCronSentinelOnCompaction()
+            // cron-sentinel cache is invalidated via a SessionCompaction.Event
+            // .Compacted bus subscription inside cron-bridge — see
+            // `compaction.ts:468` publish + `cron-bridge.ts` subscribe pair.
+            // Covers this user-`/compact` path plus the overflow-boundary
+            // path in compaction.create.
             if (result === "stop") break
             continue
           }

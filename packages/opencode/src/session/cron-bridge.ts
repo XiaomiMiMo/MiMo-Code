@@ -1,10 +1,11 @@
 import { Context, Effect, Layer } from "effect"
 import { Scheduler, defaultLayer as SchedulerDefaultLayer, type LoopEndedEvent } from "@/cron/scheduler"
 import type { CronTask } from "@/cron/cron-task"
-import { resolveAtFireTime, isSentinel } from "@/cron/sentinel"
+import { resolveAtFireTime, isSentinel, resetOnCompaction as resetCronSentinelOnCompaction } from "@/cron/sentinel"
 import { listLoopStates, deleteLoopState, resetStrikes, incrementStrikes, getStrikes } from "@/cron/loop-state"
 import { injectScheduledPrompt } from "./prompt"
 import { SessionStatus } from "./status"
+import { SessionCompaction } from "./compaction"
 import { Bus } from "@/bus"
 import { SessionID } from "./schema"
 import { Flag } from "@/flag/flag"
@@ -55,6 +56,7 @@ export const layer = Layer.effect(
     type Handle = {
       sessionID: SessionID
       unsubscribe: () => void
+      unsubscribeCompaction: () => void
       loading: boolean
       // Set to true once the SessionStatus bus subscription has delivered
       // at least one event. Used to decide whether to trust the seed value
@@ -145,6 +147,7 @@ export const layer = Layer.effect(
         const handle: Handle = {
           sessionID,
           unsubscribe: () => undefined,
+          unsubscribeCompaction: () => undefined,
           loading: false,
           gotFirstEvent: false,
           armedThisTurn: new Set(),
@@ -179,6 +182,26 @@ export const layer = Layer.effect(
           }
         })
         handle.unsubscribe = unsubscribe
+
+        // Subscribe to SessionCompaction.Event.Compacted. Any compaction
+        // (user /compact via compaction.process, or overflow-boundary via
+        // compaction.create) drops effective context from the model's view —
+        // the cron sentinel content cache must reset for this session so the
+        // next fire re-sends full loop.md / autonomous preamble rather than
+        // the short "unchanged" reminder that assumes the earlier full
+        // delivery is still in context. Ignore subagent-slice compactions
+        // (agentID present and not "main") because those don't touch the
+        // main-agent context that owns the sentinel cache for this session.
+        const unsubscribeCompaction = yield* bus.subscribeCallback(
+          SessionCompaction.Event.Compacted,
+          (e) => {
+            if (e.properties.sessionID !== sessionID) return
+            const aid = e.properties.agentID
+            if (aid !== undefined && aid !== "main") return
+            resetCronSentinelOnCompaction(sessionID)
+          },
+        )
+        handle.unsubscribeCompaction = unsubscribeCompaction
 
         // Reconcile: if the subscription hasn't seen any events yet, seed
         // handle.loading from the live status. If events already landed
@@ -273,6 +296,7 @@ export const layer = Layer.effect(
         if (!handle) return
         started = null
         yield* Effect.sync(() => handle.unsubscribe())
+        yield* Effect.sync(() => handle.unsubscribeCompaction())
         yield* scheduler.stop()
         yield* Effect.sync(() => log.info("bridge stopped", { sessionID: handle.sessionID }))
       })

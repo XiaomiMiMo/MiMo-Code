@@ -146,3 +146,41 @@ test("autonomous-loop delivery does not bleed across sessions", async () => {
   expect(b1).toContain("autonomous loop")
   expect(b1.length).toBeGreaterThan(100)
 })
+
+// Regression: resetOnCompaction(sessionID) is scoped — only the named session's
+// cache entries are cleared. Sibling sessions keep their "already delivered"
+// state so their next fire returns the short reminder (no wasted retransmission).
+// This is the shape the cron-bridge uses when it subscribes to
+// SessionCompaction.Event.Compacted and forwards `sessionID` — the wiring that
+// covers both the user-/compact path and the overflow-boundary rebuild path.
+test("resetOnCompaction(sessionID) is scoped, does not clear sibling sessions", async () => {
+  resetOnCompaction() // clean slate
+  const dir = mkdtempSync(join(tmpdir(), "sentinel-"))
+  mkdirSync(join(dir, ".mimocode"), { recursive: true })
+  writeFileSync(join(dir, ".mimocode", "loop.md"), "shared body")
+
+  // Warm the cache for both sessions.
+  const a1 = await resolveAtFireTime(LOOP_FILE_SENTINEL, dir, "ses_A")
+  const b1 = await resolveAtFireTime(LOOP_FILE_SENTINEL, dir, "ses_B")
+  expect(a1).toContain("shared body")
+  expect(b1).toContain("shared body")
+
+  // 2nd fire on each → short reminder (cache is warm).
+  const a2 = await resolveAtFireTime(LOOP_FILE_SENTINEL, dir, "ses_A")
+  const b2 = await resolveAtFireTime(LOOP_FILE_SENTINEL, dir, "ses_B")
+  expect(a2).toMatch(/unchanged/)
+  expect(b2).toMatch(/unchanged/)
+
+  // Only compact session A.
+  resetOnCompaction("ses_A")
+
+  // A's next fire returns full content again (cache was cleared for A).
+  const a3 = await resolveAtFireTime(LOOP_FILE_SENTINEL, dir, "ses_A")
+  expect(a3).toContain("shared body")
+
+  // B's cache is untouched → still returns the short reminder.
+  const b3 = await resolveAtFireTime(LOOP_FILE_SENTINEL, dir, "ses_B")
+  expect(b3).toMatch(/unchanged/)
+
+  rmSync(dir, { recursive: true, force: true })
+})

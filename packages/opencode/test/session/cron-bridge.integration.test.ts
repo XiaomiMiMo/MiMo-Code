@@ -8,6 +8,7 @@ import { Flag } from "@/flag/flag"
 
 import { Bus } from "@/bus"
 import { SessionStatus } from "@/session/status"
+import { SessionCompaction } from "@/session/compaction"
 import { SessionPrompt, type PromptInput, type InjectScheduledPromptInput } from "@/session/prompt"
 import { MessageV2 } from "@/session/message-v2"
 import { SessionID, MessageID, PartID } from "@/session/schema"
@@ -262,6 +263,78 @@ test("cron-bridge is resolvable via CronBridge.use (matches prompt.ts hook patte
     expect(true).toBe(true)
   } finally {
     rmSync(dir, { recursive: true, force: true })
+    rmSync(instanceDir, { recursive: true, force: true })
+  }
+})
+
+// Regression: cron-bridge subscribes to SessionCompaction.Event.Compacted so
+// the sentinel cache resets automatically on user /compact AND on the
+// overflow-boundary path (compaction.create also publishes now). Subagent
+// slice compactions (agentID present, not "main") must NOT reset the main
+// cache — cache is scoped to (sessionID, workspaceRoot) and the sentinel
+// content lives in the main agent's context, not the subagent slice.
+test("cron-bridge resets sentinel cache on main-agent Compacted, ignores subagent slice", async () => {
+  const captured: { value: CapturedPrompt[] } = { value: [] }
+  const wsDir = freshDir()
+  const instanceDir = mkdtempSync(join(tmpdir(), "cron-bridge-instance-"))
+  try {
+    // Set up loop.md so the sentinel expansion is exercisable.
+    const mkdirSync2 = (await import("fs")).mkdirSync
+    const writeFileSync2 = (await import("fs")).writeFileSync
+    mkdirSync2(join(wsDir, ".mimocode"), { recursive: true })
+    writeFileSync2(join(wsDir, ".mimocode", "loop.md"), "cached body")
+
+    const capture = makeCaptureLayer(captured)
+    const base = Layer.mergeAll(SchedulerDefaultLayer, SessionStatus.defaultLayer, Bus.layer, capture)
+    const bridge = cronBridgeLayer.pipe(Layer.provide(base))
+    const layered = Layer.mergeAll(bridge, base)
+
+    // Import the sentinel primitives so we can inspect cache state directly.
+    const { resolveAtFireTime, LOOP_FILE_SENTINEL, resetOnCompaction } = await import("@/cron/sentinel")
+    // Clean slate for this test — earlier tests in the file may have written cache entries.
+    resetOnCompaction()
+
+    await Effect.runPromise(
+      provideInstance(instanceDir)(
+        Effect.gen(function* () {
+          const b = yield* CronBridge
+          const bus = yield* Bus.Service
+          yield* b.start(sid, wsDir)
+
+          // Warm the cache (first fire → full content).
+          const first = yield* Effect.promise(() => resolveAtFireTime(LOOP_FILE_SENTINEL, wsDir, sid))
+          expect(first).toContain("cached body")
+
+          // Second fire → short reminder (cache is warm).
+          const second = yield* Effect.promise(() => resolveAtFireTime(LOOP_FILE_SENTINEL, wsDir, sid))
+          expect(second).toMatch(/unchanged/)
+
+          // Subagent slice compaction fires. Bridge subscribes but filters
+          // agentID !== "main" — cache should stay warm.
+          yield* bus.publish(SessionCompaction.Event.Compacted, {
+            sessionID: sid,
+            agentID: "subagent-abc",
+          })
+          // Give the bus callback a tick to run.
+          yield* Effect.promise(() => new Promise((r) => setImmediate(r)))
+          const stillWarm = yield* Effect.promise(() => resolveAtFireTime(LOOP_FILE_SENTINEL, wsDir, sid))
+          expect(stillWarm).toMatch(/unchanged/)
+
+          // Main-agent compaction fires (agentID undefined). Bridge should
+          // clear the cache for this session; next fire returns full content.
+          yield* bus.publish(SessionCompaction.Event.Compacted, {
+            sessionID: sid,
+          })
+          yield* Effect.promise(() => new Promise((r) => setImmediate(r)))
+          const rewarm = yield* Effect.promise(() => resolveAtFireTime(LOOP_FILE_SENTINEL, wsDir, sid))
+          expect(rewarm).toContain("cached body")
+
+          yield* b.stop()
+        }).pipe(Effect.provide(layered)) as Effect.Effect<void>,
+      ),
+    )
+  } finally {
+    rmSync(wsDir, { recursive: true, force: true })
     rmSync(instanceDir, { recursive: true, force: true })
   }
 })
