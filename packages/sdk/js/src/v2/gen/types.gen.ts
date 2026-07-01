@@ -743,6 +743,8 @@ export type SessionStatus =
       attempt: number
       message: string
       next: number
+      providerID?: string
+      modelID?: string
     }
   | {
       type: "busy"

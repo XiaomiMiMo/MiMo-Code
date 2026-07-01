@@ -121,6 +121,22 @@ describe("session.retry.delay", () => {
       },
     })
   })
+
+  test("retry status preserves the model that scheduled the retry", () => {
+    expect(
+      SessionStatus.Info.parse({
+        type: "retry",
+        attempt: 1,
+        message: "quota exceeded",
+        next: Date.now() + 1000,
+        providerID: "glm",
+        modelID: "glm-4.5",
+      }),
+    ).toMatchObject({
+      providerID: "glm",
+      modelID: "glm-4.5",
+    })
+  })
 })
 
 describe("session.retry.retryable", () => {

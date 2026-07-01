@@ -45,6 +45,7 @@ import { DialogWorkspaceCreate, restoreWorkspaceSession } from "../dialog-worksp
 import { DialogWorkspaceUnavailable } from "../dialog-workspace-unavailable"
 import { DialogAgreement, FREE_AGREEMENT_KEY, FREE_MODEL_IDS } from "../dialog-agreement"
 import { useArgs } from "@tui/context/args"
+import { visiblePromptStatus } from "./status"
 
 export type PromptProps = {
   sessionID?: string
@@ -116,7 +117,9 @@ export function Prompt(props: PromptProps) {
   const sync = useSync()
   const dialog = useDialog()
   const toast = useToast()
-  const status = createMemo(() => sync.data.session_status?.[props.sessionID ?? ""] ?? { type: "idle" })
+  const status = createMemo(() =>
+    visiblePromptStatus(sync.data.session_status?.[props.sessionID ?? ""] ?? { type: "idle" }, local.model.current()),
+  )
   const history = usePromptHistory()
   const stash = usePromptStash()
   const command = useCommandDialog()
