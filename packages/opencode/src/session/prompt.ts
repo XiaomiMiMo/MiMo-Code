@@ -11,7 +11,17 @@ import { Agent } from "../agent/agent"
 import { SYSTEM_SPAWNED_AGENT_TYPES } from "@/agent/config"
 import { Provider } from "../provider"
 import { ModelID, ProviderID } from "../provider/schema"
-import { type Tool as AITool, type ModelMessage, tool, jsonSchema, type ToolExecutionOptions, asSchema } from "ai"
+import {
+  type Tool as AITool,
+  type ModelMessage,
+  tool,
+  jsonSchema,
+  type ToolExecutionOptions,
+  asSchema,
+  generateText,
+  wrapLanguageModel,
+} from "ai"
+import { InstallationVersion } from "@/installation/version"
 import type { JSONSchema7 } from "@ai-sdk/provider"
 import { SessionPrune } from "./prune"
 import { SessionCheckpoint } from "./checkpoint"
@@ -430,39 +440,81 @@ export const layer = Layer.effect(
       if (assistants.some((m) => m.info.time.completed === undefined)) return ""
       const lastAssistant = assistants[assistants.length - 1]
 
+      // Context fed to the prediction: up to 3 most recent user queries
+      // (chronological) plus the latest assistant turn (which carries tool
+      // outputs + final assistant text). Earlier assistant turns are dropped
+      // to keep the prompt small.
+      const recentUsers = history.filter(real).slice(-3)
+      const contextMsgs = [...recentUsers, lastAssistant]
+
       const base = yield* agents.get("title")
       if (!base) return ""
-      // Reuse the lightweight title agent's settings but swap its prompt for the
-      // prediction prompt — its default ("output ONLY a thread title") would
-      // otherwise be prepended ahead of PREDICT_SYSTEM and win.
-      const ag = { ...base, prompt: PREDICT_SYSTEM }
-      const mdl = ag.modelRef
-        ? yield* provider.resolveModelRef(ag.modelRef, lastAssistant.info.providerID)
-        : ag.model
-          ? yield* provider.getModel(ag.model.providerID, ag.model.modelID)
+      const mdl = base.modelRef
+        ? yield* provider.resolveModelRef(base.modelRef, lastAssistant.info.providerID)
+        : base.model
+          ? yield* provider.getModel(base.model.providerID, base.model.modelID)
           : ((yield* provider.getSmallModel(lastAssistant.info.providerID)) ??
             (yield* provider.getModel(lastAssistant.info.providerID, lastAssistant.info.modelID)))
 
-      const msgs = yield* MessageV2.toModelMessagesEffect([lastUser, lastAssistant], mdl, { stripMedia: true })
-      const text = yield* llm
-        .stream({
-          agent: ag,
-          user: lastUser.info,
-          system: [],
-          small: true,
-          tools: {},
-          model: mdl,
-          sessionID: input.sessionID,
-          retries: 1,
+      // Side-channel call: bypass llm.stream so prediction stays out of the
+      // session trajectory and never triggers session-coupled plugin hooks
+      // (chat.params, chat.headers, system.transform, memory instructions,
+      // x-session-affinity). Still publishes Metrics.ModelCall so the
+      // prediction cost shows up in analytics.
+      const msgs = yield* MessageV2.toModelMessagesEffect(contextMsgs, mdl, { stripMedia: true })
+      const language = yield* provider.getLanguage(mdl)
+      const wrapped = wrapLanguageModel({
+        model: language,
+        middleware: [
+          {
+            specificationVersion: "v3" as const,
+            async transformParams(args) {
+              if (args.type === "generate" || args.type === "stream") {
+                // @ts-expect-error
+                args.params.prompt = ProviderTransform.message(args.params.prompt, mdl, {})
+              }
+              return args.params
+            },
+          },
+        ],
+      })
+      const started = Date.now()
+      const result = yield* Effect.tryPromise(() =>
+        generateText({
+          model: wrapped,
+          system: PREDICT_SYSTEM,
           messages: [...msgs, { role: "user", content: PREDICT_NUDGE }],
+          maxOutputTokens: ProviderTransform.maxOutputTokens(mdl),
+          temperature: mdl.capabilities.temperature ? 0.7 : undefined,
+          providerOptions: ProviderTransform.providerOptions(mdl, ProviderTransform.smallOptions(mdl)),
+          headers: {
+            ...mdl.headers,
+            "User-Agent": `mimocode/${InstallationVersion}`,
+          },
+          maxRetries: 1,
+        }),
+      ).pipe(
+        Effect.catchCause((cause) =>
+          elog.warn("predict failed", { error: Cause.pretty(cause) }).pipe(Effect.as(undefined)),
+        ),
+      )
+      if (!result) return ""
+
+      const u = Session.getUsage({ model: mdl, usage: result.usage, metadata: result.providerMetadata })
+      yield* bus
+        .publish(Metrics.ModelCall, {
+          sessionID: input.sessionID,
+          finish_reason: result.finishReason,
+          latency_ms: Date.now() - started,
+          cached_read_tokens: u.tokens.cache.read,
+          model_id: mdl.id,
+          provider: mdl.providerID,
+          total_tokens_in: u.tokens.input + u.tokens.cache.read + u.tokens.cache.write,
+          total_tokens_out: u.tokens.output + u.tokens.reasoning,
         })
-        .pipe(
-          Stream.filter((e): e is Extract<LLM.Event, { type: "text-delta" }> => e.type === "text-delta"),
-          Stream.map((e) => e.text),
-          Stream.mkString,
-          Effect.orElseSucceed(() => ""),
-        )
-      const cleaned = text
+        .pipe(Effect.ignore)
+
+      const cleaned = result.text
         .replace(/<think>[\s\S]*?<\/think>\s*/g, "")
         .split("\n")
         .map((line) => line.trim())
