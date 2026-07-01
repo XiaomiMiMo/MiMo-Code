@@ -1239,6 +1239,11 @@ const layer: Layer.Layer<
               cachePromptTTL: model.cachePromptTTL ?? existingModel?.cachePromptTTL,
               variants: {},
             }
+            // mimo-auto is a free-tier routing alias absent from models.dev; it routes to a
+            // vision-capable model, so image input is supported.
+            if (providerID === "mimo" && modelID === "mimo-auto") {
+              parsedModel.capabilities.input.image = true
+            }
             const merged = mergeDeep(ProviderTransform.variants(parsedModel), model.variants ?? {})
             parsedModel.variants = mapValues(
               pickBy(merged, (v) => !v.disabled),
