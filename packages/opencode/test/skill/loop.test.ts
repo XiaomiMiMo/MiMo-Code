@@ -6,7 +6,7 @@ import { provideTmpdirInstance } from "../fixture/fixture"
 import { testEffect } from "../lib/effect"
 
 // Disable compose bundle to keep the skill universe small for this test; keep
-// the builtin bundle ON so the new /loop and /proactive skills are discoverable.
+// the builtin bundle ON so the /loop skill is discoverable.
 process.env.MIMOCODE_DISABLE_COMPOSE_SKILLS = "true"
 process.env.MIMOCODE_DISABLE_EXTERNAL_SKILLS = "true"
 delete process.env.MIMOCODE_DISABLE_BUILTIN_SKILLS
@@ -14,7 +14,7 @@ delete process.env.MIMOCODE_DISABLE_BUILTIN_SKILLS
 const it = testEffect(Layer.mergeAll(Skill.defaultLayer, CrossSpawnSpawner.defaultLayer))
 
 describe("loop skill", () => {
-  it.live("registers /loop and its proactive alias from the builtin bundle", () =>
+  it.live("registers /loop from the builtin bundle", () =>
     provideTmpdirInstance(
       () =>
         Effect.gen(function* () {
@@ -22,10 +22,7 @@ describe("loop skill", () => {
           const list = yield* skill.all()
 
           const loop = list.find((s) => s.name === "loop")
-          const proactive = list.find((s) => s.name === "proactive")
-
           expect(loop).toBeDefined()
-          expect(proactive).toBeDefined()
         }),
       { git: true },
     ),
@@ -60,9 +57,10 @@ describe("loop skill", () => {
           // Immediate first-execute rule.
           expect(body.toLowerCase()).toContain("immediately")
 
-          // Calls the cron tool.
+          // Instructs the model to call the cron tool's schedule verb — but
+          // does NOT hardcode a JSON call form (invocation style is per-session).
           expect(body.toLowerCase()).toContain("cron")
-          expect(body).toContain("\"action\":\"schedule\"")
+          expect(body.toLowerCase()).toContain("schedule")
         }),
       { git: true },
     ),
