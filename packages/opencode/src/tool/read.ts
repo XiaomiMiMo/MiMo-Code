@@ -11,6 +11,7 @@ import { Instance } from "../project/instance"
 import { assertExternalDirectoryEffect } from "./external-directory"
 import { SessionCwd } from "./session-cwd"
 import { Instruction } from "../session/instruction"
+import { Provider } from "@/provider"
 import { isImageAttachment, isPdfAttachment, sniffAttachmentMime } from "@/util/media"
 
 const DEFAULT_READ_LIMIT = 2000
@@ -32,6 +33,7 @@ export const ReadTool = Tool.define(
     const fs = yield* AppFileSystem.Service
     const instruction = yield* Instruction.Service
     const lsp = yield* LSP.Service
+    const provider = yield* Provider.Service
     const scope = yield* Scope.Scope
 
     const miss = Effect.fn("ReadTool.miss")(function* (filepath: string) {
@@ -208,14 +210,55 @@ export const ReadTool = Tool.define(
       const sample = yield* readSample(filepath, Number(stat.size), SAMPLE_BYTES)
 
       const mime = sniffAttachmentMime(sample, AppFileSystem.mimeType(filepath))
-      if (isImageAttachment(mime) || isPdfAttachment(mime)) {
+      if (isImageAttachment(mime)) {
+        const modelRef = [...ctx.messages]
+          .reverse()
+          .map((m) => m.info)
+          .find((i): i is Extract<typeof i, { role: "user" }> => i.role === "user")?.model
+        const model = modelRef
+          ? yield* provider
+              .getModel(modelRef.providerID, modelRef.modelID)
+              .pipe(Effect.catch(() => Effect.succeed(undefined)))
+          : undefined
+        const supportsImage = model?.capabilities.input.image ?? false
+        if (!supportsImage) {
+          const warning = [
+            `Cannot read image "${path.basename(filepath)}" — the current model has no vision support, so its visual content is unavailable.`,
+            `If you need to understand the image visually, dispatch a vision-capable subagent: actor run <type> "<desc>" "analyze the image at ${filepath}" --model <a vision model>.`,
+            `If you instead need the file's raw binary structure, use a shell tool such as \`hexdump -C ${filepath}\` — do not use the read tool for that.`,
+          ].join("\n")
+          return {
+            title,
+            output: warning,
+            metadata: { preview: warning, truncated: false, loaded: [] as string[] },
+          }
+        }
         const bytes = yield* fs.readFile(filepath)
-        const msg = isPdfAttachment(mime) ? "PDF read successfully" : "Image read successfully"
         return {
           title,
-          output: msg,
+          output: "Image read successfully",
           metadata: {
-            preview: msg,
+            preview: "Image read successfully",
+            truncated: false,
+            loaded: loaded.map((item) => item.filepath),
+          },
+          attachments: [
+            {
+              type: "file" as const,
+              mime,
+              url: `data:${mime};base64,${Buffer.from(bytes).toString("base64")}`,
+            },
+          ],
+        }
+      }
+
+      if (isPdfAttachment(mime)) {
+        const bytes = yield* fs.readFile(filepath)
+        return {
+          title,
+          output: "PDF read successfully",
+          metadata: {
+            preview: "PDF read successfully",
             truncated: false,
             loaded: loaded.map((item) => item.filepath),
           },
