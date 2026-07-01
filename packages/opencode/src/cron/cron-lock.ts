@@ -1,6 +1,7 @@
 import { Effect } from "effect"
 import { join } from "path"
 import { mkdir, readFile, rename, unlink, writeFile, open } from "fs/promises"
+import { readFileSync } from "fs"
 import { Log } from "@/util"
 
 const log = Log.create({ service: "cron-lock" })
@@ -38,7 +39,7 @@ const readPidStartJiffies = (pid: number): number | null => {
   return Effect.runSync(
     Effect.try({
       try: () => {
-        const raw = require("fs").readFileSync(`/proc/${pid}/stat`, "utf-8") as string
+        const raw = readFileSync(`/proc/${pid}/stat`, "utf-8")
         // The comm field (field 2) is parenthesised and may contain spaces; skip past the last `)`.
         const lastParen = raw.lastIndexOf(")")
         if (lastParen < 0) return null as number | null
@@ -52,39 +53,86 @@ const readPidStartJiffies = (pid: number): number | null => {
   )
 }
 
+// Read /proc/uptime and return current system uptime in ms.
+// /proc/uptime format: "<seconds-since-boot> <idle-seconds>", both floats.
+const readUptimeMs = (): number | null => {
+  if (process.platform !== "linux") return null
+  return Effect.runSync(
+    Effect.try({
+      try: () => {
+        const raw = readFileSync("/proc/uptime", "utf-8")
+        const first = raw.split(/\s+/)[0]
+        const sec = parseFloat(first ?? "")
+        return Number.isFinite(sec) ? Math.floor(sec * 1000) : null
+      },
+      catch: () => null as number | null,
+    }).pipe(Effect.orElseSucceed(() => null as number | null)),
+  )
+}
+
 let selfStartJiffies: number | null | undefined = undefined
 const getSelfStartJiffies = (): number | null => {
   if (selfStartJiffies === undefined) selfStartJiffies = readPidStartJiffies(process.pid)
   return selfStartJiffies
 }
 
+// Cached at first successful read: milliseconds-per-jiffy. On typical Linux
+// systems CLK_TCK=100 so this is ~10, but we don't hardcode — we derive it
+// from the correspondence between our own PROC_STARTED_AT (epoch ms) and our
+// own /proc starttime (boot-relative jiffies), using /proc/uptime to pin the
+// boot moment. Node doesn't expose sysconf(_SC_CLK_TCK) portably.
+let cachedMsPerJiffy: number | null | undefined = undefined
+const getMsPerJiffy = (): number | null => {
+  if (cachedMsPerJiffy !== undefined) return cachedMsPerJiffy
+  const selfJiffies = getSelfStartJiffies()
+  const uptimeMs = readUptimeMs()
+  if (selfJiffies === null || uptimeMs === null || selfJiffies < 1) {
+    cachedMsPerJiffy = null
+    return null
+  }
+  // Boot happened `uptimeMs` ago in wall-clock time. Our process started at
+  // PROC_STARTED_AT (epoch ms). So our process is (Date.now() - PROC_STARTED_AT)
+  // ms into its life, and started (uptimeMs - (Date.now() - PROC_STARTED_AT))
+  // ms after boot. selfJiffies jiffies had elapsed by that moment. Solve for
+  // the ratio.
+  const bootTimeMs = Date.now() - uptimeMs
+  const selfStartMsAfterBoot = PROC_STARTED_AT - bootTimeMs
+  if (selfStartMsAfterBoot < 1) {
+    cachedMsPerJiffy = null
+    return null
+  }
+  cachedMsPerJiffy = selfStartMsAfterBoot / selfJiffies
+  return cachedMsPerJiffy
+}
+
 // True if the pid in the lock genuinely names the live process that wrote it.
 // PR #1479 finding #7: process.kill(pid, 0) alone says "some process with this
-// PID is alive" — a recycled PID would falsely report the lock as held. By
-// comparing /proc/<pid>/stat starttime to a calibrated reference, we can detect
-// recycling. Calibration: when we wrote PROC_STARTED_AT for our own lock, we
-// also know our own /proc starttime. If the OTHER pid's starttime now reads
-// LATER than what our wall-clock reference implies, the PID is recycled.
+// PID is alive" — a recycled PID would falsely report the lock as held. On
+// Linux, cross-check the pid's start time against the lock's startedAt to
+// detect recycling; the previous version of this code did the arithmetic
+// wrong (dividing self-uptime by boot-relative jiffies, which are unrelated
+// quantities) and never actually triggered.
 const isPidAlive = (pid: number, lockStartedAtMs: number): boolean =>
   Effect.runSync(
     Effect.try({
       try: () => {
         process.kill(pid, 0)
-        // Liveness probe says yes. Now check for PID recycling on Linux.
+        // Liveness probe says yes. Check for PID recycling on Linux.
         const otherJiffies = readPidStartJiffies(pid)
-        const selfJiffies = getSelfStartJiffies()
-        if (otherJiffies !== null && selfJiffies !== null) {
-          // Convert: ms-since-boot ≈ jiffies * (1000 / clkTck). We can't read
-          // CLK_TCK portably from Node, but we don't need absolute units — we
-          // have a known reference point (our own PROC_STARTED_AT ↔ selfJiffies)
-          // and can express the lock's startedAt in jiffies via the ratio.
-          const msPerJiffy = (Date.now() - PROC_STARTED_AT) / Math.max(1, selfJiffies)
-          const expectedJiffies = lockStartedAtMs / Math.max(0.001, msPerJiffy)
-          // If the live PID's process started measurably LATER than the lock
-          // claims, it's been recycled. Allow a 2-second slop for clock skew.
-          const slopJiffies = 2_000 / Math.max(0.001, msPerJiffy)
-          if (otherJiffies > expectedJiffies + slopJiffies) return false
-        }
+        const msPerJiffy = getMsPerJiffy()
+        const uptimeMs = readUptimeMs()
+        if (otherJiffies === null || msPerJiffy === null || uptimeMs === null) return true
+
+        // Reconstruct when THIS pid actually started, in epoch ms.
+        const bootTimeMs = Date.now() - uptimeMs
+        const otherStartedAtMs = bootTimeMs + otherJiffies * msPerJiffy
+
+        // The live pid is the ORIGINAL lock owner only if its actual start
+        // time matches the claimed startedAt (within slop). Any material
+        // discrepancy — pid younger than claim OR older than claim — means
+        // the pid has been reassigned since the lock was written. 2s slop
+        // for clock/jiffy rounding.
+        if (Math.abs(otherStartedAtMs - lockStartedAtMs) > 2_000) return false
         return true
       },
       catch: (e) => {
