@@ -2730,8 +2730,44 @@ function Task(props: ToolProps<typeof ActorTool>) {
     return (raw?.operation ?? raw) as Partial<{ description: string; subagent_type: string }>
   })
 
-  const targetSession = createMemo(() => props.metadata.sessionId as string | undefined)
-  const targetBucket = createMemo(() => (props.metadata.actorId as string | undefined) ?? "main")
+  const inputActorId = createMemo(() => {
+    const raw = props.input as Partial<{ operation: { actor_id: string }; actor_id: string }>
+    return raw?.operation?.actor_id ?? raw?.actor_id
+  })
+
+  const inputAction = createMemo(() => {
+    const raw = props.input as Partial<{ operation: { action: string }; action: string }>
+    return raw?.operation?.action ?? raw?.action
+  })
+
+  const actorEntry = createMemo(() => {
+    const actorId = (props.metadata.actorId as string | undefined) ?? inputActorId()
+    if (!actorId) return undefined
+    const actors = sync.data.actor[props.part.sessionID]
+    if (!actors) return undefined
+    return actors.find((a) => a.actor_id === actorId)
+  })
+
+  const targetSession = createMemo(() => {
+    const fromMeta = props.metadata.sessionId as string | undefined
+    if (fromMeta) return fromMeta
+    return actorEntry()?.session_id
+  })
+
+  const targetBucket = createMemo(() => {
+    const fromMeta = props.metadata.actorId as string | undefined
+    if (fromMeta) return fromMeta
+    return inputActorId() ?? "main"
+  })
+
+  const actorStatus = createMemo(() => {
+    return actorEntry()?.status
+  })
+
+  const resolvedDescription = createMemo(() => {
+    if (input().description) return input().description
+    return actorEntry()?.description
+  })
 
   createEffect(() => {
     const session = targetSession()
@@ -2754,7 +2790,14 @@ function Task(props: ToolProps<typeof ActorTool>) {
     tools().findLast((x) => (x.state.status === "running" || x.state.status === "completed") && x.state.title),
   )
 
-  const isRunning = createMemo(() => props.part.state.status === "running")
+  const isRunning = createMemo(() => {
+    if (props.part.state.status === "running") return true
+    if (props.part.state.status === "completed") {
+      const status = actorStatus()
+      return status === "running" || status === "pending"
+    }
+    return false
+  })
 
   const duration = createMemo(() => {
     const first = messages().find((x) => x.role === "user")?.time.created
@@ -2764,11 +2807,33 @@ function Task(props: ToolProps<typeof ActorTool>) {
   })
 
   const content = createMemo(() => {
-    if (!input().description) return ""
-    let content = [`${Locale.titlecase(input().subagent_type ?? "General")} Task — ${input().description}`]
+    const desc = resolvedDescription()
+    if (!desc) return ""
+
+    const action = inputAction()
+    const status = actorStatus()
+    const agent = Locale.titlecase(input().subagent_type ?? actorEntry()?.agent ?? "General")
+
+    let header: string
+    if (action === "cancel") {
+      const label = props.part.state.status === "running" ? "Cancelling" : "Cancelled"
+      header = `${label} — ${desc}`
+    } else if (action === "wait") {
+      const label = props.part.state.status === "completed" ? "Waited for" : "Waiting for"
+      header = `${label} — ${desc}`
+    } else if (action === "spawn") {
+      header = `Background ${agent} Task — ${desc}`
+    } else {
+      header = `${agent} Task — ${desc}`
+    }
+
+    if (status === "cancelled" && action !== "cancel") {
+      header += " (cancelled)"
+    }
+
+    let content = [header]
 
     if (isRunning() && tools().length > 0) {
-      // content[0] += ` · ${tools().length} toolcalls`
       if (current()) {
         const state = current()!.state
         const title = state.status === "running" || state.status === "completed" ? state.title : undefined
@@ -2776,7 +2841,7 @@ function Task(props: ToolProps<typeof ActorTool>) {
       } else content.push(`↳ ${tools().length} toolcalls`)
     }
 
-    if (props.part.state.status === "completed") {
+    if (props.part.state.status === "completed" && !isRunning()) {
       content.push(`└ ${tools().length} toolcalls · ${Locale.duration(duration())}`)
     }
 
@@ -2787,7 +2852,7 @@ function Task(props: ToolProps<typeof ActorTool>) {
     <InlineTool
       icon="│"
       spinner={isRunning()}
-      complete={input().description}
+      complete={resolvedDescription()}
       pending="Delegating..."
       part={props.part}
       onClick={() => {
