@@ -2819,7 +2819,7 @@ function Task(props: ToolProps<typeof ActorTool>) {
       const label = props.part.state.status === "running" ? "Cancelling" : "Cancelled"
       header = `${label} — ${desc}`
     } else if (action === "wait") {
-      const label = isRunning() ? "Waiting for" : "Waited for"
+      const label = props.part.state.status === "completed" ? "Waited for" : "Waiting for"
       header = `${label} — ${desc}`
     } else if (action === "spawn") {
       header = `Background ${agent} Task — ${desc}`
