@@ -324,19 +324,28 @@ export const CronTool = Tool.define<typeof parameters, Metadata, Scheduler>(
           recurring: !op.one_shot,
           durable: op.durable ?? false,
         })
-        // Warn if the next fire is unreasonably far away. cron's forward-only
-        // semantics silently roll past-date pinned expressions to next year
-        // (e.g. `59 14 30 6 *` scheduled after 14:59 on June 30 targets next
-        // June 30). Real month/day intervals maxing out at ~31 days, so
-        // anything > 32 days is almost certainly a user typo — surface it in
-        // the tool return so the model can double-check with the user rather
-        // than silently wait a year.
+        // Sanity-check the cron: warn on two shapes the user is unlikely to
+        // want, both of which the parser/scheduler will otherwise accept
+        // silently.
+        //   (a) The expression never matches within a year (e.g. `0 0 30 2 *`
+        //       — Feb 30). computeNextCronRun returns null; the task will sit
+        //       on disk forever, never firing. Always worth surfacing.
+        //   (b) A ONE-SHOT expression whose next fire is > 30 days away. This
+        //       is the "past-date pinned cron silently rolls to next year"
+        //       shape the PR called out — user typed a specific date, cron's
+        //       forward-only semantics rolled it to the next matching window.
+        //       A RECURRING expression legitimately targets far-future fires
+        //       (`0 0 1 1 *` = yearly Jan 1) so no warning there.
         const nextRun = computeNextCronRun(op.cron, new Date())
-        const suspiciousDelayMs = 32 * 24 * 60 * 60 * 1000
-        const warning =
-          nextRun && nextRun.getTime() - Date.now() > suspiciousDelayMs
-            ? `\n⚠ next fire is ${nextRun.toISOString()} — cron rolls past-date expressions to the next matching window. If you meant today, cancel and re-schedule.`
-            : ""
+        const monthMs = 30 * 24 * 60 * 60 * 1000
+        let warning = ""
+        if (nextRun === null) {
+          warning =
+            `\n⚠ this cron expression never matches within a year — the task is scheduled but will never fire. Double-check the fields (e.g. \`0 0 30 2 *\` = Feb 30, which doesn't exist).`
+        } else if (op.one_shot && nextRun.getTime() - Date.now() > monthMs) {
+          warning =
+            `\n⚠ next fire is ${nextRun.toISOString()} — cron's forward-only semantics rolled this one-shot to the next matching window. If you meant sooner, cancel and re-schedule with a date in the future.`
+        }
         return {
           title: `Scheduled ${t.id}`,
           output: `Scheduled ${t.id} (${op.cron}${op.one_shot ? ", one-shot" : ", recurring"}${op.durable ? ", durable" : ""}): ${op.prompt}${warning}`,
