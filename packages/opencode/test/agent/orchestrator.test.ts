@@ -31,7 +31,7 @@ test("orchestrator agent is a native, full-capability primary (no tool restricti
       // prompt (agent.prompt), which REPLACES the base coding prompt — it is not
       // a system-reminder injected into the user message.
       expect(orchestrator?.prompt).toBe(PROMPT_ORCHESTRATOR)
-      expect(orchestrator?.prompt).toContain("NOT a coding agent")
+      expect(orchestrator?.prompt).toMatch(/leader|manager|coordinat/i)
     },
   })
 })

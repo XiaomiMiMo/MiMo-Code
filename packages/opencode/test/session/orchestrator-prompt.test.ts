@@ -7,10 +7,11 @@ describe("orchestrator prompt", () => {
     expect(PROMPT_ORCHESTRATOR).toContain("`session` tool")
   })
 
-  test("establishes a delegator identity, not a coding agent", () => {
-    // The defining trait of this mode: it coordinates/delegates rather than
-    // doing the work itself. Pin so it can't regress into a coder prompt.
-    expect(PROMPT_ORCHESTRATOR).toContain("NOT a coding agent")
+  test("establishes a positive leader/delegator identity", () => {
+    // The defining trait of this mode: it leads/coordinates and delegates the
+    // work rather than doing it itself. Pin the POSITIVE identity so it can't
+    // regress into a coder prompt.
+    expect(PROMPT_ORCHESTRATOR).toMatch(/leader|manager|coordinat/i)
     expect(PROMPT_ORCHESTRATOR).toMatch(/delegat/i)
   })
 
