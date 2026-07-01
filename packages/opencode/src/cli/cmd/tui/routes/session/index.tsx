@@ -93,6 +93,7 @@ import { DialogGoUpsell } from "../../component/dialog-go-upsell"
 import { DialogTokenPlan } from "../../component/dialog-token-plan"
 import { SessionRetry } from "@/session/retry"
 import { getRevertDiffFiles } from "../../util/revert-diff"
+import { conversationScrollKey } from "./scroll"
 
 addDefaultParsers(parsers.parsers)
 
@@ -1082,8 +1083,9 @@ export function Session() {
     }
   })
 
-  // snap to bottom when session changes
-  createEffect(on(() => route.sessionID, toBottom))
+  // Snap to bottom when the rendered conversation changes. Subagent views share
+  // the same sessionID, so key by agentID as well as sessionID.
+  createEffect(on(() => conversationScrollKey({ sessionID: route.sessionID, agentID: currentAgentID() }), toBottom))
 
   return (
     <context.Provider
