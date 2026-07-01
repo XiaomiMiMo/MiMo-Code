@@ -31,9 +31,11 @@ export async function createGridSession(input: {
   sessionID?: string
 }): Promise<string | undefined> {
   const workspaceID = input.project.workspace.current()
-  let sessionID = input.sessionID
-  if (!sessionID) {
-    const client = workspaceID ? input.workspaceClients.clientFor(asWorkspaceID(workspaceID)) : input.sdk.client
+  let created: string | undefined
+  if (!input.sessionID) {
+    const client = workspaceID
+      ? input.workspaceClients.clientFor(asWorkspaceID(workspaceID))
+      : input.sdk.client
     const result = await client.session.create({ workspace: workspaceID }).catch(() => undefined)
     if (!result?.data) {
       input.toast.show({
@@ -42,8 +44,10 @@ export async function createGridSession(input: {
       })
       return undefined
     }
-    sessionID = result.data.id
+    created = result.data.id
   }
+  const sessionID = input.sessionID ?? created
+  if (!sessionID) return undefined
   input.grid.addCell({
     sessionID,
     workspaceID: workspaceID ?? "",
