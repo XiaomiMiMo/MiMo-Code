@@ -43,7 +43,8 @@ function detectType(key: string): MemoryType {
 }
 
 export function parsePath(absPath: string): MemoryLocator | null {
-  const m = absPath.match(/\/memory\/(global|projects|sessions)(?:\/([^/]+))?\/(.+)\.md$/)
+  // Support both forward slashes (Unix) and backslashes (Windows)
+  const m = absPath.match(/[/\\]memory[/\\](global|projects|sessions)(?:[/\\]([^/\\]+))?[/\\](.+)\.md$/)
   if (!m) return null
   const [, scope, idMaybe, keyRaw] = m
   const scope_id = scope === "global" ? "" : (idMaybe ?? "")
@@ -53,8 +54,8 @@ export function parsePath(absPath: string): MemoryLocator | null {
 
 // Match: <anything>/.claude/projects/<slug>/memory/<key>.md
 // <slug> is a single path segment (CC's path-derived project identifier).
-// <key> may contain '/' for nested dirs.
-const CC_PATH_RE = /\/\.claude\/projects\/([^/]+)\/memory\/(.+)\.md$/
+// <key> may contain '/' or '\' for nested dirs.
+const CC_PATH_RE = /[/\\]\.claude[/\\]projects[/\\]([^/\\]+)[/\\]memory[/\\](.+)\.md$/
 
 export function parseCcPath(absPath: string): MemoryLocator | null {
   const m = absPath.match(CC_PATH_RE)
