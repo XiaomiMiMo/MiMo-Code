@@ -8,7 +8,7 @@ import { Font } from "@mimo-ai/ui/font"
 import { Splash } from "@mimo-ai/ui/logo"
 import { ThemeProvider } from "@mimo-ai/ui/theme/context"
 import { MetaProvider } from "@solidjs/meta"
-import { type BaseRouterProps, Navigate, Route, Router } from "@solidjs/router"
+import { type BaseRouterProps, Navigate, Route, Router, useParams } from "@solidjs/router"
 import { QueryClient, QueryClientProvider } from "@tanstack/solid-query"
 import { Effect } from "effect"
 import {
@@ -42,6 +42,7 @@ import { ServerConnection, ServerProvider, serverName, useServer } from "@/conte
 import { SettingsProvider } from "@/context/settings"
 import { TerminalProvider } from "@/context/terminal"
 import DirectoryLayout from "@/pages/directory-layout"
+import { SessionGrid } from "@/components/session"
 import Layout from "@/pages/layout"
 import { ErrorPage } from "./pages/error"
 import { useCheckServerHealth } from "./utils/server-health"
@@ -55,11 +56,12 @@ if (typeof location === "object" && /\/session(?:\/|$)/.test(location.pathname))
   void loadSession()
 }
 
-const SessionRoute = () => (
-  <SessionProviders>
-    <Session />
-  </SessionProviders>
-)
+const SessionRoute = () => {
+  const params = useParams<{ dir?: string; id?: string }>()
+  // Layout store keys are base64 dir strings (see layout.sidebar.workspaces usage).
+  // Pass params.dir verbatim so per-directory layout state lines up.
+  return <SessionGrid dir={params.dir ?? ""} primaryId={params.id} />
+}
 
 const SessionIndexRoute = () => <Navigate href="session" />
 
