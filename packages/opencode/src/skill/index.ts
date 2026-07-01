@@ -203,6 +203,12 @@ const discoverSkills = Effect.fnUntraced(function* (
     yield* scan(state, dir, MIMOCODE_SKILL_PATTERN)
   }
 
+  // marketplace 已安装内容插件（用户主动安装，默认发现，无禁用开关）
+  const pluginsRoot = path.join(Global.Path.data, "plugins")
+  if (yield* fsys.isDir(pluginsRoot)) {
+    yield* scan(state, pluginsRoot, "*/skills/**/SKILL.md", { scope: "marketplace" })
+  }
+
   const cfg = yield* config.get()
   for (const item of cfg.skills?.paths ?? []) {
     const expanded = item.startsWith("~/") ? path.join(os.homedir(), item.slice(2)) : item

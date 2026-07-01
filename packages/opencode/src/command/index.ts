@@ -2,11 +2,15 @@ import { BusEvent } from "@/bus/bus-event"
 import { InstanceState } from "@/effect"
 import { EffectBridge } from "@/effect"
 import { Flag } from "@/flag/flag"
+import { Global } from "@/global"
 import type { InstanceContext } from "@/project/instance"
 import { SessionID, MessageID } from "@/session/schema"
 import { Effect, Layer, Context } from "effect"
+import path from "path"
+import { readdir } from "fs/promises"
 import z from "zod"
 import { Config } from "../config"
+import { ConfigCommand } from "../config/command"
 import { MCP } from "../mcp"
 import { Skill } from "../skill"
 import PROMPT_INITIALIZE from "./template/initialize.txt"
@@ -65,6 +69,7 @@ export const Default = {
   DISTILL: "distill",
   GOAL: "goal",
   DEEP_RESEARCH: "deep-research",
+  RELOAD_PLUGINS: "reload-plugins",
 } as const
 
 export function deepResearchTemplate(): string {
@@ -88,6 +93,7 @@ export function deepResearchTemplate(): string {
 export interface Interface {
   readonly get: (name: string) => Effect.Effect<Info | undefined>
   readonly list: () => Effect.Effect<Info[]>
+  readonly reload: () => Effect.Effect<void>
 }
 
 export class Service extends Context.Service<Service, Interface>()("@opencode/Command") {}
@@ -189,6 +195,14 @@ export const layer = Layer.effect(
         }
       }
 
+      commands[Default.RELOAD_PLUGINS] = {
+        name: Default.RELOAD_PLUGINS,
+        description: "reload skills and commands (no restart needed after installing a plugin)",
+        source: "command",
+        template: "reload skills and commands...",
+        hints: [],
+      }
+
       for (const [name, command] of Object.entries(cfg.command ?? {})) {
         commands[name] = {
           name,
@@ -201,6 +215,39 @@ export const layer = Layer.effect(
           },
           subtask: command.subtask,
           hints: hints(command.template),
+        }
+      }
+
+      // marketplace 插件的 markdown command：与 skill 同构，直接扫 <data>/plugins/*/，
+      // 不经 config 缓存——这样 /reload-plugins 后 command.reload() 能即时生效。
+      const pluginsRoot = path.join(Global.Path.data, "plugins")
+      const pluginCommands = yield* Effect.promise(async () => {
+        const result: Record<string, ConfigCommand.Info> = {}
+        for (const name of await readdir(pluginsRoot).catch(() => [] as string[])) {
+          try {
+            const loaded = await ConfigCommand.load(path.join(pluginsRoot, name))
+            for (const [cmdName, cmd] of Object.entries(loaded)) {
+              if (!result[cmdName]) result[cmdName] = cmd
+            }
+          } catch (error) {
+            console.warn(`skipped commands from marketplace plugin "${name}"`, error)
+          }
+        }
+        return result
+      })
+      for (const [cmdName, cmd] of Object.entries(pluginCommands)) {
+        if (commands[cmdName]) continue
+        commands[cmdName] = {
+          name: cmdName,
+          description: cmd.description,
+          source: "command",
+          get template() {
+            return cmd.template
+          },
+          agent: cmd.agent,
+          model: cmd.model,
+          subtask: cmd.subtask,
+          hints: hints(cmd.template),
         }
       }
 
@@ -263,7 +310,11 @@ export const layer = Layer.effect(
       return Object.values(s.commands)
     })
 
-    return Service.of({ get, list })
+    const reload = Effect.fn("Command.reload")(function* () {
+      yield* InstanceState.invalidate(state)
+    })
+
+    return Service.of({ get, list, reload })
   }),
 )
 

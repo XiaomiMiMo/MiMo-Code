@@ -61,7 +61,7 @@ export const Info = Schema.Union([Local, Remote])
 export type Info = Schema.Schema.Type<typeof Info>
 
 export type Origin = {
-  type: "opencode" | "claude"
+  type: "opencode" | "claude" | "marketplace"
   source: string
 }
 

@@ -3670,7 +3670,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
           : `/${input.command}`
         const skillPart = {
           type: "text" as const,
-          text: `<skill_content name="${input.command}">\n${templateCommand}\n</skill_content>`,
+          text: `The user invoked the /${input.command} command, which maps to the "${input.command}" skill. Invoke the skill tool with name "${input.command}" now to load its instructions, then follow them to complete the task.`,
           synthetic: true,
         }
         const attachments = templateParts.filter((p): p is Exclude<typeof p, { type: "text" }> => p.type !== "text")
