@@ -14,7 +14,7 @@ import PROMPT_DEEPSEEK from "./prompt/deepseek.txt"
 import PROMPT_GLM from "./prompt/glm.txt"
 import PROMPT_MINIMAX from "./prompt/minimax.txt"
 import PROMPT_TRINITY from "./prompt/trinity.txt"
-import type { Provider } from "@/provider"
+import { Provider } from "@/provider"
 import type { Agent } from "@/agent/agent"
 import { Permission } from "@/permission"
 import { Skill } from "@/skill"
@@ -50,6 +50,21 @@ export const layer = Layer.effect(
   Effect.gen(function* () {
     const skill = yield* Skill.Service
 
+    const provider = yield* Provider.Service
+    const visionModels = yield* provider
+      .list()
+      .pipe(
+        Effect.map((providers) =>
+          Object.values(providers)
+            .flatMap((info) => Object.values(info.models))
+            .filter((m) => m.capabilities.input.image === true)
+            .map((m) => `${m.providerID}/${m.id}`)
+            .sort((a, b) => a.localeCompare(b))
+            .slice(0, 3),
+        ),
+      )
+      .pipe(Effect.orElseSucceed(() => [] as string[]))
+
     return Service.of({
       environment(model, now) {
         const project = Instance.project
@@ -77,7 +92,10 @@ export const layer = Layer.effect(
             [
               `<vision-capability>`,
               `You CANNOT see or interpret image content — this model has no vision support.`,
-              `Never attempt to analyze an image's visual content yourself. If a task needs image understanding, dispatch a vision-capable subagent via the actor tool (actor run <type> "<desc>" "<prompt>" --model <a vision model>), passing the image file path so the subagent can Read it.`,
+              `Never attempt to analyze an image's visual content yourself. If a task needs image understanding, dispatch a vision-capable subagent via the actor tool, passing the image file path so the subagent can Read it.`,
+              visionModels.length
+                ? `Vision-capable models you can pass to --model: ${visionModels.join(", ")}. Run \`actor models --vision\` to see all of them. Example: actor run <type> "<desc>" "analyze the image at <path>" --model ${visionModels[0]}.`
+                : `No vision-capable model is currently configured. Ask the user to configure a vision model, or use an OCR tool to extract text.`,
               `If instead you need a file's raw binary structure (not its visual content), use a shell tool such as \`hexdump -C <path>\`, NOT the read tool.`,
             ].join("\n"),
           )
@@ -101,6 +119,6 @@ export const layer = Layer.effect(
   }),
 )
 
-export const defaultLayer = layer.pipe(Layer.provide(Skill.defaultLayer))
+export const defaultLayer = layer.pipe(Layer.provide(Skill.defaultLayer), Layer.provide(Provider.defaultLayer))
 
 export * as SystemPrompt from "./system"

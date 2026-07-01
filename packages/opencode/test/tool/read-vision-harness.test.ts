@@ -7,7 +7,7 @@ import { AppFileSystem } from "@mimo-ai/shared/filesystem"
 import { LSP } from "../../src/lsp"
 import { Instance } from "../../src/project/instance"
 import { SessionID, MessageID } from "../../src/session/schema"
-import { ModelID } from "../../src/provider/schema"
+import { ModelID, ProviderID } from "../../src/provider/schema"
 import { Instruction } from "../../src/session/instruction"
 import { ReadTool } from "../../src/tool/read"
 import { Truncate } from "../../src/tool"
@@ -27,6 +27,8 @@ afterEach(async () => {
 })
 
 const nonVisionModel = ProviderTest.model({
+  id: ModelID.make("text-1"),
+  providerID: ProviderID.make("acme"),
   capabilities: {
     toolcall: true,
     attachment: false,
@@ -39,6 +41,8 @@ const nonVisionModel = ProviderTest.model({
 })
 
 const visionModel = ProviderTest.model({
+  id: ModelID.make("vision-1"),
+  providerID: ProviderID.make("acme"),
   capabilities: {
     toolcall: true,
     attachment: true,
@@ -49,6 +53,14 @@ const visionModel = ProviderTest.model({
     output: { text: true, image: false, audio: false, video: false, pdf: false },
   },
 })
+
+const visionRef = `${visionModel.providerID}/${visionModel.id}`
+
+// A provider Info holding both models so provider.list() yields a real vision ref.
+const bothModelsInfo = ProviderTest.info(
+  { id: ProviderID.make("acme"), models: { [visionModel.id]: visionModel, [nonVisionModel.id]: nonVisionModel } },
+  visionModel,
+)
 
 const ctxFor = (model: typeof nonVisionModel): Tool.Context => ({
   sessionID: SessionID.make("ses_test"),
@@ -119,7 +131,16 @@ const baseLayers = Layer.mergeAll(
   Truncate.defaultLayer,
 )
 
-const nonVision = testEffect(Layer.mergeAll(baseLayers, ProviderTest.fake({ model: nonVisionModel }).layer))
+const nonVision = testEffect(
+  Layer.mergeAll(
+    baseLayers,
+    ProviderTest.fake({
+      model: nonVisionModel,
+      info: bothModelsInfo,
+      list: Effect.fn("NonVisionHarness.list")(() => Effect.succeed({ [bothModelsInfo.id]: bothModelsInfo })),
+    }).layer,
+  ),
+)
 const vision = testEffect(Layer.mergeAll(baseLayers, ProviderTest.fake({ model: visionModel }).layer))
 
 const put = Effect.fn("ReadVisionTest.put")(function* (p: string, content: Buffer) {
@@ -142,6 +163,8 @@ describe("tool.read vision harness", () => {
       const result = yield* runRead(dir, file, ctxFor(nonVisionModel))
       expect(result.attachments).toBeUndefined()
       expect(result.output).toContain("no vision support")
+      expect(result.output).toContain(visionRef)
+      expect(result.output).toContain("actor models --vision")
     }),
   )
 
