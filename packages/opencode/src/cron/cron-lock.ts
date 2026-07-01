@@ -112,36 +112,47 @@ const getMsPerJiffy = (): number | null => {
 // detect recycling; the previous version of this code did the arithmetic
 // wrong (dividing self-uptime by boot-relative jiffies, which are unrelated
 // quantities) and never actually triggered.
-const isPidAlive = (pid: number, lockStartedAtMs: number): boolean =>
-  Effect.runSync(
-    Effect.try({
-      try: () => {
-        process.kill(pid, 0)
-        // Liveness probe says yes. Check for PID recycling on Linux.
-        const otherJiffies = readPidStartJiffies(pid)
-        const msPerJiffy = getMsPerJiffy()
-        const uptimeMs = readUptimeMs()
-        if (otherJiffies === null || msPerJiffy === null || uptimeMs === null) return true
+// True if the pid in the lock genuinely names the live process that wrote it.
+// PR #1479 finding #7: process.kill(pid, 0) alone says "some process with this
+// PID is alive" — a recycled PID would falsely report the lock as held. On
+// Linux, cross-check the pid's start time against the lock's startedAt to
+// detect recycling.
+//
+// PR #1479 re-review round 2: this used to be wrapped in Effect.try({try, catch})
+// piped to orElseSucceed(() => false). That was subtly wrong: Effect.try's
+// `catch` handler's return value populates the ERROR channel, not the success
+// channel, so `catch: () => true` (intended for EPERM = "alive, just can't
+// signal it") produced a failed effect carrying `true` as its error — which
+// orElseSucceed then replaced with `false`. Net: EPERM → judged dead → any
+// scheduler running under a different uid than the current lock owner would
+// take over and become a second concurrent owner. Plain sync JS with a real
+// try/catch matches the intent.
+const isPidAlive = (pid: number, lockStartedAtMs: number): boolean => {
+  try {
+    process.kill(pid, 0)
+  } catch (e) {
+    const code = (e as NodeJS.ErrnoException)?.code
+    // EPERM = pid exists but we can't signal it (different uid). Treat as
+    // alive so we don't take over a foreign-user's lock and double-fire.
+    // ESRCH (or anything else) = truly dead → treat as dead.
+    return code === "EPERM"
+  }
+  // Liveness probe says yes. Check for PID recycling on Linux.
+  const otherJiffies = readPidStartJiffies(pid)
+  const msPerJiffy = getMsPerJiffy()
+  const uptimeMs = readUptimeMs()
+  if (otherJiffies === null || msPerJiffy === null || uptimeMs === null) return true
 
-        // Reconstruct when THIS pid actually started, in epoch ms.
-        const bootTimeMs = Date.now() - uptimeMs
-        const otherStartedAtMs = bootTimeMs + otherJiffies * msPerJiffy
+  // Reconstruct when THIS pid actually started, in epoch ms.
+  const bootTimeMs = Date.now() - uptimeMs
+  const otherStartedAtMs = bootTimeMs + otherJiffies * msPerJiffy
 
-        // The live pid is the ORIGINAL lock owner only if its actual start
-        // time matches the claimed startedAt (within slop). Any material
-        // discrepancy — pid younger than claim OR older than claim — means
-        // the pid has been reassigned since the lock was written. 2s slop
-        // for clock/jiffy rounding.
-        if (Math.abs(otherStartedAtMs - lockStartedAtMs) > 2_000) return false
-        return true
-      },
-      catch: (e) => {
-        const code = (e as NodeJS.ErrnoException)?.code
-        if (code === "EPERM") return true
-        return false
-      },
-    }).pipe(Effect.orElseSucceed(() => false)),
-  )
+  // The live pid is the ORIGINAL lock owner only if its actual start time
+  // matches the claimed startedAt (within slop). Any material discrepancy —
+  // pid younger than claim OR older than claim — means the pid has been
+  // reassigned since the lock was written. 2s slop for clock/jiffy rounding.
+  return Math.abs(otherStartedAtMs - lockStartedAtMs) <= 2_000
+}
 
 // Returns "created" on success, "exists" if file already present, "error" otherwise.
 const writeLockExclusive = (path: string, info: LockInfo) =>

@@ -89,6 +89,44 @@ test("release no-ops if lock file is missing", async () => {
   cleanup(dir)
 })
 
+test("acquire does NOT take over when kill(pid,0) throws EPERM (foreign-uid live owner)", async () => {
+  // Regression for PR #1479 re-review round 2. isPidAlive used to wrap the
+  // liveness check in Effect.try({try, catch}).pipe(orElseSucceed(false)) —
+  // Effect.try's catch return value goes to the ERROR channel, not the
+  // success channel, so `catch: () => true` on EPERM produced Effect<never,
+  // true> which orElseSucceed then replaced with false. Net: any scheduler
+  // running under a different uid than the lock's real owner would judge
+  // the owner dead and take over → two owners double-firing every task.
+  //
+  // Simulate the non-root case by mocking process.kill to throw EPERM for
+  // the tested pid. The lock's startedAt is planted to match the real init
+  // start time so the recycle check won't fire — the ONLY decision path
+  // exercised is the EPERM handling.
+  if (process.platform !== "linux") return
+  const dir = fresh()
+  mkdirSync(join(dir, ".mimocode"), { recursive: true })
+  const initStartedAt = Math.floor(reconstructPidStartMs(1))
+  writeFileSync(
+    join(dir, ".mimocode", ".cron-lock"),
+    JSON.stringify({ pid: 1, startedAt: initStartedAt }),
+  )
+  const origKill = process.kill
+  process.kill = ((pid: number, sig?: string | number) => {
+    if (pid === 1 && sig === 0) {
+      const err = new Error("EPERM") as NodeJS.ErrnoException
+      err.code = "EPERM"
+      throw err
+    }
+    return origKill.call(process, pid, sig as string | number)
+  }) as typeof process.kill
+  try {
+    expect(await run(tryAcquireSchedulerLock({ dir }))).toBe(false)
+  } finally {
+    process.kill = origKill
+  }
+  cleanup(dir)
+})
+
 // Regression for PR #1479 finding #7 (re-review round). The earlier fix wrote
 // arithmetic that never triggered — msPerJiffy was computed from unrelated
 // quantities (self-uptime ms / boot-relative jiffies), producing an
