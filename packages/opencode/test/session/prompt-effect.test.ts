@@ -45,6 +45,7 @@ import { History } from "../../src/history"
 import { Team } from "../../src/team"
 import { SessionCheckpoint } from "../../src/session/checkpoint"
 import { TaskRegistry } from "../../src/task/registry"
+import { defaultLayer as SchedulerDefaultLayer } from "../../src/cron/scheduler"
 import { Auth } from "../../src/auth"
 import { Log } from "../../src/util"
 import * as CrossSpawnSpawner from "../../src/effect/cross-spawn-spawner"
@@ -190,6 +191,7 @@ function makeHttp() {
     Layer.provide(Memory.defaultLayer),
     Layer.provide(History.defaultLayer),
     Layer.provide(TaskRegistry.defaultLayer),
+    Layer.provide(SchedulerDefaultLayer),
     Layer.provide(taskRegistry),
   )
   const taskWaiter = ActorWaiter.layer.pipe(Layer.provide(Bus.layer), Layer.provide(taskRegistry))
@@ -207,6 +209,7 @@ function makeHttp() {
     Layer.provide(Memory.defaultLayer),
     Layer.provide(History.defaultLayer),
     Layer.provide(TaskRegistry.defaultLayer),
+    Layer.provide(SchedulerDefaultLayer),
     Layer.provide(Auth.defaultLayer),
     Layer.provideMerge(todo),
     Layer.provideMerge(question),
@@ -228,9 +231,10 @@ function makeHttp() {
   return Layer.mergeAll(
     TestLLMServer.layer,
     SessionPrompt.layer.pipe(
-    Layer.provide(Goal.defaultLayer),
+      Layer.provide(Goal.defaultLayer),
       Layer.provide(TaskGateState.defaultLayer),
       Layer.provide(TaskRegistry.defaultLayer),
+      Layer.provide(SchedulerDefaultLayer),
       Layer.provide(SessionRevert.defaultLayer),
       Layer.provide(summary),
       Layer.provide(checkpoint),

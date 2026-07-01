@@ -2629,7 +2629,8 @@ NOTE: At any point in time through this workflow you should feel free to ask the
             // the session layer out of the app-runtime module-init cycle
             // (prompt → app-runtime → AppLayer → SessionPrompt). Only loaded when a
             // trigger actually fires. Detached fire-and-forget on the full runtime.
-            if (dreamTrigger || distillTrigger) {
+            const needAppRuntime = dreamTrigger || distillTrigger || Flag.MIMOCODE_EXPERIMENTAL_CRON
+            if (needAppRuntime) {
               const { AppRuntime } = yield* Effect.promise(() => import("@/effect/app-runtime"))
               if (dreamTrigger) {
                 AppRuntime.runPromise(
@@ -2652,6 +2653,20 @@ NOTE: At any point in time through this workflow you should feel free to ask the
                     }),
                   ),
                 ).catch((err) => log.error("auto-distill prompt failed", { error: String(err) }))
+              }
+              // T18-bridge mount: fire CronBridge.start(sessionID, workspaceRoot)
+              // once per new top-level session boot. The bridge itself no-ops when
+              // MIMOCODE_EXPERIMENTAL_CRON is unset; the outer gate just skips the
+              // resolve cost in the common case. Mirrors auto-dream's detached
+              // dynamic-import pattern so prompt.ts stays out of the app-runtime
+              // module-init cycle. Bridge.start is idempotent via its `started`
+              // guard, and its Layer finalizer handles teardown on scope close.
+              if (Flag.MIMOCODE_EXPERIMENTAL_CRON) {
+                const workspaceRoot = (yield* InstanceState.context).worktree
+                const { CronBridge } = yield* Effect.promise(() => import("@/session/cron-bridge"))
+                AppRuntime.runPromise(
+                  CronBridge.use((b) => b.start(sessionID, workspaceRoot)),
+                ).catch((err) => log.error("cron-bridge start failed", { sessionID, error: String(err) }))
               }
             }
           }
@@ -2682,6 +2697,11 @@ NOTE: At any point in time through this workflow you should feel free to ask the
               overflow: compactionPart?.overflow,
               agentID: lastUser.agentID,
             })
+            // cron-sentinel cache is invalidated via a SessionCompaction.Event
+            // .Compacted bus subscription inside cron-bridge — see
+            // `compaction.ts:468` publish + `cron-bridge.ts` subscribe pair.
+            // Covers this user-`/compact` path plus the overflow-boundary
+            // path in compaction.create.
             if (result === "stop") break
             continue
           }
@@ -3926,5 +3946,58 @@ const bashRegex = /!`([^`]+)`/g
 const argsRegex = /(?:\[Image\s+\d+\]|"[^"]*"|'[^']*'|[^\s"']+)/gi
 const placeholderRegex = /\$(\d+)/g
 const quoteTrimRegex = /^["']|["']$/g
+
+/**
+ * Fire seam for scheduled prompts (T18, spec [S5]).
+ *
+ * Funnels a cron/loop fire through the SAME entry point typed user prompts use:
+ * `SessionPrompt.Service.prompt`. The synthetic part carries `synthetic: true`
+ * (mimocode convention for `isMeta`) so transcript-preview surfaces can hide it,
+ * and `metadata.origin = { kind: "cron", taskId, kindOfTask }` so the TUI can
+ * render a clock icon. Sentinel expansion is intentionally NOT done here — T19
+ * will wrap `value` before this call.
+ */
+export type ScheduledPromptOrigin = {
+  kind: "cron"
+  taskId: string
+  kindOfTask: "cron" | "loop"
+  /**
+   * ISO-8601 timestamp of when the scheduler tick fired this task. Set by the
+   * cron bridge in `onFire`; persisted on the synthetic part's metadata so the
+   * TUI and downstream consumers can recover fire time without parsing the
+   * prepended text prefix.
+   */
+  firedAt?: string
+}
+
+export type InjectScheduledPromptInput = {
+  sessionID: SessionID
+  value: string
+  origin: ScheduledPromptOrigin
+  priority?: "later" | "next" | "now"
+  isMeta?: boolean
+}
+
+export const injectScheduledPrompt = (input: InjectScheduledPromptInput) =>
+  Effect.gen(function* () {
+    const sp = yield* Service
+    yield* Effect.asVoid(
+      sp.prompt({
+        sessionID: input.sessionID,
+        source: "hook",
+        parts: [
+          {
+            type: "text",
+            text: input.value,
+            synthetic: input.isMeta ?? true,
+            metadata: {
+              origin: input.origin,
+              priority: input.priority ?? "later",
+            },
+          },
+        ],
+      }),
+    )
+  })
 
 export * as SessionPrompt from "./prompt"

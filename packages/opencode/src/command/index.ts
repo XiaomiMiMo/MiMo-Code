@@ -10,6 +10,7 @@ import { Config } from "../config"
 import { MCP } from "../mcp"
 import { Skill } from "../skill"
 import PROMPT_INITIALIZE from "./template/initialize.txt"
+import PROMPT_LOOPS from "./template/loops.txt"
 import PROMPT_REVIEW from "./template/review.txt"
 
 type State = {
@@ -65,6 +66,7 @@ export const Default = {
   DISTILL: "distill",
   GOAL: "goal",
   DEEP_RESEARCH: "deep-research",
+  LOOPS: "loops",
 } as const
 
 export function deepResearchTemplate(): string {
@@ -186,6 +188,19 @@ export const layer = Layer.effect(
             return deepResearchTemplate()
           },
           hints: ["$ARGUMENTS"],
+        }
+      }
+
+      if (Flag.MIMOCODE_EXPERIMENTAL_CRON) {
+        commands[Default.LOOPS] = {
+          name: Default.LOOPS,
+          description: "list active scheduled jobs; accepts `cancel <id>` to delete one",
+          source: "command",
+          subtask: false,
+          get template() {
+            return PROMPT_LOOPS
+          },
+          hints: hints(PROMPT_LOOPS),
         }
       }
 

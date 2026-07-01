@@ -86,6 +86,17 @@ export function formatPart(part: Part, options: TranscriptOptions): string {
     return `${part.text}\n\n`
   }
 
+  // Cron-fired synthetic prompts: surface in the exported markdown as a
+  // distinct line so downstream readers see fire history. Use the canonical
+  // `metadata.origin.firedAt` ISO timestamp; never parse the prefix.
+  if (part.type === "text" && part.synthetic) {
+    const origin = (part.metadata as { origin?: { kind?: string; firedAt?: string } } | undefined)?.origin
+    if (origin?.kind === "cron" && origin.firedAt) {
+      const body = part.text.replace(/^\[cron fire @ [^\]]+\]\s*/, "")
+      return `_🕒 cron fire @ ${origin.firedAt} — ${body}_\n\n`
+    }
+  }
+
   if (part.type === "reasoning") {
     if (options.thinking) {
       return `_Thinking:_\n\n${part.text}\n\n`

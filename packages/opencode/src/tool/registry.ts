@@ -10,6 +10,7 @@ import { MemoryTool } from "./memory"
 import { ReadTool } from "./read"
 import { ActorTool } from "./actor"
 import { TaskTool } from "./task"
+import { CronTool } from "./cron"
 import { WorkflowTool } from "./workflow"
 import { WebFetchTool } from "./webfetch"
 import { WriteTool } from "./write"
@@ -57,6 +58,7 @@ import { Memory } from "@/memory"
 import { History } from "@/history"
 import { SessionCheckpoint } from "@/session/checkpoint"
 import { TaskRegistry } from "@/task/registry"
+import { defaultLayer as SchedulerDefaultLayer } from "@/cron/scheduler"
 import { Auth } from "@/auth"
 import { shellWrap } from "./shell-wrap"
 import * as BashInteractive from "./bash-interactive"
@@ -142,6 +144,7 @@ export const layer = Layer.effect(
     const historytool = yield* HistoryTool
     const memorytool = yield* MemoryTool
     const tasktool = yield* TaskTool
+    const crontool = yield* CronTool
     const workflowtool = yield* WorkflowTool
     const agent = yield* Agent.Service
 
@@ -229,6 +232,7 @@ export const layer = Layer.effect(
           memory: Tool.init(memorytool),
           history: Tool.init(historytool),
           task: Tool.init(tasktool),
+          cron: Tool.init(crontool),
           workflow: Tool.init(workflowtool),
         })
 
@@ -257,6 +261,7 @@ export const layer = Layer.effect(
             tool.memory,
             tool.history,
             tool.task,
+            ...(Flag.MIMOCODE_EXPERIMENTAL_CRON ? [tool.cron] : []),
             ...(Flag.MIMOCODE_EXPERIMENTAL_WORKFLOW_TOOL ? [tool.workflow] : []),
           ],
           actor: tool.actor,
@@ -422,6 +427,7 @@ export const defaultLayer = Layer.suspend(() =>
         History.defaultLayer,
         SessionCheckpoint.defaultLayer,
         TaskRegistry.defaultLayer,
+        SchedulerDefaultLayer,
         Auth.defaultLayer,
       ),
     ),

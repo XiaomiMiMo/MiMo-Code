@@ -43,6 +43,7 @@ import { SessionCompaction } from "../../src/session/compaction"
 import { Goal } from "../../src/session/goal"
 import { TaskGateState } from "../../src/task/gate-state"
 import { TaskRegistry } from "../../src/task/registry"
+import { defaultLayer as SchedulerDefaultLayer } from "../../src/cron/scheduler"
 import { Auth } from "../../src/auth"
 import { Instance } from "../../src/project/instance"
 import * as CrossSpawnSpawner from "../../src/effect/cross-spawn-spawner"
@@ -156,6 +157,7 @@ function makeLayer() {
     Layer.provide(Memory.defaultLayer),
     Layer.provide(History.defaultLayer),
     Layer.provide(TaskRegistry.defaultLayer),
+    Layer.provide(SchedulerDefaultLayer),
     Layer.provide(Auth.defaultLayer),
     Layer.provideMerge(todo),
     Layer.provideMerge(question),
@@ -189,6 +191,7 @@ function makeLayer() {
     // dev's Actor.layer now resolves TaskRegistry.Service (spawn.ts) — provide it
     // here too, matching test/actor/spawn.test.ts.
     Layer.provide(TaskRegistry.defaultLayer),
+    Layer.provide(SchedulerDefaultLayer),
     // provideMerge (not provide) so Inbox.Service stays in the output context for
     // WorkflowRuntime.layer, which now resolves Inbox to notify the parent on
     // terminal. Mirrors prod WorkflowRuntime.defaultLayer providing Inbox.
