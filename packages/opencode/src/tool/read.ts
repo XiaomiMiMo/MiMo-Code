@@ -218,7 +218,7 @@ export const ReadTool = Tool.define(
         const model = modelRef
           ? yield* provider
               .getModel(modelRef.providerID, modelRef.modelID)
-              .pipe(Effect.catch(() => Effect.succeed(undefined)))
+              .pipe(Effect.catchDefect(() => Effect.succeed(undefined)))
           : undefined
         const supportsImage = model?.capabilities.input.image ?? false
         if (!supportsImage) {

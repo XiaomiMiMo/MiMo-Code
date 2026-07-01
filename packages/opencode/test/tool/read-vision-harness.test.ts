@@ -7,6 +7,7 @@ import { AppFileSystem } from "@mimo-ai/shared/filesystem"
 import { LSP } from "../../src/lsp"
 import { Instance } from "../../src/project/instance"
 import { SessionID, MessageID } from "../../src/session/schema"
+import { ModelID } from "../../src/provider/schema"
 import { Instruction } from "../../src/session/instruction"
 import { ReadTool } from "../../src/tool/read"
 import { Truncate } from "../../src/tool"
@@ -72,6 +73,43 @@ const ctxFor = (model: typeof nonVisionModel): Tool.Context => ({
   ask: () => Effect.void,
 })
 
+// ctx whose last user message references a modelID the fake provider does not know,
+// so getModel raises a defect (Effect.die) and the read must degrade to non-vision.
+const ctxUnknownModel: Tool.Context = {
+  sessionID: SessionID.make("ses_test"),
+  messageID: MessageID.make(""),
+  callID: "",
+  agent: "build",
+  abort: AbortSignal.any([]),
+  messages: [
+    {
+      info: {
+        id: MessageID.make(""),
+        sessionID: SessionID.make("ses_test"),
+        role: "user" as const,
+        time: { created: 0 },
+        agent: "build",
+        model: { providerID: visionModel.providerID, modelID: ModelID.make("nonexistent-model") },
+      },
+      parts: [],
+    },
+  ],
+  metadata: () => Effect.void,
+  ask: () => Effect.void,
+}
+
+// ctx with no user message carrying a model, so modelRef is undefined.
+const ctxNoModel: Tool.Context = {
+  sessionID: SessionID.make("ses_test"),
+  messageID: MessageID.make(""),
+  callID: "",
+  agent: "build",
+  abort: AbortSignal.any([]),
+  messages: [],
+  metadata: () => Effect.void,
+  ask: () => Effect.void,
+}
+
 const baseLayers = Layer.mergeAll(
   Agent.defaultLayer,
   AppFileSystem.defaultLayer,
@@ -115,6 +153,30 @@ describe("tool.read vision harness", () => {
 
       const result = yield* runRead(dir, file, ctxFor(visionModel))
       expect(result.attachments?.[0].mime.startsWith("image/")).toBe(true)
+    }),
+  )
+
+  vision.live("unresolvable model on last user message degrades to non-vision instead of crashing", () =>
+    Effect.gen(function* () {
+      const dir = yield* tmpdirScoped()
+      const file = path.join(dir, "image.png")
+      yield* put(file, PNG)
+
+      const result = yield* runRead(dir, file, ctxUnknownModel)
+      expect(result.attachments).toBeUndefined()
+      expect(result.output).toContain("no vision support")
+    }),
+  )
+
+  vision.live("no user model on messages treats the model as non-vision", () =>
+    Effect.gen(function* () {
+      const dir = yield* tmpdirScoped()
+      const file = path.join(dir, "image.png")
+      yield* put(file, PNG)
+
+      const result = yield* runRead(dir, file, ctxNoModel)
+      expect(result.attachments).toBeUndefined()
+      expect(result.output).toContain("no vision support")
     }),
   )
 })
