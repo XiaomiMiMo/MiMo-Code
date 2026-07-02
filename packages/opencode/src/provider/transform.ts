@@ -1046,6 +1046,13 @@ export function options(input: {
       ) {
         result["reasoningSummary"] = "auto"
       }
+      // Responses API with store:false is stateless, so encrypted reasoning
+      // items must be echoed back on the next turn. Without requesting them via
+      // `include`, gpt-5.x returns reasoning-only/empty steps on tool loops,
+      // which classify.ts flags as "empty output". Match upstream opencode.
+      if (input.model.api.npm === "@ai-sdk/openai") {
+        result["include"] = ["reasoning.encrypted_content"]
+      }
     }
 
     // Only set textVerbosity for non-chat gpt-5.x models

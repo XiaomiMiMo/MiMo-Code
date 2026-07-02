@@ -362,6 +362,25 @@ describe("ProviderTransform.options - gpt-5 textVerbosity", () => {
     const result = ProviderTransform.options({ model, sessionID, providerOptions: {} })
     expect(result.textVerbosity).toBeUndefined()
   })
+
+  test("gpt-5.5 should request encrypted reasoning via include (store:false round-trip)", () => {
+    const model = createGpt5Model("gpt-5.5")
+    const result = ProviderTransform.options({ model, sessionID, providerOptions: {} })
+    expect(result.store).toBe(false)
+    expect(result.include).toEqual(["reasoning.encrypted_content"])
+  })
+
+  test("gpt-5 should request encrypted reasoning via include", () => {
+    const model = createGpt5Model("gpt-5")
+    const result = ProviderTransform.options({ model, sessionID, providerOptions: {} })
+    expect(result.include).toEqual(["reasoning.encrypted_content"])
+  })
+
+  test("gpt-5-pro should NOT set include (pro path skips reasoning options)", () => {
+    const model = createGpt5Model("gpt-5-pro")
+    const result = ProviderTransform.options({ model, sessionID, providerOptions: {} })
+    expect(result.include).toBeUndefined()
+  })
 })
 
 describe("ProviderTransform.options - gateway", () => {
