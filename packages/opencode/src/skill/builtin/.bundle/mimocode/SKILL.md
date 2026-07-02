@@ -44,7 +44,11 @@ Add `"$schema": "https://mimo.xiaomi.com/mimocode/config.json"` for editor valid
 }
 ```
 
-For the full key reference (model, provider, mcp, permission, agent, checkpoint, compaction, memory, dream, distill, voice, workflow, experimental, and more) see @reference/config.md.
+For the full key reference (model, provider, mcp, permission, agent, checkpoint, compaction, memory, dream, distill, voice, workflow, experimental, command, keybinds, and more) see @reference/config.md. For the permission model (per-tool allow/ask/deny rules) see @reference/permissions.md.
+
+## How-To Guide
+
+For task-oriented walkthroughs — signing in & choosing a model, making memory remember project rules, writing custom slash commands, remapping keybinds, adding MCP servers, and using compose mode — see @reference/guide.md.
 
 ## Where Things Live On Disk
 
