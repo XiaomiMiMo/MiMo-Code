@@ -383,6 +383,38 @@ describe("ProviderTransform.options - gpt-5 textVerbosity", () => {
   })
 })
 
+describe("ProviderTransform.smallOptions - gpt-5 encrypted reasoning", () => {
+  const createModel = (apiId: string, npm: string, providerID = "openai") =>
+    ({
+      id: `${providerID}/${apiId}`,
+      providerID,
+      api: { id: apiId, url: "https://api.openai.com", npm },
+      name: apiId,
+    }) as any
+
+  test("gpt-5.5 small model requests encrypted reasoning (store:false round-trip)", () => {
+    const result = ProviderTransform.smallOptions(createModel("gpt-5.5", "@ai-sdk/openai")) as any
+    expect(result.store).toBe(false)
+    expect(result.reasoningEffort).toBe("low")
+    expect(result.include).toEqual(["reasoning.encrypted_content"])
+  })
+
+  test("gpt-5 small model requests encrypted reasoning", () => {
+    const result = ProviderTransform.smallOptions(createModel("gpt-5", "@ai-sdk/openai")) as any
+    expect(result.store).toBe(false)
+    expect(result.reasoningEffort).toBe("minimal")
+    expect(result.include).toEqual(["reasoning.encrypted_content"])
+  })
+
+  test("github-copilot small model does NOT set include (uses its own path)", () => {
+    const result = ProviderTransform.smallOptions(
+      createModel("gpt-5", "@ai-sdk/github-copilot", "github-copilot"),
+    ) as any
+    expect(result.store).toBe(false)
+    expect(result.include).toBeUndefined()
+  })
+})
+
 describe("ProviderTransform.options - gateway", () => {
   const sessionID = "test-session-123"
 

@@ -1113,11 +1113,14 @@ export function smallOptions(model: Provider.Model) {
     model.api.npm === "@ai-sdk/openai" ||
     model.api.npm === "@ai-sdk/github-copilot"
   ) {
+    // Match the main-model path: request encrypted reasoning so store:false
+    // stays round-trippable if a small-model call ever runs a tool loop.
+    const include = model.api.npm === "@ai-sdk/openai" ? { include: ["reasoning.encrypted_content"] } : {}
     if (model.api.id.includes("gpt-5")) {
       if (model.api.id.includes("5.") || model.api.id.includes("5-mini")) {
-        return { store: false, reasoningEffort: "low" }
+        return { store: false, reasoningEffort: "low", ...include }
       }
-      return { store: false, reasoningEffort: "minimal" }
+      return { store: false, reasoningEffort: "minimal", ...include }
     }
     return { store: false }
   }

@@ -127,6 +127,16 @@ xai stayed at 3.0.82 (already matched upstream).
   for `@ai-sdk/openai` gpt-5.x — no need to set them manually (and avoid a stray backslash such as
   `reasoning.encrypted\_content`, which would be an invalid include value).
 
+## Resolved follow-up
+
+- **`smallOptions` include symmetry (done).** `smallOptions()` set `store:false` + `reasoningEffort`
+  for gpt-5.x but not `include`. Small-model calls today are single-shot with no tool loop
+  (title gen `prompt.ts:396` `tools:{}`; summarizer `prompt.ts:489`), so this could not trigger
+  `rs_ not found` in practice — but it was an asymmetry with the main-model path. Added
+  `include: ["reasoning.encrypted_content"]` for `@ai-sdk/openai` gpt-5.x in `smallOptions`
+  (github-copilot excluded — it uses its own include path) as defense-in-depth, with tests
+  (reverse-verified: they fail without the change).
+
 ## Open follow-up (not done)
 
 Upstream also has a signature/redactedData-aware reasoning filter in `normalizeMessages`
