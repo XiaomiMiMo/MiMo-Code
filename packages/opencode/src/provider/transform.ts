@@ -447,6 +447,24 @@ function limitImages(msgs: ModelMessage[]): ModelMessage[] {
   })
 }
 
+function mapProviderOptions(
+  msgs: ModelMessage[],
+  transform: (options: Record<string, any> | undefined) => Record<string, any> | undefined,
+): ModelMessage[] {
+  return msgs.map((msg) => {
+    if (!Array.isArray(msg.content)) return { ...msg, providerOptions: transform(msg.providerOptions) }
+    return {
+      ...msg,
+      providerOptions: transform(msg.providerOptions),
+      content: msg.content.map((part) =>
+        part.type === "tool-approval-request" || part.type === "tool-approval-response"
+          ? part
+          : { ...part, providerOptions: transform(part.providerOptions) },
+      ),
+    } as typeof msg
+  })
+}
+
 export function message(msgs: ModelMessage[], model: Provider.Model, options: Record<string, unknown>) {
   msgs = unsupportedParts(msgs, model)
   msgs = limitImages(msgs)
@@ -458,27 +476,27 @@ export function message(msgs: ModelMessage[], model: Provider.Model, options: Re
   // Remap providerOptions keys from stored providerID to expected SDK key
   const key = sdkKey(model.api.npm)
   if (key && key !== model.providerID) {
-    const remap = (opts: Record<string, any> | undefined) => {
+    msgs = mapProviderOptions(msgs, (opts) => {
       if (!opts) return opts
       if (!(model.providerID in opts)) return opts
       const result = { ...opts }
       result[key] = result[model.providerID]
       delete result[model.providerID]
       return result
-    }
+    })
+  }
 
-    msgs = msgs.map((msg) => {
-      if (!Array.isArray(msg.content)) return { ...msg, providerOptions: remap(msg.providerOptions) }
-      return {
-        ...msg,
-        providerOptions: remap(msg.providerOptions),
-        content: msg.content.map((part) => {
-          if (part.type === "tool-approval-request" || part.type === "tool-approval-response") {
-            return { ...part }
-          }
-          return { ...part, providerOptions: remap(part.providerOptions) }
-        }),
-      } as typeof msg
+  // Strip Responses item IDs before serialization, following Codex and keeping
+  // signed request bodies immutable. Removing `itemId` here (rather than mutating
+  // the already-serialized fetch body) lets the SDK build a clean request that
+  // works against proxies which validate reasoning `rs_` references. Only applies
+  // to stateless (store !== true) OpenAI Responses-family providers.
+  if (options.store !== true && key && ["@ai-sdk/openai", "@ai-sdk/azure"].includes(model.api.npm)) {
+    msgs = mapProviderOptions(msgs, (opts) => {
+      if (!opts?.[key] || !("itemId" in opts[key])) return opts
+      const metadata = { ...opts[key] }
+      delete metadata.itemId
+      return { ...opts, [key]: metadata }
     })
   }
 
