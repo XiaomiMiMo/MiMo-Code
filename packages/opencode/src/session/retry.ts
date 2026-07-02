@@ -109,6 +109,9 @@ export function retryable(error: Err) {
 
   if (MessageV2.APIError.isInstance(error)) {
     const status = error.data.statusCode
+    // Upstream processing failures (e.g. multimodal data corruption) return 400
+    // but are transient — retry them.
+    if (status === 400 && error.data.responseBody?.includes("upstream_error")) return error.data.message
     // 5xx errors are transient server failures and should always be retried,
     // even when the provider SDK doesn't explicitly mark them as retryable.
     if (!error.data.isRetryable && !(status !== undefined && status >= 500)) return undefined
