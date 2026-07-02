@@ -362,6 +362,57 @@ describe("ProviderTransform.options - gpt-5 textVerbosity", () => {
     const result = ProviderTransform.options({ model, sessionID, providerOptions: {} })
     expect(result.textVerbosity).toBeUndefined()
   })
+
+  test("gpt-5.5 should request encrypted reasoning via include (store:false round-trip)", () => {
+    const model = createGpt5Model("gpt-5.5")
+    const result = ProviderTransform.options({ model, sessionID, providerOptions: {} })
+    expect(result.store).toBe(false)
+    expect(result.include).toEqual(["reasoning.encrypted_content"])
+  })
+
+  test("gpt-5 should request encrypted reasoning via include", () => {
+    const model = createGpt5Model("gpt-5")
+    const result = ProviderTransform.options({ model, sessionID, providerOptions: {} })
+    expect(result.include).toEqual(["reasoning.encrypted_content"])
+  })
+
+  test("gpt-5-pro should NOT set include (pro path skips reasoning options)", () => {
+    const model = createGpt5Model("gpt-5-pro")
+    const result = ProviderTransform.options({ model, sessionID, providerOptions: {} })
+    expect(result.include).toBeUndefined()
+  })
+})
+
+describe("ProviderTransform.smallOptions - gpt-5 encrypted reasoning", () => {
+  const createModel = (apiId: string, npm: string, providerID = "openai") =>
+    ({
+      id: `${providerID}/${apiId}`,
+      providerID,
+      api: { id: apiId, url: "https://api.openai.com", npm },
+      name: apiId,
+    }) as any
+
+  test("gpt-5.5 small model requests encrypted reasoning (store:false round-trip)", () => {
+    const result = ProviderTransform.smallOptions(createModel("gpt-5.5", "@ai-sdk/openai")) as any
+    expect(result.store).toBe(false)
+    expect(result.reasoningEffort).toBe("low")
+    expect(result.include).toEqual(["reasoning.encrypted_content"])
+  })
+
+  test("gpt-5 small model requests encrypted reasoning", () => {
+    const result = ProviderTransform.smallOptions(createModel("gpt-5", "@ai-sdk/openai")) as any
+    expect(result.store).toBe(false)
+    expect(result.reasoningEffort).toBe("minimal")
+    expect(result.include).toEqual(["reasoning.encrypted_content"])
+  })
+
+  test("github-copilot small model does NOT set include (uses its own path)", () => {
+    const result = ProviderTransform.smallOptions(
+      createModel("gpt-5", "@ai-sdk/github-copilot", "github-copilot"),
+    ) as any
+    expect(result.store).toBe(false)
+    expect(result.include).toBeUndefined()
+  })
 })
 
 describe("ProviderTransform.options - gateway", () => {
@@ -1473,7 +1524,7 @@ describe("ProviderTransform.message - strip openai metadata when store=false", (
     headers: {},
   } as any
 
-  test("preserves itemId and reasoningEncryptedContent when store=false", () => {
+  test("strips openai itemId and preserves reasoningEncryptedContent when store=false", () => {
     const msgs = [
       {
         role: "assistant",
@@ -1504,11 +1555,13 @@ describe("ProviderTransform.message - strip openai metadata when store=false", (
     const result = ProviderTransform.message(msgs, openaiModel, { store: false }) as any[]
 
     expect(result).toHaveLength(1)
-    expect(result[0].content[0].providerOptions?.openai?.itemId).toBe("rs_123")
-    expect(result[0].content[1].providerOptions?.openai?.itemId).toBe("msg_456")
+    expect(result[0].content[0].providerOptions?.openai?.itemId).toBeUndefined()
+    expect(result[0].content[0].providerOptions?.openai?.reasoningEncryptedContent).toBe("encrypted")
+    expect(result[0].content[1].providerOptions?.openai?.itemId).toBeUndefined()
   })
 
-  test("preserves itemId and reasoningEncryptedContent when store=false even when not openai", () => {
+  test("strips itemId based on SDK package namespace, not provider ID", () => {
+    // Custom providerID but @ai-sdk/openai npm (e.g. a proxy) still strips via the openai key.
     const zenModel = {
       ...openaiModel,
       providerID: "zen",
@@ -1543,11 +1596,12 @@ describe("ProviderTransform.message - strip openai metadata when store=false", (
     const result = ProviderTransform.message(msgs, zenModel, { store: false }) as any[]
 
     expect(result).toHaveLength(1)
-    expect(result[0].content[0].providerOptions?.openai?.itemId).toBe("rs_123")
-    expect(result[0].content[1].providerOptions?.openai?.itemId).toBe("msg_456")
+    expect(result[0].content[0].providerOptions?.openai?.itemId).toBeUndefined()
+    expect(result[0].content[0].providerOptions?.openai?.reasoningEncryptedContent).toBe("encrypted")
+    expect(result[0].content[1].providerOptions?.openai?.itemId).toBeUndefined()
   })
 
-  test("preserves other openai options including itemId", () => {
+  test("strips itemId but preserves other openai options", () => {
     const msgs = [
       {
         role: "assistant",
@@ -1568,8 +1622,39 @@ describe("ProviderTransform.message - strip openai metadata when store=false", (
 
     const result = ProviderTransform.message(msgs, openaiModel, { store: false }) as any[]
 
-    expect(result[0].content[0].providerOptions?.openai?.itemId).toBe("msg_123")
+    expect(result[0].content[0].providerOptions?.openai?.itemId).toBeUndefined()
     expect(result[0].content[0].providerOptions?.openai?.otherOption).toBe("value")
+  })
+
+  test("strips Azure itemId from the azure namespace when store=false", () => {
+    const azureModel = {
+      ...openaiModel,
+      providerID: "azure",
+      api: {
+        id: "gpt-5",
+        url: "https://example.openai.azure.com",
+        npm: "@ai-sdk/azure",
+      },
+    }
+    const msgs = [
+      {
+        role: "assistant",
+        content: [
+          {
+            type: "text",
+            text: "Hello",
+            providerOptions: {
+              azure: { itemId: "msg_123", otherOption: "value" },
+            },
+          },
+        ],
+      },
+    ] as any[]
+
+    const result = ProviderTransform.message(msgs, azureModel, { store: false }) as any[]
+
+    expect(result[0].content[0].providerOptions?.azure?.itemId).toBeUndefined()
+    expect(result[0].content[0].providerOptions?.azure?.otherOption).toBe("value")
   })
 
   test("preserves metadata for openai package when store is true", () => {
@@ -1590,7 +1675,7 @@ describe("ProviderTransform.message - strip openai metadata when store=false", (
       },
     ] as any[]
 
-    // openai package preserves itemId regardless of store value
+    // store=true keeps itemId (stateful Responses API resolves items by id)
     const result = ProviderTransform.message(msgs, openaiModel, { store: true }) as any[]
 
     expect(result[0].content[0].providerOptions?.openai?.itemId).toBe("msg_123")
@@ -1614,7 +1699,7 @@ describe("ProviderTransform.message - strip openai metadata when store=false", (
             type: "text",
             text: "Hello",
             providerOptions: {
-              openai: {
+              anthropic: {
                 itemId: "msg_123",
               },
             },
@@ -1623,13 +1708,13 @@ describe("ProviderTransform.message - strip openai metadata when store=false", (
       },
     ] as any[]
 
-    // store=false preserves metadata for non-openai packages
+    // store=false does NOT strip for non-openai/azure packages
     const result = ProviderTransform.message(msgs, anthropicModel, { store: false }) as any[]
 
-    expect(result[0].content[0].providerOptions?.openai?.itemId).toBe("msg_123")
+    expect(result[0].content[0].providerOptions?.anthropic?.itemId).toBe("msg_123")
   })
 
-  test("preserves metadata using providerID key when store is false", () => {
+  test("preserves metadata using providerID key for openai-compatible packages", () => {
     const opencodeModel = {
       ...openaiModel,
       providerID: "opencode",
@@ -1659,50 +1744,9 @@ describe("ProviderTransform.message - strip openai metadata when store=false", (
 
     const result = ProviderTransform.message(msgs, opencodeModel, { store: false }) as any[]
 
+    // @ai-sdk/openai-compatible is not in the strip list, so itemId survives
     expect(result[0].content[0].providerOptions?.opencode?.itemId).toBe("msg_123")
     expect(result[0].content[0].providerOptions?.opencode?.otherOption).toBe("value")
-  })
-
-  test("preserves itemId across all providerOptions keys", () => {
-    const opencodeModel = {
-      ...openaiModel,
-      providerID: "opencode",
-      api: {
-        id: "opencode-test",
-        url: "https://api.mimocode.ai",
-        npm: "@ai-sdk/openai-compatible",
-      },
-    }
-    const msgs = [
-      {
-        role: "assistant",
-        providerOptions: {
-          openai: { itemId: "msg_root" },
-          opencode: { itemId: "msg_opencode" },
-          extra: { itemId: "msg_extra" },
-        },
-        content: [
-          {
-            type: "text",
-            text: "Hello",
-            providerOptions: {
-              openai: { itemId: "msg_openai_part" },
-              opencode: { itemId: "msg_opencode_part" },
-              extra: { itemId: "msg_extra_part" },
-            },
-          },
-        ],
-      },
-    ] as any[]
-
-    const result = ProviderTransform.message(msgs, opencodeModel, { store: false }) as any[]
-
-    expect(result[0].providerOptions?.openai?.itemId).toBe("msg_root")
-    expect(result[0].providerOptions?.opencode?.itemId).toBe("msg_opencode")
-    expect(result[0].providerOptions?.extra?.itemId).toBe("msg_extra")
-    expect(result[0].content[0].providerOptions?.openai?.itemId).toBe("msg_openai_part")
-    expect(result[0].content[0].providerOptions?.opencode?.itemId).toBe("msg_opencode_part")
-    expect(result[0].content[0].providerOptions?.extra?.itemId).toBe("msg_extra_part")
   })
 
   test("does not strip metadata for non-openai packages when store is not false", () => {
@@ -1723,7 +1767,7 @@ describe("ProviderTransform.message - strip openai metadata when store=false", (
             type: "text",
             text: "Hello",
             providerOptions: {
-              openai: {
+              anthropic: {
                 itemId: "msg_123",
               },
             },
@@ -1734,7 +1778,7 @@ describe("ProviderTransform.message - strip openai metadata when store=false", (
 
     const result = ProviderTransform.message(msgs, anthropicModel, {}) as any[]
 
-    expect(result[0].content[0].providerOptions?.openai?.itemId).toBe("msg_123")
+    expect(result[0].content[0].providerOptions?.anthropic?.itemId).toBe("msg_123")
   })
 })
 

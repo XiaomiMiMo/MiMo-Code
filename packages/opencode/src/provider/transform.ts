@@ -447,6 +447,24 @@ function limitImages(msgs: ModelMessage[]): ModelMessage[] {
   })
 }
 
+function mapProviderOptions(
+  msgs: ModelMessage[],
+  transform: (options: Record<string, any> | undefined) => Record<string, any> | undefined,
+): ModelMessage[] {
+  return msgs.map((msg) => {
+    if (!Array.isArray(msg.content)) return { ...msg, providerOptions: transform(msg.providerOptions) }
+    return {
+      ...msg,
+      providerOptions: transform(msg.providerOptions),
+      content: msg.content.map((part) =>
+        part.type === "tool-approval-request" || part.type === "tool-approval-response"
+          ? part
+          : { ...part, providerOptions: transform(part.providerOptions) },
+      ),
+    } as typeof msg
+  })
+}
+
 export function message(msgs: ModelMessage[], model: Provider.Model, options: Record<string, unknown>) {
   msgs = unsupportedParts(msgs, model)
   msgs = limitImages(msgs)
@@ -458,27 +476,27 @@ export function message(msgs: ModelMessage[], model: Provider.Model, options: Re
   // Remap providerOptions keys from stored providerID to expected SDK key
   const key = sdkKey(model.api.npm)
   if (key && key !== model.providerID) {
-    const remap = (opts: Record<string, any> | undefined) => {
+    msgs = mapProviderOptions(msgs, (opts) => {
       if (!opts) return opts
       if (!(model.providerID in opts)) return opts
       const result = { ...opts }
       result[key] = result[model.providerID]
       delete result[model.providerID]
       return result
-    }
+    })
+  }
 
-    msgs = msgs.map((msg) => {
-      if (!Array.isArray(msg.content)) return { ...msg, providerOptions: remap(msg.providerOptions) }
-      return {
-        ...msg,
-        providerOptions: remap(msg.providerOptions),
-        content: msg.content.map((part) => {
-          if (part.type === "tool-approval-request" || part.type === "tool-approval-response") {
-            return { ...part }
-          }
-          return { ...part, providerOptions: remap(part.providerOptions) }
-        }),
-      } as typeof msg
+  // Strip Responses item IDs before serialization, following Codex and keeping
+  // signed request bodies immutable. Removing `itemId` here (rather than mutating
+  // the already-serialized fetch body) lets the SDK build a clean request that
+  // works against proxies which validate reasoning `rs_` references. Only applies
+  // to stateless (store !== true) OpenAI Responses-family providers.
+  if (options.store !== true && key && ["@ai-sdk/openai", "@ai-sdk/azure"].includes(model.api.npm)) {
+    msgs = mapProviderOptions(msgs, (opts) => {
+      if (!opts?.[key] || !("itemId" in opts[key])) return opts
+      const metadata = { ...opts[key] }
+      delete metadata.itemId
+      return { ...opts, [key]: metadata }
     })
   }
 
@@ -1046,6 +1064,13 @@ export function options(input: {
       ) {
         result["reasoningSummary"] = "auto"
       }
+      // Responses API with store:false is stateless, so encrypted reasoning
+      // items must be echoed back on the next turn. Without requesting them via
+      // `include`, gpt-5.x returns reasoning-only/empty steps on tool loops,
+      // which classify.ts flags as "empty output". Match upstream opencode.
+      if (input.model.api.npm === "@ai-sdk/openai") {
+        result["include"] = ["reasoning.encrypted_content"]
+      }
     }
 
     // Only set textVerbosity for non-chat gpt-5.x models
@@ -1088,11 +1113,14 @@ export function smallOptions(model: Provider.Model) {
     model.api.npm === "@ai-sdk/openai" ||
     model.api.npm === "@ai-sdk/github-copilot"
   ) {
+    // Match the main-model path: request encrypted reasoning so store:false
+    // stays round-trippable if a small-model call ever runs a tool loop.
+    const include = model.api.npm === "@ai-sdk/openai" ? { include: ["reasoning.encrypted_content"] } : {}
     if (model.api.id.includes("gpt-5")) {
       if (model.api.id.includes("5.") || model.api.id.includes("5-mini")) {
-        return { store: false, reasoningEffort: "low" }
+        return { store: false, reasoningEffort: "low", ...include }
       }
-      return { store: false, reasoningEffort: "minimal" }
+      return { store: false, reasoningEffort: "minimal", ...include }
     }
     return { store: false }
   }
