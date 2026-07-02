@@ -667,14 +667,15 @@ export const RunCommand = cmd({
         })
       } else {
         const model = args.model ? Provider.parseModel(args.model) : undefined
-        await sdk.session.prompt({
+        const params = {
           sessionID,
           agent,
           model,
           variant: args.variant,
           role: args.role as "user" | "assistant" | undefined,
-          parts: [...files, { type: "text", text: message }],
-        })
+          parts: [...files, { type: "text" as const, text: message }],
+        }
+        await sdk.session.prompt(params as typeof params & Record<string, unknown>)
       }
       tracker.markStarted()
     }
