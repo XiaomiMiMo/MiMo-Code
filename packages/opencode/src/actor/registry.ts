@@ -66,6 +66,7 @@ export interface Interface {
     },
   ) => Effect.Effect<void>
   readonly updateTurn: (sessionID: SessionID, actorID: string) => Effect.Effect<void>
+  readonly updateAgent: (sessionID: SessionID, actorID: string, agent: string) => Effect.Effect<void>
   readonly get: (sessionID: SessionID, actorID: string) => Effect.Effect<Actor | undefined>
   readonly listBySession: (sessionID: SessionID) => Effect.Effect<Actor[]>
   readonly listActive: () => Effect.Effect<Actor[]>
@@ -200,6 +201,24 @@ export const layer: Layer.Layer<Service, never, Bus.Service> = Layer.effect(
               turn_count: sql`${ActorRegistryTable.turn_count} + 1`,
               time_updated: now,
             })
+            .where(
+              and(eq(ActorRegistryTable.session_id, sessionID), eq(ActorRegistryTable.actor_id, actorID)),
+            )
+            .run(),
+        ),
+      )
+    })
+
+    const updateAgent = Effect.fn("ActorRegistry.updateAgent")(function* (
+      sessionID: SessionID,
+      actorID: string,
+      agent: string,
+    ) {
+      yield* Effect.sync(() =>
+        Database.use((db) =>
+          db
+            .update(ActorRegistryTable)
+            .set({ agent, time_updated: Date.now() })
             .where(
               and(eq(ActorRegistryTable.session_id, sessionID), eq(ActorRegistryTable.actor_id, actorID)),
             )
@@ -395,6 +414,7 @@ export const layer: Layer.Layer<Service, never, Bus.Service> = Layer.effect(
       register,
       updateStatus,
       updateTurn,
+      updateAgent,
       get,
       listBySession,
       listActive,

@@ -19,7 +19,7 @@ import { TuiEvent } from "@/cli/cmd/tui/event"
 import type { SessionID, MessageID } from "../session/schema"
 import type { ProviderID, ModelID } from "../provider/schema"
 
-const KNOWN_VERBS = ["create", "switch", "list", "cancel", "ask"]
+const KNOWN_VERBS = ["create", "switch", "list", "cancel", "ask", "setmode"]
 
 // Wraps the human/agent question in a side-boundary system-reminder mirroring
 // CC /btw + Codex side-question semantics: one-shot, READ-ONLY, answer-to-caller.
@@ -187,6 +187,14 @@ const askOperation = z.strictObject({
   question: z.string().min(1).describe("The side question to answer from a frozen snapshot of that session's history."),
 })
 
+const setmodeOperation = z.strictObject({
+  action: z.literal("setmode"),
+  sessionID: z.string().min(1).describe("Session id of the child session whose mode to change."),
+  mode: z
+    .enum(["build", "plan", "compose"])
+    .describe("New agent mode the child's SUBSEQUENT turns run under (build|plan|compose)."),
+})
+
 const parameters = z.strictObject({
   // .meta({ type: "object" }) is REQUIRED — without it, the emitted JSON
   // schema's `operation` node has only `anyOf`, no `type`. Some models
@@ -194,7 +202,7 @@ const parameters = z.strictObject({
   // {"operation":"{\"action\":\"create\",...}"} which fails zod validation.
   // See research-tool-call-schema/REPORT.md §2.5 "success-nested" warning.
   operation: z
-    .discriminatedUnion("action", [createOperation, switchOperation, listOperation, cancelOperation, askOperation])
+    .discriminatedUnion("action", [createOperation, switchOperation, listOperation, cancelOperation, askOperation, setmodeOperation])
     .meta({ type: "object" }),
 })
 
@@ -349,6 +357,16 @@ function mapVerb(verb: string | undefined, args: string[], line: number): Effect
       if (rest.length < 2) return arityError("ask", "<sessionID> <question...>", rest, line)
       return Effect.succeed({
         operation: { action: "ask" as const, session_id: rest[0], question: rest.slice(1).join(" ") },
+      })
+    }
+    case "setmode": {
+      const { rest, error } = extractSessionFlags(args, [])
+      if (error) return flagError("setmode", error, line)
+      if (rest.length !== 2) return arityError("setmode", "<sessionID> <build|plan|compose>", rest, line)
+      if (rest[1] !== "build" && rest[1] !== "plan" && rest[1] !== "compose")
+        return flagError("setmode", `mode must be build, plan or compose (got '${rest[1]}')`, line)
+      return Effect.succeed({
+        operation: { action: "setmode" as const, sessionID: rest[0], mode: rest[1] as "build" | "plan" | "compose" },
       })
     }
     default: {
@@ -531,6 +549,34 @@ export const SessionTool = Tool.define<typeof parameters, Metadata, Deps>(
           title: `Asked ${op.session_id}`,
           output: answer,
           metadata: { sessionID: op.session_id } as Metadata,
+        }
+      }
+
+      if (op.action === "setmode") {
+        // A background peer resolves its mode each turn from the `agent` field on
+        // the last message in its slice (prompt.ts) — inbox.drain carries that
+        // forward to the wake message on the next relay. So changing the child's
+        // mode = rewriting `agent` on its newest slice message(s); the change
+        // takes effect on the child's NEXT turn. A peer's slice is agentID ===
+        // its own sessionID. Always update the registry `agent` too (so `session
+        // list` reflects the new mode; cosmetic — not read at turn time).
+        const childID = op.sessionID as SessionID
+        yield* actorReg.updateAgent(childID, childID, op.mode).pipe(Effect.catch(() => Effect.void))
+        const slice = yield* sessions.messages({ sessionID: childID, agentID: childID })
+        const lastUser = slice.findLast((m) => m.info.role === "user")
+        const lastAssistant = slice.findLast((m) => m.info.role === "assistant")
+        for (const m of [lastUser, lastAssistant]) {
+          if (m) yield* sessions.updateMessage({ ...m.info, agent: op.mode })
+        }
+        const took = lastUser || lastAssistant
+        return {
+          title: `Set mode of ${op.sessionID} to ${op.mode}`,
+          output: took
+            ? `Child session ${op.sessionID} will run its next turn in ${op.mode} mode. ` +
+              `Relay it a message (actor send) to continue under the new mode.`
+            : `Set child ${op.sessionID} mode to ${op.mode} (registry updated; it has no turns yet, ` +
+              `so the change applies once it starts).`,
+          metadata: { sessionID: op.sessionID } as Metadata,
         }
       }
 

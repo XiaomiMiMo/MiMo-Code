@@ -75,6 +75,57 @@ describe("session tool", () => {
     ),
   )
 
+  it.live("parameters schema accepts a setmode operation", () =>
+    provideTmpdirInstance(() =>
+      Effect.gen(function* () {
+        const info = yield* SessionTool
+        const tool = yield* info.init()
+        const parsed = tool.parameters.safeParse({
+          operation: { action: "setmode", sessionID: "ses_x", mode: "build" },
+        })
+        expect(parsed.success).toBe(true)
+      }),
+    ),
+  )
+
+  it.live("parameters schema accepts setmode with mode:'plan' and mode:'compose'", () =>
+    provideTmpdirInstance(() =>
+      Effect.gen(function* () {
+        const tool = yield* (yield* SessionTool).init()
+        for (const mode of ["plan", "compose"] as const) {
+          const parsed = tool.parameters.safeParse({
+            operation: { action: "setmode", sessionID: "ses_y", mode },
+          })
+          expect(parsed.success).toBe(true)
+        }
+      }),
+    ),
+  )
+
+  it.live("parameters schema rejects setmode with an invalid mode", () =>
+    provideTmpdirInstance(() =>
+      Effect.gen(function* () {
+        const tool = yield* (yield* SessionTool).init()
+        const parsed = tool.parameters.safeParse({
+          operation: { action: "setmode", sessionID: "ses_x", mode: "bogus" },
+        })
+        expect(parsed.success).toBe(false)
+      }),
+    ),
+  )
+
+  it.live("parameters schema rejects setmode with an empty sessionID", () =>
+    provideTmpdirInstance(() =>
+      Effect.gen(function* () {
+        const tool = yield* (yield* SessionTool).init()
+        const parsed = tool.parameters.safeParse({
+          operation: { action: "setmode", sessionID: "", mode: "build" },
+        })
+        expect(parsed.success).toBe(false)
+      }),
+    ),
+  )
+
   it.live("create spawns a child peer session registered with mode peer + agent build", () =>
     provideTmpdirInstance(() =>
       Effect.gen(function* () {
@@ -114,8 +165,48 @@ describe("session tool", () => {
     ),
   )
 
-  it.live("switch publishes TuiEvent.SessionSelect with the target sessionID", () =>
+  it.live("setmode changes the child's registry agent and rewrites its slice message agent", () =>
     provideTmpdirInstance(() =>
+      Effect.gen(function* () {
+        const sessions = yield* Session.Service
+        const actorReg = yield* ActorRegistry.Service
+        const parent = yield* sessions.create({ title: "Parent" })
+
+        const info = yield* SessionTool
+        const tool = yield* info.init()
+        const created = yield* tool.execute(
+          { operation: { action: "create", task: "plan the feature", mode: "plan", title: "Planner" } },
+          ctx(parent.id),
+        )
+        const childID = created.metadata.sessionID!
+        expect(childID).toBeDefined()
+
+        // child starts in plan mode
+        const before = yield* actorReg.get(SessionID.make(childID), childID)
+        expect(before!.agent).toBe("plan")
+
+        // switch it to build
+        const result = yield* tool.execute(
+          { operation: { action: "setmode", sessionID: childID, mode: "build" } },
+          ctx(parent.id),
+        )
+        expect(result.title).toContain("build")
+
+        // registry agent updated (cosmetic — session list reflects it; always
+        // updated regardless of whether the child has produced messages yet)
+        const after = yield* actorReg.get(SessionID.make(childID), childID)
+        expect(after!.agent).toBe("build")
+
+        // if the child has slice messages, their agent is rewritten to build
+        // (this drives the next turn's mode via prompt.ts lastUser.agent)
+        const slice = yield* sessions.messages({ sessionID: SessionID.make(childID), agentID: childID })
+        const lastUser = slice.findLast((m) => m.info.role === "user")
+        if (lastUser) expect(lastUser.info.agent).toBe("build")
+      }),
+    ),
+  )
+
+  it.live("switch publishes TuiEvent.SessionSelect with the target sessionID", () =>    provideTmpdirInstance(() =>
       Effect.gen(function* () {
         const sessions = yield* Session.Service
         const parent = yield* sessions.create({ title: "Parent" })
