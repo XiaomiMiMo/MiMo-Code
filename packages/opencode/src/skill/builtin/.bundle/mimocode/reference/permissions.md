@@ -21,11 +21,12 @@ A permission rule is **either** a single action string, **or** a glob-keyed map 
   "permission": {
     // whole-tool action
     "webfetch": "allow",
-    // glob-keyed: match on the tool's path/command argument
+    // glob-keyed: match on the tool's path/command argument.
+    // Later rules win, so put the catch-all FIRST and specifics after it.
     "bash": {
+      "*": "ask",
       "git *": "allow",
-      "rm -rf *": "deny",
-      "*": "ask"
+      "rm -rf *": "deny"
     }
   }
 }
@@ -60,6 +61,6 @@ Ask before every file edit:
 
 ## Notes
 
-- Rules are evaluated in your original insertion order; put specific patterns before the `*` catch-all.
+- Rules are evaluated in your original insertion order and **the last matching rule wins**. Put the `*` catch-all **first** and more specific patterns after it — a `*` placed last would shadow everything above it (e.g. a trailing `"*": "ask"` makes preceding `allow`/`deny` rules dead code).
 - `external_directory` governs reads/writes outside the project working directory — by default these prompt, so MiMoCode never silently widens scope.
 - Permissions cannot be modified by custom tools/hooks — they are the one system the self-extension surface can't override.
