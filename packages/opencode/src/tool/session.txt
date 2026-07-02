@@ -31,6 +31,14 @@ JSON calls always wrap the action in an `operation` object — see examples belo
             child, once it has produced a plan, switches to `build`/`compose` to
             execute in the same session. Takes effect on the child's next turn;
             relay it a message (`actor send`) to continue under the new mode.
+- approve:  approve a child's CURRENT pending permission request (a background
+            child that hit an `ask` gate forwards it to you). `sessionID` required.
+            Resolves that one request; if the user already approved it directly,
+            this is a no-op.
+- grant-approval: pre-authorize FUTURE permission asks so they auto-approve
+            without asking you each time. `target` = a child session id (grant for
+            that child) or `all` (grant for every child of yours). Scoped to your
+            own sessions.
 
 ## JSON examples
 
@@ -41,6 +49,9 @@ JSON calls always wrap the action in an `operation` object — see examples belo
 {"operation":{"action":"cancel","sessionID":"ses_..."}}
 {"operation":{"action":"ask","session_id":"ses_...","question":"what is your current progress?"}}
 {"operation":{"action":"setmode","sessionID":"ses_...","mode":"build"}}
+{"operation":{"action":"approve","sessionID":"ses_..."}}
+{"operation":{"action":"grant-approval","target":"ses_..."}}
+{"operation":{"action":"grant-approval","target":"all"}}
 
 ## How to operate
 

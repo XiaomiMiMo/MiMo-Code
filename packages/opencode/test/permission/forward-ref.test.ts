@@ -17,10 +17,21 @@ describe("forwardRef", () => {
   })
 
   test("pending add/find/remove", () => {
-    forwardRef.addPending("req1", { childSessionID: "cX", parentSessionID: "pY" })
+    forwardRef.addPending("req1", { childSessionID: "cX", parentSessionID: "pY", resolve: () => {} })
     expect(forwardRef.findPendingByChild("cX")?.requestID).toBe("req1")
     forwardRef.removePending("req1")
     expect(forwardRef.findPendingByChild("cX")).toBeUndefined()
+  })
+
+  test("resolve invokes the bound resolver, drops the record, is idempotent", () => {
+    let calls = 0
+    forwardRef.addPending("req3", { childSessionID: "cR", parentSessionID: "pR", resolve: () => (calls += 1) })
+    expect(forwardRef.resolve("cR", "allow")).toBe(true)
+    expect(calls).toBe(1)
+    expect(forwardRef.findPendingByChild("cR")).toBeUndefined()
+    // second resolve is a no-op (already dropped)
+    expect(forwardRef.resolve("cR", "allow")).toBe(false)
+    expect(calls).toBe(1)
   })
 
   test("clearGrantsForChild removes child from all parents", () => {
@@ -31,7 +42,7 @@ describe("forwardRef", () => {
   })
 
   test("clearGrantsForChild also drops that child's pending records", () => {
-    forwardRef.addPending("req2", { childSessionID: "cKill", parentSessionID: "pKeep" })
+    forwardRef.addPending("req2", { childSessionID: "cKill", parentSessionID: "pKeep", resolve: () => {} })
     forwardRef.clearGrantsForChild("cKill")
     expect(forwardRef.findPendingByChild("cKill")).toBeUndefined()
   })

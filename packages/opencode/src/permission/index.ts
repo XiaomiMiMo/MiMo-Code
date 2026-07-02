@@ -246,7 +246,20 @@ export const layer = Layer.effect(
         if (forwardRef.grantAllowed(parentSessionID, info.sessionID)) {
           yield* Deferred.succeed(deferred, void 0)
         } else {
-          forwardRef.addPending(String(id), { childSessionID: info.sessionID, parentSessionID })
+          // Store a resolver bound to THIS ask's Deferred (in this child's
+          // Instance) so `session approve` can resolve it from the orchestrator's
+          // Instance. allow → succeed; deny → fail(RejectedError). Resolving an
+          // already-settled Deferred is a no-op (idempotent with a direct reply).
+          forwardRef.addPending(String(id), {
+            childSessionID: info.sessionID,
+            parentSessionID,
+            resolve: (decision) =>
+              Effect.runFork(
+                decision === "allow"
+                  ? Deferred.succeed(deferred, void 0)
+                  : Deferred.fail(deferred, new RejectedError()),
+              ),
+          })
         }
       }
 

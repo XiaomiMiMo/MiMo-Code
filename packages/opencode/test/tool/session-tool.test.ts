@@ -206,6 +206,53 @@ describe("session tool", () => {
     ),
   )
 
+  it.live("grant-approval sets a delegation grant for a specific child and for all", () =>
+    provideTmpdirInstance(() =>
+      Effect.gen(function* () {
+        const sessions = yield* Session.Service
+        const parent = yield* sessions.create({ title: "Parent" })
+        // forwardRef is a process-global singleton; isolate this parent's grants.
+        forwardRef.clearGrantsForParent(parent.id)
+        const tool = yield* (yield* SessionTool).init()
+
+        yield* tool.execute({ operation: { action: "grant-approval", target: "ses_childX" } }, ctx(parent.id))
+        expect(forwardRef.grantAllowed(parent.id, "ses_childX")).toBe(true)
+        expect(forwardRef.grantAllowed(parent.id, "ses_other")).toBe(false)
+
+        yield* tool.execute({ operation: { action: "grant-approval", target: "all" } }, ctx(parent.id))
+        expect(forwardRef.grantAllowed(parent.id, "ses_other")).toBe(true)
+
+        forwardRef.clearGrantsForParent(parent.id)
+      }),
+    ),
+  )
+
+  it.live("approve resolves a child's pending forwarded request and clears it", () =>
+    provideTmpdirInstance(() =>
+      Effect.gen(function* () {
+        const sessions = yield* Session.Service
+        const parent = yield* sessions.create({ title: "Parent" })
+        const tool = yield* (yield* SessionTool).init()
+
+        // Simulate a forwarded pending ask from a child (as Permission.ask would record).
+        let resolved: string | undefined
+        forwardRef.addPending("req_appr", {
+          childSessionID: "ses_childP",
+          parentSessionID: parent.id,
+          resolve: (d) => (resolved = d),
+        })
+
+        const res = yield* tool.execute({ operation: { action: "approve", sessionID: "ses_childP" } }, ctx(parent.id))
+        expect(res.title).toContain("Approved")
+        expect(resolved).toBe("allow")
+        expect(forwardRef.findPendingByChild("ses_childP")).toBeUndefined()
+
+        const res2 = yield* tool.execute({ operation: { action: "approve", sessionID: "ses_childP" } }, ctx(parent.id))
+        expect(res2.title).toContain("No pending approval")
+      }),
+    ),
+  )
+
   it.live("switch publishes TuiEvent.SessionSelect with the target sessionID", () =>    provideTmpdirInstance(() =>
       Effect.gen(function* () {
         const sessions = yield* Session.Service
@@ -616,6 +663,7 @@ import { Config } from "../../src/config"
 import { LSP } from "../../src/lsp"
 import { MCP } from "../../src/mcp"
 import { Permission } from "../../src/permission"
+import { forwardRef } from "../../src/permission/permission-forward-ref"
 import { Plugin } from "../../src/plugin"
 import { Provider as ProviderSvc } from "../../src/provider"
 import { Env } from "../../src/env"

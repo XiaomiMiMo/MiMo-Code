@@ -10,6 +10,7 @@ import { Instance } from "@/project/instance"
 import { InstanceRef } from "@/effect/instance-ref"
 import { InstanceState } from "@/effect"
 import { ActorRegistry } from "@/actor/registry"
+import { forwardRef } from "@/permission/permission-forward-ref"
 import { Provider } from "@/provider"
 import { spawnRef } from "@/actor/spawn-ref"
 import { prefixCaptureRef } from "@/session/prefix-capture-ref"
@@ -19,7 +20,7 @@ import { TuiEvent } from "@/cli/cmd/tui/event"
 import type { SessionID, MessageID } from "../session/schema"
 import type { ProviderID, ModelID } from "../provider/schema"
 
-const KNOWN_VERBS = ["create", "switch", "list", "cancel", "ask", "setmode"]
+const KNOWN_VERBS = ["create", "switch", "list", "cancel", "ask", "setmode", "approve", "grant-approval"]
 
 // Wraps the human/agent question in a side-boundary system-reminder mirroring
 // CC /btw + Codex side-question semantics: one-shot, READ-ONLY, answer-to-caller.
@@ -195,6 +196,19 @@ const setmodeOperation = z.strictObject({
     .describe("New agent mode the child's SUBSEQUENT turns run under (build|plan|compose)."),
 })
 
+const approveOperation = z.strictObject({
+  action: z.literal("approve"),
+  sessionID: z.string().min(1).describe("Child session id whose pending permission request to approve."),
+})
+
+const grantApprovalOperation = z.strictObject({
+  action: z.literal("grant-approval"),
+  target: z
+    .string()
+    .min(1)
+    .describe("A child session id to auto-approve future asks for, or 'all' to auto-approve every child."),
+})
+
 const parameters = z.strictObject({
   // .meta({ type: "object" }) is REQUIRED — without it, the emitted JSON
   // schema's `operation` node has only `anyOf`, no `type`. Some models
@@ -202,7 +216,7 @@ const parameters = z.strictObject({
   // {"operation":"{\"action\":\"create\",...}"} which fails zod validation.
   // See research-tool-call-schema/REPORT.md §2.5 "success-nested" warning.
   operation: z
-    .discriminatedUnion("action", [createOperation, switchOperation, listOperation, cancelOperation, askOperation, setmodeOperation])
+    .discriminatedUnion("action", [createOperation, switchOperation, listOperation, cancelOperation, askOperation, setmodeOperation, approveOperation, grantApprovalOperation])
     .meta({ type: "object" }),
 })
 
@@ -368,6 +382,18 @@ function mapVerb(verb: string | undefined, args: string[], line: number): Effect
       return Effect.succeed({
         operation: { action: "setmode" as const, sessionID: rest[0], mode: rest[1] as "build" | "plan" | "compose" },
       })
+    }
+    case "approve": {
+      const { rest, error } = extractSessionFlags(args, [])
+      if (error) return flagError("approve", error, line)
+      if (rest.length !== 1) return arityError("approve", "<sessionID>", rest, line)
+      return Effect.succeed({ operation: { action: "approve" as const, sessionID: rest[0] } })
+    }
+    case "grant-approval": {
+      const { rest, error } = extractSessionFlags(args, [])
+      if (error) return flagError("grant-approval", error, line)
+      if (rest.length !== 1) return arityError("grant-approval", "<sessionID|all>", rest, line)
+      return Effect.succeed({ operation: { action: "grant-approval" as const, target: rest[0] } })
     }
     default: {
       const suggestion = suggestVerb(verb ?? "")
@@ -576,6 +602,39 @@ export const SessionTool = Tool.define<typeof parameters, Metadata, Deps>(
               `Relay it a message (actor send) to continue under the new mode.`
             : `Set child ${op.sessionID} mode to ${op.mode} (registry updated; it has no turns yet, ` +
               `so the change applies once it starts).`,
+          metadata: { sessionID: op.sessionID } as Metadata,
+        }
+      }
+
+      if (op.action === "grant-approval") {
+        // Pre-authorize FUTURE permission asks from a child (or all children):
+        // when such an ask forwards, it auto-resolves allow without a human. The
+        // grant is keyed by THIS orchestrator's session id (the parent) so it
+        // scopes to this orchestrator's children only.
+        // Store "all" as the "*" wildcard the grant check understands.
+        forwardRef.setGrant(ctx.sessionID, op.target === "all" ? "*" : op.target)
+        return {
+          title: `Approval granted for ${op.target}`,
+          output:
+            op.target === "all"
+              ? `Future permission asks from ANY of your child sessions will be auto-approved.`
+              : `Future permission asks from child ${op.target} will be auto-approved.`,
+          metadata: {} as Metadata,
+        }
+      }
+
+      if (op.action === "approve") {
+        // One-shot approval of a child's CURRENT pending forwarded ask. The
+        // pending record carries a resolver bound to the child's own Deferred (in
+        // the child's Instance), so this works whether the child shares our
+        // Instance or runs in its own worktree. resolve() is idempotent and a
+        // no-op if the user already approved directly (structural dedup).
+        const approved = forwardRef.resolve(op.sessionID, "allow")
+        return {
+          title: approved ? `Approved ${op.sessionID}` : `No pending approval for ${op.sessionID}`,
+          output: approved
+            ? `Approved child ${op.sessionID}'s pending permission request.`
+            : `Child ${op.sessionID} has no pending permission request to approve.`,
           metadata: { sessionID: op.sessionID } as Metadata,
         }
       }

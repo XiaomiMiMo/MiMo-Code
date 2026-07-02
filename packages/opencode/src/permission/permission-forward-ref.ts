@@ -8,10 +8,16 @@
 // - grants:  parentSessionID -> Set of (childSessionID | "*"). A grant lets the
 //            orchestrator pre-authorize a forwarded ask without a human.
 // - pending: requestID -> which child/parent a forwarded, not-yet-resolved ask
-//            belongs to, so a `session approve <child>` can find the requestID
-//            and the orchestrator can drop its copy on resolution.
+//            belongs to, PLUS a resolver bound to the child's own Deferred (in
+//            the child's Instance) so `session approve` can resolve it from the
+//            orchestrator's Instance and the orchestrator can drop its copy.
 
-type PendingRec = { childSessionID: string; parentSessionID: string }
+type Decision = "allow" | "deny"
+type PendingRec = {
+  childSessionID: string
+  parentSessionID: string
+  resolve: (decision: Decision) => void
+}
 
 const grants = new Map<string, Set<string>>()
 const pending = new Map<string, PendingRec>()
@@ -47,5 +53,15 @@ export const forwardRef = {
       if (rec.childSessionID === childSessionID) return { requestID, rec }
     }
     return undefined
+  },
+  // Resolve the child's current pending forwarded ask (allow/deny) via the bound
+  // resolver, then drop the record. Returns true if there was one to resolve.
+  // Idempotent: a second call (or after a direct user reply cleared it) no-ops.
+  resolve(childSessionID: string, decision: Decision): boolean {
+    const found = this.findPendingByChild(childSessionID)
+    if (!found) return false
+    found.rec.resolve(decision)
+    pending.delete(found.requestID)
+    return true
   },
 }
