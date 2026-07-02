@@ -92,8 +92,15 @@ Use the `workflow` tool (or ask the agent to run one):
 
 Runnable by `name` without writing a file:
 
-- **`compose`** — full spec→ship pipeline (brainstorm → design → implement in parallel worktrees → verify → review → report → merge). Pass `args.task`.
+- **`compose`** — full spec→ship pipeline (brainstorm → design → implement (TDD) → verify → review → merge). Pass `args.task`. Auto-parallelizes independent subtasks into per-task worktrees and chains each phase's structured output to the next. Re-running on existing docs reuses them and scopes the fan-out to the actual diff (incremental amend).
 - **`deep-research`** — parallel web search → source extraction → adversarial cross-check → cited report. Pass the refined question as `args`.
+
+### `compose` workflow vs `compose` agent
+
+Both drive the same spec→ship lifecycle, but choose by task shape:
+
+- **`compose` workflow** (this, deterministic code) — best when requirements are **well-defined** and the task **decomposes into independent subtasks**. It fans out to parallel worktrees and runs **non-interactively to completion** — fire-and-forget.
+- **`compose` agent** (conversational, switch with `Tab`) — best for **exploratory or ambiguous** work where you want to redirect mid-flow, answer questions, or inject judgment between steps.
 
 ## Semantics worth knowing
 
@@ -101,6 +108,10 @@ Runnable by `name` without writing a file:
 - **Failed child `workflow()` resolves to `null`** for runtime failures, but **structural faults throw** and propagate up the whole tree: cycle detected (a saved name calling itself), nesting past `maxDepth`, or an unknown workflow name.
 - **Concurrency** is one process-wide semaphore sized by `workflow.maxConcurrentAgents`; a per-run value can only narrow it. Excess `agent()` calls queue automatically.
 - **Communicate between workflows by dataflow** — return a value from a child and pass it as `args` to the next, or write a shared file with `writeFile` and read it later. Workflows don't message each other directly.
+
+## Watching a run (TUI)
+
+A running workflow shows a bounded inline panel (capped to ~12 lines) with live spinner, phase, and status counters. After a workflow tool message, the `view workflow agents` keybind opens the full-screen workflow page — message-style cards per agent, colored status counters, and drill-down into each subagent's (and nested workflow's) full conversation, with scroll position preserved across navigation.
 
 ## Config knobs (`workflow.*`)
 

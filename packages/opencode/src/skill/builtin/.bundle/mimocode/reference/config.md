@@ -30,7 +30,10 @@ Memory files live under `~/.local/share/mimocode/memory/`:
 
 - `MIMOCODE_HOME` — override all base dirs (absolute path).
 - `MIMOCODE_CONFIG_DIR` — extra config directory to search.
-- `MIMOCODE_PURE` — pure mode.
+- `MIMOCODE_PURE` — run without external plugins (same as `mimo --pure`). Does **not** change models or Claude Code inheritance.
+- `MIMOCODE_MIMO_ONLY` — pure-MiMo mode: don't inherit Claude Code settings (CLAUDE.md, `~/.claude/skills`), don't read provider API keys from env, fall back to the mimo-auto model.
+- `MIMOCODE_DISABLE_LOG_ROTATION` — keep a single growing log file instead of rotating.
+- `MIMOCODE_TEXT_TOOL_CALL_RETRY_LIMIT` — retries when a model emits a tool call as prose markup instead of a structured call (default 2).
 - `MIMOCODE_DISABLE_BUILTIN_SKILLS`, `_COMPOSE_SKILLS`, `_EXTERNAL_SKILLS`, `_CLAUDE_CODE_SKILLS`, `_CODEX_SKILLS`, `_OPENCODE_SKILLS`, `_PROJECT_CONFIG`, `_CLAUDE_IMPORT` — feature toggles.
 
 ## Top-level config keys
