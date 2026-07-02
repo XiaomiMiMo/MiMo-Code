@@ -27,6 +27,7 @@ import { BashTool } from "../../tool/bash"
 import { Locale } from "../../util"
 import { AppRuntime } from "@/effect/app-runtime"
 import { createCompletionTracker, type CompletionTracker } from "./run-completion"
+import { selectContinueSessionID } from "../continue-session"
 
 type ToolProps<T> = {
   input: Tool.InferParameters<T>
@@ -365,7 +366,7 @@ export const RunCommand = cmd({
     }
 
     async function session(sdk: OpencodeClient) {
-      const baseID = args.continue ? (await sdk.session.list()).data?.find((s) => !s.parentID)?.id : args.session
+      const baseID = args.continue ? selectContinueSessionID((await sdk.session.list()).data ?? []) : args.session
 
       if (baseID && args.fork) {
         const forked = await sdk.session.fork({ sessionID: baseID })
