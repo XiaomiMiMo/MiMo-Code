@@ -198,7 +198,7 @@ const mapActorVerb = Effect.fn("mapActorVerb")(function* (verb: string | undefin
         operation: {
           action: "models" as const,
           ...(vision ? { vision: true } : {}),
-          ...(flags.limit ? { limit: Number(flags.limit) } : {}),
+          ...(Number.isInteger(Number(flags.limit)) && Number(flags.limit) > 0 ? { limit: Number(flags.limit) } : {}),
         },
       } as ActorShellArgs
     }
