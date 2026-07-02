@@ -1694,10 +1694,16 @@ const layer: Layer.Layer<
 
     const getVisionModel = Effect.fn("Provider.getVisionModel")(function* () {
       const cfg = yield* config.get()
-      // Explicit vision_model literal wins.
+      // Explicit vision_model literal wins. getModel raises ModelNotFoundError as
+      // a defect, so a misconfigured vision_model must not propagate — catch it and
+      // fall back to the smart default. (This runs at SystemPrompt layer construction,
+      // so an uncaught defect would fail session startup, not just image reads.)
       if (cfg.vision_model) {
         const parsed = parseModel(cfg.vision_model)
-        return yield* getModel(parsed.providerID, parsed.modelID)
+        const explicit = yield* getModel(parsed.providerID, parsed.modelID).pipe(
+          Effect.catchDefect(() => Effect.succeed(undefined)),
+        )
+        if (explicit) return explicit
       }
       // Smart default: in-house preferred, then cheapest vision-capable model.
       const providers = yield* list()

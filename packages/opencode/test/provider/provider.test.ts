@@ -1278,6 +1278,51 @@ test("getVisionModel returns undefined when no vision-capable model exists", asy
   })
 })
 
+// Regression: getModel raises ModelNotFoundError as a DEFECT. A misconfigured
+// vision_model must not propagate that defect (it runs at SystemPrompt layer
+// construction → would fail session startup). It should fall back to the smart
+// default instead of throwing.
+test("getVisionModel falls back to smart default when vision_model is misconfigured", async () => {
+  await using tmp = await tmpdir({
+    init: async (dir) => {
+      await Bun.write(
+        path.join(dir, "mimocode.json"),
+        JSON.stringify({
+          $schema: "https://opencode.ai/config.json",
+          vision_model: "vendor/does-not-exist",
+          provider: {
+            vendor: {
+              name: "Vendor",
+              npm: "@ai-sdk/openai-compatible",
+              env: [],
+              models: {
+                "vision-cheap": {
+                  name: "Vision Cheap",
+                  tool_call: true,
+                  limit: { context: 8000, output: 2000 },
+                  cost: { input: 5, output: 10 },
+                  modalities: { input: ["text", "image"], output: ["text"] },
+                },
+              },
+              options: { apiKey: "test-key" },
+            },
+          },
+          enabled_providers: ["vendor"],
+        }),
+      )
+    },
+  })
+  await Instance.provide({
+    directory: tmp.path,
+    fn: async () => {
+      // Must not throw; falls back to the only vision-capable model.
+      const model = await getVisionModel()
+      expect(model).toBeDefined()
+      expect(String(model?.id)).toBe("vision-cheap")
+    },
+  })
+})
+
 test("provider.sort prioritizes preferred models", () => {
   const models = [
     { id: "random-model", name: "Random" },
