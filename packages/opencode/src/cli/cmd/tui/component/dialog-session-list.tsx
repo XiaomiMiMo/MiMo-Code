@@ -10,6 +10,7 @@ import { useTheme } from "../context/theme"
 import { useSDK } from "../context/sdk"
 import { useLanguage } from "../context/language"
 import { Flag } from "@/flag/flag"
+import { isSystemSession } from "@/session/auto-dream"
 import { DialogSessionRename } from "./dialog-session-rename"
 import { Keybind } from "@/util"
 import { createDebouncedSignal } from "../util/signal"
@@ -113,7 +114,6 @@ export function DialogSessionList() {
 
   const options = createMemo(() => {
     const today = new Date().toDateString()
-    const isAutoSession = (x: { title: string }) => x.title === "Auto Dream" || x.title === "Auto Distill"
     return sessions()
       .filter((x) => x.parentID === undefined)
       .toSorted((a, b) => {
@@ -165,7 +165,7 @@ export function DialogSessionList() {
         return {
           title: isDeleting
             ? `Press ${keybind.print("session_delete")} again to confirm`
-            : isAutoSession(x)
+            : isSystemSession(x)
               ? `[${t("tui.session.badge.auto")}] ${x.title}`
               : x.title,
           bg: isDeleting ? theme.error : undefined,

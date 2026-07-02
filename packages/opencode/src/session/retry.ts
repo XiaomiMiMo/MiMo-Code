@@ -28,7 +28,7 @@ export const RETRY_MAX_DELAY = 2_147_483_647 // max 32-bit signed integer for se
 
 const NETWORK_ERROR_CODES = new Set(["ECONNRESET", "EPIPE", "ETIMEDOUT"])
 const SSE_TIMEOUT_MESSAGE = "SSE read timed out"
-const RETRYABLE_HTTP_STATUS = new Set([429, 500, 502, 503, 504, 529])
+const RETRYABLE_HTTP_STATUS = new Set([400, 429, 500, 502, 503, 504, 529])
 
 /**
  * Single source of truth for "is this transient and retryable?".

@@ -4,6 +4,7 @@ import { pathToFileURL } from "url"
 import { UI } from "../ui"
 import { cmd } from "./cmd"
 import { Flag } from "../../flag/flag"
+import { isSystemSession } from "../../session/auto-dream"
 import { bootstrap } from "../bootstrap"
 import { EOL } from "os"
 import { Filesystem, Log } from "../../util"
@@ -283,6 +284,11 @@ export const RunCommand = cmd({
         describe: "show thinking blocks",
         default: false,
       })
+      .option("role", {
+        type: "string",
+        choices: ["user", "assistant"],
+        describe: "role for the injected message (assistant injects text as model output then triggers continuation)",
+      })
       .option("dangerously-skip-permissions", {
         type: "boolean",
         describe: "auto-approve permissions that are not explicitly denied (dangerous!)",
@@ -365,7 +371,9 @@ export const RunCommand = cmd({
     }
 
     async function session(sdk: OpencodeClient) {
-      const baseID = args.continue ? (await sdk.session.list()).data?.find((s) => !s.parentID)?.id : args.session
+      const baseID = args.continue
+        ? (await sdk.session.list()).data?.find((s) => !s.parentID && !isSystemSession(s))?.id
+        : args.session
 
       if (baseID && args.fork) {
         const forked = await sdk.session.fork({ sessionID: baseID })
@@ -664,6 +672,7 @@ export const RunCommand = cmd({
           agent,
           model,
           variant: args.variant,
+          role: args.role as "user" | "assistant" | undefined,
           parts: [...files, { type: "text", text: message }],
         })
       }
