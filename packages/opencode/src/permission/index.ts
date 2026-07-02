@@ -14,6 +14,12 @@ import { Deferred, Effect, Layer, Schema, Context } from "effect"
 import os from "os"
 import { evaluate as evalRule } from "./evaluate"
 import { PermissionID } from "./schema"
+import { forwardRef } from "./permission-forward-ref"
+
+// A forwarded ask (orchestrator peer) that no one ever approves resolves DENY
+// after this bound rather than hanging — preserving the hang-safety the old
+// interactive:false gate guaranteed. Aligned with the actor registry stuck bound.
+const FORWARD_DENY_TIMEOUT_MS = 5 * 60 * 1000
 
 const log = Log.create({ service: "permission" })
 
@@ -119,6 +125,12 @@ export const AskInput = Schema.Struct({
   // (SYSTEM_SPAWNED_AGENT_TYPES) which have no attached human to reply. Default
   // (undefined/true) preserves all existing interactive behavior.
   interactive: Schema.optional(Schema.Boolean),
+  // Orchestrator-peer forward mode. When present, an ask that would block is
+  // FORWARDED for approval instead of auto-denied: the orchestrator may
+  // pre-authorize it via a delegation grant (keyed by parentSessionID), else it
+  // waits (bounded) for a human/orchestrator reply. Internal to the ask call —
+  // NOT persisted on the Request schema.
+  forward: Schema.optional(Schema.Struct({ parentSessionID: Schema.String })),
 })
   .annotate({ identifier: "PermissionAskInput" })
   .pipe(withStatics((s) => ({ zod: zod(s) })))
@@ -225,6 +237,19 @@ export const layer = Layer.effect(
       pending.set(id, { info, deferred })
       yield* bus.publish(Event.Asked, info)
 
+      // Orchestrator-peer forward mode: either the orchestrator holds a delegation
+      // grant for this child (pre-authorized → resolve allow immediately, no human
+      // round-trip), or record the pending forward so `session approve` can find
+      // it and race a bounded deny-timeout below.
+      if (input.forward) {
+        const parentSessionID = input.forward.parentSessionID
+        if (forwardRef.grantAllowed(parentSessionID, info.sessionID)) {
+          yield* Deferred.succeed(deferred, void 0)
+        } else {
+          forwardRef.addPending(String(id), { childSessionID: info.sessionID, parentSessionID })
+        }
+      }
+
       // Spec ③ P3: race against caller's abortSignal so a stranded ask
       // doesn't block forever when the surrounding scope is interrupted.
       // NOTE: Effect.callback (not Effect.promise) — when Deferred.await
@@ -254,10 +279,24 @@ export const layer = Layer.effect(
           )
         : deferredAwait
 
+      // A forwarded ask that no approver resolves must still terminate (deny),
+      // never hang. Race the bounded timeout; the grant path above already
+      // resolved the Deferred, so it wins instantly when pre-authorized.
+      const guarded = input.forward
+        ? Effect.race(
+            main,
+            Effect.sleep(`${FORWARD_DENY_TIMEOUT_MS} millis`).pipe(
+              Effect.andThen(() => Deferred.fail(deferred, new RejectedError())),
+              Effect.andThen(() => Effect.fail(new RejectedError())),
+            ),
+          )
+        : main
+
       return yield* Effect.ensuring(
-        main,
+        guarded,
         Effect.sync(() => {
           pending.delete(id)
+          forwardRef.removePending(String(id))
         }),
       )
     })
