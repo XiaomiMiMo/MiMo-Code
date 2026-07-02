@@ -1322,7 +1322,7 @@ unix(
   30_000,
 )
 
-// skip: flaky due to timing race — 150ms sleep insufficient on slow CI runners
+// skip (was unix-only): flaky timing race — 150ms sleep insufficient on slow CI runners
 it.live.skip(
   "cancel finalizes interrupted bash tool output through normal truncation",
   () =>
