@@ -45,6 +45,7 @@ import { ThemeProvider, useTheme } from "@tui/context/theme"
 import { Home } from "@tui/routes/home"
 import { Session } from "@tui/routes/session"
 import { GridView } from "@tui/routes/grid"
+import { WorkspaceClientsProvider } from "@tui/context/workspace-clients"
 import { CellEventBusProvider } from "@tui/routes/grid/cell-event-bus"
 import { PromptHistoryProvider } from "./component/prompt/history"
 import { FrecencyProvider } from "./component/prompt/frecency"
@@ -1169,7 +1170,9 @@ function App(props: { onSnapshot?: () => Promise<string[]> }) {
             <Session />
           </Match>
           <Match when={route.data.type === "grid"}>
-            <GridView />
+            <WorkspaceClientsProvider>
+              <GridView />
+            </WorkspaceClientsProvider>
           </Match>
         </Switch>
       </Show>
