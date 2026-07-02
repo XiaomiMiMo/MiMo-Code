@@ -51,6 +51,10 @@ For the full key reference (model, provider, mcp, permission, agent, checkpoint,
 
 For task-oriented walkthroughs — signing in & choosing a model, making memory remember project rules, writing custom slash commands, remapping keybinds, adding MCP servers, and using compose mode — see @reference/guide.md. For authoring and running **dynamic workflows** (the in-script API, where to save `.js` workflow files, and the `workflow` tool) see @reference/workflows.md.
 
+**Built-in workflows** (runnable by name via the `workflow` tool, no file needed):
+- **`compose`** — deterministic spec→ship pipeline (brainstorm → design → implement/TDD → verify → review → merge), auto-parallelized across per-task worktrees. Pass `args.task`.
+- **`deep-research`** — parallel web search → source extraction → adversarial cross-check → cited report. Pass the question as `args`.
+
 ## Where Things Live On Disk
 
 Base dirs follow `MIMOCODE_HOME` (if set, absolute) else XDG. Data typically lives at `~/.local/share/mimocode/` (memory, logs, extracted builtin skills), config at `~/.config/mimocode/`, cache at `~/.cache/mimocode/`. See @reference/config.md for the full layout and env vars.
