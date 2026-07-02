@@ -15,6 +15,8 @@ import os from "os"
 import { evaluate as evalRule } from "./evaluate"
 import { PermissionID } from "./schema"
 import { forwardRef } from "./permission-forward-ref"
+import { inboxServiceRef } from "@/inbox/inbox-ref"
+import { TuiEvent } from "@/cli/cmd/tui/event"
 
 // A forwarded ask (orchestrator peer) that no one ever approves resolves DENY
 // after this bound rather than hanging — preserving the hang-safety the old
@@ -260,6 +262,26 @@ export const layer = Layer.effect(
                   : Deferred.fail(deferred, new RejectedError()),
               ),
           })
+          // Wake the orchestrator (inbox note to its main actor) so it learns a
+          // child needs approval, and toast the user (child may be unfocused).
+          // Best-effort: never fail the ask on a notify hiccup.
+          const inbox = inboxServiceRef.current
+          if (inbox) {
+            yield* inbox
+              .send({
+                receiverSessionID: parentSessionID as SessionID,
+                receiverActorID: "main",
+                senderSessionID: info.sessionID,
+                content: `<permission-request child="${info.sessionID}" requestID="${id}">Child session ${info.sessionID} needs approval to use "${info.permission}". Use \`session approve ${info.sessionID}\` to allow it once, or \`session grant-approval ${info.sessionID}\` (or \`all\`) to auto-approve future asks.</permission-request>`,
+              })
+              .pipe(Effect.ignore)
+          }
+          yield* Effect.promise(() =>
+            Bus.publish(TuiEvent.ToastShow, {
+              message: `Child session needs approval to use "${info.permission}"`,
+              variant: "warning",
+            }),
+          ).pipe(Effect.ignore)
         }
       }
 

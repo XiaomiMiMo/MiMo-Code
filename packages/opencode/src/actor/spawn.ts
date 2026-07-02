@@ -14,6 +14,7 @@ import type { SpawnMode, ContextMode, ToolWhitelist, Lifecycle } from "@/actor/s
 import { runTurn } from "@/actor/turn"
 import { spawnRef } from "@/actor/spawn-ref"
 import { Bus } from "@/bus"
+import { TuiEvent } from "@/cli/cmd/tui/event"
 import { MessageV2 } from "@/session/message-v2"
 import { Inbox } from "@/inbox"
 import { renderActorNotification } from "@/inbox/render"
@@ -312,6 +313,17 @@ export const layer = Layer.effect(
                   }),
                 })
                 .pipe(Effect.ignore)
+                // Also give the user a visible signal (the child may be unfocused).
+                .pipe(
+                  Effect.andThen(
+                    Effect.promise(() =>
+                      Bus.publish(TuiEvent.ToastShow, {
+                        message: `Child "${description}" ${status}`,
+                        variant: status === "completed" ? "success" : status === "cancelled" ? "info" : "error",
+                      }),
+                    ).pipe(Effect.ignore),
+                  ),
+                )
             : Effect.void
 
         // Derive actor mode from spawn shape: peer creates a new session, subagent shares parent's
