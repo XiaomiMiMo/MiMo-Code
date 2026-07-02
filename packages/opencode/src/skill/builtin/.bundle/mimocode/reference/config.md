@@ -41,7 +41,7 @@ All optional.
 | Key | Purpose |
 |-----|---------|
 | `model` | Primary model, `provider/model` (e.g. `anthropic/claude-2`) |
-| `small_model` | Explicit model for cheap tasks (title generation, etc.); if unset, routes through the `lite` group. `provider/model` |
+| `small_model` | **Legacy / not recommended** — carried over from OpenCode for back-compat. Prefer configuring the `lite` group instead. If set, its literal `provider/model` still wins for cheap tasks (title generation, etc.); if unset, cheap tasks route through the `lite` group |
 | `model_groups` | Named capability tiers usable anywhere a model string is accepted — see [Model groups](#model-groups) |
 | `provider` | Custom provider configs & model overrides |
 | `enabled_providers` / `disabled_providers` | Allowlist / blocklist providers |
@@ -74,7 +74,7 @@ Each group maps a name to either a single default model (string shorthand) or an
 - A ref without `/` is a group name. If configured, MiMoCode is **provider-aware**: it prefers a member on the caller's current provider, otherwise falls back to the group's `default`.
 - `ultra`, `standard`, `lite` are **built-in tier names**. If you reference one but haven't configured it, it silently falls back to the default model (zero-config never errors).
 - Any other unconfigured name errors with fuzzy suggestions of your defined groups.
-- `small_model` interplay: an explicit `small_model` literal wins; otherwise cheap-task selection resolves the `lite` group (then the built-in fallback).
+- Cheap-task (small) model: **configure the `lite` group** — that is the recommended path. The legacy `small_model` literal, if set, still takes precedence for back-compat, but is not recommended for new configs.
 
 Use groups when you want one label (`"standard"`) to map to different concrete models per provider, or to swap tiers globally without editing every agent/model reference.
 
@@ -153,7 +153,7 @@ Use groups when you want one label (`"standard"`) to map to different concrete m
 {
   "$schema": "https://mimo.xiaomi.com/mimocode/config.json",
   "model": "anthropic/claude-opus-4-8",
-  "small_model": "anthropic/claude-haiku",
+  "model_groups": { "lite": "anthropic/claude-haiku" },
   "dream": { "auto": true, "interval_days": 3 },
   "compaction": { "tail_turns": 3 },
   "permission": { "external_directory": { "/tmp/**": "allow" } },
