@@ -8,7 +8,7 @@ import { Log } from "../util"
 import { SessionRevert } from "./revert"
 import * as Session from "./session"
 import { Agent } from "../agent/agent"
-import { SYSTEM_SPAWNED_AGENT_TYPES } from "@/agent/config"
+import { decideAskRouting } from "@/agent/config"
 import { Provider } from "../provider"
 import { ModelID, ProviderID } from "../provider/schema"
 import {
@@ -712,9 +712,23 @@ NOTE: At any point in time through this workflow you should feel free to ask the
       const askActor = input.agentID
         ? yield* actorRegistry.get(input.session.id, input.agentID)
         : undefined
-      const askNonInteractive = askActor
-        ? SYSTEM_SPAWNED_AGENT_TYPES.has(askActor.agent) || askActor.background
-        : SYSTEM_SPAWNED_AGENT_TYPES.has(input.agent.name)
+      // Three-way permission-ask routing (see decideAskRouting): system agent ->
+      // auto-deny; orchestrator peer -> FORWARD for approval; other background ->
+      // auto-deny; normal -> interactive.
+      const askRouting = decideAskRouting({
+        askActor: askActor
+          ? {
+              agent: askActor.agent,
+              background: askActor.background,
+              mode: askActor.mode,
+              parentActorID: askActor.parentActorID,
+            }
+          : undefined,
+        sessionParentID: input.session.parentID,
+        agentName: input.agent.name,
+      })
+      const askInteractive = askRouting.interactive
+      const askForward = askRouting.forward
       const rejectionFor = (toolID: string) => ({
         title: "Tool not permitted",
         output: `The "${toolID}" tool is not in this actor's whitelist. Allowed tools: ${
@@ -755,10 +769,10 @@ NOTE: At any point in time through this workflow you should feel free to ask the
                 sessionID: input.session.id,
                 tool: { messageID: input.processor.message.id, callID: options.toolCallId },
                 ruleset: Agent.runtimePermission(input.agent, input.session.permission),
-                // System-spawned background agents (checkpoint-writer, dream, distill)
-                // AND any background actor (e.g. compose workflow subagents) have no
-                // human to answer a permission prompt — fail clean, don't hang.
-                interactive: !askNonInteractive,
+                // System-spawned + non-peer background agents have no human to answer
+                // → fail clean, don't hang. Orchestrator peers FORWARD for approval.
+                interactive: askInteractive,
+                ...(askForward ? { forward: askForward } : {}),
               },
               options.abortSignal,
             )
