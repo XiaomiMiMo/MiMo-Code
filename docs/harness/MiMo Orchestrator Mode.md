@@ -95,7 +95,7 @@ Orchestrator 的 child 有一条通往人的路径——它的父会话与看 TU
 
 ## 5. 全局唯一的 Orchestrator 工作区
 
-像 Codex / OpenClaw 那样，Orchestrator 模式使用一个**固定的全局工作目录**（`<data>/orchestrator`，`src/global/index.ts` 的 `orchestratorDir()`）：
+Orchestrator 模式使用一个**固定的全局工作目录**（`<data>/orchestrator`，`src/global/index.ts` 的 `orchestratorDir()`）：
 
 - 无论从哪个目录启动 MiMoCode，**切到 Orchestrator 模式**都会把 TUI 的工作目录切到这个全局目录，并落到那里**唯一的**根 Orchestrator 会话（find-or-create）。
 - 因此不管在哪启动，永远是同一个 Orchestrator 会话——之前建过的 child 会话始终可见、可访问。否则在不同目录启动会得到不同的 Orchestrator 会话，用户就找不到之前创建的子会话了。

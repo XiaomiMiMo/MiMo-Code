@@ -22,8 +22,8 @@ import type { ProviderID, ModelID } from "../provider/schema"
 
 const KNOWN_VERBS = ["create", "switch", "list", "cancel", "ask", "setmode", "approve", "grant-approval"]
 
-// Wraps the human/agent question in a side-boundary system-reminder mirroring
-// CC /btw + Codex side-question semantics: one-shot, READ-ONLY, answer-to-caller.
+// Wraps the human/agent question in a side-boundary system-reminder:
+// one-shot, READ-ONLY, answer-to-caller.
 // The hard read-only guarantee comes from the tool whitelist at spawn (only
 // read/grep/glob); this prompt reinforces it and forbids continuing the task.
 function SIDE_QUESTION_PROMPT(question: string): string {
