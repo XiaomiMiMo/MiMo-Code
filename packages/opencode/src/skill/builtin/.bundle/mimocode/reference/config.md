@@ -41,10 +41,42 @@ All optional.
 | Key | Purpose |
 |-----|---------|
 | `model` | Primary model, `provider/model` (e.g. `anthropic/claude-2`) |
-| `small_model` | Model for cheap tasks like title generation |
-| `model_groups` | Named capability tiers (e.g. ultra/standard/lite); usable anywhere a model string is |
+| `small_model` | Explicit model for cheap tasks (title generation, etc.); if unset, routes through the `lite` group. `provider/model` |
+| `model_groups` | Named capability tiers usable anywhere a model string is accepted — see [Model groups](#model-groups) |
 | `provider` | Custom provider configs & model overrides |
 | `enabled_providers` / `disabled_providers` | Allowlist / blocklist providers |
+
+### Model groups
+
+`model_groups` lets you define named capability tiers and reference them by name (e.g. `"ultra"`) anywhere a `provider/model` string is accepted — the `model` key, an agent's model, the `actor` subagent `model` argument, and workflow model tiers.
+
+Each group maps a name to either a single default model (string shorthand) or an object with a `default` plus optional member `models`:
+
+```jsonc
+{
+  "$schema": "https://mimo.xiaomi.com/mimocode/config.json",
+  "model_groups": {
+    // string shorthand: the group IS its default model
+    "lite": "anthropic/claude-haiku",
+    // object form: a default plus alternates on other providers
+    "standard": {
+      "default": "anthropic/claude-sonnet",
+      "models": ["anthropic/claude-sonnet", "openrouter/xiaomi/mimo-v2.5"]
+    },
+    "ultra": "anthropic/claude-opus-4-8"
+  },
+  "model": "standard"
+}
+```
+
+**Resolution rules:**
+- A ref containing `/` is a literal `provider/model` and is used as-is.
+- A ref without `/` is a group name. If configured, MiMoCode is **provider-aware**: it prefers a member on the caller's current provider, otherwise falls back to the group's `default`.
+- `ultra`, `standard`, `lite` are **built-in tier names**. If you reference one but haven't configured it, it silently falls back to the default model (zero-config never errors).
+- Any other unconfigured name errors with fuzzy suggestions of your defined groups.
+- `small_model` interplay: an explicit `small_model` literal wins; otherwise cheap-task selection resolves the `lite` group (then the built-in fallback).
+
+Use groups when you want one label (`"standard"`) to map to different concrete models per provider, or to swap tiers globally without editing every agent/model reference.
 
 ### Agents
 | Key | Purpose |
