@@ -25,6 +25,7 @@ MiMoCode (CLI binary `mimo`) is an agentic coding tool with a terminal UI, built
 | **Voice input** | Streaming ASR (TenVAD + MiMo ASR); needs `sox` | `/voice` |
 | **Dream** | Consolidates recent traces into project memory | `/dream` |
 | **Distill** | Packages repeated manual workflows into skills/subagents/commands | `/distill` |
+| **Dynamic workflows** | JS scripts that orchestrate many subagents deterministically (fan-out, pipelines, nesting); built-ins `compose` & `deep-research` | `.mimocode/workflows/*.js` + `workflow` tool |
 | **Skills / self-extension** | Add tools, hooks, skills under `.mimocode/` | see the `self-extend` skill |
 | **MCP** | Local & remote Model Context Protocol servers | `mcp` config + `mimo mcp` |
 
@@ -48,7 +49,7 @@ For the full key reference (model, provider, mcp, permission, agent, checkpoint,
 
 ## How-To Guide
 
-For task-oriented walkthroughs — signing in & choosing a model, making memory remember project rules, writing custom slash commands, remapping keybinds, adding MCP servers, and using compose mode — see @reference/guide.md.
+For task-oriented walkthroughs — signing in & choosing a model, making memory remember project rules, writing custom slash commands, remapping keybinds, adding MCP servers, and using compose mode — see @reference/guide.md. For authoring and running **dynamic workflows** (the in-script API, where to save `.js` workflow files, and the `workflow` tool) see @reference/workflows.md.
 
 ## Where Things Live On Disk
 
