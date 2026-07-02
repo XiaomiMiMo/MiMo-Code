@@ -65,30 +65,30 @@ async function readDarwinClipboardImage(): Promise<Content | undefined> {
       }
     }
 
-    // Primary path: let AppKit decode any image representation → PNG.
-    if (which("swift")) {
-      const script = path.join(tmpdir(), `opencode-clipboard-${Date.now()}.swift`)
-      const swift = [
-        "import AppKit",
-        "guard let image = NSImage(pasteboard: NSPasteboard.general) else { exit(1) }",
-        "guard let tiff = image.tiffRepresentation, let rep = NSBitmapImageRep(data: tiff),",
-        "      let png = rep.representation(using: .png, properties: [:]) else { exit(1) }",
-        `try? png.write(to: URL(fileURLWithPath: "${dest}"))`,
-      ].join("\n")
-      try {
-        await Bun.write(script, swift)
-        const out = await Process.run(["swift", script], { nothrow: true })
-        if (out.code === 0) {
-          const buf = await Filesystem.readBytes(dest).catch(() => Buffer.alloc(0))
-          if (buf.length > 0) return { data: buf.toString("base64"), mime: "image/png" }
-        }
-      } finally {
-        await fs.rm(script, { force: true }).catch(() => {})
-      }
+    // Primary path: let AppKit decode any image representation → PNG. Use JXA
+    // (osascript -l JavaScript) rather than `swift`, which recompiles on every
+    // invocation (multi-second cold stall) and needs Xcode CLT. JXA is
+    // interpreted, always available, and reaches the same AppKit APIs.
+    const jxa = [
+      "ObjC.import('AppKit');",
+      "const pb = $.NSPasteboard.generalPasteboard;",
+      "const img = $.NSImage.alloc.initWithPasteboard(pb);",
+      "if (!img) { $.exit(1); }",
+      "const tiff = img.TIFFRepresentation;",
+      "if (!tiff) { $.exit(1); }",
+      "const rep = $.NSBitmapImageRep.imageRepWithData(tiff);",
+      "const png = rep.representationUsingTypeProperties($.NSBitmapImageFileTypePNG, $());",
+      "if (!png) { $.exit(1); }",
+      `png.writeToFileAtomically($('${dest}'), true);`,
+    ].join("\n")
+    const jxaOut = await Process.run(["osascript", "-l", "JavaScript", "-e", jxa], { nothrow: true })
+    if (jxaOut.code === 0) {
+      const buf = await Filesystem.readBytes(dest).catch(() => Buffer.alloc(0))
+      if (buf.length > 0) return { data: buf.toString("base64"), mime: "image/png" }
     }
 
-    // Last resort: osascript PNGf, then TIFF via sips. Works without Swift CLT
-    // but only matches those two specific pasteboard classes.
+    // Last resort: osascript PNGf, then TIFF via sips. Works even on the rare
+    // system where JXA/AppKit is unavailable, but only matches those two classes.
     const dumpClipboard = async (clazz: string, out: string) => {
       await Process.run(
         [
