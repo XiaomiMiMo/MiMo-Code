@@ -55,15 +55,17 @@ export async function read(): Promise<Content | undefined> {
   const os = platform()
 
   if (os === "darwin") {
-    const tmpfile = path.join(tmpdir(), "opencode-clipboard.png")
-    try {
+    // Dump a given clipboard class (e.g. "PNGf", «class TIFF») to a file via
+    // osascript. osascript runs with nothrow, so absence of that class leaves
+    // the file empty rather than throwing — callers must check the byte length.
+    const dumpClipboard = async (clazz: string, dest: string) => {
       await Process.run(
         [
           "osascript",
           "-e",
-          'set imageData to the clipboard as "PNGf"',
+          `set imageData to the clipboard as ${clazz}`,
           "-e",
-          `set fileRef to open for access POSIX file "${tmpfile}" with write permission`,
+          `set fileRef to open for access POSIX file "${dest}" with write permission`,
           "-e",
           "set eof fileRef to 0",
           "-e",
@@ -73,11 +75,29 @@ export async function read(): Promise<Content | undefined> {
         ],
         { nothrow: true },
       )
-      const buffer = await Filesystem.readBytes(tmpfile)
-      return { data: buffer.toString("base64"), mime: "image/png" }
+      return Filesystem.readBytes(dest).catch(() => Buffer.alloc(0))
+    }
+
+    const pngfile = path.join(tmpdir(), "opencode-clipboard.png")
+    const tifffile = path.join(tmpdir(), "opencode-clipboard.tiff")
+    try {
+      // Fast path: clipboard already carries a PNG representation.
+      const png = await dumpClipboard('"PNGf"', pngfile)
+      if (png.length > 0) return { data: png.toString("base64"), mime: "image/png" }
+
+      // Fallback: macOS screenshots land on the clipboard as TIFF with no PNG
+      // representation, so "PNGf" yields nothing. Read the TIFF and convert it
+      // to PNG with the built-in `sips`.
+      const tiff = await dumpClipboard("«class TIFF»", tifffile)
+      if (tiff.length > 0) {
+        await Process.run(["sips", "-s", "format", "png", tifffile, "--out", pngfile], { nothrow: true })
+        const converted = await Filesystem.readBytes(pngfile).catch(() => Buffer.alloc(0))
+        if (converted.length > 0) return { data: converted.toString("base64"), mime: "image/png" }
+      }
     } catch {
     } finally {
-      await fs.rm(tmpfile, { force: true }).catch(() => {})
+      await fs.rm(pngfile, { force: true }).catch(() => {})
+      await fs.rm(tifffile, { force: true }).catch(() => {})
     }
   }
 
