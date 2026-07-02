@@ -37,8 +37,8 @@ Run `mimo <command> --help` for flags on any command.
 | `/dream` | Scan recent traces, extract durable knowledge into project memory, prune stale entries |
 | `/distill` | Detect repeated manual workflows and package high-confidence ones into skills/subagents/commands |
 | `/voice` | Toggle streaming voice input (needs `sox`; MiMo-logged-in users) |
-| `/loop` | Run the built-in loop skill (autonomous iteration) |
-| `/loops` | Manage / view loops |
+| `/loop` | `[interval] <prompt>` — schedule a repeating prompt (also runs once now); maps the interval to a cron job |
+| `/loops` | List scheduled cron/loop jobs; `/loops cancel <id>` stops one |
 | `/connect` | Sign in to a provider (e.g. OpenRouter) |
 | `/<skill-name>` | Invoke any available skill directly by name |
 

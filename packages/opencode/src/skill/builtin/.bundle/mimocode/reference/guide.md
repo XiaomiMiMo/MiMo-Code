@@ -81,6 +81,29 @@ For well-defined tasks that split into independent subtasks, prefer the determin
 
 The `notebook-edit` tool edits `.ipynb` cells directly (replace / insert / delete a single cell) while preserving the surrounding JSON, outputs, and metadata — prefer it over raw text edits on notebooks.
 
+## Scheduled prompts (cron) & loops
+
+**Cron** schedules a prompt to be injected into a session on a recurring or one-shot basis. It is driven by the `cron` tool (no `/cron` slash command); `MIMOCODE_EXPERIMENTAL_CRON` is **on by default** (kill switch: `MIMOCODE_DISABLE_CRON`).
+
+The `cron` tool has six verbs:
+
+| Verb | Purpose |
+|------|---------|
+| `schedule` | Add a job: `cron` (5-field expression), `prompt`, optional `one_shot`, `durable`, `session_id` |
+| `loop` | Arm a repeating loop by `delay_seconds` (clamped 60–3600) + `prompt` |
+| `list` | List jobs (filter by `kind`, `durable_only`) |
+| `get` | Show one job by `id` |
+| `rename` | Replace a job's prompt body |
+| `delete` (alias `cancel`) | Remove a job by `id` |
+
+- **Expressions are 5-field** (`minute hour dom month dow`) and evaluated in **UTC** — there is no timezone config.
+- **Durable** jobs persist to `<project>/.mimocode/scheduled_tasks.json` and survive restart; non-durable jobs live only for the session.
+- When a job fires, the prompt is injected with an `[cron fire @ <ISO>]` prefix; the TUI shows a `🕒 cron fire` clock-row before the reply.
+
+**Loop** — `/loop [interval] <prompt>` (a built-in skill) is a friendly front end: it parses an interval (e.g. `30m`, `2h`), maps it to a recurring cron job, and also runs the prompt once immediately. Manage loops with `/loops` (lists jobs; `/loops cancel <id>` stops one). Loops auto-stop after a keepalive budget of missed turns or a 7-day max age.
+
+`/loop` (cadence) and `/goal` (stop condition) are complementary and independent: `/goal` decides *whether* an autonomous agent may stop; `/loop` decides *how often* it runs.
+
 ## Extending MiMoCode
 
 To add tools, hooks, or skills, use the `self-extend` skill — it covers writing `.mimocode/tools/*.ts`, `.mimocode/hooks/*.ts`, and `.mimocode/skills/*/SKILL.md`, all hot-reloaded on the next turn.
