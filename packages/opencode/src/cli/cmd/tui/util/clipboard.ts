@@ -43,6 +43,90 @@ export async function spillImage(content: { data: string; mime: string }): Promi
   return file
 }
 
+// Reads an image off the macOS clipboard as PNG, whatever representation the
+// source app put there (screenshots, PixPin, copied files, other tools).
+//
+// Enumerating specific pasteboard classes ("PNGf", TIFF) is fragile: it only
+// matches sources that happen to publish that exact type. Instead we ask AppKit
+// to decode ANY available image representation into an NSImage and re-encode it
+// to PNG — the same path native apps use — so format detection is the system's
+// job, not ours. `pngpaste` (if installed) is a faster shortcut for the common
+// case; the osascript path is a last resort when Swift tooling is unavailable.
+async function readDarwinClipboardImage(): Promise<Content | undefined> {
+  const dest = path.join(tmpdir(), `opencode-clipboard-${Date.now()}.png`)
+  try {
+    // Fast path: pngpaste (brew) reads any image representation as PNG.
+    const which = await getWhich()
+    if (which("pngpaste")) {
+      const out = await Process.run(["pngpaste", dest], { nothrow: true })
+      if (out.code === 0) {
+        const buf = await Filesystem.readBytes(dest).catch(() => Buffer.alloc(0))
+        if (buf.length > 0) return { data: buf.toString("base64"), mime: "image/png" }
+      }
+    }
+
+    // Primary path: let AppKit decode any image representation → PNG.
+    if (which("swift")) {
+      const script = path.join(tmpdir(), `opencode-clipboard-${Date.now()}.swift`)
+      const swift = [
+        "import AppKit",
+        "guard let image = NSImage(pasteboard: NSPasteboard.general) else { exit(1) }",
+        "guard let tiff = image.tiffRepresentation, let rep = NSBitmapImageRep(data: tiff),",
+        "      let png = rep.representation(using: .png, properties: [:]) else { exit(1) }",
+        `try? png.write(to: URL(fileURLWithPath: "${dest}"))`,
+      ].join("\n")
+      try {
+        await Bun.write(script, swift)
+        const out = await Process.run(["swift", script], { nothrow: true })
+        if (out.code === 0) {
+          const buf = await Filesystem.readBytes(dest).catch(() => Buffer.alloc(0))
+          if (buf.length > 0) return { data: buf.toString("base64"), mime: "image/png" }
+        }
+      } finally {
+        await fs.rm(script, { force: true }).catch(() => {})
+      }
+    }
+
+    // Last resort: osascript PNGf, then TIFF via sips. Works without Swift CLT
+    // but only matches those two specific pasteboard classes.
+    const dumpClipboard = async (clazz: string, out: string) => {
+      await Process.run(
+        [
+          "osascript",
+          "-e",
+          `set imageData to the clipboard as ${clazz}`,
+          "-e",
+          `set fileRef to open for access POSIX file "${out}" with write permission`,
+          "-e",
+          "set eof fileRef to 0",
+          "-e",
+          "write imageData to fileRef",
+          "-e",
+          "close access fileRef",
+        ],
+        { nothrow: true },
+      )
+      return Filesystem.readBytes(out).catch(() => Buffer.alloc(0))
+    }
+    const png = await dumpClipboard('"PNGf"', dest)
+    if (png.length > 0) return { data: png.toString("base64"), mime: "image/png" }
+    const tifffile = dest.replace(/\.png$/, ".tiff")
+    try {
+      const tiff = await dumpClipboard("«class TIFF»", tifffile)
+      if (tiff.length > 0) {
+        await Process.run(["sips", "-s", "format", "png", tifffile, "--out", dest], { nothrow: true })
+        const converted = await Filesystem.readBytes(dest).catch(() => Buffer.alloc(0))
+        if (converted.length > 0) return { data: converted.toString("base64"), mime: "image/png" }
+      }
+    } finally {
+      await fs.rm(tifffile, { force: true }).catch(() => {})
+    }
+    return undefined
+  } finally {
+    await fs.rm(dest, { force: true }).catch(() => {})
+  }
+}
+
 // Checks clipboard for images first, then falls back to text.
 //
 // On Windows prompt/ can call this from multiple paste signals because
@@ -55,50 +139,8 @@ export async function read(): Promise<Content | undefined> {
   const os = platform()
 
   if (os === "darwin") {
-    // Dump a given clipboard class (e.g. "PNGf", «class TIFF») to a file via
-    // osascript. osascript runs with nothrow, so absence of that class leaves
-    // the file empty rather than throwing — callers must check the byte length.
-    const dumpClipboard = async (clazz: string, dest: string) => {
-      await Process.run(
-        [
-          "osascript",
-          "-e",
-          `set imageData to the clipboard as ${clazz}`,
-          "-e",
-          `set fileRef to open for access POSIX file "${dest}" with write permission`,
-          "-e",
-          "set eof fileRef to 0",
-          "-e",
-          "write imageData to fileRef",
-          "-e",
-          "close access fileRef",
-        ],
-        { nothrow: true },
-      )
-      return Filesystem.readBytes(dest).catch(() => Buffer.alloc(0))
-    }
-
-    const pngfile = path.join(tmpdir(), "opencode-clipboard.png")
-    const tifffile = path.join(tmpdir(), "opencode-clipboard.tiff")
-    try {
-      // Fast path: clipboard already carries a PNG representation.
-      const png = await dumpClipboard('"PNGf"', pngfile)
-      if (png.length > 0) return { data: png.toString("base64"), mime: "image/png" }
-
-      // Fallback: macOS screenshots land on the clipboard as TIFF with no PNG
-      // representation, so "PNGf" yields nothing. Read the TIFF and convert it
-      // to PNG with the built-in `sips`.
-      const tiff = await dumpClipboard("«class TIFF»", tifffile)
-      if (tiff.length > 0) {
-        await Process.run(["sips", "-s", "format", "png", tifffile, "--out", pngfile], { nothrow: true })
-        const converted = await Filesystem.readBytes(pngfile).catch(() => Buffer.alloc(0))
-        if (converted.length > 0) return { data: converted.toString("base64"), mime: "image/png" }
-      }
-    } catch {
-    } finally {
-      await fs.rm(pngfile, { force: true }).catch(() => {})
-      await fs.rm(tifffile, { force: true }).catch(() => {})
-    }
+    const image = await readDarwinClipboardImage()
+    if (image) return image
   }
 
   // Windows/WSL: probe clipboard for images via PowerShell.
