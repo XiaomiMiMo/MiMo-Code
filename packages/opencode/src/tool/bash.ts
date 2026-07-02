@@ -23,6 +23,7 @@ import { ChildProcess } from "effect/unstable/process"
 import { ChildProcessSpawner } from "effect/unstable/process/ChildProcessSpawner"
 import * as BashInteractive from "./bash-interactive"
 import * as BashTokenEfficient from "./bash_token_efficient_pipeline"
+import * as BashTokenEfficientHeuristic from "./bash_token_efficient_heuristic"
 
 const MAX_METADATA_LENGTH = 30_000
 const DEFAULT_TIMEOUT = Flag.MIMOCODE_EXPERIMENTAL_BASH_DEFAULT_TIMEOUT_MS || 2 * 60 * 1000
@@ -586,7 +587,25 @@ export const BashTool = Tool.define(
         })
       }
 
-      let output = cleaned?.text ?? end.text
+      // Heuristic (shape-based) pipeline runs AFTER the common pipeline and
+      // only when both flags are on. Same never-worse contract — a shape that
+      // doesn't shrink the bytes is discarded.
+      const heuristic =
+        !file &&
+        Flag.MIMOCODE_EXPERIMENTAL_TOKEN_EFFICIENCY &&
+        Flag.MIMOCODE_EXPERIMENTAL_TOKEN_EFFICIENCY_HEURISTIC
+          ? BashTokenEfficientHeuristic.cleanHeuristic(cleaned?.text ?? end.text, { command: input.command })
+          : null
+      if (heuristic && heuristic.bytesOut < heuristic.bytesIn) {
+        log.info("bash output heuristic cleaned", {
+          shape: heuristic.shape,
+          bytesIn: heuristic.bytesIn,
+          bytesOut: heuristic.bytesOut,
+          saved: heuristic.bytesIn - heuristic.bytesOut,
+        })
+      }
+
+      let output = heuristic?.text ?? cleaned?.text ?? end.text
       if (!output) output = "(no output)"
 
       if (cut && file) {

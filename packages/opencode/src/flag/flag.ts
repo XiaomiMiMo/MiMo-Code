@@ -153,6 +153,13 @@ export const Flag = {
   MIMOCODE_EXPERIMENTAL_TOKEN_EFFICIENCY_MAX_LINE_CHARS: number("MIMOCODE_EXPERIMENTAL_TOKEN_EFFICIENCY_MAX_LINE_CHARS") ?? 500,
   MIMOCODE_EXPERIMENTAL_TOKEN_EFFICIENCY_LINE_HEAD_KEEP: number("MIMOCODE_EXPERIMENTAL_TOKEN_EFFICIENCY_LINE_HEAD_KEEP") ?? 160,
   MIMOCODE_EXPERIMENTAL_TOKEN_EFFICIENCY_NEVER_WORSE_MARGIN: number("MIMOCODE_EXPERIMENTAL_TOKEN_EFFICIENCY_NEVER_WORSE_MARGIN") ?? 0,
+  // Heuristic (shape-based) filter pipeline for bash output. Runs AFTER the
+  // common pipeline, only when the common pipeline is enabled AND this flag is
+  // explicitly opted in. Each shape (gitdiff / pytest / npm / make /
+  // stacktrace / tsc / kubectl / json / md / gostest) recognises a command
+  // pattern or body fingerprint and rewrites the body to strip predictable
+  // noise. Off by default. Set to 1/true to opt in.
+  MIMOCODE_EXPERIMENTAL_TOKEN_EFFICIENCY_HEURISTIC: truthy("MIMOCODE_EXPERIMENTAL_TOKEN_EFFICIENCY_HEURISTIC"),
   MIMOCODE_EXPERIMENTAL_OUTPUT_TOKEN_MAX: number("MIMOCODE_EXPERIMENTAL_OUTPUT_TOKEN_MAX"),
   MIMOCODE_EXPERIMENTAL_OXFMT: MIMOCODE_EXPERIMENTAL || truthy("MIMOCODE_EXPERIMENTAL_OXFMT"),
   MIMOCODE_EXPERIMENTAL_LSP_TY: truthy("MIMOCODE_EXPERIMENTAL_LSP_TY"),
