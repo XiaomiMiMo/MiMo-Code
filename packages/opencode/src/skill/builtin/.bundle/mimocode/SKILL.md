@@ -34,11 +34,11 @@ Config file (JSON or JSONC), discovered by walking up from cwd:
 - **Project**: `.mimocode/mimocode.json` (or `.jsonc`)
 - **Global**: `~/.config/mimocode/mimocode.json`
 
-Add `"$schema": "https://opencode.ai/config.json"` for editor validation. All top-level keys are optional; project config merges over global.
+Add `"$schema": "https://mimo.xiaomi.com/mimocode/config.json"` for editor validation. All top-level keys are optional; project config merges over global.
 
 ```jsonc
 {
-  "$schema": "https://opencode.ai/config.json",
+  "$schema": "https://mimo.xiaomi.com/mimocode/config.json",
   "model": "provider/model",
   "permission": { "external_directory": { "/tmp/**": "allow" } }
 }

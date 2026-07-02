@@ -8,7 +8,7 @@ Config is JSON or JSONC. MiMoCode discovers it by walking up from the cwd to the
 - Global: `~/.config/mimocode/mimocode.json` (XDG config dir)
 - Extra config dirs are also searched via `$MIMOCODE_CONFIG_DIR`.
 
-Project config merges **over** global. Always include `"$schema": "https://opencode.ai/config.json"` for validation.
+Project config merges **over** global. Always include `"$schema": "https://mimo.xiaomi.com/mimocode/config.json"` for validation.
 
 ## On-disk data layout
 
@@ -119,7 +119,7 @@ All optional.
 
 ```jsonc
 {
-  "$schema": "https://opencode.ai/config.json",
+  "$schema": "https://mimo.xiaomi.com/mimocode/config.json",
   "model": "anthropic/claude-opus-4-8",
   "small_model": "anthropic/claude-haiku",
   "dream": { "auto": true, "interval_days": 3 },
