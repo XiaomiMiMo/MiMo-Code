@@ -401,6 +401,28 @@ describe("session tool dual-schema (shell + JSON) end-to-end", () => {
     ),
   )
 
+  it.live("shell form: create parses --mode plan", () =>
+    provideTmpdirInstance(() =>
+      Effect.gen(function* () {
+        const tool = yield* (yield* SessionTool).init()
+        const ops = yield* tool.shell!.parse("session create do it --mode plan")
+        expect(ops[0]).toEqual({
+          operation: { action: "create", task: "do it", mode: "plan" },
+        })
+      }),
+    ),
+  )
+
+  it.live("shell form: create rejects an invalid --mode", () =>
+    provideTmpdirInstance(() =>
+      Effect.gen(function* () {
+        const tool = yield* (yield* SessionTool).init()
+        const exit = yield* Effect.exit(tool.shell!.parse("session create do it --mode foo"))
+        expect(exit._tag).toBe("Failure")
+      }),
+    ),
+  )
+
   it.live("shell form: parses 'ask' into session_id + joined question", () =>
     provideTmpdirInstance(() =>
       Effect.gen(function* () {
