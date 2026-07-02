@@ -2,6 +2,7 @@ import type { AssistantMessage } from "@mimo-ai/sdk/v2"
 import type { TuiPlugin, TuiPluginApi, TuiPluginModule } from "@mimo-ai/plugin/tui"
 import { Show, createEffect, createMemo, createSignal, onCleanup } from "solid-js"
 import { completedTPS, formatTPS, streamingTPS } from "./tps"
+import { useLocal } from "@tui/context/local"
 
 const id = "internal:sidebar-context"
 const REFRESH_MS = 1000
@@ -13,6 +14,7 @@ const money = new Intl.NumberFormat("en-US", {
 
 function View(props: { api: TuiPluginApi; session_id: string }) {
   const theme = () => props.api.theme.current
+  const local = useLocal()
   const msg = createMemo(() => props.api.state.session.messages(props.session_id))
   const cost = createMemo(() => msg().reduce((sum, item) => sum + (item.role === "assistant" ? item.cost : 0), 0))
 
@@ -75,7 +77,13 @@ function View(props: { api: TuiPluginApi; session_id: string }) {
 
     const tokens =
       last.tokens.input + last.tokens.output + last.tokens.reasoning + last.tokens.cache.read + last.tokens.cache.write
-    const model = props.api.state.provider.find((item) => item.id === last.providerID)?.models[last.modelID]
+
+    // Use current selected model for context limit display
+    const currentModel = local.model.current()
+    const model = currentModel
+      ? props.api.state.provider.find((item) => item.id === currentModel.providerID)?.models[currentModel.modelID]
+      : props.api.state.provider.find((item) => item.id === last.providerID)?.models[last.modelID]
+
     return {
       tokens,
       percent: model?.limit.context ? Math.round((tokens / model.limit.context) * 100) : null,
