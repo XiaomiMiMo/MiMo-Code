@@ -222,22 +222,11 @@ export const ReadTool = Tool.define(
           : undefined
         const supportsImage = model?.capabilities.input.image ?? false
         if (!supportsImage) {
-          const visionModels = yield* provider
-            .list()
-            .pipe(
-              Effect.map((providers) =>
-                Object.values(providers)
-                  .flatMap((info) => Object.values(info.models))
-                  .filter((m) => m.capabilities.input.image === true)
-                  .map((m) => `${m.providerID}/${m.id}`)
-                  .sort((a, b) => a.localeCompare(b))
-                  .slice(0, 3),
-              ),
-            )
-            .pipe(Effect.orElseSucceed(() => [] as string[]))
-          const dispatch = visionModels.length
-            ? `dispatch a vision-capable subagent: actor run <type> "<desc>" "analyze the image at ${filepath}" --model ${visionModels[0]} (run \`actor models --vision\` for the full list)`
-            : `no vision-capable model is configured — ask the user to configure one or use an OCR tool`
+        const preferred = yield* provider.getVisionModel().pipe(Effect.orElseSucceed(() => undefined))
+        const preferredRef = preferred ? `${preferred.providerID}/${preferred.id}` : undefined
+        const dispatch = preferredRef
+          ? `dispatch a vision-capable subagent: actor run <type> "<desc>" "analyze the image at ${filepath}" --model ${preferredRef} (run \`actor models --vision\` for the full list)`
+          : `no vision-capable model is configured — ask the user to configure one or use an OCR tool`
           const warning = [
             `Cannot read image "${path.basename(filepath)}" — the current model has no vision support, so its visual content is unavailable.`,
             `If you need to understand the image visually, ${dispatch}.`,

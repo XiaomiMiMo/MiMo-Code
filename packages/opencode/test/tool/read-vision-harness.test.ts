@@ -138,6 +138,7 @@ const nonVision = testEffect(
       model: nonVisionModel,
       info: bothModelsInfo,
       list: Effect.fn("NonVisionHarness.list")(() => Effect.succeed({ [bothModelsInfo.id]: bothModelsInfo })),
+      getVisionModel: Effect.fn("NonVisionHarness.getVisionModel")(() => Effect.succeed(visionModel)),
     }).layer,
   ),
 )
