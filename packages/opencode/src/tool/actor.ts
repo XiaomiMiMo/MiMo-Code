@@ -9,6 +9,7 @@ import { SessionID, MessageID, PartID } from "../session/schema"
 import { MessageV2 } from "../session/message-v2"
 import { Agent } from "../agent/agent"
 import { Provider } from "../provider"
+import { sortVisionModels } from "../provider/provider"
 import type { SessionPrompt } from "../session/prompt"
 import { Config } from "../config"
 import { ActorRegistry } from "@/actor/registry"
@@ -640,24 +641,20 @@ export const ActorTool = Tool.define(
 
         if (op.action === "models") {
           const providers = yield* provider.list()
-          const all = Object.values(providers).flatMap((info) =>
-            Object.values(info.models).map((m) => ({
-              ref: `${m.providerID}/${m.id}`,
-              name: m.name,
-              vision: m.capabilities.input.image === true,
-            })),
-          )
-          const filtered = op.vision ? all.filter((m) => m.vision) : all
-          const sorted = filtered.sort((a, b) => a.ref.localeCompare(b.ref))
+          const allModels = Object.values(providers).flatMap((info) => Object.values(info.models))
+          const filtered = op.vision ? allModels.filter((m) => m.capabilities.input.image === true) : allModels
+          const ordered = op.vision
+            ? sortVisionModels(filtered)
+            : [...filtered].sort((a, b) => `${a.providerID}/${a.id}`.localeCompare(`${b.providerID}/${b.id}`))
           const limit = op.limit ?? 50
-          const shown = sorted.slice(0, limit)
-          const lines = shown.map((m) => `${m.ref}${m.vision ? " (vision)" : ""}`)
+          const shown = ordered.slice(0, limit)
+          const lines = shown.map((m) => `${m.providerID}/${m.id}${m.capabilities.input.image ? " (vision)" : ""}`)
           const header = op.vision ? `Vision-capable models` : `Available models`
-          const more = sorted.length > shown.length ? `\n… and ${sorted.length - shown.length} more (raise --limit)` : ""
+          const more = ordered.length > shown.length ? `\n… and ${ordered.length - shown.length} more (raise --limit)` : ""
           const output = shown.length === 0
             ? (op.vision ? "No vision-capable models are configured. Configure a vision model or use an OCR tool." : "No models are configured.")
-            : `${header} (${shown.length} of ${sorted.length}):\n${lines.join("\n")}${more}\nPass any of these to actor --model.`
-          return { title: header, output, metadata: { count: shown.length, total: sorted.length, vision: !!op.vision } as Record<string, any> }
+            : `${header} (${shown.length} of ${ordered.length}):\n${lines.join("\n")}${more}\nPass any of these to actor --model.`
+          return { title: header, output, metadata: { count: shown.length, total: ordered.length, vision: !!op.vision } as Record<string, any> }
         }
 
         // op.action ==="run" or "spawn" — schema guarantees
