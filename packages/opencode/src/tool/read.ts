@@ -211,15 +211,24 @@ export const ReadTool = Tool.define(
 
       const mime = sniffAttachmentMime(sample, AppFileSystem.mimeType(filepath))
       if (isImageAttachment(mime)) {
-        const modelRef = [...ctx.messages]
-          .reverse()
-          .map((m) => m.info)
-          .find((i): i is Extract<typeof i, { role: "user" }> => i.role === "user")?.model
-        const model = modelRef
-          ? yield* provider
-              .getModel(modelRef.providerID, modelRef.modelID)
-              .pipe(Effect.catchDefect(() => Effect.succeed(undefined)))
-          : undefined
+        // The active model is carried on ctx.extra.model (set on both the
+        // agent-call path and the @file resolution path, which passes messages: []).
+        // Fall back to resolving the last user message's model for any caller that
+        // doesn't populate extra. Mirrors tool/websearch/index.ts.
+        const extraModel = (ctx.extra as { model?: Provider.Model } | undefined)?.model
+        const messageModelRef = extraModel
+          ? undefined
+          : [...ctx.messages]
+              .reverse()
+              .map((m) => m.info)
+              .find((i): i is Extract<typeof i, { role: "user" }> => i.role === "user")?.model
+        const model =
+          extraModel ??
+          (messageModelRef
+            ? yield* provider
+                .getModel(messageModelRef.providerID, messageModelRef.modelID)
+                .pipe(Effect.catchDefect(() => Effect.succeed(undefined)))
+            : undefined)
         const supportsImage = model?.capabilities.input.image ?? false
         if (!supportsImage) {
         const preferred = yield* provider.getVisionModel().pipe(Effect.orElseSucceed(() => undefined))

@@ -122,6 +122,21 @@ const ctxNoModel: Tool.Context = {
   ask: () => Effect.void,
 }
 
+// The @file path: messages is empty and the active model is supplied via
+// extra.model (see session/prompt.ts execRead). ctx.messages alone would
+// resolve undefined → wrongly report "no vision support" for a vision model.
+const ctxExtraModel = (model: typeof visionModel): Tool.Context => ({
+  sessionID: SessionID.make("ses_test"),
+  messageID: MessageID.make(""),
+  callID: "",
+  agent: "build",
+  abort: AbortSignal.any([]),
+  extra: { model },
+  messages: [],
+  metadata: () => Effect.void,
+  ask: () => Effect.void,
+})
+
 const baseLayers = Layer.mergeAll(
   Agent.defaultLayer,
   AppFileSystem.defaultLayer,
@@ -199,6 +214,32 @@ describe("tool.read vision harness", () => {
       yield* put(file, PNG)
 
       const result = yield* runRead(dir, file, ctxNoModel)
+      expect(result.attachments).toBeUndefined()
+      expect(result.output).toContain("no vision support")
+    }),
+  )
+
+  // Regression: the @file path passes messages: [] and the model via extra.model.
+  // Resolving from ctx.messages alone wrongly reported "no vision support" for a
+  // vision model referencing an image (e.g. autocomplete @image.png).
+  vision.live("vision model supplied via extra.model returns the image attachment", () =>
+    Effect.gen(function* () {
+      const dir = yield* tmpdirScoped()
+      const file = path.join(dir, "image.png")
+      yield* put(file, PNG)
+
+      const result = yield* runRead(dir, file, ctxExtraModel(visionModel))
+      expect(result.attachments?.[0].mime.startsWith("image/")).toBe(true)
+    }),
+  )
+
+  vision.live("non-vision model supplied via extra.model returns the warning", () =>
+    Effect.gen(function* () {
+      const dir = yield* tmpdirScoped()
+      const file = path.join(dir, "image.png")
+      yield* put(file, PNG)
+
+      const result = yield* runRead(dir, file, ctxExtraModel(nonVisionModel))
       expect(result.attachments).toBeUndefined()
       expect(result.output).toContain("no vision support")
     }),
