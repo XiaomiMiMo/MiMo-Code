@@ -53,4 +53,15 @@ describe("decideAskRouting", () => {
     expect(r.interactive).toBe(false)
     expect(r.forward).toBeUndefined()
   })
+
+  test("orchestrator disabled (flag off) -> peer does NOT forward, auto-denies", () => {
+    const r = decideAskRouting({
+      askActor: { agent: "build", background: true, mode: "peer", parentActorID: "main" },
+      sessionParentID: "ses_orchestrator",
+      agentName: "build",
+      orchestratorEnabled: false,
+    })
+    expect(r.interactive).toBe(false)
+    expect(r.forward).toBeUndefined()
+  })
 })

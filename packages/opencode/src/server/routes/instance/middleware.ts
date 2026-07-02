@@ -27,8 +27,12 @@ export function InstanceMiddleware(workspaceID?: WorkspaceID): MiddlewareHandler
       const cwd = Filesystem.resolve(process.cwd())
       // The fixed global Orchestrator workspace is app-owned (under Global.Path.data),
       // not user-supplied, so entering Orchestrator mode may switch to it even though
-      // it lives outside the server's cwd. Allow it explicitly.
-      const orchestrator = Filesystem.resolve(path.join(Global.Path.data, "orchestrator"))
+      // it lives outside the server's cwd. Allow it explicitly — but only when the
+      // Orchestrator feature is enabled (otherwise no escape hatch exists).
+      const orchestrator =
+        Flag.MIMOCODE_EXPERIMENTAL_ORCHESTRATOR
+          ? Filesystem.resolve(path.join(Global.Path.data, "orchestrator"))
+          : undefined
       if (!Filesystem.contains(cwd, directory) && directory !== orchestrator) {
         return c.json({ error: "Access denied: directory must be within the server's working directory" }, 403)
       }

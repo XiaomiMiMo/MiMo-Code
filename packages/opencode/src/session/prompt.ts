@@ -726,6 +726,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
           : undefined,
         sessionParentID: input.session.parentID,
         agentName: input.agent.name,
+        orchestratorEnabled: Flag.MIMOCODE_EXPERIMENTAL_ORCHESTRATOR,
       })
       const askInteractive = askRouting.interactive
       const askForward = askRouting.forward

@@ -16,12 +16,16 @@ export function decideAskRouting(input: {
   askActor?: { agent: string; background: boolean; mode: string; parentActorID?: string }
   sessionParentID?: string
   agentName: string
+  // When false, orchestrator-peer forwarding is disabled (feature flag off) and
+  // a peer falls back to the background auto-deny path.
+  orchestratorEnabled?: boolean
 }): { interactive: boolean; forward?: { parentSessionID: string } } {
   const isSystemAgent = input.askActor
     ? SYSTEM_SPAWNED_AGENT_TYPES.has(input.askActor.agent)
     : SYSTEM_SPAWNED_AGENT_TYPES.has(input.agentName)
   if (isSystemAgent) return { interactive: false }
   const isOrchestratorPeer =
+    input.orchestratorEnabled !== false &&
     !!input.askActor?.background &&
     input.askActor?.mode === "peer" &&
     !!(input.askActor?.parentActorID || input.sessionParentID)

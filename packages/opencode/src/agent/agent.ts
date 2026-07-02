@@ -1,4 +1,5 @@
 import { Config } from "../config"
+import { Flag } from "@/flag/flag"
 import z from "zod"
 import { Provider } from "../provider"
 import { ModelID, ProviderID } from "../provider/schema"
@@ -211,23 +212,32 @@ export const layer = Layer.effect(
             mode: "primary",
             native: true,
           },
-          orchestrator: {
-            name: "orchestrator",
-            color: "#7fb3d5",
-            description:
-              "Orchestrator mode. A general-purpose coordinator that accomplishes goals by delegating work to child sessions; use the `session` tool to create/switch/list/cancel children running in their own mode and model.",
-            prompt: PROMPT_ORCHESTRATOR,
-            options: {},
-            permission: Permission.merge(
-              defaults,
-              Permission.fromConfig({
-                question: "allow",
-              }),
-              user,
-            ),
-            mode: "primary",
-            native: true,
-          },
+          // Orchestrator mode is experimental and opt-in (default OFF): only
+          // registered when MIMOCODE_EXPERIMENTAL_ORCHESTRATOR is set. Gating the
+          // registration here removes it from the TUI mode-cycle, the agent
+          // dialog, defaultAgent, and prevents any `session`-tool peer spawns —
+          // making the rest of the orchestrator feature dead code when off.
+          ...(Flag.MIMOCODE_EXPERIMENTAL_ORCHESTRATOR
+            ? {
+                orchestrator: {
+                  name: "orchestrator",
+                  color: "#7fb3d5",
+                  description:
+                    "Orchestrator mode. A general-purpose coordinator that accomplishes goals by delegating work to child sessions; use the `session` tool to create/switch/list/cancel children running in their own mode and model.",
+                  prompt: PROMPT_ORCHESTRATOR,
+                  options: {},
+                  permission: Permission.merge(
+                    defaults,
+                    Permission.fromConfig({
+                      question: "allow",
+                    }),
+                    user,
+                  ),
+                  mode: "primary" as const,
+                  native: true,
+                },
+              }
+            : {}),
           general: {
             name: "general",
             color: "#aac4e1",

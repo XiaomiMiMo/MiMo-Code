@@ -428,7 +428,8 @@ function App(props: { onSnapshot?: () => Promise<string[]> }) {
     const prev = lastAgentName
     lastAgentName = name
     // Only act on the transition INTO orchestrator, and never re-enter while a
-    // switch is already in flight.
+    // switch is already in flight. No-op entirely when the feature is off.
+    if (!Flag.MIMOCODE_EXPERIMENTAL_ORCHESTRATOR) return
     if (name !== "orchestrator" || prev === "orchestrator" || enteringOrchestrator) return
     enteringOrchestrator = true
     void (async () => {
