@@ -60,7 +60,7 @@ export const dict = {
   "tui.tips.redo": "{highlight}/redo{/highlight} で取り消したメッセージとファイル変更を復元します",
   "tui.tips.share": "{highlight}/share{/highlight} を実行すると opencode.ai に会話の公開リンクを作成します",
   "tui.tips.drag_drop": "画像や PDF をターミナルにドラッグ＆ドロップしてコンテキストに追加できます",
-  "tui.tips.paste_image": "{highlight}Ctrl+V{/highlight} でクリップボードの画像をプロンプトに貼り付けます",
+  "tui.tips.paste_image": "{highlight}Ctrl+V{/highlight} でクリップボードの画像を貼り付けます（macOS では Cmd+V ではなく Ctrl+V を使用してください。Cmd+V は端末が横取りします）",
   "tui.tips.editor":
     "{highlight}Ctrl+X E{/highlight} または {highlight}/editor{/highlight} で外部エディタからメッセージを書けます",
   "tui.tips.init": "{highlight}/init{/highlight} を実行するとコードベースを基にプロジェクトのルールを自動生成します",

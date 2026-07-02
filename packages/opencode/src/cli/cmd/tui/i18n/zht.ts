@@ -59,7 +59,7 @@ export const dict = {
   "tui.tips.redo": "使用 {highlight}/redo{/highlight} 還原先前復原的訊息與檔案變更",
   "tui.tips.share": "執行 {highlight}/share{/highlight} 在 opencode.ai 上為你的對話產生公開連結",
   "tui.tips.drag_drop": "把圖片或 PDF 拖入終端機可作為上下文加入",
-  "tui.tips.paste_image": "按 {highlight}Ctrl+V{/highlight} 把剪貼簿中的圖片貼到輸入框",
+  "tui.tips.paste_image": "按 {highlight}Ctrl+V{/highlight} 把剪貼簿中的圖片貼到輸入框（macOS 上請用 Ctrl+V，不要用 Cmd+V——Cmd+V 會被終端攔截）",
   "tui.tips.editor": "按 {highlight}Ctrl+X E{/highlight} 或 {highlight}/editor{/highlight} 在外部編輯器中編輯訊息",
   "tui.tips.init": "執行 {highlight}/init{/highlight} 根據你的程式碼庫自動產生專案規則",
   "tui.tips.models": "執行 {highlight}/models{/highlight} 或 {highlight}Ctrl+X M{/highlight} 切換模型",

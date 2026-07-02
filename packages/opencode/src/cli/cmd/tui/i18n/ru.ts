@@ -66,7 +66,7 @@ export const dict = {
     "Выполните {highlight}/share{/highlight}, чтобы получить публичную ссылку на диалог на opencode.ai",
   "tui.tips.drag_drop": "Перетащите изображения или PDF в терминал, чтобы добавить их в контекст",
   "tui.tips.paste_image":
-    "Нажмите {highlight}Ctrl+V{/highlight}, чтобы вставить изображение из буфера обмена в строку ввода",
+    "Нажмите {highlight}Ctrl+V{/highlight}, чтобы вставить изображение из буфера обмена (в macOS используйте Ctrl+V, а не Cmd+V — терминал перехватывает Cmd+V)",
   "tui.tips.editor":
     "Нажмите {highlight}Ctrl+X E{/highlight} или {highlight}/editor{/highlight}, чтобы редактировать сообщения во внешнем редакторе",
   "tui.tips.init":
