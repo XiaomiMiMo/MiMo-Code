@@ -62,6 +62,19 @@ const ctx = (sessionID: string) => ({
 })
 
 describe("session tool", () => {
+  it.live("create accepts mode:'plan' against the tool parameters schema", () =>
+    provideTmpdirInstance(() =>
+      Effect.gen(function* () {
+        const info = yield* SessionTool
+        const tool = yield* info.init()
+        const parsed = tool.parameters.safeParse({
+          operation: { action: "create", task: "x", mode: "plan" },
+        })
+        expect(parsed.success).toBe(true)
+      }),
+    ),
+  )
+
   it.live("create spawns a child peer session registered with mode peer + agent build", () =>
     provideTmpdirInstance(() =>
       Effect.gen(function* () {
@@ -462,8 +475,14 @@ describe("recoverSessionArgs", () => {
     expect(recoverSessionArgs("nope")).toBeUndefined()
   })
 
-  test("ignores an invalid mode on a bare create", () => {
+  test("carries mode:'plan' on a bare create", () => {
     expect(recoverSessionArgs({ task: "x", mode: "plan" })).toEqual({
+      operation: { action: "create", task: "x", mode: "plan" },
+    })
+  })
+
+  test("ignores an invalid mode on a bare create", () => {
+    expect(recoverSessionArgs({ task: "x", mode: "bogus" })).toEqual({
       operation: { action: "create", task: "x" },
     })
   })

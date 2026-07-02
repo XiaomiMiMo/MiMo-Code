@@ -8,8 +8,8 @@ JSON calls always wrap the action in an `operation` object — see examples belo
 ## Operations
 
 - create:   spawn a new child session that runs in the BACKGROUND. `task` required
-            (the child's first-turn prompt). optional: `mode` (build|compose,
-            default build), `model` (group/tier name or literal provider/model),
+            (the child's first-turn prompt). optional: `mode` (build|plan|compose,
+            default build; compose preferred for planned work, plan secondary), `model` (group/tier name or literal provider/model),
             `title`, `dir` (working directory; any project or path; defaults to the
             orchestrator's directory), `isolate` (own git worktree of `dir` for
             concurrent-edit isolation; non-git dir falls back to shared). Returns

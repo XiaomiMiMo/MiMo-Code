@@ -13,7 +13,7 @@ memory. Verbs: create | switch | list | cancel | ask.
     session create implement email/password login --mode build
     session create port the parser to repo B --dir /path/to/repoB --isolate
     session create design the billing schema --mode compose --model standard --title Billing
-    # --mode  build|compose   (default build)
+    # --mode  build|plan|compose   (default build; compose preferred for planned work, plan is secondary)
     # --model <ref>           model group/tier name, or literal provider/model
     # --title <t>             session title (defaults to the task prefix)
     # --dir <path>            working directory the child runs in (any project or path; default orchestrator dir)

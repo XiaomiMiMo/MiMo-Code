@@ -155,7 +155,12 @@ const id = "session"
 const createOperation = z.strictObject({
   action: z.literal("create"),
   task: z.string().min(1).describe("The task/prompt for the child session's first turn."),
-  mode: z.enum(["build", "compose"]).optional().describe("Agent mode for the child session. Default build."),
+  mode: z
+    .enum(["build", "plan", "compose"])
+    .optional()
+    .describe(
+      "Agent mode for the child session (build|plan|compose). Default build. Use compose for work needing planning (preferred); plan is a secondary planning-only mode.",
+    ),
   model: z.string().min(1).optional().describe("Model group/tier name or literal provider/model for the child."),
   title: z.string().min(1).optional().describe("Title for the child session. Defaults to the task prefix."),
   dir: z.string().min(1).optional().describe("Working directory the child runs in (any project or path). Defaults to the orchestrator's directory."),
@@ -240,7 +245,7 @@ export function recoverSessionArgs(rawArgs: unknown): SessionOperation | undefin
     return { operation: obj.operation } as SessionOperation
   if (typeof obj.task === "string") {
     const op: Record<string, unknown> = { action: "create", task: obj.task }
-    if (obj.mode === "build" || obj.mode === "compose") op.mode = obj.mode
+    if (obj.mode === "build" || obj.mode === "plan" || obj.mode === "compose") op.mode = obj.mode
     if (typeof obj.model === "string") op.model = obj.model
     if (typeof obj.title === "string") op.title = obj.title
     return { operation: op } as SessionOperation
@@ -305,14 +310,14 @@ function mapVerb(verb: string | undefined, args: string[], line: number): Effect
       const { flags, bools, rest, error } = extractSessionFlags(args, ["mode", "model", "title", "dir"], ["isolate"])
       if (error) return flagError("create", error, line)
       if (rest.length < 1)
-        return arityError("create", "<task...> [--mode build|compose] [--model <ref>] [--title <t>] [--dir <path>] [--isolate]", rest, line)
-      if (flags.mode && flags.mode !== "build" && flags.mode !== "compose")
-        return flagError("create", `--mode must be build or compose (got '${flags.mode}')`, line)
+        return arityError("create", "<task...> [--mode build|plan|compose] [--model <ref>] [--title <t>] [--dir <path>] [--isolate]", rest, line)
+      if (flags.mode && flags.mode !== "build" && flags.mode !== "plan" && flags.mode !== "compose")
+        return flagError("create", `--mode must be build, plan or compose (got '${flags.mode}')`, line)
       return Effect.succeed({
         operation: {
           action: "create" as const,
           task: rest.join(" "),
-          ...(flags.mode ? { mode: flags.mode as "build" | "compose" } : {}),
+          ...(flags.mode ? { mode: flags.mode as "build" | "plan" | "compose" } : {}),
           ...(flags.model ? { model: flags.model } : {}),
           ...(flags.title ? { title: flags.title } : {}),
           ...(flags.dir ? { dir: flags.dir } : {}),
