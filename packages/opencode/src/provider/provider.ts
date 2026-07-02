@@ -1378,6 +1378,10 @@ const layer: Layer.Layer<
           }
 
           const configProvider = cfg.provider?.[providerID]
+          // A non-empty `models` config acts as an implicit whitelist: only the
+          // configured model IDs are shown, hiding the rest of the models.dev catalog.
+          const configModels = configProvider?.models ? Object.keys(configProvider.models) : undefined
+          const implicitWhitelist = configModels && configModels.length > 0 ? configModels : undefined
 
           for (const [modelID, model] of Object.entries(provider.models)) {
             model.api.id = model.api.id ?? model.id ?? modelID
@@ -1390,7 +1394,8 @@ const layer: Layer.Layer<
             if (model.status === "deprecated") delete provider.models[modelID]
             if (
               (configProvider?.blacklist && configProvider.blacklist.includes(modelID)) ||
-              (configProvider?.whitelist && !configProvider.whitelist.includes(modelID))
+              (configProvider?.whitelist && !configProvider.whitelist.includes(modelID)) ||
+              (implicitWhitelist && !implicitWhitelist.includes(modelID))
             )
               delete provider.models[modelID]
 
