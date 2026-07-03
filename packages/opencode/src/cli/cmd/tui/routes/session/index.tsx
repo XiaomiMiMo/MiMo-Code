@@ -124,6 +124,25 @@ function use() {
   return ctx
 }
 
+function SidebarToggleButton(props: { visible: boolean; onToggle: () => void }) {
+  const { theme } = useTheme()
+  const [hover, setHover] = createSignal(false)
+  return (
+    <box
+      width={3}
+      height="100%"
+      justifyContent="flex-start"
+      alignItems="center"
+      backgroundColor={hover() ? theme.backgroundElement : undefined}
+      onMouseOver={() => setHover(true)}
+      onMouseOut={() => setHover(false)}
+      onMouseUp={() => props.onToggle()}
+    >
+      <text fg={hover() ? theme.text : theme.textMuted}>{props.visible ? "▶" : "◀"}</text>
+    </box>
+  )
+}
+
 export function Session() {
   const route = useRouteData("session")
   const fullRoute = useRoute()
@@ -1132,6 +1151,7 @@ export function Session() {
               />
             }
           >
+          
           <Show when={session()}>
             <scrollbox
               ref={(r) => (scroll = r)}
@@ -1285,6 +1305,16 @@ export function Session() {
           </Show>
           <Toast />
         </box>
+        <SidebarToggleButton
+          visible={sidebarVisible()}
+          onToggle={() => {
+            batch(() => {
+              const isVisible = sidebarVisible()
+              setSidebar(() => (isVisible ? "hide" : "auto"))
+              setSidebarOpen(!isVisible)
+            })
+          }}
+        />
         <Show when={sidebarVisible()}>
           <Switch>
             <Match when={wide()}>
