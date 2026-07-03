@@ -25,15 +25,29 @@ MiMo Auto is built in as a free-for-limited-time channel, so you can start with 
 ## Quick Start
 
 ```bash
-# One-line install
+# One-line install (macOS / Linux)
 curl -fsSL https://mimo.xiaomi.com/install | bash
 
-# Or install via npm
-npm install -g @mimo-ai/cli
+# Or install via npm (all platforms)
+# Mirror registries (e.g. cnpm/taobao) may have delayed platform package sync
+npm install -g @mimo-ai/cli --registry https://registry.npmjs.org
 
 # Run
 mimo
 ```
+
+<details>
+<summary><strong>Windows native install (beta)</strong></summary>
+
+PowerShell one-liner that installs to `%USERPROFILE%\.mimocode\bin` and adds to User PATH:
+
+```powershell
+powershell -ep Bypass -c "irm https://mimo.xiaomi.com/install.ps1 | iex"
+```
+
+**Note:** Installing versions prior to 0.1.5 with this method will cause `mimo upgrade` to not function. If you need to use an older version, please install via npm instead. Once 0.1.5+ is available, this becomes the recommended install method for Windows.
+
+</details>
 
 The first launch guides you through configuration automatically. Supported options:
 - **MiMo Auto (free for a limited time)** — anonymous channel, zero configuration
@@ -204,7 +218,58 @@ Custom providers must register at least one model in their `models` field to be 
 
 ## Configuration
 
-MiMoCode is configured via `.mimocode/mimocode.json` in the project directory (or `~/.config/mimocode/mimocode.json` globally). Key options include:
+MiMoCode uses JSON/JSONC config files with published JSON Schemas for autocompletion and validation.
+
+### File Locations
+
+| File | Project-level | Global |
+|------|--------------|--------|
+| Main config | `.mimocode/mimocode.jsonc` | `~/.config/mimocode/mimocode.json` |
+| TUI config | `.mimocode/tui.json` | `~/.config/mimocode/tui.json` |
+| Auth credentials | — | `~/.local/share/mimocode/auth.json` |
+
+> On Windows, XDG paths fall under `%LOCALAPPDATA%\mimocode\`. You can override all paths with `MIMOCODE_HOME`.
+
+### JSON Schemas
+
+MiMoCode auto-injects a `$schema` field when it first loads your config, so your editor gets completions and validation out of the box:
+
+| Config | Schema URL |
+|--------|-----------|
+| `mimocode.jsonc` / `mimocode.json` | `https://mimo.xiaomi.com/mimocode/config.json` |
+| `tui.json` | `https://mimo.xiaomi.com/mimocode/tui.json` |
+
+<details>
+<summary><strong>VS Code / Cursor: trust the schema domain</strong></summary>
+
+Add to your `settings.json` so the editor can download schemas for autocompletion:
+
+```json
+{
+  "json.schemaDownload.trustedDomains": {
+    "https://mimo.xiaomi.com/": true
+  }
+}
+```
+
+</details>
+
+<details>
+<summary><strong>Data directories</strong></summary>
+
+Beyond config files, MiMoCode stores runtime data under XDG paths (or `$MIMOCODE_HOME`):
+
+| Directory | Default (Linux) | Contents |
+|-----------|----------------|----------|
+| data | `~/.local/share/mimocode/` | SQLite database, auth credentials (`auth.json`), memory, logs |
+| state | `~/.local/state/mimocode/` | TUI preferences (`kv.json`), recent models (`model.json`) |
+| cache | `~/.cache/mimocode/` | Language servers, cached model catalog, skills |
+
+To remove stored credentials, delete `auth.json` from the data directory. On macOS, XDG data defaults to `~/Library/Application Support/mimocode/`.
+
+</details>
+
+### Key Options
 
 - Provider and model selection
 - Agent permissions and custom agents
@@ -228,7 +293,7 @@ be prompted each time, you can opt in by allowing it in your config:
 
 ```json title=".mimocode/mimocode.json"
 {
-  "$schema": "https://opencode.ai/config.json",
+  "$schema": "https://mimo.xiaomi.com/mimocode/config.json",
   "permission": {
     "external_directory": {
       "/tmp/**": "allow"
