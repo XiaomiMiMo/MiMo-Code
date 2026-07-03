@@ -26,6 +26,7 @@ export const dict = {
   "tui.prompt.placeholder.normal": 'Pregunta lo que quieras... "{{example}}"',
   "tui.prompt.placeholder.shell": 'Ejecuta un comando... "{{example}}"',
   "tui.prompt.ghost": "{{prediction}}  (Tab para aceptar)",
+  "tui.paste.image.fallback_path": "El modelo no admite imágenes — se insertó la ruta de la imagen en su lugar",
   "tui.home.placeholder.example.todo": "Corregir un TODO en el código",
   "tui.home.placeholder.example.stack": "¿Cuál es el stack técnico del proyecto?",
   "tui.home.placeholder.example.tests": "Arreglar las pruebas fallidas",
@@ -65,7 +66,7 @@ export const dict = {
     "Ejecuta {highlight}/share{/highlight} para crear un enlace público a tu conversación en opencode.ai",
   "tui.tips.drag_drop": "Arrastra y suelta imágenes o PDF en el terminal para añadirlos como contexto",
   "tui.tips.paste_image":
-    "Pulsa {highlight}Ctrl+V{/highlight} para pegar imágenes desde el portapapeles en la entrada",
+    "Pulsa {highlight}Ctrl+V{/highlight} para pegar imágenes desde el portapapeles (en macOS usa Ctrl+V, no Cmd+V — la terminal intercepta Cmd+V)",
   "tui.tips.editor":
     "Pulsa {highlight}Ctrl+X E{/highlight} o {highlight}/editor{/highlight} para componer mensajes en tu editor externo",
   "tui.tips.init":

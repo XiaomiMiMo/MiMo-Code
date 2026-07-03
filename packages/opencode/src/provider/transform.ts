@@ -17,23 +17,6 @@ function mimeToModality(mime: string): Modality | undefined {
   return undefined
 }
 
-// MiMo vision support isn't reflected in models.dev modality data, so the
-// generic capability check would strip images before they reach the model.
-// mimo-auto and mimo-v2.5 accept images; mimo-v2.5-pro is text-only.
-function supportsImageInput(model: Provider.Model): boolean {
-  if (model.providerID === "mimo" || model.providerID === "xiaomi") {
-    const id = model.id.toLowerCase()
-    if (id.includes("v2.5-pro")) return false
-    if (id === "mimo-auto" || id.includes("v2.5")) return true
-  }
-  // Claude and GPT models are all multimodal regardless of catalog data.
-  const id = model.id.toLowerCase()
-  const apiID = model.api.id.toLowerCase()
-  if (id.includes("claude") || apiID.includes("claude") || model.providerID === "anthropic") return true
-  if (id.includes("gpt") || apiID.includes("gpt")) return true
-  return model.capabilities.input.image
-}
-
 export const OUTPUT_TOKEN_MAX = Flag.MIMOCODE_EXPERIMENTAL_OUTPUT_TOKEN_MAX || 32_000
 const MIMO_OUTPUT_TOKEN_MAX = 128_000
 
@@ -388,7 +371,7 @@ function unsupportedParts(msgs: ModelMessage[], model: Provider.Model): ModelMes
       const filename = part.type === "file" ? part.filename : undefined
       const modality = mimeToModality(mime)
       if (!modality) return part
-      const supported = modality === "image" ? supportsImageInput(model) : model.capabilities.input[modality]
+      const supported = model.capabilities.input[modality]
       if (supported) return part
 
       const name = filename ? `"${filename}"` : modality

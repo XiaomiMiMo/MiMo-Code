@@ -14,7 +14,8 @@ import PROMPT_DEEPSEEK from "./prompt/deepseek.txt"
 import PROMPT_GLM from "./prompt/glm.txt"
 import PROMPT_MINIMAX from "./prompt/minimax.txt"
 import PROMPT_TRINITY from "./prompt/trinity.txt"
-import type { Provider } from "@/provider"
+import { Provider } from "@/provider"
+import { sortVisionModels } from "@/provider/provider"
 import type { Agent } from "@/agent/agent"
 import { Permission } from "@/permission"
 import { Skill } from "@/skill"
@@ -50,10 +51,28 @@ export const layer = Layer.effect(
   Effect.gen(function* () {
     const skill = yield* Skill.Service
 
+    const provider = yield* Provider.Service
+    const preferred = yield* provider.getVisionModel().pipe(Effect.orElseSucceed(() => undefined))
+    const visionModels = yield* provider
+      .list()
+      .pipe(
+        Effect.map((providers) =>
+          sortVisionModels(
+            Object.values(providers)
+              .flatMap((info) => Object.values(info.models))
+              .filter((m) => m.capabilities.input.image === true),
+          )
+            .map((m) => `${m.providerID}/${m.id}`)
+            .slice(0, 3),
+        ),
+      )
+      .pipe(Effect.orElseSucceed(() => [] as string[]))
+    const preferredRef = preferred ? `${preferred.providerID}/${preferred.id}` : visionModels[0]
+
     return Service.of({
       environment(model, now) {
         const project = Instance.project
-        return [
+        const base = [
           [
             `You are MiMo Code Agent, built by Xiaomi MiMo Team. You are an interactive agent that helps users with software engineering tasks. Use the instructions below and the tools available to you to assist the user.`,
             `You are powered by the model named ${model.api.id}. The exact model ID is ${model.providerID}/${model.api.id}`,
@@ -72,6 +91,19 @@ export const layer = Layer.effect(
           ].join("\n"),
           `IMPORTANT: Your response must ALWAYS strictly follow the same major language as the user.`,
         ]
+        if (!model.capabilities.input.image)
+          base.push(
+            [
+              `<vision-capability>`,
+              `You CANNOT see or interpret image content — this model has no vision support.`,
+              `Never attempt to analyze an image's visual content yourself. If a task needs image understanding, dispatch a vision-capable subagent via the actor tool, passing the image file path so the subagent can Read it.`,
+              visionModels.length
+                ? `Vision-capable models you can pass to --model: ${visionModels.join(", ")}. Run \`actor models --vision\` to see all of them. Example: actor run <type> "<desc>" "analyze the image at <path>" --model ${preferredRef}.`
+                : `No vision-capable model is currently configured. Ask the user to configure a vision model, or use an OCR tool to extract text.`,
+              `If instead you need a file's raw binary structure (not its visual content), use a shell tool such as \`hexdump -C <path>\`, NOT the read tool.`,
+            ].join("\n"),
+          )
+        return base
       },
 
       skills: Effect.fn("SystemPrompt.skills")(function* (agent: Agent.Info) {
@@ -91,6 +123,6 @@ export const layer = Layer.effect(
   }),
 )
 
-export const defaultLayer = layer.pipe(Layer.provide(Skill.defaultLayer))
+export const defaultLayer = layer.pipe(Layer.provide(Skill.defaultLayer), Layer.provide(Provider.defaultLayer))
 
 export * as SystemPrompt from "./system"

@@ -22,6 +22,7 @@ export const dict: Record<string, string> = {
   "tui.prompt.placeholder.normal": "Type your message... (type / for commands)",
   "tui.prompt.placeholder.shell": 'Run a command... "{{example}}"',
   "tui.prompt.ghost": "{{prediction}}  (Tab to accept)",
+  "tui.paste.image.fallback_path": "Model has no vision support — inserted image path instead",
   "tui.home.placeholder.example.todo": "Fix a TODO in the codebase",
   "tui.home.placeholder.example.stack": "What is the tech stack of this project?",
   "tui.home.placeholder.example.tests": "Fix broken tests",
@@ -56,7 +57,7 @@ export const dict: Record<string, string> = {
   "tui.tips.redo": "Use {highlight}/redo{/highlight} to restore previously undone messages and file changes",
   "tui.tips.share": "Run {highlight}/share{/highlight} to create a public link to your conversation at opencode.ai",
   "tui.tips.drag_drop": "Drag and drop images or PDFs into the terminal to add them as context",
-  "tui.tips.paste_image": "Press {highlight}Ctrl+V{/highlight} to paste images from your clipboard into the prompt",
+  "tui.tips.paste_image": "Press {highlight}Ctrl+V{/highlight} to paste images from your clipboard (on macOS use Ctrl+V, not Cmd+V — the terminal intercepts Cmd+V)",
   "tui.tips.editor":
     "Press {highlight}Ctrl+X E{/highlight} or {highlight}/editor{/highlight} to compose messages in your external editor",
   "tui.tips.init": "Run {highlight}/init{/highlight} to auto-generate project rules based on your codebase",

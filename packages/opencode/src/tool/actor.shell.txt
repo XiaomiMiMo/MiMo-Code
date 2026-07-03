@@ -34,6 +34,9 @@ appends them at request time per-agent).
     # --session: target session id (defaults to current); --type: 'text' (default) or 'actor_notification'
     # (--task is NOT valid here — it applies only to run/spawn for tying a subagent to a task_id)
 
+# list available models (optionally vision-only) to pick a --model value:
+    actor models [--vision] [--limit <n>]
+
 Examples:
     actor run explore "Find error recovery" "Scan src/parser.ts for catch blocks. Return file:line."
 
@@ -70,3 +73,4 @@ When to use what:
     run    — single delegation where the result drives your next step
     spawn  — fan-out for parallel work, OR fire-and-forget background tasks
     wait   — pick up a previously-spawned actor's result on demand
+    models — discover which models you can pass to --model (use --vision to find image-capable models for dispatching an image subagent)

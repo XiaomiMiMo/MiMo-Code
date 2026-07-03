@@ -140,6 +140,10 @@ const InfoSchema = Schema.Struct({
   small_model: Schema.optional(ConfigModelID).annotate({
     description: "Small model to use for tasks like title generation in the format of provider/model",
   }),
+  vision_model: Schema.optional(ConfigModelID).annotate({
+    description:
+      "Model to use for image/vision subagent tasks in the format of provider/model. If unset, a vision-capable model is chosen automatically (in-house models preferred, then cheapest).",
+  }),
   model_groups: Schema.optional(
     Schema.Record(
       Schema.String,
