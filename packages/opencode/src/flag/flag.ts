@@ -52,7 +52,6 @@ export const Flag = {
   MIMOCODE_CONFIG_CONTENT: process.env["MIMOCODE_CONFIG_CONTENT"],
 
   MIMOCODE_DISABLE_AUTOUPDATE: truthy("MIMOCODE_DISABLE_AUTOUPDATE"),
-  MIMOCODE_INSTALL_SCRIPT_URL: process.env["MIMOCODE_INSTALL_SCRIPT_URL"],
 
   // Defaults to false (rotation enabled). When enabled, the active log file is
   // never archived to <name>.log.<stamp> on hitting MAX_FILE_SIZE — it grows in
