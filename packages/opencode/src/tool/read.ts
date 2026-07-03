@@ -12,6 +12,7 @@ import { assertExternalDirectoryEffect } from "./external-directory"
 import { SessionCwd } from "./session-cwd"
 import { Instruction } from "../session/instruction"
 import { isImageAttachment, isPdfAttachment, sniffAttachmentMime } from "@/util/media"
+import { markFileRead } from "./read-state"
 
 const DEFAULT_READ_LIMIT = 2000
 const MAX_LINE_LENGTH = 2000
@@ -183,6 +184,7 @@ export const ReadTool = Tool.define(
         const start = offset - 1
         const sliced = items.slice(start, start + limit)
         const truncated = start + sliced.length < items.length
+        markFileRead(ctx, filepath)
 
         return {
           title,
@@ -211,6 +213,7 @@ export const ReadTool = Tool.define(
       if (isImageAttachment(mime) || isPdfAttachment(mime)) {
         const bytes = yield* fs.readFile(filepath)
         const msg = isPdfAttachment(mime) ? "PDF read successfully" : "Image read successfully"
+        markFileRead(ctx, filepath)
         return {
           title,
           output: msg,
@@ -262,6 +265,8 @@ export const ReadTool = Tool.define(
       if (loaded.length > 0) {
         output += `\n\n<system-reminder>\n${loaded.map((item) => item.content).join("\n\n")}\n</system-reminder>`
       }
+
+      markFileRead(ctx, filepath)
 
       return {
         title,

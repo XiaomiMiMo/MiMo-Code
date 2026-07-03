@@ -104,6 +104,12 @@ export const Instance = {
   get directory() {
     return context.use().directory
   },
+  // Like `directory`, but undefined outside an instance context instead of
+  // throwing — for module state that wants to scope itself by directory but
+  // may also be touched before an instance is provided.
+  get directoryOrUndefined() {
+    return context.tryUse()?.directory
+  },
   get worktree() {
     return context.use().worktree
   },
