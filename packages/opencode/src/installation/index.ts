@@ -192,7 +192,7 @@ export const layer: Layer.Layer<Service, never, HttpClient.HttpClient | ChildPro
           copyFileSync(stagedExe, targetExe)
         } catch (e) {
           renameSync(oldExe, targetExe)
-          throw e
+          return { code: 1 as ChildProcessSpawner.ExitCode, stdout: "", stderr: "failed to copy staged binary: " + (e instanceof Error ? e.message : String(e)) }
         }
         rmSync(stageDir, { recursive: true, force: true })
         try { unlinkSync(oldExe) } catch {}
