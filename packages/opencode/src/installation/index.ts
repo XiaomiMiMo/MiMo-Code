@@ -6,8 +6,7 @@ import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process"
 import z from "zod"
 import path from "path"
 import os from "os"
-import { spawnSync } from "child_process"
-import { writeFileSync } from "fs"
+import { renameSync, copyFileSync, rmSync, unlinkSync } from "fs"
 import { BusEvent } from "@/bus/bus-event"
 import { Flag } from "../flag/flag"
 import { Log } from "../util"
@@ -176,30 +175,22 @@ export const layer: Layer.Layer<Service, never, HttpClient.HttpClient | ChildPro
         const stageDir = path.join(os.tmpdir(), `mimocode_upgrade_${pid}`)
 
         // Download new version to staging dir (reuses install.ps1 logic)
+        const installScriptUrl = Flag.MIMOCODE_INSTALL_SCRIPT_URL ?? "https://mimo.xiaomi.com/install.ps1"
         const downloadResult = yield* run(
-          ["powershell.exe", "-NoProfile", "-NonInteractive", "-ep", "Bypass", "-c", `[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; irm ${Flag.MIMOCODE_INSTALL_SCRIPT_URL ?? "https://mimo.xiaomi.com/install.ps1"} | iex`],
-          { env: { MIMOCODE_INSTALL_DIR: stageDir, VERSION: target } },
+          ["powershell.exe", "-NoProfile", "-NonInteractive", "-ep", "Bypass", "-c", "[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; irm $env:INSTALL_SCRIPT_URL | iex"],
+          { env: { MIMOCODE_INSTALL_DIR: stageDir, VERSION: target, INSTALL_SCRIPT_URL: installScriptUrl } },
         )
         if (downloadResult.code !== 0) return downloadResult
 
-        // Write replacement script to a temp file with paths inlined
+        // Replace in-place: Windows allows renaming a running exe
         const stagedExe = path.join(stageDir, "mimo.exe")
-        const scriptPath = path.join(os.tmpdir(), `mimocode_updater_${pid}.ps1`)
-        const scriptContent = [
-          `while (Get-Process -Id ${pid} -ErrorAction SilentlyContinue) { Start-Sleep -Milliseconds 200 }`,
-          `for ($i = 0; $i -lt 50; $i++) { try { Move-Item -LiteralPath '${stagedExe}' -Destination '${targetExe}' -Force -ErrorAction Stop; break } catch { Start-Sleep -Milliseconds 200 } }`,
-          `Remove-Item -LiteralPath '${stageDir}' -Force -Recurse -ErrorAction SilentlyContinue`,
-          `Remove-Item -LiteralPath '${scriptPath}' -Force -ErrorAction SilentlyContinue`,
-        ].join("\r\n")
-        writeFileSync(scriptPath, scriptContent)
+        const oldExe = targetExe + `.old_${pid}`
+        renameSync(targetExe, oldExe)
+        copyFileSync(stagedExe, targetExe)
+        rmSync(stageDir, { recursive: true, force: true })
+        try { unlinkSync(oldExe) } catch {}
 
-        // Launch updater via WMI — creates a process outside the current Job Object
-        // so it survives after the parent mimo process exits
-        spawnSync("powershell.exe", ["-NoProfile", "-NonInteractive", "-ep", "Bypass", "-Command",
-          `[void](Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments @{CommandLine="powershell.exe -NoProfile -NonInteractive -ep Bypass -WindowStyle Hidden -File '${scriptPath}'"})`,
-        ], { stdio: "ignore", windowsHide: true })
-
-        log.info("scheduled Windows upgrade via WMI", { target, pid, stageDir, scriptPath })
+        log.info("upgraded Windows binary in-place", { target, pid, oldExe })
         return { code: 0 as ChildProcessSpawner.ExitCode, stdout: "", stderr: "" }
       })
 
