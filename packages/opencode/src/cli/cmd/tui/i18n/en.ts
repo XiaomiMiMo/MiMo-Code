@@ -45,7 +45,7 @@ export const dict: Record<string, string> = {
   "tui.tips.shell_prefix":
     "Start a message with {highlight}!{/highlight} to run shell commands directly (e.g., {highlight}!ls -la{/highlight})",
   "tui.tips.tab_agent":
-    "Press {highlight}Tab{/highlight} or {highlight}Shift+Tab{/highlight} to cycle between Build, Plan, and Compose agents",
+    "Press {highlight}Tab{/highlight} or {highlight}Shift+Tab{/highlight} to cycle between Build, Plan, Compose, and Orchestrator agents",
   "tui.tips.theme_mode":
     "Run {highlight}/dark{/highlight} for dark mode or {highlight}/light{/highlight} for light mode",
   "tui.tips.doc": "Run {highlight}/doc{/highlight} to open the user documentation",
@@ -319,6 +319,9 @@ export const dict: Record<string, string> = {
   "tui.command.session.timeline.title": "Jump to message",
   "tui.command.session.fork.title": "Fork session",
   "tui.command.session.compact.title": "Compact session",
+  "tui.command.session.ask.title": "Ask a side question",
+  "tui.command.session.ask.description": "Ask the current session a question without disrupting it",
+  "tui.command.session.ask.placeholder": "Ask a side question…",
   "tui.command.session.unshare.title": "Unshare session",
   "tui.command.session.undo.title": "Undo previous message",
   "tui.command.session.redo.title": "Redo",

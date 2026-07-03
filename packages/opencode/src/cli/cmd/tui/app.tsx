@@ -53,6 +53,7 @@ import { DialogConfirm } from "./ui/dialog-confirm"
 import { ToastProvider, useToast } from "./ui/toast"
 import { ExitProvider, useExit } from "./context/exit"
 import { Session as SessionApi } from "@/session"
+import { orchestratorDir } from "@/global"
 import { TuiEvent } from "./event"
 import { KVProvider, useKV } from "./context/kv"
 import { LanguageProvider, UiI18nBridge, useLanguage } from "./context/language"
@@ -413,6 +414,49 @@ function App(props: { onSnapshot?: () => Promise<string[]> }) {
       }
     })
   })
+
+  // Orchestrator mode is GLOBALLY UNIQUE: switching INTO it (from any launch
+  // directory) switches the working dir to a fixed global orchestrator workspace
+  // and lands on the single root session there (find-or-create). This guarantees
+  // there is exactly one orchestrator session regardless of where the user
+  // launched, so previously-created child sessions are always reachable. Mirrors
+  // dialog-worktree's switch sequence (dispose → switchDirectory → bootstrap).
+  let enteringOrchestrator = false
+  let lastAgentName: string | undefined = undefined
+  createEffect(() => {
+    const name = local.agent.current()?.name
+    const prev = lastAgentName
+    lastAgentName = name
+    // Only act on the transition INTO orchestrator, and never re-enter while a
+    // switch is already in flight. No-op entirely when the feature is off.
+    if (!Flag.MIMOCODE_EXPERIMENTAL_ORCHESTRATOR) return
+    if (name !== "orchestrator" || prev === "orchestrator" || enteringOrchestrator) return
+    enteringOrchestrator = true
+    void (async () => {
+      try {
+        const dir = await orchestratorDir()
+        if (sdk.directory !== dir) {
+          await sdk.client.instance.dispose().catch(() => {})
+          sdk.switchDirectory(dir)
+          await sync.bootstrap()
+        }
+        const existing = sync.data.session
+          .toSorted((a, b) => b.time.updated - a.time.updated)
+          .find((x) => x.parentID === undefined)?.id
+        if (existing) {
+          route.navigate({ type: "session", sessionID: existing })
+        } else {
+          const res = await sdk.client.session.create({})
+          if (res.data?.id) route.navigate({ type: "session", sessionID: res.data.id })
+        }
+      } catch (e) {
+        toast.show({ message: `Failed to enter Orchestrator: ${e}`, variant: "error" })
+      } finally {
+        enteringOrchestrator = false
+      }
+    })()
+  })
+
 
 
   const connected = useConnected()

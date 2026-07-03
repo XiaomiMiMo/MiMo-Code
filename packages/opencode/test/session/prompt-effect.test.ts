@@ -1,3 +1,4 @@
+import { Worktree } from "../../src/worktree"
 import { NodeFileSystem } from "@effect/platform-node"
 import { FetchHttpClient } from "effect/unstable/http"
 import { afterEach, expect } from "bun:test"
@@ -197,6 +198,7 @@ function makeHttp() {
   const taskWaiter = ActorWaiter.layer.pipe(Layer.provide(Bus.layer), Layer.provide(taskRegistry))
   const team = Team.defaultLayer
   const registry = ToolRegistry.layer.pipe(
+    Layer.provide(Worktree.defaultLayer),
     Layer.provide(Skill.defaultLayer),
     Layer.provide(FetchHttpClient.layer),
     Layer.provide(CrossSpawnSpawner.defaultLayer),
@@ -447,6 +449,33 @@ it.live("static loop returns assistant text through local provider", () =>
       expect(result.parts.some((part) => part.type === "text" && part.text === "world")).toBe(true)
       expect(yield* llm.hits).toHaveLength(1)
       expect(yield* llm.pending).toBe(0)
+    }),
+    { git: true, config: providerCfg },
+  ),
+)
+
+it.live("injects orchestrator system prompt for agent 'orchestrator'", () =>
+  provideTmpdirServer(
+    Effect.fnUntraced(function* ({ llm }) {
+      const prompt = yield* SessionPrompt.Service
+      const sessions = yield* Session.Service
+      const session = yield* sessions.create({
+        title: "Orchestrator",
+        permission: [{ permission: "*", pattern: "*", action: "allow" }],
+      })
+
+      yield* prompt.prompt({
+        sessionID: session.id,
+        agent: "orchestrator",
+        noReply: true,
+        parts: [{ type: "text", text: "kick things off" }],
+      })
+
+      yield* llm.text("ok")
+      yield* prompt.loop({ sessionID: session.id })
+
+      const inputs = yield* llm.inputs
+      expect(JSON.stringify(inputs)).toContain("MiMoCode Orchestrator")
     }),
     { git: true, config: providerCfg },
   ),

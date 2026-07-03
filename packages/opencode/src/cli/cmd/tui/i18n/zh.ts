@@ -48,7 +48,7 @@ export const dict = {
   "tui.tips.attach_file": "输入 {highlight}@{/highlight} 后接文件名以模糊搜索并附加文件",
   "tui.tips.shell_prefix": "以 {highlight}!{/highlight} 开头可直接运行 shell 命令（例如 {highlight}!ls -la{/highlight}）",
   "tui.tips.tab_agent":
-    "按 {highlight}Tab{/highlight} 或 {highlight}Shift+Tab{/highlight} 在 Build / Plan / Compose 智能体之间切换",
+    "按 {highlight}Tab{/highlight} 或 {highlight}Shift+Tab{/highlight} 在 Build / Plan / Compose / Orchestrator 智能体之间切换",
   "tui.tips.theme_mode":
     "运行 {highlight}/dark{/highlight} 切换到深色模式，{highlight}/light{/highlight} 切换到浅色模式",
   "tui.tips.doc": "运行 {highlight}/doc{/highlight} 打开使用文档",
@@ -308,6 +308,9 @@ export const dict = {
   "tui.command.session.timeline.title": "跳转到消息",
   "tui.command.session.fork.title": "派生会话",
   "tui.command.session.compact.title": "压缩会话",
+  "tui.command.session.ask.title": "提一个旁问",
+  "tui.command.session.ask.description": "向当前会话提问而不打断它",
+  "tui.command.session.ask.placeholder": "提一个旁问…",
   "tui.command.session.unshare.title": "取消分享",
   "tui.command.session.undo.title": "撤销上一条消息",
   "tui.command.session.redo.title": "重做",

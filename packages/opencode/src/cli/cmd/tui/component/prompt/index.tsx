@@ -1128,6 +1128,22 @@ export function Prompt(props: PromptProps) {
         command: inputText,
       })
       setStore("mode", "normal")
+    } else if (inputText.startsWith("/btw ")) {
+      // Inline side-question form: `/btw <question>` on the prompt line. Client
+      // slashes match the exact `/btw` token and drop args, so handle the
+      // arg-bearing form here. READ-ONLY + EPHEMERAL: render the answer in a
+      // dismissible dialog, never inject it into the conversation.
+      const question = inputText.slice("/btw ".length).trim()
+      if (question)
+        void sdk.client.session
+          .ask({ sessionID, question })
+          .then((res) => DialogAlert.show(dialog, "/btw", res.data?.answer ?? "(no answer)"))
+          .catch((err) => {
+            toast.show({
+              message: err instanceof Error ? err.message : "Failed to ask side question",
+              variant: "error",
+            })
+          })
     } else if (clientSlash) {
       clientSlash.onSelect?.()
     } else if (

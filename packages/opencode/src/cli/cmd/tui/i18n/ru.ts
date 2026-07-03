@@ -50,7 +50,7 @@ export const dict = {
   "tui.tips.shell_prefix":
     "Начните сообщение с {highlight}!{/highlight}, чтобы выполнить shell-команду напрямую (например, {highlight}!ls -la{/highlight})",
   "tui.tips.tab_agent":
-    "Нажмите {highlight}Tab{/highlight} или {highlight}Shift+Tab{/highlight}, чтобы переключаться между агентами Build, Plan и Compose",
+    "Нажмите {highlight}Tab{/highlight} или {highlight}Shift+Tab{/highlight}, чтобы переключаться между агентами Build, Plan, Compose и Orchestrator",
   "tui.tips.theme_mode":
     "Выполните {highlight}/dark{/highlight} для тёмного режима или {highlight}/light{/highlight} для светлого",
   "tui.tips.doc": "Выполните {highlight}/doc{/highlight}, чтобы открыть пользовательскую документацию",
@@ -390,6 +390,9 @@ export const dict = {
   "tui.command.session.timeline.title": "Перейти к сообщению",
   "tui.command.session.fork.title": "Разветвить сессию",
   "tui.command.session.compact.title": "Сжать сессию",
+  "tui.command.session.ask.title": "Задать побочный вопрос",
+  "tui.command.session.ask.description": "Задайте вопрос текущей сессии, не прерывая её",
+  "tui.command.session.ask.placeholder": "Задайте побочный вопрос…",
   "tui.command.session.unshare.title": "Отменить публикацию",
   "tui.command.session.undo.title": "Отменить предыдущее сообщение",
   "tui.command.session.redo.title": "Повторить",

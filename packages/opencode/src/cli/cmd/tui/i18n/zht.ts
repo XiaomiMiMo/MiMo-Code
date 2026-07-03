@@ -48,7 +48,7 @@ export const dict = {
   "tui.tips.attach_file": "輸入 {highlight}@{/highlight} 後接檔案名稱以模糊搜尋並附加檔案",
   "tui.tips.shell_prefix": "以 {highlight}!{/highlight} 開頭可直接執行 shell 指令（例如 {highlight}!ls -la{/highlight}）",
   "tui.tips.tab_agent":
-    "按 {highlight}Tab{/highlight} 或 {highlight}Shift+Tab{/highlight} 在 Build / Plan / Compose 智慧代理之間切換",
+    "按 {highlight}Tab{/highlight} 或 {highlight}Shift+Tab{/highlight} 在 Build / Plan / Compose / Orchestrator 智慧代理之間切換",
   "tui.tips.theme_mode":
     "執行 {highlight}/dark{/highlight} 切換深色模式，{highlight}/light{/highlight} 切換淺色模式",
   "tui.tips.doc": "執行 {highlight}/doc{/highlight} 開啟使用文件",
@@ -308,6 +308,9 @@ export const dict = {
   "tui.command.session.timeline.title": "跳到訊息",
   "tui.command.session.fork.title": "分支工作階段",
   "tui.command.session.compact.title": "壓縮工作階段",
+  "tui.command.session.ask.title": "提一個旁問",
+  "tui.command.session.ask.description": "向目前工作階段提問而不打斷它",
+  "tui.command.session.ask.placeholder": "提一個旁問…",
   "tui.command.session.unshare.title": "取消分享",
   "tui.command.session.undo.title": "復原上一條訊息",
   "tui.command.session.redo.title": "重做",

@@ -36,6 +36,7 @@ import { Truncate } from "../../src/tool"
 import { ActorRegistry } from "../../src/actor/registry"
 import { ActorWaiter } from "../../src/actor/waiter"
 import { Actor } from "../../src/actor/spawn"
+import { Worktree } from "../../src/worktree"
 import { Memory } from "../../src/memory"
 import { History } from "../../src/history"
 import { Team } from "../../src/team"
@@ -183,6 +184,7 @@ function makeLayer() {
     TestLLMServer.layer,
     Actor.layer.pipe(
       Layer.provideMerge(prompt),
+      Layer.provide(Worktree.defaultLayer),
       Layer.provideMerge(taskRegistry),
       // provideMerge (not provide) so the test body can `yield* TaskRegistry.Service`
       // directly to assert on task status; the original spawn.test.ts never needed it.

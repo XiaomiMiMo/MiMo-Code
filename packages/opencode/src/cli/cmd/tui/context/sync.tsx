@@ -400,7 +400,8 @@ export const { use: useSync, provider: SyncProvider } = createSimpleContext({
           break
 
         case "session.deleted": {
-          const result = Binary.search(store.session, event.properties.info.id, (s) => s.id)
+          const sid = event.properties.info.id
+          const result = Binary.search(store.session, sid, (s) => s.id)
           if (result.found) {
             setStore(
               "session",
@@ -409,6 +410,28 @@ export const { use: useSync, provider: SyncProvider } = createSimpleContext({
               }),
             )
           }
+          // Evict every per-session bucket keyed by sessionID so child sessions
+          // that end don't leak their message/part/actor/task/etc. entries.
+          setStore(
+            produce((s) => {
+              delete s.permission[sid]
+              delete s.question[sid]
+              delete s.session_status[sid]
+              delete s.session_goal[sid]
+              delete s.session_diff[sid]
+              delete s.session_cwd[sid]
+              delete s.todo[sid]
+              delete s.task[sid]
+              delete s.actor[sid]
+              const agents = s.message[sid]
+              if (agents) {
+                for (const msgs of Object.values(agents)) {
+                  for (const m of msgs) delete s.part[m.id]
+                }
+              }
+              delete s.message[sid]
+            }),
+          )
           break
         }
         case "session.updated": {

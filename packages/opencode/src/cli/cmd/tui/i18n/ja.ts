@@ -49,7 +49,7 @@ export const dict = {
   "tui.tips.shell_prefix":
     "メッセージを {highlight}!{/highlight} で始めるとシェルコマンドを直接実行できます（例：{highlight}!ls -la{/highlight}）",
   "tui.tips.tab_agent":
-    "{highlight}Tab{/highlight} または {highlight}Shift+Tab{/highlight} で Build / Plan / Compose エージェントを切り替えます",
+    "{highlight}Tab{/highlight} または {highlight}Shift+Tab{/highlight} で Build / Plan / Compose / Orchestrator エージェントを切り替えます",
   "tui.tips.theme_mode":
     "{highlight}/dark{/highlight} でダークモード、{highlight}/light{/highlight} でライトモードに切り替えます",
   "tui.tips.doc": "{highlight}/doc{/highlight} を実行してユーザードキュメントを開きます",
@@ -323,6 +323,9 @@ export const dict = {
   "tui.command.session.timeline.title": "メッセージにジャンプ",
   "tui.command.session.fork.title": "セッションを分岐",
   "tui.command.session.compact.title": "セッションを圧縮",
+  "tui.command.session.ask.title": "サイド質問をする",
+  "tui.command.session.ask.description": "現在のセッションを中断せずに質問する",
+  "tui.command.session.ask.placeholder": "サイド質問を入力…",
   "tui.command.session.unshare.title": "共有を解除",
   "tui.command.session.undo.title": "直前のメッセージを取り消す",
   "tui.command.session.redo.title": "やり直し",

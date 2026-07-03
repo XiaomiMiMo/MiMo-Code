@@ -14,12 +14,15 @@ import type { SpawnMode, ContextMode, ToolWhitelist, Lifecycle } from "@/actor/s
 import { runTurn } from "@/actor/turn"
 import { spawnRef } from "@/actor/spawn-ref"
 import { Bus } from "@/bus"
+import { TuiEvent } from "@/cli/cmd/tui/event"
 import { MessageV2 } from "@/session/message-v2"
 import { Inbox } from "@/inbox"
 import { renderActorNotification } from "@/inbox/render"
 import { Plugin, HookEvent } from "@/plugin"
 import { parseReturnHeader, type ReturnStatus } from "./return-header"
 import { Log } from "@/util"
+import { Instance, type InstanceContext } from "@/project/instance"
+import { InstanceRef } from "@/effect/instance-ref"
 
 const log = Log.create({ service: "actor.spawn" })
 
@@ -134,6 +137,12 @@ export interface SpawnInput {
   background: boolean
   parentActorID?: string
   task_id?: string // Spec ②: bound user-task ID for postStop progress.md validation
+  // Peer-only: directory the child session runs in. When set, the child's work
+  // fiber is bound to that directory's Instance (via InstanceRef) so all its
+  // file tools / write boundary resolve against it — i.e. real isolation. A
+  // worktree is just such a directory; whether to CREATE one is the caller's
+  // policy (the session tool creates a worktree and passes its dir here). When
+  // unset, the child shares the spawner's directory.
   cwd?: string
   forkContext?: ForkContext // NEW
   lifecycle?: Lifecycle
@@ -261,6 +270,11 @@ export const layer = Layer.effect(
       // gate; specialized/system agents and peers create no user tasks.
       gateEligible?: boolean
       format?: MessageV2.OutputFormat
+      // When set, the child's work fiber runs under this InstanceContext (via
+      // InstanceRef) instead of inheriting the spawner's. Used by peers placed
+      // in their own git worktree so their tools resolve paths/write-boundary
+      // against the worktree, not the orchestrator's directory.
+      instanceRef?: InstanceContext
     }) =>
       Effect.gen(function* () {
         const outcome = yield* Deferred.make<AgentOutcome>()
@@ -299,6 +313,17 @@ export const layer = Layer.effect(
                   }),
                 })
                 .pipe(Effect.ignore)
+                // Also give the user a visible signal (the child may be unfocused).
+                .pipe(
+                  Effect.andThen(
+                    Effect.promise(() =>
+                      Bus.publish(TuiEvent.ToastShow, {
+                        message: `Child "${description}" ${status}`,
+                        variant: status === "completed" ? "success" : status === "cancelled" ? "info" : "error",
+                      }),
+                    ).pipe(Effect.ignore),
+                  ),
+                )
             : Effect.void
 
         // Derive actor mode from spawn shape: peer creates a new session, subagent shares parent's
@@ -589,15 +614,30 @@ export const layer = Layer.effect(
               }),
           }),
         )
-        const fiber = yield* work.pipe(Effect.forkIn(scope))
+        const boundWork = input.instanceRef
+          ? work.pipe(Effect.provideService(InstanceRef, input.instanceRef))
+          : work
+        const fiber = yield* boundWork.pipe(Effect.forkIn(scope))
         return { fiber, outcome }
       })
 
     const spawnPeer = Effect.fn("Actor.spawnPeer")(function* (input: SpawnInput) {
+      // When the caller gives the child its own directory (e.g. a worktree the
+      // session tool created), bind the child's work fiber to that directory's
+      // Instance so its file tools / write boundary are isolated there. A
+      // worktree is just a directory — spawn neither knows nor cares how it was
+      // made. Best-effort: a bad/unresolvable dir falls back to the shared dir.
+      const instanceRef = input.cwd
+        ? yield* Effect.promise(() => Instance.provide({ directory: input.cwd!, fn: () => Instance.current })).pipe(
+            Effect.catch(() => Effect.succeed(undefined)),
+          )
+        : undefined
+
       const child = yield* session.create({
         parentID: input.sessionID,
         contextFrom: input.context === "full" ? input.sessionID : undefined,
         title: `${input.agentType}: ${input.task.slice(0, 40)}`,
+        ...(input.cwd ? { directory: input.cwd } : {}),
       })
       yield* actorReg.register({
         sessionID: child.id,
@@ -628,6 +668,7 @@ export const layer = Layer.effect(
         lifecycle: input.lifecycle ?? "persistent",
         task_id: input.task_id,
         format: input.format,
+        ...(instanceRef ? { instanceRef } : {}),
       })
       if (!input.background) yield* Fiber.join(fiber).pipe(Effect.ignore)
       return { actorID: child.id, sessionID: child.id, outcome }
