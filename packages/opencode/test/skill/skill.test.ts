@@ -408,6 +408,143 @@ description: A skill in the .agents/skills directory.
     ),
   )
 
+  it.live("skips .claude/skills when sources.claude is false", () =>
+    provideTmpdirInstance(
+      (dir) =>
+        Effect.gen(function* () {
+          yield* Effect.promise(() =>
+            Promise.all([
+              Bun.write(
+                path.join(dir, ".claude", "skills", "claude-skill", "SKILL.md"),
+                `---
+name: claude-skill
+description: A skill in the .claude/skills directory.
+---
+
+# Claude Skill
+`,
+              ),
+              Bun.write(
+                path.join(dir, ".agents", "skills", "agent-skill", "SKILL.md"),
+                `---
+name: agent-skill
+description: A skill in the .agents/skills directory.
+---
+
+# Agent Skill
+`,
+              ),
+            ]),
+          )
+
+          const skill = yield* Skill.Service
+          const list = yield* skill.all()
+          expect(list.length).toBe(1)
+          expect(list[0].name).toBe("agent-skill")
+        }),
+      { git: true, config: { skills: { sources: { claude: false } } } },
+    ),
+  )
+
+  it.live("skips .codex/skills when sources.codex is false", () =>
+    provideTmpdirInstance(
+      (dir) =>
+        Effect.gen(function* () {
+          yield* Effect.promise(() =>
+            Bun.write(
+              path.join(dir, ".codex", "skills", "codex-skill", "SKILL.md"),
+              `---
+name: codex-skill
+description: A skill in the .codex/skills directory.
+---
+
+# Codex Skill
+`,
+            ),
+          )
+
+          const skill = yield* Skill.Service
+          expect(yield* skill.all()).toEqual([])
+        }),
+      { git: true, config: { skills: { sources: { codex: false } } } },
+    ),
+  )
+
+  it.live("skips .agents/skills when sources.agents is false", () =>
+    provideTmpdirInstance(
+      (dir) =>
+        Effect.gen(function* () {
+          yield* Effect.promise(() =>
+            Bun.write(
+              path.join(dir, ".agents", "skills", "agent-skill", "SKILL.md"),
+              `---
+name: agent-skill
+description: A skill in the .agents/skills directory.
+---
+
+# Agent Skill
+`,
+            ),
+          )
+
+          const skill = yield* Skill.Service
+          expect(yield* skill.all()).toEqual([])
+        }),
+      { git: true, config: { skills: { sources: { agents: false } } } },
+    ),
+  )
+
+  it.live("skips global ~/.claude/skills when sources.claude is false", () =>
+    Effect.gen(function* () {
+      const tmp = yield* Effect.acquireRelease(
+        Effect.promise(() =>
+          tmpdir({
+            git: true,
+            config: { skills: { sources: { claude: false } } },
+          }),
+        ),
+        (tmp) => Effect.promise(() => tmp[Symbol.asyncDispose]()),
+      )
+
+      yield* withHome(
+        tmp.path,
+        Effect.gen(function* () {
+          yield* Effect.promise(() => createGlobalSkill(tmp.path))
+          yield* Effect.gen(function* () {
+            const skill = yield* Skill.Service
+            expect(yield* skill.all()).toEqual([])
+          }).pipe(provideInstance(tmp.path))
+        }),
+      )
+    }),
+  )
+
+  it.live("keeps loading .claude/skills when sources leaves claude enabled", () =>
+    provideTmpdirInstance(
+      (dir) =>
+        Effect.gen(function* () {
+          yield* Effect.promise(() =>
+            Bun.write(
+              path.join(dir, ".claude", "skills", "claude-skill", "SKILL.md"),
+              `---
+name: claude-skill
+description: A skill in the .claude/skills directory.
+---
+
+# Claude Skill
+`,
+            ),
+          )
+
+          const skill = yield* Skill.Service
+          const list = yield* skill.all()
+          expect(list.length).toBe(1)
+          expect(list[0].name).toBe("claude-skill")
+        }),
+      { git: true, config: { skills: { sources: { codex: false } } } },
+    ),
+  )
+
   it.live("properly resolves directories that skills live in", () =>
     provideTmpdirInstance(
       (dir) =>
