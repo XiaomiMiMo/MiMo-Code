@@ -176,7 +176,7 @@ export const layer: Layer.Layer<Service, never, HttpClient.HttpClient | ChildPro
 
         // Download new version to staging dir (reuses install.ps1 logic)
         const downloadResult = yield* run(
-          ["powershell.exe", "-NoProfile", "-NonInteractive", "-ep", "Bypass", "-c", "irm https://mimo.xiaomi.com/install.ps1 | iex"],
+          ["powershell.exe", "-NoProfile", "-NonInteractive", "-ep", "Bypass", "-c", "[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; irm https://mimo.xiaomi.com/install.ps1 | iex"],
           { env: { MIMOCODE_INSTALL_DIR: stageDir, VERSION: target } },
         )
         if (downloadResult.code !== 0) return downloadResult
