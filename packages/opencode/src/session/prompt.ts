@@ -712,8 +712,11 @@ NOTE: At any point in time through this workflow you should feel free to ask the
       const askActor = input.agentID
         ? yield* actorRegistry.get(input.session.id, input.agentID)
         : undefined
+      // All subagents (whether "run" sync or "spawn" background) are non-interactive:
+      // they have no attached human to reply to permission prompts, so an ask
+      // that would block must fail clean with DeniedError instead of hanging.
       const askNonInteractive = askActor
-        ? SYSTEM_SPAWNED_AGENT_TYPES.has(askActor.agent) || askActor.background
+        ? SYSTEM_SPAWNED_AGENT_TYPES.has(askActor.agent) || askActor.background || askActor.mode === "subagent"
         : SYSTEM_SPAWNED_AGENT_TYPES.has(input.agent.name)
       const rejectionFor = (toolID: string) => ({
         title: "Tool not permitted",
