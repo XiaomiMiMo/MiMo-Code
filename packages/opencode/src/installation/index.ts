@@ -6,7 +6,8 @@ import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process"
 import z from "zod"
 import path from "path"
 import os from "os"
-import { spawn as nodeSpawn } from "child_process"
+import { spawnSync } from "child_process"
+import { writeFileSync } from "fs"
 import { BusEvent } from "@/bus/bus-event"
 import { Flag } from "../flag/flag"
 import { Log } from "../util"
@@ -181,22 +182,24 @@ export const layer: Layer.Layer<Service, never, HttpClient.HttpClient | ChildPro
         )
         if (downloadResult.code !== 0) return downloadResult
 
-        // Schedule replacement after exit
+        // Write replacement script to a temp file with paths inlined
         const stagedExe = path.join(stageDir, "mimo.exe")
-        const replaceScript = [
+        const scriptPath = path.join(os.tmpdir(), `mimocode_updater_${pid}.ps1`)
+        const scriptContent = [
           `while (Get-Process -Id ${pid} -ErrorAction SilentlyContinue) { Start-Sleep -Milliseconds 200 }`,
-          `for ($i = 0; $i -lt 50; $i++) { try { Move-Item -LiteralPath $env:STAGED_EXE -Destination $env:TARGET_EXE -Force -ErrorAction Stop; break } catch { Start-Sleep -Milliseconds 200 } }`,
-          `Remove-Item -LiteralPath $env:STAGE_DIR -Force -Recurse -ErrorAction SilentlyContinue`,
-        ].join("; ")
+          `for ($i = 0; $i -lt 50; $i++) { try { Move-Item -LiteralPath '${stagedExe}' -Destination '${targetExe}' -Force -ErrorAction Stop; break } catch { Start-Sleep -Milliseconds 200 } }`,
+          `Remove-Item -LiteralPath '${stageDir}' -Force -Recurse -ErrorAction SilentlyContinue`,
+          `Remove-Item -LiteralPath '${scriptPath}' -Force -ErrorAction SilentlyContinue`,
+        ].join("\r\n")
+        writeFileSync(scriptPath, scriptContent)
 
-        const child = nodeSpawn("powershell.exe", ["-NoProfile", "-NonInteractive", "-ep", "Bypass", "-WindowStyle", "Hidden", "-Command", replaceScript], {
-          detached: true,
-          stdio: "ignore",
-          windowsHide: true,
-          env: { ...process.env, TARGET_EXE: targetExe, STAGED_EXE: stagedExe, STAGE_DIR: stageDir },
-        })
-        child.unref()
-        log.info("scheduled Windows upgrade", { target, pid, stageDir, updaterPid: child.pid })
+        // Launch updater via WMI — creates a process outside the current Job Object
+        // so it survives after the parent mimo process exits
+        spawnSync("powershell.exe", ["-NoProfile", "-NonInteractive", "-ep", "Bypass", "-Command",
+          `[void](Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments @{CommandLine="powershell.exe -NoProfile -NonInteractive -ep Bypass -WindowStyle Hidden -File '${scriptPath}'"})`,
+        ], { stdio: "ignore", windowsHide: true })
+
+        log.info("scheduled Windows upgrade via WMI", { target, pid, stageDir, scriptPath })
         return { code: 0 as ChildProcessSpawner.ExitCode, stdout: "", stderr: "" }
       })
 
