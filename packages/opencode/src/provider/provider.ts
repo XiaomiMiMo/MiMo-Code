@@ -1701,8 +1701,7 @@ const layer: Layer.Layer<
       const cfg = yield* config.get()
       // Explicit vision_model literal wins. getModel raises ModelNotFoundError as
       // a defect, so a misconfigured vision_model must not propagate — catch it and
-      // fall back to the smart default. (This runs at SystemPrompt layer construction,
-      // so an uncaught defect would fail session startup, not just image reads.)
+      // fall back to the smart default.
       if (cfg.vision_model) {
         const parsed = parseModel(cfg.vision_model)
         const explicit = yield* getModel(parsed.providerID, parsed.modelID).pipe(

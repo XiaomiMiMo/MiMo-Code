@@ -40,7 +40,7 @@ export function provider(model: Provider.Model) {
 }
 
 export interface Interface {
-  readonly environment: (model: Provider.Model, now: number) => string[]
+  readonly environment: (model: Provider.Model, now: number) => Effect.Effect<string[]>
   readonly skills: (agent: Agent.Info) => Effect.Effect<string | undefined>
 }
 
@@ -50,27 +50,10 @@ export const layer = Layer.effect(
   Service,
   Effect.gen(function* () {
     const skill = yield* Skill.Service
-
     const provider = yield* Provider.Service
-    const preferred = yield* provider.getVisionModel().pipe(Effect.orElseSucceed(() => undefined))
-    const visionModels = yield* provider
-      .list()
-      .pipe(
-        Effect.map((providers) =>
-          sortVisionModels(
-            Object.values(providers)
-              .flatMap((info) => Object.values(info.models))
-              .filter((m) => m.capabilities.input.image === true),
-          )
-            .map((m) => `${m.providerID}/${m.id}`)
-            .slice(0, 3),
-        ),
-      )
-      .pipe(Effect.orElseSucceed(() => [] as string[]))
-    const preferredRef = preferred ? `${preferred.providerID}/${preferred.id}` : visionModels[0]
 
     return Service.of({
-      environment(model, now) {
+      environment: Effect.fn("SystemPrompt.environment")(function* (model: Provider.Model, now: number) {
         const project = Instance.project
         const base = [
           [
@@ -85,13 +68,31 @@ export const layer = Layer.effect(
             // Anchored to the session's creation time (not request time) so this block
             // stays byte-identical across every turn of a session — including ones that
             // cross midnight — keeping it inside the Anthropic cached system prefix.
-            // Both the runLoop and checkpoint prefix-capture paths pass the same value.
             `  Today's date: ${new Date(now).toDateString()}`,
             `</env>`,
           ].join("\n"),
           `IMPORTANT: Your response must ALWAYS strictly follow the same major language as the user.`,
         ]
-        if (!model.capabilities.input.image)
+        if (!model.capabilities.input.image) {
+          // NOTE: vision models are resolved per-call (lazy). If provider list changes
+          // mid-session, this block may differ between turns and break cached system prefix.
+          // In practice provider config is stable within a session.
+          const preferred = yield* provider.getVisionModel().pipe(Effect.orElseSucceed(() => undefined))
+          const visionModels = yield* provider
+            .list()
+            .pipe(
+              Effect.map((providers) =>
+                sortVisionModels(
+                  Object.values(providers)
+                    .flatMap((info) => Object.values(info.models))
+                    .filter((m) => m.capabilities.input.image === true),
+                )
+                  .map((m) => `${m.providerID}/${m.id}`)
+                  .slice(0, 3),
+              ),
+            )
+            .pipe(Effect.orElseSucceed(() => [] as string[]))
+          const preferredRef = preferred ? `${preferred.providerID}/${preferred.id}` : visionModels[0]
           base.push(
             [
               `<vision-capability>`,
@@ -103,8 +104,9 @@ export const layer = Layer.effect(
               `If instead you need a file's raw binary structure (not its visual content), use a shell tool such as \`hexdump -C <path>\`, NOT the read tool.`,
             ].join("\n"),
           )
+        }
         return base
-      },
+      }),
 
       skills: Effect.fn("SystemPrompt.skills")(function* (agent: Agent.Info) {
         if (Permission.disabled(["skill"], agent.permission).has("skill")) return

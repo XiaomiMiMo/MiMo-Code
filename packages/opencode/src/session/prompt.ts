@@ -277,7 +277,7 @@ export const layer = Layer.effect(
         if (!captureSession) return empty
         const [skills, env, instructions] = yield* Effect.all([
           sys.skills(ag),
-          Effect.sync(() => sys.environment(model, captureSession.time.created)),
+          sys.environment(model, captureSession.time.created),
           instruction.system().pipe(Effect.orDie),
         ])
         // (checkpoint-writer never requests json_schema output, so STRUCTURED_OUTPUT_SYSTEM_PROMPT
@@ -3208,7 +3208,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
 
             const [skills, env, instructions] = yield* Effect.all([
               sys.skills(agent),
-              Effect.sync(() => sys.environment(model, session.time.created)),
+              sys.environment(model, session.time.created),
               instruction.system().pipe(Effect.orDie),
             ])
             // Surface which instruction files (CLAUDE.md, AGENTS.md, ...) were loaded.

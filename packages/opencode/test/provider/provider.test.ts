@@ -1313,8 +1313,8 @@ test("getVisionModel returns undefined when no vision-capable model exists", asy
 })
 
 // Regression: getModel raises ModelNotFoundError as a DEFECT. A misconfigured
-// vision_model must not propagate that defect (it runs at SystemPrompt layer
-// construction → would fail session startup). It should fall back to the smart
+// vision_model must not propagate that defect (it runs at SystemPrompt.environment()
+// call time → would fail the current request). It should fall back to the smart
 // default instead of throwing.
 test("getVisionModel falls back to smart default when vision_model is misconfigured", async () => {
   await using tmp = await tmpdir({
