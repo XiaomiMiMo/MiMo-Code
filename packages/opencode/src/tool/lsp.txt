@@ -10,10 +10,19 @@ Supported operations:
 - prepareCallHierarchy: Get call hierarchy item at a position (functions/methods)
 - incomingCalls: Find all functions/methods that call the function at a position
 - outgoingCalls: Find all functions/methods called by the function at a position
+- sendRequest: Send a read-only LSP request to the server. Only safe, read-only methods are allowed (e.g. textDocument/codeAction, textDocument/completion, textDocument/signatureHelp, textDocument/foldingRange, textDocument/documentLink, textDocument/semanticTokens/full, textDocument/semanticTokens/range, textDocument/semanticTokens/full/delta, textDocument/declaration, textDocument/typeDefinition). Dangerous methods like workspace/executeCommand and workspace/applyEdit are blocked.
 
-All operations require:
-- file_path: The file to operate on
+Most operations require:
+- file_path: The absolute or relative path to the file
 - line: The line number (1-based, as shown in editors)
 - character: The character offset (1-based, as shown in editors)
+
+The workspaceSymbol operation requires:
+- query: The symbol name or partial name to search for. Always provide it — most language servers return no results for an empty query.
+
+The sendRequest operation requires:
+- file_path: The file to determine which LSP server to target
+- method: The LSP method name (e.g. "textDocument/codeAction")
+- params: The parameters for the LSP method
 
 Note: LSP servers must be configured for the file type. If no server is available, an error will be returned.

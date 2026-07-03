@@ -114,6 +114,7 @@ const lsp = Layer.succeed(
     prepareCallHierarchy: () => Effect.succeed([]),
     incomingCalls: () => Effect.succeed([]),
     outgoingCalls: () => Effect.succeed([]),
+    sendRequest: () => Effect.succeed(undefined),
   }),
 )
 

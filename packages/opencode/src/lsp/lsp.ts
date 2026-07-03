@@ -16,6 +16,8 @@ import { AppFileSystem } from "@mimo-ai/shared/filesystem"
 
 const log = Log.create({ service: "lsp" })
 
+const fileExtension = (file: string) => path.parse(file).ext || file
+
 export const Event = {
   Updated: BusEvent.define("lsp.updated", z.object({})),
 }
@@ -121,10 +123,10 @@ const filterExperimentalServers = (servers: Record<string, LSPServer.Info>) => {
       log.info("LSP server pyright is disabled because MIMOCODE_EXPERIMENTAL_LSP_TY is enabled")
       delete servers["pyright"]
     }
-  } else {
-    if (servers["ty"]) {
-      delete servers["ty"]
-    }
+    return
+  }
+  if (servers["ty"]) {
+    delete servers["ty"]
   }
 }
 
@@ -143,15 +145,16 @@ export interface Interface {
   readonly hasClients: (file: string) => Effect.Effect<boolean>
   readonly touchFile: (input: string, waitForDiagnostics?: boolean) => Effect.Effect<void>
   readonly diagnostics: () => Effect.Effect<Record<string, LSPClient.Diagnostic[]>>
-  readonly hover: (input: LocInput) => Effect.Effect<any>
-  readonly definition: (input: LocInput) => Effect.Effect<any[]>
-  readonly references: (input: LocInput) => Effect.Effect<any[]>
-  readonly implementation: (input: LocInput) => Effect.Effect<any[]>
+  readonly hover: (input: LocInput) => Effect.Effect<unknown>
+  readonly definition: (input: LocInput) => Effect.Effect<unknown[]>
+  readonly references: (input: LocInput) => Effect.Effect<unknown[]>
+  readonly implementation: (input: LocInput) => Effect.Effect<unknown[]>
   readonly documentSymbol: (uri: string) => Effect.Effect<(DocumentSymbol | Symbol)[]>
   readonly workspaceSymbol: (query: string) => Effect.Effect<Symbol[]>
-  readonly prepareCallHierarchy: (input: LocInput) => Effect.Effect<any[]>
-  readonly incomingCalls: (input: LocInput) => Effect.Effect<any[]>
-  readonly outgoingCalls: (input: LocInput) => Effect.Effect<any[]>
+  readonly prepareCallHierarchy: (input: LocInput) => Effect.Effect<unknown[]>
+  readonly incomingCalls: (input: LocInput) => Effect.Effect<unknown[]>
+  readonly outgoingCalls: (input: LocInput) => Effect.Effect<unknown[]>
+  readonly sendRequest: (file: string, method: string, params: unknown) => Effect.Effect<unknown>
 }
 
 export class Service extends Context.Service<Service, Interface>()("@opencode/LSP") {}
@@ -169,7 +172,9 @@ export const layer = Layer.effect(
 
         if (!cfg.lsp) {
           log.info("all LSPs are disabled")
-        } else {
+        }
+
+        if (cfg.lsp) {
           for (const server of Object.values(LSPServer)) {
             servers[server.id] = server
           }
@@ -234,7 +239,7 @@ export const layer = Layer.effect(
       }
       const s = yield* InstanceState.get(state)
       return yield* Effect.promise(async () => {
-        const extension = path.parse(file).ext || file
+        const extension = fileExtension(file)
         const result: LSPClient.Info[] = []
 
         async function schedule(server: LSPServer.Info, root: string, key: string) {
@@ -351,7 +356,7 @@ export const layer = Layer.effect(
       const ctx = yield* InstanceState.context
       const s = yield* InstanceState.get(state)
       return yield* Effect.promise(async () => {
-        const extension = path.parse(file).ext || file
+        const extension = fileExtension(file)
         for (const server of Object.values(s.servers)) {
           if (server.extensions.length && !server.extensions.includes(extension)) continue
           const root = await server.root(file, ctx)
@@ -374,7 +379,7 @@ export const layer = Layer.effect(
             return wait
           }),
         ).catch((err) => {
-          log.error("failed to touch file", { err, file: input })
+          log.error("failed to touch file", { error: err, file: input })
         }),
       )
     })
@@ -410,7 +415,7 @@ export const layer = Layer.effect(
             textDocument: { uri: pathToFileURL(input.file).href },
             position: { line: input.line, character: input.character },
           })
-          .catch(() => null),
+          .catch(() => []),
       )
       return results.flat().filter(Boolean)
     })
@@ -435,7 +440,7 @@ export const layer = Layer.effect(
             textDocument: { uri: pathToFileURL(input.file).href },
             position: { line: input.line, character: input.character },
           })
-          .catch(() => null),
+          .catch(() => []),
       )
       return results.flat().filter(Boolean)
     })
@@ -495,6 +500,12 @@ export const layer = Layer.effect(
       return yield* callHierarchyRequest(input, "callHierarchy/outgoingCalls")
     })
 
+    const sendRequest = Effect.fn("LSP.sendRequest")(function* (file: string, method: string, params: unknown) {
+      return yield* run(file, (client) =>
+        client.connection.sendRequest(method, params).catch(() => null)
+      )
+    })
+
     return Service.of({
       init,
       status,
@@ -510,6 +521,7 @@ export const layer = Layer.effect(
       prepareCallHierarchy,
       incomingCalls,
       outgoingCalls,
+      sendRequest,
     })
   }),
 )
