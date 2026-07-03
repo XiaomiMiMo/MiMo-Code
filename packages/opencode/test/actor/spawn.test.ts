@@ -701,6 +701,60 @@ describe("mode × contextMode matrix", () => {
     ),
   )
 
+  it.live("subagent + full captures forkContext when caller does not provide one", () =>
+    provideTmpdirServer(
+      Effect.fnUntraced(function* ({ llm }) {
+        const actor = yield* Actor.Service
+        const session = yield* Session.Service
+
+        const parent = yield* session.create({
+          title: "matrix subagent+full auto capture",
+          permission: [{ permission: "*", pattern: "*", action: "allow" }],
+        })
+
+        const mainMessageID = MessageID.ascending()
+        const mainMessage = {
+          id: mainMessageID,
+          sessionID: parent.id,
+          role: "user",
+          time: { created: Date.now() },
+          agent: "build",
+          model: { providerID: ProviderID.make("test"), modelID: ModelID.make("test-model") },
+          tools: {},
+        } satisfies MessageV2.User
+        yield* session.updateMessage(mainMessage)
+        yield* session.updatePart({
+          id: PartID.ascending(),
+          sessionID: parent.id,
+          messageID: mainMessageID,
+          type: "text",
+          text: "parent context",
+        })
+
+        yield* llm.hang
+
+        const result = yield* actor.spawn({
+          mode: "subagent",
+          sessionID: parent.id,
+          agentType: "explore",
+          task: "read the inherited context",
+          context: "full",
+          tools: ["read"],
+          background: true,
+          model: ref,
+        })
+
+        const ctx = yield* actor.getForkContext(result.actorID)
+        expect(ctx).toBeDefined()
+        expect(ctx?.watermarkMsgID).toBe(mainMessageID)
+        expect(ctx?.inheritedMessages.length).toBeGreaterThan(0)
+
+        yield* actor.cancel(result.sessionID, result.actorID, "forced")
+      }),
+      { git: true, config: providerCfg },
+    ),
+  )
+
   it.live("subagent + none: no forkContext stored", () =>
     provideTmpdirServer(
       Effect.fnUntraced(function* ({ llm }) {

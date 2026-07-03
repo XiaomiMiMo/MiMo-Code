@@ -20,6 +20,7 @@ import { renderActorNotification } from "@/inbox/render"
 import { Plugin, HookEvent } from "@/plugin"
 import { parseReturnHeader, type ReturnStatus } from "./return-header"
 import { Log } from "@/util"
+import { prefixCaptureRef } from "@/session/prefix-capture-ref"
 
 const log = Log.create({ service: "actor.spawn" })
 
@@ -199,6 +200,51 @@ export const layer = Layer.effect(
     // (contextMode = "full"). Read by fork's runLoop (see prompt.ts) and
     // cleared on terminal status. Fiber tracking moved to SessionRunState.
     const forkContexts = new Map<string, ForkContext>()
+
+    const captureForkContext = Effect.fn("Actor.captureForkContext")(function* (
+      input: SpawnInput,
+      watermarkMsgID: MessageID | undefined,
+    ) {
+      if (input.context !== "full" || input.forkContext) return input.forkContext
+      if (!input.model || !watermarkMsgID) return undefined
+
+      const buildPrefix = prefixCaptureRef.current
+      if (!buildPrefix) {
+        log.warn("captureForkContext skipped: prefixCaptureRef not set", {
+          sessionID: input.sessionID,
+          agentType: input.agentType,
+        })
+        return undefined
+      }
+
+      const msgs = yield* session.messages({ sessionID: input.sessionID })
+      const watermarkIdx = msgs.findIndex((m) => m.info.id === watermarkMsgID)
+      if (watermarkIdx < 0) {
+        log.warn("captureForkContext skipped: watermark message not found", {
+          sessionID: input.sessionID,
+          agentType: input.agentType,
+          watermarkMsgID,
+        })
+        return undefined
+      }
+
+      const prefix = yield* buildPrefix({
+        sessionID: input.sessionID,
+        agentName: input.agentType,
+        providerID: input.model.providerID,
+        modelID: input.model.modelID,
+        msgs: msgs.slice(0, watermarkIdx + 1),
+      })
+
+      return {
+        system: prefix.system,
+        tools: prefix.tools,
+        inheritedMessages: prefix.inheritedMessages,
+        parentPermission: prefix.parentPermission,
+        watermarkMsgID,
+        model: input.model,
+      } satisfies ForkContext
+    })
 
     // Real agent loop: marks the actor running, then drives a SessionPrompt.prompt
     // turn. The user message persisted by SessionPrompt carries the actor's
@@ -612,8 +658,9 @@ export const layer = Layer.effect(
         lifecycle: input.lifecycle ?? "persistent",
         tools: input.tools,
       })
-      if (input.forkContext) {
-        forkContexts.set(child.id, input.forkContext) // peer's actorID === child.id
+      const forkContext = yield* captureForkContext(input, yield* session.lastMainMessageID(input.sessionID))
+      if (forkContext) {
+        forkContexts.set(child.id, forkContext) // peer's actorID === child.id
       }
       const { fiber, outcome } = yield* forkWork({
         sessionID: child.id,
@@ -657,8 +704,9 @@ export const layer = Layer.effect(
       // Synchronous + best-effort: a throwing callback must not fail the spawn.
       if (input.onActorID) yield* Effect.sync(() => input.onActorID!(actorID)).pipe(Effect.ignore)
 
-      if (input.forkContext) {
-        forkContexts.set(actorID, input.forkContext)
+      const forkContext = yield* captureForkContext(input, watermark)
+      if (forkContext) {
+        forkContexts.set(actorID, forkContext)
       }
 
       // Auto-inject return-format instruction for non-specialized subagents.
