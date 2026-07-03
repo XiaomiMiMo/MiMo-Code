@@ -253,6 +253,40 @@ test("custom model alias via config", async () => {
   })
 })
 
+test("non-empty models config acts as implicit whitelist", async () => {
+  await using tmp = await tmpdir({
+    init: async (dir) => {
+      await Bun.write(
+        path.join(dir, "mimocode.json"),
+        JSON.stringify({
+          $schema: "https://opencode.ai/config.json",
+          provider: {
+            anthropic: {
+              models: {
+                "claude-sonnet-4-20250514": {
+                  name: "Only Sonnet",
+                },
+              },
+            },
+          },
+        }),
+      )
+    },
+  })
+  await Instance.provide({
+    directory: tmp.path,
+    init: async () => {
+      set("ANTHROPIC_API_KEY", "test-api-key")
+    },
+    fn: async () => {
+      const providers = await list()
+      expect(providers[ProviderID.anthropic]).toBeDefined()
+      const models = Object.keys(providers[ProviderID.anthropic].models)
+      expect(models).toEqual(["claude-sonnet-4-20250514"])
+    },
+  })
+})
+
 test("custom provider with npm package", async () => {
   await using tmp = await tmpdir({
     init: async (dir) => {
