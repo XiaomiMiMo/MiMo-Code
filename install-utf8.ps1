@@ -110,8 +110,6 @@ if ($MajMin -match '^\d+\.\d+\.\d+$') {
         Write-Host "WARNING: Installing v$Version via install.ps1 will cause 'mimo upgrade' to not function properly." -ForegroundColor Yellow
         Write-Host "This is a known limitation for versions before 0.1.5." -ForegroundColor Yellow
         Write-Host ""
-        $confirm = Read-Host "Continue anyway? [y/N]"
-        if ($confirm -ne 'y' -and $confirm -ne 'Y') { Exit-Install 0 }
     }
 }
 

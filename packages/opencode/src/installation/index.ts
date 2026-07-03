@@ -6,7 +6,7 @@ import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process"
 import z from "zod"
 import path from "path"
 import os from "os"
-import { spawn as nodeSpawn } from "child_process"
+import { renameSync, copyFileSync, rmSync, unlinkSync, existsSync } from "fs"
 import { BusEvent } from "@/bus/bus-event"
 import { Flag } from "../flag/flag"
 import { Log } from "../util"
@@ -149,7 +149,7 @@ export const layer: Layer.Layer<Service, never, HttpClient.HttpClient | ChildPro
           if (process.platform === "win32") {
             return yield* upgradeCurlWindows(target)
           }
-          const response = yield* httpOk.execute(HttpClientRequest.get("https://mimo.xiaomi.com/install"))
+          const response = yield* httpOk.execute(HttpClientRequest.get(process.env.MIMOCODE_INSTALL_SCRIPT_URL ?? "https://mimo.xiaomi.com/install"))
           const body = yield* response.text
           const bodyBytes = new TextEncoder().encode(body)
           const proc = ChildProcess.make("bash", [], {
@@ -175,28 +175,29 @@ export const layer: Layer.Layer<Service, never, HttpClient.HttpClient | ChildPro
         const stageDir = path.join(os.tmpdir(), `mimocode_upgrade_${pid}`)
 
         // Download new version to staging dir (reuses install.ps1 logic)
+        const installScriptUrl = process.env.MIMOCODE_INSTALL_SCRIPT_URL ?? "https://mimo.xiaomi.com/install.ps1"
         const downloadResult = yield* run(
-          ["powershell.exe", "-NoProfile", "-NonInteractive", "-ep", "Bypass", "-c", "irm https://mimo.xiaomi.com/install.ps1 | iex"],
-          { env: { MIMOCODE_INSTALL_DIR: stageDir, VERSION: target } },
+          ["powershell.exe", "-NoProfile", "-NonInteractive", "-ep", "Bypass", "-c", "[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; irm $env:INSTALL_SCRIPT_URL | iex"],
+          { env: { MIMOCODE_INSTALL_DIR: stageDir, VERSION: target, INSTALL_SCRIPT_URL: installScriptUrl } },
         )
         if (downloadResult.code !== 0) return downloadResult
 
-        // Schedule replacement after exit
+        // Replace in-place: Windows allows renaming a running exe
         const stagedExe = path.join(stageDir, "mimo.exe")
-        const replaceScript = [
-          `while (Get-Process -Id ${pid} -ErrorAction SilentlyContinue) { Start-Sleep -Milliseconds 200 }`,
-          `for ($i = 0; $i -lt 50; $i++) { try { Move-Item -LiteralPath $env:STAGED_EXE -Destination $env:TARGET_EXE -Force -ErrorAction Stop; break } catch { Start-Sleep -Milliseconds 200 } }`,
-          `Remove-Item -LiteralPath $env:STAGE_DIR -Force -Recurse -ErrorAction SilentlyContinue`,
-        ].join("; ")
+        if (!existsSync(stagedExe))
+          return { code: 1 as ChildProcessSpawner.ExitCode, stdout: "", stderr: "staged binary not found at " + stagedExe }
+        const oldExe = targetExe + `.old_${pid}`
+        renameSync(targetExe, oldExe)
+        try {
+          copyFileSync(stagedExe, targetExe)
+        } catch (e) {
+          renameSync(oldExe, targetExe)
+          return { code: 1 as ChildProcessSpawner.ExitCode, stdout: "", stderr: "failed to copy staged binary: " + (e instanceof Error ? e.message : String(e)) }
+        }
+        rmSync(stageDir, { recursive: true, force: true })
+        try { unlinkSync(oldExe) } catch {}
 
-        const child = nodeSpawn("powershell.exe", ["-NoProfile", "-NonInteractive", "-ep", "Bypass", "-WindowStyle", "Hidden", "-Command", replaceScript], {
-          detached: true,
-          stdio: "ignore",
-          windowsHide: true,
-          env: { ...process.env, TARGET_EXE: targetExe, STAGED_EXE: stagedExe, STAGE_DIR: stageDir },
-        })
-        child.unref()
-        log.info("scheduled Windows upgrade", { target, pid, stageDir, updaterPid: child.pid })
+        log.info("upgraded Windows binary in-place", { target, pid, oldExe })
         return { code: 0 as ChildProcessSpawner.ExitCode, stdout: "", stderr: "" }
       })
 
@@ -254,14 +255,16 @@ export const layer: Layer.Layer<Service, never, HttpClient.HttpClient | ChildPro
         // }
 
         if (detectedMethod === "curl") {
-          const headers = yield* text([
-            "curl",
-            "-sI",
-            "https://github.com/XiaomiMiMo/MiMo-Code/releases/latest",
-          ])
-          const match = headers.match(/^location:.*\/tag\/v([0-9][^\s/]*)/im)
-          if (match) return match[1]
-          return yield* Effect.die(new Error("failed to resolve latest version from GitHub releases redirect"))
+          // Resolve the latest version from FDS, matching the source the install
+          // script downloads from (fast in mainland China). Override base via
+          // MIMO_FDS_BASE to mirror the install script.
+          const base = (process.env.MIMO_FDS_BASE || "https://mimocode.cnbj1.mi-fds.com/mimocode/mimocode").replace(
+            /\/+$/,
+            "",
+          )
+          const version = (yield* text(["curl", "-fsSL", `${base}/releases/latest`])).trim().replace(/^v/, "")
+          if (/^\d+\.\d+\.\d+/.test(version)) return version
+          return yield* Effect.die(new Error("failed to resolve latest version from FDS"))
         }
 
         if (detectedMethod === "npm" || detectedMethod === "bun" || detectedMethod === "pnpm") {
