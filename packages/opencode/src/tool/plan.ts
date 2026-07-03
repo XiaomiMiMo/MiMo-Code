@@ -8,6 +8,7 @@ import { MessageV2 } from "../session/message-v2"
 import { Provider } from "../provider"
 import { Instance } from "../project/instance"
 import { type SessionID, MessageID, PartID } from "../session/schema"
+import { Agent } from "../agent/agent"
 import ENTER_DESCRIPTION from "./plan-enter.txt"
 import EXIT_DESCRIPTION from "./plan-exit.txt"
 
@@ -18,12 +19,20 @@ function getLastModel(sessionID: SessionID) {
   return undefined
 }
 
+function getAgentModel(agentInfo: Agent.Info) {
+  if (agentInfo.model) {
+    return { providerID: agentInfo.model.providerID, modelID: agentInfo.model.modelID }
+  }
+  return undefined
+}
+
 export const PlanEnterTool = Tool.define(
   "plan_enter",
   Effect.gen(function* () {
     const session = yield* Session.Service
     const question = yield* Question.Service
     const provider = yield* Provider.Service
+    const agentService = yield* Agent.Service
 
     return {
       description: ENTER_DESCRIPTION,
@@ -37,6 +46,8 @@ export const PlanEnterTool = Tool.define(
               metadata: { switched: false, feedback: "" },
             }
           }
+
+          const planAgent = yield* agentService.get("plan")
 
           const info = yield* session.get(ctx.sessionID)
           const plan = path.relative(Instance.worktree, Session.plan(info))
@@ -68,7 +79,7 @@ export const PlanEnterTool = Tool.define(
             }
           }
 
-          const model = getLastModel(ctx.sessionID) ?? (yield* provider.defaultModel())
+          const model = getAgentModel(planAgent) ?? getLastModel(ctx.sessionID) ?? (yield* provider.defaultModel())
 
           const msg: MessageV2.User = {
             id: MessageID.ascending(),
@@ -104,6 +115,7 @@ export const PlanExitTool = Tool.define(
     const session = yield* Session.Service
     const question = yield* Question.Service
     const provider = yield* Provider.Service
+    const agentService = yield* Agent.Service
 
     return {
       description: EXIT_DESCRIPTION,
@@ -117,6 +129,8 @@ export const PlanExitTool = Tool.define(
               metadata: { switched: false, feedback: "" },
             }
           }
+
+          const buildAgent = yield* agentService.get("build")
 
           const info = yield* session.get(ctx.sessionID)
           const plan = path.relative(Instance.worktree, Session.plan(info))
@@ -148,7 +162,7 @@ export const PlanExitTool = Tool.define(
             }
           }
 
-          const model = getLastModel(ctx.sessionID) ?? (yield* provider.defaultModel())
+          const model = getAgentModel(buildAgent) ?? getLastModel(ctx.sessionID) ?? (yield* provider.defaultModel())
 
           const msg: MessageV2.User = {
             id: MessageID.ascending(),
