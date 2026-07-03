@@ -149,7 +149,7 @@ export const layer: Layer.Layer<Service, never, HttpClient.HttpClient | ChildPro
           if (process.platform === "win32") {
             return yield* upgradeCurlWindows(target)
           }
-          const response = yield* httpOk.execute(HttpClientRequest.get("https://mimo.xiaomi.com/install"))
+          const response = yield* httpOk.execute(HttpClientRequest.get(Flag.MIMOCODE_INSTALL_SCRIPT_URL ?? "https://mimo.xiaomi.com/install"))
           const body = yield* response.text
           const bodyBytes = new TextEncoder().encode(body)
           const proc = ChildProcess.make("bash", [], {
@@ -176,7 +176,7 @@ export const layer: Layer.Layer<Service, never, HttpClient.HttpClient | ChildPro
 
         // Download new version to staging dir (reuses install.ps1 logic)
         const downloadResult = yield* run(
-          ["powershell.exe", "-NoProfile", "-NonInteractive", "-ep", "Bypass", "-c", "[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; irm https://mimo.xiaomi.com/install.ps1 | iex"],
+          ["powershell.exe", "-NoProfile", "-NonInteractive", "-ep", "Bypass", "-c", `[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; irm ${Flag.MIMOCODE_INSTALL_SCRIPT_URL ?? "https://mimo.xiaomi.com/install.ps1"} | iex`],
           { env: { MIMOCODE_INSTALL_DIR: stageDir, VERSION: target } },
         )
         if (downloadResult.code !== 0) return downloadResult
