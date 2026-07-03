@@ -90,6 +90,8 @@ Use groups when you want one label (`"standard"`) to map to different concrete m
 | `agent` | Per-agent config: `plan`, `build`, `general`, `explore`, `title`, `summary`, `compaction`, plus custom |
 | `username` | Display name in conversations |
 
+Prefer a markdown file (`.mimocode/agent/<name>.md`, body = system prompt) for defining a custom agent/mode — see the "Custom agents & modes" section in @guide.md. Use the `agent` config key for short, inline per-agent overrides.
+
 ### Tools, skills, MCP, extensions
 | Key | Purpose |
 |-----|---------|

@@ -40,6 +40,41 @@ Review the staged diff. Focus on: $ARGUMENTS
 
 Commands hot-reload on the next turn.
 
+## Custom agents & modes (file-based system prompts)
+
+A "mode" is just a **primary agent** with its own system prompt. To give MiMoCode a custom mode (e.g. a `general` chat mode alongside the coding-focused `build`), drop a markdown file — no code, no server changes. The frontmatter is config; the **markdown body becomes the agent's system prompt**.
+
+```markdown
+---
+description: A friendly general-purpose assistant for everyday chat and Q&A
+mode: primary
+temperature: 0.7
+---
+You are "General" — a warm, concise, general-purpose assistant.
+Keep replies short unless asked to elaborate; you are not focused on coding.
+```
+
+Where to put the file (all hot-reloaded on the next turn; `.claude/agent(s)` are also read):
+
+| Path | Scope |
+|------|-------|
+| `.mimocode/agent/<name>.md` (or `agents/`) | project agent — most common |
+| `.mimocode/mode/<name>.md` (or `modes/`) | project mode — same as an agent forced to `mode: primary` |
+| `~/.config/mimocode/agent/<name>.md` | global agent, available in every project |
+
+Frontmatter fields (all optional except that the body should be non-empty):
+
+- `mode` — `primary` (selectable with `Tab`, replaces the base prompt for the session), `subagent` (spawnable by a primary via the `actor`/`task` tools), or `all`. Files under `mode/` are always primary.
+- `model` — a `provider/model` or a group name (`ultra`/`standard`/`lite`); `variant`, `temperature`, `top_p` tune generation.
+- `description` — when to use it (shown in the `@` autocomplete for subagents).
+- `permission`, `tool_allowlist`, `tools`, `steps`, `color`, `hidden` — see @config.md.
+
+**How it reaches the model:** for a primary agent the body is used as the base system prompt in place of the model's default prompt; the usual environment/skills/instructions blocks are still appended. Selecting the mode is session-scoped — the TUI `Tab` picker or, over the SDK, the `agent` field on `session.prompt`. So a desktop/SDK client switches modes by sending `agent: "general"` vs `agent: "build"` per session; the prompt itself lives in the file, server-side.
+
+Verify a file loaded with `mimo agent list` — your agent shows up with its `(primary)` / `(subagent)` mode.
+
+Config-file alternative: instead of a `.md` file you can inline an agent under the `agent` config key (`agent.<name>.prompt`, plus `model`, `mode`, …); the markdown form is preferred for anything beyond a couple of lines.
+
 ## Keybinds
 
 All TUI keybinds are remappable under the `keybinds` config. The leader key defaults to `ctrl+x`, so `<leader>` in a binding means "press ctrl+x then …".

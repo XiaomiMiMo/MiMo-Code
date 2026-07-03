@@ -15,7 +15,7 @@ MiMoCode (CLI binary `mimo`) is an agentic coding tool with a terminal UI, built
 
 | Feature | What it is | How to reach it |
 |---------|-----------|-----------------|
-| **Agents** | `build` (default, full tools), `plan` (read-only analysis), `compose` (specs-driven orchestration) | `Tab` cycles primary agents |
+| **Agents / modes** | `build` (default, full tools), `plan` (read-only analysis), `compose` (specs-driven orchestration), plus custom modes you define | `Tab` cycles primary agents; add your own via `.mimocode/agent/<name>.md` (see @reference/guide.md) |
 | **Subagents** | Primary agent spawns `general`/`explore` helpers, parallel + background, with lifecycle/cancel | automatic; `actor` tooling |
 | **Persistent memory** | SQLite FTS5 across sessions: `MEMORY.md`, `checkpoint.md`, `notes.md`, `tasks/<id>/progress.md` | auto-injected on resume |
 | **Context management** | Auto-checkpoints, context reconstruction near limit, budgeted injection | automatic; tune via `checkpoint`/`compaction` config |
