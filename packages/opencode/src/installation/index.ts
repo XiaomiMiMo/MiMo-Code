@@ -6,7 +6,7 @@ import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process"
 import z from "zod"
 import path from "path"
 import os from "os"
-import { renameSync, copyFileSync, rmSync, unlinkSync } from "fs"
+import { renameSync, copyFileSync, rmSync, unlinkSync, existsSync } from "fs"
 import { BusEvent } from "@/bus/bus-event"
 import { Flag } from "../flag/flag"
 import { Log } from "../util"
@@ -184,9 +184,16 @@ export const layer: Layer.Layer<Service, never, HttpClient.HttpClient | ChildPro
 
         // Replace in-place: Windows allows renaming a running exe
         const stagedExe = path.join(stageDir, "mimo.exe")
+        if (!existsSync(stagedExe))
+          return { code: 1 as ChildProcessSpawner.ExitCode, stdout: "", stderr: "staged binary not found at " + stagedExe }
         const oldExe = targetExe + `.old_${pid}`
         renameSync(targetExe, oldExe)
-        copyFileSync(stagedExe, targetExe)
+        try {
+          copyFileSync(stagedExe, targetExe)
+        } catch (e) {
+          renameSync(oldExe, targetExe)
+          throw e
+        }
         rmSync(stageDir, { recursive: true, force: true })
         try { unlinkSync(oldExe) } catch {}
 
@@ -256,7 +263,7 @@ export const layer: Layer.Layer<Service, never, HttpClient.HttpClient | ChildPro
             "",
           )
           const version = (yield* text(["curl", "-fsSL", `${base}/releases/latest`])).trim().replace(/^v/, "")
-          if (version) return version
+          if (/^\d+\.\d+\.\d+/.test(version)) return version
           return yield* Effect.die(new Error("failed to resolve latest version from FDS"))
         }
 
