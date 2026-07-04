@@ -15,6 +15,7 @@ import { useLanguage } from "@tui/context/language"
 import { slashCommandDescription } from "@tui/i18n/slash-command"
 import { useTerminalDimensions } from "@opentui/solid"
 import { Locale } from "@/util"
+import { Flag } from "@/flag/flag"
 import type { PromptInfo } from "./history"
 import { useFrecency } from "./frecency"
 import { detectTrigger } from "./autocomplete-detect"
@@ -368,7 +369,7 @@ export function Autocomplete(props: {
     const results: AutocompleteOption[] = [...command.slashes()]
 
     for (const serverCommand of sync.data.command) {
-      if (serverCommand.source === "skill") continue
+      if (serverCommand.source === "skill" && !Flag.MIMOCODE_ENABLE_SLASH_SKILLS) continue
       const label = serverCommand.source === "mcp" ? ":mcp" : ""
       results.push({
         display: "/" + serverCommand.name + label,

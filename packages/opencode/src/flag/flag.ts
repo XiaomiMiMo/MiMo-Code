@@ -106,6 +106,13 @@ export const Flag = {
   MIMOCODE_DISABLE_EXTERNAL_SKILLS,
   MIMOCODE_DISABLE_CODEX_SKILLS: MIMOCODE_DISABLE_EXTERNAL_SKILLS || truthy("MIMOCODE_DISABLE_CODEX_SKILLS"),
   MIMOCODE_DISABLE_OPENCODE_SKILLS: MIMOCODE_DISABLE_EXTERNAL_SKILLS || truthy("MIMOCODE_DISABLE_OPENCODE_SKILLS"),
+
+  // Defaults to false. When enabled, skill-source commands appear in the `/`
+  // autocomplete dropdown alongside user commands and MCP prompts (Claude
+  // Code-style). By default skills are only surfaced via the `/skills` picker
+  // and model-driven invocation, keeping the `/` list focused on user-authored
+  // commands.
+  MIMOCODE_ENABLE_SLASH_SKILLS: truthy("MIMOCODE_ENABLE_SLASH_SKILLS"),
   MIMOCODE_FAKE_VCS: process.env["MIMOCODE_FAKE_VCS"],
 
   // When enabled, skips all git subprocess calls during project discovery
