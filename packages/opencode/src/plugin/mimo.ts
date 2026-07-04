@@ -91,10 +91,29 @@ export async function MimoAuthPlugin(_input: PluginInput): Promise<Hooks> {
       // api: https://api.xiaomimimo.com/v1) — hardcoding "MiMo" here collided with
       // the free "mimo" provider's display name and confused users.
       input.provider.xiaomi ??= {}
-      // Both "opencode" and "opencode-go" stay enabled. The opencode custom
-      // loader strips the free/public tier (and hides paid models until the
-      // user authenticates). "opencode-go" has no free models and no custom
-      // loader, so it only loads once a subscription key/auth is present.
+
+      // Register mimo as a separate free-tier provider via opencode.ai gateway
+      input.provider.mimo ??= {}
+      const mimo = input.provider.mimo
+      mimo.name ??= "MiMo"
+      mimo.api ??= "https://opencode.ai/zen/v1"
+      mimo.env ??= []
+      mimo.models ??= {}
+      mimo.models["mimo-auto"] ??= {
+        id: "mimo-v2.5-free",
+        name: "MiMo Auto",
+        release_date: "2025-01-01",
+        attachment: true,
+        reasoning: true,
+        temperature: true,
+        tool_call: true,
+        cost: { input: 0, output: 0, cache_read: 0, cache_write: 0 },
+        limit: { context: 1000000, output: 32000 },
+        modalities: {
+          input: ["text", "image"],
+          output: ["text"],
+        },
+      }
     },
     auth: {
       provider: "xiaomi",

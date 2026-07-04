@@ -452,7 +452,7 @@ function Option(props: {
         wrapMode="none"
         paddingLeft={3}
       >
-        {Locale.truncate(props.title, 61)}
+        {Locale.truncate(props.title ?? "", 61)}
         <Show when={props.description}>
           <span style={{ fg: props.active ? fg : theme.textMuted }}> {props.description}</span>
         </Show>

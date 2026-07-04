@@ -17,6 +17,7 @@ import { Global } from "@/global"
 import { useDialog } from "../../ui/dialog"
 import { getScrollAcceleration } from "../../util/scroll"
 import { useTuiConfig } from "../../context/tui-config"
+import { useLanguage } from "../../context/language"
 
 type PermissionStage = "permission" | "always" | "reject"
 
@@ -132,6 +133,7 @@ function TextBody(props: { title: string; description?: string; icon?: string })
 export function PermissionPrompt(props: { request: PermissionRequest }) {
   const sdk = useSDK()
   const sync = useSync()
+  const { t } = useLanguage()
   const [store, setStore] = createStore({
     stage: "permission" as PermissionStage,
   })
@@ -156,7 +158,7 @@ export function PermissionPrompt(props: { request: PermissionRequest }) {
     <Switch>
       <Match when={store.stage === "always"}>
         <Prompt
-          title="Always allow"
+          title={t("tui.permission.allow_always")}
           body={
             <Switch>
               <Match when={props.request.always.length === 1 && props.request.always[0] === "*"}>
@@ -179,7 +181,7 @@ export function PermissionPrompt(props: { request: PermissionRequest }) {
               </Match>
             </Switch>
           }
-          options={{ confirm: "Confirm", cancel: "Cancel" }}
+          options={{ confirm: t("tui.permission.confirm"), cancel: t("tui.permission.cancel") }}
           escapeKey="cancel"
           onSelect={(option) => {
             setStore("stage", "permission")
@@ -437,10 +439,10 @@ export function PermissionPrompt(props: { request: PermissionRequest }) {
 
           const body = (
             <Prompt
-              title="Permission required"
+              title={t("tui.permission.required")}
               header={header()}
               body={current.body}
-              options={{ once: "Allow once", always: "Allow always", reject: "Reject" }}
+              options={{ once: t("tui.permission.allow_once"), always: t("tui.permission.allow_always_short"), reject: t("tui.permission.reject") }}
               escapeKey="reject"
               fullscreen
               onSelect={(option) => {
@@ -559,6 +561,7 @@ function Prompt<const T extends Record<string, string>>(props: {
   onSelect: (option: keyof T) => void
 }) {
   const { theme } = useTheme()
+  const { t } = useLanguage()
   const keybind = useKeybind()
   const dimensions = useTerminalDimensions()
   const keys = Object.keys(props.options) as (keyof T)[]
@@ -604,7 +607,7 @@ function Prompt<const T extends Record<string, string>>(props: {
     }
   })
 
-  const hint = createMemo(() => (store.expanded ? "minimize" : "fullscreen"))
+  const hint = createMemo(() => (store.expanded ? t("tui.permission.minimize") : t("tui.permission.fullscreen")))
   useRenderer()
 
   const content = () => (

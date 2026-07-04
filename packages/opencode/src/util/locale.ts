@@ -58,12 +58,14 @@ export function duration(input: number) {
   return `${days}d ${hours}h`
 }
 
-export function truncate(str: string, len: number): string {
+export function truncate(str: string | undefined | null, len: number): string {
+  if (str == null) return ""
   if (str.length <= len) return str
   return str.slice(0, len - 1) + "…"
 }
 
-export function truncateMiddle(str: string, maxLength: number = 35): string {
+export function truncateMiddle(str: string | undefined | null, maxLength: number = 35): string {
+  if (str == null) return ""
   if (str.length <= maxLength) return str
 
   const ellipsis = "…"

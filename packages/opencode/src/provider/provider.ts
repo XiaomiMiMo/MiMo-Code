@@ -163,6 +163,11 @@ function custom(dep: CustomDep): Record<string, CustomLoader> {
           },
         },
       }),
+    mimo: () =>
+      Effect.succeed({
+        autoload: true,
+        options: {},
+      }),
     opencode: Effect.fnUntraced(function* (input: Info) {
       const env = yield* dep.env()
       const hasKey = iife(() => {

@@ -465,8 +465,8 @@ export function Session() {
       onSelect: async (dialog) => {
         const copy = (url: string) =>
           Clipboard.copy(url)
-            .then(() => toast.show({ message: "Share URL copied to clipboard!", variant: "success" }))
-            .catch(() => toast.show({ message: "Failed to copy URL to clipboard", variant: "error" }))
+            .then(() => toast.show({ message: t("tui.session.toast.share_copied"), variant: "success" }))
+            .catch(() => toast.show({ message: t("tui.session.toast.share_copy_failed"), variant: "error" }))
         const url = session()?.share?.url
         if (url) {
           await copy(url)
@@ -564,7 +564,7 @@ export function Session() {
         if (!selectedModel) {
           toast.show({
             variant: "warning",
-            message: "Connect a provider to summarize this session",
+            message: t("tui.session.toast.no_provider"),
             duration: 3000,
           })
           return
