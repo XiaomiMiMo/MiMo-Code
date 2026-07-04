@@ -31,7 +31,7 @@ export function renderActorNotification(event: {
   if (event.status === "completed") {
     const statusLine = `Status: ${event.reportedStatus ?? "unknown"}`
     const summaryLine = event.reportedSummary ? `\nSummary: ${event.reportedSummary}` : ""
-    return `<actor-notification>\n${header} completed.\n${statusLine}${summaryLine}\nResult: ${event.result ?? "(no output)"}\n</actor-notification>`
+    return `<actor-notification>\n${header} completed.\n${statusLine}${summaryLine}\nResult: ${event.result ?? "(no output)"}\n\nUse the background_output tool to retrieve the full result.\n</actor-notification>`
   }
   if (event.status === "failed") {
     return `<actor-notification>\n${header} failed.\nError: ${event.error ?? "unknown"}\n</actor-notification>`
