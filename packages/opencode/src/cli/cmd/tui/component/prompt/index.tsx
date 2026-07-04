@@ -25,6 +25,7 @@ import { useLanguage } from "@tui/context/language"
 import { useRenderer, type JSX } from "@opentui/solid"
 import * as Editor from "@tui/util/editor"
 import * as Voice from "@tui/util/voice"
+import { contextTokens } from "@tui/util/context-tokens"
 import { useExit } from "../../context/exit"
 import * as Clipboard from "../../util/clipboard"
 import type { AssistantMessage, FilePart, UserMessage } from "@mimo-ai/sdk/v2"
@@ -464,8 +465,7 @@ export function Prompt(props: PromptProps) {
     const last = msg.findLast((item): item is AssistantMessage => item.role === "assistant" && item.tokens.output > 0)
     if (!last) return
 
-    const tokens =
-      last.tokens.input + last.tokens.output + last.tokens.reasoning + last.tokens.cache.read + last.tokens.cache.write
+    const tokens = contextTokens(last)
     if (tokens <= 0) return
 
     const model = sync.data.provider.find((item) => item.id === last.providerID)?.models[last.modelID]
