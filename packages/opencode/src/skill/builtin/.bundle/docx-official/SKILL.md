@@ -1,5 +1,5 @@
 ---
-name: docx
+name: docx-official
 description: "Use this skill whenever a Microsoft Word (.docx) file is being produced, opened, transformed, or read. That includes: drafting reports, letters, contracts, RFPs, technical documents, or any long-form written deliverable; extracting text or structure from an existing Word file; filling a Word template with values; converting Word to PDF or plain text; splitting or merging documents; inspecting styles, headings, sections, tables, images, comments, or tracked changes. Trigger on mentions of 'Word doc', 'DOCX', 'Office document', a filename ending in .docx, or requests like 'turn this into a Word report'."
 license: Apache-2.0 — see LICENSE for terms and third-party attributions
 ---

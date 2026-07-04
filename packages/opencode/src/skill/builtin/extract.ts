@@ -8,7 +8,7 @@ import { Log } from "@/util"
 import { loadBuiltinBundle } from "./bundle.macro" with { type: "macro" }
 import { loadBuiltinBundle as loadBuiltinBundleDev } from "./bundle.macro"
 
-export const DOCUMENT_SKILL_NAMES = new Set(["docx", "pdf", "pptx", "xlsx"])
+export const DOCUMENT_SKILL_NAMES = new Set(["docx-official", "pdf-official", "pptx-official", "xlsx-official"])
 
 function safeLoadBuiltinBundle() {
   try {

@@ -1,5 +1,5 @@
 ---
-name: xlsx
+name: xlsx-official
 description: "Spreadsheet toolkit. Reach for it whenever the artifact on either side of the conversation is a workbook file — .xlsx, .xlsm, .xltx, .csv, .tsv — and the user wants that artifact produced, changed, cleaned, or read. Typical triggers: 'build me a model', 'update this sheet', 'add a column', 'compute the totals as formulas', 'sanity-check this xlsx', 'export sheet 2 to CSV', 'render the workbook as PDF', 'the spreadsheet in ~/Downloads is a mess, fix it'. Applies equally to financial models, ops reports, data cleanups, and template fills. Skip it when the workbook is only source material and the real output is a Word doc, an HTML page, a Python script that runs standalone, a Google Sheets integration, or an ingestion pipeline into a database — in those cases the spreadsheet is a means, not the deliverable."
 license: Apache-2.0 — see LICENSE for terms and third-party attributions
 ---

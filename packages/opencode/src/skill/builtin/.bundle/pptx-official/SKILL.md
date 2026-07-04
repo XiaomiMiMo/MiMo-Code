@@ -1,5 +1,5 @@
 ---
-name: pptx
+name: pptx-official
 description: "Use this skill whenever a Microsoft PowerPoint (.pptx) file is being produced, opened, transformed, or read. That includes: authoring slide decks, pitch decks, executive readouts, training material, or any presentation deliverable; extracting text or structure from an existing .pptx; filling a .pptx template with values; converting a deck to PDF or images; splitting or merging decks; inspecting slides, layouts, masters, tables, images, charts, speaker notes, or comments. Trigger on words like 'deck', 'slides', 'presentation', 'pitch deck', 'keynote' (when a .pptx is expected as output), or any filename ending in .pptx. Do NOT trigger when the primary deliverable is a Word document, spreadsheet, PDF report, HTML site, or Google Slides API call, even if presentation-shaped content appears along the way."
 license: Apache-2.0 — see LICENSE for terms and third-party attributions
 ---
