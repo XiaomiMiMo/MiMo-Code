@@ -48,3 +48,5 @@ experiment/last-outcome.json
 
 # temp
 temp/
+__pycache__
+Thumbs.db
