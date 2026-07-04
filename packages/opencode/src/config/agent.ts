@@ -126,12 +126,19 @@ export type Info = z.infer<typeof Info>
 
 export async function load(dir: string) {
   const result: Record<string, Info> = {}
-  for (const item of await Glob.scan("{agent,agents}/**/*.md", {
-    cwd: dir,
-    absolute: true,
-    dot: true,
-    symlink: true,
-  })) {
+  const subdirs = ["agent", "agents"]
+  const scans = await Promise.all(
+    subdirs.map((subdir) =>
+      Glob.scan(`${subdir}/**/*.md`, {
+        cwd: dir,
+        absolute: true,
+        dot: true,
+        symlink: true,
+      }),
+    ),
+  )
+  const items = scans.flat().sort()
+  for (const item of items) {
     const md = await ConfigMarkdown.parse(item).catch(async (err) => {
       const message = ConfigMarkdown.FrontmatterError.isInstance(err)
         ? err.data.message
@@ -163,12 +170,19 @@ export async function load(dir: string) {
 
 export async function loadMode(dir: string) {
   const result: Record<string, Info> = {}
-  for (const item of await Glob.scan("{mode,modes}/*.md", {
-    cwd: dir,
-    absolute: true,
-    dot: true,
-    symlink: true,
-  })) {
+  const subdirs = ["mode", "modes"]
+  const scans = await Promise.all(
+    subdirs.map((subdir) =>
+      Glob.scan(`${subdir}/*.md`, {
+        cwd: dir,
+        absolute: true,
+        dot: true,
+        symlink: true,
+      }),
+    ),
+  )
+  const items = scans.flat().sort()
+  for (const item of items) {
     const md = await ConfigMarkdown.parse(item).catch(async (err) => {
       const message = ConfigMarkdown.FrontmatterError.isInstance(err)
         ? err.data.message

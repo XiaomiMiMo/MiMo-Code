@@ -22,7 +22,7 @@ import { extractBuiltinBundle } from "./builtin/extract"
 const log = Log.create({ service: "skill" })
 const EXTERNAL_DIRS = [".claude", ".agents", ".codex", ".opencode"]
 const EXTERNAL_SKILL_PATTERN = "skills/**/SKILL.md"
-const MIMOCODE_SKILL_PATTERN = "{skill,skills}/**/SKILL.md"
+const MIMOCODE_SKILL_PATTERNS = ["skill/**/SKILL.md", "skills/**/SKILL.md"]
 const SKILL_PATTERN = "**/SKILL.md"
 
 export const Info = z.object({
@@ -199,9 +199,13 @@ const discoverSkills = Effect.fnUntraced(function* (
   }
 
   const configDirs = yield* config.directories()
-  for (const dir of configDirs) {
-    yield* scan(state, dir, MIMOCODE_SKILL_PATTERN)
-  }
+  yield* Effect.forEach(
+    configDirs.flatMap((dir) =>
+      MIMOCODE_SKILL_PATTERNS.map((pattern) => ({ dir, pattern })),
+    ),
+    ({ dir, pattern }) => scan(state, dir, pattern),
+    { concurrency: 1 },
+  )
 
   const cfg = yield* config.get()
   for (const item of cfg.skills?.paths ?? []) {
@@ -230,7 +234,7 @@ const discoverSkills = Effect.fnUntraced(function* (
 
 const loadSkills = Effect.fnUntraced(function* (state: State, discovered: DiscoveryState, bus: Bus.Interface) {
   yield* Effect.forEach(discovered.matches, (match) => add(state, match, bus), {
-    concurrency: "unbounded",
+    concurrency: 1,
     discard: true,
   })
 

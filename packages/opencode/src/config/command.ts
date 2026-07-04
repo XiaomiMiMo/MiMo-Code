@@ -26,12 +26,19 @@ export type Info = Schema.Schema.Type<typeof Info>
 
 export async function load(dir: string) {
   const result: Record<string, Info> = {}
-  for (const item of await Glob.scan("{command,commands}/**/*.md", {
-    cwd: dir,
-    absolute: true,
-    dot: true,
-    symlink: true,
-  })) {
+  const subdirs = ["command", "commands"]
+  const scans = await Promise.all(
+    subdirs.map((subdir) =>
+      Glob.scan(`${subdir}/**/*.md`, {
+        cwd: dir,
+        absolute: true,
+        dot: true,
+        symlink: true,
+      }),
+    ),
+  )
+  const items = scans.flat().sort()
+  for (const item of items) {
     const md = await ConfigMarkdown.parse(item).catch(async (err) => {
       const message = ConfigMarkdown.FrontmatterError.isInstance(err)
         ? err.data.message
