@@ -287,6 +287,7 @@ export const dict = {
   "tui.skill.html-to-video-pipeline.description": "Магический инструмент для коротких видео — создавайте короткие видео с помощью HTML",
   "tui.skill.arxiv.description": "Поиск, цитирование, загрузка и отслеживание статей arXiv",
   "tui.skill.skill-creator.description": "Создание, проверка и улучшение skills агента",
+  "tui.skill.research-paper-writing.description": "Написание, полировка и рецензирование научных статей",
 
   // Language switching
   "tui.command.language.switch.title": "Сменить язык",

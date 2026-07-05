@@ -208,6 +208,7 @@ export const dict: Record<string, string> = {
   "tui.skill.html-to-video-pipeline.description": "Short-video magic — make short videos with HTML",
   "tui.skill.arxiv.description": "Search, cite, download, and track arXiv papers",
   "tui.skill.skill-creator.description": "Create, review, and improve agent skills",
+  "tui.skill.research-paper-writing.description": "Draft, polish, and reviewer-style critique for academic papers",
 
   // Language switching
   "tui.command.language.switch.title": "Switch language",
