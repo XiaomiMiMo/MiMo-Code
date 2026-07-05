@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test"
+import path from "path"
 import { parsePath, buildPath, resolveProjectId } from "../../src/memory/paths"
 
 describe("parsePath", () => {
@@ -191,12 +192,12 @@ describe("buildPath", () => {
   test("session checkpoint", () => {
     expect(
       buildPath({ root: "/data/memory", scope: "sessions", scope_id: "ses_abc", key: "checkpoint" }),
-    ).toBe("/data/memory/sessions/ses_abc/checkpoint.md")
+    ).toBe(path.join("/data/memory", "sessions", "ses_abc", "checkpoint.md"))
   })
 
   test("global free", () => {
     expect(buildPath({ root: "/data/memory", scope: "global", key: "tooling" })).toBe(
-      "/data/memory/global/tooling.md",
+      path.join("/data/memory", "global", "tooling.md"),
     )
   })
 
