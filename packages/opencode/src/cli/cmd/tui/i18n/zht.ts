@@ -196,6 +196,7 @@ export const dict = {
   "tui.skill.loop.description": "依固定週期循環執行提示詞",
   "tui.skill.html-to-video-pipeline.description": "短影片神器 - 利用 HTML 製作短影片",
   "tui.skill.arxiv.description": "搜尋、引用、下載與追蹤 arXiv 論文",
+  "tui.skill.skill-creator.description": "建立、審查與改進 Agent 技能",
 
   // Language switching
   "tui.command.language.switch.title": "切換語言",
