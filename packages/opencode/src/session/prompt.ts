@@ -561,7 +561,7 @@ export const layer = Layer.effect(
       }
 
       const assistantMessage = input.messages.findLast((msg) => msg.info.role === "assistant")
-      if (!Flag.MIMOCODE_DISABLE_BUILTIN_SKILLS && !Flag.MIMOCODE_DISABLE_DOCUMENT_SKILLS) {
+      if (!Flag.MIMOCODE_DISABLE_BUILTIN_SKILLS && !Flag.MIMOCODE_DISABLE_OFFICIAL_SKILLS) {
         const fileCandidates = userMessage.parts.flatMap((p) => {
           if (p.type !== "file") return []
           const filenameFromSource =

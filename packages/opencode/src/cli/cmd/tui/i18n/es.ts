@@ -281,6 +281,7 @@ export const dict = {
   "tui.skill.self-extend.description": "Amplía tus propias capacidades con nuevas skills, herramientas y hooks",
   "tui.skill.frontend-design.description": "Guía para un diseño visual de UI distintivo e intencional",
   "tui.skill.loop.description": "Programar un prompt para ejecutarse en un intervalo recurrente",
+  "tui.skill.html-to-video-pipeline.description": "El arma definitiva para vídeos cortos — crea vídeos cortos con HTML",
 
   // Language switching
   "tui.command.language.switch.title": "Cambiar idioma",

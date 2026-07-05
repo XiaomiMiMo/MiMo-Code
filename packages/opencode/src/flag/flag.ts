@@ -240,12 +240,12 @@ export const Flag = {
   get MIMOCODE_DISABLE_BUILTIN_SKILLS() {
     return truthy("MIMOCODE_DISABLE_BUILTIN_SKILLS")
   },
-  // Disables the built-in document-processing skills (docx, pdf, pptx, xlsx)
-  // while keeping the rest of the builtin bundle available. Defaults to false
-  // (all four skills are extracted and loaded). Set
-  // MIMOCODE_DISABLE_DOCUMENT_SKILLS=true to skip them.
-  get MIMOCODE_DISABLE_DOCUMENT_SKILLS() {
-    return truthy("MIMOCODE_DISABLE_DOCUMENT_SKILLS")
+  // Disables the built-in official skills (docx, pdf, pptx, xlsx,
+  // html-to-video-pipeline) while keeping the rest of the builtin bundle
+  // available. Defaults to false (all skills are extracted and loaded). Set
+  // MIMOCODE_DISABLE_OFFICIAL_SKILLS=true to skip them.
+  get MIMOCODE_DISABLE_OFFICIAL_SKILLS() {
+    return truthy("MIMOCODE_DISABLE_OFFICIAL_SKILLS")
   },
   get MIMOCODE_DISABLE_PROJECT_CONFIG() {
     return truthy("MIMOCODE_DISABLE_PROJECT_CONFIG")

@@ -205,6 +205,7 @@ export const dict: Record<string, string> = {
   "tui.skill.self-extend.description": "Extend your own capabilities with new skills, tools, and hooks",
   "tui.skill.frontend-design.description": "Guidance for distinctive, intentional visual UI design",
   "tui.skill.loop.description": "Schedule a prompt to run on a recurring interval",
+  "tui.skill.html-to-video-pipeline.description": "Short-video magic — make short videos with HTML",
 
   // Language switching
   "tui.command.language.switch.title": "Switch language",
