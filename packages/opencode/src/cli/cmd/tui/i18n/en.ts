@@ -196,6 +196,16 @@ export const dict: Record<string, string> = {
   "tui.slash.deep-research.description":
     "deep multi-source, fact-checked research report (runs the deep-research workflow)",
 
+  // Built-in bundled skill descriptions (user-facing, decoupled from SKILL.md description which targets the LLM)
+  "tui.skill.docx-official.description": "Create, edit, and read Microsoft Word (.docx) files",
+  "tui.skill.xlsx-official.description": "Create, edit, and read Microsoft Excel (.xlsx) workbooks",
+  "tui.skill.pdf-official.description": "Create, edit, transform, and read PDF files",
+  "tui.skill.pptx-official.description": "Create, edit, and read Microsoft PowerPoint (.pptx) decks",
+  "tui.skill.mimocode.description": "Self-documentation for MiMoCode features, config, and commands",
+  "tui.skill.self-extend.description": "Extend your own capabilities with new skills, tools, and hooks",
+  "tui.skill.frontend-design.description": "Guidance for distinctive, intentional visual UI design",
+  "tui.skill.loop.description": "Schedule a prompt to run on a recurring interval",
+
   // Language switching
   "tui.command.language.switch.title": "Switch language",
   "tui.command.language.switch.description": "Change the display language",

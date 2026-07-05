@@ -275,6 +275,16 @@ export const dict = {
   "tui.slash.deep-research.description":
     "глубокий многоисточниковый проверенный отчёт (запускает workflow deep-research)",
 
+  // Built-in bundled skill descriptions (user-facing, decoupled from SKILL.md description which targets the LLM)
+  "tui.skill.docx-official.description": "Создание, редактирование и чтение файлов Microsoft Word (.docx)",
+  "tui.skill.xlsx-official.description": "Создание, редактирование и чтение книг Microsoft Excel (.xlsx)",
+  "tui.skill.pdf-official.description": "Создание, редактирование, преобразование и чтение PDF-файлов",
+  "tui.skill.pptx-official.description": "Создание, редактирование и чтение презентаций Microsoft PowerPoint (.pptx)",
+  "tui.skill.mimocode.description": "Самодокументация функций, конфигурации и команд MiMoCode",
+  "tui.skill.self-extend.description": "Расширьте свои возможности новыми skills, инструментами и hooks",
+  "tui.skill.frontend-design.description": "Руководство по выразительному, осмысленному визуальному дизайну UI",
+  "tui.skill.loop.description": "Запланировать запуск промпта с периодичностью",
+
   // Language switching
   "tui.command.language.switch.title": "Сменить язык",
   "tui.command.language.switch.description": "Изменить язык интерфейса",

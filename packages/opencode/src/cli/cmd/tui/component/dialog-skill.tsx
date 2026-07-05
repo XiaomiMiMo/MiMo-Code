@@ -3,6 +3,8 @@ import { createResource, createMemo } from "solid-js"
 import { useDialog } from "@tui/ui/dialog"
 import { useSDK } from "@tui/context/sdk"
 import { useLocal } from "@tui/context/local"
+import { useLanguage } from "@tui/context/language"
+import { skillDescription } from "@tui/i18n/skill"
 
 export type DialogSkillProps = {
   onSelect: (skill: string) => void
@@ -12,6 +14,7 @@ export function DialogSkill(props: DialogSkillProps) {
   const dialog = useDialog()
   const sdk = useSDK()
   const local = useLocal()
+  const lang = useLanguage()
   dialog.setSize("large")
 
   const [skills] = createResource(async () => {
@@ -28,7 +31,7 @@ export function DialogSkill(props: DialogSkillProps) {
     const maxWidth = Math.max(0, ...list.map((s) => s.name.length))
     return list.map((skill) => ({
       title: skill.name.padEnd(maxWidth),
-      description: skill.description?.replace(/\s+/g, " ").trim(),
+      description: skillDescription(lang.t, skill.name, skill.description)?.replace(/\s+/g, " ").trim(),
       value: skill.name,
       category: "Skills",
       onSelect: () => {
