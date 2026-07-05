@@ -66,6 +66,16 @@ export const Flag = {
   MIMOCODE_DISABLE_TERMINAL_TITLE: truthy("MIMOCODE_DISABLE_TERMINAL_TITLE"),
   MIMOCODE_SHOW_TTFD: truthy("MIMOCODE_SHOW_TTFD"),
   MIMOCODE_PERMISSION: process.env["MIMOCODE_PERMISSION"],
+
+  // Defaults to false. When false, the bash tool intercepts irreversible
+  // deletion commands (rm, rmdir, unlink, shred, del, erase, rd, remove-item,
+  // and git destructive subcommands like reset --hard / clean -f / branch -D /
+  // worktree remove / push --force / stash drop|clear / tag -d) and forces an
+  // extra permission prompt with permission="bash_delete" — separate from the
+  // normal bash-permission ask so it can't be silently pre-approved by a broad
+  // `bash: allow` rule. Set MIMOCODE_AUTO_APPROVE_DELETE=true to trust the
+  // model with deletes and skip the second confirmation.
+  MIMOCODE_AUTO_APPROVE_DELETE: truthy("MIMOCODE_AUTO_APPROVE_DELETE"),
   MIMOCODE_DISABLE_DEFAULT_PLUGINS: truthy("MIMOCODE_DISABLE_DEFAULT_PLUGINS"),
   MIMOCODE_DISABLE_LSP_DOWNLOAD: truthy("MIMOCODE_DISABLE_LSP_DOWNLOAD"),
   MIMOCODE_ENABLE_EXPERIMENTAL_MODELS: truthy("MIMOCODE_ENABLE_EXPERIMENTAL_MODELS"),

@@ -54,6 +54,36 @@ const FILES = new Set([
 const FLAGS = new Set(["-destination", "-literalpath", "-path"])
 const SWITCHES = new Set(["-confirm", "-debug", "-force", "-nonewline", "-recurse", "-verbose", "-whatif"])
 
+// Irreversible file/directory removal commands. Names are matched
+// case-insensitively for PowerShell; bash is case-sensitive.
+const DELETE_COMMANDS = new Set([
+  "rm",
+  "rmdir",
+  "unlink",
+  "shred",
+  // Windows / PowerShell removal verbs and their common aliases. `remove-item`
+  // is the canonical verb; `ri`, `rd`, `del`, `erase` are aliases.
+  "del",
+  "erase",
+  "rd",
+  "remove-item",
+  "ri",
+])
+
+// git subcommands that destroy history, working tree state, or remote branches.
+// Value is the set of tokens (flag or subcommand keyword) that must appear
+// anywhere in the argv for the invocation to count as destructive. An empty
+// set means the subcommand is destructive on its own.
+const GIT_DESTRUCTIVE = new Map<string, Set<string>>([
+  ["reset", new Set(["--hard"])],
+  ["clean", new Set(["-f", "-ff", "-fd", "-fdx", "-df", "-dfx", "-fx", "--force"])],
+  ["branch", new Set(["-D", "--delete"])],
+  ["tag", new Set(["-d", "--delete"])],
+  ["worktree", new Set(["remove"])],
+  ["push", new Set(["--force", "-f"])],
+  ["stash", new Set(["drop", "clear"])],
+])
+
 const Parameters = z.object({
   command: z.string().describe("The command to execute"),
   timeout: z.number().describe("Optional timeout in milliseconds").optional(),
@@ -85,6 +115,7 @@ type Scan = {
   dirs: Set<string>
   patterns: Set<string>
   always: Set<string>
+  deletes: Set<string>
 }
 
 type Chunk = {
@@ -135,6 +166,24 @@ function source(node: Node) {
 
 function commands(node: Node) {
   return node.descendantsOfType("command").filter((child): child is Node => Boolean(child))
+}
+
+// Returns true when `tokens` (the flat argv of a single command node) invokes
+// an irreversible deletion — either a direct removal command (rm, remove-item,
+// …) or a destructive git subcommand (git reset --hard, git clean -f, …).
+// `ps` toggles PowerShell case-insensitive matching.
+function isDelete(tokens: string[], ps: boolean) {
+  if (tokens.length === 0) return false
+  const head = ps ? tokens[0].toLowerCase() : tokens[0]
+  if (DELETE_COMMANDS.has(head)) return true
+  if (head === "git" && tokens.length >= 2) {
+    const sub = tokens[1]
+    const flags = GIT_DESTRUCTIVE.get(sub)
+    if (!flags) return false
+    if (flags.size === 0) return true
+    return tokens.slice(2).some((tok) => flags.has(tok))
+  }
+  return false
 }
 
 function unquote(text: string) {
@@ -308,6 +357,22 @@ const ask = Effect.fn("BashTool.ask")(function* (ctx: Tool.Context, scan: Scan) 
   })
 })
 
+// Secondary confirmation for irreversible deletion commands. Uses its own
+// permission type ("bash_delete") so a broad `bash: allow` rule can't silently
+// pre-approve it. `MIMOCODE_AUTO_APPROVE_DELETE=true` skips the ask entirely
+// for callers who explicitly opt out of the extra prompt.
+const askDelete = Effect.fn("BashTool.askDelete")(function* (ctx: Tool.Context, scan: Scan, command: string) {
+  if (Flag.MIMOCODE_AUTO_APPROVE_DELETE) return
+  if (scan.deletes.size === 0) return
+  const patterns = Array.from(scan.deletes)
+  yield* ctx.ask({
+    permission: "bash_delete",
+    patterns,
+    always: ["*"],
+    metadata: { command, deletes: patterns },
+  })
+})
+
 function cmd(shell: string, name: string, command: string, cwd: string, env: NodeJS.ProcessEnv) {
   if (process.platform === "win32" && PS.has(name)) {
     const prefixed = `${Shell.POWERSHELL_UTF8_PREFIX}${command}`
@@ -401,6 +466,7 @@ export const BashTool = Tool.define(
         dirs: new Set<string>(),
         patterns: new Set<string>(),
         always: new Set<string>(),
+        deletes: new Set<string>(),
       }
 
       for (const node of commands(root)) {
@@ -422,6 +488,8 @@ export const BashTool = Tool.define(
           scan.patterns.add(source(node))
           scan.always.add(BashArity.prefix(tokens).join(" ") + " *")
         }
+
+        if (isDelete(tokens, ps)) scan.deletes.add(source(node))
       }
 
       return scan
@@ -690,6 +758,7 @@ export const BashTool = Tool.define(
               const scan = yield* collect(root, cwd, ps, shell)
               if (!Instance.containsPath(cwd)) scan.dirs.add(cwd)
               yield* ask(ctx, scan)
+              yield* askDelete(ctx, scan, params.command)
 
               // Interactive mode: hand terminal to user for direct interaction
               if (params.interactive) {

@@ -294,6 +294,80 @@ describe("tool.bash permissions", () => {
     })
   })
 
+  each("asks for bash_delete when running rm inside the project", async () => {
+    await using tmp = await tmpdir({
+      init: async (dir) => {
+        await Bun.write(path.join(dir, "victim.txt"), "x")
+      },
+    })
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () => {
+        const bash = await initBash()
+        const requests: Array<Omit<Permission.Request, "id" | "sessionID" | "tool">> = []
+        await Effect.runPromise(
+          bash.execute(
+            {
+              command: "rm victim.txt",
+              description: "Remove victim.txt",
+            },
+            capture(requests),
+          ),
+        )
+        const deleteReq = requests.find((r) => r.permission === "bash_delete")
+        expect(deleteReq).toBeDefined()
+        expect(deleteReq!.patterns).toContain("rm victim.txt")
+        expect(deleteReq!.metadata.command).toBe("rm victim.txt")
+      },
+    })
+  })
+
+  each("asks for bash_delete on destructive git subcommands", async () => {
+    await using tmp = await tmpdir()
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () => {
+        const bash = await initBash()
+        const err = new Error("stop after permission")
+        const requests: Array<Omit<Permission.Request, "id" | "sessionID" | "tool">> = []
+        await expect(
+          Effect.runPromise(
+            bash.execute(
+              {
+                command: "git reset --hard HEAD",
+                description: "Hard reset",
+              },
+              capture(requests, err),
+            ),
+          ),
+        ).rejects.toThrow(err.message)
+        const bashReq = requests.find((r) => r.permission === "bash")
+        expect(bashReq).toBeDefined()
+      },
+    })
+  })
+
+  each("does not ask for bash_delete on non-destructive commands", async () => {
+    await using tmp = await tmpdir()
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () => {
+        const bash = await initBash()
+        const requests: Array<Omit<Permission.Request, "id" | "sessionID" | "tool">> = []
+        await Effect.runPromise(
+          bash.execute(
+            {
+              command: "echo hello",
+              description: "Echo hello",
+            },
+            capture(requests),
+          ),
+        )
+        expect(requests.find((r) => r.permission === "bash_delete")).toBeUndefined()
+      },
+    })
+  })
+
   if (process.platform === "win32") {
     if (bash) {
       test(
