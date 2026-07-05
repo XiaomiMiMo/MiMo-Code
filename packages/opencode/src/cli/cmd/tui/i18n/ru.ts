@@ -285,6 +285,7 @@ export const dict = {
   "tui.skill.frontend-design.description": "Руководство по выразительному, осмысленному визуальному дизайну UI",
   "tui.skill.loop.description": "Запланировать запуск промпта с периодичностью",
   "tui.skill.html-to-video-pipeline.description": "Магический инструмент для коротких видео — создавайте короткие видео с помощью HTML",
+  "tui.skill.arxiv.description": "Поиск, цитирование, загрузка и отслеживание статей arXiv",
 
   // Language switching
   "tui.command.language.switch.title": "Сменить язык",
