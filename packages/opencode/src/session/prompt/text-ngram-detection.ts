@@ -6,10 +6,31 @@ export function tokenizeForNgram(text: string): string[] {
   return text
     .toLowerCase()
     .replace(/\s+/g, " ")
-    .replace(/([　-ヿ㐀-䶿一-鿿豈-﫿＀-￯])/g, " $1 ")
+    .replace(/([　-ヿ㐀-䶿一-鿿豈-﫿＀-￯])/g, " $1 ")
     .trim()
     .split(" ")
     .filter(Boolean)
+}
+
+/**
+ * Detects whether the text is predominantly markdown table content.
+ * Returns true when >40% of non-empty lines look like table rows (start with |).
+ * Structured table output naturally has high n-gram overlap and should not
+ * trigger the repetition detector.
+ */
+function isTableHeavy(text: string): boolean {
+  const lines = text.split("\n")
+  let tableLines = 0
+  let contentLines = 0
+  for (const line of lines) {
+    const trimmed = line.trim()
+    if (!trimmed) continue
+    contentLines++
+    if (/^\|/.test(trimmed) || /^[\s]*[-:]+[\s]*\|/.test(trimmed)) {
+      tableLines++
+    }
+  }
+  return contentLines > 0 && tableLines / contentLines > 0.4
 }
 
 export function detectRepeatedNgram(tokens: readonly string[], n: number, threshold: number): boolean {
@@ -68,6 +89,10 @@ export class TextNgramMonitor {
     const all = tokenizeForNgram(this.buffer)
     this.tokens = all.length > this.windowTokens ? all.slice(-this.windowTokens) : all
     if (all.length > this.windowTokens * 2) this.buffer = this.tokens.join(" ")
+    // Skip consecutive repeat detection for table-heavy output — structured
+    // tables naturally have high n-gram overlap due to pipe separators and
+    // uniform row structure, which is not actual content repetition.
+    if (isTableHeavy(this.buffer)) return false
     return detectConsecutiveRepeat(this.tokens, this.n, this.threshold, this.minDistinct)
   }
 
