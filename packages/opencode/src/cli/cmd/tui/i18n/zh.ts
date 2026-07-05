@@ -195,6 +195,7 @@ export const dict = {
   "tui.skill.frontend-design.description": "具备鲜明主张的前端视觉设计指南",
   "tui.skill.loop.description": "按固定周期循环运行提示词",
   "tui.skill.html-to-video-pipeline.description": "短视频神器 - 利用 HTML 制作短视频",
+  "tui.skill.arxiv.description": "搜索、引用、下载与追踪 arXiv 论文",
 
   // Language switching
   "tui.command.language.switch.title": "切换语言",

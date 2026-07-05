@@ -219,6 +219,7 @@ export const dict = {
   "tui.skill.frontend-design.description": "個性的で意図的な UI ビジュアルデザインのガイド",
   "tui.skill.loop.description": "プロンプトを一定間隔で繰り返し実行するようスケジュール",
   "tui.skill.html-to-video-pipeline.description": "ショート動画の神ツール - HTML でショート動画を制作",
+  "tui.skill.arxiv.description": "arXiv 論文の検索・引用・ダウンロード・追跡",
 
   // Language switching
   "tui.command.language.switch.title": "言語を切り替え",
