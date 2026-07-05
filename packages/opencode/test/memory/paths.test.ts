@@ -148,6 +148,43 @@ describe("parsePath", () => {
   test("legacy <root>/tasks/<id>/ path no longer matches (tasks dropped from Scope)", () => {
     expect(parsePath("/data/memory/tasks/T1/progress.md")).toBeNull()
   })
+
+  // Windows backslash paths
+  test("Windows: global scope with backslash paths", () => {
+    expect(parsePath("C:\\Users\\user\\.local\\share\\mimocode\\memory\\global\\MEMORY.md")).toEqual({
+      scope: "global",
+      scope_id: "",
+      type: "memory",
+      key: "MEMORY",
+    })
+  })
+
+  test("Windows: project scope with backslash paths", () => {
+    expect(parsePath("C:\\Users\\user\\.local\\share\\mimocode\\memory\\projects\\uuid-1\\memory.md")).toEqual({
+      scope: "projects",
+      scope_id: "uuid-1",
+      type: "memory",
+      key: "memory",
+    })
+  })
+
+  test("Windows: session scope with backslash paths", () => {
+    expect(parsePath("C:\\Users\\user\\.local\\share\\mimocode\\memory\\sessions\\ses_abc\\checkpoint.md")).toEqual({
+      scope: "sessions",
+      scope_id: "ses_abc",
+      type: "checkpoint",
+      key: "checkpoint",
+    })
+  })
+
+  test("Windows: task progress with backslash paths", () => {
+    expect(parsePath("C:\\Users\\user\\.local\\share\\mimocode\\memory\\sessions\\ses_abc\\tasks\\T1.2\\progress.md")).toEqual({
+      scope: "sessions",
+      scope_id: "ses_abc",
+      type: "progress",
+      key: "tasks/T1.2/progress",
+    })
+  })
 })
 
 describe("buildPath", () => {
