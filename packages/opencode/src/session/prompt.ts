@@ -54,6 +54,7 @@ import {
   TEXT_NGRAM_RECOVERY_REPLAN,
 } from "../session/prompt/text-ngram-detection"
 import { composeSkillsBlock } from "@/skill/compose/extract"
+import { builtinSkillRoot, matchDocumentSkills } from "@/skill/builtin/extract"
 import { ToolRegistry } from "../tool"
 import { MCP } from "../mcp"
 import { LSP } from "../lsp"
@@ -560,6 +561,32 @@ export const layer = Layer.effect(
       }
 
       const assistantMessage = input.messages.findLast((msg) => msg.info.role === "assistant")
+      if (!Flag.MIMOCODE_DISABLE_BUILTIN_SKILLS && !Flag.MIMOCODE_DISABLE_DOCUMENT_SKILLS) {
+        const fileCandidates = userMessage.parts.flatMap((p) => {
+          if (p.type !== "file") return []
+          const filenameFromSource =
+            p.source?.type === "file" && p.source.path ? path.basename(p.source.path) : undefined
+          return [{ mime: p.mime, filename: p.filename ?? filenameFromSource }]
+        })
+        const skills = matchDocumentSkills(fileCandidates)
+        if (skills.length > 0) {
+          const root = builtinSkillRoot()
+          const entries = skills.map((skill) => `- ${skill}: ${path.join(root, skill, "SKILL.md")}`).join("\n")
+          const part = yield* sessions.updatePart({
+            id: PartID.ascending(),
+            messageID: userMessage.info.id,
+            sessionID: userMessage.info.sessionID,
+            type: "text",
+            text: `<system-reminder>
+The user's message attaches office document file(s). The following built-in skill(s) may be relevant for producing, reading, or transforming these files. You are recommended to consult the SKILL.md when it fits the task — prefer using these skills over ad-hoc approaches when applicable:
+${entries}
+</system-reminder>`,
+            synthetic: true,
+          })
+          userMessage.parts.push(part)
+        }
+      }
+
       if (input.agent.name !== "plan" && assistantMessage?.info.agent === "plan") {
         const plan = Session.plan(input.session)
         if (!(yield* fsys.existsSafe(plan))) return input.messages
