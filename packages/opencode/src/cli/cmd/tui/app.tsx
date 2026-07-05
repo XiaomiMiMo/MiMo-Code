@@ -69,13 +69,17 @@ import { TuiConfigProvider, useTuiConfig } from "./context/tui-config"
 import { TuiConfig } from "@/cli/cmd/tui/config/tui"
 import { createTuiApi, TuiPluginRuntime, type RouteMap } from "./plugin"
 import { FormatError, FormatUnknownError } from "@/cli/error"
-import { isPlainTerminal } from "./util/terminal"
+import { isMouseEnabled, isPlainTerminal } from "./util/terminal"
 
 import type { EventSource } from "./context/sdk"
 import { DialogVariant } from "./component/dialog-variant"
 
 function rendererConfig(_config: TuiConfig.Info, plainTerminal: boolean): CliRendererConfig {
-  const mouseEnabled = !plainTerminal && !Flag.MIMOCODE_DISABLE_MOUSE && (_config.mouse ?? true)
+  const mouseEnabled = isMouseEnabled({
+    plainTerminal,
+    disableMouse: Flag.MIMOCODE_DISABLE_MOUSE,
+    configMouse: _config.mouse,
+  })
 
   return {
     externalOutputMode: "passthrough",
