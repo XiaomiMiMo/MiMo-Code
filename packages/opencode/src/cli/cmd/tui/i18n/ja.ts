@@ -209,6 +209,16 @@ export const dict = {
   "tui.slash.goal.description": "停止条件付きゴールを設定；判定が達成と言うまで実行。/goal clear で中止",
   "tui.slash.deep-research.description": "深い多ソース・ファクトチェック済み調査レポート（deep-research ワークフローを実行）",
 
+  // Built-in bundled skill descriptions (user-facing, decoupled from SKILL.md description which targets the LLM)
+  "tui.skill.docx-official.description": "Microsoft Word (.docx) ファイルの作成・編集・読み取り",
+  "tui.skill.xlsx-official.description": "Microsoft Excel (.xlsx) ブックの作成・編集・読み取り",
+  "tui.skill.pdf-official.description": "PDF ファイルの作成・編集・変換・読み取り",
+  "tui.skill.pptx-official.description": "Microsoft PowerPoint (.pptx) スライドの作成・編集・読み取り",
+  "tui.skill.mimocode.description": "MiMoCode の機能・設定・コマンドに関するセルフドキュメント",
+  "tui.skill.self-extend.description": "新しいスキル・ツール・フックで自身の能力を拡張",
+  "tui.skill.frontend-design.description": "個性的で意図的な UI ビジュアルデザインのガイド",
+  "tui.skill.loop.description": "プロンプトを一定間隔で繰り返し実行するようスケジュール",
+
   // Language switching
   "tui.command.language.switch.title": "言語を切り替え",
   "tui.command.language.switch.description": "表示言語を変更します",

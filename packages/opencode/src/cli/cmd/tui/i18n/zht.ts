@@ -185,6 +185,16 @@ export const dict = {
   "tui.slash.goal.description": "設定終止條件目標；執行直到判定達成。使用 /goal clear 中止",
   "tui.slash.deep-research.description": "深度多來源、事實核查的研究報告（執行 deep-research 工作流程）",
 
+  // Built-in bundled skill descriptions (user-facing, decoupled from SKILL.md description which targets the LLM)
+  "tui.skill.docx-official.description": "建立、編輯、讀取 Microsoft Word (.docx) 文件",
+  "tui.skill.xlsx-official.description": "建立、編輯、讀取 Microsoft Excel (.xlsx) 活頁簿",
+  "tui.skill.pdf-official.description": "建立、編輯、轉換、讀取 PDF 檔案",
+  "tui.skill.pptx-official.description": "建立、編輯、讀取 Microsoft PowerPoint (.pptx) 簡報",
+  "tui.skill.mimocode.description": "MiMoCode 功能、設定與命令的自文件參考",
+  "tui.skill.self-extend.description": "透過新技能、工具與掛鉤擴充自身能力",
+  "tui.skill.frontend-design.description": "具備鮮明主張的前端視覺設計指引",
+  "tui.skill.loop.description": "依固定週期循環執行提示詞",
+
   // Language switching
   "tui.command.language.switch.title": "切換語言",
   "tui.command.language.switch.description": "變更顯示語言",
