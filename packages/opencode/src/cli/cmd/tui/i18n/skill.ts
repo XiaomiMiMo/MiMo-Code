@@ -9,6 +9,7 @@ const BUILTIN = new Set([
   "loop",
   "html-to-video-pipeline",
   "arxiv",
+  "skill-creator",
 ])
 
 export function skillDescription(

@@ -271,6 +271,7 @@ export const dict = {
   "tui.skill.loop.description": "Planifier l'exécution récurrente d'un prompt",
   "tui.skill.html-to-video-pipeline.description": "L'arme ultime pour vidéos courtes — créez des vidéos courtes avec du HTML",
   "tui.skill.arxiv.description": "Rechercher, citer, télécharger et suivre des articles arXiv",
+  "tui.skill.skill-creator.description": "Créer, réviser et améliorer des skills d'agent",
 
   // Language switching
   "tui.command.language.switch.title": "Changer de langue",

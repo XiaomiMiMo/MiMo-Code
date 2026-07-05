@@ -207,6 +207,7 @@ export const dict: Record<string, string> = {
   "tui.skill.loop.description": "Schedule a prompt to run on a recurring interval",
   "tui.skill.html-to-video-pipeline.description": "Short-video magic — make short videos with HTML",
   "tui.skill.arxiv.description": "Search, cite, download, and track arXiv papers",
+  "tui.skill.skill-creator.description": "Create, review, and improve agent skills",
 
   // Language switching
   "tui.command.language.switch.title": "Switch language",
