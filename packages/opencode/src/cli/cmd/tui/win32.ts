@@ -3,6 +3,7 @@ import type { ReadStream } from "node:tty"
 
 const STD_INPUT_HANDLE = -10
 const ENABLE_PROCESSED_INPUT = 0x0001
+const ENABLE_VIRTUAL_TERMINAL_INPUT = 0x0200
 
 const kernel = () =>
   dlopen("kernel32.dll", {
@@ -25,7 +26,13 @@ function load() {
 }
 
 /**
- * Clear ENABLE_PROCESSED_INPUT on the console stdin handle.
+ * Clear ENABLE_PROCESSED_INPUT and enable ENABLE_VIRTUAL_TERMINAL_INPUT
+ * on the console stdin handle.
+ *
+ * ENABLE_VIRTUAL_TERMINAL_INPUT tells the Windows Console to send VT-style
+ * escape sequences (including bracketed paste) instead of native KEY_EVENT_RECORD
+ * structures. Without this, opentui cannot parse paste events, Ctrl+V, or
+ * right-click paste on Windows PowerShell.
  */
 export function win32DisableProcessedInput() {
   if (process.platform !== "win32") return
@@ -37,8 +44,10 @@ export function win32DisableProcessedInput() {
   if (k32!.symbols.GetConsoleMode(handle, ptr(buf)) === 0) return
 
   const mode = buf[0]!
-  if ((mode & ENABLE_PROCESSED_INPUT) === 0) return
-  k32!.symbols.SetConsoleMode(handle, mode & ~ENABLE_PROCESSED_INPUT)
+  const cleared = mode & ~ENABLE_PROCESSED_INPUT
+  const updated = cleared | ENABLE_VIRTUAL_TERMINAL_INPUT
+  if (updated === mode) return
+  k32!.symbols.SetConsoleMode(handle, updated)
 }
 
 /**
@@ -84,8 +93,9 @@ export function win32InstallCtrlCGuard() {
   const enforce = () => {
     if (k32!.symbols.GetConsoleMode(handle, ptr(buf)) === 0) return
     const mode = buf[0]!
-    if ((mode & ENABLE_PROCESSED_INPUT) === 0) return
-    k32!.symbols.SetConsoleMode(handle, mode & ~ENABLE_PROCESSED_INPUT)
+    const needsFix = (mode & ENABLE_PROCESSED_INPUT) !== 0 || (mode & ENABLE_VIRTUAL_TERMINAL_INPUT) === 0
+    if (!needsFix) return
+    k32!.symbols.SetConsoleMode(handle, (mode & ~ENABLE_PROCESSED_INPUT) | ENABLE_VIRTUAL_TERMINAL_INPUT)
   }
 
   // Some runtimes can re-apply console modes on the next tick; enforce twice.
