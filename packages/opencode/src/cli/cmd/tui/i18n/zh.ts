@@ -194,6 +194,7 @@ export const dict = {
   "tui.skill.self-extend.description": "通过新技能、工具与钩子扩展自身能力",
   "tui.skill.frontend-design.description": "具备鲜明主张的前端视觉设计指南",
   "tui.skill.loop.description": "按固定周期循环运行提示词",
+  "tui.skill.html-to-video-pipeline.description": "短视频神器 - 利用 HTML 制作短视频",
 
   // Language switching
   "tui.command.language.switch.title": "切换语言",

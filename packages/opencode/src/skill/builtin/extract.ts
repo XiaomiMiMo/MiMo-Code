@@ -8,7 +8,13 @@ import { Log } from "@/util"
 import { loadBuiltinBundle } from "./bundle.macro" with { type: "macro" }
 import { loadBuiltinBundle as loadBuiltinBundleDev } from "./bundle.macro"
 
-export const DOCUMENT_SKILL_NAMES = new Set(["docx-official", "pdf-official", "pptx-official", "xlsx-official"])
+export const OFFICIAL_SKILL_NAMES = new Set([
+  "docx-official",
+  "pdf-official",
+  "pptx-official",
+  "xlsx-official",
+  "html-to-video-pipeline",
+])
 
 const DOCUMENT_SKILL_TRIGGERS: Array<{
   skill: string
@@ -95,7 +101,7 @@ export const extractBuiltinBundle = Effect.fn("Skill.extractBuiltinBundle")(func
   if (!InstallationLocal && (yield* fsys.existsSafe(marker))) return root
 
   for (const [skillName, files] of Object.entries(BUILTIN_BUNDLE)) {
-    if (Flag.MIMOCODE_DISABLE_DOCUMENT_SKILLS && DOCUMENT_SKILL_NAMES.has(skillName)) continue
+    if (Flag.MIMOCODE_DISABLE_OFFICIAL_SKILLS && OFFICIAL_SKILL_NAMES.has(skillName)) continue
     const skillDir = path.join(skillsRoot, skillName)
     for (const [relPath, content] of Object.entries(files)) {
       yield* fsys.writeWithDirs(path.join(skillDir, relPath), content)

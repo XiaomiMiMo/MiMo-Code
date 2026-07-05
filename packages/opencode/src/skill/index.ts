@@ -17,7 +17,7 @@ import { Glob } from "@mimo-ai/shared/util/glob"
 import { Log } from "../util"
 import { Discovery } from "./discovery"
 import { extractComposeBundle } from "./compose/extract"
-import { extractBuiltinBundle, DOCUMENT_SKILL_NAMES } from "./builtin/extract"
+import { extractBuiltinBundle, OFFICIAL_SKILL_NAMES } from "./builtin/extract"
 
 const log = Log.create({ service: "skill" })
 const EXTERNAL_DIRS = [".claude", ".agents", ".codex", ".opencode"]
@@ -162,9 +162,9 @@ const discoverSkills = Effect.fnUntraced(function* (
     )
     if (builtinSkillRoot && (yield* fsys.isDir(builtinSkillRoot))) {
       yield* scan(state, builtinSkillRoot, SKILL_PATTERN, { scope: "builtin" })
-      if (Flag.MIMOCODE_DISABLE_DOCUMENT_SKILLS) {
+      if (Flag.MIMOCODE_DISABLE_OFFICIAL_SKILLS) {
         const skillsRoot = path.join(builtinSkillRoot, "skills")
-        for (const name of DOCUMENT_SKILL_NAMES) {
+        for (const name of OFFICIAL_SKILL_NAMES) {
           const prefix = path.join(skillsRoot, name) + path.sep
           for (const match of state.matches) {
             if (match.startsWith(prefix)) {

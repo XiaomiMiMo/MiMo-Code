@@ -284,6 +284,7 @@ export const dict = {
   "tui.skill.self-extend.description": "Расширьте свои возможности новыми skills, инструментами и hooks",
   "tui.skill.frontend-design.description": "Руководство по выразительному, осмысленному визуальному дизайну UI",
   "tui.skill.loop.description": "Запланировать запуск промпта с периодичностью",
+  "tui.skill.html-to-video-pipeline.description": "Магический инструмент для коротких видео — создавайте короткие видео с помощью HTML",
 
   // Language switching
   "tui.command.language.switch.title": "Сменить язык",

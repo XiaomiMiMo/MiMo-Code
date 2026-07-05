@@ -7,6 +7,7 @@ const BUILTIN = new Set([
   "self-extend",
   "frontend-design",
   "loop",
+  "html-to-video-pipeline",
 ])
 
 export function skillDescription(
