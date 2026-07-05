@@ -197,6 +197,7 @@ export const dict = {
   "tui.skill.html-to-video-pipeline.description": "短视频神器 - 利用 HTML 制作短视频",
   "tui.skill.arxiv.description": "搜索、引用、下载与追踪 arXiv 论文",
   "tui.skill.skill-creator.description": "创建、审查与改进 Agent 技能",
+  "tui.skill.research-paper-writing.description": "撰写、润色学术论文，并以审稿人视角提前把关",
 
   // Language switching
   "tui.command.language.switch.title": "切换语言",

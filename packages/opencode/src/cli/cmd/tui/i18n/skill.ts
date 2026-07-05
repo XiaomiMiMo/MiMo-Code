@@ -10,6 +10,7 @@ const BUILTIN = new Set([
   "html-to-video-pipeline",
   "arxiv",
   "skill-creator",
+  "research-paper-writing",
 ])
 
 export function skillDescription(
