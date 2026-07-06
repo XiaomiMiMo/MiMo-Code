@@ -45,6 +45,9 @@ import { KeybindProvider, useKeybind } from "@tui/context/keybind"
 import { ThemeProvider, useTheme } from "@tui/context/theme"
 import { Home } from "@tui/routes/home"
 import { Session } from "@tui/routes/session"
+import { GridView } from "@tui/routes/grid"
+import { WorkspaceClientsProvider } from "@tui/context/workspace-clients"
+import { CellEventBusProvider } from "@tui/routes/grid/cell-event-bus"
 import { PromptHistoryProvider } from "./component/prompt/history"
 import { FrecencyProvider } from "./component/prompt/frecency"
 import { PromptStashProvider } from "./component/prompt/stash"
@@ -170,12 +173,21 @@ export function tui(input: {
                 <ToastProvider>
                   <RouteProvider
                     initialRoute={
-                      input.args.continue
+                      // Phase 6: boot directly into the grid when
+                      // `--grid` / `MIMOCODE_GRID` is set, unless the
+                      // caller also asked for a specific session
+                      // (which becomes the seed cell).
+                      input.args.grid || Flag.MIMOCODE_GRID
                         ? {
-                            type: "session",
-                            sessionID: "dummy",
+                            type: "grid",
+                            ...(input.args.sessionID ? { cells: [{ sessionID: input.args.sessionID }] } : {}),
                           }
-                        : undefined
+                        : input.args.continue
+                          ? {
+                              type: "session",
+                              sessionID: "dummy",
+                            }
+                          : undefined
                     }
                   >
                     <TuiConfigProvider config={input.config}>
@@ -188,7 +200,8 @@ export function tui(input: {
                       >
                         <ProjectProvider>
                           <SyncProvider>
-                            <ThemeProvider mode={mode} plain={plainTerminal}>
+                            <CellEventBusProvider>
+                              <ThemeProvider mode={mode} plain={plainTerminal}>
                               <LocalProvider>
                                 <KeybindProvider>
                                   <PromptStashProvider>
@@ -207,6 +220,7 @@ export function tui(input: {
                                 </KeybindProvider>
                               </LocalProvider>
                             </ThemeProvider>
+                          </CellEventBusProvider>
                           </SyncProvider>
                         </ProjectProvider>
                       </SDKProvider>
@@ -350,6 +364,12 @@ function App(props: { onSnapshot?: () => Promise<string[]> }) {
 
     if (route.data.type === "plugin") {
       renderer.setTerminalTitle(`OC | ${route.data.id}`)
+      return
+    }
+
+    if (route.data.type === "grid") {
+      renderer.setTerminalTitle("MC | Grid")
+      return
     }
   })
 
@@ -366,6 +386,11 @@ function App(props: { onSnapshot?: () => Promise<string[]> }) {
             duration: 3000,
           })
         local.model.set({ providerID, modelID }, { recent: true })
+      }
+      if (args.grid || Flag.MIMOCODE_GRID) {
+        const seedSessionID = args.sessionID
+        route.navigate(seedSessionID ? { type: "grid", cells: [{ sessionID: seedSessionID }] } : { type: "grid" })
+        return
       }
       if (args.sessionID && !args.fork) {
         route.navigate({
@@ -883,6 +908,17 @@ function App(props: { onSnapshot?: () => Promise<string[]> }) {
       },
     },
     {
+      title: "Grid Mode",
+      value: "grid.open",
+      keybind: "grid_create",
+      category: "system",
+      enabled: route.data.type !== "grid",
+      onSelect: (dialog) => {
+        route.navigate({ type: "grid" })
+        dialog.clear()
+      },
+    },
+    {
       title: t(terminalTitleEnabled() ? "tui.command.terminal.title.disable" : "tui.command.terminal.title.enable"),
       value: "terminal.title.toggle",
       keybind: "terminal_title_toggle",
@@ -1177,6 +1213,11 @@ function App(props: { onSnapshot?: () => Promise<string[]> }) {
           </Match>
           <Match when={route.data.type === "session"}>
             <Session />
+          </Match>
+          <Match when={route.data.type === "grid"}>
+            <WorkspaceClientsProvider>
+              <GridView />
+            </WorkspaceClientsProvider>
           </Match>
         </Switch>
       </Show>

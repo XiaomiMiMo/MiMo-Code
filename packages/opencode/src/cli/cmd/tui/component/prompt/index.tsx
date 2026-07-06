@@ -60,7 +60,24 @@ export type PromptProps = {
     normal?: string[]
     shell?: string[]
   }
+  /**
+   * Phase 8 (grid): when true, the prompt should grab focus on mount. The
+   * cell passes its active state so the freshly-activated cell gets focus
+   * without a manual click, and backgrounded cells keep focus elsewhere.
+   * Currently a hint - the cell itself decides focus on active changes;
+   * accepted here so the cell does not have to wrap the prompt component
+   * to filter the prop out.
+   */
+  focusEnabled?: boolean
+  /**
+   * Phase 8 (grid): the agent ID this prompt is bound to. Used by the cell
+   * to keep history filtered and slash-command completions agent-aware when
+   * the cell switches between sub-agents. Reserved for future use; the
+   * prompt itself does not read it yet.
+   */
+  agentID?: string
 }
+
 
 export type PromptRef = {
   focused: boolean

@@ -95,6 +95,11 @@ function routeCurrent(route: ReturnType<typeof useRoute>): TuiPluginApi["route"]
       },
     }
   }
+  if (route.data.type === "grid") {
+    // TUI grid mode (multi-session workspace). No plugin view; signal
+    // grid mode so plugin APIs can branch correctly when active.
+    return { name: "grid" }
+  }
 
   return {
     name: route.data.id,

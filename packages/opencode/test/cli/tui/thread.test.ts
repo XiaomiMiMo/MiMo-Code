@@ -71,6 +71,7 @@ describe("tui thread", () => {
       cors: [],
       "no-auth": false,
       noAuth: false,
+      grid: false,
     }
     return TuiThreadCommand.handler(args)
   }

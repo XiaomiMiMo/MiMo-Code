@@ -115,6 +115,28 @@ const KeybindsSchema = Schema.Struct({
   tips_toggle: keybind("<leader>h", "Toggle tips on home screen"),
   plugin_manager: keybind("none", "Open plugin manager dialog"),
   display_thinking: keybind("none", "Toggle thinking blocks visibility"),
+  // MiMo Grid v0.0.1 - Phase 1.4
+  // `grid_create` and `grid_layout_toggle` were originally `<leader>n` and
+  // `<leader>l`, but those keys are already bound to `session_new` and
+  // `session_list`. Remapped to `<leader>o` and `<leader>k` to avoid
+  // conflicts while keeping the leader-key convention.
+  grid_create: keybind("<leader>o", "Create new grid cell"),
+  grid_close: keybind("<leader>w", "Close active grid cell"),
+  grid_next: keybind("<leader>right", "Next grid cell"),
+  grid_prev: keybind("<leader>left", "Previous grid cell"),
+  grid_plan_mode: keybind("<leader>p", "Toggle plan-only mode"),
+  grid_layout_toggle: keybind("<leader>k", "Toggle grid layout"),
+  // Phase 6: direct cell-switch keybinds. Numbers 1-9 jump to the cell at
+  // that position (cycling if needed).
+  grid_cell_1: keybind("<leader>1", "Switch to cell 1"),
+  grid_cell_2: keybind("<leader>2", "Switch to cell 2"),
+  grid_cell_3: keybind("<leader>3", "Switch to cell 3"),
+  grid_cell_4: keybind("<leader>4", "Switch to cell 4"),
+  grid_cell_5: keybind("<leader>5", "Switch to cell 5"),
+  grid_cell_6: keybind("<leader>6", "Switch to cell 6"),
+  grid_cell_7: keybind("<leader>7", "Switch to cell 7"),
+  grid_cell_8: keybind("<leader>8", "Switch to cell 8"),
+  grid_cell_9: keybind("<leader>9", "Switch to cell 9"),
 }).annotate({ identifier: "KeybindsConfig" })
 
 export type Keybinds = Schema.Schema.Type<typeof KeybindsSchema>
