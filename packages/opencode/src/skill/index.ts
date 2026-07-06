@@ -154,9 +154,12 @@ const discoverSkills = Effect.fnUntraced(function* (
   worktree: string,
 ) {
   const state: ScanState = { matches: new Set(), dirs: new Set() }
+  const cfg = yield* config.get()
+  const sources = cfg.skills?.sources
+  const enabled = (source: keyof NonNullable<typeof sources>) => sources?.[source] !== false
 
   // Extract builtin skills to disk first (user skills with same name override)
-  if (!Flag.MIMOCODE_DISABLE_BUILTIN_SKILLS) {
+  if (!Flag.MIMOCODE_DISABLE_BUILTIN_SKILLS && enabled("builtin")) {
     const builtinSkillRoot = yield* extractBuiltinBundle(fsys).pipe(
       Effect.catch(() => Effect.succeed(undefined)),
     )
@@ -178,7 +181,7 @@ const discoverSkills = Effect.fnUntraced(function* (
   }
 
   // Extract compose skills to disk (user skills with same name override)
-  if (!Flag.MIMOCODE_DISABLE_COMPOSE_SKILLS) {
+  if (!Flag.MIMOCODE_DISABLE_COMPOSE_SKILLS && enabled("compose")) {
     const composeSkillRoot = yield* extractComposeBundle(fsys).pipe(
       Effect.catch(() => Effect.succeed(undefined)),
     )
@@ -189,9 +192,10 @@ const discoverSkills = Effect.fnUntraced(function* (
 
   if (!Flag.MIMOCODE_DISABLE_EXTERNAL_SKILLS) {
     const externalDirs = EXTERNAL_DIRS.filter((dir) => {
-      if (dir === ".claude" && Flag.MIMOCODE_DISABLE_CLAUDE_CODE_SKILLS) return false
-      if (dir === ".codex" && Flag.MIMOCODE_DISABLE_CODEX_SKILLS) return false
-      if (dir === ".opencode" && Flag.MIMOCODE_DISABLE_OPENCODE_SKILLS) return false
+      if (dir === ".claude") return !Flag.MIMOCODE_DISABLE_CLAUDE_CODE_SKILLS && enabled("claude")
+      if (dir === ".agents") return enabled("agents")
+      if (dir === ".codex") return !Flag.MIMOCODE_DISABLE_CODEX_SKILLS && enabled("codex")
+      if (dir === ".opencode") return !Flag.MIMOCODE_DISABLE_OPENCODE_SKILLS && enabled("opencode")
       return true
     })
 
@@ -215,7 +219,6 @@ const discoverSkills = Effect.fnUntraced(function* (
     yield* scan(state, dir, MIMOCODE_SKILL_PATTERN)
   }
 
-  const cfg = yield* config.get()
   for (const item of cfg.skills?.paths ?? []) {
     const expanded = item.startsWith("~/") ? path.join(os.homedir(), item.slice(2)) : item
     const dir = path.isAbsolute(expanded) ? expanded : path.join(directory, expanded)

@@ -19,15 +19,51 @@ OpenCode searches these locations:
 - Global Claude-compatible: `~/.claude/skills/<name>/SKILL.md`
 - Project agent-compatible: `.agents/skills/<name>/SKILL.md`
 - Global agent-compatible: `~/.agents/skills/<name>/SKILL.md`
+- Project Codex-compatible: `.codex/skills/<name>/SKILL.md`
+- Global Codex-compatible: `~/.codex/skills/<name>/SKILL.md`
 
 ---
 
 ## Understand discovery
 
 For project-local paths, OpenCode walks up from your current working directory until it reaches the git worktree.
-It loads any matching `skills/*/SKILL.md` in `.opencode/` and any matching `.claude/skills/*/SKILL.md` or `.agents/skills/*/SKILL.md` along the way.
+It loads any matching `skills/*/SKILL.md` in `.opencode/` and any matching `.claude/skills/*/SKILL.md`, `.agents/skills/*/SKILL.md`, or `.codex/skills/*/SKILL.md` along the way.
 
-Global definitions are also loaded from `~/.config/opencode/skills/*/SKILL.md`, `~/.claude/skills/*/SKILL.md`, and `~/.agents/skills/*/SKILL.md`.
+Global definitions are also loaded from `~/.config/opencode/skills/*/SKILL.md`, `~/.claude/skills/*/SKILL.md`, `~/.agents/skills/*/SKILL.md`, and `~/.codex/skills/*/SKILL.md`.
+
+---
+
+## Control skill sources
+
+If you also run Claude Code or Codex on the same machine, their skill directories are picked up too, and same-name skills from different tools can collide.
+Use `skills.sources` in `opencode.json` to turn individual sources off:
+
+```json
+{
+  "skills": {
+    "sources": {
+      "claude": false,
+      "codex": false
+    }
+  }
+}
+```
+
+Every source defaults to `true`. Available keys:
+
+| Key        | What it controls                                          |
+| ---------- | --------------------------------------------------------- |
+| `builtin`  | Skills bundled with the binary                            |
+| `compose`  | MiMoCode Compose skills bundled with the binary           |
+| `claude`   | `.claude/skills` in the home directory and project tree   |
+| `agents`   | `.agents/skills` in the home directory and project tree   |
+| `codex`    | `.codex/skills` in the home directory and project tree    |
+| `opencode` | `.opencode/skills` in the home directory and project tree |
+
+Disabling a source skips both its global (home directory) and project-local directories.
+To add extra directories beyond the defaults, use `skills.paths`; to fetch skills from a URL, use `skills.urls`.
+
+The environment variables `MIMOCODE_DISABLE_EXTERNAL_SKILLS`, `MIMOCODE_DISABLE_CLAUDE_CODE_SKILLS`, `MIMOCODE_DISABLE_CODEX_SKILLS`, and `MIMOCODE_DISABLE_OPENCODE_SKILLS` still work and take precedence: a source disabled by an environment variable stays off regardless of config.
 
 ---
 
