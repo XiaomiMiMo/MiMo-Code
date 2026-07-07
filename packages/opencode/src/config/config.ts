@@ -102,7 +102,7 @@ const InfoSchema = Schema.Struct({
     description: "Server configuration for mimo serve and web commands",
   }),
   command: Schema.optional(Schema.Record(Schema.String, ConfigCommand.Info)).annotate({
-    description: "Command configuration, see https://opencode.ai/docs/commands",
+    description: "Command configuration, see https://mimo.xiaomi.com/mimocode/docs/commands",
   }),
   skills: Schema.optional(ConfigSkills.Info).annotate({ description: "Additional skill folder paths" }),
   compose: Schema.optional(ConfigCompose.Info).annotate({ description: "Compose mode configuration" }),
@@ -192,7 +192,7 @@ const InfoSchema = Schema.Struct({
       }),
       [Schema.Record(Schema.String, AgentRef)],
     ),
-  ).annotate({ description: "Agent configuration, see https://opencode.ai/docs/agents" }),
+  ).annotate({ description: "Agent configuration, see https://mimo.xiaomi.com/mimocode/docs/agents" }),
   provider: Schema.optional(Schema.Record(Schema.String, ConfigProvider.Info)).annotate({
     description: "Custom provider configurations and model overrides",
   }),
