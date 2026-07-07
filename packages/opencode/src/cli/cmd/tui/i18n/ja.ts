@@ -264,6 +264,7 @@ export const dict = {
   "tui.command.never_ask.toast_on":
     "質問しないをオンにしました — あなたに質問せず、オフにする（/never-ask）まで自分で最適な選択肢を選びます。権限リクエストは引き続きあなたの承認が必要です。",
   "tui.command.never_ask.toast_off": "質問しないをオフにしました — 判断ポイントで再びあなたに質問します。",
+  "tui.prompt.never_ask_indicator": "«質問しない»",
   "tui.command.agent.cycle.title": "エージェントを循環",
   "tui.command.variant.cycle.title": "バリアントを循環",
   "tui.command.variant.list.title": "モデルバリアントを切り替え",

@@ -334,6 +334,7 @@ export const dict = {
   "tui.command.never_ask.toast_on":
     "Без вопросов ВКЛ — я не буду спрашивать; сам выберу лучший вариант, пока вы не выключите (/never-ask). Запросы разрешений по-прежнему требуют вашего подтверждения.",
   "tui.command.never_ask.toast_off": "Без вопросов ВЫКЛ — я снова буду спрашивать вас в точках принятия решений.",
+  "tui.prompt.never_ask_indicator": "«без вопросов»",
   "tui.command.agent.cycle.title": "Цикл агентов",
   "tui.command.variant.cycle.title": "Цикл вариантов",
   "tui.command.variant.list.title": "Сменить вариант модели",

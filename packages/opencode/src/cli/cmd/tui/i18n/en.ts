@@ -255,6 +255,7 @@ export const dict: Record<string, string> = {
   "tui.command.never_ask.toast_on":
     "Never-ask ON — I won't prompt you; I'll pick the best option myself until you turn it off (/never-ask). Permission requests still need your approval.",
   "tui.command.never_ask.toast_off": "Never-ask OFF — I'll ask you at decision points again.",
+  "tui.prompt.never_ask_indicator": "«never-ask»",
   "tui.command.agent.cycle.title": "Agent cycle",
   "tui.command.variant.cycle.title": "Variant cycle",
   "tui.command.variant.list.title": "Switch model variant",

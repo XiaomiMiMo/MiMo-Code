@@ -240,6 +240,7 @@ export const dict = {
   "tui.command.never_ask.toast_on":
     "已開啟跳過提問 — 我不會再向你提問，會自行選擇最佳選項，直到你關閉（/never-ask）。權限請求仍需你確認。",
   "tui.command.never_ask.toast_off": "已關閉跳過提問 — 遇到決策點我會重新向你提問。",
+  "tui.prompt.never_ask_indicator": "«跳過提問»",
   "tui.command.agent.cycle.title": "循環切換智慧代理",
   "tui.command.variant.cycle.title": "循環切換模型變體",
   "tui.command.variant.list.title": "切換模型變體",
