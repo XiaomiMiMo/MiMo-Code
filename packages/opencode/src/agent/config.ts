@@ -32,5 +32,5 @@ export function decideAskRouting(input: {
   if (isOrchestratorPeer && input.sessionParentID) {
     return { interactive: true, forward: { parentSessionID: input.sessionParentID } }
   }
-  return { interactive: !input.askActor?.background }
+  return { interactive: !input.askActor?.background && input.askActor?.mode !== "subagent" }
 }
