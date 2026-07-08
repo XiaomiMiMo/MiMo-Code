@@ -78,7 +78,7 @@ def _invoke(input_path: Path, out_dir: Path, target: str) -> Path:
     with _isolated_profile() as profile_uri:
         result = subprocess.run(
             [
-                binary, "--headless",
+                binary, "--headless", "--invisible", "--norestore",
                 f"-env:UserInstallation={profile_uri}",
                 "--convert-to", target,
                 "--outdir", str(out_dir),

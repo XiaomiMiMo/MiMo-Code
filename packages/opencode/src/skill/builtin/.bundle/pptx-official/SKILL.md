@@ -309,8 +309,8 @@ thousands of context tokens. Loading multiple slides into the main
 conversation for inspection will quickly exhaust your context budget and
 crowd out useful working memory.
 
-**Default: always use a subagent for visual inspection.** Spawn an
-`explore` or `general` subagent with the rendered PNG paths and the
+**Default: always use a subagent for visual inspection.** Spawn a
+`general` subagent with the rendered PNG paths and the
 inspection criteria from step 3 above. The subagent reports findings as
 text (slide number + issue description); the images never enter the main
 conversation context. This is mandatory unless the exception below applies.

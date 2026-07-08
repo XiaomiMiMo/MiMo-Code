@@ -1,8 +1,9 @@
 #!/usr/bin/env bun
 /**
  * PPTX Preview — long-running server process.
- * Watches a .pptx file, converts to PDF via LibreOffice on change,
- * serves the PDF in the browser's native viewer with WebSocket refresh.
+ * Watches the directory containing a .pptx file for changes, converts to
+ * PDF via LibreOffice, serves in the browser's native viewer with WebSocket
+ * refresh.
  *
  * Not meant to be run directly — use preview.ts to start/stop.
  *
@@ -68,7 +69,7 @@ async function convertToPdf() {
   if (!await Bun.file(pptxPath).exists()) { converting = false; return }
 
   const proc = Bun.spawn([
-    soffice, "--headless", "--invisible",
+    soffice, "--headless", "--invisible", "--norestore",
     `--env:UserInstallation=file://${sofficeProfile}`,
     "--convert-to", "pdf",
     "--outdir", previewDir,
