@@ -87,6 +87,14 @@ Run scripts directly as TypeScript — no transpilation needed:
 bun run create-ppt.ts
 ```
 
+**Always run type checking after writing or modifying TS code:**
+```bash
+bun tsc --noEmit create-ppt.ts
+```
+Models may inadvertently use outdated PptxGenJS API signatures or
+deprecated syntax without realizing it. A type check catches these
+mismatches before runtime.
+
 ### System dependencies (PDF/PNG rendering)
 
 ```bash
@@ -234,6 +242,50 @@ that survived template fill. Verify explicitly.
    ```
 
 If any of these fail, fix and re-run — don't paper over.
+
+## Visual QA execution model
+
+**Slide images are expensive.** A single rendered PNG at 150 DPI consumes
+thousands of context tokens. Loading multiple slides into the main
+conversation for inspection will quickly exhaust your context budget and
+crowd out useful working memory.
+
+**Default: always use a subagent for visual inspection.** Spawn an
+`explore` or `general` subagent with the rendered PNG paths and the
+inspection criteria from step 3 above. The subagent reports findings as
+text (slide number + issue description); the images never enter the main
+conversation context. This is mandatory unless the exception below applies.
+
+```
+actor({
+  operation: {
+    action: "run",
+    subagent_type: "general",
+    model: "xiaomi/mimo-v2.5",   // recommended: vision-capable model
+    description: "Visual QA slides",
+    prompt: "Inspect the rendered slide images in qa/ for: text overflow, overlapping shapes, cut-off labels, wrong-scale icons, off-brand colors. Report each issue as 'slide N: <problem>'. Images: qa/slide-1.png through qa/slide-<N>.png."
+  }
+})
+```
+
+**Model selection (recommended, not enforced):**
+
+| Your current model | Recommended vision subagent model | Notes |
+|--------------------|-----------------------------------|-------|
+| `xiaomi/mimo-v2.5-pro` | `xiaomi/mimo-v2.5` | mimo-v2.5-pro is text-only; mimo-v2.5 is multimodal |
+| Any non-vision model | A vision-capable model | Query available vision models to pick one |
+| Already a vision model | Same model or any vision model | No change needed |
+
+Pick a vision-capable model for the subagent. If unsure what's available,
+query available vision models via
+`actor({ operation: { action: "models", vision: true } })`.
+
+**Exception — direct inspection in the main context:** Only load slide
+images directly (without a subagent) when the user explicitly requests
+that the current model inspect a specific slide for fine-grained,
+interactive editing (e.g. "look at slide 5 and adjust the title
+position"). This requires the current model to be multimodal. If it
+isn't, inform the user and offer to spawn a vision subagent instead.
 
 ## Common visual pitfalls
 
