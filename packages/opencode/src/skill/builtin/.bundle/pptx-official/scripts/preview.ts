@@ -38,11 +38,13 @@ function isProcessAlive(pid: number): boolean {
   try { process.kill(pid, 0); return true } catch { return false }
 }
 
-function readPid(pidFile: string): number | null {
+function readPid(pidFile: string): { pid: number; port: number } | null {
   if (!existsSync(pidFile)) return null
-  const pid = parseInt(readFileSync(pidFile, "utf-8").trim(), 10)
+  const content = readFileSync(pidFile, "utf-8").trim()
+  const [pidStr, portStr] = content.split(":")
+  const pid = parseInt(pidStr, 10)
   if (isNaN(pid)) return null
-  return pid
+  return { pid, port: parseInt(portStr, 10) || 4200 }
 }
 
 // --- Stop mode ---
@@ -53,11 +55,11 @@ if (values.stop) {
     process.exit(2)
   }
   const pidFile = pidFileFor(resolve(source))
-  const pid = readPid(pidFile)
-  if (pid && isProcessAlive(pid)) {
-    process.kill(pid, "SIGTERM")
+  const info = readPid(pidFile)
+  if (info && isProcessAlive(info.pid)) {
+    process.kill(info.pid, "SIGTERM")
     unlinkSync(pidFile)
-    console.log(`Stopped preview server (pid ${pid})`)
+    console.log(`Stopped preview server (pid ${info.pid})`)
   } else {
     if (existsSync(pidFile)) unlinkSync(pidFile)
     console.log("No running preview server for this file")
@@ -84,10 +86,10 @@ const pidFile = pidFileFor(pptxPath)
 mkdirSync(previewDir, { recursive: true })
 
 // Check if already running
-const existingPid = readPid(pidFile)
-if (existingPid && isProcessAlive(existingPid)) {
-  console.log(`Preview server already running (pid ${existingPid})`)
-  console.log(`  URL: http://localhost:${port}`)
+const existing = readPid(pidFile)
+if (existing && isProcessAlive(existing.pid)) {
+  console.log(`Preview server already running (pid ${existing.pid})`)
+  console.log(`  URL: http://localhost:${existing.port}`)
   process.exit(0)
 }
 
@@ -107,11 +109,11 @@ const child = Bun.spawn(
 // Detach child so this process can exit
 child.unref()
 
-// Write PID
-writeFileSync(pidFile, String(child.pid))
+// Write PID:port
+writeFileSync(pidFile, `${child.pid}:${port}`)
 
 console.log(`PPTX Preview Server started (pid ${child.pid})`)
 console.log(`  Watching: ${pptxPath}`)
 console.log(`  URL:      http://localhost:${port}`)
 console.log(`  Log:      ${logFile}`)
-console.log(`\n  Stop with: bun run scripts/preview.ts --stop`)
+console.log(`\n  Stop with: bun run scripts/preview.ts --stop ${basename(pptxPath)}`)

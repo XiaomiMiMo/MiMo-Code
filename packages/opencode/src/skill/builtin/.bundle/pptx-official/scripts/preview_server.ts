@@ -54,19 +54,22 @@ function findSoffice(): string {
 }
 
 const soffice = findSoffice()
+const sofficeProfile = resolve(previewDir, "libreoffice_profile")
 let converting = false
+let pendingConvert = false
 let debounceTimer: ReturnType<typeof setTimeout> | null = null
 const clients = new Set<{ send(msg: string): void }>()
 
 async function convertToPdf() {
-  if (converting) return
+  if (converting) { pendingConvert = true; return }
   converting = true
   broadcast(JSON.stringify({ status: "converting" }))
 
   if (!await Bun.file(pptxPath).exists()) { converting = false; return }
 
   const proc = Bun.spawn([
-    soffice, "--headless",
+    soffice, "--headless", "--invisible",
+    `--env:UserInstallation=file://${sofficeProfile}`,
     "--convert-to", "pdf",
     "--outdir", previewDir,
     pptxPath,
@@ -81,6 +84,8 @@ async function convertToPdf() {
     const err = await new Response(proc.stderr).text()
     broadcast(JSON.stringify({ status: "error", message: err.slice(0, 200) }))
   }
+
+  if (pendingConvert) { pendingConvert = false; scheduleConvert() }
 }
 
 function broadcast(msg: string) {
@@ -92,7 +97,9 @@ function scheduleConvert() {
   debounceTimer = setTimeout(convertToPdf, 800)
 }
 
-watch(pptxPath, () => scheduleConvert())
+watch(dirname(pptxPath), (_, filename) => {
+  if (filename === basename(pptxPath)) scheduleConvert()
+})
 
 const HTML = `<!DOCTYPE html>
 <html><head>
@@ -161,6 +168,9 @@ Bun.serve({
 console.log(`PPTX Preview Server running`)
 console.log(`  Watching: ${pptxPath}`)
 console.log(`  URL:      http://localhost:${port}`)
+
+process.on("SIGTERM", () => process.exit(0))
+process.on("SIGINT", () => process.exit(0))
 
 // Initial conversion
 convertToPdf()
