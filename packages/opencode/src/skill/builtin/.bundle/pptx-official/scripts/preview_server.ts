@@ -56,6 +56,7 @@ function findSoffice(): string {
 
 const soffice = findSoffice()
 const sofficeProfile = resolve(previewDir, "libreoffice_profile")
+mkdirSync(sofficeProfile, { recursive: true })
 let converting = false
 let pendingConvert = false
 let debounceTimer: ReturnType<typeof setTimeout> | null = null
@@ -70,7 +71,7 @@ async function convertToPdf() {
 
   const proc = Bun.spawn([
     soffice, "--headless", "--invisible", "--norestore",
-    `--env:UserInstallation=file://${sofficeProfile}`,
+    `-env:UserInstallation=file://${sofficeProfile}`,
     "--convert-to", "pdf",
     "--outdir", previewDir,
     pptxPath,
