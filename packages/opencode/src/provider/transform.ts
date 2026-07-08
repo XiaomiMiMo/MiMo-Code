@@ -51,6 +51,34 @@ function normalizeMessages(
   model: Provider.Model,
   _options: Record<string, unknown>,
 ): ModelMessage[] {
+  // vLLM/Qwen chat templates only accept a single leading system message.
+  // MiMoCode produces multiple system messages (agent prompt + memory instructions),
+  // so collapse consecutive leading system messages into one for openai-compatible providers.
+  //
+  // Design note: the merged message intentionally drops providerOptions from individual
+  // system messages. This is safe because (1) system messages are constructed without
+  // providerOptions in llm.ts, and (2) applyCaching runs AFTER normalizeMessages and
+  // does not apply to @ai-sdk/openai-compatible (supportsCacheMarkers returns false).
+  // If a future change adds providerOptions to system messages before this point,
+  // the merge logic must be updated to preserve them.
+  if (model.api.npm === "@ai-sdk/openai-compatible") {
+    let lastSystemIdx = -1
+    for (let i = 0; i < msgs.length; i++) {
+      if (msgs[i].role !== "system") break
+      lastSystemIdx = i
+    }
+    if (lastSystemIdx > 0) {
+      const merged: ModelMessage = {
+        role: "system",
+        content: msgs
+          .slice(0, lastSystemIdx + 1)
+          .map((m) => (typeof m.content === "string" ? m.content : ""))
+          .join("\n\n"),
+      }
+      msgs = [merged, ...msgs.slice(lastSystemIdx + 1)]
+    }
+  }
+
   // Anthropic rejects messages with empty content - filter out empty string messages
   // and remove empty text/reasoning parts from array content
   if (model.api.npm === "@ai-sdk/anthropic" || model.api.npm === "@ai-sdk/amazon-bedrock") {

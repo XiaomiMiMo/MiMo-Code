@@ -3565,3 +3565,101 @@ describe("ProviderTransform.schema - openai discriminated-union flatten", () => 
     expect(result.anyOf).toBeUndefined()
   })
 })
+
+describe("ProviderTransform.message - merge consecutive system messages for openai-compatible", () => {
+  const vllmModel = {
+    id: ModelID.make("qwen/qwen3-235b-a22b"),
+    providerID: ProviderID.make("custom"),
+    api: {
+      id: "qwen3-235b-a22b",
+      url: "http://localhost:8000/v1",
+      npm: "@ai-sdk/openai-compatible",
+    },
+    name: "Qwen3 235B",
+    capabilities: {
+      temperature: true,
+      reasoning: false,
+      attachment: false,
+      toolcall: true,
+      input: { text: true, audio: false, image: false, video: false, pdf: false },
+      output: { text: true, audio: false, image: false, video: false, pdf: false },
+      interleaved: false,
+    },
+    cost: { input: 0, output: 0, cache: { read: 0, write: 0 } },
+    limit: { context: 128000, output: 8192 },
+    status: "active",
+    options: {},
+    headers: {},
+  } as any
+
+  test("two consecutive system messages are merged into one", () => {
+    const msgs = [
+      { role: "system", content: "You are a coding assistant." },
+      { role: "system", content: "Memory instructions here." },
+      { role: "user", content: [{ type: "text", text: "Hello" }] },
+    ] as any[]
+
+    const result = ProviderTransform.message(msgs, vllmModel, {})
+    const systemMsgs = result.filter((m) => m.role === "system")
+    expect(systemMsgs).toHaveLength(1)
+    expect(systemMsgs[0].content).toBe("You are a coding assistant.\n\nMemory instructions here.")
+    expect(result).toHaveLength(2)
+    expect(result[1].role).toBe("user")
+  })
+
+  test("three consecutive system messages are merged into one", () => {
+    const msgs = [
+      { role: "system", content: "Agent prompt." },
+      { role: "system", content: "Memory block." },
+      { role: "system", content: "Plugin additions." },
+      { role: "user", content: [{ type: "text", text: "Hi" }] },
+    ] as any[]
+
+    const result = ProviderTransform.message(msgs, vllmModel, {})
+    const systemMsgs = result.filter((m) => m.role === "system")
+    expect(systemMsgs).toHaveLength(1)
+    expect(systemMsgs[0].content).toBe("Agent prompt.\n\nMemory block.\n\nPlugin additions.")
+    expect(result).toHaveLength(2)
+  })
+
+  test("single system message is left untouched", () => {
+    const msgs = [
+      { role: "system", content: "You are a coding assistant." },
+      { role: "user", content: [{ type: "text", text: "Hello" }] },
+    ] as any[]
+
+    const result = ProviderTransform.message(msgs, vllmModel, {})
+    const systemMsgs = result.filter((m) => m.role === "system")
+    expect(systemMsgs).toHaveLength(1)
+    expect(systemMsgs[0].content).toBe("You are a coding assistant.")
+  })
+
+  test("@ai-sdk/openai provider is not affected by the merge", () => {
+    const openaiModel = {
+      ...vllmModel,
+      providerID: ProviderID.make("openai"),
+      api: { id: "gpt-4o", url: "https://api.openai.com/v1", npm: "@ai-sdk/openai" },
+    }
+    const msgs = [
+      { role: "system", content: "System prompt A." },
+      { role: "system", content: "System prompt B." },
+      { role: "user", content: [{ type: "text", text: "Hello" }] },
+    ] as any[]
+
+    const result = ProviderTransform.message(msgs, openaiModel, {})
+    const systemMsgs = result.filter((m) => m.role === "system")
+    expect(systemMsgs).toHaveLength(2)
+  })
+
+  test("empty messages array is a no-op", () => {
+    const result = ProviderTransform.message([], vllmModel, {})
+    expect(result).toHaveLength(0)
+  })
+
+  test("no system messages is a no-op", () => {
+    const msgs = [{ role: "user", content: [{ type: "text", text: "Hello" }] }] as any[]
+    const result = ProviderTransform.message(msgs, vllmModel, {})
+    expect(result).toHaveLength(1)
+    expect(result[0].role).toBe("user")
+  })
+})
