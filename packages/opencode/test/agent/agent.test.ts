@@ -655,6 +655,51 @@ description: Permission skill.
   }
 })
 
+test("skill directories are allowed even when user denies external_directory globally", async () => {
+  await using tmp = await tmpdir({
+    git: true,
+    config: {
+      permission: {
+        external_directory: "deny",
+      },
+    },
+    init: async (dir) => {
+      const skillDir = path.join(dir, ".mimocode", "skill", "perm-skill")
+      await Bun.write(
+        path.join(skillDir, "SKILL.md"),
+        `---
+name: perm-skill
+description: Permission skill.
+---
+
+# Permission Skill
+`,
+      )
+    },
+  })
+
+  const home = process.env.HOME
+  const userProfile = process.env.USERPROFILE
+  process.env.HOME = tmp.path
+  process.env.USERPROFILE = tmp.path
+
+  try {
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () => {
+        const build = await load(tmp.path, (svc) => svc.get("build"))
+        const skillDir = path.join(tmp.path, ".mimocode", "skill", "perm-skill")
+        const target = path.join(skillDir, "reference", "notes.md")
+        expect(Permission.evaluate("external_directory", target, build!.permission).action).toBe("allow")
+        expect(Permission.evaluate("external_directory", "/some/other/path", build!.permission).action).toBe("deny")
+      },
+    })
+  } finally {
+    process.env.HOME = home
+    process.env.USERPROFILE = userProfile
+  }
+})
+
 test("defaultAgent returns build when no default_agent config", async () => {
   await using tmp = await tmpdir()
   await Instance.provide({
