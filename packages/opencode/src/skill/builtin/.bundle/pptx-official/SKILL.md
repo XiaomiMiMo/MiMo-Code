@@ -146,6 +146,47 @@ uv run scripts/diagnose.py output.pptx
 Every script is a small, self-contained Python file. Read the top of the file
 for its full CLI options.
 
+## Live preview
+
+A live preview server is available for real-time slide feedback.
+**Not started by default.** When multi-slide work begins, ask the user
+if they want live preview enabled. If yes:
+
+```bash
+# Start (spawns background server, prints URL, exits immediately)
+bun run scripts/preview.ts output.pptx
+bun run scripts/preview.ts output.pptx --port 5000
+
+# Stop
+bun run scripts/preview.ts --stop output.pptx
+```
+
+If the server is already running, `preview.ts` detects this via PID file
+and prints the existing URL instead of spawning a duplicate.
+
+The background server watches the `.pptx` file, debounces (800ms),
+converts to PDF via LibreOffice, and pushes a WebSocket reload to the
+browser. The browser's native PDF viewer provides scroll, thumbnails,
+zoom, and search. Preview output goes to `.pptx-preview/` (separate
+from `qa/`, no conflict with other scripts).
+
+Give the user the printed URL to open in their browser.
+
+**Live preview is for humans only — it does NOT replace visual QA.**
+The preview server lets the user watch progress. You must still run
+the visual QA subagent (render PNGs to `qa/`, spawn a vision model to
+inspect them) as described in the "Visual QA execution model" section.
+These are independent workflows:
+- Preview server → user sees live updates in browser
+- Visual QA subagent → automated inspection, catches issues you can't
+
+**When to regenerate the .pptx during multi-slide work:** If the user
+has the preview server running, regenerate the `.pptx` (re-run the
+creation script) after completing each logical module — e.g. after
+finishing a section's slides, not after every single shape placement.
+This gives the user meaningful visual checkpoints without excessive
+intermediate renders.
+
 ## Authoring principles
 
 Slides are a **visual surface**. Users read the deck at 40 feet from the back
@@ -335,3 +376,7 @@ isn't, inform the user and offer to spawn a vision subagent instead.
   (including speaker notes), structural walk, metadata, thumbnails, image
   extraction, conversion to PDF / PNG for QA.
 - **Scripts**: [`scripts/`](scripts/) — self-contained CLI utilities.
+- **Live preview**: [`scripts/preview.ts`](scripts/preview.ts) — launcher
+  (start/stop); [`scripts/preview_server.ts`](scripts/preview_server.ts) —
+  background server that watches .pptx, converts to PDF, serves with
+  WebSocket hot-reload in the browser's native PDF viewer.
