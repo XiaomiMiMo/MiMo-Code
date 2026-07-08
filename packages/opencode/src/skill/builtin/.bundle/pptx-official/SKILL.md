@@ -78,8 +78,26 @@ bun add react react-dom sharp      # rasterization (icons + formulas)
 bun add react-icons                # icon library (FA, MD, etc.)
 bun add mathjax-full               # LaTeX formula rendering
 
-# Type definitions
-bun add -d @types/react @types/react-dom
+# Type definitions (including Bun runtime types)
+bun add -d @types/bun @types/react @types/react-dom
+```
+
+Create a `tsconfig.json` if one doesn't exist:
+```json
+{
+  "compilerOptions": {
+    "lib": ["ESNext"],
+    "target": "ESNext",
+    "module": "Preserve",
+    "moduleResolution": "bundler",
+    "allowImportingTsExtensions": true,
+    "noEmit": true,
+    "jsx": "react-jsx",
+    "strict": true,
+    "skipLibCheck": true,
+    "types": ["bun"]
+  }
+}
 ```
 
 Run scripts directly as TypeScript — no transpilation needed:
@@ -89,7 +107,7 @@ bun run create-ppt.ts
 
 **Always run type checking after writing or modifying TS code:**
 ```bash
-bun tsc --noEmit create-ppt.ts
+bun tsc --noEmit
 ```
 Models may inadvertently use outdated PptxGenJS API signatures or
 deprecated syntax without realizing it. A type check catches these
