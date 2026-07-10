@@ -136,6 +136,47 @@ function isMcpConfigured(entry: McpEntry): entry is ConfigMCP.Info {
 
 const sanitize = (s: string) => s.replace(/[^a-zA-Z0-9_-]/g, "_")
 
+/**
+ * Safely normalize MCP tool call arguments before passing to the MCP SDK.
+ *
+ * The AI SDK may pass args as:
+ *  - A parsed JS object (normal case)
+ *  - A raw JSON string (when the model output contains a raw JSON string that
+ *    the AI SDK's repair mechanism passed through without re-parsing)
+ *  - An unexpected type (null, array, primitives)
+ *
+ * The MCP SDK treats `arguments` as `z.record(z.string(), z.unknown())`, so we
+ * must ensure the value is always a plain object.  Passing a string causes the
+ * MCP server's JSON parser to see `arguments: "..."` (a string) instead of
+ * `arguments: { ... }` (an object), which the server then tries to parse as an
+ * object and fails with "JSON Parse error: Unexpected EOF".
+ *
+ * @see https://github.com/XiaomiMiMo/MiMo-Code/issues/1644
+ */
+function normalizeMcpArgs(args: unknown): Record<string, unknown> {
+  if (typeof args === "string") {
+    try {
+      const parsed = JSON.parse(args)
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+        return parsed as Record<string, unknown>
+      }
+    } catch {
+      log.warn("MCP tool args is a string but not valid JSON — falling back to empty object", {
+        raw: args.slice(0, 200),
+      })
+    }
+    return {}
+  }
+
+  if (args && typeof args === "object" && !Array.isArray(args)) {
+    // The spread strips non-enumerable properties (e.g. prototype, toJSON)
+    // that could interfere with JSON-RPC serialization on some runtimes.
+    return { ...(args as Record<string, unknown>) }
+  }
+
+  return {}
+}
+
 // Convert MCP tool definition to AI SDK Tool type
 function convertMcpTool(mcpTool: MCPToolDef, client: MCPClient, timeout?: number): Tool {
   const inputSchema = mcpTool.inputSchema
@@ -152,10 +193,12 @@ function convertMcpTool(mcpTool: MCPToolDef, client: MCPClient, timeout?: number
     description: mcpTool.description ?? "",
     inputSchema: jsonSchema(schema),
     execute: async (args: unknown) => {
+      const sanitizedArgs = normalizeMcpArgs(args)
+
       return client.callTool(
         {
           name: mcpTool.name,
-          arguments: (args || {}) as Record<string, unknown>,
+          arguments: sanitizedArgs,
         },
         CallToolResultSchema,
         {
