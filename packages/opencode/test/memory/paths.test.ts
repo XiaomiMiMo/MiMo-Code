@@ -148,6 +148,58 @@ describe("parsePath", () => {
   test("legacy <root>/tasks/<id>/ path no longer matches (tasks dropped from Scope)", () => {
     expect(parsePath("/data/memory/tasks/T1/progress.md")).toBeNull()
   })
+
+  // Regression for #1571: on Windows, `path.join` produces backslash-separated
+  // paths, so the POSIX-style regex above never matched and `memory_fts`
+  // stayed empty. The fix normalizes separators before matching.
+  test("Windows path with backslashes: global MEMORY.md", () => {
+    expect(parsePath("C:\\Users\\user\\.local\\share\\mimocode\\memory\\global\\MEMORY.md")).toEqual({
+      scope: "global",
+      scope_id: "",
+      type: "memory",
+      key: "MEMORY",
+    })
+  })
+
+  test("Windows path with backslashes: project memory.md", () => {
+    expect(parsePath("C:\\data\\memory\\projects\\uuid-1\\memory.md")).toEqual({
+      scope: "projects",
+      scope_id: "uuid-1",
+      type: "memory",
+      key: "memory",
+    })
+  })
+
+  test("Windows path with backslashes: session checkpoint.md", () => {
+    expect(parsePath("C:\\data\\memory\\sessions\\ses_abc\\checkpoint.md")).toEqual({
+      scope: "sessions",
+      scope_id: "ses_abc",
+      type: "checkpoint",
+      key: "checkpoint",
+    })
+  })
+
+  test("Windows path with backslashes: project free file", () => {
+    expect(parsePath("D:\\repo\\memory\\projects\\abc123def456\\conventions.md")).toEqual({
+      scope: "projects",
+      scope_id: "abc123def456",
+      type: "free",
+      key: "conventions",
+    })
+  })
+
+  test("mixed separators normalize to forward slashes", () => {
+    expect(parsePath("C:\\data/memory\\sessions/ses_abc/checkpoint.md")).toEqual({
+      scope: "sessions",
+      scope_id: "ses_abc",
+      type: "checkpoint",
+      key: "checkpoint",
+    })
+  })
+
+  test("Windows path that is not under /memory still returns null", () => {
+    expect(parsePath("C:\\Users\\user\\checkpoints\\ses_abc\\001.md")).toBeNull()
+  })
 })
 
 describe("buildPath", () => {

@@ -57,4 +57,36 @@ describe("parseCcPath", () => {
   test("non-md file returns null", () => {
     expect(parseCcPath("/home/u/.claude/projects/-foo/memory/x.txt")).toBeNull()
   })
+
+  // Regression for #1571: on Windows, `path.join` produces backslash-separated
+  // paths. parseCcPath was written against POSIX paths, so CC memory files on
+  // Windows never matched and never got indexed.
+  test("Windows path with backslashes: standard slug", () => {
+    expect(
+      parseCcPath("C:\\Users\\user\\.claude\\projects\\-myproj\\memory\\feedback_x.md"),
+    ).toEqual({
+      scope: "cc",
+      scope_id: "-myproj",
+      type: "free",
+      key: "feedback_x",
+    })
+  })
+
+  test("Windows path with backslashes: MEMORY.md (the index file)", () => {
+    expect(parseCcPath("C:\\home\\u\\.claude\\projects\\-myproj\\memory\\MEMORY.md")).toEqual({
+      scope: "cc",
+      scope_id: "-myproj",
+      type: "free",
+      key: "MEMORY",
+    })
+  })
+
+  test("Windows path with mixed separators normalizes to forward slashes", () => {
+    expect(parseCcPath("C:\\home/u/.claude\\projects/-foo/memory/sub/file.md")).toEqual({
+      scope: "cc",
+      scope_id: "-foo",
+      type: "free",
+      key: "sub/file",
+    })
+  })
 })

@@ -42,8 +42,19 @@ function detectType(key: string): MemoryType {
   return "free"
 }
 
+function normalizePathSeparators(absPath: string): string {
+  // On Windows, `path.join` produces backslash-separated paths (e.g.
+  // `C:\Users\me\memory\global\MEMORY.md`). The regexes below are written
+  // against POSIX paths, so they would never match without normalization,
+  // which left `memory_fts` empty on Windows. Convert backslashes to
+  // forward slashes before matching. Already-normalized POSIX paths are
+  // unaffected because they contain no backslashes.
+  return absPath.replace(/\\/g, "/")
+}
+
 export function parsePath(absPath: string): MemoryLocator | null {
-  const m = absPath.match(/\/memory\/(global|projects|sessions)(?:\/([^/]+))?\/(.+)\.md$/)
+  const normalized = normalizePathSeparators(absPath)
+  const m = normalized.match(/\/memory\/(global|projects|sessions)(?:\/([^/]+))?\/(.+)\.md$/)
   if (!m) return null
   const [, scope, idMaybe, keyRaw] = m
   const scope_id = scope === "global" ? "" : (idMaybe ?? "")
@@ -57,7 +68,8 @@ export function parsePath(absPath: string): MemoryLocator | null {
 const CC_PATH_RE = /\/\.claude\/projects\/([^/]+)\/memory\/(.+)\.md$/
 
 export function parseCcPath(absPath: string): MemoryLocator | null {
-  const m = absPath.match(CC_PATH_RE)
+  const normalized = normalizePathSeparators(absPath)
+  const m = normalized.match(CC_PATH_RE)
   if (!m) return null
   const [, slug, keyRaw] = m
   return {
