@@ -32,7 +32,7 @@ For detailed information: https://docs.astral.sh/uv/
 
 ### Python version
 
-Pin a single Python minor version. As of 2025 the recommended version is 3.12:
+Pin a single Python minor version. The recommended default is 3.12 (broadest ecosystem support — PyTorch, CUDA images, downstream libraries). Python 3.13 is the latest stable; prefer it for new projects unless you depend on packages that haven't added 3.13 support yet.
 
 ```toml
 # pyproject.toml
@@ -56,7 +56,7 @@ uv init -p 3.12               # Specify Python version
 
 ```bash
 uv add requests               # Add dependency
-uv add --dev ruff pyright     # Add dev dependency
+uv add --dev ruff "pyright[nodejs]"  # Add dev dependencies
 uv remove requests            # Remove dependency
 uv sync                       # Install from lockfile
 uv run COMMAND                # Run command in project environment
@@ -74,11 +74,11 @@ uvx TOOL ARGS                 # Run a tool without installing it
 
 ### Project types
 
-For **library** projects, use the standard src layout with `uv_build`:
+For **library** projects (`uv init --lib`) or packaged apps (`uv init --package`), `uv_build` is used as the default build backend automatically. The generated `pyproject.toml` includes:
 
 ```toml
 [build-system]
-requires = ["uv_build>=0.11.24,<0.12.0"]
+requires = ["uv_build>=0.11.26,<0.12"]
 build-backend = "uv_build"
 ```
 
@@ -105,26 +105,29 @@ Always use ruff for Python linting and formatting. Prefer `uv run ruff` when ruf
 
 ### Configuration
 
-Add to `pyproject.toml`:
+Add to `pyproject.toml`. Use `select` to make the rule set explicit:
 
 ```toml
 [tool.ruff.lint]
-extend-select = [
-    "UP",  # pyupgrade — modernize syntax
-    "I",   # isort — sort imports
+select = [
+    "E",   # pycodestyle
+    "F",   # Pyflakes
+    "UP",  # pyupgrade
+    "B",   # flake8-bugbear
+    "SIM", # flake8-simplify
+    "I",   # isort
 ]
 ```
 
+When using `ruff format` (recommended), rules that conflict with the formatter are automatically suppressed.
+
 ### Post-edit workflow
 
-After modifying Python code:
+After modifying Python code, run both:
 
 ```bash
-# Format
-uv run ruff format path/to/changed_file.py
-
-# Lint + auto-fix (imports, style)
 uv run ruff check --fix path/to/changed_file.py
+uv run ruff format path/to/changed_file.py
 ```
 
 Use `--diff` to preview changes without applying.
@@ -135,14 +138,20 @@ Use `--diff` to preview changes without applying.
 
 Pyright is a fast type checker for Python. Only use it when the project lists it as a dev dependency or explicitly uses type checking.
 
+Install with the `nodejs` extra so Node.js is bundled automatically (no system `node` required):
+
+```bash
+uv add --dev "pyright[nodejs]"
+```
+
+Run type checking:
+
 ```bash
 uv run pyright path/to/changed_file.py    # check specific files
 uv run pyright src/                        # check all code
 ```
 
 Usually only check the files you modified. For broad changes (base classes, shared types), check the full tree.
-
-**Prerequisite:** Pyright requires a `node` binary. If not available, skip and note it to the user.
 
 ---
 
@@ -170,10 +179,6 @@ items: list[tuple[str, int]] = []    # annotate — empty literal
 config: dict[str, Any] = {}          # annotate — empty literal
 result = some_api()                  # inference is fine
 ```
-
-### String formatting
-
-Always use f-strings. Do not use `.format()` or `%` formatting.
 
 ### pydantic v2
 
