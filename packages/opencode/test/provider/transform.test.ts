@@ -333,6 +333,13 @@ describe("ProviderTransform.options - gpt-5 textVerbosity", () => {
     expect(result.textVerbosity).toBe("low")
   })
 
+  test("gpt-5.5 should not set textVerbosity", () => {
+    const model = createGpt5Model("gpt-5.5")
+    const result = ProviderTransform.options({ model, sessionID, providerOptions: {} })
+    expect(result.reasoningEffort).toBe("medium")
+    expect(result.textVerbosity).toBeUndefined()
+  })
+
   test("gpt-5.2-chat-latest should NOT have textVerbosity set (only supports medium)", () => {
     const model = createGpt5Model("gpt-5.2-chat-latest")
     const result = ProviderTransform.options({ model, sessionID, providerOptions: {} })
@@ -3563,5 +3570,44 @@ describe("ProviderTransform.schema - openai discriminated-union flatten", () => 
     expect(result.type).toBe("object")
     expect(result.properties.a).toBeDefined()
     expect(result.anyOf).toBeUndefined()
+  })
+
+  test("gpt-5.5 — flattens nested discriminated unions in tool parameters", () => {
+    const nested = {
+      type: "object",
+      properties: {
+        operation: {
+          type: "object",
+          anyOf: anyOfSchema.anyOf,
+        },
+      },
+      required: ["operation"],
+      additionalProperties: false,
+    } as any
+
+    const result = ProviderTransform.schema({ providerID: "openai", api: { id: "gpt-5.5" } } as any, nested) as any
+
+    expect(result.properties.operation.anyOf).toBeUndefined()
+    expect(result.properties.operation.type).toBe("object")
+    expect(result.properties.operation.properties.action.enum).toEqual(["create", "list", "rename"])
+    expect(result.properties.operation.required).toEqual(["action"])
+  })
+
+  test("non-gpt-5.5 — leaves nested discriminated unions untouched", () => {
+    const nested = {
+      type: "object",
+      properties: {
+        operation: {
+          type: "object",
+          anyOf: anyOfSchema.anyOf,
+        },
+      },
+      required: ["operation"],
+      additionalProperties: false,
+    } as any
+
+    const result = ProviderTransform.schema({ providerID: "openai", api: { id: "gpt-4" } } as any, nested) as any
+
+    expect(result.properties.operation.anyOf).toHaveLength(3)
   })
 })
