@@ -640,7 +640,7 @@ export const layer = Layer.effect(
         yield* fs
           .writeFileString(
             gitignore,
-            ["node_modules", "package.json", "package-lock.json", "bun.lock", ".gitignore", ".cron-lock"].join("\n"),
+            ["node_modules", "package.json", "package-lock.json", "bun.lock", ".gitignore", ".cron-lock", "scheduled_tasks.json"].join("\n"),
           )
           .pipe(
             Effect.catchIf(
