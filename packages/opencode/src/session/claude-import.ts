@@ -1,6 +1,5 @@
 import path from "path"
 import { existsSync } from "fs"
-import { readFile } from "fs/promises"
 import { Slug } from "@mimo-ai/shared/util/slug"
 import { Glob } from "@mimo-ai/shared/util/glob"
 import { Global } from "../global"
@@ -14,6 +13,7 @@ import { SessionTable, MessageTable, PartTable } from "./session.sql"
 import { ExternalImportTable } from "./external-import.sql"
 import { SessionID, MessageID, PartID } from "./schema"
 import { MessageV2 } from "./message-v2"
+import { Jsonl } from "./jsonl"
 
 const log = Log.create({ service: "claude-import" })
 
@@ -50,19 +50,11 @@ function stringifyToolContent(content: unknown): string {
 
 type Built = { info: MessageV2.Info; parts: { part: MessageV2.Part; time: number }[] }
 
-function parse(text: string, sessionId: SessionID) {
-  const entries = text
-    .split("\n")
-    .map((l) => l.trim())
-    .filter(Boolean)
-    .flatMap((line) => {
-      try {
-        return [JSON.parse(line)]
-      } catch {
-        return []
-      }
-    })
-  if (entries.length === 0) return undefined
+export async function parse(input: string | AsyncIterable<string>, sessionId: SessionID) {
+  // String input is kept for tests and small payloads; the import path streams
+  // lines so a multi-GB transcript never exists as one JS string (issue #1671).
+  const lines = typeof input === "string" ? input.split("\n") : input
+  let sawEntry = false
 
   let cwd: string | undefined
   let version: string | undefined
@@ -81,7 +73,16 @@ function parse(text: string, sessionId: SessionID) {
     current = null
   }
 
-  for (const entry of entries) {
+  for await (const raw of lines) {
+    const line = raw.trim()
+    if (!line) continue
+    let entry: any
+    try {
+      entry = JSON.parse(line)
+    } catch {
+      continue
+    }
+    sawEntry = true
     if (entry.type !== "user" && entry.type !== "assistant") continue
     const t = entry.timestamp ? Date.parse(entry.timestamp) : Date.now()
     if (!cwd && entry.cwd) cwd = entry.cwd
@@ -213,6 +214,7 @@ function parse(text: string, sessionId: SessionID) {
   }
   flushAssistant()
 
+  if (!sawEntry) return undefined
   return {
     cwd: cwd ?? "",
     version,
@@ -231,9 +233,10 @@ function resolveProject(cwd: string): { id: ProjectID; worktree: string; vcs: st
 
 export async function run(opts?: { force?: boolean }) {
   const root = path.join(Global.Path.home, ".claude", "projects")
-  const stats = { scanned: 0, imported: 0, resynced: 0, skipped: 0, errors: [] as string[] }
+  const stats = { scanned: 0, imported: 0, resynced: 0, skipped: 0, oversized: 0, errors: [] as string[] }
   if (!existsSync(root)) return stats
 
+  const maxBytes = Jsonl.maxImportFileBytes()
   const files = await Glob.scan("*/*.jsonl", { cwd: root, absolute: true })
   for (const file of files) {
     stats.scanned++
@@ -242,6 +245,11 @@ export async function run(opts?: { force?: boolean }) {
       const st = Filesystem.stat(file)
       if (!st) {
         stats.skipped++
+        continue
+      }
+      if (maxBytes > 0 && st.size > maxBytes) {
+        stats.oversized++
+        log.warn("skipping transcript over the import size limit", { file, size: st.size, limit: maxBytes })
         continue
       }
       const mtime = Math.floor(Number(st.mtimeMs))
@@ -272,7 +280,7 @@ export async function run(opts?: { force?: boolean }) {
       }
 
       const sessionId = existing ? existing.session_id : SessionID.descending()
-      const parsed = parse(await readFile(file, "utf-8"), sessionId)
+      const parsed = await parse(Jsonl.lines(file), sessionId)
       if (!parsed || parsed.messages.length === 0) {
         stats.skipped++
         continue
@@ -373,7 +381,7 @@ export async function run(opts?: { force?: boolean }) {
     }
   }
 
-  if (stats.imported + stats.resynced > 0 || stats.errors.length > 0)
+  if (stats.imported + stats.resynced + stats.oversized > 0 || stats.errors.length > 0)
     log.info("claude import", { ...stats, errors: stats.errors.length })
   return stats
 }

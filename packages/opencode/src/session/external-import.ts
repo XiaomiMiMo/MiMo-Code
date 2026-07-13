@@ -20,6 +20,9 @@ export type ImportStats = {
   imported: number
   resynced: number
   skipped: number
+  // Files skipped for exceeding the import size budget (see Jsonl.maxImportFileBytes).
+  // Optional: the opencode source reads a SQLite DB and never reports it.
+  oversized?: number
   errors: string[]
 }
 

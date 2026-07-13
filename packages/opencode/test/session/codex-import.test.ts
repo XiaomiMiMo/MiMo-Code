@@ -87,14 +87,14 @@ function eventMsg(subtype: string, ts?: string) {
 
 // [TP-R1-01] Standard Codex rollout jsonl parsed correctly
 describe("codex-import parse", () => {
-  test("parses standard conversation with user/assistant messages", () => {
+  test("parses standard conversation with user/assistant messages", async () => {
     const text = [
       sessionMeta(),
       userMessage("Hello, help me with this"),
       assistantMessage("Sure, I can help!"),
     ].join("\n")
 
-    const result = parse(text, SID)
+    const result = await parse(text, SID)
     expect(result).toBeDefined()
     expect(result!.cwd).toBe("/Users/test/project")
     expect(result!.title).toBe("Hello, help me with this")
@@ -112,7 +112,7 @@ describe("codex-import parse", () => {
   })
 
   // [TP-R1-02] Tool use: function_call / function_call_output restored correctly
-  test("restores function_call and function_call_output as ToolPart", () => {
+  test("restores function_call and function_call_output as ToolPart", async () => {
     const text = [
       sessionMeta(),
       userMessage("List files"),
@@ -121,7 +121,7 @@ describe("codex-import parse", () => {
       functionCallOutput("call_abc", "file1.txt\nfile2.txt"),
     ].join("\n")
 
-    const result = parse(text, SID)!
+    const result = (await parse(text, SID))!
     expect(result.messages).toHaveLength(2)
 
     const assistant = result.messages[1]
@@ -141,7 +141,7 @@ describe("codex-import parse", () => {
   })
 
   // [TP-R1-02] custom_tool_call (e.g. apply_patch) also restored
-  test("restores custom_tool_call as ToolPart", () => {
+  test("restores custom_tool_call as ToolPart", async () => {
     const text = [
       sessionMeta(),
       userMessage("Apply fix"),
@@ -150,7 +150,7 @@ describe("codex-import parse", () => {
       customToolCallOutput("call_xyz", '{"output":"Success"}'),
     ].join("\n")
 
-    const result = parse(text, SID)!
+    const result = (await parse(text, SID))!
     const assistant = result.messages[1]
     const toolParts = assistant.parts.filter((p) => p.part.type === "tool")
     expect(toolParts).toHaveLength(1)
@@ -161,7 +161,7 @@ describe("codex-import parse", () => {
   })
 
   // [TP-R1-03] Reasoning blocks restored
-  test("restores reasoning blocks as reasoning parts", () => {
+  test("restores reasoning blocks as reasoning parts", async () => {
     const text = [
       sessionMeta(),
       userMessage("Think about this"),
@@ -169,7 +169,7 @@ describe("codex-import parse", () => {
       reasoning("I thought about it carefully"),
     ].join("\n")
 
-    const result = parse(text, SID)!
+    const result = (await parse(text, SID))!
     const assistant = result.messages[1]
     const reasoningParts = assistant.parts.filter((p) => p.part.type === "reasoning")
     expect(reasoningParts).toHaveLength(1)
@@ -179,17 +179,17 @@ describe("codex-import parse", () => {
   })
 
   // [TP-R1-05] Empty file returns undefined
-  test("returns undefined for empty file", () => {
-    expect(parse("", SID)).toBeUndefined()
+  test("returns undefined for empty file", async () => {
+    expect(await parse("", SID)).toBeUndefined()
   })
 
   // [TP-R1-05] All lines parse failure returns undefined
-  test("returns undefined when all lines fail to parse", () => {
-    expect(parse("not json\nalso not json\n", SID)).toBeUndefined()
+  test("returns undefined when all lines fail to parse", async () => {
+    expect(await parse("not json\nalso not json\n", SID)).toBeUndefined()
   })
 
   // [TP-R1-06] Mixed valid/invalid lines: bad lines skipped, good lines parsed
-  test("skips malformed lines and parses valid ones", () => {
+  test("skips malformed lines and parses valid ones", async () => {
     const text = [
       sessionMeta(),
       "GARBAGE LINE",
@@ -198,35 +198,35 @@ describe("codex-import parse", () => {
       assistantMessage("Hi there"),
     ].join("\n")
 
-    const result = parse(text, SID)!
+    const result = (await parse(text, SID))!
     expect(result.messages).toHaveLength(2)
     expect(result.title).toBe("Hello")
   })
 
   // [TP-R1-08] Missing cwd in session_meta
-  test("handles missing cwd gracefully", () => {
+  test("handles missing cwd gracefully", async () => {
     const text = [
       sessionMeta({ cwd: undefined }),
       userMessage("Hello"),
       assistantMessage("Hi"),
     ].join("\n")
 
-    const result = parse(text, SID)!
+    const result = (await parse(text, SID))!
     expect(result.cwd).toBe("")
   })
 
   // [TP-R1-09] Only session_meta with no messages → undefined
-  test("returns undefined when only session_meta and no messages", () => {
+  test("returns undefined when only session_meta and no messages", async () => {
     const text = [
       sessionMeta(),
       eventMsg("task_started"),
       eventMsg("task_complete"),
     ].join("\n")
 
-    expect(parse(text, SID)).toBeUndefined()
+    expect(await parse(text, SID)).toBeUndefined()
   })
 
-  test("event_msg lines are ignored (no messages created from them)", () => {
+  test("event_msg lines are ignored (no messages created from them)", async () => {
     const text = [
       sessionMeta(),
       eventMsg("task_started"),
@@ -237,11 +237,11 @@ describe("codex-import parse", () => {
       eventMsg("task_complete"),
     ].join("\n")
 
-    const result = parse(text, SID)!
+    const result = (await parse(text, SID))!
     expect(result.messages).toHaveLength(2)
   })
 
-  test("developer role messages treated as user", () => {
+  test("developer role messages treated as user", async () => {
     const text = [
       sessionMeta(),
       line("response_item", {
@@ -252,12 +252,12 @@ describe("codex-import parse", () => {
       assistantMessage("Understood"),
     ].join("\n")
 
-    const result = parse(text, SID)!
+    const result = (await parse(text, SID))!
     expect(result.messages).toHaveLength(2)
     expect(result.messages[0].info.role).toBe("user")
   })
 
-  test("timestamps are correctly extracted", () => {
+  test("timestamps are correctly extracted", async () => {
     const t1 = "2026-06-01T09:00:00.000Z"
     const t2 = "2026-06-01T10:00:00.000Z"
     const t3 = "2026-06-01T11:00:00.000Z"
@@ -267,26 +267,26 @@ describe("codex-import parse", () => {
       assistantMessage("Hi", t3),
     ].join("\n")
 
-    const result = parse(text, SID)!
+    const result = (await parse(text, SID))!
     expect(result.timeCreated).toBe(Date.parse(t1))
     expect(result.timeUpdated).toBe(Date.parse(t3))
   })
 
   // [TP-R1-04] Verify multiple files would create separate sessions (parse only)
-  test("sessionUuid is extracted from session_meta", () => {
+  test("sessionUuid is extracted from session_meta", async () => {
     const text = [
       sessionMeta({ id: "custom-uuid-123" }),
       userMessage("Hi"),
     ].join("\n")
 
-    const result = parse(text, SID)!
+    const result = (await parse(text, SID))!
     expect(result.sessionUuid).toBe("custom-uuid-123")
   })
 
   // [TP-R1-03] Reasoning emitted BEFORE the first assistant text must not be dropped.
   // Codex routinely writes a reasoning item ahead of the assistant message; an
   // earlier version dropped it because no assistant message was open yet.
-  test("restores reasoning that precedes the first assistant message", () => {
+  test("restores reasoning that precedes the first assistant message", async () => {
     const text = [
       sessionMeta(),
       userMessage("Think first"),
@@ -294,7 +294,7 @@ describe("codex-import parse", () => {
       assistantMessage("Done thinking"),
     ].join("\n")
 
-    const result = parse(text, SID)!
+    const result = (await parse(text, SID))!
     const assistant = result.messages.find((m) => m.info.role === "assistant")!
     const reasoningParts = assistant.parts.filter((p) => p.part.type === "reasoning")
     expect(reasoningParts).toHaveLength(1)
@@ -307,7 +307,7 @@ describe("codex-import parse", () => {
 
   // [TP-R1-02] A tool call emitted before any assistant text must still be captured,
   // along with its later output (which would otherwise be orphaned).
-  test("restores function_call that precedes the first assistant message", () => {
+  test("restores function_call that precedes the first assistant message", async () => {
     const text = [
       sessionMeta(),
       userMessage("Run it"),
@@ -316,7 +316,7 @@ describe("codex-import parse", () => {
       assistantMessage("Here is the result"),
     ].join("\n")
 
-    const result = parse(text, SID)!
+    const result = (await parse(text, SID))!
     const assistant = result.messages.find((m) => m.info.role === "assistant")!
     const toolParts = assistant.parts.filter((p) => p.part.type === "tool")
     expect(toolParts).toHaveLength(1)

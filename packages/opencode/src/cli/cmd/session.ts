@@ -62,8 +62,11 @@ export const SessionImportClaudeCommand = cmd({
     const stats = await ClaudeImport.run({ force: args.force })
     UI.println(
       `Claude import: scanned ${stats.scanned}, imported ${stats.imported}, resynced ${stats.resynced}, skipped ${stats.skipped}` +
+        (stats.oversized ? `, oversized ${stats.oversized}` : "") +
         (stats.errors.length ? `, errors ${stats.errors.length}` : ""),
     )
+    if (stats.oversized)
+      UI.println(`${stats.oversized} transcript(s) exceeded the import size limit; set MIMOCODE_IMPORT_MAX_FILE_BYTES to raise it (0 disables).`)
     for (const err of stats.errors) UI.error(err)
   },
 })
