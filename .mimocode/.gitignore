@@ -2,6 +2,7 @@ node_modules
 plans
 package.json
 bun.lock
+.gitignore
 package-lock.json
 references/
 .cron-lock
