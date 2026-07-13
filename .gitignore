@@ -36,7 +36,6 @@ tsconfig.tsbuildinfo
 .claude/
 *.pid
 .mimo-worktrees
-.mimocode/
 
 # experiment run artifacts (regenerated per run, not source)
 experiment/*.log
