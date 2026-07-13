@@ -559,7 +559,8 @@ async function getCustomThemes() {
       const name = path.basename(item, ".json")
       const text = await Filesystem.readText(item).catch(() => "")
       if (!text) continue
-      const data = JSON.parse(text) as ThemeJson
+      let data: ThemeJson
+      try { data = JSON.parse(text) } catch { continue }
       if (!data.$schema || data.$schema === "https://opencode.ai/theme.json") {
         data.$schema = THEME_SCHEMA_URL
         const edits = modify(text, ["$schema"], THEME_SCHEMA_URL, {
