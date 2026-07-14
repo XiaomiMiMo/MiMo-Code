@@ -1197,7 +1197,6 @@ function App(props: { onSnapshot?: () => Promise<string[]> }) {
           return
         }
 
-        promptRef.current?.paste()
         evt.preventDefault()
         evt.stopPropagation()
       }}
