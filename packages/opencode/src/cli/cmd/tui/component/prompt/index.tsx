@@ -119,6 +119,26 @@ export function Prompt(props: PromptProps) {
   const dialog = useDialog()
   const toast = useToast()
   const status = createMemo(() => sync.data.session_status?.[props.sessionID ?? ""] ?? { type: "idle" })
+
+  // Clear stale retry status when the user switches models.  The server only
+  // updates session_status on prompt completion, so a leftover rate-limit
+  // message from a previous model persists until the next prompt fires.
+  createEffect(
+    on(
+      () => {
+        const m = local.model.current()
+        return m ? `${m.providerID}/${m.modelID}` : undefined
+      },
+      (_prev, curr) => {
+        if (!curr || !props.sessionID) return
+        const s = sync.data.session_status?.[props.sessionID]
+        if (s && s.type === "retry") {
+          sync.set("session_status", props.sessionID, { type: "idle" })
+        }
+      },
+      { defer: true },
+    ),
+  )
   const history = usePromptHistory()
   const stash = usePromptStash()
   const command = useCommandDialog()

@@ -295,6 +295,10 @@ export function Session() {
   const dialog = useDialog()
   const renderer = useRenderer()
 
+  // Track whether the Go upsell dialog is currently showing, so we can
+  // auto-dismiss it when the user switches to a model that isn't rate-limited.
+  let goUpsellShowing = false
+
   event.on("session.status", (evt) => {
     if (evt.properties.sessionID !== route.sessionID) return
     if (evt.properties.status.type !== "retry") return
@@ -306,11 +310,32 @@ export function Session() {
 
     if (kv.get(GO_UPSELL_DONT_SHOW)) return
 
+    goUpsellShowing = true
     void DialogGoUpsell.show(dialog).then((dontShowAgain) => {
+      goUpsellShowing = false
       if (dontShowAgain) kv.set(GO_UPSELL_DONT_SHOW, true)
       kv.set(GO_UPSELL_LAST_SEEN_AT, Date.now())
     })
   })
+
+  // Auto-dismiss the Go upsell dialog when the user switches models.
+  // The dialog is tied to the model that hit the free limit; switching to a
+  // different model (or provider) means the user is taking action to resolve
+  // the issue, so the nag dialog should disappear.
+  createEffect(
+    on(
+      () => {
+        const m = local.model.current()
+        return m ? `${m.providerID}/${m.modelID}` : undefined
+      },
+      () => {
+        if (goUpsellShowing) {
+          goUpsellShowing = false
+          dialog.clear()
+        }
+      },
+    ),
+  )
 
   // Allow exit when in child session (prompt is hidden)
   const exit = useExit()
