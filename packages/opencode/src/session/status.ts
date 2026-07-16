@@ -15,6 +15,8 @@ export const Info = z
       attempt: z.number(),
       message: z.string(),
       next: z.number(),
+      providerID: z.string().optional(),
+      modelID: z.string().optional(),
     }),
     z.object({
       type: z.literal("busy"),

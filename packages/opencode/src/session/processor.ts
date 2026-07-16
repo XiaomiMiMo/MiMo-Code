@@ -813,6 +813,8 @@ export const layer: Layer.Layer<
                         attempt: info.attempt,
                         message: info.message,
                         next: info.next,
+                        providerID: ctx.model.providerID,
+                        modelID: ctx.model.id,
                       })
                     : Effect.void,
               }),
