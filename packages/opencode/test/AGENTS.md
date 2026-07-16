@@ -19,7 +19,7 @@ test("example", async () => {
 ### Options
 
 - `git?: boolean` - Initialize a git repo with a root commit
-- `config?: Partial<Config.Info>` - Write an `opencode.json` config file
+- `config?: Partial<Config.Info>` - Write an `mimocode.json` config file
 - `init?: (dir: string) => Promise<T>` - Custom setup function, returns value accessible as `tmp.extra`
 - `dispose?: (dir: string) => Promise<T>` - Custom cleanup function
 
@@ -76,7 +76,7 @@ await using tmp = await tmpdir({
 
 ### Notes
 
-- Directories are created in the system temp folder with prefix `opencode-test-`
+- Directories are created in the system temp folder with prefix `mimocode-test-`
 - Use `await using` for automatic cleanup when the variable goes out of scope
 - Paths are sanitized to strip null bytes (defensive fix for CI environments)
 
