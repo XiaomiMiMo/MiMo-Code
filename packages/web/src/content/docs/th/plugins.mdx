@@ -19,7 +19,7 @@ description: เขียนปลั๊กอินของคุณเอง�
 
 วางไฟล์ JavaScript หรือ TypeScript ในไดเร็กทอรีปลั๊กอิน
 
-- `.opencode/plugins/` - ​​ปลั๊กอินระดับโครงการ
+- `.mimocode/plugins/` - ​​ปลั๊กอินระดับโครงการ
 - `~/.config/opencode/plugins/` - ​​ปลั๊กอินทั่วโลก
 
 ไฟล์ในไดเร็กทอรีเหล่านี้จะถูกโหลดโดยอัตโนมัติเมื่อเริ่มต้นระบบ
@@ -30,9 +30,9 @@ description: เขียนปลั๊กอินของคุณเอง�
 
 ระบุแพ็คเกจ npm ในไฟล์ปรับแต่งของคุณ
 
-```json title="opencode.json"
+```json title="mimocode.jsonc"
 {
-  "$schema": "https://opencode.ai/config.json",
+  "$schema": "https://mimocode.ai/config.json",
   "plugin": ["opencode-helicone-session", "opencode-wakatime", "@my-org/custom-plugin"]
 }
 ```
@@ -55,10 +55,10 @@ description: เขียนปลั๊กอินของคุณเอง�
 
 ปลั๊กอินถูกโหลดจากทุกแหล่งและ hooks ทั้งหมดทำงานตามลำดับ ลำดับการโหลดคือ:
 
-1. การกำหนดค่าส่วนกลาง (`~/.config/opencode/opencode.json`)
-2. การกำหนดค่าโครงการ (`opencode.json`)
+1. การกำหนดค่าส่วนกลาง (`~/.config/opencode/mimocode.jsonc`)
+2. การกำหนดค่าโครงการ (`mimocode.jsonc`)
 3. ไดเร็กทอรีปลั๊กอินสากล (`~/.config/opencode/plugins/`)
-4. ไดเรกทอรีปลั๊กอินโครงการ (`.opencode/plugins/`)
+4. ไดเรกทอรีปลั๊กอินโครงการ (`.mimocode/plugins/`)
 
 แพ็กเกจ npm ที่ซ้ำกันซึ่งมีชื่อและเวอร์ชันเดียวกันจะถูกโหลดหนึ่งครั้ง อย่างไรก็ตาม ทั้งปลั๊กอินในเครื่องและปลั๊กอิน npm ที่มีชื่อคล้ายกันจะโหลดแยกกัน
 
@@ -75,7 +75,7 @@ description: เขียนปลั๊กอินของคุณเอง�
 
 ปลั๊กอินท้องถิ่นและเครื่องมือแบบกำหนดเองสามารถใช้แพ็คเกจ npm ภายนอกได้ เพิ่ม `package.json` ลงในไดเร็กทอรี config ของคุณด้วยการอ้างอิงที่คุณต้องการ
 
-```json title=".opencode/package.json"
+```json title=".mimocode/package.json"
 {
   "dependencies": {
     "shescape": "^2.1.0"
@@ -85,7 +85,7 @@ description: เขียนปลั๊กอินของคุณเอง�
 
 OpenCode รัน `bun install` เมื่อเริ่มต้นเพื่อติดตั้งสิ่งเหล่านี้ ปลั๊กอินและเครื่องมือของคุณสามารถนำเข้าได้
 
-```ts title=".opencode/plugins/my-plugin.ts"
+```ts title=".mimocode/plugins/my-plugin.ts"
 import { escape } from "shescape"
 
 export const MyPlugin = async (ctx) => {
@@ -103,7 +103,7 @@ export const MyPlugin = async (ctx) => {
 
 ### โครงสร้างพื้นฐาน
 
-```js title=".opencode/plugins/example.js"
+```js title=".mimocode/plugins/example.js"
 export const MyPlugin = async ({ project, client, $, directory, worktree }) => {
   console.log("Plugin initialized!")
 
@@ -218,7 +218,7 @@ export const MyPlugin: Plugin = async ({ project, client, $, directory, worktree
 
 ส่งการแจ้งเตือนเมื่อมีเหตุการณ์บางอย่างเกิดขึ้น:
 
-```js title=".opencode/plugins/notification.js"
+```js title=".mimocode/plugins/notification.js"
 export const NotificationPlugin = async ({ project, client, $, directory, worktree }) => {
   return {
     event: async ({ event }) => {
@@ -243,7 +243,7 @@ export const NotificationPlugin = async ({ project, client, $, directory, worktr
 
 ป้องกันไม่ให้ opencode อ่านไฟล์ `.env`:
 
-```javascript title=".opencode/plugins/env-protection.js"
+```javascript title=".mimocode/plugins/env-protection.js"
 export const EnvProtection = async ({ project, client, $, directory, worktree }) => {
   return {
     "tool.execute.before": async (input, output) => {
@@ -261,7 +261,7 @@ export const EnvProtection = async ({ project, client, $, directory, worktree })
 
 แทรกตัวแปรสภาพแวดล้อมลงในการดำเนินการ shell ทั้งหมด (เครื่องมือ AI และ terminal ผู้ใช้):
 
-```javascript title=".opencode/plugins/inject-env.js"
+```javascript title=".mimocode/plugins/inject-env.js"
 export const InjectEnvPlugin = async () => {
   return {
     "shell.env": async (input, output) => {
@@ -278,7 +278,7 @@ export const InjectEnvPlugin = async () => {
 
 ปลั๊กอินยังสามารถเพิ่มเครื่องมือที่กำหนดเองให้กับ opencode:
 
-```ts title=".opencode/plugins/custom-tools.ts"
+```ts title=".mimocode/plugins/custom-tools.ts"
 import { type Plugin, tool } from "@mimo-ai/plugin"
 
 export const CustomToolsPlugin: Plugin = async (ctx) => {
@@ -317,7 +317,7 @@ export const CustomToolsPlugin: Plugin = async (ctx) => {
 
 ใช้ `client.app.log()` แทน `console.log` สำหรับการบันทึกแบบมีโครงสร้าง:
 
-```ts title=".opencode/plugins/my-plugin.ts"
+```ts title=".mimocode/plugins/my-plugin.ts"
 export const MyPlugin = async ({ client }) => {
   await client.app.log({
     body: {
@@ -330,7 +330,7 @@ export const MyPlugin = async ({ client }) => {
 }
 ```
 
-ระดับ: `debug`, `info`, `warn`, `error` ดู[SDKเอกสารประกอบ](https://opencode.ai/docs/sdk)สำหรับรายละเอียด
+ระดับ: `debug`, `info`, `warn`, `error` ดู[SDKเอกสารประกอบ](https://mimocode.ai/docs/sdk)สำหรับรายละเอียด
 
 ---
 
@@ -338,7 +338,7 @@ export const MyPlugin = async ({ client }) => {
 
 ปรับแต่งบริบทที่รวมไว้เมื่อมีการกระชับเซสชัน:
 
-```ts title=".opencode/plugins/compaction.ts"
+```ts title=".mimocode/plugins/compaction.ts"
 import type { Plugin } from "@mimo-ai/plugin"
 
 export const CompactionPlugin: Plugin = async (ctx) => {
@@ -362,7 +362,7 @@ Include any state that should persist across compaction:
 
 คุณยังสามารถแทนที่พรอมต์การกระชับข้อมูลทั้งหมดได้โดยตั้งค่า `output.prompt`:
 
-```ts title=".opencode/plugins/custom-compaction.ts"
+```ts title=".mimocode/plugins/custom-compaction.ts"
 import type { Plugin } from "@mimo-ai/plugin"
 
 export const CustomCompactionPlugin: Plugin = async (ctx) => {

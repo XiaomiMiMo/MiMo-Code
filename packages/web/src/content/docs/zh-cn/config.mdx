@@ -11,9 +11,9 @@ description: 使用 OpenCode JSON 配置。
 
 OpenCode 支持 **JSON** 和 **JSONC**（带注释的 JSON）格式。
 
-```jsonc title="opencode.jsonc"
+```jsonc title="mimocode.jsoncc"
 {
-  "$schema": "https://opencode.ai/config.json",
+  "$schema": "https://mimocode.ai/config.json",
   "model": "anthropic/claude-sonnet-4-5",
   "autoupdate": true,
   "server": {
@@ -43,11 +43,11 @@ OpenCode 支持 **JSON** 和 **JSONC**（带注释的 JSON）格式。
 配置源按以下顺序加载（后面的源覆盖前面的源）：
 
 1. **远程配置**（来自 `.well-known/opencode`）- 组织默认值
-2. **全局配置**（`~/.config/opencode/opencode.json`）- 用户偏好
-3. **自定义配置**（`OPENCODE_CONFIG` 环境变量）- 自定义覆盖
-4. **项目配置**（项目中的 `opencode.json`）- 项目特定设置
+2. **全局配置**（`~/.config/opencode/mimocode.jsonc`）- 用户偏好
+3. **自定义配置**（`MIMOCODE_CONFIG` 环境变量）- 自定义覆盖
+4. **项目配置**（项目中的 `mimocode.jsonc`）- 项目特定设置
 5. **`.opencode` 目录** - 代理、命令、插件
-6. **内联配置**（`OPENCODE_CONFIG_CONTENT` 环境变量）- 运行时覆盖
+6. **内联配置**（`MIMOCODE_CONFIG_CONTENT` 环境变量）- 运行时覆盖
 
 这意味着项目配置可以覆盖全局默认值，全局配置可以覆盖远程组织默认值。
 
@@ -79,7 +79,7 @@ OpenCode 支持 **JSON** 和 **JSONC**（带注释的 JSON）格式。
 
 您可以在本地配置中启用特定服务器：
 
-```json title="opencode.json"
+```json title="mimocode.jsonc"
 {
   "mcp": {
     "jira": {
@@ -95,7 +95,7 @@ OpenCode 支持 **JSON** 和 **JSONC**（带注释的 JSON）格式。
 
 ### 全局
 
-将全局 OpenCode 配置放在 `~/.config/opencode/opencode.json` 中。使用全局配置来设置用户级别的偏好，例如主题、提供商或快捷键。
+将全局 OpenCode 配置放在 `~/.config/opencode/mimocode.jsonc` 中。使用全局配置来设置用户级别的偏好，例如主题、提供商或快捷键。
 
 全局配置覆盖远程组织默认值。
 
@@ -103,7 +103,7 @@ OpenCode 支持 **JSON** 和 **JSONC**（带注释的 JSON）格式。
 
 ### 项目级
 
-在项目根目录中添加 `opencode.json`。项目配置在标准配置文件中具有最高优先级——它会覆盖全局配置和远程配置。
+在项目根目录中添加 `mimocode.jsonc`。项目配置在标准配置文件中具有最高优先级——它会覆盖全局配置和远程配置。
 
 :::tip
 将项目特定配置放在项目的根目录中。
@@ -117,10 +117,10 @@ OpenCode 支持 **JSON** 和 **JSONC**（带注释的 JSON）格式。
 
 ### 自定义路径
 
-使用 `OPENCODE_CONFIG` 环境变量指定自定义配置文件路径。
+使用 `MIMOCODE_CONFIG` 环境变量指定自定义配置文件路径。
 
 ```bash
-export OPENCODE_CONFIG=/path/to/my/custom-config.json
+export MIMOCODE_CONFIG=/path/to/my/custom-config.json
 opencode run "Hello world"
 ```
 
@@ -130,10 +130,10 @@ opencode run "Hello world"
 
 ### 自定义目录
 
-使用 `OPENCODE_CONFIG_DIR` 环境变量指定自定义配置目录。该目录会像标准 `.opencode` 目录一样被搜索代理、命令、模式和插件，并且应遵循相同的结构。
+使用 `MIMOCODE_CONFIG_DIR` 环境变量指定自定义配置目录。该目录会像标准 `.opencode` 目录一样被搜索代理、命令、模式和插件，并且应遵循相同的结构。
 
 ```bash
-export OPENCODE_CONFIG_DIR=/path/to/my/config-directory
+export MIMOCODE_CONFIG_DIR=/path/to/my/config-directory
 opencode run "Hello world"
 ```
 
@@ -143,7 +143,7 @@ opencode run "Hello world"
 
 ## Schema
 
-配置文件具有在 [**`opencode.ai/config.json`**](https://opencode.ai/config.json) 中定义的 Schema。
+配置文件具有在 [**`mimocode.ai/config.json`**](https://mimocode.ai/config.json) 中定义的 Schema。
 
 您的编辑器应该能够基于该 Schema 进行验证和自动补全。
 
@@ -153,9 +153,9 @@ opencode run "Hello world"
 
 您可以通过 `tui` 选项配置 TUI 相关设置。
 
-```json title="opencode.json"
+```json title="mimocode.jsonc"
 {
-  "$schema": "https://opencode.ai/config.json",
+  "$schema": "https://mimocode.ai/config.json",
   "tui": {
     "scroll_speed": 3,
     "scroll_acceleration": {
@@ -180,9 +180,9 @@ opencode run "Hello world"
 
 您可以通过 `server` 选项为 `opencode serve` 和 `opencode web` 命令配置服务器设置。
 
-```json title="opencode.json"
+```json title="mimocode.jsonc"
 {
-  "$schema": "https://opencode.ai/config.json",
+  "$schema": "https://mimocode.ai/config.json",
   "server": {
     "port": 4096,
     "hostname": "0.0.0.0",
@@ -209,9 +209,9 @@ opencode run "Hello world"
 
 您可以通过 `tools` 选项管理 LLM 可以使用的工具。
 
-```json title="opencode.json"
+```json title="mimocode.jsonc"
 {
-  "$schema": "https://opencode.ai/config.json",
+  "$schema": "https://mimocode.ai/config.json",
   "tools": {
     "write": false,
     "bash": false
@@ -227,9 +227,9 @@ opencode run "Hello world"
 
 您可以通过 `provider`、`model` 和 `small_model` 选项在 OpenCode 配置中设置要使用的提供商和模型。
 
-```json title="opencode.json"
+```json title="mimocode.jsonc"
 {
-  "$schema": "https://opencode.ai/config.json",
+  "$schema": "https://mimocode.ai/config.json",
   "provider": {},
   "model": "anthropic/claude-sonnet-4-5",
   "small_model": "anthropic/claude-haiku-4-5"
@@ -240,9 +240,9 @@ opencode run "Hello world"
 
 提供商选项可以包括 `timeout` 和 `setCacheKey`：
 
-```json title="opencode.json"
+```json title="mimocode.jsonc"
 {
-  "$schema": "https://opencode.ai/config.json",
+  "$schema": "https://mimocode.ai/config.json",
   "provider": {
     "anthropic": {
       "options": {
@@ -269,9 +269,9 @@ opencode run "Hello world"
 
 Amazon Bedrock 支持 AWS 特定配置：
 
-```json title="opencode.json"
+```json title="mimocode.jsonc"
 {
-  "$schema": "https://opencode.ai/config.json",
+  "$schema": "https://mimocode.ai/config.json",
   "provider": {
     "amazon-bedrock": {
       "options": {
@@ -300,9 +300,9 @@ Bearer Token（`AWS_BEARER_TOKEN_BEDROCK` 或 `/connect`）优先于基于配置
 
 您可以通过 OpenCode 配置中的 `theme` 选项设置要使用的主题。
 
-```json title="opencode.json"
+```json title="mimocode.jsonc"
 {
-  "$schema": "https://opencode.ai/config.json",
+  "$schema": "https://mimocode.ai/config.json",
   "theme": ""
 }
 ```
@@ -315,9 +315,9 @@ Bearer Token（`AWS_BEARER_TOKEN_BEDROCK` 或 `/connect`）优先于基于配置
 
 您可以通过 `agent` 选项为特定任务配置专用代理。
 
-```jsonc title="opencode.jsonc"
+```jsonc title="mimocode.jsoncc"
 {
-  "$schema": "https://opencode.ai/config.json",
+  "$schema": "https://mimocode.ai/config.json",
   "agent": {
     "code-reviewer": {
       "description": "Reviews code for best practices and potential issues",
@@ -333,7 +333,7 @@ Bearer Token（`AWS_BEARER_TOKEN_BEDROCK` 或 `/connect`）优先于基于配置
 }
 ```
 
-您还可以使用 `~/.config/opencode/agents/` 或 `.opencode/agents/` 中的 Markdown 文件定义代理。[在此了解更多](/docs/agents)。
+您还可以使用 `~/.config/opencode/agents/` 或 `.mimocode/agents/` 中的 Markdown 文件定义代理。[在此了解更多](/docs/agents)。
 
 ---
 
@@ -341,9 +341,9 @@ Bearer Token（`AWS_BEARER_TOKEN_BEDROCK` 或 `/connect`）优先于基于配置
 
 您可以使用 `default_agent` 选项设置默认代理。当未明确指定代理时，将使用该默认代理。
 
-```json title="opencode.json"
+```json title="mimocode.jsonc"
 {
-  "$schema": "https://opencode.ai/config.json",
+  "$schema": "https://mimocode.ai/config.json",
   "default_agent": "plan"
 }
 ```
@@ -358,9 +358,9 @@ Bearer Token（`AWS_BEARER_TOKEN_BEDROCK` 或 `/connect`）优先于基于配置
 
 您可以通过 `share` 选项配置[分享](/docs/share)功能。
 
-```json title="opencode.json"
+```json title="mimocode.jsonc"
 {
-  "$schema": "https://opencode.ai/config.json",
+  "$schema": "https://mimocode.ai/config.json",
   "share": "manual"
 }
 ```
@@ -379,9 +379,9 @@ Bearer Token（`AWS_BEARER_TOKEN_BEDROCK` 或 `/connect`）优先于基于配置
 
 您可以通过 `command` 选项为重复任务配置自定义命令。
 
-```jsonc title="opencode.jsonc"
+```jsonc title="mimocode.jsoncc"
 {
-  "$schema": "https://opencode.ai/config.json",
+  "$schema": "https://mimocode.ai/config.json",
   "command": {
     "test": {
       "template": "Run the full test suite with coverage report and show any failures.\nFocus on the failing tests and suggest fixes.",
@@ -397,7 +397,7 @@ Bearer Token（`AWS_BEARER_TOKEN_BEDROCK` 或 `/connect`）优先于基于配置
 }
 ```
 
-您还可以使用 `~/.config/opencode/commands/` 或 `.opencode/commands/` 中的 Markdown 文件定义命令。[在此了解更多](/docs/commands)。
+您还可以使用 `~/.config/opencode/commands/` 或 `.mimocode/commands/` 中的 Markdown 文件定义命令。[在此了解更多](/docs/commands)。
 
 ---
 
@@ -405,9 +405,9 @@ Bearer Token（`AWS_BEARER_TOKEN_BEDROCK` 或 `/connect`）优先于基于配置
 
 您可以通过 `keybinds` 选项自定义快捷键。
 
-```json title="opencode.json"
+```json title="mimocode.jsonc"
 {
-  "$schema": "https://opencode.ai/config.json",
+  "$schema": "https://mimocode.ai/config.json",
   "keybinds": {}
 }
 ```
@@ -420,9 +420,9 @@ Bearer Token（`AWS_BEARER_TOKEN_BEDROCK` 或 `/connect`）优先于基于配置
 
 OpenCode 启动时会自动下载新版本。您可以使用 `autoupdate` 选项禁用此功能。
 
-```json title="opencode.json"
+```json title="mimocode.jsonc"
 {
-  "$schema": "https://opencode.ai/config.json",
+  "$schema": "https://mimocode.ai/config.json",
   "autoupdate": false
 }
 ```
@@ -436,9 +436,9 @@ OpenCode 启动时会自动下载新版本。您可以使用 `autoupdate` 选项
 
 您可以通过 `formatter` 选项配置代码格式化程序。
 
-```json title="opencode.json"
+```json title="mimocode.jsonc"
 {
-  "$schema": "https://opencode.ai/config.json",
+  "$schema": "https://mimocode.ai/config.json",
   "formatter": {
     "prettier": {
       "disabled": true
@@ -464,9 +464,9 @@ OpenCode 启动时会自动下载新版本。您可以使用 `autoupdate` 选项
 
 例如，要让 `edit` 和 `bash` 工具需要用户确认：
 
-```json title="opencode.json"
+```json title="mimocode.jsonc"
 {
-  "$schema": "https://opencode.ai/config.json",
+  "$schema": "https://mimocode.ai/config.json",
   "permission": {
     "edit": "ask",
     "bash": "ask"
@@ -482,9 +482,9 @@ OpenCode 启动时会自动下载新版本。您可以使用 `autoupdate` 选项
 
 您可以通过 `compaction` 选项控制上下文压缩行为。
 
-```json title="opencode.json"
+```json title="mimocode.jsonc"
 {
-  "$schema": "https://opencode.ai/config.json",
+  "$schema": "https://mimocode.ai/config.json",
   "compaction": {
     "auto": true,
     "prune": true,
@@ -503,9 +503,9 @@ OpenCode 启动时会自动下载新版本。您可以使用 `autoupdate` 选项
 
 您可以通过 `watcher` 选项配置文件监视器的忽略模式。
 
-```json title="opencode.json"
+```json title="mimocode.jsonc"
 {
-  "$schema": "https://opencode.ai/config.json",
+  "$schema": "https://mimocode.ai/config.json",
   "watcher": {
     "ignore": ["node_modules/**", "dist/**", ".git/**"]
   }
@@ -520,9 +520,9 @@ OpenCode 启动时会自动下载新版本。您可以使用 `autoupdate` 选项
 
 您可以通过 `mcp` 选项配置要使用的 MCP 服务器。
 
-```json title="opencode.json"
+```json title="mimocode.jsonc"
 {
-  "$schema": "https://opencode.ai/config.json",
+  "$schema": "https://mimocode.ai/config.json",
   "mcp": {}
 }
 ```
@@ -535,11 +535,11 @@ OpenCode 启动时会自动下载新版本。您可以使用 `autoupdate` 选项
 
 [插件](/docs/plugins)通过自定义工具、钩子和集成来扩展 OpenCode。
 
-将插件文件放置在 `.opencode/plugins/` 或 `~/.config/opencode/plugins/` 中。您还可以通过 `plugin` 选项从 npm 加载插件。
+将插件文件放置在 `.mimocode/plugins/` 或 `~/.config/opencode/plugins/` 中。您还可以通过 `plugin` 选项从 npm 加载插件。
 
-```json title="opencode.json"
+```json title="mimocode.jsonc"
 {
-  "$schema": "https://opencode.ai/config.json",
+  "$schema": "https://mimocode.ai/config.json",
   "plugin": ["opencode-helicone-session", "@my-org/custom-plugin"]
 }
 ```
@@ -552,9 +552,9 @@ OpenCode 启动时会自动下载新版本。您可以使用 `autoupdate` 选项
 
 您可以通过 `instructions` 选项为所使用的模型配置指令。
 
-```json title="opencode.json"
+```json title="mimocode.jsonc"
 {
-  "$schema": "https://opencode.ai/config.json",
+  "$schema": "https://mimocode.ai/config.json",
   "instructions": ["CONTRIBUTING.md", "docs/guidelines.md", ".cursor/rules/*.md"]
 }
 ```
@@ -567,9 +567,9 @@ OpenCode 启动时会自动下载新版本。您可以使用 `autoupdate` 选项
 
 您可以通过 `disabled_providers` 选项禁用自动加载的提供商。当您希望阻止某些提供商被加载（即使其凭据可用）时，此选项非常有用。
 
-```json title="opencode.json"
+```json title="mimocode.jsonc"
 {
-  "$schema": "https://opencode.ai/config.json",
+  "$schema": "https://mimocode.ai/config.json",
   "disabled_providers": ["openai", "gemini"]
 }
 ```
@@ -590,9 +590,9 @@ OpenCode 启动时会自动下载新版本。您可以使用 `autoupdate` 选项
 
 您可以通过 `enabled_providers` 选项指定允许使用的提供商白名单。设置后，仅启用指定的提供商，所有其他提供商将被忽略。
 
-```json title="opencode.json"
+```json title="mimocode.jsonc"
 {
-  "$schema": "https://opencode.ai/config.json",
+  "$schema": "https://mimocode.ai/config.json",
   "enabled_providers": ["anthropic", "openai"]
 }
 ```
@@ -611,9 +611,9 @@ OpenCode 启动时会自动下载新版本。您可以使用 `autoupdate` 选项
 
 `experimental` 键包含正在积极开发中的选项。
 
-```json title="opencode.json"
+```json title="mimocode.jsonc"
 {
-  "$schema": "https://opencode.ai/config.json",
+  "$schema": "https://mimocode.ai/config.json",
   "experimental": {}
 }
 ```
@@ -634,10 +634,10 @@ OpenCode 启动时会自动下载新版本。您可以使用 `autoupdate` 选项
 
 使用 `{env:VARIABLE_NAME}` 来替换环境变量：
 
-```json title="opencode.json"
+```json title="mimocode.jsonc"
 {
-  "$schema": "https://opencode.ai/config.json",
-  "model": "{env:OPENCODE_MODEL}",
+  "$schema": "https://mimocode.ai/config.json",
+  "model": "{env:MIMOCODE_MODEL}",
   "provider": {
     "anthropic": {
       "models": {},
@@ -657,9 +657,9 @@ OpenCode 启动时会自动下载新版本。您可以使用 `autoupdate` 选项
 
 使用 `{file:path/to/file}` 来替换文件内容：
 
-```json title="opencode.json"
+```json title="mimocode.jsonc"
 {
-  "$schema": "https://opencode.ai/config.json",
+  "$schema": "https://mimocode.ai/config.json",
   "instructions": ["./custom-instructions.md"],
   "provider": {
     "openai": {

@@ -380,6 +380,9 @@ const InfoSchema = Schema.Struct({
   ).annotate({ description: "Voice input provider and model configuration." }),
   experimental: Schema.optional(
     Schema.Struct({
+      skip_claude_md: Schema.optional(Schema.Boolean).annotate({
+        description: "Skip reading ~/.claude/CLAUDE.md files.",
+      }),
       disable_paste_summary: Schema.optional(Schema.Boolean),
       batch_tool: Schema.optional(Schema.Boolean).annotate({ description: "Enable the batch tool" }),
       openTelemetry: Schema.optional(Schema.Boolean).annotate({

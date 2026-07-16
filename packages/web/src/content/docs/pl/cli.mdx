@@ -360,7 +360,7 @@ Uruchom serwer OpenCode (bez interfejsu) w celu uzyskania dostępu do API. Pełn
 opencode serve
 ```
 
-Uruchamia to serwer HTTP, który zapewnia dostęp do API OpenCode bez interfejsu TUI. Ustaw `OPENCODE_SERVER_PASSWORD`, aby włączyć podstawowe uwierzytelnianie HTTP (domyślna nazwa użytkownika to `opencode`).
+Uruchamia to serwer HTTP, który zapewnia dostęp do API OpenCode bez interfejsu TUI. Ustaw `MIMOCODE_SERVER_PASSWORD`, aby włączyć podstawowe uwierzytelnianie HTTP (domyślna nazwa użytkownika to `opencode`).
 
 #### Flagi
 
@@ -456,7 +456,7 @@ Uruchom serwer OpenCode z interfejsem internetowym.
 opencode web
 ```
 
-Uruchamia to serwer HTTP i udostępnia OpenCode przez interfejs przeglądarkowy. Ustaw `OPENCODE_SERVER_PASSWORD`, aby włączyć podstawowe uwierzytelnianie HTTP (domyślna nazwa użytkownika to `opencode`).
+Uruchamia to serwer HTTP i udostępnia OpenCode przez interfejs przeglądarkowy. Ustaw `MIMOCODE_SERVER_PASSWORD`, aby włączyć podstawowe uwierzytelnianie HTTP (domyślna nazwa użytkownika to `opencode`).
 
 #### Flagi
 
@@ -555,30 +555,30 @@ OpenCode można skonfigurować za pomocą zmiennych środowiskowych.
 
 | Zmienna                               | Typ     | Opis                                                       |
 | ------------------------------------- | ------- | ---------------------------------------------------------- |
-| `OPENCODE_AUTO_SHARE`                 | boolean | Automatycznie udostępniaj sesje                            |
-| `OPENCODE_GIT_BASH_PATH`              | string  | Ścieżka do pliku wykonywalnego Git Bash w systemie Windows |
-| `OPENCODE_CONFIG`                     | string  | Ścieżka do pliku konfiguracyjnego                          |
-| `OPENCODE_TUI_CONFIG`                 | string  | Ścieżka do pliku konfiguracyjnego TUI                      |
-| `OPENCODE_CONFIG_DIR`                 | string  | Ścieżka do katalogu konfiguracyjnego                       |
-| `OPENCODE_CONFIG_CONTENT`             | string  | Treść konfiguracji JSON (inline)                           |
-| `OPENCODE_DISABLE_AUTOUPDATE`         | boolean | Wyłącz automatyczne sprawdzanie aktualizacji               |
-| `OPENCODE_DISABLE_PRUNE`              | boolean | Wyłącz czyszczenie starych wyników (pruning)               |
-| `OPENCODE_DISABLE_TERMINAL_TITLE`     | boolean | Wyłącz automatyczne ustawianie tytułu terminala            |
-| `OPENCODE_PERMISSION`                 | string  | Konfiguracja uprawnień w JSON (inline)                     |
-| `OPENCODE_DISABLE_DEFAULT_PLUGINS`    | boolean | Wyłącz domyślne wtyczki                                    |
-| `OPENCODE_DISABLE_LSP_DOWNLOAD`       | boolean | Wyłącz automatyczne pobieranie serwerów LSP                |
-| `OPENCODE_ENABLE_EXPERIMENTAL_MODELS` | boolean | Włącz modele eksperymentalne                               |
-| `OPENCODE_DISABLE_AUTOCOMPACT`        | boolean | Wyłącz automatyczne kompaktowanie kontekstu                |
-| `OPENCODE_DISABLE_CLAUDE_CODE`        | boolean | Wyłącz integrację z `.claude` (prompt + skills)            |
-| `OPENCODE_DISABLE_CLAUDE_CODE_PROMPT` | boolean | Wyłącz czytanie `~/.claude/CLAUDE.md`                      |
-| `OPENCODE_DISABLE_CLAUDE_CODE_SKILLS` | boolean | Wyłącz ładowanie `.claude/skills`                          |
-| `OPENCODE_DISABLE_MODELS_FETCH`       | boolean | Wyłącz pobieranie modeli ze źródeł zewnętrznych            |
-| `OPENCODE_FAKE_VCS`                   | string  | Fałszywy dostawca VCS do celów testowych                   |
-| `OPENCODE_CLIENT`                     | string  | Identyfikator klienta (domyślnie `cli`)                    |
-| `OPENCODE_ENABLE_EXA`                 | boolean | Włącz narzędzie wyszukiwania internetowego Exa             |
-| `OPENCODE_SERVER_PASSWORD`            | string  | Włącz uwierzytelnianie podstawowe dla `serve`/`web`        |
-| `OPENCODE_SERVER_USERNAME`            | string  | Nazwa użytkownika do autoryzacji (domyślnie `opencode`)    |
-| `OPENCODE_MODELS_URL`                 | string  | Niestandardowy adres URL do pobierania konfiguracji modeli |
+| `MIMOCODE_AUTO_SHARE`                 | boolean | Automatycznie udostępniaj sesje                            |
+| `MIMOCODE_GIT_BASH_PATH`              | string  | Ścieżka do pliku wykonywalnego Git Bash w systemie Windows |
+| `MIMOCODE_CONFIG`                     | string  | Ścieżka do pliku konfiguracyjnego                          |
+| `MIMOCODE_TUI_CONFIG`                 | string  | Ścieżka do pliku konfiguracyjnego TUI                      |
+| `MIMOCODE_CONFIG_DIR`                 | string  | Ścieżka do katalogu konfiguracyjnego                       |
+| `MIMOCODE_CONFIG_CONTENT`             | string  | Treść konfiguracji JSON (inline)                           |
+| `MIMOCODE_DISABLE_AUTOUPDATE`         | boolean | Wyłącz automatyczne sprawdzanie aktualizacji               |
+| `MIMOCODE_DISABLE_PRUNE`              | boolean | Wyłącz czyszczenie starych wyników (pruning)               |
+| `MIMOCODE_DISABLE_TERMINAL_TITLE`     | boolean | Wyłącz automatyczne ustawianie tytułu terminala            |
+| `MIMOCODE_PERMISSION`                 | string  | Konfiguracja uprawnień w JSON (inline)                     |
+| `MIMOCODE_DISABLE_DEFAULT_PLUGINS`    | boolean | Wyłącz domyślne wtyczki                                    |
+| `MIMOCODE_DISABLE_LSP_DOWNLOAD`       | boolean | Wyłącz automatyczne pobieranie serwerów LSP                |
+| `MIMOCODE_ENABLE_EXPERIMENTAL_MODELS` | boolean | Włącz modele eksperymentalne                               |
+| `MIMOCODE_DISABLE_AUTOCOMPACT`        | boolean | Wyłącz automatyczne kompaktowanie kontekstu                |
+| `MIMOCODE_DISABLE_CLAUDE_CODE`        | boolean | Wyłącz integrację z `.claude` (prompt + skills)            |
+| `MIMOCODE_DISABLE_CLAUDE_CODE_PROMPT` | boolean | Wyłącz czytanie `~/.claude/CLAUDE.md`                      |
+| `MIMOCODE_DISABLE_CLAUDE_CODE_SKILLS` | boolean | Wyłącz ładowanie `.claude/skills`                          |
+| `MIMOCODE_DISABLE_MODELS_FETCH`       | boolean | Wyłącz pobieranie modeli ze źródeł zewnętrznych            |
+| `MIMOCODE_FAKE_VCS`                   | string  | Fałszywy dostawca VCS do celów testowych                   |
+| `MIMOCODE_CLIENT`                     | string  | Identyfikator klienta (domyślnie `cli`)                    |
+| `MIMOCODE_ENABLE_EXA`                 | boolean | Włącz narzędzie wyszukiwania internetowego Exa             |
+| `MIMOCODE_SERVER_PASSWORD`            | string  | Włącz uwierzytelnianie podstawowe dla `serve`/`web`        |
+| `MIMOCODE_SERVER_USERNAME`            | string  | Nazwa użytkownika do autoryzacji (domyślnie `opencode`)    |
+| `MIMOCODE_MODELS_URL`                 | string  | Niestandardowy adres URL do pobierania konfiguracji modeli |
 
 ---
 
@@ -588,16 +588,16 @@ Te zmienne włączają funkcje eksperymentalne, które mogą ulec zmianie lub zo
 
 | Zmienna                                         | Typ     | Opis                                         |
 | ----------------------------------------------- | ------- | -------------------------------------------- |
-| `OPENCODE_EXPERIMENTAL`                         | boolean | Włącz wszystkie funkcje eksperymentalne      |
-| `OPENCODE_EXPERIMENTAL_ICON_DISCOVERY`          | boolean | Włącz wykrywanie ikon                        |
-| `OPENCODE_EXPERIMENTAL_DISABLE_COPY_ON_SELECT`  | boolean | Wyłącz kopiowanie przy zaznaczaniu w TUI     |
-| `OPENCODE_EXPERIMENTAL_BASH_DEFAULT_TIMEOUT_MS` | number  | Domyślny limit czasu dla narzędzia bash w ms |
-| `OPENCODE_EXPERIMENTAL_OUTPUT_TOKEN_MAX`        | number  | Maksymalne tokeny wyjściowe dla LLM          |
-| `OPENCODE_EXPERIMENTAL_FILEWATCHER`             | boolean | Włącz obserwatora plików dla całego katalogu |
-| `OPENCODE_EXPERIMENTAL_OXFMT`                   | boolean | Włącz formater oxfmt                         |
-| `OPENCODE_EXPERIMENTAL_LSP_TOOL`                | boolean | Włącz eksperymentalne narzędzie LSP          |
-| `OPENCODE_EXPERIMENTAL_DISABLE_FILEWATCHER`     | boolean | Wyłącz obserwatora plików                    |
-| `OPENCODE_EXPERIMENTAL_EXA`                     | boolean | Włącz funkcje eksperymentalne Exa            |
-| `OPENCODE_EXPERIMENTAL_LSP_TY`                  | boolean | Włącz TY LSP dla plików python               |
-| `OPENCODE_EXPERIMENTAL_MARKDOWN`                | boolean | Włącz funkcje eksperymentalne Markdown       |
-| `OPENCODE_EXPERIMENTAL_PLAN_MODE`               | boolean | Włącz tryb planowania                        |
+| `MIMOCODE_EXPERIMENTAL`                         | boolean | Włącz wszystkie funkcje eksperymentalne      |
+| `MIMOCODE_EXPERIMENTAL_ICON_DISCOVERY`          | boolean | Włącz wykrywanie ikon                        |
+| `MIMOCODE_EXPERIMENTAL_DISABLE_COPY_ON_SELECT`  | boolean | Wyłącz kopiowanie przy zaznaczaniu w TUI     |
+| `MIMOCODE_EXPERIMENTAL_BASH_DEFAULT_TIMEOUT_MS` | number  | Domyślny limit czasu dla narzędzia bash w ms |
+| `MIMOCODE_EXPERIMENTAL_OUTPUT_TOKEN_MAX`        | number  | Maksymalne tokeny wyjściowe dla LLM          |
+| `MIMOCODE_EXPERIMENTAL_FILEWATCHER`             | boolean | Włącz obserwatora plików dla całego katalogu |
+| `MIMOCODE_EXPERIMENTAL_OXFMT`                   | boolean | Włącz formater oxfmt                         |
+| `MIMOCODE_EXPERIMENTAL_LSP_TOOL`                | boolean | Włącz eksperymentalne narzędzie LSP          |
+| `MIMOCODE_EXPERIMENTAL_DISABLE_FILEWATCHER`     | boolean | Wyłącz obserwatora plików                    |
+| `MIMOCODE_EXPERIMENTAL_EXA`                     | boolean | Włącz funkcje eksperymentalne Exa            |
+| `MIMOCODE_EXPERIMENTAL_LSP_TY`                  | boolean | Włącz TY LSP dla plików python               |
+| `MIMOCODE_EXPERIMENTAL_MARKDOWN`                | boolean | Włącz funkcje eksperymentalne Markdown       |
+| `MIMOCODE_EXPERIMENTAL_PLAN_MODE`               | boolean | Włącz tryb planowania                        |

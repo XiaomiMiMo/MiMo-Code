@@ -360,7 +360,7 @@ opencode run --attach http://localhost:4096 "Explain async/await in JavaScript"
 opencode serve
 ```
 
-此命令启动一个 HTTP 服务器，提供对 OpenCode 功能的 API 访问，无需 TUI 界面。设置 `OPENCODE_SERVER_PASSWORD` 可启用 HTTP 基本认证（用户名默认为 `opencode`）。
+此命令启动一个 HTTP 服务器，提供对 OpenCode 功能的 API 访问，无需 TUI 界面。设置 `MIMOCODE_SERVER_PASSWORD` 可启用 HTTP 基本认证（用户名默认为 `opencode`）。
 
 #### 标志
 
@@ -456,7 +456,7 @@ opencode import https://opncd.ai/s/abc123
 opencode web
 ```
 
-此命令启动一个 HTTP 服务器并打开浏览器，通过 Web 界面访问 OpenCode。设置 `OPENCODE_SERVER_PASSWORD` 可启用 HTTP 基本认证（用户名默认为 `opencode`）。
+此命令启动一个 HTTP 服务器并打开浏览器，通过 Web 界面访问 OpenCode。设置 `MIMOCODE_SERVER_PASSWORD` 可启用 HTTP 基本认证（用户名默认为 `opencode`）。
 
 #### 标志
 
@@ -555,30 +555,30 @@ OpenCode 可以通过环境变量进行配置。
 
 | 变量                                  | 类型    | 描述                                    |
 | ------------------------------------- | ------- | --------------------------------------- |
-| `OPENCODE_AUTO_SHARE`                 | boolean | 自动分享会话                            |
-| `OPENCODE_GIT_BASH_PATH`              | string  | Windows 上 Git Bash 可执行文件的路径    |
-| `OPENCODE_CONFIG`                     | string  | 配置文件路径                            |
-| `OPENCODE_TUI_CONFIG`                 | string  | TUI 配置文件路径                        |
-| `OPENCODE_CONFIG_DIR`                 | string  | 配置目录路径                            |
-| `OPENCODE_CONFIG_CONTENT`             | string  | 内联 JSON 配置内容                      |
-| `OPENCODE_DISABLE_AUTOUPDATE`         | boolean | 禁用自动更新检查                        |
-| `OPENCODE_DISABLE_PRUNE`              | boolean | 禁用旧数据清理                          |
-| `OPENCODE_DISABLE_TERMINAL_TITLE`     | boolean | 禁用自动终端标题更新                    |
-| `OPENCODE_PERMISSION`                 | string  | 内联 JSON 权限配置                      |
-| `OPENCODE_DISABLE_DEFAULT_PLUGINS`    | boolean | 禁用默认插件                            |
-| `OPENCODE_DISABLE_LSP_DOWNLOAD`       | boolean | 禁用 LSP 服务器自动下载                 |
-| `OPENCODE_ENABLE_EXPERIMENTAL_MODELS` | boolean | 启用实验性模型                          |
-| `OPENCODE_DISABLE_AUTOCOMPACT`        | boolean | 禁用自动上下文压缩                      |
-| `OPENCODE_DISABLE_CLAUDE_CODE`        | boolean | 禁用读取 `.claude`（提示词 + 技能）     |
-| `OPENCODE_DISABLE_CLAUDE_CODE_PROMPT` | boolean | 禁用读取 `~/.claude/CLAUDE.md`          |
-| `OPENCODE_DISABLE_CLAUDE_CODE_SKILLS` | boolean | 禁用加载 `.claude/skills`               |
-| `OPENCODE_DISABLE_MODELS_FETCH`       | boolean | 禁用从远程源获取模型                    |
-| `OPENCODE_FAKE_VCS`                   | string  | 用于测试目的的模拟 VCS 提供商           |
-| `OPENCODE_CLIENT`                     | string  | 客户端标识符（默认为 `cli`）            |
-| `OPENCODE_ENABLE_EXA`                 | boolean | 启用 Exa 网络搜索工具                   |
-| `OPENCODE_SERVER_PASSWORD`            | string  | 为 `serve`/`web` 启用基本认证           |
-| `OPENCODE_SERVER_USERNAME`            | string  | 覆盖基本认证用户名（默认为 `opencode`） |
-| `OPENCODE_MODELS_URL`                 | string  | 自定义模型配置获取 URL                  |
+| `MIMOCODE_AUTO_SHARE`                 | boolean | 自动分享会话                            |
+| `MIMOCODE_GIT_BASH_PATH`              | string  | Windows 上 Git Bash 可执行文件的路径    |
+| `MIMOCODE_CONFIG`                     | string  | 配置文件路径                            |
+| `MIMOCODE_TUI_CONFIG`                 | string  | TUI 配置文件路径                        |
+| `MIMOCODE_CONFIG_DIR`                 | string  | 配置目录路径                            |
+| `MIMOCODE_CONFIG_CONTENT`             | string  | 内联 JSON 配置内容                      |
+| `MIMOCODE_DISABLE_AUTOUPDATE`         | boolean | 禁用自动更新检查                        |
+| `MIMOCODE_DISABLE_PRUNE`              | boolean | 禁用旧数据清理                          |
+| `MIMOCODE_DISABLE_TERMINAL_TITLE`     | boolean | 禁用自动终端标题更新                    |
+| `MIMOCODE_PERMISSION`                 | string  | 内联 JSON 权限配置                      |
+| `MIMOCODE_DISABLE_DEFAULT_PLUGINS`    | boolean | 禁用默认插件                            |
+| `MIMOCODE_DISABLE_LSP_DOWNLOAD`       | boolean | 禁用 LSP 服务器自动下载                 |
+| `MIMOCODE_ENABLE_EXPERIMENTAL_MODELS` | boolean | 启用实验性模型                          |
+| `MIMOCODE_DISABLE_AUTOCOMPACT`        | boolean | 禁用自动上下文压缩                      |
+| `MIMOCODE_DISABLE_CLAUDE_CODE`        | boolean | 禁用读取 `.claude`（提示词 + 技能）     |
+| `MIMOCODE_DISABLE_CLAUDE_CODE_PROMPT` | boolean | 禁用读取 `~/.claude/CLAUDE.md`          |
+| `MIMOCODE_DISABLE_CLAUDE_CODE_SKILLS` | boolean | 禁用加载 `.claude/skills`               |
+| `MIMOCODE_DISABLE_MODELS_FETCH`       | boolean | 禁用从远程源获取模型                    |
+| `MIMOCODE_FAKE_VCS`                   | string  | 用于测试目的的模拟 VCS 提供商           |
+| `MIMOCODE_CLIENT`                     | string  | 客户端标识符（默认为 `cli`）            |
+| `MIMOCODE_ENABLE_EXA`                 | boolean | 启用 Exa 网络搜索工具                   |
+| `MIMOCODE_SERVER_PASSWORD`            | string  | 为 `serve`/`web` 启用基本认证           |
+| `MIMOCODE_SERVER_USERNAME`            | string  | 覆盖基本认证用户名（默认为 `opencode`） |
+| `MIMOCODE_MODELS_URL`                 | string  | 自定义模型配置获取 URL                  |
 
 ---
 
@@ -588,15 +588,15 @@ OpenCode 可以通过环境变量进行配置。
 
 | 变量                                            | 类型    | 描述                            |
 | ----------------------------------------------- | ------- | ------------------------------- | --- | -------------------------------- | ------- | ------------------------ |
-| `OPENCODE_EXPERIMENTAL`                         | boolean | 启用所有实验性功能              |
-| `OPENCODE_EXPERIMENTAL_ICON_DISCOVERY`          | boolean | 启用图标发现                    |
-| `OPENCODE_EXPERIMENTAL_DISABLE_COPY_ON_SELECT`  | boolean | 禁用 TUI 中的选中即复制         |
-| `OPENCODE_EXPERIMENTAL_BASH_DEFAULT_TIMEOUT_MS` | number  | bash 命令的默认超时时间（毫秒） |
-| `OPENCODE_EXPERIMENTAL_OUTPUT_TOKEN_MAX`        | number  | LLM 响应的最大输出 Token 数     |
-| `OPENCODE_EXPERIMENTAL_FILEWATCHER`             | boolean | 启用整个目录的文件监听器        |
-| `OPENCODE_EXPERIMENTAL_OXFMT`                   | boolean | 启用 oxfmt 格式化器             |
-| `OPENCODE_EXPERIMENTAL_LSP_TOOL`                | boolean | 启用实验性 LSP 工具             |
-| `OPENCODE_EXPERIMENTAL_DISABLE_FILEWATCHER`     | boolean | 禁用文件监听器                  |
-| `OPENCODE_EXPERIMENTAL_EXA`                     | boolean | 启用实验性 Exa 功能             |
-| `OPENCODE_EXPERIMENTAL_LSP_TY`                  | boolean | 为 python 文件启用 TY LSP       |     | `OPENCODE_EXPERIMENTAL_MARKDOWN` | boolean | 启用实验性 Markdown 功能 |
-| `OPENCODE_EXPERIMENTAL_PLAN_MODE`               | boolean | 启用计划模式                    |
+| `MIMOCODE_EXPERIMENTAL`                         | boolean | 启用所有实验性功能              |
+| `MIMOCODE_EXPERIMENTAL_ICON_DISCOVERY`          | boolean | 启用图标发现                    |
+| `MIMOCODE_EXPERIMENTAL_DISABLE_COPY_ON_SELECT`  | boolean | 禁用 TUI 中的选中即复制         |
+| `MIMOCODE_EXPERIMENTAL_BASH_DEFAULT_TIMEOUT_MS` | number  | bash 命令的默认超时时间（毫秒） |
+| `MIMOCODE_EXPERIMENTAL_OUTPUT_TOKEN_MAX`        | number  | LLM 响应的最大输出 Token 数     |
+| `MIMOCODE_EXPERIMENTAL_FILEWATCHER`             | boolean | 启用整个目录的文件监听器        |
+| `MIMOCODE_EXPERIMENTAL_OXFMT`                   | boolean | 启用 oxfmt 格式化器             |
+| `MIMOCODE_EXPERIMENTAL_LSP_TOOL`                | boolean | 启用实验性 LSP 工具             |
+| `MIMOCODE_EXPERIMENTAL_DISABLE_FILEWATCHER`     | boolean | 禁用文件监听器                  |
+| `MIMOCODE_EXPERIMENTAL_EXA`                     | boolean | 启用实验性 Exa 功能             |
+| `MIMOCODE_EXPERIMENTAL_LSP_TY`                  | boolean | 为 python 文件启用 TY LSP       |     | `MIMOCODE_EXPERIMENTAL_MARKDOWN` | boolean | 启用实验性 Markdown 功能 |
+| `MIMOCODE_EXPERIMENTAL_PLAN_MODE`               | boolean | 启用计划模式                    |

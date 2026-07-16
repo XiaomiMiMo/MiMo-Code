@@ -360,7 +360,7 @@ Start en headless OpenCode-server for API-tilgang. Sjekk ut [server-dokumentene]
 opencode serve
 ```
 
-Dette starter en HTTP-server som gir API tilgang til OpenCode-funksjonalitet uten TUI-grensesnittet. Sett `OPENCODE_SERVER_PASSWORD` for å aktivere HTTP grunnleggende autentisering (brukernavn er standard til `opencode`).
+Dette starter en HTTP-server som gir API tilgang til OpenCode-funksjonalitet uten TUI-grensesnittet. Sett `MIMOCODE_SERVER_PASSWORD` for å aktivere HTTP grunnleggende autentisering (brukernavn er standard til `opencode`).
 
 #### Flagg
 
@@ -456,7 +456,7 @@ Start en headless OpenCode-server med et webgrensesnitt.
 opencode web
 ```
 
-Dette starter en HTTP-server og åpner en nettleser for å få tilgang til OpenCode via et nettgrensesnitt. Sett `OPENCODE_SERVER_PASSWORD` for å aktivere HTTP grunnleggende autentisering (brukernavn er standard til `opencode`).
+Dette starter en HTTP-server og åpner en nettleser for å få tilgang til OpenCode via et nettgrensesnitt. Sett `MIMOCODE_SERVER_PASSWORD` for å aktivere HTTP grunnleggende autentisering (brukernavn er standard til `opencode`).
 
 #### Flagg
 
@@ -555,30 +555,30 @@ OpenCode kan konfigureres ved hjelp av miljøvariabler.
 
 | Variabel                              | Type   | Beskrivelse                                                           |
 | ------------------------------------- | ------ | --------------------------------------------------------------------- |
-| `OPENCODE_AUTO_SHARE`                 | boolsk | Del økter automatisk                                                  |
-| `OPENCODE_GIT_BASH_PATH`              | streng | Bane til Git Bash-kjørbar på Windows                                  |
-| `OPENCODE_CONFIG`                     | streng | Bane til konfigurasjonsfil                                            |
-| `OPENCODE_TUI_CONFIG`                 | streng | Bane til TUI-konfigurasjonsfil                                        |
-| `OPENCODE_CONFIG_DIR`                 | streng | Bane til konfigurasjonskatalog                                        |
-| `OPENCODE_CONFIG_CONTENT`             | streng | Innebygd json-konfigurasjonsinnhold                                   |
-| `OPENCODE_DISABLE_AUTOUPDATE`         | boolsk | Deaktiver automatiske oppdateringskontroller                          |
-| `OPENCODE_DISABLE_PRUNE`              | boolsk | Deaktiver beskjæring av gamle data                                    |
-| `OPENCODE_DISABLE_TERMINAL_TITLE`     | boolsk | Deaktiver automatiske terminaltitteloppdateringer                     |
-| `OPENCODE_PERMISSION`                 | streng | Innebygd json-tillatelseskonfigurasjon                                |
-| `OPENCODE_DISABLE_DEFAULT_PLUGINS`    | boolsk | Deaktiver standard plugins                                            |
-| `OPENCODE_DISABLE_LSP_DOWNLOAD`       | boolsk | Deaktiver automatiske LSP servernedlastinger                          |
-| `OPENCODE_ENABLE_EXPERIMENTAL_MODELS` | boolsk | Aktiver eksperimentelle modeller                                      |
-| `OPENCODE_DISABLE_AUTOCOMPACT`        | boolsk | Deaktiver automatisk kontekstkomprimering                             |
-| `OPENCODE_DISABLE_CLAUDE_CODE`        | boolsk | Deaktiver lesing fra `.claude` (spørsmål + ferdigheter)               |
-| `OPENCODE_DISABLE_CLAUDE_CODE_PROMPT` | boolsk | Deaktiver lesing `~/.claude/CLAUDE.md`                                |
-| `OPENCODE_DISABLE_CLAUDE_CODE_SKILLS` | boolsk | Deaktiver innlasting av `.claude/skills`                              |
-| `OPENCODE_DISABLE_MODELS_FETCH`       | boolsk | Deaktiver henting av modeller fra eksterne kilder                     |
-| `OPENCODE_FAKE_VCS`                   | streng | Falsk VCS-leverandør for testformål                                   |
-| `OPENCODE_CLIENT`                     | streng | Klientidentifikator (standard til `cli`)                              |
-| `OPENCODE_ENABLE_EXA`                 | boolsk | Aktiver Exa-nettsøkeverktøy                                           |
-| `OPENCODE_SERVER_PASSWORD`            | streng | Aktiver grunnleggende autentisering for `serve`/`web`                 |
-| `OPENCODE_SERVER_USERNAME`            | streng | Overstyr grunnleggende autentiseringsbrukernavn (standard `opencode`) |
-| `OPENCODE_MODELS_URL`                 | streng | Egendefinert URL for henting av modellkonfigurasjon                   |
+| `MIMOCODE_AUTO_SHARE`                 | boolsk | Del økter automatisk                                                  |
+| `MIMOCODE_GIT_BASH_PATH`              | streng | Bane til Git Bash-kjørbar på Windows                                  |
+| `MIMOCODE_CONFIG`                     | streng | Bane til konfigurasjonsfil                                            |
+| `MIMOCODE_TUI_CONFIG`                 | streng | Bane til TUI-konfigurasjonsfil                                        |
+| `MIMOCODE_CONFIG_DIR`                 | streng | Bane til konfigurasjonskatalog                                        |
+| `MIMOCODE_CONFIG_CONTENT`             | streng | Innebygd json-konfigurasjonsinnhold                                   |
+| `MIMOCODE_DISABLE_AUTOUPDATE`         | boolsk | Deaktiver automatiske oppdateringskontroller                          |
+| `MIMOCODE_DISABLE_PRUNE`              | boolsk | Deaktiver beskjæring av gamle data                                    |
+| `MIMOCODE_DISABLE_TERMINAL_TITLE`     | boolsk | Deaktiver automatiske terminaltitteloppdateringer                     |
+| `MIMOCODE_PERMISSION`                 | streng | Innebygd json-tillatelseskonfigurasjon                                |
+| `MIMOCODE_DISABLE_DEFAULT_PLUGINS`    | boolsk | Deaktiver standard plugins                                            |
+| `MIMOCODE_DISABLE_LSP_DOWNLOAD`       | boolsk | Deaktiver automatiske LSP servernedlastinger                          |
+| `MIMOCODE_ENABLE_EXPERIMENTAL_MODELS` | boolsk | Aktiver eksperimentelle modeller                                      |
+| `MIMOCODE_DISABLE_AUTOCOMPACT`        | boolsk | Deaktiver automatisk kontekstkomprimering                             |
+| `MIMOCODE_DISABLE_CLAUDE_CODE`        | boolsk | Deaktiver lesing fra `.claude` (spørsmål + ferdigheter)               |
+| `MIMOCODE_DISABLE_CLAUDE_CODE_PROMPT` | boolsk | Deaktiver lesing `~/.claude/CLAUDE.md`                                |
+| `MIMOCODE_DISABLE_CLAUDE_CODE_SKILLS` | boolsk | Deaktiver innlasting av `.claude/skills`                              |
+| `MIMOCODE_DISABLE_MODELS_FETCH`       | boolsk | Deaktiver henting av modeller fra eksterne kilder                     |
+| `MIMOCODE_FAKE_VCS`                   | streng | Falsk VCS-leverandør for testformål                                   |
+| `MIMOCODE_CLIENT`                     | streng | Klientidentifikator (standard til `cli`)                              |
+| `MIMOCODE_ENABLE_EXA`                 | boolsk | Aktiver Exa-nettsøkeverktøy                                           |
+| `MIMOCODE_SERVER_PASSWORD`            | streng | Aktiver grunnleggende autentisering for `serve`/`web`                 |
+| `MIMOCODE_SERVER_USERNAME`            | streng | Overstyr grunnleggende autentiseringsbrukernavn (standard `opencode`) |
+| `MIMOCODE_MODELS_URL`                 | streng | Egendefinert URL for henting av modellkonfigurasjon                   |
 
 ---
 
@@ -588,16 +588,16 @@ Disse miljøvariablene muliggjør eksperimentelle funksjoner som kan endres elle
 
 | Variabel                                        | Type   | Beskrivelse                                   |
 | ----------------------------------------------- | ------ | --------------------------------------------- |
-| `OPENCODE_EXPERIMENTAL`                         | boolsk | Aktiver alle eksperimentelle funksjoner       |
-| `OPENCODE_EXPERIMENTAL_ICON_DISCOVERY`          | boolsk | Aktiver ikonoppdagelse                        |
-| `OPENCODE_EXPERIMENTAL_DISABLE_COPY_ON_SELECT`  | boolsk | Deaktiver kopi ved valg i TUI                 |
-| `OPENCODE_EXPERIMENTAL_BASH_DEFAULT_TIMEOUT_MS` | tall   | Standard tidsavbrudd for bash-kommandoer i ms |
-| `OPENCODE_EXPERIMENTAL_OUTPUT_TOKEN_MAX`        | tall   | Maks Output Tokens for LLM-svar               |
-| `OPENCODE_EXPERIMENTAL_FILEWATCHER`             | boolsk | Aktiver filovervåker for hele dir             |
-| `OPENCODE_EXPERIMENTAL_OXFMT`                   | boolsk | Aktiver oxfmt formatter                       |
-| `OPENCODE_EXPERIMENTAL_LSP_TOOL`                | boolsk | Aktiver eksperimentelt LSP-verktøy            |
-| `OPENCODE_EXPERIMENTAL_DISABLE_FILEWATCHER`     | boolsk | Deaktiver filovervåking                       |
-| `OPENCODE_EXPERIMENTAL_EXA`                     | boolsk | Aktiver eksperimentelle Exa-funksjoner        |
-| `OPENCODE_EXPERIMENTAL_LSP_TY`                  | boolsk | Aktiver TY LSP for python-filer               |
-| `OPENCODE_EXPERIMENTAL_MARKDOWN`                | boolsk | Aktiver eksperimentelle Markdown-funksjoner   |
-| `OPENCODE_EXPERIMENTAL_PLAN_MODE`               | boolsk | Aktiver planmodus                             |
+| `MIMOCODE_EXPERIMENTAL`                         | boolsk | Aktiver alle eksperimentelle funksjoner       |
+| `MIMOCODE_EXPERIMENTAL_ICON_DISCOVERY`          | boolsk | Aktiver ikonoppdagelse                        |
+| `MIMOCODE_EXPERIMENTAL_DISABLE_COPY_ON_SELECT`  | boolsk | Deaktiver kopi ved valg i TUI                 |
+| `MIMOCODE_EXPERIMENTAL_BASH_DEFAULT_TIMEOUT_MS` | tall   | Standard tidsavbrudd for bash-kommandoer i ms |
+| `MIMOCODE_EXPERIMENTAL_OUTPUT_TOKEN_MAX`        | tall   | Maks Output Tokens for LLM-svar               |
+| `MIMOCODE_EXPERIMENTAL_FILEWATCHER`             | boolsk | Aktiver filovervåker for hele dir             |
+| `MIMOCODE_EXPERIMENTAL_OXFMT`                   | boolsk | Aktiver oxfmt formatter                       |
+| `MIMOCODE_EXPERIMENTAL_LSP_TOOL`                | boolsk | Aktiver eksperimentelt LSP-verktøy            |
+| `MIMOCODE_EXPERIMENTAL_DISABLE_FILEWATCHER`     | boolsk | Deaktiver filovervåking                       |
+| `MIMOCODE_EXPERIMENTAL_EXA`                     | boolsk | Aktiver eksperimentelle Exa-funksjoner        |
+| `MIMOCODE_EXPERIMENTAL_LSP_TY`                  | boolsk | Aktiver TY LSP for python-filer               |
+| `MIMOCODE_EXPERIMENTAL_MARKDOWN`                | boolsk | Aktiver eksperimentelle Markdown-funksjoner   |
+| `MIMOCODE_EXPERIMENTAL_PLAN_MODE`               | boolsk | Aktiver planmodus                             |

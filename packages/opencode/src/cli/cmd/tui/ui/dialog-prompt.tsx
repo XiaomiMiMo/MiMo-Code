@@ -79,6 +79,8 @@ export function DialogPrompt(props: DialogPromptProps) {
             props.onConfirm?.(textarea.plainText)
           }}
           height={3}
+          selectionFg={theme.text}
+          selectionBg={theme.backgroundElement}
           keyBindings={props.busy ? [] : [{ name: "return", action: "submit" }]}
           ref={(val: TextareaRenderable) => {
             textarea = val
