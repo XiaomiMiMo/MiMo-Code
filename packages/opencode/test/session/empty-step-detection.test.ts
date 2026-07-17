@@ -59,22 +59,23 @@ describe("isEmptyStep — case (a): tool call with empty/invalid input", () => {
   })
 
   test("provider-executed tool part is ignored for the has-tool test", () => {
-    // Only a provider-executed part + no substantive output => empty terminal.
-    expect(isEmptyStep([toolPart({ q: "x" }, { providerExecuted: true })])).toBe(true)
+    // A provider-executed part is not a client action; without any real client
+    // tool call there is nothing to flag as empty (b-branch is disabled).
+    expect(isEmptyStep([toolPart({ q: "x" }, { providerExecuted: true })])).toBe(false)
   })
 })
 
-describe("isEmptyStep — case (b): empty terminal (no valid tool part, no output)", () => {
-  test("completely empty parts array is empty", () => {
-    expect(isEmptyStep([])).toBe(true)
+describe("isEmptyStep — (b) empty terminal is NOT flagged (allowed by design)", () => {
+  test("completely empty parts array is NOT empty (natural turn end)", () => {
+    expect(isEmptyStep([])).toBe(false)
   })
 
-  test("only a synthetic text part (harness reminder) is empty", () => {
-    expect(isEmptyStep([textPart("<system-reminder>...</system-reminder>", { synthetic: true })])).toBe(true)
+  test("only a synthetic text part is NOT empty (no client tool call to flag)", () => {
+    expect(isEmptyStep([textPart("<system-reminder>...</system-reminder>", { synthetic: true })])).toBe(false)
   })
 
-  test("only whitespace text is empty", () => {
-    expect(isEmptyStep([textPart("   \n  ")])).toBe(true)
+  test("only whitespace text is NOT empty", () => {
+    expect(isEmptyStep([textPart("   \n  ")])).toBe(false)
   })
 
   test("substantive text answer is NOT empty", () => {
@@ -85,7 +86,11 @@ describe("isEmptyStep — case (b): empty terminal (no valid tool part, no outpu
     expect(isEmptyStep([reasoningPart("Let me think about this...")])).toBe(false)
   })
 
-  test("ignored text does not count as substantive", () => {
-    expect(isEmptyStep([textPart("stuff", { ignored: true })])).toBe(true)
+  test("ignored text alone is NOT empty (no tool call to flag)", () => {
+    expect(isEmptyStep([textPart("stuff", { ignored: true })])).toBe(false)
+  })
+
+  test("provider-executed tool part alone is NOT empty (not a client action)", () => {
+    expect(isEmptyStep([toolPart({ q: "x" }, { providerExecuted: true })])).toBe(false)
   })
 })

@@ -25,7 +25,7 @@ import { SessionPrompt } from "../../src/session/prompt"
 import { EMPTY_STEP_MAX_RECOVERY } from "../../src/session/prompt/empty-step-detection"
 import { Log } from "../../src/util"
 import { tmpdir } from "../fixture/fixture"
-import { startScriptedLLMServer, emptyStopResponse, textStopResponse } from "../lib/scripted-llm-server"
+import { startScriptedLLMServer, emptyStopResponse, textStopResponse, toolCallStopResponse } from "../lib/scripted-llm-server"
 
 void Log.init({ print: false })
 
@@ -54,12 +54,15 @@ function writeConfig(dir: string, origin: string) {
 }
 
 describe("empty/no-op tool-call loop guard — integration", () => {
-  test("repeated empty steps HARD-HALT the turn instead of looping forever", async () => {
+  test("repeated empty-args tool calls HARD-HALT the turn instead of looping forever", async () => {
     await using tmp = await tmpdir({ git: true })
-    // Every response is an empty stop step. The stub repeats its last entry
-    // forever, so if the guard failed to halt this would spin indefinitely
-    // (the test would hang / time out). We assert it terminates.
-    const stub = startScriptedLLMServer([{ lines: emptyStopResponse() }])
+    // Every response is a tool call with empty args ({}). The stub repeats its
+    // last entry forever, so if the guard failed to halt this would spin
+    // indefinitely. We assert it terminates. (This is the specific "frontier
+    // model emits tool call with no args" pathology the guard targets.)
+    const stub = startScriptedLLMServer([
+      { lines: toolCallStopResponse({ id: "call_1", name: "read", args: "{}" }) },
+    ])
     try {
       await writeConfig(tmp.path, stub.origin)
       await Instance.provide({
@@ -75,10 +78,8 @@ describe("empty/no-op tool-call loop guard — integration", () => {
                 agent: "build",
                 parts: [{ type: "text", text: "Do the task." }],
               })
-              // Turn terminated (did not hang) with an error on the assistant.
               expect(result.info.role).toBe("assistant")
               if (result.info.role === "assistant") expect(result.info.error).toBeDefined()
-              // Bounded: EMPTY_STEP_MAX_RECOVERY soft nudges + 1 halting step.
               expect(stub.captures.length).toBe(EMPTY_STEP_MAX_RECOVERY + 1)
             }),
           ),
@@ -88,11 +89,47 @@ describe("empty/no-op tool-call loop guard — integration", () => {
     }
   })
 
-  test("a single empty step recovers when the next step produces a real answer (no halt)", async () => {
+  test("empty terminal (no tool call, no text) is NOT halted by the empty-step guard", async () => {
+    await using tmp = await tmpdir({ git: true })
+    // Empty terminal used to be flagged (b-branch) and could hard-halt the turn
+    // after EMPTY_STEP_MAX_RECOVERY. It is now allowed by isEmptyStep — no
+    // client tool call means nothing to loop-guard. Other invalid-output
+    // handling (autoContinueInvalidOutput) may still nudge, but the guard's
+    // terminal error must not fire.
+    const stub = startScriptedLLMServer([{ lines: emptyStopResponse() }])
+    try {
+      await writeConfig(tmp.path, stub.origin)
+      await Instance.provide({
+        directory: tmp.path,
+        fn: () =>
+          run(
+            Effect.gen(function* () {
+              const sessions = yield* Session.Service
+              const prompt = yield* SessionPrompt.Service
+              const session = yield* sessions.create({ title: "empty-terminal-allowed" })
+              const result = yield* prompt.prompt({
+                sessionID: session.id,
+                agent: "build",
+                parts: [{ type: "text", text: "Do the task." }],
+              })
+              expect(result.info.role).toBe("assistant")
+              // The empty-step guard specifically must NOT be the terminator.
+              if (result.info.role === "assistant" && result.info.error) {
+                expect(result.info.error.data?.message ?? "").not.toContain("Empty tool call loop detected")
+              }
+            }),
+          ),
+      })
+    } finally {
+      await stub.stop()
+    }
+  })
+
+  test("a single empty-args tool call recovers when the next step produces a real answer (no halt)", async () => {
     await using tmp = await tmpdir({ git: true })
     const stub = startScriptedLLMServer([
-      // step 1: empty terminal → streak 1 → REMIND nudge, continue
-      { lines: emptyStopResponse() },
+      // step 1: empty-args tool call → streak 1 → REMIND nudge, continue
+      { lines: toolCallStopResponse({ id: "call_1", name: "read", args: "{}" }) },
       // step 2: real answer → streak reset, loop exits cleanly
       { lines: textStopResponse("here is the real answer") },
     ])
