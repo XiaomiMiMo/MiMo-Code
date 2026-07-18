@@ -33,7 +33,7 @@ export function InstanceMiddleware(workspaceID?: WorkspaceID): MiddlewareHandler
         Flag.MIMOCODE_EXPERIMENTAL_ORCHESTRATOR
           ? Filesystem.resolve(path.join(Global.Path.data, "orchestrator"))
           : undefined
-      if (!Filesystem.contains(cwd, directory) && directory !== orchestrator) {
+      if (!Filesystem.contains(cwd, directory) && directory !== orchestrator && !Filesystem.contains(Global.Path.data, directory)) {
         return c.json({ error: "Access denied: directory must be within the server's working directory" }, 403)
       }
     }
