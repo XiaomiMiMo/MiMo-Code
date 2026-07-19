@@ -1,0 +1,6 @@
+interface:
+  display_name: "Design KPIs"
+  short_description: "Define KPIs, driver metrics, guardrails, and scorecards"
+  default_prompt: "Design a KPI framework with primary metrics, drivers, guardrails, targets, and reporting guidance."
+policy:
+  allow_implicit_invocation: true

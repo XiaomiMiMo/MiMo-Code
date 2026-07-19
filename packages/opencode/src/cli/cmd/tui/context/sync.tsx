@@ -63,6 +63,38 @@ export type WorkflowRun = {
   updatedAt?: number
 }
 
+// Mirror of the runtime's WorkflowNode union (server route serializes it as
+// z.array(z.any())). The single TUI-side definition reused by the detail dialog
+// and the tree renderer.
+export type WorkflowNode =
+  | { type: "phase"; id: string; title: string }
+  | {
+      type: "agent"
+      id: string
+      phaseId?: string
+      label?: string
+      agentType: string
+      prompt: string
+      model?: string
+      tools?: string[]
+      schema?: boolean
+      isolation?: boolean
+      actorID?: string
+      durationMs?: number
+      resultSummary?: string
+      resultFull?: string
+      status: "running" | "succeeded" | "failed"
+    }
+  | {
+      type: "workflow"
+      id: string
+      phaseId?: string
+      childRunID: string
+      name: string
+      args?: unknown
+      status: "running" | "completed" | "failed" | "cancelled"
+    }
+
 /**
  * TUI-side view of a session's stop-condition goal (server event `session.goal`).
  * `condition` is the active goal (undefined once cleared/satisfied/impossible).
@@ -185,6 +217,12 @@ export const { use: useSync, provider: SyncProvider } = createSimpleContext({
       workflow: {
         [runID: string]: WorkflowRun
       }
+      workflowTranscript: {
+        [runID: string]: { kind: "phase" | "log"; text: string }[]
+      }
+      workflowStructure: {
+        [runID: string]: WorkflowNode[]
+      }
     }>({
       provider_next: {
         all: [],
@@ -218,6 +256,8 @@ export const { use: useSync, provider: SyncProvider } = createSimpleContext({
       vcs: undefined,
       actor: {},
       workflow: {},
+      workflowTranscript: {},
+      workflowStructure: {},
     })
 
     const event = useEvent()
@@ -361,7 +401,8 @@ export const { use: useSync, provider: SyncProvider } = createSimpleContext({
           break
 
         case "session.deleted": {
-          const result = Binary.search(store.session, event.properties.info.id, (s) => s.id)
+          const sid = event.properties.info.id
+          const result = Binary.search(store.session, sid, (s) => s.id)
           if (result.found) {
             setStore(
               "session",
@@ -370,6 +411,28 @@ export const { use: useSync, provider: SyncProvider } = createSimpleContext({
               }),
             )
           }
+          // Evict every per-session bucket keyed by sessionID so child sessions
+          // that end don't leak their message/part/actor/task/etc. entries.
+          setStore(
+            produce((s) => {
+              delete s.permission[sid]
+              delete s.question[sid]
+              delete s.session_status[sid]
+              delete s.session_goal[sid]
+              delete s.session_diff[sid]
+              delete s.session_cwd[sid]
+              delete s.todo[sid]
+              delete s.task[sid]
+              delete s.actor[sid]
+              const agents = s.message[sid]
+              if (agents) {
+                for (const msgs of Object.values(agents)) {
+                  for (const m of msgs) delete s.part[m.id]
+                }
+              }
+              delete s.message[sid]
+            }),
+          )
           break
         }
         case "session.updated": {
@@ -637,8 +700,10 @@ export const { use: useSync, provider: SyncProvider } = createSimpleContext({
         syncedWorkspace = workspace
       }
       const start = Date.now() - 30 * 24 * 60 * 60 * 1000
+      // roots: true so child sessions (subagents, workers) don't crowd root
+      // sessions out of the server-side limit
       const sessionListPromise = sdk.client.session
-        .list({ start: start })
+        .list({ start: start, roots: true })
         .then((x) => (x.data ?? []).toSorted((a, b) => a.id.localeCompare(b.id)))
 
       // blocking - include session.list when continuing a session
@@ -758,7 +823,7 @@ export const { use: useSync, provider: SyncProvider } = createSimpleContext({
         async refresh() {
           const start = Date.now() - 30 * 24 * 60 * 60 * 1000
           const list = await sdk.client.session
-            .list({ start })
+            .list({ start, roots: true })
             .then((x) => (x.data ?? []).toSorted((a, b) => a.id.localeCompare(b.id)))
           setStore("session", reconcile(list))
         },
@@ -774,19 +839,30 @@ export const { use: useSync, provider: SyncProvider } = createSimpleContext({
         },
         async sync(sessionID: string) {
           if (fullSyncedSessions.has(sessionID)) return
-          const [session, messages, todo, diff, actors, task] = await Promise.all([
+          const [session, messages, todo, diff, actors, task, children] = await Promise.all([
             sdk.client.session.get({ sessionID }, { throwOnError: true }),
             sdk.client.session.messages({ sessionID, limit: 100, agent_id: "*" }),
             sdk.client.session.todo({ sessionID }),
             sdk.client.session.diff({ sessionID }),
             sdk.client.session.actors({ sessionID }),
             sdk.client.session.task({ sessionID }),
+            // children aren't in the root-only session list; fetch them so the
+            // session dialog can show the current session's child sessions.
+            // visible: true hides internal machinery children (checkpoint-writer
+            // hosts, ask-tool forks, workflow subagent sessions) — only peer
+            // sessions the user should see are returned.
+            sdk.client.session.children({ sessionID, visible: true }).catch(() => undefined),
           ])
           setStore(
             produce((draft) => {
               const match = Binary.search(draft.session, sessionID, (s) => s.id)
               if (match.found) draft.session[match.index] = session.data!
               if (!match.found) draft.session.splice(match.index, 0, session.data!)
+              for (const child of children?.data ?? []) {
+                const childMatch = Binary.search(draft.session, child.id, (s) => s.id)
+                if (childMatch.found) draft.session[childMatch.index] = child
+                if (!childMatch.found) draft.session.splice(childMatch.index, 0, child)
+              }
               draft.todo[sessionID] = todo.data ?? []
               draft.task[sessionID] = task.data ?? []
               const flat = (messages.data ?? []).map((x) => x.info)
@@ -821,6 +897,23 @@ export const { use: useSync, provider: SyncProvider } = createSimpleContext({
       },
       resumeWorkflow(runID: string) {
         return sdk.client.workflow.resume({ runID })
+      },
+      loadWorkflowTranscript(runID: string) {
+        void sdk.client.workflow.transcript({ runID }).then((res) => {
+          const t = (res.data as { transcript?: { kind: "phase" | "log"; text: string }[] } | undefined)?.transcript
+          // reconcile so the 1s poll merges into the existing array (append-only,
+          // stable by index) instead of swapping in all-new refs every tick.
+          if (Array.isArray(t)) setStore("workflowTranscript", runID, reconcile(t))
+        })
+      },
+      loadWorkflowStructure(runID: string) {
+        void sdk.client.workflow.structure({ runID }).then((res) => {
+          const n = (res.data as { nodes?: WorkflowNode[] } | undefined)?.nodes
+          // reconcile keyed by node id so unchanged cards keep their object identity
+          // across the 1s poll — otherwise <For> (ref-keyed) remounts every card each
+          // tick, dropping hover state and flickering.
+          if (Array.isArray(n)) setStore("workflowStructure", runID, reconcile(n, { key: "id" }))
+        })
       },
     }
     return result

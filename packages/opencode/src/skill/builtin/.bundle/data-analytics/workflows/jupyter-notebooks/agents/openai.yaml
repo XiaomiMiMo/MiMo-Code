@@ -1,0 +1,6 @@
+interface:
+  display_name: "Jupyter Notebooks"
+  short_description: "Create and validate reproducible analysis notebooks"
+  default_prompt: "Create a reproducible analysis notebook with inspectable code, outputs, assumptions, and validation checks."
+policy:
+  allow_implicit_invocation: true

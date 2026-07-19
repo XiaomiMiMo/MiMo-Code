@@ -43,3 +43,12 @@ export function stringIndexToWidth(text: string, stringIndex: number): number {
 export function charAfterCursor(text: string, cursorWidth: number): string | undefined {
   return text.at(widthToStringIndex(text, cursorWidth))
 }
+
+// Find the display-width position of the end of the token starting at `startWidth`.
+// A token ends at the next whitespace character or end of text.
+export function tokenEndWidth(text: string, startWidth: number): number {
+  const startIdx = widthToStringIndex(text, startWidth)
+  let endIdx = startIdx
+  while (endIdx < text.length && !/\s/.test(text[endIdx]!)) endIdx++
+  return stringIndexToWidth(text, endIdx)
+}

@@ -1,5 +1,4 @@
 import { useDialog } from "@tui/ui/dialog"
-import { DialogConfirm } from "@tui/ui/dialog-confirm"
 import { DialogSelect, type DialogSelectOption } from "@tui/ui/dialog-select"
 import { useRoute } from "@tui/context/route"
 import { useSync } from "@tui/context/sync"
@@ -39,20 +38,10 @@ export function DialogWorkflows() {
     return list.map((r) => ({
       title: `${r.name}  ${r.status}  ${r.currentPhase ?? "-"}  ${r.succeeded}✓ ${r.failed}✗ ${r.running}⟳`,
       value: r.runID,
-      onSelect: async (d) => {
-        // Resume an incomplete run; completed runs just close.
-        if (r.status === "running" || r.status === "failed" || r.status === "cancelled") {
-          // Re-running re-executes the workflow (cost / side effects), so confirm first.
-          // DialogConfirm.show replaces this dialog with the confirm dialog and clears
-          // itself on confirm/cancel, so no explicit d.clear() is needed here.
-          const ok = await DialogConfirm.show(
-            d,
-            "Resume workflow",
-            `Re-run "${r.name}"? This re-executes the workflow and may incur cost.`,
-          )
-          if (ok === true) void sync.resumeWorkflow(r.runID)
-          return
-        }
+      // Navigate to the full-screen workflow page (replaces the conversation view,
+      // like opening a subagent). Mirrors DialogSubagent's route.navigate.
+      onSelect: (d) => {
+        if (route.data.type === "session") route.navigate({ ...route.data, workflowRunID: r.runID })
         d.clear()
       },
     }))

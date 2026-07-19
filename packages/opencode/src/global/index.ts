@@ -21,6 +21,17 @@ export const Path = {
   state,
 }
 
+// Fixed, launch-directory-independent home for the globally-unique Orchestrator
+// session. Lives under the global data root so switching into orchestrator mode
+// from anywhere always lands on the same workspace/session. Children get their
+// own --dir/--isolate, so this dir does not need to be a git repo. Created on
+// first use.
+export async function orchestratorDir() {
+  const dir = path.join(Path.data, "orchestrator")
+  await fs.mkdir(dir, { recursive: true })
+  return dir
+}
+
 // Initialize Flock with global state path
 Flock.setGlobal({ state })
 

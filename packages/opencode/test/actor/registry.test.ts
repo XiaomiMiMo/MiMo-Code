@@ -1,9 +1,11 @@
-import { afterEach, describe, expect, test } from "bun:test"
+import { afterEach, beforeEach, describe, expect, test } from "bun:test"
 import { Effect, Layer, ManagedRuntime } from "effect"
 import { Instance } from "../../src/project/instance"
 import { Session } from "../../src/session"
 import { ActorRegistry } from "../../src/actor/registry"
+import { ActorRegistryTable } from "../../src/actor/actor.sql"
 import { SessionID } from "../../src/session/schema"
+import { Database, eq, and } from "../../src/storage"
 import { Log } from "../../src/util"
 import { tmpdir } from "../fixture/fixture"
 
@@ -14,6 +16,13 @@ const testLayer = Layer.mergeAll(Session.defaultLayer, ActorRegistry.defaultLaye
 
 afterEach(async () => {
   await Instance.disposeAll()
+})
+
+// Database.Client is a process-level singleton so rows survive across tmpdirs.
+// orphan recovery only touches rows whose instance_id differs, and same-process
+// tests share the same PROCESS_INSTANCE_ID — so wipe leftover rows before each test.
+beforeEach(() => {
+  Database.use((db) => db.delete(ActorRegistryTable).run())
 })
 
 /**
@@ -443,7 +452,174 @@ describe("ActorRegistry", () => {
         expect(before!.status).toBe("running")
       })
 
+      // Simulate a different process by manually setting a different instance_id
+      await Instance.provide({
+        directory: tmp.path,
+        fn: async () => {
+          await Database.use((db) =>
+            db
+              .update(ActorRegistryTable)
+              .set({ instance_id: "old-process-id" })
+              .where(
+                and(
+                  eq(ActorRegistryTable.session_id, parentId!),
+                  eq(ActorRegistryTable.actor_id, taskId!),
+                ),
+              )
+              .run(),
+          )
+        },
+      })
+
       // Second runtime (simulates restart): orphan recovery should mark it idle+failure
+      await withRegistry(tmp.path, async (rt) => {
+        const recovered = await rt.runPromise(
+          ActorRegistry.Service.use((svc) => svc.get(parentId!, taskId!)),
+        )
+        expect(recovered!.status).toBe("idle")
+        expect(recovered!.lastOutcome).toBe("failure")
+        expect(recovered!.lastError).toBe("orphaned: process restarted")
+      })
+    })
+
+    test("does NOT orphan actors registered in the same registry instance", async () => {
+      await using tmp = await tmpdir({ git: true })
+
+      // Register an actor and set it to running within the same runtime
+      await withRegistry(tmp.path, async (rt) => {
+        const parent = await rt.runPromise(Session.Service.use((svc) => svc.create()))
+        const taskId = SessionID.descending()
+        await rt.runPromise(
+          ActorRegistry.Service.use((svc) =>
+            svc.register({
+              sessionID: parent.id,
+              actorID: taskId,
+              mode: "subagent",
+              agent: "explore",
+              description: "Current instance task",
+              contextMode: "none",
+              background: false,
+              lifecycle: "ephemeral",
+            }),
+          ),
+        )
+        await rt.runPromise(
+          ActorRegistry.Service.use((svc) => svc.updateStatus(parent.id, taskId, { status: "running" })),
+        )
+
+        // Actor should still be running — not orphaned
+        const actor = await rt.runPromise(ActorRegistry.Service.use((svc) => svc.get(parent.id, taskId)))
+        expect(actor!.status).toBe("running")
+        expect(actor!.lastOutcome).toBeUndefined()
+        expect(actor!.lastError).toBeUndefined()
+      })
+    })
+
+    test("same-process layer rebuild does NOT orphan running children (singleton instanceID)", async () => {
+      await using tmp = await tmpdir({ git: true })
+      // Use Instance.provide to share the same directory across multiple layer constructions
+      await Instance.provide({
+        directory: tmp.path,
+        fn: async () => {
+          const taskId = SessionID.descending()
+          let parentId: SessionID
+
+          // First layer construction: register and set running
+          const rt1 = ManagedRuntime.make(testLayer)
+          try {
+            const parent = await rt1.runPromise(Session.Service.use((svc) => svc.create()))
+            parentId = parent.id
+            await rt1.runPromise(
+              ActorRegistry.Service.use((svc) =>
+                svc.register({
+                  sessionID: parentId,
+                  actorID: taskId,
+                  mode: "subagent",
+                  agent: "explore",
+                  description: "Layer rebuild test task",
+                  contextMode: "none",
+                  background: false,
+                  lifecycle: "ephemeral",
+                }),
+              ),
+            )
+            await rt1.runPromise(
+              ActorRegistry.Service.use((svc) => svc.updateStatus(parentId, taskId, { status: "running" })),
+            )
+          } finally {
+            await rt1.dispose()
+          }
+
+          // Second layer construction (simulates layer rebuild): should NOT orphan
+          const rt2 = ManagedRuntime.make(testLayer)
+          try {
+            const actor = await rt2.runPromise(
+              ActorRegistry.Service.use((svc) => svc.get(parentId, taskId)),
+            )
+            expect(actor!.status).toBe("running")
+            expect(actor!.lastOutcome).toBeUndefined()
+            expect(actor!.lastError).toBeUndefined()
+          } finally {
+            await rt2.dispose()
+          }
+        },
+      })
+    })
+
+    test("row from a different instanceID IS orphaned", async () => {
+      await using tmp = await tmpdir({ git: true })
+
+      // First runtime: register an actor
+      let taskId: SessionID
+      let parentId: SessionID
+
+      await withRegistry(tmp.path, async (rt) => {
+        const parent = await rt.runPromise(Session.Service.use((svc) => svc.create()))
+        parentId = parent.id
+        taskId = SessionID.descending()
+        await rt.runPromise(
+          ActorRegistry.Service.use((svc) =>
+            svc.register({
+              sessionID: parentId,
+              actorID: taskId,
+              mode: "subagent",
+              agent: "explore",
+              description: "Different instance test task",
+              contextMode: "none",
+              background: false,
+              lifecycle: "ephemeral",
+            }),
+          ),
+        )
+        await rt.runPromise(
+          ActorRegistry.Service.use((svc) => svc.updateStatus(parentId, taskId, { status: "running" })),
+        )
+
+        // Verify it's running
+        const before = await rt.runPromise(ActorRegistry.Service.use((svc) => svc.get(parentId, taskId)))
+        expect(before!.status).toBe("running")
+      })
+
+      // Manually update the instance_id to simulate a different process
+      await Instance.provide({
+        directory: tmp.path,
+        fn: async () => {
+          await Database.use((db) =>
+            db
+              .update(ActorRegistryTable)
+              .set({ instance_id: "different-process-id" })
+              .where(
+                and(
+                  eq(ActorRegistryTable.session_id, parentId!),
+                  eq(ActorRegistryTable.actor_id, taskId!),
+                ),
+              )
+              .run(),
+          )
+        },
+      })
+
+      // Second runtime: should orphan the row with different instance_id
       await withRegistry(tmp.path, async (rt) => {
         const recovered = await rt.runPromise(
           ActorRegistry.Service.use((svc) => svc.get(parentId!, taskId!)),
@@ -552,6 +728,116 @@ describe("ActorRegistry", () => {
           ActorRegistry.Service.use((svc) => svc.isSystemSpawned(session.id, "main")),
         )
         expect(result).toBe(false)
+      })
+    })
+  })
+
+  describe("servesCheckpoint", () => {
+    test("true for undefined actorID (main runLoop)", async () => {
+      await using tmp = await tmpdir({ git: true })
+      await withRegistry(tmp.path, async (rt) => {
+        const session = await rt.runPromise(Session.Service.use((svc) => svc.create()))
+        const result = await rt.runPromise(
+          ActorRegistry.Service.use((svc) => svc.servesCheckpoint(session.id, undefined)),
+        )
+        expect(result).toBe(true)
+      })
+    })
+
+    test("true for 'main' actorID", async () => {
+      await using tmp = await tmpdir({ git: true })
+      await withRegistry(tmp.path, async (rt) => {
+        const session = await rt.runPromise(Session.Service.use((svc) => svc.create()))
+        const result = await rt.runPromise(
+          ActorRegistry.Service.use((svc) => svc.servesCheckpoint(session.id, "main")),
+        )
+        expect(result).toBe(true)
+      })
+    })
+
+    test("true for peer (agentID is child.id, mode peer)", async () => {
+      await using tmp = await tmpdir({ git: true })
+      await withRegistry(tmp.path, async (rt) => {
+        const session = await rt.runPromise(Session.Service.use((svc) => svc.create()))
+        await rt.runPromise(
+          ActorRegistry.Service.use((svc) =>
+            svc.register({
+              sessionID: session.id,
+              actorID: "child-session-1",
+              mode: "peer",
+              agent: "build",
+              description: "x",
+              contextMode: "none",
+              background: true,
+              lifecycle: "ephemeral",
+            }),
+          ),
+        )
+        const result = await rt.runPromise(
+          ActorRegistry.Service.use((svc) => svc.servesCheckpoint(session.id, "child-session-1")),
+        )
+        expect(result).toBe(true)
+      })
+    })
+
+    test("false for subagent (explorer) — uses per-actor compaction", async () => {
+      await using tmp = await tmpdir({ git: true })
+      await withRegistry(tmp.path, async (rt) => {
+        const session = await rt.runPromise(Session.Service.use((svc) => svc.create()))
+        await rt.runPromise(
+          ActorRegistry.Service.use((svc) =>
+            svc.register({
+              sessionID: session.id,
+              actorID: "explorer-1",
+              mode: "subagent",
+              agent: "explorer",
+              description: "x",
+              contextMode: "none",
+              background: false,
+              lifecycle: "ephemeral",
+            }),
+          ),
+        )
+        const result = await rt.runPromise(
+          ActorRegistry.Service.use((svc) => svc.servesCheckpoint(session.id, "explorer-1")),
+        )
+        expect(result).toBe(false)
+      })
+    })
+
+    test("false for checkpoint-writer (system-spawned)", async () => {
+      await using tmp = await tmpdir({ git: true })
+      await withRegistry(tmp.path, async (rt) => {
+        const session = await rt.runPromise(Session.Service.use((svc) => svc.create()))
+        await rt.runPromise(
+          ActorRegistry.Service.use((svc) =>
+            svc.register({
+              sessionID: session.id,
+              actorID: "writer-1",
+              mode: "subagent",
+              agent: "checkpoint-writer",
+              description: "x",
+              contextMode: "full",
+              background: true,
+              lifecycle: "ephemeral",
+            }),
+          ),
+        )
+        const result = await rt.runPromise(
+          ActorRegistry.Service.use((svc) => svc.servesCheckpoint(session.id, "writer-1")),
+        )
+        expect(result).toBe(false)
+      })
+    })
+
+    test("true for unregistered actorID (fail open)", async () => {
+      await using tmp = await tmpdir({ git: true })
+      await withRegistry(tmp.path, async (rt) => {
+        const session = await rt.runPromise(Session.Service.use((svc) => svc.create()))
+        const result = await rt.runPromise(
+          ActorRegistry.Service.use((svc) => svc.servesCheckpoint(session.id, "ghost-9")),
+        )
+        expect(result).toBe(true)
       })
     })
   })

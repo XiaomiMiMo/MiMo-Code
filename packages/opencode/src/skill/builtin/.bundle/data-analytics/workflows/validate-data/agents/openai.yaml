@@ -1,0 +1,6 @@
+interface:
+  display_name: "Validate Data"
+  short_description: "QA analysis logic, metrics, charts, and conclusions"
+  default_prompt: "Validate an analysis result, metric definition, chart, or conclusion for correctness and evidence quality."
+policy:
+  allow_implicit_invocation: true

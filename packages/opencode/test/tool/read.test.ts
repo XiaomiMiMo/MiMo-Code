@@ -15,6 +15,7 @@ import { Tool } from "../../src/tool"
 import { Filesystem } from "../../src/util"
 import { provideInstance, tmpdirScoped } from "../fixture/fixture"
 import { testEffect } from "../lib/effect"
+import { ProviderTest } from "../fake/provider"
 
 const FIXTURES_DIR = path.join(import.meta.dir, "fixtures")
 
@@ -22,13 +23,38 @@ afterEach(async () => {
   await Instance.disposeAll()
 })
 
+const visionModel = ProviderTest.model({
+  capabilities: {
+    toolcall: true,
+    attachment: true,
+    reasoning: false,
+    temperature: true,
+    interleaved: false,
+    input: { text: true, image: true, audio: false, video: false, pdf: true },
+    output: { text: true, image: false, audio: false, video: false, pdf: false },
+  },
+})
+const visionProvider = ProviderTest.fake({ model: visionModel })
+
 const ctx = {
   sessionID: SessionID.make("ses_test"),
   messageID: MessageID.make(""),
   callID: "",
   agent: "build",
   abort: AbortSignal.any([]),
-  messages: [],
+  messages: [
+    {
+      info: {
+        id: MessageID.make(""),
+        sessionID: SessionID.make("ses_test"),
+        role: "user" as const,
+        time: { created: 0 },
+        agent: "build",
+        model: { providerID: visionModel.providerID, modelID: visionModel.id },
+      },
+      parts: [],
+    },
+  ],
   metadata: () => Effect.void,
   ask: () => Effect.void,
 }
@@ -41,6 +67,7 @@ const it = testEffect(
     Instruction.defaultLayer,
     LSP.defaultLayer,
     Truncate.defaultLayer,
+    visionProvider.layer,
   ),
 )
 

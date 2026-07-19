@@ -7,6 +7,15 @@ import { workflowRef } from "@/workflow/runtime-ref"
 import { jsonRequest } from "./trace"
 import type { SessionID } from "@/session/schema"
 
+// Read-only routes (transcript/structure) accept BOTH runID shapes: a top-level
+// run is `wf_` + 26 base62 (Identifier.descending), a nested child workflow is
+// `wf_` + 64 hex (sha256 of parent runID + key, see runtime.ts). The resume route
+// keeps the strict 26-char form because only top-level runs are resumable AND it
+// builds a filesystem path from the id; these read routes only do an in-memory
+// runtime map lookup, so the wider (still traversal-proof — no `.`/`/`) charset is
+// safe here.
+const READ_RUN_ID = /^wf_(?:[0-9A-Za-z]{26}|[0-9a-f]{64})$/
+
 export const WorkflowRoutes = lazy(() =>
   new Hono()
     .get(
@@ -67,6 +76,67 @@ export const WorkflowRoutes = lazy(() =>
           const params = c.req.valid("param")
           if (!runtime) return { runID: params.runID, resumed: false }
           return yield* runtime.resume({ runID: params.runID })
+        }),
+    )
+    .get(
+      "/:runID/transcript",
+      describeRoute({
+        summary: "Get a workflow run's full transcript",
+        description:
+          "Return the complete ordered phase/log transcript for one run, straight from the runtime's in-memory buffer (uncapped, unlike the tool-part metadata copy). Empty when the runtime is down or the run is unknown.",
+        operationId: "workflow.transcript",
+        responses: {
+          200: {
+            description: "Full transcript",
+            content: {
+              "application/json": {
+                schema: resolver(
+                  z.object({
+                    runID: z.string(),
+                    transcript: z.array(z.object({ kind: z.enum(["phase", "log"]), text: z.string() })),
+                  }),
+                ),
+              },
+            },
+          },
+        },
+      }),
+      validator("param", z.object({ runID: z.string().regex(READ_RUN_ID, "invalid workflow runID") })),
+      async (c) =>
+        jsonRequest("WorkflowRoutes.transcript", c, function* () {
+          const runtime = workflowRef.current
+          const params = c.req.valid("param")
+          if (!runtime) return { runID: params.runID, transcript: [] }
+          const transcript = yield* runtime.transcript({ runID: params.runID })
+          return { runID: params.runID, transcript: transcript.slice() }
+        }),
+    )
+    .get(
+      "/:runID/structure",
+      describeRoute({
+        summary: "Get a workflow run's structure tree",
+        description:
+          "Return the observability-only structure tree (phase/agent/workflow nodes with live status) for one run. Empty when the runtime is down or the run is unknown.",
+        operationId: "workflow.structure",
+        responses: {
+          200: {
+            description: "Structure tree",
+            content: {
+              "application/json": {
+                schema: resolver(z.object({ runID: z.string(), nodes: z.array(z.any()) })),
+              },
+            },
+          },
+        },
+      }),
+      validator("param", z.object({ runID: z.string().regex(READ_RUN_ID, "invalid workflow runID") })),
+      async (c) =>
+        jsonRequest("WorkflowRoutes.structure", c, function* () {
+          const runtime = workflowRef.current
+          const params = c.req.valid("param")
+          if (!runtime) return { runID: params.runID, nodes: [] }
+          const s = yield* runtime.structure({ runID: params.runID })
+          return { runID: params.runID, nodes: s.nodes }
         }),
     ),
 )

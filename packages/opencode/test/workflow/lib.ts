@@ -39,8 +39,8 @@ import { Team } from "../../src/team"
 import { SessionCheckpoint } from "../../src/session/checkpoint"
 import { SessionCompaction } from "../../src/session/compaction"
 import { Goal } from "../../src/session/goal"
-import { TaskGateState } from "../../src/task/gate-state"
 import { TaskRegistry } from "../../src/task/registry"
+import { defaultLayer as SchedulerDefaultLayer } from "../../src/cron/scheduler"
 import { Auth } from "../../src/auth"
 import * as CrossSpawnSpawner from "../../src/effect/cross-spawn-spawner"
 import { Ripgrep } from "../../src/file/ripgrep"
@@ -142,6 +142,7 @@ export function makeLayer() {
     Layer.provide(Memory.defaultLayer),
     Layer.provide(History.defaultLayer),
     Layer.provide(TaskRegistry.defaultLayer),
+    Layer.provide(SchedulerDefaultLayer),
     Layer.provide(Auth.defaultLayer),
     Layer.provideMerge(todo),
     Layer.provideMerge(question),
@@ -152,7 +153,6 @@ export function makeLayer() {
   const prune = SessionPrune.layer.pipe(Layer.provide(checkpoint), Layer.provideMerge(deps))
   const prompt = SessionPrompt.layer.pipe(
     Layer.provide(Goal.defaultLayer),
-    Layer.provide(TaskGateState.defaultLayer),
     Layer.provide(SessionRevert.defaultLayer),
     Layer.provide(summary),
     Layer.provide(checkpoint),
@@ -175,6 +175,7 @@ export function makeLayer() {
     // dev's Actor.layer now resolves TaskRegistry.Service (spawn.ts) — provide it
     // here too, matching test/actor/spawn.test.ts.
     Layer.provide(TaskRegistry.defaultLayer),
+    Layer.provide(SchedulerDefaultLayer),
     // provideMerge (not provide) so Inbox.Service stays in the output context for
     // WorkflowRuntime.layer, which now also resolves Inbox to notify the parent
     // on terminal. Mirrors prod WorkflowRuntime.defaultLayer providing Inbox.
@@ -198,6 +199,7 @@ export const ref = {
 }
 
 const cfg = {
+  $schema: "https://mimo.xiaomi.com/mimocode/config.json",
   provider: {
     test: {
       name: "Test",

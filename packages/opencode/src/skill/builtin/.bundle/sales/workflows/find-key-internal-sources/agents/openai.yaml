@@ -1,0 +1,6 @@
+interface:
+  display_name: "Find Key Internal Sources"
+  short_description: "Find internal experts, docs, and channels"
+  default_prompt: "Find the key internal sources for a customer question."
+policy:
+  allow_implicit_invocation: false

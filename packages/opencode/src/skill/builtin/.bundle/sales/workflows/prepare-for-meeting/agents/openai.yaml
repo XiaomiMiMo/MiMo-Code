@@ -1,0 +1,6 @@
+interface:
+  display_name: "Prepare For Meeting"
+  short_description: "Customer meeting briefs from calendars and notes"
+  default_prompt: "Prepare me for an upcoming customer meeting."
+policy:
+  allow_implicit_invocation: false

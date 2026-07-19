@@ -111,6 +111,10 @@ export class Info extends Schema.Class<Info>("ProviderConfig")({
     ),
   ),
   models: Schema.optional(Schema.Record(Schema.String, Model)),
+  only_configured_models: Schema.optional(Schema.Boolean).annotate({
+    description:
+      "When true, show only the models listed in this provider's `models` map and hide the rest of the catalog (acts as an implicit whitelist). Defaults to false: `models` only augments/overrides the catalog without filtering it.",
+  }),
 }) {
   static readonly zod = zod(this)
 }

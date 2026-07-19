@@ -1,0 +1,6 @@
+interface:
+  display_name: "Image To Code"
+  short_description: "Build a responsive frontend after minimum brief playback"
+  default_prompt: "Play back the minimum design brief, then build this selected design as an interactive frontend."
+policy:
+  allow_implicit_invocation: true
