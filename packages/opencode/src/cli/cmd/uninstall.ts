@@ -96,7 +96,7 @@ async function collectRemovalTargets(args: UninstallArgs, method: Installation.M
     { path: Global.Path.state, label: "State", keep: false },
   ]
 
-  const shellConfig = method === "curl" ? await getShellConfigFile() : null
+  const shellConfig = method === "curl" && process.platform !== "win32" ? await getShellConfigFile() : null
   const binary = method === "curl" ? process.execPath : null
 
   return { directories, shellConfig, binary }
@@ -126,6 +126,10 @@ async function showRemovalSummary(targets: RemovalTargets, method: Installation.
 
   if (targets.shellConfig) {
     prompts.log.info(`  ✓ Shell PATH in ${shortenPath(targets.shellConfig)}`)
+  }
+
+  if (method === "curl" && process.platform === "win32") {
+    prompts.log.info(`  ✓ User PATH (registry)`)
   }
 
   if (method !== "curl" && method !== "unknown") {
@@ -176,6 +180,17 @@ async function executeUninstall(method: Installation.Method, targets: RemovalTar
       errors.push(`Shell config: ${err.message}`)
     } else {
       spinner.stop("Cleaned shell config")
+    }
+  }
+
+  if (method === "curl" && process.platform === "win32") {
+    spinner.start("Cleaning User PATH...")
+    const err = await cleanWindowsPath().catch((e) => e)
+    if (err) {
+      spinner.stop("Failed to clean User PATH", 1)
+      errors.push(`User PATH: ${err.message}`)
+    } else {
+      spinner.stop("Cleaned User PATH")
     }
   }
 
@@ -348,4 +363,21 @@ function shortenPath(p: string): string {
     return p.replace(home, "~")
   }
   return p
+}
+
+async function cleanWindowsPath() {
+  const installDir = path.join(os.homedir(), ".mimocode", "bin")
+  const script = `
+    $installDir = $env:MIMOCODE_UNINSTALL_DIR
+    $userPath = [Environment]::GetEnvironmentVariable('PATH', 'User')
+    if ($userPath -and $userPath -like "*$installDir*") {
+      $newPath = ($userPath -split ';' | Where-Object { $_ -ne $installDir }) -join ';'
+      [Environment]::SetEnvironmentVariable('PATH', $newPath, 'User')
+    }
+  `
+  const result = await Process.run(["powershell", "-ep", "Bypass", "-c", script], {
+    nothrow: true,
+    env: { ...process.env, MIMOCODE_UNINSTALL_DIR: installDir },
+  })
+  if (result.code !== 0) throw new Error(result.stderr.toString() || "Failed to clean User PATH")
 }

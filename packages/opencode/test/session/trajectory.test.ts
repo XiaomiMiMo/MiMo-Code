@@ -217,6 +217,31 @@ describe("serializeTrajectoryMessages", () => {
               ],
             },
           },
+          {
+            id: PartID.make("part_e"),
+            messageID: asstID,
+            sessionID,
+            type: "tool",
+            tool: "click",
+            callID: "call_e",
+            state: {
+              status: "error",
+              input: {},
+              error: "click failed",
+              metadata: {},
+              time: { start: 3, end: 4 },
+              attachments: [
+                {
+                  id: PartID.make("part_error_att"),
+                  messageID: asstID,
+                  sessionID,
+                  type: "file",
+                  mime: "image/jpeg",
+                  url: "data:image/jpeg;base64,CCCCCCCCCCC",
+                },
+              ],
+            },
+          },
         ],
       },
     ]
@@ -232,5 +257,8 @@ describe("serializeTrajectoryMessages", () => {
     const toolPart = out[1]?.parts[0] as any
     expect(toolPart.state.attachments[0].url).toBe("[data-url:image/png]")
     expect(toolPart.state.attachments[0].mime).toBe("image/png")
+    const errorToolPart = out[1]?.parts[1] as any
+    expect(errorToolPart.state.attachments[0].url).toBe("[data-url:image/jpeg]")
+    expect(errorToolPart.state.attachments[0].mime).toBe("image/jpeg")
   })
 })

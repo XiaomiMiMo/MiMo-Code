@@ -373,10 +373,12 @@ add_to_path() {
 
     if grep -Fxq "$command" "$config_file"; then
         print_message info "Command already exists in $config_file, skipping write."
+        path_written=true
     elif [[ -w $config_file ]]; then
         echo -e "\n# mimocode" >> "$config_file"
         echo "$command" >> "$config_file"
         print_message info "${MUTED}Successfully added ${NC}mimocode ${MUTED}to \$PATH in ${NC}$config_file"
+        path_written=true
     else
         print_message warning "Manually add the directory to $config_file (or similar):"
         print_message info "  $command"
@@ -410,6 +412,7 @@ esac
 
 if [[ "$no_modify_path" != "true" ]]; then
     config_file=""
+    path_written=false
     for file in $config_files; do
         if [[ -f $file ]]; then
             config_file=$file
@@ -452,15 +455,38 @@ if [ -n "${GITHUB_ACTIONS-}" ] && [ "${GITHUB_ACTIONS}" == "true" ]; then
 fi
 
 echo -e ""
-echo -e "${MUTED}█▀▄▀█ ░▀░ █▀▄▀█ █▀▀█ ${NC}█▀▀ █▀▀█ █▀▀▄ █▀▀"
-echo -e "${MUTED}█░▀░█ ▀█▀ █░▀░█ █░░█ ${NC}█░░ █░░█ █░░█ █▀▀"
-echo -e "${MUTED}▀░░░▀ ▀▀▀ ▀░░░▀ ▀▀▀▀ ${NC}▀▀▀ ▀▀▀▀ ▀▀░▀ ▀▀▀"
+# Show classic (bold) logo when terminal is wide enough, thin otherwise
+term_width=$(tput cols 2>/dev/null || echo 80)
+if [ "$term_width" -ge 80 ] 2>/dev/null; then
+    echo -e "${MUTED}  ███╗   ███╗ ██╗ ███╗   ███╗  ██████╗ ${NC}   ██████╗  ██████╗  ██████╗  ███████╗"
+    echo -e "${MUTED}  ████╗ ████║ ██║ ████╗ ████║ ██╔═══██╗${NC}  ██╔════╝ ██╔═══██╗ ██╔══██╗ ██╔════╝"
+    echo -e "${MUTED}  ██╔████╔██║ ██║ ██╔████╔██║ ██║   ██║${NC}  ██║      ██║   ██║ ██║  ██║ █████╗  "
+    echo -e "${MUTED}  ██║╚██╔╝██║ ██║ ██║╚██╔╝██║ ██║   ██║${NC}  ██║      ██║   ██║ ██║  ██║ ██╔══╝  "
+    echo -e "${MUTED}  ██║ ╚═╝ ██║ ██║ ██║ ╚═╝ ██║ ╚██████╔╝${NC}  ╚██████╗ ╚██████╔╝ ██████╔╝ ███████╗"
+    echo -e "${MUTED}  ╚═╝     ╚═╝ ╚═╝ ╚═╝     ╚═╝  ╚═════╝ ${NC}   ╚═════╝  ╚═════╝  ╚═════╝  ╚══════╝"
+else
+    echo -e "${MUTED}█▀▄▀█ █ █▀▄▀█ █▀▀█${NC}  █▀▀ █▀▀█ █▀▀▄ █▀▀▀"
+    echo -e "${MUTED}█ ▀ █ █ █ ▀ █ █  █${NC}  █   █  █ █  █ █▀▀ "
+    echo -e "${MUTED}▀   ▀ ▀ ▀   ▀ ▀▀▀▀${NC}  ▀▀▀ ▀▀▀▀ ▀▀▀  ▀▀▀▀"
+fi
 echo -e ""
 echo -e ""
-echo -e "${MUTED}To start:${NC}"
-echo -e ""
-echo -e "cd <project>  ${MUTED}# Open directory${NC}"
-echo -e "mimo          ${MUTED}# Run command${NC}"
+if [[ ":$PATH:" != *":$INSTALL_DIR:"* ]]; then
+    echo -e "${MUTED}To get started, run:${NC}"
+    echo -e ""
+    if [[ "${path_written:-}" == "true" && -n "${config_file:-}" ]]; then
+        echo -e "source $config_file  ${MUTED}# or open a new terminal${NC}"
+    else
+        echo -e "export PATH=$INSTALL_DIR:\$PATH"
+    fi
+    echo -e "cd <project>"
+    echo -e "mimo"
+else
+    echo -e "${MUTED}To start:${NC}"
+    echo -e ""
+    echo -e "cd <project>  ${MUTED}# Open directory${NC}"
+    echo -e "mimo          ${MUTED}# Run command${NC}"
+fi
 echo -e ""
 echo -e "${MUTED}For more information visit ${NC}https://mimo.xiaomi.com/coder/docs"
 echo -e ""

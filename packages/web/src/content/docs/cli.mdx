@@ -29,16 +29,19 @@ opencode [project]
 
 #### Flags
 
-| Flag         | Short | Description                                                             |
-| ------------ | ----- | ----------------------------------------------------------------------- |
-| `--continue` | `-c`  | Continue the last session                                               |
-| `--session`  | `-s`  | Session ID to continue                                                  |
-| `--fork`     |       | Fork the session when continuing (use with `--continue` or `--session`) |
-| `--prompt`   |       | Prompt to use                                                           |
-| `--model`    | `-m`  | Model to use in the form of provider/model                              |
-| `--agent`    |       | Agent to use                                                            |
-| `--port`     |       | Port to listen on                                                       |
-| `--hostname` |       | Hostname to listen on                                                   |
+| Flag                             | Short | Description                                                             |
+| -------------------------------- | ----- | ----------------------------------------------------------------------- |
+| `--continue`                     | `-c`  | Continue the last session                                               |
+| `--session`                      | `-s`  | Session ID to continue                                                  |
+| `--fork`                         |       | Fork the session when continuing (use with `--continue` or `--session`) |
+| `--prompt`                       |       | Prompt to use                                                           |
+| `--model`                        | `-m`  | Model to use in the form of provider/model                              |
+| `--agent`                        |       | Agent to use                                                            |
+| `--port`                         |       | Port to listen on                                                       |
+| `--hostname`                     |       | Hostname to listen on                                                   |
+| `--never-ask`                    |       | Start in never-ask mode — auto-decide without asking (permissions excluded) |
+| `--trust`                        |       | Skip workspace trust prompt and trust the directory                     |
+| `--dangerously-skip-permissions` |       | Auto-approve permissions that are not explicitly denied (dangerous!)    |
 
 ---
 

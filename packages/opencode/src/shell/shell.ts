@@ -107,4 +107,18 @@ export const preferred = lazy(() => select(process.env.SHELL))
 
 export const acceptable = lazy(() => select(process.env.SHELL, { acceptable: true }))
 
+// On non-UTF-8 Windows locales (e.g. zh-CN ACP 936/GBK) shell subprocesses emit
+// output in the legacy code page, which we decode as UTF-8 → mojibake. These
+// prefixes force UTF-8 output before the user command runs.
+
+// PowerShell/pwsh: set both the output pipe encoding and the console encoding.
+// UTF8Encoding($false) is BOM-less to avoid leading garbage bytes.
+export const POWERSHELL_UTF8_PREFIX =
+  "$OutputEncoding = [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false);"
+
+// cmd.exe: switch the code page to 65001. `&` (not `&&`) so the user command's
+// exit code is preserved and a chcp failure doesn't block it; redirect both
+// stdout and stderr so chcp output never pollutes the result.
+export const CMD_UTF8_PREFIX = "chcp 65001 >nul 2>nul & "
+
 export * as Shell from "./shell"

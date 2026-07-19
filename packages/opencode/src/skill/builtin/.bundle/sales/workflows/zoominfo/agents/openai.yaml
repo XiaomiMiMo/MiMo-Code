@@ -1,0 +1,6 @@
+interface:
+  display_name: "ZoomInfo User Guide"
+  short_description: "ZoomInfo search, enrichment, research, and recovery rules"
+  default_prompt: "Use ZoomInfo carefully for this Sales enrichment workflow."
+policy:
+  allow_implicit_invocation: false

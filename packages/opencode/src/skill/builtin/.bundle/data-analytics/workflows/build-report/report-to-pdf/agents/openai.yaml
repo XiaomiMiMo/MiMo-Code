@@ -1,0 +1,6 @@
+interface:
+  display_name: "Report To PDF"
+  short_description: "Convert static Data Analytics report exports into verified PDF artifacts"
+  default_prompt: "Convert an existing Data Analytics HTML report or export into a verified PDF artifact."
+policy:
+  allow_implicit_invocation: false

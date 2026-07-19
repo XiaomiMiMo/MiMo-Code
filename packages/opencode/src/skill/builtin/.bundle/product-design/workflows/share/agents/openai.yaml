@@ -1,0 +1,6 @@
+interface:
+  display_name: "Share"
+  short_description: "Deploy a runnable prototype and return a shareable URL"
+  default_prompt: "Share my runnable prototype."
+policy:
+  allow_implicit_invocation: false

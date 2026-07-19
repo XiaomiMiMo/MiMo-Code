@@ -1,0 +1,70 @@
+required_inputs:
+  - source_type
+  - evidence
+
+recommended_inputs:
+  - account_name
+  - call_date
+
+optional_inputs:
+  - primary_contact_name
+  - primary_contact_email
+  - known_chat_channel
+  - opportunity_name
+  - opportunity_link
+  - account_context_notes
+
+source_type_values:
+  - call_transcript
+  - meeting_recording
+  - meeting_recording_transcript
+  - pasted_notes
+  - pasted_transcript
+  - docs_note
+  - chat_thread
+
+defaults:
+  chat_mode: draft_only
+  crm_mode: copy_paste_only
+  unknown_marker: Unknown
+  missing_due_date_marker: TBD
+
+input_notes:
+  source_type:
+    required: true
+    guidance: "Choose the best grounded evidence path. Prefer ~~Meeting Transcripts first, then meeting recording when those sources can be retrieved in the user's environment; use pasted text, ~~Knowledge & Files, or ~~Email when they are the best available fallback."
+  evidence:
+    required: true
+    guidance: "Use direct transcript text, a retrievable ~~Meeting Transcripts source reference, meeting recording title/link, ~~Email link, ~~Knowledge & Files URL, or a linked/exported transcript artifact."
+  account_name:
+    required: false
+    guidance: "Use when already known or when it can be resolved confidently from the source."
+  call_date:
+    required: false
+    guidance: "Use the call date if present. Resolve relative recent phrases such as earlier today, this morning, yesterday, or last week into the user's current local date or timeframe when available; otherwise preserve Unknown rather than guessing."
+  primary_contact_name:
+    required: false
+    guidance: "Use placeholders when the recipient name is not known."
+  primary_contact_email:
+    required: false
+    guidance: "Use placeholders when the recipient email is not known."
+  known_chat_channel:
+    required: false
+    guidance: "Only use if it is clearly an internal account channel."
+  opportunity_name:
+    required: false
+    guidance: "If given, use as the primary candidate for the ~~CRM next-steps sentence."
+  opportunity_link:
+    required: false
+    guidance: "Use only to disambiguate the target opportunity."
+  account_context_notes:
+    required: false
+    guidance: "Supplemental user-provided context that can sharpen seller actions but must not override the source evidence."
+
+normalization_rules:
+  - "Normalize unknown names, dates, and owners to the configured markers."
+  - "Treat a company/account plus a recent relative timeframe, such as 'my call with Acme earlier today,' as a retrievable evidence reference for meeting notes or transcripts, not as a request to ask for pasted notes first."
+  - "Preserve direct evidence wording for decisions, asks, and commitments when possible."
+  - "Treat ~~CRM and ~~Knowledge & Files account context as enrichment lanes, not the primary call-evidence source."
+  - "For meeting recording, require enough identifiers to distinguish the transcript: title, date or timeframe, customer name, and one to two keywords when a direct link is not provided."
+  - "If direct meeting recording retrieval is unavailable in the current environment, retain the source_type and degrade to exported transcript text or linked doc evidence."

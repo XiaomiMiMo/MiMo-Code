@@ -66,6 +66,7 @@ export const layer = Layer.effect(
 
         return { wildcard, typed }
       }),
+      { phase: "late" },
     )
 
     function getOrCreate<D extends BusEvent.Definition>(state: State, def: D) {

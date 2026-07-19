@@ -1,0 +1,6 @@
+interface:
+  display_name: "Create Data Context"
+  short_description: "Create reusable data context and semantic layers"
+  default_prompt: "Create reusable data context or a semantic layer from my metric docs, tables, dashboards, or source notes."
+policy:
+  allow_implicit_invocation: true

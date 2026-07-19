@@ -1,6 +1,5 @@
 ---
 name: compose:report
-hidden: true
 description: "Use after implementation is verified and before merge — consolidates multiple spec iterations into a single final-state report, marks related specs, and records key lessons"
 ---
 

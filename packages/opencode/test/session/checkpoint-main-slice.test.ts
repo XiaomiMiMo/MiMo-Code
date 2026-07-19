@@ -44,6 +44,8 @@ const captures: Captures = { input: undefined, prefixMsgs: undefined }
 const recordingActor = Layer.effect(
   Actor.Service,
   Effect.gen(function* () {
+    const prevSpawnRef = spawnRef.current
+    const prevPrefixCaptureRef = prefixCaptureRef.current
     const impl = Actor.Service.of({
       spawn: (input) =>
         Effect.gen(function* () {
@@ -80,8 +82,8 @@ const recordingActor = Layer.effect(
 
     yield* Effect.addFinalizer(() =>
       Effect.sync(() => {
-        if (spawnRef.current === impl) spawnRef.current = undefined
-        if (prefixCaptureRef.current === capture) prefixCaptureRef.current = undefined
+        if (spawnRef.current === impl) spawnRef.current = prevSpawnRef
+        if (prefixCaptureRef.current === capture) prefixCaptureRef.current = prevPrefixCaptureRef
       }),
     )
     return impl

@@ -1,0 +1,25 @@
+List active scheduled jobs (cron schedules and self-paced loops) and let the user cancel them.
+
+User focus or follow-up arguments:
+$ARGUMENTS
+
+## What to do
+
+1. Call the `cron` tool's `list` verb to enumerate every active job for this session. Use whichever call form the tool's own prompt describes — the `list` action takes no required arguments.
+
+2. Render the result as an indexed table. One row per job. Columns, left to right:
+   - `id` — the job's short id (so the user can reference it)
+   - `cadence` — for `kind: cron`, the 5-field cron expression; for `kind: loop`, the `delay_seconds` (formatted as `~Ns` or `~Nm`)
+   - `prompt-preview` — the first 60 characters of the prompt body; replace sentinels (`<<autonomous-loop>>`, `<<loop.md>>`, etc.) with a short tag like `[autonomous]` or `[loop.md]`
+   - `kind` — `cron` or `loop`
+   - `status` — `active` by default; if the job is paused or about to expire (within one tick of `recurringMaxAgeMs`), note it
+
+   If there are no jobs, say so on a single line and stop.
+
+3. If the user's arguments contain `cancel <id>` (or `delete <id>`, `stop <id>`, `kill <id>`), call the `cron` tool's `delete` verb with that id and report the result. Multiple ids in the same message → one delete call per id.
+
+## Conventions
+
+- Do not re-render the table after a cancel unless the user asks. Just confirm what was cancelled.
+- Treat ambiguous ids (a short prefix that matches multiple jobs) as an error and ask the user to disambiguate.
+- Never run the prompt body of a listed job. This command is read-only/cancel-only.

@@ -1,0 +1,6 @@
+interface:
+  display_name: "Visualize Data"
+  short_description: "Design and QA quantitative charts for analytical work"
+  default_prompt: "Design or QA quantitative charts with clear encodings, labels, comparisons, and reader-facing takeaways."
+policy:
+  allow_implicit_invocation: true

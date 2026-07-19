@@ -1,0 +1,188 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Priority Ledger Pane Payload",
+  "description": "Canonical JSON payload to embed in assets/account-priority-pane.template.html.",
+  "type": "object",
+  "required": [
+    "title",
+    "generatedAt",
+    "source",
+    "scope",
+    "workNow",
+    "watch",
+    "paused",
+    "evidenceGaps"
+  ],
+  "properties": {
+    "title": {
+      "type": "string"
+    },
+    "generatedAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "viewerInitials": {
+      "description": "Optional initials for the seller avatar in the pane header.",
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 3
+    },
+    "source": {
+      "type": "object",
+      "required": ["label", "status"],
+      "properties": {
+        "label": {
+          "type": "string"
+        },
+        "status": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": true
+    },
+    "scope": {
+      "type": "object",
+      "required": [
+        "sourceOfTruth",
+        "sourcesChecked",
+        "accountSet",
+        "rankingBasis",
+        "assumptions"
+      ],
+      "properties": {
+        "sourceOfTruth": {
+          "type": "string"
+        },
+        "sourcesChecked": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "accountSet": {
+          "type": "string"
+        },
+        "rankingBasis": {
+          "type": "string"
+        },
+        "assumptions": {
+          "type": "string"
+        },
+        "motionGoal": {
+          "type": "string",
+          "enum": ["net_new", "expansion", "mixed"]
+        },
+        "batchSize": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "capacityWindow": {
+          "type": "integer",
+          "minimum": 1
+        }
+      },
+      "additionalProperties": true
+    },
+    "workNow": {
+      "description": "Ranked accounts that deserve seller attention now.",
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/accountRow"
+      }
+    },
+    "watch": {
+      "description": "Accounts to monitor until a named trigger changes their priority.",
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/accountRow"
+      }
+    },
+    "paused": {
+      "description": "Suppressed or blocked accounts where no seller action should be taken now.",
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/accountRow"
+      }
+    },
+    "evidenceGaps": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    }
+  },
+  "$defs": {
+    "accountRow": {
+      "type": "object",
+      "required": [
+        "rank",
+        "account",
+        "motion",
+        "stage",
+        "value",
+        "whyItMatters",
+        "nextAction",
+        "owner",
+        "dueDate",
+        "confidence",
+        "status"
+      ],
+      "properties": {
+        "rank": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "account": {
+          "type": "string"
+        },
+        "accountUrl": {
+          "type": "string",
+          "format": "uri"
+        },
+        "motion": {
+          "description": "Sales motion such as Renewal, Expansion, New logo, or Cross-sell.",
+          "type": "string"
+        },
+        "stage": {
+          "description": "Seller-friendly opportunity or account stage.",
+          "type": "string"
+        },
+        "value": {
+          "description": "Display-ready opportunity value or Value unavailable when the source does not provide one.",
+          "type": "string"
+        },
+        "whyItMatters": {
+          "description": "Short, source-grounded explanation of the timing, value, momentum, or risk.",
+          "type": "string"
+        },
+        "nextAction": {
+          "description": "Immediate safe action, watch trigger, or unblocking step appropriate to the row's tab.",
+          "type": "string"
+        },
+        "owner": {
+          "description": "Current seller or action owner, or Unassigned when unknown.",
+          "type": "string"
+        },
+        "dueDate": {
+          "description": "Display-ready due date or No date set when unknown.",
+          "type": "string"
+        },
+        "confidence": {
+          "type": "string",
+          "enum": ["High", "Medium", "Low"]
+        },
+        "status": {
+          "type": "string"
+        },
+        "primaryContact": {
+          "type": "string"
+        },
+        "evidence": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": true
+    }
+  },
+  "additionalProperties": true
+}

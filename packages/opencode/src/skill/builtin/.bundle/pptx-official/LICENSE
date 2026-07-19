@@ -1,0 +1,33 @@
+Apache License
+Version 2.0, January 2004
+http://www.apache.org/licenses/
+
+Copyright 2026 The Fresh PPTX Skill contributors
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+
+--------------------------------------------------------------------------------
+
+This skill is an independent implementation authored from scratch. It relies on
+public specifications and permissively licensed third-party tooling, including:
+
+  - ECMA-376 / ISO/IEC 29500 (Office Open XML, PresentationML) — public standard
+  - python-pptx (MIT, https://github.com/scanny/python-pptx)
+  - PptxGenJS (MIT, https://github.com/gitbrent/PptxGenJS)
+  - lxml (BSD-3-Clause, https://lxml.de)
+  - Pillow (MIT-CMU, https://python-pillow.org)
+  - LibreOffice / soffice (MPL 2.0, invoked as an external binary; no linking)
+  - Poppler / pdftoppm (GPL, invoked as an external binary; no linking)
+
+Users are responsible for complying with the licenses of the external
+tools they choose to install.

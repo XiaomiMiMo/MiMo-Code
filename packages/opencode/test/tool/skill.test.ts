@@ -1,5 +1,5 @@
 import * as CrossSpawnSpawner from "../../src/effect/cross-spawn-spawner"
-import { Effect, Layer } from "effect"
+import { Cause, Effect, Layer } from "effect"
 import { afterEach, describe, expect } from "bun:test"
 import path from "path"
 import { pathToFileURL } from "url"
@@ -92,6 +92,30 @@ Use this skill.
           expect(result.output).toContain(`<skill_content name="tool-skill">`)
           expect(result.output).toContain(`Base directory for this skill: ${pathToFileURL(skill).href}`)
           expect(result.output).toContain(`<file>${file}</file>`)
+        }),
+      { git: true },
+    ),
+  )
+
+  it.live("a built-in workflow name redirects to the workflow tool, not a dead-end error", () =>
+    provideTmpdirInstance(
+      () =>
+        Effect.gen(function* () {
+          const registry = yield* ToolRegistry.Service
+          const agent = { name: "build", mode: "primary" as const, permission: [], options: {} }
+          const tool = (yield* registry.tools({
+            providerID: "opencode" as any,
+            modelID: "gpt-5" as any,
+            agent,
+          })).find((tool) => tool.id === SkillTool.id)
+          if (!tool) throw new Error("Skill tool not found")
+          const ctx: Tool.Context = { ...baseCtx, ask: () => Effect.void }
+          const exit = yield* Effect.exit(tool.execute({ name: "fact-check" }, ctx))
+          expect(exit._tag).toBe("Failure")
+          const msg = exit._tag === "Failure" ? Cause.pretty(exit.cause) : ""
+          expect(msg).toContain("built-in WORKFLOW")
+          expect(msg).toContain("workflow tool")
+          expect(msg).toContain('name: "fact-check"')
         }),
       { git: true },
     ),

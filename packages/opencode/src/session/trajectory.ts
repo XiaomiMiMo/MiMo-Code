@@ -20,7 +20,7 @@ function serializeFilePart(part: MessageV2.FilePart): MessageV2.FilePart {
  * Mutation is shallow — original part is not modified.
  */
 function sanitizeToolState(state: MessageV2.ToolPart["state"]): MessageV2.ToolPart["state"] {
-  if (state.status === "completed" && state.attachments && state.attachments.length > 0) {
+  if ("attachments" in state && state.attachments && state.attachments.length > 0) {
     return { ...state, attachments: state.attachments.map(serializeFilePart) }
   }
   return state

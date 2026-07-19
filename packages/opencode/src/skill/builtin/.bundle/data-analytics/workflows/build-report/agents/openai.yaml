@@ -1,0 +1,6 @@
+interface:
+  display_name: "Build Report"
+  short_description: "Turn reviewed evidence into polished analytical reports"
+  default_prompt: "Using this reviewed evidence, build a polished analytical report with clear narrative, charts, caveats, and source notes."
+policy:
+  allow_implicit_invocation: true

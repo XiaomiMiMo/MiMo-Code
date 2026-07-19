@@ -1,0 +1,133 @@
+{
+  "skill_name": "super-research",
+  "evals": [
+    {
+      "id": 0,
+      "name": "clear-setup-and-3-iterations",
+      "prompt": "This is a tiny research playground. Read README.md and run.py. The goal is to lower `val_loss` — please run the autonomous research loop for exactly 3 experiments after the baseline (so 4 total runs), then stop and print a summary. Use a 30-second wall-clock timeout per run. Keep going without asking permission mid-loop.",
+      "expected_output": "Fresh branch created (research/<tag>). results.tsv with 4 rows plus header, first row = baseline. Each experiment committed. Metric extraction uses grep on run.log. Kept vs discarded decisions match whether val_loss improved. Final summary lists best val_loss and top changes.",
+      "files": ["toy_repo/run.py", "toy_repo/README.md"],
+      "expectations": [
+        "results.tsv exists in outputs/",
+        "results.tsv has a header row and at least 4 data rows (baseline + 3 experiments)",
+        "results.tsv uses tab characters as field separators (not commas)",
+        "First data row status is 'keep' (baseline retained)",
+        "Branch name matches research/* pattern",
+        "Git log on the branch shows at least 2 commits",
+        "Best val_loss recorded is <= baseline val_loss (or all runs crashed)",
+        "Loop reported final summary without asking permission to continue during the 3 experiments"
+      ]
+    },
+    {
+      "id": 1,
+      "name": "ambiguous-goal-must-clarify",
+      "prompt": "Make this repo better. Do 3 experiments after baseline, 30s timeout each, then stop.",
+      "expected_output": "Agent surfaces the experiment contract before starting.",
+      "files": ["toy_repo/run.py", "toy_repo/README.md"],
+      "expectations": [
+        "contract.md artifact exists and enumerates: metric, run command, mutable file, budget/timeout, branch",
+        "Contract identifies val_loss as the primary metric",
+        "results.tsv exists with baseline + at least 3 experiments (4+ data rows)",
+        "Branch name matches research/* pattern",
+        "Experiments were committed on the new branch, not on master"
+      ]
+    },
+    {
+      "id": 2,
+      "name": "handles-crash-gracefully",
+      "prompt": "Please run the autonomous research loop on this toy repo for 3 experiments after baseline (30s timeout per run). To exercise your crash handling, deliberately make ONE of the three experiments introduce a syntax error or an obviously broken change (e.g. `DEPTH = 'four'`), see what happens, then continue the loop with the remaining experiments. Log the crash in results.tsv with status=crash and keep going.",
+      "expected_output": "results.tsv contains a row with status=crash and val_loss=0. Branch is reset after the crash.",
+      "files": ["toy_repo/run.py", "toy_repo/README.md"],
+      "expectations": [
+        "results.tsv contains at least one row with status='crash'",
+        "Crash row records val_loss=0 (crash sentinel)",
+        "Final run.py parses as valid Python (no syntax error at HEAD)",
+        "Loop completed 3 experiments after baseline (results.tsv has 4+ data rows)",
+        "Branch HEAD is a working commit — no broken code left checked out"
+      ]
+    },
+    {
+      "id": 3,
+      "name": "topic-survey-simpsons-paradox",
+      "prompt": "调研: I'm writing a short internal explainer on Simpson's paradox for a mixed audience (engineers + PMs). Do a topic survey — gather 8-12 sources of mixed types (papers, blog posts, textbook chapters, tutorials), synthesize into a 1-page report that answers: (1) what is it precisely, (2) 2 concrete real-world examples where it changed a decision, (3) practical detection recipe an analyst can follow. Save everything under `survey/<tag>/`. Do not ask me to confirm anything mid-way — pick reasonable choices and go.",
+      "expected_output": "survey/<tag>/ directory containing sources.tsv with 8+ rows (header + data), claims.tsv, and report.md. Report answers the 3 sub-questions with inline S00N citations. Sources are of mixed types.",
+      "files": [],
+      "expectations": [
+        "A directory named survey/<tag>/ exists in the working directory",
+        "sources.tsv exists with at least 9 lines (header + 8 sources)",
+        "sources.tsv is tab-separated with a `credibility` or similar quality column",
+        "sources.tsv contains at least 2 distinct `kind` values (e.g. paper AND blog)",
+        "report.md exists and answers all three sub-questions (definition, examples, detection recipe)",
+        "report.md contains inline citations of the form S001 / S002 / etc. that reference sources.tsv IDs",
+        "At least one contradiction, disagreement, or open question is explicitly noted in the report or a claims.tsv"
+      ]
+    },
+    {
+      "id": 4,
+      "name": "quant-analysis-detects-confound",
+      "prompt": "量化分析: I have a dataset at `dataset.csv` (2005 rows: id, x, y, w, age). Please answer this question rigorously: does X predict Y? Produce an analysis directory `analysis/<tag>/` with scripts/, an analysis_log.tsv, and a report.md that includes the effect size, its uncertainty, and any caveats. Don't ask for confirmation mid-way — pick reasonable choices and go. Work in the current directory.",
+      "expected_output": "analysis/<tag>/ contains scripts/ (audit + at least one hypothesis-test script), analysis_log.tsv, report.md. The analysis controls for W and reports the correct within-stratum negative relationship, not just the misleading positive raw correlation.",
+      "files": ["toy_dataset/dataset.csv", "toy_dataset/README.md"],
+      "expectations": [
+        "An analysis/<tag>/ directory exists in the working directory",
+        "scripts/ folder contains at least an audit script and a hypothesis-test script (2+ .py files)",
+        "analysis_log.tsv exists and has at least 3 data rows",
+        "The audit surfaces the missingness in `age` (~3%) OR the duplicates (5)",
+        "The analysis considers/controls for W (mentions W as a confounder, stratification, or partial correlation)",
+        "The report notes the sign flip: raw corr positive but within-W corr negative — the Simpson's paradox is detected",
+        "The report includes an effect size AND a caveat / uncertainty statement",
+        "report.md exists in the analysis directory"
+      ]
+    },
+    {
+      "id": 5,
+      "name": "benchmark-fair-matrix-with-failure",
+      "prompt": "对比评测: Three text-cleaner implementations sit in `toy_bench/candidates/` (cleaner_a.py, cleaner_b.py, cleaner_c.py). Five test cases with gold outputs sit in `toy_bench/cases/` (case01..case05). Use `toy_bench/run_case.sh <candidate.py> <case_basename>` — it prints `score=X.Y time=T status=<done|error>`. Pick the best cleaner for our pipeline. Run each candidate × case at least twice (10 total per candidate), log every cell — including failures — to a `matrix.tsv`, and produce a `benchmark/<tag>/report.md` with a ranking, a stability check, and a recommendation. Don't tune any candidate. Don't ask me to confirm — pick reasonable defaults and go.",
+      "expected_output": "benchmark/<tag>/ with matrix.tsv (3 candidates × 5 cases × ≥2 reps = 30+ rows) including error/timeout rows verbatim, and report.md declaring cleaner_c the winner while flagging cleaner_b's empty-input crash as an integration finding.",
+      "files": ["toy_bench/candidates/cleaner_a.py", "toy_bench/candidates/cleaner_b.py", "toy_bench/candidates/cleaner_c.py", "toy_bench/cases/case01.in", "toy_bench/cases/case01.gold", "toy_bench/cases/case02.in", "toy_bench/cases/case02.gold", "toy_bench/cases/case03.in", "toy_bench/cases/case03.gold", "toy_bench/cases/case04.in", "toy_bench/cases/case04.gold", "toy_bench/cases/case05.in", "toy_bench/cases/case05.gold", "toy_bench/run_case.sh", "toy_bench/README.md"],
+      "expectations": [
+        "A benchmark/<tag>/ directory exists in the working directory",
+        "matrix.tsv exists and is tab-separated with a header row",
+        "matrix.tsv has at least 30 data rows (3 candidates × 5 cases × ≥2 reps)",
+        "matrix.tsv contains at least one row with status='error' (cleaner_b on case04)",
+        "No cell is silently dropped — every (candidate, case, rep) planned has a row",
+        "report.md ranks cleaner_c ahead of cleaner_b ahead of cleaner_a on the primary metric",
+        "report.md explicitly mentions cleaner_b's crash on empty input as an integration/coverage finding, not a data-cleaning drop",
+        "report.md includes a stability / drop-one-case discussion or a per-case breakdown"
+      ]
+    },
+    {
+      "id": 6,
+      "name": "root-cause-bisect-plus-reversal",
+      "prompt": "根因排查: Run `toy_regression/setup.sh /tmp/toy_regression_case` to seed a fresh 5-commit git repo at `/tmp/toy_regression_case`. On HEAD, `python solver.py 0` raises `ValueError: unexpected parity result: 0` and `python test_solver.py` exits 1 with one failing case. It worked at commit-1 (HEAD~4). Find and demonstrate the root cause. Produce an `investigation/<tag>/` folder with `baseline.md`, `hypotheses.tsv` (including hypotheses you rule out), and `report.md`. The stopping criterion is a confirmed cause with two-way reversal (revert makes tests pass, cherry-pick reintroduces the failure). Don't ask me to confirm mid-way.",
+      "expected_output": "investigation/<tag>/ with baseline.md, hypotheses.tsv, report.md. Root cause identified as commit-3's rewrite of is_even (specifically the `x and (x % 2 == 0)` short-circuit returning 0 instead of False on x=0). Two-way reversal demonstrated.",
+      "files": ["toy_regression/setup.sh", "toy_regression/README.md"],
+      "expectations": [
+        "An investigation/<tag>/ directory exists in the working directory",
+        "baseline.md quantifies the symptom (pass/fail count on HEAD vs commit-1)",
+        "hypotheses.tsv exists, is tab-separated, and has at least 2 hypothesis rows",
+        "hypotheses.tsv contains at least one row with status='ruled-out' (showing falsification, not just confirmation)",
+        "The report identifies commit-3 as the root cause (by commit message or hash)",
+        "The report demonstrates two-way reversal: reverting commit-3 makes the failing test pass AND reintroducing commit-3's change onto a good commit re-triggers the failure",
+        "The report explains the mechanism (short-circuit `and` returns 0 rather than False, and downstream `is True/is False` identity check rejects 0)"
+      ]
+    },
+    {
+      "id": 7,
+      "name": "ablation-reports-surprising-positive",
+      "prompt": "消融实验: `toy_pipeline/pipeline.py` runs a scoring pipeline with five ablatable component switches (`ENABLED_NORMALIZE`, `ENABLED_DEDUPE`, `ENABLED_WEIGHT_BOOST`, `ENABLED_SMOOTH`, `ENABLED_GUARD`) at the top of the file. Run a leave-one-out ablation study. Establish a noise floor from ≥3 reference runs (different SEED values). Then run each single-component-off configuration at ≥2 seeds. Log every run — including crashes — to `ablation.tsv` and produce an `ablation/<tag>/report.md` classifying each component (critical / load-bearing / no measurable / hurts). Do NOT stop after finding the first big effect. Don't ask me to confirm mid-way.",
+      "expected_output": "ablation/<tag>/ with ablation.tsv (≥3 reference rows + ≥2 rows per ablation = 13+ rows) and report.md that classifies all 5 components correctly, INCLUDING flagging ENABLED_GUARD as 'hurts' (score improves when removed — the surprising positive) rather than silently dropping it.",
+      "files": ["toy_pipeline/pipeline.py", "toy_pipeline/README.md"],
+      "expectations": [
+        "An ablation/<tag>/ directory exists in the working directory",
+        "ablation.tsv exists, is tab-separated, and has at least 13 data rows (≥3 reference + ≥10 ablation across 5 components × 2 seeds)",
+        "ablation.tsv contains at least one row with status='crash' or equivalent for the normalize-off run",
+        "The report identifies ENABLED_NORMALIZE as critical (crashes when removed)",
+        "The report identifies ENABLED_DEDUPE and ENABLED_WEIGHT_BOOST as load-bearing with numeric deltas",
+        "The report identifies ENABLED_SMOOTH as having no measurable effect and explicitly compares its delta to the noise floor",
+        "The report identifies ENABLED_GUARD as hurting (score improves when removed) — this is the honest 'surprising positive' finding, not filtered out",
+        "The report cites a measured noise floor / reference standard deviation as the yardstick for 'measurable'"
+      ]
+    }
+  ]
+}
