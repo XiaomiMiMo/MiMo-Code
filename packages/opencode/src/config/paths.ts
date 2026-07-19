@@ -24,17 +24,21 @@ export const files = Effect.fn("ConfigPaths.projectFiles")(function* (
 
 export const directories = Effect.fn("ConfigPaths.directories")(function* (directory: string, worktree?: string) {
   const afs = yield* AppFileSystem.Service
+  // OCP M1 dual-scan: keep `.mimocode` first so native config wins on conflict,
+  // then also discover OpenCode project dirs (`.opencode`) for unchanged plugins.
+  // See https://github.com/oakimov/opencode-plugin-compat/blob/main/patches/mimo-m1.md
+  const projectTargets = [".mimocode", ".opencode"]
   return unique([
     Global.Path.config,
     ...(!Flag.MIMOCODE_DISABLE_PROJECT_CONFIG
       ? yield* afs.up({
-          targets: [".mimocode"],
+          targets: projectTargets,
           start: directory,
           stop: worktree,
         })
       : []),
     ...(yield* afs.up({
-      targets: [".mimocode"],
+      targets: projectTargets,
       start: Global.Path.home,
       stop: Global.Path.home,
     })),
