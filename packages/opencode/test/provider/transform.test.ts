@@ -362,6 +362,57 @@ describe("ProviderTransform.options - gpt-5 textVerbosity", () => {
     const result = ProviderTransform.options({ model, sessionID, providerOptions: {} })
     expect(result.textVerbosity).toBeUndefined()
   })
+
+  test("gpt-5.5 should request encrypted reasoning via include (store:false round-trip)", () => {
+    const model = createGpt5Model("gpt-5.5")
+    const result = ProviderTransform.options({ model, sessionID, providerOptions: {} })
+    expect(result.store).toBe(false)
+    expect(result.include).toEqual(["reasoning.encrypted_content"])
+  })
+
+  test("gpt-5 should request encrypted reasoning via include", () => {
+    const model = createGpt5Model("gpt-5")
+    const result = ProviderTransform.options({ model, sessionID, providerOptions: {} })
+    expect(result.include).toEqual(["reasoning.encrypted_content"])
+  })
+
+  test("gpt-5-pro should NOT set include (pro path skips reasoning options)", () => {
+    const model = createGpt5Model("gpt-5-pro")
+    const result = ProviderTransform.options({ model, sessionID, providerOptions: {} })
+    expect(result.include).toBeUndefined()
+  })
+})
+
+describe("ProviderTransform.smallOptions - gpt-5 encrypted reasoning", () => {
+  const createModel = (apiId: string, npm: string, providerID = "openai") =>
+    ({
+      id: `${providerID}/${apiId}`,
+      providerID,
+      api: { id: apiId, url: "https://api.openai.com", npm },
+      name: apiId,
+    }) as any
+
+  test("gpt-5.5 small model requests encrypted reasoning (store:false round-trip)", () => {
+    const result = ProviderTransform.smallOptions(createModel("gpt-5.5", "@ai-sdk/openai")) as any
+    expect(result.store).toBe(false)
+    expect(result.reasoningEffort).toBe("low")
+    expect(result.include).toEqual(["reasoning.encrypted_content"])
+  })
+
+  test("gpt-5 small model requests encrypted reasoning", () => {
+    const result = ProviderTransform.smallOptions(createModel("gpt-5", "@ai-sdk/openai")) as any
+    expect(result.store).toBe(false)
+    expect(result.reasoningEffort).toBe("minimal")
+    expect(result.include).toEqual(["reasoning.encrypted_content"])
+  })
+
+  test("github-copilot small model does NOT set include (uses its own path)", () => {
+    const result = ProviderTransform.smallOptions(
+      createModel("gpt-5", "@ai-sdk/github-copilot", "github-copilot"),
+    ) as any
+    expect(result.store).toBe(false)
+    expect(result.include).toBeUndefined()
+  })
 })
 
 describe("ProviderTransform.options - gateway", () => {
@@ -924,6 +975,7 @@ describe("ProviderTransform.message - DeepSeek reasoning content", () => {
           },
         ],
       },
+      { role: "user", content: [{ type: "text", text: "next" }] },
     ] as any[]
 
     const result = ProviderTransform.message(
@@ -965,7 +1017,7 @@ describe("ProviderTransform.message - DeepSeek reasoning content", () => {
       {},
     )
 
-    expect(result).toHaveLength(1)
+    expect(result).toHaveLength(2)
     expect(result[0].content).toEqual([
       {
         type: "tool-call",
@@ -986,6 +1038,7 @@ describe("ProviderTransform.message - DeepSeek reasoning content", () => {
           { type: "text", text: "Answer" },
         ],
       },
+      { role: "user", content: [{ type: "text", text: "next" }] },
     ] as any[]
 
     const result = ProviderTransform.message(
@@ -1136,6 +1189,321 @@ describe("ProviderTransform.message - empty image handling", () => {
   })
 })
 
+describe("ProviderTransform.message - oversized image handling", () => {
+  const PROVIDER_HARD_LIMIT = 5_242_880
+  const mockModel = {
+    id: "anthropic/claude-3-5-sonnet",
+    providerID: "anthropic",
+    api: { id: "claude-3-5-sonnet-20241022", url: "https://api.anthropic.com", npm: "@ai-sdk/anthropic" },
+    name: "Claude 3.5 Sonnet",
+    capabilities: {
+      temperature: true,
+      reasoning: false,
+      attachment: true,
+      toolcall: true,
+      input: { text: true, audio: false, image: true, video: false, pdf: true },
+      output: { text: true, audio: false, image: false, video: false, pdf: false },
+      interleaved: false,
+    },
+    cost: { input: 0.003, output: 0.015, cache: { read: 0.0003, write: 0.00375 } },
+    limit: { context: 200000, output: 8192 },
+    status: "active",
+    options: {},
+    headers: {},
+  } as any
+
+  const base64ByteSize = (b64: string) => {
+    const padding = b64.endsWith("==") ? 2 : b64.endsWith("=") ? 1 : 0
+    return Math.floor((b64.length * 3) / 4) - padding
+  }
+
+  // A big decodable JPEG (>5 MB): noisy pixels resist JPEG compression, so the
+  // encoded payload actually exceeds the limit and forces the shrink path.
+  const bigJpegBase64 = (() => {
+    const jpeg = require("jpeg-js")
+    const width = 2600
+    const height = 2600
+    const data = Buffer.alloc(width * height * 4)
+    for (let i = 0; i < data.length; i += 4) {
+      data[i] = (i * 73) % 256
+      data[i + 1] = (i * 151) % 256
+      data[i + 2] = (i * 199) % 256
+      data[i + 3] = 255
+    }
+    const encoded = jpeg.encode({ data, width, height }, 100)
+    return Buffer.from(encoded.data).toString("base64")
+  })()
+
+  test("baseline: fixture is a real oversized image", () => {
+    expect(base64ByteSize(bigJpegBase64)).toBeGreaterThan(PROVIDER_HARD_LIMIT)
+  })
+
+  test("recompresses an oversized user image below the limit", () => {
+    const msgs = [
+      {
+        role: "user",
+        content: [
+          { type: "text", text: "What is in this image?" },
+          { type: "image", image: `data:image/jpeg;base64,${bigJpegBase64}` },
+        ],
+      },
+    ] as any[]
+
+    const result = ProviderTransform.message(msgs, mockModel, {})
+    const part = (result[0].content as any[])[1]
+    // Either shrunk to a smaller image, or stripped to text — never still oversized.
+    if (part.type === "image") {
+      const match = String(part.image).match(/^data:[^;]+;base64,(.*)$/)
+      expect(match).not.toBeNull()
+      expect(base64ByteSize(match![1])).toBeLessThanOrEqual(PROVIDER_HARD_LIMIT)
+    } else {
+      expect(part.type).toBe("text")
+      expect(part.text).toContain("Image omitted")
+    }
+  })
+
+  test("recompresses an oversized tool-result image below the limit", () => {
+    const msgs = [
+      {
+        role: "tool",
+        content: [
+          {
+            type: "tool-result",
+            toolCallId: "call_1",
+            toolName: "read",
+            output: {
+              type: "content",
+              value: [
+                { type: "text", text: "Image read successfully" },
+                { type: "media", mediaType: "image/jpeg", data: bigJpegBase64 },
+              ],
+            },
+          },
+        ],
+      },
+    ] as any[]
+
+    const result = ProviderTransform.message(msgs, mockModel, {})
+    const entry = (result[0].content[0] as any).output.value[1]
+    if (entry.type === "media" || entry.type === "image-data") {
+      expect(base64ByteSize(entry.data)).toBeLessThanOrEqual(PROVIDER_HARD_LIMIT)
+    } else {
+      expect(entry.type).toBe("text")
+      expect(entry.text).toContain("Image omitted")
+    }
+  })
+
+  test("strips an oversized undecodable image (webp) to a placeholder", () => {
+    // >5 MB of base64 that is NOT a decodable jpeg/png → must become a placeholder.
+    const junk = Buffer.alloc(6_000_000, 0x42).toString("base64")
+    const msgs = [
+      {
+        role: "user",
+        content: [{ type: "image", image: `data:image/webp;base64,${junk}` }],
+      },
+    ] as any[]
+
+    const result = ProviderTransform.message(msgs, mockModel, {})
+    const part = (result[0].content as any[])[0]
+    expect(part.type).toBe("text")
+    expect(part.text).toContain("Image omitted")
+  })
+
+  test("strips an oversized undecodable tool-result image to a placeholder", () => {
+    const junk = Buffer.alloc(6_000_000, 0x42).toString("base64")
+    const msgs = [
+      {
+        role: "tool",
+        content: [
+          {
+            type: "tool-result",
+            toolCallId: "call_1",
+            toolName: "read",
+            output: {
+              type: "content",
+              value: [{ type: "media", mediaType: "image/webp", data: junk }],
+            },
+          },
+        ],
+      },
+    ] as any[]
+
+    const result = ProviderTransform.message(msgs, mockModel, {})
+    const entry = (result[0].content[0] as any).output.value[0]
+    expect(entry.type).toBe("text")
+    expect(entry.text).toContain("Image omitted")
+  })
+
+  test("leaves a small image untouched (default cap applies by default)", () => {
+    const validBase64 =
+      "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="
+    const msgs = [
+      { role: "user", content: [{ type: "image", image: `data:image/png;base64,${validBase64}` }] },
+    ] as any[]
+
+    const result = ProviderTransform.message(msgs, mockModel, {})
+    expect(result[0].content[0]).toEqual({ type: "image", image: `data:image/png;base64,${validBase64}` })
+  })
+})
+
+describe("ProviderTransform.message - provider-aware image size cap", () => {
+  const PROVIDER_HARD_LIMIT = 5_242_880
+
+  const withApi = (providerID: string, api: { id: string; url: string; npm: string }, id?: string) =>
+    ({
+      id: id ?? `${providerID}/${api.id}`,
+      providerID,
+      api,
+      name: api.id,
+      capabilities: {
+        temperature: true,
+        reasoning: false,
+        attachment: true,
+        toolcall: true,
+        input: { text: true, audio: false, image: true, video: false, pdf: true },
+        output: { text: true, audio: false, image: false, video: false, pdf: false },
+        interleaved: false,
+      },
+      cost: { input: 0.003, output: 0.015, cache: { read: 0.0003, write: 0.00375 } },
+      limit: { context: 200000, output: 8192 },
+      status: "active",
+      options: {},
+      headers: {},
+    }) as any
+
+  const base64ByteSize = (b64: string) => {
+    const padding = b64.endsWith("==") ? 2 : b64.endsWith("=") ? 1 : 0
+    return Math.floor((b64.length * 3) / 4) - padding
+  }
+
+  // 6 MB of raw base64 bytes. Not a decodable jpeg/png, so if it ever hit the
+  // cap path it would be STRIPPED to a placeholder — which makes "left untouched"
+  // an unambiguous signal that no cap was applied.
+  const sixMbJunk = Buffer.alloc(6_000_000, 0x42).toString("base64")
+  const wrappedSixMbJunk = sixMbJunk.replace(/.{76}/g, "$&\n")
+
+  test("baseline: fixture exceeds the anthropic 5MB hard limit", () => {
+    expect(base64ByteSize(sixMbJunk)).toBeGreaterThan(PROVIDER_HARD_LIMIT)
+  })
+
+  const userMsgs = () =>
+    [{ role: "user", content: [{ type: "image", image: `data:image/webp;base64,${sixMbJunk}` }] }] as any[]
+
+  const toolMsgs = () =>
+    [
+      {
+        role: "tool",
+        content: [
+          {
+            type: "tool-result",
+            toolCallId: "call_1",
+            toolName: "read",
+            output: { type: "content", value: [{ type: "media", mediaType: "image/webp", data: sixMbJunk }] },
+          },
+        ],
+      },
+    ] as any[]
+
+  const fileMsgs = (data: string | Uint8Array | URL) =>
+    [
+      {
+        role: "user",
+        content: [{ type: "file", mediaType: "image/webp", filename: "capture.webp", data }],
+      },
+    ] as any[]
+
+  test("anthropic: strips an oversized undecodable user image (cap enforced)", () => {
+    const model = withApi("anthropic", {
+      id: "claude-3-5-sonnet-20241022",
+      url: "https://api.anthropic.com",
+      npm: "@ai-sdk/anthropic",
+    })
+    const part = (ProviderTransform.message(userMsgs(), model, {})[0].content as any[])[0]
+    expect(part.type).toBe("text")
+    expect(part.text).toContain("Image omitted")
+  })
+
+  test("anthropic: caps normalized raw-base64 and byte-array image files", () => {
+    const model = withApi("anthropic", {
+      id: "claude-3-5-sonnet-20241022",
+      url: "https://api.anthropic.com",
+      npm: "@ai-sdk/anthropic",
+    })
+
+    for (const data of [sixMbJunk, wrappedSixMbJunk, Buffer.from(sixMbJunk, "base64")]) {
+      const part = (ProviderTransform.message(fileMsgs(data), model, {})[0].content as any[])[0]
+      expect(part.type).toBe("text")
+      expect(part.text).toContain("Image omitted")
+    }
+  })
+
+  test("anthropic: leaves remote image-file URLs untouched", () => {
+    const model = withApi("anthropic", {
+      id: "claude-3-5-sonnet-20241022",
+      url: "https://api.anthropic.com",
+      npm: "@ai-sdk/anthropic",
+    })
+    const remote = new URL("https://example.com/capture.webp")
+    const part = (ProviderTransform.message(fileMsgs(remote), model, {})[0].content as any[])[0]
+    expect(part).toEqual({ type: "file", mediaType: "image/webp", filename: "capture.webp", data: remote })
+  })
+
+  test("bedrock: strips an oversized undecodable tool-result image (cap enforced)", () => {
+    const model = withApi("amazon-bedrock", {
+      id: "anthropic.claude-opus-4-6",
+      url: "https://bedrock-runtime.us-east-1.amazonaws.com",
+      npm: "@ai-sdk/amazon-bedrock",
+    })
+    const entry = (ProviderTransform.message(toolMsgs(), model, {})[0].content[0] as any).output.value[0]
+    expect(entry.type).toBe("text")
+    expect(entry.text).toContain("Image omitted")
+  })
+
+  test("openai: leaves a 6MB user image UNTOUCHED (no cap for non-anthropic)", () => {
+    const model = withApi("openai", { id: "gpt-4o", url: "https://api.openai.com", npm: "@ai-sdk/openai" })
+    const part = (ProviderTransform.message(userMsgs(), model, {})[0].content as any[])[0]
+    expect(part).toEqual({ type: "image", image: `data:image/webp;base64,${sixMbJunk}` })
+  })
+
+  test("openai: leaves a 6MB raw-base64 image file UNTOUCHED (no cap for non-anthropic)", () => {
+    const model = withApi("openai", { id: "gpt-4o", url: "https://api.openai.com", npm: "@ai-sdk/openai" })
+    const part = (ProviderTransform.message(fileMsgs(sixMbJunk), model, {})[0].content as any[])[0]
+    expect(part).toEqual({
+      type: "file",
+      mediaType: "image/webp",
+      filename: "capture.webp",
+      data: sixMbJunk,
+    })
+  })
+
+  test("openai: leaves a 6MB tool-result image UNTOUCHED (no cap for non-anthropic)", () => {
+    const model = withApi("openai", { id: "gpt-4o", url: "https://api.openai.com", npm: "@ai-sdk/openai" })
+    const entry = (ProviderTransform.message(toolMsgs(), model, {})[0].content[0] as any).output.value[0]
+    expect(entry).toEqual({ type: "media", mediaType: "image/webp", data: sixMbJunk })
+  })
+
+  test("openrouter claude: still caps (routes to anthropic) — strips oversized image", () => {
+    const model = withApi(
+      "openrouter",
+      { id: "anthropic/claude-sonnet-4", url: "https://openrouter.ai/api", npm: "@openrouter/ai-sdk-provider" },
+      "openrouter/anthropic/claude-sonnet-4",
+    )
+    const part = (ProviderTransform.message(userMsgs(), model, {})[0].content as any[])[0]
+    expect(part.type).toBe("text")
+    expect(part.text).toContain("Image omitted")
+  })
+
+  test("openrouter non-claude: leaves a 6MB image UNTOUCHED (no anthropic route)", () => {
+    const model = withApi(
+      "openrouter",
+      { id: "openai/gpt-4o", url: "https://openrouter.ai/api", npm: "@openrouter/ai-sdk-provider" },
+      "openrouter/openai/gpt-4o",
+    )
+    const part = (ProviderTransform.message(userMsgs(), model, {})[0].content as any[])[0]
+    expect(part).toEqual({ type: "image", image: `data:image/webp;base64,${sixMbJunk}` })
+  })
+})
+
 describe("ProviderTransform.message - anthropic empty content filtering", () => {
   const anthropicModel = {
     id: "anthropic/claude-3-5-sonnet",
@@ -1193,11 +1561,12 @@ describe("ProviderTransform.message - anthropic empty content filtering", () => 
           { type: "text", text: "" },
         ],
       },
+      { role: "user", content: [{ type: "text", text: "next" }] },
     ] as any[]
 
     const result = ProviderTransform.message(msgs, anthropicModel, {})
 
-    expect(result).toHaveLength(1)
+    expect(result).toHaveLength(2)
     expect(result[0].content).toHaveLength(1)
     expect(result[0].content[0]).toEqual({ type: "text", text: "Hello" })
   })
@@ -1212,11 +1581,12 @@ describe("ProviderTransform.message - anthropic empty content filtering", () => 
           { type: "reasoning", text: "" },
         ],
       },
+      { role: "user", content: [{ type: "text", text: "next" }] },
     ] as any[]
 
     const result = ProviderTransform.message(msgs, anthropicModel, {})
 
-    expect(result).toHaveLength(1)
+    expect(result).toHaveLength(2)
     expect(result[0].content).toHaveLength(1)
     expect(result[0].content[0]).toEqual({ type: "text", text: "Answer" })
   })
@@ -1250,11 +1620,12 @@ describe("ProviderTransform.message - anthropic empty content filtering", () => 
           { type: "tool-call", toolCallId: "123", toolName: "bash", input: { command: "ls" } },
         ],
       },
+      { role: "user", content: [{ type: "text", text: "next" }] },
     ] as any[]
 
     const result = ProviderTransform.message(msgs, anthropicModel, {})
 
-    expect(result).toHaveLength(1)
+    expect(result).toHaveLength(2)
     expect(result[0].content).toHaveLength(1)
     expect(result[0].content[0]).toEqual({
       type: "tool-call",
@@ -1274,11 +1645,12 @@ describe("ProviderTransform.message - anthropic empty content filtering", () => 
           { type: "text", text: "Result" },
         ],
       },
+      { role: "user", content: [{ type: "text", text: "next" }] },
     ] as any[]
 
     const result = ProviderTransform.message(msgs, anthropicModel, {})
 
-    expect(result).toHaveLength(1)
+    expect(result).toHaveLength(2)
     expect(result[0].content).toHaveLength(2)
     expect(result[0].content[0]).toEqual({ type: "reasoning", text: "Thinking..." })
     expect(result[0].content[1]).toEqual({ type: "text", text: "Result" })
@@ -1306,14 +1678,18 @@ describe("ProviderTransform.message - anthropic empty content filtering", () => 
           { type: "text", text: "Answer" },
         ],
       },
+      // Bedrock rejects a trailing assistant message, so end on a user turn to
+      // isolate the empty-content filtering behavior under test here.
+      { role: "user", content: "Thanks" },
     ] as any[]
 
     const result = ProviderTransform.message(msgs, bedrockModel, {})
 
-    expect(result).toHaveLength(2)
+    expect(result).toHaveLength(3)
     expect(result[0].content).toBe("Hello")
     expect(result[1].content).toHaveLength(1)
     expect(result[1].content[0]).toEqual({ type: "text", text: "Answer" })
+    expect(result[2].content).toBe("Thanks")
   })
 
   test("does not filter for non-anthropic providers", () => {
@@ -1333,11 +1709,12 @@ describe("ProviderTransform.message - anthropic empty content filtering", () => 
         role: "assistant",
         content: [{ type: "text", text: "" }],
       },
+      { role: "user", content: "next" },
     ] as any[]
 
     const result = ProviderTransform.message(msgs, openaiModel, {})
 
-    expect(result).toHaveLength(2)
+    expect(result).toHaveLength(3)
     expect(result[0].content).toBe("")
     expect(result[1].content).toHaveLength(1)
   })
@@ -1396,11 +1773,12 @@ describe("ProviderTransform.message - anthropic empty content filtering", () => 
           { type: "tool-call", toolCallId: "toolu_2", toolName: "glob", input: { pattern: "**/*.pdf" } },
         ],
       },
+      { role: "user", content: [{ type: "text", text: "next" }] },
     ] as any[]
 
     const result = ProviderTransform.message(msgs, anthropicModel, {}) as any[]
 
-    expect(result).toHaveLength(1)
+    expect(result).toHaveLength(2)
     expect(result[0].content).toMatchObject([
       { type: "text", text: "I checked your home directory and looked for PDF files." },
       { type: "tool-call", toolCallId: "toolu_1", toolName: "read", input: { filePath: "/root" } },
@@ -1428,11 +1806,12 @@ describe("ProviderTransform.message - anthropic empty content filtering", () => 
           { type: "text", text: "I checked your home directory and looked for PDF files." },
         ],
       },
+      { role: "user", content: [{ type: "text", text: "next" }] },
     ] as any[]
 
     const result = ProviderTransform.message(msgs, model, {}) as any[]
 
-    expect(result).toHaveLength(2)
+    expect(result).toHaveLength(3)
     expect(result[0]).toMatchObject({
       role: "assistant",
       content: [{ type: "text", text: "I checked your home directory and looked for PDF files." }],
@@ -1446,6 +1825,242 @@ describe("ProviderTransform.message - anthropic empty content filtering", () => 
     })
   })
 })
+
+describe("ProviderTransform.isAssistantPrefillRejection - error-body detection (defensive backstop)", () => {
+  // Backstop for any path that might still slip a trailing assistant prefill to
+  // the wire despite the unconditional proactive drop. The only reliable signal
+  // for the rejection is the deterministic 400 body, so detection keys off that.
+  const bedrockPrefillBody = JSON.stringify({
+    message: "This model does not support assistant message prefill. The conversation must end with a user message.",
+    Service: "BedrockRuntime",
+  })
+
+  test("detects the AI SDK APICallError shape (statusCode 400 + responseBody)", () => {
+    const error = {
+      name: "AI_APICallError",
+      statusCode: 400,
+      responseBody: bedrockPrefillBody,
+      message: "Bad Request",
+      isRetryable: false,
+    }
+    expect(ProviderTransform.isAssistantPrefillRejection(error)).toBe(true)
+  })
+
+  test("detects the phrase in the error message even when responseBody is absent", () => {
+    const error = {
+      statusCode: 400,
+      message: "This model does not support assistant message prefill.",
+    }
+    expect(ProviderTransform.isAssistantPrefillRejection(error)).toBe(true)
+  })
+
+  test("detects the 'must end with a user message' variant (case-insensitive)", () => {
+    const error = { statusCode: 400, responseBody: "The conversation MUST END WITH A USER MESSAGE." }
+    expect(ProviderTransform.isAssistantPrefillRejection(error)).toBe(true)
+  })
+
+  test("matches when statusCode is a numeric string (some gateways stringify it)", () => {
+    const error = { statusCode: "400", responseBody: bedrockPrefillBody }
+    expect(ProviderTransform.isAssistantPrefillRejection(error)).toBe(true)
+  })
+
+  test("does NOT match an unrelated 400 (no prefill phrase)", () => {
+    const error = { statusCode: 400, responseBody: JSON.stringify({ message: "invalid_request: bad tool schema" }) }
+    expect(ProviderTransform.isAssistantPrefillRejection(error)).toBe(false)
+  })
+
+  test("does NOT match a non-400 status even if the phrase appears (must be the 400 rejection)", () => {
+    const error = { statusCode: 500, responseBody: "does not support assistant message prefill" }
+    expect(ProviderTransform.isAssistantPrefillRejection(error)).toBe(false)
+  })
+
+  test("does NOT match null / undefined / non-object", () => {
+    expect(ProviderTransform.isAssistantPrefillRejection(undefined)).toBe(false)
+    expect(ProviderTransform.isAssistantPrefillRejection(null)).toBe(false)
+    expect(ProviderTransform.isAssistantPrefillRejection("does not support assistant message prefill")).toBe(false)
+  })
+
+  test("matches when statusCode is absent but the phrase is present (stream-body error without a parsed status)", () => {
+    const error = { message: "400 does not support assistant message prefill (Service: BedrockRuntime)" }
+    expect(ProviderTransform.isAssistantPrefillRejection(error)).toBe(true)
+  })
+})
+
+describe("ProviderTransform.ensureTrailingUserMessage - safe proactive guard (never deletes a completed reply)", () => {
+  const withProvider = (providerID: string, api: { id: string; url: string; npm: string }) =>
+    ({
+      id: `${providerID}/${api.id}`,
+      providerID,
+      api,
+      name: api.id,
+      capabilities: {
+        temperature: true,
+        reasoning: false,
+        attachment: true,
+        toolcall: true,
+        input: { text: true, audio: false, image: true, video: false, pdf: true },
+        output: { text: true, audio: false, image: false, video: false, pdf: false },
+        interleaved: false,
+      },
+      cost: { input: 0.003, output: 0.015, cache: { read: 0.0003, write: 0.00375 } },
+      limit: { context: 200000, output: 8192 },
+      status: "active",
+      options: {},
+      headers: {},
+    }) as any
+
+  const anthropicModel = withProvider("anthropic", {
+    id: "claude-3-5-sonnet-20241022",
+    url: "https://api.anthropic.com",
+    npm: "@ai-sdk/anthropic",
+  })
+  const bedrockModel = withProvider("amazon-bedrock", {
+    id: "anthropic.claude-opus-4-6",
+    url: "https://bedrock-runtime.us-east-1.amazonaws.com",
+    npm: "@ai-sdk/amazon-bedrock",
+  })
+  // Gateway exposing an Anthropic-backed model via a dotted id — the live-400 path
+  // (gateway -> Bedrock). The guard is provider-agnostic so it applies here too.
+  const gatewayModel = withProvider("mimo", {
+    id: "anthropic.claude-sonnet-4",
+    url: "http://gateway.example/v1/messages",
+    npm: "@ai-sdk/anthropic",
+  })
+
+  test("preserves a COMPLETED trailing assistant reply and appends a continuation user turn (no content deleted)", () => {
+    const msgs = [
+      { role: "user", content: "q" },
+      { role: "assistant", content: [{ type: "text", text: "the full completed answer" }] },
+    ] as any[]
+    const result = ProviderTransform.ensureTrailingUserMessage(msgs)
+    expect(result).toHaveLength(3)
+    // Reply preserved verbatim...
+    expect(result[1].role).toBe("assistant")
+    expect((result[1].content as any)[0].text).toBe("the full completed answer")
+    // ...and the conversation now ends with a user message.
+    expect(result[result.length - 1].role).toBe("user")
+  })
+
+  test("preserves a trailing assistant that carries a tool-call (real content) via a continuation user turn", () => {
+    const msgs = [
+      { role: "user", content: "read" },
+      { role: "assistant", content: [{ type: "tool-call", toolCallId: "c1", toolName: "read", input: {} }] },
+    ] as any[]
+    const result = ProviderTransform.ensureTrailingUserMessage(msgs)
+    expect(result.some((m) => Array.isArray(m.content) && (m.content[0] as any)?.type === "tool-call")).toBe(true)
+    expect(result[result.length - 1].role).toBe("user")
+  })
+
+  test("drops an INCOMPLETE (empty) trailing assistant (residue) without appending anything", () => {
+    const msgs = [
+      { role: "user", content: "q" },
+      { role: "assistant", content: [] },
+    ] as any[]
+    const result = ProviderTransform.ensureTrailingUserMessage(msgs)
+    expect(result).toHaveLength(1)
+    expect(result[0].role).toBe("user")
+  })
+
+  test("drops a reasoning-only trailing assistant (residue: no final text/tool-call, matches toModelMessages)", () => {
+    const msgs = [
+      { role: "user", content: "q" },
+      { role: "assistant", content: [{ type: "reasoning", text: "some reasoning" }] },
+    ] as any[]
+    const result = ProviderTransform.ensureTrailingUserMessage(msgs)
+    // A reasoning-only trailing assistant carries no final answer or tool call, so
+    // it is residue (upstream toModelMessages skips such aborted turns). Dropped;
+    // the conversation then ends on the user turn with nothing appended.
+    expect(result).toHaveLength(1)
+    expect(result[0].role).toBe("user")
+  })
+
+  test("peels trailing empty residue but preserves an earlier content-bearing reply with a continuation turn", () => {
+    const msgs = [
+      { role: "user", content: "go" },
+      { role: "assistant", content: [{ type: "text", text: "real reply" }] },
+      { role: "assistant", content: [] },
+      { role: "assistant", content: "   " },
+    ] as any[]
+    const result = ProviderTransform.ensureTrailingUserMessage(msgs)
+    expect(result.some((m) => Array.isArray(m.content) && (m.content[0] as any)?.text === "real reply")).toBe(true)
+    expect(result[result.length - 1].role).toBe("user")
+  })
+
+  test("leaves a conversation already ending with a user message untouched (identity)", () => {
+    const msgs = [
+      { role: "user", content: "hi" },
+      { role: "assistant", content: [{ type: "text", text: "hello" }] },
+      { role: "user", content: "bye" },
+    ] as any[]
+    expect(ProviderTransform.ensureTrailingUserMessage(msgs)).toBe(msgs)
+  })
+
+  test("leaves a trailing tool message untouched (tool result is a valid conversation end, not a prefill)", () => {
+    const msgs = [
+      { role: "user", content: "read" },
+      { role: "assistant", content: [{ type: "tool-call", toolCallId: "c1", toolName: "read", input: {} }] },
+      {
+        role: "tool",
+        content: [{ type: "tool-result", toolCallId: "c1", toolName: "read", output: { type: "text", value: "ok" } }],
+      },
+    ] as any[]
+    const result = ProviderTransform.ensureTrailingUserMessage(msgs)
+    expect(result).toHaveLength(3)
+    expect(result[result.length - 1].role).toBe("tool")
+  })
+
+  describe("end-to-end via message() — every provider ends the request with a user message", () => {
+    for (const [label, model] of [
+      ["anthropic-native", anthropicModel],
+      ["bedrock", bedrockModel],
+      ["anthropic gateway", gatewayModel],
+    ] as const) {
+      test(`${label}: a completed trailing reply is kept and the request ends with a user message`, () => {
+        const msgs = [
+          { role: "user", content: "Question?" },
+          { role: "assistant", content: [{ type: "text", text: "Completed answer." }] },
+        ] as any[]
+        const result = ProviderTransform.message(msgs, model, {})
+        expect(result[result.length - 1].role).toBe("user")
+        expect(
+          result.some((m: any) => Array.isArray(m.content) && m.content.some((p: any) => p.text === "Completed answer.")),
+        ).toBe(true)
+      })
+    }
+  })
+})
+
+describe("ProviderTransform.dropTrailingAssistantPrefill - hard prune (reactive backstop last resort)", () => {
+  test("drops the entire trailing assistant run, discarding content", () => {
+    const msgs = [
+      { role: "user", content: "go" },
+      { role: "assistant", content: [{ type: "text", text: "first" }] },
+      { role: "assistant", content: [{ type: "text", text: "second" }] },
+    ] as any[]
+    const result = ProviderTransform.dropTrailingAssistantPrefill(msgs)
+    expect(result).toHaveLength(1)
+    expect(result[0].role).toBe("user")
+  })
+
+  test("only drops the trailing run, preserving mid-conversation assistants", () => {
+    const msgs = [
+      { role: "user", content: "hi" },
+      { role: "assistant", content: [{ type: "text", text: "mid" }] },
+      { role: "user", content: "go" },
+      { role: "assistant", content: [{ type: "text", text: "tail" }] },
+    ] as any[]
+    const result = ProviderTransform.dropTrailingAssistantPrefill(msgs)
+    expect(result[result.length - 1].role).toBe("user")
+    expect(result[result.length - 1].content).toBe("go")
+    expect(result.some((m) => Array.isArray(m.content) && (m.content[0] as any)?.text === "mid")).toBe(true)
+  })
+
+  test("leaves a user/tool-terminated list unchanged (identity)", () => {
+    const msgs = [{ role: "user", content: "hi" }] as any[]
+    expect(ProviderTransform.dropTrailingAssistantPrefill(msgs)).toBe(msgs)
+  })
+})
+
 
 describe("ProviderTransform.message - strip openai metadata when store=false", () => {
   const openaiModel = {
@@ -1473,7 +2088,7 @@ describe("ProviderTransform.message - strip openai metadata when store=false", (
     headers: {},
   } as any
 
-  test("preserves itemId and reasoningEncryptedContent when store=false", () => {
+  test("strips openai itemId and preserves reasoningEncryptedContent when store=false", () => {
     const msgs = [
       {
         role: "assistant",
@@ -1499,16 +2114,19 @@ describe("ProviderTransform.message - strip openai metadata when store=false", (
           },
         ],
       },
+      { role: "user", content: [{ type: "text", text: "next" }] },
     ] as any[]
 
     const result = ProviderTransform.message(msgs, openaiModel, { store: false }) as any[]
 
-    expect(result).toHaveLength(1)
-    expect(result[0].content[0].providerOptions?.openai?.itemId).toBe("rs_123")
-    expect(result[0].content[1].providerOptions?.openai?.itemId).toBe("msg_456")
+    expect(result).toHaveLength(2)
+    expect(result[0].content[0].providerOptions?.openai?.itemId).toBeUndefined()
+    expect(result[0].content[0].providerOptions?.openai?.reasoningEncryptedContent).toBe("encrypted")
+    expect(result[0].content[1].providerOptions?.openai?.itemId).toBeUndefined()
   })
 
-  test("preserves itemId and reasoningEncryptedContent when store=false even when not openai", () => {
+  test("strips itemId based on SDK package namespace, not provider ID", () => {
+    // Custom providerID but @ai-sdk/openai npm (e.g. a proxy) still strips via the openai key.
     const zenModel = {
       ...openaiModel,
       providerID: "zen",
@@ -1538,16 +2156,18 @@ describe("ProviderTransform.message - strip openai metadata when store=false", (
           },
         ],
       },
+      { role: "user", content: [{ type: "text", text: "next" }] },
     ] as any[]
 
     const result = ProviderTransform.message(msgs, zenModel, { store: false }) as any[]
 
-    expect(result).toHaveLength(1)
-    expect(result[0].content[0].providerOptions?.openai?.itemId).toBe("rs_123")
-    expect(result[0].content[1].providerOptions?.openai?.itemId).toBe("msg_456")
+    expect(result).toHaveLength(2)
+    expect(result[0].content[0].providerOptions?.openai?.itemId).toBeUndefined()
+    expect(result[0].content[0].providerOptions?.openai?.reasoningEncryptedContent).toBe("encrypted")
+    expect(result[0].content[1].providerOptions?.openai?.itemId).toBeUndefined()
   })
 
-  test("preserves other openai options including itemId", () => {
+  test("strips itemId but preserves other openai options", () => {
     const msgs = [
       {
         role: "assistant",
@@ -1564,12 +2184,45 @@ describe("ProviderTransform.message - strip openai metadata when store=false", (
           },
         ],
       },
+      { role: "user", content: [{ type: "text", text: "next" }] },
     ] as any[]
 
     const result = ProviderTransform.message(msgs, openaiModel, { store: false }) as any[]
 
-    expect(result[0].content[0].providerOptions?.openai?.itemId).toBe("msg_123")
+    expect(result[0].content[0].providerOptions?.openai?.itemId).toBeUndefined()
     expect(result[0].content[0].providerOptions?.openai?.otherOption).toBe("value")
+  })
+
+  test("strips Azure itemId from the azure namespace when store=false", () => {
+    const azureModel = {
+      ...openaiModel,
+      providerID: "azure",
+      api: {
+        id: "gpt-5",
+        url: "https://example.openai.azure.com",
+        npm: "@ai-sdk/azure",
+      },
+    }
+    const msgs = [
+      {
+        role: "assistant",
+        content: [
+          {
+            type: "text",
+            text: "Hello",
+            providerOptions: {
+              azure: { itemId: "msg_123", otherOption: "value" },
+            },
+          },
+        ],
+      },
+      { role: "user", content: [{ type: "text", text: "next" }] },
+    ] as any[]
+
+    const result = ProviderTransform.message(msgs, azureModel, { store: false }) as any[]
+
+    expect(result[0].content[0].providerOptions?.azure?.itemId).toBeUndefined()
+    expect(result[0].content[0].providerOptions?.azure?.otherOption).toBe("value")
   })
 
   test("preserves metadata for openai package when store is true", () => {
@@ -1588,9 +2241,10 @@ describe("ProviderTransform.message - strip openai metadata when store=false", (
           },
         ],
       },
+      { role: "user", content: [{ type: "text", text: "next" }] },
     ] as any[]
 
-    // openai package preserves itemId regardless of store value
+    // store=true keeps itemId (stateful Responses API resolves items by id)
     const result = ProviderTransform.message(msgs, openaiModel, { store: true }) as any[]
 
     expect(result[0].content[0].providerOptions?.openai?.itemId).toBe("msg_123")
@@ -1614,22 +2268,23 @@ describe("ProviderTransform.message - strip openai metadata when store=false", (
             type: "text",
             text: "Hello",
             providerOptions: {
-              openai: {
+              anthropic: {
                 itemId: "msg_123",
               },
             },
           },
         ],
       },
+      { role: "user", content: [{ type: "text", text: "next" }] },
     ] as any[]
 
-    // store=false preserves metadata for non-openai packages
+    // store=false does NOT strip for non-openai/azure packages
     const result = ProviderTransform.message(msgs, anthropicModel, { store: false }) as any[]
 
-    expect(result[0].content[0].providerOptions?.openai?.itemId).toBe("msg_123")
+    expect(result[0].content[0].providerOptions?.anthropic?.itemId).toBe("msg_123")
   })
 
-  test("preserves metadata using providerID key when store is false", () => {
+  test("preserves metadata using providerID key for openai-compatible packages", () => {
     const opencodeModel = {
       ...openaiModel,
       providerID: "opencode",
@@ -1655,54 +2310,14 @@ describe("ProviderTransform.message - strip openai metadata when store=false", (
           },
         ],
       },
+      { role: "user", content: [{ type: "text", text: "next" }] },
     ] as any[]
 
     const result = ProviderTransform.message(msgs, opencodeModel, { store: false }) as any[]
 
+    // @ai-sdk/openai-compatible is not in the strip list, so itemId survives
     expect(result[0].content[0].providerOptions?.opencode?.itemId).toBe("msg_123")
     expect(result[0].content[0].providerOptions?.opencode?.otherOption).toBe("value")
-  })
-
-  test("preserves itemId across all providerOptions keys", () => {
-    const opencodeModel = {
-      ...openaiModel,
-      providerID: "opencode",
-      api: {
-        id: "opencode-test",
-        url: "https://api.mimocode.ai",
-        npm: "@ai-sdk/openai-compatible",
-      },
-    }
-    const msgs = [
-      {
-        role: "assistant",
-        providerOptions: {
-          openai: { itemId: "msg_root" },
-          opencode: { itemId: "msg_opencode" },
-          extra: { itemId: "msg_extra" },
-        },
-        content: [
-          {
-            type: "text",
-            text: "Hello",
-            providerOptions: {
-              openai: { itemId: "msg_openai_part" },
-              opencode: { itemId: "msg_opencode_part" },
-              extra: { itemId: "msg_extra_part" },
-            },
-          },
-        ],
-      },
-    ] as any[]
-
-    const result = ProviderTransform.message(msgs, opencodeModel, { store: false }) as any[]
-
-    expect(result[0].providerOptions?.openai?.itemId).toBe("msg_root")
-    expect(result[0].providerOptions?.opencode?.itemId).toBe("msg_opencode")
-    expect(result[0].providerOptions?.extra?.itemId).toBe("msg_extra")
-    expect(result[0].content[0].providerOptions?.openai?.itemId).toBe("msg_openai_part")
-    expect(result[0].content[0].providerOptions?.opencode?.itemId).toBe("msg_opencode_part")
-    expect(result[0].content[0].providerOptions?.extra?.itemId).toBe("msg_extra_part")
   })
 
   test("does not strip metadata for non-openai packages when store is not false", () => {
@@ -1723,18 +2338,19 @@ describe("ProviderTransform.message - strip openai metadata when store=false", (
             type: "text",
             text: "Hello",
             providerOptions: {
-              openai: {
+              anthropic: {
                 itemId: "msg_123",
               },
             },
           },
         ],
       },
+      { role: "user", content: [{ type: "text", text: "next" }] },
     ] as any[]
 
     const result = ProviderTransform.message(msgs, anthropicModel, {}) as any[]
 
-    expect(result[0].content[0].providerOptions?.openai?.itemId).toBe("msg_123")
+    expect(result[0].content[0].providerOptions?.anthropic?.itemId).toBe("msg_123")
   })
 })
 
@@ -2149,10 +2765,10 @@ describe("ProviderTransform.message - cache control on gateway", () => {
 
   test("openai-compatible with claude in model id does NOT trigger caching", () => {
     const model = createModel({
-      id: "mimorouter/claude-opus-4-8",
+      id: "gateway/claude-opus-4-8",
       providerID: "custom",
       api: {
-        id: "mimorouter/claude-opus-4-8",
+        id: "gateway/claude-opus-4-8",
         url: "https://proxy.example.com/v1",
         npm: "@ai-sdk/openai-compatible",
       },
@@ -2208,7 +2824,9 @@ describe("ProviderTransform.message - cache control on gateway", () => {
 
   test("content-level provider marks the last two messages regardless of role", () => {
     // Providers that reach applyCaching honor message-level markers (incl.
-    // assistant), so the double-tail marks the last two messages by position.
+    // assistant). The unconditional prefill drop removes any TRAILING assistant
+    // before caching, so a mid-conversation assistant (index 3) is the "regardless
+    // of role" case: it still gets marked when it lands in the double-tail window.
     const model = createModel({
       providerID: "openrouter",
       api: { id: "anthropic/claude-sonnet-4", url: "https://openrouter.ai/api", npm: "@openrouter/ai-sdk-provider" },
@@ -2217,8 +2835,8 @@ describe("ProviderTransform.message - cache control on gateway", () => {
       { role: "system", content: [{ type: "text", text: "sys" }] },
       { role: "user", content: [{ type: "text", text: "first question" }] },
       { role: "assistant", content: [{ type: "text", text: "first answer" }] },
-      { role: "user", content: [{ type: "text", text: "second question" }] },
       { role: "assistant", content: [{ type: "text", text: "second answer" }] },
+      { role: "user", content: [{ type: "text", text: "second question" }] },
     ] as any[]
 
     const result = ProviderTransform.message(msgs, model, {}) as any[]
@@ -2227,7 +2845,7 @@ describe("ProviderTransform.message - cache control on gateway", () => {
       !!msg.providerOptions?.openrouter ||
       msg.content?.some?.((c: any) => c.providerOptions?.openrouter)
 
-    // The last two messages (index 3 user, 4 assistant) are both marked.
+    // The last two messages (index 3 assistant, 4 user) are both marked.
     expect(hasMarker(result[3])).toBe(true)
     expect(hasMarker(result[4])).toBe(true)
     // Earlier turns are not.
@@ -3519,5 +4137,152 @@ describe("ProviderTransform.schema - openai discriminated-union flatten", () => 
     expect(result.type).toBe("object")
     expect(result.properties.a).toBeDefined()
     expect(result.anyOf).toBeUndefined()
+  })
+})
+
+describe("ProviderTransform.schema - moonshot combiner sibling type", () => {
+  // Real shape of the `operation` node emitted by task/actor/cron/session:
+  // z.discriminatedUnion(...).meta({ type: "object" }) serializes to
+  // { type: "object", anyOf: [...] } nested under a root strictObject (so
+  // flattenDiscriminatedUnion leaves it alone). oneOf is also covered — the
+  // transform handles it defensively.
+  const nested = (combiner: "oneOf" | "anyOf") =>
+    ({
+      type: "object",
+      properties: {
+        operation: {
+          type: "object",
+          [combiner]: [
+            {
+              type: "object",
+              properties: { action: { type: "string", const: "create" }, summary: { type: "string", minLength: 1 } },
+              required: ["action", "summary"],
+              additionalProperties: false,
+            },
+            {
+              type: "object",
+              properties: { action: { type: "string", const: "list" } },
+              required: ["action"],
+              additionalProperties: false,
+            },
+          ],
+        },
+      },
+      required: ["operation"],
+      additionalProperties: false,
+    }) as any
+
+  const moonshot = { providerID: "moonshotai", api: { id: "kimi-k2.7-code", npm: "@ai-sdk/openai-compatible" } } as any
+
+  test("moonshotai — drops the parent type sitting next to oneOf", () => {
+    const result = ProviderTransform.schema(moonshot, nested("oneOf")) as any
+    expect(result.properties.operation.type).toBeUndefined()
+    expect(Array.isArray(result.properties.operation.oneOf)).toBe(true)
+    // Variants keep their own type, so the meaning is preserved.
+    expect(result.properties.operation.oneOf.every((v: any) => v.type === "object")).toBe(true)
+    // Root object is untouched.
+    expect(result.type).toBe("object")
+    expect(result.required).toEqual(["operation"])
+  })
+
+  test("moonshotai — drops the parent type sitting next to anyOf", () => {
+    const result = ProviderTransform.schema(moonshot, nested("anyOf")) as any
+    expect(result.properties.operation.type).toBeUndefined()
+    expect(Array.isArray(result.properties.operation.anyOf)).toBe(true)
+  })
+
+  test("detects Kimi via model id even when the provider id is not moonshot (e.g. a gateway)", () => {
+    const gateway = { providerID: "opencode", api: { id: "kimi-k2.7-code", npm: "@ai-sdk/openai-compatible" } } as any
+    const result = ProviderTransform.schema(gateway, nested("oneOf")) as any
+    expect(result.properties.operation.type).toBeUndefined()
+  })
+
+  test("pushes the parent type into a combiner item that lacks its own, keeping the item's own keys", () => {
+    const schema = {
+      type: "object",
+      properties: {
+        operation: {
+          type: "object",
+          anyOf: [
+            { properties: { action: { const: "x" }, note: { type: "string" } }, required: ["action"] },
+            { type: "object", properties: { action: { const: "y" } }, additionalProperties: false },
+          ],
+        },
+      },
+    } as any
+    const result = ProviderTransform.schema(moonshot, schema) as any
+    expect(result.properties.operation.type).toBeUndefined()
+    // The typeless variant inherits the parent type WITHOUT losing its own keys.
+    expect(result.properties.operation.anyOf[0].type).toBe("object")
+    expect(result.properties.operation.anyOf[0].properties.action.const).toBe("x")
+    expect(result.properties.operation.anyOf[0].properties.note.type).toBe("string")
+    expect(result.properties.operation.anyOf[0].required).toEqual(["action"])
+    // The already-typed variant is preserved untouched.
+    expect(result.properties.operation.anyOf[1].type).toBe("object")
+    expect(result.properties.operation.anyOf[1].properties.action.const).toBe("y")
+    expect(result.properties.operation.anyOf[1].additionalProperties).toBe(false)
+  })
+
+  test("matches Moonshot via provider id 'kimi-for-coding' and via 'moonshot' in the model id", () => {
+    // exercises the isMoonshot branches provider.includes('kimi') and apiID.includes('moonshot')
+    const kfc = { providerID: "kimi-for-coding", api: { id: "k2", npm: "@ai-sdk/anthropic" } } as any
+    expect((ProviderTransform.schema(kfc, nested("anyOf")) as any).properties.operation.type).toBeUndefined()
+    const byModelId = { providerID: "custom", api: { id: "moonshot-v1-8k", npm: "@ai-sdk/openai-compatible" } } as any
+    expect((ProviderTransform.schema(byModelId, nested("anyOf")) as any).properties.operation.type).toBeUndefined()
+  })
+
+  test("normalizes a combiner+type nested deep inside array items and additionalProperties", () => {
+    const schema = {
+      type: "object",
+      properties: {
+        list: { type: "array", items: { type: "object", anyOf: [{ type: "object", properties: { k: { const: "a" } } }] } },
+        bag: { type: "object", additionalProperties: { type: "object", oneOf: [{ type: "object", properties: { k: { const: "b" } } }] } },
+      },
+    } as any
+    const result = ProviderTransform.schema(moonshot, schema) as any
+    expect(result.properties.list.items.type).toBeUndefined()
+    expect(Array.isArray(result.properties.list.items.anyOf)).toBe(true)
+    expect(result.properties.bag.additionalProperties.type).toBeUndefined()
+    expect(Array.isArray(result.properties.bag.additionalProperties.oneOf)).toBe(true)
+    // The array/object containers keep their own type.
+    expect(result.properties.list.type).toBe("array")
+    expect(result.properties.bag.type).toBe("object")
+  })
+
+  test("leaves a combiner that has NO sibling type untouched", () => {
+    const schema = {
+      type: "object",
+      properties: { operation: { anyOf: [{ type: "object", properties: { a: { const: "x" } } }] } },
+    } as any
+    const result = ProviderTransform.schema(moonshot, schema) as any
+    expect("type" in result.properties.operation).toBe(false)
+    expect(result.properties.operation.anyOf[0].type).toBe("object")
+  })
+
+  test("non-moonshot models keep the parent type (guards the mimo/MiniMax stringify mitigation, #1371)", () => {
+    const mimo = { providerID: "mimo", api: { id: "mimo-v2.5-pro", npm: "@ai-sdk/openai-compatible" } } as any
+    const result = ProviderTransform.schema(mimo, nested("oneOf")) as any
+    expect(result.properties.operation.type).toBe("object")
+    expect(Array.isArray(result.properties.operation.oneOf)).toBe(true)
+  })
+
+  test("leaves allOf + type untouched (only anyOf/oneOf are rejected by Moonshot)", () => {
+    const schema = {
+      type: "object",
+      properties: {
+        operation: { type: "object", allOf: [{ type: "object", properties: { a: { type: "string" } } }] },
+      },
+    } as any
+    const result = ProviderTransform.schema(moonshot, schema) as any
+    expect(result.properties.operation.type).toBe("object")
+    expect(Array.isArray(result.properties.operation.allOf)).toBe(true)
+  })
+
+  test("does not mutate the input schema", () => {
+    const input = nested("anyOf")
+    const snapshot = JSON.stringify(input)
+    ProviderTransform.schema(moonshot, input)
+    expect(JSON.stringify(input)).toBe(snapshot)
+    expect(input.properties.operation.type).toBe("object")
   })
 })

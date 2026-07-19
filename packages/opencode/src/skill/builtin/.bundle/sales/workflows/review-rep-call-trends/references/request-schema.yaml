@@ -1,0 +1,18 @@
+type: object
+properties:
+  target_rep:
+    type: string
+  date_range:
+    type: string
+  call_type:
+    type: string
+  account_scope:
+    type: string
+  topics:
+    type: array
+    items:
+      type: string
+  source_materials:
+    type: array
+    items:
+      type: string

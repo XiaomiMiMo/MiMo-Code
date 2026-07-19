@@ -244,31 +244,20 @@ export const layer: Layer.Layer<
       promptOps: ActorPromptOps
       agentID?: string
     }) {
-      // Skip if this is a system-spawned actor — it's an internal subagent
-      // (e.g. checkpoint-writer) and should not itself trigger checkpoints.
-      if (input.agentID && (yield* actorReg.isSystemSpawned(input.sessionID, input.agentID))) {
-        return
-      }
-
-      // Kept separate from the isSystemSpawned skip above on purpose: that
-      // guard keys on AGENT TYPE (checkpoint-writer/dream/distill), this one
-      // keys on MODE. They are orthogonal invariants that merely overlap today
-      // (those agents happen to spawn as mode:"subagent"). Folding them into one
-      // boolean would silently re-enable self-triggering for any future
-      // system agent spawned as mode:"peer". The extra registry read is a local
-      // SQLite hit; correctness of the layering is worth more than saving it.
-      //
       // Checkpoint serves main/peer only; subagents use per-actor compaction
-      // (independent layers — see 2026-05-22-checkpoint-v8-design.md:71). A
-      // subagent shares the parent sessionID, so if it triggered a checkpoint
-      // the writer's unfiltered-stream watermark could land on the subagent's
-      // messages and the fork would capture the wrong parent system prompt.
-      // Gate on registry mode, NOT agentID: a peer's agentID is its child.id,
-      // not "main", so an agentID==="main" check would wrongly exclude peers.
-      // Unresolved actor (no agentID / unregistered / race) → fail open and
-      // fire: main and peer must never silently lose checkpoints.
-      const actor = input.agentID ? yield* actorReg.get(input.sessionID, input.agentID) : undefined
-      if (actor?.mode === "subagent") return
+      // (independent layers — see 2026-05-22-checkpoint-v8-design.md:71), and
+      // system-spawned agents (checkpoint-writer/dream/distill) are the writers
+      // themselves and must not self-trigger. Both exclusions live in the shared
+      // `servesCheckpoint` judgement (keyed on agent TYPE and MODE, kept orthogonal
+      // there so a future system agent spawned as mode:"peer" can't slip back in).
+      // It also shares the exact judgement with LLM.buildSystemArray's memory gate,
+      // so "who owns a checkpoint" and "who is taught about it" can never drift.
+      // A subagent shares the parent sessionID, so if it triggered a checkpoint the
+      // writer's unfiltered-stream watermark could land on the subagent's messages
+      // and the fork would capture the wrong parent system prompt. Unresolved actor
+      // (no agentID / unregistered / race) → servesCheckpoint fails open and fires:
+      // main and peer must never silently lose checkpoints.
+      if (!(yield* actorReg.servesCheckpoint(input.sessionID, input.agentID))) return
 
       // Lock: skip if a writer is already running for this session.
       // crossed Set is NOT incremented here — when the in-flight writer

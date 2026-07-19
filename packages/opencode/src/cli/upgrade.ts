@@ -18,7 +18,7 @@ export async function upgrade() {
   if (!latest) return
 
   if (Flag.MIMOCODE_ALWAYS_NOTIFY_UPDATE) {
-    await Bus.publish(Installation.Event.UpdateAvailable, { version: latest })
+    await Bus.publish(Installation.Event.UpdateAvailable, { version: latest, method })
     return
   }
 
@@ -28,13 +28,13 @@ export async function upgrade() {
   const kind = Installation.getReleaseType(InstallationVersion, latest)
 
   if (config.autoupdate === "notify" || kind !== "patch") {
-    await Bus.publish(Installation.Event.UpdateAvailable, { version: latest })
+    await Bus.publish(Installation.Event.UpdateAvailable, { version: latest, method })
     return
   }
 
   if (method === "unknown") return
   await AppRuntime.runPromise(Installation.Service.use((svc) => svc.upgrade(method, latest)))
-    .then(() => Bus.publish(Installation.Event.Updated, { version: latest }))
+    .then(() => Bus.publish(Installation.Event.Updated, { version: latest, method }))
     .catch((err) => {
       log.warn("auto-upgrade failed", { method, target: latest, error: String(err) })
     })

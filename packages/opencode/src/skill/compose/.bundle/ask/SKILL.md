@@ -1,6 +1,5 @@
 ---
 name: compose:ask
-hidden: true
 description: "Use whenever you need a decision, clarification, or approval from the user — covers how to ask with the question tool, and how to resolve the decision yourself when no user is available (question tool absent, or a [Never-Ask] response)"
 ---
 

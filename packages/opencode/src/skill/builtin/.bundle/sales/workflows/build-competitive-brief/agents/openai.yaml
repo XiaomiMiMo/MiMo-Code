@@ -1,0 +1,6 @@
+interface:
+  display_name: "Build Competitive Brief"
+  short_description: "Competitor reports, comparison matrices, and objection handling"
+  default_prompt: "Build a competitive brief for a competitor set."
+policy:
+  allow_implicit_invocation: false

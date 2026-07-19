@@ -1,0 +1,6 @@
+interface:
+  display_name: "KPI Reporting"
+  short_description: "Produce leadership-ready KPI updates and scorecards"
+  default_prompt: "Produce a leadership-ready KPI update with current status, comparison, drivers, and implications."
+policy:
+  allow_implicit_invocation: true

@@ -3,7 +3,7 @@
 To install dependencies:
 
 ```bash
-bun install
+bun ci
 ```
 
 To run:

@@ -139,4 +139,46 @@ describe("workflow meta parser", () => {
       expect(result.meta.description).toBe("d")
     }
   })
+
+  test("parses a valid permissions manifest", () => {
+    const script = [
+      `export const meta = { name: "x", description: "d", permissions: [{ permission: "bash", patterns: ["rm *"], always: ["rm *"], reason: "cleanup" }] }`,
+      `return 1`,
+    ].join("\n")
+    const result = parseMeta(script)
+    expect(result.ok).toBe(true)
+    if (result.ok) {
+      expect(result.meta.permissions).toEqual([
+        { permission: "bash", patterns: ["rm *"], always: ["rm *"], reason: "cleanup" },
+      ])
+    }
+  })
+
+  test("rejects permissions that is not an array", () => {
+    const result = parseMeta(`export const meta = { name: "x", description: "d", permissions: "nope" }\nreturn 1`)
+    expect(result.ok).toBe(false)
+    if (!result.ok) expect(result.error).toContain("meta.permissions must be an array")
+  })
+
+  test("rejects a permissions entry missing a permission string", () => {
+    const result = parseMeta(`export const meta = { name: "x", description: "d", permissions: [{ reason: "x" }] }\nreturn 1`)
+    expect(result.ok).toBe(false)
+    if (!result.ok) expect(result.error).toContain("non-empty `permission` string")
+  })
+
+  test("rejects patterns that is not an array of strings", () => {
+    const result = parseMeta(
+      `export const meta = { name: "x", description: "d", permissions: [{ permission: "bash", patterns: [1] }] }\nreturn 1`,
+    )
+    expect(result.ok).toBe(false)
+    if (!result.ok) expect(result.error).toContain("meta.permissions[].patterns must be an array of strings")
+  })
+
+  test("rejects a non-string reason", () => {
+    const result = parseMeta(
+      `export const meta = { name: "x", description: "d", permissions: [{ permission: "bash", reason: 5 }] }\nreturn 1`,
+    )
+    expect(result.ok).toBe(false)
+    if (!result.ok) expect(result.error).toContain("meta.permissions[].reason must be a string")
+  })
 })

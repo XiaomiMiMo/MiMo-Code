@@ -1,12 +1,28 @@
-const disposers = new Set<(directory: string) => Promise<void>>()
+interface Disposer {
+  fn: (directory: string) => Promise<void>
+  phase: "normal" | "late"
+}
 
-export function registerDisposer(disposer: (directory: string) => Promise<void>) {
-  disposers.add(disposer)
+const disposers = new Set<Disposer>()
+
+export function registerDisposer(
+  fn: (directory: string) => Promise<void>,
+  opts?: { phase?: "normal" | "late" },
+) {
+  const entry: Disposer = { fn, phase: opts?.phase ?? "normal" }
+  disposers.add(entry)
   return () => {
-    disposers.delete(disposer)
+    disposers.delete(entry)
   }
 }
 
 export async function disposeInstance(directory: string) {
-  await Promise.allSettled([...disposers].map((disposer) => disposer(directory)))
+  const normal: Disposer[] = []
+  const late: Disposer[] = []
+  for (const d of disposers) {
+    if (d.phase === "late") late.push(d)
+    else normal.push(d)
+  }
+  await Promise.allSettled(normal.map((d) => d.fn(directory)))
+  await Promise.allSettled(late.map((d) => d.fn(directory)))
 }

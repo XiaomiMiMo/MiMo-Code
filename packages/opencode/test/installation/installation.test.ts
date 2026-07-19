@@ -157,12 +157,12 @@ describe("installation", () => {
       expect(result).toBe("1.7.0")
     })
 
-    test("resolves version from GitHub releases redirect for curl method", async () => {
+    test("resolves version from FDS for curl method", async () => {
       const layer = testLayer(
         () => jsonResponse({}),
         (cmd, args) => {
-          if (cmd === "curl" && args.includes("https://github.com/XiaomiMiMo/MiMo-Code/releases/latest"))
-            return "HTTP/2 302\r\nlocation: https://github.com/XiaomiMiMo/MiMo-Code/releases/tag/v0.1.1\r\n"
+          if (cmd === "curl" && args.includes("https://mimocode.cnbj1.mi-fds.com/mimocode/mimocode/releases/latest"))
+            return "v0.1.1\n"
           return ""
         },
       )

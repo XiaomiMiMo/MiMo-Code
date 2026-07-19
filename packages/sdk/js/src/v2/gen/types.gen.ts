@@ -18,6 +18,70 @@ export type EventGlobalDisposed = {
   }
 }
 
+export type EventTuiPromptAppend = {
+  type: "tui.prompt.append"
+  properties: {
+    text: string
+  }
+}
+
+export type EventTuiCommandExecute = {
+  type: "tui.command.execute"
+  properties: {
+    command:
+      | "session.list"
+      | "session.new"
+      | "session.share"
+      | "session.interrupt"
+      | "session.compact"
+      | "session.page.up"
+      | "session.page.down"
+      | "session.line.up"
+      | "session.line.down"
+      | "session.half.page.up"
+      | "session.half.page.down"
+      | "session.first"
+      | "session.last"
+      | "prompt.clear"
+      | "prompt.submit"
+      | "agent.cycle"
+      | string
+  }
+}
+
+export type EventTuiToastShow = {
+  type: "tui.toast.show"
+  properties: {
+    title?: string
+    message: string
+    variant: "info" | "success" | "warning" | "error"
+    /**
+     * Duration in milliseconds
+     */
+    duration?: number
+  }
+}
+
+export type EventTuiSessionSelect = {
+  type: "tui.session.select"
+  properties: {
+    /**
+     * Session ID to navigate to
+     */
+    sessionID: string
+  }
+}
+
+export type EventTuiInstructionsLoaded = {
+  type: "tui.instructions.loaded"
+  properties: {
+    /**
+     * Display labels of loaded instruction files: worktree-relative path, ~-path, or absolute
+     */
+    files: Array<string>
+  }
+}
+
 export type EventActorRegistered = {
   type: "actor.registered"
   properties: {
@@ -52,6 +116,17 @@ export type EventActorStuck = {
     description: string
     lastTurnTime: number
     stuckDuration: number
+  }
+}
+
+export type EventActorStalled = {
+  type: "actor.stalled"
+  properties: {
+    sessionID: string
+    actorID: string
+    description: string
+    lastTurnTime: number
+    stalledDuration: number
   }
 }
 
@@ -120,24 +195,6 @@ export type EventTaskUpdated = {
   }
 }
 
-export type EventTeamCreated = {
-  type: "team.created"
-  properties: {
-    teamID: string
-    creatorSessionID: string
-  }
-}
-
-export type EventTeamMemberJoined = {
-  type: "team.member.joined"
-  properties: {
-    teamID: string
-    sessionID: string
-    agent: string
-    role: string
-  }
-}
-
 export type EventMetricsModelCall = {
   type: "metrics.model_call"
   properties: {
@@ -179,67 +236,34 @@ export type EventMetricsAgentRequest = {
   }
 }
 
-export type EventTuiPromptAppend = {
-  type: "tui.prompt.append"
+export type EventMetricsTryBestDetected = {
+  type: "metrics.try_best_detected"
   properties: {
-    text: string
-  }
-}
-
-export type EventTuiCommandExecute = {
-  type: "tui.command.execute"
-  properties: {
-    command:
-      | "session.list"
-      | "session.new"
-      | "session.share"
-      | "session.interrupt"
-      | "session.compact"
-      | "session.page.up"
-      | "session.page.down"
-      | "session.line.up"
-      | "session.line.down"
-      | "session.half.page.up"
-      | "session.half.page.down"
-      | "session.first"
-      | "session.last"
-      | "prompt.clear"
-      | "prompt.submit"
-      | "agent.cycle"
-      | string
-  }
-}
-
-export type EventTuiToastShow = {
-  type: "tui.toast.show"
-  properties: {
-    title?: string
-    message: string
-    variant: "info" | "success" | "warning" | "error"
-    /**
-     * Duration in milliseconds
-     */
-    duration?: number
-  }
-}
-
-export type EventTuiSessionSelect = {
-  type: "tui.session.select"
-  properties: {
-    /**
-     * Session ID to navigate to
-     */
     sessionID: string
+    reason: "edit_repeat" | "bash_retry" | "action_streak"
+    provider: string
+    model_id: string
+    count: number
+    similarity?: number
+    action?: "edit" | "verify"
   }
 }
 
-export type EventTuiInstructionsLoaded = {
-  type: "tui.instructions.loaded"
+export type EventTeamCreated = {
+  type: "team.created"
   properties: {
-    /**
-     * Display labels of loaded instruction files: worktree-relative path, ~-path, or absolute
-     */
-    files: Array<string>
+    teamID: string
+    creatorSessionID: string
+  }
+}
+
+export type EventTeamMemberJoined = {
+  type: "team.member.joined"
+  properties: {
+    teamID: string
+    sessionID: string
+    agent: string
+    role: string
   }
 }
 
@@ -376,6 +400,7 @@ export type EventInstallationUpdated = {
   type: "installation.updated"
   properties: {
     version: string
+    method?: string
   }
 }
 
@@ -383,6 +408,7 @@ export type EventInstallationUpdateAvailable = {
   type: "installation.update-available"
   properties: {
     version: string
+    method?: string
   }
 }
 
@@ -562,6 +588,25 @@ export type EventSessionRetryAttempt = {
   }
 }
 
+export type EventSessionTryBestDetected = {
+  type: "session.try_best.detected"
+  properties: {
+    sessionID: string
+    agentID?: string
+    providerID: string
+    modelID: string
+    reason: "edit_repeat" | "bash_retry" | "action_streak"
+    evidence: {
+      tool: string
+      path?: string
+      command?: string
+      count: number
+      similarity?: number
+      action?: "edit" | "verify"
+    }
+  }
+}
+
 export type EventHookExecuted = {
   type: "hook.executed"
   properties: {
@@ -715,25 +760,6 @@ export type EventBashInteractiveReplied = {
   }
 }
 
-export type Todo = {
-  /**
-   * Brief description of the task
-   */
-  content: string
-  /**
-   * Current status of the task: pending, in_progress, completed, cancelled
-   */
-  status: string
-}
-
-export type EventTodoUpdated = {
-  type: "todo.updated"
-  properties: {
-    sessionID: string
-    todos: Array<Todo>
-  }
-}
-
 export type SessionStatus =
   | {
       type: "idle"
@@ -764,28 +790,10 @@ export type EventSessionIdle = {
   }
 }
 
-export type EventSessionGoal = {
-  type: "session.goal"
+export type EventVcsBranchUpdated = {
+  type: "vcs.branch.updated"
   properties: {
-    sessionID: string
-    goal?: {
-      condition: string
-    }
-    lastVerdict?: {
-      ok: boolean
-      impossible?: boolean
-      reason: string
-      attempt: number
-      messageID?: string
-      error?: boolean
-    }
-  }
-}
-
-export type EventSessionCompacted = {
-  type: "session.compacted"
-  properties: {
-    sessionID: string
+    branch?: string
   }
 }
 
@@ -814,13 +822,6 @@ export type EventCommandExecuted = {
   }
 }
 
-export type EventVcsBranchUpdated = {
-  type: "vcs.branch.updated"
-  properties: {
-    branch?: string
-  }
-}
-
 export type EventWorktreeReady = {
   type: "worktree.ready"
   properties: {
@@ -833,6 +834,51 @@ export type EventWorktreeFailed = {
   type: "worktree.failed"
   properties: {
     message: string
+  }
+}
+
+export type Todo = {
+  /**
+   * Brief description of the task
+   */
+  content: string
+  /**
+   * Current status of the task: pending, in_progress, completed, cancelled
+   */
+  status: string
+}
+
+export type EventTodoUpdated = {
+  type: "todo.updated"
+  properties: {
+    sessionID: string
+    todos: Array<Todo>
+  }
+}
+
+export type EventSessionGoal = {
+  type: "session.goal"
+  properties: {
+    sessionID: string
+    goal?: {
+      condition: string
+    }
+    lastVerdict?: {
+      ok: boolean
+      impossible?: boolean
+      reason: string
+      attempt: number
+      messageID?: string
+      error?: boolean
+    }
+  }
+}
+
+export type EventSessionCompacted = {
+  type: "session.compacted"
+  properties: {
+    sessionID: string
+    agentID?: string
   }
 }
 
@@ -1174,6 +1220,7 @@ export type ToolStateError = {
     start: number
     end: number
   }
+  attachments?: Array<FilePart>
 }
 
 export type ToolState = ToolStatePending | ToolStateRunning | ToolStateCompleted | ToolStateError
@@ -1509,23 +1556,25 @@ export type GlobalEvent = {
   payload:
     | EventServerConnected
     | EventGlobalDisposed
-    | EventActorRegistered
-    | EventActorStatus
-    | EventActorStuck
-    | EventWriterCachePerf
-    | EventInboxArrived
-    | EventTaskCreated
-    | EventTaskUpdated
-    | EventTeamCreated
-    | EventTeamMemberJoined
-    | EventMetricsModelCall
-    | EventMetricsToolCall
-    | EventMetricsAgentRequest
     | EventTuiPromptAppend
     | EventTuiCommandExecute
     | EventTuiToastShow
     | EventTuiSessionSelect
     | EventTuiInstructionsLoaded
+    | EventActorRegistered
+    | EventActorStatus
+    | EventActorStuck
+    | EventActorStalled
+    | EventWriterCachePerf
+    | EventInboxArrived
+    | EventTaskCreated
+    | EventTaskUpdated
+    | EventMetricsModelCall
+    | EventMetricsToolCall
+    | EventMetricsAgentRequest
+    | EventMetricsTryBestDetected
+    | EventTeamCreated
+    | EventTeamMemberJoined
     | EventWorkflowPhase
     | EventWorkflowLog
     | EventWorkflowStarted
@@ -1546,6 +1595,7 @@ export type GlobalEvent = {
     | EventSessionDiff
     | EventSessionError
     | EventSessionRetryAttempt
+    | EventSessionTryBestDetected
     | EventHookExecuted
     | EventHookReactReentered
     | EventHookReactMaxReached
@@ -1555,17 +1605,17 @@ export type GlobalEvent = {
     | EventSessionCwd
     | EventBashInteractiveAsked
     | EventBashInteractiveReplied
-    | EventTodoUpdated
     | EventSessionStatus
     | EventSessionIdle
-    | EventSessionGoal
-    | EventSessionCompacted
+    | EventVcsBranchUpdated
     | EventMcpToolsChanged
     | EventMcpBrowserOpenFailed
     | EventCommandExecuted
-    | EventVcsBranchUpdated
     | EventWorktreeReady
     | EventWorktreeFailed
+    | EventTodoUpdated
+    | EventSessionGoal
+    | EventSessionCompacted
     | EventPtyCreated
     | EventPtyUpdated
     | EventPtyExited
@@ -1823,6 +1873,10 @@ export type ProviderConfig = {
       }
     }
   }
+  /**
+   * When true, show only the models listed in this provider's `models` map and hide the rest of the catalog (acts as an implicit whitelist). Defaults to false: `models` only augments/overrides the catalog without filtering it.
+   */
+  only_configured_models?: boolean
 }
 
 export type McpLocalConfig = {
@@ -1911,7 +1965,7 @@ export type Config = {
   logLevel?: LogLevel
   server?: ServerConfig
   /**
-   * Command configuration, see https://opencode.ai/docs/commands
+   * Command configuration, see https://mimo.xiaomi.com/mimocode/commands
    */
   command?: {
     [key: string]: {
@@ -1993,6 +2047,10 @@ export type Config = {
    */
   small_model?: string
   /**
+   * Model to use for image/vision subagent tasks in the format of provider/model. If unset, a vision-capable model is chosen automatically (in-house models preferred, then cheapest).
+   */
+  vision_model?: string
+  /**
    * Named model groups (capability tiers, e.g. ultra/standard/lite). Each group has a default model and optional member models. A group name can be used anywhere a provider/model string is accepted.
    */
   model_groups?: {
@@ -2020,7 +2078,7 @@ export type Config = {
     [key: string]: AgentConfig | undefined
   }
   /**
-   * Agent configuration, see https://opencode.ai/docs/agents
+   * Agent configuration, see https://mimo.xiaomi.com/mimocode/agents
    */
   agent?: {
     plan?: AgentConfig
@@ -2285,6 +2343,27 @@ export type Config = {
      * Continue the agent loop when a tool call is denied
      */
     continue_loop_on_deny?: boolean
+    /**
+     * Try-best loop detector thresholds.
+     */
+    try_best?: {
+      /**
+       * Recent edit events to compare (default 12).
+       */
+      edit_window?: number
+      /**
+       * Jaccard threshold for near-identical edit detection (default 0.8).
+       */
+      edit_similarity?: number
+      /**
+       * Prior similar edits required before pausing (default 2).
+       */
+      edit_matches?: number
+      /**
+       * Consecutive edit or verify actions without progress before pausing (default 4).
+       */
+      action_streak?: number
+    }
     /**
      * Timeout in milliseconds for model context protocol (MCP) requests
      */
@@ -2694,23 +2773,25 @@ export type File = {
 export type Event =
   | EventServerConnected
   | EventGlobalDisposed
-  | EventActorRegistered
-  | EventActorStatus
-  | EventActorStuck
-  | EventWriterCachePerf
-  | EventInboxArrived
-  | EventTaskCreated
-  | EventTaskUpdated
-  | EventTeamCreated
-  | EventTeamMemberJoined
-  | EventMetricsModelCall
-  | EventMetricsToolCall
-  | EventMetricsAgentRequest
   | EventTuiPromptAppend
   | EventTuiCommandExecute
   | EventTuiToastShow
   | EventTuiSessionSelect
   | EventTuiInstructionsLoaded
+  | EventActorRegistered
+  | EventActorStatus
+  | EventActorStuck
+  | EventActorStalled
+  | EventWriterCachePerf
+  | EventInboxArrived
+  | EventTaskCreated
+  | EventTaskUpdated
+  | EventMetricsModelCall
+  | EventMetricsToolCall
+  | EventMetricsAgentRequest
+  | EventMetricsTryBestDetected
+  | EventTeamCreated
+  | EventTeamMemberJoined
   | EventWorkflowPhase
   | EventWorkflowLog
   | EventWorkflowStarted
@@ -2731,6 +2812,7 @@ export type Event =
   | EventSessionDiff
   | EventSessionError
   | EventSessionRetryAttempt
+  | EventSessionTryBestDetected
   | EventHookExecuted
   | EventHookReactReentered
   | EventHookReactMaxReached
@@ -2740,17 +2822,17 @@ export type Event =
   | EventSessionCwd
   | EventBashInteractiveAsked
   | EventBashInteractiveReplied
-  | EventTodoUpdated
   | EventSessionStatus
   | EventSessionIdle
-  | EventSessionGoal
-  | EventSessionCompacted
+  | EventVcsBranchUpdated
   | EventMcpToolsChanged
   | EventMcpBrowserOpenFailed
   | EventCommandExecuted
-  | EventVcsBranchUpdated
   | EventWorktreeReady
   | EventWorktreeFailed
+  | EventTodoUpdated
+  | EventSessionGoal
+  | EventSessionCompacted
   | EventPtyCreated
   | EventPtyUpdated
   | EventPtyExited
@@ -2828,6 +2910,7 @@ export type Command = {
   agent?: string
   model?: string
   source?: "command" | "mcp" | "skill"
+  bundled?: boolean
   template: string
   subtask?: boolean
   hints: Array<string>
@@ -4239,6 +4322,10 @@ export type SessionChildrenData = {
   query?: {
     directory?: string
     workspace?: string
+    /**
+     * Only return user-visible children (peer sessions); hides internal subagent hosts
+     */
+    visible?: boolean
   }
   url: "/session/{sessionID}/children"
 }
@@ -4566,6 +4653,44 @@ export type SessionSummarizeResponses = {
 }
 
 export type SessionSummarizeResponse = SessionSummarizeResponses[keyof SessionSummarizeResponses]
+
+export type SessionAskData = {
+  body?: {
+    question: string
+  }
+  path: {
+    sessionID: string
+  }
+  query?: {
+    directory?: string
+    workspace?: string
+  }
+  url: "/session/{sessionID}/ask"
+}
+
+export type SessionAskErrors = {
+  /**
+   * Bad request
+   */
+  400: BadRequestError
+  /**
+   * Not found
+   */
+  404: NotFoundError
+}
+
+export type SessionAskError = SessionAskErrors[keyof SessionAskErrors]
+
+export type SessionAskResponses = {
+  /**
+   * Side question answer
+   */
+  200: {
+    answer: string
+  }
+}
+
+export type SessionAskResponse = SessionAskResponses[keyof SessionAskResponses]
 
 export type SessionMessagesData = {
   body?: never
@@ -5223,6 +5348,58 @@ export type PermissionListResponses = {
 }
 
 export type PermissionListResponse = PermissionListResponses[keyof PermissionListResponses]
+
+export type PermissionSkipAllData = {
+  body?: never
+  path?: never
+  query?: {
+    directory?: string
+    workspace?: string
+  }
+  url: "/permission/skip-all"
+}
+
+export type PermissionSkipAllResponses = {
+  /**
+   * Current skip-all state
+   */
+  200: boolean
+}
+
+export type PermissionSkipAllResponse = PermissionSkipAllResponses[keyof PermissionSkipAllResponses]
+
+export type PermissionSetSkipAllData = {
+  body?: {
+    /**
+     * Whether skip-all is enabled
+     */
+    enabled: boolean
+  }
+  path?: never
+  query?: {
+    directory?: string
+    workspace?: string
+  }
+  url: "/permission/skip-all"
+}
+
+export type PermissionSetSkipAllErrors = {
+  /**
+   * Bad request
+   */
+  400: BadRequestError
+}
+
+export type PermissionSetSkipAllError = PermissionSetSkipAllErrors[keyof PermissionSetSkipAllErrors]
+
+export type PermissionSetSkipAllResponses = {
+  /**
+   * Updated skip-all state
+   */
+  200: boolean
+}
+
+export type PermissionSetSkipAllResponse = PermissionSetSkipAllResponses[keyof PermissionSetSkipAllResponses]
 
 export type WorkflowListData = {
   body?: never
@@ -6604,6 +6781,7 @@ export type AppSkillsResponses = {
     location: string
     content: string
     hidden?: boolean
+    bundled?: boolean
   }>
 }
 

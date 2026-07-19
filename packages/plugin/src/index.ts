@@ -572,6 +572,7 @@ export interface Hooks {
       assistantMessageID?: string
       /** Full raw agent slice: user text, synthetic reminders, tool calls/results, reasoning, etc. */
       trajectory: TrajectoryMessage[]
+      systemPrompt?: string[]
     },
     output: {},
   ) => Promise<void>
@@ -607,6 +608,7 @@ export interface Hooks {
       finalText?: string
       /** Raw messages through this step (includes synthetic reminders, tools, reasoning). */
       trajectory: TrajectoryMessage[]
+      systemPrompt?: string[]
     },
     output: {},
   ) => Promise<void>

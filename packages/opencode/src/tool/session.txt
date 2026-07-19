@@ -1,0 +1,82 @@
+Child-session orchestration tool (Orchestrator mode only). Create and manage
+full child sessions, each running in its OWN session id with its own mode,
+model, task panel, and memory. Use this to coordinate many independent tasks
+from a single Orchestrator session instead of doing everything inline.
+
+JSON calls always wrap the action in an `operation` object — see examples below.
+
+## Operations
+
+- create:   spawn a new child session that runs in the BACKGROUND. `task` required
+            (the child's first-turn prompt). optional: `mode` (build|plan|compose,
+            default build; compose preferred for planned work, plan secondary), `model` (group/tier name or literal provider/model),
+            `title`, `dir` (working directory; any project or path; defaults to the
+            orchestrator's directory), `isolate` (own git worktree of `dir` for
+            concurrent-edit isolation; non-git dir falls back to shared). Returns
+            the child session id.
+- switch:   move the user's frontend panel to a session. `sessionID` required.
+            Use after `list` to resolve which child the user meant in natural
+            language, then switch to it. (Orchestrator-only — a child cannot
+            switch back; the user returns manually via the session-parent keybind.)
+- list:     enumerate this Orchestrator's child sessions (id, title, mode, status).
+- dashboard: the fleet at a glance — one grouped TABLE of every child correlated
+            to its liveness (progressing/idle/stalled + age), turnCount, mode,
+            and the git worktree backing isolated children (branch, commits-ahead,
+            dir). Use it when you (or the user) want the whole fleet + its
+            worktree/branch mapping in one structured view rather than flat `list`.
+- cancel:   stop a running child session. `sessionID` required.
+- ask:      ask a session a ONE-SHOT, READ-ONLY side question over a FROZEN
+            snapshot of its history, without disturbing its running turn.
+            `session_id` + `question` required. Returns the answer to you. The
+            answering fork may only read (read/grep/glob) — it cannot modify
+             files, run commands, or continue the session's task.
+- setmode:  change a child session's agent mode for its SUBSEQUENT turns.
+            `sessionID` + `mode` (build|plan|compose) required. Use it to move a
+            child between modes without opening a new session — e.g. a `plan`
+            child, once it has produced a plan, switches to `build`/`compose` to
+            execute in the same session. Takes effect on the child's next turn;
+            relay it a message (`actor send`) to continue under the new mode.
+- approve:  approve a child's CURRENT pending permission request (a background
+            child that hit an `ask` gate forwards it to you). `sessionID` required.
+            Resolves that one request; if the user already approved it directly,
+            this is a no-op.
+- grant-approval: pre-authorize FUTURE permission asks so they auto-approve
+            without asking you each time. `target` = a child session id (grant for
+            that child) or `all` (grant for every child of yours). Scoped to your
+            own sessions.
+
+## JSON examples
+
+{"operation":{"action":"create","task":"Implement email/password login","mode":"build"}}
+{"operation":{"action":"create","task":"Design the billing schema","mode":"compose","model":"standard","title":"Billing"}}
+{"operation":{"action":"list"}}
+{"operation":{"action":"dashboard"}}
+{"operation":{"action":"switch","sessionID":"ses_..."}}
+{"operation":{"action":"cancel","sessionID":"ses_..."}}
+{"operation":{"action":"ask","session_id":"ses_...","question":"what is your current progress?"}}
+{"operation":{"action":"setmode","sessionID":"ses_...","mode":"build"}}
+{"operation":{"action":"approve","sessionID":"ses_..."}}
+{"operation":{"action":"grant-approval","target":"ses_..."}}
+{"operation":{"action":"grant-approval","target":"all"}}
+
+## How to operate
+
+- Delegate each substantial, independent piece of work to its own child via
+  `create`. One main-line task = one child. Pick `mode: "compose"` for work that
+  benefits from the structured compose workflow, otherwise `mode: "build"`.
+- Children run concurrently in the background; you keep your turn free to talk to
+  the user or dispatch more children.
+- Relay between the user and a child with `actor send --session <childSessionID>`
+  (full-duplex; the child replies via a notification back to you).
+- Keep your own `task` panel as a dispatch ledger — one task per child you create.
+
+## When to use
+
+Use `session create` when a request is a real, self-contained unit of work worth
+its own session (a feature, a bug, a refactor). For trivial inline answers, just
+respond directly — you are a full-capability session and have every normal tool.
+
+## Don't repeat in your reply
+
+Do not dump the child-session list in your reply — `session list` already renders
+it. Summarize which child you created or what changed.

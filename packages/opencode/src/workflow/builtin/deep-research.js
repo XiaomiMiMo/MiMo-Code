@@ -1,398 +1,227 @@
 export const meta = {
-  name: 'deep-research',
-  description: 'Deep research orchestrator — runs parallel web searches, reads the strongest sources, cross-checks each fact with an adversarial jury, and writes a cited report.',
-  whenToUse: 'Use when the user wants a thorough, multi-source, fact-checked answer rather than a quick reply. If the request is broad or ambiguous (missing budget, region, use-case, time frame, etc.), ask one or two narrowing questions first, then fold the answers into the question you pass as args.',
+  name: "deep-research",
+  description:
+    "Deep research report generator — brief → plan angles → parallel sub-agents → reflect → single-writer cited report → cold review. Convergent (resumable via file checkpoints).",
+  whenToUse:
+    'Use when the user wants a comprehensive, multi-source investigation written as a cited Markdown report. Best for broad research questions ("survey X", "what are the recent advances in Y", "compare the options for Z"). NOT for simple lookups (single WebSearch suffices) and NOT for precise fact-checking (use fact-check workflow instead). If the request is broad, ask one narrowing question first, then pass the refined question as args.',
   phases: [
-    { title: "Plan", detail: "Break the question (from args) into several complementary search lines" },
-    { title: "Search", detail: "One web-search agent per line, in parallel" },
-    { title: "Extract", detail: "De-duplicate URLs, read the top sources, pull out checkable facts" },
-    { title: "Group", detail: "Fold facts that assert the same thing into one so each is checked once" },
-    { title: "Crosscheck", detail: "Adversarial jury per fact — a majority of reject votes drops it" },
-    { title: "Report", detail: "Rank survivors by certainty, merge, and cite" },
+    { title: "Brief", detail: "Refine the question into an unambiguous research brief" },
+    { title: "Plan", detail: "Decompose brief into independent research angles" },
+    { title: "Research", detail: "One sub-agent per angle in parallel, writing structured findings to disk" },
+    { title: "Reflect", detail: "Gap-check against brief; spawn delta sub-agents if budget allows" },
+    { title: "Write", detail: "Single agent writes the full cited Markdown report" },
+    { title: "Review", detail: "Independent reviewer spot-checks citations; fix pass if needed" },
   ],
+};
+
+// Sandbox exposes `args` as a JSON value — normalize bare strings gracefully.
+const _a = (() => {
+  if (args == null || args === undefined) return {};
+  if (typeof args === "string") {
+    try { const p = JSON.parse(args); return (typeof p === "object" && p !== null) ? p : { question: args }; }
+    catch { return { question: args }; }
+  }
+  return typeof args === "object" ? args : {};
+})();
+const question = _a.question;
+if (!question) throw new Error("args.question is required — pass {question: \"...\"} or a bare question string as args");
+const dir = _a.dir ?? ".";
+const today = _a.today;
+if (!today) throw new Error("args.today (YYYY-MM-DD) is required — the host auto-injects this for built-in runs; if calling from a user script, pass it manually");
+
+// Hard budgets per depth — enforced by script, not by LLM judgment.
+const DEPTH = {
+  quick: { angles: 3, queryBudget: 4, deltaAngles: 0, sources: 8 },
+  standard: { angles: 5, queryBudget: 6, deltaAngles: 3, sources: 15 },
+  deep: { angles: 8, queryBudget: 8, deltaAngles: 4, sources: 25 },
+}[_a.depth ?? "standard"];
+if (!DEPTH) throw new Error(`invalid depth: ${_a.depth}`);
+
+// Locked sub-agent prompt template.
+const subagentPrompt = (n, angle, briefContext) => `You are a research sub-agent. Today is ${today}.
+
+Research context: ${briefContext}
+
+Your ONLY task — research this single angle, nothing else:
+${angle}
+
+Rules:
+1. Run up to ${DEPTH.queryBudget} web searches. Start with 2-3 differently-phrased queries in parallel; refine based on what comes back. Prefer primary sources (official docs, papers, original announcements) over aggregators and SEO farms. If the WebSearch tool is unavailable, use DuckDuckGo HTML as fallback: WebFetch https://html.duckduckgo.com/html/?q=<query> (decode uddg param for real URLs). Also try free APIs: arXiv, Semantic Scholar, GitHub search, HN Algolia.
+2. WebFetch the 3-6 most promising results to read actual content. Do not cite a page you did not fetch.
+3. Judge each source: official/primary > reputable media/peer-reviewed > forums/blogs > content farms. Discard low-quality sources rather than citing them.
+4. Extract findings as information-dense claims: include exact entities, numbers, dates, versions. One claim per finding.
+5. Write your findings to findings/F${n}.md in EXACTLY this format:
+
+# F${n}: ${angle}
+
+## Findings
+
+### [1] <one-sentence claim>
+- quote: "<short verbatim supporting quote>"
+- url: <source URL>
+- source_type: primary | secondary | community
+- published: <date if known, else unknown>
+- confidence: high | medium | low
+
+### [2] ...
+
+## Dead ends
+- <queries or sources that yielded nothing useful, one line each>
+
+## Suggested follow-ups
+- <at most 3 narrower questions worth a deeper look, or "none">
+
+6. Aim for 5-12 findings. Depth beats breadth: 6 solid sourced claims beat 15 vague ones.
+7. If the angle turns out unanswerable or results are thin, still write the file with whatever you found and say so under Dead ends.
+
+Return ONLY: a 3-5 line summary, the file path written, finding count, overall confidence. Do NOT return raw page content.`;
+
+// ---------- Phase 1: Brief ----------
+phase("Brief");
+if (!(await exists("brief.md"))) {
+  const ok = await agent(
+    `You are the scoping step of a deep research run. Today is ${today}. No user is available — do NOT ask questions; write assumptions instead.
+Research question (verbatim from user): "${question}"
+${_a.context ? `Additional context from the requester: ${_a.context}` : ""}
+Write brief.md with sections:
+# Research Brief
+**Date**: ${today} · **Depth**: ${_a.depth ?? "standard"}
+## Question — the refined, unambiguous research question
+## Scope — In: ... / Out: ... (explicit boundaries)
+## Assumptions — audience, time frame, region, language; every guess you made goes here
+Do nothing else. Do not plan angles yet.`
+  );
+  if (!ok || !(await exists("brief.md"))) throw new Error("brief step failed: brief.md not created");
 }
+log("brief.md ready");
 
-// Tunables.
-const JURY_SIZE = 3        // crosscheck voters per fact
-const REJECT_QUORUM = 2    // reject votes that kill a fact AND the min valid votes needed to keep one
-const SOURCE_BUDGET = 15   // hard cap on how many URLs we actually read
-const FACT_CAP = 25        // hard cap on facts that reach crosscheck
-
-// ─── Structured-output shapes ───
-const PLAN_SHAPE = {
-  type: "object", required: ["question", "lines"],
+// ---------- Phase 2: Plan angles ----------
+phase("Plan");
+const anglesSchema = {
+  type: "object",
   properties: {
-    question: { type: "string" },
-    strategy: { type: "string" },
-    lines: { type: "array", minItems: 3, maxItems: 6, items: {
-      type: "object", required: ["topic", "query"],
-      properties: {
-        topic: { type: "string" },
-        query: { type: "string" },
-        why: { type: "string" },
+    briefContext: { type: "string", description: "2-3 line compression of the brief (topic, time frame, audience) to hand to sub-agents" },
+    angles: { type: "array", items: { type: "string" }, description: "independent research angles, one sentence each" },
+  },
+  required: ["briefContext", "angles"],
+};
+let plan;
+if (await exists("plan.json")) {
+  plan = JSON.parse(await readFile("plan.json"));
+} else {
+  plan = await agent(
+    `You are the planning step of a deep research run. Read brief.md.
+Decompose it into 3-${DEPTH.angles} INDEPENDENT research angles (no overlap; each answerable alone). Draw from these lenses as applicable: core facts/definitions · recent developments · quantitative data/benchmarks · counter-arguments & failure cases · practitioner experience · academic work · key players/alternatives.
+Also compress the brief into a 2-3 line briefContext for sub-agents.`,
+    { schema: anglesSchema }
+  );
+  if (!plan || !plan.angles || plan.angles.length === 0) throw new Error("planning failed: no angles");
+  plan.angles = plan.angles.slice(0, DEPTH.angles); // hard cap
+  await writeFile("plan.json", JSON.stringify(plan, null, 2));
+}
+log(`${plan.angles.length} angles planned`);
+
+// ---------- Phase 3: Parallel research (round 1) ----------
+phase("Research");
+const round1 = [];
+for (let i = 0; i < plan.angles.length; i++) {
+  const n = i + 1;
+  if (!(await exists(`findings/F${n}.md`))) round1.push({ n, angle: plan.angles[i] });
+}
+log(`${plan.angles.length - round1.length} findings exist, ${round1.length} to research`);
+if (round1.length > 0) {
+  await parallel(round1.map(({ n, angle }) => () => agent(subagentPrompt(n, angle, plan.briefContext))));
+}
+let findingFiles = await glob("findings/F*.md");
+if (findingFiles.length === 0) throw new Error("research round 1 produced no findings files");
+log(`round 1 done: ${findingFiles.length} findings files`);
+
+// ---------- Phase 4: Reflect (one round, hard-capped) ----------
+phase("Reflect");
+if (DEPTH.deltaAngles > 0 && !(await exists("reflect.json"))) {
+  const reflect = await agent(
+    `You are the reflection step of a deep research run. Read brief.md and EVERY file in findings/.
+Against the brief, identify: (a) parts of the brief with no evidence; (b) major claims resting on a single source; (c) conflicts between sources worth resolving. Also consider the "Suggested follow-ups" sections in the findings.
+Output at most ${DEPTH.deltaAngles} delta-angles — narrow, targeted research questions that would close the most important gaps. If coverage is already sufficient, output an empty array. Also list unresolved gaps that should surface in the report's "Open questions" section.`,
+    {
+      schema: {
+        type: "object",
+        properties: {
+          deltaAngles: { type: "array", items: { type: "string" } },
+          openQuestions: { type: "array", items: { type: "string" } },
+        },
+        required: ["deltaAngles", "openQuestions"],
       },
-    }},
-  },
-}
-const HITS_SHAPE = {
-  type: "object", required: ["hits"],
-  properties: {
-    hits: { type: "array", maxItems: 6, items: {
-      type: "object", required: ["url", "title", "fit"],
-      properties: {
-        url: { type: "string" },
-        title: { type: "string" },
-        note: { type: "string" },
-        fit: { enum: ["high", "medium", "low"] },
-      },
-    }},
-  },
-}
-const READ_SHAPE = {
-  type: "object", required: ["facts", "tier"],
-  properties: {
-    tier: { enum: ["primary", "secondary", "blog", "forum", "weak"] },
-    published: { type: "string" },
-    facts: { type: "array", maxItems: 5, items: {
-      type: "object", required: ["statement", "excerpt", "weight"],
-      properties: {
-        statement: { type: "string" },
-        excerpt: { type: "string" },
-        weight: { enum: ["key", "support", "aside"] },
-      },
-    }},
-  },
-}
-const RULING_SHAPE = {
-  type: "object", required: ["reject", "reason", "certainty"],
-  properties: {
-    reject: { type: "boolean" },
-    reason: { type: "string" },
-    certainty: { enum: ["high", "medium", "low"] },
-    counter: { type: "string" },
-  },
-}
-const GROUP_SHAPE = {
-  type: "object", required: ["groups"],
-  properties: {
-    groups: { type: "array", items: {
-      type: "object", required: ["canonical", "members"],
-      properties: {
-        canonical: { type: "string" },
-        members: { type: "array", items: { type: "number" } },
-        urls: { type: "array", items: { type: "string" } },
-      },
-    }},
-  },
-}
-const REPORT_SHAPE = {
-  type: "object", required: ["answer", "findings", "limits"],
-  properties: {
-    answer: { type: "string" },
-    findings: { type: "array", items: {
-      type: "object", required: ["point", "certainty", "sources", "basis"],
-      properties: {
-        point: { type: "string" },
-        certainty: { enum: ["high", "medium", "low"] },
-        sources: { type: "array", items: { type: "string" } },
-        basis: { type: "string" },
-        tally: { type: "string" },
-      },
-    }},
-    limits: { type: "string" },
-    followups: { type: "array", items: { type: "string" } },
-  },
-}
-
-// ─── Plan: split the question into search lines ───
-phase("Plan")
-const TOPIC = (typeof args === "string" && args.trim()) || ""
-if (!TOPIC) {
-  return { error: "No research question provided. Pass the question as args." }
-}
-const plan = await agent(
-  "You are planning a research sweep. Turn the question below into complementary web searches.\n\n" +
-  "## Question\n" + TOPIC + "\n\n" +
-  "## What to produce\n" +
-  "Five web-search queries that, together, approach the question from different directions. Choose directions that fit the subject. A few patterns to draw on:\n" +
-  "- general overview · technical/academic depth · latest developments · skeptical/opposing takes · hands-on/practitioner notes\n" +
-  "- a clinical question might split into: mechanism · frequent causes · dangerous look-alikes · guideline sources · warning signs\n" +
-  "- a software question might split into: current best practice · measured benchmarks · known limits · who actually ships it · cost & trade-offs\n\n" +
-  "Keep each query tight enough to surface high-signal pages. Don't let two queries overlap.\n" +
-  "Return the question (as given or lightly cleaned up), a one-line plan, and the search lines.\n\nReturn structured output only.",
-  { label: "plan", schema: PLAN_SHAPE }
-)
-if (!plan) {
-  return { error: "Planning step produced nothing — cannot split the question into searches." }
-}
-log("Q: " + TOPIC.slice(0, 80) + (TOPIC.length > 80 ? "…" : ""))
-log("Split into " + plan.lines.length + " lines: " + plan.lines.map(l => l.topic).join(", "))
-
-// ─── URL bookkeeping, shared as searchers report in ───
-const canonURL = u => {
-  try {
-    const parsed = new URL(u)
-    return (parsed.hostname.replace(/^www\./, "") + parsed.pathname.replace(/\/$/, "")).toLowerCase()
-  } catch { return u.toLowerCase() }
-}
-const taken = new Map()
-const repeats = []
-const overflow = []
-const FIT_RANK = { high: 0, medium: 1, low: 2 }
-let slotsLeft = SOURCE_BUDGET
-
-// ─── Agent prompts ───
-const searchPrompt = (line) =>
-  "You are one of several researchers, each chasing a different line of inquiry.\n\n" +
-  "Overall question: \"" + TOPIC + "\"\n\n" +
-  "Your line: **" + line.topic + "**" + (line.why ? " — " + line.why : "") + "\n" +
-  "Suggested query: `" + line.query + "`\n\n" +
-  "Run WebSearch (refine the query if you can do better) and hand back the 4-6 most useful results.\n" +
-  "Judge usefulness against the OVERALL question, not just your query. Drop content farms and SEO spam.\n" +
-  "Give each result a one-line note on why it matters.\n\nReturn structured output only."
-
-const readPrompt = (source, line) =>
-  "Read one source and pull out checkable facts.\n\n" +
-  "Overall question: \"" + TOPIC + "\"\n\n" +
-  "**URL:** " + source.url + "\n**Title:** " + source.title + "\n**Surfaced by:** the \"" + line + "\" line\n\n" +
-  "## Steps\n1. Fetch the page with WebFetch.\n" +
-  "2. Judge the source tier: primary (research / the institution itself), secondary (reporting), blog/opinion, forum, or weak/unreliable.\n" +
-  "3. Pull 2-5 FALSIFIABLE facts that bear on the question. Each fact must:\n" +
-  "   - state something concrete and checkable (no vague hand-waving)\n" +
-  "   - quote the source verbatim as backing\n" +
-  "   - be tagged key / support / aside relative to the question\n" +
-  "4. Record the publish date if you can find it.\n\n" +
-  "If the page won't load, is paywalled, or is off-topic, return facts: [] with tier: \"weak\".\n\nReturn structured output only."
-
-const groupPrompt = (facts) =>
-  "Fold together the facts below that assert the SAME thing, so each assertion gets checked only once.\n\n" +
-  "Overall question: \"" + TOPIC + "\"\n\n" +
-  "Merge only facts that make the same claim (even if worded differently or from different sources). " +
-  "If you're unsure, leave them apart — collapsing two distinct facts can let a shaky one ride on a solid one's coattails.\n\n" +
-  "## Facts (index: statement — source)\n" +
-  facts.map((f, i) => i + ": " + f.statement + " — " + f.sourceUrl + " (" + f.tier + ")").join("\n") + "\n\n" +
-  "Per group, return a single canonical wording, the member indices, and the combined source URLs.\n\nReturn structured output only."
-
-const crosscheckPrompt = (fact, n) =>
-  "You are juror " + (n + 1) + " of " + JURY_SIZE + ", and your job is to try to KNOCK THIS DOWN.\n\n" +
-  "Stay skeptical. " + REJECT_QUORUM + " of " + JURY_SIZE + " jurors voting reject will drop the fact.\n\n" +
-  "## Question in scope\n" + TOPIC + "\n\n" +
-  "## Fact on trial\n\"" + fact.statement + "\"\n\n" +
-  "**Source:** " + fact.sourceUrl + " (" + fact.tier + ")\n" +
-  "**Backing quote:** \"" + fact.excerpt + "\"\n\n" +
-  "## Run through these\n" +
-  "1. Does the quote actually back the fact, or is the fact reaching beyond it?\n" +
-  "2. Search for contradicting evidence — does any trustworthy source disagree or add big caveats?\n" +
-  "3. Is the source strong enough for how bold the fact is? (big claims need primary sources)\n" +
-  "4. Has it gone stale? (check dates — old facts in fast-moving areas are suspect)\n" +
-  "5. Is it really marketing copy, a press release, a cherry-picked number, or forum chatter?\n\n" +
-  "Vote **reject=true** when: the quote doesn't support it / something contradicts it / the source is too weak for the claim / it's outdated / it's spin.\n" +
-  "Vote **reject=false** only when the fact is well-backed, current, and the source matches its boldness.\n" +
-  "When genuinely unsure, reject. Your reason MUST be concrete.\n\nReturn structured output only."
-
-// ─── Search → de-dup → read, streamed (no barrier between stages) ───
-const perLine = await pipeline(
-  plan.lines,
-
-  line => agent(searchPrompt(line), {
-    label: "search:" + line.topic, phase: "Search", schema: HITS_SHAPE
-  }).then(r => {
-    if (!r) return null
-    log(line.topic + ": " + r.hits.length + " hits")
-    return { line: line.topic, hits: r.hits }
-  }),
-
-  found => {
-    // Stage 1 returns null when the search agent failed (over-cap, schema
-    // reject, no-deliverable, etc.). pipeline() pipes that null straight here,
-    // so guard before touching .hits — otherwise a single search miss crashes
-    // the whole run with `cannot read property 'hits' of null` at line 207.
-    // Returning null here drops this line's slot; perLine.flat().filter(Boolean)
-    // at line 251 already prunes nulls when collecting `sources`.
-    if (!found) return null
-    const byFit = [...found.hits].sort((a, b) => FIT_RANK[a.fit] - FIT_RANK[b.fit])
-    const fresh = byFit.filter(h => {
-      const key = canonURL(h.url)
-      if (taken.has(key)) {
-        repeats.push({ ...h, line: found.line, sameAs: taken.get(key) })
-        return false
-      }
-      // Once the read budget is gone, only still-admit top-fit pages.
-      if (slotsLeft <= 0 && FIT_RANK[h.fit] >= 1) {
-        overflow.push({ ...h, line: found.line })
-        return false
-      }
-      taken.set(key, { line: found.line, title: h.title })
-      slotsLeft--
-      return true
-    })
-    if (fresh.length < found.hits.length) {
-      log(found.line + ": " + fresh.length + " fresh (" + (found.hits.length - fresh.length) + " dropped)")
     }
-    return parallel(
-      fresh.map(source => () => {
-        let host = "unknown"
-        try { host = new URL(source.url).hostname.replace(/^www\./, "") } catch {}
-        return agent(readPrompt(source, found.line), {
-          label: "read:" + host,
-          phase: "Extract",
-          schema: READ_SHAPE,
-        }).then(out => {
-          // A skipped agent returns null — drop the entry (the flat().filter(Boolean)
-          // below clears it) instead of routing it through .catch and falsely tagging it weak.
-          if (!out) return null
-          return {
-            url: source.url, title: source.title, line: found.line,
-            tier: out.tier, published: out.published,
-            facts: out.facts.map(f => ({ ...f, sourceUrl: source.url, tier: out.tier })),
-          }
-        }).catch(e => {
-          log("read failed: " + source.url + " — " + (e.message || e))
-          return { url: source.url, title: source.title, line: found.line, tier: "weak", facts: [] }
-        })
-      })
-    )
-  }
-)
-
-const sources = perLine.flat().filter(Boolean)
-const facts = sources.flatMap(s => s.facts)
-const WEIGHT_RANK = { key: 0, support: 1, aside: 2 }
-const TIER_RANK = { primary: 0, secondary: 1, blog: 2, forum: 3, weak: 4 }
-
-const topFacts = [...facts]
-  .sort((a, b) => (WEIGHT_RANK[a.weight] - WEIGHT_RANK[b.weight]) || (TIER_RANK[a.tier] - TIER_RANK[b.tier]))
-  .slice(0, FACT_CAP)
-
-log("Read " + sources.length + " sources → " + facts.length + " facts → checking top " + topFacts.length)
-
-if (topFacts.length === 0) {
-  return {
-    question: TOPIC,
-    answer: "No facts could be extracted. " + sources.length + " sources read, all empty or failed. " + repeats.length + " repeat URLs, " + overflow.length + " past the read budget.",
-    findings: [], rejected: [], sources: sources.map(s => ({ url: s.url, tier: s.tier })),
-    stats: { lines: plan.lines.length, sources: sources.length, facts: 0, repeats: repeats.length },
-  }
+  );
+  const safe = reflect ?? { deltaAngles: [], openQuestions: [] };
+  safe.deltaAngles = (safe.deltaAngles || []).slice(0, DEPTH.deltaAngles); // hard cap
+  await writeFile("reflect.json", JSON.stringify(safe, null, 2));
 }
+const reflect = (await exists("reflect.json"))
+  ? JSON.parse(await readFile("reflect.json"))
+  : { deltaAngles: [], openQuestions: [] };
 
-// ─── Group identical facts so each is checked once ───
-phase("Group")
-const grouped = await agent(groupPrompt(topFacts), { label: "group", phase: "Group", schema: GROUP_SHAPE })
-const groups = grouped && grouped.groups && grouped.groups.length
-  ? grouped.groups.map(g => {
-      const idx = (g.members || []).filter(i => i >= 0 && i < topFacts.length)
-      const head = topFacts[idx[0] != null ? idx[0] : 0]
-      const urls = [...new Set((g.urls && g.urls.length ? g.urls : idx.map(i => topFacts[i].sourceUrl)))]
-      return { ...head, statement: g.canonical || head.statement, urls }
-    })
-  : topFacts.map(f => ({ ...f, urls: [f.sourceUrl] }))
-log("Folded " + topFacts.length + " facts → " + groups.length + " groups")
-
-// ─── Crosscheck: adversarial jury per group ───
-// Barrier on purpose — the full fact set must be gathered and ranked before any voting.
-phase("Crosscheck")
-const judged = (await parallel(
-  groups.map(fact => () =>
-    parallel(
-      Array.from({ length: JURY_SIZE }, (_, n) => () =>
-        agent(crosscheckPrompt(fact, n), {
-          label: "j" + n + ":" + fact.statement.slice(0, 40),
-          phase: "Crosscheck",
-          schema: RULING_SHAPE,
-          model: "lite",
-        })
-      )
-    ).then(rulings => {
-      // A null ruling (skip or agent error) counts as an abstention.
-      const cast = rulings.filter(Boolean)
-      const rejects = cast.filter(v => v.reject).length
-      // A fact is kept only if it was genuinely adjudicated: a quorum of real
-      // votes AND fewer than REJECT_QUORUM of them rejecting. Too many
-      // abstentions means "unproven", which must not slip through as kept
-      // (otherwise all-abstain → rejects=0 → false keep).
-      const abstain = JURY_SIZE - cast.length
-      const kept = cast.length >= REJECT_QUORUM && rejects < REJECT_QUORUM
-      log("\"" + fact.statement.slice(0, 50) + "…\": " + (cast.length - rejects) + "-" + rejects + (abstain > 0 ? " (" + abstain + " abstain)" : "") + " " + (kept ? "✓" : "✗"))
-      return { ...fact, rulings: cast, rejectCount: rejects, kept }
-    })
-  )
-)).filter(Boolean)
-
-const upheld = judged.filter(f => f.kept)
-const dropped = judged.filter(f => !f.kept)
-log("Crosscheck done: " + judged.length + " facts → " + upheld.length + " upheld, " + dropped.length + " dropped")
-
-if (upheld.length === 0) {
-  return {
-    question: TOPIC,
-    answer: "Every one of the " + judged.length + " facts was rejected on crosscheck. Inconclusive — sources were likely weak or the claims overstated.",
-    findings: [],
-    rejected: dropped.map(f => ({ statement: f.statement, tally: (f.rulings.length - f.rejectCount) + "-" + f.rejectCount, source: f.sourceUrl })),
-    sources: sources.map(s => ({ url: s.url, tier: s.tier, factCount: s.facts.length })),
-    stats: { lines: plan.lines.length, sources: sources.length, facts: facts.length, checked: judged.length, upheld: 0, dropped: dropped.length },
+if (reflect.deltaAngles.length > 0) {
+  phase("Research (delta)");
+  const base = plan.angles.length;
+  const round2 = [];
+  for (let i = 0; i < reflect.deltaAngles.length; i++) {
+    const n = base + i + 1;
+    if (!(await exists(`findings/F${n}.md`))) round2.push({ n, angle: reflect.deltaAngles[i] });
   }
+  if (round2.length > 0) {
+    await parallel(round2.map(({ n, angle }) => () => agent(subagentPrompt(n, angle, plan.briefContext))));
+  }
+  log("delta round done");
 }
+findingFiles = await glob("findings/F*.md");
 
-// ─── Report ───
-phase("Report")
-const CERTAINTY_RANK = { high: 0, medium: 1, low: 2 }
-const digest = upheld.map((f, i) => {
-  const top = f.rulings.filter(v => !v.reject).sort((a, b) => CERTAINTY_RANK[a.certainty] - CERTAINTY_RANK[b.certainty])[0]
-  const cites = (f.urls && f.urls.length ? f.urls : [f.sourceUrl]).join(", ")
-  return "### [" + i + "] " + f.statement + "\n" +
-    "Tally: " + (f.rulings.length - f.rejectCount) + "-" + f.rejectCount + " · Sources: " + cites + " (" + f.tier + ")\n" +
-    "Quote: \"" + f.excerpt + "\"\nJuror basis (" + top.certainty + "): " + top.reason + "\n"
-}).join("\n")
+// ---------- Phase 5: Write (single-point) ----------
+phase("Write");
+if (!(await exists("REPORT.md"))) {
+  await agent(
+    `You are the SOLE writer of a deep research report. Read brief.md, reflect.json (openQuestions), and EVERY file in findings/.
+Write REPORT.md in one pass. Header: "> Generated ${today} · depth: ${_a.depth ?? "standard"} · workspace: ${dir}".
+Report structure: Executive summary (5-10 bullet conclusions with [n] citations) → Background & scope → Body sections organized by THEME (not by findings file) → Open questions (seeded from reflect.json) → Sources (numbered, dedup URLs, access date ${today}).
+Hard rules: every non-obvious claim carries [n] resolving to a Sources entry whose URL appears in some findings file — never cite from memory; conflicts presented with both sides and dates; [single source] and [speculative] flags where applicable.
+Do NOT re-search. If a gap blocks a section, state the gap.`
+  );
+  if (!(await exists("REPORT.md"))) throw new Error("write step failed: REPORT.md not created");
+}
+log("REPORT.md ready");
 
-const droppedDigest = dropped.length > 0
-  ? "\n## Rejected on crosscheck (shown for transparency)\n" +
-    dropped.map(f => "- \"" + f.statement + "\" (" + f.sourceUrl + ", tally " + (f.rulings.length - f.rejectCount) + "-" + f.rejectCount + ")").join("\n")
-  : ""
-
-const report = await agent(
-  "## Write the research report\n\n" +
-  "**Question:** " + TOPIC + "\n\n" +
-  upheld.length + " facts came through a " + JURY_SIZE + "-juror crosscheck. Fold any remaining duplicates and write this up.\n\n" +
-  "## Facts that held up\n" + digest + "\n" + droppedDigest + "\n\n" +
-  "## How to write it\n" +
-  "1. Merge facts that say the same thing and pool their sources.\n" +
-  "2. Gather related facts into coherent findings, each one speaking to the question.\n" +
-  "3. Rate each finding's certainty: high (several primary sources, jury unanimous), medium (secondary sources or a split jury), low (single source or blog-grade).\n" +
-  "4. Open with a 3-5 sentence answer to the question.\n" +
-  "5. Spell out the limits: what's shaky, which sources were thin, what may have gone stale.\n" +
-  "6. End with 2-4 questions that surfaced but went unanswered.\n\nReturn structured output only.",
-  { label: "report", schema: REPORT_SHAPE }
-)
-
-if (!report) {
-  // Report agent skipped or failed — hand back the upheld facts raw rather than
-  // throwing on report.findings and losing the whole run.
-  return {
-    question: TOPIC,
-    answer: "Report step was skipped or failed — returning " + upheld.length + " checked facts unmerged.",
-    findings: [],
-    upheld: upheld.map(f => ({ statement: f.statement, source: f.sourceUrl, quote: f.excerpt, tally: (f.rulings.length - f.rejectCount) + "-" + f.rejectCount })),
-    rejected: dropped.map(f => ({ statement: f.statement, tally: (f.rulings.length - f.rejectCount) + "-" + f.rejectCount, source: f.sourceUrl })),
-    sources: sources.map(s => ({ url: s.url, tier: s.tier, factCount: s.facts.length })),
-    stats: { lines: plan.lines.length, sources: sources.length, facts: facts.length, checked: judged.length, upheld: upheld.length, dropped: dropped.length, afterReport: 0 },
+// ---------- Phase 6: Cold review ----------
+phase("Review");
+const review = await agent(
+  `You are an independent reviewer with NO prior context — judge only from files.
+Read REPORT.md and every file in findings/.
+Check: (a) claims lacking citations that need one; (b) spot-check 5 random [n] citations — does the URL exist in some findings file and plausibly support the sentence?; (c) conclusions stronger than the evidence; (d) executive summary consistent with body.
+Write findings to REVIEW.md.`,
+  {
+    schema: {
+      type: "object",
+      properties: {
+        critical: { type: "number", description: "count of fabricated-citation or unsupported-claim findings" },
+        summary: { type: "string" },
+      },
+      required: ["critical", "summary"],
+    },
   }
+);
+log(`review: ${review ? review.summary : "reviewer failed"}`);
+
+if (review && review.critical > 0) {
+  phase("Fix");
+  await agent(
+    `Read REVIEW.md and fix REPORT.md accordingly: re-anchor citations to URLs actually present in findings/, otherwise weaken or remove unsupported claims. Never invent new sources.`
+  );
 }
 
 return {
-  question: TOPIC,
-  ...report,
-  rejected: dropped.map(f => ({ statement: f.statement, tally: (f.rulings.length - f.rejectCount) + "-" + f.rejectCount, source: f.sourceUrl })),
-  sources: sources.map(s => ({ url: s.url, tier: s.tier, line: s.line, factCount: s.facts.length })),
-  stats: {
-    lines: plan.lines.length,
-    sourcesRead: sources.length,
-    factsFound: facts.length,
-    factsChecked: judged.length,
-    upheld: upheld.length,
-    dropped: dropped.length,
-    afterReport: report.findings.length,
-    repeatUrls: repeats.length,
-    overBudget: overflow.length,
-    agentRuns: 1 + plan.lines.length + sources.length + 1 + (judged.length * JURY_SIZE) + 1,
-  },
-}
+  angles: plan.angles.length,
+  deltaAngles: reflect.deltaAngles.length,
+  findingsFiles: findingFiles.length,
+  reviewCritical: review ? review.critical : null,
+  report: `${dir}/REPORT.md`,
+};

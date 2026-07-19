@@ -1,0 +1,6 @@
+interface:
+  display_name: "Product Design"
+  short_description: "Primary entrypoint for explicit Product Design work, design exploration, research, audits, critique, source clones, QA, and sharing."
+  default_prompt: "What can Product Design do?"
+policy:
+  allow_implicit_invocation: true

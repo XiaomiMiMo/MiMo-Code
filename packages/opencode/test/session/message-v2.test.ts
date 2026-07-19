@@ -9,6 +9,9 @@ import { Question } from "../../src/question"
 
 const sessionID = SessionID.make("session")
 const providerID = ProviderID.make("test")
+const pngBase64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="
+const wavBase64 = "UklGRiUAAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQEAAACA"
+const binaryBase64 = "YmluYXJ5"
 const model: Provider.Model = {
   id: ModelID.make("test-model"),
   providerID,
@@ -56,6 +59,24 @@ const model: Provider.Model = {
   options: {},
   headers: {},
   release_date: "2026-01-01",
+}
+const openAICompatibleModel: Provider.Model = {
+  ...model,
+  api: { ...model.api, npm: "@ai-sdk/openai-compatible" },
+}
+
+function withInputCapabilities(
+  input: Partial<Provider.Model["capabilities"]["input"]>,
+  base: Provider.Model = model,
+): Provider.Model {
+  return {
+    ...base,
+    capabilities: {
+      ...base.capabilities,
+      attachment: true,
+      input: { ...base.capabilities.input, ...input },
+    },
+  }
 }
 
 function userInfo(id: string): MessageV2.User {
@@ -262,9 +283,10 @@ describe("session.message-v2.toModelMessage", () => {
     ])
   })
 
-  test("extracts tool-result media into a user message for openai models", async () => {
+  test("routes supported and unsupported tool-result files for OpenAI-compatible Chat models", async () => {
     const userID = "m-user"
     const assistantID = "m-assistant"
+    const mediaModel = withInputCapabilities({ image: true, audio: true }, openAICompatibleModel)
 
     const input: MessageV2.WithParts[] = [
       {
@@ -304,7 +326,21 @@ describe("session.message-v2.toModelMessage", () => {
                   type: "file",
                   mime: "image/png",
                   filename: "attachment.png",
-                  url: "data:image/png;base64,Zm9v",
+                  url: `data:image/png;base64,${pngBase64}`,
+                },
+                {
+                  ...basePart(assistantID, "file-2"),
+                  type: "file",
+                  mime: "audio/wav",
+                  filename: "attachment.wav",
+                  url: `data:audio/wav;base64,${wavBase64}`,
+                },
+                {
+                  ...basePart(assistantID, "file-3"),
+                  type: "file",
+                  mime: "application/octet-stream",
+                  filename: "attachment.bin",
+                  url: `data:application/octet-stream;base64,${binaryBase64}`,
                 },
               ],
             },
@@ -314,7 +350,8 @@ describe("session.message-v2.toModelMessage", () => {
       },
     ]
 
-    expect(await MessageV2.toModelMessages(input, model)).toStrictEqual([
+    const messages = await MessageV2.toModelMessages(input, mediaModel)
+    expect(messages).toStrictEqual([
       {
         role: "user",
         content: [{ type: "text", text: "run tool" }],
@@ -352,15 +389,27 @@ describe("session.message-v2.toModelMessage", () => {
         role: "user",
         content: [
           { type: "text", text: MessageV2.SYNTHETIC_ATTACHMENT_PROMPT },
+          { type: "text", text: 'Tool "bash" call call-1 completed:' },
           {
             type: "file",
             mediaType: "image/png",
             filename: "attachment.png",
-            data: "data:image/png;base64,Zm9v",
+            data: `data:image/png;base64,${pngBase64}`,
+          },
+          {
+            type: "file",
+            mediaType: "audio/wav",
+            filename: "attachment.wav",
+            data: `data:audio/wav;base64,${wavBase64}`,
+          },
+          {
+            type: "text",
+            text: '[Tool attachment "attachment.bin" (application/octet-stream) was retained but cannot be safely sent to this model/provider.]',
           },
         ],
       },
     ])
+    expect(JSON.stringify(messages)).not.toContain(binaryBase64)
   })
 
   test("preserves jpeg tool-result media for anthropic models", async () => {
@@ -440,7 +489,7 @@ describe("session.message-v2.toModelMessage", () => {
         type: "content",
         value: [
           { type: "text", text: "Image read successfully" },
-          { type: "media", mediaType: "image/jpeg", data: jpeg },
+          { type: "image-data", mediaType: "image/jpeg", data: jpeg },
         ],
       },
     })
@@ -588,9 +637,10 @@ describe("session.message-v2.toModelMessage", () => {
     ])
   })
 
-  test("converts assistant tool error into error-text tool result", async () => {
+  test("preserves tool error media for OpenAI-compatible Chat models", async () => {
     const userID = "m-user"
     const assistantID = "m-assistant"
+    const mediaModel = withInputCapabilities({ image: true, audio: true }, openAICompatibleModel)
 
     const input: MessageV2.WithParts[] = [
       {
@@ -617,6 +667,36 @@ describe("session.message-v2.toModelMessage", () => {
               error: "nope",
               time: { start: 0, end: 1 },
               metadata: {},
+              attachments: [
+                {
+                  ...basePart(assistantID, "file-1"),
+                  type: "file",
+                  mime: "image/png",
+                  filename: "error-state.png",
+                  url: `data:image/png;base64,${pngBase64}`,
+                },
+                {
+                  ...basePart(assistantID, "file-2"),
+                  type: "file",
+                  mime: "audio/wav",
+                  filename: "error.wav",
+                  url: `data:audio/wav;base64,${wavBase64}`,
+                },
+                {
+                  ...basePart(assistantID, "file-3"),
+                  type: "file",
+                  mime: "audio/ogg",
+                  filename: "unsupported.ogg",
+                  url: "data:audio/ogg;base64,T2dnUw==",
+                },
+                {
+                  ...basePart(assistantID, "file-4"),
+                  type: "file",
+                  mime: "application/octet-stream",
+                  filename: "diagnostic.bin",
+                  url: `data:application/octet-stream;base64,${binaryBase64}`,
+                },
+              ],
             },
             metadata: { openai: { tool: "meta" } },
           },
@@ -624,7 +704,8 @@ describe("session.message-v2.toModelMessage", () => {
       },
     ]
 
-    expect(await MessageV2.toModelMessages(input, model)).toStrictEqual([
+    const messages = await MessageV2.toModelMessages(input, mediaModel)
+    expect(messages).toStrictEqual([
       {
         role: "user",
         content: [{ type: "text", text: "run tool" }],
@@ -654,7 +735,213 @@ describe("session.message-v2.toModelMessage", () => {
           },
         ],
       },
+      {
+        role: "user",
+        content: [
+          { type: "text", text: MessageV2.SYNTHETIC_ATTACHMENT_PROMPT },
+          { type: "text", text: 'Tool "bash" call call-1 failed:' },
+          {
+            type: "file",
+            mediaType: "image/png",
+            filename: "error-state.png",
+            data: `data:image/png;base64,${pngBase64}`,
+          },
+          {
+            type: "file",
+            mediaType: "audio/wav",
+            filename: "error.wav",
+            data: `data:audio/wav;base64,${wavBase64}`,
+          },
+          {
+            type: "text",
+            text: '[Tool attachment "unsupported.ogg" (audio/ogg) was retained but cannot be safely sent to this model/provider.]',
+          },
+          {
+            type: "text",
+            text: '[Tool attachment "diagnostic.bin" (application/octet-stream) was retained but cannot be safely sent to this model/provider.]',
+          },
+        ],
+      },
     ])
+
+    expect(JSON.stringify(messages)).not.toContain(binaryBase64)
+    expect(await MessageV2.toModelMessages(input, mediaModel, { stripMedia: true })).toStrictEqual(
+      messages.slice(0, -1),
+    )
+  })
+
+  test("caps oversized synthetic error images before sending them to Anthropic", async () => {
+    const anthropicModel = withInputCapabilities(
+      { image: true },
+      {
+        ...model,
+        id: ModelID.make("anthropic/claude-opus-4-7"),
+        providerID: ProviderID.make("anthropic"),
+        api: {
+          id: "claude-opus-4-7-20250805",
+          url: "https://api.anthropic.com",
+          npm: "@ai-sdk/anthropic",
+        },
+      },
+    )
+    const oversized = Buffer.alloc(6_000_000, 0x42).toString("base64")
+    const userID = "m-user-oversized-error"
+    const assistantID = "m-assistant-oversized-error"
+    const input: MessageV2.WithParts[] = [
+      {
+        info: userInfo(userID),
+        parts: [{ ...basePart(userID, "u1-oversized-error"), type: "text", text: "run tool" }] as MessageV2.Part[],
+      },
+      {
+        info: assistantInfo(assistantID, userID),
+        parts: [
+          {
+            ...basePart(assistantID, "a1-oversized-error"),
+            type: "tool",
+            callID: "call-oversized-error",
+            tool: "computer",
+            state: {
+              status: "error",
+              input: {},
+              error: "capture failed",
+              time: { start: 0, end: 1 },
+              metadata: {},
+              attachments: [
+                {
+                  ...basePart(assistantID, "file-oversized-error"),
+                  type: "file",
+                  mime: "image/webp",
+                  filename: "error-state.webp",
+                  url: `data:image/webp;base64,${oversized}`,
+                },
+              ],
+            },
+          },
+        ] as MessageV2.Part[],
+      },
+    ]
+
+    const messages = await MessageV2.toModelMessages(input, anthropicModel)
+    const synthetic = messages.at(-1)
+    expect(synthetic?.role).toBe("user")
+    expect(
+      Array.isArray(synthetic?.content) &&
+        synthetic.content.some((part) => part.type === "file" && part.mediaType === "image/webp"),
+    ).toBe(true)
+
+    // streamText converts data URLs to raw base64 before invoking the model
+    // middleware where ProviderTransform.message runs.
+    const providerPrompt = messages.map((message) => {
+      if (message !== synthetic || message.role !== "user" || !Array.isArray(message.content)) return message
+      return {
+        ...message,
+        content: message.content.map((part) =>
+          part.type === "file" && part.mediaType === "image/webp" ? { ...part, data: oversized } : part,
+        ),
+      }
+    })
+    const transformed = ProviderTransform.message(providerPrompt, anthropicModel, {})
+    const content = transformed.at(-1)?.content
+    expect(
+      Array.isArray(content) && content.some((part) => part.type === "text" && part.text.includes("Image omitted")),
+    ).toBe(true)
+    expect(
+      Array.isArray(content) && content.some((part) => part.type === "file" && part.mediaType === "image/webp"),
+    ).toBe(false)
+  })
+
+  test("keeps synthetic attachments correlated with multiple tool calls", async () => {
+    const userID = "m-user-groups"
+    const assistantID = "m-assistant-groups"
+    const mediaModel = withInputCapabilities({ image: true })
+    const input: MessageV2.WithParts[] = [
+      {
+        info: userInfo(userID),
+        parts: [
+          {
+            ...basePart(userID, "u-groups"),
+            type: "text",
+            text: "run both tools",
+          },
+        ] as MessageV2.Part[],
+      },
+      {
+        info: assistantInfo(assistantID, userID),
+        parts: [
+          {
+            ...basePart(assistantID, "tool-image"),
+            type: "tool",
+            callID: "call-image",
+            tool: "screenshot",
+            state: {
+              status: "completed",
+              input: {},
+              output: "captured",
+              title: "Screenshot",
+              metadata: {},
+              time: { start: 0, end: 1 },
+              attachments: [
+                {
+                  ...basePart(assistantID, "group-image"),
+                  type: "file",
+                  mime: "image/png",
+                  filename: "screen.png",
+                  url: `data:image/png;base64,${pngBase64}`,
+                },
+              ],
+            },
+          },
+          {
+            ...basePart(assistantID, "tool-error"),
+            type: "tool",
+            callID: "call-error",
+            tool: "upload",
+            state: {
+              status: "error",
+              input: {},
+              error: "upload failed",
+              metadata: {},
+              time: { start: 2, end: 3 },
+              attachments: [
+                {
+                  ...basePart(assistantID, "group-binary"),
+                  type: "file",
+                  mime: "application/octet-stream",
+                  filename: "upload.bin",
+                  url: `data:application/octet-stream;base64,${binaryBase64}`,
+                },
+              ],
+            },
+          },
+        ] as MessageV2.Part[],
+      },
+    ]
+
+    const messages = await MessageV2.toModelMessages(input, mediaModel)
+    const synthetic = messages.filter(
+      (message) =>
+        message.role === "user" &&
+        Array.isArray(message.content) &&
+        message.content.some((part) => part.type === "text" && part.text === "Attached file(s) from tool result:"),
+    )
+
+    expect(synthetic).toHaveLength(1)
+    expect(synthetic[0]?.content).toStrictEqual([
+      { type: "text", text: "Attached file(s) from tool result:" },
+      { type: "text", text: 'Tool "screenshot" call call-image completed:' },
+      {
+        type: "file",
+        mediaType: "image/png",
+        filename: "screen.png",
+        data: `data:image/png;base64,${pngBase64}`,
+      },
+      { type: "text", text: 'Tool "upload" call call-error failed:' },
+      {
+        type: "text",
+        text: '[Tool attachment "upload.bin" (application/octet-stream) was retained but cannot be safely sent to this model/provider.]',
+      },
+    ])
+    expect(JSON.stringify(messages)).not.toContain(binaryBase64)
   })
 
   test("forwards partial bash output for aborted tool calls", async () => {
