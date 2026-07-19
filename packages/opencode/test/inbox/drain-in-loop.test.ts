@@ -2,6 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test"
 import { Effect, Layer, ManagedRuntime } from "effect"
 import { Inbox } from "../../src/inbox"
 import { MAX_DRAIN_PER_TURN } from "../../src/inbox/inbox"
+import { defaultModelRef } from "../../src/inbox/inbox-ref"
 import { ActorRegistry } from "../../src/actor/registry"
 import { Session } from "../../src/session"
 import { Bus } from "../../src/bus"
@@ -14,6 +15,7 @@ const base = Layer.mergeAll(Session.defaultLayer, ActorRegistry.defaultLayer, Bu
 const testLayer = Inbox.layer.pipe(Layer.provide(base), Layer.provideMerge(base))
 
 afterEach(async () => {
+  defaultModelRef.current = undefined
   await Instance.disposeAll()
 })
 
@@ -172,6 +174,153 @@ describe("Inbox.drain in loop (Plan 2 / Task 7)", () => {
         Inbox.Service.use((inbox) => inbox.drain(session.id, "actor-3")),
       )
       expect(count2).toBe(0)
+    })
+  })
+
+  test("tier-1 seed: idle standing peer inherits agent+model from a prior CROSS-SLICE message (no Provider layer)", async () => {
+    await using tmp = await tmpdir({ git: true })
+    await withInbox(tmp.path, async (rt) => {
+      const session = await rt.runPromise(Session.Service.use((s) => s.create()))
+      // Register the peer whose OWN slice (agentID === its actor id) has NO
+      // messages — the "peer ran a turn under a different slice, then went idle"
+      // case. The prior model-bearing message lives on the "main" slice.
+      await rt.runPromise(
+        ActorRegistry.Service.use((reg) =>
+          reg.register({
+            sessionID: session.id,
+            actorID: "peer-idle",
+            mode: "peer",
+            parentActorID: undefined,
+            agent: "build",
+            description: "standing peer",
+            contextMode: "none",
+            contextWatermark: undefined,
+            background: true,
+            lifecycle: "persistent",
+          }),
+        ),
+      )
+      // Seed a real model-bearing message on a DIFFERENT slice ("main").
+      await seedRealMessage(rt, session.id, "main")
+
+      await rt.runPromise(
+        Inbox.Service.use((inbox) =>
+          inbox.send({ receiverSessionID: session.id, receiverActorID: "peer-idle", content: "relayed task" }),
+        ),
+      )
+
+      // drain must now SEED from the cross-slice message and process the row —
+      // NOT return 0. No Provider layer is present, proving tier 1 needs none.
+      const count = await rt.runPromise(
+        Inbox.Service.use((inbox) => inbox.drain(session.id, "peer-idle")),
+      )
+      expect(count).toBe(1)
+
+      const msgs = await rt.runPromise(
+        Session.Service.use((sessions) => sessions.messages({ sessionID: session.id, agentID: "peer-idle" })),
+      )
+      const lastUser = msgs.findLast((m) => m.info.role === "user")
+      expect(lastUser).toBeDefined()
+      const info1 = lastUser!.info
+      if (info1.role !== "user") throw new Error("expected a user message")
+      // Inherited agent + model from the cross-slice real message.
+      expect(info1.agent).toBe("general")
+      expect(String(info1.model.modelID)).toBe("test-model")
+    })
+  })
+
+  test("tier-2 seed: turnCount-0 peer seeds agent from registry + model from the default-model ref", async () => {
+    await using tmp = await tmpdir({ git: true })
+    await withInbox(tmp.path, async (rt) => {
+      const session = await rt.runPromise(Session.Service.use((s) => s.create()))
+      await rt.runPromise(
+        ActorRegistry.Service.use((reg) =>
+          reg.register({
+            sessionID: session.id,
+            actorID: "peer-t0",
+            mode: "peer",
+            parentActorID: undefined,
+            agent: "compose",
+            description: "turnCount-0 peer",
+            contextMode: "none",
+            contextWatermark: undefined,
+            background: true,
+            lifecycle: "persistent",
+          }),
+        ),
+      )
+      await rt.runPromise(
+        Inbox.Service.use((inbox) =>
+          inbox.send({ receiverSessionID: session.id, receiverActorID: "peer-t0", content: "queued" }),
+        ),
+      )
+
+      // Wire the already-resolved default-model value (as SessionPrompt.layer
+      // would in production). No Provider LAYER is pulled — the ref is a plain
+      // resolver over a stored value.
+      defaultModelRef.current = {
+        defaultModel: () =>
+          Effect.succeed({ providerID: ProviderID.make("test"), modelID: ModelID.make("default-model") }),
+      }
+
+      const count = await rt.runPromise(
+        Inbox.Service.use((inbox) => inbox.drain(session.id, "peer-t0")),
+      )
+      expect(count).toBe(1)
+
+      const msgs = await rt.runPromise(
+        Session.Service.use((sessions) => sessions.messages({ sessionID: session.id, agentID: "peer-t0" })),
+      )
+      const lastUser = msgs.findLast((m) => m.info.role === "user")
+      expect(lastUser).toBeDefined()
+      const info2 = lastUser!.info
+      if (info2.role !== "user") throw new Error("expected a user message")
+      // Agent from the REGISTRY row; model from the default-model ref.
+      expect(info2.agent).toBe("compose")
+      expect(String(info2.model.modelID)).toBe("default-model")
+    })
+  })
+
+  test("tier-3: with no prior message AND no default-model ref, drain leaves rows durable (returns 0, no regression)", async () => {
+    await using tmp = await tmpdir({ git: true })
+    await withInbox(tmp.path, async (rt) => {
+      const session = await rt.runPromise(Session.Service.use((s) => s.create()))
+      await rt.runPromise(
+        ActorRegistry.Service.use((reg) =>
+          reg.register({
+            sessionID: session.id,
+            actorID: "peer-fresh",
+            mode: "peer",
+            parentActorID: undefined,
+            agent: "build",
+            description: "turnCount-0 peer",
+            contextMode: "none",
+            contextWatermark: undefined,
+            background: true,
+            lifecycle: "persistent",
+          }),
+        ),
+      )
+      await rt.runPromise(
+        Inbox.Service.use((inbox) =>
+          inbox.send({ receiverSessionID: session.id, receiverActorID: "peer-fresh", content: "queued" }),
+        ),
+      )
+
+      // No cross-slice message (tier 1 miss) and no defaultModelRef wired in this
+      // minimal fixture (tier 2 unavailable) → tier 3: keep durable, return 0.
+      const count = await rt.runPromise(
+        Inbox.Service.use((inbox) => inbox.drain(session.id, "peer-fresh")),
+      )
+      expect(count).toBe(0)
+
+      // The row is STILL in the inbox (durable) — a later drain with a model
+      // source will consume it. Prove by seeding a message and draining again.
+      await seedRealMessage(rt, session.id, "main")
+      const count2 = await rt.runPromise(
+        Inbox.Service.use((inbox) => inbox.drain(session.id, "peer-fresh")),
+      )
+      expect(count2).toBe(1)
     })
   })
 

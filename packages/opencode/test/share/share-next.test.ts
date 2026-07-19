@@ -10,8 +10,10 @@ import * as CrossSpawnSpawner from "../../src/effect/cross-spawn-spawner"
 import { Bus } from "../../src/bus"
 import { Config } from "../../src/config"
 import { Provider } from "../../src/provider"
+import { ModelID, ProviderID } from "../../src/provider/schema"
 import { Session } from "../../src/session"
-import type { SessionID } from "../../src/session/schema"
+import { MessageV2 } from "../../src/session/message-v2"
+import { MessageID, PartID, type SessionID } from "../../src/session/schema"
 import { ShareNext } from "../../src/share"
 import { SessionShareTable } from "../../src/share/share.sql"
 import { Database, eq } from "../../src/storage"
@@ -231,6 +233,103 @@ describe("ShareNext", () => {
         expect(Exit.isFailure(exit)).toBe(true)
         expect(share(session.id)).toBeUndefined()
       }),
+    ),
+  )
+
+  it.live("redacts MCP _meta from full and incremental share syncs", () =>
+    provideTmpdirInstance(
+      () => {
+        const syncBodies: string[] = []
+        const client = HttpClient.make((req) => {
+          if (req.url.endsWith("/sync") && req.body._tag === "Uint8Array") {
+            syncBodies.push(new TextDecoder().decode(req.body.body))
+            return Effect.succeed(json(req, { ok: true }))
+          }
+          return Effect.succeed(
+            json(req, {
+              id: "shr_abc",
+              url: "https://legacy-share.example.com/share/abc",
+              secret: "sec_123",
+            }),
+          )
+        })
+
+        return Effect.gen(function* () {
+          const share = yield* ShareNext.Service
+          const session = yield* Session.Service
+          const bus = yield* Bus.Service
+          const info = yield* session.create({ title: "MCP metadata" })
+          const messageID = MessageID.ascending()
+          const partID = PartID.ascending()
+          const toolPart = (token: string, changed: boolean) => ({
+            id: partID,
+            messageID,
+            sessionID: info.id,
+            type: "tool" as const,
+            tool: "mcp_window",
+            callID: "call_1",
+            state: {
+              status: "completed" as const,
+              input: {},
+              output: "Window updated",
+              title: "",
+              metadata: {
+                mcp: {
+                  isError: false,
+                  structuredContent: { changed },
+                  _meta: { token },
+                },
+              },
+              time: { start: 1, end: 2 },
+            },
+          })
+
+          yield* session.updateMessage({
+            id: messageID,
+            sessionID: info.id,
+            role: "assistant",
+            parentID: MessageID.ascending(),
+            modelID: ModelID.make("test-model"),
+            providerID: ProviderID.make("test-provider"),
+            mode: "",
+            agent: "build",
+            path: { cwd: process.cwd(), root: process.cwd() },
+            cost: 0,
+            tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+            time: { created: 1, completed: 2 },
+          })
+          yield* session.updatePart(toolPart("full-sync-secret", true))
+
+          yield* share.create(info.id)
+          yield* Effect.sleep(1_250)
+
+          expect(syncBodies).toHaveLength(1)
+          expect(syncBodies[0]).not.toContain("full-sync-secret")
+          expect(syncBodies[0]).not.toContain('"_meta"')
+          expect(syncBodies[0]).toContain('"isError":false')
+          expect(syncBodies[0]).toContain('"structuredContent":{"changed":true}')
+
+          const incremental = toolPart("incremental-sync-secret", false)
+          yield* session.updatePart(incremental)
+          yield* bus.publish(MessageV2.Event.PartUpdated, {
+            sessionID: info.id,
+            part: incremental,
+            time: Date.now(),
+          })
+          yield* Effect.sleep(1_250)
+
+          expect(syncBodies).toHaveLength(2)
+          expect(syncBodies[1]).not.toContain("incremental-sync-secret")
+          expect(syncBodies[1]).not.toContain('"_meta"')
+          expect(syncBodies[1]).toContain('"structuredContent":{"changed":false}')
+
+          const local = yield* session.getPart({ sessionID: info.id, messageID, partID })
+          expect(local?.type).toBe("tool")
+          if (local?.type !== "tool" || local.state.status !== "completed") return
+          expect(local.state.metadata.mcp._meta).toEqual({ token: "incremental-sync-secret" })
+        }).pipe(Effect.provide(wired(client)))
+      },
+      { config: { enterprise: { url: "https://legacy-share.example.com" } } },
     ),
   )
 

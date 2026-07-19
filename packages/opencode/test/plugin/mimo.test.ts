@@ -41,22 +41,24 @@ const fakeInput = {
 
 describe("MimoAuthPlugin", () => {
   describe("config hook", () => {
-    test("registers mimo provider with correct name", async () => {
+    test("registers xiaomi provider placeholder", async () => {
       const hooks = await MimoAuthPlugin(fakeInput)
       const cfg: any = {}
       await hooks.config!(cfg)
-      expect(cfg.provider.xiaomi.name).toBe("MiMo")
-      expect(cfg.provider.xiaomi.api).toBeTruthy()
+      // The plugin only registers the provider so it shows up before login.
+      // name/api are left to the models.dev database (name: "Xiaomi").
+      expect(cfg.provider.xiaomi).toBeDefined()
+      expect(cfg.provider.xiaomi.name).toBeUndefined()
+      expect(cfg.provider.xiaomi.api).toBeUndefined()
     })
 
     test("registers all expected models", async () => {
       const hooks = await MimoAuthPlugin(fakeInput)
       const cfg: any = {}
       await hooks.config!(cfg)
-      // The plugin only sets name and api; models are not registered by the plugin
-      // (they come from the provider registry). Verify the provider is created.
+      // Models are not registered by the plugin (they come from the provider
+      // registry). Verify the provider placeholder is created.
       expect(cfg.provider.xiaomi).toBeDefined()
-      expect(cfg.provider.xiaomi.name).toBe("MiMo")
     })
 
     test("does not overwrite existing config", async () => {

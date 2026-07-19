@@ -1,0 +1,6 @@
+interface:
+  display_name: "User Context"
+  short_description: "Save and read Product Design user context"
+  default_prompt: "Set up Product Design with my product URLs, Figma files, screenshots, codebase paths, Storybook, tokens, and brand assets."
+policy:
+  allow_implicit_invocation: false

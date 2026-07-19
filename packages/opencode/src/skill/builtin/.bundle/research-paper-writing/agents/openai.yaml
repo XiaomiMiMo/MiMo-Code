@@ -1,0 +1,4 @@
+interface:
+  display_name: "Research Paper Writing"
+  short_description: "Draft, polish, and review academic papers (Abstract/Intro/Method/Experiments), with pre-submission reviewer-style checks"
+  default_prompt: "Use $research-paper-writing to improve my paper draft: fix section structure and paragraph flow, and flag any claims not backed by my experiments."

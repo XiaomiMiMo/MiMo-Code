@@ -89,6 +89,12 @@ delete process.env["MIMOCODE_HOME"]
 // Use in-memory sqlite
 process.env["MIMOCODE_DB"] = ":memory:"
 
+// Enable the experimental Orchestrator feature in tests (default OFF in prod).
+// The Orchestrator agent, `session` tool, and approval routing are gated behind
+// MIMOCODE_EXPERIMENTAL_ORCHESTRATOR; the orchestrator test suites exercise the
+// feature, so enable it here (Flag is read once at import — must be set first).
+process.env["MIMOCODE_EXPERIMENTAL_ORCHESTRATOR"] = "true"
+
 // Now safe to import from src/
 const { Log } = await import("../src/util")
 const { initProjectors } = await import("../src/server/projectors")

@@ -1,0 +1,6 @@
+interface:
+  display_name: "Enrich Company And Contact Data"
+  short_description: "Company, contact, and market enrichment for sales workflows"
+  default_prompt: "Find and qualify a short list of companies that fit my criteria."
+policy:
+  allow_implicit_invocation: false

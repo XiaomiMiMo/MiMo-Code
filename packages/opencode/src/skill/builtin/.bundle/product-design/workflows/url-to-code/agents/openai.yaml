@@ -1,0 +1,6 @@
+interface:
+  display_name: "URL To Code"
+  short_description: "Clone live URLs of your projects into lightweight prototypes"
+  default_prompt: "Clone this URL as a runnable frontend prototype."
+policy:
+  allow_implicit_invocation: true

@@ -385,7 +385,16 @@ export const TaskTool = Tool.define<typeof parameters, Metadata, TaskRegistry.Se
       }
 
       if (op.action === "start") {
-        const result = yield* reg.start({ session_id: sessionID, id: op.id, owner: ctx.actorID ?? ctx.agent, event_summary: op.event_summary })
+        // A subagent starting a task owned by someone else must NOT steal
+        // ownership: the completion gate filters by owner, so an accidental
+        // handoff traps the subagent in "finish tasks you own" re-entry for
+        // tasks that belong to the main agent. Intentional handoff stays
+        // available to internal callers (actor auto-start in spawn.ts).
+        const caller = ctx.actorID ?? ctx.agent
+        const existing = yield* reg.get({ session_id: sessionID, id: op.id })
+        const isSubagent = ctx.actorID !== undefined && ctx.actorID !== "main"
+        const keepOwner = isSubagent && existing?.owner != null && existing.owner !== caller
+        const result = yield* reg.start({ session_id: sessionID, id: op.id, owner: keepOwner ? undefined : caller, event_summary: op.event_summary })
         return {
           title: `Task ${op.id}: ${result.status}`,
           output: `start → ${result.status}`,

@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test"
-import { detectTrigger } from "../../../../src/cli/cmd/tui/component/prompt/autocomplete-detect"
+import { detectTrigger, exactSubmitOption } from "../../../../src/cli/cmd/tui/component/prompt/autocomplete-detect"
+import { tokenEndWidth } from "../../../../src/cli/cmd/tui/component/prompt/offset"
 
 // cursorWidth is the editor's display-width cursor offset (CJK = 2 columns).
 // detectTrigger inspects the plainText and returns the trigger kind plus the
@@ -51,5 +52,95 @@ describe("detectTrigger", () => {
   test("does not trigger when char before @ is non-whitespace", () => {
     // "a@fo" — '@' is glued to 'a', not a fresh mention
     expect(detectTrigger("a@fo", 4)).toBeUndefined()
+  })
+
+  // Mid-message "/" skill trigger tests
+  test("detects mid-message / with at least one char typed", () => {
+    // "hello /ef" — / preceded by space, "ef" after it, cursor at end (width 9)
+    expect(detectTrigger("hello /ef", 9)).toEqual({ kind: "/", index: 6 })
+  })
+
+  test("does not trigger lone / mid-message (needs at least one char)", () => {
+    // "hello /" — just the slash, no chars after → should NOT open
+    expect(detectTrigger("hello /", 7)).toBeUndefined()
+  })
+
+  test("does not trigger / mid-message when preceded by non-whitespace", () => {
+    // "https://x.com/api" — slashes not preceded by whitespace
+    expect(detectTrigger("https://x.com/api", 17)).toBeUndefined()
+  })
+
+  test("detects mid-message / with CJK before trigger", () => {
+    // "你好 /ef" — 你好(4) + space(1) + /ef(3) = cursor width 8, / at width 5
+    expect(detectTrigger("你好 /ef", 8)).toEqual({ kind: "/", index: 5 })
+  })
+
+  test("position-0 / with whitespace returns undefined (not single-command)", () => {
+    // "/init foo" with cursor at end — has whitespace before cursor, first check fails
+    // mid-message check: last / is at 0, before is undefined (idx===0), between="/init foo" has space → no
+    expect(detectTrigger("/init foo", 9)).toBeUndefined()
+  })
+
+  test("position-0 / without whitespace is detected as position-0 trigger", () => {
+    // "/models1234" cursor in middle (width 8) — no whitespace before cursor
+    expect(detectTrigger("/models1234", 8)).toEqual({ kind: "/", index: 0 })
+  })
+
+  test("prefers later trigger when multiple exist", () => {
+    // "hello /effect /fro" — should detect the LAST / (at position 14)
+    expect(detectTrigger("hello /effect /fro", 18)).toEqual({ kind: "/", index: 14 })
+  })
+})
+
+describe("exactSubmitOption", () => {
+  const options = [
+    { display: "/frontend-design  " },
+    { display: "/前端设计  ", submitOnSelect: true },
+  ]
+
+  test("returns an exact Chinese skill alias for immediate submission", () => {
+    expect(exactSubmitOption("/", "前端设计", options)).toBe(options[1])
+  })
+
+  test("does not immediately submit partial aliases or canonical commands", () => {
+    expect(exactSubmitOption("/", "前端", options)).toBeUndefined()
+    expect(exactSubmitOption("/", "frontend-design", options)).toBeUndefined()
+  })
+
+  test("does not submit from non-slash autocomplete", () => {
+    expect(exactSubmitOption("@", "前端设计", options)).toBeUndefined()
+  })
+})
+
+describe("tokenEndWidth", () => {
+  test("finds end at whitespace boundary", () => {
+    // "/models 1234" — token starts at 0, ends at space (width 7)
+    expect(tokenEndWidth("/models 1234", 0)).toBe(7)
+  })
+
+  test("finds end at end of text when no trailing space", () => {
+    // "hello /effect" — token starts at 6, ends at 13 (end of text)
+    expect(tokenEndWidth("hello /effect", 6)).toBe(13)
+  })
+
+  test("handles mid-text token with content after space", () => {
+    // "hello /effect world" — token at 6, ends at space before "world" (width 13)
+    expect(tokenEndWidth("hello /effect world", 6)).toBe(13)
+  })
+
+  test("handles CJK in token", () => {
+    // "你好 /技能 end" — / at width 5 (string index 3), token is "/技能" (width 5+1+2+2=5 from start)
+    // / width 1, 技 width 2, 能 width 2 → token end at width 5+1+2+2 = 10
+    expect(tokenEndWidth("你好 /技能 end", 5)).toBe(10)
+  })
+
+  test("handles token starting at position 0", () => {
+    // "/init" — whole text is the token
+    expect(tokenEndWidth("/init", 0)).toBe(5)
+  })
+
+  test("handles second token after first", () => {
+    // "/effect /frontend" — second token starts at 8
+    expect(tokenEndWidth("/effect /frontend", 8)).toBe(17)
   })
 })

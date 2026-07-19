@@ -3,11 +3,35 @@ import DESCRIPTION from "./workflow.txt"
 import z from "zod"
 import { Effect, Fiber } from "effect"
 import { Config } from "../config"
+import { ConfigCompose } from "../config"
+import { InstanceState } from "@/effect"
 import { workflowRef } from "@/workflow/runtime-ref"
 import { BuiltinWorkflow } from "@/workflow/builtin"
+import { ActorRegistry } from "@/actor/registry"
 import type { SessionID } from "../session/schema"
 
 const id = "workflow"
+
+// Mirror compose.js arg normalization: a bare task string OR a JSON string both
+// collapse to an object. Used so host-side docs-dir injection can merge into args
+// regardless of how the caller serialized them.
+function parseComposeArgString(raw: string): Record<string, unknown> {
+  try {
+    const parsed = JSON.parse(raw)
+    if (typeof parsed === "object" && parsed !== null) return parsed as Record<string, unknown>
+  } catch {}
+  return { task: raw }
+}
+
+// Normalize a bare string arg into an args object with a `question` field.
+// Mirrors parseComposeArgString but maps to {question} instead of {task}.
+function parseArgsAsQuestion(raw: string): Record<string, unknown> {
+  try {
+    const parsed = JSON.parse(raw)
+    if (typeof parsed === "object" && parsed !== null) return parsed as Record<string, unknown>
+  } catch {}
+  return { question: raw }
+}
 
 const runSchema = z.strictObject({
   operation: z.literal("run"),
@@ -25,7 +49,12 @@ const runSchema = z.strictObject({
     .describe(
       "(optional) Inline JS workflow script; must begin with `export const meta = {...}`. Provide EITHER name OR script, not both.",
     ),
-  args: z.any().optional().describe("(optional) JSON value exposed to the script as `args`."),
+  args: z
+    .any()
+    .optional()
+    .describe(
+      "(optional) Input value exposed to the script as the global `args`, verbatim. Pass objects/arrays as ACTUAL JSON values — NOT as a JSON string. e.g. args: { theme: \"...\", signals: { trademark: \"required\" } }, never args: \"{ \\\"theme\\\": ... }\".",
+    ),
   workspace: z
     .string()
     .optional()
@@ -89,10 +118,11 @@ function capTranscript(t: readonly TranscriptEntry[]): TranscriptEntry[] {
   ]
 }
 
-export const WorkflowTool = Tool.define<typeof parameters, Metadata, Config.Service>(
+export const WorkflowTool = Tool.define<typeof parameters, Metadata, Config.Service | ActorRegistry.Service>(
   id,
   Effect.gen(function* () {
     const config = yield* Config.Service
+    const actorRegistry = yield* ActorRegistry.Service
 
     // Resolve the WorkflowRuntime through the late-bound workflowRef rather than as
     // a Layer dependency: pulling WorkflowRuntime.Service in here would push that
@@ -110,6 +140,51 @@ export const WorkflowTool = Tool.define<typeof parameters, Metadata, Config.Serv
       }
       return Effect.succeed(runtime)
     }
+
+    // Thread the operator-configured compose docs dir into the `compose` built-in's
+    // args, mirroring the `<compose_docs_dir>` block prompt.ts injects for the
+    // interactive compose agent. The compose guest reads `args._composeDocsDir` and
+    // tells its plan/report subagents where to write specs/plans/reports. We
+    // normalize args the same way compose.js does (object | JSON-string | bare task
+    // string) so the injection survives the AI-SDK string-serialization boundary.
+    const enrichComposeArgs = (raw: unknown) =>
+      Effect.gen(function* () {
+        const ctx = yield* InstanceState.context
+        const docs = ConfigCompose.resolveDocsDir(ctx.worktree, (yield* config.get()).compose)
+        const base =
+          typeof raw === "object" && raw !== null
+            ? (raw as Record<string, unknown>)
+            : typeof raw === "string"
+              ? parseComposeArgString(raw)
+              : {}
+        return { ...base, _composeDocsDir: docs }
+      })
+
+    // Normalize and enrich args for the deep-research built-in:
+    //   - bare string args → { question: <string> }  (mirrors compose's parseComposeArgString)
+    //   - inject today (YYYY-MM-DD) from host Date  (the sandbox strips Date for determinism)
+    //   - inject dir = workspace root  (so agent writes and sandbox exists checks resolve
+    //     to the same location — the root cause of the "brief.md not created" bug was
+    //     dir ≠ workspaceRoot causing a path mismatch between agent writes and exists checks)
+    const enrichDeepResearchArgs = (raw: unknown, workspace?: string) =>
+      Effect.gen(function* () {
+        const ctx = yield* InstanceState.context
+        const resolvedWorkspace = workspace ?? ctx.worktree
+        const base =
+          typeof raw === "object" && raw !== null
+            ? { ...(raw as Record<string, unknown>) }
+            : typeof raw === "string"
+              ? parseArgsAsQuestion(raw)
+              : {}
+        // dir must equal the workspace root: the sandbox file primitives (exists,
+        // writeFile, readFile, glob) are jailed there, and the script's agent
+        // prompts reference ${dir}/... for file paths. Mismatched dir was the root
+        // cause of "brief.md not created" — the agent wrote to ${dir}/brief.md
+        // while exists checked ${workspaceRoot}/brief.md.
+        if (!base.dir) base.dir = resolvedWorkspace
+        if (!base.today) base.today = new Date().toISOString().slice(0, 10)
+        return base
+      })
 
     const run = Effect.fn("WorkflowTool.execute")(function* (
       input: z.infer<typeof parameters>,
@@ -141,14 +216,31 @@ export const WorkflowTool = Tool.define<typeof parameters, Metadata, Config.Serv
             ),
           )
         }
+        // Is a human attached to answer the workflow's up-front manifest
+        // permission ask? A workflow launched from an interactive session actor
+        // (foreground turn, no registered background actor) can prompt the human;
+        // one launched from a BACKGROUND subagent/system actor cannot, so the
+        // engine must ask non-interactively (fail closed) or it would hang forever
+        // on a reply no one can give. Mirrors decideAskRouting's `!askActor.background`:
+        // resolve the launching actor and treat a background actor as non-interactive.
+        // Absent actorID (the main foreground turn) => no background actor => interactive.
+        const askActor = ctx.actorID
+          ? yield* actorRegistry.get(ctx.sessionID as SessionID, ctx.actorID).pipe(Effect.orElseSucceed(() => undefined))
+          : undefined
+        const interactive = !askActor?.background
         const started = yield* runtime.start({
           script,
           sessionID: ctx.sessionID as SessionID,
           parentActorID: ctx.agent ?? "main",
-          args: input.args,
+          args: input.name === "compose"
+            ? yield* enrichComposeArgs(input.args)
+            : input.name === "deep-research"
+              ? yield* enrichDeepResearchArgs(input.args, input.workspace)
+              : input.args,
           workspace: input.workspace,
           maxConcurrentAgents: cfg.workflow?.maxConcurrentAgents,
           scriptDeadlineMs: cfg.workflow?.scriptDeadlineMs,
+          interactive,
           // Only the async (background) path relies on the inbox notification; the
           // sync path below returns the result inline, so suppress the duplicate.
           notifyOnTerminal: input.async === true,

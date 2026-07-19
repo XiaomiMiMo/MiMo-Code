@@ -1,0 +1,6 @@
+interface:
+  display_name: "Metric Diagnostics"
+  short_description: "Diagnose metric changes, anomalies, gaps, and discrepancies"
+  default_prompt: "Diagnose why a metric changed by reproducing it, validating drivers, and summarizing the evidence."
+policy:
+  allow_implicit_invocation: true

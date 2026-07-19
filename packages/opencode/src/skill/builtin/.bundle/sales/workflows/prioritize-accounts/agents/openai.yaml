@@ -1,0 +1,6 @@
+interface:
+  display_name: "Prioritize Accounts"
+  short_description: "Rank accounts and open a local action pane"
+  default_prompt: "Prioritize accounts for pipeline focus."
+policy:
+  allow_implicit_invocation: false

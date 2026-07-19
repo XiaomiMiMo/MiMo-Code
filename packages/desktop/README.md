@@ -5,7 +5,7 @@ The OpenCode Desktop app, built with Electron.
 ## Development
 
 ```bash
-bun install
+bun ci
 bun dev
 ```
 

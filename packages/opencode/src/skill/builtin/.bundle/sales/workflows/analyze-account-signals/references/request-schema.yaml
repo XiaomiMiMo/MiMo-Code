@@ -1,0 +1,67 @@
+# Request schema for analyze-account-signals
+#
+# Accepted inputs:
+# 1. prompt-only natural language
+# 2. pasted YAML
+# 3. attached YAML
+#
+# Use structured input as the source of truth when both prompt text and YAML are present.
+
+mode: "adhoc"              # required enum: adhoc | monitor
+
+# Single-account selectors
+company_name: ""           # required for adhoc when crm_account_id is missing
+crm_account_id: ""         # preferred stable CRM identifier when known
+
+# Portfolio selectors
+owner_id: ""               # used in monitor mode when watchlist_accounts is empty
+owner_email: ""            # fallback owner identifier for monitor mode
+
+# Optional explicit scope for monitor mode.
+# Each entry may be a company name, CRM account id, or an object with both.
+watchlist_accounts: []
+# Example:
+# watchlist_accounts:
+#   - "ExampleCorp"
+#   - "001US00000ABC123"
+#   - company_name: "ExampleCo"
+#     crm_account_id: "001US00000XYZ456"
+
+# Recency window for source queries and signal freshness.
+time_window: "14d"         # examples: 7d | 14d | 30d
+
+# Optional prioritization or analysis hints.
+focus_areas: []
+# examples:
+# - expansion
+# - churn
+# - rollout blockers
+# - stakeholder movement
+
+output_style: ""           # optional; defaults by mode
+
+# Internal normalized shape
+#
+# mode: "adhoc" | "monitor"
+# company_name: ""
+# crm_account_id: ""
+# owner_id: ""
+# owner_email: ""
+# watchlist_accounts: []
+# time_window: "14d"
+# focus_areas: []
+# output_style: "brief" | "inbox_summary"
+
+# Interface rules
+#
+# 1. `adhoc` mode requires exactly one target account by name or id.
+# 2. `monitor` mode prefers `watchlist_accounts`; otherwise it requires `owner_id` or `owner_email`.
+# 3. When both `watchlist_accounts` and owner fields are present, the watchlist wins.
+# 4. When both `company_name` and `crm_account_id` are present for the same target, the account id wins.
+# 5. Accept `sfdc_account_id` as a legacy alias for `crm_account_id` when older inputs use it.
+# 6. If `output_style` is omitted:
+#    - `adhoc` -> `brief`
+#    - `monitor` -> `inbox_summary`
+# 7. `time_window` defaults to `14d`.
+# 8. `focus_areas` is optional and only narrows interpretation and prioritization.
+# 9. Structured input wins over conflicting prompt wording.
