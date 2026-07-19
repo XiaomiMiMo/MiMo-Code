@@ -25,6 +25,14 @@ export function isPlainTerminal(input?: { platform?: NodeJS.Platform; termProgra
   return isMacNativeTerminal(input)
 }
 
+export function needsTextSizingDisabled(input?: { vteVersion?: string; disableTextSizing?: string }) {
+  const disable = input?.disableTextSizing ?? process.env.MIMOCODE_DISABLE_TEXT_SIZING
+  if (disable === "false" || disable === "0") return false
+  if (disable === "true" || disable === "1") return true
+  const vteVersion = input?.vteVersion ?? process.env.VTE_VERSION
+  return vteVersion !== undefined && vteVersion !== ""
+}
+
 function parse(color: string): RGBA | null {
   if (color.startsWith("rgb:")) {
     const parts = color.substring(4).split("/")

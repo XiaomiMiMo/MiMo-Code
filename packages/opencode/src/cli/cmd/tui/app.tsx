@@ -69,7 +69,7 @@ import { TuiConfigProvider, useTuiConfig } from "./context/tui-config"
 import { TuiConfig } from "@/cli/cmd/tui/config/tui"
 import { createTuiApi, TuiPluginRuntime, type RouteMap } from "./plugin"
 import { FormatError, FormatUnknownError } from "@/cli/error"
-import { isPlainTerminal, isWindowsTerminal } from "./util/terminal"
+import { isPlainTerminal, isWindowsTerminal, needsTextSizingDisabled } from "./util/terminal"
 import {
   detectionFromPart,
   formatHarnessReminder,
@@ -159,6 +159,11 @@ export function tui(input: {
     }
 
     const plainTerminal = isPlainTerminal()
+    if (needsTextSizingDisabled()) {
+      process.env.OPENTUI_FORCE_EXPLICIT_WIDTH ??= "0"
+      process.env.OPENTUI_FORCE_WCWIDTH ??= "1"
+    }
+
     const renderer = await createCliRenderer(rendererConfig(input.config, plainTerminal))
     // 默认使用 dark 模式(不跟随终端背景);用户手动切换后会被 theme_mode_lock 记住并优先。
     const mode = "dark"
