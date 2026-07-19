@@ -1,0 +1,24 @@
+type: object
+properties:
+  target_rep:
+    type: string
+  peer_reps:
+    type: array
+    items:
+      type: string
+  date_range:
+    type: string
+  account_name:
+    type: string
+  call_type:
+    type: string
+  topics:
+    type: array
+    items:
+      type: string
+  product_focus:
+    type: string
+  source_materials:
+    type: array
+    items:
+      type: string

@@ -1,0 +1,6 @@
+interface:
+  display_name: "Ideate"
+  short_description: "Generate design mocks for a product with Image Gen"
+  default_prompt: "Generate a few design directions for my app idea"
+policy:
+  allow_implicit_invocation: true

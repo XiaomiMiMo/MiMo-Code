@@ -1,0 +1,6 @@
+interface:
+  display_name: "Plan Deal Strategy"
+  short_description: "Grounded strategies for active deals and sales motions"
+  default_prompt: "Build a deal strategy for an active account."
+policy:
+  allow_implicit_invocation: false

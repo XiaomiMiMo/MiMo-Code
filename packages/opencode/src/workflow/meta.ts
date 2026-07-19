@@ -23,6 +23,13 @@ export type WorkflowMeta = {
   whenToUse?: string
   phases?: { title: string; detail?: string }[]
   model?: string
+  // Optional permission manifest: tools/commands the workflow's agents need.
+  // The runtime requests these ONCE at run start in the (interactive) foreground
+  // context, so approval lands in the session ruleset and the workflow's
+  // background subagents inherit it — instead of each subagent hitting an
+  // unanswerable permission prompt that fails closed. Backward-compatible:
+  // absent => today's behavior (no up-front request).
+  permissions?: { permission: string; patterns?: string[]; always?: string[]; reason?: string }[]
 }
 
 export type ParseResult =
@@ -53,6 +60,22 @@ export function parseMeta(script: string): ParseResult {
   if (typeof m.name !== "string" || !m.name) return { ok: false, error: "meta.name (non-empty string) is required" }
   if (typeof m.description !== "string" || !m.description)
     return { ok: false, error: "meta.description (non-empty string) is required" }
+  if (m.permissions !== undefined) {
+    if (!Array.isArray(m.permissions)) return { ok: false, error: "meta.permissions must be an array" }
+    for (const p of m.permissions) {
+      if (typeof p !== "object" || p === null || Array.isArray(p))
+        return { ok: false, error: "each meta.permissions entry must be an object" }
+      const entry = p as Record<string, unknown>
+      if (typeof entry.permission !== "string" || !entry.permission)
+        return { ok: false, error: "each meta.permissions entry needs a non-empty `permission` string" }
+      for (const key of ["patterns", "always"] as const) {
+        if (entry[key] !== undefined && (!Array.isArray(entry[key]) || (entry[key] as unknown[]).some((x) => typeof x !== "string")))
+          return { ok: false, error: `meta.permissions[].${key} must be an array of strings` }
+      }
+      if (entry.reason !== undefined && typeof entry.reason !== "string")
+        return { ok: false, error: "meta.permissions[].reason must be a string" }
+    }
+  }
   const endIndex = close + 1 + (script[close + 1] === ";" ? 1 : 0)
   const matched = script.slice(start.index, endIndex)
   const body = script.slice(0, start.index) + matched.replace(/[^\n]/g, " ") + script.slice(endIndex)

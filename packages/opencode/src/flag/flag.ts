@@ -17,6 +17,13 @@ function number(key: string) {
   return Number.isInteger(parsed) && parsed > 0 ? parsed : undefined
 }
 
+function nonNegativeNumber(key: string) {
+  const value = process.env[key]
+  if (!value) return undefined
+  const parsed = Number(value)
+  return Number.isInteger(parsed) && parsed >= 0 ? parsed : undefined
+}
+
 const MIMOCODE_EXPERIMENTAL = truthy("MIMOCODE_EXPERIMENTAL")
 
 // Defaults to false. When enabled, mimocode runs in pure-mimo mode:
@@ -59,6 +66,20 @@ export const Flag = {
   MIMOCODE_DISABLE_TERMINAL_TITLE: truthy("MIMOCODE_DISABLE_TERMINAL_TITLE"),
   MIMOCODE_SHOW_TTFD: truthy("MIMOCODE_SHOW_TTFD"),
   MIMOCODE_PERMISSION: process.env["MIMOCODE_PERMISSION"],
+
+  // Defaults to false. When false, the bash tool intercepts irreversible
+  // deletion commands (rm, rmdir, unlink, shred, del, erase, rd, remove-item,
+  // and git destructive subcommands like reset --hard / clean -f / branch -D /
+  // worktree remove / push --force / stash drop|clear / tag -d) and forces an
+  // extra permission prompt with permission="bash_delete" — separate from the
+  // normal bash-permission ask so it can't be silently pre-approved by a broad
+  // `bash: allow` rule. Set MIMOCODE_AUTO_APPROVE_DELETE=true to trust the
+  // model with deletes and skip the second confirmation.
+  MIMOCODE_AUTO_APPROVE_DELETE: truthy("MIMOCODE_AUTO_APPROVE_DELETE"),
+  // Set by the TUI's --dangerously-skip-permissions flag. When truthy, an
+  // allow-all base ruleset is injected UNDER the user's config permission so
+  // every tool auto-approves unless the user explicitly denied it.
+  MIMOCODE_DANGEROUSLY_SKIP_PERMISSIONS: truthy("MIMOCODE_DANGEROUSLY_SKIP_PERMISSIONS"),
   MIMOCODE_DISABLE_DEFAULT_PLUGINS: truthy("MIMOCODE_DISABLE_DEFAULT_PLUGINS"),
   MIMOCODE_DISABLE_LSP_DOWNLOAD: truthy("MIMOCODE_DISABLE_LSP_DOWNLOAD"),
   MIMOCODE_ENABLE_EXPERIMENTAL_MODELS: truthy("MIMOCODE_ENABLE_EXPERIMENTAL_MODELS"),
@@ -68,18 +89,25 @@ export const Flag = {
   MIMOCODE_OUTPUT_LENGTH_CONTINUATION_LIMIT: number("MIMOCODE_OUTPUT_LENGTH_CONTINUATION_LIMIT") ?? 3,
   MIMOCODE_INVALID_OUTPUT_CONTINUATION_LIMIT: number("MIMOCODE_INVALID_OUTPUT_CONTINUATION_LIMIT") ?? 2,
   MIMOCODE_TEXT_TOOL_CALL_RETRY_LIMIT: number("MIMOCODE_TEXT_TOOL_CALL_RETRY_LIMIT") ?? 2,
+  // Empty/no-op tool-call loop guard: number of soft nudges (remind → replan)
+  // before the harness hard-halts the turn. N consecutive empty steps beyond
+  // this many recovery attempts terminates the turn. Mirrors TEXT_NGRAM_MAX_RECOVERY.
+  MIMOCODE_EMPTY_STEP_MAX_RECOVERY: number("MIMOCODE_EMPTY_STEP_MAX_RECOVERY") ?? 2,
 
-  // Sliding-window n-gram repetition detection for streamed reasoning + text.
-  // An n-gram of size N appearing REPEAT_THRESHOLD times within the last
-  // WINDOW_TOKENS tokens triggers recovery (remind → replan → terminate).
-  MIMOCODE_TEXT_NGRAM_N: number("MIMOCODE_TEXT_NGRAM_N") ?? 6,
-  MIMOCODE_TEXT_REPEAT_THRESHOLD: number("MIMOCODE_TEXT_REPEAT_THRESHOLD") ?? 3,
+  // Consecutive-block repetition detection for streamed reasoning + text.
+  // A block of at least N tokens repeating REPEAT_THRESHOLD times consecutively
+  // within the last WINDOW_TOKENS tokens triggers recovery (remind → replan → terminate).
+  MIMOCODE_TEXT_NGRAM_N: number("MIMOCODE_TEXT_NGRAM_N") ?? 4,
+  MIMOCODE_TEXT_REPEAT_THRESHOLD: number("MIMOCODE_TEXT_REPEAT_THRESHOLD") ?? 20,
   MIMOCODE_TEXT_WINDOW_TOKENS: number("MIMOCODE_TEXT_WINDOW_TOKENS") ?? 500,
 
-  // Caps applied to image attachments before a prompt is sent. Both default to
-  // undefined (no limit). MIMOCODE_MAX_PROMPT_IMAGES bounds how many images may
-  // be sent per request (oldest excess images are dropped); MIMOCODE_MAX_PROMPT_IMAGE_SIZE
-  // bounds the decoded byte size of a single image. Values must be positive integers.
+  // Caps applied to image attachments before a prompt is sent.
+  // MIMOCODE_MAX_PROMPT_IMAGES (default undefined = no count limit) bounds how
+  // many images may be sent per request (oldest excess images are dropped).
+  // MIMOCODE_MAX_PROMPT_IMAGE_SIZE overrides the default per-image byte cap
+  // (DEFAULT_MAX_IMAGE_BYTES ~4.5 MB, kept under the provider 5 MB hard limit);
+  // oversized images are recompressed under the cap, or stripped to a text
+  // placeholder when they can't be compressed. Values must be positive integers.
   MIMOCODE_MAX_PROMPT_IMAGES: number("MIMOCODE_MAX_PROMPT_IMAGES"),
   MIMOCODE_MAX_PROMPT_IMAGE_SIZE: number("MIMOCODE_MAX_PROMPT_IMAGE_SIZE"),
   MIMOCODE_MIMO_ONLY,
@@ -99,6 +127,28 @@ export const Flag = {
   MIMOCODE_DISABLE_EXTERNAL_SKILLS,
   MIMOCODE_DISABLE_CODEX_SKILLS: MIMOCODE_DISABLE_EXTERNAL_SKILLS || truthy("MIMOCODE_DISABLE_CODEX_SKILLS"),
   MIMOCODE_DISABLE_OPENCODE_SKILLS: MIMOCODE_DISABLE_EXTERNAL_SKILLS || truthy("MIMOCODE_DISABLE_OPENCODE_SKILLS"),
+
+  // Skill-search ranking and loading policy. Exact mentions stay above BM25;
+  // the BM25/coverage blend has a 0.90 ceiling, and near-max results auto-load.
+  MIMOCODE_SKILL_SEARCH_EXACT_SCORE: 1,
+  MIMOCODE_SKILL_SEARCH_BM25_K1: 1.5,
+  MIMOCODE_SKILL_SEARCH_BM25_LENGTH_NORMALIZATION: 0.75,
+  MIMOCODE_SKILL_SEARCH_BM25_IDF_SMOOTHING: 0.5,
+  MIMOCODE_SKILL_SEARCH_BM25_SCORE_WEIGHT: 0.55,
+  MIMOCODE_SKILL_SEARCH_QUERY_COVERAGE_WEIGHT: 0.35,
+  MIMOCODE_SKILL_SEARCH_AUTO_LOAD_THRESHOLD: 0.85,
+  MIMOCODE_SKILL_SEARCH_SCORE_PRECISION: 4,
+  MIMOCODE_SKILL_SEARCH_MAX_RESULTS: 3,
+  MIMOCODE_SKILL_SEARCH_STEM_MIN_LENGTH: 3,
+  MIMOCODE_SKILL_SEARCH_FILE_SAMPLE_LIMIT: 10,
+  MIMOCODE_SKILL_SEARCH_REFRESH_INTERVAL_MS: 2 * 60 * 60 * 1000,
+
+  // Defaults to false. When enabled, skill-source commands appear in the `/`
+  // autocomplete dropdown alongside user commands and MCP prompts. Skills are
+  // surfaced in `/` completion by default; set MIMOCODE_DISABLE_SLASH_SKILLS=1
+  // to hide them and fall back to the `/skills` picker + model-driven
+  // invocation only.
+  MIMOCODE_DISABLE_SLASH_SKILLS: truthy("MIMOCODE_DISABLE_SLASH_SKILLS"),
   MIMOCODE_FAKE_VCS: process.env["MIMOCODE_FAKE_VCS"],
 
   // When enabled, skips all git subprocess calls during project discovery
@@ -110,6 +160,24 @@ export const Flag = {
   MIMOCODE_SERVER_PASSWORD: process.env["MIMOCODE_SERVER_PASSWORD"],
   MIMOCODE_SERVER_USERNAME: process.env["MIMOCODE_SERVER_USERNAME"],
   MIMOCODE_ENABLE_QUESTION_TOOL: truthy("MIMOCODE_ENABLE_QUESTION_TOOL"),
+
+  // Defaults to false (tool_script hidden). Set MIMOCODE_ENABLE_TOOL_SCRIPT=true
+  // (or 1, or the umbrella MIMOCODE_EXPERIMENTAL) to register the tool_script
+  // sandbox tool. Getter so tests can flip the env var at runtime.
+  get MIMOCODE_ENABLE_TOOL_SCRIPT() {
+    return MIMOCODE_EXPERIMENTAL || truthy("MIMOCODE_ENABLE_TOOL_SCRIPT")
+  },
+
+  // Defaults to false. Set MIMOCODE_ENABLE_TRY_BEST_HANDOFF=true (or 1) to
+  // enable try-best loop detection, automatic turn pausing, and handoff UI.
+  MIMOCODE_ENABLE_TRY_BEST_HANDOFF: truthy("MIMOCODE_ENABLE_TRY_BEST_HANDOFF"),
+
+  // Defaults to false. The edit tool does pure exact-string matching with
+  // explicit error signals. Set MIMOCODE_ENABLE_FUZZY_EDIT=true to opt into the
+  // legacy multi-stage fuzzy fallback chain (line-trimmed / block-anchor /
+  // whitespace-normalized / indentation-flexible / etc.) when old_string fails
+  // to match exactly.
+  MIMOCODE_ENABLE_FUZZY_EDIT: truthy("MIMOCODE_ENABLE_FUZZY_EDIT"),
 
   // Experimental
   MIMOCODE_EXPERIMENTAL,
@@ -124,14 +192,57 @@ export const Flag = {
     copy === undefined ? process.platform === "win32" : truthy("MIMOCODE_EXPERIMENTAL_DISABLE_COPY_ON_SELECT"),
   MIMOCODE_ENABLE_EXA: truthy("MIMOCODE_ENABLE_EXA") || MIMOCODE_EXPERIMENTAL || truthy("MIMOCODE_EXPERIMENTAL_EXA"),
   MIMOCODE_EXPERIMENTAL_BASH_DEFAULT_TIMEOUT_MS: number("MIMOCODE_EXPERIMENTAL_BASH_DEFAULT_TIMEOUT_MS"),
+  // Token-efficient post-cleanse: strip ANSI / fold \r progress bars / redact
+  // secrets / elide super-long lines from bash tool output before it is
+  // returned to the model. Only applies when the output fits inline — if the
+  // output spills to a truncation file, cleaning is skipped so the on-disk
+  // archive stays raw. Off by default. Set to 1/true to opt in.
+  MIMOCODE_EXPERIMENTAL_TOKEN_EFFICIENCY: truthy("MIMOCODE_EXPERIMENTAL_TOKEN_EFFICIENCY"),
+  // Tunables for the token-efficient post-cleanse pipeline (see
+  // src/tool/bash_token_efficient_pipeline.ts). Positive integers only;
+  // unset / non-positive values fall back to the documented defaults.
+  //   MAX_LINE_CHARS   threshold above which a single line is elided  (default 500)
+  //   LINE_HEAD_KEEP   chars kept from the head of an elided line     (default 160)
+  //   NEVER_WORSE_MARGIN  bytes the cleaned output must beat the raw  (default 0)
+  MIMOCODE_EXPERIMENTAL_TOKEN_EFFICIENCY_MAX_LINE_CHARS: number("MIMOCODE_EXPERIMENTAL_TOKEN_EFFICIENCY_MAX_LINE_CHARS") ?? 500,
+  MIMOCODE_EXPERIMENTAL_TOKEN_EFFICIENCY_LINE_HEAD_KEEP: number("MIMOCODE_EXPERIMENTAL_TOKEN_EFFICIENCY_LINE_HEAD_KEEP") ?? 160,
+  MIMOCODE_EXPERIMENTAL_TOKEN_EFFICIENCY_NEVER_WORSE_MARGIN: number("MIMOCODE_EXPERIMENTAL_TOKEN_EFFICIENCY_NEVER_WORSE_MARGIN") ?? 0,
+  // Heuristic (shape-based) filter pipeline for bash output. Runs AFTER the
+  // common pipeline, only when the common pipeline is enabled AND this flag is
+  // explicitly opted in. Each shape (gitdiff / pytest / npm / make /
+  // stacktrace / tsc / kubectl / json / md / gostest) recognises a command
+  // pattern or body fingerprint and rewrites the body to strip predictable
+  // noise. Off by default. Set to 1/true to opt in.
+  MIMOCODE_EXPERIMENTAL_TOKEN_EFFICIENCY_HEURISTIC: truthy("MIMOCODE_EXPERIMENTAL_TOKEN_EFFICIENCY_HEURISTIC"),
   MIMOCODE_EXPERIMENTAL_OUTPUT_TOKEN_MAX: number("MIMOCODE_EXPERIMENTAL_OUTPUT_TOKEN_MAX"),
   MIMOCODE_EXPERIMENTAL_OXFMT: MIMOCODE_EXPERIMENTAL || truthy("MIMOCODE_EXPERIMENTAL_OXFMT"),
   MIMOCODE_EXPERIMENTAL_LSP_TY: truthy("MIMOCODE_EXPERIMENTAL_LSP_TY"),
   MIMOCODE_EXPERIMENTAL_LSP_TOOL: MIMOCODE_EXPERIMENTAL || truthy("MIMOCODE_EXPERIMENTAL_LSP_TOOL"),
+  // Defaults to OFF (opt-in): the Orchestrator primary mode — a general
+  // coordinator that delegates to child sessions via the `session` tool, with a
+  // global singleton workspace and child permission-approval routing. Enable with
+  // MIMOCODE_EXPERIMENTAL_ORCHESTRATOR=true (or the umbrella MIMOCODE_EXPERIMENTAL).
+  MIMOCODE_EXPERIMENTAL_ORCHESTRATOR: MIMOCODE_EXPERIMENTAL || truthy("MIMOCODE_EXPERIMENTAL_ORCHESTRATOR"),
   // Defaults to true: dynamic workflow + built-in deep-research are on by default.
   // Set MIMOCODE_EXPERIMENTAL_WORKFLOW_TOOL=false to opt out. The env-var name is
   // kept for backwards compat (long-running experiments still pass it as `1`).
   MIMOCODE_EXPERIMENTAL_WORKFLOW_TOOL: !falsy("MIMOCODE_EXPERIMENTAL_WORKFLOW_TOOL"),
+  // Defaults to true: cron + self-paced loop scheduling are on by default.
+  // Set MIMOCODE_EXPERIMENTAL_CRON=false to opt out. Runtime kill switch is
+  // MIMOCODE_DISABLE_CRON (checked live every tick).
+  MIMOCODE_EXPERIMENTAL_CRON: !falsy("MIMOCODE_EXPERIMENTAL_CRON"),
+  // Keepalive contract for self-paced loops (spec [S8]). Budget = how many
+  // "forget" turns the model gets before the loop is declared model_stopped;
+  // delay seconds = the auto-arm horizon used for the keepalive fire. Budget
+  // accepts 0 (end immediately on the first turn without a re-arm) for tests
+  // and aggressive policies. Both are getters so tests can flip the env var
+  // between cases without restarting the process.
+  get MIMOCODE_LOOP_KEEPALIVE_BUDGET() {
+    return nonNegativeNumber("MIMOCODE_LOOP_KEEPALIVE_BUDGET") ?? 1
+  },
+  get MIMOCODE_LOOP_KEEPALIVE_DELAY_S() {
+    return number("MIMOCODE_LOOP_KEEPALIVE_DELAY_S") ?? 1200
+  },
   MIMOCODE_EXPERIMENTAL_MARKDOWN: !falsy("MIMOCODE_EXPERIMENTAL_MARKDOWN"),
   MIMOCODE_MODELS_URL: process.env["MIMOCODE_MODELS_URL"],
   MIMOCODE_MODELS_PATH: process.env["MIMOCODE_MODELS_PATH"],
@@ -161,10 +272,17 @@ export const Flag = {
     return truthy("MIMOCODE_DISABLE_COMPOSE_SKILLS")
   },
   // Disables user-facing builtin skills shipped with the binary (e.g.
-  // self-extend). Does not affect compose skills — the two sets are
+  // evolve). Does not affect compose skills — the two sets are
   // independent and non-overlapping.
   get MIMOCODE_DISABLE_BUILTIN_SKILLS() {
     return truthy("MIMOCODE_DISABLE_BUILTIN_SKILLS")
+  },
+  // Disables the built-in official skills (docx, pdf, pptx, xlsx,
+  // html-to-video-pipeline) while keeping the rest of the builtin bundle
+  // available. Defaults to false (all skills are extracted and loaded). Set
+  // MIMOCODE_DISABLE_OFFICIAL_SKILLS=true to skip them.
+  get MIMOCODE_DISABLE_OFFICIAL_SKILLS() {
+    return truthy("MIMOCODE_DISABLE_OFFICIAL_SKILLS")
   },
   get MIMOCODE_DISABLE_PROJECT_CONFIG() {
     return truthy("MIMOCODE_DISABLE_PROJECT_CONFIG")

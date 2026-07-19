@@ -1,7 +1,7 @@
 import { Effect } from "effect"
 import { Bus } from "@/bus"
 import { Flag } from "@/flag/flag"
-import { ModelCall, ToolCall, AgentRequest } from "./event"
+import { ModelCall, ToolCall, AgentRequest, TryBestDetected } from "./event"
 import { buildHeader, postEvents, type EventType } from "./client"
 import { getInstallationID } from "./installation"
 
@@ -51,6 +51,17 @@ export const subscribe = Effect.fn("Metrics.subscribe")(function* () {
           total_tokens_out: p.total_tokens_out,
           files_changed: p.files_changed,
           validation_status: p.validation_status,
+        })
+      }),
+      svc.subscribeCallback(TryBestDetected, (e) => {
+        const p = e.properties
+        return send("try_best_detected", p.sessionID, {
+          reason: p.reason,
+          provider: p.provider,
+          model_id: p.model_id,
+          count: p.count,
+          similarity: p.similarity,
+          action: p.action,
         })
       }),
     ]),

@@ -1,0 +1,6 @@
+interface:
+  display_name: "Apollo User Guide"
+  short_description: "Apollo prospecting, enrichment, and outbound gates"
+  default_prompt: "Use $apollo to guide this Sales Apollo prospecting workflow."
+policy:
+  allow_implicit_invocation: false

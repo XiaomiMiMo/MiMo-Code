@@ -69,5 +69,56 @@ export const PermissionRoutes = lazy(() =>
           const svc = yield* Permission.Service
           return yield* svc.list()
         }),
+    )
+    .get(
+      "/skip-all",
+      describeRoute({
+        summary: "Get skip-all state",
+        description:
+          "Whether permission asks are auto-allowed at runtime. Explicit deny rules and forced-ask permissions are unaffected.",
+        operationId: "permission.skipAll",
+        responses: {
+          200: {
+            description: "Current skip-all state",
+            content: {
+              "application/json": {
+                schema: resolver(z.boolean()),
+              },
+            },
+          },
+        },
+      }),
+      async (c) =>
+        jsonRequest("PermissionRoutes.skipAll", c, function* () {
+          const svc = yield* Permission.Service
+          return yield* svc.skipAll()
+        }),
+    )
+    .post(
+      "/skip-all",
+      describeRoute({
+        summary: "Set skip-all state",
+        description:
+          "Enable or disable runtime auto-allow for permission asks. Applies instance-wide, so subagents inherit it. Explicit deny rules and forced-ask permissions (e.g. bash_delete) still apply.",
+        operationId: "permission.setSkipAll",
+        responses: {
+          200: {
+            description: "Updated skip-all state",
+            content: {
+              "application/json": {
+                schema: resolver(z.boolean()),
+              },
+            },
+          },
+          ...errors(400),
+        },
+      }),
+      validator("json", z.object({ enabled: z.boolean().describe("Whether skip-all is enabled") })),
+      async (c) =>
+        jsonRequest("PermissionRoutes.setSkipAll", c, function* () {
+          const svc = yield* Permission.Service
+          yield* svc.setSkipAll(c.req.valid("json").enabled)
+          return yield* svc.skipAll()
+        }),
     ),
 )

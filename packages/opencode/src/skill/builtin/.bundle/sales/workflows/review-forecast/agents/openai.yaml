@@ -1,0 +1,6 @@
+interface:
+  display_name: "Review Forecast"
+  short_description: "Forecast reviews with risk analysis and recommendation posture"
+  default_prompt: "Review a forecast for risk and next actions."
+policy:
+  allow_implicit_invocation: false

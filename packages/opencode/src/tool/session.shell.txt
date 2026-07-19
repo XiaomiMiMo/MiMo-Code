@@ -1,0 +1,55 @@
+Child-session orchestration tool (shell form, Orchestrator mode only). Each
+child runs in its own session id with its own mode, model, task panel, and
+memory. Verbs: create | switch | list | dashboard | cancel | ask.
+
+# Script structure
+#   - Multi-line: one command per non-blank line, set-e on first failure
+#   - "double" quotes preserve literal LF and process \" \\ escapes
+#   - 'single' quotes are verbatim
+#   - # starts a line comment to end-of-line (quoted # is literal text)
+
+# create — spawn a background child session (task text is positional, 1+ words):
+    session create write a file hello.txt containing the word world
+    session create implement email/password login --mode build
+    session create port the parser to repo B --dir /path/to/repoB --isolate
+    session create design the billing schema --mode compose --model standard --title Billing
+    # --mode  build|plan|compose   (default build; compose preferred for planned work, plan is secondary)
+    # --model <ref>           model group/tier name, or literal provider/model
+    # --title <t>             session title (defaults to the task prefix)
+    # --dir <path>            working directory the child runs in (any project or path; default orchestrator dir)
+    # --isolate               run the child in its own git worktree of --dir (concurrent edits); non-git dir => shared
+
+# multi-line task via heredoc (verbatim — no escaping needed for " \ $ #):
+    session create <<EOF
+    Implement auth
+    - email/password
+    - oauth (google, github)
+    EOF
+
+# inspect:
+    session list                       # this Orchestrator's children: id, title, mode, status
+    session dashboard                  # fleet TABLE: liveness+age, turns, mode, worktree branch/ahead/dir per child
+
+# navigate the user's frontend panel:
+    session switch ses_...             # Orchestrator-only; a child cannot switch back
+
+# stop a child:
+    session cancel ses_...
+
+# ask a session a one-shot, READ-ONLY side question (non-disruptive):
+    session ask ses_... what is your current progress
+    # Freezes a snapshot of that session's history and answers from it without
+    # touching its running turn. The fork can only read (read/grep/glob) — it
+    # cannot modify files, run commands, or continue the session's task. The
+    # answer is returned to you. Works on any session (running or idle).
+
+# multi-command (one per line, set-e on first failure) — fan out several children:
+    session create implement the parser --mode build
+    session create write the integration tests --mode build
+    session create draft the API docs --mode compose
+
+# Relay (separate tool): talk to a running child via the actor tool —
+#   actor send --session <childSessionID> "<message>"   (the child replies back to you)
+
+# Don't dump the child list in your reply — `session list` already renders it.
+# Just summarize which child you created or what changed.

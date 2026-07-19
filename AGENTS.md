@@ -4,6 +4,7 @@
 - The default branch in this repo is `main`.
 - CI triggers on both `main` and `dev` branches.
 - Prefer automation: execute requested actions without confirmation unless blocked by missing info or safety/irreversibility.
+- Install deps with `bun ci` (= `bun install --frozen-lockfile`) — install per `bun.lock`, don't mutate the lockfile. ⛔ Do NOT use `bun install`/`npm install`.
 
 ## Core Focus (as of 2025-06-18)
 
