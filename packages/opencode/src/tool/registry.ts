@@ -75,6 +75,7 @@ import { BuiltinWorkflow } from "@/workflow/builtin"
 import { ToolScriptTool, renderToolScriptDeclarations } from "./tool-script"
 import { toolScriptRegistry } from "./tool-script-ref"
 import { usesGPTToolset } from "./gpt"
+import { RecoverableError } from "./recoverable"
 
 const log = Log.create({ service: "tool.registry" })
 
@@ -173,19 +174,24 @@ export const layer = Layer.effect(
         const custom: Tool.Def[] = []
 
         function fromPlugin(id: string, def: ToolDefinition): Tool.Def {
+          const parameters = z.object(def.args)
           return {
             id,
-            parameters: z.object(def.args),
+            parameters,
             description: def.description,
             execute: (args, toolCtx) =>
               Effect.gen(function* () {
+                const parsed = yield* Effect.try({
+                  try: () => parameters.parse(args),
+                  catch: (error) => new RecoverableError(Tool.validationErrorMessage(id, error), { cause: error }),
+                })
                 const pluginCtx: PluginToolContext = {
                   ...toolCtx,
                   ask: (req) => toolCtx.ask(req),
                   directory: ctx.directory,
                   worktree: ctx.worktree,
                 }
-                const result = yield* Effect.promise(() => def.execute(args as any, pluginCtx))
+                const result = yield* Effect.promise(() => def.execute(parsed, pluginCtx))
                 const output = typeof result === "string" ? result : result.output
                 const metadata = typeof result === "string" ? {} : (result.metadata ?? {})
                 const info = yield* agent.get(toolCtx.agent)
@@ -199,7 +205,7 @@ export const layer = Layer.effect(
                     ...(out.truncated && { outputPath: out.outputPath }),
                   },
                 }
-              }),
+              }).pipe(Effect.orDie),
           }
         }
 
