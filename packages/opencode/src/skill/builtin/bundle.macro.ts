@@ -1,9 +1,12 @@
 import fs from "fs"
 import path from "path"
 
+const JUNK = new Set([".DS_Store", "Thumbs.db", "__pycache__"])
+
 function walkDir(base: string, rel: string, out: Record<string, string>) {
   const fullPath = rel ? path.join(base, rel) : base
   for (const entry of fs.readdirSync(fullPath, { withFileTypes: true })) {
+    if (JUNK.has(entry.name) || entry.name.endsWith(".pyc")) continue
     const relPath = rel ? `${rel}/${entry.name}` : entry.name
     if (entry.isDirectory()) {
       walkDir(base, relPath, out)

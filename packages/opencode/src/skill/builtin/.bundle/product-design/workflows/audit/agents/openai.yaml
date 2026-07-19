@@ -1,0 +1,6 @@
+interface:
+  display_name: "Audit"
+  short_description: "Audit or critique product UX and design from captured screenshots"
+  default_prompt: "Audit this product flow and report UX, design, and accessibility findings."
+policy:
+  allow_implicit_invocation: true

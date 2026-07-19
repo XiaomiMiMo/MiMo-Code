@@ -4,6 +4,7 @@ import { makeRuntime } from "@/effect/run-service"
 import { AppFileSystem } from "@mimo-ai/shared/filesystem"
 import { iife } from "@/util/iife"
 import { Log } from "@/util"
+import { withTimeout } from "@/util/timeout"
 import { LocalContext } from "../util"
 import * as Project from "./project"
 import { WorkspaceContext } from "@/control-plane/workspace-context"
@@ -17,7 +18,9 @@ export interface InstanceContext {
 
 const context = LocalContext.create<InstanceContext>("instance")
 const cache = new Map<string, Promise<InstanceContext>>()
+const directoryDisposals = new Map<string, Promise<void>>()
 const project = makeRuntime(Project.Service, Project.defaultLayer)
+const DIRECTORY_DISPOSE_TIMEOUT = 2_000
 
 const FORBIDDEN_PREFIXES = [
   "/etc",
@@ -78,10 +81,32 @@ function track(directory: string, next: Promise<InstanceContext>) {
   return task
 }
 
+async function disposeCached(directory: string, current: Promise<InstanceContext>) {
+  const ctx = await current.catch(() => undefined)
+  if (!ctx || cache.get(directory) !== current) return
+
+  cache.delete(directory)
+  Log.Default.info("disposing instance", { directory })
+  await context.provide(ctx, () => disposeInstance(directory))
+
+  GlobalBus.emit("event", {
+    directory,
+    project: ctx.project.id,
+    workspace: WorkspaceContext.workspaceID,
+    payload: {
+      type: "server.instance.disposed",
+      properties: {
+        directory,
+      },
+    },
+  })
+}
+
 export const Instance = {
   async provide<R>(input: { directory: string; init?: () => Promise<any>; fn: () => R }): Promise<R> {
     const directory = AppFileSystem.resolve(input.directory)
     assertSafeDirectory(directory)
+    await directoryDisposals.get(directory)
     let existing = cache.get(directory)
     if (!existing) {
       Log.Default.info("creating instance", { directory })
@@ -143,6 +168,7 @@ export const Instance = {
   },
   async reload(input: { directory: string; init?: () => Promise<any>; project?: Project.Info; worktree?: string }) {
     const directory = AppFileSystem.resolve(input.directory)
+    await directoryDisposals.get(directory)
     Log.Default.info("reloading instance", { directory })
     await disposeInstance(directory)
     cache.delete(directory)
@@ -161,6 +187,31 @@ export const Instance = {
     })
 
     return await next
+  },
+  async disposeDirectory(input: string) {
+    const directory = AppFileSystem.resolve(input)
+    assertSafeDirectory(directory)
+    const pending = directoryDisposals.get(directory)
+    if (pending) return pending
+    const current = cache.get(directory)
+    if (!current) return
+
+    // NOTE: withTimeout only bounds the *wait*, not the underlying promise —
+    // a slow disposer may still complete after the timeout fires.  The
+    // directoryDisposals guard above is a soft happens-before (bounded by
+    // DIRECTORY_DISPOSE_TIMEOUT), not a true barrier.  If a disposer times
+    // out and the same directory is re-provided immediately, the background
+    // disposer can still race with the new instance and tear down
+    // per-directory state (e.g. session-cwd entries) once it finally finishes.
+    const cleanup = withTimeout(disposeCached(directory, current), DIRECTORY_DISPOSE_TIMEOUT).catch((error) => {
+      Log.Default.warn("instance dispose did not complete", { directory, error })
+    })
+    directoryDisposals.set(directory, cleanup)
+    try {
+      await cleanup
+    } finally {
+      if (directoryDisposals.get(directory) === cleanup) directoryDisposals.delete(directory)
+    }
   },
   async dispose() {
     const directory = Instance.directory

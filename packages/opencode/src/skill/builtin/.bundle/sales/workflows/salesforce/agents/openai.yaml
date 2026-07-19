@@ -1,0 +1,6 @@
+interface:
+  display_name: "Salesforce User Guide"
+  short_description: "Salesforce CRM queries, drafts, and proposed writes"
+  default_prompt: "Review Salesforce CRM records safely for this Sales workflow."
+policy:
+  allow_implicit_invocation: false

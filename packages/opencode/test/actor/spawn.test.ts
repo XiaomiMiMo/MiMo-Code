@@ -27,7 +27,6 @@ import { SessionPrompt } from "../../src/session/prompt"
 import { SessionRevert } from "../../src/session/revert"
 import { SessionRunState } from "../../src/session/run-state"
 import { Goal } from "../../src/session/goal"
-import { TaskGateState } from "../../src/task/gate-state"
 import { SessionStatus } from "../../src/session/status"
 import { Skill } from "../../src/skill"
 import { SystemPrompt } from "../../src/session/system"
@@ -37,12 +36,14 @@ import { Truncate } from "../../src/tool"
 import { ActorRegistry } from "../../src/actor/registry"
 import { ActorWaiter } from "../../src/actor/waiter"
 import { Actor } from "../../src/actor/spawn"
+import { Worktree } from "../../src/worktree"
 import { Memory } from "../../src/memory"
 import { History } from "../../src/history"
 import { Team } from "../../src/team"
 import { SessionCheckpoint } from "../../src/session/checkpoint"
 import { SessionCompaction } from "../../src/session/compaction"
 import { TaskRegistry } from "../../src/task/registry"
+import { defaultLayer as SchedulerDefaultLayer } from "../../src/cron/scheduler"
 import { Auth } from "../../src/auth"
 import { Database } from "../../src/storage"
 import { MessageTable } from "../../src/session/session.sql"
@@ -57,6 +58,7 @@ import { testEffect } from "../lib/effect"
 import { TestLLMServer } from "../lib/llm-server"
 import { reply } from "../lib/llm-server"
 import { Inbox } from "../../src/inbox"
+import { inboxServiceRef } from "../../src/inbox/inbox-ref"
 
 afterEach(async () => {
   await Instance.disposeAll()
@@ -154,6 +156,7 @@ function makeLayer() {
     Layer.provide(Memory.defaultLayer),
     Layer.provide(History.defaultLayer),
     Layer.provide(TaskRegistry.defaultLayer),
+    Layer.provide(SchedulerDefaultLayer),
     Layer.provide(Auth.defaultLayer),
     Layer.provideMerge(todo),
     Layer.provideMerge(question),
@@ -164,7 +167,6 @@ function makeLayer() {
   const prune = SessionPrune.layer.pipe(Layer.provide(checkpoint), Layer.provideMerge(deps))
   const prompt = SessionPrompt.layer.pipe(
     Layer.provide(Goal.defaultLayer),
-    Layer.provide(TaskGateState.defaultLayer),
     Layer.provide(SessionRevert.defaultLayer),
     Layer.provide(summary),
     Layer.provide(checkpoint),
@@ -185,8 +187,10 @@ function makeLayer() {
     TestLLMServer.layer,
     Actor.layer.pipe(
       Layer.provideMerge(prompt),
+      Layer.provide(Worktree.defaultLayer),
       Layer.provideMerge(taskRegistry),
       Layer.provide(TaskRegistry.defaultLayer),
+    Layer.provide(SchedulerDefaultLayer),
       Layer.provide(Inbox.defaultLayer),
     ),
   ).pipe(Layer.provide(summary))
@@ -279,6 +283,64 @@ describe("Actor.spawn peer mode", () => {
         const row = yield* reg.get(result.sessionID, result.actorID)
         expect(row?.mode).toBe("peer")
         expect(row?.agent).toBe("build")
+      }),
+      { git: true, config: providerCfg },
+    ),
+  )
+
+  // T42: a freshly-created peer is addressable the instant spawn returns —
+  // spawnPeer registers the receiver/actor-registry row (session_id === actor_id
+  // === child.id, mode "peer") SYNCHRONOUSLY before spawn resolves, so Inbox.send's
+  // ESRCH pre-check (reg.get) resolves even against a turnCount-0, never-run child.
+  // Guards the T43 --topic reuse prerequisite. LLM is hung so the child's first
+  // turn never runs: the row can ONLY come from spawn-time registration.
+  it.live("send to a just-created, never-run peer (turnCount 0) does NOT ESRCH and enqueues", () =>
+    provideTmpdirServer(
+      Effect.fnUntraced(function* ({ llm }) {
+        const actor = yield* Actor.Service
+        const session = yield* Session.Service
+        const reg = yield* ActorRegistry.Service
+        const inbox = inboxServiceRef.current!
+
+        const parent = yield* session.create({
+          title: "T42 parent",
+          permission: [{ permission: "*", pattern: "*", action: "allow" }],
+        })
+        // Hang so the child's spawn turn never completes — the receiver row must
+        // exist purely from spawn-time registration, not first-turn arming.
+        yield* llm.hang
+
+        const result = yield* actor.spawn({
+          mode: "peer",
+          sessionID: parent.id,
+          agentType: "build",
+          task: "peer task",
+          context: "none",
+          tools: ["read"],
+          background: true,
+          model: ref,
+        })
+
+        // Row present at spawn: pending, zero turns (never ran).
+        const row = yield* reg.get(result.sessionID, result.actorID)
+        expect(row?.mode).toBe("peer")
+        expect(row?.turnCount).toBe(0)
+        expect(row?.status).toBe("pending")
+
+        // Both addressing forms resolve without ESRCH and enqueue a durable row.
+        const sent = yield* inbox
+          .send({
+            receiverSessionID: result.sessionID,
+            receiverActorID: result.actorID,
+            senderSessionID: parent.id,
+            senderActorID: "main",
+            content: "relayed while never-run",
+          })
+          .pipe(Effect.exit)
+        expect(sent._tag).toBe("Success")
+        if (sent._tag === "Success") expect(sent.value.inboxID).toBeTruthy()
+
+        yield* actor.cancel(result.sessionID, result.actorID, "forced")
       }),
       { git: true, config: providerCfg },
     ),

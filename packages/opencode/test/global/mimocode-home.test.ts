@@ -24,6 +24,8 @@ type PathsResult = {
   bin: string
   log: string
   home: string
+  orchestrator: string
+  orchestratorExists: boolean
 }
 
 async function runWorker(env: Record<string, string>): Promise<{ ok: true; paths: PathsResult } | { ok: false; code: number | null; stderr: string }> {
@@ -67,6 +69,20 @@ describe("MIMOCODE_HOME end-to-end", () => {
     expect(result.paths.cache).toBe(path.join(tmp.path, "cache"))
     expect(result.paths.bin).toBe(path.join(tmp.path, "cache", "bin"))
     expect(result.paths.log).toBe(path.join(tmp.path, "data", "log"))
+  })
+
+  test("orchestrator dir is a stable absolute path under data and is created on first use", async () => {
+    await using tmp = await tmpdir()
+    const result = await runWorker({ MIMOCODE_HOME: tmp.path })
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    // Fixed location under the global data root, independent of launch dir
+    expect(result.paths.orchestrator).toBe(path.join(tmp.path, "data", "orchestrator"))
+    expect(path.isAbsolute(result.paths.orchestrator)).toBe(true)
+    // Created (mkdir recursive) on first resolution
+    expect(result.paths.orchestratorExists).toBe(true)
+    const stat = await fs.stat(result.paths.orchestrator)
+    expect(stat.isDirectory()).toBe(true)
   })
 
   test("auto-creates all four subdirs under a nonexistent root", async () => {

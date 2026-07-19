@@ -10,6 +10,7 @@ import { useTheme } from "../context/theme"
 import { useSDK } from "../context/sdk"
 import { useLanguage } from "../context/language"
 import { Flag } from "@/flag/flag"
+import { isSystemSession } from "@/session/auto-dream"
 import { DialogSessionRename } from "./dialog-session-rename"
 import { Keybind } from "@/util"
 import { createDebouncedSignal } from "../util/signal"
@@ -36,7 +37,7 @@ export function DialogSessionList() {
 
   const [searchResults, { refetch }] = createResource(search, async (query) => {
     if (!query) return undefined
-    const result = await sdk.client.session.list({ search: query, limit: 30 })
+    const result = await sdk.client.session.list({ search: query, limit: 30, roots: true })
     return result.data ?? []
   })
 
@@ -113,9 +114,13 @@ export function DialogSessionList() {
 
   const options = createMemo(() => {
     const today = new Date().toDateString()
-    const isAutoSession = (x: { title: string }) => x.title === "Auto Dream" || x.title === "Auto Distill"
+    const current = currentSessionID()
+    // Top-level sessions, plus the CURRENT session's children (e.g. Orchestrator
+    // child sessions) so the user can discover and switch into them. Other
+    // sessions' children stay hidden to keep the list focused.
+    const isChildOfCurrent = (x: { parentID?: string }) => current !== undefined && x.parentID === current
     return sessions()
-      .filter((x) => x.parentID === undefined)
+      .filter((x) => x.parentID === undefined || isChildOfCurrent(x))
       .toSorted((a, b) => {
         const updatedDay = new Date(b.time.updated).setHours(0, 0, 0, 0) - new Date(a.time.updated).setHours(0, 0, 0, 0)
         if (updatedDay !== 0) return updatedDay
@@ -165,9 +170,11 @@ export function DialogSessionList() {
         return {
           title: isDeleting
             ? `Press ${keybind.print("session_delete")} again to confirm`
-            : isAutoSession(x)
-              ? `[${t("tui.session.badge.auto")}] ${x.title}`
-              : x.title,
+            : isChildOfCurrent(x)
+              ? `↳ ${x.title}`
+              : isSystemSession(x)
+                ? `[${t("tui.session.badge.auto")}] ${x.title}`
+                : x.title,
           bg: isDeleting ? theme.error : undefined,
           value: x.id,
           category,

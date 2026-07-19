@@ -1,0 +1,40 @@
+type: object
+properties:
+  seller_company_name:
+    type: string
+  product_scope:
+    type: string
+  workflow_scope:
+    type: string
+  buyer_context:
+    type: string
+  competitor_scope:
+    type: string
+  max_matrix_competitors:
+    type: integer
+    minimum: 1
+    maximum: 8
+    default: 5
+  competitor_names:
+    type: array
+    items:
+      type: string
+  account_name:
+    type: string
+  industry:
+    type: string
+  region:
+    type: string
+  customer_segment:
+    type: string
+  mode:
+    type: string
+    enum: [brief, objections, positioning, account_overlay, chat_or_markdown_only]
+  known_objections:
+    type: array
+    items:
+      type: string
+  existing_materials:
+    type: array
+    items:
+      type: string

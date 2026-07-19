@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import { evalScript } from "../../src/workflow/sandbox"
 
-// Mirrors the Group step's fold logic from builtin/deep-research.js, run in
+// Mirrors the Group step's fold logic from builtin/fact-check.js, run in
 // isolation against a stubbed agent so we can pin the collapse / null-fallback /
 // url-union behavior without a live model.
 const GROUP_STEP = `
@@ -22,7 +22,7 @@ const GROUP_STEP = `
   return { count: groups.length, urls: groups.map(g => g.urls) }
 `
 
-describe("deep-research group fold", () => {
+describe("fact-check group fold", () => {
   test("folds facts into groups with merged urls", async () => {
     const hooks = {
       agent: async () => ({

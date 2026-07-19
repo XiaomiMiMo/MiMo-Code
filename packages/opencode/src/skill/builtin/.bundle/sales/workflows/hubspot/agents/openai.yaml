@@ -1,0 +1,6 @@
+interface:
+  display_name: "HubSpot User Guide"
+  short_description: "HubSpot CRM reads, drafts, and proposed writes"
+  default_prompt: "Review HubSpot CRM records safely for this Sales workflow."
+policy:
+  allow_implicit_invocation: false

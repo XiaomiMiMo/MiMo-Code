@@ -206,6 +206,20 @@ describe("Sandbox prelude (parallel/pipeline/args)", () => {
   })
 })
 
+describe("Sandbox args string injection (Defect A regression)", () => {
+  test("a bare string arg is injected as a string, not eval'd as JS", async () => {
+    // Regression: bare string args used to cause SyntaxError because the script
+    // tried JSON.parse on a non-JSON string.
+    const result = await evalScript(`return typeof args === "string" ? args : "not-string"`, {}, { args: "深入调研X" })
+    expect(result).toBe("深入调研X")
+  })
+
+  test("a null arg is injected as undefined", async () => {
+    const result = await evalScript(`return args`, {}, { args: null })
+    expect(result).toBeUndefined()
+  })
+})
+
 describe("Sandbox unsettled-hook hygiene", () => {
   test("a fire-and-forget hook call (no await) does not abort the process", async () => {
     // The script returns immediately while agent() is still in flight.
@@ -226,6 +240,45 @@ describe("Sandbox unsettled-hook hygiene", () => {
   })
 })
 
+describe("Sandbox file roundtrip via hooks", () => {
+  test("writeFile + exists + readFile roundtrips correctly (Defect C regression)", async () => {
+    // Regression test: the deep-research script's exists("brief.md") must find
+    // a file that was just written by writeFile("brief.md", content). The
+    // "brief.md not created" bug was a path mismatch between where the agent
+    // wrote and where the sandbox checked — this test verifies the file hook
+    // primitives themselves are consistent.
+    const files = new Map<string, string>()
+    const hooks = {
+      writeFile: async (path: unknown, content: unknown) => {
+        files.set(String(path), String(content))
+      },
+      exists: async (path: unknown) => files.has(String(path)),
+      readFile: async (path: unknown) => files.get(String(path)) ?? null,
+    }
+    const body = `
+      await writeFile("brief.md", "# Research Brief\\nSome content here")
+      const has = await exists("brief.md")
+      const content = await readFile("brief.md")
+      const missing = await exists("nope.md")
+      // readFile returns null for missing files, but the sandbox marshals null
+      // as undefined — check for either.
+      const missingContent = await readFile("nope.md")
+      return { has, content, missing, missingContent }
+    `
+    const result = (await evalScript(body, hooks)) as {
+      has: boolean
+      content: string
+      missing: boolean
+      missingContent: string | undefined
+    }
+    expect(result.has).toBe(true)
+    expect(result.content).toBe("# Research Brief\nSome content here")
+    expect(result.missing).toBe(false)
+    // null is marshaled as undefined in the sandbox (marshalIn maps null → vm.undefined)
+    expect(result.missingContent).toBeUndefined()
+  })
+})
+
 describe("Sandbox URL polyfill", () => {
   test("new URL exposes hostname and pathname", async () => {
     const result = await evalScript(
@@ -243,7 +296,7 @@ describe("Sandbox URL polyfill", () => {
     expect(result).toBe("threw")
   })
 
-  test("deep-research normURL dedup shape works end to end", async () => {
+  test("fact-check normURL dedup shape works end to end", async () => {
     const body = `
       const normURL = u => {
         try {

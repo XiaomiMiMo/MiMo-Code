@@ -1,0 +1,6 @@
+interface:
+  display_name: "Analyze Account Signals"
+  short_description: "Account briefs and ranked watchlist summaries"
+  default_prompt: "Analyze signals for one of my active accounts."
+policy:
+  allow_implicit_invocation: false

@@ -1,4 +1,4 @@
-import { Context, Effect, Layer, Scope, Schema } from "effect"
+import { Context, Effect, Layer, Scope, Schema, Option } from "effect"
 import { ulid } from "ulid"
 import { Database, eq, and, lte, inArray } from "@/storage"
 import { Bus } from "@/bus"
@@ -10,7 +10,8 @@ import type { SessionID } from "@/session/schema"
 import { Log } from "@/util"
 import { InboxTable } from "./inbox.sql"
 import { renderInboxRow } from "./render"
-import { sessionPromptRef, inboxServiceRef } from "./inbox-ref"
+import { sessionPromptRef, inboxServiceRef, defaultModelRef } from "./inbox-ref"
+import type { ProviderID, ModelID } from "@/provider/schema"
 
 const log = Log.create({ service: "inbox" })
 
@@ -31,6 +32,77 @@ export class InboxReceiverNotFound extends Schema.TaggedErrorClass<InboxReceiver
     receiverActorID: Schema.String,
   },
 ) {}
+
+export interface DrainSeed {
+  agent: string
+  model: { providerID: ProviderID; modelID: ModelID; variant?: string }
+}
+
+/**
+ * Resolve the {agent, model} a drained synthetic user message should carry,
+ * via a layered cheapest-first fallback. Exported for unit testing.
+ *
+ *  1. A prior real (non-system) model-bearing message. Inherits that message's
+ *     agent+model. No Provider dependency. The SEARCH SCOPE depends on the
+ *     receiver's mode: a standing `peer` (its actor id === its session id, runs
+ *     its own child session) may have run a turn under a DIFFERENT slice then
+ *     gone idle, so it searches cross-slice (agentID "*") — the idle-standing-
+ *     peer relay case. Every other receiver (an ordinary subagent slice, or a
+ *     session's host/"main" actor that merely COORDINATES other actors — e.g. a
+ *     WorkflowRuntime parent whose subagents run under its session) searches
+ *     ONLY its own slice, so a completion/notification delivered to the host
+ *     never fabricates a turn off an unrelated subagent's message. Restoring the
+ *     pre-relay slice scope for non-peers fixes the WorkflowRuntime regression
+ *     where the parent "main" drained a child's actor_notification into a real
+ *     LLM turn (stealing a queued response from the next agent()).
+ *  2. A true turnCount-0 / empty-slice peer: agent from the actor-registry row
+ *     (recorded at spawn), model from the project default resolver reachable via
+ *     `defaultModelRef` (an already-wired value — no fresh provider layer). If
+ *     the ref is unavailable (minimal fixtures), this tier is skipped.
+ *  3. Neither → `undefined`; caller keeps the rows durable and logs.
+ */
+export function resolveDrainSeed(
+  sessions: Session.Interface,
+  reg: ActorRegistry.Interface,
+  sessionID: SessionID,
+  actorID: string,
+): Effect.Effect<DrainSeed | undefined> {
+  return Effect.gen(function* () {
+    // Receiver's registry row decides the Tier 1 search scope + feeds Tier 2.
+    const actor = yield* reg.get(sessionID, actorID)
+    // Tier 1: a prior real model-bearing message. Cross-slice ONLY for a standing
+    // peer; slice-scoped for every other receiver (subagent / coordinating host).
+    const crossSlice = actor?.mode === "peer"
+    const match = yield* sessions.findMessage(
+      sessionID,
+      (m) =>
+        (m.info.role === "user" || m.info.role === "assistant") &&
+        "model" in m.info &&
+        m.info.model !== undefined &&
+        m.info.model.providerID !== "system" &&
+        "agent" in m.info &&
+        m.info.agent !== "system",
+      { agentID: crossSlice ? "*" : actorID },
+    )
+    if (Option.isSome(match)) {
+      const info = match.value.info
+      if ("model" in info && info.model && "agent" in info) {
+        return { agent: info.agent, model: info.model }
+      }
+    }
+
+    // Tier 2: turnCount-0 / empty slice. Agent from the registry row (recorded
+    // at spawn); model from the already-wired default resolver.
+    const resolver = defaultModelRef.current
+    if (actor && resolver) {
+      const model = yield* resolver.defaultModel()
+      return { agent: actor.agent, model: { providerID: model.providerID, modelID: model.modelID } }
+    }
+
+    // Tier 3: nothing to seed from.
+    return undefined
+  })
+}
 
 export interface SendInput {
   receiverSessionID: SessionID
@@ -106,7 +178,14 @@ export const layer: Layer.Layer<
       const promptRef = sessionPromptRef.current
       if (promptRef) {
         yield* promptRef
-          .loop({ sessionID: input.receiverSessionID, agentID: input.receiverActorID })
+          .loop({
+            sessionID: input.receiverSessionID,
+            agentID: input.receiverActorID,
+            // Woken turns notify their parent on completion. The spawn turn goes
+            // through SessionPrompt.prompt (no flag) so forkWork.notify remains
+            // the sole notifier for turn 1 — no double-notify.
+            notifyParentOnComplete: true,
+          })
           .pipe(Effect.ignore, Effect.forkIn(scope))
       } else {
         // Test fixtures / renderer-only paths can run without SessionPrompt.
@@ -143,26 +222,29 @@ export const layer: Layer.Layer<
       )
       if (rows.length === 0) return 0
 
-      // Find the most recent real (non-system) assistant in this slice so the
-      // synthetic user message inherits its agent + model. Pulled into Inbox
-      // module so plan 3 can delete actor/completion.ts wholesale.
-      const sliceMessages = yield* sessions.messages({ sessionID, agentID: actorID })
-      const lastReal = sliceMessages.findLast(
-        (m) =>
-          (m.info.role === "user" || m.info.role === "assistant") &&
-          "model" in m.info &&
-          m.info.model !== undefined &&
-          m.info.model.providerID !== "system" &&
-          m.info.agent !== "system",
-      )
-      if (
-        !lastReal ||
-        !("model" in lastReal.info) ||
-        !lastReal.info.model ||
-        !("agent" in lastReal.info)
-      ) {
-        // Slice has no real assistant yet — defer the drain. Rows stay in the
-        // inbox; next iteration after a real turn will pick them up.
+      // Resolve the {agent, model} the synthetic user message will carry, via a
+      // LAYERED fallback (cheapest-first) so a woken idle/standing peer always
+      // drains instead of no-op'ing when it has no prior real turn:
+      //
+      //   1. Any prior real (non-system) message in the session — searched
+      //      cross-slice (agentID "*") so a peer that ran a turn under any slice,
+      //      then went idle, still inherits that turn's agent+model. No extra
+      //      dependency; this covers the common "idle standing peer" case.
+      //   2. A true turnCount-0 / empty-slice peer: seed the agent from the
+      //      actor-registry row (recorded at spawn) and the model from the
+      //      project default resolver (already-wired ref — no fresh provider
+      //      layer in the hot path). This reuses the same default the normal
+      //      loop uses; it does NOT invent a new provider call.
+      //   3. If BOTH yield nothing, do NOT drop the queued task: leave the rows
+      //      durable and log, so a later turn that does have a model consumes
+      //      them (no regression vs. the previous return-0 behavior).
+      const seed = yield* resolveDrainSeed(sessions, reg, sessionID, actorID)
+      if (!seed) {
+        log.warn("inbox.drain: no model source (no prior model-bearing message, registry row, or default-model ref) — leaving rows durable", {
+          sessionID,
+          actorID,
+          pending: rows.length,
+        })
         return 0
       }
 
@@ -180,8 +262,8 @@ export const layer: Layer.Layer<
         sessionID,
         agentID: actorID,
         time: { created: now },
-        agent: lastReal.info.agent,
-        model: lastReal.info.model,
+        agent: seed.agent,
+        model: seed.model,
       })
       for (const row of rows) {
         yield* sessions.updatePart({

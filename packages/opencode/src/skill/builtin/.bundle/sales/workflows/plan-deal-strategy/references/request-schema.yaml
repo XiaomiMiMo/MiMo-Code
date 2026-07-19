@@ -1,0 +1,90 @@
+type: object
+required:
+  - mode
+properties:
+  account_name:
+    type: string
+    description: Customer account name.
+  crm_account_id:
+    type: string
+    description: "~~CRM account ID if known."
+  sfdc_account_id:
+    type: string
+    description: "Legacy alias for `crm_account_id`; normalize to `crm_account_id` before use."
+  opportunity_id:
+    type: string
+    description: "~~CRM opportunity ID if known."
+  opportunity_name:
+    type: string
+  time_window_days:
+    type: integer
+    minimum: 14
+    maximum: 365
+    default: 90
+  mode:
+    type: string
+    enum:
+      - full
+      - deal_map_only
+      - buying_committee_only
+      - procurement_risk_only
+      - next_actions_only
+    default: full
+  deal_stage_hint:
+    type: string
+    enum:
+      - discovery
+      - evaluation
+      - poc
+      - commercial
+      - procurement
+      - commit_window
+      - negotiation
+      - unknown
+    default: unknown
+  known_stakeholders:
+    type: array
+    items:
+      type: object
+      properties:
+        name:
+          type: string
+        title:
+          type: string
+        org:
+          type: string
+        role_hint:
+          type: string
+  seed_evidence:
+    type: array
+    description: Optional hints supplied by the user. Not required; the skill should discover evidence via connectors.
+    items:
+      type: object
+      properties:
+        evidence_type:
+          type: string
+          enum:
+            - call_transcript
+            - external_email_thread
+            - slack_account_channel
+            - crm_activity
+            - internal_strategy_doc
+            - calendar_history
+            - pasted_notes
+        locator:
+          type: string
+  strict_evidence:
+    type: boolean
+    default: true
+  max_next_actions:
+    type: integer
+    minimum: 3
+    maximum: 12
+    default: 7
+  use_data_enrichment:
+    type: string
+    enum:
+      - auto
+      - on
+      - off
+    default: auto

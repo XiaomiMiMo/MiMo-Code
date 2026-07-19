@@ -1,0 +1,6 @@
+interface:
+  display_name: "Report To Google Slides"
+  short_description: "Convert existing HTML analytics reports into Google Slides decks"
+  default_prompt: "Convert an existing HTML analytics report into a concise Google Slides deck for stakeholders."
+policy:
+  allow_implicit_invocation: false

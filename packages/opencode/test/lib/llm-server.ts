@@ -38,6 +38,7 @@ type Sse = {
   tail: unknown[]
   wait?: PromiseLike<unknown>
   hang?: boolean
+  releaseDeferred?: Deferred.Deferred<void>
   error?: unknown
   reset?: boolean
 }
@@ -425,7 +426,15 @@ function send(item: Sse) {
     : Stream.concat(head, tail)
   let end: Stream.Stream<Uint8Array, unknown> = empty
   if (item.error) end = Stream.concat(empty, Stream.fail(item.error))
-  else if (item.hang) end = Stream.concat(empty, Stream.never)
+  else if (item.releaseDeferred) {
+    // Controllable hang: blocks on an Effect-level Deferred instead of
+    // Stream.never. Fiber.interrupt unwinds Deferred.await at the Effect
+    // layer without touching TCP, so cancel is fast and deterministic.
+    end = Stream.concat(
+      empty,
+      Stream.fromEffect(Deferred.await(item.releaseDeferred).pipe(Effect.map(() => new Uint8Array(0)))),
+    )
+  } else if (item.hang) end = Stream.concat(empty, Stream.never)
 
   return HttpServerResponse.stream(Stream.concat(body, end), { contentType: "text/event-stream" })
 }
@@ -456,6 +465,7 @@ export class Reply {
   #finish: string | undefined
   #wait: PromiseLike<unknown> | undefined
   #hang = false
+  #releaseDeferred: Deferred.Deferred<void> | undefined
   #error: unknown
   #reset = false
   #seq = 0
@@ -521,6 +531,16 @@ export class Reply {
     this.#hang = true
     this.#error = undefined
     this.#reset = false
+    this.#releaseDeferred = undefined
+    return this
+  }
+
+  hangUntil(deferred: Deferred.Deferred<void>) {
+    this.#finish = undefined
+    this.#hang = false
+    this.#error = undefined
+    this.#reset = false
+    this.#releaseDeferred = deferred
     return this
   }
 
@@ -529,6 +549,7 @@ export class Reply {
     this.#hang = false
     this.#error = error
     this.#reset = false
+    this.#releaseDeferred = undefined
     return this
   }
 
@@ -547,6 +568,7 @@ export class Reply {
       tail: this.#finish ? [...this.#tail, finishLine(this.#finish, this.#usage)] : this.#tail,
       wait: this.#wait,
       hang: this.#hang,
+      releaseDeferred: this.#releaseDeferred,
       error: this.#error,
       reset: this.#reset,
     }
@@ -615,6 +637,7 @@ namespace TestLLMServer {
     readonly fail: (message?: unknown) => Effect.Effect<void>
     readonly error: (status: number, body: unknown) => Effect.Effect<void>
     readonly hang: Effect.Effect<void>
+    readonly hangUntil: (release: Deferred.Deferred<void>) => Effect.Effect<void>
     readonly hold: (value: string, wait: PromiseLike<unknown>) => Effect.Effect<void>
     readonly reset: Effect.Effect<void>
     readonly hits: Effect.Effect<Hit[]>
@@ -744,6 +767,9 @@ export class TestLLMServer extends Context.Service<TestLLMServer, TestLLMServer.
         hang: Effect.gen(function* () {
           queue(reply().hang().item())
         }).pipe(Effect.withSpan("TestLLMServer.hang")),
+        hangUntil: Effect.fn("TestLLMServer.hangUntil")(function* (release: Deferred.Deferred<void>) {
+          queue(reply().hangUntil(release).item())
+        }),
         hold: Effect.fn("TestLLMServer.hold")(function* (value: string, wait: PromiseLike<unknown>) {
           queue(reply().wait(wait).text(value).stop().item())
         }),

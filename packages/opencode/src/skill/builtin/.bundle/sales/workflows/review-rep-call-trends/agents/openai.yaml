@@ -1,0 +1,6 @@
+interface:
+  display_name: "Review Rep Call Trends"
+  short_description: "Analyze rep call behavior trends over time"
+  default_prompt: "Review a rep's call trends."
+policy:
+  allow_implicit_invocation: false

@@ -287,6 +287,7 @@ export type ToolStateError = {
     start: number
     end: number
   }
+  attachments?: Array<FilePart>
 }
 
 export type ToolState = ToolStatePending | ToolStateRunning | ToolStateCompleted | ToolStateError

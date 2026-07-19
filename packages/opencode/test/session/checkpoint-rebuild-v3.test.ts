@@ -1,4 +1,4 @@
-import { afterEach, describe, expect } from "bun:test"
+import { afterEach, beforeEach, describe, expect } from "bun:test"
 import { Effect, Layer } from "effect"
 import * as fs from "fs/promises"
 import path from "path"
@@ -9,13 +9,21 @@ import { Session } from "../../src/session"
 import { SessionCheckpoint } from "../../src/session/checkpoint"
 import { TaskRegistry } from "../../src/task/registry"
 import { ActorRegistry } from "../../src/actor/registry"
+import { ActorRegistryTable } from "../../src/actor/actor.sql"
 import { Instance } from "../../src/project/instance"
+import { Database } from "../../src/storage"
 import * as CrossSpawnSpawner from "../../src/effect/cross-spawn-spawner"
 import { provideTmpdirInstance } from "../fixture/fixture"
 import { testEffect } from "../lib/effect"
 
 afterEach(async () => {
   await Instance.disposeAll()
+})
+
+// Database.Client is a process-level singleton; orphan recovery only cleans rows
+// whose instance_id differs, so same-process test leftovers survive. Wipe them.
+beforeEach(() => {
+  Database.use((db) => db.delete(ActorRegistryTable).run())
 })
 
 const it = testEffect(

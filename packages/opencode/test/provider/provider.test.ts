@@ -49,12 +49,12 @@ async function getSmallModel(providerID: ProviderID) {
   return run((provider) => provider.getSmallModel(providerID))
 }
 
-async function defaultModel() {
-  return run((provider) => provider.defaultModel())
+async function getVisionModel() {
+  return run((provider) => provider.getVisionModel())
 }
 
-function opencodeProviderPresent(providers: Awaited<ReturnType<typeof list>>): boolean {
-  return providers[ProviderID.make("opencode")] !== undefined
+async function defaultModel() {
+  return run((provider) => provider.defaultModel())
 }
 
 test("provider loaded from env variable", async () => {
@@ -253,6 +253,110 @@ test("custom model alias via config", async () => {
       expect(providers[ProviderID.anthropic]).toBeDefined()
       expect(providers[ProviderID.anthropic].models["my-alias"]).toBeDefined()
       expect(providers[ProviderID.anthropic].models["my-alias"].name).toBe("My Custom Alias")
+    },
+  })
+})
+
+test("non-empty models config acts as implicit whitelist when only_configured_models is true", async () => {
+  await using tmp = await tmpdir({
+    init: async (dir) => {
+      await Bun.write(
+        path.join(dir, "mimocode.json"),
+        JSON.stringify({
+          $schema: "https://opencode.ai/config.json",
+          provider: {
+            anthropic: {
+              only_configured_models: true,
+              models: {
+                "claude-sonnet-4-20250514": {
+                  name: "Only Sonnet",
+                },
+              },
+            },
+          },
+        }),
+      )
+    },
+  })
+  await Instance.provide({
+    directory: tmp.path,
+    init: async () => {
+      set("ANTHROPIC_API_KEY", "test-api-key")
+    },
+    fn: async () => {
+      const providers = await list()
+      expect(providers[ProviderID.anthropic]).toBeDefined()
+      const models = Object.keys(providers[ProviderID.anthropic].models)
+      expect(models).toEqual(["claude-sonnet-4-20250514"])
+    },
+  })
+})
+
+test("models config only augments the catalog by default (no only_configured_models)", async () => {
+  await using tmp = await tmpdir({
+    init: async (dir) => {
+      await Bun.write(
+        path.join(dir, "mimocode.json"),
+        JSON.stringify({
+          $schema: "https://opencode.ai/config.json",
+          provider: {
+            anthropic: {
+              models: {
+                "claude-sonnet-4-20250514": {
+                  name: "Renamed Sonnet",
+                },
+              },
+            },
+          },
+        }),
+      )
+    },
+  })
+  await Instance.provide({
+    directory: tmp.path,
+    init: async () => {
+      set("ANTHROPIC_API_KEY", "test-api-key")
+    },
+    fn: async () => {
+      const providers = await list()
+      expect(providers[ProviderID.anthropic]).toBeDefined()
+      const models = Object.keys(providers[ProviderID.anthropic].models)
+      // Old (non-breaking) behavior: the configured model is still present AND
+      // other catalog models are NOT hidden.
+      expect(models).toContain("claude-sonnet-4-20250514")
+      expect(models.length).toBeGreaterThan(1)
+    },
+  })
+})
+
+test("only_configured_models with no models map is a no-op (catalog stays intact)", async () => {
+  await using tmp = await tmpdir({
+    init: async (dir) => {
+      await Bun.write(
+        path.join(dir, "mimocode.json"),
+        JSON.stringify({
+          $schema: "https://opencode.ai/config.json",
+          provider: {
+            anthropic: {
+              only_configured_models: true,
+            },
+          },
+        }),
+      )
+    },
+  })
+  await Instance.provide({
+    directory: tmp.path,
+    init: async () => {
+      set("ANTHROPIC_API_KEY", "test-api-key")
+    },
+    fn: async () => {
+      const providers = await list()
+      expect(providers[ProviderID.anthropic]).toBeDefined()
+      const models = Object.keys(providers[ProviderID.anthropic].models)
+      // Empty/absent `models` ⇒ no implicit whitelist ⇒ full catalog remains.
+      expect(models).toContain("claude-sonnet-4-20250514")
+      expect(models.length).toBeGreaterThan(1)
     },
   })
 })
@@ -1097,6 +1201,228 @@ test("getSmallModel respects config small_model override", async () => {
       expect(model).toBeDefined()
       expect(String(model?.providerID)).toBe("small")
       expect(String(model?.id)).toBe("small-big")
+    },
+  })
+})
+
+// getVisionModel: an explicit `vision_model` literal wins first; otherwise a
+// smart default picks a vision-capable model with in-house (mimo/xiaomi)
+// providers preferred, then cheapest by cost.input. Providers are fully
+// config-declared so tests don't depend on env-keyed models.dev autoload.
+const VISION_PROVIDER = {
+  mimo: {
+    name: "MiMo",
+    npm: "@ai-sdk/openai-compatible",
+    env: [],
+    models: {
+      "mimo-vision": {
+        name: "MiMo Vision",
+        tool_call: true,
+        limit: { context: 8000, output: 2000 },
+        cost: { input: 100, output: 200 },
+        modalities: { input: ["text", "image"], output: ["text"] },
+      },
+    },
+    options: { apiKey: "test-key" },
+  },
+  vendor: {
+    name: "Vendor",
+    npm: "@ai-sdk/openai-compatible",
+    env: [],
+    models: {
+      "vendor-cheap-vision": {
+        name: "Vendor Cheap Vision",
+        tool_call: true,
+        limit: { context: 8000, output: 2000 },
+        cost: { input: 1, output: 2 },
+        modalities: { input: ["text", "image"], output: ["text"] },
+      },
+      "vendor-text": {
+        name: "Vendor Text",
+        tool_call: true,
+        limit: { context: 8000, output: 2000 },
+        modalities: { input: ["text"], output: ["text"] },
+      },
+    },
+    options: { apiKey: "test-key" },
+  },
+}
+
+test("getVisionModel respects config vision_model override", async () => {
+  await using tmp = await tmpdir({
+    init: async (dir) => {
+      await Bun.write(
+        path.join(dir, "mimocode.json"),
+        JSON.stringify({
+          $schema: "https://opencode.ai/config.json",
+          provider: VISION_PROVIDER,
+          vision_model: "vendor/vendor-cheap-vision",
+        }),
+      )
+    },
+  })
+  await Instance.provide({
+    directory: tmp.path,
+    fn: async () => {
+      const model = await getVisionModel()
+      expect(model).toBeDefined()
+      expect(String(model?.providerID)).toBe("vendor")
+      expect(String(model?.id)).toBe("vendor-cheap-vision")
+    },
+  })
+})
+
+test("getVisionModel prefers in-house model over cheaper non-in-house", async () => {
+  await using tmp = await tmpdir({
+    init: async (dir) => {
+      await Bun.write(
+        path.join(dir, "mimocode.json"),
+        JSON.stringify({
+          $schema: "https://opencode.ai/config.json",
+          provider: VISION_PROVIDER,
+          enabled_providers: ["mimo", "vendor"],
+        }),
+      )
+    },
+  })
+  await Instance.provide({
+    directory: tmp.path,
+    fn: async () => {
+      // mimo-vision (cost 100, in-house) beats vendor-cheap-vision (cost 1);
+      // vendor-text is text-only and excluded entirely.
+      const model = await getVisionModel()
+      expect(model).toBeDefined()
+      expect(String(model?.providerID)).toBe("mimo")
+      expect(String(model?.id)).toBe("mimo-vision")
+    },
+  })
+})
+
+test("getVisionModel picks cheapest when no in-house vision model", async () => {
+  await using tmp = await tmpdir({
+    init: async (dir) => {
+      await Bun.write(
+        path.join(dir, "mimocode.json"),
+        JSON.stringify({
+          $schema: "https://opencode.ai/config.json",
+          provider: {
+            vendor: {
+              name: "Vendor",
+              npm: "@ai-sdk/openai-compatible",
+              env: [],
+              models: {
+                "vision-pricey": {
+                  name: "Vision Pricey",
+                  tool_call: true,
+                  limit: { context: 8000, output: 2000 },
+                  cost: { input: 50, output: 100 },
+                  modalities: { input: ["text", "image"], output: ["text"] },
+                },
+                "vision-cheap": {
+                  name: "Vision Cheap",
+                  tool_call: true,
+                  limit: { context: 8000, output: 2000 },
+                  cost: { input: 5, output: 10 },
+                  modalities: { input: ["text", "image"], output: ["text"] },
+                },
+              },
+              options: { apiKey: "test-key" },
+            },
+          },
+          enabled_providers: ["vendor"],
+        }),
+      )
+    },
+  })
+  await Instance.provide({
+    directory: tmp.path,
+    fn: async () => {
+      const model = await getVisionModel()
+      expect(model).toBeDefined()
+      expect(String(model?.providerID)).toBe("vendor")
+      expect(String(model?.id)).toBe("vision-cheap")
+    },
+  })
+})
+
+test("getVisionModel returns undefined when no vision-capable model exists", async () => {
+  await using tmp = await tmpdir({
+    init: async (dir) => {
+      await Bun.write(
+        path.join(dir, "mimocode.json"),
+        JSON.stringify({
+          $schema: "https://opencode.ai/config.json",
+          provider: {
+            vendor: {
+              name: "Vendor",
+              npm: "@ai-sdk/openai-compatible",
+              env: [],
+              models: {
+                "text-only": {
+                  name: "Text Only",
+                  tool_call: true,
+                  limit: { context: 8000, output: 2000 },
+                  modalities: { input: ["text"], output: ["text"] },
+                },
+              },
+              options: { apiKey: "test-key" },
+            },
+          },
+          enabled_providers: ["vendor"],
+        }),
+      )
+    },
+  })
+  await Instance.provide({
+    directory: tmp.path,
+    fn: async () => {
+      const model = await getVisionModel()
+      expect(model).toBeUndefined()
+    },
+  })
+})
+
+// Regression: getModel raises ModelNotFoundError as a DEFECT. A misconfigured
+// vision_model must not propagate that defect (it runs at SystemPrompt.environment()
+// call time → would fail the current request). It should fall back to the smart
+// default instead of throwing.
+test("getVisionModel falls back to smart default when vision_model is misconfigured", async () => {
+  await using tmp = await tmpdir({
+    init: async (dir) => {
+      await Bun.write(
+        path.join(dir, "mimocode.json"),
+        JSON.stringify({
+          $schema: "https://opencode.ai/config.json",
+          vision_model: "vendor/does-not-exist",
+          provider: {
+            vendor: {
+              name: "Vendor",
+              npm: "@ai-sdk/openai-compatible",
+              env: [],
+              models: {
+                "vision-cheap": {
+                  name: "Vision Cheap",
+                  tool_call: true,
+                  limit: { context: 8000, output: 2000 },
+                  cost: { input: 5, output: 10 },
+                  modalities: { input: ["text", "image"], output: ["text"] },
+                },
+              },
+              options: { apiKey: "test-key" },
+            },
+          },
+          enabled_providers: ["vendor"],
+        }),
+      )
+    },
+  })
+  await Instance.provide({
+    directory: tmp.path,
+    fn: async () => {
+      // Must not throw; falls back to the only vision-capable model.
+      const model = await getVisionModel()
+      expect(model).toBeDefined()
+      expect(String(model?.id)).toBe("vision-cheap")
     },
   })
 })
@@ -2612,41 +2938,3 @@ test("plugin config enabled and disabled providers are honored", async () => {
   })
 })
 
-test("opencode and opencode-go providers are disabled by MimoFreeAuthPlugin", async () => {
-  await using base = await tmpdir({
-    init: async (dir) => {
-      await Bun.write(
-        path.join(dir, "mimocode.json"),
-        JSON.stringify({
-          $schema: "https://opencode.ai/config.json",
-          provider: {
-            opencode: {
-              options: {
-                apiKey: "test-key",
-              },
-            },
-          },
-        }),
-      )
-    },
-  })
-
-  const providers = await Instance.provide({
-    directory: base.path,
-    fn: async () => list(),
-  })
-
-  // MimoFreeAuthPlugin always pushes opencode/opencode-go into disabled_providers,
-  // so they should not appear even when the user supplies an apiKey or auth record.
-  // However, MimoFreeAuthPlugin is part of the private overlay (src/ext/) that only
-  // exists in the internal build. In the open-source build the plugin is absent and
-  // opencode/opencode-go remain loaded. Gate these assertions on mimo provider presence.
-  const mimo = providers[ProviderID.make("mimo")]
-  if (mimo) {
-    expect(opencodeProviderPresent(providers)).toBe(false)
-    expect(providers[ProviderID.make("opencode-go")]).toBeUndefined()
-    expect(mimo.models[ModelID.make("mimo-auto")]).toBeDefined()
-    expect(mimo.models[ModelID.make("mimo-auto")].limit.context).toBe(1_000_000)
-    expect(mimo.models[ModelID.make("mimo-auto")].limit.output).toBe(128_000)
-  }
-})

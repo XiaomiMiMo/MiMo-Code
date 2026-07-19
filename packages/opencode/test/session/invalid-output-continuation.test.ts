@@ -115,9 +115,12 @@ describe("invalid-output continuation — integration", () => {
     }
   })
 
-  test("repeated empty output exhausts the shared limit and writes InvalidOutputError", async () => {
+  test("repeated empty output is caught by the empty-step guard and halts the turn", async () => {
     await using tmp = await tmpdir({ git: true })
     // Server repeats the last entry, so every call returns an empty stop.
+    // The empty/no-op tool-call guard (empty-step-detection) intercepts these
+    // empty terminals BEFORE autoContinueInvalidOutput and hard-halts the turn
+    // after EMPTY_STEP_MAX_RECOVERY soft nudges + 1 halting step.
     const stub = startScriptedLLMServer([{ lines: emptyStopResponse() }])
     try {
       await writeConfig(tmp.path, stub.origin)
@@ -134,11 +137,11 @@ describe("invalid-output continuation — integration", () => {
                 agent: "build",
                 parts: [{ type: "text", text: "Answer my question." }],
               })
-              // limit nudges + 1 final attempt that trips the terminal error.
-              expect(stub.captures.length).toBe(Flag.MIMOCODE_INVALID_OUTPUT_CONTINUATION_LIMIT + 1)
+              // EMPTY_STEP_MAX_RECOVERY soft nudges + 1 halting step.
+              expect(stub.captures.length).toBe(Flag.MIMOCODE_EMPTY_STEP_MAX_RECOVERY + 1)
               expect(result.info.role).toBe("assistant")
               if (result.info.role === "assistant") {
-                expect(result.info.error?.name).toBe("InvalidOutputError")
+                expect(result.info.error).toBeDefined()
               }
             }),
           ),

@@ -1,19 +1,14 @@
-import { afterEach, describe, expect, test } from "bun:test"
+import { describe, expect, test } from "bun:test"
 import { isOverflow, pressureLevel, usable } from "../../src/session/overflow"
 import { Token } from "../../src/util"
 import { Session as SessionNs } from "../../src/session"
 import type { Provider } from "../../src/provider"
-import { Instance } from "../../src/project/instance"
 
 function mockCfg(opts?: { reserved?: number; auto?: boolean }) {
   return {
     compaction: { auto: opts?.auto ?? true, reserved: opts?.reserved },
   } as any
 }
-
-afterEach(async () => {
-  await Instance.disposeAll()
-})
 
 function createModel(opts: {
   context: number

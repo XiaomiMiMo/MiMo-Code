@@ -1,0 +1,48 @@
+Apache License
+Version 2.0, January 2004
+http://www.apache.org/licenses/
+
+Copyright 2026 The Fresh PDF Skill contributors
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+
+--------------------------------------------------------------------------------
+
+THIRD-PARTY COMPONENTS
+
+This skill is a set of Markdown guides and small Python CLI wrappers. It does
+NOT bundle or redistribute the following libraries; it merely invokes them at
+runtime. Their own licenses apply to their own code:
+
+- pypdf ............... BSD-3-Clause (https://github.com/py-pdf/pypdf)
+- pdfplumber .......... MIT          (https://github.com/jsvine/pdfplumber)
+- pypdfium2 ........... Apache-2.0 or BSD-3-Clause (dual)
+                        wraps PDFium (BSD-3-Clause) — Chromium's PDF engine
+- reportlab (open) .... BSD-3-Clause (https://www.reportlab.com/)
+- pdf-lib (JS) ........ MIT          (https://github.com/Hopding/pdf-lib)
+- pdfjs-dist (JS) ..... Apache-2.0   (Mozilla PDF.js)
+- pypng / Pillow ...... MIT / PIL-style permissive
+- pytesseract wrapper . Apache-2.0   (Tesseract itself is Apache-2.0)
+- qpdf (CLI) .......... Apache-2.0
+- poppler-utils (CLI) . GPL-2.0      — invoked only as an external command;
+                        no source code is copied or linked. Redistributing the
+                        poppler binaries is subject to GPL. If you cannot
+                        accept GPL on external tooling, avoid `pdftotext`,
+                        `pdftoppm`, and `pdfimages`; the Python-only path in
+                        this skill (pypdf + pypdfium2 + pdfplumber + reportlab)
+                        is fully permissive.
+- ImageMagick (CLI) ... ImageMagick License (Apache-2.0 style) — optional,
+                        used only in the forms zoom-refinement flow.
+
+This skill is an independent implementation. The recipes below are written
+from scratch against the linked libraries' public documentation.

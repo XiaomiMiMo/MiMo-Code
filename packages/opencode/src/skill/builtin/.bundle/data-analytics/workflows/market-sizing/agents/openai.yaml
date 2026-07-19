@@ -1,0 +1,6 @@
+interface:
+  display_name: "Market Sizing"
+  short_description: "Estimate market and opportunity size with transparent assumptions"
+  default_prompt: "Estimate a market or opportunity size with transparent scope, assumptions, calculations, and sensitivity."
+policy:
+  allow_implicit_invocation: true

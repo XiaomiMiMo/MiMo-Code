@@ -1,0 +1,6 @@
+interface:
+  display_name: "Gather Business Context"
+  short_description: "Collect product and business context before analysis"
+  default_prompt: "Gather the product and business context needed to frame this analysis accurately."
+policy:
+  allow_implicit_invocation: true

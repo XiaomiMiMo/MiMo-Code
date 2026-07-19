@@ -20,7 +20,7 @@ This is an early release. If you encounter issues or have feedback, please creat
 ## Development
 
 1. `code sdks/vscode` - Open the `sdks/vscode` directory in VS Code. **Do not open from repo root.**
-2. `bun install` - Run inside the `sdks/vscode` directory.
+2. `bun ci` - Run inside the `sdks/vscode` directory.
 3. Press `F5` to start debugging - This launches a new VS Code window with the extension loaded.
 
 #### Making Changes

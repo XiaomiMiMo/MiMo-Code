@@ -75,7 +75,7 @@ describe("sweepOrphanAssistants", () => {
     ),
   )
 
-  it.live("leaves a recent (under 60s) incomplete assistant message untouched", () =>
+  it.live("leaves a recent (under 60s) incomplete assistant message untouched when not immediate", () =>
     provideTmpdirInstance((dir) =>
       Effect.gen(function* () {
         const sessions = yield* Session.Service
@@ -95,6 +95,8 @@ describe("sweepOrphanAssistants", () => {
         const assistant = makeAssistant(session.id, userMsg.id, dir, { created: now - 1_800_000 })
         yield* sessions.updateMessage(assistant)
 
+        // immediate defaults to false → the age guard protects an in-flight
+        // (busy) turn's still-progressing assistant.
         yield* svc.sweepOrphanAssistants(session.id)
 
         const after = yield* sessions.messages({ sessionID: session.id })
@@ -103,6 +105,43 @@ describe("sweepOrphanAssistants", () => {
         const info = updated!.info as MessageV2.Assistant
         expect(info.time.completed).toBeUndefined()
         expect(info.error).toBeUndefined()
+      }),
+    ),
+  )
+
+  it.live("sweeps a recent (under 60s) incomplete assistant when immediate (idle session)", () =>
+    provideTmpdirInstance((dir) =>
+      Effect.gen(function* () {
+        const sessions = yield* Session.Service
+        const svc = yield* SessionPrompt.Service
+        const session = yield* sessions.create({})
+
+        const userMsg = yield* sessions.updateMessage({
+          id: MessageID.ascending(),
+          role: "user",
+          sessionID: session.id,
+          agent: "default",
+          model: { providerID: ProviderID.make("test"), modelID: ModelID.make("test-model") },
+          time: { created: Date.now() - 5_000 },
+        })
+
+        // A fresh orphan (well under ORPHAN_AGE_MS) — the exact shape a hard
+        // interruption leaves behind. On an idle session this must be swept so
+        // the next user message is not rendered as stuck QUEUED behind it.
+        const now = Date.now()
+        const assistant = makeAssistant(session.id, userMsg.id, dir, { created: now - 3_000 })
+        yield* sessions.updateMessage(assistant)
+
+        yield* svc.sweepOrphanAssistants(session.id, true)
+
+        const after = yield* sessions.messages({ sessionID: session.id })
+        const updated = after.find((m) => m.info.id === assistant.id)
+        expect(updated).toBeDefined()
+        const info = updated!.info as MessageV2.Assistant
+        expect(info.time.completed).toBeDefined()
+        expect(info.time.completed!).toBeGreaterThanOrEqual(now)
+        expect(info.error).toBeDefined()
+        expect(JSON.stringify(info.error)).toContain("Abandoned")
       }),
     ),
   )
