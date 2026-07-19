@@ -1,0 +1,6 @@
+interface:
+  display_name: "Build Dashboard"
+  short_description: "Create source-backed dashboards for monitoring performance, exploring drivers, and acting on metrics."
+  default_prompt: "Build a dashboard for a product or business metric with clear definitions, useful filters, validation, and handoff."
+policy:
+  allow_implicit_invocation: true

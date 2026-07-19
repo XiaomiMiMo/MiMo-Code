@@ -5,3 +5,5 @@ bun.lock
 .gitignore
 package-lock.json
 references/
+.cron-lock
+scheduled_tasks.json

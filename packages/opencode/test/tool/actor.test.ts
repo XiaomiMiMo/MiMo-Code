@@ -562,9 +562,9 @@ describe("Actor tool subagent_type enum (F36)", () => {
         expect(Object.keys(flat.properties)).toEqual(["operation"])
         expect(flat.required).toEqual(["operation"])
         // The operation node must carry type:"object" (the .meta fix) so models
-        // don't stringify the envelope, and must retain its inner 6-way union.
+        // don't stringify the envelope, and must retain its inner 7-way union.
         expect(flat.properties.operation.type).toBe("object")
-        expect((flat.properties.operation.oneOf ?? flat.properties.operation.anyOf).length).toBe(6)
+        expect((flat.properties.operation.oneOf ?? flat.properties.operation.anyOf).length).toBe(7)
       }),
     ),
   )
@@ -746,7 +746,7 @@ describe("Actor tool task_id degradation", () => {
 
         expect(result.output).toContain("not-a-task")
         expect(result.output.toLowerCase()).toContain("ad-hoc")
-        expect(result.output).toContain("Background actor started")
+        expect(result.output).toContain("Background sub-session started")
       }),
     ),
   )

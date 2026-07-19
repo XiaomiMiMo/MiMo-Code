@@ -35,8 +35,9 @@ export function DialogSubagent(props: { sessionID: string }) {
             route.navigate({ ...route.data, agentID: a.actor_id })
           }
         } else {
-          // peer mode: navigate to the actor's own session, viewing its own slice
-          route.navigate({ type: "session", sessionID: a.session_id, agentID: a.actor_id })
+          // peer mode: attach to the child's OWN session as a full writable session
+          // (no agentID → its own `main` view, like `mimo -c <id>`), not a read-only slice.
+          route.navigate({ type: "session", sessionID: a.session_id })
         }
         dialog.clear()
       },

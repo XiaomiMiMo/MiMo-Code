@@ -35,7 +35,7 @@ https://github.com/anomalyco/models.dev
 - Install dependencies and start the dev server from the repo root:
 
   ```bash
-  bun install
+  bun ci   # = bun install --frozen-lockfile
   bun dev
   ```
 

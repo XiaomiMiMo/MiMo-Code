@@ -245,14 +245,39 @@ export const layer: Layer.Layer<
 
     const setup = Effect.fnUntraced(function* (info: Info) {
       const ctx = yield* InstanceState.context
-      const created = yield* lock(ctx.worktree).withPermits(1)(
-        git(["worktree", "add", "--no-checkout", "-b", info.branch, info.directory], {
-          cwd: ctx.worktree,
+      // Hold the per-parent-repo lock across the whole atomic creation: the
+      // checked-out `worktree add -b` AND the HEAD-attachment assertion. All
+      // child worktrees share one ref store (via --git-common-dir), so a
+      // concurrent creator mutating packed-refs could otherwise clobber this
+      // branch ref advance while the commit object survives -> merge-by-hash.
+      yield* lock(ctx.worktree).withPermits(1)(
+        Effect.gen(function* () {
+          // Atomic: create the worktree already checked out onto a new branch
+          // so HEAD is attached to refs/heads/<branch> from the start. This
+          // replaces the old non-atomic two-step (`--no-checkout -b` here then
+          // a separate `git reset --hard` in boot), which could leave an
+          // unborn/empty checkout onto which later commits landed off-branch.
+          const created = yield* git(["worktree", "add", "-b", info.branch, info.directory], {
+            cwd: ctx.worktree,
+          })
+          if (created.code !== 0) {
+            throw new CreateFailedError({ message: created.stderr || created.text || "Failed to create git worktree" })
+          }
+
+          // Assert HEAD is attached to the expected branch. If git ever hands
+          // back a detached or wrong HEAD, fail loudly here rather than letting
+          // the child commit onto a detached HEAD (the root cause of the ref
+          // not advancing in the outer repo).
+          const symbolic = yield* git(["symbolic-ref", "--quiet", "HEAD"], { cwd: info.directory })
+          const head = symbolic.text.trim()
+          const expected = `refs/heads/${info.branch}`
+          if (symbolic.code !== 0 || head !== expected) {
+            throw new CreateFailedError({
+              message: `Worktree HEAD is not attached to ${expected} (got ${head || "detached HEAD"})`,
+            })
+          }
         }),
       )
-      if (created.code !== 0) {
-        throw new CreateFailedError({ message: created.stderr || created.text || "Failed to create git worktree" })
-      }
 
       yield* project.addSandbox(ctx.project.id, info.directory).pipe(Effect.catch(() => Effect.void))
     })
@@ -263,19 +288,9 @@ export const layer: Layer.Layer<
       const projectID = ctx.project.id
       const extra = startCommand?.trim()
 
-      const populated = yield* git(["reset", "--hard"], { cwd: info.directory })
-      if (populated.code !== 0) {
-        const message = populated.stderr || populated.text || "Failed to populate worktree"
-        log.error("worktree checkout failed", { directory: info.directory, message })
-        GlobalBus.emit("event", {
-          directory: info.directory,
-          project: ctx.project.id,
-          workspace: workspaceID,
-          payload: { type: Event.Failed.type, properties: { message } },
-        })
-        return
-      }
-
+      // Population is no longer a separate step: setup() creates the worktree
+      // already checked out on the branch, so the working tree is populated and
+      // HEAD is verified-attached before we get here.
       const booted = yield* Effect.promise(() =>
         Instance.provide({
           directory: info.directory,
@@ -393,6 +408,8 @@ export const layer: Layer.Layer<
       if (list.code !== 0) {
         throw new RemoveFailedError({ message: list.stderr || list.text || "Failed to read git worktrees" })
       }
+
+      yield* Effect.promise(() => Instance.disposeDirectory(input.directory))
 
       const entries = parseWorktreeList(list.text)
       const entry = yield* locateWorktree(entries, directory)

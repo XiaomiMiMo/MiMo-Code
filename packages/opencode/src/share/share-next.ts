@@ -12,6 +12,7 @@ import type { SessionID } from "@/session/schema"
 import { Database, eq } from "@/storage"
 import { Config } from "@/config"
 import { Log } from "@/util"
+import { isRecord } from "@/util/record"
 import { SessionShareTable } from "./share.sql"
 
 const log = Log.create({ service: "share-next" })
@@ -105,6 +106,26 @@ function key(item: Data) {
   }
 }
 
+function shareable(item: Data): Data {
+  if (item.type !== "part" || item.data.type !== "tool" || !("metadata" in item.data.state)) return item
+
+  const metadata = item.data.state.metadata
+  if (!isRecord(metadata) || !isRecord(metadata.mcp) || !("_meta" in metadata.mcp)) return item
+
+  const mcp = { ...metadata.mcp }
+  delete mcp._meta
+  return {
+    ...item,
+    data: {
+      ...item.data,
+      state: {
+        ...item.data.state,
+        metadata: { ...metadata, mcp },
+      },
+    },
+  } as Data
+}
+
 export const layer = Layer.effect(
   Service,
   Effect.gen(function* () {
@@ -126,12 +147,13 @@ export const layer = Layer.effect(
         const existing = s.queue.get(sessionID)
         if (existing) {
           for (const item of data) {
-            existing.set(key(item), item)
+            const safe = shareable(item)
+            existing.set(key(safe), safe)
           }
           return
         }
 
-        const next = new Map(data.map((item) => [key(item), item]))
+        const next = new Map(data.map(shareable).map((item) => [key(item), item]))
         s.queue.set(sessionID, next)
         yield* flush(sessionID).pipe(
           Effect.delay(1000),

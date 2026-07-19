@@ -1,0 +1,33 @@
+{
+  "skill_name": "html-to-video-pipeline",
+  "evals": [
+    {
+      "id": 0,
+      "name": "fout-debugging",
+      "prompt": "I'm building a small tool that turns HTML template files into MP4s using Playwright chromium.launch + recordVideo + ffmpeg. The templates are single-file HTML with a bit of CSS @keyframes and usually a Google Fonts <link> (Shrikhand, Archivo Black). Almost everything works EXCEPT: when I play back the exported MP4, the first ~1.5 seconds show the text in a system-serif fallback, then it snaps to the real Shrikhand mid-clip — you can literally see the letter widths jump. In the live preview inside my dev studio it looks fine, only the export has this issue. I already tried adding `await page.evaluate(() => document.fonts.ready)` right after page.goto and it didn't help. What's actually going on and how do I fix this properly?",
+      "expected_output": "Diagnoses that fonts.ready under domcontentloaded resolves against empty face set because stylesheet <link> hasn't loaded yet. Prescribes: freeze animations via addInitScript before goto + wait for stylesheet links + face.load() per face + fonts.ready + rAF. Notes live preview differs because tab-cached fonts.",
+      "files": []
+    },
+    {
+      "id": 1,
+      "name": "concat-corruption",
+      "prompt": "I have a pipeline that renders each scene of a video as a separate MP4. Scene A and C come from a Playwright browser recording (libx264 via ffmpeg), Scene B comes from Remotion's renderMedia (also libx264 but different pipeline). Each individual scene is exactly the length I expect — 3s each, so 9s total. When I concat them with `ffmpeg -f concat -safe 0 -i list.txt -c copy out.mp4`, the resulting file plays fine but ffprobe says it's 34 seconds long and there's a huge frozen chunk in the middle. Same list.txt works fine if all three scenes come from Playwright. What's wrong and how do I fix it? I'd really rather not re-encode if I don't have to.",
+      "expected_output": "Root cause = PTS/timebase mismatch between Remotion and Playwright outputs; -c copy accumulates bad PTS. Fix = concat filter -filter_complex \"[0:v][1:v][2:v]concat=n=3:v=1:a=0[v]\" which rebuilds timeline and requires re-encoding. Notes -vsync cfr won't rescue the demuxer path.",
+      "files": []
+    },
+    {
+      "id": 2,
+      "name": "build-from-scratch",
+      "prompt": "I need to build a headless HTML-to-video renderer for a small internal design tool at my company. Input is an HTML file that may include CSS @keyframes animations, an optional GSAP master timeline, and web fonts pulled from a Google Fonts <link>. Output is a 1080p MP4 at 30fps at whatever duration the animation naturally runs (max ~15s). It'll be called from a Node service running in a Linux container. I've written a bit of Puppeteer/Playwright glue before but never a proper video export pipeline — walk me through what the code should actually look like, and please flag any subtle traps I should know about before I ship this.",
+      "expected_output": "Walks through Playwright recordVideo + ffmpeg encode. Includes: freeze animations before goto (addInitScript), waitUntil domcontentloaded not load, proper font wait (stylesheet link + face.load + fonts.ready + rAF), duration probe with infinite/repeat:-1 guards, trim dead lead-in with -ss, ffmpeg encode with +faststart, verification via ffprobe.",
+      "files": []
+    },
+    {
+      "id": 3,
+      "name": "choppy-recording",
+      "prompt": "My Playwright recordVideo pipeline works end to end, but the exported MP4 looks choppy — the GSAP motion visibly stutters, even though I pass -r 60 to ffmpeg and the animation is silky smooth in a real browser tab. Also the whole video looks slightly soft/blurry compared to the browser. Rendering happens headless in a Docker CI container. I need a genuinely smooth 60fps 1080p export. What are my options?",
+      "expected_output": "Explains recordVideo is a best-effort variable ~25fps screencast that drops frames under CI load; -r 60 only duplicates frames and cannot add smoothness. Checks viewport === recordVideo.size for the blurriness (mismatch rescales output; deviceScaleFactor doesn't raise recording resolution). Prescribes deterministic frame stepping: pause all animations, per frame seek document.getAnimations() currentTime and gsap.globalTimeline.time(i/60), screenshot each frame, encode the PNG sequence with ffmpeg -framerate 60. Notes limits: <video> elements or setTimeout-choreographed scenes need real-time capture or a CDP virtual clock.",
+      "files": []
+    }
+  ]
+}

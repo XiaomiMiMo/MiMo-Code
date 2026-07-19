@@ -1,7 +1,7 @@
 import path from "path"
 import { Provider } from "@/provider"
 import { Log } from "@/util"
-import { Context, Duration, Effect, Layer, Record, Schedule, Ref } from "effect"
+import { Context, Duration, Effect, Layer, Record, Schedule, Ref, Cause } from "effect"
 import * as Stream from "effect/Stream"
 import { streamText, wrapLanguageModel, type ModelMessage, type Tool, tool, jsonSchema } from "ai"
 import { mergeDeep, pipe } from "remeda"
@@ -198,6 +198,12 @@ export type StreamInput = {
 
 export type StreamRequest = StreamInput & {
   abort: AbortSignal
+  // Set on the reactive one-shot retry after a Bedrock/gateway prefill-rejection
+  // 400: hard-prune the trailing assistant (prefill) message(s) before building
+  // the request so the resend ends with a user/tool message. See stream(). The
+  // proactive guard (ProviderTransform.ensureTrailingUserMessage in message())
+  // normally makes this unnecessary; this is a last-resort backstop.
+  dropAssistantPrefill?: boolean
 }
 
 export type Event = Result["fullStream"] extends AsyncIterable<infer T> ? T : never
@@ -253,17 +259,19 @@ const live: Layer.Layer<
           .join("\n"),
       )
 
-      // v5: memory-instructions section. Teaches the main agent how/where/when
-      // to maintain `MEMORY.md` and `checkpoint.md` directly via Edit. Project
-      // ID is resolved from the ALS-bound Instance with a safe fallback to
+      // v5: memory-instructions section. Teaches the agent how/where/when to
+      // maintain `MEMORY.md` and `checkpoint.md` directly via Edit. Project ID is
+      // resolved from the ALS-bound Instance with a safe fallback to
       // `ProjectID.global` (mirrors the pattern in session/checkpoint.ts so the
       // path the prompt advertises matches the path the writer actually writes).
-      // Skip for system-spawned actors (e.g. checkpoint-writer): they shouldn't
-      // see the user-facing memory instructions.
-      const isSystemActor = input.agentID
-        ? yield* actorReg.isSystemSpawned(SessionID.make(input.sessionID), input.agentID)
-        : false
-      if (!isSystemActor) {
+      // Injected only for actors whose context the checkpoint flow serves —
+      // main + peer. Subagents (explore/general/compose) use per-actor compaction
+      // and have no checkpoint duty; system-spawned actors (checkpoint-writer et al.)
+      // are the writers themselves. Shares the exact `servesCheckpoint` judgement
+      // with SessionPrune.fireCheckpoints so the "who owns a checkpoint" and "who is
+      // taught about it" sets can never drift apart.
+      const servesCheckpoint = yield* actorReg.servesCheckpoint(SessionID.make(input.sessionID), input.agentID)
+      if (servesCheckpoint) {
         const projectID =
           (yield* Effect.try({
             try: () => Instance.current?.project?.id as ProjectID | undefined,
@@ -279,20 +287,23 @@ const live: Layer.Layer<
         system.push(buildMemoryInstructions(SessionID.make(input.sessionID), projectID, yield* memory.root()))
       }
 
-      const header = system[0]
+      // Plugins still see the multi-part array (base prompt as [0], memory as a
+      // trailing element) so hooks that index or append parts keep working.
       yield* plugin.trigger(
         "experimental.chat.system.transform",
         { sessionID: input.sessionID, model: input.model },
         { system },
       )
-      // rejoin to maintain 2-part structure for caching if header unchanged
-      if (system.length > 2 && system[0] === header) {
-        const rest = system.slice(1)
-        system.length = 0
-        system.push(header, rest.join("\n"))
-      }
 
-      return system
+      // Collapse to a single system message. The historical 2-part split existed
+      // only to keep a byte-stable cache prefix separate from the memory block's
+      // per-session paths — but within a session those paths are fixed, so the
+      // whole thing is stable and one block caches just as well. One message also
+      // keeps the fork-prefix parity invariant trivial (nothing to misalign) and
+      // spares subagents/providers a stray extra system turn. Join with a blank
+      // line (\n\n) so adjacent markdown sections (base prompt, "# Memory system")
+      // don't run together into one heading.
+      return system.length <= 1 ? system : [system.filter((x) => x).join("\n\n")]
     })
 
     const run = Effect.fn("LLM.run")(function* (input: StreamRequest) {
@@ -355,10 +366,23 @@ const live: Layer.Layer<
       }
 
       const isWorkflow = language instanceof GitLabWorkflowLanguageModel
+      // Reactive prefill-rejection backstop. The PRIMARY mechanism is the
+      // proactive guard in ProviderTransform.message()
+      // (ensureTrailingUserMessage): we never send a request ending in an
+      // assistant (prefill) turn, and we never delete a completed reply to do so.
+      // This reactive path is defense-in-depth: if any code path still slips a
+      // trailing assistant through to the wire (e.g. a provider-side transform
+      // re-adds one) and the backend 400s on it, run() re-runs with this flag set
+      // to hard-prune the trailing assistant turn(s) so the resend ends with a
+      // user/tool message. It should effectively never fire, but keeping it is
+      // cheap and safe.
+      const requestMessages = input.dropAssistantPrefill
+        ? ProviderTransform.dropTrailingAssistantPrefill(input.messages)
+        : input.messages
       const messages = isOpenaiOauth
-        ? input.messages
+        ? requestMessages
         : isWorkflow
-          ? input.messages
+          ? requestMessages
           : [
               ...system.map(
                 (x): ModelMessage => ({
@@ -366,7 +390,7 @@ const live: Layer.Layer<
                   content: x,
                 }),
               ),
-              ...input.messages,
+              ...requestMessages,
             ]
 
       const params = yield* plugin.trigger(
@@ -644,58 +668,113 @@ const live: Layer.Layer<
       })
     })
 
-    const stream: Interface["stream"] = (input) =>
-      Stream.scoped(
-        Stream.unwrap(
-          Effect.gen(function* () {
-            const ctrl = yield* Effect.acquireRelease(
-              Effect.sync(() => new AbortController()),
-              (ctrl) => Effect.sync(() => ctrl.abort()),
-            )
-            const attemptRef = yield* Ref.make(0)
+    const stream: Interface["stream"] = (input) => {
+      // Build the scoped stream for one attempt. `dropAssistantPrefill` forces
+      // run() to hard-prune the trailing assistant prefill before send — used only
+      // by the reactive one-shot retry below.
+      const attempt = (dropAssistantPrefill: boolean) =>
+        Stream.scoped(
+          Stream.unwrap(
+            Effect.gen(function* () {
+              const ctrl = yield* Effect.acquireRelease(
+                Effect.sync(() => new AbortController()),
+                (ctrl) => Effect.sync(() => ctrl.abort()),
+              )
+              const attemptRef = yield* Ref.make(0)
 
-            const publishRetryEvent = (error: unknown, nextAttempt: number) =>
-              Effect.gen(function* () {
-                log.debug("retry attempt", {
-                  sessionID: input.sessionID,
-                  messageID: input.user.id,
-                  attempt: nextAttempt,
-                  reason: error instanceof Error ? error.message : String(error),
-                })
-                if (nextAttempt > 10) return
-                const delayMs = Math.min(500 * 2 ** (nextAttempt - 1), 300_000)
-                yield* Effect.promise(() =>
-                  Bus.publish(Session.Event.RetryAttempt, {
-                    sessionID: SessionID.make(input.sessionID),
+              const publishRetryEvent = (error: unknown, nextAttempt: number) =>
+                Effect.gen(function* () {
+                  log.debug("retry attempt", {
+                    sessionID: input.sessionID,
                     messageID: input.user.id,
                     attempt: nextAttempt,
-                    maxAttempts: 10,
                     reason: error instanceof Error ? error.message : String(error),
-                    nextDelayMs: delayMs,
                   })
-                )
-              })
+                  if (nextAttempt > 10) return
+                  const delayMs = Math.min(500 * 2 ** (nextAttempt - 1), 300_000)
+                  yield* Effect.promise(() =>
+                    Bus.publish(Session.Event.RetryAttempt, {
+                      sessionID: SessionID.make(input.sessionID),
+                      messageID: input.user.id,
+                      attempt: nextAttempt,
+                      maxAttempts: 10,
+                      reason: error instanceof Error ? error.message : String(error),
+                      nextDelayMs: delayMs,
+                    })
+                  )
+                })
 
-            const streamWithTelemetry = run({ ...input, abort: ctrl.signal }).pipe(
-              Effect.tapError((error) => {
-                if (!isTransientCapacityError(error)) return Effect.void
-                return Ref.updateAndGet(attemptRef, (n) => n + 1).pipe(
-                  Effect.flatMap((nextAttempt) => publishRetryEvent(error, nextAttempt))
-                )
-              })
-            )
+              const streamWithTelemetry = run({ ...input, abort: ctrl.signal, dropAssistantPrefill }).pipe(
+                Effect.tapError((error) => {
+                  if (!isTransientCapacityError(error)) return Effect.void
+                  return Ref.updateAndGet(attemptRef, (n) => n + 1).pipe(
+                    Effect.flatMap((nextAttempt) => publishRetryEvent(error, nextAttempt))
+                  )
+                })
+              )
 
-            const result = yield* streamWithTelemetry.pipe(
-              Effect.retry({
-                while: isTransientCapacityError,
-                schedule: persistentRetrySchedule,
-              }),
-            )
+              const result = yield* streamWithTelemetry.pipe(
+                Effect.retry({
+                  while: isTransientCapacityError,
+                  schedule: persistentRetrySchedule,
+                }),
+              )
 
-            return Stream.fromAsyncIterable(result.fullStream, (e) => (e instanceof Error ? e : new Error(String(e))))
-          }),
-        ),
+              // Structurally identical to the pre-guard stream: a bare scoped
+              // stream over the provider's fullStream. No per-event combinator, no
+              // extra catch layer — so the normal (non-error) event flow and the
+              // AbortController scope teardown are exactly as before. The reactive
+              // prefill retry is layered lazily below and only pays a cost when an
+              // actual error surfaces.
+              return Stream.fromAsyncIterable(result.fullStream, (e) =>
+                e instanceof Error ? e : new Error(String(e)),
+              )
+            }),
+          ),
+        )
+
+      // Promote a prefill-rejection 400 — which arrives as an in-band
+      // `{ type: "error", error }` event, not a stream fault — into a stream
+      // FAILURE so the reactive retry can catch it. `Stream.flatMap` short-circuits
+      // every non-matching event straight through with a pure `Stream.succeed` (no
+      // per-event Effect fiber, unlike `Stream.mapEffect`), and the failing branch
+      // is only ever constructed for the specific error event. On a clean stream
+      // this is a transparent passthrough.
+      const promotePrefillRejection = (stream: Stream.Stream<Event, Error, never>) =>
+        stream.pipe(
+          Stream.flatMap((event) =>
+            event.type === "error" && ProviderTransform.isAssistantPrefillRejection(event.error)
+              ? Stream.fail(event.error instanceof Error ? event.error : new Error(String(event.error)))
+              : Stream.succeed(event),
+          ),
+        )
+
+      // Reactive prefill-rejection backstop. The proactive
+      // ProviderTransform.ensureTrailingUserMessage guard runs on every request,
+      // so we should never send a trailing assistant prefill and this path should
+      // effectively never fire. It remains as defense-in-depth: if any path still
+      // slips a trailing assistant through to the wire and the backend 400s with
+      // "does not support assistant message prefill", we key off that deterministic
+      // error body — not the model id — and retry exactly ONCE with the prefill
+      // hard-pruned. Guarded to a single reprune so a persistent failure surfaces
+      // the retry's OWN error, falling back to the original prefill cause only when
+      // the resend is again prefill-rejected.
+      return promotePrefillRejection(attempt(false)).pipe(
+        Stream.catchCause((primaryCause) => {
+          if (!ProviderTransform.isAssistantPrefillRejection(Cause.squash(primaryCause)))
+            return Stream.failCause(primaryCause)
+          // Pruned resend passes events through untouched: any residual error flows
+          // to the processor and surfaces normally (no promotion, no loop).
+          return attempt(true).pipe(
+            Stream.catchCause((retryCause) =>
+              ProviderTransform.isAssistantPrefillRejection(Cause.squash(retryCause))
+                ? Stream.failCause(primaryCause)
+                : Stream.failCause(retryCause),
+            ),
+          )
+        }),
       )
+    }
 
     return Service.of({ stream, buildSystemArray })
   }),

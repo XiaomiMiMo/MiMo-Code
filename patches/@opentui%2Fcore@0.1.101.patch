@@ -1,0 +1,66 @@
+diff --git a/node_modules/@opentui/core/.bun-tag-1a78c3343e7bc25e b/.bun-tag-1a78c3343e7bc25e
+new file mode 100644
+index 0000000000000000000000000000000000000000..e69de29bb2d1d6434b8b29ae775ad8c2e48c5391
+diff --git a/index-xsfpee0k.js b/index-xsfpee0k.js
+index 964cc24e3051ec8d4aeac37b68eed747b433d1b5..ef4ee58deeed1b28c3863268429d7b2b2617754b 100644
+--- a/index-xsfpee0k.js
++++ b/index-xsfpee0k.js
+@@ -9914,7 +9914,9 @@ class ExtmarksController {
+         return;
+       }
+       this.originalDeleteCharBackward();
+-      this.adjustExtmarksAfterDeletion(targetOffset, 1);
++      const _delOffset = this.editorView.getVisualCursor().offset;
++      const _delLen = currentOffset - _delOffset;
++      if (_delLen > 0) this.adjustExtmarksAfterDeletion(_delOffset, _delLen);
+     };
+     this.editBuffer.deleteChar = () => {
+       if (this.destroyed) {
+@@ -9923,9 +9925,10 @@ class ExtmarksController {
+       }
+       this.saveSnapshot();
+       const currentOffset = this.editorView.getVisualCursor().offset;
+-      const textLength = this.editBuffer.getText().length;
++      const _txt = this.editBuffer.getText();
++      let _totalW = 0; for (const _c of _txt) _totalW += _c === '\n' ? 1 : (Bun.stringWidth(_c) || 1);
+       const hadSelection = this.editorView.hasSelection();
+-      if (currentOffset >= textLength) {
++      if (currentOffset >= _totalW) {
+         this.originalDeleteChar();
+         return;
+       }
+@@ -9946,8 +9949,13 @@ class ExtmarksController {
+         this.updateHighlights();
+         return;
+       }
++      let _wo = 0, _fw = 1;
++      for (const _c of _txt) {
++        if (_wo >= currentOffset) { _fw = _c === '\n' ? 1 : (Bun.stringWidth(_c) || 1); break; }
++        _wo += _c === '\n' ? 1 : (Bun.stringWidth(_c) || 1);
++      }
+       this.originalDeleteChar();
+-      this.adjustExtmarksAfterDeletion(targetOffset, 1);
++      this.adjustExtmarksAfterDeletion(targetOffset, _fw);
+     };
+     this.editBuffer.deleteRange = (startLine, startCol, endLine, endCol) => {
+       if (this.destroyed) {
+@@ -9999,7 +10007,8 @@ class ExtmarksController {
+       this.saveSnapshot();
+       const currentOffset = this.editorView.getVisualCursor().offset;
+       this.originalInsertText(text);
+-      this.adjustExtmarksAfterInsertion(currentOffset, text.length);
++      let _tw = 0; for (const _c of text) _tw += _c === '\n' ? 1 : (Bun.stringWidth(_c) || 1);
++      if (_tw > 0) this.adjustExtmarksAfterInsertion(currentOffset, _tw);
+     };
+     this.editBuffer.insertChar = (char) => {
+       if (this.destroyed) {
+@@ -10009,7 +10018,8 @@ class ExtmarksController {
+       this.saveSnapshot();
+       const currentOffset = this.editorView.getVisualCursor().offset;
+       this.originalInsertChar(char);
+-      this.adjustExtmarksAfterInsertion(currentOffset, 1);
++      const _cw = Bun.stringWidth(char) || 1;
++      this.adjustExtmarksAfterInsertion(currentOffset, _cw);
+     };
+     this.editBuffer.setText = (text) => {
+       if (this.destroyed) {

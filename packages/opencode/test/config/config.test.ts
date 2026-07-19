@@ -452,6 +452,71 @@ test("preserves env variables when adding $schema to config", async () => {
   }
 })
 
+test("migrates old opencode.ai $schema URL to mimo.xiaomi.com", async () => {
+  await using tmp = await tmpdir({
+    init: async (dir) => {
+      await Filesystem.write(
+        path.join(dir, "mimocode.json"),
+        JSON.stringify({ $schema: "https://opencode.ai/config.json", model: "test/model" }, null, 2),
+      )
+    },
+  })
+  await Instance.provide({
+    directory: tmp.path,
+    fn: async () => {
+      await load()
+      const content = await Filesystem.readText(path.join(tmp.path, "mimocode.json"))
+      expect(content).toContain('"$schema": "https://mimo.xiaomi.com/mimocode/config.json"')
+      expect(content).not.toContain("opencode.ai")
+      expect(content).toContain('"model": "test/model"')
+    },
+  })
+})
+
+test("does not modify custom $schema URL", async () => {
+  await using tmp = await tmpdir({
+    init: async (dir) => {
+      await Filesystem.write(
+        path.join(dir, "mimocode.json"),
+        JSON.stringify({ $schema: "https://example.com/custom.json", model: "test/model" }, null, 2),
+      )
+    },
+  })
+  await Instance.provide({
+    directory: tmp.path,
+    fn: async () => {
+      await load()
+      const content = await Filesystem.readText(path.join(tmp.path, "mimocode.json"))
+      expect(content).toContain('"$schema": "https://example.com/custom.json"')
+      expect(content).not.toContain("mimo.xiaomi.com")
+    },
+  })
+})
+
+test("preserves JSONC comments when injecting $schema", async () => {
+  await using tmp = await tmpdir({
+    init: async (dir) => {
+      await Filesystem.write(
+        path.join(dir, "mimocode.jsonc"),
+        `{
+  // My config
+  "model": "test/model"
+}`,
+      )
+    },
+  })
+  await Instance.provide({
+    directory: tmp.path,
+    fn: async () => {
+      await load()
+      const content = await Filesystem.readText(path.join(tmp.path, "mimocode.jsonc"))
+      expect(content).toContain("$schema")
+      expect(content).toContain("// My config")
+      expect(content).toContain('"model": "test/model"')
+    },
+  })
+})
+
 test("resolves env templates in account config with account token", async () => {
   const originalControlToken = process.env["MIMOCODE_CONSOLE_TOKEN"]
 

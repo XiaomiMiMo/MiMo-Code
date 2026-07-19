@@ -1,0 +1,6 @@
+interface:
+  display_name: "Sales Company Research"
+  short_description: "Research targets and shape draft outreach"
+  default_prompt: "Research this company and draft a grounded outreach approach."
+policy:
+  allow_implicit_invocation: false

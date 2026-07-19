@@ -101,6 +101,66 @@ describe("task tool", () => {
     ),
   )
 
+  it.live("subagent start on a task owned by another actor does not steal ownership", () =>
+    provideTmpdirInstance(() =>
+      Effect.gen(function* () {
+        const session = yield* Session.Service
+        const reg = yield* TaskRegistry.Service
+        const sess = yield* session.create({ title: "Test" })
+        const t = yield* reg.create({ session_id: sess.id, summary: "main's task", owner: "main" })
+        const info = yield* TaskTool
+        const tool = yield* info.init()
+        yield* tool.execute(
+          { operation: { action: "start", id: t.id } },
+          { ...ctx(sess.id), actorID: "explore-1" },
+        )
+        const after = yield* reg.get({ session_id: sess.id, id: t.id })
+        expect(after?.status).toBe("in_progress")
+        expect(after?.owner).toBe("main")
+      }),
+    ),
+  )
+
+  it.live("subagent start on its own task sets it as owner", () =>
+    provideTmpdirInstance(() =>
+      Effect.gen(function* () {
+        const session = yield* Session.Service
+        const reg = yield* TaskRegistry.Service
+        const sess = yield* session.create({ title: "Test" })
+        const t = yield* reg.create({ session_id: sess.id, summary: "unowned" })
+        const info = yield* TaskTool
+        const tool = yield* info.init()
+        yield* tool.execute(
+          { operation: { action: "start", id: t.id } },
+          { ...ctx(sess.id), actorID: "explore-1" },
+        )
+        const after = yield* reg.get({ session_id: sess.id, id: t.id })
+        expect(after?.status).toBe("in_progress")
+        expect(after?.owner).toBe("explore-1")
+      }),
+    ),
+  )
+
+  it.live("main start on a subagent-owned task still takes over (handoff preserved)", () =>
+    provideTmpdirInstance(() =>
+      Effect.gen(function* () {
+        const session = yield* Session.Service
+        const reg = yield* TaskRegistry.Service
+        const sess = yield* session.create({ title: "Test" })
+        const t = yield* reg.create({ session_id: sess.id, summary: "orphan", owner: "explore-1" })
+        const info = yield* TaskTool
+        const tool = yield* info.init()
+        yield* tool.execute(
+          { operation: { action: "start", id: t.id } },
+          { ...ctx(sess.id), actorID: "main" },
+        )
+        const after = yield* reg.get({ session_id: sess.id, id: t.id })
+        expect(after?.status).toBe("in_progress")
+        expect(after?.owner).toBe("main")
+      }),
+    ),
+  )
+
   it.live("rejects old flat JSON shape", () =>
     provideTmpdirInstance(() =>
       Effect.gen(function* () {
