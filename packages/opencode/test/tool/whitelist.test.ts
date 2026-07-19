@@ -1,3 +1,4 @@
+import { Worktree } from "../../src/worktree"
 import { NodeFileSystem } from "@effect/platform-node"
 import { FetchHttpClient } from "effect/unstable/http"
 import { afterEach, describe, expect, test } from "bun:test"
@@ -28,7 +29,6 @@ import { SessionPrompt } from "../../src/session/prompt"
 import { SessionRevert } from "../../src/session/revert"
 import { SessionRunState } from "../../src/session/run-state"
 import { Goal } from "../../src/session/goal"
-import { TaskGateState } from "../../src/task/gate-state"
 import { SessionStatus } from "../../src/session/status"
 import { Skill } from "../../src/skill"
 import { SystemPrompt } from "../../src/session/system"
@@ -42,6 +42,7 @@ import { History } from "../../src/history"
 import { Team } from "../../src/team"
 import { SessionCheckpoint } from "../../src/session/checkpoint"
 import { TaskRegistry } from "../../src/task/registry"
+import { defaultLayer as SchedulerDefaultLayer } from "../../src/cron/scheduler"
 import { Auth } from "../../src/auth"
 import { Instance } from "../../src/project/instance"
 import * as CrossSpawnSpawner from "../../src/effect/cross-spawn-spawner"
@@ -140,11 +141,13 @@ function makeLayer() {
     Layer.provide(Memory.defaultLayer),
     Layer.provide(History.defaultLayer),
     Layer.provide(TaskRegistry.defaultLayer),
+    Layer.provide(SchedulerDefaultLayer),
     Layer.provide(actorRegistry),
   )
   const actorWaiter = ActorWaiter.layer.pipe(Layer.provide(Bus.layer), Layer.provide(actorRegistry))
   const team = Team.defaultLayer
   const registry = ToolRegistry.layer.pipe(
+    Layer.provide(Worktree.defaultLayer),
     Layer.provide(Skill.defaultLayer),
     Layer.provide(FetchHttpClient.layer),
     Layer.provide(CrossSpawnSpawner.defaultLayer),
@@ -157,6 +160,7 @@ function makeLayer() {
     Layer.provide(Memory.defaultLayer),
     Layer.provide(History.defaultLayer),
     Layer.provide(TaskRegistry.defaultLayer),
+    Layer.provide(SchedulerDefaultLayer),
     Layer.provide(Auth.defaultLayer),
     Layer.provideMerge(todo),
     Layer.provideMerge(question),
@@ -177,8 +181,8 @@ function makeLayer() {
   const trunc = Truncate.layer.pipe(Layer.provideMerge(deps))
   const prompt = SessionPrompt.layer.pipe(
     Layer.provide(Goal.defaultLayer),
-    Layer.provide(TaskGateState.defaultLayer),
     Layer.provide(TaskRegistry.defaultLayer),
+    Layer.provide(SchedulerDefaultLayer),
     Layer.provide(SessionRevert.defaultLayer),
     Layer.provide(summary),
     Layer.provide(checkpoint),

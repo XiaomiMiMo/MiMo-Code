@@ -100,11 +100,77 @@ export function normalizeInput(input: unknown, schema: JSONSchema7): unknown {
   return result
 }
 
+// Repair `\uXXXX` escapes whose 4 hex digits were split by injected whitespace
+// (e.g. a CJK char `\u7ed1` arriving as `\u7 ed1` when a streaming/router
+// boundary cuts the 6-char escape and rejoins it with a space). We walk each
+// `\u`, then pull the next 4 hex digits, tolerating whitespace between them, and
+// re-emit a clean `\uXXXX`. Anything that isn't a recoverable 4-hex escape is
+// left byte-for-byte unchanged so valid content and other escapes are untouched.
+function repairUnicodeEscapes(input: string): string {
+  if (!input.includes("\\u")) return input
+  let out = ""
+  let i = 0
+  while (i < input.length) {
+    const ch = input[i]
+    if (ch !== "\\") {
+      out += ch
+      i++
+      continue
+    }
+    const next = input[i + 1]
+    // Preserve escaped backslash so `\\u...` (a literal backslash + u) is not
+    // mistaken for a unicode escape.
+    if (next === "\\") {
+      out += "\\\\"
+      i += 2
+      continue
+    }
+    if (next !== "u") {
+      out += ch
+      i++
+      continue
+    }
+    // Collect up to 4 hex digits after `\u`, skipping interleaved whitespace.
+    let j = i + 2
+    const hex: string[] = []
+    while (j < input.length && hex.length < 4) {
+      const c = input[j]
+      if (/[0-9a-fA-F]/.test(c)) {
+        hex.push(c)
+        j++
+        continue
+      }
+      if (/\s/.test(c)) {
+        j++
+        continue
+      }
+      break
+    }
+    if (hex.length === 4) {
+      out += "\\u" + hex.join("")
+      i = j
+      continue
+    }
+    // Not a recoverable escape — leave the `\u` as-is and move on.
+    out += ch
+    i++
+  }
+  return out
+}
+
 export function parseToolInput(input: string): unknown {
   if (input.trim() === "") return {}
   try {
     return JSON.parse(input) as unknown
   } catch {
+    const repaired = repairUnicodeEscapes(input)
+    if (repaired !== input) {
+      try {
+        return JSON.parse(repaired) as unknown
+      } catch {
+        return input
+      }
+    }
     return input
   }
 }

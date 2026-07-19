@@ -124,6 +124,18 @@ describe("Truncate", () => {
       }),
     )
 
+    it.live("labels truncated error output as failed", () =>
+      Effect.gen(function* () {
+        const svc = yield* Truncate.Service
+        const content = Array.from({ length: 100 }, (_, i) => `error line ${i}`).join("\n")
+        const result = yield* svc.output(content, { maxLines: 10, outcome: "error" })
+
+        expect(result.truncated).toBe(true)
+        expect(result.content).toContain("The tool call failed but the output was truncated")
+        expect(result.content).not.toContain("The tool call succeeded")
+      }),
+    )
+
     it.live("suggests actor tool when agent has actor permission", () =>
       Effect.gen(function* () {
         const svc = yield* Truncate.Service

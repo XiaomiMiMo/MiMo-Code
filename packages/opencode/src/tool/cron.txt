@@ -1,0 +1,60 @@
+Schedule prompts to fire at future times. Recurring or one-shot, session-only
+or durable. Jobs fire only while the REPL is idle; fires enter the message
+queue at 'later' priority so user input is never preempted.
+
+JSON calls always wrap the action in an `operation` object — see examples below.
+
+## Operations
+
+- schedule: cadence-driven. `cron` + `prompt` required. recurring by default;
+            pass --one-shot for "remind me at X" with pinned minute/hour/dom/month.
+- loop:     self-paced one-shot with keepalive. `delay_seconds` (clamped to
+            [60, 3600]) + `prompt` required. Always session-only, always kind=loop.
+            Call again each turn to keep the loop alive; omit to end the loop.
+- list:     enumerate active jobs. optional: `kind`, `durable_only`.
+- get:      fetch one job by id.
+- delete:   cancel a job by id.
+- rename:   change the prompt body of an existing job.
+
+## Picking minutes for `schedule`
+
+Avoid :00 and :30 unless the user named that exact time. Every user who asks
+for "9am" gets `0 9` and every fleet fires at the same instant. Nudge:
+  "every morning around 9" → "57 8 * * *" or "3 9 * * *"
+  "hourly" → "7 * * * *"
+
+## Picking delay_seconds for `loop`
+
+Clamp range is [60, 3600]. Pick based on what you observed this turn:
+- 60–300s: something changed; follow up soon.
+- 300–1800s: routine polling, quiet branch.
+- 1200–1800s: heartbeat behind a primary wake signal.
+
+## Schedule vs loop
+
+Use `schedule` when cadence is fixed up front ("every 5 minutes", "weekdays 9am").
+Use `loop` when cadence depends on what you observed and may change next turn.
+
+## Durability
+
+Default durable:false — job dies with the session. Pass durable:true ONLY when
+the user explicitly asks the job to persist across sessions.
+
+## JSON examples
+
+{"operation":{"action":"schedule","cron":"*/5 * * * *","prompt":"/babysit-prs"}}
+{"operation":{"action":"schedule","cron":"30 14 27 2 *","prompt":"file taxes","one_shot":true}}
+{"operation":{"action":"schedule","cron":"0 9 * * 1-5","prompt":"/standup","durable":true}}
+{"operation":{"action":"loop","delay_seconds":300,"prompt":"check the deploy"}}
+{"operation":{"action":"list"}}
+{"operation":{"action":"list","kind":"loop"}}
+{"operation":{"action":"get","id":"a1b2c3d4"}}
+{"operation":{"action":"delete","id":"a1b2c3d4"}}
+{"operation":{"action":"rename","id":"a1b2c3d4","prompt":"new body"}}
+
+## Discipline
+
+- Validate cron expressions. Uneven dividers (`*/7`) skew at the wrap-around;
+  pick the nearest clean cadence and tell the user what you rounded to.
+- Returns a job id — surface it so the user can delete later.
+- Don't list scheduled jobs in your reply — the UI renders them.

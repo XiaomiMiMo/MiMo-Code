@@ -25,6 +25,8 @@ import { Permission } from "@/permission"
 import { PermissionID } from "@/permission/schema"
 import { ModelID, ProviderID } from "@/provider/schema"
 import { Provider } from "@/provider"
+import { forkQuery } from "@/tool/session"
+import { spawnRef } from "@/actor/spawn-ref"
 import { errors } from "../../error"
 import { lazy } from "@/util/lazy"
 import { Bus } from "@/bus"
@@ -33,6 +35,14 @@ import { jsonRequest, runRequest } from "./trace"
 import { RateLimitMiddleware } from "../../rate-limit"
 
 const log = Log.create({ service: "server" })
+
+// Cadence of the keep-alive whitespace written on the POST /:sessionID/message
+// stream while a turn is in flight. Matches the 10s SSE heartbeat in
+// event.ts/global.ts. Read per-request (not memoized) so it can be tuned at
+// runtime; smaller values are useful in tests.
+function promptHeartbeatIntervalMs() {
+  return Number(process.env["MIMOCODE_PROMPT_HEARTBEAT_INTERVAL_MS"]) || 10_000
+}
 
 function taskToTodo(t: Task) {
   const status =
@@ -191,11 +201,21 @@ export const SessionRoutes = lazy(() =>
           sessionID: Session.ChildrenInput,
         }),
       ),
+      validator(
+        "query",
+        z.object({
+          visible: z.coerce
+            .boolean()
+            .optional()
+            .meta({ description: "Only return user-visible children (peer sessions); hides internal subagent hosts" }),
+        }),
+      ),
       async (c) => {
         const sessionID = c.req.valid("param").sessionID
+        const visible = c.req.valid("query").visible
         return jsonRequest("SessionRoutes.children", c, function* () {
           const session = yield* Session.Service
-          return yield* session.children(sessionID)
+          return yield* session.children(sessionID, { visible })
         })
       },
     )
@@ -667,6 +687,55 @@ export const SessionRoutes = lazy(() =>
           return true
         }),
     )
+    .post(
+      "/:sessionID/ask",
+      describeRoute({
+        summary: "Ask session a side question",
+        description:
+          "Ask the session a one-shot, read-only side question over a frozen snapshot of its history and return the answer text. Does NOT inject a message into the conversation or disturb the session's turn.",
+        operationId: "session.ask",
+        responses: {
+          200: {
+            description: "Side question answer",
+            content: {
+              "application/json": {
+                schema: resolver(z.object({ answer: z.string() })),
+              },
+            },
+          },
+          ...errors(400, 404),
+        },
+      }),
+      validator(
+        "param",
+        z.object({
+          sessionID: SessionID.zod,
+        }),
+      ),
+      validator(
+        "json",
+        z.object({
+          question: z.string().min(1),
+        }),
+      ),
+      async (c) =>
+        jsonRequest("SessionRoutes.ask", c, function* () {
+          const sessionID = c.req.valid("param").sessionID
+          const question = c.req.valid("json").question
+          const sessions = yield* Session.Service
+          const provider = yield* Provider.Service
+          // Resolve the Actor through the late-bound spawnRef rather than a layer
+          // dependency, mirroring tool/session.ts to avoid an Actor → SessionPrompt
+          // → ToolRegistry → tool/session → Actor layer cycle.
+          const actor = spawnRef.current
+          if (!actor)
+            return yield* Effect.fail(
+              new Error("Actor service unavailable — Actor.defaultLayer must be running to ask a side question"),
+            )
+          const answer = yield* forkQuery({ sessions, provider, actor }, sessionID, question)
+          return { answer }
+        }),
+    )
     .get(
       "/:sessionID/message",
       describeRoute({
@@ -995,14 +1064,34 @@ export const SessionRoutes = lazy(() =>
             return
           }
           signal.addEventListener("abort", onClientDisconnect, { once: true })
+          // Keep the response alive while the turn is in flight. A turn can sit
+          // silent for a long time — most notably while the `question` tool
+          // blocks on an un-timed Deferred waiting for a human reply (the Bun
+          // server itself never times out: adapter.bun.ts idleTimeout:0). A
+          // client with its own request timeout (e.g. the external `mimo run`
+          // driver's per-turn budget) would otherwise see a dead connection and
+          // abort with "error sending request for url". Periodic whitespace
+          // resets the client's idle timer; whitespace is JSON-insignificant,
+          // so the trailing JSON.stringify(msg) still parses as the whole body
+          // (clients JSON.parse the full body, which tolerates leading
+          // whitespace). Mirrors the 10s SSE heartbeat in event.ts/global.ts.
+          const heartbeat = setInterval(() => {
+            void stream.write(" ")
+          }, promptHeartbeatIntervalMs())
           try {
             const msg = await runRequest(
               "SessionRoutes.prompt",
               c,
               SessionPrompt.Service.use((svc) => svc.prompt({ ...body, sessionID })),
             )
+            // Safety invariant: no await/yield between this write and the
+            // clearInterval below (reached synchronously via finally) — else the
+            // interval could fire and append a stray space AFTER the JSON,
+            // breaking the "JSON is the whole body" contract. Leading spaces are
+            // JSON-insignificant; a trailing one would not be.
             void stream.write(JSON.stringify(msg))
           } finally {
+            clearInterval(heartbeat)
             signal.removeEventListener("abort", onClientDisconnect)
           }
         })

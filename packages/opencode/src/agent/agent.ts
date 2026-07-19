@@ -1,4 +1,5 @@
 import { Config } from "../config"
+import { Flag } from "@/flag/flag"
 import z from "zod"
 import { Provider } from "../provider"
 import { ModelID, ProviderID } from "../provider/schema"
@@ -15,6 +16,7 @@ import PROMPT_DISTILL from "./prompt/distill.txt"
 import PROMPT_SUMMARY from "./prompt/summary.txt"
 import PROMPT_COMPACTION from "./prompt/compaction.txt"
 import PROMPT_TITLE from "./prompt/title.txt"
+import PROMPT_ORCHESTRATOR from "../session/prompt/orchestrator.txt"
 import { Permission } from "@/permission"
 import { mergeDeep, pipe, sortBy, values } from "remeda"
 import { Global } from "@/global"
@@ -37,6 +39,10 @@ export const Info = z
     temperature: z.number().optional(),
     color: z.string().optional(),
     permission: Permission.Ruleset.zod,
+    // Non-overridable rules appended AFTER the user/session permissions during
+    // runtime evaluation (see runtimePermission). Use for agent invariants that
+    // config must not be able to relax — e.g. plan mode's edit/write block.
+    hardPermission: Permission.Ruleset.zod.optional(),
     model: z
       .object({
         modelID: ModelID.zod,
@@ -73,6 +79,14 @@ type State = Omit<Interface, "generate">
 
 export class Service extends Context.Service<Service, Interface>()("@opencode/Agent") {}
 
+// Merge an agent's permission with the user/session ruleset, then re-append the
+// agent's hardPermission so those invariants win over any allow rule a user or
+// session approval could introduce. Every permission-evaluation site routes
+// through this — there is no per-agent name special-casing.
+export function runtimePermission(agent: Info, permission?: Permission.Ruleset) {
+  return Permission.merge(agent.permission, permission ?? [], agent.hardPermission ?? [])
+}
+
 export const layer = Layer.effect(
   Service,
   Effect.gen(function* () {
@@ -91,6 +105,12 @@ export const layer = Layer.effect(
         const defaults = Permission.fromConfig({
           "*": "allow",
           doom_loop: "ask",
+          skill: {
+            "*": "allow",
+            "compose:*": "deny",
+          },
+          plan_enter: "deny",
+          plan_exit: "deny",
           external_directory: {
             "*": "ask",
             ...Object.fromEntries(whitelistedDirs.map((dir) => [dir, "allow"])),
@@ -117,6 +137,8 @@ export const layer = Layer.effect(
               defaults,
               Permission.fromConfig({
                 question: "allow",
+                plan_enter: "allow",
+                plan_exit: "allow",
               }),
               user,
             ),
@@ -155,17 +177,33 @@ export const layer = Layer.effect(
               defaults,
               Permission.fromConfig({
                 question: "allow",
+                plan_enter: "allow",
+                plan_exit: "allow",
                 external_directory: {
                   [path.join(Global.Path.data, "plans", "*")]: "allow",
-                },
-                edit: {
-                  "*": "deny",
-                  [path.join(".mimocode", "plans", "*.md")]: "allow",
-                  [path.relative(Instance.worktree, path.join(Global.Path.data, path.join("plans", "*.md")))]: "allow",
                 },
               }),
               user,
             ),
+            // Plan mode's one hard invariant: writes to non-plan files are
+            // blocked and user/session config must NOT be able to relax it.
+            // Re-appended after the user merge by runtimePermission so it always
+            // wins. (Every write tool — write/edit/multiedit/apply_patch/
+            // notebook_edit — funnels through ctx.ask({ permission: "edit" }),
+            // so this single rule governs all file writes.) Deliberately scoped
+            // to edit only: bash/change_directory/workflow are left to the
+            // model's own read-only discipline + plan prompt, matching the
+            // project's "trust the model, permission layer is a backstop"
+            // stance. The "*":"deny" carries a non-"*" allow exception, so the
+            // edit tool stays in the schema (no tool-list mutation on mode
+            // switch, see PR #1207).
+            hardPermission: Permission.fromConfig({
+              edit: {
+                "*": "deny",
+                [path.join(".mimocode", "plans", "*.md")]: "allow",
+                [path.relative(Instance.worktree, path.join(Global.Path.data, path.join("plans", "*.md")))]: "allow",
+              },
+            }),
             mode: "primary",
             native: true,
           },
@@ -178,12 +216,39 @@ export const layer = Layer.effect(
               defaults,
               Permission.fromConfig({
                 question: "allow",
+                skill: { "compose:*": "allow" },
               }),
               user,
             ),
             mode: "primary",
             native: true,
           },
+          // Orchestrator mode is experimental and opt-in (default OFF): only
+          // registered when MIMOCODE_EXPERIMENTAL_ORCHESTRATOR is set. Gating the
+          // registration here removes it from the TUI mode-cycle, the agent
+          // dialog, defaultAgent, and prevents any `session`-tool peer spawns —
+          // making the rest of the orchestrator feature dead code when off.
+          ...(Flag.MIMOCODE_EXPERIMENTAL_ORCHESTRATOR
+            ? {
+                orchestrator: {
+                  name: "orchestrator",
+                  color: "#7fb3d5",
+                  description:
+                    "Orchestrator mode. A general-purpose coordinator that accomplishes goals by delegating work to child sessions; use the `session` tool to create/switch/list/cancel children running in their own mode and model.",
+                  prompt: PROMPT_ORCHESTRATOR,
+                  options: {},
+                  permission: Permission.merge(
+                    defaults,
+                    Permission.fromConfig({
+                      question: "allow",
+                    }),
+                    user,
+                  ),
+                  mode: "primary" as const,
+                  native: true,
+                },
+              }
+            : {}),
           general: {
             name: "general",
             color: "#aac4e1",
@@ -395,19 +460,18 @@ export const layer = Layer.effect(
           item.permission = Permission.merge(item.permission, Permission.fromConfig(value.permission ?? {}))
         }
 
-        // Ensure Truncate.GLOB is allowed unless explicitly configured
+        // Ensure Truncate.GLOB and skill directories are allowed unless explicitly configured
         for (const name in agents) {
           const agent = agents[name]
-          const explicit = agent.permission.some((r) => {
-            if (r.permission !== "external_directory") return false
-            if (r.action !== "deny") return false
-            return r.pattern === Truncate.GLOB
-          })
-          if (explicit) continue
+          const globs = whitelistedDirs.filter(
+            (glob) =>
+              !agent.permission.some((r) => r.permission === "external_directory" && r.action === "deny" && r.pattern === glob),
+          )
+          if (globs.length === 0) continue
 
           agents[name].permission = Permission.merge(
             agents[name].permission,
-            Permission.fromConfig({ external_directory: { [Truncate.GLOB]: "allow" } }),
+            Permission.fromConfig({ external_directory: Object.fromEntries(globs.map((g) => [g, "allow" as const])) }),
           )
         }
 
@@ -425,6 +489,7 @@ export const layer = Layer.effect(
               [(x) => x.name === "build", "desc"],
               [(x) => x.name === "plan", "desc"],
               [(x) => x.name === "compose", "desc"],
+              [(x) => x.name === "orchestrator", "desc"],
               [(x) => x.name === "max", "desc"],
               [(x) => x.name, "asc"],
             ),

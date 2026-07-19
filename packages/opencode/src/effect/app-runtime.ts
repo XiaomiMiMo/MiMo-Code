@@ -32,6 +32,7 @@ import { SessionPrune } from "@/session/prune"
 import { SessionRevert } from "@/session/revert"
 import { SessionSummary } from "@/session/summary"
 import { SessionPrompt } from "@/session/prompt"
+import { defaultLayer as CronBridgeDefaultLayer } from "@/session/cron-bridge"
 import { SessionCheckpoint } from "@/session/checkpoint"
 import { Instruction } from "@/session/instruction"
 import { LLM } from "@/session/llm"
@@ -95,6 +96,7 @@ export const AppLayer = Layer.suspend(() =>
     SessionRevert.defaultLayer,
     SessionSummary.defaultLayer,
     SessionPrompt.defaultLayer,
+    CronBridgeDefaultLayer,
     SessionCheckpoint.defaultLayer,
     Instruction.defaultLayer,
     LLM.defaultLayer,

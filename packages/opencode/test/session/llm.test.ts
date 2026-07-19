@@ -917,6 +917,7 @@ describe("session.llm.stream", () => {
 
     const source = await loadFixture("anthropic", "claude-opus-4-6")
     const model = source.model
+    const pdf = "JVBERi0xLjQKJSVFT0YK"
     const chunks = [
       {
         type: "message_start",
@@ -1060,6 +1061,17 @@ describe("session.llm.stream", () => {
                   metadata: {},
                   title: "root",
                   time: { start: 10, end: 11 },
+                  attachments: [
+                    {
+                      id: "p_read_pdf",
+                      sessionID,
+                      messageID: "msg_call",
+                      type: "file",
+                      mime: "application/pdf",
+                      filename: "report.pdf",
+                      url: `data:application/pdf;base64,${pdf}`,
+                    },
+                  ],
                 },
               },
               {
@@ -1123,7 +1135,7 @@ describe("session.llm.stream", () => {
         expect(body.messages).toStrictEqual([
           {
             role: "user",
-            content: [{ cache_control: { type: "ephemeral" }, type: "text", text: "Can you check whether there are any PDF files in my home directory?" }],
+            content: [{ type: "text", text: "Can you check whether there are any PDF files in my home directory?" }],
           },
           {
             role: "assistant",
@@ -1139,6 +1151,7 @@ describe("session.llm.stream", () => {
                 input: { filePath: "/root" },
               },
               {
+                cache_control: { type: "ephemeral" },
                 type: "tool_use",
                 id: "toolu_01APxrADs7VozN8uWzw9WwHr",
                 name: "glob",
@@ -1152,9 +1165,20 @@ describe("session.llm.stream", () => {
               {
                 type: "tool_result",
                 tool_use_id: "toolu_01N8mDEzG8DSTs7UPHFtmgCT",
-                content: "<path>/root</path>",
+                content: [
+                  { type: "text", text: "<path>/root</path>" },
+                  {
+                    type: "document",
+                    source: {
+                      type: "base64",
+                      media_type: "application/pdf",
+                      data: pdf,
+                    },
+                  },
+                ],
               },
               {
+                cache_control: { type: "ephemeral" },
                 type: "tool_result",
                 tool_use_id: "toolu_01APxrADs7VozN8uWzw9WwHr",
                 content: "No files found",

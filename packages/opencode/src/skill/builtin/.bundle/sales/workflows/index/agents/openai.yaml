@@ -1,0 +1,6 @@
+interface:
+  display_name: "Index"
+  short_description: "Sales workflows for meetings, accounts, and deals"
+  default_prompt: "Help me choose the right Sales workflow for this sales task."
+policy:
+  allow_implicit_invocation: true

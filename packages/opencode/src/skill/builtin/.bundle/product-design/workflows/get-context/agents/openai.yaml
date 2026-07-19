@@ -1,0 +1,6 @@
+interface:
+  display_name: "Get Context"
+  short_description: "Confirm the Product Design brief before design or build work"
+  default_prompt: "Let's design an app for my idea"
+policy:
+  allow_implicit_invocation: false

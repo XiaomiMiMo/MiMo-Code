@@ -37,6 +37,7 @@ export const directory = Effect.map(context, (ctx) => ctx.directory)
 
 export const make = <A, E = never, R = never>(
   init: (ctx: InstanceContext) => Effect.Effect<A, E, R | Scope.Scope>,
+  opts?: { phase?: "normal" | "late" },
 ): Effect.Effect<InstanceState<A, E, Exclude<R, Scope.Scope>>, never, R | Scope.Scope> =>
   Effect.gen(function* () {
     const cache = yield* ScopedCache.make<string, A, E, R>({
@@ -47,8 +48,9 @@ export const make = <A, E = never, R = never>(
         }),
     })
 
-    const off = registerDisposer((directory) =>
-      Effect.runPromise(ScopedCache.invalidate(cache, directory).pipe(Effect.provide(EffectLogger.layer))),
+    const off = registerDisposer(
+      (directory) => Effect.runPromise(ScopedCache.invalidate(cache, directory).pipe(Effect.provide(EffectLogger.layer))),
+      { phase: opts?.phase },
     )
     yield* Effect.addFinalizer(() => Effect.sync(off))
 

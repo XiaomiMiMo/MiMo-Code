@@ -11,6 +11,7 @@ import { MessageV2 } from "./message-v2"
 export type StepClassification =
   | { type: "final"; degraded?: boolean }
   | { type: "continue" }
+  | { type: "text-tool-call" }
   | { type: "filtered" }
   | { type: "think-only" }
   | { type: "invalid"; reason: string }
@@ -57,6 +58,30 @@ export function classifyAssistantStep(input: {
 
   // 2. Nothing finalized yet.
   if (!assistant.finish) return { type: "continue" }
+
+  // 3a. Text-form tool call: the model serialized a tool call as PROSE TEXT
+  // instead of emitting a structured tool_use. Signature: finish "tool-calls"
+  // but NO structured tool part (a real tool part would have re-looped at #1)
+  // and text carrying tool-call markup. Must precede the unconditional
+  // tool-calls continue below, which would otherwise swallow this state.
+  // Guards: skip if this turn was already discarded (assistant.error set — let
+  // it fall through to `failed` at #5), and skip a stale/resumed turn the
+  // conversation already moved past (mirrors the #4 staleness guard) so a
+  // degraded turn left in history can't re-fire across turns/resumes.
+  if (
+    assistant.finish === "tool-calls" &&
+    !assistant.error &&
+    input.lastUser.id < assistant.id &&
+    !input.parts.some((part) => part.type === "tool") &&
+    input.parts.some(
+      (part) =>
+        part.type === "text" &&
+        !part.synthetic &&
+        !part.ignored &&
+        /<invoke name=|<parameter name=|<\/invoke>|<function_calls>/.test(part.text),
+    )
+  )
+    return { type: "text-tool-call" }
 
   // 3. Provider-executed-only tool step (no client tool part left, see #1).
   if (assistant.finish === "tool-calls") return { type: "continue" }

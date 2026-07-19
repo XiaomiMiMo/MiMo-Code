@@ -14,6 +14,12 @@ const MIN_SPAWN_GAP_MS = 10_000
 export const AUTO_DREAM_TITLE = "Auto Dream"
 export const AUTO_DISTILL_TITLE = "Auto Distill"
 
+const SYSTEM_SESSION_TITLES: ReadonlySet<string> = new Set([AUTO_DREAM_TITLE, AUTO_DISTILL_TITLE])
+
+export function isSystemSession(session: { title: string }): boolean {
+  return SYSTEM_SESSION_TITLES.has(session.title)
+}
+
 let lastDreamSpawnTime = 0
 let lastDistillSpawnTime = 0
 

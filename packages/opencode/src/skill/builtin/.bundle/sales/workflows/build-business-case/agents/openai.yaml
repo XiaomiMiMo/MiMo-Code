@@ -1,0 +1,6 @@
+interface:
+  display_name: "Build Business Case"
+  short_description: "Customer-led business cases and ROI narratives"
+  default_prompt: "Build a business case for a customer."
+policy:
+  allow_implicit_invocation: false

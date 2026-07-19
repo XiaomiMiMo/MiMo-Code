@@ -1,0 +1,6 @@
+interface:
+  display_name: "Follow Up After Call"
+  short_description: "Post-call recap, email, CRM note, and internal draft"
+  default_prompt: "Assess these notes from a recent sales conversation and suggest follow-up."
+policy:
+  allow_implicit_invocation: false

@@ -23,3 +23,15 @@ Concurrency is capped by the host (default min(16, 2x cores)); excess agent() ca
 Communicate between workflows by dataflow: return a value from a child and pass it as args to the next (or write a shared file via writeFile and read it in a later phase). Workflows do not message each other directly. File primitives are jailed to the workspace root (the project worktree by default, or the `workspace` you pass to the run op) by a LEXICAL name check — it blocks `..` and absolute escapes, but does not resolve symlinks, so treat it as scoping, not a hard security boundary.
 
 workflow() cycle detection is asymmetric: a SAVED name is checked by name (so A calling A is a cycle regardless of args), while an INLINE script is checked by content+args (so an inline body that calls itself with DIFFERENT args is not flagged as a cycle and is bounded only by maxDepth). A cycle, over-maxDepth, or unknown name THROWS at the workflow() call site, which fails the run if uncaught — but a try/catch around workflow() in the guest will silence those throws, so don't wrap workflow() in try/catch unless you intend to ignore configuration bugs.
+
+## Built-in workflow args reference
+
+When invoking a named built-in, `args` can be a bare string (auto-normalized to the workflow's primary arg) or an object.
+
+### deep-research
+`args`: string (treated as `question`) | object with:
+  - `question` (required): the research question. A bare string arg is auto-normalized to `{question: <string>}`.
+  - `depth` (optional): "quick" | "standard" | "deep" (default "standard")
+  - `context` (optional): additional context for the brief step
+  - `dir` and `today` are auto-injected by the host (workspace root and host YYYY-MM-DD respectively) — you do NOT need to pass them.
+Example: `workflow({operation:"run", name:"deep-research", args:"What are the latest advances in X?"})`

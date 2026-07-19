@@ -11,6 +11,7 @@ import { Flag } from "@/flag/flag"
 import { writeHeapSnapshot } from "node:v8"
 import { Heap } from "@/cli/heap"
 import { AppRuntime } from "@/effect/app-runtime"
+import { SessionCheckpoint } from "@/session/checkpoint"
 import { ensureProcessMetadata } from "@/util/mimo-process"
 
 ensureProcessMetadata("worker")
@@ -88,6 +89,19 @@ export const rpc = {
   },
   async shutdown() {
     Log.Default.info("worker shutting down")
+
+    // Give in-flight background checkpoint writers a bounded chance to finish
+    // before we tear down instances. A checkpoint writer can run for minutes on
+    // a large session; when the host recycles the worker (e.g. right after a
+    // user abort), a straight disposeAll() interrupts the writer mid-LLM-call,
+    // leaving the on-disk checkpoint stale and the session's token count pinned
+    // — the exact wedge that makes a large session unable to send. Draining
+    // here mirrors cli/bootstrap.ts's headless-run teardown so both entry
+    // points shut down gracefully. Writers that don't settle within the drain
+    // budget are abandoned (disposeAll would kill them anyway).
+    await AppRuntime.runPromise(SessionCheckpoint.Service.use((svc) => svc.drainWriters({ timeoutMs: 30_000 }))).catch(
+      (error) => Log.Default.warn("checkpoint drain failed during shutdown", { error: String(error) }),
+    )
 
     await Instance.disposeAll()
     if (server) await server.stop(true)

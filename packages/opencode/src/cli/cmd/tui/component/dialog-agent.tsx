@@ -23,7 +23,7 @@ export function DialogAgent() {
       current={local.agent.current()?.name}
       options={options()}
       onSelect={(option) => {
-        local.agent.set(option.value)
+        local.agent.userSwitch(option.value)
         dialog.clear()
       }}
     />

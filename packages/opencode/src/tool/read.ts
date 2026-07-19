@@ -11,6 +11,7 @@ import { Instance } from "../project/instance"
 import { assertExternalDirectoryEffect } from "./external-directory"
 import { SessionCwd } from "./session-cwd"
 import { Instruction } from "../session/instruction"
+import { Provider } from "@/provider"
 import { isImageAttachment, isPdfAttachment, sniffAttachmentMime } from "@/util/media"
 
 const DEFAULT_READ_LIMIT = 2000
@@ -32,6 +33,7 @@ export const ReadTool = Tool.define(
     const fs = yield* AppFileSystem.Service
     const instruction = yield* Instruction.Service
     const lsp = yield* LSP.Service
+    const provider = yield* Provider.Service
     const scope = yield* Scope.Scope
 
     const miss = Effect.fn("ReadTool.miss")(function* (filepath: string) {
@@ -208,14 +210,69 @@ export const ReadTool = Tool.define(
       const sample = yield* readSample(filepath, Number(stat.size), SAMPLE_BYTES)
 
       const mime = sniffAttachmentMime(sample, AppFileSystem.mimeType(filepath))
-      if (isImageAttachment(mime) || isPdfAttachment(mime)) {
+      if (isImageAttachment(mime)) {
+        // The active model is carried on ctx.extra.model (set on both the
+        // agent-call path and the @file resolution path, which passes messages: []).
+        // Fall back to resolving the last user message's model for any caller that
+        // doesn't populate extra. Mirrors tool/websearch/index.ts.
+        const extraModel = (ctx.extra as { model?: Provider.Model } | undefined)?.model
+        const messageModelRef = extraModel
+          ? undefined
+          : [...ctx.messages]
+              .reverse()
+              .map((m) => m.info)
+              .find((i): i is Extract<typeof i, { role: "user" }> => i.role === "user")?.model
+        const model =
+          extraModel ??
+          (messageModelRef
+            ? yield* provider
+                .getModel(messageModelRef.providerID, messageModelRef.modelID)
+                .pipe(Effect.catchDefect(() => Effect.succeed(undefined)))
+            : undefined)
+        const supportsImage = model?.capabilities.input.image ?? false
+        if (!supportsImage) {
+        const preferred = yield* provider.getVisionModel().pipe(Effect.orElseSucceed(() => undefined))
+        const preferredRef = preferred ? `${preferred.providerID}/${preferred.id}` : undefined
+        const dispatch = preferredRef
+          ? `dispatch a vision-capable subagent: actor run <type> "<desc>" "analyze the image at ${filepath}" --model ${preferredRef} (run \`actor models --vision\` for the full list)`
+          : `no vision-capable model is configured — ask the user to configure one or use an OCR tool`
+          const warning = [
+            `Cannot read image "${path.basename(filepath)}" — the current model has no vision support, so its visual content is unavailable.`,
+            `If you need to understand the image visually, ${dispatch}.`,
+            `If you instead need the file's raw binary structure, use a shell tool such as \`hexdump -C ${filepath}\` — do not use the read tool for that.`,
+          ].join("\n")
+          return {
+            title,
+            output: warning,
+            metadata: { preview: warning, truncated: false, loaded: [] as string[] },
+          }
+        }
         const bytes = yield* fs.readFile(filepath)
-        const msg = isPdfAttachment(mime) ? "PDF read successfully" : "Image read successfully"
         return {
           title,
-          output: msg,
+          output: "Image read successfully",
           metadata: {
-            preview: msg,
+            preview: "Image read successfully",
+            truncated: false,
+            loaded: loaded.map((item) => item.filepath),
+          },
+          attachments: [
+            {
+              type: "file" as const,
+              mime,
+              url: `data:${mime};base64,${Buffer.from(bytes).toString("base64")}`,
+            },
+          ],
+        }
+      }
+
+      if (isPdfAttachment(mime)) {
+        const bytes = yield* fs.readFile(filepath)
+        return {
+          title,
+          output: "PDF read successfully",
+          metadata: {
+            preview: "PDF read successfully",
             truncated: false,
             loaded: loaded.map((item) => item.filepath),
           },

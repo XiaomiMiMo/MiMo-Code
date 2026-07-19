@@ -1,0 +1,48 @@
+Cron-job tool (shell form). Schedule prompts on a 5-field cron or after a delay.
+Jobs fire only while the REPL is idle; fires queue at 'later' priority.
+
+# Script structure
+#   - Multi-line: one command per non-blank line, set-e on first failure
+#   - "double" quotes preserve LF and process \" \\ escapes
+#   - 'single' quotes are verbatim
+#   - # starts a line comment to end-of-line (quoted # is literal text)
+
+# schedule — cadence (recurring by default):
+    cron schedule "*/5 * * * *" "/babysit-prs"
+    cron schedule "7 * * * *" "check the deploy"
+
+# one-shot reminder:
+    cron schedule "30 14 27 2 *" "file taxes" --one-shot
+
+# durable (survives session restart) — only when user asked it to persist:
+    cron schedule "0 9 * * 1-5" "/standup" --durable
+
+# self-paced loop (delay seconds in [60, 3600], keepalive engages):
+    cron loop 300 "check the deploy"
+    cron loop 1500 "<<autonomous-loop-dynamic>>" --reason "heartbeat"
+
+# inspect:
+    cron list
+    cron list --kind loop
+    cron list --durable-only
+    cron get <id>
+
+# cancel (alias: cron cancel <id>):
+    cron delete <id>
+
+# change the prompt body (cron stays the same — to change cadence, delete+create):
+    cron rename <id> "new prompt body"
+
+# every verb accepts --session <id> to act on another session.
+
+# Picking minutes for `schedule`:
+#   Avoid :00 and :30. "every morning around 9" → "57 8 * * *", not "0 9 * * *".
+
+# Picking delay_seconds for `loop`:
+#   60–300: follow-up soon. 300–1800: routine. 1200–1800: heartbeat.
+
+# Schedule vs loop:
+#   schedule = fixed cadence known up front
+#   loop = cadence depends on what you observed; may change next turn
+
+# Don't list jobs in your reply — the UI renders them.

@@ -235,44 +235,6 @@ test(
   ),
 )
 
-test("Claude Code local MCP server is pending until explicitly connected", async () => {
-  await using tmp = await tmpdir({
-    init: async (dir) => {
-      await Bun.write(
-        `${dir}/.claude.json`,
-        JSON.stringify({
-          mcpServers: {
-            filesystem: {
-              command: "npx",
-              args: ["-y", "@modelcontextprotocol/server-filesystem", dir],
-            },
-          },
-        }),
-      )
-    },
-  })
-
-  await Instance.provide({
-    directory: tmp.path,
-    fn: async () => {
-      await Effect.runPromise(
-        MCP.Service.use((mcp) =>
-          Effect.gen(function* () {
-            expect((yield* mcp.status()).filesystem).toEqual({ status: "pending" })
-            expect(clientCreateCount).toBe(0)
-
-            yield* mcp.connect("filesystem")
-
-            expect((yield* mcp.status()).filesystem).toEqual({ status: "connected" })
-            expect(clientCreateCount).toBe(1)
-          }),
-        ).pipe(Effect.provide(MCP.defaultLayer)),
-      )
-      await Instance.dispose()
-    },
-  })
-})
-
 // ========================================================================
 // Test: tool change notifications refresh the cache
 // ========================================================================

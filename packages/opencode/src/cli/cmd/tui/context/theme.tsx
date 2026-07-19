@@ -43,6 +43,7 @@ import { Global } from "@/global"
 import { Filesystem } from "@/util"
 import { useTuiConfig } from "./tui-config"
 import { isRecord } from "@/util/record"
+import { applyEdits, modify } from "jsonc-parser"
 import type { TuiThemeCurrent } from "@mimo-ai/plugin/tui"
 
 type Theme = TuiThemeCurrent & {
@@ -534,6 +535,8 @@ export const { use: useTheme, provider: ThemeProvider } = createSimpleContext({
   },
 })
 
+const THEME_SCHEMA_URL = "https://mimo.xiaomi.com/mimocode/theme.json"
+
 async function getCustomThemes() {
   const directories = [
     Global.Path.config,
@@ -554,7 +557,19 @@ async function getCustomThemes() {
       symlink: true,
     })) {
       const name = path.basename(item, ".json")
-      result[name] = await Filesystem.readJson(item)
+      const text = await Filesystem.readText(item).catch(() => "")
+      if (!text) continue
+      let data: ThemeJson
+      try { data = JSON.parse(text) } catch { continue }
+      if (!data.$schema || data.$schema === "https://opencode.ai/theme.json") {
+        data.$schema = THEME_SCHEMA_URL
+        const edits = modify(text, ["$schema"], THEME_SCHEMA_URL, {
+          formattingOptions: { insertSpaces: true, tabSize: 2 },
+          isArrayInsertion: false,
+        })
+        if (edits.length) await Filesystem.write(item, applyEdits(text, edits)).catch(() => {})
+      }
+      result[name] = data
     }
   }
   return result

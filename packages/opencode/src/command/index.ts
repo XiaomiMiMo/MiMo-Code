@@ -10,6 +10,7 @@ import { Config } from "../config"
 import { MCP } from "../mcp"
 import { Skill } from "../skill"
 import PROMPT_INITIALIZE from "./template/initialize.txt"
+import PROMPT_LOOPS from "./template/loops.txt"
 import PROMPT_REVIEW from "./template/review.txt"
 
 type State = {
@@ -35,6 +36,7 @@ export const Info = z
     agent: z.string().optional(),
     model: z.string().optional(),
     source: z.enum(["command", "mcp", "skill"]).optional(),
+    bundled: z.boolean().optional(),
     // workaround for zod not supporting async functions natively so we use getters
     // https://zod.dev/v4/changelog?id=zfunction
     template: z.promise(z.string()).or(z.string()),
@@ -65,6 +67,8 @@ export const Default = {
   DISTILL: "distill",
   GOAL: "goal",
   DEEP_RESEARCH: "deep-research",
+  LOOPS: "loops",
+  REBUILD: "rebuild",
 } as const
 
 export function deepResearchTemplate(): string {
@@ -175,17 +179,41 @@ export const layer = Layer.effect(
         },
         hints: ["$ARGUMENTS"],
       }
+      commands[Default.REBUILD] = {
+        name: Default.REBUILD,
+        description: "rebuild the conversation context now from the latest checkpoint (frees context; keeps recent messages)",
+        source: "command",
+        subtask: false,
+        get template() {
+          return "$ARGUMENTS"
+        },
+        hints: ["$ARGUMENTS"],
+      }
 
       if (Flag.MIMOCODE_EXPERIMENTAL_WORKFLOW_TOOL) {
         commands[Default.DEEP_RESEARCH] = {
           name: Default.DEEP_RESEARCH,
           description: "deep multi-source, fact-checked research report (runs the deep-research workflow)",
           source: "command",
+          bundled: true,
           subtask: false,
           get template() {
             return deepResearchTemplate()
           },
           hints: ["$ARGUMENTS"],
+        }
+      }
+
+      if (Flag.MIMOCODE_EXPERIMENTAL_CRON) {
+        commands[Default.LOOPS] = {
+          name: Default.LOOPS,
+          description: "list active scheduled jobs; accepts `cancel <id>` to delete one",
+          source: "command",
+          subtask: false,
+          get template() {
+            return PROMPT_LOOPS
+          },
+          hints: hints(PROMPT_LOOPS),
         }
       }
 
@@ -239,6 +267,7 @@ export const layer = Layer.effect(
           name: item.name,
           description: item.description,
           source: "skill",
+          bundled: item.bundled,
           get template() {
             return item.content
           },

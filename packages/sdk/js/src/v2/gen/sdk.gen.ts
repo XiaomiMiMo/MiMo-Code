@@ -92,6 +92,9 @@ import type {
   PermissionRespondErrors,
   PermissionRespondResponses,
   PermissionRuleset,
+  PermissionSetSkipAllErrors,
+  PermissionSetSkipAllResponses,
+  PermissionSkipAllResponses,
   ProjectCurrentResponses,
   ProjectInitGitResponses,
   ProjectListResponses,
@@ -130,6 +133,8 @@ import type {
   SessionAbortResponses,
   SessionActorsErrors,
   SessionActorsResponses,
+  SessionAskErrors,
+  SessionAskResponses,
   SessionChildrenErrors,
   SessionChildrenResponses,
   SessionCommandErrors,
@@ -209,6 +214,8 @@ import type {
   VcsGetResponses,
   WorkflowListResponses,
   WorkflowResumeResponses,
+  WorkflowStructureResponses,
+  WorkflowTranscriptResponses,
   WorktreeCreateErrors,
   WorktreeCreateInput,
   WorktreeCreateResponses,
@@ -1948,6 +1955,7 @@ export class Session2 extends HeyApiClient {
       sessionID: string
       directory?: string
       workspace?: string
+      visible?: boolean
     },
     options?: Options<never, ThrowOnError>,
   ) {
@@ -1959,6 +1967,7 @@ export class Session2 extends HeyApiClient {
             { in: "path", key: "sessionID" },
             { in: "query", key: "directory" },
             { in: "query", key: "workspace" },
+            { in: "query", key: "visible" },
           ],
         },
       ],
@@ -2279,6 +2288,45 @@ export class Session2 extends HeyApiClient {
     )
     return (options?.client ?? this.client).post<SessionSummarizeResponses, SessionSummarizeErrors, ThrowOnError>({
       url: "/session/{sessionID}/summarize",
+      ...options,
+      ...params,
+      headers: {
+        "Content-Type": "application/json",
+        ...options?.headers,
+        ...params.headers,
+      },
+    })
+  }
+
+  /**
+   * Ask session a side question
+   *
+   * Ask the session a one-shot, read-only side question over a frozen snapshot of its history and return the answer text. Does NOT inject a message into the conversation or disturb the session's turn.
+   */
+  public ask<ThrowOnError extends boolean = false>(
+    parameters: {
+      sessionID: string
+      directory?: string
+      workspace?: string
+      question?: string
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "path", key: "sessionID" },
+            { in: "query", key: "directory" },
+            { in: "query", key: "workspace" },
+            { in: "body", key: "question" },
+          ],
+        },
+      ],
+    )
+    return (options?.client ?? this.client).post<SessionAskResponses, SessionAskErrors, ThrowOnError>({
+      url: "/session/{sessionID}/ask",
       ...options,
       ...params,
       headers: {
@@ -2976,6 +3024,77 @@ export class Permission extends HeyApiClient {
       ...params,
     })
   }
+
+  /**
+   * Get skip-all state
+   *
+   * Whether permission asks are auto-allowed at runtime. Explicit deny rules and forced-ask permissions are unaffected.
+   */
+  public skipAll<ThrowOnError extends boolean = false>(
+    parameters?: {
+      directory?: string
+      workspace?: string
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "query", key: "directory" },
+            { in: "query", key: "workspace" },
+          ],
+        },
+      ],
+    )
+    return (options?.client ?? this.client).get<PermissionSkipAllResponses, unknown, ThrowOnError>({
+      url: "/permission/skip-all",
+      ...options,
+      ...params,
+    })
+  }
+
+  /**
+   * Set skip-all state
+   *
+   * Enable or disable runtime auto-allow for permission asks. Applies instance-wide, so subagents inherit it. Explicit deny rules and forced-ask permissions (e.g. bash_delete) still apply.
+   */
+  public setSkipAll<ThrowOnError extends boolean = false>(
+    parameters?: {
+      directory?: string
+      workspace?: string
+      enabled?: boolean
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "query", key: "directory" },
+            { in: "query", key: "workspace" },
+            { in: "body", key: "enabled" },
+          ],
+        },
+      ],
+    )
+    return (options?.client ?? this.client).post<
+      PermissionSetSkipAllResponses,
+      PermissionSetSkipAllErrors,
+      ThrowOnError
+    >({
+      url: "/permission/skip-all",
+      ...options,
+      ...params,
+      headers: {
+        "Content-Type": "application/json",
+        ...options?.headers,
+        ...params.headers,
+      },
+    })
+  }
 }
 
 export class Workflow extends HeyApiClient {
@@ -3038,6 +3157,70 @@ export class Workflow extends HeyApiClient {
     )
     return (options?.client ?? this.client).post<WorkflowResumeResponses, unknown, ThrowOnError>({
       url: "/workflows/{runID}/resume",
+      ...options,
+      ...params,
+    })
+  }
+
+  /**
+   * Get a workflow run's full transcript
+   *
+   * Return the complete ordered phase/log transcript for one run, straight from the runtime's in-memory buffer (uncapped, unlike the tool-part metadata copy). Empty when the runtime is down or the run is unknown.
+   */
+  public transcript<ThrowOnError extends boolean = false>(
+    parameters: {
+      runID: string
+      directory?: string
+      workspace?: string
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "path", key: "runID" },
+            { in: "query", key: "directory" },
+            { in: "query", key: "workspace" },
+          ],
+        },
+      ],
+    )
+    return (options?.client ?? this.client).get<WorkflowTranscriptResponses, unknown, ThrowOnError>({
+      url: "/workflows/{runID}/transcript",
+      ...options,
+      ...params,
+    })
+  }
+
+  /**
+   * Get a workflow run's structure tree
+   *
+   * Return the observability-only structure tree (phase/agent/workflow nodes with live status) for one run. Empty when the runtime is down or the run is unknown.
+   */
+  public structure<ThrowOnError extends boolean = false>(
+    parameters: {
+      runID: string
+      directory?: string
+      workspace?: string
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "path", key: "runID" },
+            { in: "query", key: "directory" },
+            { in: "query", key: "workspace" },
+          ],
+        },
+      ],
+    )
+    return (options?.client ?? this.client).get<WorkflowStructureResponses, unknown, ThrowOnError>({
+      url: "/workflows/{runID}/structure",
       ...options,
       ...params,
     })

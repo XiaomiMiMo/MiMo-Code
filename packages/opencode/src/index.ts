@@ -32,6 +32,7 @@ import { PrCommand } from "./cli/cmd/pr"
 import { SessionCommand } from "./cli/cmd/session"
 import { DbCommand } from "./cli/cmd/db"
 import path from "path"
+import { readdirSync, unlinkSync } from "fs"
 import { Global } from "./global"
 import { JsonMigration } from "./storage"
 import { Database } from "./storage"
@@ -164,6 +165,18 @@ const cli = yargs(args)
       } catch (e) {
         Log.Default.warn("claude-import failed", { e: errorMessage(e) })
       }
+    }
+
+    // Clean up stale .old_* files left by Windows in-place upgrades
+    if (process.platform === "win32") {
+      try {
+        const binDir = path.dirname(process.execPath)
+        for (const entry of readdirSync(binDir)) {
+          if (entry.startsWith("mimo.exe.old_")) {
+            try { unlinkSync(path.join(binDir, entry)) } catch {}
+          }
+        }
+      } catch {}
     }
   })
   .usage("")

@@ -27,6 +27,7 @@ export interface Options {
   maxBytes?: number
   direction?: "head" | "tail" | "head+tail"
   pressureCaps?: boolean
+  outcome?: "success" | "error"
 }
 
 function hasActorTool(agent?: Agent.Info) {
@@ -77,6 +78,14 @@ export const layer = Layer.effect(
       let maxBytes = options.maxBytes ?? MAX_BYTES
       const direction = options.direction ?? "head+tail"
       const pressureCaps = options.pressureCaps ?? false
+      const outcome = options.outcome ?? "success"
+
+      const hint = (file: string) => {
+        const result = outcome === "error" ? "failed" : "succeeded"
+        return hasActorTool(agent)
+          ? `The tool call ${result} but the output was truncated. Full output saved to: ${file}\nUse the actor tool to have explore agent process this file with Grep and Read (with offset/limit). Do NOT read the full file yourself - delegate to save context.`
+          : `The tool call ${result} but the output was truncated. Full output saved to: ${file}\nUse Grep to search the full content or Read with offset/limit to view specific sections.`
+      }
 
       if (pressureCaps) {
         maxLines = Math.floor(maxLines / 2)
@@ -125,12 +134,8 @@ export const layer = Layer.effect(
           const omitted = lines.length - headOut.length - tailOut.length
           const file = yield* write(text)
 
-          const hintText = hasActorTool(agent)
-            ? `The tool call succeeded but the output was truncated. Full output saved to: ${file}\nUse the actor tool to have explore agent process this file with Grep and Read (with offset/limit). Do NOT read the full file yourself - delegate to save context.`
-            : `The tool call succeeded but the output was truncated. Full output saved to: ${file}\nUse Grep to search the full content or Read with offset/limit to view specific sections.`
-
           return {
-            content: `${headOut.join("\n")}\n\n... ${omitted} lines omitted — showing head and tail ...\n\n${tailOut.join("\n")}\n\n${hintText}`,
+            content: `${headOut.join("\n")}\n\n... ${omitted} lines omitted — showing head and tail ...\n\n${tailOut.join("\n")}\n\n${hint(file)}`,
             truncated: true,
             outputPath: file,
           } as const
@@ -170,15 +175,11 @@ export const layer = Layer.effect(
       const preview = out.join("\n")
       const file = yield* write(text)
 
-      const hintText = hasActorTool(agent)
-        ? `The tool call succeeded but the output was truncated. Full output saved to: ${file}\nUse the actor tool to have explore agent process this file with Grep and Read (with offset/limit). Do NOT read the full file yourself - delegate to save context.`
-        : `The tool call succeeded but the output was truncated. Full output saved to: ${file}\nUse Grep to search the full content or Read with offset/limit to view specific sections.`
-
       return {
         content:
           direction === "head" || direction === "head+tail"
-            ? `${preview}\n\n...${removed} ${unit} truncated...\n\n${hintText}`
-            : `...${removed} ${unit} truncated...\n\n${hintText}\n\n${preview}`,
+            ? `${preview}\n\n...${removed} ${unit} truncated...\n\n${hint(file)}`
+            : `...${removed} ${unit} truncated...\n\n${hint(file)}\n\n${preview}`,
         truncated: true,
         outputPath: file,
       } as const

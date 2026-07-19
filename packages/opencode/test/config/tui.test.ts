@@ -625,3 +625,76 @@ test("merges plugin_enabled flags across config layers", async () => {
     "local.plugin": true,
   })
 })
+
+test("injects $schema when missing from tui.json", async () => {
+  await using tmp = await tmpdir({ outsideGit: true,
+    init: async (dir) => {
+      await Bun.write(path.join(dir, "tui.json"), JSON.stringify({ theme: "nord" }, null, 2))
+    },
+  })
+
+  await getTuiConfig(tmp.path)
+  const text = await Filesystem.readText(path.join(tmp.path, "tui.json"))
+  expect(text).toContain('"$schema": "https://mimo.xiaomi.com/mimocode/tui.json"')
+  expect(text).toContain('"theme": "nord"')
+})
+
+test("migrates old opencode.ai $schema URL to mimo.xiaomi.com", async () => {
+  await using tmp = await tmpdir({ outsideGit: true,
+    init: async (dir) => {
+      await Bun.write(
+        path.join(dir, "tui.json"),
+        JSON.stringify({ $schema: "https://opencode.ai/tui.json", theme: "dracula" }, null, 2),
+      )
+    },
+  })
+
+  await getTuiConfig(tmp.path)
+  const text = await Filesystem.readText(path.join(tmp.path, "tui.json"))
+  expect(text).toContain('"$schema": "https://mimo.xiaomi.com/mimocode/tui.json"')
+  expect(text).not.toContain("opencode.ai")
+  expect(text).toContain('"theme": "dracula"')
+})
+
+test("does not modify $schema when pointing to a custom URL", async () => {
+  await using tmp = await tmpdir({ outsideGit: true,
+    init: async (dir) => {
+      await Bun.write(
+        path.join(dir, "tui.json"),
+        JSON.stringify({ $schema: "https://example.com/my-schema.json", theme: "nord" }, null, 2),
+      )
+    },
+  })
+
+  await getTuiConfig(tmp.path)
+  const text = await Filesystem.readText(path.join(tmp.path, "tui.json"))
+  expect(text).toContain('"$schema": "https://example.com/my-schema.json"')
+  expect(text).not.toContain("mimo.xiaomi.com")
+})
+
+test("preserves JSONC comments when injecting $schema", async () => {
+  await using tmp = await tmpdir({ outsideGit: true,
+    init: async (dir) => {
+      await Bun.write(
+        path.join(dir, "tui.jsonc"),
+        `{
+  // My theme config
+  "theme": "catppuccin"
+}`,
+      )
+    },
+  })
+
+  await getTuiConfig(tmp.path)
+  const text = await Filesystem.readText(path.join(tmp.path, "tui.jsonc"))
+  expect(text).toContain('"$schema": "https://mimo.xiaomi.com/mimocode/tui.json"')
+  expect(text).toContain("// My theme config")
+  expect(text).toContain('"theme": "catppuccin"')
+})
+
+test("does not write $schema to non-existent tui.json", async () => {
+  await using tmp = await tmpdir({ outsideGit: true })
+
+  await getTuiConfig(tmp.path)
+  expect(await Filesystem.exists(path.join(tmp.path, "tui.json"))).toBe(false)
+})

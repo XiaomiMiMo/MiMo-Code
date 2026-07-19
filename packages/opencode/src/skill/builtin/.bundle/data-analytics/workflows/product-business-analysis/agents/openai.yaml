@@ -1,0 +1,6 @@
+interface:
+  display_name: "Product And Business Analysis"
+  short_description: "Analyze product or business data to support decisions"
+  default_prompt: "Analyze a product or business question with data-backed evidence, context, and a recommendation."
+policy:
+  allow_implicit_invocation: true
