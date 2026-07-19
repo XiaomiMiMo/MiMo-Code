@@ -129,6 +129,26 @@ describe("session.retry.retryable", () => {
     expect(SessionRetry.retryable(error)).toBe("Too Many Requests")
   })
 
+  test("maps provider 429 limitation error body as rate-limited", () => {
+    const error = wrap(JSON.stringify({ error: { code: "429", message: "Too many requests", type: "limitation" } }))
+    expect(SessionRetry.retryable(error)).toBe("Too Many Requests")
+  })
+
+  test("maps numeric 429 error code as rate-limited", () => {
+    const error = wrap(JSON.stringify({ error: { code: 429, message: "Too many requests" } }))
+    expect(SessionRetry.retryable(error)).toBe("Too Many Requests")
+  })
+
+  test("maps top-level 429 code as rate-limited", () => {
+    const error = wrap(JSON.stringify({ code: "429", message: "slow down" }))
+    expect(SessionRetry.retryable(error)).toBe("Too Many Requests")
+  })
+
+  test("maps nested rate-limit message as rate-limited", () => {
+    const error = wrap(JSON.stringify({ error: { code: "unknown", message: "Rate limit exceeded" } }))
+    expect(SessionRetry.retryable(error)).toBe("Too Many Requests")
+  })
+
   test("maps overloaded provider codes", () => {
     const error = wrap(JSON.stringify({ code: "resource_exhausted" }))
     expect(SessionRetry.retryable(error)).toBe("Provider is overloaded")
@@ -217,6 +237,62 @@ describe("session.retry.retryable", () => {
     }).toObject() as MessageV2.APIError
 
     expect(SessionRetry.retryable(error)).toBeUndefined()
+  })
+
+  // T18: a 429 APIError the provider marked non-retryable previously fell
+  // through the non-retryable bail (429 < 500) and surfaced as a raw blob.
+  test("retries 429 APIError even when isRetryable is false (by status)", () => {
+    const error = new MessageV2.APIError({
+      message: '429: {"error":{"type":"rate_limit_error","message":"rate limited"}}',
+      isRetryable: false,
+      statusCode: 429,
+      responseBody: '{"error":{"type":"rate_limit_error"}}',
+    }).toObject() as MessageV2.APIError
+
+    expect(SessionRetry.retryable(error)).toBe("Too Many Requests")
+  })
+
+  test("retries a rate-limit APIError when status is absent (by message/body)", () => {
+    const error = new MessageV2.APIError({
+      message: "provider error",
+      isRetryable: false,
+      responseBody: '{"error":{"type":"rate_limit_error"}}',
+    }).toObject() as MessageV2.APIError
+
+    expect(SessionRetry.retryable(error)).toBe("Too Many Requests")
+  })
+
+  // PR #1680 regression: FreeUsageLimitError arrives as an HTTP 429 whose body
+  // also reads "Rate limit exceeded". It MUST surface the Go upsell prompt, not
+  // be swallowed by the generic 429-retry branch into "Too Many Requests".
+  test("FreeUsageLimitError over 429 returns the Go upsell, not Too Many Requests", () => {
+    const error = new MessageV2.APIError({
+      message: "429: Rate limit exceeded",
+      isRetryable: false,
+      statusCode: 429,
+      responseBody: '{"type":"FreeUsageLimitError","message":"Rate limit exceeded"}',
+    }).toObject() as MessageV2.APIError
+
+    expect(SessionRetry.retryable(error)).toBe(SessionRetry.GO_UPSELL_MESSAGE)
+  })
+
+  // PR #1680 follow-up: SubscriptionUsageLimitError is also a terminal 429 —
+  // retrying just hangs the session, so it must not become retryable.
+  test("SubscriptionUsageLimitError over 429 is terminal (not retryable)", () => {
+    const error = new MessageV2.APIError({
+      message: "429: Rate limit exceeded",
+      isRetryable: false,
+      statusCode: 429,
+      responseBody: '{"type":"SubscriptionUsageLimitError","message":"Rate limit exceeded"}',
+    }).toObject() as MessageV2.APIError
+
+    expect(SessionRetry.retryable(error)).toBeUndefined()
+  })
+
+  test("isRateLimitMessage matches underscore rate_limit variants", () => {
+    expect(SessionRetry.isRateLimitMessage("rate_limit_error")).toBe(true)
+    expect(SessionRetry.isRateLimitMessage("too_many_requests")).toBe(true)
+    expect(SessionRetry.isRateLimitMessage("something unrelated")).toBe(false)
   })
 
   test("retries ZlibError decompression failures", () => {

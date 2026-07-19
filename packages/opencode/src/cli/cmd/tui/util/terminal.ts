@@ -9,6 +9,15 @@ export function isMacNativeTerminal(input?: { platform?: NodeJS.Platform; termPr
   )
 }
 
+export function isWindowsTerminal(input?: { wtSession?: string }) {
+  // Windows Terminal — and WSL sessions launched from it — set WT_SESSION to a
+  // GUID. Used to skip the app-level right-click paste there: Windows Terminal
+  // already performs its own right-click paste, so triggering paste() again
+  // double-inserts (notably images). Other terminals don't self-paste on
+  // right-click, so they keep relying on the app-level paste.
+  return !!(input?.wtSession ?? process.env.WT_SESSION)
+}
+
 export function isPlainTerminal(input?: { platform?: NodeJS.Platform; termProgram?: string; plain?: string }) {
   const plain = input?.plain ?? process.env.MIMOCODE_TUI_PLAIN
   if (plain === "false" || plain === "0") return false

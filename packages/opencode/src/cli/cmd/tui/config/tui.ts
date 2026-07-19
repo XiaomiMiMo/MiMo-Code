@@ -2,6 +2,7 @@ export * as TuiConfig from "./tui"
 
 import z from "zod"
 import { mergeDeep, unique } from "remeda"
+import { applyEdits, modify } from "jsonc-parser"
 import { Context, Effect, Fiber, Layer } from "effect"
 import { ConfigParse } from "@/config/parse"
 import * as ConfigPaths from "@/config/paths"
@@ -192,13 +193,25 @@ export async function get() {
   return runPromise((svc) => svc.get())
 }
 
+const TUI_SCHEMA_URL = "https://mimo.xiaomi.com/mimocode/tui.json"
+
 async function loadFile(filepath: string): Promise<Info> {
   const text = await ConfigPaths.readFile(filepath)
   if (!text) return {}
-  return load(text, filepath).catch((error) => {
+  let parsed = false
+  const data = await load(text, filepath).then((d) => { parsed = true; return d }).catch((error) => {
     log.warn("failed to load tui config", { path: filepath, error })
-    return {}
+    return {} as Info
   })
+  if (parsed && (!data.$schema || data.$schema === "https://opencode.ai/tui.json")) {
+    data.$schema = TUI_SCHEMA_URL
+    const edits = modify(text, ["$schema"], TUI_SCHEMA_URL, {
+      formattingOptions: { insertSpaces: true, tabSize: 2 },
+      isArrayInsertion: false,
+    })
+    if (edits.length) await Filesystem.write(filepath, applyEdits(text, edits)).catch(() => {})
+  }
+  return data
 }
 
 async function load(text: string, configFilepath: string): Promise<Info> {

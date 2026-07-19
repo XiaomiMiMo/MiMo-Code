@@ -1,5 +1,5 @@
 {
-  "$schema": "https://opencode.ai/config.json",
+  "$schema": "https://mimo.xiaomi.com/mimocode/config.json",
   "provider": {},
   "permission": {
     "edit": {

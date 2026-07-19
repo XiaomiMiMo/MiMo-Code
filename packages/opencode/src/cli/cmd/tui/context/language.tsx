@@ -61,6 +61,8 @@ export const { use: useLanguage, provider: LanguageProvider } = createSimpleCont
     })
 
     const [dict] = createResource(effective, loadDict, { initialValue: base })
+    // NB: i18n.translator() returns undefined for missing keys at runtime, despite the cast to string.
+    // Callers that need a fallback should use `t(key) || fallback`.
     const t = i18n.translator(() => dict() ?? base, i18n.resolveTemplate) as (
       key: string,
       params?: Record<string, string | number | boolean>,

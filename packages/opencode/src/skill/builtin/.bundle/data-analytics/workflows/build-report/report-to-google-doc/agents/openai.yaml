@@ -1,0 +1,6 @@
+interface:
+  display_name: "Report To Google Doc"
+  short_description: "Convert existing HTML analytics reports into Google Doc or DOCX deliverables"
+  default_prompt: "Convert an existing HTML analytics report into a shareable Google Doc or DOCX deliverable."
+policy:
+  allow_implicit_invocation: false

@@ -25,6 +25,7 @@ export const ActorRegistryTable = sqliteTable(
     last_turn_time: integer().notNull(),
     turn_count: integer().notNull().default(0),
     last_error: text(),
+    instance_id: text().notNull(),
     time_completed: integer(),
     ...Timestamps,
   },

@@ -185,6 +185,8 @@ describe("session.llm system prompt — memory-instructions guard", () => {
         const capture = await request
         const messages = capture.body.messages as Array<{ role: string; content: string }>
         const sysMsgs = messages.filter((m) => m.role === "system")
+        // buildSystemArray now collapses everything into a single system message.
+        expect(sysMsgs.length).toBe(1)
         const allSys = sysMsgs.map((m) => m.content).join("\n")
         expect(allSys).toContain("# Memory system")
       },

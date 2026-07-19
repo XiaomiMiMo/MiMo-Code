@@ -1,0 +1,51 @@
+{
+  "schema_version": "data_analytics_source_category_config.v1",
+  "description": "Author-owned Data Analytics source category catalog. Runtime source resolution and fallback behavior are owned by the index skill for guided workflows and semantic-layer references for reusable data-context workflows. Skills decide which categories they attempt. preferred_plugins values are routing hints and examples, not an exhaustive source list. Data Analytics does not persist user-specific source-routing preferences or semantic-layer registry pointers in hidden local state.",
+  "categories": {
+    "structured_data": {
+      "label": "Data warehouse",
+      "preferred_plugins": ["Databricks", "BigQuery", "Snowflake"],
+      "relevant_skills": []
+    },
+    "team_communication": {
+      "label": "Team communication",
+      "preferred_plugins": ["Slack", "Teams"],
+      "relevant_skills": []
+    },
+    "company_docs": {
+      "label": "Company docs",
+      "preferred_plugins": ["Google Drive", "SharePoint", "Notion"],
+      "relevant_skills": []
+    },
+    "dashboards_bi": {
+      "label": "Dashboards and BI",
+      "preferred_plugins": ["ThoughtSpot", "Omni Analytics", "Metabase"],
+      "relevant_skills": []
+    },
+    "behavior_signals": {
+      "label": "Behavior signals",
+      "preferred_plugins": ["Amplitude", "Mixpanel", "PostHog"],
+      "relevant_skills": []
+    },
+    "notebook_lab": {
+      "label": "Notebook lab",
+      "preferred_plugins": ["Hex", "Deepnote"],
+      "relevant_skills": []
+    },
+    "email_context": {
+      "label": "Email context",
+      "preferred_plugins": ["Gmail", "Outlook Email"],
+      "relevant_skills": []
+    },
+    "calendar_context": {
+      "label": "Calendar context",
+      "preferred_plugins": ["Google Calendar", "Outlook Calendar"],
+      "relevant_skills": []
+    },
+    "code_repository": {
+      "label": "Code repository",
+      "preferred_plugins": ["GitHub"],
+      "relevant_skills": []
+    }
+  }
+}

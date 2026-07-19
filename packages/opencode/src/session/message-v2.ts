@@ -9,7 +9,6 @@ import { SyncEvent } from "../sync"
 import { Database, NotFoundError, and, desc, eq, inArray, lt, or } from "@/storage"
 import { MessageTable, PartTable, SessionTable } from "./session.sql"
 import { ProviderError } from "@/provider"
-import { iife } from "@/util/iife"
 import { errorMessage } from "@/util/error"
 import { isMedia } from "@/util/media"
 import type { SystemError } from "bun"
@@ -17,6 +16,12 @@ import type { Provider } from "@/provider"
 import { ModelID, ProviderID } from "@/provider/schema"
 import { Effect } from "effect"
 import { EffectLogger } from "@/effect"
+import {
+  inlineToolAttachment,
+  routeToolAttachment,
+  toolAttachmentFilename,
+  toolAttachmentPlaceholder,
+} from "./tool-attachment"
 
 /** Error shape thrown by Bun's fetch() when gzip/br decompression fails mid-stream */
 interface FetchDecompressionError extends Error {
@@ -25,7 +30,7 @@ interface FetchDecompressionError extends Error {
   path: string
 }
 
-export const SYNTHETIC_ATTACHMENT_PROMPT = "Attached image(s) from tool result:"
+export const SYNTHETIC_ATTACHMENT_PROMPT = "Attached file(s) from tool result:"
 export { isMedia }
 
 export const OutputLengthError = NamedError.create("MessageOutputLengthError", z.object({}))
@@ -344,6 +349,7 @@ export const ToolStateError = z
       start: z.number(),
       end: z.number(),
     }),
+    attachments: FilePart.array().optional(),
   })
   .meta({
     ref: "ToolStateError",
@@ -619,23 +625,6 @@ export const toModelMessagesEffect = Effect.fnUntraced(function* (
 ) {
   const result: UIMessage[] = []
   const toolNames = new Set<string>()
-  // Track media from tool results that need to be injected as user messages
-  // for providers that don't support media in tool results.
-  //
-  // OpenAI-compatible APIs only support string content in tool results, so media
-  // must be extracted and injected as a user message. Anthropic/Bedrock can keep
-  // media nested in tool results; Gemini 3 supports it, but earlier Gemini models
-  // need the extracted-user-message path.
-  const supportsMediaInToolResults = (() => {
-    if (model.api.npm === "@ai-sdk/anthropic") return true
-    if (model.api.npm === "@ai-sdk/amazon-bedrock") return true
-    if (model.api.npm === "@ai-sdk/google-vertex/anthropic") return true
-    if (model.api.npm === "@ai-sdk/google") {
-      const id = model.api.id.toLowerCase()
-      return id.includes("gemini-3") && !id.includes("gemini-2")
-    }
-    return false
-  })()
 
   const toModelOutput = (options: { toolCallId: string; input: unknown; output: unknown }) => {
     const output = options.output
@@ -648,22 +637,29 @@ export const toModelMessagesEffect = Effect.fnUntraced(function* (
         text: string
         attachments?: Array<{ mime: string; url: string; filename?: string }>
       }
-      const attachments = (outputObject.attachments ?? []).filter((attachment) => {
-        return attachment.url.startsWith("data:") && attachment.url.includes(",")
+      const attachments = (outputObject.attachments ?? []).flatMap((attachment) => {
+        const inline = inlineToolAttachment(attachment)
+        return inline ? [{ ...attachment, ...inline }] : []
       })
 
       return {
         type: "content",
         value: [
           { type: "text", text: outputObject.text },
-          ...attachments.map((attachment) => ({
-            type: "media",
-            mediaType: attachment.mime,
-            data: iife(() => {
-              const commaIndex = attachment.url.indexOf(",")
-              return commaIndex === -1 ? attachment.url : attachment.url.slice(commaIndex + 1)
-            }),
-          })),
+          ...attachments.map((attachment) =>
+            attachment.mime.startsWith("image/")
+              ? {
+                  type: "image-data" as const,
+                  mediaType: attachment.mediaType,
+                  data: attachment.data,
+                }
+              : {
+                  type: "file-data" as const,
+                  mediaType: attachment.mediaType,
+                  data: attachment.data,
+                  filename: toolAttachmentFilename(attachment),
+                },
+          ),
         ],
       }
     }
@@ -727,7 +723,51 @@ export const toModelMessagesEffect = Effect.fnUntraced(function* (
 
     if (msg.info.role === "assistant") {
       const differentModel = `${model.providerID}/${model.id}` !== `${msg.info.providerID}/${msg.info.modelID}`
-      const media: Array<{ mime: string; url: string; filename?: string }> = []
+      const syntheticGroups: Array<{
+        tool: string
+        callID: string
+        status: "completed" | "error"
+        parts: Array<
+          { type: "file"; url: string; mediaType: string; filename?: string } | { type: "text"; text: string }
+        >
+      }> = []
+      const routeAttachments = (input: {
+        tool: string
+        callID: string
+        status: "completed" | "error"
+        attachments: FilePart[]
+        allowNative: boolean
+      }) => {
+        const native: FilePart[] = []
+        const parts: (typeof syntheticGroups)[number]["parts"] = []
+        for (const attachment of input.attachments) {
+          const route = routeToolAttachment({ model, attachment, allowNative: input.allowNative })
+          if (route === "native") native.push(attachment)
+          if (route === "synthetic") {
+            parts.push({
+              type: "file",
+              url: attachment.url,
+              mediaType: attachment.mime,
+              filename: toolAttachmentFilename(attachment),
+            })
+          }
+          if (route === "placeholder") {
+            parts.push({
+              type: "text",
+              text: toolAttachmentPlaceholder(attachment),
+            })
+          }
+        }
+        if (parts.length > 0) {
+          syntheticGroups.push({
+            tool: input.tool,
+            callID: input.callID,
+            status: input.status,
+            parts,
+          })
+        }
+        return native
+      }
 
       if (
         msg.info.error &&
@@ -759,15 +799,13 @@ export const toModelMessagesEffect = Effect.fnUntraced(function* (
           if (part.state.status === "completed") {
             const outputText = part.state.time.compacted ? "[Old tool result content cleared]" : part.state.output
             const attachments = part.state.time.compacted || options?.stripMedia ? [] : (part.state.attachments ?? [])
-
-            // For providers that don't support media in tool results, extract media files
-            // (images, PDFs) to be sent as a separate user message
-            const mediaAttachments = attachments.filter((a) => isMedia(a.mime))
-            const nonMediaAttachments = attachments.filter((a) => !isMedia(a.mime))
-            if (!supportsMediaInToolResults && mediaAttachments.length > 0) {
-              media.push(...mediaAttachments)
-            }
-            const finalAttachments = supportsMediaInToolResults ? attachments : nonMediaAttachments
+            const finalAttachments = routeAttachments({
+              tool: part.tool,
+              callID: part.callID,
+              status: "completed",
+              attachments,
+              allowNative: true,
+            })
 
             const output =
               finalAttachments.length > 0
@@ -788,6 +826,14 @@ export const toModelMessagesEffect = Effect.fnUntraced(function* (
             })
           }
           if (part.state.status === "error") {
+            const attachments = options?.stripMedia ? [] : (part.state.attachments ?? [])
+            routeAttachments({
+              tool: part.tool,
+              callID: part.callID,
+              status: "error",
+              attachments,
+              allowNative: false,
+            })
             const output = part.state.metadata?.interrupted === true ? part.state.metadata.output : undefined
             if (typeof output === "string") {
               assistantMessage.parts.push({
@@ -834,9 +880,7 @@ export const toModelMessagesEffect = Effect.fnUntraced(function* (
       }
       if (assistantMessage.parts.length > 0) {
         result.push(assistantMessage)
-        // Inject pending media as a user message for providers that don't support
-        // media (images, PDFs) in tool results
-        if (media.length > 0) {
+        if (syntheticGroups.length > 0) {
           result.push({
             id: MessageID.ascending(),
             role: "user",
@@ -845,12 +889,13 @@ export const toModelMessagesEffect = Effect.fnUntraced(function* (
                 type: "text" as const,
                 text: SYNTHETIC_ATTACHMENT_PROMPT,
               },
-              ...media.map((attachment) => ({
-                type: "file" as const,
-                url: attachment.url,
-                mediaType: attachment.mime,
-                filename: attachment.filename,
-              })),
+              ...syntheticGroups.flatMap((group) => [
+                {
+                  type: "text" as const,
+                  text: `Tool "${group.tool}" call ${group.callID} ${group.status === "error" ? "failed" : "completed"}:`,
+                },
+                ...group.parts,
+              ]),
             ],
           })
         }

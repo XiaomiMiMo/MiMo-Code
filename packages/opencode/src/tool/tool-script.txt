@@ -1,0 +1,68 @@
+Execute a TypeScript script that orchestrates existing tools programmatically.
+
+## USE THIS TOOL SPARINGLY
+
+Prefer direct tool calls almost always. `tool_script` exists for ONE narrow purpose: HIDING large or numerous intermediate tool results from the conversation context, keeping only a small aggregated value. If the intermediate results are useful to see, do NOT use this tool — direct calls give the user (and you) the native per-call TUI rendering, which is lost when calls are wrapped here.
+
+### Do NOT use tool_script when
+- Fewer than ~5 same-tool calls would do — call them directly (in parallel if independent).
+- The next step's decision depends on judging the previous step's output — stay in the normal loop.
+- Side-effects need per-step review (writes, deletes, network mutations) — do them one at a time.
+
+### Only use tool_script when ALL of these hold
+- You will make many similar tool calls (typically 10+) and DO NOT need the intermediate outputs in context.
+- You can express the final answer as a small aggregate (a count, a filtered list of paths, a sorted top-N).
+- The reduction (filter/sort/count) is mechanical and deterministic — no semantic judgment per item.
+
+Typical fit: "scan 40 files for a pattern and return the top 10 matches" — 40 reads collapsed into a list of 10.
+
+## Contract
+
+The `code` argument is the BODY of an async function (TypeScript or JavaScript):
+- Call tools via the `tools` object: `await tools.glob({ pattern: "src/**/*.ts" })`. MCP tools are included under their full name: `await tools.myserver_search({ query: "..." })`.
+- Every tool returns `Promise<ToolResult>` where `ToolResult = { title: string; output: string; metadata: Record<string, unknown> }`. `output` is the same text the tool prints when called directly (may be truncated for very large outputs; check `metadata.truncated`). MCP results are folded to text; non-text content (images, audio) is dropped with a note.
+- `bash` is NOT available here — batch shell work belongs in a single reviewable bash call running a script.
+- Use `Promise.all` / `Promise.allSettled` for concurrency (max 8 in flight; excess queue automatically).
+- `console.log(...)` output is captured and returned alongside the result (capped at 64KB). Use it for debugging, not as the primary output channel.
+- `return` a SMALL, aggregated value.
+
+### Environment (minimal sandbox — NOT Node, NOT a browser)
+- Available: JS language built-ins (`JSON`, `Math`, `Date`, `Promise`, `RegExp`, ...), a minimal `URL`, plus the injected `tools`, `files`, `console`.
+- NOT available: `import`/`export`/`require` (code is a function body — a top-level import is a syntax error), `setTimeout`/`setInterval`, `fetch`, `crypto`, `Buffer`, `TextEncoder`, `structuredClone`, `process`. Anything needing a module, a timer, or a shell belongs in the normal agent loop.
+
+### Return value serialization
+The returned value must be JSON-serializable. Circular references, BigInt, and throwing getters FAIL the execution with the offending path (e.g. `$.items[3].self`) — they do not silently degrade. Lossy-but-accepted conversions are applied and reported in a `<warnings>` block: `NaN`/`Infinity` → null, `Map` → entries array, `Set` → values array, `Error` → `{name, message, stack}`, `RegExp` → string, unawaited `Promise` → null, functions/symbols → dropped.
+
+Limits per execution: 50 tool calls (default — raise via `max_tool_calls`, hard cap 500), 8 concurrent, 60s of pure compute time (default — raise via `timeout_seconds`, hard cap 600; time spent waiting on tool calls is NOT charged), result capped at 256KB, logs capped at 64KB. Exceeding a limit fails the execution with a structured error.
+
+Permissions are enforced per tool call exactly as if you had called the tool directly — calls may pause awaiting user approval; a user rejection rejects that call's promise (catchable).
+
+State does NOT persist between executions: each tool_script call runs in a fresh sandbox — variables from a previous execution are gone. To pass data between executions, either `return` it (best for small results) or use the `files` raw-IO API to stage it in a temp file:
+```
+await files.writeText("/tmp/scan-results.json", JSON.stringify(hits))
+// ...next tool_script execution:
+const hits = JSON.parse(await files.readText("/tmp/scan-results.json"))
+```
+
+`tools.*` outputs are the AGENT-FACING text (e.g. `read` prefixes lines with `N: ` line numbers and may truncate). That is fine for scanning/matching, but for exact bytes (parsing JSON, byte-accurate content) use `files.readText` instead — raw content, no line numbers, no truncation. `files.readText` covers the project worktree and the OS temp dir; `files.writeText` is limited to the OS temp dir — project file writes must go through `tools.write` / `tools.edit` so permissions apply. Both are TEXT-only: reading a file that is not valid UTF-8 throws (binary content cannot cross the sandbox string boundary).
+
+## Output format
+
+The tool result comes back wrapped as `<tool_script status="...">` with child blocks — `<return_value>`, `<warnings>` (lossy serialization notes, when any), `<logs>`, `<trace>` — plus `<error_message>` on failure paths. The `return` value is embedded verbatim inside `<return_value>` (not JSON-escaped), so newlines and quotes stay readable.
+
+## Example (correct use)
+
+Scan every TypeScript file for TODO comments; return the top 20 files by TODO count. 40+ reads collapsed into a 20-item list:
+
+```
+const files = await tools.glob({ pattern: "src/**/*.ts" })
+const paths = files.output.split("\n").filter(p => p.trim() && !p.startsWith("("))
+const reads = await Promise.all(paths.map(p => tools.read({ file_path: p })))
+const hits = paths
+  .map((p, i) => ({ path: p, todos: (reads[i].output.match(/TODO/g) ?? []).length }))
+  .filter(x => x.todos > 0)
+  .sort((a, b) => b.todos - a.todos)
+return { total: hits.length, top: hits.slice(0, 20) }
+```
+
+The available tools and their exact input types are declared below.

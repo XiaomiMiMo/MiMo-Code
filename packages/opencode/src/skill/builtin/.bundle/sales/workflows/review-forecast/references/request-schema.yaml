@@ -1,0 +1,41 @@
+type: object
+properties:
+  owner_name:
+    type: string
+  owner_email:
+    type: string
+  focus_accounts:
+    type: array
+    items:
+      type: string
+  focus_opportunities:
+    type: array
+    items:
+      type: string
+  forecast_period:
+    type: string
+  forecast_posture_standard:
+    type: string
+    enum: [defend_commit, identify_upside, conservative_manager_ready]
+  forecast_category_convention:
+    type: string
+  amount_basis:
+    type: string
+    enum: [carr_arr, acv, tcv, weighted_amount, crm_primary_amount]
+  comparison_snapshot:
+    type: string
+  current_snapshot:
+    type: string
+  pipeline_export:
+    type: string
+  enrichment_mode:
+    type: string
+    enum: [none, light, standard]
+  include_call_evidence:
+    type: boolean
+  include_chat_signals:
+    type: boolean
+required:
+  - forecast_posture_standard
+  - forecast_category_convention
+  - amount_basis

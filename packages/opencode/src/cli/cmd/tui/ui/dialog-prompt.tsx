@@ -1,7 +1,7 @@
 import { TextareaRenderable, TextAttributes } from "@opentui/core"
 import { useTheme } from "../context/theme"
 import { useDialog, type DialogContext } from "./dialog"
-import { Show, createEffect, onMount, type JSX } from "solid-js"
+import { Show, createEffect, createSignal, onMount, type JSX } from "solid-js"
 import { useKeyboard } from "@opentui/solid"
 import { Spinner } from "../component/spinner"
 import { useLanguage } from "@tui/context/language"
@@ -117,6 +117,89 @@ DialogPrompt.show = (dialog: DialogContext, title: string, options?: Omit<Dialog
       () => (
         <DialogPrompt title={title} {...options} onConfirm={(value) => resolve(value)} onCancel={() => resolve(null)} />
       ),
+      () => resolve(null),
+    )
+  })
+}
+
+// Prompt for input, then keep the SAME dialog mounted in a busy state while
+// `handler` runs against the entered value. Gives immediate pending feedback
+// for long async work (e.g. the /btw fork-query) instead of a stale, idle
+// dialog. The dialog stays open until `handler` resolves so the caller can
+// swap in a result dialog; on empty input or cancel it clears and resolves null.
+// The busy signal lives inside an internal component (same pattern as
+// DialogMimoLogin) so toggling busy updates props reactively without remounting.
+// `handler` receives an `active()` accessor that returns false once the busy
+// dialog was dismissed (Escape/click-away), so callers can skip surfacing a
+// now-stale answer.
+DialogPrompt.ask = <T,>(
+  dialog: DialogContext,
+  title: string,
+  handler: (value: string, active: () => boolean) => Promise<T>,
+  options?: Omit<DialogPromptProps, "title" | "busy" | "busyText" | "onConfirm" | "onCancel"> & { busyText?: string },
+) => {
+  return new Promise<T | null>((resolve) => {
+    let dismissed = false
+    const active = () => !dismissed
+    function Asker() {
+      const [busy, setBusy] = createSignal(false)
+      return (
+        <DialogPrompt
+          title={title}
+          {...options}
+          busy={busy()}
+          busyText={options?.busyText}
+          onConfirm={(entered) => {
+            if (busy()) return
+            const trimmed = entered.trim()
+            if (!trimmed) {
+              dialog.clear()
+              resolve(null)
+              return
+            }
+            setBusy(true)
+            handler(trimmed, active).then(
+              (result) => resolve(result),
+              () => resolve(null),
+            )
+          }}
+          onCancel={() => resolve(null)}
+        />
+      )
+    }
+    dialog.replace(
+      () => <Asker />,
+      () => {
+        dismissed = true
+        resolve(null)
+      },
+    )
+  })
+}
+
+// Show a busy/spinner dialog immediately for a pre-known value (no input step)
+// while `handler` runs. Used by the inline `/btw <question>` form where the
+// question is already typed, so the user still gets instant pending feedback.
+// `handler` receives an `active()` accessor (false once dismissed) so a
+// now-stale answer can be skipped.
+DialogPrompt.busy = <T,>(
+  dialog: DialogContext,
+  title: string,
+  value: string,
+  handler: (active: () => boolean) => Promise<T>,
+  options?: { busyText?: string },
+) => {
+  return new Promise<T | null>((resolve) => {
+    let dismissed = false
+    const active = () => !dismissed
+    dialog.replace(
+      () => <DialogPrompt title={title} value={value} busy={true} busyText={options?.busyText} />,
+      () => {
+        dismissed = true
+      },
+    )
+    handler(active).then(
+      (result) => resolve(result),
       () => resolve(null),
     )
   })

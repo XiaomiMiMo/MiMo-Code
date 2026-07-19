@@ -1,0 +1,6 @@
+interface:
+  display_name: "Analyze Data Quality"
+  short_description: "Assess tables and datasets before analysis or publication"
+  default_prompt: "Assess a dataset or table for quality risks before I rely on it for analysis or reporting."
+policy:
+  allow_implicit_invocation: true

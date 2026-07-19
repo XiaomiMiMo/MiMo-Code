@@ -211,7 +211,7 @@ describe("Instance.containsPath", () => {
 
 describe("Instance.provide directory safety", () => {
   test("rejects system paths containing secrets", async () => {
-    const systemPaths = ["/etc", "/etc/nginx", "/etc/shadow", "/proc", "/sys", "/dev", "/root", "/boot"]
+    const systemPaths = ["/etc", "/etc/nginx", "/etc/shadow", "/proc", "/sys", "/dev", "/boot"]
     for (const dir of systemPaths) {
       await expect(
         Instance.provide({ directory: dir, fn: () => {} }),

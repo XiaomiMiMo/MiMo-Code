@@ -82,6 +82,7 @@ export type WorkflowNode =
       actorID?: string
       durationMs?: number
       resultSummary?: string
+      resultFull?: string
       status: "running" | "succeeded" | "failed"
     }
   | {
@@ -400,7 +401,8 @@ export const { use: useSync, provider: SyncProvider } = createSimpleContext({
           break
 
         case "session.deleted": {
-          const result = Binary.search(store.session, event.properties.info.id, (s) => s.id)
+          const sid = event.properties.info.id
+          const result = Binary.search(store.session, sid, (s) => s.id)
           if (result.found) {
             setStore(
               "session",
@@ -409,6 +411,28 @@ export const { use: useSync, provider: SyncProvider } = createSimpleContext({
               }),
             )
           }
+          // Evict every per-session bucket keyed by sessionID so child sessions
+          // that end don't leak their message/part/actor/task/etc. entries.
+          setStore(
+            produce((s) => {
+              delete s.permission[sid]
+              delete s.question[sid]
+              delete s.session_status[sid]
+              delete s.session_goal[sid]
+              delete s.session_diff[sid]
+              delete s.session_cwd[sid]
+              delete s.todo[sid]
+              delete s.task[sid]
+              delete s.actor[sid]
+              const agents = s.message[sid]
+              if (agents) {
+                for (const msgs of Object.values(agents)) {
+                  for (const m of msgs) delete s.part[m.id]
+                }
+              }
+              delete s.message[sid]
+            }),
+          )
           break
         }
         case "session.updated": {
@@ -676,8 +700,10 @@ export const { use: useSync, provider: SyncProvider } = createSimpleContext({
         syncedWorkspace = workspace
       }
       const start = Date.now() - 30 * 24 * 60 * 60 * 1000
+      // roots: true so child sessions (subagents, workers) don't crowd root
+      // sessions out of the server-side limit
       const sessionListPromise = sdk.client.session
-        .list({ start: start })
+        .list({ start: start, roots: true })
         .then((x) => (x.data ?? []).toSorted((a, b) => a.id.localeCompare(b.id)))
 
       // blocking - include session.list when continuing a session
@@ -797,7 +823,7 @@ export const { use: useSync, provider: SyncProvider } = createSimpleContext({
         async refresh() {
           const start = Date.now() - 30 * 24 * 60 * 60 * 1000
           const list = await sdk.client.session
-            .list({ start })
+            .list({ start, roots: true })
             .then((x) => (x.data ?? []).toSorted((a, b) => a.id.localeCompare(b.id)))
           setStore("session", reconcile(list))
         },
@@ -813,19 +839,30 @@ export const { use: useSync, provider: SyncProvider } = createSimpleContext({
         },
         async sync(sessionID: string) {
           if (fullSyncedSessions.has(sessionID)) return
-          const [session, messages, todo, diff, actors, task] = await Promise.all([
+          const [session, messages, todo, diff, actors, task, children] = await Promise.all([
             sdk.client.session.get({ sessionID }, { throwOnError: true }),
             sdk.client.session.messages({ sessionID, limit: 100, agent_id: "*" }),
             sdk.client.session.todo({ sessionID }),
             sdk.client.session.diff({ sessionID }),
             sdk.client.session.actors({ sessionID }),
             sdk.client.session.task({ sessionID }),
+            // children aren't in the root-only session list; fetch them so the
+            // session dialog can show the current session's child sessions.
+            // visible: true hides internal machinery children (checkpoint-writer
+            // hosts, ask-tool forks, workflow subagent sessions) — only peer
+            // sessions the user should see are returned.
+            sdk.client.session.children({ sessionID, visible: true }).catch(() => undefined),
           ])
           setStore(
             produce((draft) => {
               const match = Binary.search(draft.session, sessionID, (s) => s.id)
               if (match.found) draft.session[match.index] = session.data!
               if (!match.found) draft.session.splice(match.index, 0, session.data!)
+              for (const child of children?.data ?? []) {
+                const childMatch = Binary.search(draft.session, child.id, (s) => s.id)
+                if (childMatch.found) draft.session[childMatch.index] = child
+                if (!childMatch.found) draft.session.splice(childMatch.index, 0, child)
+              }
               draft.todo[sessionID] = todo.data ?? []
               draft.task[sessionID] = task.data ?? []
               const flat = (messages.data ?? []).map((x) => x.info)

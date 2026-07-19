@@ -1,0 +1,1436 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="light dark" />
+    <title>Priority Ledger — Sales Focus</title>
+    <style>
+      :root {
+        color-scheme: light;
+        --bg: #f7faf8;
+        --bg-elevated: #ffffff;
+        --bg-hover: #f0f6f3;
+        --bg-control: rgba(255, 255, 255, 0.88);
+        --line: #dbe4df;
+        --line-strong: #bdcbc4;
+        --text: #16211c;
+        --muted: #68756f;
+        --subtle: #89948f;
+        --accent: #167a55;
+        --accent-strong: #0c6041;
+        --accent-soft: #dff3e9;
+        --accent-contrast: #ffffff;
+        --danger: #a73a35;
+        --backdrop: rgba(19, 29, 24, 0.42);
+        --shadow: 0 16px 50px rgba(27, 45, 35, 0.12);
+        --app-font-sans: var(
+          --font-sans,
+          ui-sans-serif,
+          -apple-system,
+          BlinkMacSystemFont,
+          "Segoe UI",
+          sans-serif
+        );
+      }
+
+      @media (prefers-color-scheme: dark) {
+        :root {
+          color-scheme: dark;
+          --bg: #090f12;
+          --bg-elevated: #0d1519;
+          --bg-hover: rgba(18, 28, 32, 0.72);
+          --bg-control: rgba(15, 22, 26, 0.72);
+          --line: #243036;
+          --line-strong: #445159;
+          --text: #f3f5f4;
+          --muted: #899399;
+          --subtle: #5e696f;
+          --accent: #68d6a7;
+          --accent-strong: #a3eccb;
+          --accent-soft: #183028;
+          --accent-contrast: #072218;
+          --danger: #ff8580;
+          --backdrop: rgba(2, 6, 8, 0.66);
+          --shadow: -28px 0 80px rgba(0, 0, 0, 0.35);
+        }
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      html,
+      body {
+        min-height: 100%;
+        margin: 0;
+        background: var(--bg);
+      }
+
+      html {
+        scrollbar-gutter: stable;
+        -webkit-text-size-adjust: 100%;
+        text-size-adjust: 100%;
+      }
+
+      body {
+        color: var(--text);
+        font-family: var(--app-font-sans);
+        font-size: 14px;
+        line-height: 1.5;
+        -webkit-font-smoothing: antialiased;
+        -moz-osx-font-smoothing: grayscale;
+      }
+
+      button,
+      input,
+      a {
+        color: inherit;
+        font: inherit;
+      }
+
+      button {
+        cursor: pointer;
+      }
+
+      button:focus-visible,
+      input:focus-visible,
+      a:focus-visible,
+      summary:focus-visible {
+        border-radius: 6px;
+        outline: 2px solid var(--accent);
+        outline-offset: 3px;
+      }
+
+      svg {
+        display: block;
+      }
+
+      .app-shell {
+        min-height: 100vh;
+        background: var(--bg);
+      }
+
+      .topbar {
+        position: sticky;
+        top: 0;
+        z-index: 10;
+        display: grid;
+        grid-template-columns: 1fr minmax(320px, 450px) 1fr auto;
+        align-items: center;
+        gap: 28px;
+        min-height: 76px;
+        border-bottom: 1px solid color-mix(in srgb, var(--line) 72%, transparent);
+        background: color-mix(in srgb, var(--bg) 92%, transparent);
+        padding: 0 27px;
+        -webkit-backdrop-filter: blur(16px);
+        backdrop-filter: blur(16px);
+      }
+
+      .brand-lockup {
+        display: flex;
+        align-items: center;
+        gap: 18px;
+        min-width: 0;
+        font-size: 15px;
+      }
+
+      .brand-lockup strong {
+        overflow: hidden;
+        letter-spacing: -0.01em;
+        font-weight: 650;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .brand-mark {
+        display: grid;
+        width: 34px;
+        height: 34px;
+        flex: 0 0 auto;
+        place-items: center;
+        border-radius: 50%;
+        background: var(--accent);
+        color: var(--accent-contrast);
+        transform: rotate(-45deg);
+      }
+
+      .divider {
+        width: 1px;
+        height: 20px;
+        flex: 0 0 auto;
+        background: var(--line);
+      }
+
+      .current-view {
+        overflow: hidden;
+        color: var(--muted);
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .search-box {
+        display: flex;
+        align-items: center;
+        gap: 11px;
+        height: 44px;
+        border: 1px solid var(--line);
+        border-radius: 9px;
+        background: var(--bg-control);
+        color: var(--muted);
+        padding: 0 14px;
+        transition:
+          border-color 150ms ease,
+          background 150ms ease;
+      }
+
+      .search-box:focus-within {
+        border-color: color-mix(in srgb, var(--accent) 62%, var(--line));
+        background: var(--bg-elevated);
+      }
+
+      .search-box input {
+        width: 100%;
+        min-width: 0;
+        border: 0;
+        outline: 0;
+        background: transparent;
+        color: var(--text);
+        font-size: 14px;
+      }
+
+      .search-box input::placeholder {
+        color: var(--subtle);
+      }
+
+      .search-clear {
+        display: grid;
+        width: 26px;
+        height: 26px;
+        flex: 0 0 auto;
+        place-items: center;
+        border: 0;
+        border-radius: 50%;
+        background: transparent;
+        color: var(--muted);
+        padding: 0;
+      }
+
+      .search-clear:hover {
+        background: var(--bg-hover);
+        color: var(--text);
+      }
+
+      .search-clear[hidden] {
+        display: none;
+      }
+
+      .sync-state {
+        display: flex;
+        align-items: center;
+        justify-self: end;
+        gap: 8px;
+        overflow: hidden;
+        color: var(--muted);
+        font-size: 12px;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .sync-dot {
+        width: 7px;
+        height: 7px;
+        flex: 0 0 auto;
+        border-radius: 50%;
+        background: var(--accent);
+        box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 12%, transparent);
+      }
+
+      .avatar {
+        width: 34px;
+        height: 34px;
+        border: 1px solid var(--line);
+        border-radius: 50%;
+        background: var(--bg-elevated);
+        color: var(--text);
+        font-size: 12px;
+        font-weight: 700;
+      }
+
+      .content {
+        width: 100%;
+        padding: 38px 27px 24px;
+      }
+
+      .page-intro h1 {
+        margin: 0;
+        letter-spacing: -0.02em;
+        font-size: 19px;
+        font-weight: 620;
+        line-height: 1.3;
+      }
+
+      .page-intro p {
+        max-width: 680px;
+        margin: 8px 0 0;
+        color: var(--muted);
+        font-size: 14px;
+      }
+
+      .status-tabs {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        width: min(580px, 100%);
+        height: 56px;
+        margin-top: 36px;
+        border: 1px solid var(--line-strong);
+        border-radius: 10px;
+        padding: 4px;
+      }
+
+      .status-tabs button {
+        position: relative;
+        border: 0;
+        border-radius: 7px;
+        background: transparent;
+        color: var(--muted);
+        font-size: 14px;
+        transition:
+          background 150ms ease,
+          color 150ms ease;
+      }
+
+      .status-tabs button + button::before {
+        position: absolute;
+        top: 14px;
+        left: 0;
+        width: 1px;
+        height: 20px;
+        background: var(--line);
+        content: "";
+      }
+
+      .status-tabs button:hover {
+        color: var(--text);
+      }
+
+      .status-tabs button[aria-selected="true"] {
+        background: var(--accent-soft);
+        color: var(--text);
+        font-weight: 600;
+      }
+
+      .status-tabs button[aria-selected="true"]::before,
+      .status-tabs button[aria-selected="true"] + button::before {
+        opacity: 0;
+      }
+
+      .tab-count {
+        display: inline-grid;
+        min-width: 24px;
+        height: 24px;
+        margin-left: 8px;
+        place-items: center;
+        border-radius: 999px;
+        background: color-mix(in srgb, var(--line) 64%, transparent);
+        color: var(--text);
+        padding: 0 7px;
+        font-size: 12px;
+      }
+
+      .status-tabs button[aria-selected="true"] .tab-count {
+        background: color-mix(in srgb, var(--accent) 22%, transparent);
+      }
+
+      .ledger {
+        margin-top: 36px;
+      }
+
+      .ledger-head {
+        display: grid;
+        grid-template-columns: 29% 26% 30% 15%;
+        align-items: center;
+        height: 48px;
+        border-bottom: 1px solid var(--line);
+        color: var(--subtle);
+        padding: 0 48px 0 72px;
+        font-size: 12px;
+        letter-spacing: 0.01em;
+      }
+
+      .account-list {
+        min-height: 160px;
+      }
+
+      .account-row {
+        display: grid;
+        grid-template-columns:
+          52px calc(29% - 52px) 26% 30% calc(15% - 42px)
+          42px;
+        align-items: center;
+        min-height: 172px;
+        border-bottom: 1px solid color-mix(in srgb, var(--line) 78%, transparent);
+        transition:
+          background 150ms ease,
+          opacity 150ms ease;
+      }
+
+      .account-row:hover {
+        background: var(--bg-hover);
+      }
+
+      .account-row.is-complete {
+        opacity: 0.52;
+      }
+
+      .account-row.is-complete .action-copy {
+        text-decoration: line-through color-mix(in srgb, var(--accent) 60%, transparent);
+      }
+
+      .rank {
+        color: var(--accent);
+        padding-left: 8px;
+        font-size: 18px;
+        font-weight: 560;
+      }
+
+      .account-cell {
+        display: flex;
+        align-items: center;
+        gap: 18px;
+        min-width: 0;
+        padding-right: 22px;
+      }
+
+      .company-logo {
+        display: grid;
+        width: 68px;
+        height: 68px;
+        flex: 0 0 auto;
+        place-items: center;
+        border: 1px solid color-mix(in srgb, var(--line) 70%, transparent);
+        border-radius: 14px;
+        background:
+          linear-gradient(
+            145deg,
+            color-mix(in srgb, var(--logo-accent) 30%, var(--bg-elevated)),
+            var(--bg-elevated)
+          );
+        color: var(--logo-accent);
+        font-size: 19px;
+        font-weight: 760;
+        letter-spacing: -0.03em;
+      }
+
+      .account-copy {
+        min-width: 0;
+      }
+
+      .account-copy h2 {
+        overflow: hidden;
+        margin: 0 0 9px;
+        letter-spacing: -0.015em;
+        font-size: 16px;
+        font-weight: 620;
+        line-height: 1.35;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .account-copy p,
+      .account-copy span {
+        display: block;
+        overflow: hidden;
+        margin: 0;
+        color: var(--muted);
+        font-size: 13px;
+        line-height: 1.65;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .account-copy span {
+        color: var(--subtle);
+      }
+
+      .why-cell {
+        align-self: center;
+        min-width: 0;
+        padding-right: 34px;
+      }
+
+      .why-cell strong {
+        display: block;
+        overflow: hidden;
+        margin-bottom: 9px;
+        color: var(--accent);
+        font-size: 17px;
+        font-weight: 610;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .why-cell p {
+        display: -webkit-box;
+        overflow: hidden;
+        max-width: 340px;
+        margin: 0;
+        color: var(--muted);
+        font-size: 13px;
+        line-height: 1.5;
+        -webkit-box-orient: vertical;
+        -webkit-line-clamp: 3;
+      }
+
+      .action-cell {
+        display: grid;
+        grid-template-columns: 38px 1fr;
+        align-items: start;
+        gap: 14px;
+        min-width: 0;
+        padding-right: 40px;
+      }
+
+      .complete-button {
+        display: grid;
+        width: 34px;
+        height: 34px;
+        place-items: center;
+        border: 1px solid var(--accent);
+        border-radius: 50%;
+        background: transparent;
+        color: var(--accent);
+        padding: 0;
+        transition:
+          background 150ms ease,
+          color 150ms ease,
+          transform 150ms ease;
+      }
+
+      .complete-button:hover,
+      .complete-button[aria-pressed="true"] {
+        background: var(--accent);
+        color: var(--accent-contrast);
+        transform: translateX(2px);
+      }
+
+      .action-copy {
+        display: -webkit-box;
+        overflow: hidden;
+        border: 0;
+        background: transparent;
+        color: var(--accent);
+        padding: 0;
+        text-align: left;
+        font-size: 15px;
+        line-height: 1.55;
+        -webkit-box-orient: vertical;
+        -webkit-line-clamp: 3;
+      }
+
+      .action-copy:hover {
+        color: var(--accent-strong);
+      }
+
+      .owner-cell {
+        display: grid;
+        gap: 14px;
+        color: var(--text);
+        font-size: 12px;
+      }
+
+      .owner-cell span {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        min-width: 0;
+      }
+
+      .owner-cell span > span {
+        display: block;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .owner-cell svg {
+        flex: 0 0 auto;
+        color: var(--muted);
+      }
+
+      .open-row {
+        display: grid;
+        width: 36px;
+        height: 44px;
+        place-items: center;
+        border: 0;
+        background: transparent;
+        color: var(--subtle);
+        padding: 0;
+        transition:
+          color 150ms ease,
+          transform 150ms ease;
+      }
+
+      .open-row:hover {
+        color: var(--accent);
+        transform: translateX(2px);
+      }
+
+      .result-count {
+        margin: 16px 0 0;
+        color: var(--subtle);
+        text-align: center;
+        font-size: 11px;
+      }
+
+      .empty-state {
+        display: grid;
+        min-height: 360px;
+        place-content: center;
+        justify-items: center;
+        color: var(--muted);
+        text-align: center;
+      }
+
+      .empty-state h2 {
+        margin: 14px 0 5px;
+        color: var(--text);
+        font-size: 17px;
+      }
+
+      .empty-state p {
+        max-width: 420px;
+        margin: 0;
+        font-size: 13px;
+      }
+
+      .run-details {
+        width: min(760px, 100%);
+        margin: 22px auto 0;
+        border-top: 1px solid var(--line);
+        color: var(--muted);
+        padding-top: 14px;
+        font-size: 12px;
+      }
+
+      .run-details summary {
+        width: fit-content;
+        margin: 0 auto;
+        cursor: pointer;
+        color: var(--muted);
+        list-style: none;
+      }
+
+      .run-details summary::-webkit-details-marker {
+        display: none;
+      }
+
+      .run-details summary:hover {
+        color: var(--text);
+      }
+
+      .run-details-content {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 12px 28px;
+        padding: 18px 0 4px;
+      }
+
+      .run-detail {
+        min-width: 0;
+      }
+
+      .run-detail span {
+        display: block;
+        margin-bottom: 3px;
+        color: var(--subtle);
+        font-size: 11px;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+      }
+
+      .run-detail strong {
+        display: block;
+        overflow-wrap: anywhere;
+        color: var(--text);
+        font-weight: 520;
+      }
+
+      .evidence-gaps {
+        grid-column: 1 / -1;
+        margin: 2px 0 0;
+        padding-left: 18px;
+      }
+
+      .evidence-gaps li + li {
+        margin-top: 4px;
+      }
+
+      .drawer-backdrop {
+        position: fixed;
+        z-index: 30;
+        inset: 0;
+        background: var(--backdrop);
+        animation: fade-in 180ms ease-out;
+        -webkit-backdrop-filter: blur(3px);
+        backdrop-filter: blur(3px);
+      }
+
+      .drawer-backdrop[hidden] {
+        display: none;
+      }
+
+      .detail-drawer {
+        position: absolute;
+        top: 0;
+        right: 0;
+        bottom: 0;
+        width: min(520px, 92vw);
+        overflow-y: auto;
+        border-left: 1px solid var(--line);
+        background: var(--bg-elevated);
+        box-shadow: var(--shadow);
+        padding: 42px;
+        animation: slide-in 240ms ease-out;
+      }
+
+      .drawer-close {
+        position: absolute;
+        top: 24px;
+        right: 24px;
+        display: grid;
+        width: 36px;
+        height: 36px;
+        place-items: center;
+        border: 1px solid var(--line);
+        border-radius: 50%;
+        background: transparent;
+        color: var(--muted);
+        padding: 0;
+      }
+
+      .drawer-close:hover {
+        background: var(--bg-hover);
+        color: var(--text);
+      }
+
+      .drawer-logo {
+        margin-bottom: 28px;
+      }
+
+      .eyebrow {
+        margin: 0 0 9px;
+        color: var(--accent);
+        font-size: 11px;
+        letter-spacing: 0.16em;
+        text-transform: uppercase;
+      }
+
+      .detail-drawer h2 {
+        max-width: calc(100% - 44px);
+        margin: 0;
+        letter-spacing: -0.035em;
+        font-size: 28px;
+        line-height: 1.18;
+      }
+
+      .drawer-meta {
+        margin: 8px 0 26px;
+        color: var(--muted);
+        font-size: 13px;
+      }
+
+      .drawer-section {
+        border-top: 1px solid var(--line);
+        padding: 26px 0;
+      }
+
+      .drawer-section > span,
+      .drawer-action > span {
+        display: block;
+        margin-bottom: 10px;
+        color: var(--subtle);
+        font-size: 11px;
+        letter-spacing: 0.12em;
+        text-transform: uppercase;
+      }
+
+      .drawer-section strong {
+        color: var(--accent);
+        font-size: 22px;
+      }
+
+      .drawer-section p,
+      .drawer-action p {
+        margin: 0;
+        color: var(--text);
+        font-size: 15px;
+        line-height: 1.65;
+      }
+
+      .drawer-action {
+        margin-top: 6px;
+        border-radius: 12px;
+        background: var(--accent-soft);
+        padding: 24px;
+      }
+
+      .drawer-action p {
+        font-size: 17px;
+      }
+
+      .drawer-link {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 9px;
+        width: 100%;
+        height: 44px;
+        margin-top: 24px;
+        border-radius: 8px;
+        background: var(--accent);
+        color: var(--accent-contrast);
+        font-weight: 700;
+        text-decoration: none;
+      }
+
+      .drawer-link:hover {
+        background: var(--accent-strong);
+      }
+
+      @keyframes fade-in {
+        from {
+          opacity: 0;
+        }
+      }
+
+      @keyframes slide-in {
+        from {
+          opacity: 0.5;
+          transform: translateX(40px);
+        }
+      }
+
+      @media (max-width: 1100px) {
+        .topbar {
+          grid-template-columns: 1fr minmax(280px, 360px) auto;
+        }
+
+        .sync-state {
+          display: none;
+        }
+
+        .ledger-head {
+          grid-template-columns: 34% 27% 39%;
+          padding-right: 32px;
+        }
+
+        .ledger-head span:last-child {
+          display: none;
+        }
+
+        .account-row {
+          grid-template-columns: 45px calc(34% - 45px) 27% 39% 34px;
+          min-height: 182px;
+        }
+
+        .owner-cell {
+          display: none;
+        }
+
+        .action-cell {
+          padding-right: 24px;
+        }
+      }
+
+      @media (min-width: 761px) and (max-height: 980px) {
+        .content {
+          padding-top: 28px;
+        }
+
+        .status-tabs {
+          margin-top: 26px;
+        }
+
+        .ledger {
+          margin-top: 24px;
+        }
+
+        .ledger-head {
+          height: 42px;
+        }
+
+        .account-row {
+          min-height: 142px;
+        }
+
+        .company-logo {
+          width: 60px;
+          height: 60px;
+          border-radius: 12px;
+        }
+
+        .account-cell {
+          gap: 16px;
+        }
+
+        .account-copy h2,
+        .why-cell strong {
+          margin-bottom: 6px;
+        }
+      }
+
+      @media (max-width: 760px) {
+        .topbar {
+          grid-template-columns: 1fr auto;
+          min-height: 72px;
+          padding: 16px 18px;
+        }
+
+        .brand-lockup .divider,
+        .current-view,
+        .avatar {
+          display: none;
+        }
+
+        .search-box {
+          grid-area: 2 / 1 / auto / -1;
+          width: 100%;
+        }
+
+        .content {
+          padding: 28px 18px 20px;
+        }
+
+        .status-tabs {
+          margin-top: 28px;
+        }
+
+        .ledger {
+          margin-top: 24px;
+        }
+
+        .ledger-head {
+          display: none;
+        }
+
+        .account-row {
+          grid-template-columns: 32px 1fr 32px;
+          gap: 0;
+          min-height: 0;
+          padding: 24px 0;
+        }
+
+        .rank {
+          grid-area: 1 / 1;
+          align-self: start;
+          padding-top: 4px;
+          padding-left: 0;
+        }
+
+        .account-cell {
+          grid-area: 1 / 2;
+        }
+
+        .company-logo {
+          width: 54px;
+          height: 54px;
+          border-radius: 11px;
+          font-size: 16px;
+        }
+
+        .why-cell {
+          grid-area: 2 / 2;
+          padding: 22px 10px 0 72px;
+        }
+
+        .action-cell {
+          grid-area: 3 / 2;
+          padding: 22px 10px 0 72px;
+        }
+
+        .owner-cell {
+          display: grid;
+          grid-area: 4 / 2;
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+          padding: 22px 10px 0 72px;
+        }
+
+        .open-row {
+          grid-area: 1 / 3 / 5;
+        }
+
+        .account-copy h2 {
+          font-size: 15px;
+        }
+
+        .run-details-content {
+          grid-template-columns: 1fr;
+        }
+
+        .evidence-gaps {
+          grid-column: 1;
+        }
+
+        .detail-drawer {
+          padding: 34px 28px;
+        }
+      }
+
+      @media (max-width: 480px) {
+        .status-tabs {
+          height: auto;
+        }
+
+        .status-tabs button {
+          min-height: 48px;
+          font-size: 13px;
+        }
+
+        .tab-count {
+          min-width: 21px;
+          height: 21px;
+          margin-left: 4px;
+          padding: 0 5px;
+          font-size: 11px;
+        }
+
+        .account-cell {
+          gap: 13px;
+        }
+
+        .why-cell,
+        .action-cell,
+        .owner-cell {
+          padding-left: 67px;
+        }
+
+        .owner-cell {
+          grid-template-columns: 1fr;
+        }
+      }
+
+      @media (prefers-reduced-motion: reduce) {
+        *,
+        *::before,
+        *::after {
+          scroll-behavior: auto !important;
+          animation-duration: 0.01ms !important;
+          animation-iteration-count: 1 !important;
+          transition-duration: 0.01ms !important;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main class="app-shell">
+      <header class="topbar">
+        <div class="brand-lockup">
+          <span class="brand-mark" aria-hidden="true">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
+              <path d="M5 12h14M13 6l6 6-6 6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+            </svg>
+          </span>
+          <strong>Priority Ledger</strong>
+          <span class="divider" aria-hidden="true"></span>
+          <span class="current-view">Sales Focus</span>
+        </div>
+
+        <label class="search-box">
+          <svg width="19" height="19" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+            <circle cx="11" cy="11" r="7" stroke="currentColor" stroke-width="1.8" />
+            <path d="m16.3 16.3 4 4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" />
+          </svg>
+          <input id="search" type="search" placeholder="Search accounts or actions" aria-label="Search accounts or actions" autocomplete="off" />
+          <button id="search-clear" class="search-clear" type="button" aria-label="Clear search" hidden>
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+              <path d="m7 7 10 10M17 7 7 17" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" />
+            </svg>
+          </button>
+        </label>
+
+        <div class="sync-state" title="Source status">
+          <span class="sync-dot" aria-hidden="true"></span>
+          <span id="sync-copy">Connected sources used</span>
+        </div>
+
+        <button id="avatar" class="avatar" type="button" aria-label="Sales focus profile">SF</button>
+      </header>
+
+      <section class="content">
+        <div class="page-intro">
+          <h1 id="page-title">Account priorities</h1>
+          <p>Where to spend time, who to involve, and the next best action for each account.</p>
+        </div>
+
+        <nav id="status-tabs" class="status-tabs" aria-label="Account status" role="tablist"></nav>
+
+        <section class="ledger" aria-live="polite">
+          <div class="ledger-head" aria-hidden="true">
+            <span>Account</span>
+            <span>Why it matters</span>
+            <span>Next action</span>
+            <span>Owner &amp; due</span>
+          </div>
+          <div id="account-list" class="account-list"></div>
+          <p id="result-count" class="result-count"></p>
+        </section>
+
+        <details class="run-details">
+          <summary>Source &amp; run details</summary>
+          <div id="run-details-content" class="run-details-content"></div>
+        </details>
+      </section>
+    </main>
+
+    <div id="drawer-backdrop" class="drawer-backdrop" hidden>
+      <aside id="detail-drawer" class="detail-drawer" role="dialog" aria-modal="true" aria-labelledby="drawer-title"></aside>
+    </div>
+
+    <script>
+      const payload = __PRIORITIZE_ACCOUNTS_DATA_JSON__;
+
+      const icons = {
+        arrow: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+        check: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="m6 12 4 4 8-9" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+        close: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="m7 7 10 10M17 7 7 17" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>',
+        calendar: '<svg width="17" height="17" viewBox="0 0 24 24" fill="none" aria-hidden="true"><rect x="3" y="5" width="18" height="16" rx="2" stroke="currentColor" stroke-width="1.6"/><path d="M7 3v4M17 3v4M3 10h18" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>',
+        external: '<svg width="17" height="17" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M14 5h5v5M19 5l-9 9" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/><path d="M19 14v4a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1h4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>',
+        search: '<svg width="34" height="34" viewBox="0 0 24 24" fill="none" aria-hidden="true"><circle cx="11" cy="11" r="7" stroke="currentColor" stroke-width="1.5"/><path d="m16.3 16.3 4 4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>',
+        user: '<svg width="17" height="17" viewBox="0 0 24 24" fill="none" aria-hidden="true"><circle cx="12" cy="8" r="4" stroke="currentColor" stroke-width="1.6"/><path d="M4.5 21a7.5 7.5 0 0 1 15 0" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>'
+      };
+
+      const tabConfig = [
+        { key: "workNow", label: "Work now" },
+        { key: "watch", label: "Watch" },
+        { key: "paused", label: "Paused" }
+      ];
+
+      const groups = Object.fromEntries(
+        tabConfig.map(({ key }) => [key, Array.isArray(payload[key]) ? payload[key] : []])
+      );
+
+      const state = {
+        tab: groups.workNow.length ? "workNow" : tabConfig.find(({ key }) => groups[key].length)?.key || "workNow",
+        query: "",
+        complete: new Set(),
+        selected: null
+      };
+
+      const list = document.getElementById("account-list");
+      const tabs = document.getElementById("status-tabs");
+      const count = document.getElementById("result-count");
+      const search = document.getElementById("search");
+      const searchClear = document.getElementById("search-clear");
+      const backdrop = document.getElementById("drawer-backdrop");
+      const drawer = document.getElementById("detail-drawer");
+
+      function text(value, fallback = "Not available") {
+        const normalized = value == null ? "" : String(value).trim();
+        return normalized || fallback;
+      }
+
+      function element(tag, className, copy) {
+        const node = document.createElement(tag);
+        if (className) node.className = className;
+        if (copy != null) node.textContent = copy;
+        return node;
+      }
+
+      function setIcon(node, name) {
+        node.innerHTML = icons[name] || "";
+        return node;
+      }
+
+      function initials(name) {
+        return text(name, "?")
+          .split(/\s+/)
+          .filter(Boolean)
+          .slice(0, 2)
+          .map((part) => part[0])
+          .join("")
+          .toUpperCase();
+      }
+
+      function logoColor(name) {
+        const palette = ["#68d6a7", "#55b8e8", "#a78bfa", "#f29a71", "#e56d9e", "#d7b75b"];
+        const hash = Array.from(text(name, "account")).reduce((sum, character) => sum + character.charCodeAt(0), 0);
+        return palette[hash % palette.length];
+      }
+
+      function rowKey(row, index) {
+        return `${state.tab}:${text(row.account)}:${row.rank || index + 1}`;
+      }
+
+      function searchableCopy(row) {
+        return [
+          row.account,
+          row.motion,
+          row.stage,
+          row.value,
+          row.whyItMatters,
+          row.nextAction,
+          row.owner,
+          row.dueDate,
+          row.confidence,
+          row.status
+        ]
+          .map((value) => text(value, ""))
+          .join(" ")
+          .toLocaleLowerCase();
+      }
+
+      function filteredRows() {
+        const rows = groups[state.tab];
+        const query = state.query.trim().toLocaleLowerCase();
+        return query ? rows.filter((row) => searchableCopy(row).includes(query)) : rows;
+      }
+
+      function renderTabs() {
+        tabs.replaceChildren();
+        tabConfig.forEach(({ key, label }) => {
+          const button = element("button", "", label);
+          button.type = "button";
+          button.id = `tab-${key}`;
+          button.setAttribute("role", "tab");
+          button.setAttribute("aria-selected", String(state.tab === key));
+          button.setAttribute("aria-controls", "account-list");
+          button.tabIndex = state.tab === key ? 0 : -1;
+
+          const badge = element("span", "tab-count", String(groups[key].length));
+          button.appendChild(badge);
+          button.addEventListener("click", () => {
+            state.tab = key;
+            closeDrawer();
+            render();
+          });
+          button.addEventListener("keydown", (event) => {
+            const currentIndex = tabConfig.findIndex((tab) => tab.key === key);
+            const direction = event.key === "ArrowRight" ? 1 : event.key === "ArrowLeft" ? -1 : 0;
+            if (!direction) return;
+            event.preventDefault();
+            const next = tabConfig[(currentIndex + direction + tabConfig.length) % tabConfig.length];
+            state.tab = next.key;
+            render();
+            document.getElementById(`tab-${next.key}`)?.focus();
+          });
+          tabs.appendChild(button);
+        });
+      }
+
+      function makeAccountRow(row, index) {
+        const key = rowKey(row, index);
+        const article = element("article", "account-row");
+        article.classList.toggle("is-complete", state.complete.has(key));
+
+        article.appendChild(element("div", "rank", String(row.rank || index + 1)));
+
+        const accountCell = element("div", "account-cell");
+        const logo = element("div", "company-logo", initials(row.account));
+        logo.style.setProperty("--logo-accent", logoColor(row.account));
+        logo.setAttribute("aria-hidden", "true");
+
+        const accountCopy = element("div", "account-copy");
+        accountCopy.appendChild(element("h2", "", text(row.account)));
+        accountCopy.appendChild(element("p", "", `${text(row.motion)} · ${text(row.stage)}`));
+        accountCopy.appendChild(element("span", "", `${text(row.confidence)} confidence`));
+        accountCell.append(logo, accountCopy);
+        article.appendChild(accountCell);
+
+        const why = element("div", "why-cell");
+        why.appendChild(element("strong", "", text(row.value, "Value unavailable")));
+        why.appendChild(element("p", "", text(row.whyItMatters)));
+        article.appendChild(why);
+
+        const action = element("div", "action-cell");
+        const complete = setIcon(element("button", "complete-button"), state.complete.has(key) ? "check" : "arrow");
+        complete.type = "button";
+        complete.setAttribute("aria-label", `${state.complete.has(key) ? "Reopen" : "Complete"} ${text(row.account)} action`);
+        complete.setAttribute("aria-pressed", String(state.complete.has(key)));
+        complete.addEventListener("click", () => {
+          if (state.complete.has(key)) state.complete.delete(key);
+          else state.complete.add(key);
+          render();
+        });
+
+        const actionCopy = element("button", "action-copy", text(row.nextAction));
+        actionCopy.type = "button";
+        actionCopy.addEventListener("click", () => openDrawer(row));
+        action.append(complete, actionCopy);
+        article.appendChild(action);
+
+        const owner = element("div", "owner-cell");
+        const ownerLine = element("span");
+        setIcon(ownerLine, "user");
+        ownerLine.appendChild(element("span", "", text(row.owner, "Unassigned")));
+        const dueLine = element("span");
+        setIcon(dueLine, "calendar");
+        dueLine.appendChild(element("span", "", `Due ${text(row.dueDate, "not set")}`));
+        owner.append(ownerLine, dueLine);
+        article.appendChild(owner);
+
+        const open = setIcon(element("button", "open-row"), "arrow");
+        open.type = "button";
+        open.setAttribute("aria-label", `Open ${text(row.account)} details`);
+        open.addEventListener("click", () => openDrawer(row));
+        article.appendChild(open);
+
+        return article;
+      }
+
+      function renderRows() {
+        const rows = filteredRows();
+        list.replaceChildren();
+        rows.forEach((row, index) => list.appendChild(makeAccountRow(row, index)));
+
+        if (!rows.length) {
+          const empty = element("div", "empty-state");
+          setIcon(empty, "search");
+          empty.appendChild(element("h2", "", state.query ? "No matching accounts" : "Nothing in this view"));
+          empty.appendChild(
+            element(
+              "p",
+              "",
+              state.query
+                ? "Try a different account, owner, stage, or action."
+                : "Accounts will appear here when they match this priority status."
+            )
+          );
+          list.appendChild(empty);
+        }
+
+        const label = tabConfig.find(({ key }) => key === state.tab)?.label.toLocaleLowerCase() || "this view";
+        count.textContent = `Showing ${rows.length} of ${groups[state.tab].length} accounts in ${label}`;
+      }
+
+      function appendDrawerSection(label, value, emphasize = false) {
+        const section = element("section", "drawer-section");
+        section.appendChild(element("span", "", label));
+        section.appendChild(element(emphasize ? "strong" : "p", "", text(value)));
+        drawer.appendChild(section);
+      }
+
+      function safeAccountUrl(value) {
+        try {
+          const url = new URL(value);
+          return ["http:", "https:"].includes(url.protocol) ? url.href : "";
+        } catch {
+          return "";
+        }
+      }
+
+      function openDrawer(row) {
+        state.selected = row;
+        drawer.replaceChildren();
+
+        const close = setIcon(element("button", "drawer-close"), "close");
+        close.type = "button";
+        close.setAttribute("aria-label", "Close account details");
+        close.addEventListener("click", closeDrawer);
+        drawer.appendChild(close);
+
+        const logo = element("div", "company-logo drawer-logo", initials(row.account));
+        logo.style.setProperty("--logo-accent", logoColor(row.account));
+        logo.setAttribute("aria-hidden", "true");
+        drawer.appendChild(logo);
+        drawer.appendChild(element("p", "eyebrow", tabConfig.find(({ key }) => key === state.tab)?.label || "Sales focus"));
+
+        const title = element("h2", "", text(row.account));
+        title.id = "drawer-title";
+        drawer.appendChild(title);
+        drawer.appendChild(element("p", "drawer-meta", `${text(row.motion)} · ${text(row.stage)} · ${text(row.confidence)} confidence`));
+
+        appendDrawerSection("Opportunity value", row.value, true);
+        appendDrawerSection("Why it matters", row.whyItMatters);
+
+        if (row.primaryContact) appendDrawerSection("Primary contact", row.primaryContact);
+        if (row.evidence) appendDrawerSection("Evidence", row.evidence);
+
+        const action = element("section", "drawer-action");
+        action.appendChild(element("span", "", "Next action"));
+        action.appendChild(element("p", "", text(row.nextAction)));
+
+        const accountUrl = safeAccountUrl(row.accountUrl);
+        if (accountUrl) {
+          const link = element("a", "drawer-link", "Open account record");
+          link.href = accountUrl;
+          link.target = "_blank";
+          link.rel = "noopener noreferrer";
+          setIcon(link, "external");
+          link.appendChild(document.createTextNode("Open account record"));
+          action.appendChild(link);
+        }
+        drawer.appendChild(action);
+
+        backdrop.hidden = false;
+        document.body.style.overflow = "hidden";
+        close.focus();
+      }
+
+      function closeDrawer() {
+        state.selected = null;
+        backdrop.hidden = true;
+        document.body.style.overflow = "";
+      }
+
+      function appendRunDetail(label, value) {
+        const detail = element("div", "run-detail");
+        detail.appendChild(element("span", "", label));
+        detail.appendChild(element("strong", "", text(value)));
+        document.getElementById("run-details-content").appendChild(detail);
+      }
+
+      function renderRunDetails() {
+        const container = document.getElementById("run-details-content");
+        container.replaceChildren();
+        const scope = payload.scope && typeof payload.scope === "object" ? payload.scope : {};
+        appendRunDetail("Account set", scope.accountSet);
+        appendRunDetail("Ranking basis", scope.rankingBasis);
+        appendRunDetail("Source of truth", scope.sourceOfTruth || payload.source?.label);
+        appendRunDetail("Sources checked", Array.isArray(scope.sourcesChecked) ? scope.sourcesChecked.join(", ") : scope.sourcesChecked);
+
+        if (Array.isArray(payload.evidenceGaps) && payload.evidenceGaps.length) {
+          const gaps = element("ul", "evidence-gaps");
+          payload.evidenceGaps.forEach((gap) => gaps.appendChild(element("li", "", text(gap))));
+          container.appendChild(gaps);
+        }
+      }
+
+      function render() {
+        renderTabs();
+        renderRows();
+        renderRunDetails();
+      }
+
+      search.addEventListener("input", () => {
+        state.query = search.value;
+        searchClear.hidden = !state.query;
+        renderRows();
+      });
+
+      searchClear.addEventListener("click", () => {
+        search.value = "";
+        state.query = "";
+        searchClear.hidden = true;
+        renderRows();
+        search.focus();
+      });
+
+      backdrop.addEventListener("click", (event) => {
+        if (event.target === backdrop) closeDrawer();
+      });
+
+      document.addEventListener("keydown", (event) => {
+        if (event.key === "Escape" && !backdrop.hidden) closeDrawer();
+      });
+
+      document.getElementById("page-title").textContent = text(payload.title, "Account priorities");
+      document.getElementById("sync-copy").textContent = text(payload.source?.status, "Connected sources used");
+      document.getElementById("avatar").textContent = text(payload.viewerInitials, "SF").slice(0, 3).toUpperCase();
+      document.title = `${text(payload.title, "Account priorities")} — Sales Focus`;
+
+      render();
+    </script>
+  </body>
+</html>
