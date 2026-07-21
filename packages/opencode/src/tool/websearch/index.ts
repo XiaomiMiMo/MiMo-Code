@@ -9,8 +9,12 @@ import { Provider } from "@/provider"
 import DESCRIPTION from "./websearch.txt"
 
 const WEBFETCH_FALLBACK =
-  "Web search unavailable. Use `webfetch` with a relevant URL instead, or enable the Web Search plugin at https://platform.xiaomimimo.com/console/plugin."
+  "Web search unavailable. Use `webfetch` with a relevant URL instead, enable the Web Search plugin at https://platform.xiaomimimo.com/console/plugin, or set MIMO_WEB_SEARCH_API_KEY to a MiMo API key dedicated to web search."
 const MAX_TIMEOUT = 120 * 1000 // 2 minutes
+
+function isMimoProvider(providerID?: string) {
+  return providerID === "xiaomi" || providerID === "mimo"
+}
 
 const Parameters = z.object({
   query: z.string().describe("Websearch query"),
@@ -61,17 +65,25 @@ export const WebSearchTool = Tool.define(
 
           const model = (ctx.extra as { model?: Provider.Model })?.model
           const timeout = params.timeout === undefined ? undefined : Math.min(params.timeout * 1000, MAX_TIMEOUT)
+          const xiaomiAuth = yield* auth.get("xiaomi").pipe(Effect.orElseSucceed(() => undefined))
+          const mimoWebsearchKey =
+            process.env.MIMO_WEB_SEARCH_API_KEY || (xiaomiAuth?.type === "api" ? xiaomiAuth.key : undefined)
+          const mimoWebsearchBaseUrl =
+            process.env.MIMO_WEB_SEARCH_BASE_URL || (isMimoProvider(model?.providerID) ? model?.api.url : undefined)
+          const shouldUseMimoWebsearch =
+            mimoWebsearchKey !== undefined &&
+            (isMimoProvider(model?.providerID) ||
+              Boolean(process.env.MIMO_WEB_SEARCH_API_KEY) ||
+              xiaomiAuth?.type === "api")
 
           const result =
-            model?.providerID === "xiaomi"
+            shouldUseMimoWebsearch
               ? yield* Effect.catchCause(
                   Effect.gen(function* () {
-                    const info = yield* auth.get("xiaomi")
-                    if (!info || info.type !== "api") return undefined
                     return yield* MimoWebsearch.call(
                       http,
-                      model.api.url,
-                      info.key,
+                      mimoWebsearchBaseUrl ?? "",
+                      mimoWebsearchKey,
                       params.query,
                       "mimo-v2.5",
                       timeout ?? "30 seconds",
@@ -79,6 +91,8 @@ export const WebSearchTool = Tool.define(
                   }),
                   () => Effect.succeed(undefined),
                 )
+              : isMimoProvider(model?.providerID)
+                ? undefined
               : yield* McpExa.call(
                   http,
                   "web_search_exa",
