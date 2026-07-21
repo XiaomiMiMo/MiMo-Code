@@ -162,7 +162,7 @@ export const layer = Layer.effect(
             add: [
               {
                 name: "@mimo-ai/plugin",
-                version: InstallationLocal ? undefined : InstallationVersion,
+                version: InstallationLocal ? undefined : `^${InstallationVersion}`,
               },
             ],
           })
