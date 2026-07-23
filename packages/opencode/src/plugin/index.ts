@@ -458,9 +458,9 @@ export const layer = Layer.effect(
                 if (!result.success) throw new Error(result.logs.map(String).join("\n"))
                 const blob = result.outputs[0]
                 const tmpFile = `${match}.${Date.now()}.mjs`
-                await Bun.write(tmpFile, blob)
+                await Bun.write(tmpFile, await blob.text())
                 try {
-                  return await import(tmpFile) as Record<string, unknown>
+                  return require(tmpFile) as Record<string, unknown>
                 } finally {
                   fs.promises.unlink(tmpFile).catch(() => {})
                 }
