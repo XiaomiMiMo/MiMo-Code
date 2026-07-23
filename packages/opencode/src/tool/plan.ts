@@ -58,12 +58,19 @@ export const PlanEnterTool = Tool.define(
           })
 
           const answer = answers[0]?.[0]
-          if (answer === "No") return yield* new Question.RejectedError()
+          if (answer === "No") {
+            return {
+              title: "Staying in current mode",
+              output:
+                "User chose NOT to switch to plan mode. Stay in the current mode and continue the current task. Do not call plan_enter again unless the user asks for it.",
+              metadata: { switched: false, feedback: "" },
+            }
+          }
 
           if (answer !== "Yes") {
             return {
               title: "User provided feedback",
-              output: `User chose not to switch yet and provided feedback: ${answer}`,
+              output: `User chose not to switch yet and provided feedback: ${answer}\n\nThe mode did NOT change — you are still in the current mode. Address the feedback, then call plan_enter again if planning is still desired.`,
               metadata: { switched: false, feedback: answer },
             }
           }
@@ -138,12 +145,19 @@ export const PlanExitTool = Tool.define(
           })
 
           const answer = answers[0]?.[0]
-          if (answer === "No") return yield* new Question.RejectedError()
+          if (answer === "No") {
+            return {
+              title: "Staying in plan mode",
+              output:
+                "User chose to stay in plan mode and continue refining the plan. Plan mode is still active — do NOT start implementing. Use the question tool to ask the user which aspects of the plan they want to refine or change, then update the plan file accordingly and call plan_exit again when ready.",
+              metadata: { switched: false, feedback: "" },
+            }
+          }
 
           if (answer !== "Yes") {
             return {
               title: "User provided feedback",
-              output: `User chose not to switch yet and provided feedback: ${answer}`,
+              output: `User chose not to switch yet and provided feedback: ${answer}\n\nPlan mode is still active — do NOT start implementing. Address the feedback by refining the plan file, then call plan_exit again when the plan is ready.`,
               metadata: { switched: false, feedback: answer },
             }
           }
