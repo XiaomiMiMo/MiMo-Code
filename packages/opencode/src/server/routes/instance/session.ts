@@ -28,6 +28,8 @@ import { Provider } from "@/provider"
 import { forkQuery } from "@/tool/session"
 import { spawnRef } from "@/actor/spawn-ref"
 import { inboxServiceRef } from "@/inbox/inbox-ref"
+import { InboxReceiverNotFound } from "@/inbox/inbox"
+import { NotFoundError } from "@/storage"
 import { errors } from "../../error"
 import { lazy } from "@/util/lazy"
 import { Bus } from "@/bus"
@@ -1439,7 +1441,11 @@ export const SessionRoutes = lazy(() =>
               senderActorID: "main",
               content: body.content,
               type: body.type ?? "text",
-            })
+            }).pipe(
+              Effect.catchTag("InboxReceiverNotFound", (err) =>
+                Effect.fail(new NotFoundError({ message: `Actor not found: ${err.receiverActorID}` })),
+              ),
+            )
           }),
         )
         return c.json(result)

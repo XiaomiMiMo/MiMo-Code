@@ -1026,16 +1026,20 @@ export function Prompt(props: PromptProps) {
     if (props.onCustomSubmit) {
       const trimmed = store.prompt.input.trim()
       if (!trimmed) return false
-      const ok = await props.onCustomSubmit(trimmed)
-      if (ok) {
-        history.append({ ...store.prompt, mode: store.mode })
-        input.extmarks.clear()
-        setStore("prompt", { input: "", parts: [] })
-        setStore("extmarkToPartIndex", new Map())
-        props.onSubmit?.()
-        input.clear()
+      submitLock = true
+      try {
+        const ok = await props.onCustomSubmit(trimmed)
+        if (ok) {
+          input.extmarks.clear()
+          setStore("prompt", { input: "", parts: [] })
+          setStore("extmarkToPartIndex", new Map())
+          props.onSubmit?.()
+          input.clear()
+        }
+        return ok
+      } finally {
+        submitLock = false
       }
-      return ok
     }
 
     const agent = local.agent.current()
