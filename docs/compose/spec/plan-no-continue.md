@@ -1,14 +1,26 @@
 ---
 feature: plan-no-continue
-status: designed
+status: delivered
 updated: 2026-07-23
 branch: plan-no-continue
-commits: # filled at delivery
+commits: 29a107adfe76cfb67f73862115f56eebb007f569..5006141ccd8dc0088a8a791295db2160891fc971
 ---
 
 # Plan mode: non-Yes paths must guide the model to continue planning
 
 ## Report
+
+**What was built** — `plan_exit`/`plan_enter` answered "No" no longer throw `QuestionRejectedError` (which hard-stopped the turn and left an intent-free "dismissed" error); both now resolve normally with `switched: false` and explicit stay-in-mode guidance — `plan_exit`'s output instructs the model to use the question tool to ask what to refine and forbids implementing. Custom-feedback answers additionally carry a "mode did NOT change, do not implement" reminder. Esc (dismiss) still rejects and stops the turn.
+
+Every plan→plan turn now injects a one-line synthetic system-reminder (plan mode active, only the plan file is writable, end the turn with question or plan_exit) — deliberately short per user direction to save tokens; the full workflow reminder remains entry-transition-only.
+
+**Verification** — from `packages/opencode`: `bun typecheck` PASS; `bun test test/tool/plan.test.ts` PASS (4 new tests: No/feedback/Esc on plan_exit, No on plan_enter); `bun test test/tool/question.test.ts test/agent/agent.test.ts test/permission/disabled.test.ts test/session/prompt.test.ts` PASS (71); `bun test test/tool/tool-script.test.ts` PASS (47). Independent reviewer: spec compliance MET, no correctness bugs, style consistent.
+
+**Journey log**
+- Tool pipeline appends `truncated: false` to metadata — assert with `toMatchObject`, not `toEqual`.
+- `Question.Service.reject` takes a bare `requestID`, unlike `reply` which takes an object; passing an object silently no-ops (logged warning) and hangs the awaiting fiber until test timeout.
+- Esc semantics survive the fix for free: the `RejectedError` for dismissal originates inside `question.ask`'s deferred, not from the removed `answer === "No"` re-throw.
+- The continuation reminder was first written as 3 lines; user flagged token cost on chatty planning sessions — compressed to one line.
 
 ## [S1] Problem
 
@@ -56,6 +68,6 @@ TUI strike-through rendering (`completed && metadata.switched === false`) is lef
 
 ## Tasks
 
-- [ ] T1: Rework "No" and feedback branches in `PlanExitTool` and `PlanEnterTool` (`packages/opencode/src/tool/plan.ts`) — acceptance: replying "No" to either tool resolves successfully with `switched: false` and output containing continue-planning guidance (plan_exit output instructs asking the user what to refine via the question tool); feedback replies include a "mode unchanged, do not implement" reminder; rejecting (Esc) still fails with `QuestionRejectedError`; covered by new unit tests under `packages/opencode/test/tool/` (covers: S2)
-- [ ] T2: Inject short plan-continuation reminder for plan→plan turns in `packages/opencode/src/session/prompt.ts` — acceptance: when agent is `plan` and previous assistant message agent is `plan`, the outgoing user message gains one synthetic system-reminder naming the plan file path and the question/plan_exit turn-ending rule; entry transition still gets the full workflow reminder only; verified by unit test or, if the prompt pipeline is impractical to harness, by targeted inspection plus typecheck (covers: S2)
-- [ ] T3: Verify — acceptance: `bun typecheck` passes in `packages/opencode`; new and existing related tests (`test/tool/question.test.ts`, new plan tool tests, `test/agent/agent.test.ts`) pass from the package dir (covers: S2; depends: T1, T2)
+- [x] T1: Rework "No" and feedback branches in `PlanExitTool` and `PlanEnterTool` (`packages/opencode/src/tool/plan.ts`) — acceptance: replying "No" to either tool resolves successfully with `switched: false` and output containing continue-planning guidance (plan_exit output instructs asking the user what to refine via the question tool); feedback replies include a "mode unchanged, do not implement" reminder; rejecting (Esc) still fails with `QuestionRejectedError`; covered by new unit tests under `packages/opencode/test/tool/` (covers: S2)
+- [x] T2: Inject short plan-continuation reminder for plan→plan turns in `packages/opencode/src/session/prompt.ts` — acceptance: when agent is `plan` and previous assistant message agent is `plan`, the outgoing user message gains one synthetic system-reminder naming the plan file path and the question/plan_exit turn-ending rule; entry transition still gets the full workflow reminder only; verified by unit test or, if the prompt pipeline is impractical to harness, by targeted inspection plus typecheck (covers: S2)
+- [x] T3: Verify — acceptance: `bun typecheck` passes in `packages/opencode`; new and existing related tests (`test/tool/question.test.ts`, new plan tool tests, `test/agent/agent.test.ts`) pass from the package dir (covers: S2; depends: T1, T2)
