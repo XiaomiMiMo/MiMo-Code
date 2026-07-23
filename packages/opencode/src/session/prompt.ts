@@ -810,6 +810,14 @@ Keep planning proportional to task complexity: for simple combinations, two or t
       if (input.agent.name !== "plan") return input.messages
 
       if (assistantMessage?.info.agent === "plan") {
+        // Inject once per user message: insertReminders runs every step of the
+        // loop and updatePart persists. Without this guard, step 2+ of the
+        // entry turn (whose user message carries the full reminder) and every
+        // later step would stack duplicate reminders, invalidating the prompt
+        // prefix cache on each step. Matches both the full ("Plan mode is
+        // active") and short ("Plan mode is still active") variants.
+        if (userMessage.parts.some((p) => p.type === "text" && p.text?.includes("Plan mode is")))
+          return input.messages
         const plan = Session.plan(input.session)
         const part = yield* sessions.updatePart({
           id: PartID.ascending(),

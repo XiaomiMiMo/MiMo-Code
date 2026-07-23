@@ -12,15 +12,16 @@ commits: 29a107adfe76cfb67f73862115f56eebb007f569..5006141ccd8dc0088a8a791295db2
 
 **What was built** — `plan_exit`/`plan_enter` answered "No" no longer throw `QuestionRejectedError` (which hard-stopped the turn and left an intent-free "dismissed" error); both now resolve normally with `switched: false` and explicit stay-in-mode guidance — `plan_exit`'s output instructs the model to use the question tool to ask what to refine and forbids implementing. Custom-feedback answers additionally carry a "mode did NOT change, do not implement" reminder. Esc (dismiss) still rejects and stops the turn.
 
-Every plan→plan turn now injects a one-line synthetic system-reminder (plan mode active, only the plan file is writable, end the turn with question or plan_exit) — deliberately short per user direction to save tokens; the full workflow reminder remains entry-transition-only.
+Every plan→plan turn now injects a one-line synthetic system-reminder (plan mode active, only the plan file is writable, end the turn with question or plan_exit) — deliberately short per user direction to save tokens; the full workflow reminder remains entry-transition-only. A dedup guard keeps it to exactly one reminder per user message across multi-step turns (see S2), and upgrade impact on resumed sessions is a one-time incremental prefix-cache miss only (see S2).
 
-**Verification** — from `packages/opencode`: `bun typecheck` PASS; `bun test test/tool/plan.test.ts` PASS (4 new tests: No/feedback/Esc on plan_exit, No on plan_enter); `bun test test/tool/question.test.ts test/agent/agent.test.ts test/permission/disabled.test.ts test/session/prompt.test.ts` PASS (71); `bun test test/tool/tool-script.test.ts` PASS (47). Independent reviewer: spec compliance MET, no correctness bugs, style consistent.
+**Verification** — from `packages/opencode`: `bun typecheck` PASS; `bun test test/tool/plan.test.ts` PASS (4 new tests: No/feedback/Esc on plan_exit, No on plan_enter); `bun test test/session/plan-reminder-dedup.test.ts` PASS (multi-step entry + continuation turns each carry exactly one reminder); `bun test test/tool/question.test.ts test/agent/agent.test.ts test/permission/disabled.test.ts test/session/prompt.test.ts` PASS (71); `bun test test/tool/tool-script.test.ts` PASS (47). Independent reviewer: spec compliance MET, no correctness bugs, style consistent.
 
 **Journey log**
 - Tool pipeline appends `truncated: false` to metadata — assert with `toMatchObject`, not `toEqual`.
 - `Question.Service.reject` takes a bare `requestID`, unlike `reply` which takes an object; passing an object silently no-ops (logged warning) and hangs the awaiting fiber until test timeout.
 - Esc semantics survive the fix for free: the `RejectedError` for dismissal originates inside `question.ask`'s deferred, not from the removed `answer === "No"` re-throw.
 - The continuation reminder was first written as 3 lines; user flagged token cost on chatty planning sessions — compressed to one line.
+- `insertReminders` runs per-step, not per-turn, and persists parts — any unconditional injection there duplicates on multi-step turns. The base entry branch only avoided this by accident (its condition flips after step 1). New injections need an explicit content-marker dedup guard.
 
 ## [S1] Problem
 
@@ -54,6 +55,10 @@ In `SessionPrompt` where `input.agent.name === "plan"` and the previous assistan
 - End the turn by either asking a question (`question` tool) or calling `plan_exit`.
 
 The full plan-mode workflow reminder stays exclusive to the entry transition; this new one covers every subsequent plan turn.
+
+**Dedup guard (required for correctness)**: `insertReminders` runs on EVERY loop step and persists parts via `updatePart`. The base code's entry branch was implicitly self-guarding — at step 2 the last assistant message is already plan, flipping the condition. The new plan→plan branch breaks that implicit guard: entry-turn step 2+ and continuation-turn step 2+ would both re-enter it and stack duplicate reminders into the DB (and shift the prompt prefix every step). The branch therefore skips injection when the user message already carries a part containing `"Plan mode is"` — matching both the full ("Plan mode is active") and short ("Plan mode is still active") variants. Regression test: `test/session/plan-reminder-dedup.test.ts` (multi-step entry turn + multi-step continuation turn each end with exactly one reminder).
+
+**Upgrade compatibility / prefix cache**: no schema change; historic messages are never rewritten. For an in-flight plan session resumed after upgrade, the next plan→plan user message gains one extra synthetic part — a one-time incremental prefix-cache miss from that message onward (equivalent to any new user input), not a full-history invalidation. Subsequent turns append the reminder only on the newest message, so the historic prefix stays byte-stable and cacheable.
 
 ### Out-of-scope UI note
 
