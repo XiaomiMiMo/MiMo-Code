@@ -1,7 +1,7 @@
 {
   "$schema": "https://json.schemastore.org/package.json",
   "name": "@mimo-ai/plugin",
-  "version": "0.1.8",
+  "version": "0.1.9",
   "description": "Plugin SDK for extending MiMoCode",
   "keywords": ["mimo", "mimocode", "ai", "plugin", "coding-assistant"],
   "type": "module",

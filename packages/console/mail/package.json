@@ -1,6 +1,6 @@
 {
   "name": "@mimo-ai/console-mail",
-  "version": "0.1.8",
+  "version": "0.1.9",
   "dependencies": {
     "@jsx-email/all": "2.2.3",
     "@jsx-email/cli": "1.4.3",
