@@ -458,12 +458,18 @@ export function Prompt(props: PromptProps) {
   // reaches the textarea's onKeyDown (where we accept it) instead of being
   // consumed by the agent-cycle keybind. Global keyboard handlers run before
   // renderable handlers, so without this the suggestion can never be accepted.
-  // The cleanup resumes keybinds on any dismissal (typing, accept, submit,
-  // session change, status leaving idle).
+  // Uses explicit state tracking instead of onCleanup to avoid race conditions
+  // where the cleanup doesn't fire, leaving keybinds permanently suspended.
+  let ghostKeybindsSuspended = false
   createEffect(() => {
-    if (!ghost()) return
-    command.keybinds(false)
-    onCleanup(() => command.keybinds(true))
+    const g = ghost()
+    if (g && !ghostKeybindsSuspended) {
+      ghostKeybindsSuspended = true
+      command.keybinds(false)
+    } else if (!g && ghostKeybindsSuspended) {
+      ghostKeybindsSuspended = false
+      command.keybinds(true)
+    }
   })
 
   const usage = createMemo(() => {

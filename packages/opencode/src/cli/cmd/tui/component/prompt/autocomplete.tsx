@@ -531,7 +531,7 @@ export function Autocomplete(props: {
   }
 
   function show(mode: "@" | "$" | "/") {
-    command.keybinds(false)
+    if (!store.visible) command.keybinds(false)
     setStore({
       visible: mode,
       index: props.input().cursorOffset,
@@ -539,7 +539,7 @@ export function Autocomplete(props: {
   }
 
   function hide() {
-    command.keybinds(true)
+    if (store.visible) command.keybinds(true)
     setStore("visible", false)
   }
 
