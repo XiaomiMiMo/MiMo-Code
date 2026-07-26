@@ -3670,7 +3670,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
               return "break" as const
             }
 
-            const stepEffect = useMaxMode
+            const stepEffect = useMaxMode && !isLastStep
               ? MaxMode.runMaxStep({
                   // runMaxStep reuses the identical per-step args as handle.process,
                   // plus the orchestration handles it needs.

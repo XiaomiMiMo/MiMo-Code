@@ -364,6 +364,25 @@ function providerCfg(url: string) {
   }
 }
 
+// Enables the "max" agent (only registered when experimental.maxMode is
+// configured) and caps it at a single step, so the very first step is also
+// the last one.
+function maxModeLastStepCfg(url: string) {
+  return {
+    ...providerCfg(url),
+    experimental: {
+      maxMode: {
+        candidates: 2,
+      },
+    },
+    agent: {
+      max: {
+        steps: 1,
+      },
+    },
+  }
+}
+
 function mediaProviderCfg(url: string) {
   const config = providerCfg(url)
   return {
@@ -1812,4 +1831,38 @@ it.live(
       { git: true, config: cfg },
     ),
   30_000,
+)
+
+// Max mode
+
+it.live("max mode's last step falls back to a single handle.process call", () =>
+  provideTmpdirServer(
+    Effect.fnUntraced(function* ({ llm }) {
+      const prompt = yield* SessionPrompt.Service
+      const sessions = yield* Session.Service
+      const chat = yield* sessions.create({
+        title: "Max mode last step",
+        permission: [{ permission: "*", pattern: "*", action: "allow" }],
+      })
+
+      yield* llm.text("final answer")
+
+      const result = yield* prompt.prompt({
+        sessionID: chat.id,
+        agent: "max",
+        model: ref,
+        parts: [{ type: "text", text: "hello" }],
+      })
+
+      expect(result.info.role).toBe("assistant")
+      expect(result.parts.some((part) => part.type === "text" && part.text === "final answer")).toBe(true)
+      // With steps: 1, the very first step is also the last one. If max mode
+      // still ran runMaxStep here, it would fan out to 2 candidates + 1 judge
+      // call (3 total) instead of the single handle.process call the step-cap
+      // wrap-up expects.
+      expect(yield* llm.calls).toBe(1)
+    }),
+    { git: true, config: maxModeLastStepCfg },
+  ),
+  15_000,
 )
