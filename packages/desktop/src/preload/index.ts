@@ -53,6 +53,9 @@ const api: ElectronAPI = {
   openLink: (url) => ipcRenderer.send("open-link", url),
   openPath: (path, app) => ipcRenderer.invoke("open-path", path, app),
   readClipboardImage: () => ipcRenderer.invoke("read-clipboard-image"),
+  readClipboardText: () => ipcRenderer.invoke("read-clipboard-text"),
+  writeClipboardText: (text) => ipcRenderer.invoke("write-clipboard-text", text),
+  syncUniversalClipboard: () => ipcRenderer.invoke("mac:sync-universal-clipboard"),
   showNotification: (title, body) => ipcRenderer.send("show-notification", title, body),
   getWindowFocused: () => ipcRenderer.invoke("get-window-focused"),
   setWindowFocus: () => ipcRenderer.invoke("set-window-focus"),
@@ -66,6 +69,27 @@ const api: ElectronAPI = {
   checkUpdate: () => ipcRenderer.invoke("check-update"),
   installUpdate: () => ipcRenderer.invoke("install-update"),
   setBackgroundColor: (color: string) => ipcRenderer.invoke("set-background-color", color),
+  setWindowTitle: (title: string) => ipcRenderer.invoke("set-window-title", title),
+  setRecentProjects: (directories) => ipcRenderer.invoke("set-recent-projects", directories),
+  updateTraySessions: (sessions) => ipcRenderer.invoke("update-tray-sessions", sessions),
+  onTrayCommand: (cb) => {
+    const handler = (_: unknown, id: string) => cb(id)
+    ipcRenderer.on("tray-command", handler)
+    return () => ipcRenderer.removeListener("tray-command", handler)
+  },
+
+  // macOS 系统集成（只在 macOS 上可用，调用前用 `await window.api.mac.capabilities()` 判断）
+  mac: process.platform === "darwin"
+    ? {
+        capabilities: () => ipcRenderer.invoke("mac:capabilities"),
+        credentialSet: (name, value) => ipcRenderer.invoke("mac:credential-set", name, value),
+        credentialGet: (name) => ipcRenderer.invoke("mac:credential-get", name),
+        credentialDelete: (name) => ipcRenderer.invoke("mac:credential-delete", name),
+        openInTerminal: (command, terminal) => ipcRenderer.invoke("mac:open-in-terminal", command, terminal),
+        setDockBadge: (text) => ipcRenderer.invoke("mac:set-dock-badge", text),
+        showNotification: (title, body, opts) => ipcRenderer.send("mac:show-notification", title, body, opts),
+      }
+    : undefined,
 }
 
 contextBridge.exposeInMainWorld("api", api)

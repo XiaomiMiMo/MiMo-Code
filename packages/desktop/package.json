@@ -1,9 +1,15 @@
 {
-  "name": "@mimo-ai/desktop",
+  "name": "mimo-code",
+  "productName": "MiMo-Code",
   "private": true,
+  "packageManager": "npm@10.0.0",
   "version": "0.1.9",
   "type": "module",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/yudong22/MiMo-Code.git"
+  },
   "homepage": "https://opencode.ai",
   "author": {
     "name": "OpenCode",
@@ -17,13 +23,15 @@
     "build": "electron-vite build",
     "preview": "electron-vite preview",
     "package": "electron-builder --config electron-builder.config.ts",
-    "package:mac": "electron-builder --mac --config electron-builder.config.ts",
+    "package:mac": "bun ./scripts/build-package-mac.ts",
+    "package:mac:fast": "bun ./scripts/build-package-mac.ts --fast",
     "package:win": "electron-builder --win --config electron-builder.config.ts",
     "package:linux": "electron-builder --linux --config electron-builder.config.ts",
     "native:build": "bun install --cwd native"
   },
   "main": "./out/main/index.js",
-  "dependencies": {
+  "dependencies": {},
+  "devDependencies": {
     "effect": "catalog:",
     "electron-context-menu": "4.1.2",
     "electron-log": "^5",
@@ -31,12 +39,10 @@
     "electron-updater": "^6",
     "electron-window-state": "^5.0.3",
     "drizzle-orm": "catalog:",
-    "marked": "^15"
-  },
-  "devDependencies": {
+    "marked": "^15",
     "@lydell/node-pty": "catalog:",
-    "@mimo-ai/app": "workspace:*",
-    "@mimo-ai/ui": "workspace:*",
+    "@mimo-ai/app": "0.1.9",
+    "@mimo-ai/ui": "0.1.9",
     "@solid-primitives/i18n": "2.2.1",
     "@solid-primitives/storage": "catalog:",
     "@solidjs/meta": "catalog:",
@@ -48,6 +54,7 @@
     "electron": "41.2.1",
     "electron-builder": "^26",
     "electron-vite": "^5",
+    "lightningcss": "catalog:",
     "solid-js": "catalog:",
     "sury": "11.0.0-alpha.4",
     "typescript": "~5.6.2",

@@ -6,7 +6,8 @@
   "exports": {
     ".": "./src/index.ts",
     "./vite": "./vite.js",
-    "./index.css": "./src/index.css"
+    "./index.css": "./src/index.css",
+    "./i18n/*": "./src/i18n/*.ts"
   },
   "scripts": {
     "typecheck": "tsgo -b",
@@ -34,6 +35,7 @@
     "@types/node": "catalog:",
     "@typescript/native-preview": "catalog:",
     "typescript": "catalog:",
+    "lightningcss": "catalog:",
     "vite": "catalog:",
     "vite-plugin-icons-spritesheet": "3.0.1",
     "vite-plugin-solid": "catalog:"

@@ -1012,6 +1012,52 @@ export default function Layout(props: ParentProps) {
     }
   }
 
+  async function deleteSession(session: Session) {
+    const [store, setStore] = globalSync.child(session.directory)
+    const sessions = store.session ?? []
+    const index = sessions.findIndex((s) => s.id === session.id)
+    const nextSession = sessions[index + 1] ?? sessions[index - 1]
+
+    await globalSDK.client.session.delete({
+      directory: session.directory,
+      sessionID: session.id,
+    }).catch((err) => {
+      showToast({
+        title: language.t("session.delete.failed.title"),
+        description: errorMessage(err, language.t("common.requestFailed")),
+      })
+    })
+
+    setStore(
+      produce((draft) => {
+        const match = Binary.search(draft.session, session.id, (s) => s.id)
+        if (match.found) draft.session.splice(match.index, 1)
+      }),
+    )
+    if (session.id === params.id) {
+      if (nextSession) {
+        navigate(`/${params.dir}/session/${nextSession.id}`)
+      } else {
+        navigate(`/${params.dir}/session`)
+      }
+    }
+  }
+
+  async function renameSession(session: Session, title: string) {
+    const [_, setStore] = globalSync.child(session.directory)
+    await globalSDK.client.session.update({
+      directory: session.directory,
+      sessionID: session.id,
+      title,
+    })
+    setStore(
+      produce((draft) => {
+        const match = Binary.search(draft.session, session.id, (s) => s.id)
+        if (match.found) draft.session[match.index].title = title
+      }),
+    )
+  }
+
   command.register("layout", () => {
     const commands: CommandOption[] = [
       {
@@ -1973,6 +2019,8 @@ export default function Layout(props: ParentProps) {
     clearHoverProjectSoon,
     prefetchSession,
     archiveSession,
+    deleteSession,
+    renameSession,
     workspaceName,
     renameWorkspace,
     editorOpen,
@@ -2019,6 +2067,8 @@ export default function Layout(props: ParentProps) {
       clearHoverProjectSoon,
       prefetchSession,
       archiveSession,
+      deleteSession,
+      renameSession,
     },
   }
 

@@ -42,8 +42,23 @@ function createDefaultTitle(isChild = false) {
 }
 
 export function isDefaultTitle(title: string) {
+  if (!title || title.trim() === "") return true
+  const lower = title.trim().toLowerCase()
+  if (
+    lower === "new session" ||
+    lower === "untitled session" ||
+    lower === "untitled" ||
+    lower === "新会话" ||
+    lower === "新建会话" ||
+    lower.startsWith("new session") ||
+    lower.startsWith("child session") ||
+    lower.startsWith("untitled")
+  ) {
+    return true
+  }
   return new RegExp(
-    `^(${parentTitlePrefix}|${childTitlePrefix})\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z$`,
+    `^(${parentTitlePrefix}|${childTitlePrefix})\\d{4}-\\d{2}-\\d{2}`,
+    "i"
   ).test(title)
 }
 

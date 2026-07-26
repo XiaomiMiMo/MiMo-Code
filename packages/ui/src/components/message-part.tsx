@@ -295,32 +295,89 @@ function tone(name: string) {
   return agentPalette[hash % agentPalette.length]
 }
 
+function normalizeInput(input: unknown): Record<string, unknown> {
+  if (!input) return {}
+  if (typeof input === "object" && input !== null) return input as Record<string, unknown>
+  if (typeof input === "string") {
+    const trimmed = input.trim()
+    if (trimmed.startsWith("{") && trimmed.endsWith("}")) {
+      try {
+        const parsed = JSON.parse(trimmed)
+        if (parsed && typeof parsed === "object") return parsed as Record<string, unknown>
+      } catch {
+        // ignore JSON parse error
+      }
+    }
+    return { path: trimmed }
+  }
+  return {}
+}
+
+function extractFilePath(rawInput: unknown): string | undefined {
+  const input = normalizeInput(rawInput)
+  const candidate =
+    input.filePath ??
+    input.AbsolutePath ??
+    input.TargetFile ??
+    input.SearchPath ??
+    input.DirectoryPath ??
+    input.path ??
+    input.targetFile ??
+    input.file
+  if (typeof candidate === "string" && candidate.trim() !== "") {
+    return candidate.trim()
+  }
+  return undefined
+}
+
+function extractSearchQuery(rawInput: unknown): string | undefined {
+  const input = normalizeInput(rawInput)
+  const candidate = input.Query ?? input.query ?? input.pattern ?? input.QueryString
+  if (typeof candidate === "string" && candidate.trim() !== "") {
+    return candidate.trim()
+  }
+  return undefined
+}
+
+function extractFileExt(filename: string | undefined): string | undefined {
+  if (!filename || !filename.includes(".")) return undefined
+  const ext = filename.split(".").pop()?.toUpperCase() ?? ""
+  if (ext.length > 5 || ext === filename.toUpperCase()) return undefined
+  return ext
+}
+
 export function getToolInfo(tool: string, input: any = {}): ToolInfo {
   const i18n = useI18n()
+  const filePath = extractFilePath(input)
+  const filename = filePath ? getFilename(filePath) : undefined
+  const searchQuery = extractSearchQuery(input)
   switch (tool) {
     case "read":
+    case "view_file":
       return {
         icon: "glasses",
         title: i18n.t("ui.tool.read"),
-        subtitle: input.filePath ? getFilename(input.filePath) : undefined,
+        subtitle: filename,
       }
     case "list":
+    case "list_dir":
       return {
         icon: "bullet-list",
         title: i18n.t("ui.tool.list"),
-        subtitle: input.path ? getFilename(input.path) : undefined,
+        subtitle: filename || (filePath ? _getDirectory(filePath) : undefined),
       }
     case "glob":
       return {
         icon: "magnifying-glass-menu",
         title: i18n.t("ui.tool.glob"),
-        subtitle: input.pattern,
+        subtitle: searchQuery || input.pattern,
       }
     case "grep":
+    case "grep_search":
       return {
         icon: "magnifying-glass-menu",
         title: i18n.t("ui.tool.grep"),
-        subtitle: input.pattern,
+        subtitle: searchQuery || input.pattern,
       }
     case "webfetch":
       return {
@@ -332,13 +389,13 @@ export function getToolInfo(tool: string, input: any = {}): ToolInfo {
       return {
         icon: "window-cursor",
         title: i18n.t("ui.tool.websearch"),
-        subtitle: input.query,
+        subtitle: searchQuery || input.query,
       }
     case "codesearch":
       return {
         icon: "code",
         title: i18n.t("ui.tool.codesearch"),
-        subtitle: input.query,
+        subtitle: searchQuery || input.query,
       }
     case "task": {
       const op = (input.operation as Record<string, any>) ?? input
@@ -359,16 +416,19 @@ export function getToolInfo(tool: string, input: any = {}): ToolInfo {
         subtitle: input.description,
       }
     case "edit":
+    case "replace_file_content":
+    case "multi_replace_file_content":
       return {
         icon: "code-lines",
         title: i18n.t("ui.messagePart.title.edit"),
-        subtitle: input.filePath ? getFilename(input.filePath) : undefined,
+        subtitle: filename,
       }
     case "write":
+    case "write_to_file":
       return {
         icon: "code-lines",
         title: i18n.t("ui.messagePart.title.write"),
-        subtitle: input.filePath ? getFilename(input.filePath) : undefined,
+        subtitle: filename,
       }
     case "apply_patch":
       return {
@@ -656,61 +716,107 @@ function contextToolDetail(part: ToolPart): string | undefined {
 }
 
 function contextToolTrigger(part: ToolPart, i18n: ReturnType<typeof useI18n>) {
-  const input = (part.state.input ?? {}) as Record<string, unknown>
-  const path = typeof input.path === "string" ? input.path : "/"
-  const filePath = typeof input.filePath === "string" ? input.filePath : undefined
-  const pattern = typeof input.pattern === "string" ? input.pattern : undefined
-  const include = typeof input.include === "string" ? input.include : undefined
-  const offset = typeof input.offset === "number" ? input.offset : undefined
-  const limit = typeof input.limit === "number" ? input.limit : undefined
+  const input = normalizeInput(part.state.input)
+  const filePath = extractFilePath(part.state.input)
+  const filename = filePath ? getFilename(filePath) : undefined
+  const fileExt = filename ? extractFileExt(filename) : undefined
+  const searchQuery = extractSearchQuery(part.state.input)
+
+  const title = (part.state as any)?.title as string | undefined
+  const cleanTitle = title && title !== "read" && title !== "读取" && title !== "Read" && title !== "view_file"
+    ? title
+    : undefined
+
+  const startLine =
+    typeof input.StartLine === "number"
+      ? input.StartLine
+      : typeof input.startLine === "number"
+        ? input.startLine
+        : typeof input.offset === "number"
+          ? input.offset
+          : undefined
+  const endLine =
+    typeof input.EndLine === "number"
+      ? input.EndLine
+      : typeof input.endLine === "number"
+        ? input.endLine
+        : typeof input.limit === "number"
+          ? input.limit
+          : undefined
+
+  let badgeText: string | undefined
+  if (startLine !== undefined && endLine !== undefined) {
+    badgeText = `#L${startLine}-${endLine}`
+  } else if (startLine !== undefined) {
+    badgeText = `#L${startLine}`
+  }
+
+  const stateAny = part.state as any
+  const resultsCount = typeof stateAny.metadata?.matchCount === "number"
+    ? stateAny.metadata.matchCount
+    : typeof stateAny.metadata?.results === "number"
+      ? stateAny.metadata.results
+      : undefined
 
   switch (part.tool) {
-    case "read": {
-      const args: string[] = []
-      if (offset !== undefined) args.push("offset=" + offset)
-      if (limit !== undefined) args.push("limit=" + limit)
+    case "read":
+    case "view_file": {
       return {
-        title: i18n.t("ui.tool.read"),
-        subtitle: filePath ? getFilename(filePath) : "",
-        args,
+        actionLabel: i18n.t("ui.tool.analyzed"),
+        fileExt,
+        mainText: filename ?? (filePath ? getFilename(filePath) : (cleanTitle ?? (i18n.t("ui.tool.read")))),
+        badgeText,
       }
     }
     case "list":
+    case "list_dir": {
+      const path = filePath ?? (typeof input.path === "string" ? input.path : "/")
       return {
-        title: i18n.t("ui.tool.list"),
-        subtitle: getDirectory(path),
+        actionLabel: i18n.t("ui.tool.explored"),
+        mainText: _getDirectory(path) || path,
       }
+    }
     case "glob":
+    case "grep":
+    case "grep_search":
+    case "codesearch": {
+      const query = searchQuery ?? (typeof input.path === "string" ? _getDirectory(input.path) : "")
+      const badge = resultsCount !== undefined ? `${resultsCount} ${i18n.t("ui.common.results")}` : undefined
       return {
-        title: i18n.t("ui.tool.glob"),
-        subtitle: getDirectory(path),
-        args: pattern ? ["pattern=" + pattern] : [],
+        actionLabel: i18n.t("ui.tool.searched"),
+        mainText: query || cleanTitle || i18n.t("ui.tool.grep"),
+        badgeText: badge,
       }
-    case "grep": {
-      const args: string[] = []
-      if (pattern) args.push("pattern=" + pattern)
-      if (include) args.push("include=" + include)
+    }
+    case "edit":
+    case "write":
+    case "replace_file_content":
+    case "multi_replace_file_content":
+    case "write_to_file": {
       return {
-        title: i18n.t("ui.tool.grep"),
-        subtitle: getDirectory(path),
-        args,
+        actionLabel: i18n.t("ui.tool.edited"),
+        fileExt,
+        mainText: filename ?? (filePath ? getFilename(filePath) : (cleanTitle ?? (i18n.t("ui.tool.write")))),
       }
     }
     default: {
       const info = getToolInfo(part.tool, input)
       return {
-        title: info.title,
-        subtitle: info.subtitle || contextToolDetail(part),
-        args: [],
+        actionLabel: info.title,
+        fileExt,
+        mainText: info.subtitle || filename || cleanTitle || contextToolDetail(part) || "",
+        badgeText,
       }
     }
   }
 }
 
 function contextToolSummary(parts: ToolPart[]) {
-  const read = parts.filter((part) => part.tool === "read").length
-  const search = parts.filter((part) => part.tool === "glob" || part.tool === "grep").length
-  const list = parts.filter((part) => part.tool === "list").length
+  const read = parts.filter((part) => part.tool === "read" || part.tool === "view_file").length
+  const search = parts.filter(
+    (part) => part.tool === "glob" || part.tool === "grep" || part.tool === "grep_search" || part.tool === "codesearch",
+  ).length
+  const list = parts.filter((part) => part.tool === "list" || part.tool === "list_dir").length
   return { read, search, list }
 }
 
@@ -745,22 +851,38 @@ export function registerPartComponent(type: string, component: PartComponent) {
 }
 
 export function Message(props: MessageProps) {
+  const p = props as any
   return (
     <Switch>
       <Match when={props.message.role === "user" && props.message}>
-        {(userMessage) => (
-          <UserMessageDisplay message={userMessage() as UserMessage} parts={props.parts} actions={props.actions} />
-        )}
+        {(() => {
+          const message = createMemo(() => props.message as UserMessage)
+          const parts = createMemo(() => props.parts ?? [])
+
+          return (
+            <UserMessageDisplay
+              message={message()}
+              parts={parts()}
+              actions={p.userActions ?? p.actions}
+            />
+          )
+        })()}
       </Match>
       <Match when={props.message.role === "assistant" && props.message}>
-        {(assistantMessage) => (
-          <AssistantMessageDisplay
-            message={assistantMessage() as AssistantMessage}
-            parts={props.parts}
-            showAssistantCopyPartID={props.showAssistantCopyPartID}
-            showReasoningSummaries={props.showReasoningSummaries}
-          />
-        )}
+        {(() => {
+          const messages = createMemo(() => [props.message as AssistantMessage])
+          return (
+            <AssistantParts
+              messages={messages()}
+              showAssistantCopyPartID={props.showAssistantCopyPartID}
+              turnDurationMs={p.turnDurationMs}
+              working={p.working}
+              showReasoningSummaries={props.showReasoningSummaries}
+              shellToolDefaultOpen={p.shellToolDefaultOpen}
+              editToolDefaultOpen={p.editToolDefaultOpen}
+            />
+          )
+        })()}
       </Match>
     </Switch>
   )
@@ -900,36 +1022,40 @@ function ContextToolGroup(props: { parts: ToolPart[]; busy?: boolean }) {
         </div>
       </Collapsible.Trigger>
       <Collapsible.Content>
-        <div data-component="context-tool-group-list">
+        <div data-component="context-tool-group-list" class="flex flex-col gap-1.5 pt-1.5 pb-1 pl-1">
           <Index each={props.parts}>
             {(partAccessor) => {
-              const trigger = createMemo(() => contextToolTrigger(partAccessor(), i18n))
+              const info = createMemo(() => contextToolTrigger(partAccessor(), i18n))
               const running = createMemo(
                 () => partAccessor().state.status === "pending" || partAccessor().state.status === "running",
               )
               return (
-                <div data-slot="context-tool-group-item">
-                  <div data-component="tool-trigger">
-                    <div data-slot="basic-tool-tool-trigger-content">
-                      <div data-slot="basic-tool-tool-info">
-                        <div data-slot="basic-tool-tool-info-structured">
-                          <div data-slot="basic-tool-tool-info-main">
-                            <span data-slot="basic-tool-tool-title">
-                              <TextShimmer text={trigger().title} active={running()} />
-                            </span>
-                            <Show when={!running() && trigger().subtitle}>
-                              <span data-slot="basic-tool-tool-subtitle">{trigger().subtitle}</span>
-                            </Show>
-                            <Show when={!running() && trigger().args?.length}>
-                              <For each={trigger().args}>
-                                {(arg) => <span data-slot="basic-tool-tool-arg">{arg}</span>}
-                              </For>
-                            </Show>
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
+                <div data-slot="context-tool-group-item" class="flex items-center gap-2 py-0.5 text-13-regular">
+                  <span data-slot="context-action" class="text-text-weak shrink-0">
+                    {info().actionLabel}
+                  </span>
+                  <Show when={info().fileExt}>
+                    <span
+                      data-slot="context-file-ext"
+                      class="px-1 py-0.2 text-[10px] font-bold font-mono uppercase bg-surface-raised-base text-text-weak rounded border border-border-weak shrink-0"
+                    >
+                      {info().fileExt}
+                    </span>
+                  </Show>
+                  <span
+                    data-slot="context-main-text"
+                    class="font-medium text-text-strong font-mono min-w-0 overflow-hidden text-ellipsis whitespace-nowrap"
+                  >
+                    <TextShimmer text={info().mainText} active={running()} />
+                  </span>
+                  <Show when={info().badgeText}>
+                    <span
+                      data-slot="context-badge"
+                      class="px-1.5 py-0.5 text-xs font-mono rounded bg-surface-raised-base text-text-weak border border-border-weak shrink-0"
+                    >
+                      {info().badgeText}
+                    </span>
+                  </Show>
                 </div>
               )
             }}

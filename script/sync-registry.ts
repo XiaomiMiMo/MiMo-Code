@@ -39,7 +39,7 @@ const REGISTRIES = {
 type RegistryKey = keyof typeof REGISTRIES
 
 const CONCURRENCY = 5
-const POLL_INTERVAL = 3000
+const POLL_INTERVAL = 10000
 const POLL_TIMEOUT = 120000
 
 async function syncNpmmirror(packageName: string) {
@@ -68,9 +68,12 @@ async function pollSyncStatus(packageName: string, taskId: string) {
       `${REGISTRIES.npmmirror.syncUrl}/-/package/${encoded}/syncs/${taskId}`,
     )
     if (!res.ok) continue
-    const data = (await res.json()) as { state?: string }
+    const data = (await res.json()) as { state?: string; error?: string }
     if (data.state === "success") return "success"
-    if (data.state === "error") return "error"
+    if (data.state === "fail" || data.state === "error") {
+      if (data.error) console.error(`  ✗ ${packageName}: ${data.error}`)
+      return "error"
+    }
   }
   return "timeout"
 }
@@ -98,30 +101,45 @@ async function runConcurrent<T>(items: T[], concurrency: number, fn: (item: T) =
   await Promise.all(workers)
 }
 
-async function syncToNpmmirror() {
-  console.log(`\n▶ Syncing to npmmirror (${REGISTRIES.npmmirror.syncUrl})`)
-  console.log(`  Triggering sync for ${PACKAGES.length} packages...\n`)
-
+async function syncPass(packages: string[]) {
   const tasks: { pkg: string; taskId: string }[] = []
-  await runConcurrent(PACKAGES, CONCURRENCY, async (name) => {
+  const failed: string[] = []
+  await runConcurrent(packages, CONCURRENCY, async (name) => {
     const taskId = await syncNpmmirror(name)
-    if (taskId) {
-      console.log(`  ↻ ${name} → queued (${taskId})`)
-      tasks.push({ pkg: name, taskId })
+    if (!taskId) {
+      failed.push(name)
+      return
     }
+    console.log(`  ↻ ${name} → queued (${taskId})`)
+    tasks.push({ pkg: name, taskId })
   })
 
-  if (tasks.length === 0) {
-    console.log("  No sync tasks created.")
-    return
-  }
-
-  console.log(`\n  Polling ${tasks.length} sync tasks...`)
+  if (tasks.length > 0) console.log(`\n  Polling ${tasks.length} sync tasks...`)
   await runConcurrent(tasks, CONCURRENCY, async (task) => {
     const result = await pollSyncStatus(task.pkg, task.taskId)
     const icon = result === "success" ? "✓" : result === "error" ? "✗" : "⏱"
     console.log(`  ${icon} ${task.pkg}: ${result}`)
+    if (result !== "success") failed.push(task.pkg)
   })
+  return failed
+}
+
+async function syncToNpmmirror() {
+  console.log(`\n▶ Syncing to npmmirror (${REGISTRIES.npmmirror.syncUrl})`)
+  console.log(`  Triggering sync for ${PACKAGES.length} packages...\n`)
+
+  const failed = await syncPass(PACKAGES)
+  if (failed.length === 0) return
+
+  console.log(`\n  ⟳ Retrying ${failed.length} failed/timed-out packages...\n`)
+  const stillFailed = await syncPass(failed)
+  if (stillFailed.length === 0) {
+    console.log(`\n  ✓ All packages synced after retry.`)
+    return
+  }
+
+  console.log(`\n  ⚠️  ${stillFailed.length}/${PACKAGES.length} packages NOT synced after retry:`)
+  for (const pkg of stillFailed) console.log(`     ✗ ${pkg}`)
 }
 
 async function syncToProxy(key: RegistryKey) {

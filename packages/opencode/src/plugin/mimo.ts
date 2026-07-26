@@ -86,6 +86,30 @@ export async function MimoAuthPlugin(_input: PluginInput): Promise<Hooks> {
   return {
     config: async (input) => {
       input.provider ??= {}
+      // Register the built-in anonymous free channel "mimo / mimo-auto".
+      // models.dev has no "mimo" provider entry, so we hardcode it here.
+      // The provider.ts loader is patched to skip the cost.input === 0 strip
+      // when the provider id is "mimo" (see provider/provider.ts).
+      input.provider.mimo ??= {
+        name: "MiMo Auto",
+        api: "https://api.xiaomimimo.com/v1",
+        npm: "@ai-sdk/openai-compatible",
+        env: [],
+        models: {
+          "mimo-auto": {
+            id: "mimo-auto",
+            name: "MiMo Auto (Free)",
+            attachment: true,
+            reasoning: true,
+            tool_call: true,
+            temperature: true,
+            release_date: "2025-01",
+            modalities: { input: ["text", "image"], output: ["text"] },
+            limit: { context: 1_000_000, output: 32_000 },
+            cost: { input: 0, output: 0 },
+          },
+        },
+      }
       // Register xiaomi as a config provider so it shows up even before login.
       // name/api are intentionally left to the models.dev database (name: "Xiaomi",
       // api: https://api.xiaomimimo.com/v1) — hardcoding "MiMo" here collided with

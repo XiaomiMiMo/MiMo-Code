@@ -1,0 +1,186 @@
+name: release-desktop
+
+on:
+  push:
+    tags:
+      - "desktop/v*"
+      - "v*-desktop"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag to release (e.g. desktop/v1.2.3)"
+        required: true
+      channel:
+        description: "Release channel"
+        required: true
+        default: "prod"
+        type: choice
+        options:
+          - prod
+          - beta
+          - dev
+
+concurrency:
+  group: release-desktop
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+  id-token: write
+
+env:
+  # 从 tag 推断 channel（desktop/v1.0.0-beta.1 → beta，否则 prod）
+  OPENCODE_CHANNEL: >-
+    ${{
+      inputs.channel != '' && inputs.channel ||
+      (contains(github.ref_name, 'beta') && 'beta' || 'prod')
+    }}
+
+jobs:
+  # ── 1. 类型检查 ─────────────────────────────────────────────────
+  typecheck:
+    name: Typecheck
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: ./.github/actions/setup-bun
+
+      - name: Typecheck desktop
+        working-directory: packages/desktop
+        run: bun run typecheck
+
+  # ── 2. 构建 & 打包（macOS / Windows / Linux）────────────────────
+  package-mac:
+    name: Package macOS
+    needs: typecheck
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: ./.github/actions/setup-bun
+
+      - name: Build desktop renderer & main
+        working-directory: packages/desktop
+        run: bun run build
+
+      - name: Package macOS (dmg + zip)
+        working-directory: packages/desktop
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: bun run package:mac
+
+      - name: Upload macOS artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: desktop-mac
+          path: |
+            packages/desktop/dist/*.dmg
+            packages/desktop/dist/*.zip
+          if-no-files-found: error
+
+#   package-win:
+#     name: Package Windows
+#     needs: typecheck
+#     runs-on: windows-latest
+#     steps:
+#       - uses: actions/checkout@v6
+#
+#       - uses: ./.github/actions/setup-bun
+#
+#       - name: Build desktop renderer & main
+#         working-directory: packages/desktop
+#         run: bun run build
+#
+#       - name: Package Windows (nsis)
+#         working-directory: packages/desktop
+#         env:
+#           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+#           AZURE_KEY_VAULT_URI: ${{ secrets.AZURE_KEY_VAULT_URI }}
+#           AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+#           AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+#           AZURE_CERT_NAME: ${{ secrets.AZURE_CERT_NAME }}
+#         run: bun run package:win
+#
+#       - name: Upload Windows artifacts
+#         uses: actions/upload-artifact@v7
+#         with:
+#           name: desktop-win
+#           path: packages/desktop/dist/*.exe
+#           if-no-files-found: error
+#
+#   package-linux:
+#     name: Package Linux
+#     needs: typecheck
+#     runs-on: ubuntu-latest
+#     steps:
+#       - uses: actions/checkout@v6
+#
+#       - uses: ./.github/actions/setup-bun
+#
+#       - name: Build desktop renderer & main
+#         working-directory: packages/desktop
+#         run: bun run build
+#
+#       - name: Package Linux (AppImage / deb / rpm)
+#         working-directory: packages/desktop
+#         env:
+#           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+#         run: bun run package:linux
+#
+#       - name: Upload Linux artifacts
+#         uses: actions/upload-artifact@v7
+#         with:
+#           name: desktop-linux
+#           path: |
+#             packages/desktop/dist/*.AppImage
+#             packages/desktop/dist/*.deb
+#             packages/desktop/dist/*.rpm
+#           if-no-files-found: error
+
+  # ── 3. 发布 GitHub Release ──────────────────────────────────────
+  release:
+    name: Publish GitHub Release
+    needs: [package-mac]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Download all platform artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: desktop-*
+          path: dist/
+          merge-multiple: false
+
+      - name: Extract version from tag or branch
+        id: version
+        run: |
+          if [[ "$GITHUB_REF_NAME" == desktop/v* ]]; then
+            VERSION="${GITHUB_REF_NAME#desktop/v}"
+            TAG_NAME="$GITHUB_REF_NAME"
+          elif [[ "$GITHUB_REF_NAME" == v*-desktop ]]; then
+            VERSION="${GITHUB_REF_NAME%-desktop}"
+            VERSION="${VERSION#v}"
+            TAG_NAME="$GITHUB_REF_NAME"
+          else
+            SHORT_SHA=$(git rev-parse --short HEAD)
+            VERSION="dev-${SHORT_SHA}"
+            TAG_NAME="v0.0.0-dev-${SHORT_SHA}-desktop"
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "tag_name=$TAG_NAME" >> "$GITHUB_OUTPUT"
+          IS_PRE=$([[ "$VERSION" == *beta* || "$VERSION" == *alpha* || "$VERSION" == *dev* ]] && echo true || echo false)
+          echo "is_prerelease=$IS_PRE" >> "$GITHUB_OUTPUT"
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: "desktop v${{ steps.version.outputs.version }}"
+          tag_name: ${{ steps.version.outputs.tag_name }}
+          prerelease: ${{ steps.version.outputs.is_prerelease }}
+          generate_release_notes: true
+          files: dist/**/*

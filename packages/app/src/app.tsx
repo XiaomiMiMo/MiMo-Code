@@ -73,6 +73,7 @@ declare global {
     __OPENCODE__?: {
       updaterEnabled?: boolean
       deepLinks?: string[]
+      recentProjects?: string[]
       wsl?: boolean
     }
     api?: {

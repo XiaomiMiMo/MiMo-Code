@@ -115,23 +115,26 @@ function toolResultContinueReminder(): string {
 }
 
 async function ensureCheckpointTemplate(checkpointFile: string): Promise<void> {
-  if (!(await Bun.file(checkpointFile).exists())) {
+  const exists = await fs.stat(checkpointFile).then(() => true).catch(() => false)
+  if (!exists) {
     await fs.mkdir(path.dirname(checkpointFile), { recursive: true })
-    await Bun.write(checkpointFile, CHECKPOINT_TEMPLATE)
+    await fs.writeFile(checkpointFile, CHECKPOINT_TEMPLATE, "utf-8")
   }
 }
 
 async function ensureMemoryTemplate(memoryFile: string): Promise<void> {
-  if (!(await Bun.file(memoryFile).exists())) {
+  const exists = await fs.stat(memoryFile).then(() => true).catch(() => false)
+  if (!exists) {
     await fs.mkdir(path.dirname(memoryFile), { recursive: true })
-    await Bun.write(memoryFile, MEMORY_TEMPLATE)
+    await fs.writeFile(memoryFile, MEMORY_TEMPLATE, "utf-8")
   }
 }
 
 async function ensureNotesTemplate(notesFile: string): Promise<void> {
-  if (!(await Bun.file(notesFile).exists())) {
+  const exists = await fs.stat(notesFile).then(() => true).catch(() => false)
+  if (!exists) {
     await fs.mkdir(path.dirname(notesFile), { recursive: true })
-    await Bun.write(notesFile, NOTES_TEMPLATE)
+    await fs.writeFile(notesFile, NOTES_TEMPLATE, "utf-8")
   }
 }
 
@@ -652,8 +655,8 @@ export const layer: Layer.Layer<
       yield* Effect.promise(() => ensureNotesTemplate(notesFile))
 
       // v5: single-file checkpoint, check if prior content exists
-      const checkpointExists = yield* Effect.promise(() => Bun.file(checkpointFile).exists())
-      const memoryExists = yield* Effect.promise(() => Bun.file(memoryFile).exists())
+      const checkpointExists = yield* Effect.promise(() => fs.stat(checkpointFile).then(() => true).catch(() => false))
+      const memoryExists = yield* Effect.promise(() => fs.stat(memoryFile).then(() => true).catch(() => false))
       const rangeDesc = checkpointExists
         ? [
             `Previous checkpoint: ${checkpointFile}`,
@@ -1019,7 +1022,7 @@ export const layer: Layer.Layer<
     })
 
     const hasCheckpoint = Effect.fn("SessionCheckpoint.hasCheckpoint")(function* (sessionID: SessionID) {
-      return yield* Effect.promise(() => Bun.file(checkpointPath(sessionID)).exists())
+      return yield* Effect.promise(() => fs.stat(checkpointPath(sessionID)).then(() => true).catch(() => false))
     })
 
     const hasMemoryOrTasks = Effect.fn("SessionCheckpoint.hasMemoryOrTasks")(function* (sessionID: SessionID) {
@@ -1035,7 +1038,7 @@ export const layer: Layer.Layer<
 
     const loadLatest = Effect.fn("SessionCheckpoint.loadLatest")(function* (sessionID: SessionID) {
       const content = yield* Effect.promise(() =>
-        Bun.file(checkpointPath(sessionID)).text().catch(() => ""),
+        fs.readFile(checkpointPath(sessionID), "utf-8").catch(() => ""),
       )
       return content || undefined
     })
@@ -1045,17 +1048,17 @@ export const layer: Layer.Layer<
       _count: number,
     ) {
       const content = yield* Effect.promise(() =>
-        Bun.file(checkpointPath(sessionID)).text().catch(() => ""),
+        fs.readFile(checkpointPath(sessionID), "utf-8").catch(() => ""),
       )
       return content ? [content] : []
     })
 
     const renderIndex = Effect.fn("SessionCheckpoint.renderIndex")(function* (sessionID: SessionID) {
       const snapFile = checkpointPath(sessionID)
-      const exists = yield* Effect.promise(() => Bun.file(snapFile).exists())
+      const exists = yield* Effect.promise(() => fs.stat(snapFile).then(() => true).catch(() => false))
       if (!exists) return "No checkpoints yet for this session."
 
-      const content = yield* Effect.promise(() => Bun.file(snapFile).text().catch(() => ""))
+      const content = yield* Effect.promise(() => fs.readFile(snapFile, "utf-8").catch(() => ""))
       const topicMatch = content.match(/^Topic:\s*(.+)$/m)
       const topic = topicMatch ? topicMatch[1].trim() : "(unknown)"
 

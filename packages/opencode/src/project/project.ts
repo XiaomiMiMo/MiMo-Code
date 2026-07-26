@@ -21,34 +21,37 @@ import { zod } from "@/util/effect-zod"
 import { withStatics } from "@/util/schema"
 
 async function setupProjectIdEnvironment(workingDir: string): Promise<void> {
-  const mainGit = resolveMainGitDir(workingDir)
-  if (!mainGit) return
+  if (!workingDir || workingDir === "/" || nodePath.parse(workingDir).root === workingDir) return
+  try {
+    const mainGit = resolveMainGitDir(workingDir)
+    if (!mainGit) return
 
-  const localFile = nodePath.join(workingDir, ".mimocode-project-id")
-  const idFile = nodePath.join(mainGit, "mimocode-project-id")
+    const localFile = nodePath.join(workingDir, ".mimocode-project-id")
+    const idFile = nodePath.join(mainGit, "mimocode-project-id")
 
-  // 运行时无关:用 node fs(node engine 构建里没有 Bun 全局)
-  const exists = (p: string) =>
-    nodeFs
-      .access(p)
-      .then(() => true)
-      .catch(() => false)
+    // 运行时无关:用 node fs(node engine 构建里没有 Bun 全局)
+    const exists = (p: string) =>
+      nodeFs
+        .access(p)
+        .then(() => true)
+        .catch(() => false)
 
-  if (await exists(localFile)) {
-    if (!(await exists(idFile))) {
-      const id = await nodeFs.readFile(localFile, "utf-8")
-      await nodeFs.writeFile(idFile, id)
+    if (await exists(localFile)) {
+      if (!(await exists(idFile))) {
+        const id = await nodeFs.readFile(localFile, "utf-8")
+        await nodeFs.writeFile(idFile, id)
+      }
+      await nodeFs.unlink(localFile).catch(() => {})
     }
-    await nodeFs.unlink(localFile).catch(() => {})
-  }
 
-  // Belt-and-suspenders: ensure .git/info/exclude lists .mimocode-project-id
-  const excludeFile = nodePath.join(mainGit, "info", "exclude")
-  await nodeFs.mkdir(nodePath.dirname(excludeFile), { recursive: true })
-  const existing = await nodeFs.readFile(excludeFile, "utf-8").catch(() => "")
-  if (!existing.includes(".mimocode-project-id")) {
-    await nodeFs.appendFile(excludeFile, "\n.mimocode-project-id\n")
-  }
+    // Belt-and-suspenders: ensure .git/info/exclude lists .mimocode-project-id
+    const excludeFile = nodePath.join(mainGit, "info", "exclude")
+    await nodeFs.mkdir(nodePath.dirname(excludeFile), { recursive: true })
+    const existing = await nodeFs.readFile(excludeFile, "utf-8").catch(() => "")
+    if (!existing.includes(".mimocode-project-id")) {
+      await nodeFs.appendFile(excludeFile, "\n.mimocode-project-id\n")
+    }
+  } catch {}
 }
 
 const log = Log.create({ service: "project" })
@@ -205,6 +208,15 @@ export const layer: Layer.Layer<
             id: ProjectID.global,
             worktree: directory,
             sandbox: directory,
+            vcs: fakeVcs,
+          }
+        }
+
+        if (!directory || directory === "/" || nodePath.parse(directory).root === directory) {
+          return {
+            id: ProjectID.global,
+            worktree: "/",
+            sandbox: "/",
             vcs: fakeVcs,
           }
         }

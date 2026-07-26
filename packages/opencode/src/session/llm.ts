@@ -590,6 +590,13 @@ const live: Layer.Layer<
         )
         .pipe(Effect.ignore)
 
+      console.log("🤖 [DEV-TRACE][7. LLM Stream Invoking Provider]", {
+        providerID: input.model.providerID,
+        modelID: input.model.id,
+        apiURL: input.model.api.url,
+        sessionID: input.sessionID,
+      })
+
       return streamText({
         onError(error) {
           l.debug("streamText error", {

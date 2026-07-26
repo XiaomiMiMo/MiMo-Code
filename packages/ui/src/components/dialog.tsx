@@ -27,16 +27,30 @@ export function Dialog(props: DialogProps) {
         <Kobalte.Content
           data-slot="dialog-content"
           data-no-header={!props.title && !props.action ? "" : undefined}
+          tabIndex={-1}
           classList={{
             ...props.classList,
             [props.class ?? ""]: !!props.class,
           }}
           onOpenAutoFocus={(e) => {
+            e.preventDefault()
             const target = e.currentTarget as HTMLElement | null
             const autofocusEl = target?.querySelector("[autofocus]") as HTMLElement | null
             if (autofocusEl) {
-              e.preventDefault()
               autofocusEl.focus()
+            } else {
+              target?.focus()
+            }
+          }}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" || e.key === " ") {
+              const activeEl = document.activeElement as HTMLElement | null
+              const isCloseBtn = activeEl?.closest('[data-slot="dialog-close-button"]')
+              const isContentContainer = activeEl === e.currentTarget
+              if (isCloseBtn || isContentContainer) {
+                e.preventDefault()
+                e.stopPropagation()
+              }
             }
           }}
         >

@@ -1,15 +1,16 @@
 import type { RootLoadArgs } from "./types"
 
 export async function loadRootSessionsWithFallback(input: RootLoadArgs) {
+  const dir = !input.directory || input.directory === "/" || input.directory === "global" ? undefined : input.directory
   try {
-    const result = await input.list({ directory: input.directory, roots: true, limit: input.limit })
+    const result = await input.list({ directory: dir, roots: true, limit: input.limit })
     return {
       data: result.data,
       limit: input.limit,
       limited: true,
     } as const
   } catch {
-    const result = await input.list({ directory: input.directory, roots: true })
+    const result = await input.list({ directory: dir, roots: true })
     return {
       data: result.data,
       limit: input.limit,

@@ -73,7 +73,17 @@ await Bun.build({
   outdir: "./dist/node",
   format: "esm",
   sourcemap: "linked",
-  external: ["jsonc-parser", "@lydell/node-pty"],
+  external: ["@lydell/node-pty"],
+  plugins: [
+    {
+      name: "jsonc-parser-esm",
+      setup(build) {
+        build.onResolve({ filter: /^jsonc-parser$/ }, () => ({
+          path: require.resolve("jsonc-parser/lib/esm/main.js"),
+        }))
+      },
+    },
+  ],
   define: {
     OPENCODE_MIGRATIONS: JSON.stringify(migrations),
     MIMOCODE_CHANNEL: `'${Script.channel}'`,

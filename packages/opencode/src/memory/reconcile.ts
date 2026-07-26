@@ -57,7 +57,7 @@ export async function indexFromDisk(
   const fingerprint = `${stat.size}-${stat.mtimeMs}`
   if (oldFingerprint === fingerprint) return "hit"
 
-  const body = await Bun.file(absPath).text()
+  const body = await fs.readFile(absPath, "utf-8")
 
   // For CC files, derive type from frontmatter; mimo files keep loc.type from path.
   const finalType =

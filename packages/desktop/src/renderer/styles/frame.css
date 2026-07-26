@@ -1,0 +1,27 @@
+/* Window Frame & Titlebar Drag Regions */
+
+.app-drag-region,
+[data-app-region="drag"] {
+  -webkit-app-region: drag;
+}
+
+.app-no-drag,
+[data-app-region="no-drag"],
+button,
+a,
+input,
+textarea,
+select,
+[role="button"] {
+  -webkit-app-region: no-drag;
+}
+
+/* macOS hiddenInset traffic light offset support */
+.app-header-mac {
+  padding-left: var(--app-titlebar-mac-offset, 76px);
+}
+
+/* Windows titlebar controls overlay inset support */
+.app-header-win {
+  padding-right: var(--app-titlebar-win-offset, 138px);
+}

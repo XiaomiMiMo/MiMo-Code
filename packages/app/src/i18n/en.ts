@@ -920,8 +920,8 @@ export const dict = {
   "settings.permissions.tool.doom_loop.description": "Detect repeated tool calls with identical input",
 
   "session.delete.failed.title": "Failed to delete session",
-  "session.delete.title": "Delete session",
-  "session.delete.confirm": 'Delete session "{{name}}"?',
+  "session.delete.title": "Delete Conversation",
+  "session.delete.confirm": "Are you sure you want to delete this conversation? This action cannot be undone.",
   "session.delete.button": "Delete session",
 
   "workspace.new": "New workspace",

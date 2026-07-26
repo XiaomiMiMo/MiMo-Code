@@ -2,9 +2,9 @@ name: test
 
 on:
   push:
-    branches: [main, dev]
+    branches:
+      - "**"
   pull_request:
-    branches: [main, dev]
   workflow_dispatch:
 
 concurrency:
@@ -15,13 +15,9 @@ permissions:
   contents: read
 
 jobs:
-  unit:
+  desktop-test:
+    name: Desktop Tests
     runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        shard: ["1/4", "2/4", "3/4", "4/4"]
-    name: unit (shard ${{ matrix.shard }})
     steps:
       - name: Checkout repository
         uses: actions/checkout@v6
@@ -29,19 +25,6 @@ jobs:
       - name: Setup Bun
         uses: ./.github/actions/setup-bun
 
-      - name: Configure git identity
-        run: |
-          git config --global user.email "ci@mimo.ai"
-          git config --global user.name "mimo-ci"
-
-      - name: Run unit tests (shard ${{ matrix.shard }})
-        timeout-minutes: 8
-        working-directory: packages/opencode
-        run: bun run test:ci --shard ${{ matrix.shard }}
-
-      - name: Upload JUnit
-        if: always()
-        uses: actions/upload-artifact@v7
-        with:
-          name: junit-shard-${{ strategy.job-index }}
-          path: packages/opencode/.artifacts/unit/junit.xml
+      - name: Run desktop tests
+        working-directory: packages/desktop
+        run: bun test

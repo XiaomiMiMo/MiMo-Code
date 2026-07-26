@@ -13,9 +13,20 @@ export default [
     name: "opencode-desktop:config",
     config() {
       return {
+        css: {
+          transformer: "lightningcss",
+        },
         resolve: {
           alias: {
             "@": fileURLToPath(new URL("./src", import.meta.url)),
+          },
+        },
+        optimizeDeps: {
+          exclude: ["@mimo-ai/ui", "@mimo-ai/app", "@mimo-ai/shared"],
+        },
+        server: {
+          watch: {
+            ignored: ["!**/packages/ui/**", "!**/packages/app/**"],
           },
         },
         worker: {

@@ -18,10 +18,6 @@
 
   animation: contextMenuContentHide var(--transition-duration) var(--transition-easing) forwards;
 
-  @starting-style {
-    animation: none;
-  }
-
   &[data-expanded] {
     pointer-events: auto;
     animation: contextMenuContentShow var(--transition-duration) var(--transition-easing) forwards;

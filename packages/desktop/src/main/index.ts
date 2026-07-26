@@ -19,9 +19,9 @@ try {
 process.env.OPENCODE_DISABLE_EMBEDDED_WEB_UI = "true"
 
 const APP_NAMES: Record<string, string> = {
-  dev: "OpenCode Dev",
-  beta: "OpenCode Beta",
-  prod: "OpenCode",
+  dev: "MiMo-Code Dev",
+  beta: "MiMo-Code Beta",
+  prod: "MiMo-Code",
 }
 const APP_IDS: Record<string, string> = {
   dev: "ai.opencode.desktop.dev",
@@ -29,7 +29,7 @@ const APP_IDS: Record<string, string> = {
   prod: "ai.opencode.desktop",
 }
 const appId = app.isPackaged ? APP_IDS[CHANNEL] : "ai.opencode.desktop.dev"
-app.setName(app.isPackaged ? APP_NAMES[CHANNEL] : "OpenCode Dev")
+app.setName(app.isPackaged ? APP_NAMES[CHANNEL] : "MiMo-Code Dev")
 app.setAppUserModelId(appId)
 app.setPath("userData", join(app.getPath("appData"), appId))
 const { autoUpdater } = pkg
@@ -39,9 +39,13 @@ import { checkAppExists, resolveAppPath, wslPath } from "./apps"
 import { CHANNEL, UPDATER_ENABLED } from "./constants"
 import { registerIpcHandlers, sendDeepLinks, sendMenuCommand, sendSqliteMigrationProgress } from "./ipc"
 import { initLogging } from "./logging"
+import { isMac, registerMacProtocolSchemes } from "./mac"
 import { parseMarkdown } from "./markdown"
 import { createMenu } from "./menu"
+import { migrate } from "./migrate"
 import { getDefaultServerUrl, getWslConfig, setDefaultServerUrl, setWslConfig, spawnLocalServer } from "./server"
+import { getRecentProjects, setRecentProjects as setWorkspaceRecent } from "./workspace-recent"
+import { createTray, destroyTray, updateTraySessions } from "./tray"
 import {
   createLoadingWindow,
   createMainWindow,
@@ -49,6 +53,7 @@ import {
   setBackgroundColor,
   setDockIcon,
 } from "./windows"
+import { installCli } from "./install-cli"
 import { drizzle } from "drizzle-orm/node-sqlite/driver"
 import type { Server } from "virtual:opencode-server"
 
@@ -101,21 +106,37 @@ function setupApp() {
 
   app.on("will-quit", () => {
     killSidecar()
+    destroyTray()
   })
 
   for (const signal of ["SIGINT", "SIGTERM"] as const) {
     process.on(signal, () => {
+      logger.log(`[Desktop] Received ${signal}, gracefully shutting down sidecar...`)
+      console.log(`\n[Desktop] Received ${signal}, shutting down...`)
       killSidecar()
+      destroyTray()
       app.exit(0)
     })
   }
 
   void app.whenReady().then(async () => {
     app.setAsDefaultProtocolClient("opencode")
+    if (isMac()) registerMacProtocolSchemes()
     registerRendererProtocol()
     setDockIcon()
     setupAutoUpdater()
+    migrate()
     await initialize()
+    // 初始化 macOS 菜单栏图标（系统托盘）
+    if (isMac()) {
+      createTray({
+        onShowWindow: () => focusMainWindow(),
+        onQuit: () => {
+          killSidecar()
+          app.quit()
+        },
+      })
+    }
   })
 }
 
@@ -260,9 +281,13 @@ registerIpcHandlers({
   wslPath: async (path, mode) => wslPath(path, mode),
   resolveAppPath: async (appName) => resolveAppPath(appName),
   loadingWindowComplete: () => loadingComplete.resolve(),
+  installCli: async () => installCli(),
+  setRecentProjects: (directories) => setWorkspaceRecent(directories),
+  updateTraySessions: (sessions) => updateTraySessions(sessions),
   runUpdater: async (alertOnFail) => checkForUpdates(alertOnFail),
   checkUpdate: async () => checkUpdate(),
   installUpdate: async () => installUpdate(),
+  setWindowTitle: (title) => { if (mainWindow) mainWindow.setTitle(title) },
   setBackgroundColor: (color) => setBackgroundColor(color),
 })
 
@@ -429,11 +454,5 @@ function delay(ms: number) {
 }
 
 function defer<T>() {
-  let resolve!: (value: T) => void
-  let reject!: (error: Error) => void
-  const promise = new Promise<T>((res, rej) => {
-    resolve = res
-    reject = rej
-  })
-  return { promise, resolve, reject }
+  return Promise.withResolvers<T>()
 }

@@ -467,12 +467,14 @@ export const layer = Layer.effect(
       modelID: ModelID
     }) {
       if (input.session.parentID) return
+      console.log("🏷️ [TITLE-DEBUG 1] ensureTitle called:", { sessionID: input.session.id, currentTitle: input.session.title })
 
       // Persistent orchestrator root session: keep a stable, task-independent
       // title. Set it once (if still the default) and SKIP the per-first-message
       // LLM title generation so later tasks never rename it.
       const stable = stableRootTitle({ agent: input.agent, parentID: input.session.parentID })
       if (stable) {
+        console.log("🏷️ [TITLE-DEBUG 2] stableRootTitle matched:", { stable })
         if (Session.isDefaultTitle(input.session.title))
           yield* sessions
             .setTitle({ sessionID: input.session.id, title: stable })
@@ -480,13 +482,20 @@ export const layer = Layer.effect(
         return
       }
 
-      if (!Session.isDefaultTitle(input.session.title)) return
+      const isDef = Session.isDefaultTitle(input.session.title)
+      console.log("🏷️ [TITLE-DEBUG 3] isDefaultTitle check:", { title: input.session.title, isDefault: isDef })
+      if (!isDef) {
+        log.info("title generation skipped: title is not default", { title: input.session.title })
+        return
+      }
 
       const real = (m: MessageV2.WithParts) =>
         m.info.role === "user" && !m.parts.every((p) => "synthetic" in p && p.synthetic)
       const idx = input.history.findIndex(real)
+      const realCount = input.history.filter(real).length
+      console.log("🏷️ [TITLE-DEBUG 4] history check:", { totalMsgs: input.history.length, realCount, idx })
       if (idx === -1) return
-      if (input.history.filter(real).length !== 1) return
+      if (realCount !== 1) return
 
       const context = input.history.slice(0, idx + 1)
       const firstUser = context[idx]
@@ -497,16 +506,32 @@ export const layer = Layer.effect(
       const onlySubtasks = subtasks.length > 0 && firstUser.parts.every((p) => p.type === "subtask")
 
       const ag = yield* agents.get("title")
-      if (!ag) return
-      const mdl = ag.modelRef
-        ? yield* provider.resolveModelRef(ag.modelRef, input.providerID)
-        : ag.model
-          ? yield* provider.getModel(ag.model.providerID, ag.model.modelID)
-          : ((yield* provider.getSmallModel(input.providerID)) ??
-            (yield* provider.getModel(input.providerID, input.modelID)))
-      const msgs = onlySubtasks
+      if (!ag) {
+        console.log("🏷️ [TITLE-DEBUG 5a] title agent not found!")
+        return
+      }
+      const smallMdl = yield* provider.getSmallModel(input.providerID).pipe(Effect.catch(() => Effect.succeed(undefined)))
+      const mdl = (smallMdl && smallMdl.providerID === input.providerID ? smallMdl : undefined) ??
+        (yield* provider.getModel(input.providerID, input.modelID).pipe(Effect.catch(() => Effect.succeed(undefined))))
+      if (!mdl) {
+        console.log("🏷️ [TITLE-DEBUG 5b] model for title agent could not be resolved!")
+        return
+      }
+
+      console.log("🏷️ [TITLE-DEBUG 5c] invoking LLM for title generation...", { providerID: mdl.providerID, modelID: mdl.id })
+      log.info("title generation starting", { sessionID: input.session.id, providerID: mdl.providerID, modelID: mdl.id })
+
+      const rawMsgs = onlySubtasks
         ? [{ role: "user" as const, content: subtasks.map((p) => p.prompt).join("\n") }]
         : yield* MessageV2.toModelMessagesEffect(context, mdl)
+
+      const titleMsgs = rawMsgs.map((m, i) => {
+        if (i === 0 && m.role === "user" && typeof m.content === "string") {
+          return { ...m, content: `Generate a brief title for this conversation:\n\n${m.content}` }
+        }
+        return m
+      })
+
       const text = yield* llm
         .stream({
           agent: ag,
@@ -517,7 +542,7 @@ export const layer = Layer.effect(
           model: mdl,
           sessionID: input.session.id,
           retries: 2,
-          messages: [{ role: "user", content: "Generate a title for this conversation:\n" }, ...msgs],
+          messages: titleMsgs,
         })
         .pipe(
           Stream.filter((e): e is Extract<LLM.Event, { type: "text-delta" }> => e.type === "text-delta"),
@@ -525,16 +550,22 @@ export const layer = Layer.effect(
           Stream.mkString,
           Effect.orDie,
         )
+      console.log("🏷️ [TITLE-DEBUG 6] raw title text received from LLM:", JSON.stringify(text))
       const cleaned = text
         .replace(/<think>[\s\S]*?<\/think>\s*/g, "")
         .split("\n")
         .map((line) => line.trim())
         .find((line) => line.length > 0)
-      if (!cleaned) return
+      if (!cleaned) {
+        console.log("🏷️ [TITLE-DEBUG 7] title text was empty after cleaning!")
+        return
+      }
       const t = cleaned.length > 100 ? cleaned.substring(0, 97) + "..." : cleaned
+      console.log("🏷️ [TITLE-DEBUG 8] setting session title to:", t)
+      log.info("title generation succeeded", { sessionID: input.session.id, title: t })
       yield* sessions
         .setTitle({ sessionID: input.session.id, title: t })
-        .pipe(Effect.catchCause((cause) => elog.error("failed to generate title", { error: Cause.squash(cause) })))
+        .pipe(Effect.catchCause((cause) => elog.error("failed to set generated title", { error: Cause.squash(cause) })))
     })
 
     const predict = Effect.fn("SessionPrompt.predict")(function* (input: { sessionID: SessionID }) {
@@ -2128,6 +2159,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
 
     const prompt: (input: PromptInput) => Effect.Effect<MessageV2.WithParts> = Effect.fn("SessionPrompt.prompt")(
       function* (input: PromptInput) {
+        console.log("🔄 [DEV-TRACE][3. SessionPrompt] prompt starting for session:", input.sessionID)
         const session = yield* sessions.get(input.sessionID)
         if (input.source !== "spawn" && input.source !== "hook") {
           yield* revert.cleanup(session)
@@ -2926,6 +2958,53 @@ NOTE: At any point in time through this workflow you should feel free to ask the
             (yield* autoContinueOutputLength({ lastUser, assistant: lastAssistant }))
           ) {
             continue
+          }
+
+          if (step === 0) {
+            console.log("🏷️ [TITLE-DEBUG 0] promptLoop step 0 triggering title check for session:", sessionID)
+            yield* title({
+              session,
+              agent: lastUser.agent,
+              modelID: lastUser.model.modelID,
+              providerID: lastUser.model.providerID,
+              history: msgs,
+            }).pipe(
+              Effect.catchCause((cause) => Effect.sync(() => console.error("❌ [TITLE-ERROR] title generation failed:", cause))),
+              Effect.forkIn(scope),
+            )
+
+            if (!session.parentID) {
+              const cfg = yield* config.get()
+              const dreamTrigger = yield* shouldAutoDream(cfg).pipe(Effect.catch(() => Effect.succeed(false)))
+              const distillTrigger = yield* shouldAutoDistill(cfg).pipe(Effect.catch(() => Effect.succeed(false)))
+              const mdl = { providerID: lastUser.model.providerID, modelID: lastUser.model.modelID }
+              const needAppRuntime = dreamTrigger || distillTrigger || Flag.MIMOCODE_EXPERIMENTAL_CRON
+              if (needAppRuntime) {
+                const { AppRuntime } = yield* Effect.promise(() => import("@/effect/app-runtime"))
+                if (dreamTrigger) {
+                  AppRuntime.runPromise(
+                    Session.Service.use((svc) =>
+                      Effect.gen(function* () {
+                        const s = yield* svc.create({ title: AUTO_DREAM_TITLE })
+                        const sp = yield* Service
+                        yield* sp.prompt({ sessionID: s.id, agent: "dream", model: mdl, parts: [{ type: "text", text: DREAM_TASK }] })
+                      }),
+                    ),
+                  )
+                }
+                if (distillTrigger) {
+                  AppRuntime.runPromise(
+                    Session.Service.use((svc) =>
+                      Effect.gen(function* () {
+                        const s = yield* svc.create({ title: AUTO_DISTILL_TITLE })
+                        const sp = yield* Service
+                        yield* sp.prompt({ sessionID: s.id, agent: "distill", model: mdl, parts: [{ type: "text", text: DISTILL_TASK }] })
+                      }),
+                    ),
+                  )
+                }
+              }
+            }
           }
 
           if (lastAssistant) {

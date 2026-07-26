@@ -209,7 +209,7 @@ export const loadPathQuery = (
   queryOptions<Path>({
     queryKey: [directory, "path"],
     queryFn:
-      sdk && transform
+      sdk && transform && directory && directory !== "/" && directory !== "global"
         ? () =>
             retry(() =>
               sdk.path.get().then(async (x) => {
@@ -236,6 +236,9 @@ export async function bootstrapDirectory(input: {
   }
   queryClient: QueryClient
 }) {
+  if (!input.directory || input.directory === "/" || input.directory === "global") {
+    return
+  }
   const loading = input.store.status !== "complete"
   const seededProject = projectID(input.directory, input.global.project)
   const seededPath = input.global.path.directory === input.directory ? input.global.path : undefined

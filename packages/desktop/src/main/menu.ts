@@ -1,6 +1,7 @@
 import { Menu, shell } from "electron"
 
 import { UPDATER_ENABLED } from "./constants"
+import { openInTerminal } from "./mac"
 import { createMainWindow } from "./windows"
 
 type Deps = {
@@ -8,6 +9,10 @@ type Deps = {
   checkForUpdates: () => void
   reload: () => void
   relaunch: () => void
+  recentProjects?: string[]
+  onOpenRecent?: (dir: string) => void
+  // 当前 session 信息（用于 "Open in Terminal"）
+  currentSession?: { id: string; directory: string; title?: string }
 }
 
 export function createMenu(deps: Deps) {
@@ -15,7 +20,7 @@ export function createMenu(deps: Deps) {
 
   const template: Electron.MenuItemConstructorOptions[] = [
     {
-      label: "OpenCode",
+      label: "MiMo-Code",
       submenu: [
         { role: "about" },
         {
@@ -44,10 +49,29 @@ export function createMenu(deps: Deps) {
       submenu: [
         { label: "New Session", accelerator: "Shift+Cmd+S", click: () => deps.trigger("session.new") },
         { label: "Open Project...", accelerator: "Cmd+O", click: () => deps.trigger("project.open") },
+        { label: "New Window", accelerator: "Cmd+Shift+N", click: () => createMainWindow() },
         {
-          label: "New Window",
-          accelerator: "Cmd+Shift+N",
-          click: () => createMainWindow(),
+          label: "Open Recent",
+          submenu: deps.recentProjects?.length
+            ? deps.recentProjects.map((dir) => ({ label: dir.split("/").pop() || dir, click: () => deps.onOpenRecent?.(dir) }))
+            : [{ label: "No Recent Projects", enabled: false }],
+        },
+        { type: "separator" },
+        {
+          label: "Open in Terminal",
+          accelerator: "Cmd+Shift+T",
+          // 当前 session 已知时，attach 到同一 session；否则只是打开一个新 TUI
+          click: async () => {
+            const session = deps.currentSession
+            const cmd = session
+              ? `cd ${quote(session.directory)} && mimo --session ${quote(session.id)}`
+              : `mimo`
+            try {
+              await openInTerminal(cmd)
+            } catch (err) {
+              console.error("Failed to open in Terminal", err)
+            }
+          },
         },
         { type: "separator" },
         { role: "close" },
@@ -133,4 +157,8 @@ export function createMenu(deps: Deps) {
   ]
 
   Menu.setApplicationMenu(Menu.buildFromTemplate(template))
+}
+
+function quote(value: string): string {
+  return `"${value.replace(/"/g, '\\"')}"`
 }

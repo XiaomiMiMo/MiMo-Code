@@ -75,7 +75,7 @@ async function injectFrontmatter(filePath: string, body: string): Promise<void> 
   const newBody = fmMatch
     ? frontmatterBlock + body.slice(fmMatch[0].length)
     : frontmatterBlock + body
-  await Bun.write(filePath, newBody)
+  await fs.writeFile(filePath, newBody, "utf-8")
 }
 
 export async function SubagentProgressCheckerPlugin(_pluginInput: PluginInput): Promise<Hooks> {
@@ -115,7 +115,7 @@ export async function SubagentProgressCheckerPlugin(_pluginInput: PluginInput): 
 
         let body: string | undefined
         try {
-          body = await Bun.file(filePath).text()
+          body = await fs.readFile(filePath, "utf-8")
         } catch {
           body = undefined
         }

@@ -71,6 +71,7 @@ import { Sidebar } from "./sidebar"
 import { WorkflowTree } from "@tui/component/workflow-tree"
 import { SubagentFooter } from "./subagent-footer.tsx"
 import { DialogSubagent } from "./dialog-subagent.tsx"
+import { isActorToolRunning } from "./actor-tool-state"
 import { Flag } from "@/flag/flag"
 import { parseActorNotification } from "@/inbox/render"
 import { LANGUAGE_EXTENSIONS } from "@/lsp/language"
@@ -3206,12 +3207,11 @@ function Task(props: ToolProps<typeof ActorTool>) {
   )
 
   const isRunning = createMemo(() => {
-    if (props.part.state.status === "running") return true
-    if (props.part.state.status === "completed") {
-      const status = actorStatus()
-      return status === "running" || status === "pending"
-    }
-    return false
+    return isActorToolRunning({
+      partStatus: props.part.state.status,
+      action: inputAction(),
+      actorStatus: actorStatus(),
+    })
   })
 
   const duration = createMemo(() => {

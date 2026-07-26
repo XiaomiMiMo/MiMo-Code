@@ -117,6 +117,8 @@ export const { use: useModels, provider: ModelsProvider } = createSimpleContext(
       if (state === "hide") return false
       if (state === "show") return true
       if (latestSet().has(key)) return true
+      const modelsForProvider = available().filter((m) => m.provider.id === model.providerID)
+      if (modelsForProvider.length <= 5) return true
       const date = release().get(key)
       if (!date?.isValid) return true
       return false
