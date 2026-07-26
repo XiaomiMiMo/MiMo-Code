@@ -543,6 +543,13 @@ export function Autocomplete(props: {
     setStore("visible", false)
   }
 
+  // Clean up on unmount: if autocomplete was visible when the component is
+  // removed (e.g. session switch), decrement the suspend counter so keybinds
+  // don't stay permanently blocked.
+  onCleanup(() => {
+    if (store.visible) command.keybinds(true)
+  })
+
   function clearTriggerRange() {
     if (store.visible !== "/") return
     const input = props.input()
