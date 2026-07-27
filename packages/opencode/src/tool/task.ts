@@ -43,7 +43,16 @@ function suggestVerb(input: string): string | undefined {
 
 const id = "task"
 
-const statusSchema = z.enum(["open", "in_progress", "blocked", "done", "abandoned"])
+const statusSchema = z.enum([
+  "open",
+  "dispatched",
+  "in_progress",
+  "blocked",
+  "human_review",
+  "done",
+  "failed",
+  "abandoned",
+])
 
 const createOperation = z.strictObject({
   action: z.literal("create"),

@@ -1250,7 +1250,16 @@ export const layer: Layer.Layer<
           byParent.set(t.parent_task_id, bucket)
         }
         const statusIcon = (s: string) =>
-          ({ open: "🔵", in_progress: "🔄", blocked: "🟡", done: "✅", abandoned: "❌" })[s] ?? s
+          ({
+            open: "🔵",
+            dispatched: "📤",
+            in_progress: "🔄",
+            blocked: "🟡",
+            human_review: "🙋",
+            done: "✅",
+            failed: "🔴",
+            abandoned: "❌",
+          })[s] ?? s
         const ledgerLines: string[] = []
         for (const t of topLevel) {
           ledgerLines.push(`- ${t.id} ${t.status} — ${t.summary}`)

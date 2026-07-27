@@ -11,9 +11,19 @@ export const TaskTable = sqliteTable(
       .notNull()
       .references(() => SessionTable.id, { onDelete: "cascade" }),
     parent_task_id: text(),
-    status: text().$type<"open" | "in_progress" | "blocked" | "done" | "abandoned">().notNull(),
+    status: text()
+      .$type<
+        "open" | "dispatched" | "in_progress" | "blocked" | "human_review" | "done" | "failed" | "abandoned"
+      >()
+      .notNull(),
     summary: text().notNull(),
     owner: text(),
+    // Deliberately NOT a foreign key to SessionTable: a worker session may be
+    // torn down (or its row cascade-deleted) while the task must survive as
+    // durable history. Same soft-link treatment `owner` already gets.
+    worker_session_id: text().$type<SessionID>(),
+    dispatched_at: integer(),
+    result_ref: text(),
     created_at: integer().notNull(),
     last_event_at: integer().notNull(),
     ended_at: integer(),
@@ -24,6 +34,7 @@ export const TaskTable = sqliteTable(
     index("task_session_idx").on(table.session_id),
     index("task_parent_idx").on(table.session_id, table.parent_task_id),
     index("task_status_idx").on(table.status),
+    index("task_worker_idx").on(table.worker_session_id, table.status),
   ],
 )
 

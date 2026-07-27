@@ -44,16 +44,23 @@ function promptHeartbeatIntervalMs() {
   return Number(process.env["MIMOCODE_PROMPT_HEARTBEAT_INTERVAL_MS"]) || 10_000
 }
 
+// Maps the richer task queue statuses onto the 4-value todo vocabulary the UI
+// consumes. `failed` is terminal, so it must NOT fall through to `pending` —
+// that would render a dead task as still actionable. `dispatched` and
+// `human_review` are genuinely pending (queued on a worker / on the user).
+const TODO_STATUS: Record<Task["status"], string> = {
+  open: "pending",
+  dispatched: "pending",
+  in_progress: "in_progress",
+  blocked: "pending",
+  human_review: "pending",
+  done: "completed",
+  failed: "cancelled",
+  abandoned: "cancelled",
+}
+
 function taskToTodo(t: Task) {
-  const status =
-    t.status === "in_progress"
-      ? "in_progress"
-      : t.status === "done"
-        ? "completed"
-        : t.status === "abandoned"
-          ? "cancelled"
-          : "pending"
-  return { content: t.summary, status }
+  return { content: t.summary, status: TODO_STATUS[t.status] ?? "pending" }
 }
 
 /**

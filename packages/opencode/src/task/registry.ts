@@ -5,6 +5,7 @@ import { Config } from "../config"
 import type { SessionID } from "../session/schema"
 import { TaskTable, TaskEventTable } from "./task.sql"
 import type { Task, TaskEvent } from "./schema"
+import { NON_TERMINAL_TASK_STATUSES, isTerminalTaskStatus } from "./schema"
 import { Created as TaskCreated, Updated as TaskUpdated, type UpdatedKind } from "./events"
 import { RecoverableError } from "@/tool/recoverable"
 
@@ -27,6 +28,9 @@ function fromTaskRow(row: TaskRow): Task {
     status: row.status,
     summary: row.summary,
     owner: row.owner ?? undefined,
+    worker_session_id: (row.worker_session_id as SessionID | null) ?? undefined,
+    dispatched_at: row.dispatched_at ?? undefined,
+    result_ref: row.result_ref ?? undefined,
     created_at: row.created_at,
     last_event_at: row.last_event_at,
     ended_at: row.ended_at ?? undefined,
@@ -81,6 +85,33 @@ export interface Interface {
   readonly rename: (input: { session_id: SessionID; id: string; summary: string }) => Effect.Effect<Task>
 
   readonly start: (input: { session_id: SessionID; id: string; owner?: string; event_summary?: string }) => Effect.Effect<Task>
+
+  /** Assign a peer worker session and move the task onto the `dispatched` queue. */
+  readonly dispatch: (input: {
+    session_id: SessionID
+    id: string
+    worker_session_id: SessionID
+    event_summary?: string
+  }) => Effect.Effect<Task>
+
+  /** Move the task onto the `human_review` queue — it now waits on the USER. */
+  readonly requestReview: (input: {
+    session_id: SessionID
+    id: string
+    event_summary?: string
+    result_ref?: string
+  }) => Effect.Effect<Task>
+
+  /** Reject a reviewed result: back to `dispatched` (if it kept a worker) or `open`. */
+  readonly rework: (input: { session_id: SessionID; id: string; event_summary?: string }) => Effect.Effect<Task>
+
+  /** Terminal failure reported by a worker (distinct from operator-dropped `abandoned`). */
+  readonly fail: (input: {
+    session_id: SessionID
+    id: string
+    event_summary?: string
+    result_ref?: string
+  }) => Effect.Effect<Task>
 
   readonly events: (input: { session_id: SessionID; task_id: string }) => Effect.Effect<TaskEvent[]>
 }
@@ -151,6 +182,9 @@ export const layer: Layer.Layer<Service, never, Bus.Service | Config.Service> = 
         status: "open",
         summary: input.summary,
         owner: input.owner ?? null,
+        worker_session_id: null,
+        dispatched_at: null,
+        result_ref: null,
         created_at: now,
         last_event_at: now,
         ended_at: null,
@@ -176,11 +210,7 @@ export const layer: Layer.Layer<Service, never, Bus.Service | Config.Service> = 
       if (input.status) conds.push(eq(TaskTable.status, input.status))
       if (input.owner) conds.push(eq(TaskTable.owner, input.owner))
       if (!input.include_terminal) {
-        const nonTerminal = or(
-          eq(TaskTable.status, "open"),
-          eq(TaskTable.status, "in_progress"),
-          eq(TaskTable.status, "blocked"),
-        )
+        const nonTerminal = or(...NON_TERMINAL_TASK_STATUSES.map((s) => eq(TaskTable.status, s)))
         if (nonTerminal) conds.push(nonTerminal)
       }
       if (!input.include_archived) {
@@ -259,6 +289,135 @@ export const layer: Layer.Layer<Service, never, Bus.Service | Config.Service> = 
       return updated
     })
 
+    // Queue transitions: dispatch → worker, requestReview → human, rework → back
+    // to the worker queue, fail → terminal.
+
+    const dispatch = Effect.fn("TaskRegistry.dispatch")(function* (input: {
+      session_id: SessionID
+      id: string
+      worker_session_id: SessionID
+      event_summary?: string
+    }) {
+      const now = Date.now()
+      const existing = yield* get({ session_id: input.session_id, id: input.id })
+      if (!existing) return yield* Effect.die(new RecoverableError(notFoundMessage(input.id)))
+      if (isTerminalTaskStatus(existing.status)) {
+        yield* Effect.logWarning(`refusing to dispatch terminal task ${input.id} (status=${existing.status})`)
+        return existing
+      }
+
+      Database.use((db) =>
+        db
+          .update(TaskTable)
+          .set({
+            status: "dispatched",
+            worker_session_id: input.worker_session_id,
+            dispatched_at: now,
+            last_event_at: now,
+          })
+          .where(and(eq(TaskTable.session_id, input.session_id), eq(TaskTable.id, input.id)))
+          .run(),
+      )
+      insertEvent(input.session_id, input.id, "dispatched", input.event_summary, now)
+      const updated = yield* get({ session_id: input.session_id, id: input.id })
+      if (!updated) return yield* Effect.die(new RecoverableError(notFoundMessage(input.id)))
+      publishUpdated(updated, "dispatched")
+      return updated
+    })
+
+    const requestReview = Effect.fn("TaskRegistry.requestReview")(function* (input: {
+      session_id: SessionID
+      id: string
+      event_summary?: string
+      result_ref?: string
+    }) {
+      const now = Date.now()
+      const existing = yield* get({ session_id: input.session_id, id: input.id })
+      if (!existing) return yield* Effect.die(new RecoverableError(notFoundMessage(input.id)))
+      if (isTerminalTaskStatus(existing.status)) {
+        yield* Effect.logWarning(`refusing to review terminal task ${input.id} (status=${existing.status})`)
+        return existing
+      }
+
+      Database.use((db) =>
+        db
+          .update(TaskTable)
+          .set({
+            status: "human_review",
+            last_event_at: now,
+            ...(input.result_ref !== undefined ? { result_ref: input.result_ref } : {}),
+          })
+          .where(and(eq(TaskTable.session_id, input.session_id), eq(TaskTable.id, input.id)))
+          .run(),
+      )
+      insertEvent(input.session_id, input.id, "review_requested", input.event_summary, now)
+      const updated = yield* get({ session_id: input.session_id, id: input.id })
+      if (!updated) return yield* Effect.die(new RecoverableError(notFoundMessage(input.id)))
+      publishUpdated(updated, "review_requested")
+      return updated
+    })
+
+    // The user rejected the result: push the task back onto the worker queue.
+    // Keeps its worker if it still has one (rework by the same session), else
+    // back to `open` so the orchestrator can dispatch a fresh worker.
+    const rework = Effect.fn("TaskRegistry.rework")(function* (input: {
+      session_id: SessionID
+      id: string
+      event_summary?: string
+    }) {
+      const now = Date.now()
+      const existing = yield* get({ session_id: input.session_id, id: input.id })
+      if (!existing) return yield* Effect.die(new RecoverableError(notFoundMessage(input.id)))
+      if (existing.status !== "human_review") {
+        yield* Effect.logWarning(`refusing to rework task ${input.id}: not in human_review (status=${existing.status})`)
+        return existing
+      }
+
+      const next = existing.worker_session_id ? "dispatched" : "open"
+      Database.use((db) =>
+        db
+          .update(TaskTable)
+          .set({ status: next, last_event_at: now })
+          .where(and(eq(TaskTable.session_id, input.session_id), eq(TaskTable.id, input.id)))
+          .run(),
+      )
+      insertEvent(input.session_id, input.id, "reworked", input.event_summary, now)
+      const updated = yield* get({ session_id: input.session_id, id: input.id })
+      if (!updated) return yield* Effect.die(new RecoverableError(notFoundMessage(input.id)))
+      publishUpdated(updated, "reworked")
+      return updated
+    })
+
+    // Terminal, like done()/abandon(): a worker reported failure. Distinct from
+    // `abandoned`, which is the operator dropping the work.
+    const fail = Effect.fn("TaskRegistry.fail")(function* (input: {
+      session_id: SessionID
+      id: string
+      event_summary?: string
+      result_ref?: string
+    }) {
+      const now = Date.now()
+      const cleanup = yield* cleanupAfter(now)
+      Database.use((db) =>
+        db
+          .update(TaskTable)
+          .set({
+            status: "failed",
+            ended_at: now,
+            cleanup_after: cleanup,
+            last_event_at: now,
+            ...(input.result_ref !== undefined ? { result_ref: input.result_ref } : {}),
+          })
+          .where(and(eq(TaskTable.session_id, input.session_id), eq(TaskTable.id, input.id)))
+          .run(),
+      )
+      insertEvent(input.session_id, input.id, "failed", input.event_summary, now)
+      const updated = yield* get({ session_id: input.session_id, id: input.id })
+      if (!updated) return yield* Effect.die(new RecoverableError(notFoundMessage(input.id)))
+      publishUpdated(updated, "failed")
+      return updated
+    })
+
     const start = Effect.fn("TaskRegistry.start")(function* (input: {
       session_id: SessionID
       id: string
@@ -272,11 +431,11 @@ export const layer: Layer.Layer<Service, never, Bus.Service | Config.Service> = 
       // Terminal states are final. Auto-start makes start() a structural side-effect of
       // every actor spawn, so a stale/reused task_id (ReAct re-entry, verification rerun,
       // operator typo colliding with an old TID) must NOT silently resurrect a
-      // done/abandoned task. done()/abandon() stamp ended_at + cleanup_after; start()
-      // does not clear them, so resurrection would leave a self-contradictory row
+      // done/failed/abandoned task. done()/fail()/abandon() stamp ended_at + cleanup_after;
+      // start() does not clear them, so resurrection would leave a self-contradictory row
       // (status=in_progress yet carrying ended_at/cleanup_after) that list() drops from
       // the active set the moment the old archive window elapses. No-op and warn instead.
-      if (existing.status === "done" || existing.status === "abandoned") {
+      if (isTerminalTaskStatus(existing.status)) {
         yield* Effect.logWarning(`refusing to start terminal task ${input.id} (status=${existing.status})`)
         return existing
       }
@@ -385,6 +544,10 @@ export const layer: Layer.Layer<Service, never, Bus.Service | Config.Service> = 
       abandon,
       rename,
       start,
+      dispatch,
+      requestReview,
+      rework,
+      fail,
     })
   }),
 )
