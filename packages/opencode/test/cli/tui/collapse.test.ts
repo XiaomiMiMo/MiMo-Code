@@ -46,3 +46,28 @@ describe("collapse.columns", () => {
     expect(Collapse.columns(10)).toBe(20)
   })
 })
+
+describe("collapse display width", () => {
+  test("counts CJK as two cells", () => {
+    expect(Collapse.rows("中".repeat(60), 100)).toBe(2)
+    expect(Collapse.rows("a".repeat(60), 100)).toBe(1)
+  })
+
+  test("counts an emoji as two cells", () => {
+    expect(Collapse.rows("👍".repeat(15), 20)).toBe(2)
+  })
+
+  test("slices CJK on the cell budget, not the character count", () => {
+    expect(Collapse.clip("中".repeat(200), 100, 2)).toBe(`${"中".repeat(100)}\n…`)
+  })
+
+  test("stops before a wide character that would overflow the last cell", () => {
+    // 21 cells: the leading "x" plus 10 CJK chars fill it; an 11th needs cell 22
+    expect(Collapse.clip(`x${"中".repeat(50)}`, 21, 1)).toBe(`x${"中".repeat(10)}\n…`)
+  })
+
+  test("charges a tab at least one cell (Bun.stringWidth reports 0)", () => {
+    expect(Collapse.rows("\t".repeat(30), 20)).toBe(2)
+    expect(Collapse.rows("\ta\tb", 20)).toBe(1)
+  })
+})
