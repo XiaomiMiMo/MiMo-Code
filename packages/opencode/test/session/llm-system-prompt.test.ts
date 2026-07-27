@@ -14,6 +14,7 @@ import { MessageV2 } from "../../src/session/message-v2"
 import { SessionID, MessageID } from "../../src/session/schema"
 import { AppRuntime } from "../../src/effect/app-runtime"
 import { Global } from "../../src/global"
+import { Flag } from "../../src/flag/flag"
 
 // Reuses the same HTTP-mock approach from llm.test.ts to capture the
 // system prompt the LLM layer assembled before sending. The system prompt
@@ -44,20 +45,12 @@ function waitRequest(pathname: string, response: Response) {
   return pending.promise
 }
 
-function createChatStream(text: string) {
-  const payload =
-    [
-      `data: ${JSON.stringify({ id: "x", object: "chat.completion.chunk", choices: [{ delta: { role: "assistant" } }] })}`,
-      `data: ${JSON.stringify({ id: "x", object: "chat.completion.chunk", choices: [{ delta: { content: text } }] })}`,
-      `data: ${JSON.stringify({ id: "x", object: "chat.completion.chunk", choices: [{ delta: {}, finish_reason: "stop" }] })}`,
-      "data: [DONE]",
-    ].join("\n\n") + "\n\n"
-  const encoder = new TextEncoder()
-  return new ReadableStream<Uint8Array>({
-    start(controller) {
-      controller.enqueue(encoder.encode(payload))
-      controller.close()
-    },
+function createChatResponse(text: string) {
+  return Response.json({
+    id: "x",
+    object: "chat.completion",
+    choices: [{ message: { role: "assistant", content: text }, finish_reason: "stop" }],
+    usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
   })
 }
 
@@ -71,7 +64,9 @@ async function loadFixture(providerID: string, modelID: string) {
   return { provider, model }
 }
 
+const checkpointEnabled = Flag.MIMOCODE_ENABLE_CHECKPOINT
 beforeAll(() => {
+  Flag.MIMOCODE_ENABLE_CHECKPOINT = true
   queueState.server = Bun.serve({
     port: 0,
     async fetch(req) {
@@ -91,6 +86,7 @@ beforeEach(() => {
 })
 
 afterAll(() => {
+  Flag.MIMOCODE_ENABLE_CHECKPOINT = checkpointEnabled
   void queueState.server?.stop()
 })
 
@@ -141,7 +137,7 @@ describe("session.llm system prompt — memory-instructions guard", () => {
     const fixture = await loadFixture(providerID, modelID)
     const request = waitRequest(
       "/chat/completions",
-      new Response(createChatStream("Hi"), { status: 200, headers: { "Content-Type": "text/event-stream" } }),
+      createChatResponse("Hi"),
     )
 
     await using tmp = await tmpdir({
@@ -200,7 +196,7 @@ describe("session.llm system prompt — memory-instructions guard", () => {
     const fixture = await loadFixture(providerID, modelID)
     const request = waitRequest(
       "/chat/completions",
-      new Response(createChatStream("Hi"), { status: 200, headers: { "Content-Type": "text/event-stream" } }),
+      createChatResponse("Hi"),
     )
 
     await using tmp = await tmpdir({
@@ -284,7 +280,7 @@ describe("session.llm system prompt — memory-instructions guard", () => {
     const fixture = await loadFixture(providerID, modelID)
     const request = waitRequest(
       "/chat/completions",
-      new Response(createChatStream("Hi"), { status: 200, headers: { "Content-Type": "text/event-stream" } }),
+      createChatResponse("Hi"),
     )
 
     await using tmp = await tmpdir({
@@ -342,7 +338,7 @@ describe("session.llm system prompt — memory-instructions guard", () => {
     const fixture = await loadFixture(providerID, modelID)
     const request = waitRequest(
       "/chat/completions",
-      new Response(createChatStream("Hi"), { status: 200, headers: { "Content-Type": "text/event-stream" } }),
+      createChatResponse("Hi"),
     )
 
     await using tmp = await tmpdir({
@@ -422,7 +418,7 @@ describe("session.llm system prompt — memory-instructions guard", () => {
     const fixture = await loadFixture(providerID, modelID)
     const request = waitRequest(
       "/chat/completions",
-      new Response(createChatStream("Hi"), { status: 200, headers: { "Content-Type": "text/event-stream" } }),
+      createChatResponse("Hi"),
     )
 
     await using tmp = await tmpdir({

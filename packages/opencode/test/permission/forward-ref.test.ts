@@ -1,4 +1,6 @@
 import { describe, expect, test } from "bun:test"
+import { enforcePermissions } from "./enforce"
+enforcePermissions()
 import { forwardRef } from "../../src/permission/permission-forward-ref"
 
 describe("forwardRef", () => {

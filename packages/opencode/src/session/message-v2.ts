@@ -82,7 +82,7 @@ export const OutputFormatJsonSchema = z
   .object({
     type: z.literal("json_schema"),
     schema: z.record(z.string(), z.any()).meta({ ref: "JSONSchema" }),
-    retryCount: z.number().int().min(0).default(2),
+    retryCount: z.number().int().min(0).default(0),
   })
   .meta({
     ref: "OutputFormatJsonSchema",

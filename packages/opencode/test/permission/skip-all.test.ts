@@ -1,4 +1,6 @@
 import { afterEach, describe, expect } from "bun:test"
+import { enforcePermissions } from "./enforce"
+enforcePermissions()
 import { Effect, Fiber, Layer } from "effect"
 import { Bus } from "../../src/bus"
 import * as CrossSpawnSpawner from "../../src/effect/cross-spawn-spawner"

@@ -1,9 +1,6 @@
 /**
- * Integration tests for T01: a `finish=stop` step with no usable output
- * (think-only = reasoning only, or empty = nothing at all) must not silently
- * break into an empty assistant. The loop nudges the model to produce a final
- * answer; once the shared continuation counter is exhausted it writes an
- * InvalidOutputError terminal instead of looping forever.
+ * RL integration tests: a `finish=stop` step with no usable output is terminal
+ * after one request and records an InvalidOutputError instead of resending.
  *
  * Driven through a real Session.prompt(...) against the scripted HTTP LLM stub.
  */
@@ -14,7 +11,6 @@ import { Effect, Layer } from "effect"
 import { Instance } from "../../src/project/instance"
 import { Session } from "../../src/session"
 import { SessionPrompt } from "../../src/session/prompt"
-import { Flag } from "../../src/flag/flag"
 import { Log } from "../../src/util"
 import { tmpdir } from "../fixture/fixture"
 import {
@@ -88,8 +84,8 @@ function writeGPTConfig(dir: string, origin: string) {
   )
 }
 
-describe("invalid-output continuation — integration", () => {
-  test("empty stop step is nudged, second call produces a non-empty final assistant", async () => {
+describe("invalid-output single attempt — integration", () => {
+  test("empty stop step is terminal without a resend", async () => {
     await using tmp = await tmpdir({ git: true })
     const stub = startScriptedLLMServer([{ lines: emptyStopResponse() }, { lines: textStopResponse("final answer") }])
     try {
@@ -107,11 +103,10 @@ describe("invalid-output continuation — integration", () => {
                 agent: "build",
                 parts: [{ type: "text", text: "Answer my question." }],
               })
-              // First empty stop => nudge + continue; second call => final text.
-              expect(stub.captures.length).toBe(2)
+              expect(stub.captures).toHaveLength(1)
               expect(result.info.role).toBe("assistant")
-              if (result.info.role === "assistant") expect(result.info.error).toBeUndefined()
-              expect(result.parts.some((p) => p.type === "text" && p.text === "final answer")).toBe(true)
+              if (result.info.role === "assistant") expect(result.info.error?.name).toBe("InvalidOutputError")
+              expect(result.parts.some((p) => p.type === "text" && p.text === "final answer")).toBe(false)
             }),
           ),
       })
@@ -120,7 +115,7 @@ describe("invalid-output continuation — integration", () => {
     }
   })
 
-  test("think-only (reasoning only) stop step is nudged, second call produces a final assistant", async () => {
+  test("think-only stop step is terminal without a resend", async () => {
     await using tmp = await tmpdir({ git: true })
     const stub = startScriptedLLMServer([
       { lines: reasoningStopResponse("let me think about this...") },
@@ -141,10 +136,10 @@ describe("invalid-output continuation — integration", () => {
                 agent: "build",
                 parts: [{ type: "text", text: "Answer my question." }],
               })
-              expect(stub.captures.length).toBe(2)
+              expect(stub.captures).toHaveLength(1)
               expect(result.info.role).toBe("assistant")
-              if (result.info.role === "assistant") expect(result.info.error).toBeUndefined()
-              expect(result.parts.some((p) => p.type === "text" && p.text === "final answer")).toBe(true)
+              if (result.info.role === "assistant") expect(result.info.error?.name).toBe("InvalidOutputError")
+              expect(result.parts.some((p) => p.type === "text" && p.text === "final answer")).toBe(false)
             }),
           ),
       })
@@ -153,7 +148,7 @@ describe("invalid-output continuation — integration", () => {
     }
   })
 
-  test("ordinary actor gets a parent-facing invalid-output reminder", async () => {
+  test("ordinary actor is not resent after invalid output", async () => {
     await using tmp = await tmpdir({ git: true })
     const stub = startScriptedLLMServer([{ lines: emptyStopResponse() }, { lines: textStopResponse("actor result") }])
     try {
@@ -166,15 +161,14 @@ describe("invalid-output continuation — integration", () => {
               const sessions = yield* Session.Service
               const prompt = yield* SessionPrompt.Service
               const session = yield* sessions.create({ title: "invalid-actor" })
-              yield* prompt.prompt({
+              const result = yield* prompt.prompt({
                 sessionID: session.id,
                 agent: "build",
                 agentID: "general-1",
                 parts: [{ type: "text", text: "Do delegated work." }],
               })
-              const retry = JSON.stringify(stub.captures[1].messages)
-              expect(retry).toContain("parent agent")
-              expect(retry).not.toContain("final answer to the user")
+              expect(stub.captures).toHaveLength(1)
+              expect(result.info.role === "assistant" && result.info.error?.name).toBe("InvalidOutputError")
             }),
           ),
       })
@@ -183,7 +177,7 @@ describe("invalid-output continuation — integration", () => {
     }
   })
 
-  test("checkpoint-writer gets a scoped retry and converges on CHECKPOINT_COMPLETE", async () => {
+  test("checkpoint-writer invalid output is not resent", async () => {
     await using tmp = await tmpdir({ git: true })
     const stub = startScriptedLLMServer([
       { lines: emptyStopResponse() },
@@ -204,11 +198,9 @@ describe("invalid-output continuation — integration", () => {
                 agent: "checkpoint-writer",
                 parts: [{ type: "text", text: "Update the checkpoint." }],
               })
-              const retry = JSON.stringify(stub.captures[1].messages)
-              expect(retry).toContain("checkpoint writer")
-              expect(retry).toContain("CHECKPOINT_COMPLETE")
-              expect(retry).not.toContain("final answer to the user")
-              expect(result.parts.some((part) => part.type === "text" && part.text === "CHECKPOINT_COMPLETE")).toBe(true)
+              expect(stub.captures).toHaveLength(1)
+              expect(result.info.role === "assistant" && result.info.error?.name).toBe("InvalidOutputError")
+              expect(result.parts.some((part) => part.type === "text" && part.text === "CHECKPOINT_COMPLETE")).toBe(false)
             }),
           ),
       })
@@ -249,9 +241,9 @@ describe("invalid-output continuation — integration", () => {
     } finally {
       await stub.stop()
     }
-  })
+  }, 10_000)
 
-  test("GPT reasoning-only length step still auto-continues", async () => {
+  test("GPT reasoning-only length step is not resent", async () => {
     await using tmp = await tmpdir({ git: true })
     const stub = startScriptedLLMServer([
       { lines: reasoningLengthResponse("token budget exhausted while thinking...") },
@@ -272,23 +264,21 @@ describe("invalid-output continuation — integration", () => {
                 agent: "build",
                 parts: [{ type: "text", text: "Answer my question." }],
               })
-              expect(stub.captures.length).toBe(2)
-              expect(JSON.stringify(stub.captures[1].messages)).toContain("output token limit")
-              expect(result.parts.some((p) => p.type === "text" && p.text === "final answer")).toBe(true)
+              expect(stub.captures).toHaveLength(1)
+              expect(result.info.role === "assistant" && result.info.error?.name).toBe("MessageOutputLengthError")
+              expect(result.parts.some((p) => p.type === "text" && p.text === "final answer")).toBe(false)
             }),
           ),
       })
     } finally {
       await stub.stop()
     }
-  })
+  }, 10_000)
 
-  test("repeated empty output is caught by the empty-step guard and halts the turn", async () => {
+  test("empty output is terminal without requesting another response", async () => {
     await using tmp = await tmpdir({ git: true })
-    // Server repeats the last entry, so every call returns an empty stop.
-    // The empty/no-op tool-call guard (empty-step-detection) intercepts these
-    // empty terminals BEFORE autoContinueInvalidOutput and hard-halts the turn
-    // after EMPTY_STEP_MAX_RECOVERY soft nudges + 1 halting step.
+    // The server would repeat its last entry if called again; the single
+    // captured request proves invalid output does not trigger a resend.
     const stub = startScriptedLLMServer([{ lines: emptyStopResponse() }])
     try {
       await writeConfig(tmp.path, stub.origin)
@@ -305,8 +295,7 @@ describe("invalid-output continuation — integration", () => {
                 agent: "build",
                 parts: [{ type: "text", text: "Answer my question." }],
               })
-              // EMPTY_STEP_MAX_RECOVERY soft nudges + 1 halting step.
-              expect(stub.captures.length).toBe(Flag.MIMOCODE_EMPTY_STEP_MAX_RECOVERY + 1)
+              expect(stub.captures.length).toBe(1)
               expect(result.info.role).toBe("assistant")
               if (result.info.role === "assistant") {
                 expect(result.info.error).toBeDefined()
@@ -317,5 +306,5 @@ describe("invalid-output continuation — integration", () => {
     } finally {
       await stub.stop()
     }
-  })
+  }, 10_000)
 })

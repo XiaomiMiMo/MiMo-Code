@@ -78,27 +78,19 @@ describe("SessionCheckpoint.insertRebuildBoundary", () => {
         Effect.gen(function* () {
           const ssn = yield* SessionNs.Service
           const cp = yield* SessionCheckpoint.Service
-          const memory = yield* Memory.Service
-          const root = yield* memory.root()
-          yield* Effect.promise(() =>
-            Promise.all([
-              fs.rm(path.join(root, "global"), { recursive: true, force: true }).catch(() => undefined),
-              fs.rm(path.join(root, "projects"), { recursive: true, force: true }).catch(() => undefined),
-            ]),
-          )
           const info = yield* ssn.create({})
 
           const m1 = yield* Effect.promise(() => seedUserMessage(info.id, "turn one"))
           const _m2 = yield* Effect.promise(() => seedUserMessage(info.id, "turn two"))
           const m3 = yield* Effect.promise(() => seedUserMessage(info.id, "turn three"))
 
-          // No checkpoint file → renderRebuildContext is empty → helper returns false, inserts nothing.
-          // recent_user disabled here: the verbatim-user-input section's whole point is to make a
-          // user-only-signal session emit non-empty context, so it must be opted out to assert the
-          // "nothing to push" semantics this test targets.
+          // Non-main actor slices never own checkpoint context, which gives this
+          // test a deterministic empty render independent of shared memory files
+          // or actors created concurrently by other checkpoint tests.
           const insertedNoCtx = yield* cp.insertRebuildBoundary({
             sessionID: info.id,
             boundary: m3.id,
+            agentID: "empty-context-test",
             agent: "build",
             model: { providerID: "anthropic", modelID: "claude" },
           })

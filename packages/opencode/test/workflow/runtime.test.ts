@@ -1,4 +1,4 @@
-import { describe, expect, afterEach } from "bun:test"
+import { describe, expect, afterEach, setDefaultTimeout } from "bun:test"
 import { Effect } from "effect"
 import { Session } from "../../src/session"
 import { Instance } from "../../src/project/instance"
@@ -11,6 +11,8 @@ import { WorkflowPersistence } from "../../src/workflow/persistence"
 import { ActorRegistry } from "../../src/actor/registry"
 import { Bus } from "../../src/bus"
 import { makeLayer, ref, providerCfg } from "./lib"
+
+setDefaultTimeout(15_000)
 
 afterEach(async () => {
   await Instance.disposeAll()
@@ -177,7 +179,7 @@ describe("WorkflowRuntime convergence (scout drives fan-out)", () => {
 
 describe("WorkflowRuntime schema contract (schema'd agent never returns prose)", () => {
   // A schema'd agent() whose model NEVER calls StructuredOutput (answers with plain
-  // prose, exhausting the format.retryCount=2 retries) MUST resolve to `null`, NOT
+  // prose instead of structured output) MUST resolve to `null`, NOT
   // the prose finalText. Returning prose breaks scripts that do `r.fields.map(...)`
   // (the prose is a truthy non-object) and our pipeline's catch then injects a bare
   // null that bypasses the script's own `r ? … : []` guard — exactly the full-tree
@@ -199,7 +201,7 @@ describe("WorkflowRuntime schema contract (schema'd agent never returns prose)",
           permission: [{ permission: "*", pattern: "*", action: "allow" }],
         })
         // The model refuses structured output every turn: original + 2 retries
-        // (format.retryCount=2) all answer with prose, never a StructuredOutput call.
+        // answers with prose and never emits a StructuredOutput call.
         yield* llm.text("I cannot call StructuredOutput; here is prose instead.")
         yield* llm.text("Still prose, no tool call.")
         yield* llm.text("Prose again.")

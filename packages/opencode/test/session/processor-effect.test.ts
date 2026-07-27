@@ -236,37 +236,13 @@ it.live("session.processor effect tests capture llm input cleanly", () =>
   ),
 )
 
-it.live("session.processor effect tests preserve text start time", () =>
+it.live("session.processor effect tests persist text timestamps after a non-stream response", () =>
   provideTmpdirServer(
     ({ dir, llm }) =>
       Effect.gen(function* () {
-        const gate = defer<void>()
         const { processors, session, provider } = yield* boot()
 
-        yield* llm.push(
-          raw({
-            head: [
-              {
-                id: "chatcmpl-test",
-                object: "chat.completion.chunk",
-                choices: [{ delta: { role: "assistant" } }],
-              },
-              {
-                id: "chatcmpl-test",
-                object: "chat.completion.chunk",
-                choices: [{ delta: { content: "hello" } }],
-              },
-            ],
-            wait: gate.promise,
-            tail: [
-              {
-                id: "chatcmpl-test",
-                object: "chat.completion.chunk",
-                choices: [{ delta: {}, finish_reason: "stop" }],
-              },
-            ],
-          }),
-        )
+        yield* llm.text("hello")
 
         const chat = yield* session.create({})
         const parent = yield* user(chat.id, "hi")
@@ -278,55 +254,42 @@ it.live("session.processor effect tests preserve text start time", () =>
           model: mdl,
         })
 
-        const run = yield* handle
-          .process({
-            user: {
-              id: parent.id,
-              sessionID: chat.id,
-              role: "user",
-              time: parent.time,
-              agent: parent.agent,
-              model: { providerID: ref.providerID, modelID: ref.modelID },
-            } satisfies MessageV2.User,
+        const value = yield* handle.process({
+          user: {
+            id: parent.id,
             sessionID: chat.id,
-            model: mdl,
-            agent: agent(),
-            system: [],
-            messages: [{ role: "user", content: "hi" }],
-            tools: {},
-          })
-          .pipe(Effect.forkChild)
-
-        yield* Effect.promise(async () => {
-          const stop = Date.now() + 500
-          while (Date.now() < stop) {
-            const text = MessageV2.parts(msg.id).find((part): part is MessageV2.TextPart => part.type === "text")
-            if (text?.time?.start) return
-            await Bun.sleep(10)
-          }
-          throw new Error("timed out waiting for text part")
+            role: "user",
+            time: parent.time,
+            agent: parent.agent,
+            model: { providerID: ref.providerID, modelID: ref.modelID },
+          } satisfies MessageV2.User,
+          sessionID: chat.id,
+          model: mdl,
+          agent: agent(),
+          system: [],
+          messages: [{ role: "user", content: "hi" }],
+          tools: {},
         })
-        yield* Effect.sleep("20 millis")
-        gate.resolve()
 
-        const exit = yield* Fiber.await(run)
         const text = MessageV2.parts(msg.id).find((part): part is MessageV2.TextPart => part.type === "text")
 
-        expect(Exit.isSuccess(exit)).toBe(true)
+        expect(value).toBe("continue")
         expect(text?.text).toBe("hello")
         expect(text?.time?.start).toBeDefined()
         expect(text?.time?.end).toBeDefined()
         if (!text?.time?.start || !text.time.end) return
-        expect(text.time.start).toBeLessThan(text.time.end)
+        expect(text.time.start).toBeLessThanOrEqual(text.time.end)
       }),
     { git: true, config: (url) => providerCfg(url) },
   ),
 )
 
-it.live("session.processor effect tests stop after token overflow requests compaction", () =>
-  provideTmpdirServer(
-    ({ dir, llm }) =>
-      Effect.gen(function* () {
+it.live(
+  "session.processor effect tests request automatic compaction by default",
+  () =>
+    provideTmpdirServer(
+      ({ dir, llm }) =>
+        Effect.gen(function* () {
         const { processors, session, provider } = yield* boot()
 
         yield* llm.text("after", { usage: { input: 100, output: 0 } })
@@ -361,12 +324,13 @@ it.live("session.processor effect tests stop after token overflow requests compa
 
         const parts = MessageV2.parts(msg.id)
 
-        expect(value).toBe("overflow")
-        expect(parts.some((part) => part.type === "text" && part.text === "after")).toBe(true)
-        expect(parts.some((part) => part.type === "step-finish")).toBe(true)
-      }),
-    { git: true, config: (url) => providerCfg(url) },
-  ),
+          expect(value).toBe("overflow")
+          expect(parts.some((part) => part.type === "text" && part.text === "after")).toBe(true)
+          expect(parts.some((part) => part.type === "step-finish")).toBe(true)
+        }),
+      { git: true, config: (url) => providerCfg(url) },
+    ),
+  10_000,
 )
 
 it.live("session.processor effect tests capture reasoning from http mock", () =>
@@ -417,7 +381,7 @@ it.live("session.processor effect tests capture reasoning from http mock", () =>
   ),
 )
 
-it.live("session.processor effect tests reset reasoning state across retries", () =>
+it.live("session.processor effect tests do not retry a reset response", () =>
   provideTmpdirServer(
     ({ dir, llm }) =>
       Effect.gen(function* () {
@@ -455,10 +419,10 @@ it.live("session.processor effect tests reset reasoning state across retries", (
         const parts = MessageV2.parts(msg.id)
         const reasoning = parts.filter((part): part is MessageV2.ReasoningPart => part.type === "reasoning")
 
-        expect(value).toBe("continue")
-        expect(yield* llm.calls).toBe(2)
-        expect(reasoning.some((part) => part.text === "two")).toBe(true)
-        expect(reasoning.some((part) => part.text === "onetwo")).toBe(false)
+        expect(value).toBe("stop")
+        expect(yield* llm.calls).toBe(1)
+        expect(reasoning.some((part) => part.text === "two")).toBe(false)
+        expect(handle.message.error?.name).toBe("APIError")
       }),
     { git: true, config: (url) => providerCfg(url) },
   ),
@@ -507,7 +471,7 @@ it.live("session.processor effect tests do not retry unknown json errors", () =>
   ),
 )
 
-it.live("session.processor effect tests retry recognized structured json errors", () =>
+it.live("session.processor effect tests do not retry recognized structured json errors", () =>
   provideTmpdirServer(
     ({ dir, llm }) =>
       Effect.gen(function* () {
@@ -545,27 +509,16 @@ it.live("session.processor effect tests retry recognized structured json errors"
 
         const parts = MessageV2.parts(msg.id)
 
-        expect(value).toBe("continue")
-        expect(yield* llm.calls).toBe(2)
-        expect(parts.some((part) => part.type === "text" && part.text === "after")).toBe(true)
-        expect(handle.message.error).toBeUndefined()
+        expect(value).toBe("stop")
+        expect(yield* llm.calls).toBe(1)
+        expect(parts.some((part) => part.type === "text" && part.text === "after")).toBe(false)
+        expect(handle.message.error?.name).toBe("APIError")
       }),
     { git: true, config: (url) => providerCfg(url) },
   ),
 )
 
-// TODO: Re-enable after we restructure the retry-status path.
-// Task 1 of docs/superpowers/plans/2026-05-17-retry-and-timeout-tuning.md
-// bumped streamText maxRetries 0→10. AI SDK now consumes 503 (and other
-// transient HTTP errors) inside its own exp-backoff loop, so the outer
-// Effect-based SessionRetry.policy at processor.ts:568 never sees this
-// error and the `type: "retry"` status banner never publishes for the
-// single-503 fixture this test uses. The user-facing contract changed:
-// silent retries during the SDK window, banner only when AI SDK gives
-// up after 10+ retries. A proper rewrite would either inject 11+
-// errors (so AI SDK exhausts then outer retry fires) or use a
-// non-AI-SDK-retryable error path.
-it.live.skip("session.processor effect tests publish retry status updates", () =>
+it.live("session.processor effect tests do not retry or publish retry status", () =>
   provideTmpdirServer(
     ({ dir, llm }) =>
       Effect.gen(function* () {
@@ -573,7 +526,6 @@ it.live.skip("session.processor effect tests publish retry status updates", () =
         const bus = yield* Bus.Service
 
         yield* llm.error(503, { error: "boom" })
-        yield* llm.text("")
 
         const chat = yield* session.create({})
         const parent = yield* user(chat.id, "retry")
@@ -609,9 +561,10 @@ it.live.skip("session.processor effect tests publish retry status updates", () =
 
         off()
 
-        expect(value).toBe("continue")
-        expect(yield* llm.calls).toBe(2)
-        expect(states).toStrictEqual([1])
+        expect(value).toBe("stop")
+        expect(yield* llm.calls).toBe(1)
+        expect(states).toStrictEqual([])
+        expect(handle.message.error?.name).toBe("APIError")
       }),
     { git: true, config: (url) => providerCfg(url) },
   ),
@@ -660,7 +613,7 @@ it.live("session.processor effect tests compact on structured context overflow",
   ),
 )
 
-it.live("session.processor effect tests mark pending tools as aborted on cleanup", () =>
+it.live("session.processor effect tests do not persist partial tools from an interrupted non-stream response", () =>
   provideTmpdirServer(
     ({ dir, llm }) =>
       Effect.gen(function* () {
@@ -717,12 +670,7 @@ it.live("session.processor effect tests mark pending tools as aborted on cleanup
           expect(Cause.hasInterruptsOnly(exit.cause)).toBe(true)
         }
         expect(yield* llm.calls).toBe(1)
-        expect(call?.state.status).toBe("error")
-        if (call?.state.status === "error") {
-          expect(call.state.error).toBe("Tool execution aborted")
-          expect(call.state.metadata?.interrupted).toBe(true)
-          expect(call.state.time.end).toBeDefined()
-        }
+        expect(call).toBeUndefined()
       }),
     { git: true, config: (url) => providerCfg(url) },
   ),

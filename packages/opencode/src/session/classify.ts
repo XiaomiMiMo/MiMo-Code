@@ -41,17 +41,15 @@ export function classifyAssistantStep(input: {
 
   // 1. Core guarantee — beats everything: a pending client tool call must
   // re-loop so its observation is fed back to the model. EXCLUDE error-state
-  // tool parts: cleanup after SSE timeout / abort marks pending tool parts
-  // as state.status === "error". Those are NOT pending observation — they're
-  // terminal failures. Without this guard, classify mis-routes errored steps
-  // to "continue", runLoop re-enters and gets stranded on permission.ask
-  // from the in-flight tool that won't ever resolve. See Spec ③.
+  // tool parts: cleanup after timeout / abort marks pending tool parts as
+  // interrupted errors. Those are terminal failures. An error produced by an
+  // actual tool execution is still an observation the model must receive.
   if (
     input.parts.some(
       (part) =>
         part.type === "tool" &&
         !part.metadata?.providerExecuted &&
-        part.state.status !== "error",
+        (part.state.status !== "error" || part.state.metadata?.interrupted !== true),
     )
   )
     return { type: "continue" }

@@ -48,6 +48,46 @@ function run<A, E>(fx: Effect.Effect<A, E, SessionPrompt.Service | Session.Servi
 }
 
 describe("main runLoop history monotonic-growth invariant", () => {
+  test("does not issue an auxiliary title request by default", async () => {
+    await using tmp = await tmpdir({ git: true })
+    const stub = startScriptedLLMServer([{ lines: textStopResponse("done.") }])
+
+    try {
+      await Bun.write(
+        path.join(tmp.path, "mimocode.json"),
+        JSON.stringify({
+          enabled_providers: ["alibaba"],
+          provider: {
+            alibaba: { options: { apiKey: "test-key", baseURL: `${stub.origin}/v1` } },
+          },
+          agent: { build: { model: "alibaba/qwen-plus" } },
+        }),
+      )
+
+      await Instance.provide({
+        directory: tmp.path,
+        fn: () =>
+          run(
+            Effect.gen(function* () {
+              const sessions = yield* Session.Service
+              const prompt = yield* SessionPrompt.Service
+              const session = yield* sessions.create({})
+              yield* prompt.prompt({
+                sessionID: session.id,
+                agent: "build",
+                parts: [{ type: "text", text: "Answer once." }],
+              })
+
+              expect(stub.captures).toHaveLength(1)
+              expect(Session.isDefaultTitle((yield* sessions.get(session.id)).title)).toBe(true)
+            }),
+          ),
+      })
+    } finally {
+      await stub.stop()
+    }
+  })
+
   test("each step's /chat/completions request strictly contains previous step's messages", async () => {
     // Create the tmp dir first (without init) so we know the real path before
     // constructing responses — this avoids any post-start mutation of the
@@ -105,6 +145,7 @@ describe("main runLoop history monotonic-growth invariant", () => {
 
               // Verify the invariant: at least 2 LLM calls were made.
               expect(stub.captures.length).toBeGreaterThanOrEqual(2)
+              expect(stub.captures.every((capture) => !capture.stream)).toBe(true)
 
               const cap0 = stub.captures[0].messages
               const cap1 = stub.captures[1].messages
@@ -123,9 +164,9 @@ describe("main runLoop history monotonic-growth invariant", () => {
     } finally {
       await stub.stop()
     }
-  })
+  }, 10_000)
 
-  test("auto-continues when a step finishes because of output length", async () => {
+  test("does not resend when a step finishes because of output length", async () => {
     await using tmp = await tmpdir({ git: true })
 
     const responses = [
@@ -169,9 +210,59 @@ describe("main runLoop history monotonic-growth invariant", () => {
                 parts: [{ type: "text", text: "Produce an answer that may need continuation." }],
               })
 
-              expect(stub.captures.length).toBe(2)
-              expect(JSON.stringify(stub.captures[1].messages)).toContain("output token limit")
-              expect(final.parts.some((part) => part.type === "text" && part.text === "done.")).toBe(true)
+              expect(stub.captures).toHaveLength(1)
+              expect(stub.captures[0].stream).toBe(false)
+              expect(final.info.role === "assistant" && final.info.error?.name).toBe("MessageOutputLengthError")
+              expect(final.parts.some((part) => part.type === "text" && part.text === "partial answer")).toBe(true)
+            }),
+          ),
+      })
+    } finally {
+      await stub.stop()
+    }
+  })
+
+  test("does not retry a transient provider failure", async () => {
+    await using tmp = await tmpdir({ git: true })
+    const stub = startScriptedLLMServer([{ lines: ["provider unavailable"], status: 503 }])
+
+    try {
+      await Bun.write(
+        path.join(tmp.path, "mimocode.json"),
+        JSON.stringify({
+          $schema: "https://opencode.ai/config.json",
+          enabled_providers: ["alibaba"],
+          provider: {
+            alibaba: {
+              options: {
+                apiKey: "test-key",
+                baseURL: `${stub.origin}/v1`,
+              },
+            },
+          },
+          agent: {
+            build: { model: "alibaba/qwen-plus" },
+          },
+        }),
+      )
+
+      await Instance.provide({
+        directory: tmp.path,
+        fn: () =>
+          run(
+            Effect.gen(function* () {
+              const sessions = yield* Session.Service
+              const prompt = yield* SessionPrompt.Service
+              const session = yield* sessions.create({ title: "no-provider-retry" })
+              const result = yield* prompt.prompt({
+                sessionID: session.id,
+                agent: "build",
+                parts: [{ type: "text", text: "Answer once." }],
+              })
+
+              expect(stub.captures).toHaveLength(1)
+              expect(stub.captures[0].stream).toBe(false)
+              expect(result.info.role === "assistant" && result.info.error).toBeDefined()
             }),
           ),
       })

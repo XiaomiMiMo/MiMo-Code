@@ -96,14 +96,8 @@ export function toSchemaOnlyTools(tools: Record<string, AITool>): Record<string,
  * proposed tool calls without executing anything. Returns null on failure so a
  * single bad draw doesn't sink the whole step.
  *
- * Transient network failures (ECONNRESET / EPIPE / SSE timeout / 5xx) are
- * retried with the same persistent schedule the normal stream path uses. This
- * is safe — and deliberately broader than the normal path — because a
- * candidate emits NOTHING externally until it completes: each attempt rebuilds
- * a fresh accumulator, so re-streaming after a mid-stream reset cannot
- * duplicate user-visible output the way the live processor stream would. A
- * mid-stream ECONNRESET that the normal path can't retry (it only wraps
- * connection setup) is fully recoverable here.
+ * Failures return null so the remaining candidates can still be judged. Each
+ * candidate makes exactly one provider request.
  */
 // Exported for integration tests (drives the real candidate path with a mock
 // llm.stream). Not part of the public surface — call sites use runMaxStep.
@@ -113,9 +107,6 @@ export const runCandidate = (
 ): Effect.Effect<Candidate | null | "text-repeat"> =>
   Effect.gen(function* () {
     const monitor = createTextNgramMonitor()
-    // Fresh accumulator per attempt: the retry below re-runs this whole block,
-    // so partial reasoning/text/toolCalls from a failed attempt must not carry
-    // over into the retry.
     const candidate: Candidate = {
       index,
       reasoning: "",
@@ -165,13 +156,8 @@ export const runCandidate = (
           candidate.usage = event.usage
           candidate.providerMetadata = event.providerMetadata
           break
-        // The AI SDK surfaces a transient stream failure (ECONNRESET etc.) as
-        // an `error` PART that ends the stream normally — it does NOT throw, and
-        // the normal processor path only converts this via its own catchCause.
-        // Emit it into the Effect error channel (NOT a thrown defect, which the
-        // retry's `while` predicate would skip) so Effect.retry below can fire;
-        // otherwise the error is silently swallowed and the candidate ends
-        // half-streamed.
+        // Provider failures can arrive as an `error` part rather than a thrown
+        // error. Surface them so this candidate is discarded.
         case "error":
           return Effect.fail(event.error)
         default:
@@ -182,20 +168,12 @@ export const runCandidate = (
 
     return candidate
   }).pipe(
-    // Mirror the proven build/plan path (processor.ts): convert any DEFECT into
-    // a typed failure before retrying. The SSE-timeout / aborted-fetch errors
-    // raised deep in the provider stream surface as defects (Cause.die), which
-    // Effect.retry's `while` and Effect.catch both skip — so without this they
-    // escape the fiber as an unhandled rejection and kill the whole session.
-    // Interrupts (genuine user cancel) are left to propagate.
+    // Convert provider defects into typed failures. Interrupts (genuine user
+    // cancel) are left to propagate.
     Effect.catchCauseIf(
       (cause) => !Cause.hasInterruptsOnly(cause),
       (cause) => Effect.fail(Cause.squash(cause)),
     ),
-    Effect.retry({
-      while: LLM.isTransientCapacityError,
-      schedule: LLM.persistentRetrySchedule,
-    }),
     Effect.catchIf(isTextNgramRepeat, () => Effect.succeed("text-repeat" as const)),
     Effect.catch((e) =>
       Effect.sync(() => {
@@ -283,31 +261,19 @@ export const judge = (input: MaxStepInput, candidates: Candidate[]): Effect.Effe
     yield* Stream.runForEach(stream, (event: LLM.Event) => {
       if (event.type === "text-delta") out += event.text
       else if (event.type === "finish-step") usage = event.usage
-      // Same as runCandidate: a transient failure arrives as an `error` part,
-      // not a thrown error. Surface it into the error channel so Effect.retry
-      // below can fire instead of silently picking candidate 0.
+      // Same as runCandidate: provider failures can arrive as an `error` part.
       else if (event.type === "error") return Effect.fail(event.error)
       return Effect.void
     })
 
     return { pick: parseJudgeIndex(out, candidates.length), usage }
   }).pipe(
-    // Convert defects (SSE timeout / aborted fetch surfacing as Cause.die) into
-    // typed failures before retrying — same as runCandidate and the proven
-    // processor path. Otherwise the defect escapes and kills the session
-    // instead of degrading to pick 0.
+    // Convert provider defects into typed failures so judging degrades to
+    // candidate 0 instead of killing the session.
     Effect.catchCauseIf(
       (cause) => !Cause.hasInterruptsOnly(cause),
       (cause) => Effect.fail(Cause.squash(cause)),
     ),
-    // Same transient-retry rationale as runCandidate: the judge accumulates
-    // `out`/`usage` locally and emits nothing externally until it returns, so
-    // re-streaming after a mid-stream reset is safe. Without this, a single
-    // ECONNRESET during judging silently collapses the whole step to pick 0.
-    Effect.retry({
-      while: LLM.isTransientCapacityError,
-      schedule: LLM.persistentRetrySchedule,
-    }),
     Effect.catch((e) => {
       log.warn("judge failed, defaulting to candidate 0", {
         error: e instanceof Error ? e.message : String(e),

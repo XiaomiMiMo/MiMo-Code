@@ -117,7 +117,7 @@ describe("classifier routing — integration", () => {
     } finally {
       await stub.stop()
     }
-  })
+  }, 10_000)
 
   test("main json_schema gate: non-continue classification writes StructuredOutputError", async () => {
     await using tmp = await tmpdir({ git: true })

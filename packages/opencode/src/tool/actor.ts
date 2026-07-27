@@ -757,7 +757,7 @@ export const ActorTool = Tool.define(
               metadata: { sessionId: sessionID, actorId: actorID, model },
             }),
           ...(op.output_schema
-            ? { format: { type: "json_schema" as const, schema: op.output_schema, retryCount: 2 } }
+            ? { format: { type: "json_schema" as const, schema: op.output_schema, retryCount: 0 } }
             : {}),
         })
 

@@ -14,7 +14,6 @@ import { MessageV2 } from "./message-v2"
 import { isOverflow } from "./overflow"
 import { PartID } from "./schema"
 import type { SessionID } from "./schema"
-import { SessionRetry } from "./retry"
 import { SessionStatus } from "./status"
 import { SessionSummary } from "./summary"
 import type { Provider } from "@/provider"
@@ -810,32 +809,6 @@ export const layer: Layer.Layer<
             Effect.catchCauseIf(
               (cause) => !Cause.hasInterruptsOnly(cause),
               (cause) => Effect.fail(Cause.squash(cause)),
-            ),
-            Effect.tapError(() =>
-              Effect.gen(function* () {
-                for (const partId of ctx.stepPartIds) {
-                  yield* session.removePart({
-                    sessionID: ctx.sessionID,
-                    messageID: ctx.assistantMessage.id,
-                    partID: partId,
-                  })
-                }
-                ctx.stepPartIds = []
-              }),
-            ),
-            Effect.retry(
-              SessionRetry.policy({
-                parse,
-                set: (info) =>
-                  isMain
-                    ? status.set(ctx.sessionID, {
-                        type: "retry",
-                        attempt: info.attempt,
-                        message: info.message,
-                        next: info.next,
-                      })
-                    : Effect.void,
-              }),
             ),
             Effect.catch(halt),
             Effect.ensuring(cleanup()),

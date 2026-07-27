@@ -7,7 +7,6 @@ import { provideTmpdirServer } from "../fixture/fixture"
 import { testEffect } from "../lib/effect"
 import { WorkflowRuntime } from "../../src/workflow/runtime"
 import { WorkflowAgentFailed } from "../../src/workflow/events"
-import { Worktree } from "../../src/worktree"
 import { Bus } from "../../src/bus"
 import { makeLayer, ref, providerCfg } from "./lib"
 
@@ -18,18 +17,13 @@ afterEach(async () => {
 
 const it = testEffect(makeLayer())
 
-// The reliable signal that the ENGINE retried is a WorkflowAgentFailed event:
-// the engine publishes exactly one per FAILED spawn attempt. A transient failure
-// that then succeeds on the engine's retry emits exactly one failed event and a
-// completed run. The MIMOCODE_TEST_SPAWN_FAIL_ONCE seam forces the first N shared
-// spawn attempts to throw a spawn-reject (retryable) deterministically, without
-// depending on LLM/actor failure modes (HTTP errors become terminal
-// no-deliverable, stream errors are retried inside the model layer, hangs don't
-// release for a retry — none of which cleanly drive the engine retry path).
-describe("WorkflowRuntime agent() retry", () => {
-  it.live("retries a spawn-reject and succeeds on the second attempt", () =>
+// The legacy retry option remains parse-compatible but must not issue another
+// model request. One forced spawn rejection therefore produces one failure event
+// and a null result regardless of the requested attempt count.
+describe("WorkflowRuntime agent() single-attempt behavior", () => {
+  it.live("ignores a retry option after a spawn rejection", () =>
     provideTmpdirServer(
-      Effect.fnUntraced(function* ({ llm }) {
+      Effect.fnUntraced(function* () {
         process.env.MIMOCODE_TEST_SPAWN_FAIL_ONCE = "1" // first spawn attempt throws
         const runtime = yield* WorkflowRuntime.Service
         const session = yield* Session.Service
@@ -40,7 +34,6 @@ describe("WorkflowRuntime agent() retry", () => {
           title: "wf retry",
           permission: [{ permission: "*", pattern: "*", action: "allow" }],
         })
-        yield* llm.text("ok") // consumed by the successful retry (attempt 2)
         const script = [
           `export const meta = { name: "t", description: "d" }`,
           `return await agent("go", { retry: { attempts: 2, baseMs: 1, maxMs: 2 } })`,
@@ -48,9 +41,9 @@ describe("WorkflowRuntime agent() retry", () => {
         const { runID } = yield* runtime.start({ script, sessionID: parent.id, parentActorID: "main", model: ref })
         const outcome = yield* runtime.wait({ runID })
         expect(outcome.status).toBe("completed")
-        expect((outcome as { result: string }).result).toBe("ok")
+        expect((outcome as { result: unknown }).result ?? null).toBeNull()
         yield* Effect.sleep("100 millis") // bus is async
-        expect(failed).toEqual(["spawn-reject"]) // exactly one attempt failed, retry succeeded
+        expect(failed).toEqual(["spawn-reject"])
       }),
       { git: true, config: providerCfg },
     ),
@@ -58,7 +51,7 @@ describe("WorkflowRuntime agent() retry", () => {
 
   it.live("no retry option => a spawn-reject is not retried (one failed attempt, run returns null)", () =>
     provideTmpdirServer(
-      Effect.fnUntraced(function* ({ llm }) {
+      Effect.fnUntraced(function* () {
         process.env.MIMOCODE_TEST_SPAWN_FAIL_ONCE = "1"
         const runtime = yield* WorkflowRuntime.Service
         const session = yield* Session.Service
@@ -69,7 +62,6 @@ describe("WorkflowRuntime agent() retry", () => {
           title: "wf no-retry",
           permission: [{ permission: "*", pattern: "*", action: "allow" }],
         })
-        yield* llm.text("ok") // queued but never consumed — no retry
         const script = [
           `export const meta = { name: "t", description: "d" }`,
           `return await agent("go")`, // no retry opt
@@ -86,7 +78,7 @@ describe("WorkflowRuntime agent() retry", () => {
     ),
   )
 
-  it.live("retry exhausted => still null; every attempt emits a failed event", () =>
+  it.live("a large retry count still makes only one attempt", () =>
     provideTmpdirServer(
       Effect.fnUntraced(function* () {
         process.env.MIMOCODE_TEST_SPAWN_FAIL_ONCE = "5" // more than attempts -> all fail
@@ -109,18 +101,17 @@ describe("WorkflowRuntime agent() retry", () => {
         const v = (outcome as { result: unknown }).result
         expect(v === null || v === undefined).toBe(true)
         yield* Effect.sleep("100 millis")
-        // 3 attempts, all spawn-reject -> 3 failed events.
-        expect(failed).toEqual(["spawn-reject", "spawn-reject", "spawn-reject"])
+        expect(failed).toEqual(["spawn-reject"])
       }),
       { git: true, config: providerCfg },
     ),
   )
 
   it.live(
-    "isolated (worktree) agent retries a spawn-reject and succeeds",
+    "isolated worktree agents also ignore retry options",
     () =>
       provideTmpdirServer(
-        Effect.fnUntraced(function* ({ dir, llm }) {
+        Effect.fnUntraced(function* ({ dir }) {
           process.env.MIMOCODE_TEST_SPAWN_FAIL_ONCE = "1"
           const runtime = yield* WorkflowRuntime.Service
           const session = yield* Session.Service
@@ -131,7 +122,6 @@ describe("WorkflowRuntime agent() retry", () => {
             title: "wf retry isolated",
             permission: [{ permission: "*", pattern: "*", action: "allow" }],
           })
-          yield* llm.text("done") // consumed by the successful retry
           yield* Effect.promise(() => $`git add -A && git commit -q -m wf-config`.cwd(dir).quiet().nothrow())
           const script = [
             `export const meta = { name: "t", description: "d" }`,
@@ -140,12 +130,9 @@ describe("WorkflowRuntime agent() retry", () => {
           const { runID } = yield* runtime.start({ script, sessionID: parent.id, parentActorID: "main", model: ref })
           const outcome = yield* runtime.wait({ runID })
           expect(outcome.status).toBe("completed")
-          expect((outcome as { result: unknown }).result).not.toBeNull()
+          expect((outcome as { result: unknown }).result ?? null).toBeNull()
           yield* Effect.sleep("100 millis")
-          expect(failed).toEqual(["spawn-reject"]) // one failed attempt, retry succeeded
-          const result = (outcome as { result: { _worktree?: { directory?: string } } }).result
-          const wtDir = result?._worktree?.directory
-          if (wtDir) yield* (yield* Worktree.Service).remove({ directory: wtDir }).pipe(Effect.ignore)
+          expect(failed).toEqual(["spawn-reject"])
         }),
         { git: true, config: providerCfg },
       ),

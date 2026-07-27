@@ -1,9 +1,6 @@
 /**
- * Integration tests for T04: under `json_schema` output, a step that fails to
- * produce structured output (plain text stop, etc.) must not immediately write
- * `StructuredOutputError({ retries: 0 })`. Instead the loop appends a repair
- * nudge and retries up to `lastUser.format.retryCount` times; on exhaustion it
- * writes a StructuredOutputError carrying the *real* retry count.
+ * RL integration tests: structured-output failures are terminal after the
+ * first provider request, even when the caller supplied a retryCount.
  *
  * Driven through a real Session.prompt(...) against the scripted HTTP LLM stub.
  */
@@ -50,8 +47,8 @@ const schema = {
   required: ["answer"],
 }
 
-describe("structured-output retry — integration", () => {
-  test("plain text stop is repaired, second call produces structured output", async () => {
+describe("structured-output single attempt — integration", () => {
+  test("plain text stop is not resent", async () => {
     await using tmp = await tmpdir({ git: true })
     const stub = startScriptedLLMServer([
       { lines: textStopResponse("here is a plain text answer") },
@@ -73,13 +70,13 @@ describe("structured-output retry — integration", () => {
                 parts: [{ type: "text", text: "What is 2 + 2?" }],
                 format: { type: "json_schema", schema, retryCount: 2 },
               })
-              // First plain text => repair nudge + continue; second call => structured tool call.
-              expect(stub.captures.length).toBe(2)
+              expect(stub.captures).toHaveLength(1)
+              expect(stub.captures[0].stream).toBe(false)
               expect(result.info.role).toBe("assistant")
               if (result.info.role === "assistant") {
-                expect(result.info.error).toBeUndefined()
-                expect(result.info.structured).toBeDefined()
-                expect((result.info.structured as any).answer).toBe(4)
+                expect(result.info.error?.name).toBe("StructuredOutputError")
+                if (result.info.error?.name === "StructuredOutputError") expect(result.info.error.data.retries).toBe(0)
+                expect(result.info.structured).toBeUndefined()
               }
             }),
           ),
@@ -89,7 +86,7 @@ describe("structured-output retry — integration", () => {
     }
   })
 
-  test("repeated plain text exhausts retryCount and writes StructuredOutputError with real retries", async () => {
+  test("ignores a positive retryCount and records zero retries", async () => {
     await using tmp = await tmpdir({ git: true })
     // Server repeats the last entry, so every call returns a plain text stop.
     const stub = startScriptedLLMServer([{ lines: textStopResponse("still plain text") }])
@@ -110,12 +107,11 @@ describe("structured-output retry — integration", () => {
                 parts: [{ type: "text", text: "What is 2 + 2?" }],
                 format: { type: "json_schema", schema, retryCount },
               })
-              // 1 initial + retryCount structured nudges + 1 invalid-output continuation.
-              expect(stub.captures.length).toBe(retryCount + 2)
+              expect(stub.captures).toHaveLength(1)
               expect(result.info.role).toBe("assistant")
               if (result.info.role === "assistant") {
                 expect(result.info.error?.name).toBe("StructuredOutputError")
-                expect((result.info.error?.data as any).retries).toBe(retryCount)
+                if (result.info.error?.name === "StructuredOutputError") expect(result.info.error.data.retries).toBe(0)
               }
             }),
           ),

@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test"
+import { afterAll, beforeAll, describe, expect, test } from "bun:test"
 import { Effect, Layer } from "effect"
 import { Bus } from "../../src/bus"
 import { Config } from "../../src/config"
@@ -14,8 +14,17 @@ import type { Provider } from "../../src/provider"
 import { ProviderTest } from "../fake/provider"
 import * as CrossSpawnSpawner from "../../src/effect/cross-spawn-spawner"
 import { ActorRegistry } from "../../src/actor/registry"
+import { Flag } from "../../src/flag/flag"
 
 void Log.init({ print: false })
+
+const checkpointEnabled = Flag.MIMOCODE_ENABLE_CHECKPOINT
+beforeAll(() => {
+  Flag.MIMOCODE_ENABLE_CHECKPOINT = true
+})
+afterAll(() => {
+  Flag.MIMOCODE_ENABLE_CHECKPOINT = checkpointEnabled
+})
 
 const ref = {
   providerID: ProviderID.make("test"),

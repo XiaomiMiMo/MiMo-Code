@@ -90,9 +90,9 @@ async function seedAssistantWithTool(
   return { msg, part }
 }
 
-describe("rebuild microcompact", () => {
+describe("rebuild tool-result history", () => {
   it.live(
-    "clears completed compactable tool_result strictly newer than boundary; preserves non-compactable and pre-boundary",
+    "preserves completed tool results on both sides of the boundary",
     provideTmpdirInstance(() =>
       Effect.gen(function* () {
         const ssn = yield* SessionNs.Service
@@ -119,7 +119,7 @@ describe("rebuild microcompact", () => {
         // insertRebuildBoundary uses boundaryCreatedAt + 1 for the marker time.
         // Anything strictly newer than that time is the post-boundary tail.
         const boundaryTime = t0 + 10
-        // Post-boundary, compactable: read + bash + edit → all 3 must be cleared.
+        // Post-boundary tool results must remain byte-identical after rebuild.
         const postRead = yield* Effect.promise(() =>
           seedAssistantWithTool(info.id, boundaryTime + 5, "read", "POST_READ_BODY"),
         )
@@ -168,14 +168,17 @@ describe("rebuild microcompact", () => {
 
         // Pre-boundary tool: NOT cleared (msg time <= boundaryTime).
         expect(compactedOf(preTool)).toBeUndefined()
-        // Post-boundary compactable: cleared.
-        expect(compactedOf(postReadTool)).toBeGreaterThan(0)
-        expect(compactedOf(postBashTool)).toBeGreaterThan(0)
-        expect(compactedOf(postEditTool)).toBeGreaterThan(0)
-        // Post-boundary non-compactable: NOT cleared.
+        expect(compactedOf(postReadTool)).toBeUndefined()
+        expect(compactedOf(postBashTool)).toBeUndefined()
+        expect(compactedOf(postEditTool)).toBeUndefined()
         expect(compactedOf(postActorTool)).toBeUndefined()
         expect(compactedOf(postTaskTool)).toBeUndefined()
         expect(compactedOf(postTodoTool)).toBeUndefined()
+        const outputOf = (p?: MessageV2.Part) =>
+          p && p.type === "tool" && p.state.status === "completed" ? p.state.output : undefined
+        expect(outputOf(postReadTool)).toBe("POST_READ_BODY")
+        expect(outputOf(postBashTool)).toBe("POST_BASH_BODY")
+        expect(outputOf(postEditTool)).toBe("POST_EDIT_BODY")
       }),
     ),
   )
@@ -223,11 +226,8 @@ describe("rebuild microcompact", () => {
     ),
   )
 
-  // C1 regression: boundaryCreatedAt undefined + boundary id present in DB.
-  // Helper must look up the boundary message's time.created instead of
-  // falling back to 0 (which would clear every compactable tool result).
   it.live(
-    "boundaryCreatedAt undefined: looks up boundary time from DB and clears only post-boundary",
+    "boundaryCreatedAt undefined still preserves every tool result",
     provideTmpdirInstance(() =>
       Effect.gen(function* () {
         const ssn = yield* SessionNs.Service
@@ -247,8 +247,6 @@ describe("rebuild microcompact", () => {
           seedAssistantWithTool(info.id, t0 + 1000, "read", "POST_BODY"),
         )
 
-        // boundaryCreatedAt INTENTIONALLY OMITTED — exercises the fallback
-        // path that should look up pre.msg.id in allMsgs and use its time.
         const inserted = yield* cp.insertRebuildBoundary({
           sessionID: info.id,
           boundary: pre.msg.id,
@@ -263,10 +261,8 @@ describe("rebuild microcompact", () => {
         const compactedOf = (p?: MessageV2.Part) =>
           p && p.type === "tool" && p.state.status === "completed" ? p.state.time.compacted : undefined
 
-        // Pre-boundary: NOT cleared (lookup found pre.msg's time correctly).
         expect(compactedOf(findTool(pre.msg.id))).toBeUndefined()
-        // Post-boundary: cleared.
-        expect(compactedOf(findTool(post.msg.id))).toBeGreaterThan(0)
+        expect(compactedOf(findTool(post.msg.id))).toBeUndefined()
       }),
     ),
   )

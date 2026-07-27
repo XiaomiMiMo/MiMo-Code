@@ -3,7 +3,7 @@ import { Flag } from "@/flag/flag"
 import z from "zod"
 import { Provider } from "../provider"
 import { ModelID, ProviderID } from "../provider/schema"
-import { generateObject, streamObject, type ModelMessage } from "ai"
+import { generateObject, type ModelMessage } from "ai"
 import { Instance } from "../project/instance"
 import { Truncate } from "../tool"
 import { Auth } from "../auth"
@@ -584,6 +584,7 @@ export const layer = Layer.effect(
             },
           },
           temperature: 0.3,
+          maxRetries: 0,
           messages: [
             ...(isOpenaiOauth
               ? []
@@ -607,20 +608,15 @@ export const layer = Layer.effect(
         } satisfies Parameters<typeof generateObject>[0]
 
         if (isOpenaiOauth) {
-          return yield* Effect.promise(async () => {
-            const result = streamObject({
+          return yield* Effect.promise(() =>
+            generateObject({
               ...params,
               providerOptions: ProviderTransform.providerOptions(resolved, {
                 instructions: system.join("\n"),
                 store: false,
               }),
-              onError: () => {},
-            })
-            for await (const part of result.fullStream) {
-              if (part.type === "error") throw part.error
-            }
-            return result.object
-          })
+            }).then((result) => result.object),
+          )
         }
 
         return yield* Effect.promise(() => generateObject(params).then((r) => r.object))

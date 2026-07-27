@@ -330,6 +330,46 @@ function flow(item: Sse) {
   return out
 }
 
+function chat(item: Sse, model: string) {
+  let content = ""
+  let reasoning = ""
+  let usage: Usage | undefined
+  const calls: Array<{ id: string; type: "function"; function: { name: string; arguments: string } }> = []
+  for (const part of flow(item)) {
+    if (part.type === "text") content += part.text
+    if (part.type === "reason") reasoning += part.text
+    if (part.type === "usage") usage = part.usage
+    if (part.type === "tool-start") {
+      calls.push({ id: part.id, type: "function", function: { name: part.name, arguments: "" } })
+    }
+    if (part.type === "tool-args" && calls.length > 0) calls[calls.length - 1].function.arguments += part.text
+  }
+  const finish =
+    [...item.head, ...item.tail]
+      .map(choices)
+      .findLast((choice) => choice && "finish_reason" in choice && typeof choice.finish_reason === "string")
+      ?.finish_reason ?? "stop"
+  return HttpServerResponse.jsonUnsafe({
+    id: "chatcmpl-test",
+    object: "chat.completion",
+    created: 0,
+    model,
+    choices: [
+      {
+        index: 0,
+        message: {
+          role: "assistant",
+          content: content || null,
+          ...(reasoning ? { reasoning_content: reasoning } : {}),
+          ...(calls.length > 0 ? { tool_calls: calls } : {}),
+        },
+        finish_reason: finish,
+      },
+    ],
+    usage: tokens(usage) ?? { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 },
+  })
+}
+
 function responses(item: Sse, model: string) {
   let seq = 1
   let msg: string | undefined
@@ -687,11 +727,13 @@ export class TestLLMServer extends Context.Service<TestLLMServer, TestLLMServer.
       const handle = Effect.fn("TestLLMServer.handle")(function* (mode: "chat" | "responses") {
         const req = yield* HttpServerRequest.HttpServerRequest
         const body = yield* req.json.pipe(Effect.orElseSucceed(() => ({})))
+        const streaming = typeof body === "object" && body !== null && "stream" in body && body.stream === true
         const current = hit(req.originalUrl, body)
         if (isTitleRequest(body)) {
           hits = [...hits, current]
           yield* notify()
           const auto: Sse = { type: "sse", head: [role()], tail: [textLine("E2E Title"), finishLine("stop")] }
+          if (mode === "chat" && !streaming) return chat(auto, modelFrom(body))
           if (mode === "responses") return send(responses(auto, modelFrom(body)))
           return send(auto)
         }
@@ -700,6 +742,7 @@ export class TestLLMServer extends Context.Service<TestLLMServer, TestLLMServer.
           hits = [...hits, current]
           yield* notify()
           const auto: Sse = { type: "sse", head: [role()], tail: [textLine("ok"), finishLine("stop")] }
+          if (mode === "chat" && !streaming) return chat(auto, modelFrom(body))
           if (mode === "responses") return send(responses(auto, modelFrom(body)))
           return send(auto)
         }
@@ -709,6 +752,9 @@ export class TestLLMServer extends Context.Service<TestLLMServer, TestLLMServer.
         if (mode === "responses") return send(responses(next, modelFrom(body)))
         if (next.reset) {
           return yield* reset(next)
+        }
+        if (!streaming && !next.wait && !next.hang && !next.releaseDeferred && !next.error) {
+          return chat(next, modelFrom(body))
         }
         return send(next)
       })

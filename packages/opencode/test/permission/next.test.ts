@@ -1,4 +1,6 @@
 import { afterEach, test, expect } from "bun:test"
+import { enforcePermissions } from "./enforce"
+enforcePermissions()
 import os from "os"
 import { Cause, Effect, Exit, Fiber, Layer } from "effect"
 import { Bus } from "../../src/bus"

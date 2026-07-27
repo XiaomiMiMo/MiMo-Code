@@ -1,4 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test"
+import { enforcePermissions } from "./enforce"
+enforcePermissions()
 import { forwardRef } from "../../src/permission/permission-forward-ref"
 import { PermissionGrantTable } from "../../src/permission/permission.sql"
 import { Database, eq } from "../../src/storage"

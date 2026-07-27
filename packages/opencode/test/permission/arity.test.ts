@@ -1,4 +1,6 @@
 import { test, expect } from "bun:test"
+import { enforcePermissions } from "./enforce"
+enforcePermissions()
 import { BashArity } from "../../src/permission/arity"
 
 test("arity 1 - unknown commands default to first token", () => {

@@ -11,7 +11,6 @@ import { SessionProcessor } from "./processor"
 import { Agent } from "@/agent/agent"
 import { Plugin } from "@/plugin"
 import { Config } from "@/config"
-import { NotFoundError } from "@/storage"
 import { ModelID, ProviderID } from "@/provider/schema"
 import { Effect, Layer, Context } from "effect"
 import { InstanceState } from "@/effect"
@@ -37,7 +36,6 @@ export const Event = {
 
 export const PRUNE_MINIMUM = 20_000
 export const PRUNE_PROTECT = 40_000
-const PRUNE_PROTECTED_TOOLS = ["skill"]
 const DEFAULT_TAIL_TURNS = 2
 const MIN_PRESERVE_RECENT_TOKENS = 2_000
 const MAX_PRESERVE_RECENT_TOKENS = 8_000
@@ -175,59 +173,14 @@ export const layer: Layer.Layer<
       }
     })
 
-    // goes backwards through parts until there are PRUNE_PROTECT tokens worth of tool
-    // calls, then erases output of older tool calls to free context space.
-    // Scoped to (sessionID, agentID): only inspects messages belonging to the
-    // given actor — main-agent messages stay untouched when agentID is set.
+    // Kept as a compatibility entry point, but intentionally append-only:
+    // compaction may add a boundary and summary, never rewrite historical parts.
     const prune = Effect.fn("SessionCompaction.prune")(function* (input: {
       sessionID: SessionID
       agentID?: string
     }) {
-      const cfg = yield* config.get()
-      if (!cfg.compaction?.prune) return
-      log.info("pruning", { agentID: input.agentID ?? "main" })
-
-      const msgs = yield* MessageV2.filterCompactedEffect(input.sessionID, { agentID: input.agentID }).pipe(
-        Effect.catchIf(NotFoundError.isInstance, () => Effect.succeed(undefined)),
-      )
-      if (!msgs) return
-
-      let total = 0
-      let pruned = 0
-      const toPrune: MessageV2.ToolPart[] = []
-      let turns = 0
-
-      loop: for (let msgIndex = msgs.length - 1; msgIndex >= 0; msgIndex--) {
-        const msg = msgs[msgIndex]
-        if (msg.info.role === "user") turns++
-        if (turns < 2) continue
-        if (msg.info.role === "assistant" && msg.info.summary) break loop
-        for (let partIndex = msg.parts.length - 1; partIndex >= 0; partIndex--) {
-          const part = msg.parts[partIndex]
-          if (part.type === "tool")
-            if (part.state.status === "completed") {
-              if (PRUNE_PROTECTED_TOOLS.includes(part.tool)) continue
-              if (part.state.time.compacted) break loop
-              const estimate = Token.estimate(part.state.output)
-              total += estimate
-              if (total > PRUNE_PROTECT) {
-                pruned += estimate
-                toPrune.push(part)
-              }
-            }
-        }
-      }
-
-      log.info("found", { pruned, total })
-      if (pruned > PRUNE_MINIMUM) {
-        for (const part of toPrune) {
-          if (part.state.status === "completed") {
-            part.state.time.compacted = Date.now()
-            yield* session.updatePart(part)
-          }
-        }
-        log.info("pruned", { count: toPrune.length })
-      }
+      void input
+      return
     })
 
     const processCompaction = Effect.fn("SessionCompaction.process")(function* (input: {

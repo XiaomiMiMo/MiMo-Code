@@ -233,32 +233,17 @@ afterAll(() => {
 })
 
 function createChatStream(text: string) {
-  const payload =
-    [
-      `data: ${JSON.stringify({
-        id: "chatcmpl-1",
-        object: "chat.completion.chunk",
-        choices: [{ delta: { role: "assistant" } }],
-      })}`,
-      `data: ${JSON.stringify({
-        id: "chatcmpl-1",
-        object: "chat.completion.chunk",
-        choices: [{ delta: { content: text } }],
-      })}`,
-      `data: ${JSON.stringify({
-        id: "chatcmpl-1",
-        object: "chat.completion.chunk",
-        choices: [{ delta: {}, finish_reason: "stop" }],
-      })}`,
-      "data: [DONE]",
-    ].join("\n\n") + "\n\n"
-
-  const encoder = new TextEncoder()
-  return new ReadableStream<Uint8Array>({
-    start(controller) {
-      controller.enqueue(encoder.encode(payload))
-      controller.close()
-    },
+  return JSON.stringify({
+    id: "chatcmpl-1",
+    object: "chat.completion",
+    created: 0,
+    model: "stub",
+    choices: [{
+      index: 0,
+      message: { role: "assistant", content: text },
+      finish_reason: "stop",
+    }],
+    usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
   })
 }
 
@@ -292,6 +277,72 @@ function createEventStream(chunks: unknown[], includeDone = false) {
 }
 
 function createEventResponse(chunks: unknown[], includeDone = false) {
+  const objects = chunks.filter((chunk): chunk is Record<string, unknown> => !!chunk && typeof chunk === "object")
+  if (objects.some((chunk) => chunk.type === "response.created")) {
+    const created = objects.find((chunk) => chunk.type === "response.created")?.response as
+      | { id?: string; created_at?: number; model?: string; service_tier?: string | null }
+      | undefined
+    const completed = objects.find((chunk) => chunk.type === "response.completed")?.response as
+      | {
+          incomplete_details?: { reason: string } | null
+          usage?: {
+            input_tokens: number
+            input_tokens_details?: { cached_tokens: number | null } | null
+            output_tokens: number
+            output_tokens_details?: { reasoning_tokens: number | null } | null
+          }
+          service_tier?: string | null
+        }
+      | undefined
+    const text = objects
+      .filter((chunk) => chunk.type === "response.output_text.delta" && typeof chunk.delta === "string")
+      .map((chunk) => chunk.delta)
+      .join("")
+    const item = objects.find((chunk) => chunk.type === "response.output_text.delta")
+    return Response.json({
+      id: created?.id,
+      created_at: created?.created_at,
+      model: created?.model,
+      error: null,
+      output: text
+        ? [{
+            type: "message",
+            role: "assistant",
+            id: typeof item?.item_id === "string" ? item.item_id : "item-1",
+            content: [{ type: "output_text", text, annotations: [], logprobs: null }],
+          }]
+        : [],
+      service_tier: completed?.service_tier ?? created?.service_tier,
+      incomplete_details: completed?.incomplete_details ?? null,
+      usage: completed?.usage,
+    })
+  }
+  if (objects.some((chunk) => chunk.type === "message_start")) {
+    const start = objects.find((chunk) => chunk.type === "message_start")?.message as
+      | { id?: string; model?: string; usage?: Record<string, number | null> }
+      | undefined
+    const delta = objects.find((chunk) => chunk.type === "message_delta") as
+      | { delta?: { stop_reason?: string | null; stop_sequence?: string | null }; usage?: Record<string, number | null> }
+      | undefined
+    const text = objects
+      .filter((chunk) => chunk.type === "content_block_delta")
+      .map((chunk) => chunk.delta)
+      .filter((value): value is { type: "text_delta"; text: string } =>
+        !!value && typeof value === "object" && "type" in value && value.type === "text_delta" && "text" in value && typeof value.text === "string"
+      )
+      .map((value) => value.text)
+      .join("")
+    return Response.json({
+      type: "message",
+      id: start?.id ?? null,
+      model: start?.model ?? null,
+      content: text ? [{ type: "text", text }] : [],
+      stop_reason: delta?.delta?.stop_reason ?? null,
+      stop_sequence: delta?.delta?.stop_sequence ?? null,
+      usage: { ...start?.usage, ...delta?.usage },
+    })
+  }
+  if (objects.some((chunk) => Array.isArray(chunk.candidates))) return Response.json(objects[0])
   return new Response(createEventStream(chunks, includeDone), {
     status: 200,
     headers: { "Content-Type": "text/event-stream" },
@@ -314,7 +365,7 @@ describe("session.llm.stream", () => {
       "/chat/completions",
       new Response(createChatStream("Hello"), {
         status: 200,
-        headers: { "Content-Type": "text/event-stream" },
+        headers: { "Content-Type": "application/json" },
       }),
     )
 
@@ -383,7 +434,7 @@ describe("session.llm.stream", () => {
         expect(body.model).toBe(resolved.api.id)
         expect(body.temperature).toBe(0.4)
         expect(body.top_p).toBe(0.8)
-        expect(body.stream).toBe(true)
+        expect(body.stream).toBeUndefined()
 
         const maxTokens = (body.max_tokens as number | undefined) ?? (body.max_output_tokens as number | undefined)
         const expectedMaxTokens = ProviderTransform.maxOutputTokens(resolved)
@@ -491,7 +542,7 @@ describe("session.llm.stream", () => {
       "/chat/completions",
       new Response(createChatStream("Hello"), {
         status: 200,
-        headers: { "Content-Type": "text/event-stream" },
+        headers: { "Content-Type": "application/json" },
       }),
     )
 
@@ -666,7 +717,7 @@ describe("session.llm.stream", () => {
 
         expect(capture.url.pathname.endsWith("/responses")).toBe(true)
         expect(body.model).toBe(resolved.api.id)
-        expect(body.stream).toBe(true)
+        expect(body.stream).toBeUndefined()
         expect((body.reasoning as { effort?: string } | undefined)?.effort).toBe("high")
 
         const maxTokens = body.max_output_tokens as number | undefined
@@ -844,7 +895,7 @@ describe("session.llm.stream", () => {
           model: { providerID: ProviderID.openai, modelID: resolved.id },
         } satisfies MessageV2.User
         const started = Date.now()
-        const events = await llm.runPromise((svc) =>
+        const result = llm.runPromise((svc) =>
           svc
             .stream({
               user,
@@ -854,13 +905,12 @@ describe("session.llm.stream", () => {
               system: ["You are a helpful assistant."],
               messages: [{ role: "user", content: "Hello" }],
               tools: {},
-              retries: 0,
             })
             .pipe(Stream.runCollect),
         )
 
+        await expect(result).rejects.toThrow("Response header timed out")
         expect(Date.now() - started).toBeLessThan(400)
-        expect(Array.from(events).some((event) => event.type === "error")).toBe(true)
         expect((await request.promise).url.pathname.endsWith("/responses")).toBe(true)
       },
     })
@@ -1391,7 +1441,7 @@ describe("session.llm.stream", () => {
     const modelID = "gemini-2.5-flash"
     const fixture = await loadFixture(providerID, modelID)
     const model = fixture.model
-    const pathSuffix = `/v1beta/models/${model.id}:streamGenerateContent`
+    const pathSuffix = `/v1beta/models/${model.id}:generateContent`
 
     const chunks = [
       {

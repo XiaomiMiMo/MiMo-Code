@@ -9,12 +9,15 @@
  * that mock.
  *
  * This module provides a ScriptedLLMServer that accepts a queue of scripted
- * SSE responses and records the full request body of every call.
+ * responses and records the full request body of every call. It mirrors the
+ * request mode: SSE for `stream: true`, JSON for non-stream requests.
  */
 
 export interface LLMCapture {
   /** Raw messages array from the OpenAI-compatible request body */
   messages: Array<{ role: string; content: unknown }>
+  /** Whether the caller requested SSE. */
+  stream: boolean
 }
 
 type ScriptedResponse = {
@@ -223,13 +226,84 @@ export function startScriptedLLMServer(responses: ScriptedResponse[]): ScriptedL
         return new Response("not found", { status: 404 })
       }
 
-      const body = (await req.json()) as { messages: Array<{ role: string; content: unknown }> }
-      captures.push({ messages: body.messages })
+      const body = (await req.json()) as {
+        messages: Array<{ role: string; content: unknown }>
+        stream?: boolean
+      }
+      captures.push({ messages: body.messages, stream: body.stream === true })
 
       const response = responses[Math.min(callIdx, responses.length - 1)]
       callIdx++
 
       const lines = response.lines
+      if (body.stream !== true && (response.status ?? 200) < 400) {
+        const deltas = lines.flatMap((line) => {
+          const payload = line.trim().replace(/^data:\s*/, "")
+          if (!payload || payload === "[DONE]") return []
+          return [JSON.parse(payload) as {
+            choices: Array<{
+              delta: {
+                role?: string
+                content?: string
+                reasoning_content?: string
+                tool_calls?: Array<{
+                  index: number
+                  id?: string
+                  type?: string
+                  function?: { name?: string; arguments?: string }
+                }>
+              }
+              finish_reason?: string
+            }>
+          }]
+        })
+        const toolCalls = new Map<
+          number,
+          { id: string; type: string; function: { name: string; arguments: string } }
+        >()
+        for (const item of deltas) {
+          for (const call of item.choices[0]?.delta.tool_calls ?? []) {
+            const current = toolCalls.get(call.index) ?? {
+              id: "",
+              type: "function",
+              function: { name: "", arguments: "" },
+            }
+            toolCalls.set(call.index, {
+              id: call.id ?? current.id,
+              type: call.type ?? current.type,
+              function: {
+                name: call.function?.name ?? current.function.name,
+                arguments: current.function.arguments + (call.function?.arguments ?? ""),
+              },
+            })
+          }
+        }
+        const content = deltas.map((item) => item.choices[0]?.delta.content ?? "").join("")
+        const reasoning = deltas.map((item) => item.choices[0]?.delta.reasoning_content ?? "").join("")
+        const finishReason = deltas.findLast((item) => item.choices[0]?.finish_reason)?.choices[0]?.finish_reason ?? "stop"
+        return Response.json(
+          {
+            id: "chatcmpl-stub",
+            object: "chat.completion",
+            created: 0,
+            model: "stub",
+            choices: [
+              {
+                index: 0,
+                message: {
+                  role: "assistant",
+                  content: content || null,
+                  ...(reasoning ? { reasoning_content: reasoning } : {}),
+                  ...(toolCalls.size > 0 ? { tool_calls: Array.from(toolCalls.values()) } : {}),
+                },
+                finish_reason: finishReason,
+              },
+            ],
+            usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+          },
+          { status: response.status ?? 200 },
+        )
+      }
       const encoder = new TextEncoder()
       const stream = new ReadableStream<Uint8Array>({
         start(ctrl) {

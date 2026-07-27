@@ -1,4 +1,3 @@
-import { Flag } from "@/flag/flag"
 import type { MessageV2 } from "../message-v2"
 
 /**
@@ -7,8 +6,8 @@ import type { MessageV2 } from "../message-v2"
  * Narrow purpose: some models (including frontier ones under certain workloads)
  * occasionally emit a tool call with a completely empty argument object —
  * i.e. they "called a tool" but passed nothing actionable. Re-looping just
- * repeats the same empty call. This guard detects that specific shape and
- * escalates via a soft→hard recovery ladder mirroring text-ngram-detection.
+ * repeats the same empty call. This guard detects that specific shape so the
+ * caller can terminate the turn after one request.
  *
  * IMPORTANT scope note: this guard does NOT try to catch "empty terminals"
  * (steps that emit no tool call and no text). An empty terminal is a natural
@@ -19,7 +18,7 @@ import type { MessageV2 } from "../message-v2"
  * already backstop any actual "model produces nothing" pathology.
  */
 
-export const EMPTY_STEP_MAX_RECOVERY = Flag.MIMOCODE_EMPTY_STEP_MAX_RECOVERY
+export const EMPTY_STEP_MAX_RECOVERY = 0
 
 /**
  * Is this assistant step an empty tool call?
@@ -82,18 +81,3 @@ function isEmptyValue(value: unknown): boolean {
   // number / boolean → the model passed a real value.
   return false
 }
-
-export const EMPTY_STEP_RECOVERY_REMIND = [
-  "<system-reminder>",
-  "Your previous tool call had empty or missing arguments — the tool needs real input to make progress.",
-  "Retry the call with COMPLETE arguments, or if the tool is not the right next step, answer the user in plain text.",
-  "</system-reminder>",
-].join("\n")
-
-export const EMPTY_STEP_RECOVERY_REPLAN = [
-  "<system-reminder>",
-  "Second empty tool call. Final chance before this turn is halted.",
-  "Either issue a tool call with fully-populated arguments, or give a plain-text reply.",
-  "Any further empty-argument tool call will terminate this turn.",
-  "</system-reminder>",
-].join("\n")

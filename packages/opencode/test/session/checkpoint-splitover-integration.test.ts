@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, test } from "bun:test"
+import { afterAll, afterEach, beforeAll, describe, expect, test } from "bun:test"
 import { Deferred, Effect, Stream } from "effect"
 import * as fs from "fs/promises"
 import { tmpdir } from "../fixture/fixture"
@@ -15,8 +15,17 @@ import { ProviderID, ModelID } from "../../src/provider/schema"
 import { startScriptedLLMServer, textStopResponse } from "../lib/scripted-llm-server"
 import * as CheckpointContext from "../../src/session/checkpoint-context"
 import { SessionCheckpoint } from "../../src/session/checkpoint"
+import { Flag } from "../../src/flag/flag"
 
 void Log.init({ print: false })
+
+const checkpointEnabled = Flag.MIMOCODE_ENABLE_CHECKPOINT
+beforeAll(() => {
+  Flag.MIMOCODE_ENABLE_CHECKPOINT = true
+})
+afterAll(() => {
+  Flag.MIMOCODE_ENABLE_CHECKPOINT = checkpointEnabled
+})
 
 afterEach(async () => {
   await Instance.disposeAll()

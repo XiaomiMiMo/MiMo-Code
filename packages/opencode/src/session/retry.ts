@@ -36,14 +36,8 @@ const SSE_TIMEOUT_MESSAGE = "SSE read timed out"
 const RETRYABLE_HTTP_STATUS = new Set([429, 500, 502, 503, 504, 529])
 
 /**
- * Single source of truth for "is this transient and retryable?".
- *
- * Used by:
- * - `retryable()` below (processor-level Effect.retry policy via SessionRetry.policy)
- * - `isTransientCapacityError()` in llm.ts (LLM-internal retry around streamText)
- *
- * Both call sites previously had divergent logic — this hung sessions on
- * SSE timeouts that one path retried but the other dropped. See Spec ③.
+ * Shared error classification for the exported legacy helpers below.
+ * The LLM execution path does not install a retry policy.
  */
 export function isRetryableTransientError(error: unknown): boolean {
   if (!(error instanceof Error)) return false

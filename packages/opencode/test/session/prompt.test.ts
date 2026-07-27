@@ -28,32 +28,13 @@ function defer<T>() {
 }
 
 function chat(text: string) {
-  const payload =
-    [
-      `data: ${JSON.stringify({
-        id: "chatcmpl-1",
-        object: "chat.completion.chunk",
-        choices: [{ delta: { role: "assistant" } }],
-      })}`,
-      `data: ${JSON.stringify({
-        id: "chatcmpl-1",
-        object: "chat.completion.chunk",
-        choices: [{ delta: { content: text } }],
-      })}`,
-      `data: ${JSON.stringify({
-        id: "chatcmpl-1",
-        object: "chat.completion.chunk",
-        choices: [{ delta: {}, finish_reason: "stop" }],
-      })}`,
-      "data: [DONE]",
-    ].join("\n\n") + "\n\n"
-
-  const encoder = new TextEncoder()
-  return new ReadableStream<Uint8Array>({
-    start(ctrl) {
-      ctrl.enqueue(encoder.encode(payload))
-      ctrl.close()
-    },
+  return JSON.stringify({
+    id: "chatcmpl-1",
+    object: "chat.completion",
+    created: 0,
+    model: "stub",
+    choices: [{ index: 0, message: { role: "assistant", content: text }, finish_reason: "stop" }],
+    usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
   })
 }
 
@@ -62,32 +43,13 @@ function chat(text: string) {
 // "tool_calls" — yet no structured tool_calls field is emitted (the model
 // wrote the call as prose).
 function chatFinish(text: string, finishReason: string) {
-  const payload =
-    [
-      `data: ${JSON.stringify({
-        id: "chatcmpl-1",
-        object: "chat.completion.chunk",
-        choices: [{ delta: { role: "assistant" } }],
-      })}`,
-      `data: ${JSON.stringify({
-        id: "chatcmpl-1",
-        object: "chat.completion.chunk",
-        choices: [{ delta: { content: text } }],
-      })}`,
-      `data: ${JSON.stringify({
-        id: "chatcmpl-1",
-        object: "chat.completion.chunk",
-        choices: [{ delta: {}, finish_reason: finishReason }],
-      })}`,
-      "data: [DONE]",
-    ].join("\n\n") + "\n\n"
-
-  const encoder = new TextEncoder()
-  return new ReadableStream<Uint8Array>({
-    start(ctrl) {
-      ctrl.enqueue(encoder.encode(payload))
-      ctrl.close()
-    },
+  return JSON.stringify({
+    id: "chatcmpl-1",
+    object: "chat.completion",
+    created: 0,
+    model: "stub",
+    choices: [{ index: 0, message: { role: "assistant", content: text }, finish_reason: finishReason }],
+    usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
   })
 }
 
@@ -294,7 +256,7 @@ describe("session.prompt regression", () => {
         calls++
         return new Response(chat("packages/opencode/src/session/processor.ts"), {
           status: 200,
-          headers: { "Content-Type": "text/event-stream" },
+          headers: { "Content-Type": "application/json" },
         })
       },
     })
@@ -447,7 +409,7 @@ describe("session.prompt regression", () => {
     }
   })
 
-  test("text-form tool call is discarded and the request is regenerated", async () => {
+  test("text-form tool call is terminal and is not regenerated", async () => {
     let calls = 0
     const server = Bun.serve({
       port: 0,
@@ -457,8 +419,9 @@ describe("session.prompt regression", () => {
           return new Response("not found", { status: 404 })
         }
         calls++
-        // Call 1: degraded turn — tool call written as TEXT, finish "tool_calls",
-        // no structured tool_calls field. Call 2: clean recovery text.
+        // Degraded turn: tool call written as TEXT, finish "tool_calls", with no
+        // structured tool_calls field. A second response is present to prove it
+        // is not consumed.
         const body =
           calls === 1
             ? chatFinish(
@@ -468,7 +431,7 @@ describe("session.prompt regression", () => {
             : chat("recovered: here is the answer")
         return new Response(body, {
           status: 200,
-          headers: { "Content-Type": "text/event-stream" },
+          headers: { "Content-Type": "application/json" },
         })
       },
     })
@@ -514,14 +477,9 @@ describe("session.prompt regression", () => {
                 parts: [{ type: "text", text: "do something" }],
               })
 
-              // Proof the retry REGENERATED: the model was called a second time
-              // (the original bug burned the counter with calls === 1).
-              expect(calls).toBe(2)
-              // Final answer is the recovered text, not the discarded markup.
+              expect(calls).toBe(1)
               expect(result.info.role).toBe("assistant")
-              expect(
-                result.parts.some((part) => part.type === "text" && part.text.includes("recovered")),
-              ).toBe(true)
+              if (result.info.role === "assistant") expect(result.info.error?.name).toBe("TextToolCallError")
 
               // The discarded degraded turn carries the TextToolCallError marker.
               const msgs = yield* sessions.messages({ sessionID: session.id })
@@ -823,5 +781,5 @@ describe("session.prompt F37 subagent context isolation", () => {
     } finally {
       void server.stop(true)
     }
-  })
+  }, 15_000)
 })

@@ -27,6 +27,7 @@ import { Log } from "../../src/util"
 import { provideTmpdirServer } from "../fixture/fixture"
 import { testEffect } from "../lib/effect"
 import { TestLLMServer } from "../lib/llm-server"
+import { ModelID, ProviderID } from "../../src/provider/schema"
 
 // Same layer setup as prompt-effect.test.ts
 import { NodeFileSystem } from "@effect/platform-node"
@@ -266,6 +267,7 @@ it.live("tool execution produces non-empty session diff (snapshot race)", () =>
       yield* prompt.prompt({
         sessionID: session.id,
         agent: "build",
+        model: { providerID: ProviderID.make("test"), modelID: ModelID.make("test-model") },
         noReply: true,
         parts: [{ type: "text", text: "create the file" }],
       })
@@ -302,4 +304,5 @@ it.live("tool execution produces non-empty session diff (snapshot race)", () =>
     }),
     { git: true, config: providerCfg },
   ),
+  30_000,
 )

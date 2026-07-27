@@ -121,41 +121,22 @@ describe("text loop detection integration logic", () => {
     expect(triggered).toBe(false)
   })
 
-  test("recovery clears buffer and resets detection window", () => {
+  test("clearing the buffer resets the detection window", () => {
     const buffer: string[] = []
-    let recoveryAttempts = 0
     const repeatedText = "The user wants me to create a ChangeLog file."
 
-    // First 3 identical → trigger #1
     for (let i = 0; i < 3; i++) {
       buffer.push(normalizeForLoopDetection(repeatedText))
     }
     expect(detectTextLoop(buffer, TEXT_LOOP_TRIGGER_COUNT)).toBe(true)
-    recoveryAttempts++
-    buffer.length = 0 // clear on recovery
-
-    // After recovery, buffer is empty — next identical doesn't trigger yet
-    buffer.push(normalizeForLoopDetection(repeatedText))
-    expect(detectTextLoop(buffer, TEXT_LOOP_TRIGGER_COUNT)).toBe(false)
-
-    // Fill up again for second trigger
-    buffer.push(normalizeForLoopDetection(repeatedText))
-    buffer.push(normalizeForLoopDetection(repeatedText))
-    expect(detectTextLoop(buffer, TEXT_LOOP_TRIGGER_COUNT)).toBe(true)
-    recoveryAttempts++
     buffer.length = 0
 
-    // Third trigger would exceed max
-    for (let i = 0; i < 3; i++) {
-      buffer.push(normalizeForLoopDetection(repeatedText))
-    }
-    expect(detectTextLoop(buffer, TEXT_LOOP_TRIGGER_COUNT)).toBe(true)
-    expect(recoveryAttempts >= TEXT_LOOP_MAX_RECOVERY).toBe(true) // should terminate
+    buffer.push(normalizeForLoopDetection(repeatedText))
+    expect(detectTextLoop(buffer, TEXT_LOOP_TRIGGER_COUNT)).toBe(false)
   })
 
-  test("recovery that succeeds does not escalate", () => {
+  test("different outputs do not trigger after a buffer reset", () => {
     const buffer: string[] = []
-    let recoveryAttempts = 0
     const repeatedText = "I am stuck in a loop"
     const differentText = "OK I will try something else"
 
@@ -164,22 +145,17 @@ describe("text loop detection integration logic", () => {
       buffer.push(normalizeForLoopDetection(repeatedText))
     }
     expect(detectTextLoop(buffer, TEXT_LOOP_TRIGGER_COUNT)).toBe(true)
-    recoveryAttempts++
     buffer.length = 0
 
-    // After recovery, model responds differently
     buffer.push(normalizeForLoopDetection(differentText))
     buffer.push(normalizeForLoopDetection("Now doing something useful"))
     buffer.push(normalizeForLoopDetection("Almost done"))
     expect(detectTextLoop(buffer, TEXT_LOOP_TRIGGER_COUNT)).toBe(false)
-
-    // Recovery succeeded — counter stays at 1, no escalation
-    expect(recoveryAttempts).toBe(1)
   })
 
   test("constants have expected values", () => {
     expect(TEXT_LOOP_BUFFER_SIZE).toBe(5)
     expect(TEXT_LOOP_TRIGGER_COUNT).toBe(3)
-    expect(TEXT_LOOP_MAX_RECOVERY).toBe(2)
+    expect(TEXT_LOOP_MAX_RECOVERY).toBe(0)
   })
 })

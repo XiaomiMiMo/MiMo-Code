@@ -8,7 +8,7 @@ import { Log, Token } from "../util"
 import { SessionRevert } from "./revert"
 import * as Session from "./session"
 import { Agent } from "../agent/agent"
-import { decideAskRouting, resolveInvalidOutputPolicy, SYSTEM_SPAWNED_AGENT_TYPES } from "@/agent/config"
+import { decideAskRouting, SYSTEM_SPAWNED_AGENT_TYPES } from "@/agent/config"
 import { renderActorNotification } from "@/inbox/render"
 import { parseReturnHeader } from "@/actor/return-header"
 import { Provider } from "../provider"
@@ -42,25 +42,11 @@ import BUILD_SWITCH from "../session/prompt/build-switch.txt"
 import MAX_STEPS from "../session/prompt/max-steps.txt"
 import PROMPT_COMPOSE from "../session/prompt/compose.txt"
 import {
-  RECOVERY_PROMPT_MILD,
-  RECOVERY_PROMPT_STRONG,
   TEXT_LOOP_BUFFER_SIZE,
   TEXT_LOOP_TRIGGER_COUNT,
-  TEXT_LOOP_MAX_RECOVERY,
   normalizeForLoopDetection,
   detectTextLoop,
 } from "../session/prompt/text-loop-recovery"
-import {
-  TEXT_NGRAM_MAX_RECOVERY,
-  TEXT_NGRAM_RECOVERY_REMIND,
-  TEXT_NGRAM_RECOVERY_REPLAN,
-} from "../session/prompt/text-ngram-detection"
-import {
-  EMPTY_STEP_MAX_RECOVERY,
-  EMPTY_STEP_RECOVERY_REMIND,
-  EMPTY_STEP_RECOVERY_REPLAN,
-  isEmptyStep,
-} from "../session/prompt/empty-step-detection"
 import { builtinSkillRoot, matchDocumentSkills } from "@/skill/builtin/extract"
 import { ToolRegistry } from "../tool"
 import { MCP } from "../mcp"
@@ -254,10 +240,6 @@ const STRUCTURED_OUTPUT_SYSTEM_PROMPT = `IMPORTANT: The user has requested struc
 const PREDICT_SYSTEM = `You predict the single most likely next message a user will send to a coding assistant, based on the conversation so far. Output only that next message as one short, natural first-person request (what the user would type). No preamble, no quotes, no explanation, no markdown. Keep it under 100 characters.`
 
 const PREDICT_NUDGE = `Based on the conversation above, write the user's most likely next message:`
-
-const OUTPUT_LENGTH_CONTINUATION_LIMIT = Flag.MIMOCODE_OUTPUT_LENGTH_CONTINUATION_LIMIT
-const INVALID_OUTPUT_CONTINUATION_LIMIT = Flag.MIMOCODE_INVALID_OUTPUT_CONTINUATION_LIMIT
-const TEXT_TOOL_CALL_RETRY_LIMIT = Flag.MIMOCODE_TEXT_TOOL_CALL_RETRY_LIMIT
 
 const log = Log.create({ service: "session.prompt" })
 
@@ -484,6 +466,7 @@ export const layer = Layer.effect(
         return
       }
 
+      if (!Flag.MIMOCODE_ENABLE_TITLE_GENERATION) return
       if (!Session.isDefaultTitle(input.session.title)) return
 
       const real = (m: MessageV2.WithParts) =>
@@ -520,7 +503,6 @@ export const layer = Layer.effect(
           tools: {},
           model: mdl,
           sessionID: input.session.id,
-          retries: 2,
           messages: [{ role: "user", content: "Generate a title for this conversation:\n" }, ...msgs],
         })
         .pipe(
@@ -542,6 +524,7 @@ export const layer = Layer.effect(
     })
 
     const predict = Effect.fn("SessionPrompt.predict")(function* (input: { sessionID: SessionID }) {
+      if (!Flag.MIMOCODE_ENABLE_PREDICT_NEXT_PROMPT) return ""
       const cfg = yield* config.get()
       if (cfg.experimental?.predict_next_prompt === false) return ""
 
@@ -614,7 +597,7 @@ export const layer = Layer.effect(
             ...mdl.headers,
             "User-Agent": `mimocode/${InstallationVersion}`,
           },
-          maxRetries: 1,
+          maxRetries: 0,
         }),
       ).pipe(
         Effect.catchCause((cause) =>
@@ -2213,10 +2196,8 @@ NOTE: At any point in time through this workflow you should feel free to ask the
     ) {
       const msgs = yield* sessions.messages({ sessionID, agentID: "*" })
       const now = Date.now()
-      // 1 hour — must exceed Task 1's chunkMs (300s) plus Task 2's
-      // PERSISTENT_RETRY worst-case backoff (10 attempts × 5 min cap =
-      // 50 min) so a still-active in-flight request is never falsely
-      // swept while its retry chain is making progress.
+      // One hour remains a conservative guard for a genuinely long-running
+      // single request. Requests are never retried by the session loop.
       const ORPHAN_AGE_MS = 3_600_000
       for (const m of msgs) {
         if (m.info.role !== "assistant") continue
@@ -2312,32 +2293,8 @@ NOTE: At any point in time through this workflow you should feel free to ask the
         const session = yield* sessions.get(sessionID)
         let lastFinishedForPrune: MessageV2.Assistant | undefined
         let lastModelForPrune: Provider.Model | undefined
-        let outputLengthContinuations = 0
-        // Shared local counter for "model finished but produced nothing usable"
-        // (think-only / empty). T04's generic-invalid retries reuse this same
-        // counter — do not add a second one. Local to runLoop so a fresh user
-        // turn resets it (no cross-message pollution), same as outputLengthContinuations.
-        let invalidContinuations = 0
-        // structured-output 专用 retry：上限来自 lastUser.format.retryCount（默认 2），
-        // 与 invalidContinuations（generic invalid）分离，互不污染。局部于 runLoop，
-        // 新一轮用户 turn 自动归零。
-        let structuredRetries = 0
-        // Bounded retries for text-form tool calls (model wrote a tool call as
-        // prose text instead of a structured tool_use). Local to runLoop so each
-        // fresh user turn starts clean.
-        let textToolCallRetries = 0
-        // Consecutive empty/no-op tool-call steps in this turn. Counts steps
-        // where the model "called a tool" with empty/invalid input, or produced
-        // no valid tool part and no substantive output at all (see isEmptyStep).
-        // A single non-empty step resets it. Escalates soft (remind → replan)
-        // then hard-halts once it exceeds EMPTY_STEP_MAX_RECOVERY, mirroring the
-        // text-ngram ladder. Local to runLoop so a fresh user turn starts clean.
-        let emptyStepStreak = 0
-        // Set true when a guard hard-halts the turn (currently the empty-step
-        // guard). A hard halt is terminal: it must break out immediately and
-        // NOT be re-entered by the goalGate ReAct gate, which would
-        // otherwise inject a fresh user turn and re-drive a still-degraded model
-        // into the same loop.
+        // Context overflow with automatic compaction disabled is terminal and
+        // must not be re-entered by the goal gate.
         let hardHalt = false
         const resolvedAgentID = agentID ?? "main"
         // Tracks plugin-driven cancellation (session.pre OR any session.userQuery.pre)
@@ -2437,63 +2394,23 @@ NOTE: At any point in time through this workflow you should feel free to ask the
         let skipOverflowCheck = false
 
         const textLoopBuffer: string[] = []
-        let textLoopRecoveryAttempts = 0
-        let textNgramRecoveryAttempts = 0
-
-        // Contract (T05): on finish="length", inject a continuation nudge ONLY for
-        // plain text. If any non-providerExecuted client tool part exists we bail
-        // (return false) and let classify route the normal tool-observation re-loop.
-        // This guarantees "no output-length continuation when a tool is involved" —
-        // it does NOT guarantee a stream-time-truncated tool never executed, since
-        // the AI SDK runs tools mid-stream before the finish reason is known.
-        const autoContinueOutputLength = Effect.fn("SessionPrompt.autoContinueOutputLength")(function* (input: {
-          lastUser: MessageV2.User
+        // Output truncation is terminal for plain text. A client-side tool call
+        // still follows the normal tool-observation path.
+        const rejectOutputLength = Effect.fn("SessionPrompt.rejectOutputLength")(function* (input: {
           assistant: MessageV2.Assistant
         }) {
-          if (input.assistant.finish !== "length" || input.assistant.error || input.assistant.summary) return false
+          if (input.assistant.finish !== "length" || input.assistant.error || input.assistant.summary) return
           if (
             MessageV2.parts(input.assistant.id).some((part) => part.type === "tool" && !part.metadata?.providerExecuted)
           ) {
-            return false
+            return
           }
-          if (outputLengthContinuations >= OUTPUT_LENGTH_CONTINUATION_LIMIT) {
-            input.assistant.error = new MessageV2.OutputLengthError({}).toObject()
-            yield* sessions.updateMessage(input.assistant)
-            yield* bus.publish(Session.Event.Error, {
-              sessionID: input.assistant.sessionID,
-              error: input.assistant.error,
-            })
-            return false
-          }
-
-          outputLengthContinuations++
-          yield* slog.info("auto-continuing output length", { attempt: outputLengthContinuations })
-          const msg = yield* sessions.updateMessage({
-            id: MessageID.ascending(),
-            role: "user" as const,
-            sessionID: input.lastUser.sessionID,
-            agentID: input.lastUser.agentID,
-            agent: input.lastUser.agent,
-            model: input.lastUser.model,
-            tools: input.lastUser.tools,
-            format: input.lastUser.format,
-            time: { created: Date.now() },
+          input.assistant.error = new MessageV2.OutputLengthError({}).toObject()
+          yield* sessions.updateMessage(input.assistant)
+          yield* bus.publish(Session.Event.Error, {
+            sessionID: input.assistant.sessionID,
+            error: input.assistant.error,
           })
-          yield* sessions.updatePart({
-            id: PartID.ascending(),
-            messageID: msg.id,
-            sessionID: msg.sessionID,
-            type: "text",
-            synthetic: true,
-            text: [
-              "<system-reminder>",
-              "The previous assistant response hit the model output token limit before completing.",
-              "Continue the same task from the exact point where it stopped.",
-              "Do not restart, recap, or repeat prior reasoning. Keep reasoning concise, prefer concrete tool calls or final output, and only stop when the user's task is complete or genuinely blocked.",
-              "</system-reminder>",
-            ].join("\n"),
-          } satisfies MessageV2.TextPart)
-          return true
         })
 
 
@@ -2607,318 +2524,74 @@ NOTE: At any point in time through this workflow you should feel free to ask the
           return true
         })
 
-        // think-only (reasoning only) / empty (nothing at all) steps finish with
-        // a non-tool stop but carry no usable answer. Without intervention the loop
-        // breaks and hands the user an assistant with no final text. Nudge the model
-        // to produce a final answer or call a real tool; give up (write a terminal
-        // error) once the shared counter is exhausted so we never loop forever.
-        const autoContinueInvalidOutput = Effect.fn("SessionPrompt.autoContinueInvalidOutput")(function* (input: {
-          lastUser: MessageV2.User
+        // Think-only and empty responses are terminal invalid output.
+        const rejectInvalidOutput = Effect.fn("SessionPrompt.rejectInvalidOutput")(function* (input: {
           assistant: MessageV2.Assistant
           reason: string
         }) {
-          if (input.assistant.error || input.assistant.summary || input.assistant.structured !== undefined) return false
-          if (invalidContinuations >= INVALID_OUTPUT_CONTINUATION_LIMIT) {
-            input.assistant.error = new MessageV2.InvalidOutputError({ message: input.reason }).toObject()
-            yield* sessions.updateMessage(input.assistant)
-            yield* bus.publish(Session.Event.Error, {
-              sessionID: input.assistant.sessionID,
-              error: input.assistant.error,
-            })
-            return false
-          }
-
-          invalidContinuations++
-          yield* slog.info("auto-continuing invalid output", { attempt: invalidContinuations, reason: input.reason })
-          const policy = resolveInvalidOutputPolicy({
-            agentName: input.lastUser.agent,
-            agentID: input.lastUser.agentID,
+          if (input.assistant.error || input.assistant.summary || input.assistant.structured !== undefined) return
+          input.assistant.error = new MessageV2.InvalidOutputError({ message: input.reason }).toObject()
+          yield* sessions.updateMessage(input.assistant)
+          yield* bus.publish(Session.Event.Error, {
+            sessionID: input.assistant.sessionID,
+            error: input.assistant.error,
           })
-          const reminder =
-            policy === "checkpoint"
-              ? [
-                  "Your checkpoint writer turn ended without a completion signal.",
-                  "Do not answer or continue the parent session's task. Work only on the authorized checkpoint and memory paths already provided to you.",
-                  "If any authorized edits remain, finish them now. If they are complete, call no more tools and reply exactly CHECKPOINT_COMPLETE.",
-                ]
-              : policy === "actor"
-                ? [
-                    "Your previous response contained no usable result for the parent agent (it had only reasoning, or was empty).",
-                    "Provide a final result to the parent agent now, or call a valid tool to complete the delegated task.",
-                    "Do not respond with only reasoning/thinking.",
-                  ]
-                : [
-                    "Your previous response contained no usable answer (it had only reasoning, or was empty).",
-                    "Provide a final answer to the user now, or call a valid tool to make progress on the task.",
-                    "Do not respond with only reasoning/thinking.",
-                  ]
-          const msg = yield* sessions.updateMessage({
-            id: MessageID.ascending(),
-            role: "user" as const,
-            sessionID: input.lastUser.sessionID,
-            agentID: input.lastUser.agentID,
-            agent: input.lastUser.agent,
-            model: input.lastUser.model,
-            tools: input.lastUser.tools,
-            format: input.lastUser.format,
-            time: { created: Date.now() },
-          })
-          yield* sessions.updatePart({
-            id: PartID.ascending(),
-            messageID: msg.id,
-            sessionID: msg.sessionID,
-            type: "text",
-            synthetic: true,
-            text: ["<system-reminder>", ...reminder, "</system-reminder>"].join("\n"),
-          } satisfies MessageV2.TextPart)
-          return true
         })
 
-        // Text-form tool call recovery. The model serialized a tool call as prose
-        // text instead of a structured tool_use (a degraded state under large
-        // context). The bad assistant turn is DISCARDED from history by setting
-        // assistant.error (toModelMessages skips a message whose info.error is
-        // set, message-v2.ts), so it can neither strand the conversation on an
-        // assistant turn (provider prefill rejection) nor poison later context.
-        // We then retry the request (caller does `continue`, no new message). On
-        // exhaustion the error stays terminal. Returns true ⇒ continue; false ⇒ break.
-        const autoRetryTextToolCall = Effect.fn("SessionPrompt.autoRetryTextToolCall")(function* (input: {
-          lastUser: MessageV2.User
+        // A text-form tool call is terminal. Mark the assistant errored so it is
+        // excluded from future model history, then surface the failure without
+        // issuing another request.
+        const rejectTextToolCall = Effect.fn("SessionPrompt.rejectTextToolCall")(function* (input: {
           assistant: MessageV2.Assistant
         }) {
-          // Already discarded on a prior pass — let classify fall through to
-          // `failed` instead of re-detecting and burning another retry.
-          if (input.assistant.error) return false
-          // Discard the bad turn from request history: toModelMessages skips a
-          // message whose info.error is set, so it can neither strand the
-          // conversation on an assistant turn nor poison later context.
+          if (input.assistant.error) return
           input.assistant.error = new MessageV2.TextToolCallError({
             message: "Model emitted a tool call as text instead of a structured tool call.",
           }).toObject()
           yield* sessions.updateMessage(input.assistant)
-          if (textToolCallRetries >= TEXT_TOOL_CALL_RETRY_LIMIT) {
-            yield* bus.publish(Session.Event.Error, {
-              sessionID: input.assistant.sessionID,
-              error: input.assistant.error,
-            })
-            return false
-          }
-          textToolCallRetries++
-          yield* slog.info("retrying text-form tool call", { attempt: textToolCallRetries })
-          // Append a synthetic user turn so the discarded assistant becomes stale
-          // (classify staleness guard) AND the loop reaches generation — mirrors
-          // autoRetryStructuredOutput. Without this the loop re-enters, re-detects
-          // the same turn, and burns retries with zero model calls.
-          const msg = yield* sessions.updateMessage({
-            id: MessageID.ascending(),
-            role: "user" as const,
-            sessionID: input.lastUser.sessionID,
-            agentID: input.lastUser.agentID,
-            agent: input.lastUser.agent,
-            model: input.lastUser.model,
-            tools: input.lastUser.tools,
-            format: input.lastUser.format,
-            time: { created: Date.now() },
+          yield* bus.publish(Session.Event.Error, {
+            sessionID: input.assistant.sessionID,
+            error: input.assistant.error,
           })
-          yield* sessions.updatePart({
-            id: PartID.ascending(),
-            messageID: msg.id,
-            sessionID: msg.sessionID,
-            type: "text",
-            synthetic: true,
-            text: [
-              "<system-reminder>",
-              "Your previous response wrote a tool call as plain text instead of invoking the tool.",
-              "Re-issue it through the real tool channel — emit a structured tool call, not text.",
-              "Do not paste the tool call as text again.",
-              "</system-reminder>",
-            ].join("\n"),
-          } satisfies MessageV2.TextPart)
-          return true
         })
 
-        // json_schema mode but the model never produced structured output (plain
-        // text stop, empty, think-only, or any other non-tool terminal). Retry up
-        // to lastUser.format.retryCount with a repair nudge; on exhaustion write a
-        // StructuredOutputError carrying the *real* retry count. Separate from
-        // invalidContinuations: structured retries are bounded by the per-request
-        // retryCount, not the generic invalid-output limit.
-        const autoRetryStructuredOutput = Effect.fn("SessionPrompt.autoRetryStructuredOutput")(function* (input: {
-          lastUser: MessageV2.User
+        // Missing structured output is terminal even when a legacy caller sends
+        // a positive retryCount.
+        const rejectMissingStructuredOutput = Effect.fn("SessionPrompt.rejectMissingStructuredOutput")(function* (input: {
           assistant: MessageV2.Assistant
         }) {
-          if (input.assistant.error || input.assistant.summary || input.assistant.structured !== undefined) return false
-          const limit = input.lastUser.format?.type === "json_schema" ? input.lastUser.format.retryCount : 0
-          if (structuredRetries >= limit) {
-            input.assistant.error = new MessageV2.StructuredOutputError({
-              message: "Model did not produce structured output",
-              retries: structuredRetries,
-            }).toObject()
-            yield* sessions.updateMessage(input.assistant)
-            yield* bus.publish(Session.Event.Error, {
-              sessionID: input.assistant.sessionID,
-              error: input.assistant.error,
-            })
-            return false
-          }
-
-          structuredRetries++
-          yield* slog.info("retrying structured output", { attempt: structuredRetries })
-          const msg = yield* sessions.updateMessage({
-            id: MessageID.ascending(),
-            role: "user" as const,
-            sessionID: input.lastUser.sessionID,
-            agentID: input.lastUser.agentID,
-            agent: input.lastUser.agent,
-            model: input.lastUser.model,
-            tools: input.lastUser.tools,
-            // Must carry format so the next iteration re-registers the StructuredOutput tool.
-            format: input.lastUser.format,
-            time: { created: Date.now() },
+          if (input.assistant.error || input.assistant.summary || input.assistant.structured !== undefined) return
+          input.assistant.error = new MessageV2.StructuredOutputError({
+            message: "Model did not produce structured output",
+            retries: 0,
+          }).toObject()
+          yield* sessions.updateMessage(input.assistant)
+          yield* bus.publish(Session.Event.Error, {
+            sessionID: input.assistant.sessionID,
+            error: input.assistant.error,
           })
-          yield* sessions.updatePart({
-            id: PartID.ascending(),
-            messageID: msg.id,
-            sessionID: msg.sessionID,
-            type: "text",
-            synthetic: true,
-            text: [
-              "<system-reminder>",
-              "Your previous response did not produce valid structured output via the StructuredOutput tool",
-              "(it was plain text, empty, or only reasoning).",
-              "You MUST call the StructuredOutput tool now, passing JSON that matches the requested schema.",
-              "Do not reply with plain text and do not respond with only reasoning/thinking.",
-              "</system-reminder>",
-            ].join("\n"),
-          } satisfies MessageV2.TextPart)
-          return true
         })
 
-        // Sliding-window n-gram repetition recovery. Symmetric across main and
-        // fork branches: 1st hit injects REMIND, 2nd hit injects REPLAN, 3rd
-        // hit (>= TEXT_NGRAM_MAX_RECOVERY) writes an error and signals break.
-        const handleTextRepeat = Effect.fn("SessionPrompt.handleTextRepeat")(function* (input: {
-          lastUser: MessageV2.User
-        }) {
-          if (textNgramRecoveryAttempts >= TEXT_NGRAM_MAX_RECOVERY) {
-            yield* slog.info("text n-gram: max recovery exceeded, terminating")
-            yield* bus.publish(Session.Event.Error, {
-              sessionID,
-              error: new NamedError.Unknown({
-                message: `Text repetition detected: repeated n-grams after ${TEXT_NGRAM_MAX_RECOVERY} recovery attempts. Session terminated.`,
-              }).toObject(),
-            })
-            return false
-          }
-          const recoveryText =
-            textNgramRecoveryAttempts === 0 ? TEXT_NGRAM_RECOVERY_REMIND : TEXT_NGRAM_RECOVERY_REPLAN
-          const reentry = yield* sessions.updateMessage({
-            id: MessageID.ascending(),
-            role: "user" as const,
+        const rejectTextRepeat = Effect.fn("SessionPrompt.rejectTextRepeat")(function* () {
+          yield* slog.info("text n-gram detected, terminating")
+          yield* bus.publish(Session.Event.Error, {
             sessionID,
-            agentID: input.lastUser.agentID,
-            agent: input.lastUser.agent,
-            model: input.lastUser.model,
-            tools: input.lastUser.tools,
-            format: input.lastUser.format,
-            time: { created: Date.now() },
+            error: new NamedError.Unknown({
+              message: "Text repetition detected. Session terminated without retrying.",
+            }).toObject(),
           })
-          yield* sessions.updatePart({
-            id: PartID.ascending(),
-            messageID: reentry.id,
-            sessionID,
-            type: "text",
-            synthetic: true,
-            text: recoveryText,
-          } satisfies MessageV2.TextPart)
-          textNgramRecoveryAttempts++
-          yield* slog.info("text n-gram: recovery injected", { attempt: textNgramRecoveryAttempts })
-          return true
         })
 
-        // Empty/no-op tool-call loop guard. Symmetric across main and fork
-        // branches, mirroring handleTextRepeat's soft→hard ladder but keyed on
-        // *empty steps* (empty/invalid tool input, or a fully empty terminal)
-        // rather than repeated text n-grams — the gap TEXT_NGRAM and
-        // stepSignature both miss (an empty tool call has no text to match and
-        // is dropped by stepSignature's undefined path).
-        //
-        // Returns:
-        //   "none"     — the step was NOT empty; streak reset, caller continues
-        //                normal classification.
-        //   "continue" — empty step, still within the soft-nudge budget; a
-        //                remind/replan reminder was injected, caller should loop.
-        //   "halt"     — empty streak exceeded EMPTY_STEP_MAX_RECOVERY; a
-        //                terminal error was published, caller must break.
-        const handleEmptyStep = Effect.fn("SessionPrompt.handleEmptyStep")(function* (input: {
-          lastUser: MessageV2.User
-          assistant: MessageV2.Assistant
-        }) {
-          // Never mask a genuine terminal outcome as an "empty loop": an errored
-          // step, a content-filter/error finish, or an already-resolved
-          // structured/summary step must fall through to its own classifier
-          // handler (writeContentFilterError / writeModelError / final). Those
-          // are terminal safety/error events, not a spinning no-op.
-          if (
-            input.assistant.error ||
-            input.assistant.summary ||
-            input.assistant.structured !== undefined ||
-            input.assistant.finish === "content-filter" ||
-            input.assistant.finish === "error"
-          ) {
-            return "none" as const
-          }
-          const parts = MessageV2.parts(input.assistant.id)
-          if (!isEmptyStep(parts)) {
-            emptyStepStreak = 0
-            return "none" as const
-          }
-          emptyStepStreak++
-          if (emptyStepStreak > EMPTY_STEP_MAX_RECOVERY) {
-            yield* slog.info("empty step: max recovery exceeded, terminating", { streak: emptyStepStreak })
-            hardHalt = true
-            // Discard the empty turn from request history so it can neither
-            // strand the conversation on an assistant prefill nor poison later
-            // context (toModelMessages skips a message whose info.error is set).
-            if (!input.assistant.error) {
-              input.assistant.error = new NamedError.Unknown({
-                message: `Empty tool call loop detected: ${emptyStepStreak} consecutive empty/no-op steps after ${EMPTY_STEP_MAX_RECOVERY} recovery attempts. Session terminated.`,
-              }).toObject()
-              yield* sessions.updateMessage(input.assistant)
-            }
-            yield* bus.publish(Session.Event.Error, {
-              sessionID,
-              error: new NamedError.Unknown({
-                message: `Empty tool call loop detected: ${emptyStepStreak} consecutive empty/no-op steps after ${EMPTY_STEP_MAX_RECOVERY} recovery attempts. Session terminated.`,
-              }).toObject(),
-            })
-            return "halt" as const
-          }
-          const recoveryText =
-            emptyStepStreak === 1 ? EMPTY_STEP_RECOVERY_REMIND : EMPTY_STEP_RECOVERY_REPLAN
-          const reentry = yield* sessions.updateMessage({
-            id: MessageID.ascending(),
-            role: "user" as const,
-            sessionID,
-            agentID: input.lastUser.agentID,
-            agent: input.lastUser.agent,
-            model: input.lastUser.model,
-            tools: input.lastUser.tools,
-            format: input.lastUser.format,
-            time: { created: Date.now() },
-          })
-          yield* sessions.updatePart({
-            id: PartID.ascending(),
-            messageID: reentry.id,
-            sessionID,
-            type: "text",
-            synthetic: true,
-            text: recoveryText,
-          } satisfies MessageV2.TextPart)
-          yield* slog.info("empty step: recovery injected", { streak: emptyStepStreak })
-          return "continue" as const
+        const rejectContextOverflow = Effect.fn("SessionPrompt.rejectContextOverflow")(function* (
+          assistant: MessageV2.Assistant,
+        ) {
+          hardHalt = true
+          assistant.error = new MessageV2.ContextOverflowError({
+            message: "Context limit exceeded and automatic compaction is disabled.",
+          }).toObject()
+          assistant.finish = "error"
+          yield* sessions.updateMessage(assistant)
         })
-
 
         // content-filter is terminal on first occurrence: re-sending the same
         // turn would just get filtered again, so there is no nudge / counter.
@@ -3038,16 +2711,13 @@ NOTE: At any point in time through this workflow you should feel free to ask the
           const hasToolCalls =
             lastAssistantMsg?.parts.some((part) => part.type === "tool" && !part.metadata?.providerExecuted) ?? false
 
-          if (
-            lastAssistant?.finish === "length" &&
-            !hasToolCalls &&
-            lastUser.id < lastAssistant.id &&
-            (yield* autoContinueOutputLength({ lastUser, assistant: lastAssistant }))
-          ) {
-            continue
-          }
+          if (lastAssistant?.finish === "length" && !hasToolCalls && lastUser.id < lastAssistant.id)
+            yield* rejectOutputLength({ assistant: lastAssistant })
 
-          if (lastAssistant) {
+          // A reused actorID can have a completed assistant from an earlier
+          // workflow pass followed by a newly appended user message. Only the
+          // assistant that is newer than the current user can terminate this run.
+          if (lastAssistant && lastUser.id < lastAssistant.id) {
             const classification = classifyAssistantStep({
               phase: "existing-assistant",
               lastUser,
@@ -3065,13 +2735,13 @@ NOTE: At any point in time through this workflow you should feel free to ask the
               break
             }
             if (classification.type === "text-tool-call") {
-              if (yield* autoRetryTextToolCall({ lastUser, assistant: lastAssistant })) continue
+              yield* rejectTextToolCall({ assistant: lastAssistant })
               yield* slog.info("exiting loop", { classification: classification.type })
               break
             }
             if (classification.type === "think-only" || classification.type === "invalid") {
               const reason = classification.type === "invalid" ? classification.reason : "think-only"
-              if (yield* autoContinueInvalidOutput({ lastUser, assistant: lastAssistant, reason })) continue
+              yield* rejectInvalidOutput({ assistant: lastAssistant, reason })
               yield* slog.info("exiting loop", { classification: classification.type })
               break
             }
@@ -3606,15 +3276,10 @@ NOTE: At any point in time through this workflow you should feel free to ask the
                   ),
                 )
 
-              if (
-                result === "continue" &&
-                (yield* autoContinueOutputLength({ lastUser, assistant: handle.message }))
-              ) {
-                return "continue" as const
-              }
+              if (result === "continue") yield* rejectOutputLength({ assistant: handle.message })
 
               if (result === "text-repeat") {
-                if (yield* handleTextRepeat({ lastUser })) return "continue" as const
+                yield* rejectTextRepeat()
                 return "break" as const
               }
               if (result === "stop") return "break" as const
@@ -3625,14 +3290,6 @@ NOTE: At any point in time through this workflow you should feel free to ask the
                 yield* sessions.updateMessage(handle.message)
                 return "break" as const
               }
-
-              // Empty/no-op tool-call loop guard (fork branch). Intercept before
-              // classify would `continue` an empty tool-calls step: soft-nudge
-              // within budget, hard-halt once exceeded. A non-empty step returns
-              // "none" and falls through to normal classification.
-              const forkEmptyStep = yield* handleEmptyStep({ lastUser, assistant: handle.message })
-              if (forkEmptyStep === "halt") return "break" as const
-              if (forkEmptyStep === "continue") return "continue" as const
 
               const forkClassification = classifyAssistantStep({
                 phase: "after-process",
@@ -3650,12 +3307,11 @@ NOTE: At any point in time through this workflow you should feel free to ask the
                 return "break" as const
               }
               if (forkClassification.type === "text-tool-call") {
-                if (yield* autoRetryTextToolCall({ lastUser, assistant: handle.message })) return "continue" as const
+                yield* rejectTextToolCall({ assistant: handle.message })
                 return "break" as const
               }
               if (forkClassification.type !== "continue" && !handle.message.error && format.type === "json_schema") {
-                if (yield* autoRetryStructuredOutput({ lastUser, assistant: handle.message }))
-                  return "continue" as const
+                yield* rejectMissingStructuredOutput({ assistant: handle.message })
                 return "break" as const
               }
 
@@ -3665,8 +3321,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
               ) {
                 const reason =
                   forkClassification.type === "invalid" ? forkClassification.reason : "think-only"
-                if (yield* autoContinueInvalidOutput({ lastUser, assistant: handle.message, reason }))
-                  return "continue" as const
+                yield* rejectInvalidOutput({ assistant: handle.message, reason })
                 return "break" as const
               }
 
@@ -3675,6 +3330,10 @@ NOTE: At any point in time through this workflow you should feel free to ask the
               // Fork agents are always subagents (lastUser.agentID is set); use
               // per-actor compaction on overflow (same as non-fork subagent path).
               if (!isBoundedComputation && result === "overflow") {
+                if ((yield* config.get()).compaction?.auto === false) {
+                  yield* rejectContextOverflow(handle.message)
+                  return "break" as const
+                }
                 yield* compaction
                   .create({
                     sessionID,
@@ -3833,15 +3492,10 @@ NOTE: At any point in time through this workflow you should feel free to ask the
               ),
             )
 
-            if (
-              result === "continue" &&
-              (yield* autoContinueOutputLength({ lastUser, assistant: handle.message }))
-            ) {
-              return "continue" as const
-            }
+            if (result === "continue") yield* rejectOutputLength({ assistant: handle.message })
 
             if (result === "text-repeat") {
-              if (yield* handleTextRepeat({ lastUser })) return "continue" as const
+              yield* rejectTextRepeat()
               return "break" as const
             }
             if (result === "stop") return "break" as const
@@ -3852,14 +3506,6 @@ NOTE: At any point in time through this workflow you should feel free to ask the
               yield* sessions.updateMessage(handle.message)
               return "break" as const
             }
-
-            // Empty/no-op tool-call loop guard (main branch). Intercept before
-            // classify would `continue` an empty tool-calls step: soft-nudge
-            // within budget, hard-halt once exceeded. A non-empty step returns
-            // "none" and falls through to normal classification.
-            const emptyStep = yield* handleEmptyStep({ lastUser, assistant: handle.message })
-            if (emptyStep === "halt") return "break" as const
-            if (emptyStep === "continue") return "continue" as const
 
             const classification = classifyAssistantStep({
               phase: "after-process",
@@ -3877,11 +3523,11 @@ NOTE: At any point in time through this workflow you should feel free to ask the
               return "break" as const
             }
             if (classification.type === "text-tool-call") {
-              if (yield* autoRetryTextToolCall({ lastUser, assistant: handle.message })) return "continue" as const
+              yield* rejectTextToolCall({ assistant: handle.message })
               return "break" as const
             }
             if (classification.type !== "continue" && !handle.message.error && format.type === "json_schema") {
-              if (yield* autoRetryStructuredOutput({ lastUser, assistant: handle.message })) return "continue" as const
+              yield* rejectMissingStructuredOutput({ assistant: handle.message })
               return "break" as const
             }
 
@@ -3890,14 +3536,17 @@ NOTE: At any point in time through this workflow you should feel free to ask the
               format.type !== "json_schema"
             ) {
               const reason = classification.type === "invalid" ? classification.reason : "think-only"
-              if (yield* autoContinueInvalidOutput({ lastUser, assistant: handle.message, reason }))
-                return "continue" as const
+              yield* rejectInvalidOutput({ assistant: handle.message, reason })
               return "break" as const
             }
 
             if (classification.type === "final" && classification.degraded)
               yield* slog.warn("degraded final on abnormal finish", { finish: handle.message.finish })
             if (!isBoundedComputation && result === "overflow") {
+              if ((yield* config.get()).compaction?.auto === false) {
+                yield* rejectContextOverflow(handle.message)
+                return "break" as const
+              }
               // Subagent overflow → per-actor compaction. Insert a boundary
               // tagged with the subagent's agent_id; the next runLoop iteration
               // will see a trimmed context (filterCompactedEffect stops at
@@ -3967,50 +3616,24 @@ NOTE: At any point in time through this workflow you should feel free to ask the
               const isTextLoop = detectTextLoop(textLoopBuffer, TEXT_LOOP_TRIGGER_COUNT)
 
               if (isTextLoop) {
-                if (textLoopRecoveryAttempts >= TEXT_LOOP_MAX_RECOVERY) {
-                  yield* slog.info("text loop: max recovery exceeded, terminating")
-                  yield* bus.publish(Session.Event.Error, {
-                    sessionID,
-                    error: new NamedError.Unknown({
-                      message: `Text loop detected: model repeated the same output ${TEXT_LOOP_TRIGGER_COUNT} times after ${TEXT_LOOP_MAX_RECOVERY} recovery attempts. Session terminated.`,
-                    }).toObject(),
-                  })
-                  break
-                }
-                const recoveryText =
-                  textLoopRecoveryAttempts === 0 ? RECOVERY_PROMPT_MILD : RECOVERY_PROMPT_STRONG
-                // Create a NEW user message at the end of conversation (not append to original)
-                const reentry = yield* sessions.updateMessage({
-                  id: MessageID.ascending(),
-                  role: "user" as const,
+                yield* slog.info("text loop detected, terminating")
+                yield* bus.publish(Session.Event.Error, {
                   sessionID,
-                  agentID: lastUser.agentID,
-                  agent: lastUser.agent,
-                  model: lastUser.model,
-                  tools: lastUser.tools,
-                  format: lastUser.format,
-                  time: { created: Date.now() },
+                  error: new NamedError.Unknown({
+                    message: `Text loop detected: model repeated the same output ${TEXT_LOOP_TRIGGER_COUNT} times. Session terminated without retrying.`,
+                  }).toObject(),
                 })
-                yield* sessions.updatePart({
-                  id: PartID.ascending(),
-                  messageID: reentry.id,
-                  sessionID,
-                  type: "text",
-                  synthetic: true,
-                  text: recoveryText,
-                } satisfies MessageV2.TextPart)
-                textLoopRecoveryAttempts++
-                textLoopBuffer.length = 0
-                yield* slog.info("text loop: recovery injected", { attempt: textLoopRecoveryAttempts })
-                continue
+                break
               }
             }
           }
 
           if (outcome === "break") {
-            // A hard halt is terminal — skip the ReAct re-entry gates so a
-            // degraded model can't be re-driven into the same empty loop.
             if (hardHalt) break
+            const queuedUser = (yield* sessions.messages({ sessionID, agentID: resolvedAgentID })).findLast(
+              (message) => message.info.role === "user" && message.info.id > lastUser.id,
+            )
+            if (queuedUser) continue
             if (yield* goalGate(lastUser)) continue
             break
           }

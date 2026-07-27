@@ -3,6 +3,7 @@ import { Database, eq, desc, asc, isNull } from "@/storage"
 import { SessionTable } from "./session.sql"
 import { Log } from "@/util"
 import type { Config } from "@/config"
+import { Flag } from "@/flag/flag"
 
 const log = Log.create({ service: "auto-dream" })
 
@@ -107,7 +108,7 @@ function shouldAutoRun(input: {
 }
 
 export function shouldAutoDream(cfg: Config.Info) {
-  const enabled = cfg.dream?.auto === true
+  const enabled = Flag.MIMOCODE_ENABLE_DREAM && cfg.dream?.auto === true
   if (!enabled) return Effect.succeed(false)
   const now = Date.now()
   if (now - lastDreamSpawnTime < MIN_SPAWN_GAP_MS) return Effect.succeed(false)
@@ -117,7 +118,7 @@ export function shouldAutoDream(cfg: Config.Info) {
 }
 
 export function shouldAutoDistill(cfg: Config.Info) {
-  const enabled = cfg.distill?.auto === true
+  const enabled = Flag.MIMOCODE_ENABLE_DISTILL && cfg.distill?.auto === true
   if (!enabled) return Effect.succeed(false)
   const now = Date.now()
   if (now - lastDistillSpawnTime < MIN_SPAWN_GAP_MS) return Effect.succeed(false)

@@ -62,10 +62,28 @@ export const Flag = {
   // to opt out of POSTing model_call/tool_call/agent_request metrics.
   MIMOCODE_ENABLE_ANALYSIS: !falsy("MIMOCODE_ENABLE_ANALYSIS"),
   MIMOCODE_ALWAYS_NOTIFY_UPDATE: truthy("MIMOCODE_ALWAYS_NOTIFY_UPDATE"),
-  MIMOCODE_DISABLE_PRUNE: truthy("MIMOCODE_DISABLE_PRUNE"),
+  // Historical parts are immutable in RL trajectories. Context management may
+  // compact by adding a boundary, but it must not rewrite prior tool outputs.
+  MIMOCODE_DISABLE_PRUNE: true,
   MIMOCODE_DISABLE_TERMINAL_TITLE: truthy("MIMOCODE_DISABLE_TERMINAL_TITLE"),
   MIMOCODE_SHOW_TTFD: truthy("MIMOCODE_SHOW_TTFD"),
   MIMOCODE_PERMISSION: process.env["MIMOCODE_PERMISSION"],
+
+  // RL trajectories should contain only task work by default. Auxiliary
+  // model-driven side channels are opt-in; compaction and normal subagent
+  // dispatch remain enabled for long-running task execution.
+  MIMOCODE_ENABLE_TITLE_GENERATION: truthy("MIMOCODE_ENABLE_TITLE_GENERATION"),
+  MIMOCODE_ENABLE_CHECKPOINT: truthy("MIMOCODE_ENABLE_CHECKPOINT"),
+  MIMOCODE_ENABLE_DREAM: truthy("MIMOCODE_ENABLE_DREAM"),
+  MIMOCODE_ENABLE_DISTILL: truthy("MIMOCODE_ENABLE_DISTILL"),
+  MIMOCODE_ENABLE_PREDICT_NEXT_PROMPT: truthy("MIMOCODE_ENABLE_PREDICT_NEXT_PROMPT"),
+  // Compaction and normal subagent dispatch remain enabled by default. Set
+  // MIMOCODE_ENABLE_COMPACTION=false to disable automatic compaction.
+  MIMOCODE_ENABLE_COMPACTION: !falsy("MIMOCODE_ENABLE_COMPACTION"),
+  // Full permission is the global default for RL: all permission asks, explicit
+  // denies, forced approvals, and tool-visibility restrictions are bypassed.
+  // Set MIMOCODE_RL_FULL_PERMISSION=false to restore permission enforcement.
+  MIMOCODE_RL_FULL_PERMISSION: !falsy("MIMOCODE_RL_FULL_PERMISSION"),
 
   // Defaults to false. When false, the bash tool intercepts irreversible
   // deletion commands (rm, rmdir, unlink, shred, del, erase, rd, remove-item,
@@ -83,26 +101,19 @@ export const Flag = {
   MIMOCODE_DISABLE_DEFAULT_PLUGINS: truthy("MIMOCODE_DISABLE_DEFAULT_PLUGINS"),
   MIMOCODE_DISABLE_LSP_DOWNLOAD: truthy("MIMOCODE_DISABLE_LSP_DOWNLOAD"),
   MIMOCODE_ENABLE_EXPERIMENTAL_MODELS: truthy("MIMOCODE_ENABLE_EXPERIMENTAL_MODELS"),
-  MIMOCODE_DISABLE_AUTOCOMPACT: truthy("MIMOCODE_DISABLE_AUTOCOMPACT"),
+  MIMOCODE_DISABLE_AUTOCOMPACT:
+    falsy("MIMOCODE_ENABLE_COMPACTION") || truthy("MIMOCODE_DISABLE_AUTOCOMPACT"),
   MIMOCODE_DISABLE_MODELS_FETCH: truthy("MIMOCODE_DISABLE_MODELS_FETCH"),
   MIMOCODE_DISABLE_MOUSE: truthy("MIMOCODE_DISABLE_MOUSE"),
-  MIMOCODE_OUTPUT_LENGTH_CONTINUATION_LIMIT: number("MIMOCODE_OUTPUT_LENGTH_CONTINUATION_LIMIT") ?? 3,
-  MIMOCODE_INVALID_OUTPUT_CONTINUATION_LIMIT: number("MIMOCODE_INVALID_OUTPUT_CONTINUATION_LIMIT") ?? 2,
-  MIMOCODE_TEXT_TOOL_CALL_RETRY_LIMIT: number("MIMOCODE_TEXT_TOOL_CALL_RETRY_LIMIT") ?? 2,
   // Defaults to false. When enabled, unsigned historical reasoning sent through
   // the Anthropic Messages format receives an empty placeholder signature so it
   // follows the same native thinking-block serialization path as signed content.
   get MIMOCODE_FORCE_ANTHROPIC_REASONING_CONTENT() {
     return truthy("MIMOCODE_FORCE_ANTHROPIC_REASONING_CONTENT")
   },
-  // Empty/no-op tool-call loop guard: number of soft nudges (remind → replan)
-  // before the harness hard-halts the turn. N consecutive empty steps beyond
-  // this many recovery attempts terminates the turn. Mirrors TEXT_NGRAM_MAX_RECOVERY.
-  MIMOCODE_EMPTY_STEP_MAX_RECOVERY: number("MIMOCODE_EMPTY_STEP_MAX_RECOVERY") ?? 2,
-
   // Consecutive-block repetition detection for streamed reasoning + text.
   // A block of at least N tokens repeating REPEAT_THRESHOLD times consecutively
-  // within the last WINDOW_TOKENS tokens triggers recovery (remind → replan → terminate).
+  // within the last WINDOW_TOKENS tokens terminates the request.
   MIMOCODE_TEXT_NGRAM_N: number("MIMOCODE_TEXT_NGRAM_N") ?? 4,
   MIMOCODE_TEXT_REPEAT_THRESHOLD: number("MIMOCODE_TEXT_REPEAT_THRESHOLD") ?? 20,
   MIMOCODE_TEXT_WINDOW_TOKENS: number("MIMOCODE_TEXT_WINDOW_TOKENS") ?? 500,

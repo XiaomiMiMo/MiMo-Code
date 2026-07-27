@@ -239,10 +239,12 @@ const InfoSchema = Schema.Struct({
   compaction: Schema.optional(
     Schema.Struct({
       auto: Schema.optional(Schema.Boolean).annotate({
-        description: "Enable automatic compaction when context is full (default: true)",
+        description:
+          "Enable automatic compaction when context is full. Enabled by default; set MIMOCODE_ENABLE_COMPACTION=false to disable.",
       }),
       prune: Schema.optional(Schema.Boolean).annotate({
-        description: "Enable pruning of old tool outputs (default: true)",
+        description:
+          "Deprecated compatibility field. Historical tool outputs and message parts are never rewritten or pruned.",
       }),
       tail_turns: Schema.optional(NonNegativeInt).annotate({
         description:
@@ -260,14 +262,14 @@ const InfoSchema = Schema.Struct({
     Schema.Struct({
       thresholds: Schema.optional(Schema.Array(Schema.String)).annotate({
         description:
-          "Context fill thresholds that trigger checkpoint writes. Strings may be percentages (\"40%\"), absolute tokens (\"100K\", \"1.5M\"), or mixed (\"100K\", \"50%\"). Each threshold must be <= window - 20K reserved. Default: [\"40%\", \"60%\", \"80%\"].",
+          "Context fill thresholds that trigger checkpoint writes when MIMOCODE_ENABLE_CHECKPOINT is enabled. Strings may be percentages (\"40%\"), absolute tokens (\"100K\", \"1.5M\"), or mixed (\"100K\", \"50%\"). Each threshold must be <= window - 20K reserved.",
       }),
       reserved: Schema.optional(NonNegativeInt).annotate({
         description: "Token buffer reserved for checkpoint operations. Default: 20000.",
       }),
       max_writer_failures: Schema.optional(PositiveInt).annotate({
         description:
-          "Maximum consecutive writer failures per session before checkpointing stops retrying until process restart. Default: 3.",
+          "Deprecated compatibility field. Checkpoint writers are single-attempt and are not automatically retried.",
       }),
       fork: Schema.optional(Schema.Boolean).annotate({
         description:
@@ -348,7 +350,7 @@ const InfoSchema = Schema.Struct({
     Schema.Struct({
       auto: Schema.optional(Schema.Boolean).annotate({
         description:
-          "Auto-trigger dream memory consolidation on new session start. Default: false.",
+          "Auto-trigger dream memory consolidation on new session start when MIMOCODE_ENABLE_DREAM is enabled. Default: false.",
       }),
       interval_days: Schema.optional(NonNegativeInt).annotate({
         description: "Minimum days between automatic dream runs. Set to 0 to trigger on every new session. Default: 7.",
@@ -359,7 +361,7 @@ const InfoSchema = Schema.Struct({
     Schema.Struct({
       auto: Schema.optional(Schema.Boolean).annotate({
         description:
-          "Auto-trigger distill workflow packaging on new session start. Default: false.",
+          "Auto-trigger distill workflow packaging on new session start when MIMOCODE_ENABLE_DISTILL is enabled. Default: false.",
       }),
       interval_days: Schema.optional(NonNegativeInt).annotate({
         description: "Minimum days between automatic distill runs. Default: 30.",
@@ -412,7 +414,7 @@ const InfoSchema = Schema.Struct({
       }),
       predict_next_prompt: Schema.optional(Schema.Boolean).annotate({
         description:
-          "Predict the user's likely next prompt after each turn and show it as inline ghost text (Tab to accept). Enabled by default; set to false to disable.",
+          "Predict the user's likely next prompt after each turn and show it as inline ghost text (Tab to accept). Requires MIMOCODE_ENABLE_PREDICT_NEXT_PROMPT; disabled by default.",
       }),
       maxMode: Schema.optional(
         Schema.Struct({

@@ -1,4 +1,6 @@
 import { test, expect } from "bun:test"
+import { enforcePermissions } from "./enforce"
+enforcePermissions()
 import { Permission } from "../../src/permission"
 
 // Minimal ruleset builder: each entry is {permission, pattern, action}.

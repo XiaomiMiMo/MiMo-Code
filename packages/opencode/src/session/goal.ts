@@ -1,5 +1,5 @@
 import { Effect, Layer, Context, Option } from "effect"
-import { generateObject, streamObject, type ModelMessage } from "ai"
+import { generateObject, type ModelMessage } from "ai"
 import z from "zod"
 import * as OtelTracer from "@effect/opentelemetry/Tracer"
 import { InstanceState } from "@/effect"
@@ -186,6 +186,7 @@ export const layer = Layer.effect(
           metadata: { userId: cfg.username ?? "unknown" },
         },
         temperature: 0,
+        maxRetries: 0,
         messages: [
           ...(isOpenaiOauth ? [] : [{ role: "system", content: JUDGE_SYSTEM } satisfies ModelMessage]),
           ...conversation,
@@ -199,20 +200,15 @@ export const layer = Layer.effect(
       } satisfies Parameters<typeof generateObject>[0]
 
       if (isOpenaiOauth) {
-        return yield* Effect.promise(async () => {
-          const result = streamObject({
+        return yield* Effect.promise(() =>
+          generateObject({
             ...params,
             providerOptions: ProviderTransform.providerOptions(resolved, {
               instructions: JUDGE_SYSTEM,
               store: false,
             }),
-            onError: () => {},
-          })
-          for await (const part of result.fullStream) {
-            if (part.type === "error") throw part.error
-          }
-          return Verdict.parse(await result.object)
-        })
+          }).then((result) => Verdict.parse(result.object)),
+        )
       }
 
       return yield* Effect.promise(() => generateObject(params).then((r) => Verdict.parse(r.object)))

@@ -1,4 +1,6 @@
 import { test, expect } from "bun:test"
+import { enforcePermissions } from "./enforce"
+enforcePermissions()
 import { Permission } from "../../src/permission"
 
 // Mirrors the ruleset actually built in agent.ts for the default agent's skill

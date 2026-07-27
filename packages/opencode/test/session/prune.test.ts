@@ -3,7 +3,7 @@ import { Effect, Layer } from "effect"
 import { Bus } from "../../src/bus"
 import { Config } from "../../src/config"
 import { Agent } from "../../src/agent/agent"
-import { SessionCheckpoint, type WriterOutcome } from "../../src/session/checkpoint"
+import { SessionCheckpoint } from "../../src/session/checkpoint"
 import { SessionPrune, defaultThresholdsFor } from "../../src/session/prune"
 import { Log } from "../../src/util"
 import { Plugin } from "../../src/plugin"
@@ -17,6 +17,7 @@ import { ProviderTest } from "../fake/provider"
 import { testEffect } from "../lib/effect"
 import * as CrossSpawnSpawner from "../../src/effect/cross-spawn-spawner"
 import { ActorRegistry } from "../../src/actor/registry"
+import { Flag } from "../../src/flag/flag"
 
 void Log.init({ print: false })
 
@@ -161,7 +162,7 @@ const seedSessionWithOldToolOutput = Effect.fn("PruneTest.seed")(function* (inpu
 
 describe("SessionPrune.prune", () => {
   it.live(
-    "compacts old completed tool output",
+    "preserves old completed tool output",
     provideTmpdirInstance(
       (dir) =>
         Effect.gen(function* () {
@@ -181,7 +182,8 @@ describe("SessionPrune.prune", () => {
           expect(part?.type).toBe("tool")
           expect(part?.state.status).toBe("completed")
           if (part?.type === "tool" && part.state.status === "completed") {
-            expect(part.state.time.compacted).toBeNumber()
+            expect(part.state.time.compacted).toBeUndefined()
+            expect(part.state.output).toBe("x".repeat(200_000))
           }
         }),
 
@@ -225,14 +227,18 @@ describe("SessionPrune.prune", () => {
   )
 })
 
-describe("SessionPrune.fireCheckpoints writer-failure retry", () => {
-  // A programmable stub of SessionCheckpoint.Service drives the retry
-  // counter: tryStartCheckpointWriter always returns "started" (counted in
-  // stubEnqueueCount), waitForWriter returns pre-seeded outcomes in order.
-  // Each test constructs a fresh harness so module state is per-test.
-  function makeRetryHarness() {
-    const outcomes: Array<WriterOutcome | "no-writer"> = []
-    const state = { enqueueCount: 0 }
+describe("SessionPrune.fireCheckpoints single-attempt behavior", () => {
+  async function withCheckpointEnabled<T>(run: () => Promise<T>) {
+    const enabled = Flag.MIMOCODE_ENABLE_CHECKPOINT
+    Flag.MIMOCODE_ENABLE_CHECKPOINT = true
+    try {
+      return await run()
+    } finally {
+      Flag.MIMOCODE_ENABLE_CHECKPOINT = enabled
+    }
+  }
+  function makeCheckpointHarness() {
+    const state = { enqueueCount: 0, waitCount: 0 }
 
     const stubLayer = Layer.succeed(
       SessionCheckpoint.Service,
@@ -242,7 +248,11 @@ describe("SessionPrune.fireCheckpoints writer-failure retry", () => {
             state.enqueueCount++
             return "started" as const
           }),
-        waitForWriter: () => Effect.sync(() => outcomes.shift() ?? ("no-writer" as const)),
+        waitForWriter: () =>
+          Effect.sync(() => {
+            state.waitCount++
+            return "failure" as const
+          }),
         drainWriters: () => Effect.succeed({ drained: 0, timedOut: 0 }),
         hasCheckpoint: () => Effect.succeed(false),
         hasMemoryOrTasks: () => Effect.succeed(false),
@@ -267,12 +277,12 @@ describe("SessionPrune.fireCheckpoints writer-failure retry", () => {
       ),
     )
 
-    return { env, outcomes, state }
+    return { env, state }
   }
 
   // Helper: run a prune-layer effect inside a tmpdir + Instance context.
   function runWithHarness<A, E>(
-    harness: ReturnType<typeof makeRetryHarness>,
+    harness: ReturnType<typeof makeCheckpointHarness>,
     body: Effect.Effect<A, E, SessionPrune.Service | SessionNs.Service>,
     config?: Partial<Config.Info>,
   ): Promise<A> {
@@ -288,45 +298,37 @@ describe("SessionPrune.fireCheckpoints writer-failure retry", () => {
     cache: { read: 0, write: 0 },
   })
 
-  test("three writer failures retry below cap, stop at cap", async () => {
-    const harness = makeRetryHarness()
-    const promptOps = {} as any
-
-    await runWithHarness(
-      harness,
-      Effect.gen(function* () {
-        const svc = yield* SessionPrune.Service
-        const ssn = yield* SessionNs.Service
-        const info = yield* ssn.create({})
-        const model = createModel({ context: 100_000, output: 32_000 })
-
-        // Pre-seed 3 failure outcomes — one per expected watcher.
-        harness.outcomes.push("failure", "failure", "failure")
-
-        // Fires 1-3: each fire enqueues (crossed was cleared by the prior
-        // watcher), watcher sees failure, counter increments 1→2→3.
-        // Fire 3's watcher hits cap (counter === 3) and does NOT clear crossed.
-        for (let i = 0; i < 3; i++) {
-          yield* svc.fireCheckpoints({ sessionID: info.id, model, tokens: makeTokens(), promptOps })
-          yield* Effect.sleep(100)
-        }
-        expect(harness.state.enqueueCount).toBe(3)
-
-        // Fire 4: crossed still holds the 50% threshold (not cleared at cap)
-        // so the loop skips without enqueuing.
-        yield* svc.fireCheckpoints({ sessionID: info.id, model, tokens: makeTokens(), promptOps })
-        yield* Effect.sleep(100)
-        expect(harness.state.enqueueCount).toBe(3)
-      }),
-      { checkpoint: { thresholds: ["50%"] } },
-    )
+  test("does not start a writer while checkpoint generation is disabled", async () => {
+    const harness = makeCheckpointHarness()
+    const enabled = Flag.MIMOCODE_ENABLE_CHECKPOINT
+    Flag.MIMOCODE_ENABLE_CHECKPOINT = false
+    try {
+      await runWithHarness(
+        harness,
+        Effect.gen(function* () {
+          const svc = yield* SessionPrune.Service
+          const ssn = yield* SessionNs.Service
+          const info = yield* ssn.create({})
+          yield* svc.fireCheckpoints({
+            sessionID: info.id,
+            model: createModel({ context: 100_000, output: 32_000 }),
+            tokens: makeTokens(),
+            promptOps: {} as any,
+          })
+          expect(harness.state.enqueueCount).toBe(0)
+        }),
+        { checkpoint: { thresholds: ["50%"] } },
+      )
+    } finally {
+      Flag.MIMOCODE_ENABLE_CHECKPOINT = enabled
+    }
   })
 
-  test("success outcome resets failure counter", async () => {
-    const harness = makeRetryHarness()
+  test("does not retry a failed writer at the same threshold", async () => {
+    const harness = makeCheckpointHarness()
     const promptOps = {} as any
 
-    await runWithHarness(
+    await withCheckpointEnabled(() => runWithHarness(
       harness,
       Effect.gen(function* () {
         const svc = yield* SessionPrune.Service
@@ -334,38 +336,39 @@ describe("SessionPrune.fireCheckpoints writer-failure retry", () => {
         const info = yield* ssn.create({})
         const model = createModel({ context: 100_000, output: 32_000 })
 
-        // Phase 1: two failures, then success. Success does NOT clear
-        // crossed (the checkpoint was written), so the next fire on the
-        // same threshold is a no-op. But it DOES reset the counter.
-        harness.outcomes.push("failure", "failure", "success")
         for (let i = 0; i < 3; i++) {
           yield* svc.fireCheckpoints({ sessionID: info.id, model, tokens: makeTokens(), promptOps })
-          yield* Effect.sleep(100)
         }
-        expect(harness.state.enqueueCount).toBe(3)
-
-        // Manually reset so the session "re-crosses" the threshold. This
-        // simulates the operator-visible case where a new checkpoint boundary
-        // is reached. The failure counter remains 0 (was reset by Phase 1's
-        // final success).
-        yield* svc.resetThresholds(info.id)
-
-        // Phase 2: three more failures. Because the counter was reset, all
-        // three fires land before the cap. Enqueue count goes 3→6.
-        harness.outcomes.push("failure", "failure", "failure")
-        for (let i = 0; i < 3; i++) {
-          yield* svc.fireCheckpoints({ sessionID: info.id, model, tokens: makeTokens(), promptOps })
-          yield* Effect.sleep(100)
-        }
-        expect(harness.state.enqueueCount).toBe(6)
-
-        // Seventh fire: counter === 3 again, crossed stays → no enqueue.
-        yield* svc.fireCheckpoints({ sessionID: info.id, model, tokens: makeTokens(), promptOps })
-        yield* Effect.sleep(100)
-        expect(harness.state.enqueueCount).toBe(6)
+        expect(harness.state.enqueueCount).toBe(1)
+        expect(harness.state.waitCount).toBe(0)
       }),
       { checkpoint: { thresholds: ["50%"] } },
-    )
+    ))
+  })
+
+  test("only an explicit threshold reset permits another writer", async () => {
+    const harness = makeCheckpointHarness()
+    const promptOps = {} as any
+
+    await withCheckpointEnabled(() => runWithHarness(
+      harness,
+      Effect.gen(function* () {
+        const svc = yield* SessionPrune.Service
+        const ssn = yield* SessionNs.Service
+        const info = yield* ssn.create({})
+        const model = createModel({ context: 100_000, output: 32_000 })
+
+        yield* svc.fireCheckpoints({ sessionID: info.id, model, tokens: makeTokens(), promptOps })
+        yield* svc.fireCheckpoints({ sessionID: info.id, model, tokens: makeTokens(), promptOps })
+        expect(harness.state.enqueueCount).toBe(1)
+
+        yield* svc.resetThresholds(info.id)
+        yield* svc.fireCheckpoints({ sessionID: info.id, model, tokens: makeTokens(), promptOps })
+        expect(harness.state.enqueueCount).toBe(2)
+        expect(harness.state.waitCount).toBe(0)
+      }),
+      { checkpoint: { thresholds: ["50%"] } },
+    ))
   })
 })
 

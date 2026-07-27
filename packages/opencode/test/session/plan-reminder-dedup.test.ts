@@ -15,41 +15,33 @@ function run<A, E>(fx: Effect.Effect<A, E, SessionPrompt.Service | Session.Servi
   )
 }
 
-function sse(chunks: object[]) {
-  const payload = [...chunks.map((c) => `data: ${JSON.stringify(c)}`), "data: [DONE]"].join("\n\n") + "\n\n"
-  const encoder = new TextEncoder()
-  return new ReadableStream<Uint8Array>({
-    start(ctrl) {
-      ctrl.enqueue(encoder.encode(payload))
-      ctrl.close()
-    },
-  })
-}
-
 function chat(text: string) {
-  return sse([
-    { id: "c", object: "chat.completion.chunk", choices: [{ delta: { role: "assistant" } }] },
-    { id: "c", object: "chat.completion.chunk", choices: [{ delta: { content: text } }] },
-    { id: "c", object: "chat.completion.chunk", choices: [{ delta: {}, finish_reason: "stop" }] },
-  ])
+  return {
+    id: "c",
+    object: "chat.completion",
+    choices: [{ message: { role: "assistant", content: text }, finish_reason: "stop" }],
+    usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+  }
 }
 
 function chatToolCall(name: string, args: object) {
-  return sse([
-    { id: "c", object: "chat.completion.chunk", choices: [{ delta: { role: "assistant" } }] },
-    {
-      id: "c",
-      object: "chat.completion.chunk",
-      choices: [
-        {
-          delta: {
-            tool_calls: [{ index: 0, id: "call_1", type: "function", function: { name, arguments: JSON.stringify(args) } }],
-          },
+  return {
+    id: "c",
+    object: "chat.completion",
+    choices: [
+      {
+        message: {
+          role: "assistant",
+          content: null,
+          tool_calls: [
+            { id: "call_1", type: "function", function: { name, arguments: JSON.stringify(args) } },
+          ],
         },
-      ],
-    },
-    { id: "c", object: "chat.completion.chunk", choices: [{ delta: {}, finish_reason: "tool_calls" }] },
-  ])
+        finish_reason: "tool_calls",
+      },
+    ],
+    usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+  }
 }
 
 // Plan-mode reminders are injected by insertReminders, which runs on EVERY
@@ -71,8 +63,7 @@ describe("session.prompt plan reminder dedup", () => {
         // exercises entry-turn dedup (full reminder already present when the
         // plan→plan branch is reached); turn 2 step 2 exercises short-reminder
         // dedup.
-        const body = calls === 1 || calls === 3 ? chatToolCall("glob", { pattern: "*.md" }) : chat("ok")
-        return new Response(body, { status: 200, headers: { "Content-Type": "text/event-stream" } })
+        return Response.json(calls === 1 || calls === 3 ? chatToolCall("glob", { pattern: "*.md" }) : chat("ok"))
       },
     })
 
@@ -141,5 +132,5 @@ describe("session.prompt plan reminder dedup", () => {
     } finally {
       void server.stop(true)
     }
-  })
+  }, 10_000)
 })

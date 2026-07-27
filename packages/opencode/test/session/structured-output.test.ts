@@ -21,7 +21,7 @@ describe("structured-output.OutputFormat", () => {
     if (result.success) {
       expect(result.data.type).toBe("json_schema")
       if (result.data.type === "json_schema") {
-        expect(result.data.retryCount).toBe(2) // default value
+        expect(result.data.retryCount).toBe(0)
       }
     }
   })

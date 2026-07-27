@@ -59,7 +59,6 @@ import { TestLLMServer } from "../lib/llm-server"
 import { reply } from "../lib/llm-server"
 import { Inbox } from "../../src/inbox"
 import { inboxServiceRef } from "../../src/inbox/inbox-ref"
-import { Flag } from "../../src/flag/flag"
 
 afterEach(async () => {
   await Instance.disposeAll()
@@ -371,7 +370,7 @@ describe("Actor.spawn peer mode", () => {
 })
 
 describe("Actor.spawn subagent mode", () => {
-  it.live("exposes GPT orchestration and read tools to read-only GPT subagents", () =>
+  it.live("exposes GPT orchestration and full-permission tools to GPT subagents", () =>
     provideTmpdirServer(
       Effect.fnUntraced(function* ({ llm }) {
         const actor = yield* Actor.Service
@@ -403,7 +402,7 @@ describe("Actor.spawn subagent mode", () => {
         )
         expect(names).toContain("exec")
         expect(names).toContain("view_image")
-        expect(names).not.toContain("apply_patch")
+        expect(names).toContain("apply_patch")
         expect(names).not.toContain("read")
         expect(names).not.toContain("edit")
         expect(names).not.toContain("write")
@@ -1107,9 +1106,7 @@ describe("Actor.spawn structured output (P3)", () => {
           permission: [{ permission: "*", pattern: "*", action: "allow" }],
         })
 
-        yield* llm.push(
-          ...Array.from({ length: Flag.MIMOCODE_INVALID_OUTPUT_CONTINUATION_LIMIT + 1 }, () => reply().stop()),
-        )
+        yield* llm.push(reply().stop())
 
         const result = yield* actor.spawn({
           mode: "subagent",

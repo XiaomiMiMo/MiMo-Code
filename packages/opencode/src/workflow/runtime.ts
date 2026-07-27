@@ -235,10 +235,7 @@ interface AgentOpts {
   phase?: string
   /** Per-call override of the run's agentTimeoutMs (ms). */
   timeoutMs?: number
-  /** Opt-in bounded retry of a TRANSIENT failure (spawn-reject / timeout /
-   *  actor-error). Omitted → one attempt (today's behavior). `attempts` is the
-   *  TOTAL attempts including the first (min 1). Terminal reasons (over-cap,
-   *  no-deliverable) are never retried. */
+  /** Deprecated compatibility field. Workflow agents are always single-attempt. */
   retry?: { attempts?: number; baseMs?: number; maxMs?: number }
 }
 
@@ -436,39 +433,23 @@ export const layer = Layer.effect(
     // worktree the run still owns, then clear the set. NEVER throws — a reclaim
     // failure must not mask the original terminal cause. NOT called on success:
     // kept (success+changed) worktrees are the deliverable and must survive.
-    // Worktree removal is bounded by RECLAIM_WORKTREE_TIMEOUT_MS so a hung
-    // git worktree remove (e.g. processes using the worktree) cannot block
-    // cancel indefinitely. Actor cancel is bounded by RECLAIM_ACTOR_TIMEOUT_MS
-    // so a hung child actor cannot block reclaim indefinitely.
-    const RECLAIM_WORKTREE_TIMEOUT_MS = 10_000
-    const RECLAIM_ACTOR_TIMEOUT_MS = 5_000
+    // Cancellation and removal are dispatched as detached effects: either may
+    // include uninterruptible finalizers, so awaiting a timeout race can still
+    // hang while the race waits for its losing fiber to finish.
     const reclaim = (entry: RunEntry) =>
       Effect.gen(function* () {
         const actor = spawnRef.current
         if (actor) {
           yield* Effect.forEach(
             [...entry.childActorIDs],
-            (childID) =>
-              actor.cancel(entry.sessionID, childID, "graceful").pipe(
-                Effect.timeout(RECLAIM_ACTOR_TIMEOUT_MS),
-                Effect.catchTag("TimeoutError", () =>
-                  Effect.sync(() => log.warn("actor cancel timed out during reclaim", { childID })),
-                ),
-                Effect.ignore,
-              ),
+            (childID) => actor.cancel(entry.sessionID, childID, "graceful").pipe(Effect.ignore, Effect.forkDetach),
             { concurrency: "unbounded", discard: true },
           )
         }
+        entry.childActorIDs.clear()
         yield* Effect.forEach(
           [...entry.worktrees],
-          (directory) =>
-            worktree.remove({ directory }).pipe(
-              Effect.timeout(RECLAIM_WORKTREE_TIMEOUT_MS),
-              Effect.catchTag("TimeoutError", () =>
-                Effect.sync(() => log.warn("worktree remove timed out during reclaim", { directory })),
-              ),
-              Effect.ignore,
-            ),
+          (directory) => worktree.remove({ directory }).pipe(Effect.ignore, Effect.forkDetach),
           { concurrency: "unbounded", discard: true },
         )
         entry.worktrees.clear()
@@ -492,22 +473,13 @@ export const layer = Layer.effect(
         )
       })
 
-    // Bounded interrupt: Fiber.interrupt can stall on a hung LLM fetch or an
-    // uninterruptible operation. Bounding it so cancel completes in finite time.
-    const FIBER_INTERRUPT_TIMEOUT_MS = 5_000
     const cancelEntry = (entry: RunEntry): Effect.Effect<void> =>
       Effect.gen(function* () {
         if (entry.status !== "running") return
-        // Interrupt the fiber FIRST so that downstream reclaim (which disposes
-        // worktrees and triggers scope-close finalizers) doesn't deadlock waiting
-        // for a still-running agent fiber to finish.
-        if (entry.fiber)
-          yield* Fiber.interrupt(entry.fiber).pipe(
-            Effect.timeout(FIBER_INTERRUPT_TIMEOUT_MS),
-            Effect.catchTag("TimeoutError", () =>
-              Effect.sync(() => log.warn("fiber interrupt timed out during cancel", { runID: entry.runID })),
-            ),
-          )
+        // Signal interruption without awaiting the workflow fiber's finalizers.
+        // A guest bridge can be blocked on a non-stream model request; awaiting
+        // Fiber.interrupt here would deadlock cancel before child reclaim runs.
+        if (entry.fiber) yield* Effect.sync(() => entry.fiber?.interruptUnsafe())
         yield* reclaim(entry)
         yield* flushNow(entry)
         yield* WorkflowPersistence.recordTerminal({ runID: entry.runID, status: "cancelled" }).pipe(Effect.ignore)
@@ -676,14 +648,6 @@ export const layer = Layer.effect(
       // null. Pure observability — counters and the agent() return value are
       // unaffected. Wrapped in try/catch so a bus problem can never break a run.
       type FailReason = "over-cap" | "spawn-reject" | "timeout" | "actor-error" | "no-deliverable"
-      // Transient reasons worth re-attempting. Terminal reasons (over-cap =
-      // lifecycle exhausted; no-deliverable = the agent ran fine but produced
-      // nothing, which a re-run won't fix) are NOT retried.
-      const RETRYABLE_REASONS: ReadonlySet<FailReason> = new Set(["spawn-reject", "timeout", "actor-error"])
-      const backoffMs = (attempt: number, baseMs: number, maxMs: number) => {
-        const capped = Math.min(maxMs, baseMs * Math.pow(2, attempt))
-        return Math.floor(Math.random() * capped) // full jitter in [0, capped]
-      }
       const publishAgentFailed = (
         o: AgentOpts,
         reason: FailReason,
@@ -777,9 +741,8 @@ export const layer = Layer.effect(
       // of parent history (parallel fan-out is the use case). NEVER throw to the
       // guest for spawn/turn failures — resolve to null so the script continues.
       // TEST SEAM: MIMOCODE_TEST_SPAWN_FAIL_ONCE=<n> makes the next <n> shared
-      // spawn attempts throw a synthetic spawn-reject (retryable), so a test can
-      // drive the engine retry path deterministically without depending on LLM /
-      // actor failure modes. No-op unless the env var is set. Run-scoped counter.
+      // spawn attempts throw a synthetic spawn-reject so tests can exercise the
+      // single-attempt failure path. No-op unless set. Run-scoped counter.
       let testSpawnFailsLeft = Number(process.env.MIMOCODE_TEST_SPAWN_FAIL_ONCE ?? 0) || 0
       const spawnShared = async (
         actor: NonNullable<typeof spawnRef.current>,
@@ -831,7 +794,7 @@ export const layer = Layer.effect(
                   entry.childActorIDs.add(id)
                   onActorID?.(id)
                 },
-                ...(o.schema ? { format: { type: "json_schema" as const, schema: o.schema, retryCount: 2 } } : {}),
+                ...(o.schema ? { format: { type: "json_schema" as const, schema: o.schema, retryCount: 0 } } : {}),
               })
               actorID = spawned.actorID
               // Bound the outcome-await by the per-agent timeout: a hung child times
@@ -960,7 +923,7 @@ export const layer = Layer.effect(
                       entry.childActorIDs.add(id)
                       onActorID?.(id)
                     },
-                    ...(o.schema ? { format: { type: "json_schema" as const, schema: o.schema, retryCount: 2 } } : {}),
+                    ...(o.schema ? { format: { type: "json_schema" as const, schema: o.schema, retryCount: 0 } } : {}),
                   })
                   actorIDOut = s.actorID
                   // Bound the await by the per-agent timeout. On timeout the helper
@@ -1093,38 +1056,27 @@ export const layer = Layer.effect(
             // happens AFTER the slot is released, so file IO never holds a slot.
             const result = await sem.run(async () =>
               globalSemLocal.run(async () => {
-                // NOTE: spawnShared counts running/succeeded/failed per ATTEMPT
-                // (each attempt is a real spawn). A call that succeeds on retry N
-                // therefore shows N-1 failed + 1 succeeded — intended: the live
-                // view reflects actual spawns, while the guest sees a single result.
-                const maxAttempts = Math.max(1, o.retry?.attempts ?? 1)
-                const baseMs = o.retry?.baseMs ?? 400
-                const maxMs = o.retry?.maxMs ?? 4000
-                let last: { value: unknown; reason: FailReason | null } = { value: null, reason: "actor-error" }
-                for (let attempt = 0; attempt < maxAttempts; attempt++) {
-                  if (entry.agentCount >= lifecycleCap) {
-                    warnCapOnce()
-                    publishAgentFailed(o, "over-cap")
-                    last = { value: null, reason: "over-cap" }
-                    break
-                  }
-                  entry.agentCount++
-                  const actor = spawnRef.current
-                  if (!actor) throw new Error("Actor service unavailable")
-                  // Resolve the guest's model ref host-side AFTER the journal key was
-                  // computed above (the key hashes the raw `o.model` ref, NOT the
-                  // resolved struct, so resume keys stay stable across config changes).
-                  // Never-throws: an unknown group falls back to input.model.
-                  const resolvedModel = await bridge.promise(resolveAgentModel(o.model, input.model, entry.warnedModelRefs))
-                  last = await spawnShared(actor, promptStr, o, resolvedModel, setActorID)
-                  if (last.value !== null) break // success
-                  if (!last.reason || !RETRYABLE_REASONS.has(last.reason)) break // terminal
-                  if (attempt + 1 < maxAttempts) {
-                    log.info("workflow agent retry", { runID, reason: last.reason, next: attempt + 2, of: maxAttempts })
-                    await new Promise((r) => setTimeout(r, backoffMs(attempt, baseMs, maxMs)))
-                  }
+                if (entry.agentCount >= lifecycleCap) {
+                  warnCapOnce()
+                  publishAgentFailed(o, "over-cap")
+                  return null
                 }
-                return last.value
+                entry.agentCount++
+                const actor = spawnRef.current
+                if (!actor) throw new Error("Actor service unavailable")
+                // Resolve the guest's model ref host-side AFTER the journal key was
+                // computed above (the key hashes the raw `o.model` ref, NOT the
+                // resolved struct, so resume keys stay stable across config changes).
+                // Never-throws: an unknown group falls back to input.model.
+                return (
+                  await spawnShared(
+                    actor,
+                    promptStr,
+                    o,
+                    await bridge.promise(resolveAgentModel(o.model, input.model, entry.warnedModelRefs)),
+                    setActorID,
+                  )
+                ).value
               }),
             )
             markAgentNode(result === null ? "failed" : "succeeded", result)
@@ -1145,36 +1097,28 @@ export const layer = Layer.effect(
         }
         return sem.run(async () =>
           globalSemLocal.run(async () => {
-            // Same bounded-retry contract as the shared path; each attempt makes a
-            // fresh worktree (spawnIsolated does this internally + tracks it for
-            // reclaim). markAgentNode flips once, on the final disposition.
-            const maxAttempts = Math.max(1, o.retry?.attempts ?? 1)
-            const baseMs = o.retry?.baseMs ?? 400
-            const maxMs = o.retry?.maxMs ?? 4000
-            let last: { value: unknown; reason: FailReason | null } = { value: null, reason: "actor-error" }
-            for (let attempt = 0; attempt < maxAttempts; attempt++) {
-              if (entry.agentCount >= lifecycleCap) {
-                warnCapOnce()
-                publishAgentFailed(o, "over-cap")
-                last = { value: null, reason: "over-cap" }
-                break
-              }
-              entry.agentCount++
-              const actor = spawnRef.current
-              if (!actor) throw new Error("Actor service unavailable")
-              // Resolve the guest's model ref host-side (isolated agents aren't
-              // journaled, so there's no key to keep stable here). Never-throws.
-              const resolvedModel = await bridge.promise(resolveAgentModel(o.model, input.model, entry.warnedModelRefs))
-              last = await spawnIsolated(actor, promptStr, o, resolvedModel, setActorID)
-              if (last.value !== null) break // success
-              if (!last.reason || !RETRYABLE_REASONS.has(last.reason)) break // terminal
-              if (attempt + 1 < maxAttempts) {
-                log.info("workflow isolated agent retry", { runID, reason: last.reason, next: attempt + 2, of: maxAttempts })
-                await new Promise((r) => setTimeout(r, backoffMs(attempt, baseMs, maxMs)))
-              }
+            if (entry.agentCount >= lifecycleCap) {
+              warnCapOnce()
+              publishAgentFailed(o, "over-cap")
+              markAgentNode("failed", null)
+              return null
             }
-            markAgentNode(last.value === null ? "failed" : "succeeded", last.value)
-            return last.value
+            entry.agentCount++
+            const actor = spawnRef.current
+            if (!actor) throw new Error("Actor service unavailable")
+            // Resolve the guest's model ref host-side (isolated agents aren't
+            // journaled, so there's no key to keep stable here). Never-throws.
+            const result = (
+              await spawnIsolated(
+                actor,
+                promptStr,
+                o,
+                await bridge.promise(resolveAgentModel(o.model, input.model, entry.warnedModelRefs)),
+                setActorID,
+              )
+            ).value
+            markAgentNode(result === null ? "failed" : "succeeded", result)
+            return result
           }),
         )
       }

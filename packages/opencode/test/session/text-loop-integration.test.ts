@@ -246,7 +246,7 @@ const ref = {
 const it = testEffect(makeLayers())
 
 describe("text loop detection (integration, MockLLM)", () => {
-  it.live("detects 3 identical texts and injects recovery prompt", () =>
+  it.live("detects 3 identical texts and terminates without a recovery request", () =>
     provideTmpdirInstance(
       () =>
         Effect.gen(function* () {
@@ -265,8 +265,7 @@ describe("text loop detection (integration, MockLLM)", () => {
             parts: [{ type: "text", text: "create a changelog" }],
           })
 
-          // Enqueue 3 identical text+tool replies (triggers detection)
-          // then 1 different text reply (after recovery)
+          // The fourth response must remain unused after loop detection.
           mockLLM.enqueue(
             textWithToolReply("Let me check if one was already created.", "check", { q: 1 }),
             textWithToolReply("Let me check if one was already created.", "check", { q: 1 }),
@@ -310,12 +309,10 @@ describe("text loop detection (integration, MockLLM)", () => {
           console.log("========== END TRAJECTORY ==========\n")
 
           console.log(`[text-loop] MockLLM calls: ${mockLLM.calls}`)
-          expect(mockLLM.calls).toBe(4)
+          expect(mockLLM.calls).toBe(3)
+          expect(result.parts.some((p) => p.type === "text" && p.text.includes("already created"))).toBe(true)
 
-          // Final message should contain the recovered text
-          expect(result.parts.some((p) => p.type === "text" && p.text.includes("different approach"))).toBe(true)
-
-          // Verify recovery prompt was injected as a separate user message
+          // Detection is terminal: no synthetic retry/recovery request is persisted.
           const msgs = yield* sessions.messages({ sessionID: session.id })
           const recoveryMsg = msgs.find(
             (m) => m.info.role === "user" && m.parts.some(
@@ -323,7 +320,7 @@ describe("text loop detection (integration, MockLLM)", () => {
             ),
           )
           console.log(`[text-loop] Recovery prompt injected as new message: ${!!recoveryMsg}`)
-          expect(recoveryMsg).toBeDefined()
+          expect(recoveryMsg).toBeUndefined()
           // It should NOT be on the original user message
           const originalUser = msgs.find(
             (m) => m.info.role === "user" && m.parts.some((p) => p.type === "text" && p.text === "create a changelog"),
@@ -369,15 +366,15 @@ describe("text loop detection (integration, MockLLM)", () => {
           const result = yield* prompt.loop({ sessionID: session.id })
 
           console.log(`[reasoning-test] MockLLM calls: ${mockLLM.calls}`)
-          expect(mockLLM.calls).toBe(4) // 3 repeated + 1 after recovery
-          expect(result.parts.some((p) => p.type === "text" && p.text.includes("different way"))).toBe(true)
+          expect(mockLLM.calls).toBe(3)
+          expect(result.parts.some((p) => p.type === "text" && p.text.includes("check the file"))).toBe(true)
         }),
       { git: true, config: cfg },
     ),
     30_000,
   )
 
-  it.live("7 repeated messages: triggers recovery twice then continues", () =>
+  it.live("queued repeated messages stop at the first detected loop", () =>
     provideTmpdirInstance(
       () =>
         Effect.gen(function* () {
@@ -396,8 +393,7 @@ describe("text loop detection (integration, MockLLM)", () => {
             parts: [{ type: "text", text: "help me fix a bug" }],
           })
 
-          // 7 identical replies + 1 final different reply
-          // Flow: 3→trigger#1(mild), 3→trigger#2(strong), 1 more then final stop
+          // Extra queued responses must remain unused after the third repeat.
           mockLLM.reset()
           const repeated = textWithToolReply(
             "The user wants me to create a ChangeLog file separately. Let me check if one was already created earlier and update it with all the changes we've made.",
@@ -436,7 +432,9 @@ describe("text loop detection (integration, MockLLM)", () => {
           }
           console.log("")
 
-          // Verify: 2 recovery prompts injected (mild + strong)
+          expect(mockLLM.calls).toBe(3)
+
+          // No recovery prompts are injected.
           const recoveryMsgs = allMsgs.filter(
             (m) =>
               m.info.role === "user" &&
@@ -449,9 +447,7 @@ describe("text loop detection (integration, MockLLM)", () => {
               ),
           )
           console.log(`[7-repeats] Recovery messages injected: ${recoveryMsgs.length}`)
-          expect(recoveryMsgs.length).toBe(2)
-          expect(recoveryMsgs[0].parts.some((p) => p.type === "text" && p.text.includes("LOOP DETECTED"))).toBe(true)
-          expect(recoveryMsgs[1].parts.some((p) => p.type === "text" && p.text.includes("CRITICAL"))).toBe(true)
+          expect(recoveryMsgs.length).toBe(0)
         }),
       { git: true, config: cfg },
     ),

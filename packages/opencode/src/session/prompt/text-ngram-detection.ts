@@ -1,6 +1,6 @@
 import { Flag } from "@/flag/flag"
 
-export const TEXT_NGRAM_MAX_RECOVERY = 2
+export const TEXT_NGRAM_MAX_RECOVERY = 0
 
 export function tokenizeForNgram(text: string): string[] {
   return text
@@ -92,25 +92,3 @@ export function textNgramRepeat() {
 export function isTextNgramRepeat(value: unknown): value is { _tag: "TextNgramRepeat" } {
   return typeof value === "object" && value !== null && "_tag" in value && value._tag === "TextNgramRepeat"
 }
-
-export const TEXT_NGRAM_RECOVERY_REMIND = `<system-reminder>
-REPETITION DETECTED: Your recent output contains repeated phrases (sliding n-gram match within your last ${Flag.MIMOCODE_TEXT_WINDOW_TOKENS} tokens).
-
-STOP repeating yourself and retry with a different approach:
-- Vary your wording and reasoning — do not reuse the same phrases
-- If you were about to call a tool, try a different tool or different arguments
-- If you are blocked, explain what is blocking you instead of looping
-
-Do NOT output the same phrases again.
-</system-reminder>`
-
-export const TEXT_NGRAM_RECOVERY_REPLAN = `<system-reminder>
-CRITICAL REPETITION: You are STILL repeating phrases after a recovery attempt.
-
-You MUST completely replan before continuing:
-1. Abandon your current approach entirely — it is stuck in repetition
-2. Write out a NEW plan with different steps and a different strategy
-3. State what you were trying to do, why it failed, and how your new plan differs
-
-Do NOT continue the same line of reasoning or reuse the same wording.
-</system-reminder>`

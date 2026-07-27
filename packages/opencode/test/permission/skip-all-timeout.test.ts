@@ -1,4 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test"
+import { enforcePermissions } from "./enforce"
+enforcePermissions()
 import { Effect, Fiber, Layer } from "effect"
 import type { Permission as PermissionType } from "../../src/permission"
 

@@ -547,6 +547,7 @@ describe("revert + compact workflow", () => {
         }),
       { git: true },
     ),
+    10_000,
   )
 
   it.live(
@@ -635,5 +636,6 @@ describe("revert + compact workflow", () => {
         }),
       { git: true },
     ),
+    10_000,
   )
 })

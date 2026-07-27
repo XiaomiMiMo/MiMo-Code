@@ -1,4 +1,4 @@
-import { describe, expect } from "bun:test"
+import { afterAll, beforeAll, describe, expect } from "bun:test"
 import { Deferred, Effect, Layer } from "effect"
 import { eq } from "drizzle-orm"
 import { Bus } from "../../src/bus"
@@ -23,6 +23,15 @@ import { ProviderID, ModelID } from "../../src/provider/schema"
 import { ProviderTest } from "../fake/provider"
 import { testEffect } from "../lib/effect"
 import * as CrossSpawnSpawner from "../../src/effect/cross-spawn-spawner"
+import { Flag } from "../../src/flag/flag"
+
+const checkpointEnabled = Flag.MIMOCODE_ENABLE_CHECKPOINT
+beforeAll(() => {
+  Flag.MIMOCODE_ENABLE_CHECKPOINT = true
+})
+afterAll(() => {
+  Flag.MIMOCODE_ENABLE_CHECKPOINT = checkpointEnabled
+})
 
 void Log.init({ print: false })
 
@@ -407,10 +416,7 @@ describe("checkpoint writer child-session isolation", () => {
   )
 
   it.live(
-    "T10: MAX_WRITER_FAILURES consecutive failures stops fireCheckpoints from spawning more writers",
-    // fork:true for the same reason as T9: tiny-seed fixture would hit M1
-    // empty-delta short-circuit on iterations 2+ if fork:false were used.
-    // The failure-counter gate this test verifies is fork-agnostic.
+    "T10: a failed checkpoint writer is not retried for the same threshold",
     provideTmpdirInstance(
       () =>
       Effect.gen(function* () {
@@ -423,13 +429,6 @@ describe("checkpoint writer child-session isolation", () => {
           providerID: ProviderID.make("test"),
           id: ModelID.make("test-model"),
         })
-        // Tokens above the FIRST threshold only (default thresholds for the
-        // fake model's 200K window: 20%/40%/60%/80% = 40K/80K/120K/160K).
-        // We deliberately stop at one crossed threshold per call: triggering
-        // multiple in the same call would queue pending writers (1-slot
-        // queue, see checkpoint.ts:508-517), and the settle watcher would
-        // drain pending into a fresh spawn — masking the failure-counter
-        // gate by re-populating the writers Map.
         const oneOverFirstThreshold = {
           input: 50_000,
           output: 0,
@@ -437,74 +436,31 @@ describe("checkpoint writer child-session isolation", () => {
           cache: { read: 0, write: 0 },
         } as const
 
-        // Drive MAX_WRITER_FAILURES (default 3) consecutive failures via
-        // fireCheckpoints — that's the entry point that owns writerFailures.
-        // Each iteration:
-        //   1. fireCheckpoints triggers tryStartCheckpointWriter ("started")
-        //   2. Test settles the captured outcome with failure
-        //   3. Poll until settle watcher clears writers Map (lock released)
-        //   4. Poll a bit longer so prune's forkDetach watcher reads the
-        //      failure (otherwise the writers.delete race documented in
-        //      prune.ts:321-329 would leave the counter un-incremented and
-        //      the test flaky).
-        for (let attempt = 1; attempt <= 3; attempt++) {
-          const before = spawnLog.count
-          yield* prune.fireCheckpoints({
-            sessionID: info.id,
-            model: fakeModel,
-            tokens: oneOverFirstThreshold,
-            promptOps: {} as never,
-          })
-          expect(spawnLog.count).toBe(before + 1)
-
-          // Wait for the prune-side watcher fiber (forkDetach) to actually
-          // start AND grab the WriterState reference via `writers.get(...)`
-          // inside `waitForWriter`. That read MUST happen before we settle
-          // the outcome below — otherwise the checkpoint-side settle watcher
-          // (which is forked first, inside tryStartCheckpointWriter) clears
-          // the writers Map and the prune watcher then sees "no-writer",
-          // missing the failure and never incrementing writerFailures.
-          // (See prune.ts:321-329 for the documented race; the runtime
-          // tick here is the test-side mitigation.)
-          yield* Effect.sleep("50 millis")
-
-          // Settle the just-spawned writer with failure. Both watchers now
-          // wake from their Deferred.await: the checkpoint-side runs
-          // writers.delete + DB update; the prune-side runs
-          // writerFailures.set and (when attempt < maxFailures)
-          // crossed.delete so the next iteration can re-fire the threshold.
-          const outcome = pendingOutcomes[pendingOutcomes.length - 1]
-          yield* Deferred.succeed(outcome, { status: "failure", error: `attempt ${attempt}` })
-
-          // Poll until the checkpoint-side settle watcher has cleared the
-          // writers Map (lock released).
-          let running = yield* svc.isWriterRunning(info.id)
-          for (let i = 0; i < 50 && running; i++) {
-            yield* Effect.sleep("20 millis")
-            running = yield* svc.isWriterRunning(info.id)
-          }
-          expect(running).toBe(false)
-          // Extra ticks so the prune-side watcher's continuation
-          // (writerFailures.set + crossed.delete) lands before the next
-          // fireCheckpoints reads `crossed` / `already`.
-          yield* Effect.sleep("100 millis")
-        }
-
-        // After 3 failures, fireCheckpoints should NOT spawn a 4th writer.
-        // Mechanism: on the 3rd failure the prune watcher hits
-        // `next >= maxFailures` and skips `crossed.delete`. The threshold
-        // remains in `already`, so the 4th fireCheckpoints invocation finds
-        // `already.has(t)` === true and continues without calling
-        // tryStartCheckpointWriter. (See prune.ts:339-352.)
-        const beforeFourth = spawnLog.count
-        expect(beforeFourth).toBe(3)
         yield* prune.fireCheckpoints({
           sessionID: info.id,
           model: fakeModel,
           tokens: oneOverFirstThreshold,
           promptOps: {} as never,
         })
-        expect(spawnLog.count).toBe(beforeFourth)
+        expect(spawnLog.count).toBe(1)
+        yield* Deferred.succeed(pendingOutcomes[0], { status: "failure", error: "test injected" })
+
+        let running = yield* svc.isWriterRunning(info.id)
+        for (let i = 0; i < 50 && running; i++) {
+          yield* Effect.sleep("20 millis")
+          running = yield* svc.isWriterRunning(info.id)
+        }
+        expect(running).toBe(false)
+
+        // The crossed threshold remains consumed even on failure, so periodic
+        // pruning cannot turn a failed auxiliary generation into a retry loop.
+        yield* prune.fireCheckpoints({
+          sessionID: info.id,
+          model: fakeModel,
+          tokens: oneOverFirstThreshold,
+          promptOps: {} as never,
+        })
+        expect(spawnLog.count).toBe(1)
       }),
       { config: { checkpoint: { fork: true } } },
     ),

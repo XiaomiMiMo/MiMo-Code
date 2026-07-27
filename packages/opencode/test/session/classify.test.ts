@@ -319,13 +319,7 @@ describe("classifyAssistantStep", () => {
     ).toEqual({ type: "final" })
   })
 
-  test("errored tool part → failed (Spec ③ P1 regression)", () => {
-    // SSE timeout cleanup marks pending tool parts as state.status === "error".
-    // Without the guard, these parts caused mis-classification as "continue" because
-    // the pending-tool check ranked above assistant.error. This led runLoop to
-    // re-enter and get stranded on permission.ask. Spec ③ P1 fixes this by adding
-    // state.status !== "error" to the pending-tool predicate, so errored parts fall
-    // through to step 5 (assistant.error) and return failed.
+  test("interrupted tool part → failed", () => {
     const errPart = {
       ...basePart("m-2"),
       type: "tool" as const,
@@ -336,7 +330,7 @@ describe("classifyAssistantStep", () => {
         input: {},
         error: "aborted",
         time: { start: 1, end: 2 },
-        metadata: {},
+        metadata: { interrupted: true },
       },
     } as unknown as MessageV2.Part
 
@@ -353,6 +347,31 @@ describe("classifyAssistantStep", () => {
       parts: [errPart],
     })
     expect(result).toEqual({ type: "failed", reason: "APIError" })
+  })
+
+  test("executed tool error remains an observation and continues", () => {
+    const errPart = {
+      ...basePart("m-2"),
+      type: "tool" as const,
+      callID: "call-1",
+      tool: "read",
+      state: {
+        status: "error" as const,
+        input: {},
+        error: "filePath is required",
+        time: { start: 1, end: 2 },
+        metadata: {},
+      },
+    } as unknown as MessageV2.Part
+
+    expect(
+      classifyAssistantStep({
+        phase: "after-process",
+        lastUser,
+        assistant: assistantInfo("m-2", { finish: "stop" }),
+        parts: [errPart],
+      }),
+    ).toEqual({ type: "continue" })
   })
 
   describe("text-form tool call", () => {
