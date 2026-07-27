@@ -764,7 +764,8 @@ function contextToolTrigger(part: ToolPart, i18n: ReturnType<typeof useI18n>) {
       return {
         actionLabel: i18n.t("ui.tool.analyzed"),
         fileExt,
-        mainText: filename ?? (filePath ? getFilename(filePath) : (cleanTitle ?? (i18n.t("ui.tool.read")))),
+        filePath,
+        mainText: filename ?? (filePath ? getFilename(filePath) : (cleanTitle ?? i18n.t("ui.tool.read"))),
         badgeText,
       }
     }
@@ -773,6 +774,7 @@ function contextToolTrigger(part: ToolPart, i18n: ReturnType<typeof useI18n>) {
       const path = filePath ?? (typeof input.path === "string" ? input.path : "/")
       return {
         actionLabel: i18n.t("ui.tool.explored"),
+        filePath: path,
         mainText: _getDirectory(path) || path,
       }
     }
@@ -784,6 +786,7 @@ function contextToolTrigger(part: ToolPart, i18n: ReturnType<typeof useI18n>) {
       const badge = resultsCount !== undefined ? `${resultsCount} ${i18n.t("ui.common.results")}` : undefined
       return {
         actionLabel: i18n.t("ui.tool.searched"),
+        filePath,
         mainText: query || cleanTitle || i18n.t("ui.tool.grep"),
         badgeText: badge,
       }
@@ -839,6 +842,7 @@ function contextToolTrigger(part: ToolPart, i18n: ReturnType<typeof useI18n>) {
       return {
         actionLabel: i18n.t("ui.tool.edited"),
         fileExt,
+        filePath,
         mainText: filename ?? (filePath ? getFilename(filePath) : (cleanTitle ?? i18n.t("ui.tool.write"))),
         additions,
         deletions,
@@ -1075,47 +1079,37 @@ function ContextToolGroup(props: { parts: ToolPart[]; busy?: boolean }) {
                 () => partAccessor().state.status === "pending" || partAccessor().state.status === "running",
               )
               return (
-                <div data-slot="context-tool-group-item" class="flex items-center gap-2 py-0.5 text-13-regular">
-                  <span data-slot="context-action" class="text-text-weak shrink-0">
-                    {info().actionLabel}
-                  </span>
-                  <Show when={info().fileExt}>
-                    <span
-                      data-slot="context-file-ext"
-                      class="inline-flex items-center justify-center px-1 py-0.2 text-[10px] font-bold font-mono uppercase bg-blue-500/10 text-blue-500 dark:bg-blue-400/15 dark:text-blue-400 rounded border border-blue-500/20 shrink-0"
-                    >
-                      <Show when={info().fileExt?.toLowerCase() === "md"} fallback={info().fileExt}>
-                        <span class="flex items-center gap-0.5 font-bold">
-                          <span>M</span>
-                          <span class="text-[9px]">↓</span>
-                        </span>
-                      </Show>
+                <div data-slot="context-tool-group-item" class="flex items-center justify-between w-full py-1.5 px-3 rounded-lg border border-border-weak bg-surface-raised-base text-13-regular my-0.5">
+                  <div class="flex items-center gap-2 min-w-0">
+                    <Icon name="info" class="text-blue-500 shrink-0" size="small" />
+                    <span class="text-text-weak text-13-regular shrink-0">
+                      {info().filePath && info().filePath!.includes("/") ? `${getDirectory(info().filePath!)}/` : "/"}
                     </span>
-                  </Show>
-                  <span
-                    data-slot="context-main-text"
-                    class="font-bold text-text-strong font-mono min-w-0 overflow-hidden text-ellipsis whitespace-nowrap"
-                  >
-                    <TextShimmer text={info().mainText} active={running()} />
-                  </span>
-                  <Show when={info().additions !== undefined || info().deletions !== undefined}>
-                    <div class="flex items-center gap-1 font-mono text-12-medium shrink-0 ml-0.5">
-                      <Show when={info().additions !== undefined}>
-                        <span class="text-emerald-600 dark:text-emerald-400 font-semibold">{`+${info().additions}`}</span>
-                      </Show>
-                      <Show when={info().deletions !== undefined}>
-                        <span class="text-rose-600 dark:text-rose-400 font-semibold">{`-${info().deletions}`}</span>
-                      </Show>
-                    </div>
-                  </Show>
-                  <Show when={info().badgeText}>
-                    <span
-                      data-slot="context-badge"
-                      class="px-1.5 py-0.5 text-xs font-mono rounded bg-surface-raised-base text-text-weak border border-border-weak shrink-0"
-                    >
-                      {info().badgeText}
+                    <span class="font-medium text-text-strong text-13-medium truncate">
+                      <TextShimmer text={info().mainText} active={running()} />
                     </span>
-                  </Show>
+                  </div>
+                  <div class="flex items-center gap-3 shrink-0 ml-auto">
+                    <Show when={info().additions !== undefined || info().deletions !== undefined}>
+                      <div class="flex items-center gap-2 font-mono text-13-medium">
+                        <Show when={info().additions !== undefined}>
+                          <span class="text-emerald-600 dark:text-emerald-400 font-semibold">{`+${info().additions}`}</span>
+                        </Show>
+                        <Show when={info().deletions !== undefined}>
+                          <span class="text-rose-600 dark:text-rose-400 font-semibold">{`-${info().deletions}`}</span>
+                        </Show>
+                      </div>
+                    </Show>
+                    <Show when={info().badgeText}>
+                      <span
+                        data-slot="context-badge"
+                        class="px-1.5 py-0.5 text-xs font-mono rounded bg-surface-raised-base text-text-weak border border-border-weak shrink-0"
+                      >
+                        {info().badgeText}
+                      </span>
+                    </Show>
+                    <Icon name="chevron-grabber-vertical" class="text-text-weak shrink-0" size="small" />
+                  </div>
                 </div>
               )
             }}
@@ -1407,20 +1401,20 @@ function ToolFileAccordion(props: { path: string; actions?: JSX.Element; childre
     >
       <Accordion.Item value={value()}>
         <StickyAccordionHeader>
-          <Accordion.Trigger>
-            <div data-slot="apply-patch-trigger-content">
-              <div data-slot="apply-patch-file-info">
-                <FileIcon node={{ path: props.path, type: "file" }} />
-                <div data-slot="apply-patch-file-name-container">
-                  <Show when={props.path.includes("/")}>
-                    <span data-slot="apply-patch-directory">{`\u202A${getDirectory(props.path)}\u202C`}</span>
-                  </Show>
-                  <span data-slot="apply-patch-filename">{getFilename(props.path)}</span>
-                </div>
+          <Accordion.Trigger class="w-full">
+            <div data-slot="apply-patch-trigger-content" class="flex items-center justify-between w-full px-3 py-1.5 rounded-lg border border-border-weak bg-surface-raised-base">
+              <div data-slot="apply-patch-file-info" class="flex items-center gap-2 min-w-0">
+                <Icon name="info" class="text-blue-500 shrink-0" size="small" />
+                <span data-slot="apply-patch-directory" class="text-text-weak text-13-regular shrink-0">
+                  {props.path.includes("/") ? `${getDirectory(props.path)}/` : "/"}
+                </span>
+                <span data-slot="apply-patch-filename" class="text-text-strong font-medium text-13-medium truncate">
+                  {getFilename(props.path)}
+                </span>
               </div>
-              <div data-slot="apply-patch-trigger-actions">
+              <div data-slot="apply-patch-trigger-actions" class="flex items-center gap-3 shrink-0 ml-auto">
                 {props.actions}
-                <Icon name="chevron-grabber-vertical" size="small" />
+                <Icon name="chevron-grabber-vertical" class="text-text-weak shrink-0" size="small" />
               </div>
             </div>
           </Accordion.Trigger>
@@ -1977,27 +1971,20 @@ ToolRegistry.register({
           icon="code-lines"
           defer
           trigger={
-            <div data-component="edit-trigger">
-              <div data-slot="message-part-title-area">
-                <div data-slot="message-part-title">
-                  <span data-slot="message-part-title-text">
-                    <TextShimmer text={i18n.t("ui.messagePart.title.edit")} active={pending()} />
-                  </span>
-                  <Show when={!pending()}>
-                    <span data-slot="message-part-title-filename">{filename()}</span>
+            <div data-component="edit-trigger" class="flex items-center gap-3 w-full">
+              <span data-slot="message-part-title-text" class="font-medium text-text-strong text-14-medium">
+                <TextShimmer text={i18n.t("ui.messagePart.title.edit")} active={pending()} />
+              </span>
+              <Show when={!pending() && props.metadata.filediff}>
+                <div class="flex items-center gap-2 font-mono text-13-medium">
+                  <Show when={props.metadata.filediff.additions !== undefined}>
+                    <span class="text-emerald-600 dark:text-emerald-400 font-semibold">{`+${props.metadata.filediff.additions}`}</span>
+                  </Show>
+                  <Show when={props.metadata.filediff.deletions !== undefined}>
+                    <span class="text-rose-600 dark:text-rose-400 font-semibold">{`-${props.metadata.filediff.deletions}`}</span>
                   </Show>
                 </div>
-                <Show when={!pending() && props.input.filePath?.includes("/")}>
-                  <div data-slot="message-part-path">
-                    <span data-slot="message-part-directory">{getDirectory(props.input.filePath!)}</span>
-                  </div>
-                </Show>
-              </div>
-              <div data-slot="message-part-actions">
-                <Show when={!pending() && props.metadata.filediff}>
-                  <DiffChanges changes={props.metadata.filediff} />
-                </Show>
-              </div>
+              </Show>
             </div>
           }
         >

@@ -79,3 +79,7 @@ bun run --cwd packages/desktop dev
 # 本地制作 macOS .app & .dmg 打包产物
 bun run --cwd packages/desktop package:mac
 ```
+
+---
+
+欢迎共享代码 🎉
