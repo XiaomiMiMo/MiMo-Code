@@ -13,9 +13,13 @@ export function lines(content: string) {
   return content.replace(/\n$/, "").split("\n")
 }
 
-/** Usable text columns inside a BlockTool body (left border + padding). */
+/** Usable text columns inside a BlockTool body. `ctx.width` (contentWidth) only
+ * subtracts the conversation box's own left/right padding, so we also reserve the
+ * transcript scrollbox's viewport padding + visible scrollbar (~3) and the block's
+ * left border + padding (3). Over-reserving is the safe direction: it makes the
+ * collapsed block shorter, never taller than intended. */
 export function columns(width: number) {
-  return Math.max(20, width - 3)
+  return Math.max(20, width - 6)
 }
 
 /** Display cells of a single line. Bun.stringWidth reports 0 for a tab, but the
@@ -34,18 +38,21 @@ export function rows(content: string, cols: number) {
   return lines(content).reduce((total, line) => total + height(line, cols), 0)
 }
 
-/** Head of `line` that fits in `cells` display columns. Walks code points so a
- * wide character is never split in half; stops before one that would overflow.
- * A multi-code-point grapheme (ZWJ emoji) is over-charged here, which only makes
- * the slice shorter — never taller than the budget. */
+/** Head of `line` that fits in `cells` display columns. Walks GRAPHEME clusters,
+ * not code points: Bun.stringWidth is not additive over code points — "❤️" is
+ * U+2764 U+FE0F and measures 2 as a unit but 1 + 0 summed, so a per-code-point
+ * walk under-charges emoji-presentation sequences and would overshoot the budget.
+ * A cluster that would overflow is dropped whole, never split. */
+const graphemes = new Intl.Segmenter(undefined, { granularity: "grapheme" })
+
 function sliceToWidth(line: string, cells: number) {
   let used = 0
   let out = ""
-  for (const char of line) {
-    const w = width(char)
+  for (const { segment } of graphemes.segment(line)) {
+    const w = width(segment)
     if (used + w > cells) return out
     used += w
-    out += char
+    out += segment
   }
   return out
 }

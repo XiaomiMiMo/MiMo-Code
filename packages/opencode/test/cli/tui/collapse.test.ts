@@ -41,8 +41,8 @@ describe("collapse.clip", () => {
 })
 
 describe("collapse.columns", () => {
-  test("reserves the block border and padding, with a floor", () => {
-    expect(Collapse.columns(120)).toBe(117)
+  test("reserves the scrollbox chrome and the block border, with a floor", () => {
+    expect(Collapse.columns(120)).toBe(114)
     expect(Collapse.columns(10)).toBe(20)
   })
 })
@@ -69,5 +69,19 @@ describe("collapse display width", () => {
   test("charges a tab at least one cell (Bun.stringWidth reports 0)", () => {
     expect(Collapse.rows("\t".repeat(30), 20)).toBe(2)
     expect(Collapse.rows("\ta\tb", 20)).toBe(1)
+  })
+
+  // Bun.stringWidth is not additive over code points: "❤️" is U+2764 U+FE0F and
+  // measures 2 whole but 1 + 0 summed. A per-code-point walk under-charged it and
+  // clipped twice the requested height.
+  test("clipped content never exceeds the budget, whatever the grapheme", () => {
+    for (const glyph of ["❤️", "1️⃣", "👨‍👩‍👦", "中", "a", "\t"]) {
+      const clipped = Collapse.clip(glyph.repeat(200), 20, 2)
+      expect(Collapse.rows(clipped.replace(/\n…$/, ""), 20)).toBeLessThanOrEqual(2)
+    }
+  })
+
+  test("keeps a variation-selector emoji whole rather than splitting it", () => {
+    expect(Collapse.clip("❤️".repeat(200), 20, 1)).toBe(`${"❤️".repeat(10)}\n…`)
   })
 })
