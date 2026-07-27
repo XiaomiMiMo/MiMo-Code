@@ -3,14 +3,16 @@ feature: exec-tool-view
 status: delivered
 updated: 2026-07-27
 branch: feat/exec-tool-view
-commits: 47c8425f..1e463724
+commits: 47c8425f..HEAD
 ---
 
 # exec Tool View (bash-style collapse)
 
 ## Report
 
-**What was built** — `exec` (the parallel tool-call script tool) now renders like `bash`. Once `input.code` has streamed in, the part lives in a `BlockTool` for the rest of its life; collapsing caps the script and its output at a 10-line head with a `…` marker instead of compressing everything into a one-line summary. Expanding shows both in full. The click handler and the expand/collapse hint appear only when something actually overflows, so a short script with short output is a static block — the same rule `bash` uses. The 10-line budget is now a shared constant (`TOOL_BLOCK_COLLAPSE_MAX_LINES`) consumed by both renderers, replacing bash's inline literal.
+**What was built** — `exec` (the parallel tool-call script tool) now renders like `bash`. Once `input.code` has streamed in, the part lives in a `BlockTool` for the rest of its life; collapsing caps the script and its output at a 10-row budget with a `…` marker instead of compressing everything into a one-line summary. Expanding shows both in full. The click handler and the expand/collapse hint appear only when something actually overflows, so a short script with short output is a static block — the same rule `bash` uses.
+
+The budget counts *rendered* rows, not source lines. The first cut of this change counted source lines and bounded nothing: `exec` returns JSON, one line of it wraps to dozens of terminal rows, and the collapsed block still filled the screen. Estimation and clipping now live in `packages/opencode/src/cli/cmd/tui/util/collapse.ts` and are shared with `Bash`, which had the same latent defect for long single-line output. A line straddling the budget is sliced mid-line, so a single 4000-char line still shows its head.
 
 The pre-execution state keeps the single `InlineTool` pending line (`~ Writing script...`). Because that branch is only reachable while `code` is still empty, its failure color, spinner and summary children were unreachable and were removed; `InlineTool`'s `iconColor` prop lost its last user and was deleted. `exec` output now passes through `stripAnsi` like bash's, since nested `bash` calls put raw escape sequences into `<return_value>` / `<logs>`.
 
@@ -18,13 +20,16 @@ On the backend, `exec` re-publishes the per-tool `counts` map in its terminal me
 
 **Verification**
 
-- `cd packages/opencode && bun typecheck` — PASS (clean), re-run after the review fixes.
+- `cd packages/opencode && bun typecheck` — PASS (clean), re-run after the row-budget rework.
+- `cd packages/opencode && bun test test/cli/tui/collapse.test.ts` — PASS, 8 pass / 0 fail (row estimation + clipping math).
 - `cd packages/opencode && bun test test/tool/tool-script.test.ts` — PASS, 42 pass / 0 fail.
 - `cd packages/opencode && bun test test/tool` — PASS, 731 pass / 10 skip / 0 fail.
 - Independent subagent review of `47c8425f..b5dbe888`: both acceptance criteria met, no critical findings. Two of its three minor findings were fixed in `1e463724` (dead pending-branch props, missing `stripAnsi`); the third (`clip()` being a plain function rather than a memo) was rejected — reads of `expanded()` inside JSX children are tracked by the render effect.
-- Not covered: there is no render harness for the TUI components in `routes/session/index.tsx`, so the visual result was reviewed by reading the logic, not asserted by a test. `exec` is also gated to GPT-toolset models (`registry.ts:379-381`), so no live TUI run was performed.
+- Not covered: there is no render harness for the components in `routes/session/index.tsx`, so wiring (which memo feeds which `<text>`) was reviewed by reading, not asserted. The row math itself is unit-tested. `exec` is gated to GPT-toolset models (`registry.ts:379-381`), so no live TUI run was performed; the row-budget defect was reported from a user screenshot, not caught by a test.
 
 **Journey log**
+
+- A source-line collapse budget is meaningless for tools whose output can be one enormous line. `exec` returns JSON via `JSON.stringify(parsed, null, 2)`, but each *string value* inside it (a nested `bash` stdout, a `grep` result set) keeps its `\n` escaped, so 40 rows of text arrive as one source line. Budget rendered rows for anything block-shaped.
 
 - The spec's original §S2 rule — leave the two pre-execution error returns without `counts` — did not survive contact with the type system: `Tool.define` infers metadata as the union of `execute`'s return literals, and `bun typecheck` covers `test/`, so a non-uniform union makes `result.metadata.counts` inaccessible in tests. All five terminal returns now carry `counts` (empty map for the pre-execution pair, behaviorally identical). §S2 records the delivered rule.
 - Hoisting `trace` above the code-size guard so `tally()` could be shared briefly left a duplicated `const trace` declaration; caught by grepping declarations, not by the first typecheck pass.
@@ -50,11 +55,12 @@ Restructure `ToolScript` to mirror `Bash`:
 - Shape selection is a `<Switch>` on whether script source has arrived. With no `input.code` yet, keep the existing single `InlineTool` pending line (`~ Writing script...`). Once `input.code` is a non-empty string, render `BlockTool` for the rest of the part's life, with `spinner={isRunning()}` on the title.
 - `BlockTool` title stays `# exec · <summary>`, where `summary` keeps its current composition (`N calls · read×7 grep×4(1!)`, prefixed with the failure status when the run did not complete).
 - Body, in order:
-  1. script source — first 10 lines when collapsed, plus a `…` line when truncated; full source when expanded;
-  2. output — the `props.output` string with ANSI stripped (nested `bash` calls embed escape sequences), first 10 lines when collapsed plus `…`, full when expanded. The XML envelope (`<exec status=…>`, `<return_value>`, `<logs>`, `<trace>`) is displayed verbatim, exactly as `bash` shows raw stdout. Coloured `theme.error` when the run failed.
+  1. script source — clipped to a 10-**rendered-row** budget when collapsed with a `…` marker; full source when expanded;
+  2. output — the `props.output` string with ANSI stripped (nested `bash` calls embed escape sequences), clipped to the same 10-row budget when collapsed, full when expanded. The XML envelope (`<exec status=…>`, `<return_value>`, `<logs>`, `<trace>`) is displayed verbatim, exactly as `bash` shows raw stdout. Coloured `theme.error` when the run failed.
   3. hint line `Click to expand` / `Click to collapse`, rendered only when at least one of the two blocks overflows.
 - `onClick` is wired only when something overflows, so a short script with short output is a static, non-hoverable block (bash parity, `index.tsx:2967`).
-- The 10-line budget is a shared module constant used by both `Bash` and `ToolScript`, replacing bash's inline literal `10`.
+- The budget counts **rendered rows, not source lines**: `exec` returns JSON, and one line of it wraps to dozens of terminal rows, so a source-line budget does not bound the collapsed height at all. Estimated height per line is `ceil(length / columns)` with `columns` derived from `ctx.width` minus the block's border and padding; every character is assumed one cell wide, so CJK/emoji undercount. A line straddling the budget is sliced mid-line, so a single huge line still shows its head instead of collapsing to a bare `…`.
+- The row-budget helpers live in `packages/opencode/src/cli/cmd/tui/util/collapse.ts` (`lines`, `columns`, `rows`, `clip`) and are shared by `Bash` and `ToolScript` — bash has the same long-single-line defect. `hasLongDisplayLine` / `Write`'s line count reuse `Collapse.lines`.
 - The pending branch is only reachable while `code` is empty, so it carries no failure color, spinner, or summary. `InlineTool`'s `iconColor` prop has no other user and is removed.
 
 Not in this change: syntax highlighting for the script body, envelope parsing, live output streaming.
@@ -77,3 +83,4 @@ Not in this change: syntax highlighting for the script body, envelope parsing, l
 
 - [x] T1: Retain per-tool `counts` in `exec` terminal metadata — acceptance: `bun test test/tool/tool-script.test.ts` passes with a new assertion that a completed run's metadata carries `counts` with per-tool `n`/`errors`, and that a failed inner call is reflected in `errors` (covers: S2)
 - [x] T2: Render `exec` as a bash-style collapsible block — acceptance: `ToolScript` renders `BlockTool` whenever `input.code` is non-empty, showing script head-10 + output head-10 + `…` markers while collapsed and full content when expanded, with the hint/click wiring gated on overflow; `bun typecheck` clean (covers: S2)
+- [x] T3: Budget the collapsed height in rendered rows — acceptance: `bun test test/cli/tui/collapse.test.ts` passes, covering wrapped-height counting, whole-line drops, mid-line slicing at the budget, and the column floor; `Bash` and `ToolScript` both consume the shared helper (covers: S2)

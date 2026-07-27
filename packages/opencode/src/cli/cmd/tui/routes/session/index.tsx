@@ -99,6 +99,7 @@ import { DialogGoUpsell } from "../../component/dialog-go-upsell"
 import { DialogTokenPlan } from "../../component/dialog-token-plan"
 import { SessionRetry } from "@/session/retry"
 import { getRevertDiffFiles } from "../../util/revert-diff"
+import * as Collapse from "../../util/collapse"
 import {
   createFreeApiSunsetSignal,
   freeApiModelNameKey,
@@ -2292,6 +2293,7 @@ function WorkItemTask(props: ToolProps<typeof TaskTool>) {
 // counts published through ctx.metadata.
 function ToolScript(props: ToolProps<typeof ToolScriptTool>) {
   const { theme } = useTheme()
+  const ctx = use()
   const [expanded, setExpanded] = createSignal(false)
   const isRunning = createMemo(() => props.part.state.status === "running")
   const meta = createMemo(() =>
@@ -2319,16 +2321,15 @@ function ToolScript(props: ToolProps<typeof ToolScriptTool>) {
   // exec embeds nested tool output (a `bash` call's stdout) into <return_value>
   // and <logs>, so escape sequences reach this renderer raw.
   const output = createMemo(() => stripAnsi(props.output?.trim() ?? ""))
+  const columns = createMemo(() => Collapse.columns(ctx.width))
   const overflow = createMemo(
     () =>
-      displayLines(code()).length > TOOL_BLOCK_COLLAPSE_MAX_LINES ||
-      displayLines(output()).length > TOOL_BLOCK_COLLAPSE_MAX_LINES,
+      Collapse.rows(code(), columns()) > TOOL_BLOCK_COLLAPSE_MAX_ROWS ||
+      Collapse.rows(output(), columns()) > TOOL_BLOCK_COLLAPSE_MAX_ROWS,
   )
   const clip = (content: string) => {
     if (expanded()) return content
-    const lines = displayLines(content)
-    if (lines.length <= TOOL_BLOCK_COLLAPSE_MAX_LINES) return content
-    return [...lines.slice(0, TOOL_BLOCK_COLLAPSE_MAX_LINES), "…"].join("\n")
+    return Collapse.clip(content, columns(), TOOL_BLOCK_COLLAPSE_MAX_ROWS)
   }
 
   return (
@@ -2924,30 +2925,27 @@ function BlockTool(props: {
 
 const TOOL_COLLAPSE_MAX_LINES = 3
 const TOOL_COLLAPSE_MAX_LINE_LENGTH = 120
-// Head budget for block-shaped tools (bash, exec) whose collapsed state still
-// shows content — collapsing caps the flood, it doesn't hide the output.
-const TOOL_BLOCK_COLLAPSE_MAX_LINES = 10
-
-function displayLines(content: string) {
-  if (!content) return []
-  return content.replace(/\n$/, "").split("\n")
-}
+// Height budget for block-shaped tools (bash, exec) whose collapsed state still
+// shows content — collapsing caps the flood, it doesn't hide the output. Counted
+// in rendered rows, see @tui/util/collapse.
+const TOOL_BLOCK_COLLAPSE_MAX_ROWS = 10
 
 function hasLongDisplayLine(content: string) {
-  return displayLines(content).some((line) => line.length > TOOL_COLLAPSE_MAX_LINE_LENGTH)
+  return Collapse.lines(content).some((line) => line.length > TOOL_COLLAPSE_MAX_LINE_LENGTH)
 }
 
 function Bash(props: ToolProps<typeof BashTool>) {
   const { theme } = useTheme()
+  const ctx = use()
   const sync = useSync()
   const isRunning = createMemo(() => props.part.state.status === "running")
   const output = createMemo(() => stripAnsi(props.metadata.output?.trim() ?? ""))
   const [expanded, setExpanded] = createSignal(false)
-  const lines = createMemo(() => output().split("\n"))
-  const overflow = createMemo(() => lines().length > TOOL_BLOCK_COLLAPSE_MAX_LINES)
+  const columns = createMemo(() => Collapse.columns(ctx.width))
+  const overflow = createMemo(() => Collapse.rows(output(), columns()) > TOOL_BLOCK_COLLAPSE_MAX_ROWS)
   const limited = createMemo(() => {
-    if (expanded() || !overflow()) return output()
-    return [...lines().slice(0, TOOL_BLOCK_COLLAPSE_MAX_LINES), "…"].join("\n")
+    if (expanded()) return output()
+    return Collapse.clip(output(), columns(), TOOL_BLOCK_COLLAPSE_MAX_ROWS)
   })
 
   const workdirDisplay = createMemo(() => {
@@ -3011,7 +3009,7 @@ function Write(props: ToolProps<typeof WriteTool>) {
     if (!props.input.content) return ""
     return props.input.content
   })
-  const lineCount = createMemo(() => displayLines(code()).length)
+  const lineCount = createMemo(() => Collapse.lines(code()).length)
   const collapsed = createMemo(() => lineCount() > TOOL_COLLAPSE_MAX_LINES || hasLongDisplayLine(code()))
 
   return (
