@@ -374,13 +374,11 @@ export const layer = Layer.effect(
               return message
             },
           }).pipe(
-            Effect.catch(() => {
-              // TODO: make proper events for this
-              // bus.publish(Session.Event.Error, {
-              //   error: new NamedError.Unknown({
-              //     message: `Failed to load plugin ${load.spec}: ${message}`,
-              //   }).toObject(),
-              // })
+            Effect.catch((err) => {
+              log.error("unhandled error in plugin loading pipeline", {
+                path: load.spec,
+                error: errorMessage(err),
+              })
               return Effect.void
             }),
           )
