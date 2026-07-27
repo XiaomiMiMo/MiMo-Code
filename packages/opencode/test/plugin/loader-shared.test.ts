@@ -68,6 +68,38 @@ describe("plugin.loader.shared", () => {
     expect(await fs.readFile(tmp.extra.mark, "utf8")).toBe("called")
   })
 
+  test("loads a file:// plugin with non-function exports", async () => {
+    await using tmp = await tmpdir({
+      init: async (dir) => {
+        const file = path.join(dir, "plugin.ts")
+        const mark = path.join(dir, "called.txt")
+        await Bun.write(
+          file,
+          [
+            "export const config = { foo: 'bar' }",
+            "export type Config = { foo: string }",
+            "export const VERSION = '1.0.0'",
+            "export default async () => {",
+            `  await Bun.write(${JSON.stringify(mark)}, "called")`,
+            "  return {}",
+            "}",
+            "",
+          ].join("\n"),
+        )
+
+        await Bun.write(
+          path.join(dir, "mimocode.json"),
+          JSON.stringify({ plugin: [pathToFileURL(file).href] }, null, 2),
+        )
+
+        return { mark }
+      },
+    })
+
+    await load(tmp.path)
+    expect(await fs.readFile(tmp.extra.mark, "utf8")).toBe("called")
+  })
+
   test("deduplicates same function exported as default and named", async () => {
     await using tmp = await tmpdir({
       init: async (dir) => {
