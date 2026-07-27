@@ -12,6 +12,7 @@ import {
 import { Config } from "../config"
 import { ConfigMCP } from "../config/mcp"
 import { Log } from "../util"
+import { NamedError } from "@mimo-ai/shared/util/error"
 import z from "zod/v4"
 import { Installation } from "../installation"
 import { InstallationVersion } from "../installation/version"
@@ -60,6 +61,12 @@ export const BrowserOpenFailed = BusEvent.define(
   }),
 )
 
+export const Failed = NamedError.create(
+  "MCPFailed",
+  z.object({
+    name: z.string(),
+  }),
+)
 
 type MCPClient = Client
 
