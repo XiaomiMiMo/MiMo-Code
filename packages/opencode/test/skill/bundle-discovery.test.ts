@@ -6,10 +6,13 @@ import { Skill } from "../../src/skill"
 import { loadComposeBundle } from "../../src/skill/compose/bundle.macro"
 import { provideTmpdirInstance } from "../fixture/fixture"
 import { testEffect } from "../lib/effect"
+import { withEnv } from "../lib/env"
 
-process.env.MIMOCODE_DISABLE_EXTERNAL_SKILLS = "true"
-delete process.env.MIMOCODE_DISABLE_BUILTIN_SKILLS
-delete process.env.MIMOCODE_DISABLE_COMPOSE_SKILLS
+withEnv({
+  MIMOCODE_DISABLE_EXTERNAL_SKILLS: "true",
+  MIMOCODE_DISABLE_BUILTIN_SKILLS: undefined,
+  MIMOCODE_DISABLE_COMPOSE_SKILLS: undefined,
+})
 
 const it = testEffect(Layer.mergeAll(Skill.defaultLayer, CrossSpawnSpawner.defaultLayer))
 

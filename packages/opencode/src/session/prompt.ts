@@ -717,10 +717,8 @@ ${entries}
         }
       }
 
-      // Explicit multi-skill mentions in free text ("/foo ... /bar ..."). This
-      // is separate from the SessionPrompt.command single-command path, which
-      // already wraps SKILL.md content itself. Guard against double-wrapping
-      // by checking whether userMessage.parts already contains such a block.
+      // Sole injection point for skill bodies — free-text mentions ("/foo ... /bar") and slash-command
+      // invocations alike. Runs every step, so the guard keeps step 2+ from restacking step 1's blocks.
       const alreadyWrapped = userMessage.parts.some(
         (p) => p.type === "text" && p.text.startsWith('<skill_content name="'),
       )
@@ -4257,16 +4255,12 @@ NOTE: At any point in time through this workflow you should feel free to ask the
           },
         ]
       } else if (cmd.source === "skill") {
+        // Body injection belongs to the mention scan in insertReminders, which keys off this leading token.
         const visibleText = input.arguments.trim()
           ? `/${input.command} ${input.arguments}`
           : `/${input.command}`
-        const skillPart = {
-          type: "text" as const,
-          text: `<skill_content name="${input.command}">\n${templateCommand}\n</skill_content>`,
-          synthetic: true,
-        }
         const attachments = templateParts.filter((p): p is Exclude<typeof p, { type: "text" }> => p.type !== "text")
-        parts = [{ type: "text" as const, text: visibleText }, skillPart, ...attachments, ...(input.parts ?? [])]
+        parts = [{ type: "text" as const, text: visibleText }, ...attachments, ...(input.parts ?? [])]
       } else {
         parts = [...templateParts, ...(input.parts ?? [])]
       }

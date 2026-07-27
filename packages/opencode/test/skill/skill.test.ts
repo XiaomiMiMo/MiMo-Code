@@ -4,11 +4,11 @@ import { Skill } from "../../src/skill"
 import * as CrossSpawnSpawner from "../../src/effect/cross-spawn-spawner"
 import { provideInstance, provideTmpdirInstance, tmpdir } from "../fixture/fixture"
 import { testEffect } from "../lib/effect"
+import { withEnv } from "../lib/env"
 import path from "path"
 import fs from "fs/promises"
 
-process.env.MIMOCODE_DISABLE_COMPOSE_SKILLS = "true"
-process.env.MIMOCODE_DISABLE_BUILTIN_SKILLS = "true"
+withEnv({ MIMOCODE_DISABLE_COMPOSE_SKILLS: "true", MIMOCODE_DISABLE_BUILTIN_SKILLS: "true" })
 
 const node = CrossSpawnSpawner.defaultLayer
 
