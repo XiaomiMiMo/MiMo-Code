@@ -84,4 +84,10 @@ describe("collapse display width", () => {
   test("keeps a variation-selector emoji whole rather than splitting it", () => {
     expect(Collapse.clip("❤️".repeat(200), 20, 1)).toBe(`${"❤️".repeat(10)}\n…`)
   })
+
+  test("keeps one cluster even when it is wider than the whole budget", () => {
+    // stacked Hangul jamo segment as a single cluster two cells wide per syllable
+    const jamo = "\u1100\u1161\u11A8"
+    expect(Collapse.clip(jamo.repeat(30), 4, 1)).toBe(`${jamo}\n…`)
+  })
 })

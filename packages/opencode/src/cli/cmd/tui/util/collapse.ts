@@ -13,11 +13,11 @@ export function lines(content: string) {
   return content.replace(/\n$/, "").split("\n")
 }
 
-/** Usable text columns inside a BlockTool body. `ctx.width` (contentWidth) only
- * subtracts the conversation box's own left/right padding, so we also reserve the
- * transcript scrollbox's viewport padding + visible scrollbar (~3) and the block's
- * left border + padding (3). Over-reserving is the safe direction: it makes the
- * collapsed block shorter, never taller than intended. */
+/** Usable text columns inside a BlockTool body. `ctx.width` (contentWidth) nets
+ * out the sidebar and the conversation box padding; the remaining chrome is
+ * exactly 6 — the transcript scrollbox's viewport paddingRight, the scrollbar's
+ * paddingLeft and its always-reserved cell, plus the block's left border and
+ * paddingLeft of 2. */
 export function columns(width: number) {
   return Math.max(20, width - 6)
 }
@@ -50,7 +50,11 @@ function sliceToWidth(line: string, cells: number) {
   let out = ""
   for (const { segment } of graphemes.segment(line)) {
     const w = width(segment)
-    if (used + w > cells) return out
+    // A single cluster can be wider than the whole budget (stacked Hangul jamo
+    // measure 4+). Keep the first one anyway — emitting nothing defeats the point
+    // of slicing mid-line, and one cluster of overshoot is invisible next to the
+    // word-wrap slack we already accept.
+    if (used + w > cells) return out || segment
     used += w
     out += segment
   }
