@@ -1,0 +1,79 @@
+---
+feature: exec-tool-view
+status: delivered
+updated: 2026-07-27
+branch: feat/exec-tool-view
+commits: 47c8425f..1e463724
+---
+
+# exec Tool View (bash-style collapse)
+
+## Report
+
+**What was built** — `exec` (the parallel tool-call script tool) now renders like `bash`. Once `input.code` has streamed in, the part lives in a `BlockTool` for the rest of its life; collapsing caps the script and its output at a 10-line head with a `…` marker instead of compressing everything into a one-line summary. Expanding shows both in full. The click handler and the expand/collapse hint appear only when something actually overflows, so a short script with short output is a static block — the same rule `bash` uses. The 10-line budget is now a shared constant (`TOOL_BLOCK_COLLAPSE_MAX_LINES`) consumed by both renderers, replacing bash's inline literal.
+
+The pre-execution state keeps the single `InlineTool` pending line (`~ Writing script...`). Because that branch is only reachable while `code` is still empty, its failure color, spinner and summary children were unreachable and were removed; `InlineTool`'s `iconColor` prop lost its last user and was deleted. `exec` output now passes through `stripAnsi` like bash's, since nested `bash` calls put raw escape sequences into `<return_value>` / `<logs>`.
+
+On the backend, `exec` re-publishes the per-tool `counts` map in its terminal metadata. `SessionProcessor.completeToolCall` (`packages/opencode/src/session/processor.ts:359`) *replaces* part metadata rather than merging it, so the live breakdown streamed through `ctx.metadata` used to vanish the moment a run finished and the summary degraded to `12 calls`.
+
+**Verification**
+
+- `cd packages/opencode && bun typecheck` — PASS (clean), re-run after the review fixes.
+- `cd packages/opencode && bun test test/tool/tool-script.test.ts` — PASS, 42 pass / 0 fail.
+- `cd packages/opencode && bun test test/tool` — PASS, 731 pass / 10 skip / 0 fail.
+- Independent subagent review of `47c8425f..b5dbe888`: both acceptance criteria met, no critical findings. Two of its three minor findings were fixed in `1e463724` (dead pending-branch props, missing `stripAnsi`); the third (`clip()` being a plain function rather than a memo) was rejected — reads of `expanded()` inside JSX children are tracked by the render effect.
+- Not covered: there is no render harness for the TUI components in `routes/session/index.tsx`, so the visual result was reviewed by reading the logic, not asserted by a test. `exec` is also gated to GPT-toolset models (`registry.ts:379-381`), so no live TUI run was performed.
+
+**Journey log**
+
+- The spec's original §S2 rule — leave the two pre-execution error returns without `counts` — did not survive contact with the type system: `Tool.define` infers metadata as the union of `execute`'s return literals, and `bun typecheck` covers `test/`, so a non-uniform union makes `result.metadata.counts` inaccessible in tests. All five terminal returns now carry `counts` (empty map for the pre-execution pair, behaviorally identical). §S2 records the delivered rule.
+- Hoisting `trace` above the code-size guard so `tally()` could be shared briefly left a duplicated `const trace` declaration; caught by grepping declarations, not by the first typecheck pass.
+- Anything streamed via `ctx.metadata` must be re-emitted in every terminal return or it is lost on completion — a general trap for future live-progress tools.
+
+## [S1] Problem
+
+The `exec` tool (parallel tool-call script, `packages/opencode/src/tool/tool-script.ts`, tool id `exec`) renders in the TUI through `ToolScript` (`packages/opencode/src/cli/cmd/tui/routes/session/index.tsx:2292-2345`) as a binary toggle:
+
+- Collapsed (default): a single `InlineTool` line — `» exec 12 calls · read×7 grep×4`. Neither the script nor its output is visible.
+- Expanded: a `BlockTool` dumping the full `input.code` and the full `props.output` with no truncation at all.
+
+Every other block-shaped tool — `bash` above all (`index.tsx:2922-2987`) — treats collapse as *overflow protection*, not as compression to one line: the command is always visible, and the first 10 output lines leak through with a `…` marker. `exec` is the odd one out, so a batch of parallel tool calls is either invisible or floods the transcript.
+
+A second, smaller defect: per-tool counts are streamed live through `ctx.metadata` (`tool-script.ts:411-419`) but the terminal metadata returned by `execute` is only `{ status, toolCalls }` (`tool-script.ts:549,568,575`). `SessionProcessor.completeToolCall` **replaces** part metadata rather than merging it (`packages/opencode/src/session/processor.ts:359`), so the moment a run finishes the breakdown disappears and the summary degrades to `12 calls`.
+
+## [S2] Design
+
+### Collapsed/expanded behavior (TUI)
+
+Restructure `ToolScript` to mirror `Bash`:
+
+- Shape selection is a `<Switch>` on whether script source has arrived. With no `input.code` yet, keep the existing single `InlineTool` pending line (`~ Writing script...`). Once `input.code` is a non-empty string, render `BlockTool` for the rest of the part's life, with `spinner={isRunning()}` on the title.
+- `BlockTool` title stays `# exec · <summary>`, where `summary` keeps its current composition (`N calls · read×7 grep×4(1!)`, prefixed with the failure status when the run did not complete).
+- Body, in order:
+  1. script source — first 10 lines when collapsed, plus a `…` line when truncated; full source when expanded;
+  2. output — the `props.output` string with ANSI stripped (nested `bash` calls embed escape sequences), first 10 lines when collapsed plus `…`, full when expanded. The XML envelope (`<exec status=…>`, `<return_value>`, `<logs>`, `<trace>`) is displayed verbatim, exactly as `bash` shows raw stdout. Coloured `theme.error` when the run failed.
+  3. hint line `Click to expand` / `Click to collapse`, rendered only when at least one of the two blocks overflows.
+- `onClick` is wired only when something overflows, so a short script with short output is a static, non-hoverable block (bash parity, `index.tsx:2967`).
+- The 10-line budget is a shared module constant used by both `Bash` and `ToolScript`, replacing bash's inline literal `10`.
+- The pending branch is only reachable while `code` is empty, so it carries no failure color, spinner, or summary. `InlineTool`'s `iconColor` prop has no other user and is removed.
+
+Not in this change: syntax highlighting for the script body, envelope parsing, live output streaming.
+
+### Terminal metadata (backend)
+
+`exec` keeps the per-tool breakdown after completion: the aggregation previously inlined in `publishProgress` is extracted into one host-side `tally()` helper (hoisted above the code-size guard together with `trace`), and the resulting `counts` map is included in **all five** terminal returns — code-too-large, transpile-error, failure, result-too-large, success. The two pre-execution returns emit an empty map, which is behaviorally identical to omitting the field (the TUI renders an empty `counts` as no breakdown) but keeps the inferred metadata union uniform so `metadata.counts` stays accessible to typed consumers, including tests.
+
+`running: true` is not part of terminal metadata; the TUI derives running state from `part.state.status`.
+
+## [S3] Out of Scope
+
+- Streaming logs / per-call trace lines into metadata for a live-scrolling collapsed view.
+- A dedicated `exec` panel with per-call expansion (WorkflowPanel-style).
+- Parsing the `<exec>` envelope to render `return_value` / `trace` as distinct sections.
+- TypeScript syntax highlighting of the script body.
+- Any change to the `exec` enablement gate (`registry.ts:379-381`, GPT-toolset only).
+
+## Tasks
+
+- [x] T1: Retain per-tool `counts` in `exec` terminal metadata — acceptance: `bun test test/tool/tool-script.test.ts` passes with a new assertion that a completed run's metadata carries `counts` with per-tool `n`/`errors`, and that a failed inner call is reflected in `errors` (covers: S2)
+- [x] T2: Render `exec` as a bash-style collapsible block — acceptance: `ToolScript` renders `BlockTool` whenever `input.code` is non-empty, showing script head-10 + output head-10 + `…` markers while collapsed and full content when expanded, with the hint/click wiring gated on overflow; `bun typecheck` clean (covers: S2)
