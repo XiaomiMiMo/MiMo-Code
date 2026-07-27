@@ -1,0 +1,173 @@
+name: CI
+
+on:
+  push:
+    branches: [main, dev]
+  pull_request:
+    branches: [main, dev]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  CI: true
+
+jobs:
+  typecheck:
+    name: Typecheck
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: ./.github/actions/setup-bun
+      - name: Run typecheck
+        run: bun typecheck
+
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: ./.github/actions/setup-bun
+      - name: Run oxlint
+        run: bun lint
+      - name: Check formatting
+        run: npx prettier --check "packages/opencode/src/**/*.ts" "packages/opencode/test/**/*.ts"
+
+  test:
+    name: Test (shard ${{ matrix.shard }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: ["1/4", "2/4", "3/4", "4/4"]
+    steps:
+      - uses: actions/checkout@v6
+      - uses: ./.github/actions/setup-bun
+      - name: Configure git identity
+        run: |
+          git config --global user.email "ci@mimo.ai"
+          git config --global user.name "mimo-ci"
+      - name: Run unit tests (shard ${{ matrix.shard }})
+        timeout-minutes: 8
+        working-directory: packages/opencode
+        run: bun run test:ci --shard ${{ matrix.shard }}
+      - name: Upload JUnit
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: junit-shard-${{ strategy.job-index }}
+          path: packages/opencode/.artifacts/unit/junit.xml
+
+  security:
+    name: Security Scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: ./.github/actions/setup-bun
+      - name: Install skylos
+        run: pip install skylos
+      - name: Run skylos security scan
+        run: skylos suite packages/opencode/src/plugin --json || true
+      - name: Upload results
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: skylos-results
+          path: packages/opencode/.artifacts/security/
+
+  quality:
+    name: Code Quality
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: ./.github/actions/setup-bun
+      - name: Install repowise
+        run: pip install repowise
+      - name: Run repowise health
+        run: repowise health packages/opencode/src/plugin --json || true
+      - name: Upload results
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: repowise-results
+          path: packages/opencode/.artifacts/quality/
+
+  # Multi-language support: detect and test additional languages
+  python:
+    name: Python (if present)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Check for Python files
+        id: check
+        run: |
+          if find . -name "pyproject.toml" -o -name "setup.py" -o -name "requirements.txt" | grep -v node_modules | head -1; then
+            echo "found=true" >> $GITHUB_OUTPUT
+          fi
+      - name: Setup Python
+        if: steps.check.outputs.found == 'true'
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install Python deps
+        if: steps.check.outputs.found == 'true'
+        run: |
+          pip install ruff mypy pytest
+      - name: Run ruff
+        if: steps.check.outputs.found == 'true'
+        run: ruff check .
+      - name: Run mypy
+        if: steps.check.outputs.found == 'true'
+        run: mypy . --ignore-missing-imports
+      - name: Run pytest
+        if: steps.check.outputs.found == 'true'
+        run: python -m pytest tests/ -x --timeout=60 || true
+
+  rust:
+    name: Rust (if present)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Check for Cargo.toml
+        id: check
+        run: |
+          if find . -name "Cargo.toml" | grep -v node_modules | head -1; then
+            echo "found=true" >> $GITHUB_OUTPUT
+          fi
+      - name: Setup Rust
+        if: steps.check.outputs.found == 'true'
+        uses: dtolnay/rust-toolchain@stable
+      - name: Cargo check
+        if: steps.check.outputs.found == 'true'
+        run: cargo check
+      - name: Cargo test
+        if: steps.check.outputs.found == 'true'
+        run: cargo test --no-fail-fast || true
+
+  go:
+    name: Go (if present)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Check for go.mod
+        id: check
+        run: |
+          if find . -name "go.mod" | grep -v node_modules | head -1; then
+            echo "found=true" >> $GITHUB_OUTPUT
+          fi
+      - name: Setup Go
+        if: steps.check.outputs.found == 'true'
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+      - name: Go vet
+        if: steps.check.outputs.found == 'true'
+        run: go vet ./...
+      - name: Go test
+        if: steps.check.outputs.found == 'true'
+        run: go test ./... || true
