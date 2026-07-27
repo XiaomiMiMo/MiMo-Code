@@ -2316,7 +2316,9 @@ function ToolScript(props: ToolProps<typeof ToolScriptTool>) {
   })
 
   const code = createMemo(() => ((props.input.code as string | undefined) ?? "").trim())
-  const output = createMemo(() => props.output?.trim() ?? "")
+  // exec embeds nested tool output (a `bash` call's stdout) into <return_value>
+  // and <logs>, so escape sequences reach this renderer raw.
+  const output = createMemo(() => stripAnsi(props.output?.trim() ?? ""))
   const overflow = createMemo(
     () =>
       displayLines(code()).length > TOOL_BLOCK_COLLAPSE_MAX_LINES ||
@@ -2350,15 +2352,8 @@ function ToolScript(props: ToolProps<typeof ToolScriptTool>) {
         </BlockTool>
       </Match>
       <Match when={true}>
-        <InlineTool
-          icon="»"
-          iconColor={failed() ? theme.error : undefined}
-          pending="Writing script..."
-          complete={code()}
-          spinner={isRunning()}
-          part={props.part}
-        >
-          exec {summary()}
+        <InlineTool icon="»" pending="Writing script..." complete={false} part={props.part}>
+          exec
         </InlineTool>
       </Match>
     </Switch>
@@ -2782,7 +2777,6 @@ function CollapsibleError(props: { error: string; paddingLeft?: number }) {
 
 function InlineTool(props: {
   icon: string
-  iconColor?: RGBA
   complete: any
   pending: string
   spinner?: boolean
@@ -2869,7 +2863,7 @@ function InlineTool(props: {
         <Match when={true}>
           <text paddingLeft={3} fg={fg()} attributes={denied() || recoverable() || props.dismissed ? TextAttributes.STRIKETHROUGH : undefined}>
             <Show fallback={<>~ {props.pending}</>} when={props.complete}>
-              <span style={{ fg: props.iconColor }}>{props.icon}</span> {props.children}
+              {props.icon} {props.children}
             </Show>
           </text>
         </Match>
