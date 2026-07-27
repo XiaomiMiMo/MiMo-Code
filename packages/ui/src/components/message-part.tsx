@@ -1079,37 +1079,47 @@ function ContextToolGroup(props: { parts: ToolPart[]; busy?: boolean }) {
                 () => partAccessor().state.status === "pending" || partAccessor().state.status === "running",
               )
               return (
-                <div data-slot="context-tool-group-item" class="flex items-center justify-between w-full py-1.5 px-3 rounded-lg border border-border-weak bg-surface-raised-base text-13-regular my-0.5">
-                  <div class="flex items-center gap-2 min-w-0">
-                    <Icon name="info" class="text-blue-500 shrink-0" size="small" />
-                    <span class="text-text-weak text-13-regular shrink-0">
-                      {info().filePath && info().filePath!.includes("/") ? `${getDirectory(info().filePath!)}/` : "/"}
+                <div data-slot="context-tool-group-item" class="flex items-center gap-2 py-0.5 text-14-regular">
+                  <span data-slot="context-action" class="text-text-weak font-medium shrink-0">
+                    {info().actionLabel}
+                  </span>
+                  <Show when={info().fileExt}>
+                    <span
+                      data-slot="context-file-ext"
+                      class="inline-flex items-center justify-center px-1 py-0.2 text-[10px] font-bold font-mono uppercase bg-blue-500/10 text-blue-500 dark:bg-blue-400/15 dark:text-blue-400 rounded border border-blue-500/20 shrink-0"
+                    >
+                      <Show when={info().fileExt?.toLowerCase() === "md"} fallback={info().fileExt}>
+                        <span class="flex items-center gap-0.5 font-bold">
+                          <span>M</span>
+                          <span class="text-[9px]">↓</span>
+                        </span>
+                      </Show>
                     </span>
-                    <span class="font-medium text-text-strong text-13-medium truncate">
-                      <TextShimmer text={info().mainText} active={running()} />
+                  </Show>
+                  <span
+                    data-slot="context-main-text"
+                    class="font-bold text-text-strong font-mono min-w-0 overflow-hidden text-ellipsis whitespace-nowrap"
+                  >
+                    <TextShimmer text={info().mainText} active={running()} />
+                  </span>
+                  <Show when={info().additions !== undefined || info().deletions !== undefined}>
+                    <div class="flex items-center gap-1.5 font-mono text-14-medium shrink-0 ml-1">
+                      <Show when={info().additions !== undefined}>
+                        <span class="text-emerald-600 dark:text-emerald-400 font-semibold">{`+${info().additions}`}</span>
+                      </Show>
+                      <Show when={info().deletions !== undefined}>
+                        <span class="text-rose-600 dark:text-rose-400 font-semibold">{`-${info().deletions}`}</span>
+                      </Show>
+                    </div>
+                  </Show>
+                  <Show when={info().badgeText}>
+                    <span
+                      data-slot="context-badge"
+                      class="px-1.5 py-0.5 text-xs font-mono rounded bg-surface-raised-base text-text-weak border border-border-weak shrink-0"
+                    >
+                      {info().badgeText}
                     </span>
-                  </div>
-                  <div class="flex items-center gap-3 shrink-0 ml-auto">
-                    <Show when={info().additions !== undefined || info().deletions !== undefined}>
-                      <div class="flex items-center gap-2 font-mono text-13-medium">
-                        <Show when={info().additions !== undefined}>
-                          <span class="text-emerald-600 dark:text-emerald-400 font-semibold">{`+${info().additions}`}</span>
-                        </Show>
-                        <Show when={info().deletions !== undefined}>
-                          <span class="text-rose-600 dark:text-rose-400 font-semibold">{`-${info().deletions}`}</span>
-                        </Show>
-                      </div>
-                    </Show>
-                    <Show when={info().badgeText}>
-                      <span
-                        data-slot="context-badge"
-                        class="px-1.5 py-0.5 text-xs font-mono rounded bg-surface-raised-base text-text-weak border border-border-weak shrink-0"
-                      >
-                        {info().badgeText}
-                      </span>
-                    </Show>
-                    <Icon name="chevron-grabber-vertical" class="text-text-weak shrink-0" size="small" />
-                  </div>
+                  </Show>
                 </div>
               )
             }}
@@ -1963,6 +1973,7 @@ ToolRegistry.register({
     const diagnostics = createMemo(() => getDiagnostics(props.metadata.diagnostics, props.input.filePath))
     const path = createMemo(() => props.metadata?.filediff?.file || props.input.filePath || "")
     const filename = () => getFilename(props.input.filePath ?? "")
+    const fileExt = () => extractFileExt(filename())
     const pending = () => props.status === "pending" || props.status === "running"
     return (
       <div data-component="edit-tool">
@@ -1971,12 +1982,30 @@ ToolRegistry.register({
           icon="code-lines"
           defer
           trigger={
-            <div data-component="edit-trigger" class="flex items-center gap-3 w-full">
-              <span data-slot="message-part-title-text" class="font-medium text-text-strong text-14-medium">
+            <div data-component="edit-trigger" class="flex items-center gap-2 text-14-regular">
+              <span data-slot="message-part-title-text" class="text-text-weak font-medium shrink-0">
                 <TextShimmer text={i18n.t("ui.messagePart.title.edit")} active={pending()} />
               </span>
+              <Show when={fileExt()}>
+                <span
+                  data-slot="context-file-ext"
+                  class="inline-flex items-center justify-center px-1 py-0.2 text-[10px] font-bold font-mono uppercase bg-blue-500/10 text-blue-500 dark:bg-blue-400/15 dark:text-blue-400 rounded border border-blue-500/20 shrink-0"
+                >
+                  <Show when={fileExt()?.toLowerCase() === "md"} fallback={fileExt()}>
+                    <span class="flex items-center gap-0.5 font-bold">
+                      <span>M</span>
+                      <span class="text-[9px]">↓</span>
+                    </span>
+                  </Show>
+                </span>
+              </Show>
+              <Show when={!pending()}>
+                <span data-slot="message-part-title-filename" class="font-bold text-text-strong font-mono min-w-0 overflow-hidden text-ellipsis whitespace-nowrap">
+                  {filename()}
+                </span>
+              </Show>
               <Show when={!pending() && props.metadata.filediff}>
-                <div class="flex items-center gap-2 font-mono text-13-medium">
+                <div class="flex items-center gap-1.5 font-mono text-14-medium shrink-0 ml-1">
                   <Show when={props.metadata.filediff.additions !== undefined}>
                     <span class="text-emerald-600 dark:text-emerald-400 font-semibold">{`+${props.metadata.filediff.additions}`}</span>
                   </Show>

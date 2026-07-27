@@ -83,3 +83,5 @@ bun run --cwd packages/desktop package:mac
 ---
 
 欢迎共享代码 🎉
+
+hello world
