@@ -1970,10 +1970,10 @@ ToolRegistry.register({
   render(props) {
     const i18n = useI18n()
     const fileComponent = useFileComponent()
-    const diagnostics = createMemo(() => getDiagnostics(props.metadata.diagnostics, props.input.filePath))
-    const path = createMemo(() => props.metadata?.filediff?.file || props.input.filePath || "")
-    const filename = () => getFilename(props.input.filePath ?? "")
-    const fileExt = () => extractFileExt(filename())
+    const rawPath = () => props.metadata?.filediff?.file || props.input?.filePath || props.input?.TargetFile || props.input?.targetFile || props.input?.path || ""
+    const path = createMemo(() => rawPath())
+    const filename = createMemo(() => getFilename(rawPath()))
+    const fileExt = createMemo(() => extractFileExt(filename()))
     const pending = () => props.status === "pending" || props.status === "running"
 
     const additions = createMemo(() => {
