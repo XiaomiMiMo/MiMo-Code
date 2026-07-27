@@ -291,7 +291,7 @@ describe("WorkflowRuntime cancel cascade", () => {
         // `Deferred.await(run.done)` cannot be timed out and the test hangs long
         // after this assertion already passed. Cancelling here (interruptible, so
         // the bound actually applies) drains the runner map first.
-        yield* (yield* SessionRunState.Service).cancel(parent.id).pipe(Effect.timeout(5000), Effect.ignore)
+        yield* (yield* SessionRunState.Service).cancel(parent.id).pipe(Effect.timeout("5 seconds"), Effect.ignore)
       }),
       { git: true, config: providerCfg },
     ),
@@ -370,11 +370,13 @@ describe("WorkflowRuntime cancel cascade", () => {
         // on each. An orphan (never reclaimed) would have lastOutcome unset here.
         expect(children.filter((a) => a.lastOutcome !== "cancelled")).toEqual([])
         // Drain the parent's runner map before the fixture scope closes (see above).
-        yield* (yield* SessionRunState.Service).cancel(parent.id).pipe(Effect.timeout(5000), Effect.ignore)
+        yield* (yield* SessionRunState.Service).cancel(parent.id).pipe(Effect.timeout("5 seconds"), Effect.ignore)
       }),
       { git: true, config: providerCfg },
     ),
-    20000,
+    // Same budget as the 3-child sibling above: this one adds up to 3s of registry
+    // polling, an 8-way fan-out, and the bounded drain, so it needs at least as much.
+    30000,
   )
 })
 
