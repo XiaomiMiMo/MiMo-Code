@@ -166,7 +166,7 @@ export function createDefaultOptions<T>(style: FileDiffOptions<T>["diffStyle"]) 
     disableLineNumbers: false,
     overflow: "wrap",
     diffStyle: style ?? "unified",
-    diffIndicators: "bars",
+    diffIndicators: "classic",
     lineHoverHighlight: "both",
     disableBackground: false,
     expansionLineCount: 20,

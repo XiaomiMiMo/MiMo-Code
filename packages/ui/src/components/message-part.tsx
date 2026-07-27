@@ -53,6 +53,7 @@ import { TextShimmer } from "./text-shimmer"
 import { AnimatedCountList } from "./tool-count-summary"
 import { ToolStatusTitle } from "./tool-status-title"
 import { patchFiles } from "./apply-patch-file"
+import { normalize } from "./session-diff"
 import { animate } from "motion"
 import { attached, inline, kind } from "./message-file"
 
@@ -1083,19 +1084,6 @@ function ContextToolGroup(props: { parts: ToolPart[]; busy?: boolean }) {
                   <span data-slot="context-action" class="text-text-weak font-medium shrink-0">
                     {info().actionLabel}
                   </span>
-                  <Show when={info().fileExt}>
-                    <span
-                      data-slot="context-file-ext"
-                      class="inline-flex items-center justify-center px-1 py-0.2 text-[10px] font-bold font-mono uppercase bg-blue-500/10 text-blue-500 dark:bg-blue-400/15 dark:text-blue-400 rounded border border-blue-500/20 shrink-0"
-                    >
-                      <Show when={info().fileExt?.toLowerCase() === "md"} fallback={info().fileExt}>
-                        <span class="flex items-center gap-0.5 font-bold">
-                          <span>M</span>
-                          <span class="text-[9px]">↓</span>
-                        </span>
-                      </Show>
-                    </span>
-                  </Show>
                   <span
                     data-slot="context-main-text"
                     class="font-bold text-text-strong font-mono min-w-0 overflow-hidden text-ellipsis whitespace-nowrap"
@@ -1412,24 +1400,22 @@ function ToolFileAccordion(props: { path: string; actions?: JSX.Element; childre
       <Accordion.Item value={value()}>
         <StickyAccordionHeader>
           <Accordion.Trigger class="w-full">
-            <div data-slot="apply-patch-trigger-content" class="flex items-center justify-between w-full px-3 py-1.5 rounded-lg border border-border-weak bg-surface-raised-base">
+            <div data-slot="apply-patch-trigger-content" class="flex items-center justify-between w-full px-3.5 py-2 rounded-t-lg border border-border-weak bg-surface-raised-base">
               <div data-slot="apply-patch-file-info" class="flex items-center gap-2 min-w-0">
-                <Icon name="info" class="text-blue-500 shrink-0" size="small" />
-                <span data-slot="apply-patch-directory" class="text-text-weak text-13-regular shrink-0">
-                  {props.path.includes("/") ? `${getDirectory(props.path)}/` : "/"}
-                </span>
-                <span data-slot="apply-patch-filename" class="text-text-strong font-medium text-13-medium truncate">
+                <span data-slot="apply-patch-filename" class="text-text-strong font-bold text-14-medium truncate">
                   {getFilename(props.path)}
                 </span>
               </div>
               <div data-slot="apply-patch-trigger-actions" class="flex items-center gap-3 shrink-0 ml-auto">
                 {props.actions}
-                <Icon name="chevron-grabber-vertical" class="text-text-weak shrink-0" size="small" />
+                <Icon name="chevron-down" class="text-text-weak shrink-0" size="small" />
               </div>
             </div>
           </Accordion.Trigger>
         </StickyAccordionHeader>
-        <Accordion.Content>{props.children}</Accordion.Content>
+        <Accordion.Content class="border border-t-0 border-border-weak rounded-b-lg overflow-hidden">
+          {props.children}
+        </Accordion.Content>
       </Accordion.Item>
     </Accordion>
   )
@@ -1971,6 +1957,7 @@ ToolRegistry.register({
     const i18n = useI18n()
     const fileComponent = useFileComponent()
     const rawPath = () => props.metadata?.filediff?.file || props.input?.filePath || props.input?.TargetFile || props.input?.targetFile || props.input?.path || ""
+    const diagnostics = createMemo(() => getDiagnostics(props.metadata?.diagnostics, rawPath()))
     const path = createMemo(() => rawPath())
     const filename = createMemo(() => getFilename(rawPath()))
     const fileExt = createMemo(() => extractFileExt(filename()))
@@ -2010,6 +1997,32 @@ ToolRegistry.register({
       return undefined
     })
 
+    const viewDiff = createMemo(() => {
+      const filediff = props.metadata?.filediff
+      if (filediff && (filediff.patch || filediff.before || filediff.after)) {
+        return normalize({
+          file: filediff.file || rawPath(),
+          patch: filediff.patch,
+          before: filediff.before,
+          after: filediff.after,
+          additions: filediff.additions ?? 0,
+          deletions: filediff.deletions ?? 0,
+        })
+      }
+      const oldContent = props.input?.oldString || props.input?.TargetContent || props.input?.targetContent || ""
+      const newContent = props.input?.newString || props.input?.ReplacementContent || props.input?.replacementContent || ""
+      if (oldContent || newContent) {
+        return normalize({
+          file: rawPath(),
+          before: oldContent,
+          after: newContent,
+          additions: additions() ?? 0,
+          deletions: deletions() ?? 0,
+        })
+      }
+      return undefined
+    })
+
     return (
       <div data-component="edit-tool">
         <BasicTool
@@ -2021,19 +2034,6 @@ ToolRegistry.register({
               <span data-slot="message-part-title-text" class="text-text-weak font-medium shrink-0">
                 <TextShimmer text={i18n.t("ui.messagePart.title.edit")} active={pending()} />
               </span>
-              <Show when={fileExt()}>
-                <span
-                  data-slot="context-file-ext"
-                  class="inline-flex items-center justify-center px-1 py-0.2 text-[10px] font-bold font-mono uppercase bg-blue-500/10 text-blue-500 dark:bg-blue-400/15 dark:text-blue-400 rounded border border-blue-500/20 shrink-0"
-                >
-                  <Show when={fileExt()?.toLowerCase() === "md"} fallback={fileExt()}>
-                    <span class="flex items-center gap-0.5 font-bold">
-                      <span>M</span>
-                      <span class="text-[9px]">↓</span>
-                    </span>
-                  </Show>
-                </span>
-              </Show>
               <Show when={!pending()}>
                 <span data-slot="message-part-title-filename" class="font-bold text-text-strong font-mono min-w-0 overflow-hidden text-ellipsis whitespace-nowrap">
                   {filename()}
@@ -2053,29 +2053,26 @@ ToolRegistry.register({
           }
         >
           <Show when={path()}>
-            <ToolFileAccordion
-              path={path()}
-              actions={
-                <Show when={!pending() && props.metadata.filediff}>
-                  <DiffChanges changes={props.metadata.filediff!} />
-                </Show>
-              }
-            >
+            <div data-scope="apply-patch" class="mt-1.5 rounded-lg border border-border-weaker bg-surface-raised-base overflow-hidden">
               <div data-component="edit-content">
-                <Dynamic
-                  component={fileComponent}
-                  mode="diff"
-                  before={{
-                    name: props.metadata?.filediff?.file || props.input.filePath,
-                    contents: props.metadata?.filediff?.before || props.input.oldString,
-                  }}
-                  after={{
-                    name: props.metadata?.filediff?.file || props.input.filePath,
-                    contents: props.metadata?.filediff?.after || props.input.newString,
-                  }}
-                />
+                <Show when={viewDiff()} fallback={
+                  <Dynamic
+                    component={fileComponent}
+                    mode="diff"
+                    before={{
+                      name: rawPath(),
+                      contents: props.input?.oldString || props.input?.TargetContent || props.input?.targetContent || "",
+                    }}
+                    after={{
+                      name: rawPath(),
+                      contents: props.input?.newString || props.input?.ReplacementContent || props.input?.replacementContent || "",
+                    }}
+                  />
+                }>
+                  {(vd) => <Dynamic component={fileComponent} mode="diff" fileDiff={vd().fileDiff} />}
+                </Show>
               </div>
-            </ToolFileAccordion>
+            </div>
           </Show>
           <DiagnosticsDisplay diagnostics={diagnostics()} />
         </BasicTool>
@@ -2089,9 +2086,10 @@ ToolRegistry.register({
   render(props) {
     const i18n = useI18n()
     const fileComponent = useFileComponent()
-    const diagnostics = createMemo(() => getDiagnostics(props.metadata.diagnostics, props.input.filePath))
-    const path = createMemo(() => props.input.filePath || "")
-    const filename = () => getFilename(props.input.filePath ?? "")
+    const rawPath = () => props.input?.filePath || props.input?.TargetFile || props.input?.targetFile || props.input?.path || ""
+    const diagnostics = createMemo(() => getDiagnostics(props.metadata?.diagnostics, rawPath()))
+    const path = createMemo(() => rawPath())
+    const filename = () => getFilename(rawPath())
     const pending = () => props.status === "pending" || props.status === "running"
     return (
       <div data-component="write-tool">

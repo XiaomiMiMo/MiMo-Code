@@ -1168,6 +1168,19 @@
   }
 }
 
+[data-scope="apply-patch"] {
+  border-color: var(--border-weaker-base);
+
+  [data-diff],
+  [data-file],
+  pierre-diff,
+  pierre-file {
+    border: none !important;
+    outline: none !important;
+    box-shadow: none !important;
+  }
+}
+
 [data-component="accordion"][data-scope="apply-patch"] {
   [data-slot="accordion-trigger"] {
     background-color: var(--background-stronger) !important;

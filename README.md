@@ -45,24 +45,9 @@
 ## 📸 界面预览 (Screenshots)
 
 <p align="center">
-  <!-- 预留截图：桌面端主界面 -->
-  <img src="assets/readme/desktop-app-main.png" alt="MiMoCode Desktop App" width="700">
+  <img src="assets/readme/MiMo-Code-Desktop.png" alt="MiMoCode Desktop App" width="800">
   <br>
-  <em>桌面端主界面与会话面板 (Desktop App Main Interface)</em>
-</p>
-
-<p align="center">
-  <!-- 预留截图：工具调用展开样式 -->
-  <img src="assets/readme/tool-activity-preview.png" alt="Tool Activity UI" width="700">
-  <br>
-  <em>AI 智能体工具活动展开视图 (Tool Activity UI)</em>
-</p>
-
-<p align="center">
-  <!-- 预留截图：毛玻璃弹窗与菜单 -->
-  <img src="assets/readme/backdrop-modal-preview.png" alt="Modal & Backdrop Blur" width="700">
-  <br>
-  <em>沉浸式毛玻璃确认对话框 (Immersive Glass Backdrop Modal)</em>
+  <em>桌面端主界面 (MiMoCode Desktop App)</em>
 </p>
 
 ---
@@ -79,17 +64,3 @@ bun run --cwd packages/desktop dev
 # 本地制作 macOS .app & .dmg 打包产物
 bun run --cwd packages/desktop package:mac
 ```
-
----
-
-欢迎共享代码 🎉
-
-hello world
-
-hello wo
-
-hello worl
-
-world
-
-12333
