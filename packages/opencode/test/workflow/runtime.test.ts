@@ -374,8 +374,10 @@ describe("WorkflowRuntime cancel cascade", () => {
       }),
       { git: true, config: providerCfg },
     ),
-    // Same budget as the 3-child sibling above: this one adds up to 3s of registry
-    // polling, an 8-way fan-out, and the bounded drain, so it needs at least as much.
+    // Same budget as the 3-child sibling above. Worst case is dominated by cancel's
+    // own two 5s bounds (fiber interrupt + child reclaim, the latter unbounded-
+    // concurrency so the 8-way fan-out costs one bound, not eight); on top of that
+    // this case adds up to 3s of registry polling and the bounded 5s drain.
     30000,
   )
 })
