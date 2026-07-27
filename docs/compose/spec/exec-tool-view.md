@@ -3,7 +3,7 @@ feature: exec-tool-view
 status: delivered
 updated: 2026-07-27
 branch: feat/exec-tool-view
-commits: 47c8425f..HEAD
+commits: 47c8425f..ca874bdd
 ---
 
 # exec Tool View (bash-style collapse)
