@@ -253,9 +253,9 @@ function wireMenu() {
     },
     recentProjects: getRecentProjects(),
     onOpenRecent: (dir: string) => {
-      const encoded = Buffer.from(dir).toString("base64")
-      const url = `opencode://open-project?directory=${encodeURIComponent(encoded)}`
-      sendDeepLinks(mainWindow!, [url])
+      if (!mainWindow) return
+      const url = `opencode://open-project?directory=${encodeURIComponent(dir)}`
+      sendDeepLinks(mainWindow, [url])
     },
     currentSession: currentMenuSession,
   })
@@ -292,7 +292,9 @@ registerIpcHandlers({
   installCli: async () => installCli(),
   setRecentProjects: (directories) => setWorkspaceRecent(directories),
   setCurrentSession: (session) => {
-    currentMenuSession = session ?? undefined
+    const resolved = session ?? undefined
+    if (resolved?.id === currentMenuSession?.id && resolved?.directory === currentMenuSession?.directory) return
+    currentMenuSession = resolved
     wireMenu()
   },
   runUpdater: async (alertOnFail) => checkForUpdates(alertOnFail),
