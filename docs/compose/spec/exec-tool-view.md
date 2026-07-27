@@ -3,7 +3,7 @@ feature: exec-tool-view
 status: delivered
 updated: 2026-07-27
 branch: feat/exec-tool-view
-commits: 47c8425f..6e23a566
+commits: 47c8425f..6479a56b
 ---
 
 # exec Tool View (bash-style collapse)
@@ -21,10 +21,10 @@ On the backend, `exec` re-publishes the per-tool `counts` map in its terminal me
 **Verification**
 
 - `cd packages/opencode && bun typecheck` — PASS (clean), re-run after the display-cell rework.
-- `cd packages/opencode && bun test test/cli/tui/collapse.test.ts` — PASS, 16 pass / 0 fail (row estimation, clipping, CJK/emoji/tab widths, and a budget invariant across grapheme classes).
+- `cd packages/opencode && bun test test/cli/tui/collapse.test.ts` — PASS, 16 pass / 0 fail (row estimation, clipping, CJK/emoji/tab widths, a budget invariant across grapheme classes, and the over-wide-cluster guard — verified to go red when the guard is removed).
 - `cd packages/opencode && bun test test/tool/tool-script.test.ts` — PASS, 42 pass / 0 fail.
 - `cd packages/opencode && bun test test/tool test/cli/tui` — PASS, 874 pass / 10 skip / 0 fail.
-- Independent subagent review of `47c8425f..b5dbe888`: both acceptance criteria met, no critical findings. Two of its three minor findings were fixed in `1e463724` (dead pending-branch props, missing `stripAnsi`); the third (`clip()` being a plain function rather than a memo) was rejected — reads of `expanded()` inside JSX children are tracked by the render effect. A second review covered the row-budget and display-cell work and found one CRITICAL — a per-code-point width walk under-charged variation-selector emoji and clipped ~2x the budget — fixed by segmenting graphemes (`36372846`), plus a scrollbox-chrome under-reservation. Its re-review passed after fuzzing the budget invariant over regional indicators, skin tones, combining marks and Hangul jamo; two residual nits were fixed in `6e23a566`.
+- Independent subagent review of `47c8425f..b5dbe888`: both acceptance criteria met, no critical findings. Two of its three minor findings were fixed in `1e463724` (dead pending-branch props, missing `stripAnsi`); the third (`clip()` being a plain function rather than a memo) was rejected — reads of `expanded()` inside JSX children are tracked by the render effect. A second review covered the row-budget and display-cell work and found one CRITICAL — a per-code-point width walk under-charged variation-selector emoji and clipped ~2x the budget — fixed by segmenting graphemes (`36372846`), plus a scrollbox-chrome under-reservation. Its re-review passed after fuzzing the budget invariant over regional indicators, skin tones, combining marks and Hangul jamo; two residual nits were fixed in `6e23a566`. A third review covered that residual fix and found the new guard test was not exercising the guard (its budget equalled the cluster width) — tightened in `6479a56b`.
 - Not covered: there is no render harness for the components in `routes/session/index.tsx`, so wiring (which memo feeds which `<text>`) was reviewed by reading, not asserted. The row math itself is unit-tested. `exec` is gated to GPT-toolset models (`registry.ts:379-381`), so no live TUI run was performed; both display defects were reported from user screenshots, not caught by a test.
 
 **Journey log**
