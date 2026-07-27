@@ -581,6 +581,10 @@ export const dict = {
   // Session badges
   "tui.session.badge.auto": "自动",
 
+  // Context rebuild boundary marker (inserted by /rebuild)
+  "tui.session.rebuild_boundary.label": "上下文已重建",
+  "tui.session.rebuild_boundary.detail": "较早消息已摘要",
+
   // Workspace trust
   "trust.title": "访问工作区：",
   "trust.safety_check": "安全确认：这是你自己创建或信任的项目吗？（如你自己的代码、知名开源项目或团队内部项目）。如果不是，请先检查此目录下的内容。",
