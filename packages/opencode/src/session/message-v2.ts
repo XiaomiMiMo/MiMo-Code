@@ -639,6 +639,27 @@ function providerMeta(metadata: Record<string, any> | undefined) {
   return Object.keys(rest).length > 0 ? rest : undefined
 }
 
+/**
+ * Returns true when an assistant turn's parts carry content that actually
+ * reaches a provider. `toModelMessagesEffect` only converts text / tool /
+ * reasoning / step-start parts for an assistant, and step-start is stripped
+ * again before send — so a turn holding nothing but bookkeeping (step-start,
+ * step-finish, patch, snapshot, retry, agent) produces a ZERO-content assistant
+ * message, which Bedrock/Anthropic reject with a hard 400. Reasoning alone does
+ * not count: the error gate below already treats a reasoning-only aborted turn
+ * as having produced nothing.
+ *
+ * Assistant-side mirror of `hasSubstantiveContent` in session/prompt.ts, which
+ * does the same job for user messages.
+ */
+export function hasSubstantiveAssistantContent(parts: readonly Part[]): boolean {
+  return parts.some((part) => {
+    if (part.type === "text") return part.text.trim().length > 0
+    if (part.type === "tool") return true
+    return false
+  })
+}
+
 export const toModelMessagesEffect = Effect.fnUntraced(function* (
   input: WithParts[],
   model: Provider.Model,
@@ -704,7 +725,6 @@ export const toModelMessagesEffect = Effect.fnUntraced(function* (
         role: "user",
         parts: [],
       }
-      result.push(userMessage)
       for (const part of msg.parts) {
         if (part.type === "text" && !part.ignored)
           userMessage.parts.push({
@@ -747,6 +767,12 @@ export const toModelMessagesEffect = Effect.fnUntraced(function* (
           })
         }
       }
+      // Emit only when the message actually converted to something. A user
+      // message whose parts are all non-convertible (ignored text, text/plain
+      // or directory files, bookkeeping) would otherwise go on the wire with
+      // empty content, which Bedrock rejects with
+      // `messages.<N>: user messages must have non-empty content`.
+      if (userMessage.parts.length > 0) result.push(userMessage)
     }
 
     if (msg.info.role === "assistant") {
@@ -797,13 +823,7 @@ export const toModelMessagesEffect = Effect.fnUntraced(function* (
         return native
       }
 
-      if (
-        msg.info.error &&
-        !(
-          AbortedError.isInstance(msg.info.error) &&
-          msg.parts.some((part) => part.type !== "step-start" && part.type !== "reasoning")
-        )
-      ) {
+      if (msg.info.error && !(AbortedError.isInstance(msg.info.error) && hasSubstantiveAssistantContent(msg.parts))) {
         continue
       }
       const assistantMessage: UIMessage = {
@@ -909,6 +929,13 @@ export const toModelMessagesEffect = Effect.fnUntraced(function* (
           })
         }
       }
+      // Symmetric with the `msg.parts.length === 0` skip at the top of the loop:
+      // an assistant whose parts converted to NOTHING (only step-finish / patch /
+      // snapshot bookkeeping) must not be emitted at all. Emitting it produces a
+      // zero-content assistant message that Bedrock/Anthropic hard-400 on — and
+      // because a 400 writes another contentless assistant row, the failure is
+      // self-sustaining. This also neutralizes shells already on disk from older
+      // builds, which a trailing-only sweep cannot reach.
       if (assistantMessage.parts.length > 0) {
         result.push(assistantMessage)
         if (syntheticGroups.length > 0) {

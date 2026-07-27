@@ -123,6 +123,14 @@ export type ReplayInput = {
 
 export interface Handle {
   readonly message: MessageV2.Assistant
+  /**
+   * True once the empty-shell guard in `cleanup` deleted this turn's assistant
+   * row: the turn died without producing any substantive content, so there was
+   * nothing worth persisting. `message` is still the authoritative in-memory
+   * record (error included) — SessionPrompt uses it as the turn's result so the
+   * failure is never silently swallowed.
+   */
+  readonly dropped: boolean
   readonly updateToolCall: (
     toolCallID: string,
     update: (part: MessageV2.ToolPart) => MessageV2.ToolPart,
@@ -239,6 +247,7 @@ export const layer: Layer.Layer<
         textNgramRepeat: false,
       }
       let aborted = false
+      let dropped = false
       // Only the main agent owns session-level status. Subagents (explore,
       // general, checkpoint-writer, etc.) share the parent sessionID but their
       // run-state onIdle deliberately does NOT reset status (run-state.ts) — so
@@ -765,6 +774,45 @@ export const layer: Layer.Layer<
             state: MessageV2.abortedToolState(part.state),
           })
         }
+        // EMPTY-SHELL GUARD (write side). A turn killed by a hard provider error
+        // before emitting any substantive content leaves an assistant row holding
+        // nothing but bookkeeping parts (step-start, step-finish, patch) or no
+        // parts at all. Persisting that shell is what makes a provider 400
+        // self-sustaining: the shell is replayed into the next request, the
+        // request is rejected, and the rejection writes another shell — one bad
+        // turn escalates into dozens (123 such APIError rows in the session that
+        // motivated this).
+        //
+        // The error is NOT swallowed: `halt` has already published it on
+        // Session.Event.Error and reset session status, and `dropped` tells
+        // SessionPrompt to report this turn from the in-memory message instead of
+        // re-reading the deleted row.
+        //
+        // A user ABORT is deliberately exempt: cancelling is a normal outcome the
+        // transcript should keep showing (see the "records aborted errors when
+        // prompt is cancelled mid-stream" regression test), and an errored
+        // assistant can never reach a provider anyway — toModelMessages' error
+        // gate drops it.
+        //
+        // ORDER: this runs AFTER the tool-part finalization passes above, never
+        // before. Those passes are what keep an interrupted-but-real turn out of
+        // this guard's reach — `hasSubstantiveAssistantContent` counts any `tool`
+        // part as content, so a turn that actually called a tool is never dropped,
+        // and this guard can only fire on a turn with no tool parts at all (where
+        // the loop above is a no-op). Running the guard first would let its early
+        // `return` skip the finalization entirely on the paths where the row
+        // survives.
+        if (
+          ctx.assistantMessage.error &&
+          !MessageV2.AbortedError.isInstance(ctx.assistantMessage.error) &&
+          !MessageV2.hasSubstantiveAssistantContent(MessageV2.parts(ctx.assistantMessage.id))
+        ) {
+          dropped = true
+          yield* session
+            .removeMessage({ sessionID: ctx.sessionID, messageID: ctx.assistantMessage.id })
+            .pipe(Effect.catchCause((cause) => Effect.sync(() => slog.warn("empty-shell-drop-failed", { cause }))))
+          return
+        }
         ctx.assistantMessage.time.completed = Date.now()
         yield* session.updateMessage(ctx.assistantMessage)
       })
@@ -1054,6 +1102,9 @@ export const layer: Layer.Layer<
       return {
         get message() {
           return ctx.assistantMessage
+        },
+        get dropped() {
+          return dropped
         },
         updateToolCall,
         completeToolCall,

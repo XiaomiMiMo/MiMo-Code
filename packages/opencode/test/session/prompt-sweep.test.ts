@@ -40,76 +40,7 @@ const makeAssistant = (
 })
 
 describe("sweepOrphanAssistants", () => {
-  it.live("marks an assistant message older than 60s as completed with AbortedError", () =>
-    provideTmpdirInstance((dir) =>
-      Effect.gen(function* () {
-        const sessions = yield* Session.Service
-        const svc = yield* SessionPrompt.Service
-        const session = yield* sessions.create({})
-
-        const userMsg = yield* sessions.updateMessage({
-          id: MessageID.ascending(),
-          role: "user",
-          sessionID: session.id,
-          agent: "default",
-          model: { providerID: ProviderID.make("test"), modelID: ModelID.make("test-model") },
-          time: { created: Date.now() - 7_300_000 },
-        })
-
-        const now = Date.now()
-        const assistant = makeAssistant(session.id, userMsg.id, dir, { created: now - 7_200_000 })
-        yield* sessions.updateMessage(assistant)
-
-        yield* svc.sweepOrphanAssistants(session.id)
-
-        const after = yield* sessions.messages({ sessionID: session.id })
-        const updated = after.find((m) => m.info.id === assistant.id)
-        expect(updated).toBeDefined()
-        const info = updated!.info as MessageV2.Assistant
-        expect(info.role).toBe("assistant")
-        expect(info.time.completed).toBeDefined()
-        expect(info.time.completed!).toBeGreaterThanOrEqual(now)
-        expect(info.error).toBeDefined()
-        expect(JSON.stringify(info.error)).toContain("Abandoned")
-      }),
-    ),
-  )
-
-  it.live("leaves a recent (under 60s) incomplete assistant message untouched when not immediate", () =>
-    provideTmpdirInstance((dir) =>
-      Effect.gen(function* () {
-        const sessions = yield* Session.Service
-        const svc = yield* SessionPrompt.Service
-        const session = yield* sessions.create({})
-
-        const userMsg = yield* sessions.updateMessage({
-          id: MessageID.ascending(),
-          role: "user",
-          sessionID: session.id,
-          agent: "default",
-          model: { providerID: ProviderID.make("test"), modelID: ModelID.make("test-model") },
-          time: { created: Date.now() - 1_900_000 },
-        })
-
-        const now = Date.now()
-        const assistant = makeAssistant(session.id, userMsg.id, dir, { created: now - 1_800_000 })
-        yield* sessions.updateMessage(assistant)
-
-        // immediate defaults to false → the age guard protects an in-flight
-        // (busy) turn's still-progressing assistant.
-        yield* svc.sweepOrphanAssistants(session.id)
-
-        const after = yield* sessions.messages({ sessionID: session.id })
-        const updated = after.find((m) => m.info.id === assistant.id)
-        expect(updated).toBeDefined()
-        const info = updated!.info as MessageV2.Assistant
-        expect(info.time.completed).toBeUndefined()
-        expect(info.error).toBeUndefined()
-      }),
-    ),
-  )
-
-  it.live("sweeps a recent (under 60s) incomplete assistant when immediate (idle session)", () =>
+  it.live("drops a trailing incomplete assistant regardless of age", () =>
     provideTmpdirInstance((dir) =>
       Effect.gen(function* () {
         const sessions = yield* Session.Service
@@ -125,28 +56,25 @@ describe("sweepOrphanAssistants", () => {
           time: { created: Date.now() - 5_000 },
         })
 
-        // A fresh orphan (well under ORPHAN_AGE_MS) — the exact shape a hard
-        // interruption leaves behind. On an idle session this must be swept so
-        // the next user message is not rendered as stuck QUEUED behind it.
+        // A FRESH orphan — the exact shape a hard interruption leaves behind.
+        // The old age gate kept it on disk for an hour, where it poisoned every
+        // request and made new messages render as stuck QUEUED. Callers only
+        // invoke the sweep on an idle session, so age is irrelevant now.
         const now = Date.now()
         const assistant = makeAssistant(session.id, userMsg.id, dir, { created: now - 3_000 })
         yield* sessions.updateMessage(assistant)
 
-        yield* svc.sweepOrphanAssistants(session.id, true)
+        yield* svc.sweepOrphanAssistants(session.id)
 
         const after = yield* sessions.messages({ sessionID: session.id })
-        const updated = after.find((m) => m.info.id === assistant.id)
-        expect(updated).toBeDefined()
-        const info = updated!.info as MessageV2.Assistant
-        expect(info.time.completed).toBeDefined()
-        expect(info.time.completed!).toBeGreaterThanOrEqual(now)
-        expect(info.error).toBeDefined()
-        expect(JSON.stringify(info.error)).toContain("Abandoned")
+        expect(after.find((m) => m.info.id === assistant.id)).toBeUndefined()
+        // The user turn it belonged to is untouched.
+        expect(after.find((m) => m.info.id === userMsg.id)).toBeDefined()
       }),
     ),
   )
 
-  it.live("leaves an already-completed assistant message untouched", () =>
+  it.live("leaves an already-completed trailing assistant untouched", () =>
     provideTmpdirInstance((dir) =>
       Effect.gen(function* () {
         const sessions = yield* Session.Service
@@ -178,6 +106,43 @@ describe("sweepOrphanAssistants", () => {
         const info = updated!.info as MessageV2.Assistant
         expect(info.time.completed).toBe(originalCompleted)
         expect(info.error).toBeUndefined()
+      }),
+    ),
+  )
+
+  it.live("leaves history whose last message is a user message untouched", () =>
+    provideTmpdirInstance((dir) =>
+      Effect.gen(function* () {
+        const sessions = yield* Session.Service
+        const svc = yield* SessionPrompt.Service
+        const session = yield* sessions.create({})
+
+        const firstUser = yield* sessions.updateMessage({
+          id: MessageID.ascending(),
+          role: "user",
+          sessionID: session.id,
+          agent: "default",
+          model: { providerID: ProviderID.make("test"), modelID: ModelID.make("test-model") },
+          time: { created: Date.now() - 9_000 },
+        })
+        // A NON-trailing incomplete assistant. The minimal rule only touches the
+        // tail; non-trailing shells are neutralized on the read side by
+        // MessageV2.toModelMessages, which never emits a zero-content assistant.
+        const assistant = makeAssistant(session.id, firstUser.id, dir, { created: Date.now() - 8_000 })
+        yield* sessions.updateMessage(assistant)
+        yield* sessions.updateMessage({
+          id: MessageID.ascending(),
+          role: "user",
+          sessionID: session.id,
+          agent: "default",
+          model: { providerID: ProviderID.make("test"), modelID: ModelID.make("test-model") },
+          time: { created: Date.now() - 1_000 },
+        })
+
+        yield* svc.sweepOrphanAssistants(session.id)
+
+        const after = yield* sessions.messages({ sessionID: session.id })
+        expect(after.find((m) => m.info.id === assistant.id)).toBeDefined()
       }),
     ),
   )

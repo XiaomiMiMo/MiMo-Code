@@ -1244,6 +1244,123 @@ describe("session.message-v2.toModelMessage", () => {
     expect(await MessageV2.toModelMessages(input, model)).toStrictEqual([])
   })
 
+  // An assistant message that survives the `parts.length === 0` guard but
+  // converts to NOTHING is the self-sustaining Bedrock 400: it goes on the wire
+  // with empty content, the provider 400s, and the 400 writes another
+  // contentless assistant row. These shapes exist on disk from older builds, so
+  // the converter — not just a trailing sweep — has to refuse to emit them.
+  test("drops an assistant message whose only part is step-finish", async () => {
+    const assistantID = "m-assistant-step-finish"
+
+    const input: MessageV2.WithParts[] = [
+      {
+        info: assistantInfo(assistantID, "m-parent"),
+        parts: [
+          {
+            ...basePart(assistantID, "p1"),
+            type: "step-finish",
+            tokens: { input: 1, output: 1, reasoning: 0, cache: { read: 0, write: 0 } },
+            cost: 0,
+          },
+        ] as unknown as MessageV2.Part[],
+      },
+    ]
+
+    expect(await MessageV2.toModelMessages(input, model)).toStrictEqual([])
+  })
+
+  test("drops an assistant message whose only part is patch", async () => {
+    const assistantID = "m-assistant-patch"
+
+    const input: MessageV2.WithParts[] = [
+      {
+        info: assistantInfo(assistantID, "m-parent"),
+        parts: [
+          {
+            ...basePart(assistantID, "p1"),
+            type: "patch",
+            hash: "deadbeef",
+            files: ["a.ts"],
+          },
+        ] as unknown as MessageV2.Part[],
+      },
+    ]
+
+    expect(await MessageV2.toModelMessages(input, model)).toStrictEqual([])
+  })
+
+  test("never emits a zero-content message when shells sit between real turns", async () => {
+    const userID = "m-user-real"
+    const shellA = "m-shell-a"
+    const shellB = "m-shell-b"
+    const shellC = "m-shell-c"
+    const assistantID = "m-assistant-real"
+
+    const input: MessageV2.WithParts[] = [
+      {
+        info: userInfo(userID),
+        parts: [{ ...basePart(userID, "u1"), type: "text", text: "hello" }] as MessageV2.Part[],
+      },
+      // step-finish-only shell (the msg_f5c5.../msg_fa33... shape)
+      {
+        info: assistantInfo(shellA, userID),
+        parts: [
+          {
+            ...basePart(shellA, "p1"),
+            type: "step-finish",
+            tokens: { input: 1, output: 1, reasoning: 0, cache: { read: 0, write: 0 } },
+            cost: 0,
+          },
+        ] as unknown as MessageV2.Part[],
+      },
+      // patch-only shell (the msg_f401... shape)
+      {
+        info: assistantInfo(shellB, userID),
+        parts: [
+          { ...basePart(shellB, "p1"), type: "patch", hash: "cafe", files: ["b.ts"] },
+        ] as unknown as MessageV2.Part[],
+      },
+      // zero-part error shell — the 123 rows the live session accumulated
+      {
+        info: assistantInfo(shellC, userID, { name: "APIError", data: { message: "boom" } } as never),
+        parts: [] as MessageV2.Part[],
+      },
+      {
+        info: assistantInfo(assistantID, userID),
+        parts: [{ ...basePart(assistantID, "p1"), type: "text", text: "answer" }] as MessageV2.Part[],
+      },
+    ]
+
+    const result = await MessageV2.toModelMessages(input, model)
+
+    // Assert on the BUILT array: every outgoing message carries content.
+    for (const msg of result) {
+      const content = msg.content as unknown
+      if (typeof content === "string") expect(content.length).toBeGreaterThan(0)
+      else expect(Array.isArray(content) && content.length > 0).toBe(true)
+    }
+    expect(result).toStrictEqual([
+      { role: "user", content: [{ type: "text", text: "hello" }] },
+      { role: "assistant", content: [{ type: "text", text: "answer" }] },
+    ])
+  })
+
+  test("drops a user message whose parts all convert to nothing", async () => {
+    const userID = "m-user-empty"
+
+    const input: MessageV2.WithParts[] = [
+      {
+        info: userInfo(userID),
+        parts: [
+          { ...basePart(userID, "u1"), type: "text", text: "ignored", ignored: true },
+          { ...basePart(userID, "u2"), type: "file", mime: "text/plain", url: "file:///a.txt" },
+        ] as unknown as MessageV2.Part[],
+      },
+    ]
+
+    expect(await MessageV2.toModelMessages(input, model)).toStrictEqual([])
+  })
+
   test("converts pending/running tool calls to error results to prevent dangling tool_use", async () => {
     const userID = "m-user"
     const assistantID = "m-assistant"

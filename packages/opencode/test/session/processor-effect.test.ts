@@ -502,6 +502,11 @@ it.live("session.processor effect tests do not retry unknown json errors", () =>
         expect(value).toBe("stop")
         expect(yield* llm.calls).toBe(1)
         expect(handle.message.error?.name).toBe("APIError")
+        // A hard provider error with no substantive content is the exact shape
+        // that accumulated 123 zero-part APIError shells in the wild. Not
+        // persisted — but the error is still on the caller's handle.
+        expect(handle.dropped).toBe(true)
+        expect(() => MessageV2.get({ sessionID: chat.id, messageID: msg.id })).toThrow()
       }),
     { git: true, config: (url) => providerCfg(url) },
   ),
@@ -780,7 +785,6 @@ it.live("session.processor effect tests record aborted errors and idle state", (
 
         const exit = yield* Fiber.await(run)
         yield* Effect.promise(() => seen.promise)
-        const stored = MessageV2.get({ sessionID: chat.id, messageID: msg.id })
         const state = yield* sts.get(chat.id)
         off()
 
@@ -789,6 +793,11 @@ it.live("session.processor effect tests record aborted errors and idle state", (
           expect(Cause.hasInterruptsOnly(exit.cause)).toBe(true)
         }
         expect(handle.message.error?.name).toBe("MessageAbortedError")
+        // A user ABORT is exempt from the empty-shell drop: cancelling is a normal
+        // outcome the transcript keeps showing, and an errored assistant can never
+        // reach a provider (toModelMessages' error gate drops it).
+        expect(handle.dropped).toBe(false)
+        const stored = MessageV2.get({ sessionID: chat.id, messageID: msg.id })
         expect(stored.info.role).toBe("assistant")
         if (stored.info.role === "assistant") {
           expect(stored.info.error?.name).toBe("MessageAbortedError")
@@ -842,11 +851,13 @@ it.live("session.processor effect tests mark interruptions aborted without manua
         yield* Fiber.interrupt(run)
 
         const exit = yield* Fiber.await(run)
-        const stored = MessageV2.get({ sessionID: chat.id, messageID: msg.id })
         const state = yield* sts.get(chat.id)
 
         expect(Exit.isFailure(exit)).toBe(true)
         expect(handle.message.error?.name).toBe("MessageAbortedError")
+        // Abort path: row preserved (see the abort exemption in cleanup).
+        expect(handle.dropped).toBe(false)
+        const stored = MessageV2.get({ sessionID: chat.id, messageID: msg.id })
         expect(stored.info.role).toBe("assistant")
         if (stored.info.role === "assistant") {
           expect(stored.info.error?.name).toBe("MessageAbortedError")
