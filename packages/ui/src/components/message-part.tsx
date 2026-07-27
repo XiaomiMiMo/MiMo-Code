@@ -792,11 +792,56 @@ function contextToolTrigger(part: ToolPart, i18n: ReturnType<typeof useI18n>) {
     case "write":
     case "replace_file_content":
     case "multi_replace_file_content":
+    case "apply_patch":
     case "write_to_file": {
+      const filediff = stateAny.metadata?.filediff
+      const diffStats = stateAny.metadata?.diffStats
+      let additions =
+        typeof filediff?.additions === "number"
+          ? filediff.additions
+          : typeof diffStats?.additions === "number"
+            ? diffStats.additions
+            : typeof stateAny.metadata?.additions === "number"
+              ? stateAny.metadata.additions
+              : undefined
+      let deletions =
+        typeof filediff?.deletions === "number"
+          ? filediff.deletions
+          : typeof diffStats?.deletions === "number"
+            ? diffStats.deletions
+            : typeof stateAny.metadata?.deletions === "number"
+              ? stateAny.metadata.deletions
+              : undefined
+
+      if (additions === undefined && deletions === undefined) {
+        if (typeof input.ReplacementContent === "string" || typeof input.replacementContent === "string") {
+          const rep = (input.ReplacementContent ?? input.replacementContent) as string
+          const tar = (input.TargetContent ?? input.targetContent ?? "") as string
+          additions = rep.trim() ? rep.split("\n").length : 0
+          deletions = tar.trim() ? tar.split("\n").length : 0
+        } else if (Array.isArray(input.ReplacementChunks) || Array.isArray(input.replacementChunks)) {
+          const chunks = (input.ReplacementChunks ?? input.replacementChunks) as any[]
+          additions = chunks.reduce(
+            (acc, c) => acc + (typeof c.ReplacementContent === "string" ? c.ReplacementContent.split("\n").length : 0),
+            0,
+          )
+          deletions = chunks.reduce(
+            (acc, c) => acc + (typeof c.TargetContent === "string" ? c.TargetContent.split("\n").length : 0),
+            0,
+          )
+        } else if (typeof input.CodeContent === "string" || typeof input.codeContent === "string") {
+          const code = (input.CodeContent ?? input.codeContent) as string
+          additions = code.split("\n").length
+          deletions = 0
+        }
+      }
+
       return {
         actionLabel: i18n.t("ui.tool.edited"),
         fileExt,
-        mainText: filename ?? (filePath ? getFilename(filePath) : (cleanTitle ?? (i18n.t("ui.tool.write")))),
+        mainText: filename ?? (filePath ? getFilename(filePath) : (cleanTitle ?? i18n.t("ui.tool.write"))),
+        additions,
+        deletions,
       }
     }
     default: {
@@ -1037,17 +1082,32 @@ function ContextToolGroup(props: { parts: ToolPart[]; busy?: boolean }) {
                   <Show when={info().fileExt}>
                     <span
                       data-slot="context-file-ext"
-                      class="px-1 py-0.2 text-[10px] font-bold font-mono uppercase bg-surface-raised-base text-text-weak rounded border border-border-weak shrink-0"
+                      class="inline-flex items-center justify-center px-1 py-0.2 text-[10px] font-bold font-mono uppercase bg-blue-500/10 text-blue-500 dark:bg-blue-400/15 dark:text-blue-400 rounded border border-blue-500/20 shrink-0"
                     >
-                      {info().fileExt}
+                      <Show when={info().fileExt?.toLowerCase() === "md"} fallback={info().fileExt}>
+                        <span class="flex items-center gap-0.5 font-bold">
+                          <span>M</span>
+                          <span class="text-[9px]">↓</span>
+                        </span>
+                      </Show>
                     </span>
                   </Show>
                   <span
                     data-slot="context-main-text"
-                    class="font-medium text-text-strong font-mono min-w-0 overflow-hidden text-ellipsis whitespace-nowrap"
+                    class="font-bold text-text-strong font-mono min-w-0 overflow-hidden text-ellipsis whitespace-nowrap"
                   >
                     <TextShimmer text={info().mainText} active={running()} />
                   </span>
+                  <Show when={info().additions !== undefined || info().deletions !== undefined}>
+                    <div class="flex items-center gap-1 font-mono text-12-medium shrink-0 ml-0.5">
+                      <Show when={info().additions !== undefined}>
+                        <span class="text-emerald-600 dark:text-emerald-400 font-semibold">{`+${info().additions}`}</span>
+                      </Show>
+                      <Show when={info().deletions !== undefined}>
+                        <span class="text-rose-600 dark:text-rose-400 font-semibold">{`-${info().deletions}`}</span>
+                      </Show>
+                    </div>
+                  </Show>
                   <Show when={info().badgeText}>
                     <span
                       data-slot="context-badge"

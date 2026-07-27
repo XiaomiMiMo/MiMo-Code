@@ -19,12 +19,6 @@ export type WindowConfig = {
   updaterEnabled: boolean
 }
 
-export type TraySession = {
-  id: string
-  title?: string
-  status?: "running" | "waiting" | "done" | "idle"
-}
-
 export type ElectronAPI = {
   killSidecar: () => Promise<void>
   installCli: () => Promise<string>
@@ -87,7 +81,7 @@ export type ElectronAPI = {
   setBackgroundColor: (color: string) => Promise<void>
   setWindowTitle: (title: string) => Promise<void>
   setRecentProjects: (directories: string[]) => Promise<void>
-  updateTraySessions: (sessions: TraySession[]) => Promise<void>
+  setCurrentSession: (session: { id: string; directory: string; title?: string } | null) => Promise<void>
   onTrayCommand: (cb: (id: string) => void) => () => void
 
   // macOS 系统集成 (只在 macOS 上可用，Windows/Linux 调用会 throw)

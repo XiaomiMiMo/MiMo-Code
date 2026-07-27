@@ -71,7 +71,7 @@ const api: ElectronAPI = {
   setBackgroundColor: (color: string) => ipcRenderer.invoke("set-background-color", color),
   setWindowTitle: (title: string) => ipcRenderer.invoke("set-window-title", title),
   setRecentProjects: (directories) => ipcRenderer.invoke("set-recent-projects", directories),
-  updateTraySessions: (sessions) => ipcRenderer.invoke("update-tray-sessions", sessions),
+  setCurrentSession: (session) => ipcRenderer.invoke("set-current-session", session),
   onTrayCommand: (cb) => {
     const handler = (_: unknown, id: string) => cb(id)
     ipcRenderer.on("tray-command", handler)

@@ -7,7 +7,6 @@ import type {
   ServerReadyData,
   SqliteMigrationProgress,
   TitlebarTheme,
-  TraySession,
   WindowConfig,
   WslConfig,
 } from "../preload/types"
@@ -47,7 +46,7 @@ type Deps = {
   loadingWindowComplete: () => void
   installCli: () => Promise<string>
   setRecentProjects: (directories: string[]) => void
-  updateTraySessions?: (sessions: Array<{ id: string; title?: string; status?: "running" | "waiting" | "done" | "idle" }>) => void
+  setCurrentSession: (session: { id: string; directory: string; title?: string } | null) => void
   runUpdater: (alertOnFail: boolean) => Promise<void> | void
   checkUpdate: () => Promise<{ updateAvailable: boolean; version?: string }>
   installUpdate: () => Promise<void> | void
@@ -89,8 +88,8 @@ export function registerIpcHandlers(deps: Deps) {
   ipcMain.handle("set-recent-projects", (_event: IpcMainInvokeEvent, directories: string[]) => {
     deps.setRecentProjects(directories)
   })
-  ipcMain.handle("update-tray-sessions", (_event: IpcMainInvokeEvent, sessions: TraySession[]) => {
-    deps.updateTraySessions?.(sessions)
+  ipcMain.handle("set-current-session", (_event: IpcMainInvokeEvent, session: { id: string; directory: string; title?: string } | null) => {
+    deps.setCurrentSession(session)
   })
   ipcMain.handle("store-get", (_event: IpcMainInvokeEvent, name: string, key: string) => {
     const store = getStore(name)

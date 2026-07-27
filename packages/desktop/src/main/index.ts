@@ -45,7 +45,7 @@ import { createMenu } from "./menu"
 import { migrate } from "./migrate"
 import { getDefaultServerUrl, getWslConfig, setDefaultServerUrl, setWslConfig, spawnLocalServer } from "./server"
 import { getRecentProjects, setRecentProjects as setWorkspaceRecent } from "./workspace-recent"
-import { createTray, destroyTray, updateTraySessions } from "./tray"
+import { createTray, destroyTray } from "./tray"
 import {
   createLoadingWindow,
   createMainWindow,
@@ -62,6 +62,7 @@ let initStep: InitStep = { phase: "server_waiting" }
 
 let mainWindow: BrowserWindow | null = null
 let server: Server.Listener | null = null
+let currentMenuSession: { id: string; directory: string; title?: string } | undefined
 const loadingComplete = defer<void>()
 
 const pendingDeepLinks: string[] = []
@@ -250,6 +251,13 @@ function wireMenu() {
       app.relaunch()
       app.exit(0)
     },
+    recentProjects: getRecentProjects(),
+    onOpenRecent: (dir: string) => {
+      const encoded = Buffer.from(dir).toString("base64")
+      const url = `opencode://open-project?directory=${encodeURIComponent(encoded)}`
+      sendDeepLinks(mainWindow!, [url])
+    },
+    currentSession: currentMenuSession,
   })
 }
 
@@ -283,7 +291,10 @@ registerIpcHandlers({
   loadingWindowComplete: () => loadingComplete.resolve(),
   installCli: async () => installCli(),
   setRecentProjects: (directories) => setWorkspaceRecent(directories),
-  updateTraySessions: (sessions) => updateTraySessions(sessions),
+  setCurrentSession: (session) => {
+    currentMenuSession = session ?? undefined
+    wireMenu()
+  },
   runUpdater: async (alertOnFail) => checkForUpdates(alertOnFail),
   checkUpdate: async () => checkUpdate(),
   installUpdate: async () => installUpdate(),

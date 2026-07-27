@@ -5,12 +5,6 @@ import { existsSync } from "node:fs"
 let tray: Tray | null = null
 let currentDeps: TrayDeps | null = null
 
-export type TraySession = {
-  id: string
-  title?: string
-  status?: "running" | "waiting" | "done" | "idle"
-}
-
 export type TrayDeps = {
   onShowWindow: () => void
   onQuit: () => void
@@ -47,10 +41,6 @@ export function createTray(deps: TrayDeps): Tray | null {
 
   rebuildMenu(deps)
   return tray
-}
-
-export function updateTraySessions(_sessions: TraySession[]) {
-  // No-op: active sessions submenu has been removed as requested
 }
 
 export function rebuildMenu(deps: TrayDeps) {

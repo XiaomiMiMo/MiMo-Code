@@ -333,9 +333,20 @@ render(() => {
     const cmd = useCommand()
     const loc = useLocation()
     menuTrigger = (id) => cmd.trigger(id)
-    // 监听 workspace 切换，推送 recent projects 到主进程
+    // 监听 workspace / session 切换，推送 recent projects 和当前 session 到主进程
     createEffect(() => {
       const path = loc.pathname
+
+      // Track current session for macOS menu
+      const sessionMatch = path.match(/^\/([^/]+)\/session\/([^/]+)/)
+      if (sessionMatch) {
+        const dir = atobSafe(sessionMatch[1])
+        window.api.setCurrentSession({ id: sessionMatch[2], directory: dir })
+      } else {
+        window.api.setCurrentSession(null)
+      }
+
+      // Push recent projects to main process
       if (path && path !== "/") {
         const projects = window.__OPENCODE__?.recentProjects ?? []
         if (projects.length > 0) {
