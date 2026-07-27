@@ -1975,6 +1975,41 @@ ToolRegistry.register({
     const filename = () => getFilename(props.input.filePath ?? "")
     const fileExt = () => extractFileExt(filename())
     const pending = () => props.status === "pending" || props.status === "running"
+
+    const additions = createMemo(() => {
+      const filediff = props.metadata?.filediff
+      const diffStats = props.metadata?.diffStats
+      if (typeof filediff?.additions === "number") return filediff.additions
+      if (typeof diffStats?.additions === "number") return diffStats.additions
+      if (typeof props.metadata?.additions === "number") return props.metadata.additions
+      if (typeof props.input?.ReplacementContent === "string" || typeof props.input?.replacementContent === "string") {
+        const rep = (props.input.ReplacementContent ?? props.input.replacementContent) as string
+        return rep.trim() ? rep.split("\n").length : 0
+      }
+      if (Array.isArray(props.input?.ReplacementChunks) || Array.isArray(props.input?.replacementChunks)) {
+        const chunks = (props.input.ReplacementChunks ?? props.input.replacementChunks) as any[]
+        return chunks.reduce((acc, c) => acc + (typeof c.ReplacementContent === "string" ? c.ReplacementContent.split("\n").length : 0), 0)
+      }
+      return undefined
+    })
+
+    const deletions = createMemo(() => {
+      const filediff = props.metadata?.filediff
+      const diffStats = props.metadata?.diffStats
+      if (typeof filediff?.deletions === "number") return filediff.deletions
+      if (typeof diffStats?.deletions === "number") return diffStats.deletions
+      if (typeof props.metadata?.deletions === "number") return props.metadata.deletions
+      if (typeof props.input?.TargetContent === "string" || typeof props.input?.targetContent === "string") {
+        const tar = (props.input.TargetContent ?? props.input.targetContent) as string
+        return tar.trim() ? tar.split("\n").length : 0
+      }
+      if (Array.isArray(props.input?.ReplacementChunks) || Array.isArray(props.input?.replacementChunks)) {
+        const chunks = (props.input.ReplacementChunks ?? props.input.replacementChunks) as any[]
+        return chunks.reduce((acc, c) => acc + (typeof c.TargetContent === "string" ? c.TargetContent.split("\n").length : 0), 0)
+      }
+      return undefined
+    })
+
     return (
       <div data-component="edit-tool">
         <BasicTool
@@ -2004,13 +2039,13 @@ ToolRegistry.register({
                   {filename()}
                 </span>
               </Show>
-              <Show when={!pending() && props.metadata.filediff}>
+              <Show when={!pending() && (additions() !== undefined || deletions() !== undefined)}>
                 <div class="flex items-center gap-1.5 font-mono text-14-medium shrink-0 ml-1">
-                  <Show when={props.metadata.filediff.additions !== undefined}>
-                    <span class="text-emerald-600 dark:text-emerald-400 font-semibold">{`+${props.metadata.filediff.additions}`}</span>
+                  <Show when={additions() !== undefined}>
+                    <span class="text-emerald-600 dark:text-emerald-400 font-semibold">{`+${additions()}`}</span>
                   </Show>
-                  <Show when={props.metadata.filediff.deletions !== undefined}>
-                    <span class="text-rose-600 dark:text-rose-400 font-semibold">{`-${props.metadata.filediff.deletions}`}</span>
+                  <Show when={deletions() !== undefined}>
+                    <span class="text-rose-600 dark:text-rose-400 font-semibold">{`-${deletions()}`}</span>
                   </Show>
                 </div>
               </Show>

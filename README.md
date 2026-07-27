@@ -87,3 +87,7 @@ bun run --cwd packages/desktop package:mac
 hello world
 
 hello wo
+
+hello worl
+
+world
