@@ -80,6 +80,14 @@ export default defineConfig({
     plugins: [appPlugin],
     publicDir: "../../../app/public",
     root: "src/renderer",
+    server: {
+      watch: {
+        ignored: ["!**/packages/ui/**", "!**/packages/app/**"],
+      },
+    },
+    optimizeDeps: {
+      exclude: ["@mimo-ai/ui", "@mimo-ai/app"],
+    },
     define: {
       "import.meta.env.VITE_OPENCODE_CHANNEL": JSON.stringify(channel),
     },
