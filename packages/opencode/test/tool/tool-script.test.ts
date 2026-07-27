@@ -168,6 +168,29 @@ describe("exec", () => {
     expect(result.metadata.toolCalls).toBe(3)
   })
 
+  test("terminal metadata keeps the per-tool counts breakdown", async () => {
+    const defs = [
+      fakeDef("echo", async (args) => `echo:${args.value}`),
+      fakeDef("boom", async () => {
+        throw new Error("kapow")
+      }),
+    ]
+    const result = await runToolScript(
+      `
+      await tools.echo({ value: "a" })
+      await tools.echo({ value: "b" })
+      try { await tools.boom({}) } catch {}
+      return "done"
+      `,
+      defs,
+    )
+    expect(result.metadata.status).toBe("completed")
+    expect(result.metadata.counts).toEqual({
+      echo: { n: 2, errors: 0 },
+      boom: { n: 1, errors: 1 },
+    })
+  })
+
   test("accepts TypeScript syntax (types stripped by transpiler)", async () => {
     const result = await runToolScript(
       `

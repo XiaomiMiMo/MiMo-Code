@@ -327,10 +327,23 @@ export const ToolScriptTool = Tool.define(
         Effect.gen(function* () {
           const maxToolCalls = params.max_tool_calls ?? MAX_TOOL_CALLS_DEFAULT
           const activeDeadlineMs = (params.timeout_seconds ?? ACTIVE_DEADLINE_S_DEFAULT) * 1000
+          const trace: TraceEntry[] = []
+          // completeToolCall REPLACES part metadata with execute()'s return value,
+          // so every terminal return re-publishes these counts — otherwise the
+          // per-tool breakdown vanishes the instant the run finishes.
+          const tally = () => {
+            const counts: Record<string, { n: number; errors: number }> = {}
+            for (const t of trace) {
+              const c = (counts[t.name] ??= { n: 0, errors: 0 })
+              c.n++
+              if (t.status === "error") c.errors++
+            }
+            return counts
+          }
           if (Buffer.byteLength(params.code, "utf8") > MAX_CODE_BYTES) {
             return {
               title: "code too large",
-              metadata: { status: "code_error", toolCalls: 0 },
+              metadata: { status: "code_error", toolCalls: 0, counts: tally() },
               output: `<exec status="code_error">\n<error_message>\ncode exceeds ${MAX_CODE_BYTES} bytes\n</error_message>\n</exec>`,
             }
           }
@@ -393,12 +406,11 @@ export const ToolScriptTool = Tool.define(
           if (typeof transpiled === "object") {
             return {
               title: "transpile error",
-              metadata: { status: "code_error", toolCalls: 0 },
+              metadata: { status: "code_error", toolCalls: 0, counts: tally() },
               output: `<exec status="code_error">\n<error_message>\n${transpiled.error}\n</error_message>\n</exec>`,
             }
           }
 
-          const trace: TraceEntry[] = []
           const logs: string[] = []
           let logBytes = 0
           let calls = 0
@@ -409,13 +421,9 @@ export const ToolScriptTool = Tool.define(
           // ctx.metadata fires a part delta the ToolScript view renders
           // reactively). Fire-and-forget — progress must never fail a call.
           const publishProgress = () => {
-            const counts: Record<string, { n: number; errors: number }> = {}
-            for (const t of trace) {
-              const c = (counts[t.name] ??= { n: 0, errors: 0 })
-              c.n++
-              if (t.status === "error") c.errors++
-            }
-            bridge.promise(ctx.metadata({ metadata: { running: true, toolCalls: trace.length, counts } })).catch(() => {})
+            bridge
+              .promise(ctx.metadata({ metadata: { running: true, toolCalls: trace.length, counts: tally() } }))
+              .catch(() => {})
           }
 
           const callTool: HostFn = (name: unknown, args: unknown) => {
@@ -546,7 +554,7 @@ return { __undef: __out.value === undefined, json: __out.value === undefined ? "
             log.warn("exec failed", { status, message: explained.slice(0, 500) })
             return {
               title: status,
-              metadata: { status, toolCalls: trace.length },
+              metadata: { status, toolCalls: trace.length, counts: tally() },
               output: `<exec status="${status}">\n<error_message>\n${explained}\n</error_message>\n${logBlock}${traceBlock}</exec>`,
             }
           }
@@ -565,14 +573,14 @@ return { __undef: __out.value === undefined, json: __out.value === undefined ? "
           if (returnedBytes > MAX_RESULT_BYTES) {
             return {
               title: "result too large",
-              metadata: { status: "budget_exceeded", toolCalls: trace.length },
+              metadata: { status: "budget_exceeded", toolCalls: trace.length, counts: tally() },
               output: `<exec status="budget_exceeded">\n<error_message>\nreturned value is ${returnedBytes} bytes (max ${MAX_RESULT_BYTES}). Aggregate or slice the data before returning.\n</error_message>\n${warningsBlock}${logBlock}${traceBlock}</exec>`,
             }
           }
 
           return {
             title: `${trace.length} tool calls`,
-            metadata: { status: "completed", toolCalls: trace.length },
+            metadata: { status: "completed", toolCalls: trace.length, counts: tally() },
             output: `<exec status="completed">\n<return_value>\n${returnedText}\n</return_value>\n${warningsBlock}${logBlock}${traceBlock}</exec>`,
           }
         }).pipe(Effect.orDie),
