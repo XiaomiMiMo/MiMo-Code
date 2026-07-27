@@ -71,9 +71,23 @@ describe("assertSafeUrl", () => {
   })
 
   describe("DNS fail-closed", () => {
-    test("rejects unresolvable hostnames", async () => {
-      await expect(assertSafeUrl("http://this-domain-definitely-does-not-exist-xyz123.invalid/")).rejects.toThrow(
+    // The resolver is injected: a real lookup of a `.invalid` name is
+    // environment-dependent (a local/corporate resolver may answer for it), which
+    // is what made this suite fail off-CI. The behavior under test is "resolution
+    // failed ⇒ reject", not "this hostname happens to be unresolvable here".
+    test("rejects a hostname whose resolution fails", async () => {
+      const failing = async () => {
+        throw Object.assign(new Error("getaddrinfo ENOTFOUND"), { code: "ENOTFOUND" })
+      }
+      await expect(assertSafeUrl("http://nope.example.com/", failing)).rejects.toThrow(
         "SSRF protection: DNS resolution failed",
+      )
+    })
+
+    test("rejects a hostname that resolves to a blocked IP (rebinding)", async () => {
+      const rebinding = async () => ({ address: "169.254.169.254", family: 4 })
+      await expect(assertSafeUrl("http://rebind.example.com/", rebinding)).rejects.toThrow(
+        "SSRF protection: hostname",
       )
     })
   })
