@@ -86,8 +86,10 @@ describe("collapse display width", () => {
   })
 
   test("keeps one cluster even when it is wider than the whole budget", () => {
-    // stacked Hangul jamo segment as a single cluster two cells wide per syllable
+    // three stacked Hangul jamo segment as a single cluster four cells wide, so a
+    // 2-cell budget cannot fit it — without the guard the head comes back empty
     const jamo = "\u1100\u1161\u11A8"
-    expect(Collapse.clip(jamo.repeat(30), 4, 1)).toBe(`${jamo}\n…`)
+    expect(Bun.stringWidth(jamo)).toBe(4)
+    expect(Collapse.clip(jamo.repeat(30), 2, 1)).toBe(`${jamo}\n…`)
   })
 })
