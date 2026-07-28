@@ -198,6 +198,34 @@ describe("actor.shell.parse: send", () => {
     expect(err.kind).toBe("arity")
     expect(err.detail).toContain("to_actor_id")
   })
+
+  // Parity with the JSON path's `content: z.string().min(1)` (actor.ts). shell-wrap
+  // hands a parsed shell op straight to execute WITHOUT re-validating it against
+  // `parameters`, so a blank content used to reach inbox.send — and a blank
+  // `actor_notification` body is rendered through RAW, producing a user message
+  // whose only part is an empty text part (the AI SDK drops it with no backfill
+  // → `content: []` → provider 400 "user messages must have non-empty content").
+  for (const script of [
+    'actor send main ""',
+    'actor send main "" --type actor_notification',
+    'actor send main "   " --type actor_notification',
+  ]) {
+    test(`send rejects a blank content: ${script}`, async () => {
+      const exit = await Effect.runPromise(Effect.exit(parseActorScript(script)))
+      expect(exit._tag).toBe("Failure")
+      const cause: any = (exit as any).cause
+      const fail = cause.reasons?.find?.((r: any) => r._tag === "Fail") ?? cause
+      const err = fail.error ?? fail
+      expect(err.detail).toContain("content must not be empty")
+    })
+  }
+
+  test("send still accepts a short non-blank content (guard is not over-broad)", async () => {
+    const out = await parse('actor send main "0" --type actor_notification')
+    expect(out).toEqual([
+      { operation: { action: "send", to_actor_id: "main", content: "0", type: "actor_notification" } },
+    ])
+  })
 })
 
 describe("actor.shell.parse: full parity flags", () => {

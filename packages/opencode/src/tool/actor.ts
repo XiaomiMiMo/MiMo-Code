@@ -178,6 +178,18 @@ const mapActorVerb = Effect.fn("mapActorVerb")(function* (verb: string | undefin
       const { flags, rest } = yield* extractNamedFlags(args, ["session", "type"], line)
       if (rest.length !== 2)
         return yield* actorArityError("send", '<to_actor_id> "<content>" [--session <id>] [--type <t>]', rest, line)
+      // Parity with the JSON path's `content: z.string().min(1)`. shell-wrap
+      // hands a parsed shell op straight to execute WITHOUT re-validating it
+      // against `parameters`, so without this an `actor send x ""` stores a
+      // blank inbox row — and a blank `actor_notification` body is rendered
+      // through raw, producing a user message whose only part is an empty text
+      // part (a provider 400). Reject at the boundary instead.
+      if (rest[1].trim() === "")
+        return yield* Effect.fail({
+          kind: "flag" as const,
+          line,
+          detail: "actor: send: content must not be empty",
+        })
       return {
         operation: {
           action: "send" as const,

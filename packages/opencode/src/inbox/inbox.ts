@@ -248,6 +248,44 @@ export const layer: Layer.Layer<
         return 0
       }
 
+      // Render BEFORE writing anything, and drop any row that renders blank.
+      // The drain is the one user-message producer that does NOT go through
+      // SessionPrompt.createUserMessage, so `hasSubstantiveContent` never sees
+      // it — a blank render would persist a user message whose only part is
+      // {type:"text",text:""}. The AI SDK's user branch filters empty text
+      // parts out with NO backfill, so that message reaches the provider as
+      // `content: []` and is rejected ("user messages must have non-empty
+      // content"). renderInboxRow already substitutes a placeholder for a
+      // blank body; this is the structural invariant that keeps the shape
+      // unreachable no matter what any future row type renders.
+      const rendered = rows.flatMap((row) => {
+        const text = renderInboxRow(row)
+        if (text.trim().length > 0) return [{ row, text }]
+        log.warn("inbox.drain: dropping row that rendered blank (would produce an empty user text part)", {
+          sessionID,
+          actorID,
+          rowID: row.id,
+          type: row.type,
+        })
+        return []
+      })
+
+      // Every row rendered blank: consume them (they carry no information and
+      // must not be re-drained forever) without writing a message at all. A
+      // zero-part user message would be skipped downstream anyway, so writing
+      // one is pure litter.
+      if (rendered.length === 0) {
+        yield* Effect.sync(() =>
+          Database.use((db) =>
+            db
+              .delete(InboxTable)
+              .where(inArray(InboxTable.id, rows.map((r) => r.id)))
+              .run(),
+          ),
+        )
+        return 0
+      }
+
       // Non-transactional crash window: updateMessage + updatePart commit
       // before the inbox DELETE. A crash between them re-renders the same
       // rows on next drain — LLM sees duplicated notifications. Tolerable;
@@ -265,14 +303,14 @@ export const layer: Layer.Layer<
         agent: seed.agent,
         model: seed.model,
       })
-      for (const row of rows) {
+      for (const entry of rendered) {
         yield* sessions.updatePart({
           id: PartID.ascending(),
           messageID: msgID,
           sessionID,
           type: "text" as const,
           synthetic: true,
-          text: renderInboxRow(row),
+          text: entry.text,
         })
       }
       yield* Effect.sync(() =>
@@ -284,7 +322,7 @@ export const layer: Layer.Layer<
         ),
       )
 
-      return rows.length
+      return rendered.length
     })
 
     const impl = Service.of({ send, drain })
