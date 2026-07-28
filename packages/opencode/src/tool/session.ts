@@ -330,10 +330,20 @@ function parseSessionScript(script: string): Effect.Effect<SessionOperation[], u
   })
 }
 
+// Fields that only make sense for an operation OTHER than `create` — they name
+// an already-existing session (or an ask/grant target). Their presence is
+// positive evidence the model meant to ROUTE, so recovery must never answer with
+// a synthesized `create`: that would silently spawn a duplicate child instead of
+// erroring, which is precisely the route-first violation #1741 exists to prevent
+// (and it is invisible — no error, just an extra session).
+const ROUTE_ONLY_FIELDS = ["sessionID", "session_id", "sessionIDs", "question", "target"]
+
 // Recover a shell-mode session call shaped like the JSON args (no `script`):
-// a stringified/nested `operation`, or the common bare `{task}` create.
-// Conservative — only the unambiguous create-from-task is synthesized; anything
-// else passes through (nested) or returns undefined (→ teach JSON). Mirrors
+// a stringified/nested `operation`, a FLATTENED `{operation|action, ...operands}`,
+// or the common bare `{task}` create. Conservative — a `create` is synthesized
+// only from an unambiguous bare `{task}` with no routing evidence; everything
+// else either reconstructs the operation the model actually named or returns
+// undefined (→ the call errors loudly and the model self-corrects). Mirrors
 // recoverTaskArgs in tool/task.ts.
 export function recoverSessionArgs(rawArgs: unknown): SessionOperation | undefined {
   if (rawArgs == null || typeof rawArgs !== "object") return undefined
@@ -346,7 +356,23 @@ export function recoverSessionArgs(rawArgs: unknown): SessionOperation | undefin
   }
   if (obj.operation && typeof obj.operation === "object" && !Array.isArray(obj.operation))
     return { operation: obj.operation } as SessionOperation
-  if (typeof obj.task === "string") {
+  // FLATTENED shape, repeatedly observed from mimo-v2.5:
+  //   {"operation":"send","sessionID":"ses_…","task":"…"}
+  // The discriminator sits at the TOP level — either as a bare `operation` verb
+  // that survived the JSON.parse above, or as `action` — with the operands as its
+  // siblings. Re-nest and validate against the real union so the model's actual
+  // intent runs. Note shell-wrap hands a recovered value straight to
+  // def.execute WITHOUT re-validating it, so validating here is what makes the
+  // reconstruction safe; a shape that does not validate returns undefined and
+  // surfaces as an "invalid arguments" error rather than being coerced.
+  const action =
+    typeof obj.action === "string" ? obj.action : typeof obj.operation === "string" ? obj.operation : undefined
+  if (action !== undefined) {
+    const operands = Object.fromEntries(Object.entries(obj).filter(([key]) => key !== "operation" && key !== "action"))
+    const parsed = parameters.safeParse({ operation: { ...operands, action } })
+    return parsed.success ? (parsed.data as SessionOperation) : undefined
+  }
+  if (typeof obj.task === "string" && !ROUTE_ONLY_FIELDS.some((field) => obj[field] !== undefined)) {
     const op: Record<string, unknown> = { action: "create", task: obj.task }
     if (obj.mode === "build" || obj.mode === "plan" || obj.mode === "compose") op.mode = obj.mode
     if (typeof obj.model === "string") op.model = obj.model

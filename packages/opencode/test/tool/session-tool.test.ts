@@ -938,6 +938,85 @@ describe("recoverSessionArgs", () => {
       operation: { action: "create", task: "x" },
     })
   })
+
+  // --- route-first safety -------------------------------------------------
+  // The recovery fallback must never answer a malformed call with a `create`
+  // when the payload carries evidence of a different intent. A silently
+  // synthesized `create` spawns a DUPLICATE child instead of relaying to the
+  // existing one — the route-first violation #1741 exists to prevent, and it is
+  // invisible (no error, just an extra session). A loud failure is acceptable;
+  // silent misrouting is not.
+
+  test("NEVER yields a create when the payload carries a routing field", () => {
+    // Each of these names an existing session (or an ask/grant target), so the
+    // model cannot have meant "spawn a new child".
+    const routed = [
+      { task: "relay this", sessionID: "ses_abc" },
+      { task: "relay this", session_id: "ses_abc" },
+      { task: "relay this", sessionIDs: ["ses_abc"] },
+      { task: "relay this", question: "what is the status?" },
+      { task: "relay this", target: "ses_abc" },
+      { task: "relay this", sessionID: "ses_abc", mode: "compose", model: "standard", title: "T" },
+    ]
+    for (const args of routed) {
+      const out = recoverSessionArgs(args)
+      expect(out?.operation?.action).not.toBe("create")
+      // Nothing here is a complete, unambiguous operation, so recovery declines
+      // and the call surfaces as an "invalid arguments" error the model can fix.
+      expect(out).toBeUndefined()
+    }
+  })
+
+  test("reconstructs the FLATTENED send that mimo-v2.5 actually emits", () => {
+    // Observed verbatim from mimo-v2.5: the discriminator is hoisted to the top
+    // level and the operands become its siblings.
+    expect(recoverSessionArgs({ operation: "send", sessionID: "ses_abc", task: "continue the refactor" })).toEqual({
+      operation: { action: "send", sessionID: "ses_abc", task: "continue the refactor" },
+    })
+    // Same shape with `action` as the top-level discriminator.
+    expect(recoverSessionArgs({ action: "send", sessionID: "ses_abc", task: "continue the refactor" })).toEqual({
+      operation: { action: "send", sessionID: "ses_abc", task: "continue the refactor" },
+    })
+  })
+
+  test("reconstructs other flattened operations", () => {
+    expect(recoverSessionArgs({ operation: "status", sessionID: "ses_abc" })).toEqual({
+      operation: { action: "status", sessionID: "ses_abc" },
+    })
+    expect(recoverSessionArgs({ operation: "cancel", sessionID: "ses_abc" })).toEqual({
+      operation: { action: "cancel", sessionID: "ses_abc" },
+    })
+    expect(recoverSessionArgs({ action: "ask", session_id: "ses_abc", question: "done?" })).toEqual({
+      operation: { action: "ask", session_id: "ses_abc", question: "done?" },
+    })
+    expect(recoverSessionArgs({ operation: "list" })).toEqual({ operation: { action: "list" } })
+    // A flattened create is still a create — the verb, not the field set, decides.
+    expect(recoverSessionArgs({ operation: "create", task: "build a login page" })).toEqual({
+      operation: { action: "create", task: "build a login page" },
+    })
+  })
+
+  test("a flattened operation that does not validate fails loudly instead of degrading to a create", () => {
+    // `send` without its required `task`: recovery must not fall through to the
+    // bare-{task} create branch, and must not hand execute a half-built op
+    // (shell-wrap routes a recovered value to def.execute WITHOUT re-validating).
+    expect(recoverSessionArgs({ operation: "send", sessionID: "ses_abc" })).toBeUndefined()
+    // `send` without its required `sessionID`.
+    expect(recoverSessionArgs({ operation: "send", task: "relay this" })).toBeUndefined()
+    // An unknown verb, with a task present that would previously have been
+    // rewritten into a create.
+    expect(recoverSessionArgs({ operation: "teleport", task: "relay this" })).toBeUndefined()
+    expect(recoverSessionArgs({ action: "teleport", task: "relay this" })).toBeUndefined()
+  })
+
+  test("a bare {task} with no routing evidence still creates (unchanged)", () => {
+    expect(recoverSessionArgs({ task: "build a login page" })).toEqual({
+      operation: { action: "create", task: "build a login page" },
+    })
+    expect(recoverSessionArgs({ task: "x", topic: "auth" })).toEqual({
+      operation: { action: "create", task: "x", topic: "auth" },
+    })
+  })
 })
 
 // ---------------------------------------------------------------------------
