@@ -280,6 +280,22 @@ export const layer = Layer.effect(
       // hold isn't matched → we do NOT return here → it fails closed at the
       // non-interactive gate. No human wait, no hang.
       if (needsAsk && input.inherit && !forced) {
+        // An EXPLICIT `session grant-approval <child|all>` pre-authorizes this
+        // child. That grant is DB-backed (write-through in forwardRef.setGrant),
+        // so unlike the in-memory parentGrants snapshot it survives a restart and
+        // is visible to a child running in its own Instance/process. Checked here
+        // because `decideAskRouting` routes an ordinary background subagent to
+        // `inherit`, never to `forward` — the only other place grantAllowed is
+        // consulted — so without this the documented command silently does
+        // nothing for subagents and their asks fail closed below.
+        if (forwardRef.grantAllowed(input.inherit.parentSessionID, request.sessionID)) {
+          log.info("parent holds an explicit approval grant, auto-allowing", {
+            permission: request.permission,
+            patterns: request.patterns,
+            parentSessionID: input.inherit.parentSessionID,
+          })
+          return
+        }
         const parentSnapshot = forwardRef.getParentGrants(input.inherit.parentSessionID)
         if (parentSnapshot) {
           // Mirror the parent's own two-phase evaluation (see the deny loop
