@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import path from "path"
+import fs from "fs/promises"
 import { Effect } from "effect"
 import type { Tool } from "../../src/tool"
 import { Instance } from "../../src/project/instance"
@@ -196,6 +197,88 @@ describe("tool.assertExternalDirectory", () => {
     })
 
     expect(requests.find((r) => r.permission === "external_directory")).toBeDefined()
+  })
+
+  describe("symlinked spellings of the worktree base", () => {
+    // AppFileSystem.contains is a LEXICAL prefix test, but the two sides of the
+    // trusted-root check reach it in different spellings of the same directory:
+    // Global.Path.data keeps the environment's form while Instance.provide
+    // realpath-resolves what it binds (on macOS /var vs /private/var). These cases
+    // model that with an explicit symlink so they hold on any host: a path that
+    // resolves INTO <data>/worktree but does not lexically start with it.
+    const base = path.join(Global.Path.data, "worktree")
+
+    async function linkedWorktree(seed?: string) {
+      const tmp = await tmpdir()
+      const real = path.join(base, "symlink-spelling-test", path.basename(tmp.path))
+      await fs.mkdir(path.join(real, "packages", "opencode", "src"), { recursive: true })
+      if (seed) await Bun.write(path.join(real, "packages", "opencode", "src", seed), "x")
+      const link = path.join(tmp.path, "worktree-alias")
+      await fs.symlink(real, link)
+      return { real, link, tmp }
+    }
+
+    test("does NOT ask for an existing file reached through a symlinked worktree path", async () => {
+      const { requests, ctx } = makeCtx()
+      const wt = await linkedWorktree("tool.ts")
+      const target = path.join(wt.link, "packages", "opencode", "src", "tool.ts")
+
+      // Lexically outside the trusted base — this is the spelling that used to
+      // deadlock a replier-less background child writing inside its own worktree.
+      expect(target.startsWith(base)).toBe(false)
+
+      await Instance.provide({
+        directory: "/tmp/project",
+        fn: async () => {
+          await assertExternalDirectory(ctx, target)
+        },
+      })
+
+      expect(requests.length).toBe(0)
+      await fs.rm(path.dirname(wt.real), { recursive: true, force: true })
+      await wt.tmp[Symbol.asyncDispose]()
+    })
+
+    test("does NOT ask for a file that does not exist yet under a symlinked worktree path", async () => {
+      const { requests, ctx } = makeCtx()
+      const wt = await linkedWorktree()
+      // The guard runs on writes, so the target is usually about to be created.
+      const target = path.join(wt.link, "packages", "opencode", "src", "brand-new.ts")
+
+      await Instance.provide({
+        directory: "/tmp/project",
+        fn: async () => {
+          await assertExternalDirectory(ctx, target)
+        },
+      })
+
+      expect(requests.length).toBe(0)
+      await fs.rm(path.dirname(wt.real), { recursive: true, force: true })
+      await wt.tmp[Symbol.asyncDispose]()
+    })
+
+    test("still asks for a symlink that resolves OUTSIDE the worktree base (regression)", async () => {
+      const { requests, ctx } = makeCtx()
+      await using outside = await tmpdir({
+        init: async (dir) => {
+          await Bun.write(path.join(dir, "secret.txt"), "x")
+        },
+      })
+      await using tmp = await tmpdir()
+      // Same shape as above, but the link points at a foreign directory: resolving
+      // realpaths must not turn the trust into a blanket bypass.
+      const link = path.join(tmp.path, "worktree-alias")
+      await fs.symlink(outside.path, link)
+
+      await Instance.provide({
+        directory: "/tmp/project",
+        fn: async () => {
+          await assertExternalDirectory(ctx, path.join(link, "secret.txt"))
+        },
+      })
+
+      expect(requests.find((r) => r.permission === "external_directory")).toBeDefined()
+    })
   })
 
   if (process.platform === "win32") {

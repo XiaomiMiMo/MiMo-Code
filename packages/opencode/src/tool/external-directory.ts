@@ -1,4 +1,5 @@
 import path from "path"
+import { realpathSync } from "fs"
 import { Effect } from "effect"
 import { EffectLogger } from "@/effect"
 import { InstanceState } from "@/effect"
@@ -14,6 +15,56 @@ type Kind = "file" | "directory"
 type Options = {
   bypass?: boolean
   kind?: Kind
+}
+
+/**
+ * `AppFileSystem.contains` is a LEXICAL prefix test (`relative()` — no symlink
+ * resolution), and the two sides of every trusted-root check below reach us in
+ * different spellings of the same path:
+ *
+ *   - `Global.Path.data` keeps whatever form the environment gave it (on macOS a
+ *     tmp/state root under `/var/...`),
+ *   - while `Instance.provide` REALPATH-RESOLVES the directory it binds, so every
+ *     path a tool derives from `Instance.directory` comes back as `/private/var/...`.
+ *
+ * A raw lexical test therefore answers `false` for a file that is genuinely inside
+ * `<data>/worktree/…`, and the trust below silently stops applying: an isolated
+ * child (or a subagent that inherited the spawner's main-checkout context) hits
+ * `external_directory:ask` for a write inside its own app-managed worktree, and
+ * with no interactive replier that ask never resolves — the deadlock this guard
+ * exists to prevent. Compare realpaths as a fallback so both spellings match.
+ *
+ * This only ever WIDENS an allow-check: a path outside the base fails both tests.
+ *
+ * NOTE: `src/tool/isolated-git-guard.ts` (in flight) carries the same
+ * realpath-comparing test as `isIsolatedWorktree`. Once both land, that one
+ * should delegate here rather than keep its own copy — deliberately not touched
+ * now to avoid conflicting with an unmerged branch.
+ */
+function containsReal(base: string, target: string) {
+  if (AppFileSystem.contains(base, target)) return true
+  return AppFileSystem.contains(real(base), real(target))
+}
+
+/**
+ * Realpath that tolerates a target which does not exist yet. This guard runs on
+ * WRITES, so the common case is a file the tool is about to create: plain
+ * `realpathSync` would throw ENOENT and leave the symlinked prefix unresolved.
+ * Resolve the deepest existing ancestor and re-attach the rest.
+ */
+function real(target: string) {
+  const absolute = path.resolve(target)
+  for (let dir = absolute; ; dir = path.dirname(dir)) {
+    const resolved = (() => {
+      try {
+        return realpathSync(dir)
+      } catch {
+        return undefined
+      }
+    })()
+    if (resolved) return path.join(resolved, path.relative(dir, absolute))
+    if (path.dirname(dir) === dir) return absolute
+  }
 }
 
 export const assertExternalDirectoryEffect = Effect.fn("Tool.assertExternalDirectory")(function* (
@@ -34,7 +85,7 @@ export const assertExternalDirectoryEffect = Effect.fn("Tool.assertExternalDirec
   // is redundant and, in headless run mode (no permission replier), deadlocks on a
   // never-resolved Deferred. memory-path-guard allows a task-bound subagent its own
   // tasks/<taskId>/*.md and rejects cross-task / wrong-agent writes.
-  if (AppFileSystem.contains(path.join(Global.Path.data, "memory"), full)) return
+  if (containsReal(path.join(Global.Path.data, "memory"), full)) return
 
   // Orchestrator-created worktrees live under <data>/worktree/<projectID>/<name>.
   // They are TRUSTED, app-managed workspaces — a child session isolated into one is
@@ -47,7 +98,7 @@ export const assertExternalDirectoryEffect = Effect.fn("Tool.assertExternalDirec
   // Since this base is created and owned by the app itself (not a foreign user path),
   // trust it here, exactly as the memory subtree above. Genuinely external user paths
   // are unaffected and still prompt.
-  if (AppFileSystem.contains(path.join(Global.Path.data, "worktree"), full)) return
+  if (containsReal(path.join(Global.Path.data, "worktree"), full)) return
 
   const kind = options?.kind ?? "file"
   const dir = kind === "directory" ? full : path.dirname(full)
@@ -144,7 +195,7 @@ export const askEditUnlessMemory = Effect.fn("Tool.askEditUnlessMemory")(functio
   input: { patterns: string[]; diff: string; files?: unknown },
 ) {
   const full = process.platform === "win32" ? AppFileSystem.normalizePath(filepath) : filepath
-  if (AppFileSystem.contains(path.join(Global.Path.data, "memory"), full)) return
+  if (containsReal(path.join(Global.Path.data, "memory"), full)) return
   yield* ctx.ask({
     permission: "edit",
     patterns: input.patterns,
