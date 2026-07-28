@@ -178,6 +178,17 @@ const mapActorVerb = Effect.fn("mapActorVerb")(function* (verb: string | undefin
       const { flags, rest } = yield* extractNamedFlags(args, ["session", "type"], line)
       if (rest.length !== 2)
         return yield* actorArityError("send", '<to_actor_id> "<content>" [--session <id>] [--type <t>]', rest, line)
+      // Parity with the JSON path's `content: z.string().min(1)`. shell-wrap
+      // calls def.execute(parsed) directly, so a shell-parsed op is NEVER
+      // re-validated against `parameters` — without this, `actor send main ""`
+      // queued a body-less inbox row that drain() then rendered into an
+      // unusable synthetic user text part.
+      if (rest[1] === "")
+        return yield* Effect.fail({
+          kind: "flag" as const,
+          line,
+          detail: `actor: send: content must not be empty`,
+        })
       return {
         operation: {
           action: "send" as const,

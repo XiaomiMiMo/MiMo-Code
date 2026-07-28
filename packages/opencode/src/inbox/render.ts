@@ -5,7 +5,14 @@ export function renderInboxRow(row: InboxRow): string {
     // Pre-rendered notification text — sender produced the full
     // <actor-notification>...</actor-notification> wrapper.
     const content = row.content as { text?: string }
-    return content.text ?? "(no notification body)"
+    // `||` not `??`: an EMPTY body is exactly as unusable as a missing one, and
+    // `??` let `""` through. Inbox.drain persists this return value verbatim as
+    // the ONLY text part of a synthetic `role:"user"` message, so a `""` here
+    // produced `parts: [{type:"text",text:""}]` — length 1, so every
+    // `parts.length === 0` guard misses it — which `ai`'s
+    // convertToLanguageModelMessage then filters down to `content: []`,
+    // yielding a provider 400 ("user messages must have non-empty content").
+    return content.text || "(no notification body)"
   }
   // Default: type === "text" or unknown — wrap as <inbox> element so
   // the LLM can route by sender; the wrapper format mirrors the
@@ -15,7 +22,7 @@ export function renderInboxRow(row: InboxRow): string {
     ? `${row.sender_session_id}:${row.sender_actor_id ?? "?"}`
     : "system"
   const sentAt = new Date(row.created_at).toISOString()
-  return `<inbox from="${sender}" sent_at="${sentAt}">\n${content.text ?? "(empty)"}\n</inbox>`
+  return `<inbox from="${sender}" sent_at="${sentAt}">\n${content.text || "(empty)"}\n</inbox>`
 }
 
 export function renderActorNotification(event: {
