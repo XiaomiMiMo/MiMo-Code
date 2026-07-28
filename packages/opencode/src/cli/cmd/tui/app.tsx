@@ -537,23 +537,20 @@ function App(props: { onSnapshot?: () => Promise<string[]> }) {
           sdk.switchDirectory(dir)
           await sync.bootstrap()
         }
-        const existing = sync.data.session
-          .toSorted((a, b) => b.time.updated - a.time.updated)
-          .find((x) => x.parentID === undefined)?.id
-        if (existing) {
-          local.orchestrator.setSessionID(existing)
-          // A `-s` launch wanted to land IN the orchestrator session; a plain
-          // Tab-into-orchestrator from a stale launch-dir session wanted Home
-          // (the fresh-entry state). Either way navigate exactly once, AFTER
-          // bootstrap, so the switched view resolves directly to its target with
-          // no intermediate frame — the root now exists in orchestratorDir.
-          if (resumeIntoSession) route.navigate({ type: "session", sessionID: existing })
-          else if (switching) route.navigate({ type: "home" })
-        } else {
-          const res = await sdk.client.session.create({})
-          if (res.data?.id) local.orchestrator.setSessionID(res.data.id)
-          if (switching) route.navigate({ type: "home" })
-        }
+        // Authoritative resolve-or-create against the switched directory. Reading
+        // sync.data.session here raced bootstrap's NON-blocking session list —
+        // bootstrap resolves before the list lands, so the lookup missed the
+        // existing root and minted another one on every entry.
+        const root = await sync.session.resolveRoot()
+        if (root.id) local.orchestrator.setSessionID(root.id)
+        // A `-s` launch wanted to land IN the orchestrator session; a plain
+        // Tab-into-orchestrator from a stale launch-dir session wanted Home
+        // (the fresh-entry state). Either way navigate exactly once, AFTER
+        // bootstrap, so the switched view resolves directly to its target with
+        // no intermediate frame — the root now exists in orchestratorDir. A root
+        // we just created is empty, so resuming into it makes no sense: go Home.
+        if (root.id && !root.created && resumeIntoSession) route.navigate({ type: "session", sessionID: root.id })
+        else if (switching) route.navigate({ type: "home" })
       } catch (e) {
         toast.show({ message: `Failed to enter Orchestrator: ${e}`, variant: "error" })
       } finally {
