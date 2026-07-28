@@ -1,5 +1,5 @@
 import { createContext, useContext, type ParentProps, Show } from "solid-js"
-import { createStore } from "solid-js/store"
+import { createStore, reconcile } from "solid-js/store"
 import { useTheme } from "@tui/context/theme"
 import { useTerminalDimensions } from "@opentui/solid"
 import { SplitBorder } from "../component/border"
@@ -9,6 +9,21 @@ import { type TuiEvent } from "../event"
 import { useLanguage } from "@tui/context/language"
 
 export type ToastOptions = z.infer<typeof TuiEvent.ToastShow.properties>
+
+/**
+ * Each toast REPLACES the one on screen, so it is authoritative for the whole
+ * object — including `title`, which is optional.
+ *
+ * Solid's store setter merges plain objects into the existing node
+ * (`mergeStoreNode` only writes `Object.keys(next)`). A second toast raised
+ * before the first one's timer fires therefore lands on a non-null previous
+ * toast and inherits its `title`: `toast.error(err)` passes only
+ * `{ variant, message }`, so it used to render under whatever headline the
+ * preceding success toast had set, attributing a failure to unrelated work.
+ */
+export function nextToast(options: Omit<ToastOptions, "duration">) {
+  return reconcile(options)
+}
 
 export function Toast() {
   const toast = useToast()
@@ -60,7 +75,7 @@ function init() {
   const toast = {
     show(options: ToastOptions) {
       const { duration = 5000, ...currentToast } = options
-      setStore("currentToast", currentToast)
+      setStore("currentToast", nextToast(currentToast))
       if (timeoutHandle) clearTimeout(timeoutHandle)
       timeoutHandle = setTimeout(() => {
         setStore("currentToast", null)
