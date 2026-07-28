@@ -1333,6 +1333,66 @@ describe("session.message-v2.toModelMessage", () => {
       },
     ])
   })
+
+  // Exclusion pin for the "orphaned running tool part" hypothesis about the
+  // `messages.<N>: user messages must have non-empty content` 400. An orphan is
+  // an assistant turn whose ONLY part is a tool part left at `running` by a
+  // process that died before the abort finalizer ran, and it is the worst case:
+  // no text, no reasoning, nothing else convertible. The tool_result it produces
+  // does ride in a provider `role:"user"` message on the Anthropic/Bedrock wire,
+  // which is why the hypothesis is plausible at all. It is nonetheless excluded:
+  // the SDK models a tool result as `role:"tool"`, and the empty-text strip that
+  // manufactures `content: []` (ai@6.0.168 dist/index.mjs:1424) lives in the
+  // `role:"user"` branch and filters ONLY `type:"text"` parts. A `tool-result`
+  // part is never dropped, and `:874` guarantees its value is non-empty.
+  test("an orphaned running-only tool part reaches the wire as a non-empty tool result, never as empty content", async () => {
+    const userID = "m-orphan-user"
+    const assistantID = "m-orphan-assistant"
+
+    const ours = await MessageV2.toModelMessages(
+      [
+        {
+          info: userInfo(userID),
+          parts: [{ ...basePart(userID, "u1"), type: "text", text: "run tool" }],
+        },
+        {
+          info: assistantInfo(assistantID, userID),
+          // The orphan, alone. No text/reasoning part to carry the turn.
+          parts: [
+            {
+              ...basePart(assistantID, "a1"),
+              type: "tool",
+              callID: "call-orphan",
+              tool: "bash",
+              state: { status: "running", input: { cmd: "sleep 900" }, time: { start: 0 } },
+            },
+          ],
+        },
+      ] as MessageV2.WithParts[],
+      model,
+    )
+
+    const wire = await convertToLanguageModelPrompt({
+      prompt: { messages: ours },
+      supportedUrls: {},
+      download: async () => [],
+    })
+
+    // No message anywhere in the request has empty content.
+    expect(wire.every((msg) => !Array.isArray(msg.content) || msg.content.length > 0)).toBe(true)
+    // The tool result is a `role:"tool"` message, so the user-branch empty-text
+    // strip cannot reach it, and its payload is the non-empty `:880` literal.
+    expect(wire.map((msg) => msg.role)).toStrictEqual(["user", "assistant", "tool"])
+    expect(wire[2].content).toStrictEqual([
+      {
+        type: "tool-result",
+        toolCallId: "call-orphan",
+        toolName: "bash",
+        output: { type: "error-text", value: "[Tool execution was interrupted]" },
+        providerOptions: undefined,
+      },
+    ])
+  })
 })
 
 describe("session.message-v2.fromError", () => {
