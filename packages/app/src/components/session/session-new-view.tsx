@@ -53,37 +53,39 @@ export function NewSessionView(props: NewSessionViewProps) {
       <div class="flex-1 px-6 pb-30 flex items-center justify-center text-center">
         <div class="w-full max-w-200 flex flex-col items-center text-center gap-4">
           <div class="flex flex-col items-center gap-6">
-            <Mark class="w-10" />
+            <Mark class="w-14" />
             <div class="text-20-medium text-text-strong">{language.t("session.new.title")}</div>
           </div>
-          <div class="w-full flex flex-col gap-4 items-center">
-            <div class="flex items-start justify-center gap-3 min-h-5">
-              <div class="text-12-medium text-text-weak select-text leading-5 min-w-0 max-w-160 break-words text-center">
-                {getDirectory(projectRoot())}
-                <span class="text-text-strong">{getFilename(projectRoot())}</span>
-              </div>
-            </div>
-            <div class="flex items-start justify-center gap-1.5 min-h-5">
-              <Icon name="branch" size="small" class="mt-0.5 shrink-0" />
-              <div class="text-12-medium text-text-weak select-text leading-5 min-w-0 max-w-160 break-words text-center">
-                {label(current())}
-              </div>
-            </div>
-            <Show when={sync.project}>
-              {(project) => (
-                <div class="flex items-start justify-center gap-3 min-h-5">
-                  <div class="text-12-medium text-text-weak leading-5 min-w-0 max-w-160 break-words text-center">
-                    {language.t("session.new.lastModified")}&nbsp;
-                    <span class="text-text-strong">
-                      {DateTime.fromMillis(project().time.updated ?? project().time.created)
-                        .setLocale(language.intl())
-                        .toRelative()}
-                    </span>
-                  </div>
+          <Show when={getFilename(projectRoot())}>
+            <div class="w-full flex flex-col gap-4 items-center">
+              <div class="flex items-start justify-center gap-3 min-h-5">
+                <div class="text-12-medium text-text-weak select-text leading-5 min-w-0 max-w-160 break-words text-center">
+                  {getDirectory(projectRoot())}
+                  <span class="text-text-strong">{getFilename(projectRoot())}</span>
                 </div>
-              )}
-            </Show>
-          </div>
+              </div>
+              <div class="flex items-start justify-center gap-1.5 min-h-5">
+                <Icon name="branch" size="small" class="mt-0.5 shrink-0" />
+                <div class="text-12-medium text-text-weak select-text leading-5 min-w-0 max-w-160 break-words text-center">
+                  {label(current())}
+                </div>
+              </div>
+              <Show when={sync.project}>
+                {(project) => (
+                  <div class="flex items-start justify-center gap-3 min-h-5">
+                    <div class="text-12-medium text-text-weak leading-5 min-w-0 max-w-160 break-words text-center">
+                      {language.t("session.new.lastModified")}&nbsp;
+                      <span class="text-text-strong">
+                        {DateTime.fromMillis(project().time.updated ?? project().time.created)
+                          .setLocale(language.intl())
+                          .toRelative()}
+                      </span>
+                    </div>
+                  </div>
+                )}
+              </Show>
+            </div>
+          </Show>
         </div>
       </div>
     </div>

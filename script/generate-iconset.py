@@ -3,40 +3,60 @@ import os
 import subprocess
 from PIL import Image, ImageDraw
 
-source_jpg = "/Users/denis/.gemini/antigravity/brain/7d346382-7cf1-494e-b365-f9555df36f21/app_icon_seamless_1785030788273.jpg"
+def draw_master_icon(size):
+    img = Image.new("RGBA", (size, size), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(img)
+    scale = size / 1024.0
+    
+    margin = 0
+    radius = 225 * scale
+    rect_box = [margin, margin, size - margin, size - margin]
+    
+    # 绘制纯色深色背景（去掉高亮外边框线）
+    draw.rounded_rectangle(rect_box, radius=radius, fill=(15, 23, 42, 255))
+    
+    # M 主体
+    p1 = (260 * scale, 720 * scale)
+    p2 = (260 * scale, 280 * scale)
+    p3 = (512 * scale, 530 * scale)
+    p4 = (764 * scale, 280 * scale)
+    p5 = (764 * scale, 720 * scale)
+    
+    stroke_w = max(1, int(round(28 * scale)))
+    draw.line([p1, p2, p3, p4, p5], fill=(56, 189, 248, 255), width=stroke_w, joint="round")
+    
+    # 代码终端标识 > _
+    prompt_stroke = max(1, int(round(22 * scale)))
+    draw.line([(390*scale, 600*scale), (470*scale, 650*scale), (390*scale, 700*scale)], fill=(168, 85, 247, 255), width=prompt_stroke, joint="round")
+    draw.line([(530*scale, 700*scale), (630*scale, 700*scale)], fill=(168, 85, 247, 255), width=prompt_stroke)
+    
+    # 顶部 AI 星芒
+    star_cx, star_cy = 512 * scale, 200 * scale
+    sr = 30 * scale
+    draw.polygon([
+        (star_cx, star_cy - sr*1.5),
+        (star_cx + sr*0.4, star_cy - sr*0.4),
+        (star_cx + sr*1.5, star_cy),
+        (star_cx + sr*0.4, star_cy + sr*0.4),
+        (star_cx, star_cy + sr*1.5),
+        (star_cx - sr*0.4, star_cy + sr*0.4),
+        (star_cx - sr*1.5, star_cy),
+        (star_cx - sr*0.4, star_cy - sr*0.4)
+    ], fill=(56, 189, 248, 255))
+    
+    return img
+
+print("🎨 动态绘制最新 Coding Agent 主图标...")
 target_repo = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+full_master_icon = draw_master_icon(1024)
 
-print(f"🎨 加载基准概念图标: {source_jpg}")
-img = Image.open(source_jpg).convert("RGBA")
-w, h = img.size
-
-# 1. 截取原图核心主体
-crop_margin = 0
-cropped = img.crop((crop_margin, crop_margin, w - crop_margin, h - crop_margin))
-
-# 2. 按照 Apple macOS 标准 HIG 设计规范构建图标：
-# 规范：在 1024x1024 的透明画布中，Squircle 图标主体尺寸为 824x824，四周各保留 100px 的透明 Padding 边距。
-# 这样在 macOS Dock 栏中尺寸就会与 Arc / Safari / Finder 完全一致！
+# macOS 官方 HIG 完美标准：在 1024x1024 画布中缩放到 824px，四周留 100px 边距
+# 这会与 Arc / 系统设置 / 右侧应用的圆角边缘 100% 精确对齐
 icon_size = 824
-cropped = cropped.resize((icon_size, icon_size), Image.Resampling.LANCZOS)
-
-# 创建 824x824 视效圆角蒙版 (苹果标准圆角 185px)
-mask_824 = Image.new("L", (icon_size, icon_size), 0)
-draw_824 = ImageDraw.Draw(mask_824)
-draw_824.rounded_rectangle([0, 0, icon_size, icon_size], radius=185, fill=255)
-
-squircle_icon = Image.new("RGBA", (icon_size, icon_size), (0, 0, 0, 0))
-squircle_icon.paste(cropped, (0, 0), mask_824)
-
-# 居中贴入 1024x1024 透明画布 (Padding: 100px)
+pad = 100
+squircle_icon = full_master_icon.resize((icon_size, icon_size), Image.Resampling.LANCZOS)
 macos_master_icon = Image.new("RGBA", (1024, 1024), (0, 0, 0, 0))
-macos_master_icon.paste(squircle_icon, (100, 100), squircle_icon)
-
-# 无 Padding 满铺版本 (用于 Windows / Android 等系统)
-full_master_icon = Image.new("RGBA", (1024, 1024), (0, 0, 0, 0))
-full_master_icon.paste(cropped.resize((1024, 1024), Image.Resampling.LANCZOS), (0, 0), mask_824.resize((1024, 1024), Image.Resampling.LANCZOS))
-
-print("✨ 按照 Apple macOS HIG 标准规范生成带 100px 透明 Padding 的 1024x1024 主图标。")
+macos_master_icon.paste(squircle_icon, (pad, pad), squircle_icon)
 
 # 目标处理目录
 target_dirs = [
@@ -48,24 +68,28 @@ target_dirs = [
 
 updated_count = 0
 
-def generate_tray_template(size, pad, stroke, radius):
+def generate_tray_template(size):
     img = Image.new("RGBA", (size, size), (0, 0, 0, 0))
     draw = ImageDraw.Draw(img)
-    draw.rounded_rectangle([pad, pad, size - pad, size - pad], radius=radius, outline=(0, 0, 0, 255), width=stroke)
-    x1 = pad + int((size - 2 * pad) * 0.25)
-    x2 = pad + int((size - 2 * pad) * 0.55)
-    y1 = pad + int((size - 2 * pad) * 0.25)
-    ym = pad + int((size - 2 * pad) * 0.50)
-    y2 = pad + int((size - 2 * pad) * 0.75)
-    draw.line([(x1, y1), (x2, ym)], fill=(0, 0, 0, 255), width=stroke)
-    draw.line([(x2, ym), (x1, y2)], fill=(0, 0, 0, 255), width=stroke)
-    cx1 = pad + int((size - 2 * pad) * 0.65)
-    cx2 = pad + int((size - 2 * pad) * 0.85)
-    draw.line([(cx1, y2), (cx2, y2)], fill=(0, 0, 0, 255), width=stroke)
+    scale = size / 22.0
+    stroke_w = max(1, int(round(1.6 * scale)))
+    
+    # 极简高精 M + > 终端提示符 (去掉了拥挤的外框，保持在 22x22 极佳像素精度)
+    p1 = (3.5 * scale, 17.5 * scale)
+    p2 = (3.5 * scale, 4.5 * scale)
+    p3 = (11.0 * scale, 12.0 * scale)
+    p4 = (18.5 * scale, 4.5 * scale)
+    p5 = (18.5 * scale, 17.5 * scale)
+    draw.line([p1, p2, p3, p4, p5], fill=(0, 0, 0, 255), width=stroke_w, joint="round")
+    
+    # 精致的底部提示符 > _
+    draw.line([(8.5*scale, 14.5*scale), (11.0*scale, 16.5*scale), (8.5*scale, 18.5*scale)], fill=(0, 0, 0, 255), width=stroke_w, joint="round")
+    draw.line([(13.0*scale, 18.5*scale), (16.0*scale, 18.5*scale)], fill=(0, 0, 0, 255), width=stroke_w)
+    
     return img
 
-tray_icon_1x = generate_tray_template(22, pad=3, stroke=2, radius=3)
-tray_icon_2x = generate_tray_template(44, pad=6, stroke=3, radius=6)
+tray_icon_1x = generate_tray_template(22)
+tray_icon_2x = generate_tray_template(44)
 
 for target_dir in target_dirs:
     if not os.path.exists(target_dir):

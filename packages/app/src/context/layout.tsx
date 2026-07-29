@@ -480,7 +480,7 @@ export const { use: useLayout, provider: LayoutProvider } = createSimpleContext(
 
     const enriched = createMemo(() => server.projects.list().map(enrich))
     const list = createMemo(() => {
-      const projects = enriched()
+      const projects = enriched().filter((p) => !!p.worktree && p.worktree !== "/" && p.worktree.replaceAll("\\", "/").trim() !== "/")
       return projects.map((project) => {
         const color = project.icon?.color ?? colors[project.worktree]
         if (!color) return project

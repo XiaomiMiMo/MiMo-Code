@@ -236,7 +236,7 @@ export async function bootstrapDirectory(input: {
   }
   queryClient: QueryClient
 }) {
-  if (!input.directory || input.directory === "/" || input.directory === "global") {
+  if (!input.directory || input.directory === "/" || input.directory.replaceAll("\\", "/").trim() === "/" || input.directory === "global") {
     return
   }
   const loading = input.store.status !== "complete"

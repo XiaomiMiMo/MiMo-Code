@@ -103,14 +103,16 @@ const WorkspaceHeader = (props: {
         <Spinner class="size-[15px]" />
       </Show>
     </div>
-    <span class="text-14-medium text-text-base shrink-0">
-      {props.local() ? props.language.t("workspace.type.local") : props.language.t("workspace.type.sandbox")} :
-    </span>
+    <Show when={props.branch() || (getFilename(props.directory) !== "/" && getFilename(props.directory))}>
+      <span class="text-14-medium text-text-base shrink-0">
+        {props.local() ? props.language.t("workspace.type.local") : props.language.t("workspace.type.sandbox")} :
+      </span>
+    </Show>
     <Show
       when={!props.local()}
       fallback={
         <span class="text-14-medium text-text-base min-w-0 truncate">
-          {props.branch() ?? getFilename(props.directory)}
+          {props.branch() ?? (getFilename(props.directory) === "/" ? "" : getFilename(props.directory))}
         </span>
       }
     >
