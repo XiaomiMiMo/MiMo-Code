@@ -3043,7 +3043,7 @@ describe("ProviderTransform.tools", () => {
     expect(result.bash.providerOptions).toEqual({ anthropic: { cacheControl: { type: "ephemeral", ttl: "1h" } } })
   })
 
-  test("uses cachePoint shape for bedrock", () => {
+  test("does not mark tools for bedrock", () => {
     const model = createModel({
       providerID: "amazon-bedrock",
       api: { id: "anthropic.claude-sonnet-4", url: "https://api.test.com", npm: "@ai-sdk/amazon-bedrock" },
@@ -3052,7 +3052,8 @@ describe("ProviderTransform.tools", () => {
 
     const result = ProviderTransform.tools(tools, model)
 
-    expect(result.bash.providerOptions).toEqual({ bedrock: { cachePoint: { type: "default" } } })
+    expect(result.read.providerOptions).toBeUndefined()
+    expect(result.bash.providerOptions).toBeUndefined()
   })
 
   test("uses copilot_cache_control shape for github-copilot", () => {
