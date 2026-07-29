@@ -190,6 +190,7 @@ export const dict = {
   "tui.slash.dream.description": "從 memory 檔案與原始軌跡中手動整合專案記憶",
   "tui.slash.distill.description": "在最近工作中發現重複流程，打包為 skill、子智慧代理或命令",
   "tui.slash.goal.description": "設定終止條件目標；執行直到判定達成。使用 /goal clear 中止",
+  "tui.slash.workflow.description": "根據任務產生並執行可自訂、帶驗證的多智能體 DAG",
   "tui.slash.deep-research.description": "深度多來源、事實核查的研究報告（執行 deep-research 工作流程）",
 
   // Built-in bundled skill descriptions (user-facing, decoupled from SKILL.md description which targets the LLM)
@@ -283,7 +284,8 @@ export const dict = {
   // App-level commands
   "tui.command.session.list.title": "切換工作階段",
   "tui.command.session.new.title": "新增工作階段",
-  "tui.command.workflow.list.title": "工作流程",
+  "tui.command.workflow.list.title": "工作流程執行清單",
+  "tui.command.workflow.list.description": "瀏覽並開啟本工作階段中的工作流程執行（不是 /workflow）",
   "tui.command.model.list.title": "切換模型",
   "tui.command.model.cycle_recent.title": "循環切換模型",
   "tui.command.model.cycle_recent_reverse.title": "反向循環切換模型",

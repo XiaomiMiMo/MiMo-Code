@@ -2435,7 +2435,7 @@ function Workflow(props: ToolProps<typeof WorkflowTool>) {
 
   // Counters/phase prefer the live metadata streamed by the tool's 250ms flush
   // loop, falling back to the bus run row. The bus row only learns counters via
-  // loadWorkflows polling (which only the /workflows dialog runs), so during a run
+  // loadWorkflows polling (which only the /worklist dialog runs), so during a run
   // the inline panel would otherwise sit at 0✓ 0✗ 0⟳ — the streamed metadata is
   // the authoritative live source for this in-conversation view.
   const counters = createMemo(() => {

@@ -213,6 +213,7 @@ export const dict = {
   "tui.slash.dream.description": "memory ファイルと生の軌跡からプロジェクトメモリを手動で統合",
   "tui.slash.distill.description": "最近の作業から繰り返しワークフローを見つけ、skill・サブエージェント・コマンドにパッケージ化",
   "tui.slash.goal.description": "停止条件付きゴールを設定；判定が達成と言うまで実行。/goal clear で中止",
+  "tui.slash.workflow.description": "タスクから検証付きのカスタム複数エージェント DAG を生成して実行",
   "tui.slash.deep-research.description": "深い多ソース・ファクトチェック済み調査レポート（deep-research ワークフローを実行）",
 
   // Built-in bundled skill descriptions (user-facing, decoupled from SKILL.md description which targets the LLM)
@@ -267,7 +268,8 @@ export const dict = {
   // App-level commands
   "tui.command.session.list.title": "セッションを切り替え",
   "tui.command.session.new.title": "新規セッション",
-  "tui.command.workflow.list.title": "ワークフロー",
+  "tui.command.workflow.list.title": "ワークフロー実行一覧",
+  "tui.command.workflow.list.description": "このセッションのワークフロー実行を閲覧・開く（/workflow ではない）",
   "tui.command.model.list.title": "モデルを切り替え",
   "tui.command.model.cycle_recent.title": "モデルを循環",
   "tui.command.model.cycle_recent_reverse.title": "モデルを逆循環",

@@ -88,7 +88,7 @@ export const parameters = z.discriminatedUnion("operation", [
 type TranscriptEntry = { kind: "phase" | "log"; text: string }
 // `counters` and `currentPhase` are streamed in each flush so the inline
 // conversation panel shows live progress without polling: the bus run row only
-// carries counters via loadWorkflows (which only the /workflows dialog polls), so
+// carries counters via loadWorkflows (which only the /worklist dialog polls), so
 // without this the in-conversation panel would sit at 0✓ 0✗ 0⟳ for the whole run.
 type Metadata = {
   runID?: string

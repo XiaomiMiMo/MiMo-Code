@@ -590,11 +590,12 @@ function App(props: { onSnapshot?: () => Promise<string[]> }) {
     },
     {
       title: t("tui.command.workflow.list.title"),
+      description: t("tui.command.workflow.list.description"),
       value: "workflow.list",
       category: "session",
       enabled: Flag.MIMOCODE_EXPERIMENTAL_WORKFLOW_TOOL,
       slash: {
-        name: "workflows",
+        name: "worklist",
       },
       onSelect: () => {
         dialog.replace(() => <DialogWorkflows />)
