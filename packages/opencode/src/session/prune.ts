@@ -145,6 +145,13 @@ export interface Interface {
   }) => Effect.Effect<void>
   /** True when the current tokens have just crossed the max checkpoint threshold. */
   readonly maxThresholdCrossed: (sessionID: SessionID) => Effect.Effect<boolean>
+  /**
+   * Clear ONLY the max-threshold rebuild signal, leaving the crossed-threshold
+   * ladder untouched. For the caller that acted on the signal by compacting
+   * instead of rebuilding — see the implementation for why that is not
+   * resetThresholds.
+   */
+  readonly dischargeMaxThreshold: (sessionID: SessionID) => Effect.Effect<void>
   /** Clear the crossed-threshold state for a session (e.g. after discard+rebuild). */
   readonly resetThresholds: (sessionID: SessionID) => Effect.Effect<void>
 }
@@ -445,12 +452,45 @@ export const layer: Layer.Layer<
       return maxCrossed.has(sessionID)
     })
 
+    // maxCrossed is a ONE-SHOT REQUEST ("reduce this context"), so it has to be
+    // discharged by whoever acts on it — not by one particular outcome of
+    // acting. Its only reader is the overflow gate in runLoop, and that gate
+    // always acts: it rebuilds when a checkpoint boundary can be produced, and
+    // compacts when the writer it just waited on produced nothing. Only the
+    // first of those cleared the request, via resetThresholds inside
+    // rebuildFromCheckpoint, so the compaction fallback left the request
+    // standing and the gate re-fired on it as soon as tokens climbed back.
+    //
+    // The fallback runs precisely when the watermark is unset — no writer has
+    // EVER succeeded for this session — so nothing else was ever going to clear
+    // it: the in-place retry above only clears while under the failure cap, and
+    // once the cap is reached maxCrossed is re-added by every later crossing.
+    // The result was a fresh fallback compaction, plus another doomed writer, on
+    // essentially every iteration for the rest of the turn.
+    //
+    // Deliberately NOT resetThresholds, which also clears `crossed` and would
+    // re-arm a threshold whose writer just failed — reinstating the in-place
+    // retry past the point the cap exists to stop. A rebuild may re-arm the
+    // ladder because it re-bases the context the ladder is measured against; a
+    // fallback compaction has not made the failed thresholds un-fired.
+    //
+    // The accepted cost is the direction the failure cap already chose: while
+    // the writer stays broken this session stops checkpointing (the "gave up
+    // after max consecutive failures" warning above is where that is reported),
+    // rather than compacting forever. Overflow is still caught — the gate's
+    // other disjunct is the real overflow check.
+    const dischargeMaxThreshold = Effect.fn("SessionPrune.dischargeMaxThreshold")(function* (
+      sessionID: SessionID,
+    ) {
+      maxCrossed.delete(sessionID)
+    })
+
     const resetThresholds = Effect.fn("SessionPrune.resetThresholds")(function* (sessionID: SessionID) {
       crossed.delete(sessionID)
       maxCrossed.delete(sessionID)
     })
 
-    return Service.of({ prune, fireCheckpoints, maxThresholdCrossed, resetThresholds })
+    return Service.of({ prune, fireCheckpoints, maxThresholdCrossed, dischargeMaxThreshold, resetThresholds })
   }),
 )
 

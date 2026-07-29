@@ -367,6 +367,55 @@ describe("SessionPrune.fireCheckpoints writer-failure retry", () => {
       { checkpoint: { thresholds: ["50%"] } },
     )
   })
+
+  // dischargeMaxThreshold is what the overflow gate's compaction fallback calls
+  // to retire the max-threshold signal it just served. That signal's only reader
+  // is the gate, and the fallback runs exactly when the watermark is unset, so
+  // before this existed nothing cleared it once the failure cap was reached — the
+  // in-place retry above stops clearing at the cap, while every later crossing
+  // re-adds maxCrossed — and the gate re-fired on the standing signal for the
+  // rest of the turn.
+  //
+  // Its narrowness is the point, so assert what SURVIVES as well as what is
+  // cleared: resetThresholds would also drop `crossed`, re-arming a threshold
+  // whose writer just failed and reinstating the in-place retry past the point
+  // the cap exists to stop it.
+  test("dischargeMaxThreshold clears the signal only — the crossed ladder survives", async () => {
+    const harness = makeRetryHarness()
+    const promptOps = {} as any
+
+    await runWithHarness(
+      harness,
+      Effect.gen(function* () {
+        const svc = yield* SessionPrune.Service
+        const ssn = yield* SessionNs.Service
+        const info = yield* ssn.create({})
+        const model = createModel({ context: 100_000, output: 32_000 })
+
+        // max_writer_failures 1 ⇒ the first failure IS the cap, so the watcher
+        // clears nothing and the signal is left standing — the state the gate's
+        // fallback actually finds.
+        harness.outcomes.push("failure")
+        yield* svc.fireCheckpoints({ sessionID: info.id, model, tokens: makeTokens(), promptOps })
+        yield* Effect.sleep(150)
+        expect(harness.state.enqueueCount).toBe(1)
+        expect(yield* svc.maxThresholdCrossed(info.id)).toBe(true)
+
+        yield* svc.dischargeMaxThreshold(info.id)
+        expect(yield* svc.maxThresholdCrossed(info.id)).toBe(false)
+
+        // `crossed` survived: the threshold that already fired stays fired, so a
+        // fire at the same token count enqueues nothing and no further writer is
+        // spawned. This is the assertion that would break if the fallback called
+        // resetThresholds instead.
+        yield* svc.fireCheckpoints({ sessionID: info.id, model, tokens: makeTokens(), promptOps })
+        yield* Effect.sleep(100)
+        expect(harness.state.enqueueCount).toBe(1)
+        expect(yield* svc.maxThresholdCrossed(info.id)).toBe(false)
+      }),
+      { checkpoint: { thresholds: ["50%"], max_writer_failures: 1 } },
+    )
+  })
 })
 
 describe("defaultThresholdsFor (Part 2 density)", () => {

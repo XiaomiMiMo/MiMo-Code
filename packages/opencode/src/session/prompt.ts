@@ -3499,10 +3499,17 @@ NOTE: At any point in time through this workflow you should feel free to ask the
             // still produced nothing — the ONE condition that may compact.
             if (attempt === "writer-failed") {
               // THE single compaction fallback: no checkpoint existed AND the
-              // writer failed / never ran / the bound expired. Note this is a
-              // bare boundary insert, not an LLM summary — everything before it
-              // is dropped unsummarized (compaction.ts:499, message-v2.ts:1037)
-              // — which is exactly why we tried to write a checkpoint first.
+              // writer failed / never ran / the bound expired.
+              //
+              // What this inserts is a bare boundary (compaction.ts's `create`,
+              // three local writes, no LLM call). It is NOT the end of the story
+              // though: the next iteration sees that boundary on the last user
+              // message and routes to compaction.process (the "Detect compaction
+              // boundary" branch above), which does run the summarizer and marks
+              // its assistant `summary: true`. So the history before the boundary
+              // is summarized, not dropped raw — which also means the summary
+              // marker only suppresses this gate for the single iteration that
+              // produces it, and cannot bound how often we end up here.
               yield* compaction
                 .create({
                   sessionID,
@@ -3512,6 +3519,15 @@ NOTE: At any point in time through this workflow you should feel free to ask the
                   agentID: lastUser.agentID,
                 })
                 .pipe(Effect.ignore)
+              // Discharge the max-threshold signal, the same duty the "rebuilt"
+              // branch discharges via rebuildFromCheckpoint → resetThresholds.
+              // The boundary just inserted reduces the context the rebuild was
+              // going to reduce, so the request has been served. Left standing it
+              // re-fires this same fallback — and another doomed writer with it —
+              // every time tokens climb back, because a rebuild can never insert
+              // while the watermark is unset. Narrower than resetThresholds on
+              // purpose: see dischargeMaxThreshold in prune.ts.
+              yield* prune.dischargeMaxThreshold(sessionID)
               skipOverflowCheck = true
               continue
             }
