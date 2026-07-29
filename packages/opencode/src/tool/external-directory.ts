@@ -34,6 +34,15 @@ export const assertExternalDirectoryEffect = Effect.fn("Tool.assertExternalDirec
   // is redundant and, in headless run mode (no permission replier), deadlocks on a
   // never-resolved Deferred. memory-path-guard allows a task-bound subagent its own
   // tasks/<taskId>/*.md and rejects cross-task / wrong-agent writes.
+  //
+  // DELIBERATELY the lexical `contains`, not withinTrustedRoot — unlike the worktree
+  // base below, this early return is a DEFERRAL, and its soundness depends on the
+  // delegate actually governing what is waved through here. memory-path-guard is
+  // still lexical: assertMemoryWriteAllowed returns early on `!target.startsWith(root)`,
+  // so a memory path spelled through a symlinked data root is governed by NOTHING.
+  // Widening this test alone would therefore drop the prompt for exactly the paths
+  // the guard does not inspect. These two must be promoted together; until then the
+  // conservative answer (ask) is the safe one.
   if (AppFileSystem.contains(path.join(Global.Path.data, "memory"), full)) return
 
   // Orchestrator-created worktrees live under <data>/worktree/<projectID>/<name>.
@@ -47,7 +56,15 @@ export const assertExternalDirectoryEffect = Effect.fn("Tool.assertExternalDirec
   // Since this base is created and owned by the app itself (not a foreign user path),
   // trust it here, exactly as the memory subtree above. Genuinely external user paths
   // are unaffected and still prompt.
-  if (AppFileSystem.contains(path.join(Global.Path.data, "worktree"), full)) return
+  //
+  // withinTrustedRoot is what makes that trust survive normalisation: `Instance.provide`
+  // stores a realpath-resolved directory while Global.Path.data keeps the symlinked
+  // form, so a purely lexical test can miss an in-worktree path and re-introduce the
+  // very deadlock described above. Unlike the memory branch this trust is terminal —
+  // nothing downstream re-checks it — so widening it cannot silently bypass a
+  // delegate. Same predicate as IsolatedGit.isIsolatedWorktree, which gates on this
+  // identical base.
+  if (AppFileSystem.withinTrustedRoot(path.join(Global.Path.data, "worktree"), full)) return
 
   const kind = options?.kind ?? "file"
   const dir = kind === "directory" ? full : path.dirname(full)
@@ -136,7 +153,11 @@ export const assertWriteAllowed = Effect.fn("Tool.assertWriteAllowed")(function*
  * Outside the memory tree, ask exactly as the write tools did inline before.
  *
  * Mirrors the external_directory memory-region deferral added in the 2026-06-04
- * poststop-progress-permission-deadlock fix (see assertExternalDirectoryEffect).
+ * poststop-progress-permission-deadlock fix (see assertExternalDirectoryEffect),
+ * including its choice of the LEXICAL test: this is a deferral to memory-path-guard,
+ * and that guard is still lexical, so widening only this side would drop the ask for
+ * memory paths the guard does not govern. See the note at the memory branch of
+ * assertExternalDirectoryEffect — the two move together or not at all.
  */
 export const askEditUnlessMemory = Effect.fn("Tool.askEditUnlessMemory")(function* (
   ctx: Tool.Context,

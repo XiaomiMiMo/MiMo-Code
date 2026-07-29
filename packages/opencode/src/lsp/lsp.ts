@@ -226,6 +226,12 @@ export const layer = Layer.effect(
 
     const getClients = Effect.fnUntraced(function* (file: string) {
       const ctx = yield* InstanceState.context
+      // Deliberately the LEXICAL `contains`, not the realpath-comparing
+      // `withinTrustedRoot` used by the permission gates. This is not a trust
+      // boundary: a false negative only skips LSP enrichment for one file, and
+      // getClients runs on every LSP touch, so paying two realpath syscalls per
+      // out-of-project file would be the wrong trade. If LSP silently stops
+      // attaching on a symlinked project prefix, this is the line to change.
       if (
         !AppFileSystem.contains(ctx.directory, file) &&
         (ctx.worktree === "/" || !AppFileSystem.contains(ctx.worktree, file))

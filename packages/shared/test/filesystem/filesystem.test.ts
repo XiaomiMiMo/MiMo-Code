@@ -4,6 +4,8 @@ import { NodeFileSystem } from "@effect/platform-node"
 import { AppFileSystem } from "@mimo-ai/shared/filesystem"
 import { testEffect } from "../lib/effect"
 import path from "path"
+import { mkdirSync, mkdtempSync, realpathSync, symlinkSync, writeFileSync } from "node:fs"
+import { tmpdir } from "node:os"
 
 const live = AppFileSystem.layer.pipe(Layer.provideMerge(NodeFileSystem.layer))
 const { effect: it } = testEffect(live)
@@ -333,6 +335,92 @@ describe("AppFileSystem", () => {
       expect(AppFileSystem.overlaps("/a/b", "/a/b/c")).toBe(true)
       expect(AppFileSystem.overlaps("/a/b/c", "/a/b")).toBe(true)
       expect(AppFileSystem.overlaps("/a", "/b")).toBe(false)
+    })
+  })
+
+  describe("withinTrustedRoot", () => {
+    // A REAL symlinked prefix, not a stub of `contains`: <tmp>/link -> <tmp>/real,
+    // so one file can be named through either. This is the shape the trust callers
+    // actually hit — `Instance.provide` stores a realpath-resolved directory while
+    // `Global.Path.data` keeps the symlinked form.
+    function symlinkFixture() {
+      const base = mkdtempSync(path.join(realpathSync(tmpdir()), "trusted-root-"))
+      const real = path.join(base, "real")
+      const link = path.join(base, "link")
+      mkdirSync(path.join(real, "nested"), { recursive: true })
+      writeFileSync(path.join(real, "nested", "file.ts"), "x")
+      symlinkSync(real, link, "dir")
+      return { base, real, link }
+    }
+
+    test("agrees with contains whenever the paths are lexically related", () => {
+      expect(AppFileSystem.withinTrustedRoot("/a/b", "/a/b/c")).toBe(true)
+      expect(AppFileSystem.withinTrustedRoot("/a/b", "/a/b")).toBe(true)
+    })
+
+    test("a genuinely foreign path is still outside", () => {
+      expect(AppFileSystem.withinTrustedRoot("/a/b", "/a/c")).toBe(false)
+      // A path that merely resembles the root by name must not be admitted.
+      expect(AppFileSystem.withinTrustedRoot("/data/worktree", "/tmp/worktree/foreign")).toBe(false)
+    })
+
+    test("root named through a symlink still contains a child named through the real path", () => {
+      const { real, link } = symlinkFixture()
+      const child = path.join(real, "nested", "file.ts")
+
+      // The defect being fixed: purely lexical arithmetic says "outside".
+      expect(AppFileSystem.contains(link, child)).toBe(false)
+      expect(AppFileSystem.withinTrustedRoot(link, child)).toBe(true)
+    })
+
+    test("root named through the real path still contains a child named through the symlink", () => {
+      const { real, link } = symlinkFixture()
+      const child = path.join(link, "nested", "file.ts")
+
+      expect(AppFileSystem.contains(real, child)).toBe(false)
+      expect(AppFileSystem.withinTrustedRoot(real, child)).toBe(true)
+    })
+
+    test("a child that does not exist yet is still comparable", () => {
+      // Load-bearing: a write names its file BEFORE it exists, so realpath throws
+      // and the fallback must still resolve it against the realpath'd root.
+      const { real, link } = symlinkFixture()
+      const notYet = path.join(real, "nested", "created-later.ts")
+
+      expect(AppFileSystem.contains(link, notYet)).toBe(false)
+      expect(AppFileSystem.withinTrustedRoot(link, notYet)).toBe(true)
+    })
+
+    test("a not-yet-existing child named THROUGH the symlink is still inside", () => {
+      // The case a plain `catch -> path.resolve` fallback gets wrong: `resolve`
+      // performs no symlink resolution, so the link spelling survives and the
+      // comparison misses. Since "may I create this file" is the commonest
+      // boundary question on the write path, this is the dominant case, not a
+      // corner one — the deepest existing ancestor must be canonicalized and
+      // the missing tail re-appended.
+      const { link } = symlinkFixture()
+      const notYet = path.join(link, "nested", "created-later.ts")
+
+      expect(AppFileSystem.withinTrustedRoot(link, notYet)).toBe(true)
+      // And through the real root, which is the direction Instance.provide creates.
+      const { real: real2, link: link2 } = symlinkFixture()
+      expect(AppFileSystem.withinTrustedRoot(real2, path.join(link2, "nested", "created-later.ts"))).toBe(true)
+    })
+
+    test("a deep chain of missing components resolves without throwing", () => {
+      const { real, link } = symlinkFixture()
+      const deep = path.join(link, "nested", "a", "b", "c", "d.ts")
+
+      expect(AppFileSystem.withinTrustedRoot(link, deep)).toBe(true)
+      expect(AppFileSystem.withinTrustedRoot(real, deep)).toBe(true)
+      // A missing chain that escapes the root is still outside.
+      expect(AppFileSystem.withinTrustedRoot(path.join(real, "nested"), path.join(link, "sibling", "x.ts"))).toBe(false)
+    })
+
+    test("neither side existing falls back to lexical resolution rather than throwing", () => {
+      const ghost = path.join(tmpdir(), "definitely-absent-" + Math.random().toString(36).slice(2))
+      expect(AppFileSystem.withinTrustedRoot(ghost, path.join(ghost, "child.ts"))).toBe(true)
+      expect(AppFileSystem.withinTrustedRoot(ghost, "/elsewhere/child.ts")).toBe(false)
     })
   })
 })

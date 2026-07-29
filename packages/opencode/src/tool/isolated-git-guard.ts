@@ -1,5 +1,5 @@
 import * as path from "path"
-import { readFileSync, realpathSync } from "node:fs"
+import { readFileSync } from "node:fs"
 import { AppFileSystem } from "@mimo-ai/shared/filesystem"
 import { Global } from "../global"
 
@@ -256,23 +256,14 @@ export function violates(input: {
 /** True when `directory` is one of the app-managed worktrees that back an
  *  isolated child session (`<data>/worktree/<projectID>/<name>`). The
  *  orchestrator and ordinary sessions run in the user's project directory and
- *  are therefore never gated. Mirrors the trusted-root test already used by
- *  `src/tool/external-directory.ts`, but additionally compares realpaths:
- *  `Instance.provide` stores a realpath-resolved directory, so on a symlinked
- *  prefix (macOS `/var` → `/private/var`) a raw string-prefix test misses. */
+ *  are therefore never gated. Delegates to the shared trust-boundary predicate,
+ *  which compares realpaths as well as lexical prefixes;
+ *  `src/tool/external-directory.ts` now applies that same predicate to this
+ *  same base, so the two trusted-root tests cannot drift apart again. */
 export function isIsolatedWorktree(directory: string | undefined, root?: string) {
   if (!directory) return false
   const base = root ?? path.join(Global.Path.data, "worktree")
-  if (AppFileSystem.contains(base, directory)) return true
-  return AppFileSystem.contains(real(base), real(directory))
-}
-
-function real(target: string) {
-  try {
-    return realpathSync(target)
-  } catch {
-    return path.resolve(target)
-  }
+  return AppFileSystem.withinTrustedRoot(base, directory)
 }
 
 /** Best-effort read of the branch a worktree is on, without spawning git.

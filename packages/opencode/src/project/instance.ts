@@ -157,14 +157,21 @@ export const Instance = {
    * Check if a path is within the project boundary.
    * Returns true if path is inside Instance.directory OR Instance.worktree.
    * Paths within the worktree but outside the working directory should not trigger external_directory permission.
+   *
+   * This is the first gate of the external_directory permission check, so it uses
+   * the trust-boundary predicate rather than a lexical prefix test: `Instance.provide`
+   * stores a REALPATH-RESOLVED directory, while a filepath arriving from a tool call
+   * carries whatever normalisation the caller gave it. A lexical-only comparison of
+   * two differently-normalised paths returns a false negative and sends an in-project
+   * write to the ask.
    */
   containsPath(filepath: string, ctx?: InstanceContext) {
     const instance = ctx ?? Instance
-    if (AppFileSystem.contains(instance.directory, filepath)) return true
+    if (AppFileSystem.withinTrustedRoot(instance.directory, filepath)) return true
     // Non-git projects set worktree to "/" which would match ANY absolute path.
     // Skip worktree check in this case to preserve external_directory permissions.
     if (instance.worktree === "/") return false
-    return AppFileSystem.contains(instance.worktree, filepath)
+    return AppFileSystem.withinTrustedRoot(instance.worktree, filepath)
   },
   /**
    * Captures the current instance ALS context and returns a wrapper that

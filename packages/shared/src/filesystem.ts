@@ -1,5 +1,5 @@
 import { NodeFileSystem } from "@effect/platform-node"
-import { dirname, join, relative, resolve as pathResolve } from "path"
+import { basename, dirname, join, relative, resolve as pathResolve } from "path"
 import { realpathSync } from "fs"
 import * as NFS from "fs/promises"
 import { lookup } from "mime-types"
@@ -232,5 +232,56 @@ export namespace AppFileSystem {
 
   export function contains(parent: string, child: string) {
     return !relative(parent, child).startsWith("..")
+  }
+
+  /**
+   * Boundary test for TRUST decisions: is `child` inside `root`?
+   *
+   * Use this — not `contains` — wherever the answer gates a permission, a
+   * sandbox, or any other security boundary. `contains` is pure lexical path
+   * arithmetic, and in a real trust check the two sides routinely arrive with
+   * DIFFERENT degrees of normalisation: `Instance.provide` stores a
+   * realpath-resolved directory while `Global.Path.data` keeps the symlinked
+   * form (macOS `/var` → `/private/var`, `/tmp` → `/private/tmp`). A lexical
+   * test then returns a false NEGATIVE and the caller treats an in-boundary
+   * path as external — which, on the `external_directory` gate, means a
+   * background child with no interactive replier deadlocks on the ask.
+   *
+   * Note the hazard does NOT require a symlink to be involved: it is enough
+   * that one side has been resolved and the other has not.
+   *
+   * Ordering is load-bearing for cost, not just clarity: the lexical test runs
+   * first and short-circuits, so realpath syscalls are paid ONLY on the
+   * negative path — the case that was already about to escalate to an ask.
+   *
+   * A path whose leaf does not exist yet still has to be comparable, because
+   * the commonest boundary question of all is "may I CREATE this file". Plain
+   * `realpathSync` throws there, and falling back to `path.resolve` is not
+   * enough either — `resolve` does no symlink resolution, so the unresolved
+   * spelling survives and the comparison misses exactly when it matters. So
+   * canonicalize the deepest ancestor that DOES exist and re-append the
+   * remainder, the same technique `src/tool/tool-script.ts` uses for its jail.
+   */
+  export function withinTrustedRoot(root: string, child: string) {
+    if (contains(root, child)) return true
+    return contains(realpathBestEffort(root), realpathBestEffort(child))
+  }
+
+  function realpathBestEffort(target: string) {
+    let cur = pathResolve(target)
+    let suffix = ""
+    while (true) {
+      try {
+        const resolved = realpathSync(cur)
+        return suffix ? join(resolved, suffix) : resolved
+      } catch {
+        const parent = dirname(cur)
+        // Reached the root with nothing resolvable: no part of this path exists,
+        // so the lexically resolved form is the best comparable answer.
+        if (parent === cur) return pathResolve(target)
+        suffix = suffix ? join(basename(cur), suffix) : basename(cur)
+        cur = parent
+      }
+    }
   }
 }

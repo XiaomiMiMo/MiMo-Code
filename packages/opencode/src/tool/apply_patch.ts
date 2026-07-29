@@ -189,6 +189,11 @@ export const ApplyPatchTool = Tool.define(
       const title = files.length === 1 ? files[0]!.relativePath : `${files.length} files`
 
       // Check permissions if needed
+      // Deliberately the lexical `contains`: this mirrors the memory-region deferral
+      // in external-directory.ts, whose delegate (memory-path-guard) is still lexical.
+      // Widening only this filter would drop the `edit` ask for memory paths spelled
+      // through a symlinked data root — paths assertMemoryWriteAllowed skips entirely.
+      // See the note at the memory branch of assertExternalDirectoryEffect.
       const permissionChanges = fileChanges.filter(
         (change) => !AppFileSystem.contains(path.join(Global.Path.data, "memory"), change.movePath ?? change.filePath),
       )

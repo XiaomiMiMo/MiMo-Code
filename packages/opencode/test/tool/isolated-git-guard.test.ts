@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import * as path from "path"
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs"
+import { mkdirSync, mkdtempSync, realpathSync, symlinkSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import {
   assertIsolatedGitAllowed,
@@ -177,6 +177,28 @@ describe("isolated-git-guard / isolation signal", () => {
 
   test("undefined directory is not an isolated child", () => {
     expect(isIsolatedWorktree(undefined, root)).toBe(false)
+  })
+
+  test("a symlinked worktree base still recognises its own children", () => {
+    // The realpath half of this check now comes from AppFileSystem.withinTrustedRoot.
+    // `Instance.provide` hands this function a realpath-resolved directory while the
+    // base is derived from Global.Path.data, which keeps its symlinked form — the two
+    // sides arrive differently normalised, so a lexical test alone misses.
+    const base = mkdtempSync(path.join(realpathSync(tmpdir()), "isolation-signal-"))
+    const realBase = path.join(base, "worktree")
+    const linkBase = path.join(base, "worktree-link")
+    const child = path.join(realBase, "p_abc", "child-1")
+    mkdirSync(child, { recursive: true })
+    symlinkSync(realBase, linkBase, "dir")
+
+    expect(isIsolatedWorktree(child, linkBase)).toBe(true)
+    expect(isIsolatedWorktree(path.join(linkBase, "p_abc", "child-1"), realBase)).toBe(true)
+    // A worktree directory that has not been created yet must resolve too: the
+    // isolation signal is read while a child is still being set up, and a plain
+    // `catch -> path.resolve` fallback keeps the link spelling and misses here.
+    expect(isIsolatedWorktree(path.join(linkBase, "p_abc", "child-not-created-yet"), realBase)).toBe(true)
+    // A sibling outside the base is still not isolated, symlink or not.
+    expect(isIsolatedWorktree(path.join(base, "elsewhere"), linkBase)).toBe(false)
   })
 })
 
