@@ -233,11 +233,9 @@ export const Flag = {
   // global singleton workspace and child permission-approval routing. Enable with
   // MIMOCODE_EXPERIMENTAL_ORCHESTRATOR=true (or the umbrella MIMOCODE_EXPERIMENTAL).
   MIMOCODE_EXPERIMENTAL_ORCHESTRATOR: MIMOCODE_EXPERIMENTAL || truthy("MIMOCODE_EXPERIMENTAL_ORCHESTRATOR"),
-  // Defaults to OFF (opt-in): dynamic workflows and built-in workflows.
-  // Enable with MIMOCODE_EXPERIMENTAL_WORKFLOW_TOOL=true (or the umbrella
-  // MIMOCODE_EXPERIMENTAL flag).
-  MIMOCODE_EXPERIMENTAL_WORKFLOW_TOOL:
-    MIMOCODE_EXPERIMENTAL || truthy("MIMOCODE_EXPERIMENTAL_WORKFLOW_TOOL"),
+  // Defaults to ON: dynamic workflows, built-in workflows, and `/workflow`.
+  // Set MIMOCODE_EXPERIMENTAL_WORKFLOW_TOOL=false to opt out.
+  MIMOCODE_EXPERIMENTAL_WORKFLOW_TOOL: !falsy("MIMOCODE_EXPERIMENTAL_WORKFLOW_TOOL"),
   // Defaults to true: cron + self-paced loop scheduling are on by default.
   // Set MIMOCODE_EXPERIMENTAL_CRON=false to opt out. Runtime kill switch is
   // MIMOCODE_DISABLE_CRON (checked live every tick).

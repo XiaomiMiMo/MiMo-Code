@@ -42,7 +42,7 @@ Add the experimental `/workflow <task>` command beside `/deep-research`. Its exp
 6. perform at most the requested number of rework rounds (default 2, hard prompt-level cap 3), re-running the verifier after every round; return an honest non-accepted result when the bound is exhausted;
 7. invoke `workflow({ operation: "run", script, args })` and relay its terminal result and run ID without claiming acceptance unless the verifier accepted it.
 
-The command remains behind `MIMOCODE_EXPERIMENTAL_WORKFLOW_TOOL`, because its required tool is behind the same flag. Invalid or empty user input is handled by the primary agent through one concise clarification rather than launching a guessed workflow.
+The command and its required tool share `MIMOCODE_EXPERIMENTAL_WORKFLOW_TOOL`, which is enabled by default and accepts `false` or `0` as an explicit opt-out. Invalid or empty user input is handled by the primary agent through one concise clarification rather than launching a guessed workflow.
 
 ### Standard DAG primitive
 
