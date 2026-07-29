@@ -166,4 +166,35 @@ describe("TextNgramMonitor", () => {
     const monitor = new TextNgramMonitor(4, 20, 500)
     expect(monitor.append("I will fix this bug ".repeat(20))).toBe(true)
   })
+
+  test("does not trigger on streaming large table (issue #1441)", () => {
+    const monitor = new TextNgramMonitor(4, 20, 500)
+    // Simulate streaming a 20-row comparison table chunk by chunk
+    const rows = []
+    for (let i = 1; i <= 20; i++) {
+      rows.push(`| Feature ${i} | Current | After Integration | Verdict |`)
+    }
+    const table = rows.join("\n")
+    // Feed in chunks like a real streaming response
+    const chunkSize = 100
+    for (let i = 0; i < table.length; i += chunkSize) {
+      monitor.append(table.slice(i, i + chunkSize))
+    }
+    expect(monitor.append("")).toBe(false)
+  })
+
+  test("does not trigger on table followed by new content", () => {
+    const monitor = new TextNgramMonitor(4, 20, 500)
+    const table = `| col1 | col2 | col3 |
+| a | b | c |
+| d | e | f |
+| g | h | i |
+| j | k | l |
+| m | n | o |
+| p | q | r |
+| s | t | u |`
+    monitor.append(table)
+    // New content after the table should not trigger
+    expect(monitor.append("Now let me explain the results in detail.")).toBe(false)
+  })
 })
