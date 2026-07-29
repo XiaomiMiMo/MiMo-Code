@@ -103,6 +103,18 @@ import type { Git } from "@/git"
  * fabricated id is worse than none — so the notice points at the roster the
  * session tool already injects (`session list`, and the ledger every dispatch
  * echoes) and leaves the id as a placeholder.
+ *
+ * TWO ARMS, BECAUSE OUTCOME-KEYING HAS AN INTENT-SHAPED HOLE. Everything above
+ * describes the OUTCOME arm, and its scope sentence is exact: keyed on the outcome
+ * alone. That is also its limit. `git merge -X theirs` (or `-X ours`,
+ * `--strategy-option=`, or the `ours` strategy via `-s ours`) reaches the same end
+ * state — one side of the contested hunks thrown away by whoever ran the merge —
+ * with NO conflict for git to report: clean index, no marker, exit 0. Every probe
+ * above is negative, so the affordance is not merely quiet there, it is
+ * constructively unfireable, while the rule it enforces has still been broken. A
+ * detector keyed on the aftermath necessarily cannot see a decision that leaves no
+ * aftermath, so the second arm reads the COMMAND instead — see `unilateral` below
+ * for the flags matched, the ones excluded, and the limit that cannot be removed.
  */
 
 /** In-progress integration states, in the order git resolves them, each paired
@@ -116,9 +128,24 @@ const OPERATIONS: ReadonlyArray<{ marker: string; abort: string; label: string }
   { marker: "MERGE_HEAD", abort: "git merge --abort", label: "merge" },
 ]
 
+/** The integration subcommands, and the abort that undoes each. One list because
+ *  BOTH arms key on it: the outcome arm asks "could this have left a conflicted
+ *  index", the intent arm asks "was a side-picking flag attached to one of these".
+ *  `pull` has no abort of its own — it aborts as the merge it ran. */
+const INTEGRATIONS: ReadonlyArray<{ verb: string; abort: string }> = [
+  { verb: "merge", abort: "git merge --abort" },
+  { verb: "pull", abort: "git merge --abort" },
+  { verb: "rebase", abort: "git rebase --abort" },
+  { verb: "cherry-pick", abort: "git cherry-pick --abort" },
+  { verb: "revert", abort: "git revert --abort" },
+  { verb: "am", abort: "git am --abort" },
+]
+
+const VERBS = INTEGRATIONS.map((integration) => integration.verb).join("|")
+
 /** git subcommands that can leave a conflicted index. Matched loosely on the
  *  command string on purpose — see `hint`. */
-const CAPABLE = /\bgit\b[^\n;&|]*?\b(merge|rebase|cherry-pick|revert|pull|am)\b/
+const CAPABLE = new RegExp(`\\bgit\\b[^\\n;&|]*?\\b(${VERBS})\\b`)
 
 /**
  * Cheap pre-test: is it worth spawning git to find out? True when the output
@@ -195,13 +222,141 @@ export function notice(conflict: Conflict) {
 }
 
 /**
+ * INTENT ARM — a request to settle someone else's conflict unilaterally.
+ *
+ * `-X ours` / `-X theirs` hand git a standing instruction to take one side of
+ * every conflicting hunk; `-s ours` drops the other side wholesale. Either way
+ * the operation reports SUCCESS. Measured on git 2.50.1: a `-X theirs` merge over
+ * genuinely conflicting hunks prints `Auto-merging f.txt` / `Merge made by the
+ * 'ort' strategy.`, exits 0, and leaves NO unmerged index entry and NO MERGE_HEAD.
+ * So all four probes in `outcome` below are negative BY CONSTRUCTION on exactly
+ * the case where the model has decided a conflict it does not own. An
+ * outcome-keyed detector cannot have this; the check has to read the COMMAND.
+ *
+ * It is a pure function of the string — no git spawn, no filesystem, nothing that
+ * makes the hot path slower.
+ *
+ * MATCHED, and why:
+ *   -X ours | -X theirs | -Xours | -Xtheirs        the strategy OPTION, both spellings
+ *   --strategy-option=ours|theirs, and its space form
+ *   -s ours | -sours | --strategy=ours | --strategy ours
+ *        the `ours` STRATEGY, which is strictly stronger than the option: it keeps
+ *        this tree and discards the other side's commits entirely, including
+ *        changes that never conflicted with anything. Reported in preference to
+ *        the option when a command carries both.
+ *
+ * DELIBERATELY NOT MATCHED:
+ *   - any other `-X` value. `-X patience`, `-X histogram`, `-X diff-algorithm=…`,
+ *     `-X renormalize`, `-X ignore-space-change`, `-X find-renames=…` tune HOW the
+ *     diff is computed and never pick a winner. This is why the side is matched
+ *     immediately after the flag instead of searched for anywhere in the command:
+ *     `git merge -X patience ours-branch` must not fire, and does not.
+ *   - `-s theirs`. It does not exist. git 2.50.1 answers "Could not find merge
+ *     strategy 'theirs'" and refuses to run, so there is no outcome to warn about.
+ *   - a flag belonging to a DIFFERENT command on a compound line. Both regexes
+ *     keep the existing `[^\n;&|]` discipline, so in `git merge feature; echo -X
+ *     theirs` the echo's flag cannot be attributed to the merge.
+ */
+const SIDE_OPTION = /(?:-X\s*|--strategy-option[=\s]+)(ours|theirs)\b/
+const SIDE_STRATEGY = /(?:-s\s*|--strategy[=\s]+)(ours)\b/
+
+/** An integration verb plus the remainder of ITS segment of the command line.
+ *  Global because a compound line can hold several and only some carry a flag. */
+const UNILATERAL = new RegExp(`\\bgit\\b[^\\n;&|]*?\\b(${VERBS})\\b([^\\n;&|]*)`, "g")
+
+export type Unilateral = {
+  /** The flag exactly as the command spelled it, e.g. "-X theirs". */
+  flag: string
+  /** The side git was told to keep. */
+  side: "ours" | "theirs"
+  /** The integration verb the flag was attached to. */
+  label: string
+  /** The abort that undoes that verb. */
+  abort: string
+  /** True for the `ours` STRATEGY, which discards the other side wholesale. */
+  strategy: boolean
+}
+
+/** The side-picking flag attached to an integration verb, or undefined. */
+export function unilateral(command: string): Unilateral | undefined {
+  for (const segment of command.matchAll(UNILATERAL)) {
+    const integration = INTEGRATIONS.find((candidate) => candidate.verb === segment[1])
+    if (!integration) continue
+    const strategy = SIDE_STRATEGY.exec(segment[2] ?? "")
+    const found = strategy ?? SIDE_OPTION.exec(segment[2] ?? "")
+    if (!found) continue
+    return {
+      flag: found[0].replace(/\s+/g, " ").trim(),
+      side: found[1] as "ours" | "theirs",
+      label: integration.verb,
+      abort: integration.abort,
+      strategy: strategy !== null,
+    }
+  }
+  return undefined
+}
+
+/**
+ * Renders the intent-arm block. Same shape as `notice` — no XML envelope, caps
+ * lead-in, literal numbered commands, and a line saying it is internal.
+ *
+ * PHRASED CONDITIONALLY, and that is load-bearing rather than hedging. This
+ * cannot know whether the flag changed anything, and the limit is not an
+ * implementation gap that a better probe would close. Two things were measured on
+ * git 2.50.1 and both failed:
+ *
+ *   - the OUTPUT. A `-X theirs` merge that really did settle overlapping hunks and
+ *     one where the sides never overlapped both print `Auto-merging f.txt` /
+ *     `Merge made by the 'ort' strategy.` — byte-identical, and identical again to
+ *     the same merge run with no flag at all. Suppressing on `Fast-forward` would
+ *     also invert this module's own rule that text alone must never decide.
+ *   - a post-hoc `git merge-tree --write-tree HEAD^1 HEAD^2`. It does separate the
+ *     two for a committed merge, and is wrong in the case that matters most: a
+ *     `-s ours` merge with NO textual conflict anywhere reports exit 0 — "no-op" —
+ *     while having discarded the other branch's entire contribution. It also has
+ *     no second parent to read after a cherry-pick, a rebase, a `--no-commit`, or
+ *     a fast-forward, and it costs spawns on the hottest tool in the process.
+ *
+ * So the block reports what the COMMAND ASKED FOR, never that a conflict was
+ * hidden, and hands the model the one command that does settle it.
+ */
+export function unilateralNotice(request: Unilateral) {
+  const kept = request.side === "ours" ? "this branch's" : "the incoming branch's"
+  const dropped = request.side === "ours" ? "the incoming branch's" : "this branch's"
+  const what = request.strategy
+    ? `\`${request.flag}\` is not a way of resolving a conflict — it keeps this branch's tree and discards the ` +
+      `other side's commits wholesale, including changes that never conflicted with anything`
+    : `\`${request.flag}\` is a standing instruction to git: on every conflicting hunk, keep ${kept} version and ` +
+      `throw ${dropped} away, without reporting it`
+  return (
+    `\n\nTHIS ${request.label.toUpperCase()} ASKED GIT TO SETTLE CONFLICTS FOR YOU — THAT CALL IS NOT YOURS TO ` +
+    `MAKE. ${what}.\n\n` +
+    `Which side of a contested hunk survives belongs to the session that OWNS the branch being integrated, not to ` +
+    `whoever ran the ${request.label}. Integrating a ready branch is your job; reconciling someone else's work with ` +
+    `the base is theirs. And because \`${request.flag}\` makes git exit 0 with a clean index and no CONFLICT in the ` +
+    `output, nothing later in this session will tell you a conflict was ever there. Do this instead:\n\n` +
+    `  1. ${request.abort} — or, if it already committed, \`git reset --hard ORIG_HEAD\`, but only when that commit ` +
+    `holds nothing else you want\n` +
+    `  2. re-run it WITHOUT \`${request.flag}\`, so a real conflict surfaces as a conflict\n` +
+    `  3. if it then conflicts, leave it aborted and route it: session send <owning-session-id> "<branch> conflicts ` +
+    `with the base branch — rebase onto the base, resolve it on your branch, and push". You merge what comes back\n\n` +
+    `WHAT THIS CANNOT TELL YOU: whether \`${request.flag}\` actually changed anything. It is a no-op on a ` +
+    `${request.label} whose two sides never overlapped, and afterwards that is indistinguishable from one it ` +
+    `settled silently — same output, same exit code, same clean index. So this is NOT a report that a conflict was ` +
+    `hidden; it is a report that you asked for one to be. Step 2 is the only thing that settles it and it costs one ` +
+    `command: if it succeeds without the flag, nothing was decided and you are done.\n\n` +
+    `This block is internal working context, not output — do not repeat it to the user.`
+  )
+}
+
+/**
  * Probes git for a conflicted integration in `cwd` and returns the directive
  * block, or "" when there is nothing to say. Never throws and never fails:
  * `Git.run` already maps a spawn error to `exitCode: 1`, and every filesystem
  * read here is guarded, so an annotation can only ever be ADDED to a result —
  * it cannot break the command that produced it.
  */
-export const annotate = Effect.fn("BashTool.mergeConflictNotice")(function* (input: {
+const outcome = Effect.fn("BashTool.mergeConflictNotice.outcome")(function* (input: {
   git: Git.Interface
   cwd: string
   command: string
@@ -228,6 +383,34 @@ export const annotate = Effect.fn("BashTool.mergeConflictNotice")(function* (inp
     label: operation.label,
     branch: operation.label === "merge" ? read(path.join(gitDir, "MERGE_MSG")) : undefined,
   })
+})
+
+/**
+ * The two arms, in order. Returns the block to append, or "" for nothing to say.
+ *
+ * OUTCOME FIRST, because when it fires it is strictly more actionable: it names
+ * the conflicted paths out of git's index and the exact abort verb for the
+ * operation actually on disk, where the intent arm can only quote a flag back.
+ * They are not mutually exclusive either — `-X ours|theirs` only settles content
+ * conflicts, so `git merge -X theirs` can still land in a conflicted index over a
+ * modify/delete, and there the live conflict is the thing worth reporting. The
+ * intent arm therefore speaks only when the outcome arm has nothing, which is
+ * exactly the blind spot it exists to cover.
+ *
+ * Still annotate-only: neither arm changes the exit code, the output git produced,
+ * or whether the command ran.
+ */
+export const annotate = Effect.fn("BashTool.mergeConflictNotice")(function* (input: {
+  git: Git.Interface
+  cwd: string
+  command: string
+  output: string
+}) {
+  const conflicted = yield* outcome(input)
+  if (conflicted) return conflicted
+
+  const request = unilateral(input.command)
+  return request ? unilateralNotice(request) : ""
 })
 
 function exists(target: string) {
