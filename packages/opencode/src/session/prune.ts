@@ -63,20 +63,12 @@ function isCacheCold(model?: Provider.Model, lastAssistantTime?: number): boolea
  * "1.5M"/"1.5m" (megatokens), or plain number.
  */
 export function parseThreshold(s: string, windowSize: number): number {
-  const trimmed = s.trim()
-  if (trimmed.endsWith("%")) {
-    const pct = parseFloat(trimmed.slice(0, -1))
-    if (!Number.isFinite(pct) || pct <= 0 || pct > 100) {
-      throw new Error(`Invalid checkpoint threshold percentage: "${s}" (must be 0 < n <= 100)`)
-    }
-    return Math.floor((windowSize * pct) / 100)
+  const value = Token.parseQuantity(s, windowSize)
+  if (value !== undefined) return value
+  if (s.trim().endsWith("%")) {
+    throw new Error(`Invalid checkpoint threshold percentage: "${s}" (must be 0 < n <= 100)`)
   }
-  const match = trimmed.match(/^(\d+(?:\.\d+)?)([KkMm]?)$/)
-  if (!match) throw new Error(`Invalid checkpoint threshold format: "${s}"`)
-  let n = parseFloat(match[1])
-  if (match[2] === "K" || match[2] === "k") n *= 1_000
-  else if (match[2] === "M" || match[2] === "m") n *= 1_000_000
-  return Math.floor(n)
+  throw new Error(`Invalid checkpoint threshold format: "${s}"`)
 }
 
 /**
@@ -322,6 +314,10 @@ export const layer: Layer.Layer<
               writerFailures.delete(input.sessionID)
               return
             }
+            // "no-writer" and "timeout" both mean "not a settled failure". A
+            // timed-out wait leaves the writer in flight (and still able to
+            // advance the watermark), so counting it would retire a
+            // merely-slow-but-working writer. Only a real failure ticks below.
             if (result !== "failure") return
             const next = (writerFailures.get(input.sessionID) ?? 0) + 1
             writerFailures.set(input.sessionID, next)

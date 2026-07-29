@@ -300,7 +300,7 @@ export const RunCommand = cmd({
       .map((arg) => (arg.includes(" ") ? `"${arg.replace(/"/g, '\\"')}"` : arg))
       .join(" ")
 
-    const directory = (() => {
+    const directory = await (async () => {
       if (!args.dir) return undefined
       if (args.attach) return args.dir
       try {
@@ -308,7 +308,8 @@ export const RunCommand = cmd({
         return process.cwd()
       } catch {
         UI.error("Failed to change directory to " + args.dir)
-        process.exit(1)
+        await Log.exit(1)
+        throw new Error("Log.exit returned unexpectedly")
       }
     })()
 
@@ -320,7 +321,7 @@ export const RunCommand = cmd({
         const resolvedPath = path.resolve(process.cwd(), filePath)
         if (!(await Filesystem.exists(resolvedPath))) {
           UI.error(`File not found: ${filePath}`)
-          process.exit(1)
+          await Log.exit(1)
         }
 
         const mime = (await Filesystem.isDir(resolvedPath)) ? "application/x-directory" : "text/plain"
@@ -338,12 +339,12 @@ export const RunCommand = cmd({
 
     if (message.trim().length === 0 && !args.command) {
       UI.error("You must provide a message or a command")
-      process.exit(1)
+      await Log.exit(1)
     }
 
     if (args.fork && !args.continue && !args.session) {
       UI.error("--fork requires --continue or --session")
-      process.exit(1)
+      await Log.exit(1)
     }
 
     const rules: Permission.Ruleset = [
@@ -633,7 +634,8 @@ export const RunCommand = cmd({
       const sessionID = await session(sdk)
       if (!sessionID) {
         UI.error("Session not found")
-        process.exit(1)
+        await Log.exit(1)
+        throw new Error("Log.exit returned unexpectedly")
       }
       await share(sdk, sessionID)
 
@@ -651,9 +653,9 @@ export const RunCommand = cmd({
         },
       })
 
-      loop(tracker).catch((e) => {
+      loop(tracker).catch(async (e) => {
         console.error(e)
-        process.exit(1)
+        await Log.exit(1)
       })
 
       if (args.command) {

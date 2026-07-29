@@ -32,6 +32,7 @@ import * as OtelTracer from "@effect/opentelemetry/Tracer"
 import { ActorRegistry } from "@/actor/registry"
 import { Memory } from "@/memory"
 import { isRetryableTransientError } from "./retry"
+import { MCP_TOOL_SEARCH_ID } from "@/tool/mcp-tool-search"
 
 const log = Log.create({ service: "llm" })
 export const OUTPUT_TOKEN_MAX = ProviderTransform.OUTPUT_TOKEN_MAX
@@ -191,6 +192,7 @@ export type StreamInput = {
   messages: ModelMessage[]
   small?: boolean
   tools: Record<string, Tool>
+  activeTools?: string[]
   retries?: number
   toolChoice?: "auto" | "required" | "none"
   agentID?: string
@@ -427,6 +429,8 @@ const live: Layer.Layer<
       )
 
       const tools = resolveTools(input)
+      const requestedActiveTools = new Set(input.activeTools ?? Object.keys(tools))
+      const activeTools = Object.keys(tools).filter((name) => name !== "invalid" && requestedActiveTools.has(name))
 
       // LiteLLM and some Anthropic proxies require the tools parameter to be present
       // when message history contains tool calls, even if no tools are being used.
@@ -445,7 +449,7 @@ const live: Layer.Layer<
       // The stub description explicitly tells the model not to call it.
       if (
         (isLiteLLMProxy || input.model.providerID.includes("github-copilot")) &&
-        Object.keys(tools).length === 0 &&
+        activeTools.length === 0 &&
         hasToolCalls(input.messages)
       ) {
         tools["_noop"] = tool({
@@ -458,6 +462,7 @@ const live: Layer.Layer<
           }),
           execute: async () => ({ output: "", title: "", metadata: {} }),
         })
+        activeTools.push("_noop")
       }
 
       // Wire up toolExecutor for DWS workflow models so that tool calls
@@ -571,7 +576,8 @@ const live: Layer.Layer<
       l.debug("streamText starting", {
         messageID: input.user.id,
         msgCount: messages.length,
-        toolCount: Object.keys(tools).length,
+        registeredToolCount: Object.keys(tools).length,
+        activeToolCount: activeTools.length,
       })
       yield* plugin
         .trigger(
@@ -609,11 +615,10 @@ const live: Layer.Layer<
           })
         },
         async experimental_repairToolCall(failed) {
-          const registered = Object.keys(tools).filter((x) => x !== "invalid")
           const repaired = await ToolCompat.repairToolCall({
             toolName: failed.toolCall.toolName,
             input: failed.toolCall.input,
-            toolNames: registered,
+            toolNames: activeTools,
             getSchema: (toolName) => failed.inputSchema({ toolName }),
           })
           if (repaired) {
@@ -640,7 +645,7 @@ const live: Layer.Layer<
         topP: params.topP,
         topK: params.topK,
         providerOptions: ProviderTransform.providerOptions(input.model, params.options),
-        activeTools: Object.keys(tools).filter((x) => x !== "invalid"),
+        activeTools,
         tools: ProviderTransform.tools(tools, input.model),
         toolChoice: input.toolChoice,
         maxOutputTokens: params.maxOutputTokens,
@@ -669,7 +674,12 @@ const live: Layer.Layer<
             {
               specificationVersion: "v3" as const,
               async transformParams(args) {
-                if (args.type === "stream") {
+                // `generate || stream`, matching session/prompt.ts:597. This file's
+                // only SDK entrypoint is `streamText` (:599), so narrowing to
+                // "stream" is not an active hole today — but it would silently drop
+                // the whole transform, including the empty-content invariant, the
+                // moment a non-streaming call is added here.
+                if (args.type === "generate" || args.type === "stream") {
                   // @ts-expect-error
                   args.params.prompt = ProviderTransform.message(args.params.prompt, input.model, options)
                 }
@@ -815,12 +825,17 @@ export const defaultLayer = Layer.suspend(() =>
   ),
 )
 
-function resolveTools(input: Pick<StreamInput, "tools" | "agent" | "permission" | "user">) {
+function resolveTools(input: Pick<StreamInput, "tools" | "activeTools" | "agent" | "permission" | "user">) {
   const disabled = Permission.disabled(
     Object.keys(input.tools),
     Agent.runtimePermission(input.agent, input.permission),
   )
-  return Record.filter(input.tools, (_, k) => input.user.tools?.[k] !== false && !disabled.has(k))
+  return Record.filter(
+    input.tools,
+    (_, key) =>
+      input.user.tools?.[key] !== false &&
+      (!disabled.has(key) || (key === MCP_TOOL_SEARCH_ID && input.activeTools?.includes(key) === true)),
+  )
 }
 
 // Check if messages contain any tool-call content

@@ -12,6 +12,7 @@ Use `exec` when JavaScript can batch multiple independent tool calls, programmat
 The script environment provides JavaScript built-ins plus `tools`, `files`, and `console`. It does not provide Node.js modules, `import`, `require`, `process`, `fetch`, or timers. Use the available tools for external operations.
 
 - Call tools with `await tools.name(input)`.
+- Active MCP tools are also callable as `tools.<mcp_tool_name>(input)` with the same permission checks as direct calls. When the MCP server returns structured data, the result carries it pre-parsed in the `structured` field.
 - Use `Promise.all` or `Promise.allSettled` only for independent calls; at most 8 run concurrently.
 - Return a small JSON-serializable aggregate. Circular values, BigInt, and throwing getters fail execution.
 - Use `console.log` only for debugging; logs are included in the result.

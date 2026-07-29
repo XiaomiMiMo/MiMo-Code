@@ -1,6 +1,7 @@
 import { describe, expect, afterEach } from "bun:test"
 import { Effect } from "effect"
 import { Session } from "../../src/session"
+import { SessionRunState } from "../../src/session/run-state"
 import { Instance } from "../../src/project/instance"
 import { provideTmpdirServer } from "../fixture/fixture"
 import { testEffect } from "../lib/effect"
@@ -282,6 +283,15 @@ describe("WorkflowRuntime cancel cascade", () => {
         yield* runtime.cancel({ runID })
         const s = yield* runtime.status({ runID })
         expect(s.status).toBe("cancelled")
+        // Quiesce the parent session before the fixture scope closes. Reclaiming the
+        // children makes each one notify the parent's main inbox, which re-arms the
+        // parent's `main` runner against the auto-answering test LLM. A runner still
+        // "Running" when SessionRunState's instance-state finalizer fires deadlocks
+        // teardown: finalizers run uninterruptibly, so the finalizer's
+        // `Deferred.await(run.done)` cannot be timed out and the test hangs long
+        // after this assertion already passed. Cancelling here (interruptible, so
+        // the bound actually applies) drains the runner map first.
+        yield* (yield* SessionRunState.Service).cancel(parent.id).pipe(Effect.timeout("5 seconds"), Effect.ignore)
       }),
       { git: true, config: providerCfg },
     ),
@@ -308,12 +318,11 @@ describe("WorkflowRuntime cancel cascade", () => {
   // graceful-cancelled child can be re-driven by the auto-answering test LLM and
   // bounce back to running:success later, which is a mock artifact unrelated to
   // the orphan bug; the cancel-stamp at t0 is the stable signal.
-  // SKIPPED — intermittently times out at the 20s budget when run with the rest
-  // of the file (passes 10/10 in isolation). Under CI/contention, the reclaim
-  // pass inside `runtime.cancel` can stall on `Fiber.interrupt` for a hung LLM
-  // fetch, so `cancel` itself does not return before the test deadline. Skipping
-  // matches the prior pattern for cancellation-path flakes (commit e7db5a8).
-  it.live.skip("cancel during an in-flight fan-out reclaims every child (no orphan)", () =>
+  // Previously skipped as a "cancel is too slow under contention" flake. That
+  // diagnosis was wrong: `cancel` returns in ~300ms. What blew the budget was
+  // teardown — see the quiesce note in the test above — so the test is restored
+  // with the same drain.
+  it.live("cancel during an in-flight fan-out reclaims every child (no orphan)", () =>
     provideTmpdirServer(
       Effect.fnUntraced(function* ({ llm }) {
         const runtime = yield* WorkflowRuntime.Service
@@ -360,10 +369,16 @@ describe("WorkflowRuntime cancel cascade", () => {
         // Every spawned child was reclaimed: cancel stamped lastOutcome="cancelled"
         // on each. An orphan (never reclaimed) would have lastOutcome unset here.
         expect(children.filter((a) => a.lastOutcome !== "cancelled")).toEqual([])
+        // Drain the parent's runner map before the fixture scope closes (see above).
+        yield* (yield* SessionRunState.Service).cancel(parent.id).pipe(Effect.timeout("5 seconds"), Effect.ignore)
       }),
       { git: true, config: providerCfg },
     ),
-    20000,
+    // Same budget as the 3-child sibling above. Worst case is dominated by cancel's
+    // own two 5s bounds (fiber interrupt + child reclaim, the latter unbounded-
+    // concurrency so the 8-way fan-out costs one bound, not eight); on top of that
+    // this case adds up to 3s of registry polling and the bounded 5s drain.
+    30000,
   )
 })
 

@@ -32,7 +32,7 @@ import { SessionPrompt } from "@/session/prompt"
 import { AppRuntime } from "@/effect/app-runtime"
 import { Git } from "@/git"
 import { setTimeout as sleep } from "node:timers/promises"
-import { Process } from "@/util"
+import { Log, Process } from "@/util"
 import { Effect } from "effect"
 
 type GitHubAuthor = {
@@ -444,7 +444,7 @@ export const GithubRunCommand = cmd({
       const context = isMock ? (JSON.parse(args.event!) as Context) : github.context
       if (!SUPPORTED_EVENTS.includes(context.eventName as (typeof SUPPORTED_EVENTS)[number])) {
         core.setFailed(`Unsupported event type: ${context.eventName}`)
-        process.exit(1)
+        await Log.exit(1)
       }
 
       // Determine event category for routing
@@ -708,7 +708,7 @@ export const GithubRunCommand = cmd({
           await revokeAppToken()
         }
       }
-      process.exit(exitCode)
+      await Log.exit(exitCode)
 
       function normalizeModel() {
         const value = process.env["MODEL"]

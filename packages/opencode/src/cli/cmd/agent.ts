@@ -7,7 +7,7 @@ import { Agent } from "../../agent/agent"
 import { Provider } from "../../provider"
 import path from "path"
 import fs from "fs/promises"
-import { Filesystem } from "../../util"
+import { Filesystem, Log } from "../../util"
 import matter from "gray-matter"
 import { Instance } from "../../project/instance"
 import { EOL } from "os"
@@ -113,9 +113,9 @@ const AgentCreateCommand = cmd({
         const model = args.model ? Provider.parseModel(args.model) : undefined
         const generated = await AppRuntime.runPromise(
           Agent.Service.use((svc) => svc.generate({ description, model })),
-        ).catch((error) => {
+        ).catch(async (error) => {
           spinner.stop(`LLM failed to generate agent: ${error.message}`, 1)
-          if (isFullyNonInteractive) process.exit(1)
+          if (isFullyNonInteractive) await Log.exit(1)
           throw new UI.CancelledError()
         })
         spinner.stop(`Agent ${generated.identifier} generated`)
@@ -197,7 +197,7 @@ const AgentCreateCommand = cmd({
         if (await Filesystem.exists(filePath)) {
           if (isFullyNonInteractive) {
             console.error(`Error: Agent file already exists: ${filePath}`)
-            process.exit(1)
+            await Log.exit(1)
           }
           prompts.log.error(`Agent file already exists: ${filePath}`)
           throw new UI.CancelledError()

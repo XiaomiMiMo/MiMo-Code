@@ -267,6 +267,7 @@ export const { use: useSync, provider: SyncProvider } = createSimpleContext({
 
     const fullSyncedSessions = new Set<string>()
     let syncedWorkspace = project.workspace.current()
+    let syncedDirectory = sdk.directory
 
     event.subscribe((event) => {
       switch (event.type) {
@@ -696,10 +697,35 @@ export const { use: useSync, provider: SyncProvider } = createSimpleContext({
     async function bootstrap(input: { fatal?: boolean } = {}) {
       const fatal = input.fatal ?? true
       const workspace = project.workspace.current()
-      if (workspace !== syncedWorkspace) {
+      const directory = sdk.directory
+      // fullSyncedSessions exists to keep a re-entered session from refetching its
+      // whole transcript on every navigation. That cache is scoped to the data
+      // source, so it must be dropped whenever the source changes — a workspace
+      // switch OR a directory switch (sdk.switchDirectory). Without the directory
+      // half, a session synced before the switch can never be re-synced, so any
+      // update missed during the switch window stays invisible for the rest of the
+      // session. An unchanged workspace+directory still short-circuits.
+      if (workspace !== syncedWorkspace || directory !== syncedDirectory) {
         fullSyncedSessions.clear()
         syncedWorkspace = workspace
+        syncedDirectory = directory
       }
+      // A bootstrap can outlive the directory it describes: `dispose +
+      // switchDirectory + bootstrap` ALSO re-fires bootstrap from the
+      // `server.instance.disposed` handler above, and that run built its requests
+      // from the PRE-switch client. Staleness therefore has to be re-checked AFTER
+      // each await rather than once before them — a switch landing while these
+      // requests are in flight must not write the old directory's data into the
+      // store, or the store ends up describing a directory sdk no longer talks to.
+      // When no directory was ever set (single-directory mode) nothing can switch
+      // and this is always false. `directory` above is the captured generation.
+      const stale = () => sdk.directory !== directory
+      // Same check for the NON-blocking writes, which each resolve on their own.
+      const guard = <T,>(request: Promise<T>, apply: (value: T) => void) =>
+        request.then((value) => {
+          if (stale()) return
+          apply(value)
+        })
       const start = Date.now() - 30 * 24 * 60 * 60 * 1000
       // roots: true so child sessions (subagents, workers) don't crowd root
       // sessions out of the server-side limit
@@ -743,6 +769,7 @@ export const { use: useSync, provider: SyncProvider } = createSimpleContext({
             configResponse,
             ...(sessionListResponse ? [sessionListResponse] : []),
           ]).then((responses) => {
+            if (stale()) return
             const providers = responses[0]
             const providerList = responses[1]
             const consoleState = responses[2]
@@ -762,25 +789,31 @@ export const { use: useSync, provider: SyncProvider } = createSimpleContext({
           })
         })
         .then(() => {
+          if (stale()) return
           if (store.status !== "complete") setStore("status", "partial")
           // non-blocking
           void Promise.all([
-            ...(args.continue ? [] : [sessionListPromise.then((sessions) => setStore("session", reconcile(sessions)))]),
-            consoleStatePromise.then((consoleState) => setStore("console_state", reconcile(consoleState))),
-            sdk.client.command.list({ workspace }).then((x) => setStore("command", reconcile(x.data ?? []))),
-            sdk.client.lsp.status({ workspace }).then((x) => setStore("lsp", reconcile(x.data ?? []))),
-            sdk.client.mcp.status({ workspace }).then((x) => setStore("mcp", reconcile(x.data ?? {}))),
-            sdk.client.experimental.resource
-              .list({ workspace })
-              .then((x) => setStore("mcp_resource", reconcile(x.data ?? {}))),
-            sdk.client.formatter.status({ workspace }).then((x) => setStore("formatter", reconcile(x.data ?? []))),
-            sdk.client.session.status({ workspace }).then((x) => {
+            ...(args.continue
+              ? []
+              : [guard(sessionListPromise, (sessions) => setStore("session", reconcile(sessions)))]),
+            guard(consoleStatePromise, (consoleState) => setStore("console_state", reconcile(consoleState))),
+            guard(sdk.client.command.list({ workspace }), (x) => setStore("command", reconcile(x.data ?? []))),
+            guard(sdk.client.lsp.status({ workspace }), (x) => setStore("lsp", reconcile(x.data ?? []))),
+            guard(sdk.client.mcp.status({ workspace }), (x) => setStore("mcp", reconcile(x.data ?? {}))),
+            guard(sdk.client.experimental.resource.list({ workspace }), (x) =>
+              setStore("mcp_resource", reconcile(x.data ?? {})),
+            ),
+            guard(sdk.client.formatter.status({ workspace }), (x) => setStore("formatter", reconcile(x.data ?? []))),
+            guard(sdk.client.session.status({ workspace }), (x) => {
               setStore("session_status", reconcile(x.data ?? {}))
             }),
-            sdk.client.provider.auth({ workspace }).then((x) => setStore("provider_auth", reconcile(x.data ?? {}))),
-            sdk.client.vcs.get({ workspace }).then((x) => setStore("vcs", reconcile(x.data))),
+            guard(sdk.client.provider.auth({ workspace }), (x) => setStore("provider_auth", reconcile(x.data ?? {}))),
+            guard(sdk.client.vcs.get({ workspace }), (x) => setStore("vcs", reconcile(x.data))),
             project.workspace.sync(),
           ]).then(() => {
+            // A superseded run must not declare the CURRENT directory's sync
+            // complete — that would unblock the UI on data it never wrote.
+            if (stale()) return
             setStore("status", "complete")
           })
         })
@@ -827,6 +860,25 @@ export const { use: useSync, provider: SyncProvider } = createSimpleContext({
             .list({ start, roots: true })
             .then((x) => (x.data ?? []).toSorted((a, b) => a.id.localeCompare(b.id)))
           setStore("session", reconcile(list))
+        },
+        // Resolve THE root session of the directory the client currently talks
+        // to, creating one only when the server really has none.
+        //
+        // Reading store.session for this is a race: bootstrap issues session.list
+        // as a NON-BLOCKING request (it only joins blockingRequests for
+        // `--continue`), so `await bootstrap()` resolves BEFORE the list lands. A
+        // caller that reads the store right after it sees an empty (or pre-switch)
+        // list, concludes there is no root, and mints another one — entering
+        // Orchestrator three times produced three roots. Refreshing from the
+        // server first makes the decision depend on data instead of on timing.
+        async resolveRoot() {
+          await result.session.refresh()
+          const existing = store.session
+            .filter((x) => x.parentID === undefined)
+            .toSorted((a, b) => b.time.updated - a.time.updated)
+            .at(0)
+          if (existing) return { id: existing.id, created: false }
+          return { id: (await sdk.client.session.create({})).data?.id, created: true }
         },
         status(sessionID: string) {
           const session = result.session.get(sessionID)

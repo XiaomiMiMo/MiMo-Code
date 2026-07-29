@@ -89,6 +89,10 @@ export const rpc = {
   },
   async shutdown() {
     Log.Default.info("worker shutting down")
+    // Flush instead of closing: the host may kill the worker during the drain
+    // below, so queued records must already be on disk. Closing here would
+    // leave the rest of teardown without a file sink.
+    await Log.flush()
 
     // Give in-flight background checkpoint writers a bounded chance to finish
     // before we tear down instances. A checkpoint writer can run for minutes on
@@ -105,6 +109,7 @@ export const rpc = {
 
     await Instance.disposeAll()
     if (server) await server.stop(true)
+    await Log.shutdown()
   },
 }
 

@@ -24,13 +24,14 @@ import { useCommandDialog } from "../dialog-command"
 import { useLanguage } from "@tui/context/language"
 import { useRenderer, type JSX } from "@opentui/solid"
 import * as Editor from "@tui/util/editor"
+import * as Model from "@tui/util/model"
 import * as Voice from "@tui/util/voice"
 import { useExit } from "../../context/exit"
 import * as Clipboard from "../../util/clipboard"
 import type { AssistantMessage, FilePart, UserMessage } from "@mimo-ai/sdk/v2"
 import { TuiEvent } from "../../event"
 import { iife } from "@/util/iife"
-import { Locale } from "@/util"
+import { Locale, Token } from "@/util"
 import { formatDuration } from "@/util/format"
 import { SessionRetry } from "@/session/retry"
 import { createColors, createFrames } from "../../ui/spinner.ts"
@@ -477,10 +478,16 @@ export function Prompt(props: PromptProps) {
     if (tokens <= 0) return
 
     const model = sync.data.provider.find((item) => item.id === last.providerID)?.models[last.modelID]
-    const pct = model?.limit.context ? `${Math.round((tokens / model.limit.context) * 100)}%` : undefined
+    const win = Model.contextWindow(sync.data.config, model)
     const cost = msg.reduce((sum, item) => sum + (item.role === "assistant" ? item.cost : 0), 0)
     return {
-      context: pct ? `${Locale.number(tokens)} (${pct})` : Locale.number(tokens),
+      // Denominator is the compaction trigger, not the raw window — otherwise the
+      // percentage never reaches 100% and a configured budget looks ignored.
+      context: win
+        ? `${Locale.number(tokens)}/${Token.format(win.usable)}${win.source === "config" ? "↓" : ""} (${Math.round(
+            (tokens / win.usable) * 100,
+          )}%)`
+        : Locale.number(tokens),
       cost: cost > 0 ? money.format(cost) : undefined,
     }
   })

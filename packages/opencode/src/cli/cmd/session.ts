@@ -5,7 +5,7 @@ import { ClaudeImport } from "../../session/claude-import"
 import { SessionID } from "../../session/schema"
 import { bootstrap } from "../bootstrap"
 import { UI } from "../ui"
-import { Locale } from "../../util"
+import { Locale, Log } from "../../util"
 import { Flag } from "../../flag/flag"
 import { Filesystem } from "../../util"
 import { Process } from "../../util"
@@ -85,7 +85,7 @@ export const SessionDeleteCommand = cmd({
         await AppRuntime.runPromise(Session.Service.use((svc) => svc.get(sessionID)))
       } catch {
         UI.error(`Session not found: ${args.sessionID}`)
-        process.exit(1)
+        await Log.exit(1)
       }
       await AppRuntime.runPromise(Session.Service.use((svc) => svc.remove(sessionID)))
       UI.println(UI.Style.TEXT_SUCCESS_BOLD + `Session ${args.sessionID} deleted` + UI.Style.TEXT_NORMAL)

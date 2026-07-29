@@ -15,7 +15,7 @@ import { Plugin } from "../../plugin"
 import { t } from "../i18n"
 import { Instance } from "../../project/instance"
 import type { Hooks } from "@mimo-ai/plugin"
-import { Process } from "../../util"
+import { Log, Process } from "../../util"
 import { PROVIDER_PRIORITY } from "../../util/provider-priority"
 import { text } from "node:stream/consumers"
 import { Effect } from "effect"
@@ -39,7 +39,7 @@ async function handlePluginAuth(plugin: { auth: PluginAuth }, provider: string, 
       prompts.log.error(
         `Unknown method "${methodName}" for ${provider}. Available: ${plugin.auth.methods.map((x) => x.label).join(", ")}`,
       )
-      process.exit(1)
+      await Log.exit(1)
     }
     index = match
   } else if (plugin.auth.methods.length > 1) {
@@ -543,7 +543,8 @@ export const ProvidersLoginCommand = cmd({
           const match = byID ?? byName
           if (!match) {
             prompts.log.error(`Unknown provider "${input}"`)
-            process.exit(1)
+            await Log.exit(1)
+            throw new Error("Log.exit returned unexpectedly")
           }
           provider = match.value
         } else {

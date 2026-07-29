@@ -158,7 +158,16 @@ export const layer = Layer.effect(
 
       // Convert the conversation to native model messages so the judge sees the
       // real tool calls/results/images — same context the working agent had.
-      const conversation = yield* MessageV2.toModelMessagesEffect(input.msgs, resolved)
+      //
+      // `ensureNonEmptyContent` is applied by hand here because this is the ONE
+      // persisted-parts→provider site that does not run `ProviderTransform.message`:
+      // `model: language` below is the RAW model, with no `wrapLanguageModel` and no
+      // middleware anywhere in this file, so the pre-send invariant that every other
+      // build site inherits from the middleware would otherwise be absent. An empty
+      // user message here reaches the judge's provider unrepaired.
+      const conversation = ProviderTransform.ensureNonEmptyContent(
+        yield* MessageV2.toModelMessagesEffect(input.msgs, resolved),
+      )
 
       // Diagnostic: dump the FULL message array sent to the judge. Long strings
       // (e.g. base64 image data) are clipped with a length marker so the log

@@ -675,6 +675,116 @@ describe("session.llm.stream", () => {
     })
   })
 
+  test("serializes only active tools while retaining inactive executors", async () => {
+    const server = state.server
+    if (!server) throw new Error("Server not initialized")
+
+    const source = await loadFixture("openai", "gpt-5.2")
+    const request = waitRequest(
+      "/responses",
+      createEventResponse(
+        [
+          {
+            type: "response.created",
+            response: {
+              id: "resp-active-tools",
+              created_at: Math.floor(Date.now() / 1000),
+              model: source.model.id,
+              service_tier: null,
+            },
+          },
+          {
+            type: "response.completed",
+            response: {
+              incomplete_details: null,
+              usage: {
+                input_tokens: 1,
+                input_tokens_details: null,
+                output_tokens: 1,
+                output_tokens_details: null,
+              },
+              service_tier: null,
+            },
+          },
+        ],
+        true,
+      ),
+    )
+
+    await using tmp = await tmpdir({
+      init: async (dir) => {
+        await Bun.write(
+          path.join(dir, "mimocode.json"),
+          JSON.stringify({
+            enabled_providers: ["openai"],
+            provider: {
+              openai: {
+                npm: "@ai-sdk/openai",
+                models: { [source.model.id]: source.model },
+                options: { apiKey: "test-openai-key", baseURL: `${server.url.origin}/v1` },
+              },
+            },
+          }),
+        )
+      },
+    })
+
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () => {
+        const resolved = await getModel(ProviderID.openai, ModelID.make(source.model.id))
+        const sessionID = SessionID.make("session-active-tools-wire")
+        const agent = {
+          name: "test",
+          mode: "primary",
+          options: {},
+          permission: [{ permission: "*", pattern: "*", action: "allow" }],
+        } satisfies Agent.Info
+        const user = {
+          id: MessageID.make("user-active-tools-wire"),
+          sessionID,
+          role: "user",
+          time: { created: Date.now() },
+          agent: agent.name,
+          model: { providerID: ProviderID.openai, modelID: resolved.id },
+        } satisfies MessageV2.User
+
+        await drain({
+          user,
+          sessionID,
+          model: resolved,
+          agent,
+          system: [],
+          messages: [{ role: "user", content: "find a calendar tool" }],
+          tools: {
+            mcp_tool_search: tool({
+              description: "Search MCP tools",
+              inputSchema: z.object({ query: z.string() }),
+              execute: async () => ({ title: "", output: "", metadata: {} }),
+            }),
+            calendar_hidden: tool({
+              description: "Secret calendar MCP description",
+              inputSchema: z.object({ private_field: z.string() }),
+              execute: async () => ({ title: "", output: "", metadata: {} }),
+            }),
+            direct_tool: tool({
+              description: "A directly exposed non-MCP tool",
+              inputSchema: z.object({}),
+              execute: async () => ({ title: "", output: "", metadata: {} }),
+            }),
+          },
+          activeTools: ["mcp_tool_search", "direct_tool"],
+        })
+
+        const tools = (await request).body.tools as Array<Record<string, unknown>>
+        expect(tools.map((item) => item.name)).toEqual(expect.arrayContaining(["mcp_tool_search", "direct_tool"]))
+        expect(tools.map((item) => item.name)).not.toContain("calendar_hidden")
+        expect(JSON.stringify(tools)).not.toContain("Secret calendar MCP description")
+        expect(JSON.stringify(tools)).not.toContain("private_field")
+      },
+    })
+  })
+
   test("aborts an OpenAI request that stalls before response headers", async () => {
     const server = state.server
     if (!server) throw new Error("Server not initialized")

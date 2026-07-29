@@ -107,7 +107,7 @@ function shouldAutoRun(input: {
 }
 
 export function shouldAutoDream(cfg: Config.Info) {
-  const enabled = cfg.dream?.auto !== false
+  const enabled = cfg.dream?.auto === true
   if (!enabled) return Effect.succeed(false)
   const now = Date.now()
   if (now - lastDreamSpawnTime < MIN_SPAWN_GAP_MS) return Effect.succeed(false)
@@ -117,7 +117,7 @@ export function shouldAutoDream(cfg: Config.Info) {
 }
 
 export function shouldAutoDistill(cfg: Config.Info) {
-  const enabled = cfg.distill?.auto !== false
+  const enabled = cfg.distill?.auto === true
   if (!enabled) return Effect.succeed(false)
   const now = Date.now()
   if (now - lastDistillSpawnTime < MIN_SPAWN_GAP_MS) return Effect.succeed(false)

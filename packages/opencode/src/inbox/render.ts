@@ -1,11 +1,21 @@
 import type { InboxRow } from "./inbox.sql"
 
+// A blank body must fall back to the placeholder, not just a missing one.
+// `?? placeholder` only catches null/undefined, but a blank body is stored as
+// "" (or whitespace) — and for actor_notification the body is passed through
+// RAW, so "" would become a user text part with text:"". The AI SDK's user
+// branch filters empty text parts out with no backfill, leaving `content: []`
+// and a provider 400 ("user messages must have non-empty content").
+function blankTo(text: string | undefined, placeholder: string) {
+  return text !== undefined && text.trim().length > 0 ? text : placeholder
+}
+
 export function renderInboxRow(row: InboxRow): string {
   if (row.type === "actor_notification") {
     // Pre-rendered notification text — sender produced the full
     // <actor-notification>...</actor-notification> wrapper.
     const content = row.content as { text?: string }
-    return content.text ?? "(no notification body)"
+    return blankTo(content.text, "(no notification body)")
   }
   // Default: type === "text" or unknown — wrap as <inbox> element so
   // the LLM can route by sender; the wrapper format mirrors the
@@ -15,7 +25,7 @@ export function renderInboxRow(row: InboxRow): string {
     ? `${row.sender_session_id}:${row.sender_actor_id ?? "?"}`
     : "system"
   const sentAt = new Date(row.created_at).toISOString()
-  return `<inbox from="${sender}" sent_at="${sentAt}">\n${content.text ?? "(empty)"}\n</inbox>`
+  return `<inbox from="${sender}" sent_at="${sentAt}">\n${blankTo(content.text, "(empty)")}\n</inbox>`
 }
 
 export function renderActorNotification(event: {

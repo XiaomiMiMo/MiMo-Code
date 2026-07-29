@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import { APICallError } from "ai"
+import { convertToLanguageModelPrompt } from "ai/internal"
 import { MessageV2 } from "../../src/session/message-v2"
 import { ProviderTransform } from "../../src/provider"
 import type { Provider } from "../../src/provider"
@@ -130,6 +131,61 @@ function basePart(messageID: string, id: string) {
 }
 
 describe("session.message-v2.toModelMessage", () => {
+  test("preserves structured provider-executed outputs", async () => {
+    const userID = "m-provider-user"
+    const assistantID = "m-provider-assistant"
+    const providerOutput = { results: [{ title: "Result", url: "https://example.com" }] }
+    const messages = await MessageV2.toModelMessages(
+      [
+        {
+          info: userInfo(userID),
+          parts: [{ ...basePart(userID, "u-provider"), type: "text", text: "search" }],
+        },
+        {
+          info: assistantInfo(assistantID, userID),
+          parts: [
+            {
+              ...basePart(assistantID, "a-provider"),
+              type: "tool",
+              tool: "web_search",
+              callID: "provider-call",
+              metadata: { providerExecuted: true, test: { itemId: "call-item" } },
+              state: {
+                status: "completed",
+                input: { query: "example" },
+                output: JSON.stringify(providerOutput),
+                providerOutput,
+                providerMetadata: { test: { itemId: "result-item" } },
+                title: "",
+                metadata: {},
+                time: { start: 0, end: 1 },
+              },
+            },
+          ],
+        },
+      ] as MessageV2.WithParts[],
+      model,
+    )
+
+    expect(messages[1]).toMatchObject({
+      role: "assistant",
+      content: [
+        {
+          type: "tool-call",
+          toolName: "web_search",
+          providerExecuted: true,
+          providerOptions: { test: { itemId: "call-item" } },
+        },
+        {
+          type: "tool-result",
+          toolName: "web_search",
+          output: { type: "json", value: providerOutput },
+          providerOptions: { test: { itemId: "result-item" } },
+        },
+      ],
+    })
+  })
+
   test("filters out messages with no parts", async () => {
     const input: MessageV2.WithParts[] = [
       {
@@ -154,6 +210,46 @@ describe("session.message-v2.toModelMessage", () => {
         content: [{ type: "text", text: "hello" }],
       },
     ])
+  })
+
+  // Mechanism pin for the empty-user-content provider 400. Companion to the
+  // zero-part test above: a zero-part user message is DROPPED by our layer (so
+  // the transient state between Inbox.drain's `updateMessage` and its first
+  // `updatePart` can never reach a provider), but a message whose only part is
+  // `text: ""` survives at parts.length === 1 — invisible to every
+  // `parts.length === 0` / `content.length === 0` check — and is only reduced to
+  // `content: []` later, inside the SDK's own per-role filter on the way to the
+  // provider (ai@6.0.168 dist/index.mjs:1424, convertToLanguageModelMessage:
+  // `.filter((part) => part.type !== "text" || part.text !== "")`, no backfill).
+  // `content: []` is what a provider rejects with
+  // "messages.<N>: user messages must have non-empty content".
+  test("an empty-text-only user message survives our layer at length 1 and only collapses at the SDK boundary", async () => {
+    const input: MessageV2.WithParts[] = [
+      {
+        info: userInfo("m-empty-text"),
+        parts: [
+          {
+            ...basePart("m-empty-text", "p1"),
+            type: "text",
+            text: "",
+          },
+        ] as MessageV2.Part[],
+      },
+    ]
+
+    // Our layer: still length 1, so nothing on our side can see it as "empty".
+    const ours = await MessageV2.toModelMessages(input, model)
+    expect(ours).toStrictEqual([{ role: "user", content: [{ type: "text", text: "" }] }])
+
+    // The SDK step that actually runs between us and the provider.
+    const wire = await convertToLanguageModelPrompt({
+      prompt: { messages: ours },
+      supportedUrls: {},
+      download: async () => [],
+    })
+    expect(wire.length).toBe(1)
+    expect(wire[0].role).toBe("user")
+    expect(wire[0].content).toStrictEqual([])
   })
 
   test("filters out messages with only ignored parts", async () => {

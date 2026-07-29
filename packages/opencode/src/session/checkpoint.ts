@@ -516,7 +516,11 @@ export class Service extends Context.Service<Service, Interface>()("@opencode/Se
 // Writer state per session
 // ---------------------------------------------------------------------------
 
-export type WriterOutcome = "success" | "failure"
+// "timeout" means the caller's bounded wait expired while the writer was STILL
+// IN FLIGHT — it is deliberately distinct from "failure" (the writer settled
+// unsuccessfully). See waitForWriter for why conflating the two silently
+// disables checkpointing for a session whose writers are merely slow.
+export type WriterOutcome = "success" | "failure" | "timeout"
 
 interface WriterState {
   // Holds the AgentOutcome Deferred returned by Actor.spawn so callers can
@@ -985,10 +989,23 @@ export const layer: Layer.Layer<
       // 5min so a long-but-honest writer is not mistaken for a failure by
       // the prune retry watcher. AgentOutcome → WriterOutcome translation:
       // success → "success", failure / cancelled → "failure".
+      //
+      // The bound expiring is NOT a writer failure. This timeout does not
+      // cancel the writer, and the settle watcher that owns the watermark
+      // advance (see tryStartCheckpointWriter) awaits the SAME Deferred with no
+      // bound — so a slow-but-successful writer still advances
+      // last_checkpoint_message_id after we stop waiting. Reporting "failure"
+      // here made the prune retry watcher count a working writer as broken,
+      // and MAX_WRITER_FAILURES such waits then tripped "gave up after max
+      // consecutive failures", permanently disabling checkpointing for a
+      // session whose every writer had actually succeeded. Report "timeout" so
+      // callers can distinguish "still in flight" from "settled unsuccessfully"
+      // (prune's `result !== "failure"` guard already skips the counter).
       const outcome = yield* Deferred.await(state.writing).pipe(
         Effect.timeout(300_000),
-        Effect.catch(() => Effect.succeed<AgentOutcome>({ status: "failure", error: "timeout" })),
+        Effect.catch(() => Effect.succeed("timeout" as const)),
       )
+      if (outcome === "timeout") return "timeout" as const
       return outcome.status === "success" ? ("success" as const) : ("failure" as const)
     })
 

@@ -325,6 +325,8 @@ export const ToolStateCompleted = z
     status: z.literal("completed"),
     input: z.record(z.string(), z.any()),
     output: z.string(),
+    providerOutput: z.json().optional(),
+    providerMetadata: z.record(z.string(), z.any()).optional(),
     title: z.string(),
     metadata: z.record(z.string(), z.any()),
     time: z.object({
@@ -632,7 +634,14 @@ export const toModelMessagesEffect = Effect.fnUntraced(function* (
       return { type: "text", value: output }
     }
 
-    if (typeof output === "object") {
+    if (
+      output &&
+      typeof output === "object" &&
+      "text" in output &&
+      typeof output.text === "string" &&
+      "attachments" in output &&
+      Array.isArray(output.attachments)
+    ) {
       const outputObject = output as {
         text: string
         attachments?: Array<{ mime: string; url: string; filename?: string }>
@@ -808,12 +817,14 @@ export const toModelMessagesEffect = Effect.fnUntraced(function* (
             })
 
             const output =
-              finalAttachments.length > 0
-                ? {
-                    text: outputText,
-                    attachments: finalAttachments,
-                  }
-                : outputText
+              part.state.providerOutput !== undefined
+                ? part.state.providerOutput
+                : finalAttachments.length > 0
+                  ? {
+                      text: outputText,
+                      attachments: finalAttachments,
+                    }
+                  : outputText
 
             assistantMessage.parts.push({
               type: ("tool-" + part.tool) as `tool-${string}`,
@@ -823,6 +834,7 @@ export const toModelMessagesEffect = Effect.fnUntraced(function* (
               output,
               ...(part.metadata?.providerExecuted ? { providerExecuted: true } : {}),
               ...(differentModel ? {} : { callProviderMetadata: providerMeta(part.metadata) }),
+              ...(differentModel ? {} : { resultProviderMetadata: providerMeta(part.state.providerMetadata) }),
             })
           }
           if (part.state.status === "error") {

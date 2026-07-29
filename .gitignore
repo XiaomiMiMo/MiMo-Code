@@ -50,3 +50,7 @@ experiment/last-outcome.json
 temp/
 __pycache__
 Thumbs.db
+.playwright-cli/
+.mimocode/wiki
+.mimocode/wikis
+.mimocode/cache

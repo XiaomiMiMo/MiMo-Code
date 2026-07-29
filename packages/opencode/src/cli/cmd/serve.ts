@@ -2,6 +2,7 @@ import { Server } from "../../server/server"
 import { cmd } from "./cmd"
 import { withNetworkOptions, resolveNetworkOptions } from "../network"
 import { Flag } from "../../flag/flag"
+import { Log } from "../../util"
 
 export const ServeCommand = cmd({
   command: "serve",
@@ -14,7 +15,7 @@ export const ServeCommand = cmd({
     if (!isLoopback && !Flag.MIMOCODE_SERVER_PASSWORD && !opts.noAuth) {
       console.error("ERROR: Binding to non-loopback address without MIMOCODE_SERVER_PASSWORD is not allowed.")
       console.error("Set MIMOCODE_SERVER_PASSWORD or pass --no-auth to override (DANGEROUS).")
-      process.exit(1)
+      await Log.exit(1)
     }
 
     if (!Flag.MIMOCODE_SERVER_PASSWORD) {

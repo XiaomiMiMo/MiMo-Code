@@ -76,7 +76,14 @@ export async function safeFetch(
   throw new Error("SSRF protection: too many redirects")
 }
 
-export async function assertSafeUrl(url: string): Promise<void> {
+// lookupImpl is injectable so the DNS-dependent behavior (fail-closed on
+// resolution failure, rebinding rejection) is testable without a live resolver —
+// a local/corporate resolver that answers for .invalid otherwise makes those
+// assertions environment-dependent.
+export async function assertSafeUrl(
+  url: string,
+  lookupImpl: (hostname: string) => Promise<{ address: string; family: number }> = lookup,
+): Promise<void> {
   const parsed = new URL(url)
   const hostname = parsed.hostname.replace(/^\[|\]$/g, "")
 
@@ -102,7 +109,7 @@ export async function assertSafeUrl(url: string): Promise<void> {
 
   // DNS resolution check to prevent DNS rebinding
   try {
-    const { address, family } = await lookup(hostname)
+    const { address, family } = await lookupImpl(hostname)
     if (family === 4 && isBlockedIPv4(address)) {
       throw new Error(`SSRF protection: hostname "${hostname}" resolves to blocked IP "${address}"`)
     }

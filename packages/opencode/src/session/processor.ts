@@ -31,6 +31,30 @@ import { monitor as tryBestMonitor, type TryBestIncident } from "./try-best-dete
 const DOOM_LOOP_THRESHOLD = 3
 const log = Log.create({ service: "session.processor" })
 
+function isToolExecutionResult(output: unknown): output is {
+  title: string
+  metadata: Record<string, any>
+  output: string
+  attachments?: MessageV2.FilePart[]
+} {
+  return (
+    isRecord(output) &&
+    typeof output.title === "string" &&
+    isRecord(output.metadata) &&
+    typeof output.output === "string"
+  )
+}
+
+function displayToolOutput(output: unknown) {
+  if (typeof output === "string") return output
+  return JSON.stringify(output, null, 2) ?? String(output)
+}
+
+function jsonToolOutput(output: unknown): MessageV2.ToolStateCompleted["providerOutput"] {
+  const serialized = JSON.stringify(output)
+  return serialized === undefined ? null : JSON.parse(serialized)
+}
+
 function describeTryBest(incident: TryBestIncident) {
   if (incident.reason === "edit_repeat") {
     return `A near-identical edit to ${incident.evidence.path ?? "the same file"} repeated ${incident.evidence.count} times.`
@@ -105,12 +129,8 @@ export interface Handle {
   ) => Effect.Effect<MessageV2.ToolPart | undefined>
   readonly completeToolCall: (
     toolCallID: string,
-    output: {
-      title: string
-      metadata: Record<string, any>
-      output: string
-      attachments?: MessageV2.FilePart[]
-    },
+    output: unknown,
+    providerMetadata?: Record<string, any>,
   ) => Effect.Effect<void>
   readonly process: (streamInput: LLM.StreamInput) => Effect.Effect<Result>
   /**
@@ -321,25 +341,25 @@ export const layer: Layer.Layer<
 
       const completeToolCall = Effect.fn("SessionProcessor.completeToolCall")(function* (
         toolCallID: string,
-        output: {
-          title: string
-          metadata: Record<string, any>
-          output: string
-          attachments?: MessageV2.FilePart[]
-        },
+        output: unknown,
+        providerMetadata?: Record<string, any>,
       ) {
         const match = yield* readToolCall(toolCallID)
         if (!match || match.part.state.status !== "running") return
+        const result = isToolExecutionResult(output) ? output : undefined
+        const structured = !result && match.part.metadata?.providerExecuted
         const part = yield* session.updatePart({
           ...match.part,
           state: {
             status: "completed",
             input: match.part.state.input,
-            output: output.output,
-            metadata: output.metadata,
-            title: output.title,
+            output: result?.output ?? displayToolOutput(output),
+            ...(structured ? { providerOutput: jsonToolOutput(output) } : {}),
+            ...(providerMetadata ? { providerMetadata } : {}),
+            metadata: result?.metadata ?? {},
+            title: result?.title ?? "",
             time: { start: match.part.state.time.start, end: Date.now() },
-            attachments: output.attachments,
+            attachments: result?.attachments,
           },
         })
         yield* detectTryBest(part)
@@ -513,7 +533,7 @@ export const layer: Layer.Layer<
           }
 
           case "tool-result": {
-            yield* completeToolCall(value.toolCallId, value.output)
+            yield* completeToolCall(value.toolCallId, value.output, value.providerMetadata)
             return
           }
 

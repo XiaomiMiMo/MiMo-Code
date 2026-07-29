@@ -58,6 +58,7 @@ process.on("uncaughtException", (e) => {
 })
 
 const args = hideBin(process.argv)
+const CLI_EXIT = Symbol("CLI_EXIT")
 
 function show(out: string) {
   const text = out.trimStart()
@@ -215,7 +216,8 @@ const cli = yargs(args)
       cli.showHelp(show)
     }
     if (err) throw err
-    process.exit(1)
+    void Log.exit(1)
+    throw CLI_EXIT
   })
   .strict()
 
@@ -230,40 +232,42 @@ try {
     await cli.parse()
   }
 } catch (e) {
-  let data: Record<string, any> = {}
-  if (e instanceof NamedError) {
-    const obj = e.toObject()
-    Object.assign(data, {
-      ...obj.data,
-    })
-  }
+  if (e !== CLI_EXIT) {
+    let data: Record<string, any> = {}
+    if (e instanceof NamedError) {
+      const obj = e.toObject()
+      Object.assign(data, {
+        ...obj.data,
+      })
+    }
 
-  if (e instanceof Error) {
-    Object.assign(data, {
-      name: e.name,
-      message: e.message,
-      cause: e.cause?.toString(),
-      stack: e.stack,
-    })
-  }
+    if (e instanceof Error) {
+      Object.assign(data, {
+        name: e.name,
+        message: e.message,
+        cause: e.cause?.toString(),
+        stack: e.stack,
+      })
+    }
 
-  if (e instanceof ResolveMessage) {
-    Object.assign(data, {
-      name: e.name,
-      message: e.message,
-      code: e.code,
-      specifier: e.specifier,
-      referrer: e.referrer,
-      position: e.position,
-      importKind: e.importKind,
-    })
-  }
-  Log.Default.error("fatal", data)
-  const formatted = FormatError(e)
-  if (formatted) UI.error(formatted)
-  if (formatted === undefined) {
-    UI.error("Unexpected error, check log file at " + Log.file() + " for more details" + EOL)
-    process.stderr.write(errorMessage(e) + EOL)
+    if (e instanceof ResolveMessage) {
+      Object.assign(data, {
+        name: e.name,
+        message: e.message,
+        code: e.code,
+        specifier: e.specifier,
+        referrer: e.referrer,
+        position: e.position,
+        importKind: e.importKind,
+      })
+    }
+    Log.Default.error("fatal", data)
+    const formatted = FormatError(e)
+    if (formatted) UI.error(formatted)
+    if (formatted === undefined) {
+      UI.error("Unexpected error, check log file at " + Log.file() + " for more details" + EOL)
+      process.stderr.write(errorMessage(e) + EOL)
+    }
   }
   process.exitCode = 1
 } finally {
@@ -271,5 +275,6 @@ try {
   // Most notably, some docker-container-based MCP servers don't handle such signals unless
   // run using `docker run --init`.
   // Explicitly exit to avoid any hanging subprocesses.
+  await Log.shutdown()
   process.exit()
 }

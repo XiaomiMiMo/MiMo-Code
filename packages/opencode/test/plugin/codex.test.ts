@@ -32,13 +32,18 @@ function createTestJwt(payload: object): string {
 
 describe("plugin.codex", () => {
   describe("loader", () => {
-    test("keeps all OpenAI models for OAuth", async () => {
+    test("clamps gpt context to the Codex cap without raising smaller windows", async () => {
       const hooks = await CodexAuthPlugin(fakeInput)
+      const model = (modelID: string, limit: { context: number; input?: number }) =>
+        [modelID, { api: { id: modelID }, cost: {}, limit }] as const
       const provider = {
-        models: {
-          "gpt-5.6-sol": { api: { id: "gpt-5.6-sol" }, cost: {} },
-          "gpt-4o": { api: { id: "gpt-4o" }, cost: {} },
-        },
+        models: Object.fromEntries([
+          model("gpt-5.6-sol", { context: 1_050_000, input: 922_000 }),
+          model("gpt-5.3-codex", { context: 400_000, input: 272_000 }),
+          model("gpt-4o", { context: 128_000 }),
+          model("gpt-image-1", { context: 0, input: 0 }),
+          model("o3", { context: 200_000 }),
+        ]),
       }
 
       await hooks.auth!.loader!(
@@ -46,7 +51,17 @@ describe("plugin.codex", () => {
         provider as never,
       )
 
-      expect(Object.keys(provider.models)).toEqual(["gpt-5.6-sol", "gpt-4o"])
+      expect(Object.keys(provider.models)).toEqual(["gpt-5.6-sol", "gpt-5.3-codex", "gpt-4o", "gpt-image-1", "o3"])
+      expect(provider.models["gpt-5.6-sol"].limit).toEqual({ context: 372_000, input: 372_000 })
+      // 272K input cap is already below the Codex cap — it must survive untouched,
+      // otherwise we would raise the trigger above what the provider accepts.
+      expect(provider.models["gpt-5.3-codex"].limit).toEqual({ context: 372_000, input: 272_000 })
+      // Real window below the cap: never raised.
+      expect(provider.models["gpt-4o"].limit).toEqual({ context: 128_000 })
+      // context 0 is the "overflow handling disabled" sentinel — leave it alone.
+      expect(provider.models["gpt-image-1"].limit).toEqual({ context: 0, input: 0 })
+      // Non-gpt models keep catalog limits.
+      expect(provider.models.o3.limit).toEqual({ context: 200_000 })
     })
 
     test("forwards request cancellation while refreshing an expired token", async () => {
