@@ -448,6 +448,7 @@ export const layer: Layer.Layer<
     const resetThresholds = Effect.fn("SessionPrune.resetThresholds")(function* (sessionID: SessionID) {
       crossed.delete(sessionID)
       maxCrossed.delete(sessionID)
+      writerFailures.delete(sessionID)
     })
 
     return Service.of({ prune, fireCheckpoints, maxThresholdCrossed, resetThresholds })
