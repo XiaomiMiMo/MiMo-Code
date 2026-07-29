@@ -2,7 +2,7 @@ import { Prompt, type PromptRef } from "@tui/component/prompt"
 import { createEffect, createMemo, createSignal, Show } from "solid-js"
 import path from "path"
 import { Logo } from "../component/logo"
-import { logoThin, logos, type LogoKey } from "@/cli/logo"
+import { logos } from "@/cli/logo"
 import { StarryBackground } from "../component/starry-background"
 import { BackgroundImage } from "../component/background-image"
 import { useProject } from "../context/project"
@@ -17,6 +17,7 @@ import { useLanguage } from "@tui/context/language"
 import { TuiPluginRuntime } from "../plugin"
 import { Global } from "@/global"
 import { isPlainTerminal } from "../util/terminal"
+import { resolveHomeLogoKey } from "./home-logo"
 
 let once = false
 
@@ -37,8 +38,7 @@ export function Home() {
     return path.join(Global.Path.config, "backgrounds", filename)
   })
   const logoKey = createMemo(() => {
-    const key = kv.get("logo_design")
-    return typeof key === "string" && key in logos ? (key as LogoKey) : "thin"
+    return resolveHomeLogoKey(kv.get("logo_design"))
   })
   // 所有 logo 变体(含默认的 thin 纤细半块)都显示流星特效。
   const showMeteor = () => true
@@ -101,14 +101,9 @@ export function Home() {
               </TuiPluginRuntime.Slot>
             }
           >
-            <box flexDirection="column" flexShrink={0}>
-              {logoThin.left.slice(2).map((line, index) => (
-                <box flexDirection="row" gap={1} flexShrink={0}>
-                  <text selectable={false}>{line}</text>
-                  <text selectable={false}>{logoThin.right[index + 2] ?? ""}</text>
-                </box>
-              ))}
-            </box>
+            <Show when={logoKey()} keyed>
+              {(k) => <Logo shape={logos[k]} />}
+            </Show>
           </Show>
         </box>
         <box height={1} minHeight={0} flexShrink={1} />
