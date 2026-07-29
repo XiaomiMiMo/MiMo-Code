@@ -1106,10 +1106,33 @@ export const filterCompactedEffect = Effect.fnUntraced(function* (
 
   // If watermark is set, truncate parent messages at the watermark point
   if (options.contextWatermark) {
-    const watermarkIdx = parentFiltered.findIndex((msg) => msg.info.id === options.contextWatermark)
+    const watermark = options.contextWatermark
+    const watermarkIdx = parentFiltered.findIndex((msg) => msg.info.id === watermark)
     if (watermarkIdx >= 0) {
       return [...parentFiltered.slice(0, watermarkIdx + 1), ...ownMessages]
     }
+    // The watermark ROW can be gone while the boundary it marks is still
+    // meaningful. A `context: "full"` subagent captures its watermark from
+    // Session.lastMainMessageID at spawn time (actor/spawn.ts), and a spawn
+    // issued from inside a turn captures THAT TURN'S IN-FLIGHT ASSISTANT — which
+    // SessionProcessor.cleanup then DELETES if the turn dies without substantive
+    // content (the empty-shell guard), as does sweepOrphanAssistants for an
+    // orphan. Falling straight through to "use all parent messages" would then
+    // silently widen the fork boundary the child was registered with, handing it
+    // the parent's entire history instead of the captured prefix — a boundary
+    // shift, not a display bug.
+    //
+    // MessageID is monotonic ascending, so the boundary survives the row: keep
+    // every parent message whose id does not exceed the watermark. This runs ONLY
+    // when the exact row is absent, so the resolved path above is untouched (and
+    // stays authoritative for array order, which is by time_created and can
+    // diverge from id order — insertRebuildBoundary back-dates time.created while
+    // still allocating an ascending id).
+    const truncated = parentFiltered.filter((msg) => msg.info.id <= watermark)
+    if (truncated.length > 0) return [...truncated, ...ownMessages]
+    // Watermark predates every surviving parent message: inherit nothing rather
+    // than everything.
+    return [...ownMessages]
   }
 
   // Fallback: use all parent messages

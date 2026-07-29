@@ -2346,39 +2346,56 @@ NOTE: At any point in time through this workflow you should feel free to ask the
     }, Effect.scoped)
 
     const sweepOrphanAssistants = Effect.fn("SessionPrompt.sweepOrphanAssistants")(function* (sessionID: SessionID) {
-      // Minimal rule: if the session's history ENDS in an incomplete assistant,
-      // drop it. Only callers that have established the session is idle (no
-      // active runner) may invoke this — a trailing incomplete assistant on an
-      // idle session is definitively orphaned, left behind by a hard interruption
-      // (process crash / kill / disconnect) that skipped the normal `finish`
-      // effect. That is what makes the age gate unnecessary: there is no
+      // Rule: on an idle session, EVERY incomplete assistant in the MAIN slice is
+      // orphaned — drop it. Only callers that have established the session is
+      // idle may invoke this; such an assistant is residue from a hard
+      // interruption (process crash / kill / disconnect) that skipped the normal
+      // `finish` effect. That is what makes the age gate unnecessary: there is no
       // in-flight turn whose still-progressing assistant could be mistaken for
       // residue, so waiting an hour only kept the orphan poisoning requests and
       // made every newly submitted message render as stuck QUEUED (the TUI's
-      // "pending" marker derives from the newest incomplete assistant).
+      // "pending" marker derives from the newest incomplete assistant —
+      // routes/session/index.tsx `pending`).
       //
       // Deleting rather than stamping an error matters: a stamped shell stays on
-      // disk and is replayed into every later request. Non-trailing shells are
-      // handled on the read side by MessageV2.toModelMessages, which never emits
-      // an assistant that converts to zero content.
-      const msgs = yield* sessions.messages({ sessionID, agentID: "*" })
-      const last = msgs[msgs.length - 1]
-      if (!last) return
-      if (last.info.role !== "assistant") return
-      if (last.info.time?.completed) return
-      yield* sessions.removeMessage({ sessionID, messageID: last.info.id }).pipe(
-        Effect.catchCause((cause) =>
-          elog.warn("orphan-remove-failed", {
-            sessionID,
-            messageID: last.info.id,
-            cause,
-          }),
-        ),
-      )
-      yield* elog.info("orphan-assistant-dropped", {
-        sessionID,
-        messageID: last.info.id,
-      })
+      // disk and is replayed into every later request.
+      //
+      // ⚠️SLICE SCOPE IS LOAD-BEARING, for the SAME reason spelled out at the
+      // `sweepOrphanToolParts` call site: SessionProcessor publishes status for
+      // the main slice alone, so a subagent slice can be mid-turn while the
+      // session status reads `idle`. Reading `agentID: "*"` and removing a row
+      // would therefore DELETE a live subagent's in-flight assistant out from
+      // under its own processor, which keeps calling updatePart against that
+      // messageID. The idle gate proves only that MAIN has no active runner, so
+      // main is the only slice this may touch.
+      //
+      // ⚠️AND IT IS EVERY INCOMPLETE ASSISTANT, not just the trailing one. The
+      // sweep runs BEFORE createUserMessage, so a single-slice orphan is trailing
+      // here — but one is left non-trailing whenever a later message already
+      // exists: a concurrent subagent's row (under the old `agentID: "*"` read),
+      // or a previous `source: "spawn" | "hook"` prompt that skipped this whole
+      // block. A trailing-only rule strands those forever, and the TUI's `pending`
+      // derives from the newest INCOMPLETE assistant in the slice regardless of
+      // whether anything follows it — so the stranded row keeps rendering fresh
+      // messages as stuck QUEUED, the exact symptom this sweep exists to prevent.
+      const msgs = yield* sessions.messages({ sessionID, agentID: "main" })
+      for (const m of msgs) {
+        if (m.info.role !== "assistant") continue
+        if (m.info.time?.completed) continue
+        yield* sessions.removeMessage({ sessionID, messageID: m.info.id }).pipe(
+          Effect.catchCause((cause) =>
+            elog.warn("orphan-remove-failed", {
+              sessionID,
+              messageID: m.info.id,
+              cause,
+            }),
+          ),
+        )
+        yield* elog.info("orphan-assistant-dropped", {
+          sessionID,
+          messageID: m.info.id,
+        })
+      }
     })
 
     // A tool part is persisted as `running` the moment the tool STARTS (so the TUI
@@ -2430,28 +2447,28 @@ NOTE: At any point in time through this workflow you should feel free to ask the
         const session = yield* sessions.get(input.sessionID)
         if (input.source !== "spawn" && input.source !== "hook") {
           yield* revert.cleanup(session)
-          // An idle session has no active runner, so a trailing dangling
-          // assistant is a true orphan from a hard interruption — drop it now so
-          // a fresh message is not rendered as stuck QUEUED behind it, and so the
-          // shell never reaches a provider. Guarding on idle is what lets
-          // sweepOrphanAssistants skip an age check: a busy session's in-flight
-          // assistant is trailing and incomplete too, and must never be removed.
+          // An idle session has no active runner in its MAIN slice, so every
+          // dangling assistant there is a true orphan from a hard interruption —
+          // drop them now so a fresh message is not rendered as stuck QUEUED
+          // behind one, and so the shell never reaches a provider. Guarding on
+          // idle is what lets sweepOrphanAssistants skip an age check: a busy
+          // session's in-flight assistant is incomplete too, and must never be
+          // removed.
           const idle = (yield* status.get(input.sessionID)).type === "idle"
           if (idle) yield* sweepOrphanAssistants(input.sessionID)
           // Same recovery point, same idleness argument: repair tool parts a killed
           // process left stuck at `running`. Self-gated on idle (see the function),
           // which is why it is not wrapped in the caller's `idle` check above.
           //
-          // These two look mergeable into one message fetch. They are not:
-          // `sweepOrphanAssistants` reads EVERY slice (`agentID: "*"`) while this one
-          // reads the MAIN slice only, and that difference is load-bearing.
-          // `SessionProcessor` publishes status for the main slice alone, so a subagent
-          // slice can be mid-tool while the session status reads `idle` — scanning only
-          // main is what stops this sweep from rewriting a live subagent's `running`
-          // part. Sharing a fetch would mean taking the wider read and re-filtering
-          // here, which is precisely where that property would get lost. The cost is
-          // also smaller than it looks: this returns after one status lookup unless the
-          // session is genuinely idle.
+          // Both now read the MAIN slice only, and that scope is load-bearing for
+          // both: `SessionProcessor` publishes status for the main slice alone, so a
+          // subagent slice can be mid-turn while the session status reads `idle`.
+          // Scanning only main is what stops these sweeps from rewriting a live
+          // subagent's `running` part — or, for the assistant sweep, from DELETING
+          // that subagent's in-flight assistant row. They still do not share a
+          // message fetch: this one reads main tool parts, the other reads main
+          // messages, and the cost is smaller than it looks — each returns after one
+          // status lookup unless the session is genuinely idle.
           yield* sweepOrphanToolParts(input.sessionID)
         }
         const message = yield* createUserMessage(input)

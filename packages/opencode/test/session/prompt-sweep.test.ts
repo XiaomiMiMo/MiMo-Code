@@ -110,7 +110,7 @@ describe("sweepOrphanAssistants", () => {
     ),
   )
 
-  it.live("leaves history whose last message is a user message untouched", () =>
+  it.live("drops a NON-trailing incomplete assistant in the main slice", () =>
     provideTmpdirInstance((dir) =>
       Effect.gen(function* () {
         const sessions = yield* Session.Service
@@ -125,12 +125,18 @@ describe("sweepOrphanAssistants", () => {
           model: { providerID: ProviderID.make("test"), modelID: ModelID.make("test-model") },
           time: { created: Date.now() - 9_000 },
         })
-        // A NON-trailing incomplete assistant. The minimal rule only touches the
-        // tail; non-trailing shells are neutralized on the read side by
-        // MessageV2.toModelMessages, which never emits a zero-content assistant.
+        // A NON-trailing incomplete assistant. The sweep runs before
+        // createUserMessage, so an orphan is trailing in the single-slice case —
+        // but it is left non-trailing whenever a later message already exists (a
+        // concurrent subagent row, or a previous source:"spawn"|"hook" prompt that
+        // skipped the sweep block). A trailing-only rule strands it forever, and
+        // the TUI's `pending` marker (routes/session/index.tsx) derives from the
+        // newest INCOMPLETE assistant regardless of what follows it — so the
+        // stranded row keeps rendering fresh messages as stuck QUEUED, the exact
+        // symptom this sweep exists to prevent.
         const assistant = makeAssistant(session.id, firstUser.id, dir, { created: Date.now() - 8_000 })
         yield* sessions.updateMessage(assistant)
-        yield* sessions.updateMessage({
+        const secondUser = yield* sessions.updateMessage({
           id: MessageID.ascending(),
           role: "user",
           sessionID: session.id,
@@ -142,7 +148,47 @@ describe("sweepOrphanAssistants", () => {
         yield* svc.sweepOrphanAssistants(session.id)
 
         const after = yield* sessions.messages({ sessionID: session.id })
-        expect(after.find((m) => m.info.id === assistant.id)).toBeDefined()
+        expect(after.find((m) => m.info.id === assistant.id)).toBeUndefined()
+        // Both user turns are untouched.
+        expect(after.find((m) => m.info.id === firstUser.id)).toBeDefined()
+        expect(after.find((m) => m.info.id === secondUser.id)).toBeDefined()
+      }),
+    ),
+  )
+
+  it.live("never touches a non-main slice, whose actor may still be mid-turn", () =>
+    provideTmpdirInstance((dir) =>
+      Effect.gen(function* () {
+        const sessions = yield* Session.Service
+        const svc = yield* SessionPrompt.Service
+        const session = yield* sessions.create({})
+
+        const userMsg = yield* sessions.updateMessage({
+          id: MessageID.ascending(),
+          role: "user",
+          sessionID: session.id,
+          agent: "default",
+          model: { providerID: ProviderID.make("test"), modelID: ModelID.make("test-model") },
+          time: { created: Date.now() - 9_000 },
+        })
+        // SessionProcessor publishes status for the MAIN slice alone, so the idle
+        // gate the caller checks proves nothing about a subagent. This row is the
+        // newest message in the session AND incomplete — i.e. exactly what a live
+        // background actor's in-flight assistant looks like. Removing it would
+        // delete that row out from under the actor's own processor, which keeps
+        // calling updatePart against this messageID.
+        const subAssistant: MessageV2.Assistant = {
+          ...makeAssistant(session.id, userMsg.id, dir, { created: Date.now() - 1_000 }),
+          agentID: "explore-1",
+        }
+        yield* sessions.updateMessage(subAssistant)
+
+        yield* svc.sweepOrphanAssistants(session.id)
+
+        const sub = yield* sessions.messages({ sessionID: session.id, agentID: "explore-1" })
+        const survivor = sub.find((m) => m.info.id === subAssistant.id)
+        expect(survivor).toBeDefined()
+        expect((survivor!.info as MessageV2.Assistant).time.completed).toBeUndefined()
       }),
     ),
   )
