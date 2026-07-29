@@ -2558,9 +2558,22 @@ NOTE: At any point in time through this workflow you should feel free to ask the
               agentID: resolvedAgentID,
             }).pipe(Effect.catch(() => Effect.succeed([] as MessageV2.WithParts[])))
             const lastSlice = sliceMsgs.findLast((m) => m.info.role === "assistant")
-            const finalAsst =
-              lastSlice && lastSlice.info.role === "assistant" ? lastSlice.info : undefined
-            const finalParts = lastSlice?.parts ?? []
+            // The empty-shell guard DELETED this turn's assistant row, so the
+            // persisted slice above can no longer answer "how did this turn end?"
+            // — `findLast` would skip past the hole to an OLDER, successful
+            // assistant (or find none) and report a failed turn as completed.
+            // `droppedShell` is the in-memory record of that deleted row, and it
+            // still carries the error, so it takes precedence here exactly as it
+            // does for `final` in runLoop's tail. Parts are empty because the row
+            // (and therefore its parts) is gone.
+            //
+            // Two independent readers of "the turn's final assistant" therefore
+            // both consult it: `lastAssistant` (runLoop's return value) and this
+            // hook, which feeds BOTH the `session.post` plugin outcome and #1851's
+            // MCP turn-lifecycle `status`. Missing this one made an
+            // `llm.error(400)` turn notify `status: "completed"`.
+            const finalAsst = droppedShell ?? (lastSlice?.info.role === "assistant" ? lastSlice.info : undefined)
+            const finalParts = droppedShell ? [] : (lastSlice?.parts ?? [])
             const failed = Exit.isFailure(exit)
             const finalIsError = !!finalAsst?.error
             const outcome: "completed" | "error" | "cancelled" = cancelled
