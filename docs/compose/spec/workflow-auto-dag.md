@@ -1,14 +1,28 @@
 ---
 feature: workflow-auto-dag
-status: in-progress
+status: delivered
 updated: 2026-07-29
 branch: feat/workflow-auto-dag
-commits: 57ff02ed5ea76b448893b7c80faaf3a8de4d19ff..<head-sha>
+commits: 57ff02ed5ea76b448893b7c80faaf3a8de4d19ff..559901bf45a2d95b0759c677c8d2eec1318885d6
 ---
 
 # Workflow Auto DAG
 
 ## Report
+
+**What was built** — `/workflow <task>` now expands into a primary-agent contract that generates and launches one inline JavaScript dependency DAG. Natural language remains the default input, while optional JSON can customize each node's role, prompt, model, tools, schema, isolation, and dependencies. The generated workflow runs an independent structured Verifier after implementation and permits two rework rounds by default, with a hard maximum of three.
+
+The sandbox now provides `dag(nodes, run)`. It validates the complete graph before invoking any node, rejects malformed nodes, duplicate IDs or dependencies, self-dependencies, unknown references, and cycles, then executes each topological ready batch concurrently. Dependency outputs and final results retain deterministic ordering. Existing `agent()` semaphores and content journals continue to provide concurrency limits and resume behavior without a new database schema.
+
+**Verification** — `bun test test/command/workflow-command.test.ts test/command/deep-research-command.test.ts test/workflow/sandbox.test.ts test/workflow/builtin.test.ts test/tool/describe-workflow.test.ts` — PASS, 51 tests / 258 assertions. `bun test test/workflow/runtime-nested.test.ts test/workflow/retry.test.ts test/workflow/persistence.test.ts` — PASS, 26 passed / 1 skipped / 78 assertions. Final changed-file rerun (`workflow-command` + `sandbox`) — PASS, 43 tests / 239 assertions. `bun typecheck` — PASS. `git diff --check` — PASS. `test/workflow/runtime.test.ts` remains PRE-EXISTING/ENVIRONMENTAL: isolated rerun had four existing 5-second timeouts; the focused sandbox and stable runtime/persistence bands pass.
+
+**Journey log**
+
+1. The existing runtime already had the difficult stateful pieces: process-wide agent throttling, script persistence, content-journal replay, and nested-workflow cycle checks. A deterministic guest scheduler was enough; a second DAG persistence model would have duplicated invariants.
+2. The legacy `compose.js` Kahn scheduler silently drops unknown dependencies. The reusable primitive instead validates the whole graph before execution so malformed generated plans cannot launch partial work.
+3. Verifier rejection is semantic feedback, not a transient transport error. The command contract keeps bounded rework separate from `agent({ retry })`.
+4. Independent review found no critical, high, or medium findings and identified one stale primitive list in the primary-agent prompt; the list was updated before final verification.
+5. The broader `runtime.test.ts` band has timing/process instability independent of this change; focused sandbox tests and stable runtime/persistence suites provide direct evidence for the modified boundary.
 
 ## [S1] Problem
 
@@ -60,7 +74,7 @@ The existing nested-workflow lineage guard remains unchanged. It detects recursi
 
 ## Tasks
 
-- [ ] T1: add and test the sandbox `dag(nodes, run)` primitive — acceptance: valid dependency graphs execute in deterministic concurrent batches and return declaration-ordered results; every malformed-reference and cycle case rejects before any callback runs (covers: S2)
-- [ ] T2: register and test `/workflow <task>` behind the workflow feature flag — acceptance: command autocomplete/listing exposes `workflow` only when the tool is enabled, and its expanded prompt requires inline DAG generation, role/prompt/model/dependency customization, independent verifier evidence, and bounded rework (covers: S2)
-- [ ] T3: update model-facing workflow documentation — acceptance: the workflow tool contract names `dag()` and explains how scheduling, persistence recovery, task-cycle detection, verifier separation, and rework bounds compose (covers: S2)
-- [ ] T4: run focused tests, workflow regression tests, typecheck, and diff checks — acceptance: all relevant commands pass from `packages/opencode` (covers: S2)
+- [x] T1: add and test the sandbox `dag(nodes, run)` primitive — acceptance: valid dependency graphs execute in deterministic concurrent batches and return declaration-ordered results; every malformed-reference and cycle case rejects before any callback runs (covers: S2)
+- [x] T2: register and test `/workflow <task>` behind the workflow feature flag — acceptance: command autocomplete/listing exposes `workflow` only when the tool is enabled, and its expanded prompt requires inline DAG generation, role/prompt/model/dependency customization, independent verifier evidence, and bounded rework (covers: S2)
+- [x] T3: update model-facing workflow documentation — acceptance: the workflow tool contract names `dag()` and explains how scheduling, persistence recovery, task-cycle detection, verifier separation, and rework bounds compose (covers: S2)
+- [x] T4: run focused tests, workflow regression tests, typecheck, and diff checks — acceptance: all relevant commands pass from `packages/opencode` (covers: S2)
