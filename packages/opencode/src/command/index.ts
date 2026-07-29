@@ -66,6 +66,7 @@ export const Default = {
   DREAM: "dream",
   DISTILL: "distill",
   GOAL: "goal",
+  WORKFLOW: "workflow",
   DEEP_RESEARCH: "deep-research",
   LOOPS: "loops",
   REBUILD: "rebuild",
@@ -86,6 +87,44 @@ export function deepResearchTemplate(): string {
     "",
     "Pass the full refined question as `args`. The workflow fans out web searches, fetches sources,",
     "adversarially verifies claims, and returns a cited report; relay its result to the user.",
+  ].join("\n")
+}
+
+export function workflowTemplate(): string {
+  return [
+    "Turn the user's task into a deterministic multi-agent JavaScript DAG and run it with the workflow tool.",
+    "",
+    "Task and customization request:",
+    "$ARGUMENTS",
+    "",
+    "The input is a natural-language task and may include optional JSON overrides. Honor requested node roles, prompts,",
+    "models, tool allowlists, dependencies, verifier settings, and rework bounds when they are valid and safe.",
+    "If the task itself is empty or materially ambiguous, ask one concise clarification before generating anything.",
+    "",
+    "Generate one self-contained inline JavaScript workflow beginning with a pure-data `export const meta = { ... }`.",
+    "Create a `nodes` array with stable unique ids. Each node may define `agentType`, `prompt`, `model`, `tools`,",
+    "`dependsOn`, `schema`, and `isolation`. Execute implementation nodes with valid JavaScript shaped like:",
+    "  const outputs = await dag(nodes, (node, dependencies) => agent(",
+    '    node.prompt + "\\nDependency outputs:\\n" + JSON.stringify(dependencies),',
+    "    { agentType: node.agentType, model: node.model, tools: node.tools, schema: node.schema,",
+    '      isolation: node.isolation, label: node.id, phase: "Implement" },',
+    "  ))",
+    "Do not hand-roll topological sorting. `dag(nodes, run)` validates all references and cycles before executing,",
+    "runs ready nodes concurrently, and preserves dependency ordering. Treat a required node result of null as failure.",
+    "",
+    "After implementation settles, dispatch an independent verifier using a separate agent() call and a strict schema.",
+    "The verifier must judge the original task against concrete DAG outputs and return `{ accepted, findings, evidence }`.",
+    "It must use an explicit verifier/reviewer agentType and, when available, a model at least as capable as the",
+    "strongest implementer. It must not be an implementation node or merely repeat an implementer's self-assessment.",
+    "",
+    "If verification rejects the result, perform bounded rework with the findings injected into the affected nodes,",
+    "then invoke a fresh independent verifier again. Use default 2 rework rounds with a hard maximum 3,",
+    "including when optional JSON asks for more. Stop honestly with `accepted: false` when the bound is exhausted.",
+    "Do not use agent transport retry as semantic rework; `agent({ retry })` is only for transient execution failures.",
+    "",
+    "Run the generated script with:",
+    '  workflow({ operation: "run", script, args: { task: <original task and safe customization> } })',
+    "Relay the terminal result and run id. Never claim acceptance unless the final verifier returned accepted=true with evidence.",
   ].join("\n")
 }
 
@@ -191,6 +230,17 @@ export const layer = Layer.effect(
       }
 
       if (Flag.MIMOCODE_EXPERIMENTAL_WORKFLOW_TOOL) {
+        commands[Default.WORKFLOW] = {
+          name: Default.WORKFLOW,
+          description: "generate and run a customizable verified multi-agent DAG",
+          source: "command",
+          bundled: true,
+          subtask: false,
+          get template() {
+            return workflowTemplate()
+          },
+          hints: ["$ARGUMENTS"],
+        }
         commands[Default.DEEP_RESEARCH] = {
           name: Default.DEEP_RESEARCH,
           description: "deep multi-source, fact-checked research report (runs the deep-research workflow)",
