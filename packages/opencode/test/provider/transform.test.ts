@@ -3293,6 +3293,37 @@ describe("ProviderTransform.variants", () => {
       expect(result.low).toEqual({ reasoning: { effort: "low" } })
       expect(result.high).toEqual({ reasoning: { effort: "high" } })
     })
+
+    test("mimo returns low, medium, and high with reasoning", () => {
+      const model = createMockModel({
+        id: "openrouter/xiaomi/mimo-v2.5-pro",
+        providerID: "openrouter",
+        api: {
+          id: "xiaomi/mimo-v2.5-pro",
+          url: "https://openrouter.ai",
+          npm: "@openrouter/ai-sdk-provider",
+        },
+      })
+      const result = ProviderTransform.variants(model)
+      expect(Object.keys(result)).toEqual(["low", "medium", "high"])
+      expect(result.low).toEqual({ reasoning: { effort: "low" } })
+      expect(result.medium).toEqual({ reasoning: { effort: "medium" } })
+      expect(result.high).toEqual({ reasoning: { effort: "high" } })
+    })
+  })
+
+  test("mimo variants remain disabled for non-openrouter providers", () => {
+    const model = createMockModel({
+      id: "custom/xiaomi/mimo-v2.5-pro",
+      providerID: "custom",
+      api: {
+        id: "xiaomi/mimo-v2.5-pro",
+        url: "https://api.example.com",
+        npm: "@ai-sdk/openai-compatible",
+      },
+    })
+    const result = ProviderTransform.variants(model)
+    expect(result).toEqual({})
   })
 
   describe("@ai-sdk/gateway", () => {

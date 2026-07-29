@@ -1118,6 +1118,17 @@ export function variants(model: Provider.Model): Record<string, Record<string, a
   }
   if (id.includes("grok")) return {}
 
+  if (id.includes("mimo")) {
+    if (model.api.npm === "@openrouter/ai-sdk-provider") {
+      return {
+        low: { reasoning: { effort: "low" } },
+        medium: { reasoning: { effort: "medium" } },
+        high: { reasoning: { effort: "high" } },
+      }
+    }
+    return {}
+  }
+
   switch (model.api.npm) {
     case "@openrouter/ai-sdk-provider":
       if (!model.id.includes("gpt") && !model.id.includes("gemini-3") && !model.id.includes("claude")) return {}
