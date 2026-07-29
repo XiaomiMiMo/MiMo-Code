@@ -112,12 +112,25 @@ function setupApp() {
 
   for (const signal of ["SIGINT", "SIGTERM"] as const) {
     process.on(signal, () => {
-      logger.log(`[Desktop] Received ${signal}, gracefully shutting down sidecar...`)
-      console.log(`\n[Desktop] Received ${signal}, shutting down...`)
+      logger.log(`[Desktop] Received ${signal}, exiting...`)
       killSidecar()
       destroyTray()
       app.exit(0)
     })
+  }
+
+  if (!app.isPackaged && process.stdin) {
+    let stdinClosed = false
+    const handleParentClose = () => {
+      if (stdinClosed) return
+      stdinClosed = true
+      logger.log("[Desktop] stdin closed, exiting...")
+      killSidecar()
+      destroyTray()
+      app.exit(0)
+    }
+    process.stdin.on("close", handleParentClose)
+    process.stdin.on("end", handleParentClose)
   }
 
   void app.whenReady().then(async () => {
@@ -306,7 +319,7 @@ registerIpcHandlers({
 
 function killSidecar() {
   if (!server) return
-  server.stop()
+  server.stop(true)
   server = null
 }
 

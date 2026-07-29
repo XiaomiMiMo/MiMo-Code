@@ -18,6 +18,8 @@ const OPENCODE_SERVER_ABS = path.resolve(__dirname, OPENCODE_SERVER_DIST)
 
 const nodePtyPkg = `@lydell/node-pty-${process.platform}-${process.arch}`
 
+
+
 export default defineConfig({
   main: {
     define: {

@@ -1195,6 +1195,10 @@ export type ToolStateCompleted = {
     [key: string]: unknown
   }
   output: string
+  providerOutput?: Schema0
+  providerMetadata?: {
+    [key: string]: unknown
+  }
   title: string
   metadata: {
     [key: string]: unknown
@@ -2193,6 +2197,15 @@ export type Config = {
      * Token buffer for compaction. Leaves enough window to avoid overflow during compaction.
      */
     reserved?: number
+    /**
+     * Compact earlier than the model window. A token count (300000), a shorthand string ("300K", "1M", "50%"), or a map keyed by "<providerID>/<modelID>" with wildcards ("openai/gpt-5*"). Always clamped to the model's real window — it can only lower the compaction trigger, never raise it. 0 means no budget.
+     */
+    max_context?:
+      | number
+      | string
+      | {
+          [key: string]: number | string
+        }
   }
   checkpoint?: {
     /**
@@ -2298,7 +2311,7 @@ export type Config = {
   }
   dream?: {
     /**
-     * Auto-trigger dream memory consolidation on new session start. Default: true.
+     * Auto-trigger dream memory consolidation on new session start. Default: false.
      */
     auto?: boolean
     /**
@@ -2308,7 +2321,7 @@ export type Config = {
   }
   distill?: {
     /**
-     * Auto-trigger distill workflow packaging on new session start. Default: true.
+     * Auto-trigger distill workflow packaging on new session start. Default: false.
      */
     auto?: boolean
     /**
@@ -2957,6 +2970,16 @@ export type FormatterStatus = {
   extensions: Array<string>
   enabled: boolean
 }
+
+export type Schema0 =
+  | string
+  | number
+  | boolean
+  | null
+  | Array<Schema0>
+  | {
+      [key: string]: Schema0
+    }
 
 export type GlobalHealthData = {
   body?: never

@@ -25,6 +25,25 @@ export const GenerateCommand = {
         ]
       }
     }
+    const components = (specs.components = specs.components || {})
+    const schemas = (components.schemas = components.schemas || {})
+    const extractDefs = (obj: any) => {
+      if (!obj || typeof obj !== "object") return
+      if (obj.$defs && typeof obj.$defs === "object") {
+        for (const [key, val] of Object.entries(obj.$defs)) {
+          if (!schemas[key]) {
+            schemas[key] = val as any
+          }
+          extractDefs(val)
+        }
+        delete obj.$defs
+      }
+      for (const val of Object.values(obj)) {
+        extractDefs(val)
+      }
+    }
+    extractDefs(specs)
+
     const raw = JSON.stringify(specs, null, 2)
 
     // Format through prettier so output is byte-identical to committed file
