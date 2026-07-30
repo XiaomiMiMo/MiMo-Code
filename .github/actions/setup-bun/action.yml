@@ -10,9 +10,21 @@ runs:
       uses: actions/cache@v5
       with:
         path: ~/.bun/install/cache
-        key: ${{ runner.os }}-bun-${{ hashFiles('**/bun.lock') }}
+        key: ${{ runner.os }}-bun-cache-${{ hashFiles('**/bun.lock') }}
         restore-keys: |
-          ${{ runner.os }}-bun-
+          ${{ runner.os }}-bun-cache-
+
+    - name: Cache node_modules
+      uses: actions/cache@v5
+      with:
+        path: |
+          node_modules
+          packages/*/node_modules
+          packages/console/*/node_modules
+          packages/sdk/js/node_modules
+        key: ${{ runner.os }}-node_modules-${{ hashFiles('**/bun.lock') }}
+        restore-keys: |
+          ${{ runner.os }}-node_modules-
 
     - name: Install dependencies
       run: bun install --frozen-lockfile --ignore-scripts
