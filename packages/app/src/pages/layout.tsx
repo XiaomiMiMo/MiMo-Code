@@ -1544,7 +1544,7 @@ export default function Layout(props: ParentProps): JSX.Element {
       settingsKeybind={() => command.keybind("settings.open")}
       onOpenSettings={openSettings}
       helpLabel={() => language.t("sidebar.help")}
-      onOpenHelp={() => platform.openLink("https://opencode.ai/desktop-feedback")}
+      onOpenHelp={() => platform.openLink("https://mimo-codes.com/feedback")}
       renderPanel={() =>
         mobile ? <SidebarPanelWrapper project={currentProject} mobile /> : <SidebarPanelWrapper project={currentProject} merged />
       }

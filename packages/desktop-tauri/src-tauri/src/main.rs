@@ -256,9 +256,16 @@ fn main() {
                 app.set_menu(menu)?;
             }
 
-            // Build tray icon
+            // Build tray icon — use trayTemplate.png (grayscale macOS template)
+            let tray_img = image::load_from_memory(include_bytes!("../icons/trayTemplate.png"))
+                .map(|img| img.into_rgba8())
+                .ok();
+            let tray_icon = tray_img
+                .as_ref()
+                .map(|img| tauri::image::Image::new_owned(img.to_vec(), img.width(), img.height()))
+                .unwrap_or_else(|| app.default_window_icon().unwrap().clone());
             TrayIconBuilder::new()
-                .icon(app.default_window_icon().unwrap().clone())
+                .icon(tray_icon)
                 .tooltip("MiMo-Code")
                 .on_menu_event(|app_handle, event| {
                     if event.id() == "check_updates" {
