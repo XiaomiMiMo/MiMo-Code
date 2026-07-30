@@ -16,6 +16,21 @@
     "shell:default",
     "shell:allow-execute",
     "shell:allow-open",
+    {
+      "identifier": "shell:allow-execute",
+      "allow": [
+        {
+          "name": "binaries/opencode",
+          "sidecar": true,
+          "args": true
+        },
+        {
+          "name": "opencode",
+          "sidecar": true,
+          "args": true
+        }
+      ]
+    },
     "dialog:default",
     "notification:default",
     "notification:allow-is-permission-granted",

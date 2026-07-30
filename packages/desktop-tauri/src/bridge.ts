@@ -31,10 +31,10 @@ export function setupTauriBridge(): void {
 
   let lastToggleTime = 0
   const safeToggleMaximize = async () => {
-    const now = Date.now()
-    if (now - lastToggleTime < 300) return
-    lastToggleTime = now
-    return appWindow.toggleMaximize().catch(() => {})
+    // 最佳实践：在开启 data-tauri-drag-region 的标题栏上，
+    // macOS AppKit 系统层会在双击时自动触发原生的 performZoom 窗口全屏与复原。
+    // JS 层的冗余调用设为 No-Op，彻底消除 System Gesture 与 JS IPC 冲突派发产生的弹跳问题。
+    return
   }
 
   // 注入 __TAURI__ 全局对象，以使 titlebar.tsx 等 UI 组件能顺利感知 startDragging 与 toggleMaximize

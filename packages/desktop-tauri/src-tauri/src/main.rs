@@ -70,17 +70,25 @@ fn main() {
             let handle = app.handle().clone();
             // 自动拉起 Sidecar 进程：opencode serve，并传递客户端桌面标识与密钥
             tauri::async_runtime::spawn(async move {
-                if let Ok(sidecar) = handle.shell().sidecar("opencode") {
-                    let _ = sidecar
-                        .env("OPENCODE_CLIENT", "desktop")
-                        .env("MIMOCODE_CLIENT", "desktop")
-                        .env("OPENCODE_EXPERIMENTAL_FILEWATCHER", "true")
-                        .env("OPENCODE_SERVER_USERNAME", "opencode")
-                        .env("OPENCODE_SERVER_PASSWORD", DESKTOP_SECRET)
-                        .env("MIMOCODE_SERVER_USERNAME", "opencode")
-                        .env("MIMOCODE_SERVER_PASSWORD", DESKTOP_SECRET)
-                        .args(["serve"])
-                        .spawn();
+                match handle.shell().sidecar("opencode") {
+                    Ok(sidecar) => {
+                        let res = sidecar
+                            .env("OPENCODE_CLIENT", "desktop")
+                            .env("MIMOCODE_CLIENT", "desktop")
+                            .env("OPENCODE_EXPERIMENTAL_FILEWATCHER", "true")
+                            .env("OPENCODE_SERVER_USERNAME", "opencode")
+                            .env("OPENCODE_SERVER_PASSWORD", DESKTOP_SECRET)
+                            .env("MIMOCODE_SERVER_USERNAME", "opencode")
+                            .env("MIMOCODE_SERVER_PASSWORD", DESKTOP_SECRET)
+                            .args(["serve"])
+                            .spawn();
+                        if let Err(e) = res {
+                            eprintln!("[Sidecar Error] Failed to spawn opencode sidecar: {:?}", e);
+                        }
+                    }
+                    Err(e) => {
+                        eprintln!("[Sidecar Error] Failed to create opencode sidecar command: {:?}", e);
+                    }
                 }
             });
             Ok(())

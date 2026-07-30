@@ -26,7 +26,9 @@ export default [
         },
         server: {
           watch: {
-            ignored: ["!**/packages/ui/**", "!**/packages/app/**"],
+            // 忽略 node_modules 防止无限 HMR 循环
+            // "!**/packages/xxx/**" 在 ignored 里不是有效的排除语法
+            ignored: ["**/node_modules/**"],
           },
         },
         worker: {

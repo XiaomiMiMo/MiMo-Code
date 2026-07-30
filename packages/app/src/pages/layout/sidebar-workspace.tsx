@@ -249,7 +249,7 @@ const WorkspaceSessionList = (props: {
   loadMore: () => Promise<void>
   language: ReturnType<typeof useLanguage>
 }): JSX.Element => (
-  <nav class="flex flex-col gap-1">
+  <nav class="flex flex-col gap-1 [contain:content]">
     <Show when={props.showNew()}>
       <NewSessionItem
         slug={props.slug()}
@@ -454,18 +454,15 @@ export const LocalWorkspace = (props: {
 }): JSX.Element => {
   const globalSync = useGlobalSync()
   const language = useLanguage()
-  const workspace = createMemo(() => {
-    const [store, setStore] = globalSync.child(props.project.worktree)
-    return { store, setStore }
-  })
+  const [workspaceStore, setWorkspaceStore] = globalSync.child(props.project.worktree)
   const slug = createMemo(() => base64Encode(props.project.worktree))
-  const sessions = createMemo(() => sortedRootSessions(workspace().store, props.sortNow()))
+  const sessions = createMemo(() => sortedRootSessions(workspaceStore, props.sortNow()))
   const count = createMemo(() => sessions()?.length ?? 0)
   const query = useQuery(() => ({ ...loadSessionsQuery(props.project.worktree) }))
-  const hasMore = createMemo(() => workspace().store.sessionTotal > count())
+  const hasMore = createMemo(() => workspaceStore.sessionTotal > count())
   const loading = () => query.isLoading && count() === 0
   const loadMore = async () => {
-    workspace().setStore("limit", (limit) => (limit ?? 0) + 5)
+    setWorkspaceStore("limit", (limit) => (limit ?? 0) + 5)
     await globalSync.project.loadSessions(props.project.worktree)
   }
 

@@ -22,6 +22,7 @@ import { shouldMarkBoundaryGesture, normalizeWheelDelta } from "@/pages/session/
 import { SessionContextUsage } from "@/components/session-context-usage"
 import { useDialog } from "@mimo-ai/ui/context/dialog"
 import { createResizeObserver } from "@solid-primitives/resize-observer"
+import { SessionSharePopover } from "./session-share-popover"
 import { useLanguage } from "@/context/language"
 import { useSessionKey } from "@/pages/session/session-layout"
 import { useGlobalSDK } from "@/context/global-sdk"
@@ -891,103 +892,30 @@ export function MessageTimeline(props: {
                             </DropdownMenu.Portal>
                           </DropdownMenu>
 
-                          <KobaltePopover
+                          <SessionSharePopover
                             open={share.open}
                             anchorRef={() => more}
-                            placement="bottom-end"
-                            gutter={4}
-                            modal={false}
-                            onOpenChange={(open) => {
-                              if (open) setShare("dismiss", null)
-                              setShare("open", open)
-                            }}
-                          >
-                            <KobaltePopover.Portal>
-                              <KobaltePopover.Content
-                                data-component="popover-content"
-                                style={{ "min-width": "320px" }}
-                                onEscapeKeyDown={(event) => {
-                                  setShare({ dismiss: "escape", open: false })
-                                  event.preventDefault()
-                                  event.stopPropagation()
-                                }}
-                                onPointerDownOutside={() => {
-                                  setShare({ dismiss: "outside", open: false })
-                                }}
-                                onFocusOutside={() => {
-                                  setShare({ dismiss: "outside", open: false })
-                                }}
-                                onCloseAutoFocus={(event) => {
-                                  if (share.dismiss === "outside") event.preventDefault()
-                                  setShare("dismiss", null)
-                                }}
+                            shareUrl={shareUrl()}
+                            sharePending={shareMutation.isPending}
+                            unsharePending={unshareMutation.isPending}
+                            onOpenChange={(open) => setShare({ dismiss: open ? null : "outside", open })}
+                            onShare={shareSession}
+                            onUnshare={unshareSession}
+                            onViewShare={viewShare}
+                            trigger={
+                              <Button
+                                variant="ghost"
+                                class="h-6 gap-1 px-1.5 text-12-regular text-text-weak hover:text-text-strong rounded-md transition-colors"
                               >
-                                <div class="flex flex-col p-3">
-                                  <div class="flex flex-col gap-1">
-                                    <div class="text-13-medium text-text-strong">
-                                      {language.t("session.share.popover.title")}
-                                    </div>
-                                    <div class="text-12-regular text-text-weak">
-                                      {shareUrl()
-                                        ? language.t("session.share.popover.description.shared")
-                                        : language.t("session.share.popover.description.unshared")}
-                                    </div>
-                                  </div>
-                                  <div class="mt-3 flex flex-col gap-2">
-                                    <Show
-                                      when={shareUrl()}
-                                      fallback={
-                                        <Button
-                                          size="large"
-                                          variant="primary"
-                                          class="w-full"
-                                          onClick={shareSession}
-                                          disabled={shareMutation.isPending}
-                                        >
-                                          {shareMutation.isPending
-                                            ? language.t("session.share.action.publishing")
-                                            : language.t("session.share.action.publish")}
-                                        </Button>
-                                      }
-                                    >
-                                      <div class="flex flex-col gap-2">
-                                        <TextField
-                                          value={shareUrl() ?? ""}
-                                          readOnly
-                                          copyable
-                                          copyKind="link"
-                                          tabIndex={-1}
-                                          class="w-full"
-                                        />
-                                        <div class="grid grid-cols-2 gap-2">
-                                          <Button
-                                            size="large"
-                                            variant="secondary"
-                                            class="w-full shadow-none border border-border-weak-base"
-                                            onClick={unshareSession}
-                                            disabled={unshareMutation.isPending}
-                                          >
-                                            {unshareMutation.isPending
-                                              ? language.t("session.share.action.unpublishing")
-                                              : language.t("session.share.action.unpublish")}
-                                          </Button>
-                                          <Button
-                                            size="large"
-                                            variant="primary"
-                                            class="w-full"
-                                            onClick={viewShare}
-                                            disabled={unshareMutation.isPending}
-                                          >
-                                            {language.t("session.share.action.view")}
-                                          </Button>
-                                        </div>
-                                      </div>
-                                    </Show>
-                                  </div>
-                                </div>
-                              </KobaltePopover.Content>
-                            </KobaltePopover.Portal>
-                          </KobaltePopover>
+                                <Icon name="share" size="small" />
+                                <span>
+                                  {shareUrl()
+                                    ? language.t("session.share.button.shared")
+                                    : language.t("session.share.button.unshared")}
+                                </span>
+                              </Button>
+                            }
+                          />
                         </Show>
                       </div>
                     )}
@@ -1041,12 +969,8 @@ export function MessageTimeline(props: {
                       id={props.anchor(messageID)}
                       data-message-id={messageID}
                       classList={{
-                        "min-w-0 w-full max-w-full": true,
+                        "min-w-0 w-full max-w-full [content-visibility:auto] [contain-intrinsic-size:auto_200px] [contain:content]": true,
                         "md:max-w-200 2xl:max-w-[1000px]": props.centered,
-                      }}
-                      style={{
-                        "content-visibility": active() ? undefined : "auto",
-                        "contain-intrinsic-size": active() ? undefined : "auto 500px",
                       }}
                     >
                       <Show when={commentCount() > 0}>

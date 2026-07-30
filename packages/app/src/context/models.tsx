@@ -1,4 +1,4 @@
-import { createMemo } from "solid-js"
+import { batch, createMemo } from "solid-js"
 import { createStore } from "solid-js/store"
 import { DateTime } from "luxon"
 import { filter, firstBy, flat, groupBy, mapValues, pipe, uniqueBy, values } from "remeda"
@@ -128,6 +128,14 @@ export const { use: useModels, provider: ModelsProvider } = createSimpleContext(
       update(model, state ? "show" : "hide")
     }
 
+    const setBulkVisibility = (items: { model: ModelKey; state: boolean }[]) => {
+      batch(() => {
+        for (const item of items) {
+          update(item.model, item.state ? "show" : "hide")
+        }
+      })
+    }
+
     const push = (model: ModelKey) => {
       const uniq = uniqueBy([model, ...store.recent], (x) => `${x.providerID}:${x.modelID}`)
       if (uniq.length > RECENT_LIMIT) uniq.pop()
@@ -152,6 +160,7 @@ export const { use: useModels, provider: ModelsProvider } = createSimpleContext(
       find,
       visible,
       setVisibility,
+      setBulkVisibility,
       recent: {
         list: createMemo(() => store.recent),
         push,
