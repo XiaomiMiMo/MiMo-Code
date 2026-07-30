@@ -1,7 +1,6 @@
 import type { BoxRenderable, TextareaRenderable, KeyEvent, ScrollBoxRenderable } from "@opentui/core"
 import { pathToFileURL } from "bun"
 import fuzzysort from "fuzzysort"
-import { firstBy } from "remeda"
 import { createMemo, createResource, createEffect, onMount, onCleanup, Index, Show, createSignal } from "solid-js"
 import { createStore } from "solid-js/store"
 import { useSDK } from "@tui/context/sdk"
@@ -424,11 +423,14 @@ export function Autocomplete(props: {
 
     results.sort((a, b) => a.display.localeCompare(b.display))
 
-    const max = firstBy(results, [(x) => x.display.length, "desc"])?.display.length
+    // Pad in terminal columns, not code units: CJK slash aliases (e.g. zh "前端设计")
+    // render two cells wide, so String.length + padEnd() would push the right-hand
+    // description column out of alignment.
+    const max = Math.max(0, ...results.map((x) => Bun.stringWidth(x.display)))
     if (!max) return results
     return results.map((item) => ({
       ...item,
-      display: item.display.padEnd(max + 2),
+      display: item.display + " ".repeat(Math.max(0, max + 2 - Bun.stringWidth(item.display))),
     }))
   })
 
