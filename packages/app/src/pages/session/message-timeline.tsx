@@ -18,7 +18,7 @@ import { showToast } from "@mimo-ai/ui/toast"
 import { Binary } from "@mimo-ai/shared/util/binary"
 import { getFilename } from "@mimo-ai/shared/util/path"
 import { Popover as KobaltePopover } from "@kobalte/core/popover"
-import { shouldMarkBoundaryGesture, normalizeWheelDelta } from "@/pages/session/message-gesture"
+import { normalizeWheelDelta } from "@/pages/session/message-gesture"
 import { SessionContextUsage } from "@/components/session-context-usage"
 import { useDialog } from "@mimo-ai/ui/context/dialog"
 import { createResizeObserver } from "@solid-primitives/resize-observer"
@@ -32,180 +32,17 @@ import { useSDK } from "@/context/sdk"
 import { useSync } from "@/context/sync"
 import { messageAgentColor } from "@/utils/agent"
 import { sessionTitle } from "@/utils/session-title"
-import { parseCommentNote, readCommentMetadata } from "@/utils/comment-note"
 import { makeTimer } from "@solid-primitives/timer"
-
-type MessageComment = {
-  path: string
-  comment: string
-  selection?: {
-    startLine: number
-    endLine: number
-  }
-}
+import { messageComments, taskDescription, pace, markBoundaryGesture } from "./message-timeline/utils"
+import type { MessageComment } from "./message-timeline/utils"
+import { createTimelineStaging } from "./message-timeline/stage"
+import type { StageConfig } from "./message-timeline/stage"
 
 const emptyMessages: MessageType[] = []
 const idle = { type: "idle" as const }
 type UserActions = {
   fork?: (input: { sessionID: string; messageID: string }) => Promise<void> | void
   revert?: (input: { sessionID: string; messageID: string }) => Promise<void> | void
-}
-
-const messageComments = (parts: Part[]): MessageComment[] =>
-  parts.flatMap((part) => {
-    if (part.type !== "text" || !(part as TextPart).synthetic) return []
-    const next = readCommentMetadata(part.metadata) ?? parseCommentNote(part.text)
-    if (!next) return []
-    return [
-      {
-        path: next.path,
-        comment: next.comment,
-        selection: next.selection
-          ? {
-              startLine: next.selection.startLine,
-              endLine: next.selection.endLine,
-            }
-          : undefined,
-      },
-    ]
-  })
-
-const taskDescription = (part: Part, sessionID: string) => {
-  if (part.type !== "tool" || part.tool !== "task") return
-  const metadata = "metadata" in part.state ? part.state.metadata : undefined
-  if (metadata?.sessionId !== sessionID) return
-  const value = part.state.input?.description
-  if (typeof value === "string" && value) return value
-}
-
-const pace = (width: number) => Math.round(Math.max(1200, Math.min(3200, (Math.max(width, 360) * 2000) / 900)))
-
-const boundaryTarget = (root: HTMLElement, target: EventTarget | null) => {
-  const current = target instanceof Element ? target : undefined
-  const nested = current?.closest("[data-scrollable]")
-  if (!nested || nested === root) return root
-  if (!(nested instanceof HTMLElement)) return root
-  return nested
-}
-
-const markBoundaryGesture = (input: {
-  root: HTMLDivElement
-  target: EventTarget | null
-  delta: number
-  onMarkScrollGesture: (target?: EventTarget | null) => void
-}) => {
-  const target = boundaryTarget(input.root, input.target)
-  if (target === input.root) {
-    input.onMarkScrollGesture(input.root)
-    return
-  }
-  if (
-    shouldMarkBoundaryGesture({
-      delta: input.delta,
-      scrollTop: target.scrollTop,
-      scrollHeight: target.scrollHeight,
-      clientHeight: target.clientHeight,
-    })
-  ) {
-    input.onMarkScrollGesture(input.root)
-  }
-}
-
-type StageConfig = {
-  init: number
-  batch: number
-}
-
-type TimelineStageInput = {
-  sessionKey: () => string
-  turnStart: () => number
-  messages: () => UserMessage[]
-  config: StageConfig
-}
-
-/**
- * Defer-mounts small timeline windows so revealing older turns does not
- * block first paint with a large DOM mount.
- *
- * Once staging completes for a session it never re-stages — backfill and
- * new messages render immediately.
- */
-function createTimelineStaging(input: TimelineStageInput) {
-  const [state, setState] = createStore({
-    activeSession: "",
-    completedSession: "",
-    count: 0,
-  })
-
-  const stagedCount = createMemo(() => {
-    const total = input.messages().length
-    if (input.turnStart() <= 0) return total
-    if (state.completedSession === input.sessionKey()) return total
-    const init = Math.min(total, input.config.init)
-    if (state.count <= init) return init
-    if (state.count >= total) return total
-    return state.count
-  })
-
-  const stagedUserMessages = createMemo(() => {
-    const list = input.messages()
-    const count = stagedCount()
-    if (count >= list.length) return list
-    return list.slice(Math.max(0, list.length - count))
-  })
-
-  let frame: number | undefined
-  const cancel = () => {
-    if (frame === undefined) return
-    cancelAnimationFrame(frame)
-    frame = undefined
-  }
-
-  createEffect(
-    on(
-      () => [input.sessionKey(), input.turnStart() > 0, input.messages().length] as const,
-      ([sessionKey, isWindowed, total]) => {
-        cancel()
-        const shouldStage =
-          isWindowed &&
-          total > input.config.init &&
-          state.completedSession !== sessionKey &&
-          state.activeSession !== sessionKey
-        if (!shouldStage) {
-          setState({ activeSession: "", count: total })
-          return
-        }
-
-        let count = Math.min(total, input.config.init)
-        setState({ activeSession: sessionKey, count })
-
-        const step = () => {
-          if (input.sessionKey() !== sessionKey) {
-            frame = undefined
-            return
-          }
-          const currentTotal = input.messages().length
-          count = Math.min(currentTotal, count + input.config.batch)
-          setState("count", count)
-          if (count >= currentTotal) {
-            setState({ completedSession: sessionKey, activeSession: "" })
-            frame = undefined
-            return
-          }
-          frame = requestAnimationFrame(step)
-        }
-        frame = requestAnimationFrame(step)
-      },
-    ),
-  )
-
-  const isStaging = createMemo(() => {
-    const key = input.sessionKey()
-    return state.activeSession === key && state.completedSession !== key
-  })
-
-  onCleanup(cancel)
-  return { messages: stagedUserMessages, isStaging }
 }
 
 export function MessageTimeline(props: {
