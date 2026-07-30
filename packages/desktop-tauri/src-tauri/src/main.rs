@@ -4,8 +4,8 @@
 use std::process::Command;
 use tauri::{
     menu::{MenuBuilder, MenuItemBuilder, PredefinedMenuItem, SubmenuBuilder},
-    tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
-    Emitter, Manager,
+    tray::TrayIconBuilder,
+    Manager,
 };
 use tauri_plugin_shell::ShellExt;
 
@@ -264,25 +264,31 @@ fn main() {
                 .as_ref()
                 .map(|img| tauri::image::Image::new_owned(img.to_vec(), img.width(), img.height()))
                 .unwrap_or_else(|| app.default_window_icon().unwrap().clone());
+
+            let tray_open = MenuItemBuilder::with_id("tray_open", "Open MiMo-Code").build(app)?;
+            let tray_quit = MenuItemBuilder::with_id("tray_quit", "Quit").build(app)?;
+            let tray_menu = MenuBuilder::new(app)
+                .item(&tray_open)
+                .separator()
+                .item(&tray_quit)
+                .build()?;
+
             TrayIconBuilder::new()
                 .icon(tray_icon)
                 .tooltip("MiMo-Code")
+                .menu(&tray_menu)
                 .on_menu_event(|app_handle, event| {
-                    if event.id() == "check_updates" {
-                        let _ = app_handle.emit("menu-command", "check_updates");
-                    }
-                })
-                .on_tray_icon_event(|tray, event| {
-                    if let TrayIconEvent::Click {
-                        button: MouseButton::Left,
-                        button_state: MouseButtonState::Up,
-                        ..
-                    } = event
-                    {
-                        if let Some(window) = tray.app_handle().get_webview_window("main") {
-                            let _ = window.show();
-                            let _ = window.set_focus();
+                    match event.id().as_ref() {
+                        "tray_open" => {
+                            if let Some(window) = app_handle.get_webview_window("main") {
+                                let _ = window.show();
+                                let _ = window.set_focus();
+                            }
                         }
+                        "tray_quit" => {
+                            app_handle.exit(0);
+                        }
+                        _ => {}
                     }
                 })
                 .build(app)?;
