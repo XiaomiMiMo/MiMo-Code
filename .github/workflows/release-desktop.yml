@@ -29,7 +29,6 @@ permissions:
   id-token: write
 
 env:
-  # 从 tag 推断 channel（desktop/v1.0.0-beta.1 → beta，否则 prod）
   OPENCODE_CHANNEL: >-
     ${{
       inputs.channel != '' && inputs.channel ||
@@ -46,13 +45,14 @@ jobs:
 
       - uses: ./.github/actions/setup-bun
 
-      - name: Typecheck desktop
-        working-directory: packages/desktop
-        run: bun run typecheck
+      - name: Typecheck desktop & desktop-tauri
+        run: |
+          bun run --cwd packages/desktop typecheck
+          bun run --cwd packages/desktop-tauri typecheck
 
-  # ── 2. 构建 & 打包（macOS / Windows / Linux）────────────────────
+  # ── 2. 构建 & 打包 (Electron + Tauri 并行 + Rust 缓存加速) ─────
   package-mac:
-    name: Package macOS
+    name: Package macOS (Electron + Tauri)
     needs: typecheck
     runs-on: macos-latest
     steps:
@@ -60,18 +60,21 @@ jobs:
 
       - uses: ./.github/actions/setup-bun
 
-      - name: Build desktop renderer & main
-        working-directory: packages/desktop
-        run: bun run build
+      - name: Install Rust toolchain for Tauri
+        uses: dtolnay/rust-toolchain@stable
 
-      - name: Package macOS (dmg + zip)
-        working-directory: packages/desktop
+      - name: Rust Cache Acceleration for Tauri
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: packages/desktop-tauri/src-tauri
+
+      - name: Package macOS (Electron + Tauri Parallel Build)
         env:
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: bun run package:mac
+        run: bun run package:all
 
       - name: Upload macOS artifacts
         uses: actions/upload-artifact@v4
@@ -80,66 +83,8 @@ jobs:
           path: |
             packages/desktop/dist/*.dmg
             packages/desktop/dist/*.zip
+            packages/desktop-tauri/src-tauri/target/release/bundle/dmg/*.dmg
           if-no-files-found: error
-
-#   package-win:
-#     name: Package Windows
-#     needs: typecheck
-#     runs-on: windows-latest
-#     steps:
-#       - uses: actions/checkout@v6
-#
-#       - uses: ./.github/actions/setup-bun
-#
-#       - name: Build desktop renderer & main
-#         working-directory: packages/desktop
-#         run: bun run build
-#
-#       - name: Package Windows (nsis)
-#         working-directory: packages/desktop
-#         env:
-#           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-#           AZURE_KEY_VAULT_URI: ${{ secrets.AZURE_KEY_VAULT_URI }}
-#           AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
-#           AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
-#           AZURE_CERT_NAME: ${{ secrets.AZURE_CERT_NAME }}
-#         run: bun run package:win
-#
-#       - name: Upload Windows artifacts
-#         uses: actions/upload-artifact@v7
-#         with:
-#           name: desktop-win
-#           path: packages/desktop/dist/*.exe
-#           if-no-files-found: error
-#
-#   package-linux:
-#     name: Package Linux
-#     needs: typecheck
-#     runs-on: ubuntu-latest
-#     steps:
-#       - uses: actions/checkout@v6
-#
-#       - uses: ./.github/actions/setup-bun
-#
-#       - name: Build desktop renderer & main
-#         working-directory: packages/desktop
-#         run: bun run build
-#
-#       - name: Package Linux (AppImage / deb / rpm)
-#         working-directory: packages/desktop
-#         env:
-#           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-#         run: bun run package:linux
-#
-#       - name: Upload Linux artifacts
-#         uses: actions/upload-artifact@v7
-#         with:
-#           name: desktop-linux
-#           path: |
-#             packages/desktop/dist/*.AppImage
-#             packages/desktop/dist/*.deb
-#             packages/desktop/dist/*.rpm
-#           if-no-files-found: error
 
   # ── 3. 发布 GitHub Release ──────────────────────────────────────
   release:

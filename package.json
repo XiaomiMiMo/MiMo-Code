@@ -12,7 +12,10 @@
   "scripts": {
     "dev": "bun run --cwd packages/opencode script/dev.ts",
     "build:local": "bun run --cwd packages/opencode build:local",
-    "dev:desktop": "bun --cwd packages/desktop dev",
+    "dev:desktop": "bun --cwd packages/desktop-tauri dev",
+    "package:electron": "bun run --cwd packages/desktop package:mac",
+    "package:tauri": "bun --cwd packages/desktop-tauri build",
+    "package:all": "bun ./script/release-desktop-all.ts",
     "dev:web": "bun --cwd packages/app dev",
     "dev:console": "ulimit -n 10240 2>/dev/null; bun run --cwd packages/console/app dev",
     "dev:storybook": "bun --cwd packages/storybook storybook",

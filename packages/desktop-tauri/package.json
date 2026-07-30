@@ -1,0 +1,33 @@
+{
+  "name": "@mimo-ai/desktop-tauri",
+  "productName": "MiMo-Code",
+  "private": true,
+  "version": "0.1.9",
+  "type": "module",
+  "license": "MIT",
+  "scripts": {
+    "dev": "tauri dev",
+    "build": "vite build && tauri build",
+    "typecheck": "tsgo --noEmit"
+  },
+  "dependencies": {
+    "@mimo-ai/app": "0.1.9",
+    "@mimo-ai/ui": "0.1.9",
+    "solid-js": "catalog:",
+    "@tauri-apps/api": "^2.2.0",
+    "@tauri-apps/plugin-clipboard-manager": "^2.2.0",
+    "@tauri-apps/plugin-dialog": "^2.2.0",
+    "@tauri-apps/plugin-notification": "^2.2.0",
+    "@tauri-apps/plugin-opener": "^2.2.0",
+    "@tauri-apps/plugin-os": "^2.2.0",
+    "@tauri-apps/plugin-process": "^2.2.0",
+    "@tauri-apps/plugin-shell": "^2.2.0",
+    "@tauri-apps/plugin-store": "^2.2.0"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2.2.0",
+    "@types/node": "catalog:",
+    "typescript": "catalog:",
+    "vite": "catalog:"
+  }
+}
