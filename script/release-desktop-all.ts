@@ -33,7 +33,8 @@ console.log("⚡ [2/2] 并行启动 Electron 与 Tauri Release 打包任务...\n
 const buildElectron = async () => {
   const start = Date.now()
   console.log("⏳ [Electron] 开始构建 Electron 桌面包...")
-  const res = await $`bun run --cwd packages/desktop package:mac`.nothrow()
+  // 使用 package:mac:fast 极速精简构建 (仅打 .app 包，跳过 electron-builder 慢速 DMG 扫描)
+  const res = await $`bun run --cwd packages/desktop package:mac:fast`.nothrow()
   const duration = Date.now() - start
   if (res.exitCode === 0) {
     console.log(`✅ [Electron] 构建成功！耗时: ${formatTime(duration)}`)

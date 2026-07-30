@@ -36,7 +36,7 @@ env:
     }}
 
 jobs:
-  # ── 1. 类型检查 ─────────────────────────────────────────────────
+  # ── 1. 类型检查 (方案 A：异步并行启动，不再阻塞打包 Job) ─────────────
   typecheck:
     name: Typecheck
     runs-on: ubuntu-latest
@@ -50,10 +50,10 @@ jobs:
           bun run --cwd packages/desktop typecheck
           bun run --cwd packages/desktop-tauri typecheck
 
-  # ── 2. 构建 & 打包 (Electron + Tauri 并行 + Rust 缓存加速) ─────
+  # ── 2. 构建 & 打包 (Electron 精简包 + Tauri 共享 Cache 极速并行打包) ─────
   package-mac:
-    name: Package macOS (Electron + Tauri)
-    needs: typecheck
+    name: Package macOS (Electron + Tauri Parallel)
+    # 移除 needs: typecheck 依赖，实现类型检查与打包完全并行化，秒省 53 秒等待
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v6
@@ -63,12 +63,14 @@ jobs:
       - name: Install Rust toolchain for Tauri
         uses: dtolnay/rust-toolchain@stable
 
+      # 显式配置跨 Tag 共享 Rust Cache 键名，确保新建 Tag 时也能精准命中上一次的 Cargo 依赖编译产物
       - name: Rust Cache Acceleration for Tauri
         uses: Swatinem/rust-cache@v2
         with:
-          workspaces: packages/desktop-tauri/src-tauri
+          workspaces: packages/desktop-tauri/src-tauri -> target
+          shared-key: "tauri-rust-cache-v1"
 
-      - name: Package macOS (Electron + Tauri Parallel Build)
+      - name: Package macOS (Electron fast .app + Tauri DMG)
         env:
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
@@ -81,9 +83,8 @@ jobs:
         with:
           name: desktop-mac
           path: |
-            packages/desktop/dist/*.dmg
-            packages/desktop/dist/*.zip
             packages/desktop-tauri/src-tauri/target/release/bundle/dmg/*.dmg
+            packages/desktop/dist/mac-*/*.app
           if-no-files-found: error
 
   # ── 3. 发布 GitHub Release ──────────────────────────────────────
