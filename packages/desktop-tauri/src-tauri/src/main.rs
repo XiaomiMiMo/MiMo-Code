@@ -2,24 +2,32 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 use std::process::Command;
+use tauri::{
+    menu::{MenuBuilder, MenuItemBuilder, PredefinedMenuItem, SubmenuBuilder},
+    tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
+    Emitter, Manager,
+};
 use tauri_plugin_shell::ShellExt;
 
 const DESKTOP_SECRET: &str = "mimocode-desktop-secret";
+
+// ── macOS Terminal Integration ──────────────────────────────────────────────
 
 #[tauri::command]
 fn mac_open_in_terminal(command: String, terminal: Option<String>) -> Result<(), String> {
     #[cfg(target_os = "macos")]
     {
         let term_app = terminal.unwrap_or_else(|| "Terminal".to_string());
+        let escaped = command.replace('\\', "\\\\").replace('"', "\\\"");
         let script = if term_app == "iTerm" {
             format!(
                 "tell application \"iTerm\"\n  create window with default profile\n  tell current session of current window\n    write text \"{}\"\n  end tell\nend tell",
-                command.replace('\\', "\\\\").replace('"', "\\\"")
+                escaped
             )
         } else {
             format!(
                 "tell application \"Terminal\"\n  do script \"{}\"\n  activate\nend tell",
-                command.replace('\\', "\\\\").replace('"', "\\\"")
+                escaped
             )
         };
 
@@ -37,9 +45,12 @@ fn mac_open_in_terminal(command: String, terminal: Option<String>) -> Result<(),
     }
     #[cfg(not(target_os = "macos"))]
     {
+        let _ = (command, terminal);
         Err("mac_open_in_terminal is only available on macOS".into())
     }
 }
+
+// ── macOS Capabilities ─────────────────────────────────────────────────────
 
 #[tauri::command]
 fn mac_capabilities() -> serde_json::Value {
@@ -57,6 +68,145 @@ fn mac_capabilities() -> serde_json::Value {
     })
 }
 
+// ── macOS Dock Badge ───────────────────────────────────────────────────────
+
+#[tauri::command]
+fn mac_set_dock_badge(text: Option<String>) -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    {
+        let badge = text.as_deref().unwrap_or("");
+        let script = format!(
+            r#"tell application "System Events"
+    set processList to name of every process
+    if "MiMo-Code" is in processList then
+        tell application "MiMo-Code"
+            if "{}" is "" then
+                set badge of dock tile to missing value
+            else
+                set badge of dock tile to "{}"
+            end if
+        end tell
+    end if
+end tell"#,
+            badge, badge
+        );
+        let _ = Command::new("osascript").arg("-e").arg(&script).output();
+        Ok(())
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = text;
+        Ok(())
+    }
+}
+
+// ── macOS Keychain (via `security` CLI) ────────────────────────────────────
+
+fn mac_keychain_set_impl(name: &str, value: &str) -> Result<(), String> {
+    let service = format!("com.mimo-ai.desktop.{}", name);
+    // Delete existing first, then add
+    let _ = Command::new("security")
+        .args([
+            "delete-generic-password",
+            "-s", &service,
+            "-a", name,
+        ])
+        .output();
+    let output = Command::new("security")
+        .args([
+            "add-generic-password",
+            "-s", &service,
+            "-a", name,
+            "-w", value,
+            "-U", // update if exists (though we already deleted)
+        ])
+        .output()
+        .map_err(|e| e.to_string())?;
+    if output.status.success() {
+        Ok(())
+    } else {
+        Err(String::from_utf8_lossy(&output.stderr).to_string())
+    }
+}
+
+fn mac_keychain_get_impl(name: &str) -> Result<Option<String>, String> {
+    let service = format!("com.mimo-ai.desktop.{}", name);
+    let output = Command::new("security")
+        .args([
+            "find-generic-password",
+            "-s", &service,
+            "-a", name,
+            "-w",
+        ])
+        .output()
+        .map_err(|e| e.to_string())?;
+    if output.status.success() {
+        let s = String::from_utf8(output.stdout).map_err(|e| e.to_string())?;
+        Ok(Some(s.trim_end_matches('\n').to_string()))
+    } else {
+        Ok(None)
+    }
+}
+
+fn mac_keychain_delete_impl(name: &str) -> Result<(), String> {
+    let service = format!("com.mimo-ai.desktop.{}", name);
+    let output = Command::new("security")
+        .args([
+            "delete-generic-password",
+            "-s", &service,
+            "-a", name,
+        ])
+        .output()
+        .map_err(|e| e.to_string())?;
+    if output.status.success() {
+        Ok(())
+    } else {
+        // Not finding the item is not an error
+        Ok(())
+    }
+}
+
+#[tauri::command]
+fn mac_keychain_set(name: String, value: String) -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    {
+        mac_keychain_set_impl(&name, &value)
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = (name, value);
+        Err("mac_keychain_set is only available on macOS".into())
+    }
+}
+
+#[tauri::command]
+fn mac_keychain_get(name: String) -> Result<Option<String>, String> {
+    #[cfg(target_os = "macos")]
+    {
+        mac_keychain_get_impl(&name)
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = name;
+        Err("mac_keychain_get is only available on macOS".into())
+    }
+}
+
+#[tauri::command]
+fn mac_keychain_delete(name: String) -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    {
+        mac_keychain_delete_impl(&name)
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = name;
+        Err("mac_keychain_delete is only available on macOS".into())
+    }
+}
+
+// ── Application Entry ──────────────────────────────────────────────────────
+
 fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
@@ -66,9 +216,72 @@ fn main() {
         .plugin(tauri_plugin_store::Builder::default().build())
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_updater::Builder::default().build())
         .setup(|app| {
+            // Build macOS menu
+            #[cfg(target_os = "macos")]
+            {
+                let check_updates = MenuItemBuilder::with_id("check_updates", "检查更新...").build(app)?;
+                let about = PredefinedMenuItem::about(app, Some("关于 MiMo-Code"), None::<tauri::menu::AboutMetadata>)?;
+
+                let app_submenu = SubmenuBuilder::new(app, "MiMo-Code")
+                    .item(&about)
+                    .separator()
+                    .item(&check_updates)
+                    .separator()
+                    .quit()
+                    .build()?;
+
+                let edit_submenu = SubmenuBuilder::new(app, "编辑")
+                    .undo()
+                    .redo()
+                    .separator()
+                    .cut()
+                    .copy()
+                    .paste()
+                    .select_all()
+                    .build()?;
+
+                let window_submenu = SubmenuBuilder::new(app, "窗口")
+                    .minimize()
+                    .close_window()
+                    .build()?;
+
+                let menu = MenuBuilder::new(app)
+                    .item(&app_submenu)
+                    .item(&edit_submenu)
+                    .item(&window_submenu)
+                    .build()?;
+
+                app.set_menu(menu)?;
+            }
+
+            // Build tray icon
+            TrayIconBuilder::new()
+                .icon(app.default_window_icon().unwrap().clone())
+                .tooltip("MiMo-Code")
+                .on_menu_event(|app_handle, event| {
+                    if event.id() == "check_updates" {
+                        let _ = app_handle.emit("menu-command", "check_updates");
+                    }
+                })
+                .on_tray_icon_event(|tray, event| {
+                    if let TrayIconEvent::Click {
+                        button: MouseButton::Left,
+                        button_state: MouseButtonState::Up,
+                        ..
+                    } = event
+                    {
+                        if let Some(window) = tray.app_handle().get_webview_window("main") {
+                            let _ = window.show();
+                            let _ = window.set_focus();
+                        }
+                    }
+                })
+                .build(app)?;
+
+            // Auto-spawn sidecar: opencode serve
             let handle = app.handle().clone();
-            // 自动拉起 Sidecar 进程：opencode serve，并传递客户端桌面标识与密钥
             tauri::async_runtime::spawn(async move {
                 match handle.shell().sidecar("opencode") {
                     Ok(sidecar) => {
@@ -91,11 +304,16 @@ fn main() {
                     }
                 }
             });
+
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
             mac_open_in_terminal,
-            mac_capabilities
+            mac_capabilities,
+            mac_set_dock_badge,
+            mac_keychain_set,
+            mac_keychain_get,
+            mac_keychain_delete,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

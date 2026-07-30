@@ -40,6 +40,12 @@
     ]
   },
   "plugins": {
+    "updater": {
+      "active": true,
+      "dialog": true,
+      "endpoints": ["https://releases.opencode.ai/updates/{{target}}/{{current_version}}"],
+      "pubkey": ""
+    },
     "deep-link": {
       "desktop": {
         "schemes": ["mimo", "opencode"]

@@ -39,6 +39,7 @@
     "clipboard-manager:default",
     "store:default",
     "process:default",
-    "opener:default"
+    "opener:default",
+    "updater:default"
   ]
 }
