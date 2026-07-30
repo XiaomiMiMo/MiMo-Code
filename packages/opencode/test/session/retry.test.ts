@@ -124,6 +124,24 @@ describe("session.retry.delay", () => {
 })
 
 describe("session.retry.retryable", () => {
+  test("retries streamed server_error events", () => {
+    const input = {
+      type: "error",
+      sequence_number: 59,
+      error: {
+        type: "server_error",
+        code: "server_error",
+        message: "An error occurred while processing your request. You can retry your request.",
+        param: null,
+      },
+    }
+    const error = MessageV2.fromError(input, { providerID })
+
+    expect(MessageV2.APIError.isInstance(error)).toBe(true)
+    expect(SessionRetry.retryable(error)).toBe(input.error.message)
+    expect((error as MessageV2.APIError).data.responseBody).toBe(JSON.stringify(input))
+  })
+
   test("maps too_many_requests json messages", () => {
     const error = wrap(JSON.stringify({ type: "error", error: { type: "too_many_requests" } }))
     expect(SessionRetry.retryable(error)).toBe("Too Many Requests")
