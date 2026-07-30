@@ -172,6 +172,26 @@ export function nextSessionStatus(status: SessionStatus) {
   return reconcile(status)
 }
 
+// Pick the bucket the session view should render. `main` is the normal case; a
+// peer child (spawn.ts) runs its turns under agentID == its own sessionID, and an
+// ACTOR-hosted child runs them under its actor id ("checkpoint-writer-1",
+// "explore-1", "general-46"). Attaching to either kind lands on agentID "main"
+// with an empty main bucket, so falling back to the self-id bucket alone left
+// every actor-hosted session rendering a blank transcript over a full history.
+export function selectMessages<M extends { id: string }>(
+  buckets: Record<string, M[]> | undefined,
+  agentID: string,
+  sessionID: string,
+): M[] {
+  if (agentID !== "main" || buckets?.["main"]?.length) return buckets?.[agentID] ?? []
+  if (buckets?.[sessionID]?.length) return buckets[sessionID]
+  const newest = Object.entries(buckets ?? {})
+    .filter(([key, msgs]) => key !== "main" && msgs.length > 0)
+    .sort(([, a], [, b]) => (b.at(-1)?.id ?? "").localeCompare(a.at(-1)?.id ?? ""))
+    .at(0)
+  return newest?.[1] ?? []
+}
+
 export const { use: useSync, provider: SyncProvider } = createSimpleContext({
   name: "Sync",
   init: () => {
