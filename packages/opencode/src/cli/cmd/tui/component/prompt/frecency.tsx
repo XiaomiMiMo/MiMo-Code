@@ -2,7 +2,7 @@ import path from "path"
 import { Global } from "@/global"
 import { Filesystem } from "@/util"
 import { onMount } from "solid-js"
-import { createStore } from "solid-js/store"
+import { createStore, reconcile } from "solid-js/store"
 import { createSimpleContext } from "../../context/helper"
 import { appendFile, writeFile } from "fs/promises"
 
@@ -11,6 +11,21 @@ function calculateFrecency(entry?: { frequency: number; lastOpen: number }): num
   const daysSince = (Date.now() - entry.lastOpen) / 86400000 // ms per day
   const weight = 1 / (1 + daysSince)
   return entry.frequency * weight
+}
+
+/**
+ * Both writes of the whole `data` map are PRUNES: they hand over the surviving
+ * entries and mean the rest to be gone.
+ *
+ * Solid's store setter merges plain objects into the existing node
+ * (`mergeStoreNode` only writes `Object.keys(next)`), so the pruned keys used to
+ * survive in the store while the on-disk file was rewritten without them. The
+ * MAX_FRECENCY_ENTRIES cap therefore never took effect in memory: `store.data`
+ * grew without bound, every subsequent open re-ran the prune, and dropped paths
+ * kept scoring in the file picker.
+ */
+export function nextFrecencyData(data: Record<string, { frequency: number; lastOpen: number }>) {
+  return reconcile(data)
 }
 
 const MAX_FRECENCY_ENTRIES = 1000
@@ -47,8 +62,10 @@ export const { use: useFrecency, provider: FrecencyProvider } = createSimpleCont
 
       setStore(
         "data",
-        Object.fromEntries(
-          sorted.map((entry) => [entry.path, { frequency: entry.frequency, lastOpen: entry.lastOpen }]),
+        nextFrecencyData(
+          Object.fromEntries(
+            sorted.map((entry) => [entry.path, { frequency: entry.frequency, lastOpen: entry.lastOpen }]),
+          ),
         ),
       )
 
@@ -75,7 +92,7 @@ export const { use: useFrecency, provider: FrecencyProvider } = createSimpleCont
         const sorted = Object.entries(store.data)
           .sort(([, a], [, b]) => b.lastOpen - a.lastOpen)
           .slice(0, MAX_FRECENCY_ENTRIES)
-        setStore("data", Object.fromEntries(sorted))
+        setStore("data", nextFrecencyData(Object.fromEntries(sorted)))
         const content = sorted.map(([path, entry]) => JSON.stringify({ path, ...entry })).join("\n") + "\n"
         writeFile(frecencyPath, content).catch(() => {})
       }

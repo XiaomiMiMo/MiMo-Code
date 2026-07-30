@@ -65,6 +65,23 @@ export type WorkflowRun = {
   updatedAt?: number
 }
 
+/**
+ * A `workflow.started` event mints a FRESH run row, so it is authoritative for
+ * the whole object — including the optional fields it omits.
+ *
+ * Solid's store setter merges plain objects into the existing node
+ * (`mergeStoreNode` only writes `Object.keys(next)`), and a resume reuses the
+ * SAME runID: `WorkflowRuntime.resume` hands `input.runID` back to `launch`
+ * (workflow/runtime.ts:1577), which republishes `WorkflowStarted`
+ * (workflow/runtime.ts:712). Without reconcile the row that resume calls fresh
+ * inherits the PREVIOUS attempt's `currentPhase` and `error`, so /workflows
+ * shows a running run stamped with the phase it died in and the error it just
+ * retried past, until the resumed run happens to emit its first phase.
+ */
+export function nextWorkflowRun(run: WorkflowRun) {
+  return reconcile(run)
+}
+
 // Mirror of the runtime's WorkflowNode union (server route serializes it as
 // z.array(z.any())). The single TUI-side definition reused by the detail dialog
 // and the tree renderer.
@@ -698,15 +715,19 @@ export const { use: useSync, provider: SyncProvider } = createSimpleContext({
         case "workflow.started": {
           // Upsert a fresh run row; counters stay zero until loadWorkflows /
           // the dialog's poll (T7) refreshes them from the list route.
-          setStore("workflow", event.properties.runID, {
-            runID: event.properties.runID,
-            sessionID: event.properties.sessionID,
-            name: event.properties.name,
-            status: "running",
-            running: 0,
-            succeeded: 0,
-            failed: 0,
-          })
+          setStore(
+            "workflow",
+            event.properties.runID,
+            nextWorkflowRun({
+              runID: event.properties.runID,
+              sessionID: event.properties.sessionID,
+              name: event.properties.name,
+              status: "running",
+              running: 0,
+              succeeded: 0,
+              failed: 0,
+            }),
+          )
           break
         }
 
