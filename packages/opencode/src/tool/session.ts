@@ -7,6 +7,7 @@ import { tokenize } from "./shell-tokenize"
 import z from "zod"
 import { Effect, Deferred } from "effect"
 import { Session } from "@/session"
+import { classifySession } from "@/session/visibility"
 import { Worktree } from "@/worktree"
 import { Instance } from "@/project/instance"
 import { InstanceRef } from "@/effect/instance-ref"
@@ -929,6 +930,32 @@ export const SessionTool = Tool.define<typeof parameters, Metadata, Deps>(
       }
 
       if (op.action === "switch") {
+        // Same prohibition the renderer enforces (cli/cmd/tui/routes/session/index.tsx).
+        // The renderer is the choke point, but refusing here too is what reaches
+        // the model mid-turn: a silent no-op would just make it retry.
+        // NotFoundError is a synchronous throw inside an Effect.fn (a DEFECT, not
+        // a typed failure — see the Worktree.create note above), so Effect.catch
+        // can't see it; Effect.exit captures any non-success.
+        const targetExit = yield* Effect.exit(sessions.get(op.sessionID as SessionID))
+        if (targetExit._tag !== "Success")
+          return {
+            title: `Refused switch to ${op.sessionID}`,
+            output: `Refused to move the UI to ${op.sessionID}: no such session. Run \`session list\` to see the child sessions you can switch to.`,
+            metadata: { sessionID: op.sessionID } as Metadata,
+          }
+        const target = targetExit.value
+        const verdict = classifySession(
+          target,
+          target.parentID ? yield* sessions.children(target.parentID, { visible: true }) : undefined,
+        )
+        if (!verdict.renderable)
+          return {
+            title: `Refused switch to ${op.sessionID}`,
+            output:
+              `Refused to move the UI to ${op.sessionID}: ${verdict.reason}. The UI only displays root sessions and peer child sessions; internal machinery sessions are never rendered. ` +
+              `Run \`session list\` to see the child sessions you can switch to, or switch to this session's parent instead.`,
+            metadata: { sessionID: op.sessionID } as Metadata,
+          }
         yield* Effect.promise(() => Bus.publish(TuiEvent.SessionSelect, { sessionID: op.sessionID as SessionID }))
         return {
           title: `Switched to ${op.sessionID}`,

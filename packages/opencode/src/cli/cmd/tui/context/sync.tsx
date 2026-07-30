@@ -173,23 +173,25 @@ export function nextSessionStatus(status: SessionStatus) {
 }
 
 // Pick the bucket the session view should render. `main` is the normal case; a
-// peer child (spawn.ts) runs its turns under agentID == its own sessionID, and an
-// ACTOR-hosted child runs them under its actor id ("checkpoint-writer-1",
-// "explore-1", "general-46"). Attaching to either kind lands on agentID "main"
-// with an empty main bucket, so falling back to the self-id bucket alone left
-// every actor-hosted session rendering a blank transcript over a full history.
+// peer child (spawn.ts) runs its turns under agentID == its own sessionID, so
+// attaching to one lands on agentID "main" with an empty main bucket and must
+// fall back to the self-id bucket.
+//
+// There is deliberately no third fallback to "whatever non-main bucket has the
+// newest message". The only sessions that would reach it are actor-hosted
+// children (buckets "checkpoint-writer-1", "general-46", …), and those are
+// exactly the internal-machinery sessions the product forbids rendering — the
+// route now refuses them outright (routes/session/index.tsx), so such a bucket
+// is unreachable rather than blank. Measured on a 5.4 GB local DB: of the 1295
+// sessions that fallback would have served, 0 were roots, 0 had a mode:"peer"
+// actor row, and all 1295 are refused by the render guard.
 export function selectMessages<M extends { id: string }>(
   buckets: Record<string, M[]> | undefined,
   agentID: string,
   sessionID: string,
 ): M[] {
   if (agentID !== "main" || buckets?.["main"]?.length) return buckets?.[agentID] ?? []
-  if (buckets?.[sessionID]?.length) return buckets[sessionID]
-  const newest = Object.entries(buckets ?? {})
-    .filter(([key, msgs]) => key !== "main" && msgs.length > 0)
-    .sort(([, a], [, b]) => (b.at(-1)?.id ?? "").localeCompare(a.at(-1)?.id ?? ""))
-    .at(0)
-  return newest?.[1] ?? []
+  return buckets?.[sessionID] ?? []
 }
 
 export const { use: useSync, provider: SyncProvider } = createSimpleContext({

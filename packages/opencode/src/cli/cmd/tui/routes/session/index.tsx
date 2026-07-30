@@ -34,6 +34,7 @@ import type {
 } from "@mimo-ai/sdk/v2"
 import { useLocal } from "@tui/context/local"
 import { Locale } from "@/util"
+import { verifySessionRenderable } from "@/session/visibility"
 import type { Tool } from "@/tool"
 import type { ReadTool } from "@/tool/read"
 import type { WriteTool } from "@/tool/write"
@@ -247,6 +248,25 @@ export function Session() {
     if (!result.data) {
       toast.show({
         message: `Session not found: ${route.sessionID}`,
+        variant: "error",
+      })
+      navigate({ type: "home" })
+      return
+    }
+
+    // The prohibition. Every way of reaching this route hands a raw session id
+    // straight to the renderer and bypasses both hiding layers: -s/--session
+    // (thread.ts → app.tsx), `attach --session`, POST /tui/select-session, POST
+    // /tui/event, the session tool's `switch`, MIMOCODE_ROUTE, plugin
+    // navigate("session", …) and the session-list dialog's child injection. This
+    // effect is the one point all of them must pass, so the refusal lives here
+    // rather than on any single entry point.
+    const verdict = await verifySessionRenderable(result.data, (parentID) =>
+      sdk.client.session.children({ sessionID: parentID, visible: true }).then((res) => res.data),
+    )
+    if (!verdict.renderable) {
+      toast.show({
+        message: `Cannot open session: ${verdict.reason}`,
         variant: "error",
       })
       navigate({ type: "home" })
