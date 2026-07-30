@@ -27,12 +27,46 @@ await $`rm -rf ${appPath}`
 mkdirSync(distDir, { recursive: true })
 
 // 2. 定位 node_modules 中的 Electron.app 模板
-const electronPkgMain = require.resolve("electron")
-const electronDistDir = join(dirname(electronPkgMain), "dist")
-const electronAppTemplate = join(electronDistDir, "Electron.app")
+function locateElectronAppTemplate(): string | null {
+  try {
+    const electronExe = require("electron")
+    if (typeof electronExe === "string" && electronExe.includes("Electron.app")) {
+      const appIndex = electronExe.indexOf("Electron.app")
+      const extractedPath = electronExe.slice(0, appIndex + "Electron.app".length)
+      if (existsSync(extractedPath)) return extractedPath
+    }
+  } catch {}
 
-if (!existsSync(electronAppTemplate)) {
-  console.error("❌ 找不到 Electron 模板，路径:", electronAppTemplate)
+  try {
+    const electronPkgMain = require.resolve("electron")
+    const dir = dirname(electronPkgMain)
+    const candidates = [
+      join(dir, "dist/Electron.app"),
+      join(dir, "dist/mac/Electron.app"),
+      resolve(desktopDir, "../../node_modules/electron/dist/Electron.app"),
+      resolve(desktopDir, "node_modules/electron/dist/Electron.app"),
+    ]
+    for (const c of candidates) {
+      if (existsSync(c)) return c
+    }
+  } catch {}
+
+  return null
+}
+
+let electronAppTemplate = locateElectronAppTemplate()
+
+if (!electronAppTemplate) {
+  console.log("⚠️ 尝试自动补齐下载 Electron 基础模板...")
+  try {
+    await $`node node_modules/electron/install.js`.cwd(desktopDir).nothrow()
+    await $`bunx electron --version`.cwd(desktopDir).nothrow()
+  } catch {}
+  electronAppTemplate = locateElectronAppTemplate()
+}
+
+if (!electronAppTemplate) {
+  console.error("❌ 找不到 Electron 模板，请检查 node_modules 中的 electron 安装状态")
   process.exit(1)
 }
 
