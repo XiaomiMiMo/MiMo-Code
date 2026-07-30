@@ -1,4 +1,7 @@
 import { SYSTEM_SPAWNED_AGENT_TYPES } from "@/agent/config"
+import { Log } from "@/util"
+
+const log = Log.create({ service: "session.visibility" })
 
 /**
  * Which sessions the UI is allowed to display.
@@ -69,6 +72,31 @@ import { SYSTEM_SPAWNED_AGENT_TYPES } from "@/agent/config"
  * A prohibition that fails open is still a prohibition when the population it
  * targets provably cannot arrive un-annotated; over-refusing real transcripts is
  * the more expensive error, and it is the one the user actually hit.
+ *
+ * ## "Unreadable" is NOT "absent" — only the first of the two fails open
+ *
+ * The argument above is about rows that are genuinely ABSENT, and it rests on a
+ * measured population: all 17 no-row children are real transcripts. It does not
+ * transfer to rows that EXIST but could not be READ. That is a different
+ * population — every child is a candidate, and of the 1504 children in the live
+ * DB 1304 carry a system-spawned row — so a read failure that fell through to
+ * the fail-open arm would render a checkpoint-writer host in roughly six cases
+ * out of seven. A filter may fail open; a GATE must fail closed, and this is a
+ * gate.
+ *
+ * So `classifySession` never learns about read failures: `undefined` means "this
+ * session has no rows" and nothing else. A failed read goes to
+ * `classifyUnreadableActors` instead, which refuses with a DISTINCT reason
+ * ("could not verify") so an operator can tell a broken read from the product
+ * prohibition, and logs the session id and the cause — the swallowed
+ * `catch(() => undefined)` this replaced reported a state it had not verified
+ * and left no trace of having failed.
+ *
+ * Failing closed costs a legitimate session that is briefly unopenable, which is
+ * the OTHER error this file was narrowed to avoid. Two things bound that cost:
+ * the refusal is only reached after one retry, which is what a single dropped
+ * request costs; and a root never reaches it at all, because a root's verdict
+ * does not depend on its rows, so an unreadable read cannot change it.
  */
 
 /** Minimal shape needed to classify — `parentID` is a nullable DB column. */
@@ -90,9 +118,10 @@ const RENDERABLE: RenderVerdict = { renderable: true }
 /**
  * `actors` must be the session's OWN `ActorRegistry` rows
  * (`ActorRegistry.listBySession` / `GET /session/:id/actors`) — the rows keyed by
- * `session_id === info.id`. `undefined` means the lookup could not be completed,
- * which is treated the same as "no rows": renderable. See the fail-open note
- * above.
+ * `session_id === info.id`. `undefined` means the session HAS no rows, which is
+ * renderable: see the fail-open note above. A read that FAILED must never be
+ * passed here as `undefined`; route it to `classifyUnreadableActors`, which is
+ * the whole point of keeping the two states apart.
  */
 export function classifySession(
   info: SessionVisibilityInput,
@@ -123,14 +152,50 @@ export function classifySession(
 }
 
 /**
+ * The verdict for a session whose own actor rows could not be READ, as opposed to
+ * a session that genuinely has none. Fails closed for a child, and logs the
+ * session id with the underlying cause so the failure is never silent.
+ *
+ * A root stays renderable: `classifySession` decides a root without looking at
+ * its rows at all, so an unreadable read cannot change its verdict, and routing
+ * roots through here keeps the two enforcement points from disagreeing — the
+ * transport wrapper below returns before it ever fetches, while the session
+ * tool's `switch` reads rows unconditionally and so does reach this function.
+ *
+ * The reason deliberately says "could not verify" and never names an agent: the
+ * user-visible string has to distinguish a broken read from the prohibition.
+ */
+export function classifyUnreadableActors(info: SessionVisibilityInput, cause: unknown): RenderVerdict {
+  if (!info.parentID) return RENDERABLE
+  log.error("actor rows unreadable, refusing to render", { sessionID: info.id, cause })
+  return {
+    renderable: false,
+    reason: `could not verify whether ${info.id} is a conversation: reading its actor rows failed`,
+  }
+}
+
+/**
  * Same rule, for callers that reach the actor registry over a transport rather
- * than in-process. `fetchActors` should resolve `undefined` on failure.
+ * than in-process. `fetchActors` MUST REJECT when the read fails — a client that
+ * resolves `{ data: undefined }` on an HTTP error arrives here as "no rows" and
+ * fails open, so the caller passes `throwOnError`.
  */
 export async function verifySessionRenderable(
   info: SessionVisibilityInput,
   fetchActors: (sessionID: string) => Promise<readonly SessionActorInput[] | undefined>,
 ): Promise<RenderVerdict> {
   if (!info.parentID) return RENDERABLE
-  const actors = await fetchActors(info.id).catch(() => undefined)
-  return classifySession(info, actors)
+  // One retry, then refuse. A single dropped request is the common failure and is
+  // not worth making a real transcript unopenable; a failure that survives a
+  // second attempt is not transient. Bounded on purpose — a gate that retries
+  // until it succeeds is a gate that never closes.
+  let cause: unknown
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      return classifySession(info, await fetchActors(info.id))
+    } catch (error) {
+      cause = error
+    }
+  }
+  return classifyUnreadableActors(info, cause)
 }

@@ -265,9 +265,16 @@ export function Session() {
     // means the checkpoint writer. It reads the session's own actor rows, so no
     // parent round-trip is needed.
     const verdict = await verifySessionRenderable(result.data, (sessionID) =>
+      // `throwOnError` is load-bearing, not tidiness: without it this client
+      // RESOLVES `{ data: undefined }` on an HTTP error, which the classifier
+      // reads as "this session has no actor rows" and renders. The failure has to
+      // arrive as a rejection for the gate to see it as unverified rather than as
+      // verified-absent.
       // SessionActorsResponses[200] is generated as `unknown`, so the shape is
       // asserted here exactly as sync.tsx does for the same endpoint.
-      sdk.client.session.actors({ sessionID }).then((res) => res.data as SessionActorInput[] | undefined),
+      sdk.client.session
+        .actors({ sessionID }, { throwOnError: true })
+        .then((res) => res.data as SessionActorInput[] | undefined),
     )
     if (!verdict.renderable) {
       toast.show({

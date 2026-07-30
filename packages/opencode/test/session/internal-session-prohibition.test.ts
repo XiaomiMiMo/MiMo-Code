@@ -13,7 +13,7 @@ import { Git } from "../../src/git"
 import { Instance } from "../../src/project/instance"
 import { Provider } from "../../src/provider"
 import { Session } from "../../src/session"
-import { classifySession, verifySessionRenderable } from "../../src/session/visibility"
+import { classifySession, classifyUnreadableActors, verifySessionRenderable } from "../../src/session/visibility"
 import { MessageID, SessionID } from "../../src/session/schema"
 import { Truncate } from "../../src/tool"
 import { SessionTool } from "../../src/tool/session"
@@ -162,33 +162,103 @@ describe("runtime-spawned agent hosts are never rendered — the rule", () => {
     }),
   )
 
-  // REWRITTEN, was: "an unverifiable child is refused — the prohibition fails
-  // closed", asserting `renderable === false` and a reason containing "could not
-  // verify". That assertion belonged to the previous criterion (renderable iff
-  // root or present among the parent's `visible: true` children), where an
-  // unreadable sibling list left the classifier with no evidence either way and
-  // refusing was the safe default.
+  // REWRITTEN (second time). Was, at 0b458f634: "a child whose actor rows cannot
+  // be read is still rendered — the prohibition fails open", whose first
+  // assertion was `verifySessionRenderable(child, () => { throw }).renderable ===
+  // true`. That single test asserted BOTH states at once, because
+  // `.catch(() => undefined)` made a failed read arrive at the classifier as "no
+  // rows" — so it pinned the collapse it was meant to describe.
   //
-  // The requirement changed with the criterion. The verdict is now read off the
-  // session's OWN actor rows against SYSTEM_SPAWNED_AGENT_TYPES, and the only
-  // population it must refuse — the checkpoint-writer host — provably cannot
-  // present as "no rows" once it holds a message: spawnSubagent registers the row
-  // (actor/spawn.ts:731) before forking the work that writes one (:762), the row
-  // is ON DELETE CASCADE on the session, and 1302/1302 writer hosts in the live
-  // DB carry it. Fail-closed, by contrast, refused all 17 live no-actor-row
-  // children, every one of which is a real pre-registry @explore/@general
-  // transcript stored under `main`. So the direction of error is deliberate:
-  // over-refusing a real transcript is the costlier mistake and the one users hit.
-  it.live("a child whose actor rows cannot be read is still rendered — the prohibition fails open", () =>
+  // The fail-open evidence only ever covered rows that are genuinely ABSENT: all
+  // 17 no-actor-row children in the live DB are real pre-registry
+  // @explore/@general transcripts stored under `main`. It says nothing about rows
+  // that exist and could not be READ, where the population is every child — 1304
+  // of the 1504 live children carry a system-spawned row. So the two states are
+  // now split across this test (absent, still fails open, assertions kept
+  // verbatim) and the two that follow (unreadable, fails closed). Nothing was
+  // relaxed: the `throw` case moved from asserting `renderable === true` to
+  // asserting `renderable === false` plus a distinct reason.
+  it.live("absent actor rows still fail open — a child with no rows renders", () =>
+    Effect.sync(() => {
+      expect(classifySession({ id: "ses_kid", parentID: "ses_root" }, undefined).renderable).toBe(true)
+      expect(classifySession({ id: "ses_kid", parentID: "ses_root" }, []).renderable).toBe(true)
+    }),
+  )
+
+  it.live("an UNREADABLE actor read is refused, and never with the prohibition's reason", () =>
+    Effect.sync(() => {
+      const verdict = classifyUnreadableActors({ id: "ses_kid", parentID: "ses_root" }, new Error("boom"))
+      expect(verdict.renderable).toBe(false)
+      if (!verdict.renderable) {
+        expect(verdict.reason).toContain("ses_kid")
+        // An operator has to be able to tell a broken read from the product
+        // prohibition, so these two reasons must never converge.
+        expect(verdict.reason).toContain("could not verify")
+        expect(verdict.reason).not.toContain("runtime-spawned")
+      }
+      // A root is decided without reading rows at all, so an unreadable read
+      // cannot make one unopenable. This is also what keeps the switch path — which
+      // reads rows unconditionally — in step with the renderer, which returns
+      // before it ever fetches.
+      expect(classifyUnreadableActors({ id: "ses_root" }, new Error("boom")).renderable).toBe(true)
+    }),
+  )
+
+  it.live("renderer path: a read that keeps failing is refused after exactly one retry", () =>
     Effect.gen(function* () {
-      const thrown = yield* Effect.promise(() =>
+      let attempts = 0
+      const verdict = yield* Effect.promise(() =>
         verifySessionRenderable({ id: "ses_kid", parentID: "ses_root" }, async () => {
+          attempts++
           throw new Error("network")
         }),
       )
-      expect(thrown.renderable).toBe(true)
-      expect(classifySession({ id: "ses_kid", parentID: "ses_root" }, undefined).renderable).toBe(true)
-      expect(classifySession({ id: "ses_kid", parentID: "ses_root" }, []).renderable).toBe(true)
+      expect(verdict.renderable).toBe(false)
+      if (!verdict.renderable) expect(verdict.reason).toContain("could not verify")
+      // Bounded: one retry, not a loop. A gate that retries until it succeeds is a
+      // gate that never closes.
+      expect(attempts).toBe(2)
+    }),
+  )
+
+  // The other half of the retry decision: failing closed must not punish the
+  // transient blip the branch was narrowed to avoid, and the rows recovered by
+  // the retry must be classified normally rather than as unverified.
+  it.live("renderer path: one transient failure is retried, and the recovered rows decide", () =>
+    Effect.gen(function* () {
+      let attempts = 0
+      const verdict = yield* Effect.promise(() =>
+        verifySessionRenderable({ id: "ses_kid", parentID: "ses_root" }, async () => {
+          attempts++
+          if (attempts === 1) throw new Error("blip")
+          return [{ mode: "subagent", agent: "checkpoint-writer" }]
+        }),
+      )
+      expect(attempts).toBe(2)
+      expect(verdict.renderable).toBe(false)
+      if (!verdict.renderable) {
+        expect(verdict.reason).toContain("checkpoint-writer")
+        expect(verdict.reason).not.toContain("could not verify")
+      }
+    }),
+  )
+
+  it.live("the refusal is logged with the session id and the underlying error", () =>
+    Effect.promise(async () => {
+      // Log.init({ print: false }) opens a real file sink and Log.file() names it,
+      // so the record is asserted rather than assumed. The swallowed catch this
+      // replaced left no trace at all.
+      await Log.init({ print: false })
+      const logfile = Log.file()
+      expect(logfile).not.toBe("")
+      await verifySessionRenderable({ id: "ses_logged", parentID: "ses_root" }, async () => {
+        throw new Error("actors-endpoint-exploded")
+      })
+      await Log.flush()
+      const written = await Bun.file(logfile).text()
+      expect(written).toContain("actor rows unreadable")
+      expect(written).toContain("ses_logged")
+      expect(written).toContain("actors-endpoint-exploded")
     }),
   )
 
@@ -275,6 +345,26 @@ describe("runtime-spawned agent hosts are never rendered — renderer path", () 
       expect(guardAt).toBeGreaterThan(-1)
       expect(syncAt).toBeGreaterThan(-1)
       expect(guardAt).toBeLessThan(syncAt)
+    }),
+  )
+  // Source-level for the same reason as the wiring assertion above — no Solid
+  // render harness — and additionally because what it pins is a property of the
+  // SDK CALL, not of any function under test. Load-bearing: without
+  // `throwOnError` this client RESOLVES `{ data: undefined }` on an HTTP error
+  // (gen/client/client.gen.ts:167-177), so a 500 from /session/:id/actors reaches
+  // classifySession as "this session has no rows" and renders. That reopens the
+  // fail-open leak with visibility.ts completely untouched, which is why the
+  // separation cannot be enforced in visibility.ts alone.
+  it.live("the route's actor fetch rejects on an HTTP error rather than resolving undefined", () =>
+    Effect.promise(async () => {
+      const src = await Bun.file(
+        new URL("../../src/cli/cmd/tui/routes/session/index.tsx", import.meta.url).pathname,
+      ).text()
+      const guardAt = src.indexOf("verifySessionRenderable(")
+      expect(guardAt).toBeGreaterThan(-1)
+      const call = src.slice(guardAt, src.indexOf("if (!verdict.renderable)", guardAt))
+      expect(call).toContain("sdk.client.session")
+      expect(call).toContain(".actors({ sessionID }, { throwOnError: true })")
     }),
   )
 })
@@ -380,6 +470,78 @@ describe("runtime-spawned agent hosts are never rendered — session tool switch
   // only this test fails if the agent-set check is moved above the root guard —
   // and getting that wrong refuses a real user conversation, which is what the
   // one such root in the live DB is.
+  // The discriminator that keeps the two enforcement points in step for the NEW
+  // state. `unregistered` is chosen deliberately: the test above publishes it when
+  // the rows read cleanly (absent rows fail open), and this one refuses the very
+  // same session when the read FAILS. If the two states were ever collapsed
+  // again — by restoring a swallowing catch here or by handing the failure to
+  // classifySession — this test would publish and go green.
+  it.live("switch refuses when the actor rows cannot be READ, with the unverifiable reason", () =>
+    provideTmpdirInstance(() =>
+      Effect.gen(function* () {
+        const { root, unregistered } = yield* scaffold
+        const real = yield* ActorRegistry.Service
+        // listBySession is typed as never-failing, so the only way it breaks is a
+        // defect — exactly the shape Effect.catch cannot see and Effect.exit can.
+        const broken = Layer.succeed(ActorRegistry.Service, {
+          ...real,
+          listBySession: () => Effect.die(new Error("actor_registry read failed")),
+        })
+
+        const seen: string[] = []
+        const unsub = Bus.subscribe(TuiEvent.SessionSelect, (event) => seen.push(event.properties.sessionID))
+
+        const result = yield* Effect.gen(function* () {
+          const info = yield* SessionTool
+          const tool = yield* info.init()
+          return yield* tool.execute({ operation: { action: "switch", sessionID: unregistered.id } }, ctx(root.id))
+        }).pipe(Effect.provide(broken))
+
+        unsub()
+        expect(seen).toEqual([])
+        expect(result.title).toContain("Refused")
+        expect(result.output).toContain("could not verify")
+        // Not the prohibition's wording, so the model is not told a product rule
+        // when what happened was a broken read.
+        expect(result.output).not.toContain("runtime-spawned")
+        // Still model-actionable: a silent no-op or a crashed tool call just makes
+        // the model retry blind.
+        expect(result.output).toContain("retry the switch")
+        expect(result.output).toContain("session list")
+      }),
+    ),
+  )
+
+  // A root's verdict never depends on its rows, so an unreadable read must not make
+  // one unopenable — and this path is the only one that can regress it, because
+  // verifySessionRenderable returns before it fetches while switch reads rows
+  // unconditionally.
+  it.live("switch still publishes for a root when the actor rows cannot be read", () =>
+    provideTmpdirInstance(() =>
+      Effect.gen(function* () {
+        const { root } = yield* scaffold
+        const real = yield* ActorRegistry.Service
+        const broken = Layer.succeed(ActorRegistry.Service, {
+          ...real,
+          listBySession: () => Effect.die(new Error("actor_registry read failed")),
+        })
+
+        const seen: string[] = []
+        const unsub = Bus.subscribe(TuiEvent.SessionSelect, (event) => seen.push(event.properties.sessionID))
+
+        const result = yield* Effect.gen(function* () {
+          const info = yield* SessionTool
+          const tool = yield* info.init()
+          return yield* tool.execute({ operation: { action: "switch", sessionID: root.id } }, ctx(root.id))
+        }).pipe(Effect.provide(broken))
+
+        unsub()
+        expect(seen).toEqual([root.id])
+        expect(result.title).toContain("Switched to")
+      }),
+    ),
+  )
+
   it.live("switch still publishes for a root that carries a checkpoint-writer row", () =>
     provideTmpdirInstance(() =>
       Effect.gen(function* () {
