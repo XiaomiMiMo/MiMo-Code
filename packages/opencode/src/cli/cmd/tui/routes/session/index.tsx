@@ -34,7 +34,7 @@ import type {
 } from "@mimo-ai/sdk/v2"
 import { useLocal } from "@tui/context/local"
 import { Locale } from "@/util"
-import { verifySessionRenderable } from "@/session/visibility"
+import { verifySessionRenderable, type SessionActorInput } from "@/session/visibility"
 import type { Tool } from "@/tool"
 import type { ReadTool } from "@/tool/read"
 import type { WriteTool } from "@/tool/write"
@@ -260,9 +260,14 @@ export function Session() {
     // /tui/event, the session tool's `switch`, MIMOCODE_ROUTE, plugin
     // navigate("session", …) and the session-list dialog's child injection. This
     // effect is the one point all of them must pass, so the refusal lives here
-    // rather than on any single entry point.
-    const verdict = await verifySessionRenderable(result.data, (parentID) =>
-      sdk.client.session.children({ sessionID: parentID, visible: true }).then((res) => res.data),
+    // rather than on any single entry point. What counts as forbidden lives in
+    // session/visibility.ts: a host for a RUNTIME-spawned agent, which today
+    // means the checkpoint writer. It reads the session's own actor rows, so no
+    // parent round-trip is needed.
+    const verdict = await verifySessionRenderable(result.data, (sessionID) =>
+      // SessionActorsResponses[200] is generated as `unknown`, so the shape is
+      // asserted here exactly as sync.tsx does for the same endpoint.
+      sdk.client.session.actors({ sessionID }).then((res) => res.data as SessionActorInput[] | undefined),
     )
     if (!verdict.renderable) {
       toast.show({

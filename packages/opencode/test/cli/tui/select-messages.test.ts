@@ -19,33 +19,47 @@ describe("selectMessages", () => {
     expect(selectMessages(buckets, "main", "ses_peer")).toEqual([msg("m1", "ses_peer"), msg("m2", "ses_peer")])
   })
 
-  // INVERTED IN THIS PR. These two cases previously asserted the opposite:
-  // "renders an actor-hosted session whose only bucket is its actor id" and
-  // "picks the newest bucket when an empty-main session has several actor
-  // buckets". That was arm 4 of selectMessages — a fallback added to stop
-  // `mimo -s <actor-hosted-id>` showing a blank pane over a full transcript.
+  // REWRITTEN TWICE — read the history before touching these, they have flipped
+  // once already.
   //
-  // Rendering those sessions is no longer the requirement: the same PR forbids
-  // the TUI from opening an internal-machinery session at all
-  // (routes/session/index.tsx + session/visibility.ts). Measured on a 5.4 GB
-  // local DB, arm 4's entire population — 1295 sessions, 0 roots, 0 with a
-  // mode:"peer" actor row, buckets checkpoint-writer-N (1284), build-N (7),
-  // compose-N (3), general-N (1) — is refused by that guard, so arm 4 had no
-  // legitimate population left. The blank pane is fixed by making the session
-  // unreachable, not by rendering machinery the product hides. These tests now
-  // pin that the fallback stays deleted.
-  test("does NOT fall back to an actor-hosted bucket (prohibition, not blank-pane fallback)", () => {
-    const buckets = bucketMessages([
-      msg("m1", "checkpoint-writer-1"),
-      msg("m2", "checkpoint-writer-1"),
-      msg("m3", "checkpoint-writer-1"),
+  // Originally they asserted that an actor-bucketed session renders (the
+  // blank-transcript fix). A later commit on this same branch INVERTED them to
+  // `toEqual([])` and deleted the fallback, on the reasoning that arm 4's only
+  // population was internal machinery which the new render prohibition made
+  // unreachable anyway.
+  //
+  // That reasoning has been narrowed and these are back to asserting rendering.
+  // The prohibition no longer keys on "not a peer child" but on the session
+  // hosting a RUNTIME-spawned agent (session/visibility.ts →
+  // SYSTEM_SPAWNED_AGENT_TYPES). Measured on the live DB, the 1313 sessions this
+  // arm serves are 1302 checkpoint-writer hosts — still refused, upstream at the
+  // route, before the selector ever runs — plus 11 `session ask` fork-query hosts
+  // (buckets build-1 ×7, compose-1 ×3, general-1 ×1) which are model-spawned
+  // read-only transcripts the product does display. Those 11 are precisely the
+  // blank pane #1964 was opened to fix, so the arm is load-bearing again.
+  //
+  // The inversion that makes it safe: machinery is refused BEFORE bucket
+  // selection, so this fallback can no longer be what renders a checkpoint-writer
+  // transcript.
+  test("renders an actor-hosted session whose only bucket is its actor id", () => {
+    const buckets = bucketMessages([msg("m1", "build-1"), msg("m2", "build-1"), msg("m3", "build-1")])
+    expect(selectMessages(buckets, "main", "ses_askfork")).toEqual([
+      msg("m1", "build-1"),
+      msg("m2", "build-1"),
+      msg("m3", "build-1"),
     ])
-    expect(selectMessages(buckets, "main", "ses_actorhost")).toEqual([])
   })
 
-  test("does NOT pick the newest bucket when an empty-main session has several actor buckets", () => {
+  test("picks the newest bucket when an empty-main session has several actor buckets", () => {
     const buckets = bucketMessages([msg("m1", "general-1"), msg("m9", "general-2")])
-    expect(selectMessages(buckets, "main", "ses_actorhost")).toEqual([])
+    expect(selectMessages(buckets, "main", "ses_actorhost")).toEqual([msg("m9", "general-2")])
+  })
+
+  // The self-id bucket must still win over a newer actor bucket: a peer child that
+  // spawned subagents has both, and its own conversation is what to show.
+  test("prefers the peer self-id bucket over a newer actor bucket", () => {
+    const buckets = bucketMessages([msg("m1", "ses_peer"), msg("m9", "explore-1")])
+    expect(selectMessages(buckets, "main", "ses_peer")).toEqual([msg("m1", "ses_peer")])
   })
 
   test("an explicit agentID still reaches an actor bucket (subagent dialog is unaffected)", () => {

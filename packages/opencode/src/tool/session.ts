@@ -944,15 +944,15 @@ export const SessionTool = Tool.define<typeof parameters, Metadata, Deps>(
             metadata: { sessionID: op.sessionID } as Metadata,
           }
         const target = targetExit.value
-        const verdict = classifySession(
-          target,
-          target.parentID ? yield* sessions.children(target.parentID, { visible: true }) : undefined,
-        )
+        // Same shared helper the renderer uses, so the criterion cannot drift
+        // between the two enforcement points: it reads the TARGET's own actor
+        // rows, not its parent's child list.
+        const verdict = classifySession(target, yield* actorReg.listBySession(target.id as SessionID))
         if (!verdict.renderable)
           return {
             title: `Refused switch to ${op.sessionID}`,
             output:
-              `Refused to move the UI to ${op.sessionID}: ${verdict.reason}. The UI only displays root sessions and peer child sessions; internal machinery sessions are never rendered. ` +
+              `Refused to move the UI to ${op.sessionID}: ${verdict.reason}. A session hosting a runtime-spawned agent is never rendered. ` +
               `Run \`session list\` to see the child sessions you can switch to, or switch to this session's parent instead.`,
             metadata: { sessionID: op.sessionID } as Metadata,
           }

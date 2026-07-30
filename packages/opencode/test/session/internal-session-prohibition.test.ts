@@ -59,10 +59,17 @@ const ctx = (sessionID: string) => ({
 })
 
 /**
- * Builds the three shapes that matter, exactly as they exist in the real DB:
+ * Builds the five shapes that matter, exactly as they exist in the real DB:
  *   - peer child      → actor row keyed (session_id = child.id, actor_id = child.id), mode "peer"
  *   - writer host     → actor row keyed (session_id = child.id, actor_id = "checkpoint-writer-1"), mode "subagent"
- *   - unregistered    → child session with no actor row at all (ask-tool fork window)
+ *   - ask fork        → tool/session.ts:128's forkQuery host: mode "subagent" whose
+ *                       agent is the TARGET's agent ("build"), title `ask: …`
+ *   - unregistered    → child session with no actor row at all (17 such children
+ *                       exist in the live DB: pre-registry @explore/@general subagents)
+ *   - writerRoot      → a ROOT that carries a checkpoint-writer row, because
+ *                       before the writer got its own child session it registered
+ *                       under the session it was checkpointing. One such root
+ *                       exists in the live DB and it is a real conversation.
  */
 const scaffold = Effect.gen(function* () {
   const sessions = yield* Session.Service
@@ -98,13 +105,44 @@ const scaffold = Effect.gen(function* () {
     tools: undefined,
   })
 
-  const unregistered = yield* sessions.create({ parentID: root.id as SessionID, title: "ask fork" })
+  const askFork = yield* sessions.create({ parentID: root.id as SessionID, title: "ask: what is the status" })
+  yield* actorReg.register({
+    sessionID: askFork.id as SessionID,
+    actorID: "build-1",
+    mode: "subagent",
+    agent: "build",
+    description: "fork-query",
+    contextMode: "full",
+    contextWatermark: undefined,
+    background: false,
+    lifecycle: "ephemeral",
+    tools: undefined,
+  })
 
-  return { sessions, root, peer, writerHost, unregistered }
+  const unregistered = yield* sessions.create({
+    parentID: root.id as SessionID,
+    title: "Explore codebase structure (@explore subagent)",
+  })
+
+  const writerRoot = yield* sessions.create({ title: "a real conversation that got checkpointed" })
+  yield* actorReg.register({
+    sessionID: writerRoot.id as SessionID,
+    actorID: "checkpoint-writer-1",
+    mode: "subagent",
+    agent: "checkpoint-writer",
+    description: "writer registered under the session it checkpointed",
+    contextMode: "none",
+    contextWatermark: undefined,
+    background: true,
+    lifecycle: "ephemeral",
+    tools: undefined,
+  })
+
+  return { sessions, root, peer, writerHost, askFork, unregistered, writerRoot }
 })
 
-describe("internal-machinery sessions are never rendered — the rule", () => {
-  it.live("a root is renderable without consulting siblings at all", () =>
+describe("runtime-spawned agent hosts are never rendered — the rule", () => {
+  it.live("a root is renderable without consulting its actor rows at all", () =>
     Effect.gen(function* () {
       let asked = 0
       const verdict = yield* Effect.promise(() =>
@@ -124,38 +162,80 @@ describe("internal-machinery sessions are never rendered — the rule", () => {
     }),
   )
 
-  it.live("an unverifiable child is refused — the prohibition fails closed", () =>
+  // REWRITTEN, was: "an unverifiable child is refused — the prohibition fails
+  // closed", asserting `renderable === false` and a reason containing "could not
+  // verify". That assertion belonged to the previous criterion (renderable iff
+  // root or present among the parent's `visible: true` children), where an
+  // unreadable sibling list left the classifier with no evidence either way and
+  // refusing was the safe default.
+  //
+  // The requirement changed with the criterion. The verdict is now read off the
+  // session's OWN actor rows against SYSTEM_SPAWNED_AGENT_TYPES, and the only
+  // population it must refuse — the checkpoint-writer host — provably cannot
+  // present as "no rows" once it holds a message: spawnSubagent registers the row
+  // (actor/spawn.ts:731) before forking the work that writes one (:762), the row
+  // is ON DELETE CASCADE on the session, and 1302/1302 writer hosts in the live
+  // DB carry it. Fail-closed, by contrast, refused all 17 live no-actor-row
+  // children, every one of which is a real pre-registry @explore/@general
+  // transcript stored under `main`. So the direction of error is deliberate:
+  // over-refusing a real transcript is the costlier mistake and the one users hit.
+  it.live("a child whose actor rows cannot be read is still rendered — the prohibition fails open", () =>
     Effect.gen(function* () {
       const thrown = yield* Effect.promise(() =>
         verifySessionRenderable({ id: "ses_kid", parentID: "ses_root" }, async () => {
           throw new Error("network")
         }),
       )
-      expect(thrown.renderable).toBe(false)
-      const missing = classifySession({ id: "ses_kid", parentID: "ses_root" }, undefined)
-      expect(missing.renderable).toBe(false)
-      if (!missing.renderable) expect(missing.reason).toContain("could not verify")
+      expect(thrown.renderable).toBe(true)
+      expect(classifySession({ id: "ses_kid", parentID: "ses_root" }, undefined).renderable).toBe(true)
+      expect(classifySession({ id: "ses_kid", parentID: "ses_root" }, []).renderable).toBe(true)
+    }),
+  )
+
+  it.live("dream and distill are refused for the same reason as checkpoint-writer", () =>
+    Effect.sync(() => {
+      for (const agent of ["checkpoint-writer", "dream", "distill"]) {
+        const verdict = classifySession({ id: "ses_kid", parentID: "ses_root" }, [{ mode: "subagent", agent }])
+        expect(verdict.renderable).toBe(false)
+        if (!verdict.renderable) expect(verdict.reason).toContain(agent)
+      }
+    }),
+  )
+
+  // Ordering matters, not just membership: a peer child that RAN a system agent
+  // must stay renderable, so the peer arm has to be reached before the agent set.
+  it.live("a peer row wins over a system-spawned row on the same session", () =>
+    Effect.sync(() => {
+      expect(
+        classifySession({ id: "ses_kid", parentID: "ses_root" }, [
+          { mode: "peer", agent: "general" },
+          { mode: "subagent", agent: "checkpoint-writer" },
+        ]).renderable,
+      ).toBe(true)
     }),
   )
 })
 
-describe("internal-machinery sessions are never rendered — renderer path", () => {
-  it.live("refuses a checkpoint-writer host and an unregistered fork, admits root and peer", () =>
+describe("runtime-spawned agent hosts are never rendered — renderer path", () => {
+  it.live("refuses only the checkpoint-writer host; admits root, peer, ask fork and unregistered child", () =>
     provideTmpdirInstance(() =>
       Effect.gen(function* () {
-        const { sessions, root, peer, writerHost, unregistered } = yield* scaffold
+        const { root, peer, writerHost, askFork, unregistered, writerRoot } = yield* scaffold
+        const actorReg = yield* ActorRegistry.Service
 
-        // The renderer resolves siblings through exactly the hiding layer the
-        // session list uses: Session.children(parentID, { visible: true }).
-        const fetchVisible = (parentID: string) =>
+        // The renderer resolves the verdict from the session's own actor rows,
+        // which over the SDK is GET /session/:id/actors → listBySession.
+        const fetchActors = (sessionID: string) =>
           Effect.runPromise(
-            sessions
-              .children(parentID as SessionID, { visible: true })
-              .pipe(Effect.map((rows) => rows.map((r) => ({ id: r.id })))) as Effect.Effect<{ id: string }[]>,
+            actorReg
+              .listBySession(sessionID as SessionID)
+              .pipe(Effect.map((rows) => rows.map((r) => ({ mode: r.mode, agent: r.agent })))) as Effect.Effect<
+              { mode: string; agent: string }[]
+            >,
           )
 
         const check = (info: { id: string; parentID?: string }) =>
-          Effect.promise(() => verifySessionRenderable(info, fetchVisible))
+          Effect.promise(() => verifySessionRenderable(info, fetchActors))
 
         expect((yield* check(root)).renderable).toBe(true)
         expect((yield* check(peer)).renderable).toBe(true)
@@ -164,10 +244,18 @@ describe("internal-machinery sessions are never rendered — renderer path", () 
         expect(writerVerdict.renderable).toBe(false)
         if (!writerVerdict.renderable) {
           expect(writerVerdict.reason).toContain(writerHost.id)
-          expect(writerVerdict.reason).toContain("internal session")
+          expect(writerVerdict.reason).toContain("checkpoint-writer")
         }
 
-        expect((yield* check(unregistered)).renderable).toBe(false)
+        // The narrowing. Both of these were refused by the previous criterion:
+        // neither owns a mode:"peer" row, so neither appeared among its parent's
+        // visible children. Both are real transcripts.
+        expect((yield* check(askFork)).renderable).toBe(true)
+        expect((yield* check(unregistered)).renderable).toBe(true)
+
+        // A root is never classified by its actor rows, so the real conversation
+        // that carries a checkpoint-writer row stays renderable.
+        expect((yield* check(writerRoot)).renderable).toBe(true)
       }),
     ),
   )
@@ -191,7 +279,7 @@ describe("internal-machinery sessions are never rendered — renderer path", () 
   )
 })
 
-describe("internal-machinery sessions are never rendered — session tool switch path", () => {
+describe("runtime-spawned agent hosts are never rendered — session tool switch path", () => {
   it.live("switch refuses a checkpoint-writer host without publishing SessionSelect", () =>
     provideTmpdirInstance(() =>
       Effect.gen(function* () {
@@ -207,28 +295,38 @@ describe("internal-machinery sessions are never rendered — session tool switch
         unsub()
         expect(seen).toEqual([])
         expect(result.title).toContain("Refused")
-        expect(result.output).toContain("internal session")
+        expect(result.output).toContain("checkpoint-writer")
         // The refusal must be actionable for the model mid-turn.
         expect(result.output).toContain("session list")
       }),
     ),
   )
 
-  it.live("switch refuses an unregistered child fork without publishing", () =>
+  // REWRITTEN, was: "switch refuses an unregistered child fork without
+  // publishing", asserting `seen === []` and a "Refused" title. Same criterion
+  // change as the fail-open rewrite above — a child with no actor row is no
+  // longer machinery by default, so `switch` must now move the UI there. Kept as
+  // a test rather than deleted because it is the discriminator for the two
+  // enforcement points staying in step: if only the renderer had been narrowed,
+  // the model would still be refused here and the UI would still be reachable
+  // by -s, which is the split the shared helper exists to prevent.
+  it.live("switch now publishes for an unregistered child and for an ask fork", () =>
     provideTmpdirInstance(() =>
       Effect.gen(function* () {
-        const { root, unregistered } = yield* scaffold
+        const { root, unregistered, askFork } = yield* scaffold
 
         const seen: string[] = []
         const unsub = Bus.subscribe(TuiEvent.SessionSelect, (event) => seen.push(event.properties.sessionID))
 
         const info = yield* SessionTool
         const tool = yield* info.init()
-        const result = yield* tool.execute({ operation: { action: "switch", sessionID: unregistered.id } }, ctx(root.id))
+        const bare = yield* tool.execute({ operation: { action: "switch", sessionID: unregistered.id } }, ctx(root.id))
+        const ask = yield* tool.execute({ operation: { action: "switch", sessionID: askFork.id } }, ctx(root.id))
 
         unsub()
-        expect(seen).toEqual([])
-        expect(result.title).toContain("Refused")
+        expect(seen).toEqual([unregistered.id, askFork.id])
+        expect(bare.title).toContain("Switched to")
+        expect(ask.title).toContain("Switched to")
       }),
     ),
   )
@@ -272,6 +370,31 @@ describe("internal-machinery sessions are never rendered — session tool switch
         expect(seen).toEqual([peer.id, root.id])
         expect(peerResult.title).toContain("Switched to")
         expect(rootResult.title).toContain("Switched to")
+      }),
+    ),
+  )
+
+  // The switch path is where classifySession's OWN root guard is load-bearing:
+  // it calls the helper unconditionally with listBySession's rows, whereas
+  // verifySessionRenderable returns early for a root and never fetches any. So
+  // only this test fails if the agent-set check is moved above the root guard —
+  // and getting that wrong refuses a real user conversation, which is what the
+  // one such root in the live DB is.
+  it.live("switch still publishes for a root that carries a checkpoint-writer row", () =>
+    provideTmpdirInstance(() =>
+      Effect.gen(function* () {
+        const { root, writerRoot } = yield* scaffold
+
+        const seen: string[] = []
+        const unsub = Bus.subscribe(TuiEvent.SessionSelect, (event) => seen.push(event.properties.sessionID))
+
+        const info = yield* SessionTool
+        const tool = yield* info.init()
+        const result = yield* tool.execute({ operation: { action: "switch", sessionID: writerRoot.id } }, ctx(root.id))
+
+        unsub()
+        expect(seen).toEqual([writerRoot.id])
+        expect(result.title).toContain("Switched to")
       }),
     ),
   )
