@@ -83,10 +83,17 @@ export type ContextWindow = ReturnType<typeof overflowWindow>
  * number that disagrees with the trigger and then jumps to a different measured
  * value on the next turn. Instead, when the newest measured assistant turn is
  * OLDER than the most recent rebuild boundary, the measured figure is stale, so
- * we report `pending: true` rather than repeat the pre-rebuild fill. The number
- * refreshes for real on the next assistant turn (whose id sorts after the
- * boundary). Cost is a cumulative sum over all assistant turns and is unaffected
- * by the boundary — the whole point of /rebuild is to drop context, not cost.
+ * `pending` is true and `context` blanks only the unmeasured numerator while
+ * keeping the window frame (`—/960K`), since the window is still known and a
+ * percentage of an unknown numerator is meaningless. The number refreshes for
+ * real on the next assistant turn (whose id sorts after the boundary). Cost is a
+ * cumulative sum over all assistant turns and is unaffected by the boundary —
+ * the whole point of /rebuild is to drop context, not cost.
+ *
+ * `context` is the final display string in every case: the pure function is the
+ * sole owner of the pending placeholder (it is where the "figure is stale"
+ * decision is made and where the tests live), so the renderer shows `context`
+ * unconditionally and never has to reinterpret `pending`.
  */
 export function computeContextUsage(input: {
   messages: Message[]
@@ -106,20 +113,23 @@ export function computeContextUsage(input: {
 
   const cost = messages.reduce((sum, m) => sum + (m.role === "assistant" ? m.cost : 0), 0)
 
+  // The window frame is `<usable>` plus the `↓` config-budget marker. Denominator
+  // is the compaction trigger, not the raw window — otherwise the percentage never
+  // reaches 100% and a configured budget looks ignored.
+  const frame = win ? `${Token.format(win.usable)}${win.source === "config" ? "↓" : ""}` : undefined
+
   // Ascending message ids are timestamp-monotonic, so a boundary id greater than
   // the last measured assistant id means the rebuild happened after that turn.
   const boundary = messages.findLast((m) => hasCheckpoint(m.id))
   const pending = !!boundary && boundary.id > last.id
   if (pending) {
-    return { context: "…", cost, pending: true }
+    // Blank only the unmeasured numerator; keep the frame when we have one so the
+    // footer reads as deliberately-unknown (`—/960K`) rather than broken. With no
+    // window there is no frame to keep, so a bare placeholder is correct. No
+    // percentage either way — a percentage of an unknown numerator is meaningless.
+    return { context: frame ? `—/${frame}` : "—", cost, pending: true }
   }
 
-  const context = win
-    ? // Denominator is the compaction trigger, not the raw window — otherwise the
-      // percentage never reaches 100% and a configured budget looks ignored.
-      `${Locale.number(tokens)}/${Token.format(win.usable)}${win.source === "config" ? "↓" : ""} (${Math.round(
-        (tokens / win.usable) * 100,
-      )}%)`
-    : Locale.number(tokens)
+  const context = frame ? `${Locale.number(tokens)}/${frame} (${Math.round((tokens / win!.usable) * 100)}%)` : Locale.number(tokens)
   return { context, cost, pending: false }
 }

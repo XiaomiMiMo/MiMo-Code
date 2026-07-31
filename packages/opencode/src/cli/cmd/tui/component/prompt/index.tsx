@@ -488,10 +488,10 @@ export function Prompt(props: PromptProps) {
     })
     if (!result) return
     return {
-      // Pending renders an em dash so the footer visibly stops asserting the
-      // pre-rebuild fill (which is exactly why the user ran /rebuild) without
-      // inventing an estimate that would disagree with the compaction trigger.
-      context: result.pending ? "—" : result.context,
+      // computeContextUsage owns the pending placeholder (it renders `—/<win>`
+      // so the footer stops asserting the pre-rebuild fill while keeping the
+      // frame), so `context` is the final string in every case — render it as-is.
+      context: result.context,
       cost: result.cost > 0 ? money.format(result.cost) : undefined,
     }
   })

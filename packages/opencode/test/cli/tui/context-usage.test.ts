@@ -55,9 +55,46 @@ describe("computeContextUsage", () => {
     })
     expect(out).toBeDefined()
     expect(out!.pending).toBe(true)
+    // Must not repeat the stale pre-rebuild fill (this is the whole point).
     expect(out!.context).not.toBe("579.0K/960K (60%)")
+    // Keep the frame, blank only the unmeasured numerator, and drop the percentage
+    // (a percentage of an unknown numerator is meaningless).
+    expect(out!.context).toBe("—/960K")
+    expect(out!.context).not.toContain("%")
     // Cost is cumulative and independent of the context figure — it must survive.
     expect(out!.cost).toBe(13.1)
+  })
+
+  test("pending with no known window shows a bare placeholder (no frame to keep)", () => {
+    // When the window is unknown the non-pending path shows only a bare token
+    // count, so pending has no frame to preserve — a bare `—` is correct, and it
+    // must still not carry a percentage or the stale token count.
+    const messages = [user("msg_01"), assistant("msg_02", 578_900, { cost: 13.1 }), user("msg_03")]
+    const out = computeContextUsage({
+      messages,
+      window: undefined,
+      hasCheckpoint: (id) => id === "msg_03",
+    })
+    expect(out).toBeDefined()
+    expect(out!.pending).toBe(true)
+    expect(out!.context).toBe("—")
+    expect(out!.context).not.toContain("%")
+    expect(out!.context).not.toContain("579")
+    expect(out!.cost).toBe(13.1)
+  })
+
+  test("config-source window keeps the ↓ marker in the pending frame", () => {
+    // The frame includes the ↓ budget marker for a config-sourced window; pending
+    // must preserve it so the user still sees they are on a configured budget.
+    const messages = [user("msg_01"), assistant("msg_02", 578_900, { cost: 13.1 }), user("msg_03")]
+    const out = computeContextUsage({
+      messages,
+      window: { hard: 1_000_000, effective: 980_000, usable: 960_000, source: "config" as const },
+      hasCheckpoint: (id) => id === "msg_03",
+    })
+    expect(out).toBeDefined()
+    expect(out!.pending).toBe(true)
+    expect(out!.context).toBe("—/960K↓")
   })
 
   test("a fresh assistant turn after the boundary clears pending and re-measures", () => {
