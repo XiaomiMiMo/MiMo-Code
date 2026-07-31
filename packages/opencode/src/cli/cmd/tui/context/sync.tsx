@@ -1005,6 +1005,7 @@ export const { use: useSync, provider: SyncProvider } = createSimpleContext({
               draft.todo[sessionID] = todo.data ?? []
               draft.task[sessionID] = task.data ?? []
               const flat = (messages.data ?? []).map((x) => x.info)
+              // Server returns messages id-ordered and message.updated keeps that order; the footer's post-/rebuild pending-detection deliberately does NOT depend on it (it keys off checkpoint coveredUpTo, model.ts), so reordering here won't resurface the stale-context bug.
               draft.message[sessionID] = bucketMessages(flat)
               for (const message of messages.data ?? []) {
                 draft.part[message.info.id] = message.parts

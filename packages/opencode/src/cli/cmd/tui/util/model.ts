@@ -81,14 +81,26 @@ export type ContextWindow = ReturnType<typeof overflowWindow>
  * a manual /rebuild inserts only a checkpoint-boundary message and produces no
  * new usage record, so re-tokenizing the trimmed transcript here would show a
  * number that disagrees with the trigger and then jumps to a different measured
- * value on the next turn. Instead, when the newest measured assistant turn is
- * OLDER than the most recent rebuild boundary, the measured figure is stale, so
+ * value on the next turn. Instead, when the last measured assistant turn falls
+ * inside a region a rebuild collapsed, the measured figure is stale, so
  * `pending` is true and `context` blanks only the unmeasured numerator while
  * keeping the window frame (`—/960K`), since the window is still known and a
  * percentage of an unknown numerator is meaningless. The number refreshes for
- * real on the next assistant turn (whose id sorts after the boundary). Cost is a
- * cumulative sum over all assistant turns and is unaffected by the boundary —
+ * real on the next assistant turn (which is created after the boundary). Cost is
+ * a cumulative sum over all assistant turns and is unaffected by the boundary —
  * the whole point of /rebuild is to drop context, not cost.
+ *
+ * Staleness is decided from each rebuild's `coveredUpTo` (the watermark message
+ * id it collapsed up to), NOT from the boundary marker's own id or its array
+ * position. This matters: the boundary marker message is created with a fresh
+ * ascending id but a deliberately backdated `time.created` (checkpoint.ts, so it
+ * renders next to the region it summarizes), so its id and time disagree by
+ * design. Comparing the marker's own id — or trusting `findLast` to return the
+ * newest boundary in array order — would silently reintroduce the stale-figure
+ * bug the moment the caller ordered messages by time, or ran a second rebuild.
+ * `coveredUpTo` is an ordinary watermark message id (a real prior turn), so
+ * `coveredUpTo >= last.id` is an honest "was this measured turn collapsed?" test
+ * that holds under any caller ordering and any number of rebuilds.
  *
  * `context` is the final display string in every case: the pure function is the
  * sole owner of the pending placeholder (it is where the "figure is stale"
@@ -98,10 +110,14 @@ export type ContextWindow = ReturnType<typeof overflowWindow>
 export function computeContextUsage(input: {
   messages: Message[]
   window: ContextWindow | undefined
-  /** True when the message with this id carries a `checkpoint` (rebuild) part. */
-  hasCheckpoint: (messageID: string) => boolean
+  /**
+   * For a message carrying a `checkpoint` (rebuild) part, the `coveredUpTo`
+   * watermark id that rebuild collapsed up to; `undefined` for any other
+   * message. Ordering-independent: the readout never inspects message order.
+   */
+  checkpointCoverage: (messageID: string) => string | undefined
 }): { context: string; cost: number; pending: boolean } | undefined {
-  const { messages, window: win, hasCheckpoint } = input
+  const { messages, window: win, checkpointCoverage } = input
   const last = messages.findLast(
     (m): m is AssistantMessage => m.role === "assistant" && m.tokens.output > 0,
   )
@@ -118,10 +134,13 @@ export function computeContextUsage(input: {
   // reaches 100% and a configured budget looks ignored.
   const frame = win ? `${Token.format(win.usable)}${win.source === "config" ? "↓" : ""}` : undefined
 
-  // Ascending message ids are timestamp-monotonic, so a boundary id greater than
-  // the last measured assistant id means the rebuild happened after that turn.
-  const boundary = messages.findLast((m) => hasCheckpoint(m.id))
-  const pending = !!boundary && boundary.id > last.id
+  // The measured turn is stale if ANY rebuild collapsed a region reaching it or
+  // past it — i.e. some checkpoint's coveredUpTo id is >= the last measured turn's
+  // id. `some` (not `findLast`) so the result never depends on message order.
+  const pending = messages.some((m) => {
+    const coveredUpTo = checkpointCoverage(m.id)
+    return coveredUpTo !== undefined && coveredUpTo >= last.id
+  })
   if (pending) {
     // Blank only the unmeasured numerator; keep the frame when we have one so the
     // footer reads as deliberately-unknown (`—/960K`) rather than broken. With no
