@@ -32,7 +32,7 @@ import * as Clipboard from "../../util/clipboard"
 import type { AssistantMessage, FilePart, UserMessage } from "@mimo-ai/sdk/v2"
 import { TuiEvent } from "../../event"
 import { iife } from "@/util/iife"
-import { Locale, Token } from "@/util"
+import { Locale } from "@/util"
 import { formatDuration } from "@/util/format"
 import { SessionRetry } from "@/session/retry"
 import { createColors, createFrames } from "../../ui/spinner.ts"
@@ -471,25 +471,28 @@ export function Prompt(props: PromptProps) {
   const usage = createMemo(() => {
     if (!props.sessionID) return
     const msg = sync.data.message[props.sessionID]?.["main"] ?? []
+    // Resolve the window from the last measured assistant turn's model, matching
+    // the record `computeContextUsage` reads for the token count.
     const last = msg.findLast((item): item is AssistantMessage => item.role === "assistant" && item.tokens.output > 0)
     if (!last) return
-
-    const tokens =
-      last.tokens.input + last.tokens.output + last.tokens.reasoning + last.tokens.cache.read + last.tokens.cache.write
-    if (tokens <= 0) return
-
     const model = sync.data.provider.find((item) => item.id === last.providerID)?.models[last.modelID]
     const win = Model.contextWindow(sync.data.config, model)
-    const cost = msg.reduce((sum, item) => sum + (item.role === "assistant" ? item.cost : 0), 0)
+    // A /rebuild boundary is a message carrying a `checkpoint` part (stored in
+    // sync.data.part, keyed by message id). When it is newer than the last
+    // measured turn, computeContextUsage reports pending instead of the stale
+    // fill — the number only becomes real again on the next assistant turn.
+    const result = Model.computeContextUsage({
+      messages: msg,
+      window: win,
+      hasCheckpoint: (id) => (sync.data.part[id] ?? []).some((p) => p.type === "checkpoint"),
+    })
+    if (!result) return
     return {
-      // Denominator is the compaction trigger, not the raw window — otherwise the
-      // percentage never reaches 100% and a configured budget looks ignored.
-      context: win
-        ? `${Locale.number(tokens)}/${Token.format(win.usable)}${win.source === "config" ? "↓" : ""} (${Math.round(
-            (tokens / win.usable) * 100,
-          )}%)`
-        : Locale.number(tokens),
-      cost: cost > 0 ? money.format(cost) : undefined,
+      // Pending renders an em dash so the footer visibly stops asserting the
+      // pre-rebuild fill (which is exactly why the user ran /rebuild) without
+      // inventing an estimate that would disagree with the compaction trigger.
+      context: result.pending ? "—" : result.context,
+      cost: result.cost > 0 ? money.format(result.cost) : undefined,
     }
   })
 
