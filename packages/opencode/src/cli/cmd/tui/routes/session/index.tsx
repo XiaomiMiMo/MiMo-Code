@@ -33,7 +33,7 @@ import type {
   ReasoningPart,
 } from "@mimo-ai/sdk/v2"
 import { useLocal } from "@tui/context/local"
-import { Locale } from "@/util"
+import { Locale, Log } from "@/util"
 import type { Tool } from "@/tool"
 import type { ReadTool } from "@/tool/read"
 import type { WriteTool } from "@/tool/write"
@@ -249,31 +249,61 @@ export function Session() {
   const toast = useToast()
   const sdk = useSDK()
 
-  createEffect(async () => {
+  createEffect(() => {
+    const sessionID = route.sessionID
     const previousWorkspace = project.workspace.current()
-    const result = await sdk.client.session.get({ sessionID: route.sessionID }, { throwOnError: true })
-    if (!result.data) {
+
+    const isCurrentRoute = () =>
+      fullRoute.data.type === "session" && fullRoute.data.sessionID === sessionID
+
+    void (async () => {
+      const result = await sdk.client.session.get({ sessionID })
+
+      if (!isCurrentRoute()) return
+
+      if (!result.data) {
+        toast.show({
+          message: result.response?.status === 404 ? "Session not found" : "Failed to load session",
+          variant: "error",
+        })
+        navigate({ type: "home" })
+        return
+      }
+
+      if (result.data.workspaceID !== previousWorkspace) {
+        project.workspace.set(result.data.workspaceID)
+
+        try {
+          await sync.bootstrap({ fatal: false })
+        } catch {
+          // Preserve existing non-fatal bootstrap behavior.
+        }
+
+        if (!isCurrentRoute()) return
+      }
+
+      if (!isCurrentRoute()) return
+
+      await sync.session.sync(sessionID)
+
+      if (!isCurrentRoute()) return
+
+      scroll?.scrollBy(100_000)
+    })().catch((error) => {
+      Log.Default.error("session route load failed", {
+        sessionID,
+        error: error instanceof Error ? error.message : String(error),
+        stack: error instanceof Error ? error.stack : undefined,
+      })
+
+      if (!isCurrentRoute()) return
+
       toast.show({
-        message: `Session not found: ${route.sessionID}`,
+        message: "Failed to load session",
         variant: "error",
       })
       navigate({ type: "home" })
-      return
-    }
-
-    if (result.data.workspaceID !== previousWorkspace) {
-      project.workspace.set(result.data.workspaceID)
-
-      // Sync all the data for this workspace. Note that this
-      // workspace may not exist anymore which is why this is not
-      // fatal. If it doesn't we still want to show the session
-      // (which will be non-interactive)
-      try {
-        await sync.bootstrap({ fatal: false })
-      } catch (e) {}
-    }
-    await sync.session.sync(route.sessionID)
-    if (scroll) scroll.scrollBy(100_000)
+    })
   })
 
   let lastSwitch: string | undefined = undefined

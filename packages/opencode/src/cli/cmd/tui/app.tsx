@@ -177,16 +177,7 @@ export function tui(input: {
                 <LanguageProvider>
                   <UiI18nBridge>
                 <ToastProvider>
-                  <RouteProvider
-                    initialRoute={
-                      input.args.continue
-                        ? {
-                            type: "session",
-                            sessionID: "dummy",
-                          }
-                        : undefined
-                    }
-                  >
+                  <RouteProvider>
                     <TuiConfigProvider config={input.config}>
                       <SDKProvider
                         url={input.url}
@@ -406,7 +397,8 @@ function App(props: { onSnapshot?: () => Promise<string[]> }) {
   let continued = false
   createEffect(() => {
     // When using -c, session list is loaded in blocking phase, so we can navigate at "partial"
-    if (continued || sync.status === "loading" || !args.continue) return
+    // An explicit -s takes priority: skip continue resume so it can't override the chosen session.
+    if (continued || sync.status === "loading" || !args.continue || args.sessionID) return
     // RACE GUARD: orchestratorDirPath() resolves asynchronously (onMount above).
     // If sync reaches "partial" first, orchestratorDirPath() is still undefined
     // and we'd wrongly skip the orchestrator branch, resume the persistent
@@ -437,19 +429,22 @@ function App(props: { onSnapshot?: () => Promise<string[]> }) {
     const match = sync.data.session
       .toSorted((a, b) => b.time.updated - a.time.updated)
       .find((x) => x.parentID === undefined && !isSystemSession(x))?.id
-    if (match) {
+    if (!match) {
       continued = true
-      if (args.fork) {
-        void sdk.client.session.fork({ sessionID: match }).then((result) => {
-          if (result.data?.id) {
-            route.navigate({ type: "session", sessionID: result.data.id })
-          } else {
-            toast.show({ message: "Failed to fork session", variant: "error" })
-          }
-        })
-      } else {
-        route.navigate({ type: "session", sessionID: match })
-      }
+      toast.show({ message: "No previous session to continue", variant: "info" })
+      return
+    }
+    continued = true
+    if (args.fork) {
+      void sdk.client.session.fork({ sessionID: match }).then((result) => {
+        if (result.data?.id) {
+          route.navigate({ type: "session", sessionID: result.data.id })
+        } else {
+          toast.show({ message: "Failed to fork session", variant: "error" })
+        }
+      })
+    } else {
+      route.navigate({ type: "session", sessionID: match })
     }
   })
 
