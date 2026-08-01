@@ -188,12 +188,10 @@ function custom(dep: CustomDep): Record<string, CustomLoader> {
         Boolean(yield* dep.auth(input.id)) ||
         Boolean((yield* dep.config()).provider?.["opencode"]?.options?.apiKey)
 
-      // Never surface the free/public tier (cost.input === 0). Without a
-      // subscription/key, hide the remaining (paid) models too — they can't be
-      // used unauthenticated. So: authenticated -> subscription models only,
-      // unauthenticated -> nothing.
+      // Without a subscription/key, hide all models — they can't be used
+      // unauthenticated. Authenticated users see both free and paid models.
       for (const [key, value] of Object.entries(input.models)) {
-        if (!ok || value.cost.input === 0) delete input.models[key]
+        if (!ok) delete input.models[key]
       }
 
       return {
