@@ -259,6 +259,54 @@ describe("classifyAssistantStep", () => {
     ).toBe("invalid")
   })
 
+  test("GPT stop + empty (no text/tool/reasoning) => final (not invalid)", () => {
+    // GPT via stateless Responses / openai-compatible proxies (mimorouter,
+    // LiteLLM) commonly ends a tool-loop step empty because encrypted reasoning
+    // isn't echoed back. Terminate clean instead of nudging twice then failing
+    // with a spurious InvalidOutputError.
+    expect(
+      classifyAssistantStep({
+        phase: "after-process",
+        lastUser,
+        assistant: { ...assistantInfo("m-2", { finish: "stop" }), modelID: ModelID.make("gpt-5.1") },
+        parts: [],
+      }),
+    ).toEqual({ type: "final" })
+  })
+
+  test("GPT other + empty => degraded final", () => {
+    expect(
+      classifyAssistantStep({
+        phase: "after-process",
+        lastUser,
+        assistant: { ...assistantInfo("m-2", { finish: "other" }), modelID: ModelID.make("gpt-5.1") },
+        parts: [],
+      }),
+    ).toEqual({ type: "final", degraded: true })
+  })
+
+  test("namespaced GPT stop + empty => final", () => {
+    expect(
+      classifyAssistantStep({
+        phase: "after-process",
+        lastUser,
+        assistant: { ...assistantInfo("m-2", { finish: "stop" }), modelID: ModelID.make("openai/gpt-4.1") },
+        parts: [],
+      }),
+    ).toEqual({ type: "final" })
+  })
+
+  test("non-GPT stop + empty stays invalid (GPT terminal does not leak to others)", () => {
+    expect(
+      classifyAssistantStep({
+        phase: "after-process",
+        lastUser,
+        assistant: { ...assistantInfo("m-2", { finish: "stop" }), modelID: ModelID.make("qwen-plus") },
+        parts: [],
+      }).type,
+    ).toBe("invalid")
+  })
+
   test("synthetic/ignored/whitespace text does not count as final => invalid", () => {
     expect(
       classifyAssistantStep({

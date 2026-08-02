@@ -250,6 +250,43 @@ describe("invalid-output continuation — integration", () => {
     }
   })
 
+  test("GPT empty stop step is terminal and is not retried (mimorouter empty-output bug)", async () => {
+    // A GPT model behind an openai-compatible proxy (mimorouter/LiteLLM) ends a
+    // tool-loop step with NO usable output because encrypted reasoning isn't
+    // echoed back. Before the fix this hit `invalid "empty output"`, got nudged
+    // twice, then died with InvalidOutputError. Now it terminates cleanly on the
+    // model's own `stop` — one request, no error, no retry.
+    await using tmp = await tmpdir({ git: true })
+    const stub = startScriptedLLMServer([
+      { lines: emptyStopResponse() },
+      { lines: textStopResponse("unexpected retry") },
+    ])
+    try {
+      await writeGPTConfig(tmp.path, stub.origin)
+      await Instance.provide({
+        directory: tmp.path,
+        fn: () =>
+          run(
+            Effect.gen(function* () {
+              const sessions = yield* Session.Service
+              const prompt = yield* SessionPrompt.Service
+              const session = yield* sessions.create({ title: "gpt-empty-stop" })
+              const result = yield* prompt.prompt({
+                sessionID: session.id,
+                agent: "build",
+                parts: [{ type: "text", text: "Answer my question." }],
+              })
+              expect(stub.captures.length).toBe(1)
+              expect(result.info.role).toBe("assistant")
+              if (result.info.role === "assistant") expect(result.info.error).toBeUndefined()
+            }),
+          ),
+      })
+    } finally {
+      await stub.stop()
+    }
+  })
+
   test("GPT reasoning-only length step still auto-continues", async () => {
     await using tmp = await tmpdir({ git: true })
     const stub = startScriptedLLMServer([

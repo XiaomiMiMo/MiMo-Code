@@ -115,9 +115,34 @@ export function classifyAssistantStep(input: {
     // GPT reasoning models may legitimately end a step with reasoning and no
     // separate text part. Match upstream termination semantics for that family
     // without weakening think-only recovery for other reasoning models.
-    if (/(^|\/)gpt-\d/i.test(assistant.modelID))
+    if (isGptFamily(assistant.modelID))
       return assistant.finish === "other" ? { type: "final", degraded: true } : { type: "final" }
     return { type: "think-only" }
   }
+  // GPT reasoning models routed through stateless Responses / OpenAI-compatible
+  // proxies (e.g. mimorouter, LiteLLM) commonly finish a tool-loop step with NO
+  // usable output at all — neither text nor reasoning — because the encrypted
+  // reasoning items that carry the step's content are not echoed back (see
+  // transform.ts:1582-1588, which only requests them for @ai-sdk/openai). Left
+  // to fall through, this empty step hits the `invalid "empty output"` fallback,
+  // which runLoop nudges twice and then terminates with an InvalidOutputError —
+  // surfacing a spurious hard failure and cutting the loop short. Treat it as a
+  // clean terminal for the GPT family, mirroring the reasoning-only branch
+  // above, so the loop ends on the model's own `stop` without a fake error.
+  if (isGptFamily(assistant.modelID))
+    return assistant.finish === "other" ? { type: "final", degraded: true } : { type: "final" }
   return { type: "invalid", reason: "empty output" }
+}
+
+/**
+ * GPT-family model-id predicate for the reasoning/empty terminal special-cases.
+ *
+ * Anchored at start or after a `/` provider prefix, then requires a digit right
+ * after `gpt-` (matches `gpt-5.1`, `openai/gpt-4.1`, `azure/gpt-5`). This is one
+ * of several inconsistent GPT-detection idioms in the codebase — kept as a named
+ * helper so both terminal branches share ONE definition and the anchoring is
+ * documented in a single place.
+ */
+function isGptFamily(modelID: string): boolean {
+  return /(^|\/)gpt-\d/i.test(modelID)
 }
