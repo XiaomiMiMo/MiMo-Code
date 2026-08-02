@@ -250,16 +250,16 @@ describe("invalid-output continuation — integration", () => {
     }
   })
 
-  test("GPT empty stop step is terminal and is not retried (mimorouter empty-output bug)", async () => {
+  test("GPT empty stop step is regenerated, not terminated (mimorouter empty-output bug)", async () => {
     // A GPT model behind an openai-compatible proxy (mimorouter/LiteLLM) ends a
     // tool-loop step with NO usable output because encrypted reasoning isn't
-    // echoed back. Before the fix this hit `invalid "empty output"`, got nudged
-    // twice, then died with InvalidOutputError. Now it terminates cleanly on the
-    // model's own `stop` — one request, no error, no retry.
+    // echoed back. It must NOT stop after one round: regenerate so the model can
+    // produce its next step (Codex/Responses parity). First empty stop => retry;
+    // second call => real answer. Two requests, no error.
     await using tmp = await tmpdir({ git: true })
     const stub = startScriptedLLMServer([
       { lines: emptyStopResponse() },
-      { lines: textStopResponse("unexpected retry") },
+      { lines: textStopResponse("final answer") },
     ])
     try {
       await writeGPTConfig(tmp.path, stub.origin)
@@ -276,9 +276,10 @@ describe("invalid-output continuation — integration", () => {
                 agent: "build",
                 parts: [{ type: "text", text: "Answer my question." }],
               })
-              expect(stub.captures.length).toBe(1)
+              expect(stub.captures.length).toBe(2)
               expect(result.info.role).toBe("assistant")
               if (result.info.role === "assistant") expect(result.info.error).toBeUndefined()
+              expect(result.parts.some((p) => p.type === "text" && p.text === "final answer")).toBe(true)
             }),
           ),
       })

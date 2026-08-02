@@ -259,11 +259,10 @@ describe("classifyAssistantStep", () => {
     ).toBe("invalid")
   })
 
-  test("GPT stop + empty (no text/tool/reasoning) => final (not invalid)", () => {
-    // GPT via stateless Responses / openai-compatible proxies (mimorouter,
-    // LiteLLM) commonly ends a tool-loop step empty because encrypted reasoning
-    // isn't echoed back. Terminate clean instead of nudging twice then failing
-    // with a spurious InvalidOutputError.
+  test("GPT stop + empty (no text/tool/reasoning) => empty-retry (not invalid, not final)", () => {
+    // GPT via openai-compatible proxies (mimorouter, LiteLLM) ends a tool-loop
+    // step empty because encrypted reasoning isn't echoed back. Regenerate to
+    // keep the tool loop going (Codex parity) instead of nudging + terminating.
     expect(
       classifyAssistantStep({
         phase: "after-process",
@@ -271,10 +270,10 @@ describe("classifyAssistantStep", () => {
         assistant: { ...assistantInfo("m-2", { finish: "stop" }), modelID: ModelID.make("gpt-5.1") },
         parts: [],
       }),
-    ).toEqual({ type: "final" })
+    ).toEqual({ type: "empty-retry" })
   })
 
-  test("GPT other + empty => degraded final", () => {
+  test("GPT other + empty => empty-retry", () => {
     expect(
       classifyAssistantStep({
         phase: "after-process",
@@ -282,10 +281,10 @@ describe("classifyAssistantStep", () => {
         assistant: { ...assistantInfo("m-2", { finish: "other" }), modelID: ModelID.make("gpt-5.1") },
         parts: [],
       }),
-    ).toEqual({ type: "final", degraded: true })
+    ).toEqual({ type: "empty-retry" })
   })
 
-  test("namespaced GPT stop + empty => final", () => {
+  test("namespaced GPT stop + empty => empty-retry", () => {
     expect(
       classifyAssistantStep({
         phase: "after-process",
@@ -293,10 +292,10 @@ describe("classifyAssistantStep", () => {
         assistant: { ...assistantInfo("m-2", { finish: "stop" }), modelID: ModelID.make("openai/gpt-4.1") },
         parts: [],
       }),
-    ).toEqual({ type: "final" })
+    ).toEqual({ type: "empty-retry" })
   })
 
-  test("non-GPT stop + empty stays invalid (GPT terminal does not leak to others)", () => {
+  test("non-GPT stop + empty stays invalid (GPT empty-retry does not leak to others)", () => {
     expect(
       classifyAssistantStep({
         phase: "after-process",

@@ -226,6 +226,7 @@ const PREDICT_NUDGE = `Based on the conversation above, write the user's most li
 
 const OUTPUT_LENGTH_CONTINUATION_LIMIT = Flag.MIMOCODE_OUTPUT_LENGTH_CONTINUATION_LIMIT
 const INVALID_OUTPUT_CONTINUATION_LIMIT = Flag.MIMOCODE_INVALID_OUTPUT_CONTINUATION_LIMIT
+const EMPTY_OUTPUT_RETRY_LIMIT = Flag.MIMOCODE_EMPTY_OUTPUT_RETRY_LIMIT
 const TEXT_TOOL_CALL_RETRY_LIMIT = Flag.MIMOCODE_TEXT_TOOL_CALL_RETRY_LIMIT
 
 const log = Log.create({ service: "session.prompt" })
@@ -2551,6 +2552,12 @@ NOTE: At any point in time through this workflow you should feel free to ask the
         // prose text instead of a structured tool_use). Local to runLoop so each
         // fresh user turn starts clean.
         let textToolCallRetries = 0
+        // Bounded regenerate-retries for GPT-family empty steps (no text, no
+        // reasoning, no tool) coming off OpenAI-compatible proxies (mimorouter,
+        // LiteLLM). Separate budget from invalidContinuations: this path plainly
+        // re-requests to keep the tool loop going (Codex/Responses parity) rather
+        // than nudging. Local to runLoop so a fresh user turn resets it.
+        let emptyOutputRetries = 0
         const resolvedAgentID = agentID ?? "main"
         const mcpContext: MCP.TurnContext = {
           sessionId: sessionID,
@@ -2907,6 +2914,64 @@ NOTE: At any point in time through this workflow you should feel free to ask the
           return true
         })
 
+        // GPT-family empty-step recovery (mimorouter / LiteLLM / any openai-
+        // compatible proxy). The model finished a tool-loop step with NO usable
+        // output — no text, no reasoning, no tool part — because the encrypted
+        // reasoning that carries its next action isn't echoed back on the
+        // compatible path (transform.ts only requests it for @ai-sdk/openai). The
+        // Responses path forces finish "tool-calls" via hasFunctionCall and keeps
+        // looping; the compatible path lands empty and dies. Regenerate to keep
+        // the tool loop going (Codex parity) instead of nudging with a "you gave
+        // no answer" message. A minimal synthetic user turn both (a) makes the
+        // empty assistant stale so the top-of-loop existing-assistant check lets
+        // it pass and (b) guarantees the loop reaches generation — mirrors
+        // autoContinueOutputLength. Bounded by EMPTY_OUTPUT_RETRY_LIMIT; on
+        // exhaustion stamp InvalidOutputError so a persistently-empty model can't
+        // spin forever. Returns true ⇒ continue; false ⇒ break.
+        const autoRetryEmptyOutput = Effect.fn("SessionPrompt.autoRetryEmptyOutput")(function* (input: {
+          lastUser: MessageV2.User
+          assistant: MessageV2.Assistant
+        }) {
+          if (input.assistant.error || input.assistant.summary || input.assistant.structured !== undefined) return false
+          if (emptyOutputRetries >= EMPTY_OUTPUT_RETRY_LIMIT) {
+            input.assistant.error = new MessageV2.InvalidOutputError({ message: "empty output" }).toObject()
+            yield* sessions.updateMessage(input.assistant)
+            yield* bus.publish(Session.Event.Error, {
+              sessionID: input.assistant.sessionID,
+              error: input.assistant.error,
+            })
+            return false
+          }
+
+          emptyOutputRetries++
+          yield* slog.info("auto-retrying empty output", { attempt: emptyOutputRetries })
+          const msg = yield* sessions.updateMessage({
+            id: MessageID.ascending(),
+            role: "user" as const,
+            sessionID: input.lastUser.sessionID,
+            agentID: input.lastUser.agentID,
+            agent: input.lastUser.agent,
+            model: input.lastUser.model,
+            tools: input.lastUser.tools,
+            format: input.lastUser.format,
+            time: { created: Date.now() },
+          })
+          yield* sessions.updatePart({
+            id: PartID.ascending(),
+            messageID: msg.id,
+            sessionID: msg.sessionID,
+            type: "text",
+            synthetic: true,
+            text: [
+              "<system-reminder>",
+              "Your previous response was empty. Continue the task from where you left off.",
+              "Proceed to your next step now: call the appropriate tool, or give the final answer if the task is done.",
+              "</system-reminder>",
+            ].join("\n"),
+          } satisfies MessageV2.TextPart)
+          return true
+        })
+
         // Text-form tool call recovery. The model serialized a tool call as prose
         // text instead of a structured tool_use (a degraded state under large
         // context). The bad assistant turn is DISCARDED from history by setting
@@ -3215,6 +3280,11 @@ NOTE: At any point in time through this workflow you should feel free to ask the
             }
             if (classification.type === "text-tool-call") {
               if (yield* autoRetryTextToolCall({ lastUser, assistant: lastAssistant })) continue
+              yield* slog.info("exiting loop", { classification: classification.type })
+              break
+            }
+            if (classification.type === "empty-retry") {
+              if (yield* autoRetryEmptyOutput({ lastUser, assistant: lastAssistant })) continue
               yield* slog.info("exiting loop", { classification: classification.type })
               break
             }
@@ -3768,6 +3838,12 @@ NOTE: At any point in time through this workflow you should feel free to ask the
                 return "break" as const
               }
 
+              if (forkClassification.type === "empty-retry" && format.type !== "json_schema") {
+                if (yield* autoRetryEmptyOutput({ lastUser, assistant: handle.message }))
+                  return "continue" as const
+                return "break" as const
+              }
+
               if (
                 (forkClassification.type === "think-only" || forkClassification.type === "invalid") &&
                 format.type !== "json_schema"
@@ -3981,6 +4057,11 @@ NOTE: At any point in time through this workflow you should feel free to ask the
             }
             if (classification.type !== "continue" && !handle.message.error && format.type === "json_schema") {
               if (yield* autoRetryStructuredOutput({ lastUser, assistant: handle.message })) return "continue" as const
+              return "break" as const
+            }
+
+            if (classification.type === "empty-retry" && format.type !== "json_schema") {
+              if (yield* autoRetryEmptyOutput({ lastUser, assistant: handle.message })) return "continue" as const
               return "break" as const
             }
 

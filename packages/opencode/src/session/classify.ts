@@ -14,6 +14,7 @@ export type StepClassification =
   | { type: "text-tool-call" }
   | { type: "filtered" }
   | { type: "think-only" }
+  | { type: "empty-retry" }
   | { type: "invalid"; reason: string }
   | { type: "failed"; reason: string }
 
@@ -119,18 +120,21 @@ export function classifyAssistantStep(input: {
       return assistant.finish === "other" ? { type: "final", degraded: true } : { type: "final" }
     return { type: "think-only" }
   }
-  // GPT reasoning models routed through stateless Responses / OpenAI-compatible
-  // proxies (e.g. mimorouter, LiteLLM) commonly finish a tool-loop step with NO
-  // usable output at all — neither text nor reasoning — because the encrypted
-  // reasoning items that carry the step's content are not echoed back (see
-  // transform.ts:1582-1588, which only requests them for @ai-sdk/openai). Left
-  // to fall through, this empty step hits the `invalid "empty output"` fallback,
-  // which runLoop nudges twice and then terminates with an InvalidOutputError —
-  // surfacing a spurious hard failure and cutting the loop short. Treat it as a
-  // clean terminal for the GPT family, mirroring the reasoning-only branch
-  // above, so the loop ends on the model's own `stop` without a fake error.
-  if (isGptFamily(assistant.modelID))
-    return assistant.finish === "other" ? { type: "final", degraded: true } : { type: "final" }
+  // GPT reasoning models routed through OpenAI-compatible proxies (mimorouter,
+  // LiteLLM) or stateless Responses commonly finish a TOOL-LOOP step with NO
+  // usable output at all — no text, no reasoning, no tool part — because the
+  // encrypted reasoning items that would carry the step's next action are not
+  // echoed back (transform.ts only requests them for @ai-sdk/openai). The
+  // Responses path masks this: its language model forces finish "tool-calls"
+  // whenever a function call was seen, so classify re-loops at #3. The
+  // compatible path has no such fallback, so the step lands here empty and the
+  // model never gets to emit its next tool call — the loop dies after one round.
+  //
+  // Re-request (regenerate) for the GPT family instead of terminating, matching
+  // the Responses/Codex "keep the tool loop going" behavior. runLoop bounds this
+  // with its own counter (autoRetryEmptyOutput) so a persistently-empty model
+  // can't spin forever. Non-GPT models keep the nudge-based `invalid` path.
+  if (isGptFamily(assistant.modelID)) return { type: "empty-retry" }
   return { type: "invalid", reason: "empty output" }
 }
 
