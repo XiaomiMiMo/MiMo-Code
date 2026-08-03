@@ -34,11 +34,11 @@ consistent.
 
 **Journey log**
 
-1. First attempt gated `plan_enter` behind a default-deny permission. Wrong:
-   `Permission.evaluate` is `findLast` with no specificity scoring, so
-   `--dangerously-skip-permissions`' `{"*": "allow"}` (last-merged `user` layer)
-   re-allows any specific default deny. Permission defaults cannot express
-   "off" against a wildcard allow — gate at registration, or delete.
+1. First attempt gated `plan_enter` behind a default-deny permission rule, then
+   behind a registration flag. Both work mechanically; neither was the question.
+   The question was whether anything justifies keeping the surface at all, and
+   nothing did — the deciding evidence was the entrance table in S2, not any
+   property of the gating mechanism.
 2. The first prompt rewrite replaced the advocacy paragraph with instructions on
    how to *talk about* plan mode. That is the same interruption in a new costume:
    a model told how to discuss plan mode will discuss it. The fix was deletion,
@@ -120,23 +120,17 @@ round-trips between them mid-session.
 unconditionally (`cli/cmd/run.ts:350-365`), so headless sessions have never had
 it. Removal aligns the TUI with the surface that already ships without it.
 
-**3. A permission default cannot express "off".** `Permission.evaluate` is
-`findLast` over the flattened rulesets with no specificity scoring
-(`permission/evaluate.ts:9-15`). `--dangerously-skip-permissions` merges
-`{"*": "allow"}` into `cfg.permission` (`config/config.ts:953`), which becomes
-the last-merged `user` layer in `Agent`'s `Permission.merge(defaults, overrides,
-user)`. A wildcard allow therefore beats a specific default deny, so moving
-`plan_enter` to deny-by-default would leave it live for every user in YOLO mode
-— the population most exposed to unwanted mode flips.
+**3. A registration flag would work but earns nothing.** Gating the tool's
+registration on a config flag (the `experimental.maxMode` / orchestrator pattern)
+is a perfectly serviceable way to default it off. It just buys nothing here: it
+keeps the description, the i18n strings, the TUI switch mapping and the tests in
+the tree to serve a default-off path with no evidence of demand, and it leaves a
+second knob for a decision nobody has asked to reverse. The repository's stance is
+to delete unused code rather than keep a shim. If demand appears, restoring one
+tool from git history is cheap — and restoring it behind a flag then is no harder
+than adding the flag now.
 
-**4. A registration flag would work but earns nothing.** Gating on
-`experimental.plan_enter` is immune to the allow-all problem, but it leaves the
-description, the i18n strings, the TUI switch mapping, and the tests in the tree
-to serve a default-off path with no evidence of demand. The repository's stance
-is to delete unused code rather than keep a compatibility shim. If demand
-appears, restoring one tool from git history is cheap.
-
-**5. `plan_exit` is not symmetric and stays.** It cannot solicit itself: it
+**4. `plan_exit` is not symmetric and stays.** It cannot solicit itself: it
 no-ops unless the session is already in plan mode (`tool/plan.ts:120`), which
 only a user gesture can establish. It is also the approval handshake the plan
 workflow terminates on (`session/prompt.ts:1066-1070`). After this change both
@@ -298,7 +292,14 @@ an agent at all and split it along its two real concerns:
    applies to whatever agent the user is already in instead of forcing them into
    a different one, and it composes with the existing ruleset machinery
    (`permission/index.ts`) with no new name-branching. Claude Code's shift+tab
-   cycle is the reference shape.
+   cycle is the reference shape. One constraint that design must respect:
+   `Permission.evaluate` is `findLast` over the flattened rulesets with no
+   specificity scoring (`permission/evaluate.ts:9-15`), and
+   `--dangerously-skip-permissions` merges `{"*": "allow"}` into the last `user`
+   layer (`config/config.ts:953`) — so a read-only preset expressed as an ordinary
+   ruleset deny would be silently defeated by allow-all. Today's plan mode dodges
+   this via `hardPermission` being re-appended after the user merge; a preset needs
+   an equivalent last-layer story.
 2. **A plan skill** — the ~90-line workflow injected as a system-reminder
    (`session/prompt.ts:991-1073`) is curriculum, not policy, and per S1 it is
    curriculum aimed at weaker models. `compose-next` already established the
