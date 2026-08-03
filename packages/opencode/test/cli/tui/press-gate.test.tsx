@@ -122,32 +122,4 @@ describe("createPress", () => {
     await h.mockMouse.release(GLYPH.x + 1, GLYPH.y)
     expect(h.presses()).toBe(1)
   })
-
-  // Mirrors the narrow-terminal sidebar: the collapse control is a raised flex child and
-  // the sidebar is a later absolute sibling covering the whole row.
-  test("a raised gate stays visible and hit-testable under a later absolute sibling", async () => {
-    let presses = 0
-    const h = await testRender(
-      () => {
-        const press = createPress(() => (presses += 1))
-        return (
-          <box flexDirection="row">
-            <box flexGrow={1} />
-            <box width={3} height={5} zIndex={1} alignItems="center" {...press.props}>
-              <text selectable={false}>{"▶"}</text>
-            </box>
-            <box position="absolute" top={0} left={0} right={0} bottom={0} alignItems="flex-end">
-              <box width={20} height={5} backgroundColor="#333333" />
-            </box>
-          </box>
-        )
-      },
-      { width: 30, height: 6 },
-    )
-    await h.renderOnce()
-    expect(h.captureCharFrame()).toContain("▶")
-    await h.mockMouse.pressDown(28, 0)
-    await h.mockMouse.release(28, 0)
-    expect(presses).toBe(1)
-  })
 })

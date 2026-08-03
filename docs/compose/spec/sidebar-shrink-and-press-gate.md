@@ -3,7 +3,7 @@ feature: sidebar-shrink-and-press-gate
 status: delivered
 updated: 2026-08-03
 branch: fix/sidebar-shrink-and-press-gate
-commits: 6853935c..fceb9f50
+commits: 6853935c..PLACEHOLDER
 ---
 
 # Sidebar state model & press-gated mouse controls
@@ -37,8 +37,9 @@ top-level `return`, imported as raw text via `with { type: "text" }`, and Bun so
 loads one through the ESM parser instead; minimal repro `bun test
 test/cli/tui/plugin-toggle.test.ts test/cli/tui/thread.test.ts`, each file green alone).
 Each fix was reproduced as a failing assertion before being made to pass, including the
-baseline mis-fire against a plain `onMouseUp` button and the `zIndex` layering, both proven
-with throwaway `testRender` probes.
+baseline mis-fire against a plain `onMouseUp` button, the dropped intra-element click, and
+the toggle's position parity between docked and overlay modes, all proven with throwaway
+`testRender` probes.
 
 **Journey log**
 
@@ -166,11 +167,15 @@ update and the `batch` it needed.
 - Collapsed → an expand control only when wide enough to dock.
 - Subagent views → no control at all, and the `sidebar_toggle` command disabled.
 
-The render condition `sidebarVisible() || wide()` already expresses the first two; what
-was missing is that the narrow overlay painted over the button. It gets `zIndex={1}` so it
-floats above the overlay, landing on the sidebar's right padding column. Verified both
-visually (`captureCharFrame`) and for hit-testing (`mockMouse` click at the raised
-button's cell).
+The render condition `sidebarVisible() || wide()` already expressed the first two; what was
+missing is that the narrow overlay painted over the button. Rather than raise the button
+above the overlay, it now rides *inside* it as a right-aligned row sibling placed before the
+panel. That keeps one invariant across both modes — the control sits immediately to the left
+of the sidebar — instead of the control appearing left of the panel when docked and on the
+panel's right edge when overlaid. It also removes the `zIndex` the raised version needed, and
+simplifies the in-flow gate to `sidebarAllowed() && wide()` since the overlay now owns its
+own control. Verified by comparing captured frames: the glyph occupies the same column and
+the sidebar starts at the same column in both modes, with exactly one control rendered.
 
 The third rule is new. `sidebarVisible()` was already gated on `currentAgentID() === "main"`
 while `sidebarToggle` is width-only, so on a subagent view the control offered "expand"
