@@ -3,7 +3,7 @@ feature: sidebar-shrink-and-press-gate
 status: delivered
 updated: 2026-08-03
 branch: fix/sidebar-shrink-and-press-gate
-commits: 6853935c..PLACEHOLDER
+commits: 6853935c..6dff0b1a
 ---
 
 # Sidebar state model & press-gated mouse controls
