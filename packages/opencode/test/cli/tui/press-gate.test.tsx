@@ -9,6 +9,8 @@ import { createPress } from "../../../src/cli/cmd/tui/ui/press"
 const NEIGHBOUR = { x: 4, y: 2 }
 const BUTTON = { x: 11, y: 2 }
 const OUTSIDE = { x: 20, y: 2 }
+// The centred glyph's own cell, on the row it occupies — a hit target distinct from the box.
+const GLYPH = { x: 11, y: 0 }
 
 async function mount() {
   let presses = 0
@@ -20,7 +22,7 @@ async function mount() {
           <box width={10} height={5}>
             <text>{"transcript text"}</text>
           </box>
-          <box width={3} height={5} {...press.props}>
+          <box width={3} height={5} alignItems="center" {...press.props}>
             <text selectable={false}>{"◀"}</text>
           </box>
           <box width={10} height={5} />
@@ -104,6 +106,16 @@ describe("createPress", () => {
 
     await h.mockMouse.pressDown(BUTTON.x, BUTTON.y)
     await h.mockMouse.release(BUTTON.x, BUTTON.y)
+    expect(h.presses()).toBe(1)
+  })
+
+  test("a click drifting across the inner glyph boundary still fires", async () => {
+    const h = await mount()
+    // The glyph is its own hit target, so crossing from it to the box's own cells makes
+    // opentui dispatch out/over that bubble here mid-press.
+    await h.mockMouse.pressDown(GLYPH.x, GLYPH.y)
+    await h.mockMouse.moveTo(GLYPH.x + 1, GLYPH.y)
+    await h.mockMouse.release(GLYPH.x + 1, GLYPH.y)
     expect(h.presses()).toBe(1)
   })
 
