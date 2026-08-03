@@ -64,6 +64,22 @@ describe("createPress", () => {
     expect(h.presses()).toBe(1)
   })
 
+  test("a press that drags off without an out event cannot fire a later foreign drag", async () => {
+    const h = await mount()
+    // Press the button and drag straight off it. opentui sends the button no `out` here,
+    // so the arm has to be cleared by the drag or the over on the way back.
+    await h.mockMouse.pressDown(BUTTON.x, BUTTON.y)
+    await h.mockMouse.moveTo(NEIGHBOUR.x, NEIGHBOUR.y)
+    await h.mockMouse.release(NEIGHBOUR.x, NEIGHBOUR.y)
+    expect(h.presses()).toBe(0)
+
+    await h.mockMouse.pressDown(NEIGHBOUR.x, NEIGHBOUR.y)
+    await h.mockMouse.moveTo(NEIGHBOUR.x + 2, NEIGHBOUR.y)
+    await h.mockMouse.moveTo(BUTTON.x, BUTTON.y)
+    await h.mockMouse.release(BUTTON.x, BUTTON.y)
+    expect(h.presses()).toBe(0)
+  })
+
   // Mirrors the narrow-terminal sidebar: the collapse control is a raised flex child and
   // the sidebar is a later absolute sibling covering the whole row.
   test("a raised gate stays visible and hit-testable under a later absolute sibling", async () => {

@@ -21,10 +21,26 @@ export function createPress(onPress: () => void) {
   return {
     hover,
     props: {
-      ref: (r: Renderable) => (node = r),
-      onMouseOver: () => setHover(true),
+      ref: (r: Renderable) => {
+        node = r
+      },
+      // A press can end without this element ever seeing `out` or `up` (opentui only
+      // refreshes `lastOverRenderable` on a cross-element drag/move, and never sends
+      // `out` to the capture target), so every event that proves the pointer is no
+      // longer pressing us has to disarm.
+      onMouseOver: () => {
+        setHover(true)
+        armed = false
+      },
       onMouseOut: () => {
         setHover(false)
+        armed = false
+      },
+      onMouseDrag: (evt: MouseEvent) => {
+        if (inside(evt)) return
+        armed = false
+      },
+      onMouseDrop: () => {
         armed = false
       },
       onMouseDown: (evt: MouseEvent) => {

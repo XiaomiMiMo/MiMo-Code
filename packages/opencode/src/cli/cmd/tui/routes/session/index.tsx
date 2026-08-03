@@ -230,10 +230,9 @@ export function Session() {
   const fromWorkflowRunID = createMemo(() => route.fromWorkflowRunID)
 
   const wide = createMemo(() => dimensions().width > 120)
-  const sidebarVisible = createMemo(() => {
-    if (currentAgentID() !== "main") return false
-    return sidebarVisibleFor(sidebar(), wide())
-  })
+  // Subagent views have no sidebar at all, so neither the panel nor its control belongs there.
+  const sidebarAllowed = createMemo(() => currentAgentID() === "main")
+  const sidebarVisible = createMemo(() => sidebarAllowed() && sidebarVisibleFor(sidebar(), wide()))
   // Only a docked sidebar consumes layout width; the narrow overlay floats above the transcript.
   const sidebarDocked = createMemo(() => sidebarVisible() && wide())
   const showTimestamps = createMemo(() => timestamps() === "show")
@@ -1474,7 +1473,7 @@ export function Session() {
           </Show>
           <Toast />
         </box>
-        <Show when={sidebarVisible() || wide()}>
+        <Show when={sidebarAllowed() && (sidebarVisible() || wide())}>
           <SidebarToggleButton
             visible={sidebarVisible()}
             onToggle={() => setSidebar(() => sidebarToggle(sidebar(), wide()))}
