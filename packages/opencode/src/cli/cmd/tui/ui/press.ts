@@ -24,10 +24,8 @@ export function createPress(onPress: () => void) {
       ref: (r: Renderable) => {
         node = r
       },
-      // A press can end without this element ever seeing `out` or `up` (opentui only
-      // refreshes `lastOverRenderable` on a cross-element drag/move, and never sends
-      // `out` to the capture target), so every event that proves the pointer is no
-      // longer pressing us has to disarm.
+      // A press can end without this element ever seeing `out` or `up`, so every event
+      // proving the pointer is no longer pressing us has to disarm.
       onMouseOver: () => {
         setHover(true)
         armed = false
@@ -50,6 +48,10 @@ export function createPress(onPress: () => void) {
         if (!armed) return
         // Consume first: a release inside a captured renderable is dispatched twice.
         armed = false
+        // A release closing a text-selection drag arrives here with no preceding `drop`;
+        // it is never a click on us. Requires our own content to be unselectable, or our
+        // own press would start a selection and land in this branch too.
+        if (evt.isDragging) return
         if (!inside(evt)) return
         onPress()
       },

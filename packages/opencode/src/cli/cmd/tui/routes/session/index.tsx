@@ -156,7 +156,9 @@ function SidebarToggleButton(props: { visible: boolean; onToggle: () => void }) 
       backgroundColor={press.hover() ? theme.backgroundElement : undefined}
       {...press.props}
     >
-      <text fg={press.hover() ? theme.text : theme.textMuted}>{props.visible ? "▶" : "◀"}</text>
+      <text selectable={false} fg={press.hover() ? theme.text : theme.textMuted}>
+        {props.visible ? "▶" : "◀"}
+      </text>
     </box>
   )
 }
@@ -791,6 +793,7 @@ export function Session() {
       value: "session.sidebar.toggle",
       keybind: "sidebar_toggle",
       category: "session",
+      enabled: sidebarAllowed(),
       onSelect: (dialog) => {
         setSidebar(() => sidebarToggle(sidebar(), wide()))
         dialog.clear()

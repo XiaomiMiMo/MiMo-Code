@@ -3,8 +3,9 @@ import { describe, expect, test } from "bun:test"
 import { testRender } from "@opentui/solid"
 import { createPress } from "../../../src/cli/cmd/tui/ui/press"
 
-// Left half is a drag capturer standing in for the transcript scrollbar; the 3-column
-// button on its right is the press-gated control.
+// Left half holds selectable text, standing in for the transcript (a left-press there
+// starts a text-selection drag); the 3-column button on its right is the press-gated
+// control, whose own glyph is unselectable exactly as the real one is.
 const NEIGHBOUR = { x: 4, y: 2 }
 const BUTTON = { x: 11, y: 2 }
 const OUTSIDE = { x: 20, y: 2 }
@@ -16,9 +17,11 @@ async function mount() {
       const press = createPress(() => (presses += 1))
       return (
         <box flexDirection="row">
-          <box width={10} height={5} />
+          <box width={10} height={5}>
+            <text>{"transcript text"}</text>
+          </box>
           <box width={3} height={5} {...press.props}>
-            <text>{"◀"}</text>
+            <text selectable={false}>{"◀"}</text>
           </box>
           <box width={10} height={5} />
         </box>
@@ -66,8 +69,8 @@ describe("createPress", () => {
 
   test("a press that drags off without an out event cannot fire a later foreign drag", async () => {
     const h = await mount()
-    // Press the button and drag straight off it. opentui sends the button no `out` here,
-    // so the arm has to be cleared by the drag or the over on the way back.
+    // Press the button and drag straight off it. The button is too narrow to become the
+    // capture target, so opentui sends it no out, drag, drop or up for this press.
     await h.mockMouse.pressDown(BUTTON.x, BUTTON.y)
     await h.mockMouse.moveTo(NEIGHBOUR.x, NEIGHBOUR.y)
     await h.mockMouse.release(NEIGHBOUR.x, NEIGHBOUR.y)
@@ -78,6 +81,30 @@ describe("createPress", () => {
     await h.mockMouse.moveTo(BUTTON.x, BUTTON.y)
     await h.mockMouse.release(BUTTON.x, BUTTON.y)
     expect(h.presses()).toBe(0)
+
+    // Positive control: the gate is disarmed, not dead.
+    await h.mockMouse.pressDown(BUTTON.x, BUTTON.y)
+    await h.mockMouse.release(BUTTON.x, BUTTON.y)
+    expect(h.presses()).toBe(1)
+  })
+
+  test("a text-selection drag released over the button does not fire it", async () => {
+    const h = await mount()
+    await h.mockMouse.pressDown(BUTTON.x, BUTTON.y)
+    await h.mockMouse.moveTo(NEIGHBOUR.x, NEIGHBOUR.y)
+    await h.mockMouse.release(NEIGHBOUR.x, NEIGHBOUR.y)
+
+    // Selecting transcript text takes opentui's selection path, which delivers a bare
+    // `up` with isDragging and no preceding `drop`.
+    await h.mockMouse.pressDown(2, 0)
+    await h.mockMouse.moveTo(5, 0)
+    await h.mockMouse.moveTo(BUTTON.x, BUTTON.y)
+    await h.mockMouse.release(BUTTON.x, BUTTON.y)
+    expect(h.presses()).toBe(0)
+
+    await h.mockMouse.pressDown(BUTTON.x, BUTTON.y)
+    await h.mockMouse.release(BUTTON.x, BUTTON.y)
+    expect(h.presses()).toBe(1)
   })
 
   // Mirrors the narrow-terminal sidebar: the collapse control is a raised flex child and
@@ -91,7 +118,7 @@ describe("createPress", () => {
           <box flexDirection="row">
             <box flexGrow={1} />
             <box width={3} height={5} zIndex={1} alignItems="center" {...press.props}>
-              <text>{"▶"}</text>
+              <text selectable={false}>{"▶"}</text>
             </box>
             <box position="absolute" top={0} left={0} right={0} bottom={0} alignItems="flex-end">
               <box width={20} height={5} backgroundColor="#333333" />
