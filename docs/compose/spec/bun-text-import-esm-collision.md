@@ -1,9 +1,9 @@
 ---
 feature: bun-text-import-esm-collision
-status: in-progress
+status: delivered
 updated: 2026-08-03
 branch: fix/workflow-script-ext
-commits: <base-sha>..<head-sha>
+commits: 09d03d67..09122450
 ---
 
 # Built-in workflow scripts collide with the ESM parser under `bun test`
@@ -35,9 +35,11 @@ The test counts rise by one because the test that previously failed to load now 
 Runtime and packaging were checked separately. In development,
 `BuiltinWorkflow.list()` returns all four entries with their meta parsed and script text
 intact. `bun run build:local` compiles a standalone binary whose smoke test passes; the
-scripts' text is present in the binary while the `.js.fn` paths are absent, so the content is
-inlined rather than read from disk at runtime, which is the property the text import exists
-for. Running `mimo debug agent build` from that binary lists the `workflow` tool, which means
+scripts' text is present in the binary while no `src/workflow/builtin/` source path occurs in
+it, so the content is inlined rather than read from disk at runtime, which is the property the
+text import exists for. The bare filenames do appear, as the `file:` labels in the `SCRIPTS`
+table, which is expected. Running `mimo debug agent build` from that binary lists the
+`workflow` tool, which means
 `tool/registry.ts` and therefore `builtin.ts` loaded — `builtin.ts` parses every script's
 meta at module init and throws on failure, so a successful load is positive evidence the text
 imports resolved inside the compiled binary. `bun.lock` was not modified.
@@ -52,8 +54,12 @@ imports resolved inside the compiled binary. `bun.lock` was not modified.
   the diagnostic, the four `@ts-expect-error` lines would have silently kept working while
   masking a different error than the comment claimed.
 - Verifying "the text is embedded" needed two observations, not one: the content being
-  present in the binary, and the source paths being absent from it. Either alone is
-  consistent with the wrong outcome.
+  present in the binary, and no source path being present. Either alone is consistent with
+  the wrong outcome.
+- Review caught that the rename silently drops these files out of oxlint's `src/**/*.js`
+  coverage — a cost the design had not stated. The fix is still right, but a rename that
+  moves a file off a language's conventional extension takes it out of that language's
+  tooling, which is easy to miss when the motivation is a loader problem.
 
 ## [S1] Problem
 
@@ -219,7 +225,16 @@ That removes all four suppressions and gives the imports the `string` type they 
 have, so a future mistake in this area surfaces as a type error rather than being absorbed
 by a blanket `@ts-expect-error`.
 
-### [S2.3] Rejected alternative
+### [S2.3] Accepted cost
+
+The scripts leave JS tooling's reach. oxlint currently lints `src/**/*.js` and tolerates
+their top-level `return`; under `.js.fn` it no longer sees them, and editors lose JavaScript
+highlighting unless configured for the extension. That is roughly 1500 lines of sandbox
+script losing static checking it did have. Accepted, because the lint pass reported nothing
+on these files and the extension is what removes the failure — but it is a real reduction,
+not a neutral rename, and anyone reconsidering the extension should weigh it.
+
+### [S2.4] Rejected alternative
 
 Making `plugin-toggle.test.ts:9` a static import would give the process one resolution
 route. It addresses a symptom of unclear provenance rather than the ambiguity, and would

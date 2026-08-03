@@ -133,7 +133,7 @@ Do not touch:
 - `packages/opencode/src/skill/search.ts` `startsWith("compose:")` filter.
 - `packages/opencode/src/permission/evaluate.ts` (no `evaluateSkill`).
 - `packages/opencode/src/skill/compose/**` bundle contents.
-- `packages/opencode/src/workflow/builtin/compose.js`.
+- `packages/opencode/src/workflow/builtin/compose.js.fn`.
 - `packages/opencode/src/skill/localized-alias.ts`, `dialog-skill.tsx`, `autocomplete.tsx` legacy filters.
 - Tab-cycle order in `local.agent.move` / `app.tsx` agent registration order.
 
