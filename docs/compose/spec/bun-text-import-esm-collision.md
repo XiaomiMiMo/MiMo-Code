@@ -1,6 +1,6 @@
 ---
 feature: bun-text-import-esm-collision
-status: designed
+status: in-progress
 updated: 2026-08-03
 branch: fix/workflow-script-ext
 commits: <base-sha>..<head-sha>
@@ -9,6 +9,51 @@ commits: <base-sha>..<head-sha>
 # Built-in workflow scripts collide with the ESM parser under `bun test`
 
 ## Report
+
+**What was built** — The four built-in workflow scripts are renamed from `.js` to `.js.fn`
+so that no loader can mistake a function body for a module, and `builtin.ts` is updated to
+match. An ambient declaration for the extension replaces the four `@ts-expect-error`
+suppressions the old `.js` imports needed, so the imports now carry a real `string` type
+instead of a silenced error.
+
+The rename removes the failure rather than hiding it. Both open questions from the original
+design were resolved by measurement, and one changed the design: a suppression would still
+have been required after the rename — the diagnostic merely changes from TS1192 to TS2307 —
+which is what motivated declaring the extension instead.
+
+**Verification** — All from `packages/opencode`.
+
+| Check | Before | After |
+| --- | --- | --- |
+| `bun test test/cli/tui/plugin-toggle.test.ts test/cli/tui/thread.test.ts` | 3 tests ran, 1 fail, 1 error | 4 pass, 0 fail, 0 error |
+| `bun test test/cli/tui test/cli/cmd/tui` | 261 pass, 1 fail, 1 error | 262 pass, 0 fail, 0 error |
+| `bun test test/workflow` | — | 194 pass, 5 skip, 0 fail |
+| `bun typecheck` | passes with 4 suppressions | passes with none |
+
+The test counts rise by one because the test that previously failed to load now runs.
+
+Runtime and packaging were checked separately. In development,
+`BuiltinWorkflow.list()` returns all four entries with their meta parsed and script text
+intact. `bun run build:local` compiles a standalone binary whose smoke test passes; the
+scripts' text is present in the binary while the `.js.fn` paths are absent, so the content is
+inlined rather than read from disk at runtime, which is the property the text import exists
+for. Running `mimo debug agent build` from that binary lists the `workflow` tool, which means
+`tool/registry.ts` and therefore `builtin.ts` loaded — `builtin.ts` parses every script's
+meta at module init and throws on failure, so a successful load is positive evidence the text
+imports resolved inside the compiled binary. `bun.lock` was not modified.
+
+**Journey log**
+
+- The `.js` extension was the whole defect surface. Renaming the files fixed a failure that
+  three separate hypotheses about test isolation, import routes, and cache exhaustion had all
+  failed to explain — the ambiguity itself was the bug, not any particular trigger for it.
+- Confirming a suppression is still needed, just with a different code, is what turned a
+  mechanical rename into a small improvement. Had the rename been committed without checking
+  the diagnostic, the four `@ts-expect-error` lines would have silently kept working while
+  masking a different error than the comment claimed.
+- Verifying "the text is embedded" needed two observations, not one: the content being
+  present in the binary, and the source paths being absent from it. Either alone is
+  consistent with the wrong outcome.
 
 ## [S1] Problem
 
@@ -134,57 +179,64 @@ that have not been reduced.
 
 ## [S2] Design
 
-No code change is proposed for merge. Continuous integration is green, the failure is
-confined to running two specific files in one local process, and the repository's own rule
-is that a locally-failing, CI-green test is not a feature branch's work. This document is
-the deliverable.
+### [S2.1] Rename the scripts so nothing can mistake them for modules
 
-### [S2.1] Recommended workaround, if it is ever worth removing the exposure
+The ambiguity is the root of the problem: a `.js` file containing a top-level `return` is a
+trap for loaders, readers and tooling alike. The four scripts take the extension `.js.fn`,
+which names what they are — the content is a function body, and the top-level `return` is
+the proof. `fact-check.js` becomes `fact-check.js.fn`.
 
-Rename the four scripts so that no loader can mistake them for modules — the ambiguity is
-the root of the problem, and a `.js` file containing a top-level `return` is itself a trap
-for readers and tools alike.
+Scope:
 
-Proposed extension: `.js.fn`, naming what the file is. The content is a function body; the
-top-level `return` is the proof. `fact-check.js` becomes `fact-check.js.fn`.
-
-Scope of the change:
-
-- the four import specifiers at `builtin.ts:13-19`;
-- the four `file:` values at `builtin.ts:36-39`.
+- the four import specifiers in `builtin.ts`;
+- the four `file:` values in the `SCRIPTS` table.
 
 The `file:` field is only used to name the offending script when `parseMeta` rejects it
-(`builtin.ts:32` comment, thrown at `:48`). It does not participate in matching a
-user-supplied override, so changing those strings is safe.
+(thrown at `builtin.ts:48`). It does not participate in matching a user-supplied override,
+so changing those strings is safe.
 
-Two points to confirm before adopting it, neither verified here:
+User-authored workflows keep the `.js` convention documented in `README.md`. They are read
+from disk at runtime rather than through an import attribute, so they were never exposed to
+this and are not part of the rename.
 
-- whether `@ts-expect-error TS1192` remains correct. With a non-module extension, tsgo may
-  stop reporting TS1192, at which case the unused suppression becomes an error in its own
-  right and the line needs a different treatment.
-- whether `bun build --compile` still embeds the text import under the new extension. The
-  loader is selected by the import attribute rather than the extension, so it should, but
-  the compiled binary is the reason the text import exists and deserves an explicit check.
+### [S2.2] Declare the extension instead of suppressing the diagnostic
 
-Note that user-authored workflows keep the `.js` convention documented in `README.md`: they
-are read from disk at runtime rather than through an import attribute, so they are not
-exposed to this and are not part of the rename.
+The old imports each carried `@ts-expect-error TS1192`, because tsgo resolved the `.js` as a
+real module and complained it had no default export. After the rename tsgo instead reports
+TS2307, "cannot find module" — so the suppressions would still have been load-bearing, but
+for a different reason than their comment stated.
 
-### [S2.2] Narrower alternative
+Rather than update four comments, `src/workflow/script.d.ts` declares the extension:
 
-Make `plugin-toggle.test.ts:9` a static import so the process has one resolution route.
-This addresses a symptom of unclear provenance rather than the ambiguity, and would leave
-the next test file that re-evaluates `builtin.ts` free to reintroduce the fault.
+```ts
+declare module "*.js.fn" {
+  const source: string
+  export default source
+}
+```
+
+That removes all four suppressions and gives the imports the `string` type they actually
+have, so a future mistake in this area surfaces as a type error rather than being absorbed
+by a blanket `@ts-expect-error`.
+
+### [S2.3] Rejected alternative
+
+Making `plugin-toggle.test.ts:9` a static import would give the process one resolution
+route. It addresses a symptom of unclear provenance rather than the ambiguity, and would
+leave the next test file that re-evaluates `builtin.ts` free to reintroduce the fault.
 
 ## [S3] Out of Scope
 
 - Any change to the four scripts' contents.
-- Reporting upstream. The absent standalone reproduction makes a useful report hard to
-  write; the in-repository reproduction and the measurements above are recorded here so a
-  report can be assembled later without repeating the investigation.
+- Reporting upstream. The rename removes this repository's exposure but not the underlying
+  loader behaviour. No minimal standalone reproduction was isolated, which makes a useful
+  report hard to write; the in-repository reproduction and the measurements above are
+  recorded so one can be assembled later without repeating the investigation.
 - The `thread.test.ts` re-evaluation itself. Why one test file loads `builtin.ts` on the
-  order of a hundred times was not investigated and may be worth its own look.
+  order of a hundred times was not investigated and may be worth its own look — it is the
+  condition that made the collision likely, and it presumably still holds.
 
 ## Tasks
-
-None. This document records an investigation; no implementation is queued.
+- [x] T1: Rename the four scripts to `.js.fn` and update `builtin.ts` — acceptance: the two-file reproduction runs all four tests with no failure or error (covers: S2.1)
+- [x] T2: Replace the `@ts-expect-error` suppressions with an ambient declaration for the extension — acceptance: `bun typecheck` passes with no suppression on those imports (covers: S2.2)
+- [x] T3: Confirm the text import still reaches a compiled standalone binary — acceptance: the scripts' text is present in the binary, their paths are not, and a command that loads the tool registry runs without the module-init throw (covers: S2.1)
