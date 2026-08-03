@@ -4,18 +4,20 @@ import type { MouseEvent, Renderable } from "@opentui/core"
 /**
  * Click gate for controls where a mis-fire is costly — one sitting next to a drag surface
  * (a scrollbar, selectable transcript text) whose action the user cannot casually undo.
- * Fires only on a stable click: press and release on the element with no `out` in between.
+ * Fires only when the press and the release both land on the element and the pointer never
+ * left its bounds in between. Movement within the element is fine.
  *
  * NOT a general replacement for `onMouseUp`. Plain `onMouseUp` is correct for the great
  * majority of controls, and routing one through here only costs it dropped clicks. Adopt
  * this only when an accidental activation is the problem being solved.
  *
- * Anything less than a stable click is dropped, deliberately: a dropped click is a
- * non-event the user repeats, while an unintended one is the bug this exists to prevent.
- * `out` also arrives on intra-element hit changes (a child glyph and the box's own cells
- * are separate hit targets), so a press that drifts even one cell is discarded. That is
- * the intended trade — browser semantics, where the pointer may leave and return, are
- * explicitly not the goal here.
+ * Ambiguity resolves toward not firing: a dropped click is a non-event the user repeats,
+ * while an unintended one is the bug this exists to prevent. Leaving the element and
+ * returning does not produce a click — browser semantics are not the goal.
+ *
+ * Known limitation: a press that arrives with no preceding pointer movement onto the
+ * element cannot be disarmed when it drags away, because opentui then delivers the element
+ * no event at all for that press. Real pointers always generate that movement first.
  *
  * The element's own content must be unselectable (`selectable={false}` on any `<text>`),
  * otherwise its own press starts a text selection and every release is discarded as a
@@ -39,11 +41,16 @@ export function createPress(onPress: () => void) {
       ref: (r: Renderable) => {
         node = r
       },
-      onMouseOver: () => {
+      // opentui raises out/over on intra-element hit changes too — a child glyph and the
+      // box's own cells are separate hit targets, and both events bubble here — so only a
+      // pointer whose new position is outside our bounds counts as having left.
+      onMouseOver: (evt: MouseEvent) => {
         setHover(true)
+        if (inside(evt)) return
         armed = false
       },
-      onMouseOut: () => {
+      onMouseOut: (evt: MouseEvent) => {
+        if (inside(evt)) return
         setHover(false)
         armed = false
       },

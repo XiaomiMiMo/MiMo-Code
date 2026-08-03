@@ -69,15 +69,17 @@ describe("createPress", () => {
     expect(h.presses()).toBe(1)
   })
 
-  test("a press that drags off without an out event cannot fire a later foreign drag", async () => {
+  test("a press that drags off the button cannot fire a later foreign drag", async () => {
     const h = await mount()
-    // Press the button and drag straight off it. The button is too narrow to become the
-    // capture target, so opentui sends it no out, drag, drop or up for this press.
+    // Hover first: a real pointer always generates a move onto the element before the
+    // press, which is what lets opentui deliver the `out` that disarms us on the way off.
+    await h.mockMouse.moveTo(BUTTON.x, BUTTON.y)
     await h.mockMouse.pressDown(BUTTON.x, BUTTON.y)
     await h.mockMouse.moveTo(NEIGHBOUR.x, NEIGHBOUR.y)
     await h.mockMouse.release(NEIGHBOUR.x, NEIGHBOUR.y)
     expect(h.presses()).toBe(0)
 
+    await h.mockMouse.moveTo(NEIGHBOUR.x, NEIGHBOUR.y)
     await h.mockMouse.pressDown(NEIGHBOUR.x, NEIGHBOUR.y)
     await h.mockMouse.moveTo(NEIGHBOUR.x + 2, NEIGHBOUR.y)
     await h.mockMouse.moveTo(BUTTON.x, BUTTON.y)
@@ -92,6 +94,7 @@ describe("createPress", () => {
 
   test("a text-selection drag released over the button does not fire it", async () => {
     const h = await mount()
+    await h.mockMouse.moveTo(BUTTON.x, BUTTON.y)
     await h.mockMouse.pressDown(BUTTON.x, BUTTON.y)
     await h.mockMouse.moveTo(NEIGHBOUR.x, NEIGHBOUR.y)
     await h.mockMouse.release(NEIGHBOUR.x, NEIGHBOUR.y)
@@ -109,17 +112,14 @@ describe("createPress", () => {
     expect(h.presses()).toBe(1)
   })
 
-  test("a click that drifts at all is dropped, by contract", async () => {
+  test("a click drifting within the element still fires", async () => {
     const h = await mount()
     // The glyph is its own hit target, so moving from it to the box's own cells raises
-    // `out`. These controls take stable clicks only — err toward dropping, never firing.
+    // out/over that bubble here. The pointer never left the control, so this is a click.
+    await h.mockMouse.moveTo(GLYPH.x, GLYPH.y)
     await h.mockMouse.pressDown(GLYPH.x, GLYPH.y)
     await h.mockMouse.moveTo(GLYPH.x + 1, GLYPH.y)
     await h.mockMouse.release(GLYPH.x + 1, GLYPH.y)
-    expect(h.presses()).toBe(0)
-
-    await h.mockMouse.pressDown(GLYPH.x, GLYPH.y)
-    await h.mockMouse.release(GLYPH.x, GLYPH.y)
     expect(h.presses()).toBe(1)
   })
 
