@@ -109,13 +109,17 @@ describe("createPress", () => {
     expect(h.presses()).toBe(1)
   })
 
-  test("a click drifting across the inner glyph boundary still fires", async () => {
+  test("a click that drifts at all is dropped, by contract", async () => {
     const h = await mount()
-    // The glyph is its own hit target, so crossing from it to the box's own cells makes
-    // opentui dispatch out/over that bubble here mid-press.
+    // The glyph is its own hit target, so moving from it to the box's own cells raises
+    // `out`. These controls take stable clicks only — err toward dropping, never firing.
     await h.mockMouse.pressDown(GLYPH.x, GLYPH.y)
     await h.mockMouse.moveTo(GLYPH.x + 1, GLYPH.y)
     await h.mockMouse.release(GLYPH.x + 1, GLYPH.y)
+    expect(h.presses()).toBe(0)
+
+    await h.mockMouse.pressDown(GLYPH.x, GLYPH.y)
+    await h.mockMouse.release(GLYPH.x, GLYPH.y)
     expect(h.presses()).toBe(1)
   })
 

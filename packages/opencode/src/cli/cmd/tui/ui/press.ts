@@ -2,9 +2,15 @@ import { createSignal } from "solid-js"
 import type { MouseEvent, Renderable } from "@opentui/core"
 
 /**
- * Click gate: fires only when press and release both land on the element, once per press.
- * Guards against opentui delivering a bare `up` to whatever sits under the cursor when a
- * drag captured elsewhere (a scrollbar, a text selection) ends there.
+ * Click gate for small controls: fires only on a stable click — press and release on the
+ * element with no `out` in between. Anything less is dropped, deliberately. Dropping a
+ * click is a non-event the user repeats; firing one they did not intend is not, and
+ * opentui hands a bare `up` to whatever sits under the cursor when a drag captured
+ * elsewhere (a scrollbar, a text selection) ends there.
+ *
+ * `out` arrives on intra-element hit changes too (a child glyph and the box's own cells
+ * are separate hit targets), so a press that drifts even one cell is discarded. That is
+ * the intended trade, not an oversight.
  *
  * The element's own content must be unselectable (`selectable={false}` on any `<text>`),
  * otherwise its own press starts a text selection and every release is discarded as a
@@ -28,15 +34,11 @@ export function createPress(onPress: () => void) {
       ref: (r: Renderable) => {
         node = r
       },
-      // opentui dispatches out/over on intra-element hit changes too (child glyph vs the
-      // box itself) and they bubble here, so only a pointer that actually left disarms.
-      onMouseOver: (evt: MouseEvent) => {
+      onMouseOver: () => {
         setHover(true)
-        if (inside(evt)) return
         armed = false
       },
-      onMouseOut: (evt: MouseEvent) => {
-        if (inside(evt)) return
+      onMouseOut: () => {
         setHover(false)
         armed = false
       },
