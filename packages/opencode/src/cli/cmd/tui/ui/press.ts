@@ -2,15 +2,20 @@ import { createSignal } from "solid-js"
 import type { MouseEvent, Renderable } from "@opentui/core"
 
 /**
- * Click gate for small controls: fires only on a stable click — press and release on the
- * element with no `out` in between. Anything less is dropped, deliberately. Dropping a
- * click is a non-event the user repeats; firing one they did not intend is not, and
- * opentui hands a bare `up` to whatever sits under the cursor when a drag captured
- * elsewhere (a scrollbar, a text selection) ends there.
+ * Click gate for controls where a mis-fire is costly — one sitting next to a drag surface
+ * (a scrollbar, selectable transcript text) whose action the user cannot casually undo.
+ * Fires only on a stable click: press and release on the element with no `out` in between.
  *
- * `out` arrives on intra-element hit changes too (a child glyph and the box's own cells
+ * NOT a general replacement for `onMouseUp`. Plain `onMouseUp` is correct for the great
+ * majority of controls, and routing one through here only costs it dropped clicks. Adopt
+ * this only when an accidental activation is the problem being solved.
+ *
+ * Anything less than a stable click is dropped, deliberately: a dropped click is a
+ * non-event the user repeats, while an unintended one is the bug this exists to prevent.
+ * `out` also arrives on intra-element hit changes (a child glyph and the box's own cells
  * are separate hit targets), so a press that drifts even one cell is discarded. That is
- * the intended trade, not an oversight.
+ * the intended trade — browser semantics, where the pointer may leave and return, are
+ * explicitly not the goal here.
  *
  * The element's own content must be unselectable (`selectable={false}` on any `<text>`),
  * otherwise its own press starts a text selection and every release is discarded as a
