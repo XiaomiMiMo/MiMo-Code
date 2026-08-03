@@ -3,7 +3,7 @@ feature: sidebar-shrink-and-press-gate
 status: delivered
 updated: 2026-08-03
 branch: fix/sidebar-shrink-and-press-gate
-commits: 6853935c..e796a77a
+commits: 6853935c..fceb9f50
 ---
 
 # Sidebar state model & press-gated mouse controls
@@ -47,12 +47,18 @@ with throwaway `testRender` probes.
   problem is usually the model, not the patch: this gate was accumulating disarm hooks to
   approximate browser click semantics against a dispatcher that does not supply the events
   for it.
-- The product owner cut that knot by naming the contract instead of the mechanism —
-  stable click, `out` discards, don't care about the rest. That reverted a fix
-  (`d0bb626b` → `50fee2d1`) and turned a reviewer's CRITICAL into an asserted contract.
-  The asymmetry is the whole point: a dropped click is a non-event the user repeats, an
-  unintended one is the bug. Encode such a rule as a test, or the next contributor
-  "fixes" it.
+- The product owner cut that knot by naming the contract instead of the mechanism — stable
+  click, leaving discards, don't care about the rest. That reverted a fix (`d0bb626b` →
+  `50fee2d1`) and turned a reviewer's CRITICAL into an asserted contract. The asymmetry is
+  the whole point: a dropped click is a non-event the user repeats, an unintended one is the
+  bug. Encode such a rule as a test, or the next contributor "fixes" it.
+- The contract then had to be read precisely, because "no `out`" and "never left" are not
+  the same predicate here. Reverting wholesale also discarded clicks that merely drifted
+  inside the control, which the contract never asked for. Restoring the geometric check
+  turned out to cost nothing: the mis-fire it had been reverted for only reproduces when a
+  press arrives with no preceding pointer motion, which no real pointer does. The lesson is
+  that the earlier revert leaned on a reviewer's synthetic repro without asking whether the
+  input sequence was reachable — measure the cost of a guard before paying for it.
 - Two hypotheses died to cheap experiments. Unrestored `spyOn`s looked like the obvious
   cause of the pre-existing failure until reading the file showed `mockRestore()` in a
   `finally`; a static-plus-dynamic double import of a text-loaded module looked like the
@@ -185,19 +191,27 @@ narrower than itself.
 ### [S2.3] Stable-click gate
 
 New `ui/press.ts` exporting `createPress(onPress: () => void)`, returning a `hover`
-accessor plus a spreadable prop bag. The contract is a **stable click**: press and release
-on the element with no `out` in between, once per press. Anything less is dropped.
+accessor plus a spreadable prop bag. The contract is a **stable click**: the press and the
+release both land on the element and the pointer never leaves its bounds in between, once
+per press. Movement within the element is fine.
 
 That asymmetry is the design. A dropped click is a non-event the user repeats; an
 unintended activation is the defect this exists to prevent, so every ambiguity resolves
 toward not firing. Browser semantics — where the pointer may leave the element and return
-and still produce a click — are explicitly not the goal. `out` also arrives on
-intra-element hit changes, because a child glyph and the box's own cells are separate hit
-targets, so a press that drifts one cell is discarded too. Asserted as such in the tests.
+and still produce a click — are explicitly not the goal.
+
+"Left the element" has to be decided geometrically rather than from the event name, because
+opentui raises `out` and `over` on intra-element hit-target changes as well: a child glyph
+and the box's own cells are separate hit targets, and both events bubble to the parent, so
+the parent sees `out` while the pointer is still inside it. `MouseEvent.target` does not
+settle it either, since an `out` is dispatched to the element being left — which is that
+same child both when the pointer merely crosses an internal boundary and when it exits the
+control entirely. The coordinates do settle it: `out` carries the pointer's new position.
 
 - `onMouseDown` arms only if the press coordinates fall inside the element's rect.
-- `onMouseOut` disarms unconditionally; `onMouseDrag` disarms when the drag lands outside;
-  `onMouseDrop` disarms because a `drop` means a drag captured elsewhere ended here.
+- `onMouseOut` and `onMouseOver` disarm only when the event's new position is outside the
+  rect; `onMouseDrag` disarms when the drag lands outside; `onMouseDrop` disarms because a
+  `drop` means a drag captured elsewhere ended here.
 - `onMouseUp` returns early when unarmed, disarms before anything else (the duplicate `up`
   delivered inside a captured renderable is then inert), rejects releases carrying
   `isDragging` (opentui sets that only on its two selection dispatches, so it identifies a
@@ -205,6 +219,14 @@ targets, so a press that drifts one cell is discarded too. Asserted as such in t
   the release coordinates against the rect.
 - `onMouseOver`/`onMouseOut` also drive the returned `hover` accessor, because the gate
   must own `onMouseOut` and callers cannot register a second handler for it.
+
+One limitation is accepted and documented rather than worked around: a press that arrives
+with no preceding pointer movement onto the element cannot be disarmed when it drags away,
+because opentui then delivers the element no event at all for that press — it is too narrow
+to become the capture target, and `lastOverRenderable` was never pointed at it. This was
+measured rather than assumed: with a realistic hover-then-press sequence the drag-off does
+deliver an `out` and disarms, and only a synthetic press with no prior motion reproduces the
+stale arm. Real pointers always generate that movement first.
 
 Consumers must render unselectable content (`selectable={false}` on any `<text>`).
 Otherwise the element's own press starts a text selection, every release arrives with
