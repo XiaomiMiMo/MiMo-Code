@@ -1,9 +1,9 @@
 ---
 feature: plan-enter-removal
-status: in-progress
+status: delivered
 updated: 2026-08-03
 branch: plan-enter-removal
-commits: pending (uncommitted in .worktrees/plan-enter-opt-in)
+commits: ce124cbd..e28331185884
 ---
 
 # Remove the plan_enter tool
