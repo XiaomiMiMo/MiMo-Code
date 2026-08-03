@@ -150,9 +150,6 @@ function SidebarToggleButton(props: { visible: boolean; onToggle: () => void }) 
       height="100%"
       justifyContent="flex-start"
       alignItems="center"
-      // Above the narrow-terminal sidebar overlay, which would otherwise bury the only
-      // mouse affordance for collapsing it again.
-      zIndex={1}
       backgroundColor={press.hover() ? theme.backgroundElement : undefined}
       {...press.props}
     >
@@ -237,6 +234,7 @@ export function Session() {
   const sidebarVisible = createMemo(() => sidebarAllowed() && sidebarVisibleFor(sidebar(), wide()))
   // Only a docked sidebar consumes layout width; the narrow overlay floats above the transcript.
   const sidebarDocked = createMemo(() => sidebarVisible() && wide())
+  const toggleSidebar = () => setSidebar(() => sidebarToggle(sidebar(), wide()))
   const showTimestamps = createMemo(() => timestamps() === "show")
   const contentWidth = createMemo(() => dimensions().width - (sidebarDocked() ? SIDEBAR_WIDTH : 0) - 4)
   const providers = createMemo(() => Model.index(sync.data.provider))
@@ -795,7 +793,7 @@ export function Session() {
       category: "session",
       enabled: sidebarAllowed(),
       onSelect: (dialog) => {
-        setSidebar(() => sidebarToggle(sidebar(), wide()))
+        toggleSidebar()
         dialog.clear()
       },
     },
@@ -1476,11 +1474,8 @@ export function Session() {
           </Show>
           <Toast />
         </box>
-        <Show when={sidebarAllowed() && (sidebarVisible() || wide())}>
-          <SidebarToggleButton
-            visible={sidebarVisible()}
-            onToggle={() => setSidebar(() => sidebarToggle(sidebar(), wide()))}
-          />
+        <Show when={sidebarAllowed() && wide()}>
+          <SidebarToggleButton visible={sidebarVisible()} onToggle={toggleSidebar} />
         </Show>
         <Show when={sidebarVisible()}>
           <Switch>
@@ -1488,15 +1483,19 @@ export function Session() {
               <Sidebar sessionID={route.sessionID} />
             </Match>
             <Match when={!wide()}>
+              {/* The control rides inside the overlay so it keeps the same position
+                  relative to the sidebar as when docked: immediately to its left. */}
               <box
                 position="absolute"
                 top={0}
                 left={0}
                 right={0}
                 bottom={0}
-                alignItems="flex-end"
+                flexDirection="row"
+                justifyContent="flex-end"
                 backgroundColor={RGBA.fromInts(0, 0, 0, 70)}
               >
+                <SidebarToggleButton visible={sidebarVisible()} onToggle={toggleSidebar} />
                 <Sidebar sessionID={route.sessionID} />
               </box>
             </Match>
