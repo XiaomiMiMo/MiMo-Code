@@ -1,6 +1,6 @@
 ---
 name: mimocode-docs
-description: "Use whenever the user asks about MiMoCode itself: features, TUI or CLI commands, configuration, file locations, providers, models, authentication, or custom OpenAI-compatible or Anthropic-compatible API endpoints. Especially trigger when a prompt supplies or asks to configure a base URL/baseURL, API key/apiKey, model name or ID, provider, Anthropic Messages API, or global/project mimocode.json/jsonc. Use this skill to inspect existing config safely, make minimal changes, and verify them without guessing schema fields or model capabilities."
+description: "Use whenever the user asks about MiMoCode itself: features, TUI or CLI commands, keybindings, agent modes (build / plan / compose) and how to switch between them, configuration, file locations, providers, models, authentication, or custom OpenAI-compatible or Anthropic-compatible API endpoints. Especially trigger when a prompt supplies or asks to configure a base URL/baseURL, API key/apiKey, model name or ID, provider, Anthropic Messages API, or global/project mimocode.json/jsonc, or when the user asks how to enter or leave plan mode. Use this skill to inspect existing config safely, make minimal changes, and verify them without guessing schema fields or model capabilities."
 ---
 
 # MiMoCode
@@ -15,7 +15,7 @@ MiMoCode (CLI binary `mimo`) is an agentic coding tool with a terminal UI, built
 
 | Feature | What it is | How to reach it |
 |---------|-----------|-----------------|
-| **Agents / modes** | `build` (default, full tools), `plan` (read-only analysis), `compose` (specs-driven orchestration), plus custom modes you define. Mode locks after the first message (Build↔Plan still switch freely; Compose is isolated) | `Tab` cycles primary agents; add your own via `.mimocode/agent/<name>.md` (see @reference/guide.md) |
+| **Agents / modes** | `build` (default, full tools), `plan` (read-only analysis), `compose` (specs-driven orchestration), plus custom modes you define. Mode locks after the first message (Build↔Plan still switch freely; Compose is isolated). Only the user enters a mode — no tool lets the agent switch into plan, and the agent does not raise plan mode unasked; from inside plan the agent can call `plan_exit` to ask for approval and hand the plan back to build | `Tab` cycles primary agents, or pick one in the agent dialog; add your own via `.mimocode/agent/<name>.md` (see @reference/guide.md) |
 | **Subagents** | Primary agent spawns `general`/`explore` helpers, parallel + background, with lifecycle/cancel | automatic; `actor` tooling |
 | **Persistent memory** | Markdown-backed memory with indexed search across `MEMORY.md`, `checkpoint.md`, `notes.md`, and `tasks/<id>/progress.md` | auto-injected on resume |
 | **Context management** | Auto-checkpoints, context reconstruction near limit, budgeted injection | automatic; tune via `checkpoint`/`compaction` config |

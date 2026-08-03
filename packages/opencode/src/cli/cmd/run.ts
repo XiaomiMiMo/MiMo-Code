@@ -354,11 +354,6 @@ export const RunCommand = cmd({
         pattern: "*",
       },
       {
-        permission: "plan_enter",
-        action: "deny",
-        pattern: "*",
-      },
-      {
         permission: "plan_exit",
         action: "deny",
         pattern: "*",

@@ -554,7 +554,7 @@ describe("renderToolScriptDeclarations", () => {
   })
 
   test("exclusion list covers agent control-flow tools but allows bash", () => {
-    for (const id of ["task", "question", "actor", "skill", "plan_enter", "plan_exit", "exec", "mcp_tool_search"]) {
+    for (const id of ["task", "question", "actor", "skill", "plan_exit", "exec", "mcp_tool_search"]) {
       expect(TOOL_SCRIPT_EXCLUDED.has(id)).toBe(true)
     }
     expect(TOOL_SCRIPT_EXCLUDED.has("bash")).toBe(false)

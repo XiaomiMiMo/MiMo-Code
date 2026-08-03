@@ -1,4 +1,4 @@
-import { PlanEnterTool, PlanExitTool } from "./plan"
+import { PlanExitTool } from "./plan"
 import { Session } from "../session"
 import { QuestionTool } from "./question"
 import { BashTool, bashDescription } from "./bash"
@@ -145,7 +145,6 @@ export const layer = Layer.effect(
     const question = yield* QuestionTool
     const lsptool = yield* LspTool
     const planexit = yield* PlanExitTool
-    const planenter = yield* PlanEnterTool
     const webfetch = yield* WebFetchTool
     const websearch = yield* WebSearchTool
     const bash = yield* BashTool
@@ -259,7 +258,6 @@ export const layer = Layer.effect(
           question: Tool.init(question),
           lsp: Tool.init(lsptool),
           planexit: Tool.init(planexit),
-          planenter: Tool.init(planenter),
           memory: Tool.init(memorytool),
           history: Tool.init(historytool),
           task: Tool.init(tasktool),
@@ -293,7 +291,6 @@ export const layer = Layer.effect(
             tool.changedir,
             ...(Flag.MIMOCODE_EXPERIMENTAL_LSP_TOOL ? [tool.lsp] : []),
             tool.planexit,
-            tool.planenter,
             tool.memory,
             tool.history,
             tool.task,

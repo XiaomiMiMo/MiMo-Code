@@ -157,7 +157,7 @@ test("compose:* skills are denied for build/plan, allowed for compose", async ()
   })
 })
 
-test("plan_enter and plan_exit are allowed for build and plan agents", async () => {
+test("plan_exit is allowed for build and plan agents", async () => {
   await using tmp = await tmpdir()
   await Instance.provide({
     directory: tmp.path,
@@ -166,23 +166,21 @@ test("plan_enter and plan_exit are allowed for build and plan agents", async () 
       for (const name of ["build", "plan"]) {
         const agent = agents.find((a) => a.name === name)
         expect(agent).toBeDefined()
-        const disabled = Permission.disabled(["plan_enter", "plan_exit"], agent!.permission)
-        expect(disabled.has("plan_enter")).toBe(false)
+        const disabled = Permission.disabled(["plan_exit"], agent!.permission)
         expect(disabled.has("plan_exit")).toBe(false)
       }
     },
   })
 })
 
-test("plan_enter and plan_exit are denied for compose agent", async () => {
+test("plan_exit is denied for compose agent", async () => {
   await using tmp = await tmpdir()
   await Instance.provide({
     directory: tmp.path,
     fn: async () => {
       const compose = await load(tmp.path, (svc) => svc.get("compose"))
       expect(compose).toBeDefined()
-      const disabled = Permission.disabled(["plan_enter", "plan_exit"], compose!.permission)
-      expect(disabled.has("plan_enter")).toBe(true)
+      const disabled = Permission.disabled(["plan_exit"], compose!.permission)
       expect(disabled.has("plan_exit")).toBe(true)
     },
   })
