@@ -1,5 +1,4 @@
 import {
-  batch,
   createContext,
   createEffect,
   createMemo,
@@ -68,7 +67,9 @@ import { DialogPrompt } from "@tui/ui/dialog-prompt"
 import { DialogTimeline } from "./dialog-timeline"
 import { DialogForkFromTimeline } from "./dialog-fork-from-timeline"
 import { DialogSessionRename } from "../../component/dialog-session-rename"
-import { Sidebar } from "./sidebar"
+import { Sidebar, SIDEBAR_WIDTH } from "./sidebar"
+import { sidebarToggle, sidebarVisibleFor, type SidebarPreference } from "./sidebar-state"
+import { createPress } from "../../ui/press"
 import { WorkflowTree } from "@tui/component/workflow-tree"
 import { SubagentFooter } from "./subagent-footer.tsx"
 import { DialogSubagent } from "./dialog-subagent.tsx"
@@ -142,19 +143,20 @@ function use() {
 
 function SidebarToggleButton(props: { visible: boolean; onToggle: () => void }) {
   const { theme } = useTheme()
-  const [hover, setHover] = createSignal(false)
+  const press = createPress(() => props.onToggle())
   return (
     <box
       width={3}
       height="100%"
       justifyContent="flex-start"
       alignItems="center"
-      backgroundColor={hover() ? theme.backgroundElement : undefined}
-      onMouseOver={() => setHover(true)}
-      onMouseOut={() => setHover(false)}
-      onMouseUp={() => props.onToggle()}
+      // Above the narrow-terminal sidebar overlay, which would otherwise bury the only
+      // mouse affordance for collapsing it again.
+      zIndex={1}
+      backgroundColor={press.hover() ? theme.backgroundElement : undefined}
+      {...press.props}
     >
-      <text fg={hover() ? theme.text : theme.textMuted}>{props.visible ? "▶" : "◀"}</text>
+      <text fg={press.hover() ? theme.text : theme.textMuted}>{props.visible ? "▶" : "◀"}</text>
     </box>
   )
 }
@@ -196,8 +198,7 @@ export function Session() {
   })
 
   const dimensions = useTerminalDimensions()
-  const [sidebar, setSidebar] = kv.signal<"auto" | "hide">("sidebar", "auto")
-  const [sidebarOpen, setSidebarOpen] = createSignal(false)
+  const [sidebar, setSidebar] = kv.signal<SidebarPreference>("sidebar", "auto")
   const [conceal, setConceal] = createSignal(true)
   const thinking = useThinkingMode()
   const thinkingMode = thinking.mode
@@ -231,12 +232,12 @@ export function Session() {
   const wide = createMemo(() => dimensions().width > 120)
   const sidebarVisible = createMemo(() => {
     if (currentAgentID() !== "main") return false
-    if (sidebarOpen()) return true
-    if (sidebar() === "auto" && wide()) return true
-    return false
+    return sidebarVisibleFor(sidebar(), wide())
   })
+  // Only a docked sidebar consumes layout width; the narrow overlay floats above the transcript.
+  const sidebarDocked = createMemo(() => sidebarVisible() && wide())
   const showTimestamps = createMemo(() => timestamps() === "show")
-  const contentWidth = createMemo(() => dimensions().width - (sidebarVisible() ? 42 : 0) - 4)
+  const contentWidth = createMemo(() => dimensions().width - (sidebarDocked() ? SIDEBAR_WIDTH : 0) - 4)
   const providers = createMemo(() => Model.index(sync.data.provider))
 
   const scrollAcceleration = createMemo(() => getScrollAcceleration(tuiConfig))
@@ -792,11 +793,7 @@ export function Session() {
       keybind: "sidebar_toggle",
       category: "session",
       onSelect: (dialog) => {
-        batch(() => {
-          const isVisible = sidebarVisible()
-          setSidebar(() => (isVisible ? "hide" : "auto"))
-          setSidebarOpen(!isVisible)
-        })
+        setSidebar(() => sidebarToggle(sidebar(), wide()))
         dialog.clear()
       },
     },
@@ -1477,16 +1474,10 @@ export function Session() {
           </Show>
           <Toast />
         </box>
-        <Show when={wide() || sidebarVisible()}>
+        <Show when={sidebarVisible() || wide()}>
           <SidebarToggleButton
             visible={sidebarVisible()}
-            onToggle={() => {
-              batch(() => {
-                const isVisible = sidebarVisible()
-                setSidebar(() => (isVisible ? "hide" : "auto"))
-                setSidebarOpen(!isVisible)
-              })
-            }}
+            onToggle={() => setSidebar(() => sidebarToggle(sidebar(), wide()))}
           />
         </Show>
         <Show when={sidebarVisible()}>

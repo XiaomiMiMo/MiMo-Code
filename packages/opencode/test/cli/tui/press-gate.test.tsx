@@ -1,0 +1,94 @@
+/** @jsxImportSource @opentui/solid */
+import { describe, expect, test } from "bun:test"
+import { testRender } from "@opentui/solid"
+import { createPress } from "../../../src/cli/cmd/tui/ui/press"
+
+// Left half is a drag capturer standing in for the transcript scrollbar; the 3-column
+// button on its right is the press-gated control.
+const NEIGHBOUR = { x: 4, y: 2 }
+const BUTTON = { x: 11, y: 2 }
+const OUTSIDE = { x: 20, y: 2 }
+
+async function mount() {
+  let presses = 0
+  const harness = await testRender(
+    () => {
+      const press = createPress(() => (presses += 1))
+      return (
+        <box flexDirection="row">
+          <box width={10} height={5} />
+          <box width={3} height={5} {...press.props}>
+            <text>{"◀"}</text>
+          </box>
+          <box width={10} height={5} />
+        </box>
+      )
+    },
+    { width: 30, height: 8 },
+  )
+  await harness.renderOnce()
+  return { ...harness, presses: () => presses }
+}
+
+describe("createPress", () => {
+  test("a plain click fires once", async () => {
+    const h = await mount()
+    await h.mockMouse.pressDown(BUTTON.x, BUTTON.y)
+    await h.mockMouse.release(BUTTON.x, BUTTON.y)
+    expect(h.presses()).toBe(1)
+  })
+
+  test("a drag captured elsewhere and released on the button does not fire it", async () => {
+    const h = await mount()
+    await h.mockMouse.pressDown(NEIGHBOUR.x, NEIGHBOUR.y)
+    await h.mockMouse.moveTo(NEIGHBOUR.x + 2, NEIGHBOUR.y)
+    await h.mockMouse.moveTo(BUTTON.x, BUTTON.y)
+    await h.mockMouse.release(BUTTON.x, BUTTON.y)
+    expect(h.presses()).toBe(0)
+  })
+
+  test("pressing the button then releasing outside it does not fire", async () => {
+    const h = await mount()
+    await h.mockMouse.pressDown(BUTTON.x, BUTTON.y)
+    await h.mockMouse.moveTo(BUTTON.x, BUTTON.y)
+    await h.mockMouse.moveTo(OUTSIDE.x, OUTSIDE.y)
+    await h.mockMouse.release(OUTSIDE.x, OUTSIDE.y)
+    expect(h.presses()).toBe(0)
+  })
+
+  test("dragging within the button still fires exactly once on release", async () => {
+    const h = await mount()
+    await h.mockMouse.pressDown(BUTTON.x, BUTTON.y)
+    await h.mockMouse.moveTo(BUTTON.x + 1, BUTTON.y)
+    await h.mockMouse.release(BUTTON.x + 1, BUTTON.y)
+    expect(h.presses()).toBe(1)
+  })
+
+  // Mirrors the narrow-terminal sidebar: the collapse control is a raised flex child and
+  // the sidebar is a later absolute sibling covering the whole row.
+  test("a raised gate stays visible and hit-testable under a later absolute sibling", async () => {
+    let presses = 0
+    const h = await testRender(
+      () => {
+        const press = createPress(() => (presses += 1))
+        return (
+          <box flexDirection="row">
+            <box flexGrow={1} />
+            <box width={3} height={5} zIndex={1} alignItems="center" {...press.props}>
+              <text>{"▶"}</text>
+            </box>
+            <box position="absolute" top={0} left={0} right={0} bottom={0} alignItems="flex-end">
+              <box width={20} height={5} backgroundColor="#333333" />
+            </box>
+          </box>
+        )
+      },
+      { width: 30, height: 6 },
+    )
+    await h.renderOnce()
+    expect(h.captureCharFrame()).toContain("▶")
+    await h.mockMouse.pressDown(28, 0)
+    await h.mockMouse.release(28, 0)
+    expect(presses).toBe(1)
+  })
+})

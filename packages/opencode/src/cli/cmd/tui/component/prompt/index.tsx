@@ -41,6 +41,7 @@ import { DialogProvider as DialogProviderConnect } from "../dialog-provider"
 import { DialogAlert } from "../../ui/dialog-alert"
 import { DialogPrompt } from "../../ui/dialog-prompt"
 import { useToast } from "../../ui/toast"
+import { createPress } from "../../ui/press"
 import { useKV } from "../../context/kv"
 import { createFadeIn } from "../../util/signal"
 import { useTextareaKeybindings } from "../textarea-keybindings"
@@ -366,6 +367,8 @@ export function Prompt(props: PromptProps) {
     activeVoice = av
     setVoiceState("listening")
   }
+
+  const voicePress = createPress(() => void voiceToggle())
 
   const list = createMemo(() => props.placeholders?.normal ?? [])
   const shell = createMemo(() => props.placeholders?.shell ?? [])
@@ -1831,22 +1834,22 @@ export function Prompt(props: PromptProps) {
                 <Show when={voiceEnabled()}>
                   <Switch>
                     <Match when={voiceState() === "idle"}>
-                      <text fg={theme.textMuted} selectable={false} onMouseUp={() => voiceToggle()}>
+                      <text fg={theme.textMuted} selectable={false} {...voicePress.props}>
                         {"[ 🎙  Voice ]"}
                       </text>
                     </Match>
                     <Match when={voiceState() === "listening"}>
-                      <text fg={theme.primary} selectable={false} onMouseUp={() => voiceToggle()}>
+                      <text fg={theme.primary} selectable={false} {...voicePress.props}>
                         {"[ 🎙  -:-- ]"}
                       </text>
                     </Match>
                     <Match when={voiceState() === "speaking"}>
-                      <text fg={theme.primary} selectable={false} onMouseUp={() => voiceToggle()}>
+                      <text fg={theme.primary} selectable={false} {...voicePress.props}>
                         {`[ 🎙  ${Math.floor(voiceElapsed() / 60)}:${String(voiceElapsed() % 60).padStart(2, "0")} ]`}
                       </text>
                     </Match>
                     <Match when={voiceState() === "processing"}>
-                      <text fg={theme.primary} selectable={false} onMouseUp={() => voiceToggle()}>
+                      <text fg={theme.primary} selectable={false} {...voicePress.props}>
                         {"[ 🎙  .... ]"}
                       </text>
                     </Match>
