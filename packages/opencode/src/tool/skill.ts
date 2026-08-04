@@ -1,5 +1,6 @@
 import z from "zod"
 import { Effect } from "effect"
+import { Agent } from "../agent/agent"
 import { Ripgrep } from "../file/ripgrep"
 import { Skill } from "../skill"
 import { BuiltinWorkflow } from "../workflow/builtin"
@@ -16,6 +17,7 @@ export const SkillTool = Tool.define(
   Effect.gen(function* () {
     const skill = yield* Skill.Service
     const rg = yield* Ripgrep.Service
+    const agents = yield* Agent.Service
 
     return {
       description: DESCRIPTION,
@@ -34,9 +36,9 @@ export const SkillTool = Tool.define(
                   `workflow({ operation: "run", name: "${params.name}", args: { ... } }). Do NOT use the skill tool for it.`,
               )
             }
-            const all = yield* skill.all()
-            const available = all
-              .filter((item) => !item.disable_model_invocation)
+            // Same set the tool description advertises, so a near miss cannot
+            // reveal a skill the model is not allowed to see.
+            const available = (yield* skill.modelInvocable(yield* agents.get(ctx.agent)))
               .map((item) => item.name)
               .join(", ")
             throw new Error(`Skill "${params.name}" not found. Available skills: ${available || "none"}`)
