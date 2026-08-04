@@ -3,7 +3,7 @@ feature: bun-text-import-esm-collision
 status: delivered
 updated: 2026-08-03
 branch: fix/workflow-script-ext
-commits: 09d03d67..8273c3ab
+commits: 09d03d67..e8f1a8d1
 ---
 
 # Built-in workflow scripts collide with the ESM parser
