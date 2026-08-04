@@ -1,12 +1,16 @@
 import type { Session } from "@mimo-ai/sdk/v2/client"
 import { Avatar } from "@mimo-ai/ui/avatar"
+import { Button } from "@mimo-ai/ui/button"
+import { DropdownMenu } from "@mimo-ai/ui/dropdown-menu"
+import { useDialog } from "@mimo-ai/ui/context/dialog"
+import { Dialog } from "@mimo-ai/ui/dialog"
 import { Icon } from "@mimo-ai/ui/icon"
 import { IconButton } from "@mimo-ai/ui/icon-button"
 import { Spinner } from "@mimo-ai/ui/spinner"
 import { Tooltip } from "@mimo-ai/ui/tooltip"
 import { getFilename } from "@mimo-ai/shared/util/path"
 import { A, useParams } from "@solidjs/router"
-import { type Accessor, createMemo, For, type JSX, Match, Show, Switch } from "solid-js"
+import { type Accessor, createMemo, createSignal, For, type JSX, Match, Show, Switch } from "solid-js"
 import { useGlobalSync } from "@/context/global-sync"
 import { useLanguage } from "@/context/language"
 import { getAvatarColors, type LocalProject, useLayout } from "@/context/layout"
@@ -44,7 +48,7 @@ export const ProjectIcon = (props: { project: LocalProject; class?: string; noti
           fallback={name()}
           src={
             props.project.id === OPENCODE_PROJECT_ID
-              ? "https://opencode.ai/favicon.svg"
+              ? "/favicon.svg"
               : props.project.icon?.override || props.project.icon?.url
           }
           {...getAvatarColors(props.project.icon?.color)}
@@ -80,6 +84,8 @@ export type SessionItemProps = {
   clearHoverProjectSoon: () => void
   prefetchSession: (session: Session, priority?: "high" | "low") => void
   archiveSession: (session: Session) => Promise<void>
+  deleteSession?: (session: Session) => Promise<void>
+  renameSession?: (session: Session, title: string) => Promise<void>
 }
 
 const SessionRow = (props: {
@@ -212,11 +218,85 @@ export const SessionItem = (props: SessionItemProps): JSX.Element => {
     />
   )
 
+  const dialog = useDialog()
+  const [menuOpen, setMenuOpen] = createSignal(false)
+
+  const promptRename = () => {
+    let inputRef: HTMLInputElement | undefined
+    const [titleVal, setTitleVal] = createSignal(sessionTitle(props.session.title) ?? "")
+
+    dialog.show(() => (
+      <Dialog title={language.t("common.rename")} class="w-full max-w-[400px] mx-auto">
+        <form
+          onSubmit={(e) => {
+            e.preventDefault()
+            const newTitle = titleVal().trim()
+            if (newTitle && props.renameSession) {
+              void props.renameSession(props.session, newTitle)
+            }
+            dialog.close()
+          }}
+          class="flex flex-col gap-4 p-4"
+        >
+          <input
+            ref={inputRef}
+            type="text"
+            value={titleVal()}
+            onInput={(e) => setTitleVal(e.currentTarget.value)}
+            class="w-full px-3 py-1.5 rounded-md border border-border-weak bg-surface-base text-text-base focus:outline-none focus:border-border-strong text-sm"
+            autofocus
+          />
+          <div class="flex justify-end gap-2">
+            <Button variant="ghost" onClick={() => dialog.close()}>
+              {language.t("common.cancel")}
+            </Button>
+            <Button type="submit" variant="primary">
+              {language.t("common.save")}
+            </Button>
+          </div>
+        </form>
+      </Dialog>
+    ))
+  }
+
+  const confirmDelete = () => {
+    const name = sessionTitle(props.session.title) ?? props.session.id
+    dialog.show(() => (
+      <Dialog title={language.t("session.delete.title")} fit class="w-full max-w-[440px] mx-auto">
+        <div class="flex flex-col gap-4 p-5">
+          <p class="text-sm text-text-weak leading-relaxed font-normal">
+            {language.t("session.delete.confirm", { name })}
+          </p>
+          <div class="flex items-center justify-end gap-3 pt-2">
+            <button
+              type="button"
+              class="px-4 py-2 text-sm font-medium rounded-xl bg-surface-raised-base hover:bg-surface-raised-base-hover text-text-strong transition-colors border-0 cursor-pointer"
+              onClick={() => dialog.close()}
+            >
+              {language.t("common.cancel")}
+            </button>
+            <button
+              type="button"
+              class="px-4 py-2 text-sm font-semibold rounded-xl bg-[#007acc] hover:bg-[#0069b2] text-white shadow-sm transition-colors border-0 cursor-pointer flex items-center gap-1.5"
+              onClick={() => {
+                void props.deleteSession?.(props.session)
+                dialog.close()
+              }}
+            >
+              <span>{language.t("common.delete")}</span>
+              <span class="text-xs font-mono opacity-80">↵</span>
+            </button>
+          </div>
+        </div>
+      </Dialog>
+    ))
+  }
+
   return (
     <>
       <div
         data-session-id={props.session.id}
-        class="group/session relative w-full min-w-0 rounded-md cursor-default pr-3 transition-colors hover:bg-surface-raised-base-hover [&:has(:focus-visible)]:bg-surface-raised-base-hover has-[[data-expanded]]:bg-surface-raised-base-hover has-[.active]:bg-surface-base-active"
+        class="group/session relative w-full min-w-0 rounded-md cursor-default pr-3 transition-colors hover:bg-surface-raised-base-hover [&:has(:focus-visible)]:bg-surface-raised-base-hover has-[[data-expanded]]:bg-surface-raised-base-hover has-[.active]:bg-surface-base-active [content-visibility:auto] [contain-intrinsic-size:0_32px] [contain:content]"
         style={{ "padding-left": `${8 + (props.level ?? 0) * 16}px` }}
       >
         <div class="flex min-w-0 items-center gap-1">
@@ -242,25 +322,37 @@ export const SessionItem = (props: SessionItemProps): JSX.Element => {
             <div
               class="shrink-0 overflow-hidden transition-[width,opacity]"
               classList={{
-                "w-6 opacity-100 pointer-events-auto": !!props.mobile,
-                "w-0 opacity-0 pointer-events-none": !props.mobile,
+                "w-6 opacity-100 pointer-events-auto": !!props.mobile || menuOpen(),
+                "w-0 opacity-0 pointer-events-none": !props.mobile && !menuOpen(),
                 "group-hover/session:w-6 group-hover/session:opacity-100 group-hover/session:pointer-events-auto": true,
                 "group-focus-within/session:w-6 group-focus-within/session:opacity-100 group-focus-within/session:pointer-events-auto": true,
               }}
             >
-              <Tooltip value={language.t("common.archive")} placement="top">
-                <IconButton
-                  icon="archive"
-                  variant="ghost"
-                  class="size-6 rounded-md"
-                  aria-label={language.t("common.archive")}
-                  onClick={(event) => {
-                    event.preventDefault()
-                    event.stopPropagation()
-                    void props.archiveSession(props.session)
-                  }}
-                />
-              </Tooltip>
+              <DropdownMenu open={menuOpen()} onOpenChange={setMenuOpen}>
+                <Tooltip value={language.t("common.moreOptions")} placement="top">
+                  <DropdownMenu.Trigger
+                    as={IconButton}
+                    icon="dot-grid"
+                    variant="ghost"
+                    class="size-6 rounded-md"
+                    aria-label={language.t("common.moreOptions")}
+                    onClick={(event: MouseEvent) => {
+                      event.preventDefault()
+                      event.stopPropagation()
+                    }}
+                  />
+                </Tooltip>
+                <DropdownMenu.Portal>
+                  <DropdownMenu.Content placement="bottom-end" gutter={4}>
+                    <DropdownMenu.Item onSelect={promptRename}>
+                      <DropdownMenu.ItemLabel>{language.t("common.rename")}</DropdownMenu.ItemLabel>
+                    </DropdownMenu.Item>
+                    <DropdownMenu.Item onSelect={confirmDelete}>
+                      <DropdownMenu.ItemLabel class="text-text-critical-base">{language.t("common.delete")}</DropdownMenu.ItemLabel>
+                    </DropdownMenu.Item>
+                  </DropdownMenu.Content>
+                </DropdownMenu.Portal>
+              </DropdownMenu>
             </div>
           </Show>
         </div>

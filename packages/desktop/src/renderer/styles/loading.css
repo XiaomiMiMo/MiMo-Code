@@ -1,0 +1,35 @@
+/* Loading Screen & Theme Anti-Flash Styles */
+
+:root {
+  --background-base: #ffffff;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --background-base: #131010;
+  }
+}
+
+html, body {
+  background-color: var(--background-base);
+  color-scheme: light dark;
+}
+
+/* Loading Splash Transition */
+[data-loading-splash] {
+  transition: opacity 0.3s ease, transform 0.3s ease;
+}
+
+/* Progress track customization fallback for loading screen */
+.loading-progress-track {
+  height: 4px;
+  border-radius: 9999px;
+  background-color: rgba(128, 128, 128, 0.2);
+  overflow: hidden;
+}
+
+.loading-progress-fill {
+  height: 100%;
+  border-radius: 9999px;
+  transition: width 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+}

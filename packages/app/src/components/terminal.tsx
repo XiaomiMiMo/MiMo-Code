@@ -192,8 +192,8 @@ export const Terminal = (props: TerminalProps) => {
   let ws: WebSocket | undefined
   let term: Term | undefined
   let _ghostty: Ghostty
-  let serializeAddon: SerializeAddon
-  let fitAddon: FitAddon
+  let serializeAddon: SerializeAddon | undefined
+  let fitAddon: FitAddon | undefined
   let handleResize: () => void
   let fitFrame: number | undefined
   let sizeTimer: ReturnType<typeof setTimeout> | undefined
@@ -211,15 +211,21 @@ export const Terminal = (props: TerminalProps) => {
   let tries = 0
 
   const cleanup = () => {
-    if (!cleanups.length) return
-    const fns = cleanups.splice(0).reverse()
-    for (const fn of fns) {
-      try {
-        fn()
-      } catch (err) {
-        debugTerminal("cleanup failed", err)
+    if (cleanups.length) {
+      const fns = cleanups.splice(0).reverse()
+      for (const fn of fns) {
+        try {
+          fn()
+        } catch (err) {
+          debugTerminal("cleanup failed", err)
+        }
       }
     }
+    if (container) container.replaceChildren()
+    term = undefined
+    output = undefined
+    fitAddon = undefined
+    serializeAddon = undefined
   }
 
   const pushSize = (cols: number, rows: number) => {
@@ -264,7 +270,7 @@ export const Terminal = (props: TerminalProps) => {
     fitFrame = requestAnimationFrame(() => {
       fitFrame = undefined
       if (disposed) return
-      fitAddon.fit()
+      fitAddon?.fit()
     })
   }
 

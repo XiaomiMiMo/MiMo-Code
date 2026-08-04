@@ -310,6 +310,9 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
       setVisibility(item: ModelKey, visible: boolean) {
         models.setVisibility(item, visible)
       },
+      setBulkVisibility(items: { model: ModelKey; state: boolean }[]) {
+        models.setBulkVisibility(items)
+      },
       variant: {
         configured,
         selected,

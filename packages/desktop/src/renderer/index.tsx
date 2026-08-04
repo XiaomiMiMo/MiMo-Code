@@ -13,9 +13,10 @@ import {
   PlatformProvider,
   ServerConnection,
   useCommand,
+  useGlobalSync,
 } from "@mimo-ai/app"
 import type { AsyncStorage } from "@solid-primitives/storage"
-import { MemoryRouter } from "@solidjs/router"
+import { MemoryRouter, useLocation } from "@solidjs/router"
 import { createEffect, createResource, onCleanup, onMount, Show } from "solid-js"
 import { render } from "solid-js/web"
 import pkg from "../../package.json"
@@ -245,8 +246,15 @@ const createPlatform = (): Platform => {
   }
 }
 
+function atobSafe(s: string): string {
+  try { return atob(s) } catch { return s }
+}
+
 let menuTrigger = null as null | ((id: string) => void)
 window.api.onMenuCommand((id) => {
+  menuTrigger?.(id)
+})
+window.api.onTrayCommand((id) => {
   menuTrigger?.(id)
 })
 listenForDeepLinks()
@@ -294,6 +302,25 @@ render(() => {
     return [server] as ServerConnection.Any[]
   }
 
+  function handleDeepLink(e: Event) {
+    for (const url of (e as CustomEvent<{ urls: string[] }>).detail.urls) {
+      try {
+        const u = new URL(url)
+        if (u.host === "session") {
+          const id = u.pathname.replace(/^\//, "")
+          if (id && menuTrigger) {
+            menuTrigger("session.open")
+          }
+        } else if (u.host === "project") {
+          const path = u.searchParams.get("path")
+          if (path && menuTrigger) {
+            menuTrigger("project.open")
+          }
+        }
+      } catch {}
+    }
+  }
+
   function handleClick(e: MouseEvent) {
     const link = (e.target as HTMLElement).closest("a.external-link") as HTMLAnchorElement | null
     if (link?.href) {
@@ -304,7 +331,29 @@ render(() => {
 
   function Inner() {
     const cmd = useCommand()
+    const loc = useLocation()
     menuTrigger = (id) => cmd.trigger(id)
+    // 监听 workspace / session 切换，推送 recent projects 和当前 session 到主进程
+    createEffect(() => {
+      const path = loc.pathname
+
+      // Track current session for macOS menu
+      const sessionMatch = path.match(/^\/([^/]+)\/session\/([^/]+)/)
+      if (sessionMatch) {
+        const dir = atobSafe(sessionMatch[1])
+        window.api.setCurrentSession({ id: sessionMatch[2], directory: dir })
+      } else {
+        window.api.setCurrentSession(null)
+      }
+
+      // Push recent projects to main process
+      if (path && path !== "/") {
+        const projects = window.__OPENCODE__?.recentProjects ?? []
+        if (projects.length > 0) {
+          window.api.setRecentProjects(projects)
+        }
+      }
+    })
 
     const theme = useTheme()
 
@@ -322,8 +371,10 @@ render(() => {
 
   onMount(() => {
     document.addEventListener("click", handleClick)
+    document.addEventListener("opencode:deep-link", handleDeepLink)
     onCleanup(() => {
       document.removeEventListener("click", handleClick)
+      document.removeEventListener("opencode:deep-link", handleDeepLink)
     })
   })
 

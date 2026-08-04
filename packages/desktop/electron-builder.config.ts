@@ -28,18 +28,17 @@ const channel = (() => {
 
 const getBase = (): Configuration => ({
   artifactName: "opencode-desktop-${os}-${arch}.${ext}",
+  npmRebuild: false,
+  nodeGypRebuild: false,
+  onNodeModuleFile: () => false,
+  extraMetadata: {
+    packageManager: "npm",
+  },
   directories: {
     output: "dist",
     buildResources: "resources",
   },
-  files: ["out/**/*", "resources/**/*"],
-  extraResources: [
-    {
-      from: "native/",
-      to: "native/",
-      filter: ["index.js", "index.d.ts", "build/Release/mac_window.node", "swift-build/**"],
-    },
-  ],
+  files: ["out/**/*", "resources/**/*", "node_modules/@lydell/**/*"],
   mac: {
     category: "public.app-category.developer-tools",
     icon: `resources/icons/icon.icns`,
@@ -47,7 +46,7 @@ const getBase = (): Configuration => ({
     gatekeeperAssess: false,
     entitlements: "resources/entitlements.plist",
     entitlementsInherit: "resources/entitlements.plist",
-    notarize: true,
+    notarize: false,
     target: ["dmg", "zip"],
   },
   dmg: {
@@ -85,7 +84,7 @@ function getConfig() {
       return {
         ...base,
         appId: "ai.opencode.desktop.dev",
-        productName: "OpenCode Dev",
+        productName: "MiMo-Code Dev",
         rpm: { packageName: "opencode-dev" },
       }
     }
@@ -93,9 +92,9 @@ function getConfig() {
       return {
         ...base,
         appId: "ai.opencode.desktop.beta",
-        productName: "OpenCode Beta",
-        protocols: { name: "OpenCode Beta", schemes: ["opencode"] },
-        publish: { provider: "github", owner: "anomalyco", repo: "opencode-beta", channel: "latest" },
+        productName: "MiMo-Code Beta",
+        protocols: { name: "MiMo-Code Beta", schemes: ["opencode"] },
+        // publish handled by softprops/action-gh-release in release-desktop.yml
         rpm: { packageName: "opencode-beta" },
       }
     }
@@ -103,9 +102,9 @@ function getConfig() {
       return {
         ...base,
         appId: "ai.opencode.desktop",
-        productName: "OpenCode",
-        protocols: { name: "OpenCode", schemes: ["opencode"] },
-        publish: { provider: "github", owner: "anomalyco", repo: "opencode", channel: "latest" },
+        productName: "MiMo-Code",
+        protocols: { name: "MiMo-Code", schemes: ["opencode"] },
+        // publish handled by softprops/action-gh-release in release-desktop.yml
         rpm: { packageName: "opencode" },
       }
     }

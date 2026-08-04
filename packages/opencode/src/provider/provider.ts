@@ -307,7 +307,14 @@ function custom(dep: CustomDep): Record<string, CustomLoader> {
       // subscription/key, hide the remaining (paid) models too — they can't be
       // used unauthenticated. So: authenticated -> subscription models only,
       // unauthenticated -> nothing.
+      //
+      // Exception: the "mimo" provider is the built-in anonymous free channel
+      // (mimo-auto) — its cost.input === 0 is by design, not an unauthenticated
+      // paid tier. Skip the strip for it. See plugin/mimo.ts for the
+      // corresponding config() hook that injects the provider.
+      const isMimoFreeChannel = input.id === "mimo"
       for (const [key, value] of Object.entries(input.models)) {
+        if (isMimoFreeChannel) continue
         if (!ok || value.cost.input === 0) delete input.models[key]
       }
 
@@ -1231,6 +1238,182 @@ const layer: Layer.Layer<
         const cfg = yield* config.get()
         const modelsDev = yield* Effect.promise(() => ModelsDev.get())
         const database = mapValues(modelsDev, fromModelsDevProvider)
+        if (!database["deepseek"]) {
+          database[ProviderID.make("deepseek")] = {
+            id: ProviderID.make("deepseek"),
+            name: "DeepSeek",
+            env: ["DEEPSEEK_API_KEY"],
+            options: {
+              baseURL: "https://api.deepseek.com",
+            },
+            source: "custom",
+            models: {
+              "deepseek-chat": {
+                id: ModelID.make("deepseek-chat"),
+                name: "DeepSeek Chat",
+                providerID: ProviderID.make("deepseek"),
+                api: {
+                  id: "deepseek-chat",
+                  npm: "@ai-sdk/openai-compatible",
+                  url: "https://api.deepseek.com",
+                },
+                status: "active",
+                capabilities: {
+                  temperature: true,
+                  reasoning: false,
+                  attachment: false,
+                  toolcall: true,
+                  input: { text: true, audio: false, image: false, video: false, pdf: false },
+                  output: { text: true, audio: false, image: false, video: false, pdf: false },
+                  interleaved: false,
+                },
+                cost: { input: 0.14, output: 0.28, cache: { read: 0.014, write: 0 } },
+                options: {},
+                limit: { context: 128000, output: 8192 },
+                headers: {},
+                family: "deepseek",
+                release_date: "2024-12-26",
+              },
+              "deepseek-reasoner": {
+                id: ModelID.make("deepseek-reasoner"),
+                name: "DeepSeek Reasoner (R1)",
+                providerID: ProviderID.make("deepseek"),
+                api: {
+                  id: "deepseek-reasoner",
+                  npm: "@ai-sdk/openai-compatible",
+                  url: "https://api.deepseek.com",
+                },
+                status: "active",
+                capabilities: {
+                  temperature: true,
+                  reasoning: true,
+                  attachment: false,
+                  toolcall: true,
+                  input: { text: true, audio: false, image: false, video: false, pdf: false },
+                  output: { text: true, audio: false, image: false, video: false, pdf: false },
+                  interleaved: { field: "reasoning_content" },
+                },
+                cost: { input: 0.55, output: 2.19, cache: { read: 0.14, write: 0 } },
+                options: {},
+                limit: { context: 128000, output: 8192 },
+                headers: {},
+                family: "deepseek",
+                release_date: "2025-01-20",
+              },
+              "deepseek-v4-flash": {
+                id: ModelID.make("deepseek-v4-flash"),
+                name: "DeepSeek V4 Flash",
+                providerID: ProviderID.make("deepseek"),
+                api: {
+                  id: "deepseek-v4-flash",
+                  npm: "@ai-sdk/openai-compatible",
+                  url: "https://api.deepseek.com",
+                },
+                status: "active",
+                capabilities: {
+                  temperature: true,
+                  reasoning: true,
+                  attachment: false,
+                  toolcall: true,
+                  input: { text: true, audio: false, image: false, video: false, pdf: false },
+                  output: { text: true, audio: false, image: false, video: false, pdf: false },
+                  interleaved: { field: "reasoning_content" },
+                },
+                cost: { input: 0.14, output: 0.28, cache: { read: 0.028, write: 0 } },
+                options: {},
+                limit: { context: 1000000, output: 384000 },
+                headers: {},
+                family: "deepseek-flash",
+                release_date: "2026-04-24",
+              },
+              "deepseek-v4-pro": {
+                id: ModelID.make("deepseek-v4-pro"),
+                name: "DeepSeek V4 Pro",
+                providerID: ProviderID.make("deepseek"),
+                api: {
+                  id: "deepseek-v4-pro",
+                  npm: "@ai-sdk/openai-compatible",
+                  url: "https://api.deepseek.com",
+                },
+                status: "active",
+                capabilities: {
+                  temperature: true,
+                  reasoning: true,
+                  attachment: false,
+                  toolcall: true,
+                  input: { text: true, audio: false, image: false, video: false, pdf: false },
+                  output: { text: true, audio: false, image: false, video: false, pdf: false },
+                  interleaved: { field: "reasoning_content" },
+                },
+                cost: { input: 1.74, output: 3.48, cache: { read: 0.145, write: 0 } },
+                options: {},
+                limit: { context: 1000000, output: 384000 },
+                headers: {},
+                family: "deepseek-thinking",
+                release_date: "2026-04-24",
+              },
+            },
+          }
+        }
+        if (database["deepseek"]) {
+          const ds = database["deepseek"]
+          if (!ds.models["deepseek-v4-flash"]) {
+            ds.models["deepseek-v4-flash"] = {
+              id: ModelID.make("deepseek-v4-flash"),
+              name: "DeepSeek V4 Flash",
+              providerID: ProviderID.make("deepseek"),
+              api: {
+                id: "deepseek-v4-flash",
+                npm: "@ai-sdk/openai-compatible",
+                url: "https://api.deepseek.com",
+              },
+              status: "active",
+              capabilities: {
+                temperature: true,
+                reasoning: true,
+                attachment: false,
+                toolcall: true,
+                input: { text: true, audio: false, image: false, video: false, pdf: false },
+                output: { text: true, audio: false, image: false, video: false, pdf: false },
+                interleaved: { field: "reasoning_content" },
+              },
+              cost: { input: 0.14, output: 0.28, cache: { read: 0.028, write: 0 } },
+              options: {},
+              limit: { context: 1000000, output: 384000 },
+              headers: {},
+              family: "deepseek-flash",
+              release_date: "2026-04-24",
+            }
+          }
+          if (!ds.models["deepseek-v4-pro"]) {
+            ds.models["deepseek-v4-pro"] = {
+              id: ModelID.make("deepseek-v4-pro"),
+              name: "DeepSeek V4 Pro",
+              providerID: ProviderID.make("deepseek"),
+              api: {
+                id: "deepseek-v4-pro",
+                npm: "@ai-sdk/openai-compatible",
+                url: "https://api.deepseek.com",
+              },
+              status: "active",
+              capabilities: {
+                temperature: true,
+                reasoning: true,
+                attachment: false,
+                toolcall: true,
+                input: { text: true, audio: false, image: false, video: false, pdf: false },
+                output: { text: true, audio: false, image: false, video: false, pdf: false },
+                interleaved: { field: "reasoning_content" },
+              },
+              cost: { input: 1.74, output: 3.48, cache: { read: 0.145, write: 0 } },
+              options: {},
+              limit: { context: 1000000, output: 384000 },
+              headers: {},
+              family: "deepseek-thinking",
+              release_date: "2026-04-24",
+            }
+          }
+        }
 
         const providers: Record<ProviderID, Info> = {} as Record<ProviderID, Info>
         const languages = new Map<string, LanguageModelV3>()

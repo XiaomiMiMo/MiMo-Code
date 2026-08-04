@@ -1,0 +1,36 @@
+/* Desktop Custom WebKit Scrollbar */
+
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background-color: var(--border-subtle, rgba(128, 128, 128, 0.25));
+  border-radius: 4px;
+  border: 2px solid transparent;
+  background-clip: content-box;
+  transition: background-color 0.2s ease;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background-color: var(--border-strong, rgba(128, 128, 128, 0.45));
+}
+
+::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+/* Slim Scrollbar Utility Class */
+.scrollbar-thin::-webkit-scrollbar {
+  width: 4px;
+  height: 4px;
+}
+
+.scrollbar-none::-webkit-scrollbar {
+  display: none;
+}

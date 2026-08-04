@@ -162,8 +162,8 @@ export const Flag = {
   // the working directory. Use to avoid touching git in restricted/sandboxed
   // environments or where git startup probing is undesirable.
   MIMOCODE_DISABLE_GIT: truthy("MIMOCODE_DISABLE_GIT"),
-  MIMOCODE_SERVER_PASSWORD: process.env["MIMOCODE_SERVER_PASSWORD"],
-  MIMOCODE_SERVER_USERNAME: process.env["MIMOCODE_SERVER_USERNAME"],
+  MIMOCODE_SERVER_PASSWORD: process.env["MIMOCODE_SERVER_PASSWORD"] ?? process.env["OPENCODE_SERVER_PASSWORD"],
+  MIMOCODE_SERVER_USERNAME: process.env["MIMOCODE_SERVER_USERNAME"] ?? process.env["OPENCODE_SERVER_USERNAME"],
   MIMOCODE_ENABLE_QUESTION_TOOL: truthy("MIMOCODE_ENABLE_QUESTION_TOOL"),
 
   // Defaults to false. Set MIMOCODE_ENABLE_TRY_BEST_HANDOFF=true (or 1) to
@@ -310,6 +310,6 @@ export const Flag = {
     return process.env["MIMOCODE_PLUGIN_META_FILE"]
   },
   get MIMOCODE_CLIENT() {
-    return process.env["MIMOCODE_CLIENT"] ?? "cli"
+    return process.env["MIMOCODE_CLIENT"] ?? process.env["OPENCODE_CLIENT"] ?? "cli"
   },
 }

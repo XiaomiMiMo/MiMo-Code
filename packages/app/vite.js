@@ -13,9 +13,22 @@ export default [
     name: "opencode-desktop:config",
     config() {
       return {
+        css: {
+          transformer: "lightningcss",
+        },
         resolve: {
           alias: {
             "@": fileURLToPath(new URL("./src", import.meta.url)),
+          },
+        },
+        optimizeDeps: {
+          exclude: ["@mimo-ai/ui", "@mimo-ai/app", "@mimo-ai/shared"],
+        },
+        server: {
+          watch: {
+            // 忽略 node_modules 防止无限 HMR 循环
+            // "!**/packages/xxx/**" 在 ignored 里不是有效的排除语法
+            ignored: ["**/node_modules/**"],
           },
         },
         worker: {

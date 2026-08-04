@@ -425,7 +425,12 @@ export const ToolScriptTool = Tool.define(
             return `TypeScript transpile failed:\n${rendered}${importHint}`
           }
           const transpiled = yield* Effect.try({
-            try: () => new Bun.Transpiler({ loader: "ts" }).transformSync(`globalThis.__main = async () => {\n${params.code}\n}`),
+            try: () => {
+              if (typeof Bun === "undefined") {
+                return `globalThis.__main = async () => {\n${params.code}\n}`
+              }
+              return new Bun.Transpiler({ loader: "ts" }).transformSync(`globalThis.__main = async () => {\n${params.code}\n}`)
+            },
             catch: (err) => err,
           }).pipe(Effect.catch((err) => Effect.succeed({ error: formatBuildError(err) })))
           if (typeof transpiled === "object") {
@@ -553,14 +558,14 @@ export const ToolScriptTool = Tool.define(
           // giant file can't blow the guest memory limit.
           const readText: HostFn = async (p: unknown) => {
             const abs = resolveJailed(jailRoots, String(p), "read")
-            const file = Bun.file(abs)
-            if (!(await file.exists())) return null
-            if (file.size > MAX_FILE_BYTES) throw new Error(`file exceeds ${MAX_FILE_BYTES} bytes: ${String(p)}`)
+            const stat = await fs.promises.stat(abs).catch(() => null)
+            if (!stat) return null
+            if (stat.size > MAX_FILE_BYTES) throw new Error(`file exceeds ${MAX_FILE_BYTES} bytes: ${String(p)}`)
             // Non-UTF-8 content cannot survive the string boundary into the guest
             // (Bun's .text() folds invalid sequences to U+FFFD and NULs previously
             // truncated at the C-string marshal). Fail loud instead of silently
             // returning corrupted/empty data.
-            const bytes = await file.bytes()
+            const bytes = await fs.promises.readFile(abs)
             try {
               return new TextDecoder("utf-8", { fatal: true }).decode(bytes)
             } catch {

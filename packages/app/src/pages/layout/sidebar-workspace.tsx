@@ -39,6 +39,8 @@ export type WorkspaceSidebarContext = {
   clearHoverProjectSoon: () => void
   prefetchSession: (session: Session, priority?: "high" | "low") => void
   archiveSession: (session: Session) => Promise<void>
+  deleteSession: (session: Session) => Promise<void>
+  renameSession: (session: Session, title: string) => Promise<void>
   workspaceName: (directory: string, projectId?: string, branch?: string) => string | undefined
   renameWorkspace: (directory: string, next: string, projectId?: string, branch?: string) => void
   editorOpen: (id: string) => boolean
@@ -101,14 +103,16 @@ const WorkspaceHeader = (props: {
         <Spinner class="size-[15px]" />
       </Show>
     </div>
-    <span class="text-14-medium text-text-base shrink-0">
-      {props.local() ? props.language.t("workspace.type.local") : props.language.t("workspace.type.sandbox")} :
-    </span>
+    <Show when={props.branch() || (getFilename(props.directory) !== "/" && getFilename(props.directory))}>
+      <span class="text-14-medium text-text-base shrink-0">
+        {props.local() ? props.language.t("workspace.type.local") : props.language.t("workspace.type.sandbox")} :
+      </span>
+    </Show>
     <Show
       when={!props.local()}
       fallback={
         <span class="text-14-medium text-text-base min-w-0 truncate">
-          {props.branch() ?? getFilename(props.directory)}
+          {props.branch() ?? (getFilename(props.directory) === "/" ? "" : getFilename(props.directory))}
         </span>
       }
     >
@@ -180,6 +184,8 @@ const WorkspaceActions = (props: {
       </Tooltip>
       <DropdownMenu.Portal>
         <DropdownMenu.Content
+          placement="bottom-end"
+          gutter={4}
           onCloseAutoFocus={(event) => {
             if (!props.pendingRename()) return
             event.preventDefault()
@@ -243,7 +249,7 @@ const WorkspaceSessionList = (props: {
   loadMore: () => Promise<void>
   language: ReturnType<typeof useLanguage>
 }): JSX.Element => (
-  <nav class="flex flex-col gap-1">
+  <nav class="flex flex-col gap-1 [contain:content]">
     <Show when={props.showNew()}>
       <NewSessionItem
         slug={props.slug()}
@@ -268,6 +274,8 @@ const WorkspaceSessionList = (props: {
           clearHoverProjectSoon={props.ctx.clearHoverProjectSoon}
           prefetchSession={props.ctx.prefetchSession}
           archiveSession={props.ctx.archiveSession}
+          deleteSession={props.ctx.deleteSession}
+          renameSession={props.ctx.renameSession}
         />
       )}
     </For>
@@ -446,18 +454,15 @@ export const LocalWorkspace = (props: {
 }): JSX.Element => {
   const globalSync = useGlobalSync()
   const language = useLanguage()
-  const workspace = createMemo(() => {
-    const [store, setStore] = globalSync.child(props.project.worktree)
-    return { store, setStore }
-  })
+  const [workspaceStore, setWorkspaceStore] = globalSync.child(props.project.worktree)
   const slug = createMemo(() => base64Encode(props.project.worktree))
-  const sessions = createMemo(() => sortedRootSessions(workspace().store, props.sortNow()))
+  const sessions = createMemo(() => sortedRootSessions(workspaceStore, props.sortNow()))
   const count = createMemo(() => sessions()?.length ?? 0)
   const query = useQuery(() => ({ ...loadSessionsQuery(props.project.worktree) }))
-  const hasMore = createMemo(() => workspace().store.sessionTotal > count())
+  const hasMore = createMemo(() => workspaceStore.sessionTotal > count())
   const loading = () => query.isLoading && count() === 0
   const loadMore = async () => {
-    workspace().setStore("limit", (limit) => (limit ?? 0) + 5)
+    setWorkspaceStore("limit", (limit) => (limit ?? 0) + 5)
     await globalSync.project.loadSessions(props.project.worktree)
   }
 

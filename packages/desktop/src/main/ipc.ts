@@ -10,6 +10,16 @@ import type {
   WindowConfig,
   WslConfig,
 } from "../preload/types"
+import {
+  credentialDelete,
+  credentialGet,
+  credentialSet,
+  isMac,
+  macCapabilities,
+  openInTerminal,
+  setDockBadge,
+  showSystemNotification,
+} from "./mac"
 import { getStore } from "./store"
 import { setTitlebar } from "./windows"
 
@@ -34,10 +44,14 @@ type Deps = {
   wslPath: (path: string, mode: "windows" | "linux" | null) => Promise<string>
   resolveAppPath: (appName: string) => Promise<string | null>
   loadingWindowComplete: () => void
+  installCli: () => Promise<string>
+  setRecentProjects: (directories: string[]) => void
+  setCurrentSession: (session: { id: string; directory: string; title?: string } | null) => void
   runUpdater: (alertOnFail: boolean) => Promise<void> | void
   checkUpdate: () => Promise<{ updateAvailable: boolean; version?: string }>
   installUpdate: () => Promise<void> | void
   setBackgroundColor: (color: string) => void
+  setWindowTitle: (title: string) => void
 }
 
 export function registerIpcHandlers(deps: Deps) {
@@ -68,7 +82,15 @@ export function registerIpcHandlers(deps: Deps) {
   ipcMain.handle("run-updater", (_event: IpcMainInvokeEvent, alertOnFail: boolean) => deps.runUpdater(alertOnFail))
   ipcMain.handle("check-update", () => deps.checkUpdate())
   ipcMain.handle("install-update", () => deps.installUpdate())
+  ipcMain.handle("set-window-title", (_event, title) => deps.setWindowTitle(title))
   ipcMain.handle("set-background-color", (_event: IpcMainInvokeEvent, color: string) => deps.setBackgroundColor(color))
+  ipcMain.handle("install-cli", () => deps.installCli())
+  ipcMain.handle("set-recent-projects", (_event: IpcMainInvokeEvent, directories: string[]) => {
+    deps.setRecentProjects(directories)
+  })
+  ipcMain.handle("set-current-session", (_event: IpcMainInvokeEvent, session: { id: string; directory: string; title?: string } | null) => {
+    deps.setCurrentSession(session)
+  })
   ipcMain.handle("store-get", (_event: IpcMainInvokeEvent, name: string, key: string) => {
     const store = getStore(name)
     const value = store.get(key)
@@ -156,6 +178,24 @@ export function registerIpcHandlers(deps: Deps) {
     return { buffer, width: size.width, height: size.height }
   })
 
+  // Universal Clipboard 支持：macOS 系统会在 app 激活时自动同步 iCloud 剪贴板
+  // 我们只需要把 text 读写透出给 renderer；触发同步靠 `app.focus({ steal: true })` 唤醒一下
+  ipcMain.handle("read-clipboard-text", () => {
+    return clipboard.readText()
+  })
+  ipcMain.handle("write-clipboard-text", (_event: IpcMainInvokeEvent, text: string) => {
+    clipboard.writeText(text)
+  })
+  // 唤醒一下 macOS 的 Universal Clipboard 同步（macOS 只在 app 切到前台时同步）
+  if (isMac()) {
+    ipcMain.handle("mac:sync-universal-clipboard", () => {
+      // 用 app.focus 配合 50ms 再失焦，触发系统同步检查
+      app.focus({ steal: true })
+      setTimeout(() => app.focus({ steal: false }), 50)
+      return clipboard.readText()
+    })
+  }
+
   ipcMain.on("show-notification", (_event: IpcMainEvent, title: string, body?: string) => {
     new Notification({ title, body }).show()
   })
@@ -189,6 +229,38 @@ export function registerIpcHandlers(deps: Deps) {
     if (!win) return
     setTitlebar(win, theme)
   })
+
+  // ---- macOS 系统集成 ----
+  if (isMac()) {
+    ipcMain.handle("mac:capabilities", () => macCapabilities())
+    ipcMain.handle("mac:credential-set", async (_event: IpcMainInvokeEvent, name: string, value: string) => {
+      await credentialSet(name, value)
+    })
+    ipcMain.handle("mac:credential-get", async (_event: IpcMainInvokeEvent, name: string) => credentialGet(name))
+    ipcMain.handle("mac:credential-delete", async (_event: IpcMainInvokeEvent, name: string) => {
+      await credentialDelete(name)
+    })
+    ipcMain.handle(
+      "mac:open-in-terminal",
+      async (_event: IpcMainInvokeEvent, command: string, terminal?: "Terminal" | "iTerm") => {
+        await openInTerminal(command, terminal)
+      },
+    )
+    ipcMain.handle("mac:set-dock-badge", async (_event: IpcMainInvokeEvent, text: string | number | null) => {
+      setDockBadge(text)
+    })
+    ipcMain.on(
+      "mac:show-notification",
+      (
+        _event: IpcMainEvent,
+        title: string,
+        body?: string,
+        opts?: { silent?: boolean; subtitle?: string },
+      ) => {
+        showSystemNotification({ title, body, silent: opts?.silent, subtitle: opts?.subtitle })
+      },
+    )
+  }
 }
 
 export function sendSqliteMigrationProgress(win: BrowserWindow, progress: SqliteMigrationProgress) {
@@ -197,6 +269,10 @@ export function sendSqliteMigrationProgress(win: BrowserWindow, progress: Sqlite
 
 export function sendMenuCommand(win: BrowserWindow, id: string) {
   win.webContents.send("menu-command", id)
+}
+
+export function sendTrayCommand(win: BrowserWindow, id: string) {
+  win.webContents.send("tray-command", id)
 }
 
 export function sendDeepLinks(win: BrowserWindow, urls: string[]) {

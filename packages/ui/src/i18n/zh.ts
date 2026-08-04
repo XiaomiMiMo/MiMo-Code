@@ -93,6 +93,11 @@ export const dict = {
   "ui.scrollView.ariaLabel": "可滚动内容",
 
   "ui.tool.read": "读取",
+  "ui.tool.analyzed": "已分析",
+  "ui.tool.searched": "已搜索",
+  "ui.tool.explored": "已浏览",
+  "ui.tool.edited": "已修改",
+  "ui.common.results": "个结果",
   "ui.tool.loaded": "已加载",
   "ui.tool.list": "列表",
   "ui.tool.glob": "Glob",

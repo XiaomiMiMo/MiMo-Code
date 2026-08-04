@@ -13,13 +13,15 @@ import { DIRECTORY_DENIED_CODE } from "./access"
 
 export function InstanceMiddleware(workspaceID?: WorkspaceID): MiddlewareHandler {
   return async (c, next) => {
-    const raw = c.req.query("directory") || c.req.header("x-mimocode-directory") || process.cwd()
+    const raw = c.req.query("directory") || c.req.header("x-mimocode-directory") || undefined
     const directory = AppFileSystem.resolve(
       (() => {
+        if (!raw) return process.cwd()
         try {
-          return decodeURIComponent(raw)
+          const decoded = decodeURIComponent(raw).trim()
+          return decoded || process.cwd()
         } catch {
-          return raw
+          return raw.trim() || process.cwd()
         }
       })(),
     )

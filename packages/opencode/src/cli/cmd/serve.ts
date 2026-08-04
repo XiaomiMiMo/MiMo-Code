@@ -25,7 +25,22 @@ export const ServeCommand = cmd({
     const server = await Server.listen(opts)
     console.log(`mimocode server listening on http://${server.hostname}:${server.port}`)
 
-    await new Promise(() => {})
-    await server.stop()
+    await new Promise<void>((resolve) => {
+      let shuttingDown = false
+      const shutdown = async (signal: string) => {
+        if (shuttingDown) return
+        shuttingDown = true
+        console.log(`\n[Server] Received ${signal}, gracefully shutting down...`)
+        try {
+          await server.stop()
+        } catch (err) {
+          console.error("[Server] Error during shutdown:", err)
+        }
+        resolve()
+      }
+      process.once("SIGINT", () => void shutdown("SIGINT"))
+      process.once("SIGTERM", () => void shutdown("SIGTERM"))
+    })
+    process.exit(0)
   },
 })

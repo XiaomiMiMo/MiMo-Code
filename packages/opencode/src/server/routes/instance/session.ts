@@ -1126,11 +1126,18 @@ export const SessionRoutes = lazy(() =>
       async (c) => {
         const sessionID = c.req.valid("param").sessionID
         const body = c.req.valid("json")
+        console.log("📩 [DEV-TRACE][2. Server Route] POST /session/:sessionID/prompt_async received:", {
+          sessionID,
+          model: body.model,
+          agent: body.agent,
+          messageID: body.messageID,
+        })
         void runRequest(
           "SessionRoutes.prompt_async",
           c,
           SessionPrompt.Service.use((svc) => svc.prompt({ ...body, sessionID })),
         ).catch((err) => {
+          console.error("❌ [DEV-TRACE][2. Server Route Error] prompt_async execution failed:", { sessionID, error: err })
           log.error("prompt_async failed", { sessionID, error: err })
           void Bus.publish(Session.Event.Error, {
             sessionID,
