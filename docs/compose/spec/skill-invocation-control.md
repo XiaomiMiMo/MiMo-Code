@@ -1,14 +1,82 @@
 ---
 feature: skill-invocation-control
-status: designed
+status: delivered
 updated: 2026-07-31
 branch: feat/skill-invocation-control
-commits: <base-sha>..<head-sha>
+commits: 6674db7a..6236515e
 ---
 
 # Skill Invocation Control
 
 ## Report
+
+**What was built** — Model reachability and authorization are now separate
+axes. `permission.skill` means authorization only: a `deny` makes a skill
+unusable by anyone, the user included. A new optional `disable-model-invocation`
+boolean in SKILL.md frontmatter carries reachability: the skill is absent from
+the system-prompt catalog, from the `skill` tool description, and from
+`skill_search`, and the `skill` tool refuses to load it with an error that
+points at the user's slash command instead of dead-ending. `/name` typed by the
+user is untouched. The field name is kebab-case to match Claude Code and the
+agentskills.io standard; internally it is `Info.disable_model_invocation`.
+
+Mechanically this is one new registry accessor, `Skill.modelInvocable(agent?)`
+= `available(agent)` minus the flag, feeding the three model-facing call sites,
+while `available()` and `all()` stay as the user-facing sets. The dead
+`Skill.Info.hidden` field, parsed but never read since PR #1725, is gone.
+`compose-next` graduated onto the new field: its exact `deny` rule is deleted,
+its SKILL.md sets the flag, and both its description and body now state that
+the workflow starts only on explicit user invocation — belt and braces, so it
+still behaves if the flag is ever removed. `skill-creator` and its frontmatter
+reference document the field for skill authors; `mimocode-docs` records that
+`/compose-next` is user-only, which is the channel through which a model learns
+the skill exists at all.
+
+**Verification** — all from `packages/opencode` unless noted:
+
+- `bun typecheck` (packages/opencode) — PASS. `bun typecheck` (packages/sdk/js) — PASS.
+- `bun test test/tool test/skill test/permission test/session/prompt-skill-command-multi.test.ts`
+  — 1123 pass, 11 skip, 0 fail (after the review follow-ups).
+- `bun test test/skill test/tool test/permission test/command` — 1123 pass, 11 skip, 0 fail.
+- `bun test test/session` — 899 pass, 25 skip, 1 todo, 0 fail.
+- The new test in `test/session/prompt-skill-command-multi.test.ts` was
+  confirmed to FAIL on the base commit with the intended symptom: with `src/`
+  stashed, the gated skill appeared in the model's catalog
+  (`<name>skill-gated</name>` present in `available_skills`).
+- `bun lint` (root oxlint) — 0 errors; 4043 warnings is the repo-wide baseline,
+  and the seven changed source files carry 12, all pre-existing rule classes.
+- `git diff --check` — clean.
+- `./packages/sdk/js/script/build.ts` — FAIL, `PRE-EXISTING-SDK-CODEGEN`. See T8.
+- Independent review by a fresh subagent: all eight acceptance criteria met; one
+  critical finding (a stray `packages/sdk/js/openapi.json` build artifact
+  committed by accident) and one correctness nit (the not-found hint duplicating
+  the reachability predicate over `all()`), both fixed in `6236515e`.
+
+**Journey log**
+
+1. The bug was reproduced in the authoring session itself: `/compose-next`
+   delivered no `<skill_content>` block and no error. `git log -L` on the
+   mention scan pinned the regression to `4e2a3cb6`, which swapped `sys.all()`
+   for `sys.available(runtimeAgent)` and deleted the comment recording why the
+   bypass existed. A comment that explains a non-obvious choice is load-bearing;
+   deleting it is how the choice gets undone.
+2. The first design kept `deny` as the hiding mechanism and special-cased the
+   user path. Rejected after reading Claude Code's frontmatter reference: the
+   upstream standard already splits this into `disable-model-invocation` and
+   `user-invocable`, which named the actual defect — one rule serving two
+   questions — rather than patching its symptom.
+3. `user-invocable: false` was deliberately dropped from the port. No in-repo
+   skill needs a model-only skill, and shipping an unused second axis would
+   reintroduce exactly the ambiguity being removed.
+4. An earlier draft kept a `disable-model-invocation` skill listed in the
+   catalog with an annotation, so the model could suggest `/compose-next`.
+   Rejected: obra/superpowers#345 shows what an advertised-but-unloadable skill
+   costs — the model retries the tool and then tells the user the skill does not
+   exist. Documentation skills are the right channel for "this exists, you
+   invoke it".
+5. `git add -A` after a failed SDK generation committed a 16,934-line scratch
+   file. `git status` before staging would have caught it; the reviewer did.
+   It is now gitignored.
 
 ## [S1] Problem
 
@@ -171,28 +239,47 @@ leak it back to the model.
 - The `MAX_AUTOLOAD = 3` budget, the mention regex, and the TUI/ACP
   leading-slash routing.
 
+### Known gaps left open (surfaced by review, deliberately not fixed here)
+
+- `matchDocumentSkills` (`session/prompt.ts:843`, table at
+  `skill/builtin/extract.ts:75`) recommends document skills to the model from a
+  hardcoded list, consulting neither `available` nor `modelInvocable`. No entry
+  in that table is gated today, so this is latent, not live; it becomes a real
+  leak the day someone sets the flag on a document skill.
+- The entire `tool.skill_search` describe block in
+  `test/tool/skill-search.test.ts` is `it.live.skip`ped on `main`, so the
+  compose-next invisibility assertions there — updated to the new contract in
+  this change — do not run. The mechanism itself is covered by running tests
+  over fixture skills; only the shipped-builtin wiring is inert. Un-skipping
+  that block needs the builtin bundle extracted in the test environment, which
+  is its own change.
+- `./packages/sdk/js/script/build.ts` remains broken (see T8). Fixing the
+  `__schema0` hoisting for `ToolStateCompleted.providerOutput` is a separate
+  change; until then the generated SDK drifts from the API on every schema
+  edit, and `providerOutput` itself is still missing from `types.gen.ts`.
+
 ## Tasks
 
-- [ ] T1: Replace the dead `hidden` field on `Skill.Info` with
+- [x] T1: Replace the dead `hidden` field on `Skill.Info` with
       `disable_model_invocation`, parsed from the kebab-case
       `disable-model-invocation` frontmatter key in `skill/index.ts` — acceptance:
       a SKILL.md with `disable-model-invocation: true` loads with
       `disable_model_invocation === true`; one without it loads `undefined`; no
       reference to `Info.hidden` remains in `src` (covers: S2)
-- [ ] T2: Add `Skill.modelInvocable(agent?)` and move the three model-facing
+- [x] T2: Add `Skill.modelInvocable(agent?)` and move the three model-facing
       call sites (`session/system.ts:181`, `tool/registry.ts:328`,
       `tool/skill-search.ts:37`) onto it, leaving `SystemPrompt.available` and
       the `prompt.ts:864` mention scan on `available` — acceptance: a
       `disable-model-invocation` skill is absent from the system-prompt catalog,
       the `skill` tool description, and `skill_search` results, while
       `Skill.available` and `Skill.all` still return it (covers: S2; depends: T1)
-- [ ] T3: Refuse `disable_model_invocation` skills in `tool/skill.ts` before
+- [x] T3: Refuse `disable_model_invocation` skills in `tool/skill.ts` before
       `ctx.ask`, and filter the not-found "Available skills" hint by the same
       predicate — acceptance: `skill({name})` on such a skill throws an error
       naming `disable-model-invocation` and directing the model to have the user
       type `/name`; the name does not appear in the not-found hint for a
       mistyped query (covers: S2; depends: T1)
-- [ ] T4: Graduate `compose-next`: delete `"compose-next": "deny"` from
+- [x] T4: Graduate `compose-next`: delete `"compose-next": "deny"` from
       `agent/agent.ts`, set `disable-model-invocation: true` in its SKILL.md,
       add the "only on explicit user invocation" rule to both its `description`
       and body, and drop `compose-next` from `isComposeSkill` in
@@ -200,21 +287,21 @@ leak it back to the model.
       "compose-next", defaultAgentRules)` is `allow`; `compose:*` still `deny` on
       the default agent and `allow` on Compose; `searchSkills` no longer
       special-cases the name (covers: S2; depends: T1)
-- [ ] T5: Add a regression test that a user slash invocation of a
+- [x] T5: Add a regression test that a user slash invocation of a
       `disable-model-invocation` skill injects its body, following the real-layer
       harness in `test/session/prompt-skill-command-multi.test.ts` — acceptance:
       the test fails on the base commit (no `<skill_content>` part for the
       invoked skill) and passes after T1-T4 (covers: S1, S2; depends: T2)
-- [ ] T6: Update the tests that encode the old deny-as-visibility contract
+- [x] T6: Update the tests that encode the old deny-as-visibility contract
       (`test/permission/compose-next-discovery.test.ts`,
       `test/skill/search.test.ts:101-115`, `test/tool/skill-search.test.ts:196+`)
       and add coverage for frontmatter parsing plus `modelInvocable` filtering —
       acceptance: `bun test test/skill test/tool test/permission test/session`
       shows no failures attributable to this change (covers: S2; depends: T4)
-- [ ] T7: Record in `mimocode-docs` that `/compose-next` is user-invocable only
+- [x] T7: Record in `mimocode-docs` that `/compose-next` is user-invocable only
       and the model must not start it — acceptance: the skill states both facts
       where it already documents `/compose-next` (covers: S2)
-- [ ] T8: Bring the published `AppSkillsResponses` type in
+- [x] T8: Bring the published `AppSkillsResponses` type in
       `packages/sdk/js/src/v2/gen/types.gen.ts` in line with the new
       `Skill.Info` shape — acceptance: the skills response type carries
       `disable_model_invocation?: boolean` and no `hidden?: boolean`.
