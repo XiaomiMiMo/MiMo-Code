@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import { evalScript } from "../../src/workflow/sandbox"
 
-// Mirrors the Group step's fold logic from builtin/fact-check.js.fn, run in
+// Mirrors the Group step's fold logic from builtin/fact-check.js, run in
 // isolation against a stubbed agent so we can pin the collapse / null-fallback /
 // url-union behavior without a live model.
 const GROUP_STEP = `

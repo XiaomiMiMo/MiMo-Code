@@ -26,25 +26,30 @@ follows precedent instead of inventing an extension.
 
 **Verification** — All from `packages/opencode`.
 
-| Check | Before | After |
-| --- | --- | --- |
-| `bun test test/cli/tui/plugin-toggle.test.ts test/cli/tui/thread.test.ts` | 3 tests ran, 1 fail, 1 error | 4 pass, 0 fail, 0 error |
-| `bun test test/cli/tui test/cli/cmd/tui` | 261 pass, 1 fail, 1 error | 262 pass, 0 fail, 0 error |
-| `bun test test/workflow` | — | 194 pass, 5 skip, 0 fail |
-| `bun typecheck` | passes with 4 suppressions | passes with none |
+| Check                                                                     | Before                       | After                     |
+| ------------------------------------------------------------------------- | ---------------------------- | ------------------------- |
+| `bun test test/cli/tui/plugin-toggle.test.ts test/cli/tui/thread.test.ts` | 3 tests ran, 1 fail, 1 error | 4 pass, 0 fail, 0 error   |
+| `bun test test/cli/tui test/cli/cmd/tui`                                  | 261 pass, 1 fail, 1 error    | 262 pass, 0 fail, 0 error |
+| `bun test test/workflow`                                                  | —                            | 194 pass, 5 skip, 0 fail  |
+| `bun typecheck`                                                           | passes with 4 suppressions   | passes with none          |
 
 The test counts rise by one because the test that previously failed to load now runs.
 
 Runtime and packaging were checked separately. In development, `BuiltinWorkflow.list()`
 returns all four entries with their meta parsed and script text intact. `bun run build:local`
-compiles a standalone binary whose smoke test passes; verbatim body text from the scripts is
-present in the binary while no `src/workflow/builtin/` source path occurs in it, so the macro
-expanded and the content is inlined rather than read from disk — the dev fallback described in
-[S2.2] is dead code in a shipped binary, which is the property that matters, since a
-standalone binary has no filesystem to read from. Running `mimo debug agent build` from that
-binary lists the `workflow` tool, which means `tool/registry.ts` and therefore `builtin.ts`
-loaded; `builtin.ts` throws at module init on a missing script or a malformed meta, so a
-successful load is positive evidence. `bun.lock` was not modified.
+compiles a standalone binary (into `packages/opencode/dist/`) whose smoke test passes, and
+verbatim body text from all four scripts is present in it.
+
+That the dev fallback in [S2.2] is dead code there needs a stronger check than the binary's
+contents, because `builtin.macro.ts` is also a normal import and its `readdirSync` therefore
+survives into the bundle. The decisive observation is on the bundler output:
+`bun build --target=bun src/workflow/builtin.ts` shows the macro call site replaced by an
+object literal keyed on the filenames, with the script sources inlined. The `try` block cannot
+throw, so the `catch` is structurally unreachable. Independently, running
+`mimo debug agent build` from the compiled binary in an empty working directory loads the tool
+registry, which imports `BuiltinWorkflow` at top level; module init reads the sources, checks
+the four filenames and parses four metas, and a non-expanded macro would have sent the fallback
+at a filesystem the binary does not have, throwing uncaught. `bun.lock` was not modified.
 
 **Journey log**
 
@@ -63,9 +68,12 @@ successful load is positive evidence. `bun.lock` was not modified.
   `skill/builtin/extract.ts` already encodes both, which is why it takes no arguments and
   imports itself twice. Reading the precedent properly, rather than assuming its shape,
   would have skipped two failed builds.
-- Verifying "the text is embedded" needed two observations, not one: the content being
-  present in the binary, and no source path being present. Either alone is consistent with
-  the wrong outcome.
+- Verifying "the text is embedded" is easy to do with evidence that proves nothing. The first
+  attempt checked that no `src/workflow/builtin/` path occurred in the binary — but that
+  literal never appears in the source either, since the macro composes the path from
+  `import.meta.dir`, and the dev fallback keeps the filesystem reader in the bundle regardless.
+  Review replaced it with a check on the bundler output, where the macro call site is visibly
+  replaced by an object literal.
 - Review caught that the abandoned rename would have dropped these files out of oxlint's
   `src/**/*.js` coverage — a cost that design had not stated, and one of the reasons for
   preferring the macro. A rename that moves a file off a language's conventional extension
@@ -134,11 +142,11 @@ artifact.
 `/builtin\/[a-z-]+\.js$/`, loaded with `--preload`, logged every resolution and its
 importer:
 
-| Command | Resolutions of the builtin scripts | Result |
-| --- | --- | --- |
-| `plugin-toggle.test.ts` alone | 0 | pass |
-| `thread.test.ts` alone | 116 | pass |
-| both files | ~29-30 per script | 1 fail, 1 error |
+| Command                       | Resolutions of the builtin scripts | Result          |
+| ----------------------------- | ---------------------------------- | --------------- |
+| `plugin-toggle.test.ts` alone | 0                                  | pass            |
+| `thread.test.ts` alone        | 116                                | pass            |
+| both files                    | ~29-30 per script                  | 1 fail, 1 error |
 
 Two conclusions follow. `thread.test.ts` re-evaluates `builtin.ts` on the order of a
 hundred times in one process; `plugin-toggle.test.ts` never loads it at all, so its
@@ -215,7 +223,9 @@ to read from — the same way.
 
 The registry stays a closed set. The bundle carries whatever the directory holds; `builtin.ts`
 lists the four filenames that actually register, and throws at module init naming any that is
-missing, alongside the pre-existing throw for a malformed meta.
+missing, alongside the pre-existing throw for a malformed meta. A stray `.js` left in that
+directory is therefore inlined into the binary as unused payload without becoming a workflow —
+dead weight rather than a behaviour change.
 
 ### [S2.2] The dev fallback, and why the macro takes no arguments
 
@@ -258,6 +268,7 @@ documented user-facing format.
 **Make `plugin-toggle.test.ts:9` a static import.** Addresses a trigger of unclear provenance
 rather than the cause, and leaves the next test file that re-evaluates `builtin.ts` free to
 reintroduce the fault.
+
 ## [S3] Out of Scope
 
 - Any change to the four scripts' contents.
@@ -270,6 +281,7 @@ reintroduce the fault.
   condition that made the collision likely, and it presumably still holds.
 
 ## Tasks
+
 - [x] T1: Read the scripts through a build-time macro instead of importing them, keeping their `.js` names — acceptance: the two-file reproduction runs all four tests with no failure or error (covers: S2.1)
 - [x] T2: Add the dev fallback the macro pattern requires — acceptance: `bun test` loads the registry rather than throwing `ReferenceError`, and `bun typecheck` passes with no suppressions (covers: S2.2)
 - [x] T3: Confirm the sources still reach a compiled standalone binary — acceptance: the scripts' text is present in the binary, no source path is, and a command that loads the tool registry runs without the module-init throw (covers: S2.1)
