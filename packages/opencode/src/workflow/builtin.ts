@@ -1,20 +1,14 @@
 export * as BuiltinWorkflow from "./builtin"
 
-// These scripts are workflow FUNCTION BODIES, not modules — each ends in a
-// top-level `return`, which is a syntax error to an ESM parser. The `.js.fn`
-// extension says so, and keeps any loader from trying: a `.js` name here made
-// `bun test` occasionally route one through the module parser (see
-// docs/compose/spec/bun-text-import-esm-collision.md).
-// `with { type: "text" }` makes Bun inline the SOURCE as a string and embed it
-// into the compiled binary via `bun build --compile` (mirrors the
-// `with { type: "file" }` asset pattern in script/build.ts) — so the built-in
-// script ships with the binary. A `Bun.file(...).text()` fallback is
-// intentionally NOT used: it reads the real filesystem at runtime, which does
-// not exist inside a compiled standalone binary.
-import DEEP_RESEARCH_SCRIPT from "./builtin/deep-research.js.fn" with { type: "text" }
-import FACT_CHECK_SCRIPT from "./builtin/fact-check.js.fn" with { type: "text" }
-import COMPOSE_SCRIPT from "./builtin/compose.js.fn" with { type: "text" }
-import RESEARCH_EXPERIMENT_SCRIPT from "./builtin/research-experiment.js.fn" with { type: "text" }
+// The scripts are read at BUILD time by a macro (mirrors the `bundle.macro.ts` pattern
+// used for built-in skills), so their source is inlined into the bundle and ships inside
+// a compiled binary without a runtime filesystem read — which a standalone binary has no
+// filesystem for. Going through a macro rather than an import also keeps these files out
+// of the module graph: they are function bodies ending in a top-level `return`, which any
+// ESM parser rejects, and `bun test` did occasionally route one there when they were
+// imported (docs/compose/spec/bun-text-import-esm-collision.md).
+import { loadBuiltinScripts } from "./builtin.macro" with { type: "macro" }
+import { loadBuiltinScripts as loadBuiltinScriptsDev } from "./builtin.macro"
 import { parseMeta } from "./meta"
 
 export type Entry = {
@@ -25,17 +19,30 @@ export type Entry = {
   script: string
 }
 
-// Built-in workflow scripts shipped with the binary. Each is parsed ONCE at
-// module load (meta is static data, not executed). Add new built-ins here.
-// `file` is carried so a malformed meta names the offending script — this throw
-// runs at module init, so a broken built-in fails the whole app boot; the path
-// tells the user which one.
-const SCRIPTS: { file: string; script: string }[] = [
-  { file: "deep-research.js.fn", script: DEEP_RESEARCH_SCRIPT },
-  { file: "fact-check.js.fn", script: FACT_CHECK_SCRIPT },
-  { file: "compose.js.fn", script: COMPOSE_SCRIPT },
-  { file: "research-experiment.js.fn", script: RESEARCH_EXPERIMENT_SCRIPT },
-]
+// Macros are not expanded in every transpile path — under `bun test` the import is
+// stripped without the call being replaced, which surfaces as a ReferenceError. Falling
+// back to the same function imported normally is the pattern skill/builtin/extract.ts
+// established.
+function safeLoadBuiltinScripts() {
+  try {
+    return loadBuiltinScripts()
+  } catch (e) {
+    if (e instanceof ReferenceError) return loadBuiltinScriptsDev()
+    throw e
+  }
+}
+const SOURCES = safeLoadBuiltinScripts()
+
+// Built-in workflow scripts shipped with the binary, and the closed set of them: the
+// bundle carries whatever is in the directory, this list is what actually registers. Add
+// new built-ins here. Each is parsed ONCE at module load (meta is static data, not
+// executed). A missing file or a malformed meta throws at module init, so a broken
+// built-in fails the whole app boot naming the offending script.
+const SCRIPTS = ["deep-research.js", "fact-check.js", "compose.js", "research-experiment.js"].map((file) => {
+  const script = SOURCES[file]
+  if (!script) throw new Error(`built-in workflow ${file} is missing from the bundle`)
+  return { file, script }
+})
 
 // Null-prototype so the registry is a self-evidently closed set: a lookup like
 // get("constructor")/get("toString") returns undefined, not an inherited

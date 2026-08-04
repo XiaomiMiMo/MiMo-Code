@@ -10,16 +10,19 @@ commits: 09d03d67..09122450
 
 ## Report
 
-**What was built** — The four built-in workflow scripts are renamed from `.js` to `.js.fn`
-so that no loader can mistake a function body for a module, and `builtin.ts` is updated to
-match. An ambient declaration for the extension replaces the four `@ts-expect-error`
-suppressions the old `.js` imports needed, so the imports now carry a real `string` type
-instead of a silenced error.
+**What was built** — The four built-in workflow scripts are no longer imported. A Bun macro
+reads them from disk at build time and their source is inlined into the bundle, so the files
+never enter the module graph at all and no loader can attempt to parse them. They keep their
+`.js` names, so nothing else in the repository moves and they stay within reach of JavaScript
+tooling. The four `@ts-expect-error` suppressions the text imports needed are gone, because
+the macro is an ordinary typed function.
 
-The rename removes the failure rather than hiding it. Both open questions from the original
-design were resolved by measurement, and one changed the design: a suppression would still
-have been required after the rename — the diagnostic merely changes from TS1192 to TS2307 —
-which is what motivated declaring the extension instead.
+This fixes the cause rather than the symptom. An earlier iteration renamed the files to
+`.js.fn` so that no loader would try; that worked, but it treated the extension as the problem
+when module-graph membership was the problem, and it cost the files their lint coverage and
+editor highlighting. The macro form was already the house pattern for shipping files inside
+the binary — `skill/builtin/bundle.macro.ts` and `skill/compose/bundle.macro.ts` — so this
+follows precedent instead of inventing an extension.
 
 **Verification** — All from `packages/opencode`.
 
@@ -32,34 +35,42 @@ which is what motivated declaring the extension instead.
 
 The test counts rise by one because the test that previously failed to load now runs.
 
-Runtime and packaging were checked separately. In development,
-`BuiltinWorkflow.list()` returns all four entries with their meta parsed and script text
-intact. `bun run build:local` compiles a standalone binary whose smoke test passes; the
-scripts' text is present in the binary while no `src/workflow/builtin/` source path occurs in
-it, so the content is inlined rather than read from disk at runtime, which is the property the
-text import exists for. The bare filenames do appear, as the `file:` labels in the `SCRIPTS`
-table, which is expected. Running `mimo debug agent build` from that binary lists the
-`workflow` tool, which means
-`tool/registry.ts` and therefore `builtin.ts` loaded — `builtin.ts` parses every script's
-meta at module init and throws on failure, so a successful load is positive evidence the text
-imports resolved inside the compiled binary. `bun.lock` was not modified.
+Runtime and packaging were checked separately. In development, `BuiltinWorkflow.list()`
+returns all four entries with their meta parsed and script text intact. `bun run build:local`
+compiles a standalone binary whose smoke test passes; verbatim body text from the scripts is
+present in the binary while no `src/workflow/builtin/` source path occurs in it, so the macro
+expanded and the content is inlined rather than read from disk — the dev fallback described in
+[S2.2] is dead code in a shipped binary, which is the property that matters, since a
+standalone binary has no filesystem to read from. Running `mimo debug agent build` from that
+binary lists the `workflow` tool, which means `tool/registry.ts` and therefore `builtin.ts`
+loaded; `builtin.ts` throws at module init on a missing script or a malformed meta, so a
+successful load is positive evidence. `bun.lock` was not modified.
 
 **Journey log**
 
-- The `.js` extension was the whole defect surface. Renaming the files fixed a failure that
-  three separate hypotheses about test isolation, import routes, and cache exhaustion had all
-  failed to explain — the ambiguity itself was the bug, not any particular trigger for it.
-- Confirming a suppression is still needed, just with a different code, is what turned a
-  mechanical rename into a small improvement. Had the rename been committed without checking
-  the diagnostic, the four `@ts-expect-error` lines would have silently kept working while
-  masking a different error than the comment claimed.
+- Renaming the files to `.js.fn` did fix the failure, and was still the wrong shape. It
+  treated the extension as the problem when the problem was that the scripts were in the
+  module graph at all. Asking "what is the smallest thing that makes this impossible rather
+  than unlikely" produced a better answer than iterating on the first one that worked.
+- The macro form was already in the codebase twice for the same job. Searching for precedent
+  before inventing an extension would have found it immediately; the earlier design document
+  proposed `.js.fn` without ever looking.
+- Two Bun macro constraints only surfaced by running into them, in this order: macros are not
+  expanded in every transpile path — under `bun test` the import is stripped without the call
+  being replaced, giving `ReferenceError: script is not defined` — and macro arguments must be
+  statically known, so the per-filename signature that made a typo a build error could not be
+  wrapped in the fallback that the first constraint requires. The published pattern in
+  `skill/builtin/extract.ts` already encodes both, which is why it takes no arguments and
+  imports itself twice. Reading the precedent properly, rather than assuming its shape,
+  would have skipped two failed builds.
 - Verifying "the text is embedded" needed two observations, not one: the content being
   present in the binary, and no source path being present. Either alone is consistent with
   the wrong outcome.
-- Review caught that the rename silently drops these files out of oxlint's `src/**/*.js`
-  coverage — a cost the design had not stated. The fix is still right, but a rename that
-  moves a file off a language's conventional extension takes it out of that language's
-  tooling, which is easy to miss when the motivation is a loader problem.
+- Review caught that the abandoned rename would have dropped these files out of oxlint's
+  `src/**/*.js` coverage — a cost that design had not stated, and one of the reasons for
+  preferring the macro. A rename that moves a file off a language's conventional extension
+  takes it out of that language's tooling, which is easy to miss when the motivation is a
+  loader problem.
 
 ## [S1] Problem
 
@@ -185,66 +196,73 @@ that have not been reduced.
 
 ## [S2] Design
 
-### [S2.1] Rename the scripts so nothing can mistake them for modules
+### [S2.1] Take the scripts out of the module graph
 
-The ambiguity is the root of the problem: a `.js` file containing a top-level `return` is a
-trap for loaders, readers and tooling alike. The four scripts take the extension `.js.fn`,
-which names what they are — the content is a function body, and the top-level `return` is
-the proof. `fact-check.js` becomes `fact-check.js.fn`.
+Nothing imports the scripts any more. `builtin.macro.ts` reads the directory with
+`fs.readdirSync` / `fs.readFileSync` and returns a `Record<filename, source>`; `builtin.ts`
+consumes it through `with { type: "macro" }`, so the call is evaluated at transpile and the
+sources are inlined into the bundle as string literals.
 
-Scope:
+That is what makes the failure impossible rather than unlikely. The collision needed the
+scripts to be reachable as modules; a file read at build time never is, whatever it is named.
+The files therefore keep their `.js` names, which means no other reference in the repository
+moves, they stay inside oxlint's `src/**/*.js` coverage, and editors keep highlighting them
+as JavaScript.
 
-- the four import specifiers in `builtin.ts`;
-- the four `file:` values in the `SCRIPTS` table.
+This mirrors `skill/builtin/bundle.macro.ts` and `skill/compose/bundle.macro.ts`, which solve
+the same problem — ship a directory of files inside a compiled binary that has no filesystem
+to read from — the same way.
 
-The `file:` field is only used to name the offending script when `parseMeta` rejects it
-(thrown at `builtin.ts:48`). It does not participate in matching a user-supplied override,
-so changing those strings is safe.
+The registry stays a closed set. The bundle carries whatever the directory holds; `builtin.ts`
+lists the four filenames that actually register, and throws at module init naming any that is
+missing, alongside the pre-existing throw for a malformed meta.
 
-User-authored workflows keep the `.js` convention documented in `README.md`. They are read
-from disk at runtime rather than through an import attribute, so they were never exposed to
-this and are not part of the rename.
+### [S2.2] The dev fallback, and why the macro takes no arguments
 
-### [S2.2] Declare the extension instead of suppressing the diagnostic
+Two Bun constraints shape the call site, and the established pattern in
+`skill/builtin/extract.ts` already encodes both.
 
-The old imports each carried `@ts-expect-error TS1192`, because tsgo resolved the `.js` as a
-real module and complained it had no default export. After the rename tsgo instead reports
-TS2307, "cannot find module" — so the suppressions would still have been load-bearing, but
-for a different reason than their comment stated.
+Macros are not expanded in every transpile path. Under `bun test` the macro import is stripped
+without the call being replaced, which surfaces at runtime as
+`ReferenceError: loadBuiltinScripts is not defined`. The pattern is to import the same module
+a second time as an ordinary import and fall back to it when the macro form throws a
+`ReferenceError`. A shipped binary never takes that path — verified by the absence of any
+`src/workflow/builtin/` path in it — so it exists for development and tests only. This is the
+one place a `try`/`catch` is warranted against the repository's general preference, because a
+non-expanded macro is not detectable any other way.
 
-Rather than update four comments, `src/workflow/script.d.ts` declares the extension:
+Macro arguments must be statically known. A per-filename signature, `script("fact-check.js")`,
+is attractive because a misspelled name then fails the build outright; it cannot survive the
+fallback, since passing a parameter through a wrapper makes the argument non-static and the
+build fails with `Cannot convert identifier to JS`. Taking no arguments and indexing the
+returned record is what the fallback requires, at the cost of demoting a missing file from a
+build error to a module-init throw.
 
-```ts
-declare module "*.js.fn" {
-  const source: string
-  export default source
-}
-```
+### [S2.3] Rejected alternatives
 
-That removes all four suppressions and gives the imports the `string` type they actually
-have, so a future mistake in this area surfaces as a type error rather than being absorbed
-by a blanket `@ts-expect-error`.
+**Rename to `.js.fn`.** Implemented and verified first, then abandoned. It worked, but it
+treats the extension as the defect rather than module-graph membership, and it moves the files
+out of JavaScript tooling: they lose oxlint coverage and editor highlighting, and every
+reference to them in specs, comments and docs has to be updated.
 
-### [S2.3] Accepted cost
+**Rename to `.txt`.** Cleaner than `.js.fn` — `.txt` needs no import attribute and no ambient
+declaration, and there are 57 such imports in this package already. It still costs lint
+coverage and highlighting, and it would put a second `compose.txt` in the codebase alongside
+`session/prompt/compose.txt`, which is a model-facing system prompt; the current
+`compose.js` versus `compose.txt` distinction is load-bearing vocabulary.
 
-The scripts leave JS tooling's reach. oxlint currently lints `src/**/*.js` and tolerates
-their top-level `return`; under `.js.fn` it no longer sees them, and editors lose JavaScript
-highlighting unless configured for the extension. That is roughly 1500 lines of sandbox
-script losing static checking it did have. Accepted, because the lint pass reported nothing
-on these files and the extension is what removes the failure — but it is a real reduction,
-not a neutral rename, and anyone reconsidering the extension should weigh it.
+**Make the scripts valid ESM.** The top-level `return` is the workflow sandbox contract, and
+user-authored workflows loaded from disk depend on it. Changing it is a breaking change to a
+documented user-facing format.
 
-### [S2.4] Rejected alternative
-
-Making `plugin-toggle.test.ts:9` a static import would give the process one resolution
-route. It addresses a symptom of unclear provenance rather than the ambiguity, and would
-leave the next test file that re-evaluates `builtin.ts` free to reintroduce the fault.
-
+**Make `plugin-toggle.test.ts:9` a static import.** Addresses a trigger of unclear provenance
+rather than the cause, and leaves the next test file that re-evaluates `builtin.ts` free to
+reintroduce the fault.
 ## [S3] Out of Scope
 
 - Any change to the four scripts' contents.
-- Reporting upstream. The rename removes this repository's exposure but not the underlying
-  loader behaviour. No minimal standalone reproduction was isolated, which makes a useful
+- Reporting upstream. Taking the scripts out of the module graph removes this repository's
+  exposure but not the underlying loader behaviour. No minimal standalone reproduction was isolated, which makes a useful
   report hard to write; the in-repository reproduction and the measurements above are
   recorded so one can be assembled later without repeating the investigation.
 - The `thread.test.ts` re-evaluation itself. Why one test file loads `builtin.ts` on the
@@ -252,6 +270,6 @@ leave the next test file that re-evaluates `builtin.ts` free to reintroduce the 
   condition that made the collision likely, and it presumably still holds.
 
 ## Tasks
-- [x] T1: Rename the four scripts to `.js.fn` and update `builtin.ts` — acceptance: the two-file reproduction runs all four tests with no failure or error (covers: S2.1)
-- [x] T2: Replace the `@ts-expect-error` suppressions with an ambient declaration for the extension — acceptance: `bun typecheck` passes with no suppression on those imports (covers: S2.2)
-- [x] T3: Confirm the text import still reaches a compiled standalone binary — acceptance: the scripts' text is present in the binary, their paths are not, and a command that loads the tool registry runs without the module-init throw (covers: S2.1)
+- [x] T1: Read the scripts through a build-time macro instead of importing them, keeping their `.js` names — acceptance: the two-file reproduction runs all four tests with no failure or error (covers: S2.1)
+- [x] T2: Add the dev fallback the macro pattern requires — acceptance: `bun test` loads the registry rather than throwing `ReferenceError`, and `bun typecheck` passes with no suppressions (covers: S2.2)
+- [x] T3: Confirm the sources still reach a compiled standalone binary — acceptance: the scripts' text is present in the binary, no source path is, and a command that loads the tool registry runs without the module-init throw (covers: S2.1)
