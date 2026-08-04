@@ -1956,17 +1956,40 @@ NOTE: At any point in time through this workflow you should feel free to ask the
       providerID: ProviderID,
       modelID: ModelID,
       sessionID: SessionID,
+      terminalUser?: MessageV2.User,
     ) {
       const exit = yield* provider.getModel(providerID, modelID).pipe(Effect.exit)
       if (Exit.isSuccess(exit)) return exit.value
       const err = Cause.squash(exit.cause)
       if (Provider.ModelNotFoundError.isInstance(err)) {
         const hint = err.data.suggestions?.length ? ` Did you mean: ${err.data.suggestions.join(", ")}?` : ""
+        const error = new NamedError.Unknown({
+          message: `Model not found: ${err.data.providerID}/${err.data.modelID}.${hint}`,
+        }).toObject()
+        if (terminalUser) {
+          const ctx = yield* InstanceState.context
+          const now = Date.now()
+          yield* sessions.updateMessage({
+            id: MessageID.ascending(),
+            sessionID,
+            parentID: terminalUser.id,
+            agentID: terminalUser.agentID,
+            role: "assistant",
+            mode: terminalUser.agent,
+            agent: terminalUser.agent,
+            variant: terminalUser.model.variant,
+            path: { cwd: ctx.directory, root: ctx.worktree },
+            cost: 0,
+            tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+            modelID,
+            providerID,
+            time: { created: now, completed: now },
+            error,
+          })
+        }
         yield* bus.publish(Session.Event.Error, {
           sessionID,
-          error: new NamedError.Unknown({
-            message: `Model not found: ${err.data.providerID}/${err.data.modelID}.${hint}`,
-          }).toObject(),
+          error,
         })
       }
       return yield* Effect.failCause(exit.cause)
@@ -3296,7 +3319,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
             }
           }
 
-          const model = yield* getModel(lastUser.model.providerID, lastUser.model.modelID, sessionID)
+          const model = yield* getModel(lastUser.model.providerID, lastUser.model.modelID, sessionID, lastUser)
           lastModelForPrune = model
           lastFinishedForPrune = lastFinished
           const task = tasks.pop()
