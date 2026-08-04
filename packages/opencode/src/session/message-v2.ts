@@ -325,7 +325,7 @@ export const ToolStateCompleted = z
     status: z.literal("completed"),
     input: z.record(z.string(), z.any()),
     output: z.string(),
-    providerOutput: z.json().optional(),
+    providerOutput: z.unknown().optional(),
     providerMetadata: z.record(z.string(), z.any()).optional(),
     title: z.string(),
     metadata: z.record(z.string(), z.any()),
