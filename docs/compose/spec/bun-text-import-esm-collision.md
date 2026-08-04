@@ -96,6 +96,13 @@ The directory is the registry, as it is for built-in skills in `skill/builtin/bu
 Nothing outside this module refers to the filenames; consumers look workflows up by `meta.name`,
 which each script declares itself.
 
+Three consequences follow from that, all accepted because the directory is curated. Losing a
+script is no longer a boot failure — it simply stops registering, and callers get the existing
+unknown-workflow error — so `builtin.test.ts` asserts the registered set to make a deletion
+loud. A stray `.js` dropped there becomes a shipped workflow rather than being inert, and a
+malformed meta in it fails app boot. Two scripts declaring the same `meta.name` silently
+last-wins, unchanged from before.
+
 Two Bun constraints shape the call site, both already encoded in the pattern
 `skill/builtin/extract.ts` established:
 

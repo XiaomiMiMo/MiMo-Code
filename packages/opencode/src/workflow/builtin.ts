@@ -1,11 +1,7 @@
 export * as BuiltinWorkflow from "./builtin"
 
-// Read at BUILD time by a macro, so the sources are inlined into the bundle and ship inside
-// a compiled binary, which has no filesystem to read them from. Going through a macro rather
-// than an import is also what keeps these files out of the module graph: they are function
-// bodies ending in a top-level `return`, which any ESM parser rejects, and `bun test` did
-// occasionally route one there when they were imported
-// (docs/compose/spec/bun-text-import-esm-collision.md).
+// A macro, not an import, so these function bodies never enter the module graph and no ESM
+// parser can reach them. docs/compose/spec/bun-text-import-esm-collision.md explains why.
 import { loadBuiltinScripts } from "./builtin.macro" with { type: "macro" }
 import { loadBuiltinScripts as loadBuiltinScriptsDev } from "./builtin.macro"
 import { parseMeta } from "./meta"
@@ -18,9 +14,8 @@ export type Entry = {
   script: string
 }
 
-// Macros are not expanded in every transpile path — under `bun test` the import is stripped
-// without the call being replaced, which surfaces as a ReferenceError. Falling back to the
-// same function imported normally is the pattern skill/builtin/extract.ts established.
+// `bun test` strips the macro import without replacing the call, so fall back to the same
+// function imported normally — the pattern skill/builtin/extract.ts established.
 function safeLoadBuiltinScripts() {
   try {
     return loadBuiltinScripts()
@@ -30,9 +25,7 @@ function safeLoadBuiltinScripts() {
   }
 }
 
-// Each script is parsed ONCE at module load (meta is static data, not executed). `file` is
-// carried so a malformed meta names the offending script — that throw runs at module init, so
-// a broken built-in fails the whole app boot and says which one.
+// Parsed ONCE at module load; `file` names the offending script if a meta is malformed.
 const SCRIPTS = safeLoadBuiltinScripts()
 
 // Null-prototype so the registry is a self-evidently closed set: a lookup like
