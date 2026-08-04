@@ -34,7 +34,7 @@ export const SkillSearchTool = Tool.define(
       execute: (params: z.infer<typeof Parameters>, ctx: Tool.Context) =>
         Effect.gen(function* () {
           const agent = yield* agents.get(ctx.agent)
-          const available = yield* skill.available(agent)
+          const available = yield* skill.modelInvocable(agent)
           const results = searchSkills(params.query, available)
           if (results.length === 0) {
             return {

@@ -1,11 +1,14 @@
 ---
 name: compose-next
-description: Use for multi-step feature work, bug fixes, or refactors where requirements need to settle, a feature document should carry design + tasks + delivery evidence, and the change deserves independent review before merge. Invoked explicitly from Build as `/compose-next` when a Fable/Sol-class model is available. Not for one-shot edits, single-file tweaks, or answering questions — those need no orchestration overhead.
+description: Use for multi-step feature work, bug fixes, or refactors where requirements need to settle, a feature document should carry design + tasks + delivery evidence, and the change deserves independent review before merge. Only start this when the user invoked `/compose-next` or asked for this workflow by name — never pick it up on your own, because the grill and spec phases interrupt a user who just wanted the change made. Not for one-shot edits, single-file tweaks, or answering questions — those need no orchestration overhead.
+disable-model-invocation: true
 ---
 
 # Compose Next
 
 Compact end-to-end contract for grill → spec → workspace → implement → verify → review → finalize → finish. One skill load, no internal skill hand-offs.
+
+Enter this workflow only on an explicit user request — they invoked `/compose-next`, or they named this workflow. Absent that, do the work directly and run none of the phases below; an unrequested grill or spec pass is an interruption, not a service.
 
 ## Step 0 — Orient
 

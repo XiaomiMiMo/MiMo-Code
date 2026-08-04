@@ -6784,7 +6784,7 @@ export type AppSkillsResponses = {
     aliases?: Array<string>
     location: string
     content: string
-    hidden?: boolean
+    disable_model_invocation?: boolean
     bundled?: boolean
   }>
 }

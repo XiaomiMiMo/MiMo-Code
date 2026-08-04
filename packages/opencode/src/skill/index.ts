@@ -32,10 +32,21 @@ export const Info = z.object({
   aliases: z.array(z.string()).optional(),
   location: z.string(),
   content: z.string(),
-  hidden: z.boolean().optional(),
+  // Model reachability, distinct from authorization. When true the model never
+  // sees the skill (no system-prompt catalog entry, no skill tool description
+  // entry, no skill_search hit) and the skill tool refuses to load it; a user
+  // slash invocation still works. Authorization stays with permission.skill,
+  // where `deny` means unusable by anyone.
+  disable_model_invocation: z.boolean().optional(),
   bundled: z.boolean().optional(),
 })
 export type Info = z.infer<typeof Info>
+
+// Kebab-case in frontmatter to match Claude Code and the agentskills.io open
+// standard, so a skill folder stays portable in both directions.
+const Frontmatter = Info.pick({ name: true, description: true, aliases: true }).extend({
+  "disable-model-invocation": z.boolean().optional(),
+})
 
 export const InvalidError = NamedError.create(
   "SkillInvalidError",
@@ -76,6 +87,7 @@ export interface Interface {
   readonly all: () => Effect.Effect<Info[]>
   readonly dirs: () => Effect.Effect<string[]>
   readonly available: (agent?: Agent.Info) => Effect.Effect<Info[]>
+  readonly modelInvocable: (agent?: Agent.Info) => Effect.Effect<Info[]>
   readonly reload: () => Effect.Effect<void>
 }
 
@@ -99,7 +111,7 @@ const add = Effect.fnUntraced(function* (state: State, match: string, bundledRoo
 
   if (!md) return
 
-  const parsed = Info.pick({ name: true, description: true, aliases: true, hidden: true }).safeParse(md.data)
+  const parsed = Frontmatter.safeParse(md.data)
   if (!parsed.success) return
 
   const isBundled = bundledRoots.some((root) => match.startsWith(root))
@@ -126,7 +138,7 @@ const add = Effect.fnUntraced(function* (state: State, match: string, bundledRoo
     aliases: parsed.data.aliases,
     location: match,
     content: md.content,
-    hidden: parsed.data.hidden,
+    disable_model_invocation: parsed.data["disable-model-invocation"],
     bundled: isBundled || undefined,
   }
 })
@@ -304,6 +316,8 @@ export const layer = Layer.effect(
       return (yield* InstanceState.get(discovered)).dirs
     })
 
+    // Authorization only: `deny` means unusable by anyone, so this is also the
+    // set a user slash invocation resolves against.
     const available = Effect.fn("Skill.available")(function* (agent?: Agent.Info) {
       const s = yield* InstanceState.get(state)
       let list: Info[] = Object.values(s.skills)
@@ -313,12 +327,18 @@ export const layer = Layer.effect(
       return list.filter((skill) => Permission.evaluate("skill", skill.name, agent.permission).action !== "deny")
     })
 
+    // Everything the model is allowed to see or act on. Anything the model can
+    // reach must come from here, never from `available` or `all`.
+    const modelInvocable = Effect.fn("Skill.modelInvocable")(function* (agent?: Agent.Info) {
+      return (yield* available(agent)).filter((skill) => !skill.disable_model_invocation)
+    })
+
     const reload = Effect.fn("Skill.reload")(function* () {
       yield* InstanceState.invalidate(discovered)
       yield* InstanceState.invalidate(state)
     })
 
-    return Service.of({ get, all, dirs, available, reload })
+    return Service.of({ get, all, dirs, available, modelInvocable, reload })
   }),
 )
 

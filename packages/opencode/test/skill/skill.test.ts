@@ -463,4 +463,49 @@ description: A skill in the .mimocode/skills directory.
       { git: true },
     ),
   )
+
+  // Model reachability is carried by the SKILL.md field, not by permission:
+  // all() and available() keep such a skill so the command registry and the
+  // user's slash invocation still resolve it, while modelInvocable() drops it.
+  it.live("separates model reachability from the user-facing skill sets", () =>
+    provideTmpdirInstance(
+      (dir) =>
+        Effect.gen(function* () {
+          yield* Effect.promise(() =>
+            Promise.all([
+              Bun.write(
+                path.join(dir, ".mimocode", "skill", "gated-skill", "SKILL.md"),
+                `---
+name: gated-skill
+description: Only the user may start this one.
+disable-model-invocation: true
+---
+
+# Gated Skill
+`,
+              ),
+              Bun.write(
+                path.join(dir, ".mimocode", "skill", "open-skill", "SKILL.md"),
+                `---
+name: open-skill
+description: Anyone may start this one.
+---
+
+# Open Skill
+`,
+              ),
+            ]),
+          )
+
+          const skill = yield* Skill.Service
+          expect((yield* skill.get("gated-skill"))?.disable_model_invocation).toBe(true)
+          expect((yield* skill.get("open-skill"))?.disable_model_invocation).toBeUndefined()
+
+          expect((yield* skill.all()).map((item) => item.name).toSorted()).toEqual(["gated-skill", "open-skill"])
+          expect((yield* skill.available()).map((item) => item.name)).toEqual(["gated-skill", "open-skill"])
+          expect((yield* skill.modelInvocable()).map((item) => item.name)).toEqual(["open-skill"])
+        }),
+      { git: true },
+    ),
+  )
 })

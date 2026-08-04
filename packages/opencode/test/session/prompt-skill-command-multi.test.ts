@@ -21,11 +21,11 @@ afterEach(async () => {
 
 const it = testEffect(makeLayer())
 
-function writeSkill(dir: string, name: string, marker: string, description?: string) {
+function writeSkill(dir: string, name: string, marker: string, description?: string, extraFrontmatter?: string) {
   return Effect.promise(() =>
     Bun.write(
       path.join(dir, ".mimocode", "skill", name, "SKILL.md"),
-      `---\nname: ${name}\ndescription: ${description ?? `${name} used by multi-skill injection tests.`}\n---\n\n# ${name}\n\n${marker}\n`,
+      `---\nname: ${name}\ndescription: ${description ?? `${name} used by multi-skill injection tests.`}\n${extraFrontmatter ? `${extraFrontmatter}\n` : ""}---\n\n# ${name}\n\n${marker}\n`,
     ),
   )
 }
@@ -214,6 +214,52 @@ describe("skill command with additional mentions", () => {
           expect(messages).toContain("skill-alpha")
           expect(messages).not.toContain("<name>skill-beta</name>")
           expect(messages).not.toContain("BETA_BODY_MARKER")
+
+          yield* sessions.remove(session.id)
+        }),
+        { git: true, config: providerCfg },
+      ),
+    30_000,
+  )
+
+  it.live(
+    "loads a disable-model-invocation skill on user slash invocation while hiding it from the model",
+    () =>
+      provideTmpdirServer(
+        Effect.fnUntraced(function* ({ dir, llm }) {
+          yield* writeSkill(dir, "skill-alpha", "ALPHA_BODY_MARKER")
+          yield* writeSkill(dir, "skill-gated", "GATED_BODY_MARKER", undefined, "disable-model-invocation: true")
+          yield* llm.text("ok")
+
+          const prompt = yield* SessionPrompt.Service
+          const sessions = yield* Session.Service
+          const session = yield* sessions.create({ title: "skill gated command" })
+
+          yield* prompt.command({
+            sessionID: session.id,
+            command: "skill-gated",
+            arguments: "start the gated workflow",
+            model: `${ref.providerID}/${ref.modelID}`,
+          })
+
+          const msgs = yield* sessions.messages({ sessionID: session.id })
+          const user = msgs.find((m) => m.info.role === "user")
+          expect(user).toBeDefined()
+
+          // The user asked for it by name, so the body must arrive.
+          expect(injected(user!.parts)).toEqual(["skill-gated"])
+          const text = user!.parts.flatMap((p) => (p.type === "text" ? [p.text] : [])).join("\n")
+          expect(text).toContain("GATED_BODY_MARKER")
+          expect(text).toContain('<system-reminder>\n<skill_content name="skill-gated">')
+
+          // ...but the catalog the model reads must not list it, so the model
+          // cannot pick it up on its own in a later turn.
+          const catalog = user!.parts.flatMap((p) =>
+            p.type === "text" && p.text.includes("Skills available in this session:") ? [p.text] : [],
+          )
+          expect(catalog).toHaveLength(1)
+          expect(catalog[0]).toContain("<name>skill-alpha</name>")
+          expect(catalog[0]).not.toContain("<name>skill-gated</name>")
 
           yield* sessions.remove(session.id)
         }),

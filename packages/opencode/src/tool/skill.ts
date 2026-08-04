@@ -35,8 +35,22 @@ export const SkillTool = Tool.define(
               )
             }
             const all = yield* skill.all()
-            const available = all.map((item) => item.name).join(", ")
+            const available = all
+              .filter((item) => !item.disable_model_invocation)
+              .map((item) => item.name)
+              .join(", ")
             throw new Error(`Skill "${params.name}" not found. Available skills: ${available || "none"}`)
+          }
+
+          // Model reachability gate. The user can still load this skill by
+          // typing /name; redirect there instead of dead-ending, so the model
+          // reports the option rather than retrying and giving up.
+          if (info.disable_model_invocation) {
+            throw new Error(
+              `Skill "${info.name}" sets disable-model-invocation, so it cannot be loaded with the skill tool. ` +
+                `Only the user can start it by typing /${info.name}. Do not retry this tool — tell the user to run ` +
+                `/${info.name} if that is the workflow they want.`,
+            )
           }
 
           yield* ctx.ask({

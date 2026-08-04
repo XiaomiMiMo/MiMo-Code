@@ -9,6 +9,26 @@ predecessor: compose-slim (draft PR #1850)
 
 # Compose Next
 
+## Superseded in part (2026-07-31)
+
+The invisibility mechanism described below was replaced by
+`docs/compose/spec/skill-invocation-control.md`, which is the current contract.
+Three statements in this document no longer hold:
+
+1. The exact `"compose-next": "deny"` default-agent skill permission is gone.
+   Permission now means authorization only — a `deny` makes a skill unusable by
+   the user too — so keeping it would have broken the user's own
+   `/compose-next`. Model invisibility moved to `disable-model-invocation: true`
+   in the skill's own frontmatter.
+2. S2's "`SkillTool.execute()` stays permissive… if a model guesses the exact
+   name it may invoke it" is reversed: the skill tool now refuses a
+   `disable-model-invocation` skill and redirects to the user's slash command.
+3. `skill/search.ts` no longer special-cases the name `compose-next`; its
+   exclusion from `skill_search` is carried by the field.
+
+The rest — the skill's content, its presence in `Skill.all()` for slash
+autocomplete, the deprecation touchpoints, and the i18n keys — is unchanged.
+
 ## Report
 
 **What was built** - One self-contained builtin skill `compose-next` (grill → spec → workspace → implement → verify → review → finalize → finish), invoked from Build as `/compose-next`. Hidden from model auto-discovery via an exact `"compose-next": "deny"` default-agent skill permission plus `skill_search` sourcing from `Skill.available(agent)`; still present in `Skill.all()` so slash autocomplete works. Legacy Compose is untouched functionally and marked deprecated through three additive touchpoints: agent description line, `Compose (legacy)` input-bar label, and a compose-only home-tip display override. Side fix: tips now render for first-time users (first-session gate removed).

@@ -178,7 +178,7 @@ export const layer = Layer.effect(
       skills: Effect.fn("SystemPrompt.skills")(function* (agent: Agent.Info, model?: SkillSearchModel) {
         if (Permission.disabled(["skill"], agent.permission).has("skill")) return
 
-        const list = yield* skill.available(agent)
+        const list = yield* skill.modelInvocable(agent)
 
         if (model && isSkillSearchDisabled(model)) {
           return [
@@ -202,6 +202,9 @@ export const layer = Layer.effect(
         ].join("\n")
       }),
 
+      // The user surface: authorization-filtered but NOT model-reachability
+      // filtered, because it backs the mention scan that loads a skill the user
+      // invoked explicitly. Do not switch this to modelInvocable.
       available: Effect.fn("SystemPrompt.available")(function* (agent?: Agent.Info) {
         return yield* skill.available(agent)
       }),

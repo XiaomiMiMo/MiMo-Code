@@ -108,7 +108,6 @@ export const layer = Layer.effect(
           skill: {
             "*": "allow",
             "compose:*": "deny",
-            "compose-next": "deny",
           },
           plan_exit: "deny",
           external_directory: {

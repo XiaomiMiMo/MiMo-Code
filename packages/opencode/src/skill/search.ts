@@ -18,7 +18,7 @@ export type SkillSearchModel = {
 }
 
 function isComposeSkill(skill: Pick<Skill.Info, "name">) {
-  return skill.name === "compose-next" || skill.name.startsWith("compose:")
+  return skill.name.startsWith("compose:")
 }
 
 export function isSkillSearchDisabled(model: SkillSearchModel) {
