@@ -1,5 +1,6 @@
 import { test, expect, mock, beforeEach } from "bun:test"
 import { Effect, Fiber } from "effect"
+import { asSchema } from "ai"
 import type { MCP as MCPNS } from "../../src/mcp/index"
 
 // --- Mock infrastructure ---
@@ -336,21 +337,39 @@ test(
     Effect.gen(function* () {
       lastCreatedClientName = "legacy-server"
       const serverState = getOrCreateClientState("legacy-server")
+      serverState.tools = [
+        {
+          name: "test_tool",
+          description: "A legacy tool",
+          inputSchema: {
+            type: "object",
+            properties: { session_id: { type: "string" }, turn_id: { type: "string" } },
+          },
+        },
+      ]
       yield* mcp.add("legacy-server", {
         type: "local",
         command: ["echo", "test"],
       })
 
       const tools = yield* mcp.tools({ sessionId: "ses_1", turnId: "turn_1", actorId: "main" })
-      const execute = tools["legacy-server_test_tool"]?.execute
+      const tool = tools["legacy-server_test_tool"]
+      const execute = tool?.execute
       expect(execute).toBeDefined()
+      const schema = yield* Effect.promise(() => Promise.resolve(asSchema(tool!.inputSchema).jsonSchema))
+      expect(schema.properties).toEqual({ session_id: { type: "string" }, turn_id: { type: "string" } })
       yield* Effect.promise(() =>
         Promise.resolve(
-          execute?.({}, { toolCallId: "call_1", messages: [], abortSignal: new AbortController().signal }),
+          execute?.(
+            { session_id: "legacy-session", turn_id: "legacy-turn" },
+            { toolCallId: "call_1", messages: [], abortSignal: new AbortController().signal },
+          ),
         ),
       )
 
-      expect(serverState.toolCalls).toEqual([{ name: "test_tool", arguments: {} }])
+      expect(serverState.toolCalls).toEqual([
+        { name: "test_tool", arguments: { session_id: "legacy-session", turn_id: "legacy-turn" } },
+      ])
     }),
   ),
 )
@@ -393,6 +412,62 @@ test(
         {
           name: "test_tool",
           arguments: { index: 2 },
+          _meta: { "com.xiaomi.mimo/turn-lifecycle": context },
+        },
+      ])
+    }),
+  ),
+)
+
+// [TP-IAB-R10-05] The host runtime context, never model arguments, owns lifecycle scope.
+test(
+  "lifecycle metadata is the only session identity exposed and forwarded",
+  withInstance({}, (mcp) =>
+    Effect.gen(function* () {
+      lastCreatedClientName = "lifecycle-server"
+      const serverState = getOrCreateClientState("lifecycle-server")
+      serverState.serverCapabilities = {
+        experimental: { "com.xiaomi.mimo/turn-lifecycle": { version: 1 } },
+      }
+      serverState.tools = [
+        {
+          name: "browser_js",
+          description: "execute browser code",
+          inputSchema: {
+            type: "object",
+            required: ["code"],
+            properties: {
+              code: { type: "string" },
+              session_id: { type: "string" },
+              turn_id: { type: "string" },
+            },
+          },
+        },
+      ]
+      yield* mcp.add("lifecycle-server", {
+        type: "local",
+        command: ["echo", "test"],
+      })
+
+      const context = { sessionId: "trusted-session", turnId: "trusted-turn", actorId: "main" }
+      const execute = (yield* mcp.tools(context))["lifecycle-server_browser_js"]
+      expect(execute).toBeDefined()
+      const schema = yield* Effect.promise(() => Promise.resolve(asSchema(execute!.inputSchema).jsonSchema))
+      expect(schema.properties).toEqual({ code: { type: "string" } })
+
+      yield* Effect.promise(() =>
+        Promise.resolve(
+          execute!.execute?.(
+            { code: "1 + 1", session_id: "forged-session", turn_id: "forged-turn" },
+            { toolCallId: "call_1", messages: [], abortSignal: new AbortController().signal },
+          ),
+        ),
+      )
+
+      expect(serverState.toolCalls).toEqual([
+        {
+          name: "browser_js",
+          arguments: { code: "1 + 1" },
           _meta: { "com.xiaomi.mimo/turn-lifecycle": context },
         },
       ])

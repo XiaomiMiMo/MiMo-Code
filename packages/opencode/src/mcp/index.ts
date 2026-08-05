@@ -295,16 +295,26 @@ function isMcpConfigured(entry: McpEntry): entry is ConfigMCP.Info {
 }
 
 const sanitize = (s: string) => s.replace(/[^a-zA-Z0-9_-]/g, "_")
+// Negotiated lifecycle metadata is host-controlled; model arguments cannot replace that identity.
+const LEGACY_TURN_IDENTITY_ARGUMENTS = new Set(["session_id", "turn_id"])
 
 // Convert MCP tool definition to AI SDK Tool type
 function convertMcpTool(mcpTool: MCPToolDef, client: MCPClient, timeout?: number, context?: TurnContext): Tool {
   const inputSchema = mcpTool.inputSchema
+  const lifecycle = supportsTurnLifecycle(client)
 
   // Spread first, then override type to ensure it's always "object"
   const schema: JSONSchema7 = {
     ...(inputSchema as JSONSchema7),
     type: "object",
-    properties: (inputSchema.properties ?? {}) as JSONSchema7["properties"],
+    properties: lifecycle
+      ? Object.fromEntries(
+          Object.entries(inputSchema.properties ?? {}).filter(([key]) => !LEGACY_TURN_IDENTITY_ARGUMENTS.has(key)),
+        )
+      : (inputSchema.properties ?? {}) as JSONSchema7["properties"],
+    ...(lifecycle && Array.isArray(inputSchema.required)
+      ? { required: inputSchema.required.filter((key) => !LEGACY_TURN_IDENTITY_ARGUMENTS.has(key)) }
+      : {}),
     additionalProperties: false,
   }
 
@@ -312,13 +322,14 @@ function convertMcpTool(mcpTool: MCPToolDef, client: MCPClient, timeout?: number
     description: mcpTool.description ?? "",
     inputSchema: jsonSchema(schema),
     execute: async (args: unknown, options) => {
-      const metadata =
-        context && supportsTurnLifecycle(client) ? { _meta: { [TURN_LIFECYCLE_CAPABILITY]: context } } : {}
+      const values = (args || {}) as Record<string, unknown>
       return client.callTool(
         {
           name: mcpTool.name,
-          arguments: (args || {}) as Record<string, unknown>,
-          ...metadata,
+          arguments: lifecycle
+            ? Object.fromEntries(Object.entries(values).filter(([key]) => !LEGACY_TURN_IDENTITY_ARGUMENTS.has(key)))
+            : values,
+          ...(context && lifecycle ? { _meta: { [TURN_LIFECYCLE_CAPABILITY]: context } } : {}),
         },
         CallToolResultSchema,
         {
