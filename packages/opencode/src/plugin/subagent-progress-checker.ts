@@ -78,7 +78,26 @@ async function injectFrontmatter(filePath: string, body: string): Promise<void> 
   await Bun.write(filePath, newBody)
 }
 
-export async function SubagentProgressCheckerPlugin(_pluginInput: PluginInput): Promise<Hooks> {
+/**
+ * Whether new memory may be written (config `memory.capture`, default true).
+ *
+ * Read through the plugin client, not Config.Service: this hook body is a plain
+ * async function with no Effect context, and importing AppRuntime here would
+ * close an import cycle (app-runtime → Plugin.defaultLayer → plugin/index →
+ * this file). The client already carries the instance directory, so the answer
+ * is the same config the write gate sees.
+ *
+ * Fails OPEN: a config read that errors must never silently disable the journal
+ * check. Absent field → capture is on (`?? true`, never `|| true`).
+ */
+async function memoryCaptureEnabled(client: PluginInput["client"]): Promise<boolean> {
+  const res = await client.config.get().catch(() => undefined)
+  // Read structurally — the generated SDK type lags the engine schema until the
+  // next SDK regen, so `data.memory.capture` isn't on the type yet.
+  return (res?.data as { memory?: { capture?: boolean } } | undefined)?.memory?.capture ?? true
+}
+
+export async function SubagentProgressCheckerPlugin(pluginInput: PluginInput): Promise<Hooks> {
   return {
     "actor.postStop": {
       // Use excludeOnly so the matcher fires for ALL actor types EXCEPT those
@@ -109,6 +128,13 @@ export async function SubagentProgressCheckerPlugin(_pluginInput: PluginInput): 
         // skip the check entirely so we don't burn postStop re-entries on an impossible ask.
         // `=== false` (not falsy): an absent canWrite must NOT suppress (fail-open).
         if ((input as { canWrite?: boolean }).canWrite === false) return
+
+        // memory.capture: false — the write gate (memory-path-guard) hard-rejects
+        // progress.md, so asking the subagent to write it would spin the postStop
+        // ReAct loop forever: nudge → write rejected → nudge again, burning a model
+        // turn per iteration. Bail before the first nudge. Checked after the two
+        // sync fast-outs above so non-task-bound subagents don't pay a config read.
+        if (!(await memoryCaptureEnabled(pluginInput.client))) return
 
         const sessionID = input.sessionID as SessionID
         const filePath = progressPath(sessionID, taskId)
