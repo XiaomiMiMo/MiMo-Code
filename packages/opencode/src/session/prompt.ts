@@ -4555,7 +4555,8 @@ NOTE: At any point in time through this workflow you should feel free to ask the
   }),
 )
 
-export const defaultLayer = Layer.suspend(() =>
+/** App composition variant with MCP supplied by the process-wide layer. */
+export const appLayer = Layer.suspend(() =>
   layer.pipe(
     Layer.provide(SessionRunState.defaultLayer),
     Layer.provide(SessionStatus.defaultLayer),
@@ -4563,9 +4564,8 @@ export const defaultLayer = Layer.suspend(() =>
     Layer.provide(SessionCheckpoint.defaultLayer),
     Layer.provide(SessionCompaction.defaultLayer),
     Layer.provide(SessionProcessor.defaultLayer),
-    Layer.provide(Command.defaultLayer),
+    Layer.provide(Command.appLayer),
     Layer.provide(Permission.defaultLayer),
-    Layer.provide(MCP.defaultLayer),
     Layer.provide(LSP.defaultLayer),
     Layer.provide(ToolRegistry.defaultLayer),
     Layer.provide(Truncate.defaultLayer),
@@ -4593,6 +4593,8 @@ export const defaultLayer = Layer.suspend(() =>
     ),
   ),
 )
+
+export const defaultLayer = appLayer.pipe(Layer.provide(MCP.defaultLayer))
 /**
  * Returns true when at least one resolved user-message part carries substantive
  * content that will survive the send-side filter (message-v2.ts).  Used by

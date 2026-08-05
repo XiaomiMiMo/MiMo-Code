@@ -1096,12 +1096,12 @@ export const layer = Layer.effect(
 // "Cannot access 'defaultLayer' before initialization", breaking every
 // it.live test harness. Same pattern session/prompt, session/checkpoint,
 // tool/registry, provider, etc. already use.
-export const defaultLayer = Layer.suspend(() =>
+/** App composition variant with SessionPrompt supplied by the root graph. */
+export const appLayer = Layer.suspend(() =>
   layer.pipe(
     Layer.provide(Session.defaultLayer),
     Layer.provide(ActorRegistry.defaultLayer),
     Layer.provide(Agent.defaultLayer),
-    Layer.provide(SessionPrompt.defaultLayer),
     Layer.provide(SessionRunState.defaultLayer),
     Layer.provide(Inbox.defaultLayer),
     Layer.provide(Plugin.defaultLayer),
@@ -1109,5 +1109,7 @@ export const defaultLayer = Layer.suspend(() =>
     Layer.provide(TaskRegistry.defaultLayer),
   ),
 )
+
+export const defaultLayer = appLayer.pipe(Layer.provide(SessionPrompt.defaultLayer))
 
 export * as Actor from "./spawn"
