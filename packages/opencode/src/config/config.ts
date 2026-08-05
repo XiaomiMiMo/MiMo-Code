@@ -341,9 +341,9 @@ const InfoSchema = Schema.Struct({
   ),
   memory: Schema.optional(
     Schema.Struct({
-      capture: Schema.optional(Schema.Boolean).annotate({
+      disable_write: Schema.optional(Schema.Boolean).annotate({
         description:
-          "Whether to CAPTURE new memory. Default: true. Set false to stop every new memory write — session checkpoint.md, project MEMORY.md, notes.md and per-task progress.md are no longer produced, and the high-pressure 'write your learnings to memory' nudge is suppressed. Reading is deliberately untouched: existing memory still feeds session-rebuild context injection and the builtin `memory` search tool keeps working. Nothing is ever deleted — flipping this back to true resumes capture on top of the existing files.",
+          "Stop WRITING new memory. Default: false (memory is written). When true, no new memory is produced — session checkpoint.md, project MEMORY.md, notes.md and per-task progress.md are never written, the high-pressure 'save your learnings to memory' nudge is suppressed, and automatic dream/distill runs are skipped. READING is deliberately unaffected: existing memory still loads into session-rebuild context and the builtin `memory` search tool keeps working. Nothing is ever deleted — set it back to false to resume writing on top of the existing files.",
       }),
       cc_index: Schema.optional(Schema.Boolean).annotate({
         description:

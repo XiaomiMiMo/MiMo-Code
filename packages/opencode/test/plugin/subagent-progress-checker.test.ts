@@ -21,13 +21,15 @@ async function withTmpHome<T>(fn: (sessionID: SessionID) => Promise<T>): Promise
   }
 }
 
-// The hook reads config `memory.capture` through the plugin client, so the stub
-// has to answer /config. `capture: undefined` models a config with no memory
-// section at all — the backward-compatible default (capture ON).
-async function getHooks(capture?: boolean) {
+// The hook reads the memory write switch through the plugin client, so the stub
+// has to answer /config. `disableWrite: undefined` models a config with no memory
+// section at all — the backward-compatible default (writing enabled).
+async function getHooks(disableWrite?: boolean) {
   const client = {
     config: {
-      get: async () => ({ data: capture === undefined ? {} : { memory: { capture } } }),
+      get: async () => ({
+        data: disableWrite === undefined ? {} : { memory: { disable_write: disableWrite } },
+      }),
     },
   }
   return await SubagentProgressCheckerPlugin({ client } as never)
@@ -192,12 +194,12 @@ describe("SubagentProgressCheckerPlugin postStop", () => {
     })
   })
 
-  // T3 regression: with memory.capture=false the write gate hard-rejects
+  // T3 regression: with memory writing disabled the write gate hard-rejects
   // progress.md. If this hook still nudged, the subagent would loop
   // nudge → rejected write → nudge, burning a model turn each pass.
-  test("memory.capture=false → no nudge even though the file is missing", async () => {
+  test("disable_write=true → no nudge even though the file is missing", async () => {
     await withTmpHome(async (sid) => {
-      const hooks = await getHooks(false)
+      const hooks = await getHooks(true)
       const reg = hooks["actor.postStop"]
       if (!reg || typeof reg === "function") throw new Error("expected object form with run")
       const fn = (reg as { run: (...args: any[]) => Promise<void> }).run
@@ -208,9 +210,9 @@ describe("SubagentProgressCheckerPlugin postStop", () => {
     })
   })
 
-  test("memory.capture=false → no file is created for a complete-looking task", async () => {
+  test("disable_write=true → no file is created for a complete-looking task", async () => {
     await withTmpHome(async (sid) => {
-      const hooks = await getHooks(false)
+      const hooks = await getHooks(true)
       const reg = hooks["actor.postStop"]
       if (!reg || typeof reg === "function") throw new Error("expected object form with run")
       const fn = (reg as { run: (...args: any[]) => Promise<void> }).run
@@ -219,9 +221,9 @@ describe("SubagentProgressCheckerPlugin postStop", () => {
     })
   })
 
-  test("memory.capture=true → nudges exactly as with no config", async () => {
+  test("disable_write=false → nudges exactly as with no config", async () => {
     await withTmpHome(async (sid) => {
-      const hooks = await getHooks(true)
+      const hooks = await getHooks(false)
       const reg = hooks["actor.postStop"]
       if (!reg || typeof reg === "function") throw new Error("expected object form with run")
       const fn = (reg as { run: (...args: any[]) => Promise<void> }).run

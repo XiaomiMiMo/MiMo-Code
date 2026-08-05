@@ -30,7 +30,7 @@ const ref = {
   modelID: ModelID.make("test-model"),
 }
 
-// Counts writer spawns so "capture off ⇒ no writer at all" is asserted on the
+// Counts writer spawns so "writing off ⇒ no writer at all" is asserted on the
 // spawn itself, not just on the absence of files. Mirrors the recordingActor in
 // checkpoint-child-session.test.ts.
 const spawnLog: { count: number } = { count: 0 }
@@ -106,7 +106,7 @@ const seedSession = Effect.fn("seedSession")(function* () {
   return info
 })
 
-describe("memory.capture write gate (W1)", () => {
+describe("memory write gate (W1)", () => {
   it.live(
     "absent config → writer starts and memory files are bootstrapped (today's behavior)",
     provideTmpdirInstance(
@@ -132,7 +132,7 @@ describe("memory.capture write gate (W1)", () => {
   )
 
   it.live(
-    "memory.capture: true → identical to absent config",
+    "disable_write: false → identical to absent config",
     provideTmpdirInstance(
       () =>
         Effect.gen(function* () {
@@ -150,12 +150,12 @@ describe("memory.capture write gate (W1)", () => {
           expect(spawnLog.count).toBe(1)
           expect(yield* Effect.promise(() => Bun.file(checkpointPath(info.id)).exists())).toBe(true)
         }),
-      { outsideGit: true, config: { memory: { capture: true } } },
+      { outsideGit: true, config: { memory: { disable_write: false } } },
     ),
   )
 
   it.live(
-    "memory.capture: false → skipped, no writer spawned, no memory files created",
+    "disable_write: true → skipped, no writer spawned, no memory files created",
     provideTmpdirInstance(
       () =>
         Effect.gen(function* () {
@@ -179,14 +179,14 @@ describe("memory.capture write gate (W1)", () => {
           )
           expect(tasks === "ENOENT" || tasks.length === 0).toBe(true)
         }),
-      { outsideGit: true, config: { memory: { capture: false } } },
+      { outsideGit: true, config: { memory: { disable_write: true } } },
     ),
   )
 })
 
-describe("memory.capture leaves the READ path intact", () => {
+describe("the memory write switch leaves the READ path intact", () => {
   it.live(
-    "capture: false → an existing checkpoint still produces rebuild context",
+    "disable_write: true → an existing checkpoint still produces rebuild context",
     provideTmpdirInstance(
       () =>
         Effect.gen(function* () {
@@ -206,19 +206,19 @@ describe("memory.capture leaves the READ path intact", () => {
           expect(rendered.length).toBeGreaterThan(0)
           expect(rendered).toContain("Old intent survives.")
         }),
-      { outsideGit: true, config: { memory: { capture: false } } },
+      { outsideGit: true, config: { memory: { disable_write: true } } },
     ),
   )
 
   it.live(
-    "capture: false → the memory search tool still finds pre-existing memory",
+    "disable_write: true → the memory search tool still finds pre-existing memory",
     provideTmpdirInstance(
       () =>
         Effect.gen(function* () {
           yield* reset
           const memory = yield* Memory.Service
           const root = yield* memory.root()
-          const file = path.join(root, "sessions", "ses_capture_probe", "notes.md")
+          const file = path.join(root, "sessions", "ses_write_probe", "notes.md")
           yield* Effect.promise(() => fs.mkdir(path.dirname(file), { recursive: true }))
           yield* Effect.promise(() =>
             fs.writeFile(file, "## [turn 1]\nzarquon deadlock discovered in the widget pipeline.\n"),
@@ -227,7 +227,7 @@ describe("memory.capture leaves the READ path intact", () => {
           const hits = yield* memory.search({ query: "zarquon" })
           expect(hits.some((h) => h.path === file)).toBe(true)
         }),
-      { outsideGit: true, config: { memory: { capture: false } } },
+      { outsideGit: true, config: { memory: { disable_write: true } } },
     ),
   )
 })

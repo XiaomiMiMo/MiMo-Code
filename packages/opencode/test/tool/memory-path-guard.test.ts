@@ -731,7 +731,7 @@ describe("assertAgentWriteSandbox", () => {
   }
 })
 
-describe("assertMemoryWriteAllowed — memory.capture switch", () => {
+describe("assertMemoryWriteAllowed — memory write switch", () => {
   const CANONICAL = [
     ["project MEMORY.md", path.join(MEMORY_ROOT, "projects", "p_test", "MEMORY.md")],
     ["session checkpoint.md", path.join(MEMORY_ROOT, "sessions", "sid", "checkpoint.md")],
@@ -740,7 +740,7 @@ describe("assertMemoryWriteAllowed — memory.capture switch", () => {
   ] as const
 
   for (const [label, target] of CANONICAL) {
-    test(`captureEnabled: false refuses ${label} for the checkpoint-writer`, () => {
+    test(`writeEnabled: false refuses ${label} for the checkpoint-writer`, () => {
       expect(() =>
         assertMemoryWriteAllowed({
           target,
@@ -748,12 +748,12 @@ describe("assertMemoryWriteAllowed — memory.capture switch", () => {
           memoryRoot: MEMORY_ROOT,
           projectID: PROJECT_ID,
           sessionID: SESSION_ID,
-          captureEnabled: false,
+          writeEnabled: false,
         }),
-      ).toThrow(/Memory writing is DISABLED/)
+      ).toThrow(/Memory WRITING is disabled/)
     })
 
-    test(`captureEnabled: true still allows ${label} for the checkpoint-writer`, () => {
+    test(`writeEnabled: true still allows ${label} for the checkpoint-writer`, () => {
       expect(() =>
         assertMemoryWriteAllowed({
           target,
@@ -761,13 +761,13 @@ describe("assertMemoryWriteAllowed — memory.capture switch", () => {
           memoryRoot: MEMORY_ROOT,
           projectID: PROJECT_ID,
           sessionID: SESSION_ID,
-          captureEnabled: true,
+          writeEnabled: true,
         }),
       ).not.toThrow()
     })
   }
 
-  test("captureEnabled: false refuses the main agent's MEMORY.md edit", () => {
+  test("writeEnabled: false refuses the main agent's MEMORY.md edit", () => {
     expect(() =>
       assertMemoryWriteAllowed({
         target: path.join(MEMORY_ROOT, "projects", "p_test", "MEMORY.md"),
@@ -775,12 +775,12 @@ describe("assertMemoryWriteAllowed — memory.capture switch", () => {
         memoryRoot: MEMORY_ROOT,
         projectID: PROJECT_ID,
         sessionID: SESSION_ID,
-        captureEnabled: false,
+        writeEnabled: false,
       }),
     ).toThrow(/记忆写入已关闭/)
   })
 
-  test("captureEnabled: false refuses a task-bound subagent's own progress.md", () => {
+  test("writeEnabled: false refuses a task-bound subagent's own progress.md", () => {
     expect(() =>
       assertMemoryWriteAllowed({
         target: path.join(MEMORY_ROOT, "sessions", "sid", "tasks", "T1", "progress.md"),
@@ -789,12 +789,12 @@ describe("assertMemoryWriteAllowed — memory.capture switch", () => {
         projectID: PROJECT_ID,
         sessionID: SESSION_ID,
         taskId: "T1",
-        captureEnabled: false,
+        writeEnabled: false,
       }),
-    ).toThrow(/Memory writing is DISABLED/)
+    ).toThrow(/Memory WRITING is disabled/)
   })
 
-  test("captureEnabled: false leaves non-memory paths untouched", () => {
+  test("writeEnabled: false leaves non-memory paths untouched", () => {
     expect(() =>
       assertMemoryWriteAllowed({
         target: "/some/cwd/foo.txt",
@@ -802,12 +802,12 @@ describe("assertMemoryWriteAllowed — memory.capture switch", () => {
         memoryRoot: MEMORY_ROOT,
         projectID: PROJECT_ID,
         sessionID: SESSION_ID,
-        captureEnabled: false,
+        writeEnabled: false,
       }),
     ).not.toThrow()
   })
 
-  test("omitted captureEnabled defaults to ON (backward compatible)", () => {
+  test("omitted writeEnabled defaults to ON (backward compatible)", () => {
     expect(() =>
       assertMemoryWriteAllowed({
         target: path.join(MEMORY_ROOT, "sessions", "sid", "checkpoint.md"),
@@ -828,12 +828,12 @@ describe("assertMemoryWriteAllowed — memory.capture switch", () => {
         memoryRoot: MEMORY_ROOT,
         projectID: PROJECT_ID,
         sessionID: SESSION_ID,
-        captureEnabled: false,
+        writeEnabled: false,
       })
     } catch (err) {
       message = (err as Error).message
     }
-    expect(message).toContain("memory.capture")
+    expect(message).toContain("memory.disable_write")
     expect(message).toContain("Do NOT retry with another memory path")
   })
 })

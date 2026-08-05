@@ -4,6 +4,7 @@ import { Global } from "@/global"
 import { Bus } from "@/bus"
 import { Config } from "@/config"
 import { Memory } from "@/memory"
+import { isMemoryWriteEnabled } from "@/memory/write-gate"
 import { MemoryFtsTable } from "@/memory/fts.sql"
 import { TaskRegistry } from "@/task/registry"
 import { ActorRegistry } from "@/actor/registry"
@@ -417,10 +418,9 @@ export type TryStartCheckpointWriterInput = {
  *              newest wins because its range is a strict superset of the
  *              older pending range, so the older one would just duplicate
  *              work. (F40)
- * - "skipped": the request was rejected outright — memory capture disabled
- *              (`memory.capture: false`), empty session, system-spawned
- *              subagent, or Actor service unavailable. No writer will fire for
- *              this request now or later.
+ * - "skipped": the request was rejected outright — memory writing disabled,
+ *              empty session, system-spawned subagent, or Actor service
+ *              unavailable. No writer will fire for this request now or later.
  */
 export type TryStartCheckpointWriterResult = "started" | "queued" | "skipped"
 
@@ -589,7 +589,7 @@ export const layer: Layer.Layer<
     ) => Effect.Effect<TryStartCheckpointWriterResult> = Effect.fn("SessionCheckpoint.tryStartCheckpointWriter")(function* (
       input: TryStartCheckpointWriterInput,
     ) {
-      // memory.capture: false — stop producing NEW memory. This is the single
+      // Memory writing disabled — stop producing NEW memory. This is the single
       // gate for the whole write side of checkpointing: template bootstrap
       // (ensureCheckpointTemplate / ensureMemoryTemplate / ensureNotesTemplate),
       // the writer subagent spawn, and the validator retry rename all live past
@@ -603,10 +603,10 @@ export const layer: Layer.Layer<
       // exist only to feed the writer prompt, so short-circuiting loses no
       // read capability.
       //
-      // Default is ON: absent config → capture. `?? true` (never `|| true`).
-      const captureEnabled = (yield* config.get()).memory?.capture ?? true
-      if (!captureEnabled) {
-        log.info("memory capture disabled, skipping checkpoint", { sessionID: input.sessionID })
+      // Default is ENABLED: absent config → write. The field name and polarity
+      // live in exactly one place (memory/write-gate.ts).
+      if (!isMemoryWriteEnabled(yield* config.get())) {
+        log.info("memory writing disabled, skipping checkpoint", { sessionID: input.sessionID })
         return "skipped" as const
       }
 

@@ -16,7 +16,7 @@ void Log.init({ print: false })
 const it = testEffect(Layer.mergeAll(CrossSpawnSpawner.defaultLayer, Config.defaultLayer))
 
 const ctx: Tool.Context = {
-  sessionID: SessionID.make("ses_capture_gate"),
+  sessionID: SessionID.make("ses_write_gate"),
   messageID: MessageID.make(""),
   callID: "",
   agent: "build",
@@ -26,14 +26,17 @@ const ctx: Tool.Context = {
   ask: () => Effect.void,
 }
 
+// Global.Path.data is redirected to a per-run temp dir by the test preload, so
+// these targets never point at the real user memory tree. Nothing here writes or
+// deletes — the gate is asserted before any filesystem touch.
 const memoryTarget = (...parts: string[]) => path.join(Global.Path.data, "memory", ...parts)
 
 const failureMessage = (exit: Exit.Exit<unknown, unknown>) =>
   Exit.isFailure(exit) ? String((Cause.squash(exit.cause) as Error).message) : ""
 
-describe("assertWriteAllowed × memory.capture (W5)", () => {
+describe("assertWriteAllowed × memory write switch (W5)", () => {
   it.live(
-    "capture: false → memory write is refused with an explicit 'disabled' message",
+    "disable_write: true → memory write is refused with an explicit 'disabled' message",
     provideTmpdirInstance(
       () =>
         Effect.gen(function* () {
@@ -41,39 +44,41 @@ describe("assertWriteAllowed × memory.capture (W5)", () => {
 
           expect(Exit.isFailure(exit)).toBe(true)
           const message = failureMessage(exit)
-          expect(message).toContain("Memory writing is DISABLED")
+          expect(message).toContain("Memory WRITING is disabled")
           expect(message).toContain("记忆写入已关闭")
-          expect(message).toContain("memory.capture")
+          expect(message).toContain("memory.disable_write")
           // Must not read as a path/permission problem, or the model retries elsewhere.
           expect(message).toContain("Do NOT retry with another memory path")
+          // Must not claim memory as a whole is off — reads still work.
+          expect(message).toContain("Reading is unaffected")
         }),
-      { outsideGit: true, config: { memory: { capture: false } } },
+      { outsideGit: true, config: { memory: { disable_write: true } } },
     ),
   )
 
   it.live(
-    "capture: false → notes.md is refused too (not just canonical writer paths)",
+    "disable_write: true → notes.md is refused too (not just canonical writer paths)",
     provideTmpdirInstance(
       () =>
         Effect.gen(function* () {
           const exit = yield* Effect.exit(
-            assertWriteAllowed(ctx, memoryTarget("sessions", "ses_capture_gate", "notes.md")),
+            assertWriteAllowed(ctx, memoryTarget("sessions", "ses_write_gate", "notes.md")),
           )
-          expect(failureMessage(exit)).toContain("Memory writing is DISABLED")
+          expect(failureMessage(exit)).toContain("Memory WRITING is disabled")
         }),
-      { outsideGit: true, config: { memory: { capture: false } } },
+      { outsideGit: true, config: { memory: { disable_write: true } } },
     ),
   )
 
   it.live(
-    "capture: false → writes OUTSIDE the memory tree are unaffected",
+    "disable_write: true → writes OUTSIDE the memory tree are unaffected",
     provideTmpdirInstance(
       (dir) =>
         Effect.gen(function* () {
           const exit = yield* Effect.exit(assertWriteAllowed(ctx, path.join(dir, "src", "app.ts")))
           expect(Exit.isSuccess(exit)).toBe(true)
         }),
-      { outsideGit: true, config: { memory: { capture: false } } },
+      { outsideGit: true, config: { memory: { disable_write: true } } },
     ),
   )
 
@@ -90,14 +95,14 @@ describe("assertWriteAllowed × memory.capture (W5)", () => {
   )
 
   it.live(
-    "capture: true → memory write still allowed",
+    "disable_write: false → memory write still allowed",
     provideTmpdirInstance(
       () =>
         Effect.gen(function* () {
           const exit = yield* Effect.exit(assertWriteAllowed(ctx, memoryTarget("projects", "global", "MEMORY.md")))
           expect(Exit.isSuccess(exit)).toBe(true)
         }),
-      { outsideGit: true, config: { memory: { capture: true } } },
+      { outsideGit: true, config: { memory: { disable_write: false } } },
     ),
   )
 })
