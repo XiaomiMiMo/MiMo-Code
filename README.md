@@ -401,9 +401,13 @@ To remove stored credentials, delete `auth.json` from the data directory. On mac
 
 </details>
 
-### Custom OpenAI-Compatible Endpoints
+### Custom Provider Endpoints
 
-If your provider is not in the built-in model catalog, configure it directly with its base URL, API key, and model ID:
+Use `/connect` → `+ Custom provider` to configure a provider that is not in the built-in catalog. The six-page wizard lets you move between fields with `ctrl+left`/`ctrl+right`, go back with `esc`, choose the wire protocol, fetch `/models`, and select multiple returned models with `space` before saving with `enter`.
+
+The API key is stored only through `auth.set({ type: "api", key })`; it is not written to the provider config or an environment variable. Requests use the adapter's API-key authentication (Bearer for OpenAI-compatible and OpenAI adapters; the Anthropic adapter uses its protocol-required header).
+
+For a manually maintained provider config, configure the endpoint and adapter without putting the key in the file:
 
 ```jsonc
 {
@@ -420,21 +424,20 @@ If your provider is not in the built-in model catalog, configure it directly wit
         }
       },
       "options": {
-        "baseURL": "BASE_URL",
-        "apiKey": "API_KEY"
+        "baseURL": "BASE_URL"
       }
     }
   }
 }
 ```
 
-- Use the exact keys `baseURL` and `apiKey`.
+- Use the exact key `baseURL`. Store the API key through `/connect` so it remains in the auth store.
 - Preserve the base URL and model ID exactly as supplied. MiMoCode does not require a known provider and you should not add or remove `/v1` unless the endpoint requires it.
 - The key under `models` is the upstream model ID. Model IDs containing `/` are supported because only the first `/` in `model` separates the provider ID from the model ID.
 - Replace `custom` with another unused lowercase provider ID if needed, and use the same ID in the top-level `model` value.
-- `@ai-sdk/openai-compatible` is for OpenAI-compatible APIs. Services using a different wire protocol require their provider-specific adapter.
+- Choose `@ai-sdk/openai-compatible` for `/chat/completions`, `@ai-sdk/openai` with `options.wireProtocol: "responses"` for `/responses`, or `@ai-sdk/anthropic` for `/messages`.
 
-Put user-wide settings in `~/.config/mimocode/mimocode.jsonc` (or `mimocode.json` in the same directory), or project-only settings in `.mimocode/mimocode.jsonc` (or `.json`), and merge them with any existing configuration. Because `apiKey` is stored as plaintext, keep the file readable only by your user and never commit it. Run `mimo models` or use the TUI model picker to verify the configured model.
+Put user-wide settings in `~/.config/mimocode/mimocode.jsonc` (or `mimocode.json` in the same directory), or project-only settings in `.mimocode/mimocode.jsonc` (or `.json`), and merge them with any existing configuration. Run `mimo models` or use the TUI model picker to verify the configured model.
 
 To declare which input modalities a custom model supports (image, audio, video, PDF), run `/modalities` in the TUI — a multi-select dialog that persists the setting to config without hand-editing.
 

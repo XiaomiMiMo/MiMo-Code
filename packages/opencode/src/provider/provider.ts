@@ -1765,12 +1765,16 @@ const layer: Layer.Layer<
         const sdk = await resolveSDK(model, s, envs)
 
         try {
+          const useOpenAIResponses =
+            model.api.npm === "@ai-sdk/openai" && provider.options?.["wireProtocol"] === "responses"
           const language = s.modelLoaders[model.providerID]
             ? await s.modelLoaders[model.providerID](sdk, model.api.id, {
                 ...provider.options,
                 ...model.options,
               })
-            : sdk.languageModel(model.api.id)
+            : useOpenAIResponses && "responses" in sdk && typeof sdk.responses === "function"
+              ? sdk.responses(model.api.id)
+              : sdk.languageModel(model.api.id)
           s.models.set(key, language)
           return language
         } catch (e) {
