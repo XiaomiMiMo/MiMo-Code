@@ -341,6 +341,10 @@ const InfoSchema = Schema.Struct({
   ),
   memory: Schema.optional(
     Schema.Struct({
+      capture: Schema.optional(Schema.Boolean).annotate({
+        description:
+          "Whether to CAPTURE new memory. Default: true. Set false to stop every new memory write — session checkpoint.md, project MEMORY.md, notes.md and per-task progress.md are no longer produced, and the high-pressure 'write your learnings to memory' nudge is suppressed. Reading is deliberately untouched: existing memory still feeds session-rebuild context injection and the builtin `memory` search tool keeps working. Nothing is ever deleted — flipping this back to true resumes capture on top of the existing files.",
+      }),
       cc_index: Schema.optional(Schema.Boolean).annotate({
         description:
           "Index Claude Code memory (~/.claude/projects/<slug>/memory) and expose under scope='cc'. Default: false. Note: when enabled, every mimocode agent (build/explore/subagents) can search these memories via the builtin `memory` tool — including CC's `type: user` (your role/preferences) and `type: feedback` (your guidance) categories. CC originally writes them for future CC sessions; flipping this on widens the consumer set to mimocode agents on the same machine. Leave disabled (default) if you don't want personal context recallable from a prompt-injection-vulnerable agent.",
