@@ -730,3 +730,110 @@ describe("assertAgentWriteSandbox", () => {
     })
   }
 })
+
+describe("assertMemoryWriteAllowed — memory.capture switch", () => {
+  const CANONICAL = [
+    ["project MEMORY.md", path.join(MEMORY_ROOT, "projects", "p_test", "MEMORY.md")],
+    ["session checkpoint.md", path.join(MEMORY_ROOT, "sessions", "sid", "checkpoint.md")],
+    ["session notes.md", path.join(MEMORY_ROOT, "sessions", "sid", "notes.md")],
+    ["task progress.md", path.join(MEMORY_ROOT, "sessions", "sid", "tasks", "T1", "progress.md")],
+  ] as const
+
+  for (const [label, target] of CANONICAL) {
+    test(`captureEnabled: false refuses ${label} for the checkpoint-writer`, () => {
+      expect(() =>
+        assertMemoryWriteAllowed({
+          target,
+          agentName: "checkpoint-writer",
+          memoryRoot: MEMORY_ROOT,
+          projectID: PROJECT_ID,
+          sessionID: SESSION_ID,
+          captureEnabled: false,
+        }),
+      ).toThrow(/Memory writing is DISABLED/)
+    })
+
+    test(`captureEnabled: true still allows ${label} for the checkpoint-writer`, () => {
+      expect(() =>
+        assertMemoryWriteAllowed({
+          target,
+          agentName: "checkpoint-writer",
+          memoryRoot: MEMORY_ROOT,
+          projectID: PROJECT_ID,
+          sessionID: SESSION_ID,
+          captureEnabled: true,
+        }),
+      ).not.toThrow()
+    })
+  }
+
+  test("captureEnabled: false refuses the main agent's MEMORY.md edit", () => {
+    expect(() =>
+      assertMemoryWriteAllowed({
+        target: path.join(MEMORY_ROOT, "projects", "p_test", "MEMORY.md"),
+        agentName: "build",
+        memoryRoot: MEMORY_ROOT,
+        projectID: PROJECT_ID,
+        sessionID: SESSION_ID,
+        captureEnabled: false,
+      }),
+    ).toThrow(/记忆写入已关闭/)
+  })
+
+  test("captureEnabled: false refuses a task-bound subagent's own progress.md", () => {
+    expect(() =>
+      assertMemoryWriteAllowed({
+        target: path.join(MEMORY_ROOT, "sessions", "sid", "tasks", "T1", "progress.md"),
+        agentName: "general",
+        memoryRoot: MEMORY_ROOT,
+        projectID: PROJECT_ID,
+        sessionID: SESSION_ID,
+        taskId: "T1",
+        captureEnabled: false,
+      }),
+    ).toThrow(/Memory writing is DISABLED/)
+  })
+
+  test("captureEnabled: false leaves non-memory paths untouched", () => {
+    expect(() =>
+      assertMemoryWriteAllowed({
+        target: "/some/cwd/foo.txt",
+        agentName: "build",
+        memoryRoot: MEMORY_ROOT,
+        projectID: PROJECT_ID,
+        sessionID: SESSION_ID,
+        captureEnabled: false,
+      }),
+    ).not.toThrow()
+  })
+
+  test("omitted captureEnabled defaults to ON (backward compatible)", () => {
+    expect(() =>
+      assertMemoryWriteAllowed({
+        target: path.join(MEMORY_ROOT, "sessions", "sid", "checkpoint.md"),
+        agentName: "checkpoint-writer",
+        memoryRoot: MEMORY_ROOT,
+        projectID: PROJECT_ID,
+        sessionID: SESSION_ID,
+      }),
+    ).not.toThrow()
+  })
+
+  test("refusal names the config key and forbids retrying another memory path", () => {
+    let message = ""
+    try {
+      assertMemoryWriteAllowed({
+        target: path.join(MEMORY_ROOT, "sessions", "sid", "notes.md"),
+        agentName: "build",
+        memoryRoot: MEMORY_ROOT,
+        projectID: PROJECT_ID,
+        sessionID: SESSION_ID,
+        captureEnabled: false,
+      })
+    } catch (err) {
+      message = (err as Error).message
+    }
+    expect(message).toContain("memory.capture")
+    expect(message).toContain("Do NOT retry with another memory path")
+  })
+})

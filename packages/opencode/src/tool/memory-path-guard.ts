@@ -149,6 +149,11 @@ function isReservedForCheckpointWriter(parts: string[]): boolean {
  *   - For all other agents: cannot write <sid>/tasks/* — that's
  *     checkpoint-writer-only.
  *
+ * Both policies sit behind the `memory.capture` switch: when the caller passes
+ * `captureEnabled: false`, every write inside the memory tree is refused
+ * regardless of agent or path. Purity is preserved by taking the flag as a
+ * parameter — this module never reads config itself.
+ *
  * Non-memory paths and free keys under valid scopes pass through unmodified.
  */
 export function assertMemoryWriteAllowed(input: {
@@ -158,6 +163,8 @@ export function assertMemoryWriteAllowed(input: {
   projectID: ProjectID
   sessionID: SessionID
   taskId?: string
+  /** config `memory.capture`. Omitted → capture is ON (default true). */
+  captureEnabled?: boolean
 }): void {
   const { target, agentName, memoryRoot, projectID, sessionID } = input
   const memoryFile = path.join(memoryRoot, "projects", projectID, "MEMORY.md")
@@ -166,6 +173,19 @@ export function assertMemoryWriteAllowed(input: {
   const taskMemDir = path.join(memoryRoot, "sessions", sessionID, "tasks")
   const normalizedRoot = memoryRoot.endsWith(path.sep) ? memoryRoot : memoryRoot + path.sep
   if (!target.startsWith(normalizedRoot)) return
+
+  // Memory capture switch. Deliberately worded so the refusal cannot be mistaken
+  // for a path/permission problem — a model that reads "not allowed here" tends to
+  // retry a different memory path, which would just loop.
+  if ((input.captureEnabled ?? true) === false) {
+    throw new Error(
+      `Memory writing is DISABLED (记忆写入已关闭): config \`memory.capture\` is false, so no new memory may be written.\n` +
+        `Refused: ${target}.\n` +
+        `Do NOT retry with another memory path — every path under ${memoryRoot} is refused while capture is off.\n` +
+        `Reading is unaffected: existing memory still loads into session context and the \`memory\` search tool still works.\n` +
+        `To re-enable, set \`memory.capture: true\` in config.`,
+    )
+  }
 
   const rel = path.relative(memoryRoot, target)
   const parts = rel.split(path.sep)
