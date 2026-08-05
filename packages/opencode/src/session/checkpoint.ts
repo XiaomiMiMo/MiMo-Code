@@ -588,6 +588,27 @@ export const layer: Layer.Layer<
     ) => Effect.Effect<TryStartCheckpointWriterResult> = Effect.fn("SessionCheckpoint.tryStartCheckpointWriter")(function* (
       input: TryStartCheckpointWriterInput,
     ) {
+      // memory.capture: false — stop producing NEW memory. This is the single
+      // gate for the whole write side of checkpointing: template bootstrap
+      // (ensureCheckpointTemplate / ensureMemoryTemplate / ensureNotesTemplate),
+      // the writer subagent spawn, and the validator retry rename all live past
+      // this point, so returning here holds every one of them down at once. We
+      // deliberately never spawn rather than spawn-and-drop-the-write: the writer
+      // would burn a full model turn producing bytes nobody stores.
+      //
+      // READS are untouched — renderRebuildContext still injects an existing
+      // checkpoint.md / MEMORY.md / notes.md, and the `memory` search tool keeps
+      // working. The reads inside this function (prior checkpoint, progressDiff)
+      // exist only to feed the writer prompt, so short-circuiting loses no
+      // read capability.
+      //
+      // Default is ON: absent config → capture. `?? true` (never `|| true`).
+      const captureEnabled = (yield* config.get()).memory?.capture ?? true
+      if (!captureEnabled) {
+        log.info("memory capture disabled, skipping checkpoint", { sessionID: input.sessionID })
+        return "skipped" as const
+      }
+
       // F40: writer1 still running. Evict any prior pending and queue this
       // request — newest wins because its range is a strict superset of the
       // older pending range, so older pending checkpoints would only
