@@ -417,9 +417,10 @@ export type TryStartCheckpointWriterInput = {
  *              newest wins because its range is a strict superset of the
  *              older pending range, so the older one would just duplicate
  *              work. (F40)
- * - "skipped": the request was rejected outright — empty session, system-
- *              spawned subagent, or Actor service unavailable. No writer
- *              will fire for this request now or later.
+ * - "skipped": the request was rejected outright — memory capture disabled
+ *              (`memory.capture: false`), empty session, system-spawned
+ *              subagent, or Actor service unavailable. No writer will fire for
+ *              this request now or later.
  */
 export type TryStartCheckpointWriterResult = "started" | "queued" | "skipped"
 
