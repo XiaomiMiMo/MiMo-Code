@@ -918,7 +918,7 @@ test("defaultAgent throws when all primary agents are disabled", async () => {
   })
 })
 
-test("bounded computation agents are exactly title, summary, compaction, checkpoint-writer, dream, distill", async () => {
+test("bounded computation agents are exactly title, summary, compaction, checkpoint-writer, dream, distill, review", async () => {
   await using tmp = await tmpdir()
   await Instance.provide({
     directory: tmp.path,
@@ -928,7 +928,15 @@ test("bounded computation agents are exactly title, summary, compaction, checkpo
         .filter((a) => a.native === true && a.hidden === true)
         .map((a) => a.name)
         .sort()
-      expect(boundedComputations).toEqual(["checkpoint-writer", "compaction", "distill", "dream", "summary", "title"])
+      expect(boundedComputations).toEqual([
+        "checkpoint-writer",
+        "compaction",
+        "distill",
+        "dream",
+        "review",
+        "summary",
+        "title",
+      ])
 
       // Spot-check a few durable agents are NOT classified as bounded.
       const build = agents.find((a) => a.name === "build")
@@ -1061,3 +1069,24 @@ itTool.live("compose's tool list swaps GPT-specific file tools", () =>
     }),
   ),
 )
+
+test("review agent is registered, read-only, and subagent mode", async () => {
+  await using tmp = await tmpdir()
+  await Instance.provide({
+    directory: tmp.path,
+    fn: async () => {
+      const review = await load(tmp.path, (svc) => svc.get("review"))
+      expect(review).toBeDefined()
+      expect(review?.mode).toBe("subagent")
+      expect(review?.native).toBe(true)
+      expect(evalPerm(review, "read")).toBe("allow")
+      expect(evalPerm(review, "grep")).toBe("allow")
+      expect(evalPerm(review, "glob")).toBe("allow")
+      expect(evalPerm(review, "codesearch")).toBe("allow")
+      expect(evalPerm(review, "bash")).toBe("deny")
+      expect(evalPerm(review, "edit")).toBe("deny")
+      expect(evalPerm(review, "write")).toBe("deny")
+      expect(evalPerm(review, "apply_patch")).toBe("deny")
+    },
+  })
+})
