@@ -157,6 +157,29 @@ function writerThatWritesCheckpoint(marker: string): SpawnImpl {
   } as SpawnImpl
 }
 
+/**
+ * Wrap a spawn impl so a test can assert whether it was ever ASKED to spawn.
+ *
+ * This is the difference between "the rebuild eventually gave up and compacted"
+ * and "the rebuild never tried": both end at the same compaction, so counting
+ * boundaries cannot tell them apart. A working writer that is never invoked can.
+ */
+function countingSpawn(impl: SpawnImpl) {
+  let calls = 0
+  return {
+    impl: {
+      ...impl,
+      spawn: (input: Parameters<SpawnImpl["spawn"]>[0]) => {
+        calls += 1
+        return impl.spawn(input)
+      },
+    } as SpawnImpl,
+    get calls() {
+      return calls
+    },
+  }
+}
+
 function mimocodeConfig(baseURL: string, extra?: Record<string, unknown>) {
   return JSON.stringify({
     $schema: "https://opencode.ai/config.json",
@@ -602,22 +625,25 @@ describe("Manual /rebuild: on-the-spot rebuild driven through SessionPrompt.comm
     { timeout: 30_000 },
   )
 
-  // `memory.disable_write: true` makes tryStartCheckpointWriter return
-  // "skipped" before it writes anything, so the watermark never advances, every
-  // rebuild can only reach "writer-failed", and the context is compacted
-  // instead of rebuilt — for the whole life of the session. That is the switch
-  // doing its job, but it used to leave the user with nothing: the sole trace
-  // was a log line, and the one message that WAS surfaced blamed a failed
-  // checkpoint writer, which reads like a bug to report.
+  // `memory.disable_write: true` means no checkpoint can ever be written for the
+  // session, so every rebuild degrades to compaction for the whole life of that
+  // session. That is the switch doing its job, but it used to leave the user with
+  // nothing: the sole trace was a log line, and the one message that WAS surfaced
+  // blamed a failed checkpoint writer, which reads like a bug to report.
   //
-  // A fully working writer stub is installed on purpose here: it proves the
-  // switch — not a missing/broken writer — is what blocked the checkpoint, so
-  // the two causes really are distinguished rather than conflated.
+  // A fully working writer stub is installed on purpose here, and the test
+  // asserts the switch is checked UP FRONT rather than discovered at the end of a
+  // doomed detour (read the checkpoint file, probe hasCheckpoint + lastBoundary,
+  // start a writer, wait for it). Both the detour and the guard end at the same
+  // compaction, so a compaction count cannot tell them apart; the writer-wait
+  // announcement can, and is what the mutation check confirms. See the numbered
+  // comments at the assertions for exactly what each probe does and does not
+  // prove.
   test(
-    "memory writing disabled → the compaction fallback names the switch, once per session, without pushing text at the model",
+    "memory writing disabled → compacts IMMEDIATELY without ever asking for a writer, and names the switch once per session",
     async () => {
       const llm = startLLM("should-not-be-used-as-a-reply")
-      const writer = writerThatWritesCheckpoint("SHOULD_NEVER_BE_WRITTEN")
+      const writer = countingSpawn(writerThatWritesCheckpoint("SHOULD_NEVER_BE_WRITTEN"))
       const seen: Array<string | undefined> = []
       const onEvent = (e: {
         payload?: { type?: string; properties?: { status?: { type?: string; message?: string } } }
@@ -637,7 +663,7 @@ describe("Manual /rebuild: on-the-spot rebuild driven through SessionPrompt.comm
             ),
         })
 
-        await withSpawnRef(writer, () =>
+        await withSpawnRef(writer.impl, () =>
           Instance.provide({
             directory: tmp.path,
             fn: () =>
@@ -660,6 +686,36 @@ describe("Manual /rebuild: on-the-spot rebuild driven through SessionPrompt.comm
                   // Degraded exactly as documented: compacted, never rebuilt.
                   expect(after.filter((m) => m.parts.some((p) => p.type === "compaction")).length).toBe(1)
                   expect(after.filter((m) => m.parts.some((p) => p.type === "checkpoint")).length).toBe(0)
+
+                  // ── THE "IMMEDIATELY" ASSERTIONS ────────────────────────────
+                  // Both the old detour and the guard end at the same
+                  // compaction, so the counts above cannot tell them apart. What
+                  // can: the detour's own side effects.
+                  //
+                  // 1. The writer-wait announcement. `onWaitingForWriter` runs
+                  //    inside rebuildEnsuringCheckpoint immediately before
+                  //    waitForWriter, so this message appearing means we entered
+                  //    the start-and-wait stage. Verified discriminating: with
+                  //    the guard's early return neutralized, this assertion is
+                  //    the one that fails. It is also a correctness requirement
+                  //    in its own right — announcing a wait for a writer we will
+                  //    never start would be a lie. "Rebuilding context…" IS still
+                  //    expected: the user did ask for a rebuild.
+                  expect(seen).toContain("Rebuilding context\u2026")
+                  expect(seen).not.toContain("Writing checkpoint\u2026")
+                  // 2. A writer that would have SUCCEEDED was available the whole
+                  //    time and produced nothing — so the switch, not a
+                  //    missing/broken writer, is what blocked the checkpoint.
+                  //    Deliberately NOT offered as proof of "never tried": the
+                  //    memory gate inside tryStartCheckpointWriter
+                  //    (checkpoint.ts:608) returns "skipped" before the spawn
+                  //    seam, so this count stays 0 on the old detour too. The
+                  //    call-was-never-made evidence is the absent
+                  //    "memory writing disabled, skipping checkpoint" log line,
+                  //    which only tryStartCheckpointWriter can emit.
+                  expect(writer.calls).toBe(0)
+                  // 3. Nothing was written to disk for this session either.
+                  expect(yield* Effect.promise(() => Bun.file(checkpointPath(info.id)).exists())).toBe(false)
 
                   // The notice is PERSISTED, so it outlives the busy→idle status
                   // flash (which never reaches a headless event stream at all).
@@ -718,6 +774,10 @@ describe("Manual /rebuild: on-the-spot rebuild driven through SessionPrompt.comm
                     ).length,
                   ).toBe(1)
                   expect(seen.some((m) => m?.includes("记忆写入已关闭"))).toBe(true)
+                  // Still no writer, on the second fallback either: the guard is
+                  // not a once-per-session memo, it re-decides every time.
+                  expect(writer.calls).toBe(0)
+                  expect(seen).not.toContain("Writing checkpoint\u2026")
                 }),
               ),
           }),
