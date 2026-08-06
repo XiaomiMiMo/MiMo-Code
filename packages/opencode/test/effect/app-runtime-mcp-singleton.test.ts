@@ -12,10 +12,15 @@ import { SessionPrompt } from "../../src/session/prompt"
 //   Actor.appLayer <- SessionPrompt.appLayer <- Command.appLayer <- MCP.defaultLayer
 //
 // Before that chain existed, MCP, Command, SessionPrompt and Actor were four
-// independent AppLayer leaves and each one provided its own MCP.defaultLayer,
-// so the process started one MCP subprocess set per leaf. The regression this
-// file exists to catch is someone re-adding a self-provided MCP inside any of
-// the three `appLayer` variants, or adding a second MCP.defaultLayer leaf.
+// independent AppLayer leaves, three of which provided MCP.defaultLayer
+// themselves. That shape still built only ONE MCP instance, because Layer.effect
+// memoises on the layer's own identity and every ManagedRuntime here shares the
+// single memo map from src/effect/memo-map.ts — so single-instance behaviour was
+// incidental, resting on memo identity rather than on the graph. The chain makes
+// the ownership explicit instead. The regressions this file exists to catch are
+// someone re-adding a self-provided MCP inside any of the three `appLayer`
+// variants, or adding a second MCP.defaultLayer leaf — either of which would
+// break the memo assumption the old shape silently depended on.
 //
 // These tests deliberately never build the real MCP.defaultLayer and never build
 // the full AppLayer: booting real MCP is precisely the behaviour under guard.
