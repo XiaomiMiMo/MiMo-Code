@@ -50,7 +50,6 @@ import { SessionProcessor } from "../../src/session/processor"
 import { SessionCompaction } from "../../src/session/compaction"
 import { SessionRunState } from "../../src/session/run-state"
 import { Goal } from "../../src/session/goal"
-import { TaskGateState } from "../../src/task/gate-state"
 import { ReviewGateState } from "../../src/session/review-gate-state"
 import { Git } from "../../src/git"
 import { SessionStatus } from "../../src/session/status"
@@ -192,7 +191,6 @@ function makeHttp() {
     SessionSummary.defaultLayer,
     SessionPrompt.layer.pipe(
     Layer.provide(Goal.defaultLayer),
-      Layer.provide(TaskGateState.defaultLayer),
       Layer.provide(ReviewGateState.defaultLayer),
       Layer.provide(Git.defaultLayer),
       Layer.provide(TaskRegistry.defaultLayer),

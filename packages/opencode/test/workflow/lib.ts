@@ -155,7 +155,6 @@ export function makeLayer() {
   const prune = SessionPrune.layer.pipe(Layer.provide(checkpoint), Layer.provideMerge(deps))
   const prompt = SessionPrompt.layer.pipe(
     Layer.provide(Goal.defaultLayer),
-    Layer.provide(TaskGateState.defaultLayer),
     Layer.provide(ReviewGateState.defaultLayer),
     Layer.provide(Git.defaultLayer),
     Layer.provide(SessionRevert.defaultLayer),

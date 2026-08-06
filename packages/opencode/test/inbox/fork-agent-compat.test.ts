@@ -40,7 +40,6 @@ import { SessionPrompt } from "../../src/session/prompt"
 import { SessionRevert } from "../../src/session/revert"
 import { SessionRunState } from "../../src/session/run-state"
 import { Goal } from "../../src/session/goal"
-import { TaskGateState } from "../../src/task/gate-state"
 import { ReviewGateState } from "../../src/session/review-gate-state"
 import { Git } from "../../src/git"
 import { SessionStatus } from "../../src/session/status"
@@ -179,7 +178,6 @@ function makeLayer() {
   const prune = SessionPrune.layer.pipe(Layer.provide(checkpoint), Layer.provideMerge(deps))
   const prompt = SessionPrompt.layer.pipe(
     Layer.provide(Goal.defaultLayer),
-    Layer.provide(TaskGateState.defaultLayer),
     Layer.provide(ReviewGateState.defaultLayer),
     Layer.provide(Git.defaultLayer),
     Layer.provide(SessionRevert.defaultLayer),

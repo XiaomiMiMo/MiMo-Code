@@ -20,6 +20,7 @@ import { Provider } from "../../src/provider"
 import { Session } from "../../src/session"
 import { Worktree } from "../../src/worktree"
 import { Git } from "../../src/git"
+import { ReviewGateState } from "../../src/session/review-gate-state"
 import { MessageID, SessionID, PartID } from "../../src/session/schema"
 import { ModelID, ProviderID } from "../../src/provider/schema"
 import { TaskRegistry } from "../../src/task/registry"
@@ -1191,6 +1192,8 @@ function makeAskLayer() {
   const prune = SessionPrune.layer.pipe(Layer.provide(checkpoint), Layer.provideMerge(deps))
   const prompt = SessionPrompt.layer.pipe(
     Layer.provide(Goal.defaultLayer),
+    Layer.provide(ReviewGateState.defaultLayer),
+    Layer.provide(Git.defaultLayer),
     Layer.provide(SessionRevert.defaultLayer),
     Layer.provide(askSummary),
     Layer.provide(checkpoint),
