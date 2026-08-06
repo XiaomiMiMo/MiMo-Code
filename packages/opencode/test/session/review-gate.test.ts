@@ -98,7 +98,7 @@ describe("ReviewGate.shouldReenter", () => {
           const reenter = yield* ReviewGate.shouldReenter({
             sessionID: sess.id,
             worktree: dir,
-            agent: "main",
+            agent: lastUser(sess.id).agentID ?? "main",
             lastUser: lastUser(sess.id),
             cfg,
             state,
@@ -133,7 +133,7 @@ describe("ReviewGate.shouldReenter", () => {
           const reenter = yield* ReviewGate.shouldReenter({
             sessionID: sess.id,
             worktree: dir,
-            agent: "main",
+            agent: lastUser(sess.id).agentID ?? "main",
             lastUser: lastUser(sess.id),
             cfg,
             state,
@@ -167,7 +167,45 @@ describe("ReviewGate.shouldReenter", () => {
           const reenter = yield* ReviewGate.shouldReenter({
             sessionID: sess.id,
             worktree: dir,
-            agent: "main",
+            agent: lastUser(sess.id).agentID ?? "main",
+            lastUser: lastUser(sess.id),
+            cfg,
+            state,
+            taskReg,
+            git: gitSvc,
+            actor,
+            sessions,
+          })
+
+          expect(reenter).toBe(false)
+        }),
+      { git: true },
+    ),
+  )
+
+  it.live("type name agent (e.g. 'build') on a dirty repo → returns false (gate needs the identity)", () =>
+    provideTmpdirInstance(
+      (dir) =>
+        Effect.gen(function* () {
+          yield* Effect.promise(() => seedDirty(dir))
+          const state = yield* ReviewGateState.Service
+          const taskReg = yield* TaskRegistry.Service
+          const gitSvc = yield* Git.Service
+          const sessions = yield* Session.Service
+          const sess = yield* sessions.create({ title: "R" })
+          const actor = fakeActor({
+            status: "success",
+            structured: { findings: [{ file: "a.ts", severity: "high", title: "magic number", detail: "hard-coded" }] },
+          } satisfies AgentOutcome)
+
+          // `lastUser.agent` is the agent TYPE name ("build"), NOT the identity
+          // ("main"). ReviewGate.decide derives isMain from `agent === "main"`,
+          // so passing the type name must fail closed — pinning the contract
+          // that the wrapper MUST pass `agentID` (or "main").
+          const reenter = yield* ReviewGate.shouldReenter({
+            sessionID: sess.id,
+            worktree: dir,
+            agent: lastUser(sess.id).agent,
             lastUser: lastUser(sess.id),
             cfg,
             state,

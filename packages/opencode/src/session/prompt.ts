@@ -2881,12 +2881,19 @@ NOTE: At any point in time through this workflow you should feel free to ask the
           // SessionCheckpoint uses for checkpoint-writer. A missing Actor
           // (render-only/test paths) fails open so the reviewer can never trap.
           const actor = spawnRef.current
-          if (!actor) return false
+          if (!actor) {
+            slog.debug("review gate: actor unavailable, skipping auto-review")
+            return false
+          }
           const cfg = yield* config.get()
           return yield* ReviewGate.shouldReenter({
             sessionID,
             worktree: ctx.worktree,
-            agent: lastUser.agent,
+            // Pass the agent IDENTITY (`agentID`, e.g. "main"), not the agent
+            // TYPE name (`lastUser.agent`, e.g. "build") — ReviewGate.decide
+            // derives isMain from `agent === "main"`. Same expression as the
+            // main-agent guard above and the taskGate/goalGate guards.
+            agent: agentID ?? "main",
             lastUser,
             cfg,
             state: reviewGateState,
