@@ -31,6 +31,7 @@ import { SessionCompaction } from "./compaction"
 import { computeLastMessageInfo } from "./last-message-info"
 import { contextPressureLevel, usable, isOverflow as overflowCheck } from "./overflow"
 import { Config } from "@/config"
+import { isMemoryWriteEnabled } from "@/memory/write-gate"
 import { Global } from "@/global"
 import { Bus } from "../bus"
 import { ProviderTransform } from "../provider"
@@ -532,6 +533,94 @@ export const layer = Layer.effect(
       if (yield* rebuildFromCheckpoint(input).pipe(Effect.catch(() => Effect.succeed(false))))
         return "rebuilt" as const
       return "insert-failed" as const
+    })
+
+    /**
+     * What the user is told when a rebuild degrades to compaction *because the
+     * memory write switch is off* — not because anything failed.
+     *
+     * With `memory.disable_write` on, tryStartCheckpointWriter returns
+     * "skipped" before it scaffolds anything (checkpoint.ts:608), so the
+     * watermark stays NULL for the whole session, rebuildEnsuringCheckpoint can
+     * only ever reach "writer-failed", and every overflow degrades to
+     * compaction. That is the switch working as asked, but the only trace of it
+     * was a log line ("memory writing disabled, skipping checkpoint") no user
+     * reads — and the one message that IS surfaced, `compactedInsteadMsg`,
+     * blames "the checkpoint writer failed", which reads like a bug worth
+     * reporting. So the two causes get two texts: this one names the switch.
+     *
+     * Bilingual in one string rather than through an i18n lookup because this
+     * message chain has no i18n (its neighbours `compactedInsteadMsg` /
+     * `rebuildFailedMsg` are plain literals), and the write switch already
+     * states itself both ways at its other user-facing edge
+     * (tool/memory-path-guard.ts:183).
+     */
+    const MEMORY_WRITE_OFF_FALLBACK_NOTICE =
+      "Memory writing is off (记忆写入已关闭), so no checkpoint can be written for this session and the context was " +
+      "compacted instead of rebuilt from one. Compaction is what runs whenever the context fills up: earlier turns " +
+      "leave the model's view without a summary, which can weaken continuity on long-running work. Nothing is " +
+      "broken and the session keeps working — to get checkpoint rebuilds back, set `memory.disable_write` to false " +
+      "in config.\n" +
+      "记忆写入已关闭：本会话无法写入 checkpoint，所以上下文是被压缩的，而不是从 checkpoint 重建的。上下文满时会触发压缩：" +
+      "较早的对话会在没有摘要的情况下离开模型视野，可能影响长程任务的连续性。会话本身没有损坏，仍可正常使用；" +
+      "如需恢复 checkpoint 重建，请把配置里的 `memory.disable_write` 改为 false。"
+
+    // Sessions that have already been told once, this process.
+    //
+    // The notice describes a CONFIG STATE, not an event: it says exactly the
+    // same thing at every boundary, and the automatic overflow path can reach
+    // that boundary many times in one long session. Persisting it once per
+    // session keeps a long run from stacking identical warnings in the
+    // transcript. A fresh process (a resumed session, a later `run`) announces
+    // it again — the user may never have seen the earlier one, and the switch
+    // still shapes that run — so this is deliberately in-memory rather than a
+    // durable "already warned" flag.
+    const memoryWriteOffNoticed = new Set<SessionID>()
+
+    /**
+     * Surface the memory-write-off degradation, if that is what caused this
+     * fallback. Returns the notice text when the switch is the cause (so a
+     * caller holding its own user-facing channel can reuse the same wording),
+     * or undefined when memory writing is ON and the writer genuinely failed —
+     * in which case the caller's existing "writer failed" text is the honest
+     * one and nothing here should override it.
+     *
+     * Persisting the notice as a part is what makes it outlive the status-line
+     * flash: a `session.status` busy→idle pair is in-memory and never reaches
+     * the headless event stream, so on `run --format json` the degradation was
+     * literally unobservable. `ignored: true` keeps the part out of the model's
+     * context (message-v2.ts:709) — a notice addressed to the user must never
+     * reach the model as something the user instructed — and `time.end` is what
+     * makes the CLI emit it (cli/cmd/run.ts:498).
+     */
+    const noticeMemoryWriteOffFallback = Effect.fn("SessionPrompt.noticeMemoryWriteOffFallback")(function* (
+      sessionID: SessionID,
+    ) {
+      const cfg = yield* config.get()
+      if (isMemoryWriteEnabled(cfg)) return undefined
+      if (memoryWriteOffNoticed.has(sessionID)) return MEMORY_WRITE_OFF_FALLBACK_NOTICE
+      memoryWriteOffNoticed.add(sessionID)
+      const msgs = yield* sessions.messages({ sessionID, agentID: "main" })
+      // Anchor on the compaction boundary this fallback just inserted — the
+      // notice exists to explain that boundary. Falling back to the newest
+      // message keeps the notice visible if the boundary insert itself was
+      // swallowed (compaction.create runs under Effect.ignore at every site).
+      const anchor = msgs.findLast((m) => m.parts.some((p) => p.type === "compaction")) ?? msgs[msgs.length - 1]
+      if (!anchor) return MEMORY_WRITE_OFF_FALLBACK_NOTICE
+      const now = Date.now()
+      yield* sessions
+        .updatePart({
+          id: PartID.ascending(),
+          messageID: anchor.info.id,
+          sessionID,
+          type: "text",
+          text: MEMORY_WRITE_OFF_FALLBACK_NOTICE,
+          synthetic: true,
+          ignored: true,
+          time: { start: now, end: now },
+        })
+        .pipe(Effect.ignore)
+      return MEMORY_WRITE_OFF_FALLBACK_NOTICE
     })
 
     const resolvePromptParts = Effect.fn("SessionPrompt.resolvePromptParts")(function* (template: string) {
@@ -3507,6 +3596,11 @@ NOTE: At any point in time through this workflow you should feel free to ask the
                   agentID: lastUser.agentID,
                 })
                 .pipe(Effect.ignore)
+              // Was the switch the reason no checkpoint existed? Then say so —
+              // this path is otherwise completely silent (no status message at
+              // all mid-turn), which is how "compaction instead of rebuild"
+              // became invisible to the user.
+              yield* noticeMemoryWriteOffFallback(sessionID).pipe(Effect.ignore)
               skipOverflowCheck = true
               continue
             }
@@ -4083,6 +4177,8 @@ NOTE: At any point in time through this workflow you should feel free to ask the
                     agentID: lastUser.agentID,
                   })
                   .pipe(Effect.ignore)
+                // Same reason-split as the token-threshold site.
+                yield* noticeMemoryWriteOffFallback(sessionID).pipe(Effect.ignore)
                 skipOverflowCheck = true
               }
               // "insert-failed" → a checkpoint exists; must not compact.
@@ -4375,7 +4471,16 @@ NOTE: At any point in time through this workflow you should feel free to ask the
               agentID: lastUser?.info.agentID ?? "main",
             })
             .pipe(Effect.ignore)
-          yield* settle(compactedInsteadMsg)
+          // "writer-failed" covers two very different causes and the user has to
+          // be able to tell them apart: a writer that genuinely broke (report
+          // it) versus the memory write switch being off (expected — you turned
+          // it off). When it's the switch, its notice replaces
+          // `compactedInsteadMsg`, whose "the checkpoint writer failed" would be
+          // a false alarm here.
+          const offNotice = yield* noticeMemoryWriteOffFallback(input.sessionID).pipe(
+            Effect.catch(() => Effect.succeed(undefined)),
+          )
+          yield* settle(offNotice ?? compactedInsteadMsg)
           return lastUser ?? msgs[msgs.length - 1]!
         }
 
