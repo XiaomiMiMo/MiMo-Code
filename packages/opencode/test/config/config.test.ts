@@ -147,6 +147,25 @@ test("loads JSON config file", async () => {
   })
 })
 
+test("loads review config", async () => {
+  await using tmp = await tmpdir({
+    init: async (dir) => {
+      await writeConfig(dir, {
+        $schema: "https://opencode.ai/config.json",
+        review: { auto: false, max_review_rounds: 1 },
+      })
+    },
+  })
+  await Instance.provide({
+    directory: tmp.path,
+    fn: async () => {
+      const config = await load()
+      expect(config.review?.auto).toBe(false)
+      expect(config.review?.max_review_rounds).toBe(1)
+    },
+  })
+})
+
 test("loads Claude Code MCP servers from home and project config", async () => {
   await writeClaudeConfig(path.join(Global.Path.home, ".claude.json"), {
     mcpServers: {
