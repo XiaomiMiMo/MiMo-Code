@@ -41,6 +41,8 @@ import { SessionCompaction } from "../../src/session/compaction"
 import { Goal } from "../../src/session/goal"
 import { TaskRegistry } from "../../src/task/registry"
 import { defaultLayer as SchedulerDefaultLayer } from "../../src/cron/scheduler"
+import { ReviewGateState } from "../../src/session/review-gate-state"
+import { Git } from "../../src/git"
 import { Auth } from "../../src/auth"
 import * as CrossSpawnSpawner from "../../src/effect/cross-spawn-spawner"
 import { Ripgrep } from "../../src/file/ripgrep"
@@ -153,6 +155,9 @@ export function makeLayer() {
   const prune = SessionPrune.layer.pipe(Layer.provide(checkpoint), Layer.provideMerge(deps))
   const prompt = SessionPrompt.layer.pipe(
     Layer.provide(Goal.defaultLayer),
+    Layer.provide(TaskGateState.defaultLayer),
+    Layer.provide(ReviewGateState.defaultLayer),
+    Layer.provide(Git.defaultLayer),
     Layer.provide(SessionRevert.defaultLayer),
     Layer.provide(summary),
     Layer.provide(checkpoint),

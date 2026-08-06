@@ -32,6 +32,9 @@ import { SessionPrompt } from "../../src/session/prompt"
 import { SessionRevert } from "../../src/session/revert"
 import { SessionRunState } from "../../src/session/run-state"
 import { Goal } from "../../src/session/goal"
+import { TaskGateState } from "../../src/task/gate-state"
+import { ReviewGateState } from "../../src/session/review-gate-state"
+import { Git } from "../../src/git"
 import { MessageID, PartID, SessionID } from "../../src/session/schema"
 import { SessionStatus } from "../../src/session/status"
 import { Skill } from "../../src/skill"
@@ -263,6 +266,10 @@ function makeHttp(mcpService = mcp) {
     TestLLMServer.layer,
     SessionPrompt.layer.pipe(
       Layer.provide(Goal.defaultLayer),
+    Layer.provide(Goal.defaultLayer),
+      Layer.provide(TaskGateState.defaultLayer),
+      Layer.provide(ReviewGateState.defaultLayer),
+      Layer.provide(Git.defaultLayer),
       Layer.provide(TaskRegistry.defaultLayer),
       Layer.provide(SchedulerDefaultLayer),
       Layer.provide(SessionRevert.defaultLayer),
