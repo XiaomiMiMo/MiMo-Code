@@ -732,7 +732,7 @@ export const SessionRoutes = lazy(() =>
           const actor = spawnRef.current
           if (!actor)
             return yield* Effect.fail(
-              new Error("Actor service unavailable — Actor.defaultLayer must be running to ask a side question"),
+              new Error("Actor service unavailable — Actor.appLayer must be running to ask a side question"),
             )
           const selectedModel =
             body.providerID && body.modelID ? { providerID: body.providerID, modelID: body.modelID } : undefined

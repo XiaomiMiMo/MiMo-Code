@@ -318,7 +318,7 @@ export const ActorTool = Tool.define(
       if (!a) {
         return Effect.fail(
           new Error(
-            "Actor service unavailable — Actor.defaultLayer must be running for the actor tool to spawn or cancel actors",
+            "Actor service unavailable — Actor.appLayer must be running for the actor tool to spawn or cancel actors",
           ),
         )
       }

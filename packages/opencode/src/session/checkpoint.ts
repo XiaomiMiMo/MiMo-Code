@@ -1703,8 +1703,9 @@ export const layer: Layer.Layer<
 // the Actor implementation through the late-bound `spawnRef` (see
 // `actor/spawn-ref.ts`). This deliberately breaks the otherwise-unresolvable
 // layer cycle Actor → SessionPrompt → SessionCheckpoint → Actor. The AppLayer
-// constructs `Actor.defaultLayer` separately; its initialiser populates
-// `spawnRef`, which `tryStartCheckpointWriter` reads at call time.
+// constructs `Actor.appLayer` separately; that variant wraps the same
+// `Actor.layer`, whose initialiser populates `spawnRef` (see
+// `actor/spawn.ts`), and `tryStartCheckpointWriter` reads the ref at call time.
 export const defaultLayer = Layer.suspend(() =>
   layer.pipe(
     Layer.provide(Session.defaultLayer),

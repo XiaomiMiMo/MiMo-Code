@@ -62,7 +62,7 @@ import * as BashInteractive from "@/tool/bash-interactive"
 import { memoMap } from "./memo-map"
 
 // Wrapped in Layer.suspend so the cross-module `.defaultLayer` reads defer to
-// first use instead of running at module load — same TDZ fix as Actor.defaultLayer.
+// first use instead of running at module load — same TDZ fix as Actor.appLayer.
 export const AppLayer = Layer.suspend(() =>
   Layer.mergeAll(
     Npm.defaultLayer,
