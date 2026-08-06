@@ -92,14 +92,27 @@ function isRecord(v: unknown): v is Record<string, unknown> {
   return typeof v === "object" && v !== null
 }
 
-/** Narrow an AgentOutcome's structured output to a Finding[]; malformed → []. */
+const VALID_SEVERITIES = new Set(["high", "medium", "low"])
+
+function isFinding(v: unknown): v is Finding {
+  if (!isRecord(v)) return false
+  return (
+    typeof v["file"] === "string" &&
+    typeof v["severity"] === "string" &&
+    VALID_SEVERITIES.has(v["severity"]) &&
+    typeof v["title"] === "string" &&
+    typeof v["detail"] === "string"
+  )
+}
+
+/** Narrow an AgentOutcome's structured output to a Finding[]; malformed → dropped. */
 export function extractFindings(outcome: AgentOutcome): Finding[] {
   if (outcome.status !== "success") return []
   const structured = outcome.structured
   if (!isRecord(structured)) return []
   const arr = structured["findings"]
   if (!Array.isArray(arr)) return []
-  return arr.filter(isRecord) as unknown as Finding[]
+  return arr.filter(isFinding)
 }
 
 export function findingsText(findings: Finding[]): string {
@@ -214,11 +227,15 @@ export const shouldReenter = Effect.fn("ReviewGate.shouldReenter")(function* (in
       background: false,
       format: { type: "json_schema", schema: FINDINGS_SCHEMA, retryCount: 2 },
     })
-    .pipe(Effect.catch((err) => {
-      log.warn("review spawn failed; allowing stop", { error: String(err) })
-      return Effect.succeed(null)
-    }))
-  yield* state.setInFlight(sessionID, false)
+    .pipe(
+      // Runs on success, failure, AND interruption so a cancelled review never
+      // leaves the in-flight marker stuck (which would silently disable the gate).
+      Effect.ensuring(state.setInFlight(sessionID, false)),
+      Effect.catch((err) => {
+        log.warn("review spawn failed; allowing stop", { error: String(err) })
+        return Effect.succeed(null)
+      }),
+    )
 
   if (!spawned) return false
 

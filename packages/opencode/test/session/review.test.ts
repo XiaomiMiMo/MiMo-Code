@@ -90,6 +90,19 @@ describe("ReviewGate.extractFindings", () => {
     const findings: ReviewGate.Finding[] = [{ file: "a.ts", severity: "high", title: "bug", detail: "detail" }]
     expect(ReviewGate.extractFindings({ status: "success", structured: { findings } })).toEqual(findings)
   })
+
+  test("drops malformed findings (missing or invalid severity)", () => {
+    const structured = {
+      findings: [
+        { file: "a.ts", severity: "high", title: "bug", detail: "detail" },
+        { file: "b.ts", title: "missing severity", detail: "x" },
+        { file: "c.ts", severity: "critical", title: "bad severity", detail: "x" },
+      ],
+    }
+    expect(ReviewGate.extractFindings({ status: "success", structured })).toEqual([
+      { file: "a.ts", severity: "high", title: "bug", detail: "detail" },
+    ])
+  })
 })
 
 describe("ReviewGate.findingsText", () => {
