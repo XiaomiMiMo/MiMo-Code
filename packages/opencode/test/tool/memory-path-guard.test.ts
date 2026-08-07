@@ -777,7 +777,7 @@ describe("assertMemoryWriteAllowed — memory write switch", () => {
         sessionID: SESSION_ID,
         writeEnabled: false,
       }),
-    ).toThrow(/记忆写入已关闭/)
+    ).toThrow(/Memory WRITING is disabled/)
   })
 
   test("writeEnabled: false refuses a task-bound subagent's own progress.md", () => {

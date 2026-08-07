@@ -572,21 +572,20 @@ export const layer = Layer.effect(
      * which reads like a bug worth reporting. So the two causes get two texts:
      * this one names the switch.
      *
-     * Bilingual in one string rather than through an i18n lookup because this
-     * message chain has no i18n (its neighbours `compactedInsteadMsg` /
-     * `rebuildFailedMsg` are plain literals), and the write switch already
-     * states itself both ways at its other user-facing edge
-     * (tool/memory-path-guard.ts:183).
+     * Single-language English, deliberately: this text is persisted into the
+     * session record, which the TUI, headless `run --format json`, and every
+     * other consuming client all read, and the engine does not know the reader's
+     * locale — the consuming client does, and already carries its own
+     * translations. So the engine emits one stable English string, exactly like
+     * its neighbours `compactedInsteadMsg` / `rebuildFailedMsg`, and
+     * localization stays with whoever renders it.
      */
     const MEMORY_WRITE_OFF_FALLBACK_NOTICE =
-      "Memory writing is off (记忆写入已关闭), so no checkpoint can be written for this session and the context was " +
-      "compacted instead of rebuilt from one. Compaction is what runs whenever the context fills up: earlier turns " +
-      "leave the model's view without a summary, which can weaken continuity on long-running work. Nothing is " +
-      "broken and the session keeps working — to get checkpoint rebuilds back, set `memory.disable_write` to false " +
-      "in config.\n" +
-      "记忆写入已关闭：本会话无法写入 checkpoint，所以上下文是被压缩的，而不是从 checkpoint 重建的。上下文满时会触发压缩：" +
-      "较早的对话会在没有摘要的情况下离开模型视野，可能影响长程任务的连续性。会话本身没有损坏，仍可正常使用；" +
-      "如需恢复 checkpoint 重建，请把配置里的 `memory.disable_write` 改为 false。"
+      "Memory writing is off, so no checkpoint can be written for this session and the context was compacted " +
+      "instead of rebuilt from one. Compaction is what runs whenever the context fills up: earlier turns leave " +
+      "the model's view without a summary, which can weaken continuity on long-running work. Nothing is broken " +
+      "and the session keeps working — to get checkpoint rebuilds back, set `memory.disable_write` to false in " +
+      "config."
 
     // Sessions that have already been told once, this process.
     //

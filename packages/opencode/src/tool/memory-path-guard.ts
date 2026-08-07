@@ -177,10 +177,12 @@ export function assertMemoryWriteAllowed(input: {
   // Memory write switch. Deliberately worded so the refusal cannot be mistaken
   // for a path/permission problem — a model that reads "not allowed here" tends to
   // retry a different memory path, which would just loop. Says WRITING is off, not
-  // that memory is off: reads still work.
+  // that memory is off: reads still work. English only, like every other message
+  // this module throws: it has no locale to consult, and the consuming client
+  // that surfaces it carries its own translations.
   if (input.writeEnabled === false) {
     throw new Error(
-      `Memory WRITING is disabled (记忆写入已关闭): config \`memory.disable_write\` is true, so no new memory may be written.\n` +
+      `Memory WRITING is disabled: config \`memory.disable_write\` is true, so no new memory may be written.\n` +
         `Refused: ${target}.\n` +
         `Do NOT retry with another memory path — every path under ${memoryRoot} is refused while writing is off.\n` +
         `Reading is unaffected: existing memory still loads into session context and the \`memory\` search tool still works.\n` +

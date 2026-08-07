@@ -720,20 +720,23 @@ describe("Manual /rebuild: on-the-spot rebuild driven through SessionPrompt.comm
                   // The notice is PERSISTED, so it outlives the busy→idle status
                   // flash (which never reaches a headless event stream at all).
                   const notices = after.flatMap((m) =>
-                    m.parts.filter(
-                      (p) => p.type === "text" && p.text.includes("记忆写入已关闭"),
-                    ),
+                    m.parts.filter((p) => p.type === "text" && p.text.includes("Memory writing is off")),
                   )
                   expect(notices.length).toBe(1)
                   const notice = notices[0]!
                   if (notice.type !== "text") throw new Error("expected a text part")
-                  // Both languages, and the consequence the user cares about.
+                  // Names both facts — the switch, and that compaction stood in for
+                  // the rebuild — plus the consequence the user cares about.
                   expect(notice.text).toContain("Memory writing is off")
-                  expect(notice.text).toContain("可能影响长程任务的连续性")
+                  expect(notice.text).toContain("compacted instead of rebuilt")
                   expect(notice.text).toContain("weaken continuity")
                   // Reassures rather than alarms, and says how to undo it.
                   expect(notice.text).toContain("Nothing is broken")
                   expect(notice.text).toContain("memory.disable_write")
+                  // Engine-side text is single-language English; the consuming
+                  // client owns localization, as for `compactedInsteadMsg` /
+                  // `rebuildFailedMsg`.
+                  expect(notice.text).not.toMatch(/[\u4e00-\u9fff]/)
                   // Display-only: `ignored` keeps it out of the model's context,
                   // so a notice addressed to the user can never be read back as
                   // an instruction the user gave.
@@ -744,7 +747,7 @@ describe("Manual /rebuild: on-the-spot rebuild driven through SessionPrompt.comm
 
                   // Same wording on the existing status channel, and the
                   // misleading "writer failed" text is NOT used here.
-                  expect(seen.some((m) => m?.includes("记忆写入已关闭"))).toBe(true)
+                  expect(seen.some((m) => m?.includes("Memory writing is off"))).toBe(true)
                   expect(seen.some((m) => m?.includes("the checkpoint writer failed"))).toBe(false)
 
                   // No assistant reply, as on every other /rebuild path.
@@ -770,10 +773,10 @@ describe("Manual /rebuild: on-the-spot rebuild driven through SessionPrompt.comm
                   expect(again.filter((m) => m.parts.some((p) => p.type === "compaction")).length).toBe(2)
                   expect(
                     again.flatMap((m) =>
-                      m.parts.filter((p) => p.type === "text" && p.text.includes("记忆写入已关闭")),
+                      m.parts.filter((p) => p.type === "text" && p.text.includes("Memory writing is off")),
                     ).length,
                   ).toBe(1)
-                  expect(seen.some((m) => m?.includes("记忆写入已关闭"))).toBe(true)
+                  expect(seen.some((m) => m?.includes("Memory writing is off"))).toBe(true)
                   // Still no writer, on the second fallback either: the guard is
                   // not a once-per-session memo, it re-decides every time.
                   expect(writer.calls).toBe(0)

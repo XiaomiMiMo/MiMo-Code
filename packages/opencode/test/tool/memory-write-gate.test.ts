@@ -45,8 +45,11 @@ describe("assertWriteAllowed × memory write switch (W5)", () => {
           expect(Exit.isFailure(exit)).toBe(true)
           const message = failureMessage(exit)
           expect(message).toContain("Memory WRITING is disabled")
-          expect(message).toContain("记忆写入已关闭")
           expect(message).toContain("memory.disable_write")
+          // Single-language English, like every other message this gate throws:
+          // the engine has no locale to consult, and the consuming client that
+          // surfaces this carries its own translations.
+          expect(message).not.toMatch(/[\u4e00-\u9fff]/)
           // Must not read as a path/permission problem, or the model retries elsewhere.
           expect(message).toContain("Do NOT retry with another memory path")
           // Must not claim memory as a whole is off — reads still work.
