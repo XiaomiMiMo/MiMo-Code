@@ -162,6 +162,28 @@ describe("tool.registry", () => {
     ),
   )
 
+  it.live("registers the lsp tool when LSP is configured", () =>
+    provideTmpdirInstance(
+      (dir) =>
+        Effect.gen(function* () {
+          const registry = yield* ToolRegistry.Service
+          const ids = yield* registry.ids()
+          expect(ids).toContain("lsp")
+        }),
+      { config: { lsp: true } },
+    ),
+  )
+
+  it.live("does not register the lsp tool when LSP is not configured", () =>
+    provideTmpdirInstance((dir) =>
+      Effect.gen(function* () {
+        const registry = yield* ToolRegistry.Service
+        const ids = yield* registry.ids()
+        expect(ids).not.toContain("lsp")
+      }),
+    ),
+  )
+
   it.live("keeps the reserved MCP search tool when a custom tool conflicts", () =>
     provideTmpdirInstance((dir) =>
       Effect.gen(function* () {
