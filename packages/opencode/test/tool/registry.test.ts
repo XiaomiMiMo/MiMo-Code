@@ -174,13 +174,15 @@ describe("tool.registry", () => {
     ),
   )
 
-  it.live("does not register the lsp tool when LSP is not configured", () =>
-    provideTmpdirInstance((dir) =>
-      Effect.gen(function* () {
-        const registry = yield* ToolRegistry.Service
-        const ids = yield* registry.ids()
-        expect(ids).not.toContain("lsp")
-      }),
+  it.live("does not register the lsp tool when LSP is disabled", () =>
+    provideTmpdirInstance(
+      (dir) =>
+        Effect.gen(function* () {
+          const registry = yield* ToolRegistry.Service
+          const ids = yield* registry.ids()
+          expect(ids).not.toContain("lsp")
+        }),
+      { config: { lsp: false } },
     ),
   )
 
