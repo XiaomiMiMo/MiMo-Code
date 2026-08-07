@@ -58,9 +58,21 @@ export const MAX_FORK_QUERY_MESSAGES = 12
  * question needs recent context, not the whole session (which can be hundreds
  * of thousands of tokens on long sessions). The caller keeps the session
  * boundary/watermark from the full set; only the snapshot content is bounded.
+ *
+ * With `mustInclude`, the window is extended to also cover the last element
+ * matching it (e.g. the last user message) even when it falls outside the tail
+ * window — `buildLLMRequestPrefix` dies if its msgs have no user message.
  */
-export function sliceSideQuestionContext<T>(msgs: readonly T[], max: number): T[] {
-  return msgs.slice(-max)
+export function sliceSideQuestionContext<T>(
+  msgs: readonly T[],
+  max: number,
+  /** Predicate for an element that must survive in the window (e.g. the last user message). */
+  mustInclude?: (m: T) => boolean,
+): T[] {
+  if (!mustInclude) return msgs.slice(-max)
+  const lastIdx = msgs.findLastIndex(mustInclude)
+  if (lastIdx < 0) return msgs.slice(-max)
+  return msgs.slice(Math.min(msgs.length - max, lastIdx))
 }
 
 // One-shot, READ-ONLY fork-query: ask a (possibly running) target session a
@@ -124,7 +136,7 @@ export function forkQuery(deps: {
       agentName,
       providerID,
       modelID,
-      msgs: sliceSideQuestionContext(msgs, MAX_FORK_QUERY_MESSAGES),
+      msgs: sliceSideQuestionContext(msgs, MAX_FORK_QUERY_MESSAGES, (m) => m.info.role === "user"),
     })
     const forkCtx = {
       system: prefix.system,
