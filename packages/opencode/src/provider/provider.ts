@@ -30,6 +30,7 @@ import { isFreeApiModel, isFreeApiSunset } from "@/util/free-api-sunset"
 import { usesMimoCodexMode } from "../tool/gpt"
 
 import * as ProviderTransform from "./transform"
+import { ModalityInference } from "./modality-inference"
 import { ModelID, ProviderID } from "./schema"
 
 const log = Log.create({ service: "provider" })
@@ -991,6 +992,26 @@ const ProviderInterleaved = Schema.Union([
   }),
 ])
 
+/**
+ * Provenance of a model's modality verdict, present only when the verdict was
+ * INFERRED rather than declared.
+ *
+ * Its whole job is attribution. A modality verdict can be wrong, and when it is,
+ * the difference between "the user's config says so" and "we inherited this from
+ * a models.dev entry for a different provider" is the difference between a
+ * one-line fix and an afternoon of bisecting. `source` names the exact entry the
+ * verdict was inherited from so the guess is auditable, not anonymous.
+ *
+ * `"assumed"` additionally marks a verdict that is a POLICY, not a fact — see
+ * `ModalityInference.assumedInput`. Callers that autonomously pick a model by
+ * capability must not treat it as evidence.
+ */
+const ProviderModalityInference = Schema.Struct({
+  input: Schema.Literals(["declared", "provider-entry", "directory", "assumed"]),
+  output: Schema.Literals(["declared", "provider-entry", "directory", "assumed"]),
+  source: Schema.optional(Schema.String),
+})
+
 const ProviderCapabilities = Schema.Struct({
   temperature: Schema.Boolean,
   reasoning: Schema.Boolean,
@@ -1010,6 +1031,7 @@ const ProviderCapabilities = Schema.Struct({
   input: ProviderModalities,
   output: ProviderModalities,
   interleaved: ProviderInterleaved,
+  inferred: Schema.optional(ProviderModalityInference),
 })
 
 const ProviderCacheCost = Schema.Struct({
@@ -1124,6 +1146,21 @@ export function sortVisionModels(models: Model[]): Model[] {
     if (a.cost.input !== b.cost.input) return a.cost.input - b.cost.input
     return `${a.providerID}/${a.id}`.localeCompare(`${b.providerID}/${b.id}`)
   })
+}
+
+/**
+ * Whether a model's image-input verdict is EVIDENCE rather than policy.
+ *
+ * `assumed` image support exists so that a user who attaches an image to their
+ * own BYOK model gets it sent instead of silently swapped out. It is not a
+ * reason for the engine to go and pick that model on the user's behalf: doing so
+ * would trade the silent drop this fixes for a new silent failure, where a
+ * text-only model gets auto-selected to look at a screenshot. So autonomous
+ * capability-based SELECTION requires evidence, while honouring what the user
+ * explicitly attached does not.
+ */
+export function hasEvidencedImageInput(model: Model): boolean {
+  return model.capabilities.input.image === true && model.capabilities.inferred?.input !== "assumed"
 }
 
 function cost(c: ModelsDev.Model["cost"]): Model["cost"] {
@@ -1278,6 +1315,11 @@ const layer: Layer.Layer<
 
         log.info("init")
 
+        // Indexed over the RAW models.dev directory, not `database`: `database`
+        // is rewritten below by every config provider, and the index must keep
+        // describing the catalog rather than the user's overrides of it.
+        const modalityDirectory = ModalityInference.directoryIndex(modelsDev)
+
         function mergeProvider(providerID: ProviderID, provider: Partial<Info>) {
           const existing = providers[providerID]
           if (existing) {
@@ -1331,6 +1373,25 @@ const layer: Layer.Layer<
               if (model.id && model.id !== modelID) return modelID
               return existingModel?.name ?? modelID
             })
+            // Modality resolution is factored out because its precedence is no
+            // longer expressible as a `??` chain: past the user's own
+            // declaration and the same-named provider's entry there is a
+            // directory lookup by bare model id, and past THAT an explicit
+            // "unknown" that must not collapse into `false`. See
+            // provider/modality-inference.ts for the ordering and for why
+            // unknown resolves permissively.
+            const inputModalities = ModalityInference.resolveInput({
+              declared: model.modalities?.input,
+              inherited: existingModel?.capabilities.input,
+              apiID,
+              directory: modalityDirectory,
+            })
+            const outputModalities = ModalityInference.resolveOutput({
+              declared: model.modalities?.output,
+              inherited: existingModel?.capabilities.output,
+              apiID,
+              directory: modalityDirectory,
+            })
             const parsedModel: Model = {
               id: ModelID.make(modelID),
               api: {
@@ -1346,23 +1407,8 @@ const layer: Layer.Layer<
                 reasoning: model.reasoning ?? existingModel?.capabilities.reasoning ?? false,
                 attachment: model.attachment ?? existingModel?.capabilities.attachment ?? false,
                 toolcall: model.tool_call ?? existingModel?.capabilities.toolcall ?? true,
-                input: {
-                  text: model.modalities?.input?.includes("text") ?? existingModel?.capabilities.input.text ?? true,
-                  audio: model.modalities?.input?.includes("audio") ?? existingModel?.capabilities.input.audio ?? false,
-                  image: model.modalities?.input?.includes("image") ?? existingModel?.capabilities.input.image ?? false,
-                  video: model.modalities?.input?.includes("video") ?? existingModel?.capabilities.input.video ?? false,
-                  pdf: model.modalities?.input?.includes("pdf") ?? existingModel?.capabilities.input.pdf ?? false,
-                },
-                output: {
-                  text: model.modalities?.output?.includes("text") ?? existingModel?.capabilities.output.text ?? true,
-                  audio:
-                    model.modalities?.output?.includes("audio") ?? existingModel?.capabilities.output.audio ?? false,
-                  image:
-                    model.modalities?.output?.includes("image") ?? existingModel?.capabilities.output.image ?? false,
-                  video:
-                    model.modalities?.output?.includes("video") ?? existingModel?.capabilities.output.video ?? false,
-                  pdf: model.modalities?.output?.includes("pdf") ?? existingModel?.capabilities.output.pdf ?? false,
-                },
+                input: inputModalities.modalities,
+                output: outputModalities.modalities,
                 // Declared per model, never derived: design is indistinguishable from plain
                 // TTS by modality, and a sample-taking model could be speech-to-speech
                 // conversion. `existingModel` carries the value forward when a config entry
@@ -1375,6 +1421,17 @@ const layer: Layer.Layer<
                   (!existingModel && apiNpm === "@ai-sdk/openai-compatible" && apiID.includes("deepseek")
                     ? { field: "reasoning_content" }
                     : false),
+                ...(inputModalities.provenance === "declared" && outputModalities.provenance === "declared"
+                  ? {}
+                  : {
+                      inferred: {
+                        input: inputModalities.provenance,
+                        output: outputModalities.provenance,
+                        ...((inputModalities.source ?? outputModalities.source)
+                          ? { source: inputModalities.source ?? outputModalities.source }
+                          : {}),
+                      },
+                    }),
               },
               cost: {
                 input: model?.cost?.input ?? existingModel?.cost?.input ?? 0,
@@ -1423,6 +1480,20 @@ const layer: Layer.Layer<
             // vision-capable model, so image input is supported.
             if (providerID === "mimo" && modelID === "mimo-auto") {
               parsedModel.capabilities.input.image = true
+            }
+            if (inputModalities.provenance !== "declared") {
+              log.info("input modalities inferred", {
+                providerID,
+                modelID,
+                apiID,
+                provenance: inputModalities.provenance,
+                source: inputModalities.source,
+                image: parsedModel.capabilities.input.image,
+                fix:
+                  inputModalities.provenance === "assumed"
+                    ? `Declare modalities.input in mimocode.json under provider.${providerID}.models.${modelID} to make this exact`
+                    : undefined,
+              })
             }
             const merged = mergeDeep(ProviderTransform.variants(parsedModel), model.variants ?? {})
             parsedModel.variants = mapValues(
@@ -1976,7 +2047,7 @@ const layer: Layer.Layer<
       const providers = yield* list()
       const vision = Object.values(providers)
         .flatMap((info) => Object.values(info.models))
-        .filter((m) => m.capabilities.input.image === true)
+        .filter(hasEvidencedImageInput)
       return sortVisionModels(vision)[0]
     })
 
