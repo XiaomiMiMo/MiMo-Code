@@ -2548,6 +2548,67 @@ NOTE: At any point in time through this workflow you should feel free to ask the
         return { info, parts: [] }
       }
 
+      // Announce media this turn will send WITHOUT, before the send path silently
+      // does it.
+      //
+      // `ProviderTransform.unsupportedParts` replaces an unsupported file part
+      // with "ERROR: Cannot read … Inform the user." That text is addressed to
+      // the MODEL, from inside an AI SDK middleware, and nothing about the
+      // substitution reaches the transcript: the user sees a model claiming it
+      // received no image while the image sits in the session record, which reads
+      // like the client corrupted the attachment. A component that decides to do
+      // less has to be able to say so.
+      //
+      // Same shape as `noticeMemoryWriteOffFallback` above and for the same
+      // reasons: `ignored: true` keeps a user-addressed notice out of the model's
+      // context, `synthetic: true` marks it as not-user-authored, and `time.end`
+      // is what makes the CLI emit it. Single-language English, because the
+      // engine does not know the reader's locale and the consuming client does.
+      const withheld = yield* Effect.gen(function* () {
+        const files = parts.filter((p): p is Extract<typeof p, { type: "file" }> => p.type === "file")
+        if (files.length === 0) return []
+        const full = yield* provider
+          .getModel(model.providerID, model.modelID)
+          .pipe(Effect.catchDefect(() => Effect.succeed(undefined)))
+        if (!full) return []
+        return files.flatMap((file) => {
+          const modality = ProviderTransform.withheldModality(file.mime, full)
+          return modality ? [{ filename: file.filename ?? file.mime, modality, model: full }] : []
+        })
+      })
+      if (withheld.length > 0) {
+        const capabilities = withheld[0].model.capabilities
+        const provenance =
+          capabilities.inferred?.input && capabilities.inferred.input !== "declared"
+            ? ` This model's input modalities were not declared in config — they were inferred (${capabilities.inferred.input}` +
+              `${capabilities.inferred.source ? ` from ${capabilities.inferred.source}` : ""}), so the verdict may be wrong.`
+            : ""
+        const now = Date.now()
+        parts.push(
+          assign({
+            messageID: info.id,
+            sessionID: input.sessionID,
+            type: "text",
+            synthetic: true,
+            ignored: true,
+            time: { start: now, end: now },
+            text:
+              `Not sent to ${model.providerID}/${model.modelID}: ` +
+              withheld.map((item) => `${item.filename} (${item.modality})`).join(", ") +
+              `. The model is recorded as not accepting ${[...new Set(withheld.map((i) => i.modality))].join("/")} ` +
+              `input, so the attachment was replaced with a note to the model rather than uploaded.${provenance} ` +
+              `To send it anyway, set modalities.input for this model in config, or switch to a model that accepts it.`,
+          }),
+        )
+        log.info("withheld unsupported input media", {
+          sessionID: input.sessionID,
+          messageID: info.id,
+          model: `${model.providerID}/${model.modelID}`,
+          withheld: withheld.map((item) => `${item.filename}:${item.modality}`),
+          inferred: capabilities.inferred?.input,
+        })
+      }
+
       const prompt = yield* sessions.resolvePrompt({
         sessionID: input.sessionID,
         ...(parts.some((part) => !("synthetic" in part) || !part.synthetic)
