@@ -50,6 +50,19 @@ function SIDE_QUESTION_PROMPT(question: string): string {
   ].join("\n")
 }
 
+/** Cap the /btw side-question snapshot to this many recent messages. */
+export const MAX_FORK_QUERY_MESSAGES = 12
+
+/**
+ * Bound a side-question snapshot to the most recent `max` messages. A side
+ * question needs recent context, not the whole session (which can be hundreds
+ * of thousands of tokens on long sessions). The caller keeps the session
+ * boundary/watermark from the full set; only the snapshot content is bounded.
+ */
+export function sliceSideQuestionContext<T>(msgs: readonly T[], max: number): T[] {
+  return msgs.slice(-max)
+}
+
 // One-shot, READ-ONLY fork-query: ask a (possibly running) target session a
 // side question over a FROZEN snapshot of its history without disturbing its
 // turn, and return the answer text. Mechanism mirrors tryStartCheckpointWriter
@@ -111,7 +124,7 @@ export function forkQuery(deps: {
       agentName,
       providerID,
       modelID,
-      msgs,
+      msgs: sliceSideQuestionContext(msgs, MAX_FORK_QUERY_MESSAGES),
     })
     const forkCtx = {
       system: prefix.system,
