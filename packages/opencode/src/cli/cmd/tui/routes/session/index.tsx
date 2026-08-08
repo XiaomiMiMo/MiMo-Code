@@ -32,7 +32,7 @@ import type {
   ReasoningPart,
 } from "@mimo-ai/sdk/v2"
 import { useLocal } from "@tui/context/local"
-import { Locale } from "@/util"
+import { Log, Locale } from "@/util"
 import { verifySessionRenderable, type SessionActorInput } from "@/session/visibility"
 import type { Tool } from "@/tool"
 import type { ReadTool } from "@/tool/read"
@@ -245,60 +245,72 @@ export function Session() {
 
   createEffect(async () => {
     const previousWorkspace = project.workspace.current()
-    const result = await sdk.client.session.get({ sessionID: route.sessionID }, { throwOnError: true })
-    if (!result.data) {
+    try {
+      const result = await sdk.client.session.get({ sessionID: route.sessionID }, { throwOnError: true })
+      if (!result.data) {
+        toast.show({
+          message: `Session not found: ${route.sessionID}`,
+          variant: "error",
+        })
+        navigate({ type: "home" })
+        return
+      }
+
+      // The prohibition. Every way of reaching this route hands a raw session id
+      // straight to the renderer and bypasses both hiding layers: -s/--session
+      // (thread.ts → app.tsx), `attach --session`, POST /tui/select-session, POST
+      // /tui/event, the session tool's `switch`, MIMOCODE_ROUTE, plugin
+      // navigate("session", …) and the session-list dialog's child injection. This
+      // effect is the one point all of them must pass, so the refusal lives here
+      // rather than on any single entry point. What counts as forbidden lives in
+      // session/visibility.ts: a host for a RUNTIME-spawned agent, which today
+      // means the checkpoint writer. It reads the session's own actor rows, so no
+      // parent round-trip is needed.
+      const verdict = await verifySessionRenderable(result.data, (sessionID) =>
+        // `throwOnError` is load-bearing, not tidiness: without it this client
+        // RESOLVES `{ data: undefined }` on an HTTP error, which the classifier
+        // reads as "this session has no actor rows" and renders. The failure has to
+        // arrive as a rejection for the gate to see it as unverified rather than as
+        // verified-absent.
+        // SessionActorsResponses[200] is generated as `unknown`, so the shape is
+        // asserted here exactly as sync.tsx does for the same endpoint.
+        sdk.client.session
+          .actors({ sessionID }, { throwOnError: true })
+          .then((res) => res.data as SessionActorInput[] | undefined),
+      )
+      if (!verdict.renderable) {
+        toast.show({
+          message: `Cannot open session: ${verdict.reason}`,
+          variant: "error",
+        })
+        navigate({ type: "home" })
+        return
+      }
+
+      if (result.data.workspaceID !== previousWorkspace) {
+        project.workspace.set(result.data.workspaceID)
+
+        // Sync all the data for this workspace. Note that this
+        // workspace may not exist anymore which is why this is not
+        // fatal. If it doesn't we still want to show the session
+        // (which will be non-interactive)
+        try {
+          await sync.bootstrap({ fatal: false })
+        } catch (e) {}
+      }
+      await sync.session.sync(route.sessionID)
+      if (scroll) scroll.scrollBy(100_000)
+    } catch (error) {
+      // Any load failure (malformed/nonexistent session id, HTTP error, or a
+      // renderability check that rejects) must not leave the route on an
+      // unloadable session — recover to Home with a visible notification.
+      Log.Default.error("tui session route load failed", { error })
       toast.show({
-        message: `Session not found: ${route.sessionID}`,
+        message: `Cannot open session: ${route.sessionID}`,
         variant: "error",
       })
       navigate({ type: "home" })
-      return
     }
-
-    // The prohibition. Every way of reaching this route hands a raw session id
-    // straight to the renderer and bypasses both hiding layers: -s/--session
-    // (thread.ts → app.tsx), `attach --session`, POST /tui/select-session, POST
-    // /tui/event, the session tool's `switch`, MIMOCODE_ROUTE, plugin
-    // navigate("session", …) and the session-list dialog's child injection. This
-    // effect is the one point all of them must pass, so the refusal lives here
-    // rather than on any single entry point. What counts as forbidden lives in
-    // session/visibility.ts: a host for a RUNTIME-spawned agent, which today
-    // means the checkpoint writer. It reads the session's own actor rows, so no
-    // parent round-trip is needed.
-    const verdict = await verifySessionRenderable(result.data, (sessionID) =>
-      // `throwOnError` is load-bearing, not tidiness: without it this client
-      // RESOLVES `{ data: undefined }` on an HTTP error, which the classifier
-      // reads as "this session has no actor rows" and renders. The failure has to
-      // arrive as a rejection for the gate to see it as unverified rather than as
-      // verified-absent.
-      // SessionActorsResponses[200] is generated as `unknown`, so the shape is
-      // asserted here exactly as sync.tsx does for the same endpoint.
-      sdk.client.session
-        .actors({ sessionID }, { throwOnError: true })
-        .then((res) => res.data as SessionActorInput[] | undefined),
-    )
-    if (!verdict.renderable) {
-      toast.show({
-        message: `Cannot open session: ${verdict.reason}`,
-        variant: "error",
-      })
-      navigate({ type: "home" })
-      return
-    }
-
-    if (result.data.workspaceID !== previousWorkspace) {
-      project.workspace.set(result.data.workspaceID)
-
-      // Sync all the data for this workspace. Note that this
-      // workspace may not exist anymore which is why this is not
-      // fatal. If it doesn't we still want to show the session
-      // (which will be non-interactive)
-      try {
-        await sync.bootstrap({ fatal: false })
-      } catch (e) {}
-    }
-    await sync.session.sync(route.sessionID)
-    if (scroll) scroll.scrollBy(100_000)
   })
 
   let lastSwitch: string | undefined = undefined
