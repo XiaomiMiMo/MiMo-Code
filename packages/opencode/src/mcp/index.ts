@@ -67,12 +67,11 @@ function registerExitCleanup() {
   if (exitCleanupRegistered) return
   exitCleanupRegistered = true
   process.on("exit", reapMcpChildren)
+  // Deliberate tradeoff: reap synchronously before exiting so a child spawned on
+  // the crash path can never survive the parent, and exit(0) masks the signal's
+  // non-zero code for supervisors. SIGINT is intentionally NOT hooked so the TUI
+  // Ctrl+C path still uses graceful Effect teardown (which also runs the finalizer).
   process.on("SIGTERM", () => { reapMcpChildren(); process.exit(0) })
-}
-
-/** Test hook: expose the registry size (readonly). */
-export function mcpChildCount() {
-  return mcpChildPids.size
 }
 
 /** Test hook: register a pid for reap (used by tests; production uses connectLocal). */
@@ -797,11 +796,26 @@ export const layer = Layer.effect(
       const client = s.clients[name]
       delete s.defs[name]
       if (!client) return Effect.void
+      // Capture the pid before close: StdioClientTransport.close() clears its
+      // process handle, so transport.pid would be undefined afterwards.
+      const pid = client.transport instanceof StdioClientTransport ? client.transport.pid : null
       // Interrupt sampling still running for this client first: once the
       // transport is gone its response can never be delivered, so the fiber
       // would otherwise keep a model call alive with nowhere to send the result.
       return McpSampling.cancelAll(client).pipe(
-        Effect.andThen(Effect.tryPromise(() => client.close()).pipe(Effect.ignore)),
+        Effect.andThen(
+          Effect.tryPromise(() => client.close()).pipe(
+            // StdioClientTransport.close() terminates the child, so it's safe to
+            // drop the pid here — this prunes stale pids on disconnect/reconnect
+            // so the exit handler can never SIGTERM a recycled pid.
+            Effect.tap(
+              Effect.sync(() => {
+                if (typeof pid === "number") mcpChildPids.delete(pid)
+              }),
+            ),
+            Effect.ignore,
+          ),
+        ),
       )
     }
 
