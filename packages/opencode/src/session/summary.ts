@@ -7,6 +7,23 @@ import * as Session from "./session"
 import { MessageV2 } from "./message-v2"
 import { SessionID, MessageID } from "./schema"
 
+/** Cap the per-message summary diff so a single huge file edit can't bloat a
+ * session message to hundreds of MB (issue #1854). The full session diff is
+ * still stored via session_diff; this bounds only the message-embedded copy. */
+export const MAX_SUMMARY_DIFF_BYTES = 1024 * 1024
+
+export function capSummaryDiffs(diffs: Snapshot.FileDiff[]): Snapshot.FileDiff[] {
+  let budget = MAX_SUMMARY_DIFF_BYTES
+  const capped: Snapshot.FileDiff[] = []
+  for (const d of diffs) {
+    if (budget <= 0) break
+    const patch = d.patch.slice(0, budget)
+    budget -= patch.length + d.file.length + 48
+    capped.push({ ...d, patch })
+  }
+  return capped
+}
+
 function unquoteGitPath(input: string) {
   if (!input.startsWith('"')) return input
   if (!input.endsWith('"')) return input
@@ -124,7 +141,7 @@ export const layer = Layer.effect(
       const target = messages.find((m) => m.info.id === input.messageID)
       if (!target || target.info.role !== "user") return
       const msgDiffs = yield* computeDiff({ messages })
-      target.info.summary = { ...target.info.summary, diffs: msgDiffs }
+      target.info.summary = { ...target.info.summary, diffs: capSummaryDiffs(msgDiffs) }
       yield* sessions.updateMessage(target.info)
     })
 
