@@ -91,17 +91,13 @@ function autonomousLoopReminder(): string {
   ].join("\n")
 }
 
-function stopReminder(focusTaskID: string | undefined): string {
-  const taskHint = focusTaskID
-    ? `Consult this session's tasks/${focusTaskID}/progress.md head section.`
-    : "Consult the most recently active task's progress.md head section."
+function idleReminder(): string {
   return [
     "<system-reminder>",
-    "The previous assistant turn ended with a stop. Before stopping again,",
-    taskHint,
-    "Compare the Task spec to the latest Progress entries. If the task is",
-    "incomplete, proceed to the next concrete step. Only stop when the spec",
-    "is genuinely satisfied or you need user input you cannot infer.",
+    "The previous assistant turn ended with a stop. If it fulfilled the user's request,",
+    "do not reopen or re-verify completed work — wait for the user's next input.",
+    "Only continue if you were genuinely mid-task: consult the most recently active task's",
+    "progress.md head section and proceed only when a concrete next step is required.",
     "</system-reminder>",
   ].join("\n")
 }
@@ -1504,21 +1500,24 @@ export const layer: Layer.Layer<
         "Recent messages are preserved verbatim below — the assistant turn (and any tool results) you'll see is real history, not pseudo-content. Continue your task by responding to the most recent state.",
       )
       lines.push("")
+      const info = opts?.lastMessageInfo
+      const done = info?.role === "assistant" && info.finish === "stop"
       lines.push(
-        "Resume directly. Do not acknowledge this memory dump, do not recap, do not preface with \"I'll continue\" or similar. Pick up the last task as if the break never happened.",
+        done
+          ? "The last assistant turn ended with a stop. If it fulfilled the user's request, do not reopen or re-verify completed work — wait for the user's next input."
+          : 'Resume directly. Do not acknowledge this memory dump, do not recap, do not preface with "I\'ll continue" or similar. Pick up the last task as if the break never happened.',
       )
 
       // Section 11: tail-aware system reminder. Picks the appropriate nudge
       // based on how the preserved tail ends: tool-calls → continue loop,
-      // stop → check task spec before stopping again, tool → process results,
-      // user → no addendum needed.
-      const info = opts?.lastMessageInfo
+      // stop → idle framing (do not reopen completed work), tool → process
+      // results, user → no addendum needed.
       if (info) {
         const reminder = (() => {
           switch (info.role) {
             case "assistant":
               if (info.finish === "tool-calls") return autonomousLoopReminder()
-              return stopReminder(undefined)
+              return idleReminder()
             case "tool":
               return toolResultContinueReminder()
             case "user":

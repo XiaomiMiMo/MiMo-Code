@@ -175,7 +175,7 @@ describe("renderRebuildContext v3", () => {
     ),
   )
 
-  it.live("appends stopReminder when lastMessageInfo is assistant+stop", () =>
+  it.live("uses idle framing when lastMessageInfo is assistant+stop", () =>
     provideTmpdirInstance(() =>
       Effect.gen(function* () {
         const cp = yield* SessionCheckpoint.Service
@@ -186,6 +186,7 @@ describe("renderRebuildContext v3", () => {
 
         const out = yield* cp.renderRebuildContext(sess.id, { lastMessageInfo: { role: "assistant", finish: "stop" } })
         expect(out).toContain("The previous assistant turn ended with a stop")
+        expect(out).toContain("wait for the user")
         expect(out).toContain("progress.md head section")
       }),
     ),
