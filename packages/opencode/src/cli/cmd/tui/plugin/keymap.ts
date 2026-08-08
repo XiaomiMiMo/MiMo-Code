@@ -21,15 +21,26 @@ type PluginCommand = Command<PluginTarget, KeyEvent>
 type PluginBinding = Binding<PluginTarget, KeyEvent>
 type PluginLayer = Layer<PluginTarget, KeyEvent>
 
-type RegistryEntry = {
+type CommandRegistryEntry = {
   command: PluginCommand
   binding?: PluginBinding
+}
+
+type FunctionBindingEntry = {
+  value: string
+  binding: PluginBinding & { cmd: (ctx: CommandContext<PluginTarget, KeyEvent>) => unknown }
 }
 
 type Input = {
   command: ReturnType<typeof useCommandDialog>
   keybind: ReturnType<typeof useKeybind>
   dialog: ReturnType<typeof useDialog>
+}
+
+type ContextOptions = {
+  command?: PluginCommand
+  event?: KeyEvent
+  payload?: unknown
 }
 
 function str(value: unknown): string | undefined {
@@ -60,29 +71,44 @@ function keyLikeToInfo(key: KeyLike): Keybind.Info | undefined {
   }
 }
 
+function removeEntry<Value>(list: Value[], entry: Value) {
+  const index = list.indexOf(entry)
+  if (index >= 0) list.splice(index, 1)
+}
+
 /**
  * Narrow `api.keymap` implementation bridging to the fork's command dialog
- * (`useCommandDialog`) and keybind system. `registerLayer` registers each
- * layer command as a command-palette entry; the existing keyboard loop matches
- * `option.keybind` and calls `onSelect`, so bindings work through the dialog
- * path. Known gaps vs upstream `@opentui/keymap`: no sequence keys, no layer
+ * (`useCommandDialog`) and keybind system. `registerLayer` registers each layer
+ * command as a command-palette entry and each function-valued binding as a
+ * hidden keybind option; the existing keyboard loop matches `option.keybind`
+ * and calls `onSelect`, so bindings fire through the dialog path.
+ * `dispatchCommand` runs keymap commands directly so it can thread
+ * `options.payload`/`options.event` into the command context, and falls back to
+ * the option's `onSelect` for commands registered outside the keymap.
+ *
+ * Known gaps vs upstream `@opentui/keymap`: no sequence keys, no layer
  * target/priority/targetMode semantics, no reactive `enabled`/`suggested`
  * subscriptions (evaluated once at registration), and `on`/`intercept` are
  * no-op stubs.
  */
 export function createPluginKeymap(input: Input): TuiKeymap {
-  const registry: RegistryEntry[] = []
+  const registry: CommandRegistryEntry[] = []
+  const functionBindings: FunctionBindingEntry[] = []
   const data = new Map<string, unknown>()
 
-  const buildCommandContext = (cmd: PluginCommand, keymap: TuiKeymap): CommandContext<PluginTarget, KeyEvent> => ({
+  const buildCommandContext = (
+    keymap: TuiKeymap,
+    commandInput: string,
+    opts?: ContextOptions,
+  ): CommandContext<PluginTarget, KeyEvent> => ({
     keymap,
-    event: undefined,
+    event: opts?.event,
     focused: null,
     target: null,
-    data: {},
-    command: cmd,
-    input: cmd.name,
-    payload: undefined,
+    data: Object.fromEntries(data),
+    command: opts?.command,
+    input: commandInput,
+    payload: opts?.payload,
   })
 
   const toActiveBinding = (binding: PluginBinding, keymap: TuiKeymap): ActiveBinding<PluginTarget, KeyEvent> => ({
@@ -93,7 +119,7 @@ export function createPluginKeymap(input: Input): TuiKeymap {
     fallthrough: binding.fallthrough ?? false,
   })
 
-  const commandOption = (entry: RegistryEntry, keymap: TuiKeymap): CommandOption => {
+  const commandOption = (entry: CommandRegistryEntry, keymap: TuiKeymap): CommandOption => {
     const { command: cmd, binding } = entry
     const slashName = str(cmd.slashName)
     const slashAliases = Array.isArray(cmd.slashAliases)
@@ -108,11 +134,22 @@ export function createPluginKeymap(input: Input): TuiKeymap {
       suggested: typeof cmd.suggested === "function" ? Boolean(cmd.suggested()) : (cmd.suggested as boolean | undefined),
       enabled: typeof cmd.enabled === "function" ? Boolean(cmd.enabled()) : (cmd.enabled as boolean | undefined),
       keybind: binding ? keyLikeToString(binding.key) : undefined,
-      onSelect: () => cmd.run(buildCommandContext(cmd, keymap)),
+      onSelect: () => cmd.run(buildCommandContext(keymap, cmd.name, { command: cmd })),
     }
   }
 
-  const filterCommands = (commands: PluginCommand[], query?: CommandQuery<PluginTarget, KeyEvent>): PluginCommand[] => {
+  const fnBindingOption = (entry: FunctionBindingEntry, keymap: TuiKeymap): CommandOption => ({
+    title: entry.value,
+    value: entry.value,
+    hidden: true,
+    keybind: keyLikeToString(entry.binding.key),
+    onSelect: () => entry.binding.cmd(buildCommandContext(keymap, entry.value, {})),
+  })
+
+  const filterCommands = (
+    commands: PluginCommand[],
+    query?: CommandQuery<PluginTarget, KeyEvent>,
+  ): PluginCommand[] => {
     let list = commands
     if (query?.search) {
       const searchIn = query.searchIn?.length ? query.searchIn : ["name"]
@@ -142,30 +179,51 @@ export function createPluginKeymap(input: Input): TuiKeymap {
     registerLayer(layer: PluginLayer) {
       const commands = layer.commands ?? []
       const bindings = layer.bindings ?? []
-      const entries = commands.map((command) => ({
+      const commandEntries = commands.map((command) => ({
         command,
         binding: bindings.find((b) => b.cmd === command.name),
       }))
-      for (const entry of entries) registry.push(entry)
-      const dispose = input.command.register(() => entries.map((entry) => commandOption(entry, keymap)))
+      const fnEntries = bindings
+        .filter(
+          (b): b is PluginBinding & { cmd: (ctx: CommandContext<PluginTarget, KeyEvent>) => unknown } =>
+            typeof b.cmd === "function",
+        )
+        .map((binding, index) => ({
+          value: `__keybind:${keyLikeToString(binding.key)}:${index}`,
+          binding,
+        }))
+      for (const entry of commandEntries) registry.push(entry)
+      for (const entry of fnEntries) functionBindings.push(entry)
+      const dispose = input.command.register(() => [
+        ...commandEntries.map((entry) => commandOption(entry, keymap)),
+        ...fnEntries.map((entry) => fnBindingOption(entry, keymap)),
+      ])
       return () => {
-        for (const entry of entries) {
-          const index = registry.indexOf(entry)
-          if (index >= 0) registry.splice(index, 1)
-        }
+        for (const entry of commandEntries) removeEntry(registry, entry)
+        for (const entry of fnEntries) removeEntry(functionBindings, entry)
         dispose()
       }
     },
-    dispatchCommand(name) {
+    dispatchCommand(name, options) {
       if (name === "command.palette.show") {
         input.command.show()
         return { ok: true }
       }
       const option = input.command.find(name)
       if (!option) return { ok: false, reason: "not-found" }
-      option.onSelect?.(input.dialog)
+      if (option.enabled === false) return { ok: false, reason: "disabled" }
       const command = registry.find((entry) => entry.command.name === name)?.command
-      return command ? { ok: true, command } : { ok: true }
+      if (command) {
+        command.run(buildCommandContext(keymap, name, { command, event: options?.event, payload: options?.payload }))
+        return { ok: true, command }
+      }
+      const fnBinding = functionBindings.find((entry) => entry.value === name)
+      if (fnBinding) {
+        fnBinding.binding.cmd(buildCommandContext(keymap, name, { event: options?.event, payload: options?.payload }))
+        return { ok: true }
+      }
+      option.onSelect?.(input.dialog)
+      return { ok: true }
     },
     runCommand(name, options) {
       return keymap.dispatchCommand(name, options)
