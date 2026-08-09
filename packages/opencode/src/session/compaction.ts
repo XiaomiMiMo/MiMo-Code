@@ -42,10 +42,12 @@ const DEFAULT_TAIL_TURNS = 2
 
 // Strip the OUTPUT of old completed tool parts on an in-memory message array
 // (used before building the compaction modelMessages). Mirrors the DB `prune()`
-// thresholds (PRUNE_PROTECT / PRUNE_MINIMUM / PRUNE_PROTECTED_TOOLS) but
-// operates on the in-memory copy and never touches the DB — the compaction
-// summary doesn't need full old tool bodies, so this bounds the compaction
-// request size so it can't exceed the model window (#1661).
+// thresholds (PRUNE_PROTECT / PRUNE_PROTECTED_TOOLS) but operates on the
+// in-memory copy and never touches the DB. Unlike the DB version it never gates
+// on PRUNE_MINIMUM — that threshold only decides whether to persist the pruned
+// state, whereas here the compaction summary doesn't need full old tool bodies,
+// so it always strips past PRUNE_PROTECT to bound the request size so it can't
+// exceed the model window (#1661).
 export function pruneToolOutputs(messages: MessageV2.WithParts[]): void {
   let total = 0
   let turns = 0
@@ -59,7 +61,10 @@ export function pruneToolOutputs(messages: MessageV2.WithParts[]): void {
       if (PRUNE_PROTECTED_TOOLS.includes(part.tool)) continue
       const est = Token.estimate(part.state.output)
       total += est
-      if (total > PRUNE_PROTECT) part.state.output = ""
+      if (total > PRUNE_PROTECT) {
+        part.state.output = ""
+        part.state.providerOutput = undefined
+      }
     }
   }
 }

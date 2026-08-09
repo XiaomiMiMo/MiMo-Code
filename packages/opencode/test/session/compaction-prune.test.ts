@@ -63,4 +63,26 @@ describe("pruneToolOutputs", () => {
     const toolParts = msgs.flatMap((m: any) => m.parts).filter((p: any) => p.type === "tool")
     expect(toolParts[0].state.output).toBe("tiny")
   })
+
+  test("stops the walk at a summary message, leaving pre-summary parts untouched", () => {
+    const big = "x".repeat(PRUNE_PROTECT * 5)
+    const msgs = [
+      userMsg("old"),
+      assistantMsg([toolPart("read", big)]),                      // pre-summary, would be stripped if reached
+      assistantMsg([{ type: "text", text: "summarized" }], true), // summary boundary
+      userMsg("mid"),
+      assistantMsg([toolPart("grep", big)]),                       // post-summary, outside the protected tail
+      userMsg("recent"),
+      assistantMsg([toolPart("edit", "small")]),                   // recent tail, protected
+      userMsg("last"),
+    ]
+    pruneToolOutputs(msgs)
+    const toolParts = msgs.flatMap((m: any) => m.parts).filter((p: any) => p.type === "tool")
+    // The walk broke at the summary, so the pre-summary read output is untouched.
+    expect(toolParts[0].state.output).toBe(big)
+    // The post-summary grep output is old enough to be stripped.
+    expect(toolParts[1].state.output).toBe("")
+    // The recent tail keeps its output.
+    expect(toolParts[2].state.output).toBe("small")
+  })
 })
