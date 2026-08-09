@@ -3845,7 +3845,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
                   tools,
                   activeTools,
                   model,
-                  toolChoice: isLastStep ? "none" : format.type === "json_schema" ? "required" : undefined,
+                  toolChoice: isLastStep ? "none" : format.type === "json_schema" && !model.capabilities.reasoning ? "required" : undefined,
                   agentID: lastUser.agentID,
                 })
                 .pipe(
@@ -4010,7 +4010,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
               tools,
               activeTools,
               model,
-              toolChoice: isLastStep ? ("none" as const) : format.type === "json_schema" ? ("required" as const) : undefined,
+              toolChoice: isLastStep ? ("none" as const) : format.type === "json_schema" && !model.capabilities.reasoning ? ("required" as const) : undefined,
               agentID: lastUser.agentID,
             }
 
