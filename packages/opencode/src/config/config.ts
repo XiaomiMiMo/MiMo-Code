@@ -343,7 +343,7 @@ const InfoSchema = Schema.Struct({
     Schema.Struct({
       disable_write: Schema.optional(Schema.Boolean).annotate({
         description:
-          "Stop WRITING new memory. Default: false (memory is written). When true, no new memory is produced — session checkpoint.md, project MEMORY.md, notes.md and per-task progress.md are never written, the high-pressure 'save your learnings to memory' nudge is suppressed, and automatic dream/distill runs are skipped. READING is deliberately unaffected: existing memory still loads into session-rebuild context and the builtin `memory` search tool keeps working. Nothing is ever deleted — set it back to false to resume writing on top of the existing files.",
+          "Stop WRITING new memory. Default: false (memory is written). When true, no new memory is produced — session checkpoint.md, project MEMORY.md, notes.md and per-task progress.md are never written, the high-pressure 'save your learnings to memory' nudge is suppressed, and automatic dream/distill runs are skipped. Existing memory stays READABLE on demand: the builtin `memory` search tool keeps working and the files can still be read directly. What does stop is the AUTOMATIC injection — checkpoint rebuild is short-circuited to compaction while writing is off, and the memory dumps that a rebuild would have placed in context are only produced by that rebuild, so nothing is loaded on its own; an agent that wants memory has to search or read for it. Nothing is ever deleted — set it back to false to resume writing on top of the existing files.",
       }),
       cc_index: Schema.optional(Schema.Boolean).annotate({
         description:

@@ -563,14 +563,23 @@ export const layer = Layer.effect(
      * What the user is told when a rebuild degrades to compaction *because the
      * memory write switch is off* — not because anything failed.
      *
-     * With `memory.disable_write` on, no checkpoint can ever exist for the
-     * session, so `rebuildEnsuringCheckpoint` returns "memory-write-off" on the
-     * spot and every overflow degrades to compaction. That is the switch working
-     * as asked, but the only trace of it was a log line ("memory writing
-     * disabled, skipping checkpoint") no user reads — and the one message that IS
-     * surfaced, `compactedInsteadMsg`, blames "the checkpoint writer failed",
-     * which reads like a bug worth reporting. So the two causes get two texts:
-     * this one names the switch.
+     * With `memory.disable_write` on, no *new* checkpoint can be written, and
+     * `rebuildEnsuringCheckpoint` returns "memory-write-off" at step 0 — before
+     * `rebuildFromCheckpoint` — so every overflow degrades to compaction. Note
+     * what that means and why it is deliberate: a checkpoint written *before* the
+     * switch was turned on can still be sitting on disk, and it is deliberately
+     * NOT rebuilt from either. The switch is "memory is inert", not merely "no new
+     * files": rebuilding would resume the checkpoint lifecycle the switch exists to
+     * stop, and it is the rebuild that injects the memory dumps into context. Do
+     * not "improve" this into a probe for an existing checkpoint — that is a
+     * behaviour change, not a bug fix. On-demand reads are the supported path while
+     * the switch is on (the `memory` search tool, or reading the files).
+     *
+     * That is the switch working as asked, but the only trace of it was a log line
+     * ("memory writing disabled, skipping checkpoint") no user reads — and the one
+     * message that IS surfaced, `compactedInsteadMsg`, blames "the checkpoint
+     * writer failed", which reads like a bug worth reporting. So the two causes get
+     * two texts: this one names the switch.
      *
      * Single-language English, deliberately: this text is persisted into the
      * session record, which the TUI, headless `run --format json`, and every

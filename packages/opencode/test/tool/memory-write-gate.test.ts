@@ -52,8 +52,18 @@ describe("assertWriteAllowed × memory write switch (W5)", () => {
           expect(message).not.toMatch(/[\u4e00-\u9fff]/)
           // Must not read as a path/permission problem, or the model retries elsewhere.
           expect(message).toContain("Do NOT retry with another memory path")
-          // Must not claim memory as a whole is off — reads still work.
-          expect(message).toContain("Reading is unaffected")
+          // Must not claim memory as a whole is off — existing memory stays readable.
+          expect(message).toContain("READABLE")
+          // ...but must NOT promise it arrives on its own. While writing is off,
+          // checkpoint rebuild short-circuits to compaction, and the memory dumps only a
+          // rebuild produces never appear — so a message that says memory "still loads
+          // into context" sends the reader to wait for something that will not come.
+          // Negative invariant, not a swapped literal: any future rewording that
+          // reintroduces the automatic-availability promise fails here.
+          expect(message).not.toMatch(/loads? into (session|context)/i)
+          expect(message).not.toMatch(/reading is unaffected/i)
+          // And it must say what to do instead.
+          expect(message).toMatch(/search or read it explicitly/i)
         }),
       { outsideGit: true, config: { memory: { disable_write: true } } },
     ),

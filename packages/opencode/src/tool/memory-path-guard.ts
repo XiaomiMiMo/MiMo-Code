@@ -177,15 +177,19 @@ export function assertMemoryWriteAllowed(input: {
   // Memory write switch. Deliberately worded so the refusal cannot be mistaken
   // for a path/permission problem — a model that reads "not allowed here" tends to
   // retry a different memory path, which would just loop. Says WRITING is off, not
-  // that memory is off: reads still work. English only, like every other message
-  // this module throws: it has no locale to consult, and the consuming client
-  // that surfaces it carries its own translations.
+  // that memory is off: existing memory is still readable. But it must not promise
+  // AUTOMATIC availability — while writing is off, checkpoint rebuild short-circuits
+  // to compaction, and the memory dumps only a rebuild produces never appear. So the
+  // reader is told to go get it, not that it will arrive. English only, like every
+  // other message this module throws: it has no locale to consult, and the consuming
+  // client that surfaces it carries its own translations.
   if (input.writeEnabled === false) {
     throw new Error(
       `Memory WRITING is disabled: config \`memory.disable_write\` is true, so no new memory may be written.\n` +
         `Refused: ${target}.\n` +
         `Do NOT retry with another memory path — every path under ${memoryRoot} is refused while writing is off.\n` +
-        `Reading is unaffected: existing memory still loads into session context and the \`memory\` search tool still works.\n` +
+        `Existing memory is still READABLE: the \`memory\` search tool works and you can read files under ${memoryRoot} directly.\n` +
+        `It is NOT loaded for you automatically while writing is off — checkpoint rebuild falls back to compaction, so search or read it explicitly when you need it.\n` +
         `To re-enable, set \`memory.disable_write: false\` in config.`,
     )
   }
