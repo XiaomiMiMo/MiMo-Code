@@ -1,8 +1,7 @@
 ### Issue / context (if applicable)
 
 <!--
-Link any relevant issue or discussion. For an external contribution that introduces a new feature or significant design change, include the issue where the direction was agreed.
-Use `Fixes #123` or `Closes #123` only when this PR fully resolves that issue.
+Link any relevant issue or discussion. For an external contribution that introduces a new feature or significant design change, include the issue where the direction was agreed. Use `Fixes #123` or `Closes #123` only when this PR fully resolves that issue.
 -->
 
 ### Type of change
