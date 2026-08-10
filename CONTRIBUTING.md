@@ -136,10 +136,10 @@ Tips:
 - `--inspect-wait` / `--inspect-brk` may suit your workflow better than `--inspect`.
 - Instead of repeating the flag, `export BUN_OPTIONS=--inspect=ws://localhost:6499/`.
 
-VSCode users can start from [.vscode/extensions.example.json](.vscode/extensions.example.json)
-(the Bun extension) and [.vscode/launch.example.json](.vscode/launch.example.json), which
-attaches to the inspector URL above. Avoid `"request": "launch"` configurations and the
-`JavaScript Debug Terminal`; both tend to misplace breakpoints.
+VSCode users can start from [.vscode/settings.example.json](.vscode/settings.example.json) and
+[.vscode/launch.example.json](.vscode/launch.example.json), which attaches to the inspector
+URL above. Avoid `"request": "launch"` configurations and the `JavaScript Debug Terminal`;
+both tend to misplace breakpoints.
 
 ## Pull request expectations
 

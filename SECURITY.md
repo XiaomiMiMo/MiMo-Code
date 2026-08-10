@@ -42,10 +42,15 @@ transport security, such as an HTTPS reverse proxy.
 
 Do not report a suspected vulnerability in a public GitHub issue, discussion, or pull request.
 
-MiMoCode does not currently have a dedicated security-reporting channel, and private GitHub
-vulnerability reporting is not enabled. Contact the team privately at
+Use GitHub's private
+[vulnerability reporting form](https://github.com/XiaomiMiMo/MiMo-Code/security/advisories/new).
+This keeps the report and subsequent discussion private between the reporter and the
+repository maintainers.
+
+If you cannot use the GitHub form, contact the team privately at
 [support-mimo@xiaomi.com](mailto:support-mimo@xiaomi.com) with the subject
-`[MiMoCode Security] <brief summary>`.
+`[MiMoCode Security] <brief summary>`. This address is a general team support mailbox rather
+than a dedicated security response service.
 
 Include the affected version, environment, impact, reproduction steps, and any suggested
 mitigation. The initial message should not include credentials, personal data, or unnecessary
@@ -55,6 +60,5 @@ a minimal description and ask the team to coordinate a suitable transfer method.
 Reports must describe a concrete, reproducible security impact. Automated scanner output or
 model-generated speculation without validation may not receive a response.
 
-This address is a general team support mailbox rather than a dedicated security response
-service. We will make a reasonable effort to acknowledge valid reports, but we cannot promise
-a specific response or remediation timeline.
+We will make a reasonable effort to acknowledge valid reports, but we cannot promise a
+specific response or remediation timeline.
