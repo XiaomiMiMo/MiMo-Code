@@ -127,12 +127,13 @@ async function syncToNpmmirror() {
 
   if (failed.length === 0) {
     console.log(`\n  ✓ All packages synced.`)
-    return
+    return failed
   }
 
   console.log(`\n  ⚠️  ${failed.length}/${PACKAGES.length} packages NOT synced:`)
   for (const pkg of failed) console.log(`     ✗ ${pkg}`)
   console.log(`\n  ↳ Re-run \`./script/sync-registry.ts npmmirror\` to retry.`)
+  return failed
 }
 
 async function syncToProxy(key: RegistryKey) {
@@ -154,14 +155,17 @@ console.log("═══ MiMoCode Registry Sync ═══")
 console.log(`Version: ${Script.version} (${Script.channel})`)
 console.log(`Packages: ${PACKAGES.length}`)
 
-if (!target || target === "all" || target === "npmmirror") {
-  await syncToNpmmirror()
-}
+const failed = !target || target === "all" || target === "npmmirror" ? await syncToNpmmirror() : []
 if (!target || target === "all" || target === "tencent") {
   await syncToProxy("tencent")
 }
 if (!target || target === "all" || target === "huawei") {
   await syncToProxy("huawei")
+}
+
+if (failed.length > 0) {
+  console.log(`\n═══ Failed: ${failed.length} package(s) not synced to npmmirror ═══`)
+  process.exit(1)
 }
 
 console.log("\n═══ Done ═══")
