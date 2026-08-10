@@ -1007,8 +1007,8 @@ const ProviderInterleaved = Schema.Union([
  * capability must not treat it as evidence.
  */
 const ProviderModalityInference = Schema.Struct({
-  input: Schema.Literals(["declared", "provider-entry", "directory", "assumed"]),
-  output: Schema.Literals(["declared", "provider-entry", "directory", "assumed"]),
+  input: Schema.Literals(["declared", "builtin", "provider-entry", "directory", "assumed"]),
+  output: Schema.Literals(["declared", "builtin", "provider-entry", "directory", "assumed"]),
   source: Schema.optional(Schema.String),
 })
 
@@ -1149,7 +1149,26 @@ export function sortVisionModels(models: Model[]): Model[] {
 }
 
 /**
- * Whether a model's image-input verdict is EVIDENCE rather than policy.
+ * "Can an image be handed to THIS model?" — the permissive of the two image
+ * questions, and the one to ask about a model the user has already chosen.
+ *
+ * A verdict of `assumed` counts here. The whole point of assuming permissively
+ * is that a user who attaches an image to their own BYOK model gets it sent
+ * rather than silently swapped out, so this must not require evidence.
+ *
+ * Not the question to ask when the ENGINE is choosing or recommending a model —
+ * use `hasEvidencedImageInput` for that. The two answers differ, so the choice
+ * between them is a policy decision and both are named to keep it visible: a
+ * bare `capabilities.input.image` at a call site says nothing about which one
+ * the author meant, and the two silently drifted apart once already.
+ */
+export function acceptsImageInput(model: Model): boolean {
+  return model.capabilities.input.image === true
+}
+
+/**
+ * "May the engine PICK or RECOMMEND this model to look at an image?" — the
+ * evidence-requiring counterpart to `acceptsImageInput`.
  *
  * `assumed` image support exists so that a user who attaches an image to their
  * own BYOK model gets it sent instead of silently swapped out. It is not a
@@ -1158,6 +1177,14 @@ export function sortVisionModels(models: Model[]): Model[] {
  * text-only model gets auto-selected to look at a screenshot. So autonomous
  * capability-based SELECTION requires evidence, while honouring what the user
  * explicitly attached does not.
+ *
+ * This includes telling the MODEL which refs to pass to `--model`: a ref the
+ * engine advertises is one it will be dispatched to, so advertising and picking
+ * have to answer the same way.
+ *
+ * The test is against `assumed` specifically, not for a whitelist of good
+ * provenances, so a newly added source of knowledge counts as evidence by
+ * default and only an explicit unknown is excluded.
  */
 export function hasEvidencedImageInput(model: Model): boolean {
   return model.capabilities.input.image === true && model.capabilities.inferred?.input !== "assumed"
@@ -1375,9 +1402,9 @@ const layer: Layer.Layer<
             })
             // Modality resolution is factored out because its precedence is no
             // longer expressible as a `??` chain: past the user's own
-            // declaration and the same-named provider's entry there is a
-            // directory lookup by bare model id, and past THAT an explicit
-            // "unknown" that must not collapse into `false`. See
+            // declaration, this repo's own aliases and the same-named provider's
+            // entry there is a directory lookup by bare model id, and past THAT
+            // an explicit "unknown" that must not collapse into `false`. See
             // provider/modality-inference.ts for the ordering and for why
             // unknown resolves permissively.
             const inputModalities = ModalityInference.resolveInput({
@@ -1385,12 +1412,16 @@ const layer: Layer.Layer<
               inherited: existingModel?.capabilities.input,
               apiID,
               directory: modalityDirectory,
+              providerID,
+              modelID,
             })
             const outputModalities = ModalityInference.resolveOutput({
               declared: model.modalities?.output,
               inherited: existingModel?.capabilities.output,
               apiID,
               directory: modalityDirectory,
+              providerID,
+              modelID,
             })
             const parsedModel: Model = {
               id: ModelID.make(modelID),
@@ -1476,12 +1507,10 @@ const layer: Layer.Layer<
               cachePromptTTL: model.cachePromptTTL ?? existingModel?.cachePromptTTL,
               variants: {},
             }
-            // mimo-auto is a free-tier routing alias absent from models.dev; it routes to a
-            // vision-capable model, so image input is supported.
-            if (providerID === "mimo" && modelID === "mimo-auto") {
-              parsedModel.capabilities.input.image = true
-            }
-            if (inputModalities.provenance !== "declared") {
+            // mimo/mimo-auto's image support is stated in the BUILTIN tier of
+            // provider/modality-inference.ts, not patched on here: overwriting a
+            // finished model leaves its provenance saying the verdict was assumed.
+            if (!ModalityInference.isStated(inputModalities.provenance)) {
               log.info("input modalities inferred", {
                 providerID,
                 modelID,

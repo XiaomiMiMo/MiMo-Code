@@ -12,6 +12,7 @@ import { decideAskRouting, hasActorTool, resolveInvalidOutputPolicy, SYSTEM_SPAW
 import { renderActorNotification } from "@/inbox/render"
 import { parseReturnHeader } from "@/actor/return-header"
 import { Provider } from "../provider"
+import { ModalityInference } from "../provider/modality-inference"
 import { ModelID, ProviderID } from "../provider/schema"
 import {
   type Tool as AITool,
@@ -2579,7 +2580,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
       if (withheld.length > 0) {
         const capabilities = withheld[0].model.capabilities
         const provenance =
-          capabilities.inferred?.input && capabilities.inferred.input !== "declared"
+          capabilities.inferred?.input && !ModalityInference.isStated(capabilities.inferred.input)
             ? ` This model's input modalities were not declared in config — they were inferred (${capabilities.inferred.input}` +
               `${capabilities.inferred.source ? ` from ${capabilities.inferred.source}` : ""}), so the verdict may be wrong.`
             : ""

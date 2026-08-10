@@ -11,27 +11,70 @@ import type * as ModelsDev from "./models"
  * The answer is resolved in strict precedence order:
  *
  *  1. DECLARED     — the user wrote `modalities` in config. Always authoritative.
- *  2. PROVIDER-ENTRY — the same-named models.dev provider already lists this
+ *  2. BUILTIN      — this repo ships the answer for one of its own aliases that
+ *                    no catalog documents. See `BUILTIN_INPUT`.
+ *  3. PROVIDER-ENTRY — the same-named models.dev provider already lists this
  *                    model id, so its metadata is inherited.
- *  3. DIRECTORY    — the model id alone is looked up across the whole models.dev
+ *  4. DIRECTORY    — the model id alone is looked up across the whole models.dev
  *                    directory and the FIRST-PARTY entry is used. This is the
  *                    tier that a user-invented provider id needs: `mimo-v2.5`
  *                    served through a provider called `mimo` matches nothing in
- *                    tier 2, but the model itself is documented under `xiaomi`.
- *  4. ASSUMED      — nothing is known. This is UNKNOWN, and unknown is not the
+ *                    tier 3, but the model itself is documented under `xiaomi`.
+ *  5. ASSUMED      — nothing is known. This is UNKNOWN, and unknown is not the
  *                    same as unsupported (see `assumedInput` for why unknown
  *                    resolves permissively).
  *
- * Tiers 3 and 4 are the new ones. Before them, an unmatched model fell straight
+ * Tiers 4 and 5 are the new ones. Before them, an unmatched model fell straight
  * to a hardcoded `false` for every non-text modality, which turned "we never
  * looked this up" into the much stronger claim "we know it cannot do this".
+ *
+ * Only tiers 1 and 2 are STATED by someone who knows (see `isStated`); the rest
+ * are worked out from metadata that may not describe this deployment.
  */
 
 export type InputModality = "text" | "audio" | "image" | "video" | "pdf"
 
-export type ModalityProvenance = "declared" | "provider-entry" | "directory" | "assumed"
+export type ModalityProvenance = "declared" | "builtin" | "provider-entry" | "directory" | "assumed"
 
 export type ModalityMap = Record<InputModality, boolean>
+
+/**
+ * Input modalities this repo itself ships the answer for, keyed `providerID/modelID`.
+ *
+ * `mimo-auto` is a free-tier routing ALIAS rather than a model: no vendor
+ * publishes it, so no catalog tier can ever match it, and it dispatches to a
+ * vision-capable model. Its image support is therefore not something to infer —
+ * it is a fact this repo owns, and stating it here puts it at the same standing
+ * as a user's own `modalities` declaration.
+ *
+ * It has to enter the pipeline HERE, as part of the verdict, and not be patched
+ * onto the finished model afterwards. Assigning `capabilities.input.image = true`
+ * after the fact leaves the verdict's own provenance saying `assumed`, and every
+ * consumer that asks for EVIDENCE of image support (`Provider.hasEvidencedImageInput`)
+ * then reads the alias as unknown and passes over it — which is how the only
+ * vision channel a free-tier user has got excluded from automatic vision-model
+ * selection while its `input.image` said `true` the whole time.
+ *
+ * Entries are COMPLETE input maps: an unlisted modality is `false`, not unknown.
+ * The permissive `assumed` tier exists for models nobody looked up, which is the
+ * opposite of these.
+ */
+const BUILTIN_INPUT: Record<string, readonly InputModality[]> = {
+  "mimo/mimo-auto": ["text", "image"],
+}
+
+/**
+ * Whether a provenance means the answer was STATED by someone who knows — the
+ * user's own config, or this repo's own catalog of its aliases — as opposed to
+ * worked out from third-party metadata or defaulted.
+ *
+ * Callers that warn "this verdict may be wrong" or log it as inferred should ask
+ * this rather than compare against `"declared"`, so that a stated fact is not
+ * reported to the model as a guess.
+ */
+export function isStated(provenance: ModalityProvenance): boolean {
+  return provenance === "declared" || provenance === "builtin"
+}
 
 export interface InputModalityVerdict {
   readonly modalities: ModalityMap
@@ -157,15 +200,24 @@ export function directoryIndex(database: Record<string, ModelsDev.Provider>): Di
 export interface ResolveInput {
   /** `modalities.input` as written in config, when the user wrote it. */
   readonly declared?: readonly string[]
-  /** Tier 2: input modalities of the same-named provider's existing entry. */
+  /** Tier 3: input modalities of the same-named provider's existing entry. */
   readonly inherited?: ModalityMap
-  /** Tier 3 lookup key — the id actually sent upstream. */
+  /** Tier 4 lookup key — the id actually sent upstream. */
   readonly apiID: string
   readonly directory: DirectoryIndex
+  /**
+   * Tier 2 lookup key — the CONFIG-side identity, because that is what the
+   * engine's own aliases are named by. `apiID` is what goes upstream and a user
+   * may point any local id at it.
+   */
+  readonly providerID: string
+  readonly modelID: string
 }
 
 export function resolveInput(input: ResolveInput): InputModalityVerdict {
   if (input.declared) return { modalities: mapOf(input.declared, false), provenance: "declared" }
+  const builtin = BUILTIN_INPUT[`${input.providerID}/${input.modelID}`]
+  if (builtin) return { modalities: mapOf(builtin, false), provenance: "builtin" }
   if (input.inherited) return { modalities: { ...input.inherited }, provenance: "provider-entry" }
   const official = input.directory.official(input.apiID)
   if (official?.model.modalities?.input) {
@@ -179,12 +231,14 @@ export function resolveInput(input: ResolveInput): InputModalityVerdict {
 }
 
 /**
- * Output modalities get tiers 1-3 but NOT the permissive tier 4.
+ * Output modalities get the catalog tiers but NOT the permissive `assumed` one,
+ * and no `builtin` tier either.
  *
  * Nothing decides whether to send content based on output modalities, so an
  * unknown carries no silent-drop risk to correct for; claiming a model emits
  * video would be an invention with no upside. Unknown therefore keeps the
- * long-standing text-only shape.
+ * long-standing text-only shape — which is already what the engine's own
+ * aliases emit, so there is nothing for a builtin entry to state.
  */
 export function resolveOutput(input: ResolveInput): InputModalityVerdict {
   if (input.declared) return { modalities: mapOf(input.declared, false), provenance: "declared" }
