@@ -1,5 +1,6 @@
 import { Effect, Layer } from "effect"
 import { Provider } from "../../src/provider"
+import { hasEvidencedImageInput } from "../../src/provider/provider"
 import { ModelID, ProviderID } from "../../src/provider/schema"
 
 export namespace ProviderTest {
@@ -83,7 +84,9 @@ export namespace ProviderTest {
             Effect.succeed(providerID === row.id ? mdl : undefined),
           ),
           getVisionModel: Effect.fn("TestProvider.getVisionModel")(() =>
-            Effect.succeed(mdl.capabilities.input.image ? mdl : undefined),
+            // The real one requires evidence; a fake that answered from the raw
+            // capability would let a test pass on a model production would skip.
+            Effect.succeed(hasEvidencedImageInput(mdl) ? mdl : undefined),
           ),
           defaultModel: Effect.fn("TestProvider.defaultModel")(() =>
             Effect.succeed({ providerID: row.id, modelID: mdl.id }),

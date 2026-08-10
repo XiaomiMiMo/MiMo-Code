@@ -321,6 +321,82 @@ describe("session.system", () => {
     })
   })
 
+  // The refs in this block are handed to the model as `--model` targets it may
+  // dispatch a subagent to, so the block is the engine RECOMMENDING a model. It
+  // therefore has to answer the same way as the engine's own vision-model
+  // selection. It used to filter on the raw capability instead, which let a model
+  // whose image support is merely ASSUMED be advertised as a vision target — and
+  // hid the mimo-auto exclusion, because the same list happened to supply the
+  // fallback ref that selection had dropped.
+  test("advertises only vision models the engine would itself select", async () => {
+    await using tmp = await tmpdir({
+      git: true,
+      init: async (dir) => {
+        await Bun.write(
+          path.join(dir, "mimocode.json"),
+          JSON.stringify({
+            $schema: "https://opencode.ai/config.json",
+            provider: {
+              mimo: {
+                name: "MiMo",
+                npm: "@ai-sdk/openai-compatible",
+                env: [],
+                api: "https://example.invalid/v1",
+                models: { "mimo-auto": { name: "MiMo Auto", limit: { context: 32000, output: 8000 } } },
+                options: { apiKey: "test-key" },
+              },
+              acme: {
+                name: "Acme",
+                npm: "@ai-sdk/openai-compatible",
+                env: [],
+                api: "https://example.invalid/v1",
+                // No modalities, no catalog entry: image support is ASSUMED.
+                models: {
+                  "mystery-1": { name: "Mystery 1", limit: { context: 32000, output: 8000 } },
+                  "text-1": {
+                    name: "Text 1",
+                    limit: { context: 32000, output: 8000 },
+                    modalities: { input: ["text"], output: ["text"] },
+                  },
+                },
+                options: { apiKey: "test-key" },
+              },
+            },
+            enabled_providers: ["mimo", "acme"],
+          }),
+        )
+      },
+    })
+
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () => {
+        const prompt = await Effect.runPromise(
+          Effect.gen(function* () {
+            const system = yield* SystemPrompt.Service
+            return yield* system.environment(
+              ProviderTest.model({
+                id: ModelID.make("text-1"),
+                providerID: ProviderID.make("acme"),
+                api: { id: "text-1" } as never,
+              }),
+              Date.now(),
+            )
+          }).pipe(Effect.provide(SystemPrompt.defaultLayer)),
+        ).then((lines) => lines.join("\n"))
+
+        expect(prompt).toContain("<vision-capability>")
+        // A model whose image support is only assumed must never be advertised as a
+        // dispatch target, however the list comes to be built.
+        expect(prompt).not.toContain("acme/mystery-1")
+        // And the free-tier alias must not be missing, which is what leaves the
+        // model with nothing to dispatch to.
+        expect(prompt).toContain("mimo/mimo-auto")
+        expect(prompt).not.toContain("No vision-capable model is currently configured")
+      },
+    })
+  })
+
   test("skill catalog does not include invocation reminders", async () => {
     await using tmp = await tmpdir({ git: true })
     const home = process.env.HOME
@@ -343,6 +419,39 @@ describe("session.system", () => {
           expect(prompt).not.toContain("first user query")
           expect(prompt).not.toContain("skill_search")
           expect(prompt).not.toContain("Use the skill tool")
+        },
+      })
+    } finally {
+      process.env.HOME = home
+      process.env.USERPROFILE = userProfile
+    }
+  })
+
+  test("prompts the model to search skills from the first user query", async () => {
+    await using tmp = await tmpdir({ git: true })
+    const home = process.env.HOME
+    const userProfile = process.env.USERPROFILE
+    process.env.HOME = tmp.path
+    process.env.USERPROFILE = tmp.path
+
+    try {
+      await Instance.provide({
+        directory: tmp.path,
+        fn: async () => {
+          const build = await load(tmp.path, (svc) => svc.get("build"))
+          const prompt = await Effect.runPromise(
+            Effect.gen(function* () {
+              return yield* (yield* SystemPrompt.Service).skills(build!)
+            }).pipe(Effect.provide(SystemPrompt.defaultLayer)),
+          )
+
+          expect(prompt).toContain("first user query")
+          expect(prompt).toContain("might benefit from a specialized workflow")
+          expect(prompt).toContain("skill_search")
+          expect(prompt).toContain("action")
+          expect(prompt).toContain("input")
+          expect(prompt).toContain("output")
+          expect(prompt).toContain("audience")
         },
       })
     } finally {
@@ -408,6 +517,31 @@ description: ${description}
       process.env.HOME = home
       process.env.USERPROFILE = userProfile
     }
+  })
+
+  test("does not prompt GPT or Claude models to use skill_search", async () => {
+    await using tmp = await tmpdir({ git: true })
+
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () => {
+        const build = await load(tmp.path, (svc) => svc.get("build"))
+        const prompts = await Effect.runPromise(
+          Effect.gen(function* () {
+            const system = yield* SystemPrompt.Service
+            return yield* Effect.all([
+              system.skills(build!, { id: "gpt-5.4" }),
+              system.skills(build!, { id: "claude-sonnet-4-6" }),
+              system.skills(build!, { id: "mimo-v2" }),
+            ])
+          }).pipe(Effect.provide(SystemPrompt.defaultLayer)),
+        )
+
+        expect(prompts[0]).not.toContain("skill_search")
+        expect(prompts[1]).not.toContain("skill_search")
+        expect(prompts[2]).toContain("skill_search")
+      },
+    })
   })
 
 })
