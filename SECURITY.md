@@ -20,13 +20,13 @@ Do not expose server mode to an untrusted network without authentication and app
 
 ### Out of Scope
 
-| Category                       | Rationale                                                                                |
-| ------------------------------ | ---------------------------------------------------------------------------------------- |
-| **Authorized server access**   | API access with credentials, or after explicitly using `--no-auth`, is expected behavior |
-| **Sandbox escapes**            | The permission system is not a sandbox (see above)                                       |
-| **LLM provider data handling** | Data sent to your configured LLM provider is governed by their policies                  |
-| **MCP server behavior**        | External MCP servers you configure are outside our trust boundary                        |
-| **Malicious config files**     | Users control their own config; modifying it is not an attack vector                     |
+| Category                       | Rationale                                                                                                                               |
+| ------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------- |
+| **Authorized server access**   | API access with valid credentials, or after explicitly passing `--no-auth`, is expected behavior. Bypassing authentication is in scope. |
+| **Sandbox escapes**            | The permission system is not a sandbox (see above)                                                                                      |
+| **LLM provider data handling** | Data sent to your configured LLM provider is governed by their policies                                                                 |
+| **MCP server behavior**        | External MCP servers you configure are outside our trust boundary                                                                       |
+| **Malicious config files**     | Users control their own configuration; editing it is not an attack vector                                                               |
 
 ---
 
@@ -38,7 +38,7 @@ Use GitHub's private [vulnerability reporting form](https://github.com/XiaomiMiM
 
 If you cannot use the GitHub form, contact the team privately at [support-mimo@xiaomi.com](mailto:support-mimo@xiaomi.com) with the subject `[MiMoCode Security] <brief summary>`. This address is a general team support mailbox rather than a dedicated security response service.
 
-Include the affected version, environment, impact, reproduction steps, and any suggested mitigation. The initial message should not include credentials, personal data, or unnecessary large-scale exploit details. If the report requires sensitive supporting material, first send a minimal description and ask the team to coordinate a suitable transfer method.
+Include the affected version, environment, impact, reproduction steps, and any suggested mitigation. The initial message should not include credentials, personal data, or exploit code beyond what is needed to reproduce the issue. If the report requires sensitive supporting material, first send a minimal description and ask the team to coordinate a suitable transfer method.
 
 Reports must describe a concrete, reproducible security impact. Automated scanner output or model-generated speculation without validation may not receive a response.
 
