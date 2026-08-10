@@ -1,6 +1,6 @@
 # Contributing to MiMoCode
 
-MiMoCode's codebase moves quickly. Outside contributions are welcome, especially focused improvements to the terminal experience, agent behavior, and developer compatibility.
+MiMoCode's codebase moves quickly. Outside contributions are welcome, especially focused improvements to the terminal experience and developer compatibility.
 
 ## What we accept
 
@@ -8,7 +8,6 @@ Good contributions include:
 
 - Bug fixes with a clear reproduction
 - TUI usability, accessibility, performance, and compatibility improvements
-- Improvements to agent prompts and behavior, backed by a concrete case or evaluation
 - LSP, formatter, model, and provider compatibility fixes
 - Environment-specific quirks (terminal, OS, shell, locale compatibility)
 - Documentation fixes and corrections
@@ -17,7 +16,7 @@ Please discuss these in an issue before writing code:
 
 - New features, new commands, new configuration surface
 - Significant TUI layout, keybinding, or interaction-design changes
-- Architectural changes to agents, memory, checkpoints, or tool execution
+- Changes to agent prompts, agent behavior, memory, checkpoints, or tool execution
 - Broad refactors, renames, "cleanup", or dependency bumps
 
 These proposals can overlap with ongoing work or require product decisions that are difficult to settle in a pull request. Opening an issue first helps avoid implementing a direction the project cannot adopt.
@@ -107,7 +106,7 @@ If you change the server API, regenerate the SDK and OpenAPI schema:
 ./script/generate.ts
 ```
 
-Please follow the [style guide](./AGENTS.md).
+Please follow the [style guide](./AGENTS.md#style-guide).
 
 ### Setting up a debugger
 
@@ -121,7 +120,7 @@ Tips:
 - `--inspect-wait` / `--inspect-brk` may suit your workflow better than `--inspect`.
 - Instead of repeating the flag, `export BUN_OPTIONS=--inspect=ws://localhost:6499/`.
 
-VSCode users can start from [.vscode/settings.example.json](.vscode/settings.example.json) and [.vscode/launch.example.json](.vscode/launch.example.json), which attaches to the inspector URL above. Avoid `"request": "launch"` configurations and the `JavaScript Debug Terminal`; both tend to misplace breakpoints.
+VSCode users can start from [.vscode/launch.example.json](.vscode/launch.example.json), which attaches to the inspector URL above. Avoid `"request": "launch"` configurations and the `JavaScript Debug Terminal`; both tend to misplace breakpoints.
 
 ## Pull request expectations
 
