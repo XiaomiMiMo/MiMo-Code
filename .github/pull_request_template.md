@@ -6,10 +6,7 @@ Link any relevant issue or discussion. For an external contribution that introdu
 
 ### Type of change
 
-- [ ] Bug fix
-- [ ] New feature
-- [ ] Refactor / code improvement
-- [ ] Documentation
+Bug fix / New feature / Refactor / Documentation — keep the ones that apply and delete the rest.
 
 ### What does this PR do?
 
