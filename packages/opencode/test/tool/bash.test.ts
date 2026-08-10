@@ -488,10 +488,81 @@ describe("tool.bash permissions", () => {
     })
   })
 
-  each("treats `cmd /c del` like a direct delete (external_directory ask + `del` pattern)", async () => {
+  each("routes `cmd /c del <internal>` through the forced bash_delete ask", async () => {
+    await using tmp = await tmpdir({
+      init: async (dir) => {
+        await Bun.write(path.join(dir, "victim.txt"), "x")
+      },
+    })
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () => {
+        const bash = await initBash()
+        const requests: Array<Omit<Permission.Request, "id" | "sessionID" | "tool">> = []
+        await Effect.runPromise(
+          bash.execute(
+            {
+              command: "cmd /c del victim.txt",
+              description: "Delete via cmd",
+            },
+            capture(requests),
+          ),
+        )
+        // `cmd /c` is normalized to `del`, so the delete routes through the
+        // forced bash_delete ask like a direct `del` (not the raw-pattern gate,
+        // where `cmd /c del ...` would fall through `*: allow`) — #2073.
+        const deleteReq = requests.find((r) => r.permission === "bash_delete")
+        expect(deleteReq).toBeDefined()
+        expect(deleteReq!.patterns).toContain("cmd /c del victim.txt")
+        expect(deleteReq!.metadata.command).toBe("cmd /c del victim.txt")
+        expect(requests.find((r) => r.permission === "bash")).toBeUndefined()
+        expect(requests.find((r) => r.permission === "external_directory")).toBeUndefined()
+      },
+    })
+  })
+
+  each("surfaces the normalized inner command in the bash ask pattern", async () => {
     // Use the real system temp dir (NOT the fixture tmpdir, which lives inside
     // the repo's git worktree and would count as "contained" by the instance).
-    const external = await fs.mkdtemp(path.join(os.tmpdir(), "mimocode-cmd-del-"))
+    const external = await fs.mkdtemp(path.join(os.tmpdir(), "mimocode-cmd-cat-"))
+    try {
+      await Bun.write(path.join(external, "notes.txt"), "x")
+      await using tmp = await tmpdir()
+      await Instance.provide({
+        directory: tmp.path,
+        fn: async () => {
+          const bash = await initBash()
+          const requests: Array<Omit<Permission.Request, "id" | "sessionID" | "tool">> = []
+          const file = path.join(external, "notes.txt").replaceAll("\\", "/")
+          await Effect.runPromise(
+            bash.execute(
+              {
+                command: `cmd /c cat ${file}`,
+                description: "Read outside file via cmd",
+              },
+              capture(requests),
+            ),
+          )
+          // `cat` is a FILES command but not a delete, so the regular bash ask
+          // fires — and the gate must see the normalized `cat <file>` (not the
+          // opaque `cmd /c cat <file>`) so `cat *` rules apply (#2073).
+          const bashReq = requests.find((r) => r.permission === "bash")
+          expect(bashReq).toBeDefined()
+          expect(bashReq!.patterns).toContain(`cat ${file}`)
+          expect(bashReq!.always).toContain("cat *")
+          expect(bashReq!.always).not.toContain("cmd *")
+          const extDirReq = requests.find((r) => r.permission === "external_directory")
+          expect(extDirReq).toBeDefined()
+          expect(extDirReq!.patterns).toContain(glob(path.join(path.dirname(file), "*")))
+        },
+      })
+    } finally {
+      await fs.rm(external, { recursive: true, force: true }).catch(() => {})
+    }
+  })
+
+  each("routes `cmd /c rd <external>` through the forced bash_delete ask", async () => {
+    const external = await fs.mkdtemp(path.join(os.tmpdir(), "mimocode-cmd-rd-"))
     try {
       await Bun.write(path.join(external, "victim.txt"), "x")
       await using tmp = await tmpdir()
@@ -504,26 +575,88 @@ describe("tool.bash permissions", () => {
           await Effect.runPromise(
             bash.execute(
               {
-                command: `cmd /c del ${file}`,
-                description: "Delete outside file via cmd",
+                command: `cmd /c rd ${file}`,
+                description: "Remove dir via cmd",
               },
               capture(requests),
             ),
           )
-          // `cmd /c` is normalized away, so the external path is still detected
-          // and the ask pattern becomes `del *` (not `cmd *`) — #2073.
-          const extDirReq = requests.find((r) => r.permission === "external_directory")
-          expect(extDirReq).toBeDefined()
-          expect(extDirReq!.patterns).toContain(glob(path.join(path.dirname(file), "*")))
-          const bashReq = requests.find((r) => r.permission === "bash")
-          expect(bashReq).toBeDefined()
-          expect(bashReq!.always).toContain("del *")
-          expect(bashReq!.always).not.toContain("cmd *")
+          // `rd`/`erase`/`rmdir` are deletes too — `cmd /c rd` must reach the
+          // forced bash_delete ask, and the external path is shown in the
+          // delete UI (#2073).
+          const deleteReq = requests.find((r) => r.permission === "bash_delete")
+          expect(deleteReq).toBeDefined()
+          expect(deleteReq!.patterns).toContain(`cmd /c rd ${file}`)
+          expect(deleteReq!.metadata.command).toBe(`cmd /c rd ${file}`)
+          expect(requests.find((r) => r.permission === "bash")).toBeUndefined()
         },
       })
     } finally {
       await fs.rm(external, { recursive: true, force: true }).catch(() => {})
     }
+  })
+
+  test("MIMOCODE_AUTO_APPROVE_DELETE skips the ask for `cmd /c del`", async () => {
+    await using tmp = await tmpdir({
+      init: async (dir) => {
+        await Bun.write(path.join(dir, "victim.txt"), "x")
+      },
+    })
+    // The flag is snapshotted at module load, so drive a fresh process with the
+    // env var set and assert no permission request fires for an internal delete.
+    const script = `
+import { Effect, Layer, ManagedRuntime } from "effect"
+import * as CrossSpawnSpawner from "./src/effect/cross-spawn-spawner"
+import { AppFileSystem } from "@mimo-ai/shared/filesystem"
+import { Plugin } from "./src/plugin"
+import { Truncate } from "./src/tool"
+import { Agent } from "./src/agent/agent"
+import { Git } from "./src/git"
+import { BashTool } from "./src/tool/bash"
+import { Instance } from "./src/project/instance"
+import { SessionID, MessageID } from "./src/session/schema"
+
+const runtime = ManagedRuntime.make(
+  Layer.mergeAll(
+    CrossSpawnSpawner.defaultLayer,
+    AppFileSystem.defaultLayer,
+    Plugin.defaultLayer,
+    Truncate.defaultLayer,
+    Agent.defaultLayer,
+    Git.defaultLayer,
+  ),
+)
+
+const requests: any[] = []
+const ctx = {
+  sessionID: SessionID.make("ses_test"),
+  messageID: MessageID.make(""),
+  callID: "",
+  agent: "build",
+  abort: AbortSignal.any([]),
+  messages: [],
+  metadata: () => Effect.void,
+  ask: (req: any) => Effect.sync(() => requests.push(req)),
+}
+
+await Instance.provide({
+  directory: process.env.INSTANCE_DIR!,
+  fn: async () => {
+    const bash = await runtime.runPromise(BashTool.pipe(Effect.flatMap((info: any) => info.init())))
+    await runtime.runPromise(bash.execute({ command: "cmd /c del victim.txt", description: "del via cmd" }, ctx as any))
+  },
+})
+
+process.stdout.write(JSON.stringify(requests))
+process.exit(0)
+`
+    const result = Bun.spawnSync({
+      cmd: [process.execPath, "-e", script],
+      cwd: path.join(__dirname, "../.."),
+      env: { ...process.env, MIMOCODE_AUTO_APPROVE_DELETE: "true", INSTANCE_DIR: tmp.path },
+    })
+    expect(result.exitCode).toBe(0)
+    expect(JSON.parse(result.stdout.toString())).toEqual([])
   })
 
   if (process.platform === "win32") {
