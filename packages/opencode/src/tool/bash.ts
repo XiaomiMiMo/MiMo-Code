@@ -555,10 +555,14 @@ export const BashTool = Tool.define(
         const tokens = command.map((item) => item.text)
         // Normalize `cmd /c <inner>` (Windows cmd.exe) to `<inner>` so delete
         // commands like `cmd /c del` are detected like their direct forms (#2073).
+        // `cmd`/`cmd.exe` is a native executable invoked identically from bash
+        // and PowerShell (both parsers tokenize it the same), so this applies
+        // on any host — case-insensitive with the `.exe` suffix optional.
         let cmd = ps ? tokens[0]?.toLowerCase() : tokens[0]
         let patternTokens = tokens
         let fileArgs = command
-        const normalized = !ps && tokens[0]?.toLowerCase() === "cmd" && tokens[1]?.toLowerCase() === "/c" && tokens[2]
+        const normalized =
+          /^cmd(?:\.exe)?$/i.test(tokens[0] ?? "") && tokens[1]?.toLowerCase() === "/c" && Boolean(tokens[2])
         if (normalized) {
           cmd = tokens[2]?.toLowerCase()
           patternTokens = tokens.slice(2)

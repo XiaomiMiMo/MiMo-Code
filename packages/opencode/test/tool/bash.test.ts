@@ -488,7 +488,7 @@ describe("tool.bash permissions", () => {
     })
   })
 
-  each("routes `cmd /c del <internal>` through the forced bash_delete ask", async () => {
+  each("routes `cmd /c del` (incl. `cmd.exe` and mixed-case) through the forced bash_delete ask", async () => {
     await using tmp = await tmpdir({
       init: async (dir) => {
         await Bun.write(path.join(dir, "victim.txt"), "x")
@@ -498,28 +498,64 @@ describe("tool.bash permissions", () => {
       directory: tmp.path,
       fn: async () => {
         const bash = await initBash()
-        const requests: Array<Omit<Permission.Request, "id" | "sessionID" | "tool">> = []
-        await Effect.runPromise(
-          bash.execute(
-            {
-              command: "cmd /c del victim.txt",
-              description: "Delete via cmd",
-            },
-            capture(requests),
-          ),
-        )
-        // `cmd /c` is normalized to `del`, so the delete routes through the
-        // forced bash_delete ask like a direct `del` (not the raw-pattern gate,
-        // where `cmd /c del ...` would fall through `*: allow`) — #2073.
-        const deleteReq = requests.find((r) => r.permission === "bash_delete")
-        expect(deleteReq).toBeDefined()
-        expect(deleteReq!.patterns).toContain("cmd /c del victim.txt")
-        expect(deleteReq!.metadata.command).toBe("cmd /c del victim.txt")
-        expect(requests.find((r) => r.permission === "bash")).toBeUndefined()
-        expect(requests.find((r) => r.permission === "external_directory")).toBeUndefined()
+        // `cmd`/`cmd.exe` (any case) is normalized to the inner `del` command, so
+        // each routes through the forced bash_delete ask like a direct `del`
+        // (not the raw-pattern gate, where `cmd /c del ...` would fall through
+        // `*: allow`) — #2073.
+        for (const command of ["cmd /c del victim.txt", "cmd.exe /c del victim.txt", "CMD.EXE /c del victim.txt"]) {
+          const requests: Array<Omit<Permission.Request, "id" | "sessionID" | "tool">> = []
+          await Effect.runPromise(
+            bash.execute(
+              {
+                command,
+                description: "Delete via cmd",
+              },
+              capture(requests),
+            ),
+          )
+          const deleteReq = requests.find((r) => r.permission === "bash_delete")
+          expect(deleteReq).toBeDefined()
+          expect(deleteReq!.patterns).toContain(command)
+          expect(deleteReq!.metadata.command).toBe(command)
+          expect(requests.find((r) => r.permission === "bash")).toBeUndefined()
+          expect(requests.find((r) => r.permission === "external_directory")).toBeUndefined()
+        }
       },
     })
   })
+
+  test(
+    "normalizes `cmd /c del` on a PowerShell host too",
+    withShell({ label: "powershell", shell: "pwsh" }, async () => {
+      await using tmp = await tmpdir({
+        init: async (dir) => {
+          await Bun.write(path.join(dir, "victim.txt"), "x")
+        },
+      })
+      await Instance.provide({
+        directory: tmp.path,
+        fn: async () => {
+          const bash = await initBash()
+          const err = new Error("stop after permission")
+          const requests: Array<Omit<Permission.Request, "id" | "sessionID" | "tool">> = []
+          await expect(
+            Effect.runPromise(
+              bash.execute(
+                { command: "cmd /c del victim.txt", description: "Delete via cmd" },
+                capture(requests, err),
+              ),
+            ),
+          ).rejects.toThrow(err.message)
+          // `cmd`/`cmd.exe` is a native executable, so the `cmd /c` wrap must be
+          // normalized on a PowerShell host too — not bypassed by `*: allow`
+          // (#2073).
+          const deleteReq = requests.find((r) => r.permission === "bash_delete")
+          expect(deleteReq).toBeDefined()
+          expect(deleteReq!.patterns).toContain("cmd /c del victim.txt")
+        },
+      })
+    }),
+  )
 
   each("surfaces the normalized inner command in the bash ask pattern", async () => {
     // Use the real system temp dir (NOT the fixture tmpdir, which lives inside
