@@ -1,29 +1,30 @@
-### Issue for this PR
+# Summary
 
-Closes #
+What problem does this change address, and why does this approach solve it?
 
-### Type of change
+## Related issue
+
+Link an existing issue when there is one, for example `Closes #123`. An agreed issue is
+required for new features and significant design changes, but not for small bug fixes or
+documentation corrections.
+
+## Type of change
 
 - [ ] Bug fix
 - [ ] New feature
 - [ ] Refactor / code improvement
 - [ ] Documentation
 
-### What does this PR do?
+## Verification
 
-Please provide a description of the issue, the changes you made to fix it, and why they work. It is expected that you understand why your changes work and if you do not understand why at least say as much so a maintainer knows how much to value the PR.
+What did you test, and how can a reviewer reproduce the result?
 
-**If you paste a large clearly AI generated description here your PR may be IGNORED or CLOSED!**
-
-### How did you verify your code works?
-
-### Screenshots / recordings
+## Screenshots / recordings
 
 _If this is a UI change, please include a screenshot or recording._
 
-### Checklist
+## Checklist
 
 - [ ] I have tested my changes locally
 - [ ] I have not included unrelated changes in this PR
-
-_If you do not follow this template your PR will be automatically rejected._
+- [ ] I discussed the direction in an issue first if this is a new feature or significant design change
