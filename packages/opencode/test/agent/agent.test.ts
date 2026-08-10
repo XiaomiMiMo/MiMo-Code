@@ -573,6 +573,27 @@ test("default permission includes doom_loop and external_directory as ask", asyn
   })
 })
 
+test("build agent default bash permission asks for deletes, allows other bash", async () => {
+  await using tmp = await tmpdir()
+  await Instance.provide({
+    directory: tmp.path,
+    fn: async () => {
+      const build = await load(tmp.path, (svc) => svc.get("build"))
+      expect(build).toBeDefined()
+      // Irreversible deletions require confirmation even though bash defaults
+      // to allow. `del *` also covers `cmd /c del` once the scanner normalizes
+      // it (#2073).
+      expect(Permission.evaluate("bash", "rm victim.txt", build!.permission).action).toBe("ask")
+      expect(Permission.evaluate("bash", "del victim.txt", build!.permission).action).toBe("ask")
+      expect(Permission.evaluate("bash", "remove-item victim.txt", build!.permission).action).toBe("ask")
+      // Non-delete bash remains allowed.
+      expect(Permission.evaluate("bash", "ls -la", build!.permission).action).toBe("allow")
+      expect(Permission.evaluate("bash", "bun test", build!.permission).action).toBe("allow")
+      expect(evalPerm(build, "bash")).toBe("allow")
+    },
+  })
+})
+
 test("webfetch is allowed by default", async () => {
   await using tmp = await tmpdir()
   await Instance.provide({

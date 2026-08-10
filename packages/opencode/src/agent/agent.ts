@@ -126,6 +126,15 @@ export const layer = Layer.effect(
             "*.env.*": "ask",
             "*.env.example": "allow",
           },
+          // Deleting files is irreversible, so require confirmation even though
+          // bash defaults to allow. Specific rules come after "*": "allow" so
+          // findLast makes them win (#2073).
+          bash: {
+            "*": "allow",
+            "rm *": "ask",
+            "del *": "ask",
+            "remove-item *": "ask",
+          },
         })
 
         const user = Permission.fromConfig(cfg.permission ?? {})

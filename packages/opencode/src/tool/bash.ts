@@ -36,6 +36,10 @@ const CWD = new Set(["cd", "push-location", "set-location"])
 const FILES = new Set([
   ...CWD,
   "rm",
+  "rmdir",
+  "del",
+  "erase",
+  "rd",
   "cp",
   "mv",
   "mkdir",
@@ -353,20 +357,22 @@ const parse = Effect.fn("BashTool.parse")(function* (command: string, ps: boolea
   return tree.rootNode
 })
 
-const ask = Effect.fn("BashTool.ask")(function* (ctx: Tool.Context, scan: Scan) {
-  if (scan.dirs.size > 0) {
-    const globs = Array.from(scan.dirs).map((dir) => {
-      if (process.platform === "win32") return AppFileSystem.normalizePathPattern(path.join(dir, "*"))
-      return path.join(dir, "*")
-    })
-    yield* ctx.ask({
-      permission: "external_directory",
-      patterns: globs,
-      always: globs,
-      metadata: {},
-    })
-  }
+const askExternalDirectory = Effect.fn("BashTool.askExternalDirectory")(function* (ctx: Tool.Context, scan: Scan) {
+  if (scan.dirs.size === 0) return
+  const globs = Array.from(scan.dirs).map((dir) => {
+    if (process.platform === "win32") return AppFileSystem.normalizePathPattern(path.join(dir, "*"))
+    return path.join(dir, "*")
+  })
+  yield* ctx.ask({
+    permission: "external_directory",
+    patterns: globs,
+    always: globs,
+    metadata: {},
+  })
+})
 
+const ask = Effect.fn("BashTool.ask")(function* (ctx: Tool.Context, scan: Scan) {
+  yield* askExternalDirectory(ctx, scan)
   if (scan.patterns.size === 0) return
   yield* ctx.ask({
     permission: "bash",
@@ -547,10 +553,26 @@ export const BashTool = Tool.define(
       for (const node of commands(root)) {
         const command = parts(node)
         const tokens = command.map((item) => item.text)
-        const cmd = ps ? tokens[0]?.toLowerCase() : tokens[0]
+        // Normalize `cmd /c <inner>` (Windows cmd.exe) to `<inner>` so delete
+        // commands like `cmd /c del` are detected like their direct forms (#2073).
+        // `cmd`/`cmd.exe` is a native executable invoked identically from bash
+        // and PowerShell (both parsers tokenize it the same), so this applies
+        // on any host — case-insensitive with the `.exe` suffix optional.
+        let cmd = ps ? tokens[0]?.toLowerCase() : tokens[0]
+        let patternTokens = tokens
+        let fileArgs = command
+        const normalized =
+          /^cmd(?:\.exe)?$/i.test(tokens[0] ?? "") && tokens[1]?.toLowerCase() === "/c" && Boolean(tokens[2])
+        if (normalized) {
+          cmd = tokens[2]?.toLowerCase()
+          patternTokens = tokens.slice(2)
+          // Drop the `cmd /c` prefix from file args too, so the external-path
+          // check does not treat `/c` or `del` itself as a file argument.
+          fileArgs = command.slice(2)
+        }
 
         if (cmd && FILES.has(cmd)) {
-          for (const arg of pathArgs(command, ps)) {
+          for (const arg of pathArgs(fileArgs, ps)) {
             const resolved = yield* argPath(arg, cwd, ps, shell)
             log.info("resolved path", { arg, resolved })
             if (!resolved || Instance.containsPath(resolved)) continue
@@ -560,11 +582,15 @@ export const BashTool = Tool.define(
         }
 
         if (tokens.length && (!cmd || !CWD.has(cmd))) {
-          scan.patterns.add(source(node))
-          scan.always.add(BashArity.prefix(tokens).join(" ") + " *")
+          // The permission gate evaluates request.patterns, so a normalized
+          // `cmd /c <inner>` must surface the inner command (e.g. `del /path`)
+          // rather than the opaque `cmd /c del /path` form, or the `del *` ask
+          // rule would never match (#2073).
+          scan.patterns.add(normalized ? patternTokens.join(" ") : source(node))
+          scan.always.add(BashArity.prefix(patternTokens).join(" ") + " *")
         }
 
-        if (isDelete(tokens, ps)) scan.deletes.add(source(node))
+        if (isDelete(patternTokens, ps)) scan.deletes.add(source(node))
       }
 
       return scan
@@ -872,10 +898,15 @@ export const BashTool = Tool.define(
               // the delete UI shows the full command (including any external
               // paths it touches), so a separate bash/external_directory
               // prompt would just be a second confirmation of the same thing.
-              // MIMOCODE_AUTO_APPROVE_DELETE trusts deletes and falls back to
-              // the regular ask (where a `bash: deny` rule still blocks).
+              // MIMOCODE_AUTO_APPROVE_DELETE trusts the model with deletes and
+              // skips that confirmation too — but it must NOT fall through to
+              // the regular bash ask, which would now re-prompt via the
+              // default `rm *`/`del *`/`remove-item *` ask rules. External
+              // directory access is still guarded either way (#2073).
               if (scan.deletes.size > 0 && !Flag.MIMOCODE_AUTO_APPROVE_DELETE) {
                 yield* askDelete(ctx, scan, params.command)
+              } else if (scan.deletes.size > 0) {
+                yield* askExternalDirectory(ctx, scan)
               } else {
                 yield* ask(ctx, scan)
               }
