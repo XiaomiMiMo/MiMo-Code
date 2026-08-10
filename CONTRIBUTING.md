@@ -143,7 +143,7 @@ both tend to misplace breakpoints.
 
 ## Pull request expectations
 
-- Keep the PR small and focused on the linked issue. No unrelated changes.
+- Keep the PR small and focused on one problem. No unrelated changes.
 - Explain the problem and why your change fixes it, in your own words.
 - Say **how you verified it**: what you tested, and how a reviewer can reproduce the fix.
 - For TUI changes, include a screenshot or recording of before and after.
