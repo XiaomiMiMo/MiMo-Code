@@ -36,6 +36,7 @@ const CWD = new Set(["cd", "push-location", "set-location"])
 const FILES = new Set([
   ...CWD,
   "rm",
+  "del",
   "cp",
   "mv",
   "mkdir",
@@ -547,10 +548,21 @@ export const BashTool = Tool.define(
       for (const node of commands(root)) {
         const command = parts(node)
         const tokens = command.map((item) => item.text)
-        const cmd = ps ? tokens[0]?.toLowerCase() : tokens[0]
+        // Normalize `cmd /c <inner>` (Windows cmd.exe) to `<inner>` so delete
+        // commands like `cmd /c del` are detected like their direct forms (#2073).
+        let cmd = ps ? tokens[0]?.toLowerCase() : tokens[0]
+        let patternTokens = tokens
+        let fileArgs = command
+        if (!ps && cmd === "cmd" && tokens[1]?.toLowerCase() === "/c" && tokens[2]) {
+          cmd = tokens[2]?.toLowerCase()
+          patternTokens = tokens.slice(2)
+          // Drop the `cmd /c` prefix from file args too, so the external-path
+          // check does not treat `/c` or `del` itself as a file argument.
+          fileArgs = command.slice(2)
+        }
 
         if (cmd && FILES.has(cmd)) {
-          for (const arg of pathArgs(command, ps)) {
+          for (const arg of pathArgs(fileArgs, ps)) {
             const resolved = yield* argPath(arg, cwd, ps, shell)
             log.info("resolved path", { arg, resolved })
             if (!resolved || Instance.containsPath(resolved)) continue
@@ -561,7 +573,7 @@ export const BashTool = Tool.define(
 
         if (tokens.length && (!cmd || !CWD.has(cmd))) {
           scan.patterns.add(source(node))
-          scan.always.add(BashArity.prefix(tokens).join(" ") + " *")
+          scan.always.add(BashArity.prefix(patternTokens).join(" ") + " *")
         }
 
         if (isDelete(tokens, ps)) scan.deletes.add(source(node))

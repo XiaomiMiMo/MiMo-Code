@@ -488,6 +488,44 @@ describe("tool.bash permissions", () => {
     })
   })
 
+  each("treats `cmd /c del` like a direct delete (external_directory ask + `del` pattern)", async () => {
+    // Use the real system temp dir (NOT the fixture tmpdir, which lives inside
+    // the repo's git worktree and would count as "contained" by the instance).
+    const external = await fs.mkdtemp(path.join(os.tmpdir(), "mimocode-cmd-del-"))
+    try {
+      await Bun.write(path.join(external, "victim.txt"), "x")
+      await using tmp = await tmpdir()
+      await Instance.provide({
+        directory: tmp.path,
+        fn: async () => {
+          const bash = await initBash()
+          const requests: Array<Omit<Permission.Request, "id" | "sessionID" | "tool">> = []
+          const file = path.join(external, "victim.txt").replaceAll("\\", "/")
+          await Effect.runPromise(
+            bash.execute(
+              {
+                command: `cmd /c del ${file}`,
+                description: "Delete outside file via cmd",
+              },
+              capture(requests),
+            ),
+          )
+          // `cmd /c` is normalized away, so the external path is still detected
+          // and the ask pattern becomes `del *` (not `cmd *`) — #2073.
+          const extDirReq = requests.find((r) => r.permission === "external_directory")
+          expect(extDirReq).toBeDefined()
+          expect(extDirReq!.patterns).toContain(glob(path.join(path.dirname(file), "*")))
+          const bashReq = requests.find((r) => r.permission === "bash")
+          expect(bashReq).toBeDefined()
+          expect(bashReq!.always).toContain("del *")
+          expect(bashReq!.always).not.toContain("cmd *")
+        },
+      })
+    } finally {
+      await fs.rm(external, { recursive: true, force: true }).catch(() => {})
+    }
+  })
+
   if (process.platform === "win32") {
     if (bash) {
       test(
