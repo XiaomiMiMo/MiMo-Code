@@ -329,10 +329,18 @@ describe("AppFileSystem", () => {
       expect(AppFileSystem.contains("/a/b", "/a/c")).toBe(false)
     })
 
+    test("contains rejects Windows paths on different drives", () => {
+      expect(AppFileSystem.contains("C:/Users/me/AppData/Local/mimocode/worktree", "D:/workspace/project")).toBe(false)
+    })
+
     test("overlaps detects overlapping paths", () => {
       expect(AppFileSystem.overlaps("/a/b", "/a/b/c")).toBe(true)
       expect(AppFileSystem.overlaps("/a/b/c", "/a/b")).toBe(true)
       expect(AppFileSystem.overlaps("/a", "/b")).toBe(false)
+    })
+
+    test("overlaps rejects Windows paths on different drives", () => {
+      expect(AppFileSystem.overlaps("C:/Users/me/AppData/Local/mimocode/worktree", "D:/workspace/project")).toBe(false)
     })
   })
 })
