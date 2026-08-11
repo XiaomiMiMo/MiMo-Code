@@ -1,7 +1,6 @@
 import type { BoxRenderable, TextareaRenderable, KeyEvent, ScrollBoxRenderable } from "@opentui/core"
 import { pathToFileURL } from "bun"
 import fuzzysort from "fuzzysort"
-import { firstBy } from "remeda"
 import { createMemo, createResource, createEffect, onMount, onCleanup, Index, Show, createSignal } from "solid-js"
 import { createStore } from "solid-js/store"
 import { useSDK } from "@tui/context/sdk"
@@ -22,6 +21,11 @@ import type { PromptInfo } from "./history"
 import { useFrecency } from "./frecency"
 import { detectTrigger, exactSubmitOption } from "./autocomplete-detect"
 import { charAfterCursor, tokenEndWidth } from "./offset"
+
+export function padAutocompleteDisplay(labels: string[]) {
+  const max = Math.max(...labels.map((label) => Bun.stringWidth(label)), 0)
+  return labels.map((label) => label + " ".repeat(Math.max(0, max + 2 - Bun.stringWidth(label))))
+}
 
 function removeLineRange(input: string) {
   const hashIndex = input.lastIndexOf("#")
@@ -424,11 +428,11 @@ export function Autocomplete(props: {
 
     results.sort((a, b) => a.display.localeCompare(b.display))
 
-    const max = firstBy(results, [(x) => x.display.length, "desc"])?.display.length
-    if (!max) return results
-    return results.map((item) => ({
+    const displays = padAutocompleteDisplay(results.map((item) => item.display))
+    if (!displays.length) return results
+    return results.map((item, index) => ({
       ...item,
-      display: item.display.padEnd(max + 2),
+      display: displays[index]!,
     }))
   })
 
