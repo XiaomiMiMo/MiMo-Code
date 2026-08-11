@@ -135,6 +135,7 @@ type Scan = {
   patterns: Set<string>
   always: Set<string>
   deletes: Set<string>
+  processKills: Set<string>
 }
 
 type Chunk = {
@@ -202,6 +203,15 @@ function isDelete(tokens: string[], ps: boolean) {
     if (flags.size === 0) return true
     return tokens.slice(2).some((tok) => flags.has(tok))
   }
+  return false
+}
+
+function isProcessKill(tokens: string[], ps: boolean) {
+  if (tokens.length === 0) return false
+  const head = tokens[0].toLowerCase()
+  if (head === "taskkill" || head === "killall" || head === "pkill") return true
+  if (head === "stop-process" || head === "spps") return true
+  if (ps && head === "kill") return true
   return false
 }
 
@@ -394,6 +404,16 @@ const askDelete = Effect.fn("BashTool.askDelete")(function* (ctx: Tool.Context, 
   })
 })
 
+const askProcessKill = Effect.fn("BashTool.askProcessKill")(function* (ctx: Tool.Context, scan: Scan, command: string) {
+  const patterns = Array.from(scan.processKills)
+  yield* ctx.ask({
+    permission: "bash_process_kill",
+    patterns,
+    always: [],
+    metadata: { command, processKills: patterns },
+  })
+})
+
 function cmd(shell: string, name: string, command: string, cwd: string, env: NodeJS.ProcessEnv) {
   if (process.platform === "win32" && PS.has(name)) {
     const prefixed = `${Shell.POWERSHELL_UTF8_PREFIX}${command}`
@@ -542,6 +562,7 @@ export const BashTool = Tool.define(
         patterns: new Set<string>(),
         always: new Set<string>(),
         deletes: new Set<string>(),
+        processKills: new Set<string>(),
       }
 
       for (const node of commands(root)) {
@@ -565,6 +586,7 @@ export const BashTool = Tool.define(
         }
 
         if (isDelete(tokens, ps)) scan.deletes.add(source(node))
+        if (isProcessKill(tokens, ps)) scan.processKills.add(source(node))
       }
 
       return scan
@@ -876,6 +898,8 @@ export const BashTool = Tool.define(
               // the regular ask (where a `bash: deny` rule still blocks).
               if (scan.deletes.size > 0 && !Flag.MIMOCODE_AUTO_APPROVE_DELETE) {
                 yield* askDelete(ctx, scan, params.command)
+              } else if (scan.processKills.size > 0) {
+                yield* askProcessKill(ctx, scan, params.command)
               } else {
                 yield* ask(ctx, scan)
               }

@@ -467,6 +467,35 @@ describe("tool.bash permissions", () => {
     })
   })
 
+  each("asks for process-kill confirmation on bulk process termination", async () => {
+    await using tmp = await tmpdir()
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () => {
+        const bash = await initBash()
+        for (const command of ["taskkill /F /IM node.exe", "Get-Process node | Stop-Process -Force"]) {
+          const err = new Error("stop after permission")
+          const requests: Array<Omit<Permission.Request, "id" | "sessionID" | "tool">> = []
+          await expect(
+            Effect.runPromise(
+              bash.execute(
+                {
+                  command,
+                  description: "Kill node processes",
+                },
+                capture(requests, err),
+              ),
+            ),
+          ).rejects.toThrow(err.message)
+          const killReq = requests.find((r) => r.permission === "bash_process_kill")
+          expect(killReq).toBeDefined()
+          expect(killReq!.metadata.command).toBe(command)
+          expect(requests.find((r) => r.permission === "bash")).toBeUndefined()
+        }
+      },
+    })
+  })
+
   each("does not ask for bash_delete on non-destructive commands", async () => {
     await using tmp = await tmpdir()
     await Instance.provide({

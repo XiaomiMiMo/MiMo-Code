@@ -842,6 +842,27 @@ it.live("ask - bash_delete stays pending even with explicit bash_delete allow", 
   ),
 )
 
+it.live("ask - bash_process_kill stays pending even when ruleset has wildcard allow", () =>
+  withDir({ git: true }, () =>
+    Effect.gen(function* () {
+      const fiber = yield* ask({
+        sessionID: SessionID.make("session_test"),
+        permission: "bash_process_kill",
+        patterns: ["taskkill /F /IM node.exe"],
+        metadata: {},
+        always: [],
+        ruleset: [{ permission: "*", pattern: "*", action: "allow" }],
+      }).pipe(Effect.forkScoped)
+
+      const items = yield* waitForPending(1)
+      expect(items).toHaveLength(1)
+      expect(items[0].permission).toBe("bash_process_kill")
+      yield* rejectAll()
+      yield* Fiber.await(fiber)
+    }),
+  ),
+)
+
 it.live("ask - bash_delete respects explicit deny", () =>
   withDir({ git: true }, () =>
     Effect.gen(function* () {
