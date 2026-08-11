@@ -60,6 +60,21 @@ function mergeConfigConcatArrays(target: Info, source: Info): Info {
 function normalizeLoadedConfig(data: unknown, source: string) {
   if (!isRecord(data)) return data
   const copy = { ...data }
+  if (isRecord(copy.mcp)) {
+    copy.mcp = Object.fromEntries(
+      Object.entries(copy.mcp).map(([name, server]) => {
+        if (!isRecord(server) || !isRecord(server.env)) return [name, server]
+        const { env, ...rest } = server
+        return [
+          name,
+          {
+            ...rest,
+            ...(!("environment" in server) && { environment: env }),
+          },
+        ]
+      }),
+    )
+  }
   const hadLegacy = "theme" in copy || "keybinds" in copy || "tui" in copy
   if (!hadLegacy) return copy
   delete copy.theme
