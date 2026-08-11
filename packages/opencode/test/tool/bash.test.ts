@@ -695,6 +695,82 @@ process.exit(0)
     expect(JSON.parse(result.stdout.toString())).toEqual([])
   })
 
+  test(
+    "asks for external_directory permission for PowerShell OutFile env paths",
+    withShell({ label: "pwsh", shell: path.join(os.tmpdir(), "pwsh") }, async () => {
+      await using outerTmp = await tmpdir()
+      await using tmp = await tmpdir({ git: true })
+      const key = "MIMOCODE_TEST_OUTFILE_DIR"
+      const prev = process.env[key]
+      process.env[key] = outerTmp.path
+      try {
+        await Instance.provide({
+          directory: tmp.path,
+          fn: async () => {
+            const bash = await initBash()
+            const err = new Error("stop after permission")
+            const requests: Array<Omit<Permission.Request, "id" | "sessionID" | "tool">> = []
+            await expect(
+              Effect.runPromise(
+                bash.execute(
+                  {
+                    command: `"payload" | Out-File -FilePath $env:${key}/payload.txt`,
+                    description: "Write file to env path",
+                  },
+                  capture(requests, err),
+                ),
+              ),
+            ).rejects.toThrow(err.message)
+            const extDirReq = requests.find((r) => r.permission === "external_directory")
+            expect(extDirReq).toBeDefined()
+            expect(extDirReq!.patterns).toContain(glob(path.join(outerTmp.path, "*")))
+          },
+        })
+      } finally {
+        if (prev === undefined) delete process.env[key]
+        else process.env[key] = prev
+      }
+    }),
+  )
+
+  test(
+    "asks for external_directory permission for PowerShell redirection env paths",
+    withShell({ label: "pwsh", shell: path.join(os.tmpdir(), "pwsh") }, async () => {
+      await using outerTmp = await tmpdir()
+      await using tmp = await tmpdir({ git: true })
+      const key = "MIMOCODE_TEST_REDIRECT_DIR"
+      const prev = process.env[key]
+      process.env[key] = outerTmp.path
+      try {
+        await Instance.provide({
+          directory: tmp.path,
+          fn: async () => {
+            const bash = await initBash()
+            const err = new Error("stop after permission")
+            const requests: Array<Omit<Permission.Request, "id" | "sessionID" | "tool">> = []
+            await expect(
+              Effect.runPromise(
+                bash.execute(
+                  {
+                    command: `Write-Output payload > $env:${key}/payload.txt`,
+                    description: "Redirect output to env path",
+                  },
+                  capture(requests, err),
+                ),
+              ),
+            ).rejects.toThrow(err.message)
+            const extDirReq = requests.find((r) => r.permission === "external_directory")
+            expect(extDirReq).toBeDefined()
+            expect(extDirReq!.patterns).toContain(glob(path.join(outerTmp.path, "*")))
+          },
+        })
+      } finally {
+        if (prev === undefined) delete process.env[key]
+        else process.env[key] = prev
+      }
+    }),
+  )
+
   if (process.platform === "win32") {
     if (bash) {
       test(
