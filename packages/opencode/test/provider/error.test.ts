@@ -179,4 +179,24 @@ describe("provider stream error", () => {
       responseBody: JSON.stringify(input),
     })
   })
+
+  test("marks OpenAI overloaded service unavailable events as retryable", () => {
+    const input = {
+      type: "error",
+      sequence_number: 3,
+      error: {
+        type: "service_unavailable_error",
+        code: "server_is_overloaded",
+        message: "Our servers are currently overloaded. Please try again later.",
+        param: null,
+      },
+    }
+
+    expect(parseStreamError(input)).toStrictEqual({
+      type: "api_error",
+      message: input.error.message,
+      isRetryable: true,
+      responseBody: JSON.stringify(input),
+    })
+  })
 })
