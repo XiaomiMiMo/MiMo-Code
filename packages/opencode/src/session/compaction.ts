@@ -14,10 +14,17 @@ import { Config } from "@/config"
 import { NotFoundError } from "@/storage"
 import { ModelID, ProviderID } from "@/provider/schema"
 import { Effect, Layer, Context } from "effect"
+import { FetchHttpClient } from "effect/unstable/http"
 import { InstanceState } from "@/effect"
 import { isOverflow as overflow, usable } from "./overflow"
 import { makeRuntime } from "@/effect/run-service"
 import { fn } from "@/util/fn"
+import { buildLLMRequestPrefix } from "./llm-request-prefix"
+import { SystemPrompt } from "./system"
+import { Instruction } from "./instruction"
+import { LLM } from "./llm"
+import { ToolRegistry } from "../tool"
+import { AppFileSystem } from "@mimo-ai/shared/filesystem"
 
 const log = Log.create({ service: "session.compaction" })
 
@@ -108,6 +115,10 @@ export const layer: Layer.Layer<
   | Plugin.Service
   | SessionProcessor.Service
   | Provider.Service
+  | SystemPrompt.Service
+  | Instruction.Service
+  | LLM.Service
+  | ToolRegistry.Service
 > = Layer.effect(
   Service,
   Effect.gen(function* () {
@@ -118,6 +129,10 @@ export const layer: Layer.Layer<
     const plugin = yield* Plugin.Service
     const processors = yield* SessionProcessor.Service
     const provider = yield* Provider.Service
+    const system = yield* SystemPrompt.Service
+    const instruction = yield* Instruction.Service
+    const llm = yield* LLM.Service
+    const toolRegistry = yield* ToolRegistry.Service
 
     const isOverflow = Effect.fn("SessionCompaction.isOverflow")(function* (input: {
       tokens: MessageV2.Assistant["tokens"]
@@ -333,6 +348,18 @@ export const layer: Layer.Layer<
       const msgs = structuredClone(selected.head)
       yield* plugin.trigger("experimental.chat.messages.transform", {}, { messages: msgs })
       const modelMessages = yield* MessageV2.toModelMessagesEffect(msgs, model, { stripMedia: true })
+      const parentAgent = yield* agents.get(userMessage.agent)
+      const [env, instructions] = yield* Effect.all([
+        system.environment(model, userMessage.time.created),
+        instruction.system().pipe(Effect.orDie),
+      ])
+      const prefix = yield* buildLLMRequestPrefix({
+        sessionID: input.sessionID,
+        agent: parentAgent,
+        model,
+        msgs,
+        additions: [...env, ...instructions.content],
+      }).pipe(Effect.provideService(LLM.Service, llm), Effect.provideService(ToolRegistry.Service, toolRegistry))
       const ctx = yield* InstanceState.context
       const msg: MessageV2.Assistant = {
         id: MessageID.ascending(),
@@ -369,10 +396,12 @@ export const layer: Layer.Layer<
       })
       const result = yield* processor.process({
         user: userMessage,
-        agent,
+        agent: parentAgent,
         sessionID: input.sessionID,
-        tools: {},
-        system: [],
+        tools: prefix.tools,
+        system: [...env, ...instructions.content],
+        prebuiltSystem: prefix.system,
+        toolChoice: "none",
         messages: [
           ...modelMessages,
           {
@@ -544,6 +573,12 @@ export const layer: Layer.Layer<
 
 export const defaultLayer = Layer.suspend(() =>
   layer.pipe(
+    Layer.provide(ToolRegistry.defaultLayer),
+    Layer.provide(LLM.defaultLayer),
+    Layer.provide(Instruction.layer),
+    Layer.provide(FetchHttpClient.layer),
+    Layer.provide(AppFileSystem.defaultLayer),
+    Layer.provide(SystemPrompt.defaultLayer),
     Layer.provide(Provider.defaultLayer),
     Layer.provide(Session.defaultLayer),
     Layer.provide(SessionProcessor.defaultLayer),
