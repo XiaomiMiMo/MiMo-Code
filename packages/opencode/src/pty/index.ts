@@ -11,6 +11,7 @@ import { Plugin } from "@/plugin"
 import { PtyID } from "./schema"
 import { Effect, Layer, Context } from "effect"
 import { EffectBridge } from "@/effect"
+import { childProcessBaseEnv } from "@/provider/model-runtime-env"
 
 const log = Log.create({ service: "pty" })
 
@@ -182,13 +183,13 @@ export const layer = Layer.effect(
 
       const cwd = input.cwd || s.dir
       const shell = yield* plugin.trigger("shell.env", { cwd }, { env: {} })
-      const env = {
+      const env = childProcessBaseEnv({
         ...process.env,
         ...input.env,
         ...shell.env,
         TERM: "xterm-256color",
         MIMOCODE_TERMINAL: "1",
-      } as Record<string, string>
+      }, {}) as Record<string, string>
 
       if (process.platform === "win32") {
         env.LC_ALL = "C.UTF-8"

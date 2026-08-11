@@ -28,6 +28,7 @@ import { ChildProcessSpawner } from "effect/unstable/process/ChildProcessSpawner
 import * as BashInteractive from "./bash-interactive"
 import * as BashTokenEfficient from "./bash_token_efficient_pipeline"
 import * as BashTokenEfficientHeuristic from "./bash_token_efficient_heuristic"
+import { childProcessBaseEnv } from "@/provider/model-runtime-env"
 
 const MAX_METADATA_LENGTH = 30_000
 const DEFAULT_TIMEOUT = Flag.MIMOCODE_EXPERIMENTAL_BASH_DEFAULT_TIMEOUT_MS || 2 * 60 * 1000
@@ -585,7 +586,7 @@ export const BashTool = Tool.define(
       if (identity.email && !process.env["GIT_AUTHOR_EMAIL"]) gitFloor["GIT_AUTHOR_EMAIL"] = identity.email
       if (identity.name && !process.env["GIT_COMMITTER_NAME"]) gitFloor["GIT_COMMITTER_NAME"] = identity.name
       if (identity.email && !process.env["GIT_COMMITTER_EMAIL"]) gitFloor["GIT_COMMITTER_EMAIL"] = identity.email
-      return {
+      return childProcessBaseEnv({
         ...process.env,
         // Python ignores the console code page when stdout is a pipe and falls
         // back to the ANSI code page (GBK on zh-CN), producing mojibake. Force
@@ -597,7 +598,7 @@ export const BashTool = Tool.define(
         // extra.env comes last and so can still override the floor.
         ...gitFloor,
         ...extra.env,
-      }
+      }, {})
     })
 
     const run = Effect.fn("BashTool.run")(function* (

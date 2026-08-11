@@ -26,6 +26,7 @@ import { InstanceState } from "@/effect"
 import { AppFileSystem } from "@mimo-ai/shared/filesystem"
 import { isRecord } from "@/util/record"
 import { withStatics } from "@/util/schema"
+import { publishAudioModelRuntimeEnv } from "./model-runtime-env"
 import { isFreeApiModel, isFreeApiSunset } from "@/util/free-api-sunset"
 
 import * as ProviderTransform from "./transform"
@@ -1566,6 +1567,11 @@ const layer: Layer.Layer<
 
           log.info("found", { providerID })
         }
+
+        // Shell/PTY children need a narrow runtime capability, not the complete
+        // auth store. Recompute whenever the provider instance is rebuilt so a
+        // login, logout, profile switch, or model-registry refresh is reflected.
+        publishAudioModelRuntimeEnv(process.env, providers)
 
         return {
           models: languages,
