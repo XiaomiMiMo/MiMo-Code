@@ -4,6 +4,7 @@ import { UI } from "../ui"
 import { cmd } from "./cmd"
 import { withNetworkOptions, resolveNetworkOptions } from "../network"
 import { Flag } from "../../flag/flag"
+import { Log } from "../../util"
 import open from "open"
 import { networkInterfaces } from "os"
 
@@ -45,7 +46,7 @@ export const WebCommand = cmd({
       UI.println(
         UI.Style.TEXT_DANGER_BOLD + "Set MIMOCODE_SERVER_PASSWORD or pass --no-auth to override (DANGEROUS).",
       )
-      process.exit(1)
+      await Log.exit(1)
     }
 
     if (!Flag.MIMOCODE_SERVER_PASSWORD) {

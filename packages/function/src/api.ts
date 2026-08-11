@@ -1,3 +1,4 @@
+/// <reference path="../../console/resource/sst.d.ts" />
 import { Hono } from "hono"
 import { DurableObject } from "cloudflare:workers"
 import { randomUUID } from "node:crypto"

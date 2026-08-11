@@ -56,7 +56,7 @@ export const Model = z.object({
       z.literal(true),
       z
         .object({
-          field: z.enum(["reasoning_content", "reasoning_details"]),
+          field: z.enum(["reasoning", "reasoning_content", "reasoning_details"]),
         })
         .strict(),
     ])

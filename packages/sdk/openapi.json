@@ -13893,12 +13893,6 @@
                 "minimum": 0,
                 "maximum": 9007199254740991
               },
-              "max_writer_failures": {
-                "description": "Maximum consecutive writer failures per session before checkpointing stops retrying until process restart. Default: 3.",
-                "type": "integer",
-                "exclusiveMinimum": 0,
-                "maximum": 9007199254740991
-              },
               "push_caps": {
                 "description": "Per-section token caps for rebuild context (renderRebuildContext). Each section is loaded up to its cap so the rebuild stays within a predictable budget.",
                 "type": "object",

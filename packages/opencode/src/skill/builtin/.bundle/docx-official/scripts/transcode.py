@@ -48,6 +48,9 @@ class LibreOfficeBackend:
         override = os.environ.get(cls._ENV_OVERRIDE)
         if override:
             return override
+        bundled = os.environ.get("MIMO_SOFFICE")  # bundled runtime: use only when present, else fall through
+        if bundled and Path(bundled).is_file():
+            return bundled
         for candidate in ("soffice", "libreoffice"):
             path = shutil.which(candidate)
             if path:
@@ -66,7 +69,7 @@ class LibreOfficeBackend:
             cmd = [
                 self._executable,
                 "--headless",
-                f"-env:UserInstallation=file://{profile}",
+                f"-env:UserInstallation={Path(profile).as_uri()}",  # bare file://{path} breaks on Windows
                 "--convert-to", target_fmt,
                 "--outdir", str(out_dir),
                 str(source),
@@ -121,6 +124,9 @@ class Transcode:
 
     def _rasterise(self, pdf: Path, out_dir: Path) -> list[Path]:
         if shutil.which("pdftoppm") is None:
+            if os.environ.get("MIMO_PYTHON"):
+                # No Poppler, but a bundled Python (with pypdfium2 preinstalled) exists.
+                return self._rasterise_pypdfium2(pdf, out_dir)
             raise BackendMissing(
                 "pdftoppm (Poppler) is not on PATH. Install poppler-utils, "
                 "or convert only as far as PDF."
@@ -136,6 +142,40 @@ class Transcode:
         if not pages:
             raise BackendFailure("pdftoppm produced no PNG output.")
         return pages
+
+    def _rasterise_pypdfium2(self, pdf: Path, out_dir: Path) -> list[Path]:
+        """Poppler-free fallback: render via pypdfium2 in the bundled interpreter.
+
+        Renders into a scratch directory (pre-existing files in `out_dir` are
+        never touched), then moves pages to the `<stem>-<NN>.png` convention the
+        pdftoppm path produces — keeping pypdfium2's zero-padded page numbers so
+        lexicographic sorting matches page order.
+        """
+        pages: list[Path] = []
+        with tempfile.TemporaryDirectory(prefix="pypdfium2-render-") as scratch_str:
+            scratch = Path(scratch_str)
+            proc = subprocess.run(
+                [os.environ["MIMO_PYTHON"], "-m", "pypdfium2_cli", "render", str(pdf),
+                 "--output", str(scratch), "--format", "png",
+                 "--scale", str(self.dpi / 72.0)],
+                capture_output=True, text=True,
+            )
+            if proc.returncode != 0:
+                raise BackendFailure(
+                    f"pypdfium2 fallback exit {proc.returncode}: {proc.stderr}\n"
+                    "(is pypdfium2 with its pypdfium2_cli module available in the "
+                    "MIMO_PYTHON interpreter?)"
+                )
+            for page in sorted(scratch.glob(f"{pdf.stem}_*.png")):
+                digits = page.stem.rsplit("_", 1)[1]
+                if not digits.isdigit():
+                    continue
+                target = out_dir / f"{pdf.stem}-{digits}.png"
+                shutil.move(str(page), target)
+                pages.append(target)
+        if not pages:
+            raise BackendFailure("pypdfium2 fallback produced no PNG output.")
+        return sorted(pages)
 
 
 def _parse_args(argv: list[str]) -> argparse.Namespace:

@@ -100,3 +100,10 @@ export function useToast() {
   }
   return value
 }
+
+// For contexts that want to surface a toast when one is available but must not
+// REQUIRE the toast stack (theme + terminal dimensions + border) as a dependency
+// — a data context should not be untestable because of a presentation concern.
+export function useToastOptional() {
+  return useContext(ctx)
+}

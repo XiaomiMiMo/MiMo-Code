@@ -21,6 +21,7 @@ Usage (as a CLI, mostly for smoke testing):
 from __future__ import annotations
 
 import argparse
+import os
 import shutil
 import subprocess
 import sys
@@ -40,6 +41,9 @@ class BridgeError(RuntimeError):
 
 
 def _which_soffice() -> str:
+    bundled = os.environ.get("MIMO_SOFFICE")  # bundled runtime: use only when present, else fall through
+    if bundled and Path(bundled).is_file():
+        return bundled
     for name in ("soffice", "libreoffice"):
         found = shutil.which(name)
         if found:
@@ -69,7 +73,7 @@ def _isolated_profile() -> Iterator[str]:
     its own scratch directory sidesteps the problem entirely.
     """
     with tempfile.TemporaryDirectory(prefix="soffice-profile-") as td:
-        yield f"file://{td}"
+        yield Path(td).as_uri()  # proper file:/// URI on every platform (bare f"file://{td}" breaks on Windows)
 
 
 def _invoke(input_path: Path, out_dir: Path, target: str) -> Path:
@@ -103,13 +107,19 @@ def _rasterize(pdf_path: Path, out_dir: Path, image_ext: str, *,
                dpi: int = 150,
                first: int | None = None,
                last: int | None = None) -> list[Path]:
-    binary = _which_pdftoppm()
     out_dir.mkdir(parents=True, exist_ok=True)
+    file_ext = "jpg" if image_ext in ("jpg", "jpeg") else image_ext
+
+    if shutil.which("pdftoppm") is None and os.environ.get("MIMO_PYTHON"):
+        # No Poppler, but a bundled Python (with pypdfium2 preinstalled) is available.
+        return _rasterize_pypdfium2(pdf_path, out_dir, file_ext,
+                                    dpi=dpi, first=first, last=last)
+
+    binary = _which_pdftoppm()
     prefix = out_dir / "slide"
 
     # pdftoppm's flag is `-jpeg` but the files it writes end in `.jpg`.
     flag = "jpeg" if image_ext in ("jpg", "jpeg") else image_ext
-    file_ext = "jpg" if image_ext in ("jpg", "jpeg") else image_ext
 
     args: list[str] = [binary, f"-{flag}", "-r", str(dpi)]
     if first is not None:
@@ -123,6 +133,48 @@ def _rasterize(pdf_path: Path, out_dir: Path, image_ext: str, *,
         raise BridgeError(f"pdftoppm exited {result.returncode}: {result.stderr}")
 
     return sorted(out_dir.glob(f"slide-*.{file_ext}"))
+
+
+def _rasterize_pypdfium2(pdf_path: Path, out_dir: Path, file_ext: str, *,
+                         dpi: int,
+                         first: int | None,
+                         last: int | None) -> list[Path]:
+    """Poppler-free fallback: render via pypdfium2 in the bundled interpreter.
+
+    Renders all pages into a scratch directory (pypdfium2_cli page-range syntax
+    varies across versions; pre-existing files in `out_dir` are never touched),
+    trims to [first, last], then moves the pages to `slide-<NN>.<ext>` — keeping
+    pypdfium2's zero-padded page numbers so lexicographic sorting matches page
+    order and the naming convention matches the pdftoppm path.
+    """
+    python_bin = os.environ["MIMO_PYTHON"]
+    kept: list[Path] = []
+    with tempfile.TemporaryDirectory(prefix="pypdfium2-render-") as scratch_str:
+        scratch = Path(scratch_str)
+        result = subprocess.run(
+            [python_bin, "-m", "pypdfium2_cli", "render", str(pdf_path),
+             "--output", str(scratch), "--format", file_ext, "--scale", str(dpi / 72.0)],
+            capture_output=True, text=True,
+        )
+        if result.returncode != 0:
+            raise BridgeError(
+                f"pypdfium2 fallback exited {result.returncode}: {result.stderr}\n"
+                "(is pypdfium2 with its pypdfium2_cli module available in the "
+                "MIMO_PYTHON interpreter?)")
+
+        for page in sorted(scratch.glob(f"{pdf_path.stem}_*.{file_ext}")):
+            digits = page.stem.rsplit("_", 1)[1]
+            if not digits.isdigit():
+                continue
+            number = int(digits)
+            if (first is not None and number < first) or (last is not None and number > last):
+                continue  # out-of-range pages die with the scratch dir
+            target = out_dir / f"slide-{digits}.{file_ext}"
+            shutil.move(str(page), target)
+            kept.append(target)
+    if not kept:
+        raise BridgeError("pypdfium2 fallback produced no images")
+    return sorted(kept)
 
 
 def translate(source: Path, target: str, *,

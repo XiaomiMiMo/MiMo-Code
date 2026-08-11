@@ -30,6 +30,8 @@ If the task mixes several of these, do them in this order:
 
 ## One-time environment setup
 
+> **Bundled runtime:** when the `MIMO_PYTHON` environment variable is set, skip the pip installs below — run every command with `python3`/`uv run` replaced by `"$MIMO_PYTHON"` (e.g. `"$MIMO_PYTHON" scripts/overview.py book.xlsx`). openpyxl/pandas/lxml/xlsxwriter are preinstalled in that interpreter; pip console scripts are unavailable, so always go through `"$MIMO_PYTHON" -m <module>`. A bundled LibreOffice (for `bake.py`/`pdf_out.py`) is exposed as `MIMO_SOFFICE` and picked up automatically.
+
 ```bash
 python3 -m pip install --upgrade openpyxl pandas lxml
 # Optional but recommended:

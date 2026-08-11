@@ -1,9 +1,10 @@
 import z from "zod"
 import os from "os"
-import { createWriteStream, readFileSync } from "node:fs"
+import { createWriteStream, existsSync, readFileSync } from "node:fs"
 import * as Tool from "./tool"
 import path from "path"
 import DESCRIPTION from "./bash.txt"
+import GPT_DESCRIPTION from "./bash.gpt.txt"
 import { Log } from "../util"
 import { Instance } from "../project/instance"
 import { lazy } from "@/util/lazy"
@@ -15,9 +16,12 @@ import { Flag } from "@/flag/flag"
 import { Shell } from "@/shell/shell"
 
 import { SessionCwd } from "./session-cwd"
+import * as IsolatedGit from "./isolated-git-guard"
+import * as MergeConflict from "./merge-conflict-notice"
 import { BashArity } from "@/permission/arity"
 import * as Truncate from "./truncate"
 import { Plugin } from "@/plugin"
+import { Git } from "@/git"
 import { Effect, Stream } from "effect"
 import { ChildProcess } from "effect/unstable/process"
 import { ChildProcessSpawner } from "effect/unstable/process/ChildProcessSpawner"
@@ -53,6 +57,21 @@ const FILES = new Set([
 ])
 const FLAGS = new Set(["-destination", "-literalpath", "-path"])
 const SWITCHES = new Set(["-confirm", "-debug", "-force", "-nonewline", "-recurse", "-verbose", "-whatif"])
+
+export function bashDescription(gpt = false) {
+  const name = Shell.name(Shell.acceptable())
+  const chaining =
+    name === "powershell"
+      ? "If the commands depend on each other and must run sequentially, avoid '&&' in this shell because Windows PowerShell 5.1 does not support it. Use PowerShell conditionals such as `cmd1; if ($?) { cmd2 }` when later commands must depend on earlier success."
+      : "If the commands depend on each other and must run sequentially, use a single Bash call with '&&' to chain them together (e.g., `git add . && git commit -m \"message\" && git push`). For instance, if one operation must complete before another starts (like mkdir before cp, apply_patch before Bash for git operations, or git add before git commit), run these operations sequentially instead."
+  return (gpt ? GPT_DESCRIPTION : DESCRIPTION)
+    .replaceAll("${directory}", Instance.directory)
+    .replaceAll("${os}", process.platform)
+    .replaceAll("${shell}", name)
+    .replaceAll("${chaining}", chaining)
+    .replaceAll("${maxLines}", String(Truncate.MAX_LINES))
+    .replaceAll("${maxBytes}", String(Truncate.MAX_BYTES))
+}
 
 // Irreversible file/directory removal commands. Names are matched
 // case-insensitively for PowerShell; bash is case-sensitive.
@@ -433,6 +452,60 @@ export const BashTool = Tool.define(
     const fs = yield* AppFileSystem.Service
     const trunc = yield* Truncate.Service
     const plugin = yield* Plugin.Service
+    const gitSvc = yield* Git.Service
+
+    // Layer-2 floor for git authorship: an agent may create a worktree/clone or
+    // commit in an ad-hoc dir via this bash tool, bypassing Worktree.setup()'s
+    // per-worktree local-config fix. Propagate the project repo's own identity so
+    // those commits are attributed the same way a commit in the project repo is.
+    //
+    // Behavioral contract of this floor and its cache:
+    //   - It only ever PROPAGATES an identity the repo itself already resolves.
+    //     It never invents one: when the repo has no identity — or there is no
+    //     repo at all — nothing is injected and git resolves authorship itself
+    //     (config, then `EMAIL`, then its own `user@hostname` autodetect, then
+    //     its own error). A hardcoded substitute would misattribute the commit
+    //     AND pre-empt resolution paths `git config` cannot see.
+    //   - It is delivered as GIT_AUTHOR_*/GIT_COMMITTER_* ENV, and git gives env
+    //     vars precedence OVER `user.name`/`user.email` config — including the
+    //     config of some OTHER repo the command happens to run in. That is
+    //     exactly why an unresolved field must inject nothing rather than a
+    //     placeholder: a placeholder would outrank that repo's correct config.
+    //   - Because the resolved value is memoized per worktree path for the
+    //     lifetime of the process, a `git config user.name ...` performed
+    //     mid-session is NOT picked up until the process restarts.
+    //   - Operator-set GIT_AUTHOR_*/GIT_COMMITTER_* still win: shellEnv only
+    //     fills the vars that are absent from process.env (see below).
+    //
+    // resolveGitIdentity and gitIdentityCache live in this outer setup block,
+    // not inside shellEnv, precisely so the cache persists across every bash
+    // invocation instead of being rebuilt (and re-spawning two `git config`
+    // subprocesses) on each call.
+    const gitIdentityCache = new Map<string, { name?: string; email?: string }>()
+    const resolveGitIdentity = Effect.fn("BashTool.resolveGitIdentity")(function* () {
+      const worktree = Instance.worktree
+      const cached = gitIdentityCache.get(worktree)
+      if (cached) return cached
+      // Non-git projects set worktree to "/". There is no project repo whose
+      // identity we could propagate, and whatever repo a git command does run in
+      // has its own config — which injected env would override. Inject nothing.
+      if (worktree === "/") {
+        const none: { name?: string; email?: string } = {}
+        gitIdentityCache.set(worktree, none)
+        return none
+      }
+      const name = (yield* gitSvc.run(["config", "user.name"], { cwd: worktree })).text().trim()
+      const email = (yield* gitSvc.run(["config", "user.email"], { cwd: worktree })).text().trim()
+      if (!name || !email)
+        log.warn("git identity not fully resolved from repo config; leaving authorship to git", {
+          worktree,
+          name: name ? "resolved" : "unset",
+          email: email ? "resolved" : "unset",
+        })
+      const identity = { ...(name ? { name } : {}), ...(email ? { email } : {}) }
+      gitIdentityCache.set(worktree, identity)
+      return identity
+    })
 
     const cygpath = Effect.fn("BashTool.cygpath")(function* (shell: string, text: string) {
       const lines = yield* spawner
@@ -503,12 +576,26 @@ export const BashTool = Tool.define(
         { cwd, sessionID: ctx.sessionID, callID: ctx.callID },
         { env: {} },
       )
+      const identity = yield* resolveGitIdentity()
+      // Only fill vars the operator hasn't already set, so an explicit
+      // GIT_AUTHOR_* in the environment still wins over our floor — and only
+      // fields the repo itself resolved, so an unresolved field is left for git.
+      const gitFloor: Record<string, string> = {}
+      if (identity.name && !process.env["GIT_AUTHOR_NAME"]) gitFloor["GIT_AUTHOR_NAME"] = identity.name
+      if (identity.email && !process.env["GIT_AUTHOR_EMAIL"]) gitFloor["GIT_AUTHOR_EMAIL"] = identity.email
+      if (identity.name && !process.env["GIT_COMMITTER_NAME"]) gitFloor["GIT_COMMITTER_NAME"] = identity.name
+      if (identity.email && !process.env["GIT_COMMITTER_EMAIL"]) gitFloor["GIT_COMMITTER_EMAIL"] = identity.email
       return {
         ...process.env,
         // Python ignores the console code page when stdout is a pipe and falls
         // back to the ANSI code page (GBK on zh-CN), producing mojibake. Force
         // UTF-8 for child Python processes on Windows.
         ...(process.platform === "win32" ? { PYTHONIOENCODING: "utf-8" } : {}),
+        // Git authorship floor. Placed after process.env so the spread order
+        // reads naturally, but it can never clobber an operator value: gitFloor
+        // only ever holds keys that were absent from process.env. A plugin's
+        // extra.env comes last and so can still override the floor.
+        ...gitFloor,
         ...extra.env,
       }
     })
@@ -703,6 +790,19 @@ export const BashTool = Tool.define(
       if (meta.length > 0) {
         output += "\n\n<bash_metadata>\n" + meta.join("\n") + "\n</bash_metadata>"
       }
+
+      // Conflict-ownership affordance. When this command left git mid-merge with
+      // unmerged paths, the result itself carries the rule (the conflict belongs
+      // to the branch's owner) and the two literal commands that follow it —
+      // because the model reads a tool result before its next tool call, and does
+      // not re-read a system prompt assembled requests ago. Appended LAST so it is
+      // the final thing in the result, and never blocking: see the module header.
+      output += yield* MergeConflict.annotate({
+        git: gitSvc,
+        cwd: input.cwd,
+        command: input.command,
+        output,
+      })
       if (sink) {
         const stream = sink
         yield* Effect.promise(
@@ -731,19 +831,10 @@ export const BashTool = Tool.define(
       Effect.sync(() => {
         const shell = Shell.acceptable()
         const name = Shell.name(shell)
-        const chain =
-          name === "powershell"
-            ? "If the commands depend on each other and must run sequentially, avoid '&&' in this shell because Windows PowerShell 5.1 does not support it. Use PowerShell conditionals such as `cmd1; if ($?) { cmd2 }` when later commands must depend on earlier success."
-            : "If the commands depend on each other and must run sequentially, use a single Bash call with '&&' to chain them together (e.g., `git add . && git commit -m \"message\" && git push`). For instance, if one operation must complete before another starts (like mkdir before cp, Write before Bash for git operations, or git add before git commit), run these operations sequentially instead."
         log.info("bash tool using shell", { shell })
 
         return {
-          description: DESCRIPTION.replaceAll("${directory}", Instance.directory)
-            .replaceAll("${os}", process.platform)
-            .replaceAll("${shell}", name)
-            .replaceAll("${chaining}", chain)
-            .replaceAll("${maxLines}", String(Truncate.MAX_LINES))
-            .replaceAll("${maxBytes}", String(Truncate.MAX_BYTES)),
+          description: bashDescription(),
           parameters: Parameters,
           execute: (params: z.infer<typeof Parameters>, ctx: Tool.Context) =>
             Effect.gen(function* () {
@@ -757,6 +848,24 @@ export const BashTool = Tool.define(
               const timeout = params.timeout ?? DEFAULT_TIMEOUT
               const ps = PS.has(name)
               const root = yield* parse(params.command, ps)
+              // Cross-branch git guard for isolated children. Sits on the SAME
+              // parsed AST the permission scan uses, so every command node in a
+              // pipeline / `&&` chain / subshell is checked, and it runs BEFORE
+              // ask() so a rejected command never prompts and never spawns.
+              // Keyed on Instance.directory (the session's own worktree), not on
+              // `cwd` — a child that `cd`s into the main checkout and rebases
+              // there is exactly the accident this exists to stop.
+              const own = Instance.directory
+              if (IsolatedGit.isIsolatedWorktree(own)) {
+                IsolatedGit.assertIsolatedGitAllowed({
+                  commands: commands(root).map((node) => parts(node).map((item) => item.text)),
+                  sources: commands(root).map((node) => source(node)),
+                  directory: own,
+                  isolated: true,
+                  branch: IsolatedGit.ownBranch(own),
+                  isPath: (arg) => existsSync(path.resolve(cwd, arg)),
+                })
+              }
               const scan = yield* collect(root, cwd, ps, shell)
               if (!Instance.containsPath(cwd)) scan.dirs.add(cwd)
               // Delete-containing commands are authorized by askDelete alone —

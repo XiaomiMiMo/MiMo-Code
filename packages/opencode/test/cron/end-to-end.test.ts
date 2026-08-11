@@ -81,6 +81,7 @@ const stubPrompt = Layer.succeed(
     command: () => Effect.die("command not expected in end-to-end test"),
     resolvePromptParts: () => Effect.succeed([]),
     sweepOrphanAssistants: () => Effect.void,
+    sweepOrphanToolParts: () => Effect.void,
     predict: () => Effect.succeed(""),
   }),
 )

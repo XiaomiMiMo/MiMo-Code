@@ -226,6 +226,28 @@ describe("classifyAssistantStep", () => {
     ).toEqual({ type: "think-only" })
   })
 
+  test("GPT stop + reasoning only (no text) => final", () => {
+    expect(
+      classifyAssistantStep({
+        phase: "after-process",
+        lastUser,
+        assistant: { ...assistantInfo("m-2", { finish: "stop" }), modelID: ModelID.make("gpt-5.5") },
+        parts: [reasoningPart("m-2", "let me think...")],
+      }),
+    ).toEqual({ type: "final" })
+  })
+
+  test("namespaced GPT other + reasoning only => degraded final", () => {
+    expect(
+      classifyAssistantStep({
+        phase: "after-process",
+        lastUser,
+        assistant: { ...assistantInfo("m-2", { finish: "other" }), modelID: ModelID.make("openai/gpt-5.5") },
+        parts: [reasoningPart("m-2", "let me think...")],
+      }),
+    ).toEqual({ type: "final", degraded: true })
+  })
+
   test("stop + empty (no text/tool/reasoning) => invalid", () => {
     expect(
       classifyAssistantStep({

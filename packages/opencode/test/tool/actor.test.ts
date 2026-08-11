@@ -569,6 +569,32 @@ describe("Actor tool subagent_type enum (F36)", () => {
     ),
   )
 
+  // The union order is behaviour-neutral for PARSING but it is the one part of
+  // "spawn is the default" that reaches the model as structure rather than
+  // prose: the branch order in the JSON schema handed to the provider. The
+  // actor.txt wording tests assert a file on disk; this asserts the wire format.
+  it.live("flattened schema offers spawn ahead of run in the operation union", () =>
+    provideTmpdirInstance(() =>
+      Effect.gen(function* () {
+        const tool = yield* ActorTool
+        const def = yield* tool.init()
+        const fakeModel = {
+          providerID: "mimo",
+          api: { id: "mimo-v2.5", npm: "@ai-sdk/openai-compatible" },
+          id: "mimo-v2.5",
+          capabilities: { input: {} },
+        } as any
+        const flat = transformSchema(fakeModel, z.toJSONSchema(def.parameters)) as any
+        const branches = (flat.properties.operation.oneOf ?? flat.properties.operation.anyOf) as any[]
+        const actions = branches.map((b) => b.properties?.action?.const ?? b.properties?.action?.enum?.[0])
+        expect(actions).toContain("spawn")
+        expect(actions).toContain("run")
+        expect(actions[0]).toBe("spawn")
+        expect(actions.indexOf("spawn")).toBeLessThan(actions.indexOf("run"))
+      }),
+    ),
+  )
+
   it.live("schema accepts an arbitrary task_id string (validation moved to execute)", () =>
     provideTmpdirInstance(() =>
       Effect.gen(function* () {

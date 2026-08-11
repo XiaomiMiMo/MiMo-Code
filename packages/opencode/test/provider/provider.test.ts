@@ -424,6 +424,10 @@ test("custom DeepSeek openai-compatible model defaults interleaved reasoning fie
                   name: "DeepSeek Details",
                   interleaved: { field: "reasoning_details" },
                 },
+                "deepseek-reasoning": {
+                  name: "DeepSeek Reasoning",
+                  interleaved: { field: "reasoning" },
+                },
                 "custom-model": {
                   name: "Custom Model",
                 },
@@ -457,6 +461,7 @@ test("custom DeepSeek openai-compatible model defaults interleaved reasoning fie
       const provider = providers[ProviderID.make("custom-provider")]
       expect(provider.models["deepseek-r1"].capabilities.interleaved).toEqual({ field: "reasoning_content" })
       expect(provider.models["deepseek-details"].capabilities.interleaved).toEqual({ field: "reasoning_details" })
+      expect(provider.models["deepseek-reasoning"].capabilities.interleaved).toEqual({ field: "reasoning" })
       expect(provider.models["custom-model"].capabilities.interleaved).toBe(false)
       expect(
         providers[ProviderID.make("custom-anthropic-provider")].models["deepseek-r1"].capabilities.interleaved,

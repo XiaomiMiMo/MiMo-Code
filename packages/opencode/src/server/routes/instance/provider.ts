@@ -11,6 +11,7 @@ import { errors } from "../../error"
 import { lazy } from "@/util/lazy"
 import { Effect } from "effect"
 import { jsonRequest } from "./trace"
+import { Auth } from "@/auth"
 
 export const ProviderRoutes = lazy(() =>
   new Hono()
@@ -34,6 +35,7 @@ export const ProviderRoutes = lazy(() =>
       async (c) =>
         jsonRequest("ProviderRoutes.list", c, function* () {
           const svc = yield* Provider.Service
+          const auth = yield* Auth.Service
           const cfg = yield* Config.Service
           const config = yield* cfg.get()
           const all = yield* Effect.promise(() => ModelsDev.get())
@@ -54,6 +56,7 @@ export const ProviderRoutes = lazy(() =>
             all: Object.values(providers),
             default: Provider.defaultModelIDs(providers),
             connected: Object.keys(connected),
+            authenticated: Object.keys(yield* auth.all().pipe(Effect.orDie)),
           }
         }),
     )

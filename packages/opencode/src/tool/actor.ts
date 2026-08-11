@@ -178,6 +178,24 @@ const mapActorVerb = Effect.fn("mapActorVerb")(function* (verb: string | undefin
       const { flags, rest } = yield* extractNamedFlags(args, ["session", "type"], line)
       if (rest.length !== 2)
         return yield* actorArityError("send", '<to_actor_id> "<content>" [--session <id>] [--type <t>]', rest, line)
+      // NOT the layer that makes a blank body unreachable — `parameters` DOES
+      // re-validate a shell-parsed op. shell-wrap.ts calls `def.execute(parsed)`
+      // on the def produced by Tool.init, which is wrap()-decorated, and wrap()
+      // runs `parameters.parse(args)` inside execute — so `content:
+      // z.string().min(1)` already rejects `actor send x ""` (verified: with
+      // this guard removed the shell route still enqueues nothing and reports
+      // `Too small: expected string to have >=1 characters → at
+      // operation.content`).
+      //
+      // This guard earns its place for two other reasons: it turns that generic
+      // zod dump into one specific, teachable message, and `.trim()` also
+      // rejects whitespace-only bodies, which `min(1)` accepts.
+      if (rest[1].trim() === "")
+        return yield* Effect.fail({
+          kind: "flag" as const,
+          line,
+          detail: "actor: send: content must not be empty",
+        })
       return {
         operation: {
           action: "send" as const,
@@ -300,7 +318,7 @@ export const ActorTool = Tool.define(
       if (!a) {
         return Effect.fail(
           new Error(
-            "Actor service unavailable — Actor.defaultLayer must be running for the actor tool to spawn or cancel actors",
+            "Actor service unavailable — Actor.appLayer must be running for the actor tool to spawn or cancel actors",
           ),
         )
       }
@@ -344,7 +362,11 @@ export const ActorTool = Tool.define(
         .describe("(optional) Milliseconds to wait before returning { status: 'timeout' }. Default 600000 (10 min).")
 
       const runSchema = z.strictObject({
-        action: z.literal("run").describe("Spawn a subagent and block until it completes; the result is returned inline as the tool response."),
+        action: z
+          .literal("run")
+          .describe(
+            "RARE EXCEPTION — launches a subagent and BLOCKS the whole conversation until it completes; the result is returned inline. Use it only when you cannot make your very next decision without the result in THIS turn and the work is a tiny, fast lookup. For ordinary analysis, review, or implementation work use `spawn` instead.",
+          ),
         description: z.string().min(1).describe("A short (3-5 words) description of the task."),
         prompt: z.string().min(1).describe("The task for the agent to perform."),
         subagent_type: subagentTypeEnum.describe("The type of specialized agent to use for this task."),
@@ -384,7 +406,11 @@ export const ActorTool = Tool.define(
       })
 
       const spawnSchema = z.strictObject({
-        action: z.literal("spawn").describe("Spawn a subagent and return its actor_id immediately; result is delivered as a notification or via a separate `wait` call."),
+        action: z
+          .literal("spawn")
+          .describe(
+            "THE DEFAULT — launches a subagent in the BACKGROUND and returns its actor_id immediately, so subagents run in PARALLEL and you keep responding to the user. The result arrives as a notification, or collect it with `wait`/`status`.",
+          ),
         description: z.string().min(1).describe("A short (3-5 words) description of the task."),
         prompt: z.string().min(1).describe("The task for the agent to perform."),
         subagent_type: subagentTypeEnum.describe("The type of specialized agent to use for this task."),
@@ -476,8 +502,10 @@ export const ActorTool = Tool.define(
         // key (`operation`), so models can't drop the discriminator.
         operation: z
           .discriminatedUnion("action", [
-            runSchema,
+            // spawn first: it is the default action, and the model reads this
+            // union in order. run stays available but is listed as the exception.
             spawnSchema,
+            runSchema,
             statusSchema,
             waitSchema,
             cancelSchema,

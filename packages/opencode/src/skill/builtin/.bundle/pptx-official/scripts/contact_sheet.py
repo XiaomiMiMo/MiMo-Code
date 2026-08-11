@@ -15,7 +15,6 @@ Usage:
 from __future__ import annotations
 
 import argparse
-import subprocess
 import sys
 import tempfile
 from dataclasses import dataclass
@@ -26,7 +25,7 @@ if str(_HERE) not in sys.path:
     sys.path.insert(0, str(_HERE))
 
 from soffice_bridge import (  # noqa: E402
-    BridgeError, _invoke, _which_pdftoppm,
+    BridgeError, _invoke, _rasterize,
 )
 
 
@@ -62,15 +61,9 @@ def _load_label_font():
 
 
 def _rasterise_pages(pdf: Path, out_dir: Path, dpi: int) -> list[Path]:
-    binary = _which_pdftoppm()
-    prefix = out_dir / "page"
-    result = subprocess.run(
-        [binary, "-jpeg", "-r", str(dpi), str(pdf), str(prefix)],
-        capture_output=True, text=True,
-    )
-    if result.returncode != 0:
-        raise BridgeError(f"pdftoppm exited {result.returncode}: {result.stderr}")
-    return sorted(out_dir.glob("page-*.jpg"))
+    # Delegates to the shared bridge rasteriser: pdftoppm when available, with the
+    # pypdfium2 fallback (bundled MIMO_PYTHON) when Poppler is absent.
+    return _rasterize(pdf, out_dir, "jpg", dpi=dpi)
 
 
 def build_sheet(source: Path,
@@ -90,7 +83,7 @@ def build_sheet(source: Path,
         pdf = _invoke(source, workdir, "pdf")
         pages = _rasterise_pages(pdf, workdir, options.rasterise_dpi)
         if not pages:
-            raise BridgeError("pdftoppm produced no images")
+            raise BridgeError("rasterisation produced no images")
         if limit is not None:
             pages = pages[:limit]
 

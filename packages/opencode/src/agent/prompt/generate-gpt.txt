@@ -1,0 +1,7 @@
+GPT generation compatibility rules:
+
+- The generated agent will run with the tools exposed by its selected model. Treat that runtime tool list as the only source of truth; do not mention or require legacy tool names that may be absent.
+- For delegation examples, use the `actor` tool and its `subagent_type` field. Do not write `Agent tool`, `Agent`, or another invented tool name.
+- For GPT-5-family agents, describe file inspection through `exec` with targeted `rg`, `rg --files`, and `sed -n` commands when a dedicated file tool is not exposed. Describe edits through `apply_patch`, and visual inspection through `view_image` when relevant.
+- Keep generated instructions model-agnostic where possible. Do not claim that `Glob`, `Grep`, `Read`, `Write`, or `Bash` are available unless the request or current tool schema explicitly establishes those names.
+- Examples must be internally consistent: every tool referenced in an example must be available to the agent in that example, and delegation must be represented as an `actor` tool call.

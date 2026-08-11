@@ -56,6 +56,7 @@ import { Session as SessionApi } from "@/session"
 import { orchestratorDir } from "@/global"
 import { TuiEvent } from "./event"
 import { KVProvider, useKV } from "./context/kv"
+import { resolveVisualMode, toggleVisualMode } from "./context/visual"
 import { LanguageProvider, UiI18nBridge, useLanguage } from "./context/language"
 import type { Locale } from "./i18n/locales"
 import { LOCALES } from "./i18n/locales"
@@ -81,6 +82,7 @@ import {
 import type { EventSource } from "./context/sdk"
 import { DialogVariant } from "./component/dialog-variant"
 import { DialogModalities } from "./component/dialog-modalities"
+import { DialogContextLimit } from "./component/dialog-context-limit"
 
 function rendererConfig(_config: TuiConfig.Info, plainTerminal: boolean): CliRendererConfig {
   const mouseEnabled = !plainTerminal && !Flag.MIMOCODE_DISABLE_MOUSE && (_config.mouse ?? true)
@@ -536,23 +538,20 @@ function App(props: { onSnapshot?: () => Promise<string[]> }) {
           sdk.switchDirectory(dir)
           await sync.bootstrap()
         }
-        const existing = sync.data.session
-          .toSorted((a, b) => b.time.updated - a.time.updated)
-          .find((x) => x.parentID === undefined)?.id
-        if (existing) {
-          local.orchestrator.setSessionID(existing)
-          // A `-s` launch wanted to land IN the orchestrator session; a plain
-          // Tab-into-orchestrator from a stale launch-dir session wanted Home
-          // (the fresh-entry state). Either way navigate exactly once, AFTER
-          // bootstrap, so the switched view resolves directly to its target with
-          // no intermediate frame — the root now exists in orchestratorDir.
-          if (resumeIntoSession) route.navigate({ type: "session", sessionID: existing })
-          else if (switching) route.navigate({ type: "home" })
-        } else {
-          const res = await sdk.client.session.create({})
-          if (res.data?.id) local.orchestrator.setSessionID(res.data.id)
-          if (switching) route.navigate({ type: "home" })
-        }
+        // Authoritative resolve-or-create against the switched directory. Reading
+        // sync.data.session here raced bootstrap's NON-blocking session list —
+        // bootstrap resolves before the list lands, so the lookup missed the
+        // existing root and minted another one on every entry.
+        const root = await sync.session.resolveRoot()
+        if (root.id) local.orchestrator.setSessionID(root.id)
+        // A `-s` launch wanted to land IN the orchestrator session; a plain
+        // Tab-into-orchestrator from a stale launch-dir session wanted Home
+        // (the fresh-entry state). Either way navigate exactly once, AFTER
+        // bootstrap, so the switched view resolves directly to its target with
+        // no intermediate frame — the root now exists in orchestratorDir. A root
+        // we just created is empty, so resuming into it makes no sense: go Home.
+        if (root.id && !root.created && resumeIntoSession) route.navigate({ type: "session", sessionID: root.id })
+        else if (switching) route.navigate({ type: "home" })
       } catch (e) {
         toast.show({ message: `Failed to enter Orchestrator: ${e}`, variant: "error" })
       } finally {
@@ -685,6 +684,18 @@ function App(props: { onSnapshot?: () => Promise<string[]> }) {
       },
     },
     {
+      title: t("tui.command.agent.force.title"),
+      value: "agent.force",
+      keybind: "agent_force",
+      category: "agent",
+      slash: {
+        name: "force-agent",
+      },
+      onSelect: () => {
+        dialog.replace(() => <DialogAgent force />)
+      },
+    },
+    {
       title: t("tui.command.modalities.title"),
       value: "model.modalities",
       category: "agent",
@@ -693,6 +704,17 @@ function App(props: { onSnapshot?: () => Promise<string[]> }) {
       },
       onSelect: () => {
         DialogModalities.show(dialog)
+      },
+    },
+    {
+      title: t("tui.command.context_limit.title"),
+      value: "model.context_limit",
+      category: "agent",
+      slash: {
+        name: "context-limit",
+      },
+      onSelect: () => {
+        DialogContextLimit.show(dialog)
       },
     },
     {
@@ -897,6 +919,28 @@ function App(props: { onSnapshot?: () => Promise<string[]> }) {
         dialog.replace(() => <DialogLogoDesign />)
       },
       category: "system",
+    },
+    {
+      title: t(
+        resolveVisualMode(kv.get("visual_mode", "vivid")) === "vivid"
+          ? "tui.command.visual_mode.title_on"
+          : "tui.command.visual_mode.title_off",
+      ),
+      value: "app.toggle.visual_mode",
+      slash: {
+        name: "vivid",
+      },
+      category: "system",
+      onSelect: (dialog) => {
+        const next = toggleVisualMode(kv.get("visual_mode", "vivid"))
+        kv.set("visual_mode", next)
+        toast.show({
+          message: t(next === "vivid" ? "tui.visual_mode.enabled" : "tui.visual_mode.disabled"),
+          variant: "info",
+          duration: 3000,
+        })
+        dialog.clear()
+      },
     },
     {
       title: t("tui.command.theme.switch_mode.to_dark"),

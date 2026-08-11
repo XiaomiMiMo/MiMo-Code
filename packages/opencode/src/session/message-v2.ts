@@ -325,6 +325,8 @@ export const ToolStateCompleted = z
     status: z.literal("completed"),
     input: z.record(z.string(), z.any()),
     output: z.string(),
+    providerOutput: z.unknown().optional(),
+    providerMetadata: z.record(z.string(), z.any()).optional(),
     title: z.string(),
     metadata: z.record(z.string(), z.any()),
     time: z.object({
@@ -355,6 +357,25 @@ export const ToolStateError = z
     ref: "ToolStateError",
   })
 export type ToolStateError = z.infer<typeof ToolStateError>
+
+/**
+ * The terminal state for a tool part that was left unfinished by an
+ * interruption. A `pending`/`running` part is persisted the moment the tool
+ * starts (so the TUI can stream progress) and is only rewritten by whoever
+ * finalizes the turn — so every finalizer must produce the SAME shape, or the
+ * transcript renders interrupted calls inconsistently. Callers: the abort
+ * finalizer in `SessionProcessor.cleanup` and `SessionPrompt.sweepOrphanToolParts`.
+ */
+export function abortedToolState(state: ToolPart["state"], error = "Tool execution aborted"): ToolStateError {
+  const end = Date.now()
+  return {
+    status: "error",
+    input: state.input,
+    error,
+    metadata: { ...("metadata" in state && state.metadata ? state.metadata : {}), interrupted: true },
+    time: { start: "time" in state ? state.time.start : end, end },
+  }
+}
 
 export const ToolState = z
   .discriminatedUnion("status", [ToolStatePending, ToolStateRunning, ToolStateCompleted, ToolStateError])
@@ -632,7 +653,14 @@ export const toModelMessagesEffect = Effect.fnUntraced(function* (
       return { type: "text", value: output }
     }
 
-    if (typeof output === "object") {
+    if (
+      output &&
+      typeof output === "object" &&
+      "text" in output &&
+      typeof output.text === "string" &&
+      "attachments" in output &&
+      Array.isArray(output.attachments)
+    ) {
       const outputObject = output as {
         text: string
         attachments?: Array<{ mime: string; url: string; filename?: string }>
@@ -808,12 +836,14 @@ export const toModelMessagesEffect = Effect.fnUntraced(function* (
             })
 
             const output =
-              finalAttachments.length > 0
-                ? {
-                    text: outputText,
-                    attachments: finalAttachments,
-                  }
-                : outputText
+              part.state.providerOutput !== undefined
+                ? part.state.providerOutput
+                : finalAttachments.length > 0
+                  ? {
+                      text: outputText,
+                      attachments: finalAttachments,
+                    }
+                  : outputText
 
             assistantMessage.parts.push({
               type: ("tool-" + part.tool) as `tool-${string}`,
@@ -823,6 +853,7 @@ export const toModelMessagesEffect = Effect.fnUntraced(function* (
               output,
               ...(part.metadata?.providerExecuted ? { providerExecuted: true } : {}),
               ...(differentModel ? {} : { callProviderMetadata: providerMeta(part.metadata) }),
+              ...(differentModel ? {} : { resultProviderMetadata: providerMeta(part.state.providerMetadata) }),
             })
           }
           if (part.state.status === "error") {
@@ -1064,12 +1095,7 @@ export function fromError(
 ): NonNullable<Assistant["error"]> {
   switch (true) {
     case e instanceof DOMException && e.name === "AbortError":
-      return new AbortedError(
-        { message: e.message },
-        {
-          cause: e,
-        },
-      ).toObject()
+      return new AbortedError({ message: e.message }, { cause: e }).toObject()
     // The AI SDK wraps the real failure in AI_RetryError after exhausting its
     // own maxRetries. Unwrap to the underlying error (.lastError) so the
     // APICallError branch below can extract statusCode/isRetryable/responseBody.
@@ -1103,6 +1129,18 @@ export function fromError(
           metadata: {
             code: (e as SystemError).code ?? "",
             syscall: (e as SystemError).syscall ?? "",
+            message: (e as SystemError).message ?? "",
+          },
+        },
+        { cause: e },
+      ).toObject()
+    case (e as SystemError)?.code === "ETIMEDOUT":
+      return new APIError(
+        {
+          message: (e as SystemError).message || "Request timed out",
+          isRetryable: true,
+          metadata: {
+            code: "ETIMEDOUT",
             message: (e as SystemError).message ?? "",
           },
         },
@@ -1147,6 +1185,14 @@ export function fromError(
           responseBody: parsed.responseBody,
           metadata: parsed.metadata,
         },
+        { cause: e },
+      ).toObject()
+    // A TypeError (e.g. "j.map is not a function" from non-array content)
+    // is a programming defect, not a transient API failure. Surface it as a
+    // named error so it is diagnosable instead of collapsing to UnknownError.
+    case e instanceof TypeError:
+      return new NamedError.Unknown(
+        { message: `TypeError: ${errorMessage(e)}` },
         { cause: e },
       ).toObject()
     case e instanceof Error:

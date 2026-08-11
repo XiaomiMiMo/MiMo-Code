@@ -614,7 +614,10 @@ You can control context compaction behavior through the `compaction` option.
   "compaction": {
     "auto": true,
     "prune": true,
-    "reserved": 10000
+    "reserved": 10000,
+    "max_context": {
+      "openai/gpt-5*": "300K"
+    }
   }
 }
 ```
@@ -622,6 +625,28 @@ You can control context compaction behavior through the `compaction` option.
 - `auto` - Automatically compact the session when context is full (default: `true`).
 - `prune` - Remove old tool outputs to save tokens (default: `true`).
 - `reserved` - Token buffer for compaction. Leaves enough window to avoid overflow during compaction
+- `max_context` - Compact earlier than the model's own window. Either one value for every model (`"300K"`) or a map keyed by `"<providerID>/<modelID>"` with wildcards. Values may be a token count (`300000`), a shorthand string (`"300K"`, `"1M"`) or a percentage of the model window (`"50%"`). The value is always clamped to the model's real window, so it can only lower the compaction trigger, never raise it. `0` means no budget for that model.
+
+The compaction trigger is the budget minus the reserves, so `"max_context": "300K"` on a
+model with a 20K output reserve and a 20K compaction buffer compacts at 260K. Run
+`mimocode models <provider>` to print each model's window and where it compacts, or use
+the `/context-limit` command in the TUI to set the budget for the current model from
+preset tiers.
+
+A common reason to set this: OpenAI prices GPT-5.6 prompts above 272K input tokens at 2x
+input and 1.5x output **for the whole request**. The models are capped at their Codex
+capacity (372K) rather than that billing line, so if you want to stay inside the cheaper
+tier, set the budget yourself:
+
+```json title="opencode.json"
+{
+  "compaction": {
+    "max_context": {
+      "openai/gpt-5.6*": "272K"
+    }
+  }
+}
+```
 
 ---
 

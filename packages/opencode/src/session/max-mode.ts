@@ -57,6 +57,8 @@ export type MaxStepInput = {
   messages: ModelMessage[]
   /** Execute-bearing tools from resolveTools — used to run the winner. */
   tools: Record<string, AITool>
+  /** Model-visible subset of the execute-bearing tool registry. */
+  activeTools?: string[]
   agentID?: string
   /**
    * Tool-choice from the per-step args. Accepted (so the same processArgs object
@@ -134,6 +136,7 @@ export const runCandidate = (
       prebuiltSystem: input.prebuiltSystem,
       messages: input.messages,
       tools: schemaOnly,
+      activeTools: input.activeTools,
       agentID: input.agentID,
     })
 
@@ -353,6 +356,7 @@ export const runMaxStep = (input: MaxStepInput): Effect.Effect<SessionProcessor.
         prebuiltSystem: input.prebuiltSystem,
         messages: input.messages,
         tools: input.tools,
+        activeTools: input.activeTools,
         model: input.model,
         agentID: input.agentID,
       })

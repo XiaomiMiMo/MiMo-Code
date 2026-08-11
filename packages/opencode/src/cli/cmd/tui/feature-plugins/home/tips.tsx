@@ -38,8 +38,7 @@ const tui: TuiPlugin = async (api) => {
     slots: {
       home_bottom() {
         const hidden = createMemo(() => api.kv.get("tips_hidden", false))
-        const first = createMemo(() => api.state.session.count() === 0)
-        const show = createMemo(() => !first() && !hidden())
+        const show = createMemo(() => !hidden())
         return <View show={show()} />
       },
     },

@@ -276,6 +276,33 @@ export const layer: Layer.Layer<
               message: `Worktree HEAD is not attached to ${expected} (got ${head || "detached HEAD"})`,
             })
           }
+
+          // A separate worktree checkout shares the object/ref store but has its
+          // own config, so it does NOT inherit the parent repo's LOCAL identity.
+          // Copy the parent's resolved identity (`git config` walks
+          // local->global->system) into the new worktree's own local config, so a
+          // commit made here is attributed exactly as a commit in the parent repo
+          // would be. Reading an unset key exits non-zero / empty, which the
+          // `git()` runner returns as empty text.
+          //
+          // When the parent has no identity we pin NOTHING, deliberately. A
+          // hardcoded substitute would attribute the user's commits to an address
+          // they never chose, and `git config` cannot see the rest of git's own
+          // resolution chain anyway (`EMAIL`, then git's `user@hostname`
+          // autodetect), so substituting here would pre-empt a value git could
+          // still resolve. Abstaining leaves the worktree resolving authorship
+          // exactly as the parent repo does, and leaves the fallback to git.
+          const parentName = (yield* git(["config", "user.name"], { cwd: ctx.worktree })).text.trim()
+          const parentEmail = (yield* git(["config", "user.email"], { cwd: ctx.worktree })).text.trim()
+          if (parentName) yield* git(["config", "user.name", parentName], { cwd: info.directory })
+          if (parentEmail) yield* git(["config", "user.email", parentEmail], { cwd: info.directory })
+          if (!parentName || !parentEmail)
+            log.warn("worktree created without a fully pinned git identity; git resolves authorship itself", {
+              directory: info.directory,
+              parent: ctx.worktree,
+              name: parentName ? "inherited" : "unset",
+              email: parentEmail ? "inherited" : "unset",
+            })
         }),
       )
 

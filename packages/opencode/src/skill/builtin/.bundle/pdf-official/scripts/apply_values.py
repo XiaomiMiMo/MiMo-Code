@@ -30,6 +30,7 @@ import argparse
 import importlib
 import importlib.util
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -107,7 +108,10 @@ def _validate(fields, values: dict[str, Any]) -> list[str]:
 
 def _flatten_via_qpdf(target_pdf: Path) -> bool:
     """Flatten `target_pdf` in place. Returns True on success."""
-    qpdf = shutil.which("qpdf")
+    qpdf = os.environ.get("MIMO_QPDF")  # bundled qpdf: use only when present, else fall through
+    if qpdf and not os.path.exists(qpdf):
+        qpdf = None
+    qpdf = qpdf or shutil.which("qpdf")
     if not qpdf:
         print("warning: qpdf not on PATH — cannot flatten", file=sys.stderr)
         return False

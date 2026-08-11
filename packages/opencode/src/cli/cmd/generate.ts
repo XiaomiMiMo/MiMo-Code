@@ -1,5 +1,6 @@
 import { Server } from "../../server/server"
 import type { CommandModule } from "yargs"
+import { UI } from "../ui"
 
 export const GenerateCommand = {
   command: "generate",
@@ -41,7 +42,7 @@ export const GenerateCommand = {
 
     // Wait for stdout to finish writing before process.exit() is called
     await new Promise<void>((resolve, reject) => {
-      process.stdout.write(json, (err) => {
+      process.stdout.write(UI.withTrailingEOL(json), (err) => {
         if (err) reject(err)
         else resolve()
       })

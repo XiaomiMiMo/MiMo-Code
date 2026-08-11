@@ -243,7 +243,7 @@ interface AutoMethodProps {
   title: string
   authorization: ProviderAuthAuthorization
 }
-function AutoMethod(props: AutoMethodProps) {
+export function AutoMethod(props: AutoMethodProps) {
   const { theme } = useTheme()
   const sdk = useSDK()
   const dialog = useDialog()

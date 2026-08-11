@@ -14,7 +14,7 @@ Every rule resolves to one of three actions:
 
 ## Two shapes
 
-A permission rule is **either** a single action string, **or** a glob-keyed map of action strings (for tools whose argument is a path or command):
+A permission rule is **either** a single action string, **or** a glob-keyed map of action strings (for tools whose argument is a path, a command, or another name worth matching on):
 
 ```jsonc
 {
@@ -36,9 +36,23 @@ A bare string at the top level (`"permission": "allow"`) becomes `{ "*": action 
 
 ## Configurable tools
 
-Path/command-keyed (accept the glob-map form): `read`, `edit`, `glob`, `grep`, `list`, `bash`, `task`, `actor`, `external_directory`, `lsp`, `skill`.
+Glob-keyed (accept the glob-map form): `read`, `edit`, `glob`, `grep`, `list`, `bash`, `task`, `actor`, `external_directory`, `lsp`, `skill`, `mcp_sampling`. The key is the tool's path or command argument, except for `mcp_sampling`, where it is the MCP server name.
 
 Simple action-only: `question`, `webfetch`, `websearch`, `codesearch`, `doom_loop`.
+
+`doom_loop` is the safety gate raised when repeated identical tool calls look like an infinite loop. Keep it at `ask` (the default) unless the surrounding automation has another reliable stop condition.
+
+`mcp_sampling` gates MCP **client-side sampling**: an MCP server asking MiMoCode to run a model call on its behalf (`sampling/createMessage`), so the server needs no API key of its own. The glob argument is the MCP server name, so you can allow one server and keep the rest at `ask`:
+
+```jsonc
+{
+  "permission": {
+    "mcp_sampling": { "*": "ask", "mimo-cut": "allow" }
+  }
+}
+```
+
+The prompt shows which server asked, the model that will run, the content types and audio size, and previews of the system and user prompts. A per-server `mcp.<name>.sampling` value of `deny` refuses before any prompt or model work; `allow` skips the prompt but still enforces size caps, the request timeout, and model capability checks. A `deny` from either control wins: `mcp.<name>.sampling: "allow"` does **not** override `permission.mcp_sampling` denying that server. See @mcp-sampling.md.
 
 Unknown keys fall through to a catch-all record, so future/custom tools can be named too.
 
@@ -65,9 +79,12 @@ For trusted, disposable environments (containers, sandboxes, CI) you can auto-ap
 
 | Surface | How |
 |---------|-----|
-| TUI (`mimo`) | `mimo --dangerously-skip-permissions` |
-| Headless (`mimo run`) | `mimo run --dangerously-skip-permissions "<prompt>"` |
+| TUI (`mimo`) | `mimo --dangerously-skip-permissions` or `mimo --yolo` |
+| TUI at runtime | `/skip-permissions` — toggle mid-session, instance-wide, inherited by subagents |
+| Headless (`mimo run`) | `mimo run --dangerously-skip-permissions "<prompt>"` or `mimo run --yolo "<prompt>"` |
 | Any surface (env) | `MIMOCODE_PERMISSION='"allow"'` or `MIMOCODE_DANGEROUSLY_SKIP_PERMISSIONS=1` |
+
+The `/skip-permissions` toggle auto-allows permission asks but keeps `deny` rules in force; forced-ask operations (e.g. destructive bash) still prompt and auto-reject after 60s (`MIMOCODE_SKIP_ALL_FORCED_ASK_TIMEOUT_MS`) with feedback the model can act on, so unattended runs don't hang.
 
 Semantics: an **allow-all base is injected UNDER your config**, so a tool with *no* rule auto-approves. Because the injected `*: allow` sits before your rules and the last matching rule wins, **any explicit rule you wrote still takes precedence** — a `deny` blocks, and a leftover `ask` will still prompt. Two consequences worth knowing:
 

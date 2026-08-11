@@ -1,7 +1,11 @@
 import { describe, expect, test } from "bun:test"
-import { DEFAULT_CHUNK_TIMEOUT } from "../../src/provider/provider"
+import { DEFAULT_CHUNK_TIMEOUT, DEFAULT_OPENAI_HEADER_TIMEOUT } from "../../src/provider/provider"
 
-describe("provider chunkTimeout", () => {
+describe("provider timeouts", () => {
+  test("OpenAI defaults response headers to a five-minute timeout", () => {
+    expect(DEFAULT_OPENAI_HEADER_TIMEOUT).toBe(300_000)
+  })
+
   test("DEFAULT_CHUNK_TIMEOUT is 8 minutes (480_000 ms)", () => {
     expect(DEFAULT_CHUNK_TIMEOUT).toBe(480_000)
   })

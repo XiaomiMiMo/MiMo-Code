@@ -4,6 +4,26 @@
  */
 export const SYSTEM_SPAWNED_AGENT_TYPES: ReadonlySet<string> = new Set(["checkpoint-writer", "dream", "distill"])
 
+export type InvalidOutputPolicy = "primary" | "actor" | "checkpoint"
+
+/** System agents must opt into an invalid-output contract instead of inheriting
+ * the user-facing primary retry when they run with agentID "main". */
+export const SYSTEM_INVALID_OUTPUT_POLICIES: Readonly<Record<string, InvalidOutputPolicy>> = {
+  "checkpoint-writer": "checkpoint",
+  dream: "actor",
+  distill: "actor",
+}
+
+export function resolveInvalidOutputPolicy(input: {
+  agentName: string
+  agentID?: string
+}): InvalidOutputPolicy {
+  const system = SYSTEM_INVALID_OUTPUT_POLICIES[input.agentName]
+  if (system) return system
+  if (!input.agentID || input.agentID === "main") return "primary"
+  return "actor"
+}
+
 /** Decide how a permission `ask` from the current turn should be routed:
  *  - system agent -> non-interactive (auto-deny, no human to answer)
  *  - orchestrator peer (background + mode:peer + has a parent) -> forward the ask

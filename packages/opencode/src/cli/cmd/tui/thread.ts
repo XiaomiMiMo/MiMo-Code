@@ -202,6 +202,7 @@ export const TuiThreadCommand = cmd({
         default: false,
       })
       .option("dangerously-skip-permissions", {
+        alias: ["yolo"],
         type: "boolean",
         describe: "auto-approve permissions that are not explicitly denied (dangerous!)",
         default: false,
@@ -241,7 +242,6 @@ export const TuiThreadCommand = cmd({
         if (trustLevel !== "trusted") {
           const accepted = await promptWorkspaceTrust(cwd, trustLevel)
           if (!accepted) {
-            process.exit(0)
             return
           }
           if (trustLevel === "untrusted") await markTrusted(cwd)
@@ -254,7 +254,6 @@ export const TuiThreadCommand = cmd({
         if (process.stdin.isTTY) {
           const accepted = await promptDangerousPermissions()
           if (!accepted) {
-            process.exit(0)
             return
           }
         }
@@ -368,7 +367,6 @@ export const TuiThreadCommand = cmd({
     } finally {
       unguard?.()
     }
-    process.exit(0)
   },
 })
 // scratch

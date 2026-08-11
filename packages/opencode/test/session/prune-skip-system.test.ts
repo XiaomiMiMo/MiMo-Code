@@ -63,6 +63,7 @@ describe("SessionPrune.fireCheckpoints — system-spawn skip", () => {
             return "started" as const
           }),
         waitForWriter: () => Effect.succeed("no-writer" as WriterOutcome | "no-writer"),
+        waitForWriterSettlement: () => Effect.succeed({ outcome: "no-writer" as const }),
         drainWriters: () => Effect.succeed({ drained: 0, timedOut: 0 }),
         hasCheckpoint: () => Effect.succeed(false),
         hasMemoryOrTasks: () => Effect.succeed(false),
@@ -140,6 +141,7 @@ describe("SessionPrune.fireCheckpoints — system-spawn skip", () => {
             return "started" as const
           }),
         waitForWriter: () => Effect.succeed("no-writer" as WriterOutcome | "no-writer"),
+        waitForWriterSettlement: () => Effect.succeed({ outcome: "no-writer" as const }),
         drainWriters: () => Effect.succeed({ drained: 0, timedOut: 0 }),
         hasCheckpoint: () => Effect.succeed(false),
         hasMemoryOrTasks: () => Effect.succeed(false),
@@ -217,6 +219,7 @@ describe("SessionPrune.fireCheckpoints — system-spawn skip", () => {
             return "started" as const
           }),
         waitForWriter: () => Effect.succeed("no-writer" as WriterOutcome | "no-writer"),
+        waitForWriterSettlement: () => Effect.succeed({ outcome: "no-writer" as const }),
         drainWriters: () => Effect.succeed({ drained: 0, timedOut: 0 }),
         hasCheckpoint: () => Effect.succeed(false),
         hasMemoryOrTasks: () => Effect.succeed(false),
@@ -279,6 +282,7 @@ describe("SessionPrune.fireCheckpoints — system-spawn skip", () => {
             return "started" as const
           }),
         waitForWriter: () => Effect.succeed("no-writer" as WriterOutcome | "no-writer"),
+        waitForWriterSettlement: () => Effect.succeed({ outcome: "no-writer" as const }),
         drainWriters: () => Effect.succeed({ drained: 0, timedOut: 0 }),
         hasCheckpoint: () => Effect.succeed(false),
         hasMemoryOrTasks: () => Effect.succeed(false),

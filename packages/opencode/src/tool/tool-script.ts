@@ -3,19 +3,18 @@ import os from "os"
 import fs from "fs"
 import path from "path"
 import { Effect } from "effect"
-import { asSchema, type Tool as AiTool } from "ai"
-import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js"
+import type { Tool as AiTool } from "ai"
 import { EffectBridge, InstanceState } from "@/effect"
 import { Log, Filesystem } from "@/util"
 import { Agent } from "@/agent/agent"
-import { normalizeToolResult } from "../mcp/tool-result"
+import type { ModelID, ProviderID } from "../provider/schema"
 import { evalScript, type HostFn } from "../workflow/sandbox"
-import { toolScriptRegistry, toolScriptMcp, TOOL_SCRIPT_EXCLUDED } from "./tool-script-ref"
+import { toolScriptRegistry, TOOL_SCRIPT_ALIASES, TOOL_SCRIPT_EXCLUDED } from "./tool-script-ref"
 import DESCRIPTION from "./tool-script.txt"
 import * as Tool from "./tool"
 import * as Truncate from "./truncate"
 
-const log = Log.create({ service: "tool.tool_script" })
+const log = Log.create({ service: "tool.exec" })
 
 const MAX_TOOL_CALLS_DEFAULT = 50
 const MAX_TOOL_CALLS_CEILING = 500
@@ -27,6 +26,7 @@ const MAX_RESULT_BYTES = 256 * 1024
 const MAX_LOG_BYTES = 64 * 1024
 const MAX_CODE_BYTES = 128 * 1024
 const MAX_FILE_BYTES = 10 * 1024 * 1024
+const TRACE_TAIL_ENTRIES = 20
 
 /** JSON Schema (zod v4 toJSONSchema output) → compact TS type text. Best-effort:
  * anything unrecognized renders as `unknown`, which is safe for declarations. */
@@ -66,25 +66,30 @@ function schemaToTs(schema: any): string {
 }
 
 /** Render the `tools` API declaration block appended to the tool description. */
-export function renderToolScriptDeclarations(defs: Tool.Def[], mcp: Record<string, AiTool> = {}): string {
+export function renderToolScriptDeclarations(defs: Tool.Def[]): string {
+  const aliases = new Set(Object.keys(TOOL_SCRIPT_ALIASES))
   const lines = defs
-    .filter((def) => !TOOL_SCRIPT_EXCLUDED.has(def.id))
+    .filter((def) => !TOOL_SCRIPT_EXCLUDED.has(def.id) && !aliases.has(def.id))
     .map((def) => {
       const summary = def.description.split("\n").find((l) => l.trim()) ?? ""
       const input = schemaToTs(z.toJSONSchema(def.parameters))
       return `  /** ${summary.trim().slice(0, 200)} */\n  ${def.id}(input: ${input}): Promise<ToolResult>`
     })
-  const mcpLines = Object.entries(mcp).map(([id, tool]) => {
-    const summary = (tool.description ?? "").split("\n").find((l) => l.trim()) ?? ""
-    const input = schemaToTs(asSchema(tool.inputSchema).jsonSchema)
-    return `  /** [MCP] ${summary.trim().slice(0, 200)} */\n  ${id}(input: ${input}): Promise<ToolResult>`
+  const aliasLines = Object.entries(TOOL_SCRIPT_ALIASES).flatMap(([alias, target]) => {
+    const def = defs.find((item) => item.id === target)
+    if (!def) return []
+    const summary = def.description.split("\n").find((line) => line.trim()) ?? ""
+    const input = schemaToTs(z.toJSONSchema(def.parameters))
+    return [`  /** Alias for ${target}. ${summary.trim().slice(0, 180)} */\n  ${alias}(input: ${input}): Promise<ToolResult>`]
   })
   return [
     "```ts",
-    "type ToolResult = { title: string; output: string; metadata: Record<string, unknown> }",
+    "type ToolResult = { title: string; output: string; metadata: Record<string, unknown>; structured?: unknown }",
     "declare const tools: {",
     ...lines,
-    ...mcpLines,
+    ...aliasLines,
+    "  /** Active MCP tools (if any) are also callable as tools.<name>(input). MCP results carry parsed structuredContent in `structured` when the server provides it. */",
+    "  [mcpToolName: string]: (input: Record<string, unknown>) => Promise<ToolResult>",
     "}",
     "// Raw file IO for machine-to-machine data (pipelines across executions).",
     "declare const files: {",
@@ -291,7 +296,7 @@ function makeSemaphore(max: number) {
 }
 
 export const ToolScriptTool = Tool.define(
-  "tool_script",
+  "exec",
   Effect.gen(function* () {
     const truncate = yield* Truncate.Service
     const agents = yield* Agent.Service
@@ -326,23 +331,63 @@ export const ToolScriptTool = Tool.define(
         Effect.gen(function* () {
           const maxToolCalls = params.max_tool_calls ?? MAX_TOOL_CALLS_DEFAULT
           const activeDeadlineMs = (params.timeout_seconds ?? ACTIVE_DEADLINE_S_DEFAULT) * 1000
+          const trace: TraceEntry[] = []
+          // completeToolCall REPLACES part metadata with execute()'s return value,
+          // so every terminal return re-publishes these counts — otherwise the
+          // per-tool breakdown vanishes the instant the run finishes.
+          const tally = () => {
+            const counts: Record<string, { n: number; errors: number }> = {}
+            for (const t of trace) {
+              const c = (counts[t.name] ??= { n: 0, errors: 0 })
+              c.n++
+              if (t.status === "error") c.errors++
+            }
+            return counts
+          }
+          // Bounded per-call trace tail for the TUI (last N calls, error text
+          // truncated) — kept small so metadata deltas stay cheap on 500-call
+          // runs. Re-published on terminal returns for the same reason as
+          // tally(): completeToolCall replaces part metadata.
+          const recentTail = () =>
+            trace.slice(-TRACE_TAIL_ENTRIES).map((t) => ({
+              name: t.name,
+              status: t.status,
+              durationMs: t.durationMs,
+              ...(t.error && { error: t.error.slice(0, 200) }),
+            }))
           if (Buffer.byteLength(params.code, "utf8") > MAX_CODE_BYTES) {
             return {
               title: "code too large",
-              metadata: { status: "code_error", toolCalls: 0 },
-              output: `<tool_script status="code_error">\n<error_message>\ncode exceeds ${MAX_CODE_BYTES} bytes\n</error_message>\n</tool_script>`,
+              metadata: { status: "code_error", toolCalls: 0, counts: tally(), recent: recentTail() },
+              output: `<exec status="code_error">\n<error_message>\ncode exceeds ${MAX_CODE_BYTES} bytes\n</error_message>\n</exec>`,
             }
           }
 
           const getDefs = toolScriptRegistry.current
-          if (!getDefs) throw new Error("tool_script registry unavailable")
-          const defs = (yield* getDefs()).filter((def) => !TOOL_SCRIPT_EXCLUDED.has(def.id))
-          const byId = new Map(defs.map((def) => [def.id, def]))
-          // MCP tools (late-bound ref, populated by SessionPrompt). Builtin ids
-          // win on collision — an MCP server must not shadow `read`/`grep`.
-          const mcpTools = toolScriptMcp.current ? yield* toolScriptMcp.current() : {}
-          const mcpById = new Map(Object.entries(mcpTools).filter(([id]) => !byId.has(id)))
+          if (!getDefs) throw new Error("exec tool registry unavailable")
           const agentInfo = yield* agents.get(ctx.agent)
+          const model = ctx.extra?.model as { id: ModelID; providerID: ProviderID } | undefined
+          const whitelist = Array.isArray(ctx.extra?.toolWhitelist)
+            ? new Set(ctx.extra.toolWhitelist.filter((id): id is string => typeof id === "string"))
+            : undefined
+          const defs = (
+            yield* getDefs(
+              model
+                ? { providerID: model.providerID, modelID: model.id, agent: agentInfo }
+                : undefined,
+            )
+          ).filter((def) => !TOOL_SCRIPT_EXCLUDED.has(def.id) && (!whitelist || whitelist.has(def.id)))
+          const byId = new Map(defs.map((def) => [def.id, def]))
+          // MCP tools (request-scoped view delivered via ctx.extra.execMcp,
+          // filled by SessionPrompt's resolveTools for THIS request — under
+          // mcp_tool_search gating only search-loaded tools appear, so exec
+          // cannot bypass the discovery gate; a module-level ref would be
+          // overwritten by concurrent sessions). Builtin ids win on collision
+          // — an MCP server must not shadow `read`/`grep`.
+          const mcpTools = (ctx.extra?.execMcp as { current?: Record<string, AiTool> } | undefined)?.current ?? {}
+          const mcpById = new Map(
+            Object.entries(mcpTools).filter(([id]) => !byId.has(id) && (!whitelist || whitelist.has(id))),
+          )
           // Non-git projects report worktree === "/" (see Instance.containsPath) —
           // "/" as a jail root would allow EVERYTHING. Fall back to the project
           // directory in that case. Relative guest paths resolve against roots[0].
@@ -386,34 +431,36 @@ export const ToolScriptTool = Tool.define(
           if (typeof transpiled === "object") {
             return {
               title: "transpile error",
-              metadata: { status: "code_error", toolCalls: 0 },
-              output: `<tool_script status="code_error">\n<error_message>\n${transpiled.error}\n</error_message>\n</tool_script>`,
+              metadata: { status: "code_error", toolCalls: 0, counts: tally(), recent: recentTail() },
+              output: `<exec status="code_error">\n<error_message>\n${transpiled.error}\n</error_message>\n</exec>`,
             }
           }
 
-          const trace: TraceEntry[] = []
           const logs: string[] = []
           let logBytes = 0
           let calls = 0
           const withSlot = makeSemaphore(MAX_CONCURRENT)
 
           // Live progress for the TUI: after each settled call, publish the
-          // aggregated per-tool counts through the OUTER part's metadata (each
-          // ctx.metadata fires a part delta the ToolScript view renders
-          // reactively). Fire-and-forget — progress must never fail a call.
+          // aggregated per-tool counts plus a bounded tail of per-call trace
+          // entries through the OUTER part's metadata (each ctx.metadata fires
+          // a part delta the ToolScript view renders reactively). The tail is
+          // capped so metadata deltas stay small on 500-call runs.
+          // Fire-and-forget — progress must never fail a call.
           const publishProgress = () => {
-            const counts: Record<string, { n: number; errors: number }> = {}
-            for (const t of trace) {
-              const c = (counts[t.name] ??= { n: 0, errors: 0 })
-              c.n++
-              if (t.status === "error") c.errors++
-            }
-            bridge.promise(ctx.metadata({ metadata: { running: true, toolCalls: trace.length, counts } })).catch(() => {})
+            bridge
+              .promise(
+                ctx.metadata({
+                  metadata: { running: true, toolCalls: trace.length, counts: tally(), recent: recentTail() },
+                }),
+              )
+              .catch(() => {})
           }
 
           const callTool: HostFn = (name: unknown, args: unknown) => {
             const id = String(name)
-            const def = byId.get(id)
+            const alias = TOOL_SCRIPT_ALIASES[id as keyof typeof TOOL_SCRIPT_ALIASES]
+            const def = byId.get(alias ?? id)
             const mcpDef = def ? undefined : mcpById.get(id)
             if (!def && !mcpDef) return Promise.reject(new Error(`unknown tool: ${id}`))
             calls++
@@ -423,21 +470,22 @@ export const ToolScriptTool = Tool.define(
             const start = Date.now()
             const subCtx = {
               ...ctx,
-              callID: `${ctx.callID ?? "tool_script"}:${seq}`,
-              // Sub-call metadata would clobber the outer tool_script call's
+              callID: `${ctx.callID ?? "exec"}:${seq}`,
+              // Sub-call metadata would clobber the outer exec call's
               // title in the UI — swallow it; the trace covers observability.
               metadata: () => Effect.void,
             }
-            // MCP path: same permission gate as the direct SessionPrompt MCP
-            // wrapper (ask per tool name), then normalizeToolResult folds the
-            // content blocks to text. Non-text blocks (images, audio, blobs)
-            // cannot cross the sandbox string boundary — note them so the
-            // script (and the model reading the aggregate) knows data was
-            // dropped rather than absent.
+            // MCP path: the map holds SessionPrompt's WRAPPED executes, so the
+            // full direct-call pipeline applies unchanged — permission ask,
+            // plugin before/after hooks, metrics, normalizeToolResult folding,
+            // truncation. Here we only adapt the wrapped result shape for the
+            // guest: structuredContent (when the server sent it) crosses as a
+            // parsed value under `structured` so scripts can filter/aggregate
+            // without re-parsing text; media attachments cannot cross the
+            // sandbox string boundary and are dropped with a note.
             const executeMcp = (tool: AiTool) =>
-              Effect.gen(function* () {
-                yield* ctx.ask({ permission: id, metadata: {}, patterns: ["*"], always: ["*"] })
-                const result = (yield* Effect.promise(() =>
+              Effect.tryPromise({
+                try: () =>
                   Promise.resolve(
                     tool.execute!(args ?? {}, {
                       toolCallId: subCtx.callID,
@@ -445,23 +493,26 @@ export const ToolScriptTool = Tool.define(
                       abortSignal: ctx.abort,
                     }),
                   ),
-                )) as CallToolResult
-                const normalized = normalizeToolResult(result)
-                if (normalized.isError) return yield* Effect.fail(new Error(normalized.output || "MCP tool execution failed"))
-                const dropped = normalized.attachments.length
-                  ? `\n[note: ${normalized.attachments.length} non-text attachment(s) dropped — binary content cannot cross the tool_script sandbox]`
-                  : ""
-                const truncated = yield* truncate.output(normalized.output + dropped, {}, agentInfo)
-                return {
-                  title: id,
-                  output: truncated.content,
-                  metadata: {
-                    ...normalized.metadata,
-                    truncated: truncated.truncated,
-                    ...(truncated.truncated && { outputPath: truncated.outputPath }),
-                  },
-                } satisfies Tool.ExecuteResult
-              })
+                catch: (err) => (err instanceof Error ? err : new Error(String(err))),
+              }).pipe(
+                Effect.map((result) => {
+                  const r = result as {
+                    output?: unknown
+                    metadata?: { mcp?: { structuredContent?: unknown } }
+                    attachments?: unknown[]
+                  }
+                  const structured = r?.metadata?.mcp?.structuredContent
+                  const dropped = Array.isArray(r?.attachments) && r.attachments.length
+                    ? `\n[note: ${r.attachments.length} non-text attachment(s) dropped — binary content cannot cross the exec sandbox]`
+                    : ""
+                  return {
+                    title: id,
+                    output: String(r?.output ?? "") + dropped,
+                    metadata: (r?.metadata ?? {}) as Record<string, unknown>,
+                    ...(structured !== undefined && { structured }),
+                  }
+                }),
+              )
             return withSlot(() =>
               bridge
                 .promise(def ? def.execute(args, subCtx) : executeMcp(mcpDef!))
@@ -469,7 +520,13 @@ export const ToolScriptTool = Tool.define(
                   (result) => {
                     trace.push({ name: id, status: "success", durationMs: Date.now() - start })
                     publishProgress()
-                    return { title: result.title, output: result.output, metadata: result.metadata }
+                    const structured = (result as { structured?: unknown }).structured
+                    return {
+                      title: result.title,
+                      output: result.output,
+                      metadata: result.metadata,
+                      ...(structured !== undefined && { structured }),
+                    }
                   },
                   (err) => {
                     const message = err instanceof Error ? err.message : String(err)
@@ -570,11 +627,11 @@ return { __undef: __out.value === undefined, json: __out.value === undefined ? "
               status === "timeout"
                 ? `execution exceeded its time budget (${activeDeadlineMs / 1000}s of active compute, ${WALL_DEADLINE_MS / 60000}min wall clock — time parked on tool calls is not charged against the compute budget; raise via timeout_seconds, max ${ACTIVE_DEADLINE_S_CEILING}). Original error: ${message}`
                 : message
-            log.warn("tool_script failed", { status, message: explained.slice(0, 500) })
+            log.warn("exec failed", { status, message: explained.slice(0, 500) })
             return {
               title: status,
-              metadata: { status, toolCalls: trace.length },
-              output: `<tool_script status="${status}">\n<error_message>\n${explained}\n</error_message>\n${logBlock}${traceBlock}</tool_script>`,
+              metadata: { status, toolCalls: trace.length, counts: tally(), recent: recentTail() },
+              output: `<exec status="${status}">\n<error_message>\n${explained}\n</error_message>\n${logBlock}${traceBlock}</exec>`,
             }
           }
 
@@ -592,15 +649,15 @@ return { __undef: __out.value === undefined, json: __out.value === undefined ? "
           if (returnedBytes > MAX_RESULT_BYTES) {
             return {
               title: "result too large",
-              metadata: { status: "budget_exceeded", toolCalls: trace.length },
-              output: `<tool_script status="budget_exceeded">\n<error_message>\nreturned value is ${returnedBytes} bytes (max ${MAX_RESULT_BYTES}). Aggregate or slice the data before returning.\n</error_message>\n${warningsBlock}${logBlock}${traceBlock}</tool_script>`,
+              metadata: { status: "budget_exceeded", toolCalls: trace.length, counts: tally(), recent: recentTail() },
+              output: `<exec status="budget_exceeded">\n<error_message>\nreturned value is ${returnedBytes} bytes (max ${MAX_RESULT_BYTES}). Aggregate or slice the data before returning.\n</error_message>\n${warningsBlock}${logBlock}${traceBlock}</exec>`,
             }
           }
 
           return {
             title: `${trace.length} tool calls`,
-            metadata: { status: "completed", toolCalls: trace.length },
-            output: `<tool_script status="completed">\n<return_value>\n${returnedText}\n</return_value>\n${warningsBlock}${logBlock}${traceBlock}</tool_script>`,
+            metadata: { status: "completed", toolCalls: trace.length, counts: tally(), recent: recentTail() },
+            output: `<exec status="completed">\n<return_value>\n${returnedText}\n</return_value>\n${warningsBlock}${logBlock}${traceBlock}</exec>`,
           }
         }).pipe(Effect.orDie),
     }

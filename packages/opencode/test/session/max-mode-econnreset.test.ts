@@ -62,6 +62,31 @@ function baseInput(llm: LLM.Interface): MaxStepInput {
 }
 
 describe("max-mode ECONNRESET handling (integration)", () => {
+  test("candidate preserves the model-visible active tool subset", async () => {
+    let captured: LLM.StreamInput | undefined
+    const llm = {
+      buildSystemArray: () => Effect.succeed([]),
+      stream: (input: LLM.StreamInput) => {
+        captured = input
+        return Stream.fromIterable([
+          { type: "text-delta", text: "done" } as LLM.Event,
+          { type: "finish-step", finishReason: "stop", usage: { inputTokens: 1, outputTokens: 1 } } as LLM.Event,
+        ])
+      },
+    } as LLM.Interface
+    const input = baseInput(llm)
+    input.tools = {
+      visible: { description: "visible" } as any,
+      hidden_mcp: { description: "hidden" } as any,
+    }
+    input.activeTools = ["visible"]
+
+    expectCandidate(await Effect.runPromise(runCandidate(input, 0)))
+
+    expect(captured?.activeTools).toEqual(["visible"])
+    expect(Object.keys(captured?.tools ?? {})).toEqual(["visible", "hidden_mcp"])
+  })
+
   test("candidate retries a transient error part and recovers with a fresh accumulator", async () => {
     // Each attempt's "good" path emits text then finishes. On failing attempts
     // we ALSO emit a text-delta before the error part, to prove the retry does

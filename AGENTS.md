@@ -98,6 +98,29 @@ const table = sqliteTable("session", {
 })
 ```
 
+### Reading a nullable column
+
+Two independent absences meet in one expression, and only one of them is
+`undefined`. `.get()` yields `undefined` when no row matches — Drizzle normalises
+the driver's `null` there — while a nullable column's SQL `NULL` arrives as
+`null`. So `row?.some_column` is `T | null | undefined`.
+
+When a caller only asks "is there a value", flatten to `undefined`, and write the
+flattening as an annotation rather than an `as` cast:
+
+```ts
+// Good — the compiler enforces it; deleting the `?? undefined` is a type error
+const boundary: MessageID | undefined = row?.last_checkpoint_message_id ?? undefined
+
+// Bad — the cast removes `null` from the union without converting anything,
+// so the declared type is untrue at runtime
+return row?.last_checkpoint_message_id as MessageID | undefined
+```
+
+Discriminate a possibly-absent value with truthiness or `== null`, never with
+`=== undefined` / `!== undefined`. Because `null !== undefined` is `true`, such a
+guard typechecks, reads correctly in review, and does nothing.
+
 ## Testing
 
 - Avoid mocks as much as possible

@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import argparse
 import io
+import os
 import shutil
 import subprocess
 import sys
@@ -74,7 +75,10 @@ def _check_roundtrip(reader) -> Finding:
 
 
 def _check_qpdf(path: Path) -> Finding:
-    binary = shutil.which("qpdf")
+    binary = os.environ.get("MIMO_QPDF")  # bundled qpdf: use only when present, else fall through
+    if binary and not os.path.exists(binary):
+        binary = None
+    binary = binary or shutil.which("qpdf")
     if not binary:
         return Finding("qpdf", Severity.INFO, "qpdf not on PATH (skipped)")
     proc = subprocess.run(

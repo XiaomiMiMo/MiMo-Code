@@ -7,6 +7,9 @@ import { cmd } from "./cmd"
 import { UI } from "../ui"
 import { EOL } from "os"
 import { AppRuntime } from "@/effect/app-runtime"
+import { Config } from "@/config"
+import { contextWindow } from "@/session/overflow"
+import { Token } from "@/util"
 import { Effect } from "effect"
 
 export const ModelsCommand = cmd({
@@ -41,12 +44,21 @@ export const ModelsCommand = cmd({
           Effect.gen(function* () {
             const svc = yield* Provider.Service
             const providers = yield* svc.list()
+            const cfg = yield* (yield* Config.Service).get()
 
             const print = (providerID: ProviderID, verbose?: boolean) => {
               const provider = providers[providerID]
               const sorted = Object.entries(provider.models).sort(([a], [b]) => a.localeCompare(b))
               for (const [modelID, model] of sorted) {
+                const win = contextWindow({ cfg, model })
                 process.stdout.write(`${providerID}/${modelID}`)
+                if (win.hard > 0) {
+                  process.stdout.write(
+                    ` — window ${Token.format(win.hard)}` +
+                      (win.source === "config" ? `, budget ${Token.format(win.effective)}` : "") +
+                      `, compacts at ${Token.format(win.usable)}`,
+                  )
+                }
                 process.stdout.write(EOL)
                 if (verbose) {
                   process.stdout.write(JSON.stringify(model, null, 2))

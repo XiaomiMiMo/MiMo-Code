@@ -576,6 +576,17 @@ export interface Hooks {
     },
     output: {},
   ) => Promise<void>
+  /** Fires immediately before an agent request is sent to the model gateway. */
+  "session.llm.request"?: (
+    input: {
+      sessionID: string
+      providerID: string
+      modelID: string
+      trajectory: Array<{ role: string; content: unknown }>
+      systemPrompt: string[]
+    },
+    output: {},
+  ) => Promise<void>
   /**
    * Fires immediately before each LLM step in SessionPrompt.runLoop.
    * `step` increments per loop iteration, NOT per user message — a single user

@@ -3,6 +3,11 @@ import { fileURLToPath } from "bun"
 import { useTheme } from "../context/theme"
 import { useDialog } from "@tui/ui/dialog"
 import { useSync } from "@tui/context/sync"
+import { useLocal } from "@tui/context/local"
+import { useRoute } from "@tui/context/route"
+import * as Model from "@tui/util/model"
+import { Locale, Token } from "@/util"
+import type { AssistantMessage } from "@mimo-ai/sdk/v2"
 import { For, Match, Switch, Show, createMemo } from "solid-js"
 
 export type DialogStatusProps = {}
@@ -11,8 +16,36 @@ export function DialogStatus() {
   const sync = useSync()
   const { theme } = useTheme()
   const dialog = useDialog()
+  const local = useLocal()
+  const route = useRoute()
 
   const enabledFormatters = createMemo(() => sync.data.formatter.filter((f) => f.enabled))
+
+  const context = createMemo(() => {
+    const sessionID = route.data.type === "session" ? route.data.sessionID : undefined
+    const last = sessionID
+      ? (sync.data.message[sessionID]?.["main"] ?? []).findLast(
+          (item): item is AssistantMessage => item.role === "assistant" && item.tokens.output > 0,
+        )
+      : undefined
+    // Describe the model the tokens were actually spent on, so a mid-session model
+    // switch cannot divide the old model's usage by the new model's trigger.
+    const target = last ? { providerID: last.providerID, modelID: last.modelID } : local.model.current()
+    if (!target) return
+    const win = Model.contextWindow(sync.data.config, Model.get(sync.data.provider, target.providerID, target.modelID))
+    if (!win) return
+    const tokens = last
+      ? last.tokens.input + last.tokens.output + last.tokens.reasoning + last.tokens.cache.read + last.tokens.cache.write
+      : undefined
+    return {
+      model: `${target.providerID}/${target.modelID}`,
+      window: Token.format(win.hard),
+      budget: win.source === "config" ? Token.format(win.effective) : undefined,
+      reserved: Token.format(win.effective - win.usable),
+      compact: Token.format(win.usable),
+      used: tokens ? `${Locale.number(tokens)} (${Math.round((tokens / win.usable) * 100)}%)` : undefined,
+    }
+  })
 
   const plugins = createMemo(() => {
     const list = sync.data.config.plugin ?? []
@@ -50,6 +83,22 @@ export function DialogStatus() {
           esc
         </text>
       </box>
+      <Show when={context()}>
+        {(item) => (
+          <box>
+            <text fg={theme.text}>Context</text>
+            <text fg={theme.textMuted} wrapMode="word">
+              {item().model}
+            </text>
+            <text fg={theme.textMuted}>
+              {item().budget
+                ? `window ${item().window} · budget ${item().budget} (config) · reserved ${item().reserved} · compacts at ${item().compact}`
+                : `window ${item().window} (model) · reserved ${item().reserved} · compacts at ${item().compact}`}
+            </text>
+            <Show when={item().used}>{(used) => <text fg={theme.textMuted}>used {used()}</text>}</Show>
+          </box>
+        )}
+      </Show>
       <Show when={Object.keys(sync.data.mcp).length > 0} fallback={<text fg={theme.text}>No MCP Servers</text>}>
         <box>
           <text fg={theme.text}>{Object.keys(sync.data.mcp).length} MCP Servers</text>

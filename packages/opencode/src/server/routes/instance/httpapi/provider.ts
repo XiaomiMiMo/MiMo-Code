@@ -1,5 +1,6 @@
 import { ProviderAuth } from "@/provider"
 import { Config } from "@/config"
+import { Auth } from "@/auth"
 import { ModelsDev } from "@/provider"
 import { Provider } from "@/provider"
 import { ProviderID } from "@/provider/schema"
@@ -72,6 +73,7 @@ export const ProviderApi = HttpApi.make("provider")
 export const providerHandlers = Layer.unwrap(
   Effect.gen(function* () {
     const cfg = yield* Config.Service
+    const authStore = yield* Auth.Service
     const provider = yield* Provider.Service
     const svc = yield* ProviderAuth.Service
 
@@ -95,6 +97,7 @@ export const providerHandlers = Layer.unwrap(
         all: Object.values(providers),
         default: Provider.defaultModelIDs(providers),
         connected: Object.keys(connected),
+        authenticated: Object.keys(yield* authStore.all().pipe(Effect.orDie)),
       }
     })
 
@@ -136,6 +139,7 @@ export const providerHandlers = Layer.unwrap(
     )
   }),
 ).pipe(
+  Layer.provide(Auth.defaultLayer),
   Layer.provide(ProviderAuth.defaultLayer),
   Layer.provide(Provider.defaultLayer),
   Layer.provide(Config.defaultLayer),

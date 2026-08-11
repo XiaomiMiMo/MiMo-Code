@@ -97,4 +97,28 @@ describe("skill.search", () => {
   test("excludes compose skills from the searchable manifest", () => {
     expect(searchSkills("compose:tdd", [skill("compose:tdd", "Use test-driven development.")])).toEqual([])
   })
+
+  test("does not special-case compose-next: its name is not a compose: namespace", () => {
+    // compose-next is kept out of search by disable-model-invocation at the
+    // caller (skill-search.ts reads Skill.modelInvocable), not by a name check
+    // in here. Given a caller that does pass it in, the pure function ranks it
+    // like any other skill.
+    const results = searchSkills("compose-next", [
+      skill("compose-next", "End-to-end feature orchestration for frontier models."),
+    ])
+    expect(results.map((r) => r.skill_id)).toEqual(["compose-next"])
+  })
+
+  test("caller-side filtering: a skill absent from the input list cannot appear in results", () => {
+    // Mirrors the production path: skill-search.ts feeds searchSkills the
+    // result of Skill.modelInvocable(currentAgent), which drops every
+    // disable-model-invocation skill, so no such skill can be returned or
+    // auto-loaded.
+    const modelInvocableForDefaultAgent = [
+      skill("deep-research", "Multi-source research report."),
+      skill("data-analytics", "Analyze datasets and produce findings."),
+    ]
+    const results = searchSkills("compose-next end to end feature orchestration", modelInvocableForDefaultAgent)
+    expect(results.every((r) => r.skill_id !== "compose-next")).toBe(true)
+  })
 })

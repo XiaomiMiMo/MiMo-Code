@@ -19,6 +19,7 @@ import { SYSTEM_SPAWNED_AGENT_TYPES } from "@/agent/config"
 import { Bus } from "@/bus"
 import { TuiEvent } from "@/cli/cmd/tui/event"
 import { MessageV2 } from "@/session/message-v2"
+import { SessionRetry } from "@/session/retry"
 import { Inbox } from "@/inbox"
 import { renderActorNotification } from "@/inbox/render"
 import { Plugin, HookEvent } from "@/plugin"
@@ -39,10 +40,10 @@ export const MAX_PRE_REACT = 3
 /** Cap on postStop ReAct re-entries per spawn. See MAX_PRE_REACT TODO. */
 export const MAX_POST_REACT = 3
 /**
- * T40 stall watchdog scan cadence. Sits between the per-step turn heartbeat and
- * the DEFAULT_LIVENESS_STALL_MS (90s) window, and just under the registry's own
- * 60s stuck-scan, so a genuinely stalled child is caught within ~one window of
- * flipping to `stalled` without hammering the DB.
+ * T40 stall watchdog scan cadence. Well inside the DEFAULT_LIVENESS_STALL_MS (6m)
+ * window and just under the registry's own 60s stuck-scan, so a genuinely stalled
+ * child is caught within one scan of flipping to `stalled` without hammering the
+ * DB.
  */
 export const WATCHDOG_SCAN_INTERVAL_MS = 45_000
 const RETURN_FORMAT_INSTRUCTION = `
@@ -120,8 +121,87 @@ export type AgentOutcome =
       // only when reportedStatus was downgraded to "partial"/"blocked".
       incompleteTasks?: string[]
     }
-  | { status: "failure"; error: string }
+  | { status: "failure"; error: string; failure?: FailureInfo }
   | { status: "cancelled" }
+
+/**
+ * Coarse, provider-agnostic category of a settled failure. Deliberately small:
+ * a consumer needs to answer "will this recur identically?", not to know which
+ * provider spelled which body which way. The provider-specific taxonomy has
+ * already been collapsed upstream by MessageV2.fromError, which runs
+ * ProviderError.parseAPICallError / isOverflow / isOpenAiErrorRetryable.
+ */
+export type FailureKind = "transient" | "overflow" | "auth" | "aborted" | "other"
+
+/**
+ * Classification carried on a `failure` outcome so a consumer can branch without
+ * string-matching `error`.
+ *
+ * PRESENT only when the failure came from a settled assistant error — i.e. the
+ * child's turn ran and persisted a normalized named error. ABSENT when the work
+ * fiber failed some other way (a defect during teardown, or a hand-built outcome
+ * such as checkpoint's "timeout"): there is no provider taxonomy to report and
+ * asserting one would be a lie. Read it with truthiness / `== null`, never
+ * `=== undefined` (AGENTS.md, "Reading a nullable column").
+ *
+ * `retryable` means "belonged to the retryable class", NOT "please retry". The
+ * child's LLM calls already run through SessionRetry's ladder (session/retry.ts,
+ * consumed by session/llm.ts and session/processor.ts), so any failure reaching
+ * a consumer is ALREADY post-retry.
+ */
+export interface FailureInfo {
+  readonly kind: FailureKind
+  readonly retryable: boolean
+  /** The persisted NamedError name, e.g. "APIError" / "ContextOverflowError". */
+  readonly name: string
+}
+
+/**
+ * Classify a settled assistant error where the typed error still exists.
+ *
+ * Reuses SessionRetry.retryable as the retryability oracle rather than adding a
+ * taxonomy: its input type IS this data shape (`Err` === `NamedError.toObject()`)
+ * and it already folds in isRetryableTransientError plus every 429 / 5xx / quota
+ * special case. `kind` is then read off the named-error identity, which is what
+ * MessageV2.fromError derived from ProviderError.parseAPICallError.
+ */
+function classifyAssistantError(err: SessionRetry.Err): FailureInfo {
+  // Truthiness, not `!== undefined`: retryable() returns a status *message*, and
+  // an empty one is not a usable retry signal.
+  const retryable = !!SessionRetry.retryable(err)
+  // 401/403 read off the statusCode ProviderError.parseAPICallError already
+  // extracted — not a new taxonomy and not a re-parse of prose. MessageV2.AuthError
+  // ("ProviderAuthError") only covers a MISSING key (LoadAPIKeyError); a rejected
+  // one arrives as an APIError, and both are the same thing to a consumer.
+  const status = MessageV2.APIError.isInstance(err) ? err.data.statusCode : undefined
+  const kind: FailureKind = MessageV2.ContextOverflowError.isInstance(err)
+    ? "overflow"
+    : MessageV2.AuthError.isInstance(err) || status === 401 || status === 403
+      ? "auth"
+      : MessageV2.AbortedError.isInstance(err)
+        ? "aborted"
+        : retryable
+          ? "transient"
+          : "other"
+  return { kind, retryable, name: err.name }
+}
+
+/**
+ * Raised by runAgentLoop when the child's turn settled with an assistant error.
+ * Exists solely to carry the classification across the Effect failure channel to
+ * forkWork's onFailure — that is the only place AgentOutcome is built, and the
+ * typed error is not reachable from there. Deliberately a plain Error subclass:
+ * Cause.pretty renders it byte-identically to `new Error(message)`, so the human
+ * `error` string is unchanged.
+ */
+class AssistantSettledError extends Error {
+  constructor(
+    message: string,
+    readonly failure: FailureInfo,
+  ) {
+    super(message)
+  }
+}
 
 export interface SpawnInput {
   mode: SpawnMode
@@ -273,6 +353,17 @@ export const layer = Layer.effect(
       // last text part (often a pre-tool-call preamble) is dropped to avoid
       // duplicating the result downstream. See spec §5.2.
       const info = (result as MessageV2.WithParts | undefined)?.info
+      if (info?.role === "assistant" && info.error) {
+        // Classify HERE: `info.error` is the persisted, already-normalized named
+        // error. Downstream (forkWork's onFailure) only has Cause.pretty's string,
+        // so re-deriving the class there would mean re-parsing prose.
+        return yield* Effect.fail(
+          new AssistantSettledError(
+            `Actor assistant failed: ${info.error.name}`,
+            classifyAssistantError(info.error),
+          ),
+        )
+      }
       const structured = info?.role === "assistant" ? info.structured : undefined
       const finalText =
         structured !== undefined
@@ -639,10 +730,18 @@ export const layer = Layer.effect(
               Effect.gen(function* () {
                 const cancelled = Cause.hasInterruptsOnly(cause)
                 const error = Cause.pretty(cause)
+                // Recover the classification runAgentLoop attached. Squash is the
+                // established idiom here (see session/prompt.ts, tool/shell-wrap.ts).
+                // A failure raised anywhere else carries none, and the field stays
+                // absent rather than being guessed from `error`.
+                const squashed = Cause.squash(cause)
+                const failure = squashed instanceof AssistantSettledError ? squashed.failure : undefined
                 yield* notify(cancelled ? "cancelled" : "failed", cancelled ? {} : { error })
                 yield* Deferred.succeed(
                   outcome,
-                  cancelled ? { status: "cancelled" as const } : { status: "failure" as const, error },
+                  cancelled
+                    ? { status: "cancelled" as const }
+                    : { status: "failure" as const, error, ...(failure ? { failure } : {}) },
                 )
                 yield* Effect.sync(() => forkContexts.delete(input.actorID))
               }),
@@ -747,13 +846,13 @@ export const layer = Layer.effect(
         forkContexts.set(actorID, input.forkContext)
       }
 
-      // Auto-inject return-format instruction for non-specialized subagents.
-      // Excluded: agents with hardcoded `prompt` (explore/title/summary — own
-      // contracts), checkpoint-writer (special — task is itself a complete
-      // writer-instruction string), and peer mode (routes via spawnPeer).
+      // Auto-inject return-format instruction for lifecycle-managed subagents.
+      // Agents with an explicit completionGate keep this behavior even when
+      // they also provide a dedicated system prompt.
       const agentInfo = yield* agents.get(input.agentType)
       const gateEligible =
-        agentInfo?.mode === "subagent" && !agentInfo?.prompt && input.agentType !== "checkpoint-writer"
+        agentInfo?.mode === "subagent" &&
+        (agentInfo.completionGate === true || (!agentInfo.prompt && input.agentType !== "checkpoint-writer"))
       const taskWithFormat = gateEligible ? input.task + RETURN_FORMAT_INSTRUCTION : input.task
 
       const { fiber, outcome } = yield* forkWork({
@@ -861,17 +960,17 @@ export const layer = Layer.effect(
     // Event-driven stall detection: a background fiber periodically scans active
     // background actors (ActorRegistry.listActive → pending/running + background),
     // computes deriveLiveness for each, and when a PEER/subagent flips to
-    // `stalled` (running/pending but now-lastTurnTime > DEFAULT_LIVENESS_STALL_MS
-    // AND turnCount not advancing — deriveLiveness encodes exactly that) pushes
-    // ONE actor_notification{stalled} to its parent. Reuses the notifyTerminal
-    // shape (inbox.send actor_notification + renderActorNotification + a TUI
-    // toast) so stalled joins completed/failed/cancelled on one contract.
+    // `stalled` (running/pending but nothing has landed for the actor's slice for
+    // longer than DEFAULT_LIVENESS_STALL_MS — deriveLiveness encodes exactly that)
+    // pushes ONE actor_notification{stalled} to its parent. Reuses the
+    // notifyTerminal shape (inbox.send actor_notification + renderActorNotification
+    // + a TUI toast) so stalled joins completed/failed/cancelled on one contract.
     //
     // Debounce — the crux: `notified` holds the "sessionID:actorID" of actors we
     // have ALREADY warned about for their CURRENT stall episode. We emit only on
     // the not-yet-notified → stalled edge; while it STAYS stalled across ticks it
     // is in `notified` and we skip. We re-arm (delete the key) the moment the
-    // actor is no longer stalled — it resumed (turnCount advanced so
+    // actor is no longer stalled — it resumed (activity landed again, so
     // deriveLiveness reads `progressing`), went terminal, or vanished — so a
     // later re-stall notifies again. One notification per stall episode.
     const notified = new Set<string>()
@@ -907,13 +1006,16 @@ export const layer = Layer.effect(
             sessionID: actor.sessionID,
             actorID: actor.actorID,
             description: actor.description,
-            lastTurnTime: actor.lastTurnTime,
+            // Same reference the classification used, for the same reason the
+            // notification carries it: an observability payload that reports the
+            // step clock while the predicate read the activity clock is a trap.
+            lastActivityTime: actor.lastActivityTime ?? actor.time.created,
             stalledDuration: stalledForMs,
           })
           .pipe(Effect.ignore)
         yield* Effect.promise(() =>
           Bus.publish(TuiEvent.ToastShow, {
-            message: `Child "${actor.description}" appears stalled`,
+            message: `Child "${actor.description}" appears stalled (no activity for ${Math.floor(stalledForMs / 1000)}s)`,
             variant: "info",
           }),
         ).pipe(Effect.ignore)
@@ -930,7 +1032,11 @@ export const layer = Layer.effect(
         if (live === "stalled") {
           if (notified.has(key)) continue // already warned this episode — debounce
           notified.add(key)
-          yield* notifyStalled(actor, now - actor.lastTurnTime)
+          // Report the quantity the classification actually used — silence since
+          // the last part write, or since spawn when nothing has landed — not
+          // time since the last completed step, which deriveLiveness no longer
+          // reads. A number that disagrees with its own predicate is a bug.
+          yield* notifyStalled(actor, now - (actor.lastActivityTime ?? actor.time.created))
           continue
         }
         // Not stalled (progressing/terminal) → re-arm so a future re-stall notifies.
@@ -990,12 +1096,12 @@ export const layer = Layer.effect(
 // "Cannot access 'defaultLayer' before initialization", breaking every
 // it.live test harness. Same pattern session/prompt, session/checkpoint,
 // tool/registry, provider, etc. already use.
-export const defaultLayer = Layer.suspend(() =>
+/** App composition variant with SessionPrompt supplied by the root graph. */
+export const appLayer = Layer.suspend(() =>
   layer.pipe(
     Layer.provide(Session.defaultLayer),
     Layer.provide(ActorRegistry.defaultLayer),
     Layer.provide(Agent.defaultLayer),
-    Layer.provide(SessionPrompt.defaultLayer),
     Layer.provide(SessionRunState.defaultLayer),
     Layer.provide(Inbox.defaultLayer),
     Layer.provide(Plugin.defaultLayer),
@@ -1003,5 +1109,7 @@ export const defaultLayer = Layer.suspend(() =>
     Layer.provide(TaskRegistry.defaultLayer),
   ),
 )
+
+export const defaultLayer = appLayer.pipe(Layer.provide(SessionPrompt.defaultLayer))
 
 export * as Actor from "./spawn"

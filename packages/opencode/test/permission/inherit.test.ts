@@ -17,6 +17,7 @@ afterEach(async () => {
 
 beforeEach(() => {
   forwardRef.parentGrants.clear()
+  forwardRef.clearGrantsForParent("ses_parent")
 })
 
 const bus = Bus.layer
@@ -136,6 +137,89 @@ describe("Permission.ask parent-grant inheritance", () => {
         const result = yield* perm.ask(childAsk(["/x/file.ts"])).pipe(Effect.exit)
         expect(result._tag).toBe("Failure")
         expect((yield* perm.list()).length).toBe(0)
+      }),
+    ),
+  )
+})
+
+// An EXPLICIT `session grant-approval <child|all>` must reach a background
+// SUBAGENT too. decideAskRouting routes such a child to `inherit` (never to
+// `forward`), so before this the DB-backed grant was consulted nowhere on the
+// subagent's path: `grant-approval` silently did nothing and the child's
+// external_directory ask failed closed. Unlike the in-memory parentGrants
+// snapshot, this grant survives a restart and a separate-process child, so it
+// cannot lapse mid-task.
+describe("Permission.ask explicit grant-approval reaches a background subagent", () => {
+  it.live(
+    "grant-approval for this child auto-approves with NO parent snapshot at all",
+    provideTmpdirInstance(() =>
+      Effect.gen(function* () {
+        const perm = yield* Permission.Service
+        forwardRef.setGrant("ses_parent", "ses_child")
+        let asked = 0
+        const unsub = Bus.subscribe(Permission.Event.Asked, () => {
+          asked += 1
+        })
+        // No setParentGrants: this is exactly the "snapshot missing / lapsed"
+        // case (separate-process child, or a parent that never asked).
+        const result = yield* perm
+          .ask(childAsk(["/Users/me/projects/app/*"], { permission: "external_directory" as never }))
+          .pipe(Effect.exit)
+        unsub()
+        expect(result._tag).toBe("Success")
+        expect(asked).toBe(0)
+        expect((yield* perm.list()).length).toBe(0)
+      }),
+    ),
+  )
+
+  it.live(
+    "an 'all' grant covers any child of that parent",
+    provideTmpdirInstance(() =>
+      Effect.gen(function* () {
+        const perm = yield* Permission.Service
+        forwardRef.setGrant("ses_parent", "*")
+        const result = yield* perm
+          .ask(childAsk(["/anywhere/x.ts"], { sessionID: "ses_other_child" as never }))
+          .pipe(Effect.exit)
+        expect(result._tag).toBe("Success")
+      }),
+    ),
+  )
+
+  it.live(
+    "WITHOUT a grant and without a snapshot the subagent still fails closed",
+    provideTmpdirInstance(() =>
+      Effect.gen(function* () {
+        const perm = yield* Permission.Service
+        const result = yield* perm.ask(childAsk(["/ungranted/x.ts"])).pipe(Effect.exit)
+        expect(result._tag).toBe("Failure")
+      }),
+    ),
+  )
+
+  it.live(
+    "a grant for a DIFFERENT child does not leak to this one",
+    provideTmpdirInstance(() =>
+      Effect.gen(function* () {
+        const perm = yield* Permission.Service
+        forwardRef.setGrant("ses_parent", "ses_someone_else")
+        const result = yield* perm.ask(childAsk(["/ungranted/x.ts"])).pipe(Effect.exit)
+        expect(result._tag).toBe("Failure")
+      }),
+    ),
+  )
+
+  it.live(
+    "forced-ask (bash_delete) is NOT auto-approved by a grant",
+    provideTmpdirInstance(() =>
+      Effect.gen(function* () {
+        const perm = yield* Permission.Service
+        forwardRef.setGrant("ses_parent", "*")
+        const result = yield* perm
+          .ask(childAsk(["rm -rf /"], { permission: "bash_delete" as never }))
+          .pipe(Effect.exit)
+        expect(result._tag).toBe("Failure")
       }),
     ),
   )

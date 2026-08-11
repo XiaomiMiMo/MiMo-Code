@@ -26,6 +26,9 @@ def _find_soffice() -> str:
     override = os.environ.get("DOCX_SKILL_SOFFICE")
     if override:
         return override
+    bundled = os.environ.get("MIMO_SOFFICE")  # bundled runtime: use only when present, else fall through
+    if bundled and Path(bundled).is_file():
+        return bundled
     for candidate in ("soffice", "libreoffice"):
         path = shutil.which(candidate)
         if path:
@@ -49,7 +52,7 @@ def render_pdf(source: Path, out_dir: Path | None = None) -> Path:
         cmd = [
             soffice,
             "--headless",
-            f"-env:UserInstallation=file://{scratch}",
+            f"-env:UserInstallation={Path(scratch).as_uri()}",  # bare file://{path} breaks on Windows
             "--convert-to", "pdf",
             "--outdir", str(dest_dir),
             str(source),

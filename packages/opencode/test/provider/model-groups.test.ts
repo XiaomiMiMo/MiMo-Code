@@ -377,7 +377,11 @@ test("unknown custom group name still throws", async () => {
 // fed straight into resolveModelRef (covered above) and takes precedence over the
 // structured `model` field. Pure schema parse — no Instance/LLM needed.
 test("PromptInput and ShellInput accept modelRef", () => {
-  const p = SessionPrompt.PromptInput.parse({ sessionID: "ses_x", modelRef: "ultra", parts: [] })
+  const p = SessionPrompt.PromptInput.parse({
+    sessionID: "ses_x",
+    modelRef: "ultra",
+    parts: [{ type: "text", text: "hi" }],
+  })
   expect(p.modelRef).toBe("ultra")
   const s = SessionPrompt.ShellInput.parse({
     sessionID: "ses_x",

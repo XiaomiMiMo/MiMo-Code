@@ -66,7 +66,7 @@ function createGlobalSync() {
     path: { state: "", config: "", worktree: "", directory: "", home: "" },
     project: projectCache.value,
     session_todo: {},
-    provider: { all: [], connected: [], default: {} },
+    provider: { all: [], connected: [], authenticated: [], default: {} },
     provider_auth: {},
     config: {},
     reload: undefined,

@@ -32,7 +32,7 @@ For detailed information: https://docs.astral.sh/uv/
 
 ### Python version
 
-Pin a single Python minor version. The recommended default is 3.12 (broadest ecosystem support — PyTorch, CUDA images, downstream libraries). Python 3.13 is the latest stable; prefer it for new projects unless you depend on packages that haven't added 3.13 support yet.
+Pin a single Python minor version. The recommended default is 3.12 (broadest ecosystem support — PyTorch, CUDA images, downstream libraries). Python 3.14 is the latest stable; prefer it for new projects unless you depend on packages that haven't added 3.14 support yet.
 
 ```toml
 # pyproject.toml
@@ -106,21 +106,17 @@ Always use ruff for Python linting and formatting. Prefer `uv run ruff` when ruf
 
 ### Configuration
 
-Add to `pyproject.toml`. Use `select` to make the rule set explicit:
+Add to `pyproject.toml`:
 
 ```toml
 [tool.ruff.lint]
-select = [
-    "E",   # pycodestyle
-    "F",   # Pyflakes
+extend-select = [
     "UP",  # pyupgrade
-    "B",   # flake8-bugbear
-    "SIM", # flake8-simplify
     "I",   # isort
 ]
 ```
 
-When using `ruff format` (recommended), rules that conflict with the formatter are automatically suppressed.
+Do not enable the full `E` category or other formatter-conflicting rules (E1xx, E501, W191, Q, COM); `ruff format` owns layout.
 
 ### Post-edit workflow
 

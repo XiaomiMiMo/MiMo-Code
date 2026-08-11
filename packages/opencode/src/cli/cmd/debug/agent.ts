@@ -9,6 +9,7 @@ import { MessageID, PartID } from "../../../session/schema"
 import { ToolRegistry } from "../../../tool"
 import { Instance } from "../../../project/instance"
 import { Permission } from "../../../permission"
+import { Log } from "../../../util"
 import { iife } from "../../../util/iife"
 import { bootstrap } from "../../bootstrap"
 import { cmd } from "../cmd"
@@ -40,7 +41,7 @@ export const AgentCommand = cmd({
         process.stderr.write(
           `Agent ${agentName} not found, run '${basename(process.execPath)} agent list' to get an agent list` + EOL,
         )
-        process.exit(1)
+        await Log.exit(1)
       }
       const availableTools = await getAvailableTools(agent)
       const resolvedTools = await resolveTools(agent, availableTools)
@@ -49,11 +50,12 @@ export const AgentCommand = cmd({
         const tool = availableTools.find((item) => item.id === toolID)
         if (!tool) {
           process.stderr.write(`Tool ${toolID} not found for agent ${agentName}` + EOL)
-          process.exit(1)
+          await Log.exit(1)
+          throw new Error("Log.exit returned unexpectedly")
         }
         if (resolvedTools[toolID] === false) {
           process.stderr.write(`Tool ${toolID} is disabled for agent ${agentName}` + EOL)
-          process.exit(1)
+          await Log.exit(1)
         }
         const params = parseToolParams(args.params as string | undefined)
         const ctx = await createToolContext(agent)

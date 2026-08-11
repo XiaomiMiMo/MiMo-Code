@@ -62,7 +62,7 @@ import * as BashInteractive from "@/tool/bash-interactive"
 import { memoMap } from "./memo-map"
 
 // Wrapped in Layer.suspend so the cross-module `.defaultLayer` reads defer to
-// first use instead of running at module load — same TDZ fix as Actor.defaultLayer.
+// first use instead of running at module load — same TDZ fix as Actor.appLayer.
 export const AppLayer = Layer.suspend(() =>
   Layer.mergeAll(
     Npm.defaultLayer,
@@ -95,15 +95,12 @@ export const AppLayer = Layer.suspend(() =>
     SessionPrune.defaultLayer,
     SessionRevert.defaultLayer,
     SessionSummary.defaultLayer,
-    SessionPrompt.defaultLayer,
     CronBridgeDefaultLayer,
     SessionCheckpoint.defaultLayer,
     Instruction.defaultLayer,
     LLM.defaultLayer,
     LSP.defaultLayer,
-    MCP.defaultLayer,
     McpAuth.defaultLayer,
-    Command.defaultLayer,
     Truncate.defaultLayer,
     ToolRegistry.defaultLayer,
     Format.defaultLayer,
@@ -116,11 +113,18 @@ export const AppLayer = Layer.suspend(() =>
     SessionShare.defaultLayer,
     ActorRegistry.defaultLayer,
     ActorWaiter.defaultLayer,
-    Actor.defaultLayer,
     TaskRegistry.defaultLayer,
     WorkflowRuntime.defaultLayer,
     Memory.defaultLayer,
     History.defaultLayer,
+    // MCP, Command, SessionPrompt, and Actor form one ownership chain. Their
+    // standalone default layers remain convenient for focused tests, while
+    // the application graph deliberately provides each stateful service once.
+    Actor.appLayer.pipe(
+      Layer.provideMerge(SessionPrompt.appLayer.pipe(
+        Layer.provideMerge(Command.appLayer.pipe(Layer.provideMerge(MCP.defaultLayer))),
+      )),
+    ),
   ).pipe(Layer.provideMerge(Observability.layer), Layer.provideMerge(BashInteractive.defaultLayer)),
 )
 

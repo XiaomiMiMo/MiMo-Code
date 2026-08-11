@@ -1,0 +1,62 @@
+Runs a shell command and returns its output, with optional timeout and interactive terminal support.
+
+Environment: OS: ${os}, Shell: ${shell}
+
+Commands run in the current working directory by default. Set the `workdir` parameter when a command belongs in another directory; do not use `cd <directory> && <command>` unless `workdir` cannot express the operation.
+
+IMPORTANT: In this GPT tool set, the dedicated `read`, `write`, and `edit` tools are unavailable. Use this tool to inspect, search, and navigate files. Use `apply_patch` to create, update, move, or delete project text files. Do not attempt to call unavailable tools.
+
+# Filesystem operations
+
+- Prefer `rg --files` to list or find files and `rg` to search file contents. If `rg` is unavailable, use commands native to the current shell.
+- Read only the relevant portion of a file when possible. On POSIX shells use commands such as `sed -n 'START,ENDp'`; use `cat` only for small files that must be read in full. On PowerShell use `Get-Content` with appropriate range or count options.
+- Use `apply_patch` for deliberate project text edits. Do not use shell redirection, `sed -i`, or an inline Python script merely to bypass `apply_patch`.
+- Shell writes are appropriate when they are the natural result of a command such as a formatter, code generator, build, or package script, or when handling generated or non-text data that `apply_patch` cannot represent.
+- Before creating a new path, verify its parent directory and the intended location. Quote paths containing spaces.
+- Before a recursive delete or move, resolve and verify the exact target. Never use a broad target such as a home directory, filesystem root, or unresolved environment variable.
+- On Windows, keep destructive filesystem operations in one shell end-to-end. Prefer native PowerShell cmdlets with `-LiteralPath`; do not enumerate targets in PowerShell and pass them to another shell for deletion or moving.
+
+# Command execution
+
+- The `command` and a concise 5-10 word `description` are required.
+- The optional `timeout` is in milliseconds and defaults to 120000 (2 minutes).
+- Set `interactive: true` only when the command requires direct user interaction, such as a password, confirmation prompt, authentication, or input that cannot be supplied non-interactively. Interactive commands do not time out while waiting for the user.
+- If output exceeds ${maxLines} lines or ${maxBytes} bytes, the response is truncated and the full output is saved to a file. Inspect that file with `rg`, a targeted line-range command, or the equivalent command for the current shell.
+- Do not add `head`, `tail`, or other output truncation solely to work around tool limits; prefer a query that selects the relevant information.
+- When commands are independent, issue multiple Bash tool calls in parallel.
+- ${chaining}
+- Use `;` only when commands must be sequential but later commands may run after an earlier failure.
+- Do not use newlines to separate commands; newlines are acceptable inside quoted strings.
+
+# Committing changes with git
+
+Only create commits when explicitly requested by the user. If unclear, ask first.
+
+Git safety protocol:
+- NEVER update git config.
+- NEVER run destructive or irreversible git commands such as force push, hard reset, or clean unless the user explicitly requests the exact operation.
+- NEVER skip hooks with flags such as `--no-verify` or `--no-gpg-sign` unless explicitly requested.
+- NEVER force push to main or master; warn the user if asked.
+- Avoid `git commit --amend`. Use it only when the user explicitly requested it, or when a successful commit made by you in this conversation was modified by a hook, remains unpushed, and needs the hook changes included.
+- If a commit failed or was rejected by a hook, fix the issue and create a new commit; do not amend.
+- Do not commit files likely to contain secrets. Warn the user if they explicitly request that.
+
+When asked to commit:
+1. Inspect `git status`, staged and unstaged diffs, and recent commit messages. Independent inspection commands should run in parallel.
+2. Review all staged changes and draft a concise message that describes why the change exists.
+3. Stage only relevant files, create the commit, then run `git status` after the commit completes to verify it.
+4. If a hook fails, fix the problem and create a new commit.
+
+Do not push unless the user explicitly asks. Never use interactive git flags such as `git rebase -i` or `git add -i`. Do not create an empty commit when there are no changes.
+
+# Creating pull requests
+
+Use `gh` through this tool for GitHub issues, pull requests, checks, and releases.
+
+When asked to create a pull request:
+1. In parallel, inspect repository status, staged and unstaged changes, remote tracking state, commits since the base branch, and the full diff from the merge base. The default base branch is `main` unless repository instructions say otherwise.
+2. Review every commit and change included in the pull request, then draft its title and summary.
+3. Create a branch if needed, push with `-u` if needed, and create the pull request with `gh pr create`. Use a heredoc or equivalent safe multiline mechanism for the body.
+4. Return the pull request URL.
+
+Do not use the task or Actor tools for commit or pull-request workflows.

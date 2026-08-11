@@ -1,3 +1,4 @@
+/// <reference path="../resource/sst.d.ts" />
 import { Resource } from "sst"
 import { defineConfig } from "drizzle-kit"
 

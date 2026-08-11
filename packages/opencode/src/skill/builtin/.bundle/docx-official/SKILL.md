@@ -22,6 +22,8 @@ If the task mixes several of these, do them in this order: **read → plan → e
 
 ## One-time environment setup
 
+> **Bundled runtime:** when the `MIMO_PYTHON` environment variable is set, skip `uv`/`python3` and pip installs entirely — run every command below with `uv run` replaced by `"$MIMO_PYTHON"` (e.g. `"$MIMO_PYTHON" scripts/extract_text.py input.docx`). This skill's Python dependencies are preinstalled in that interpreter; pip console scripts are unavailable, so always go through `"$MIMO_PYTHON" -m <module>`. A bundled LibreOffice is exposed as `MIMO_SOFFICE` and picked up automatically by the scripts here.
+
 All scripts include [PEP 723](https://peps.python.org/pep-0723/) inline metadata, so `uv run` resolves dependencies automatically — no manual install step needed. Just run:
 
 ```bash

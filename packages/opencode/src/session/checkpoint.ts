@@ -4,10 +4,11 @@ import { Global } from "@/global"
 import { Bus } from "@/bus"
 import { Config } from "@/config"
 import { Memory } from "@/memory"
+import { isMemoryWriteEnabled } from "@/memory/write-gate"
 import { MemoryFtsTable } from "@/memory/fts.sql"
 import { TaskRegistry } from "@/task/registry"
 import { ActorRegistry } from "@/actor/registry"
-import type { AgentOutcome, ForkContext } from "@/actor/spawn"
+import type { AgentOutcome, FailureInfo, ForkContext } from "@/actor/spawn"
 import { spawnRef } from "@/actor/spawn-ref"
 import { prefixCaptureRef } from "./prefix-capture-ref"
 import { Database, and, eq, or } from "@/storage"
@@ -175,11 +176,12 @@ const FIRST_CHECKPOINT_WAIT_MS = "5 minutes"
 // survive into the rebuild context. Their tool_use parts are kept (so the
 // LLM still sees what action was taken), but for tools in this whitelist
 // the tool_result content is replaced with a placeholder. Result is either
-// large-and-regeneratable (read/bash/grep/glob/webfetch/websearch) or
+// large-and-regeneratable (read/view_image/bash/grep/glob/webfetch/websearch) or
 // essentially a "done" confirmation (edit/write/multiedit). Tools NOT here
 // carry state the LLM references later (actor/task/question/skill/memory).
 const COMPACTABLE_TOOL_NAMES = new Set<string>([
   "read",
+  "view_image",
   "bash",
   "grep",
   "glob",
@@ -416,9 +418,9 @@ export type TryStartCheckpointWriterInput = {
  *              newest wins because its range is a strict superset of the
  *              older pending range, so the older one would just duplicate
  *              work. (F40)
- * - "skipped": the request was rejected outright — empty session, system-
- *              spawned subagent, or Actor service unavailable. No writer
- *              will fire for this request now or later.
+ * - "skipped": the request was rejected outright — memory writing disabled,
+ *              empty session, system-spawned subagent, or Actor service
+ *              unavailable. No writer will fire for this request now or later.
  */
 export type TryStartCheckpointWriterResult = "started" | "queued" | "skipped"
 
@@ -428,6 +430,20 @@ export interface Interface {
   ) => Effect.Effect<TryStartCheckpointWriterResult>
 
   readonly waitForWriter: (sessionID: SessionID) => Effect.Effect<WriterOutcome | "no-writer">
+
+  /**
+   * The same bounded wait as `waitForWriter`, additionally surfacing the
+   * failure classification the writer's outcome already carries.
+   *
+   * `waitForWriter` is #1938's contract — three flat values, one of which
+   * ("timeout") means "still in flight". That contract is deliberately left
+   * alone; this is the shape a caller needs when the CLASS of a failure
+   * changes what it does next (prune's recovery gate). Both are one
+   * implementation: `waitForWriter` projects `.outcome` off this, so the two
+   * can never disagree about what a settled writer did.
+   */
+  readonly waitForWriterSettlement: (sessionID: SessionID) => Effect.Effect<WriterSettlement>
+
 
   /**
    * Await all in-flight writers across sessions up to `timeoutMs`. Used by
@@ -512,7 +528,27 @@ export class Service extends Context.Service<Service, Interface>()("@opencode/Se
 // Writer state per session
 // ---------------------------------------------------------------------------
 
-export type WriterOutcome = "success" | "failure"
+// "timeout" means the caller's bounded wait expired while the writer was STILL
+// IN FLIGHT — it is deliberately distinct from "failure" (the writer settled
+// unsuccessfully). See waitForWriter for why conflating the two silently
+// disables checkpointing for a session whose writers are merely slow.
+export type WriterOutcome = "success" | "failure" | "timeout"
+
+/**
+ * A settled (or bound-expired) writer, plus the classification its
+ * AgentOutcome already carried.
+ *
+ * `failure` is present only when `outcome === "failure"` AND the writer's
+ * error was classifiable at the construction site. It is absent for a
+ * cancelled writer and for a failure whose error never reached
+ * classifyAssistantError — so "absent" means "unknown class", never
+ * "retryable".
+ */
+export type WriterSettlement = {
+  outcome: WriterOutcome | "no-writer"
+  failure?: FailureInfo
+}
+
 
 interface WriterState {
   // Holds the AgentOutcome Deferred returned by Actor.spawn so callers can
@@ -553,6 +589,27 @@ export const layer: Layer.Layer<
     ) => Effect.Effect<TryStartCheckpointWriterResult> = Effect.fn("SessionCheckpoint.tryStartCheckpointWriter")(function* (
       input: TryStartCheckpointWriterInput,
     ) {
+      // Memory writing disabled — stop producing NEW memory. This is the single
+      // gate for the whole write side of checkpointing: template bootstrap
+      // (ensureCheckpointTemplate / ensureMemoryTemplate / ensureNotesTemplate),
+      // the writer subagent spawn, and the validator retry rename all live past
+      // this point, so returning here holds every one of them down at once. We
+      // deliberately never spawn rather than spawn-and-drop-the-write: the writer
+      // would burn a full model turn producing bytes nobody stores.
+      //
+      // READS are untouched — renderRebuildContext still injects an existing
+      // checkpoint.md / MEMORY.md / notes.md, and the `memory` search tool keeps
+      // working. The reads inside this function (prior checkpoint, progressDiff)
+      // exist only to feed the writer prompt, so short-circuiting loses no
+      // read capability.
+      //
+      // Default is ENABLED: absent config → write. The field name and polarity
+      // live in exactly one place (memory/write-gate.ts).
+      if (!isMemoryWriteEnabled(yield* config.get())) {
+        log.info("memory writing disabled, skipping checkpoint", { sessionID: input.sessionID })
+        return "skipped" as const
+      }
+
       // F40: writer1 still running. Evict any prior pending and queue this
       // request — newest wins because its range is a strict superset of the
       // older pending range, so older pending checkpoints would only
@@ -922,10 +979,39 @@ export const layer: Layer.Layer<
             ),
           )
         } else {
-          log.warn("checkpoint writer did not succeed — leaving watermark unchanged so the delta is re-covered", {
-            sessionID: input.sessionID,
-            status: outcome.status,
-          })
+          // Classify instead of count. This is the replacement for the failure
+          // accounting deleted earlier in this branch: the same "is this writer
+          // broken?" question, answered by reading the outcome the writer already
+          // carries instead of accumulating a tally across thresholds.
+          //
+          // A TRANSIENT failure needs nothing here — the writer's LLM calls run
+          // through SessionRetry's ladder (session/retry.ts), so it is already
+          // post-retry, and the next threshold crossing re-covers the delta with
+          // fresher context. A DETERMINISTIC one (overflow / auth / bad request)
+          // will recur identically at every future threshold, so it is reported
+          // as the distinct thing it is rather than as one more copy of an
+          // undifferentiated line.
+          //
+          // Deliberately STATELESS: no per-session memory of previous failures.
+          // Such memory is a trend detector, and the trend is the deferred
+          // user-facing-warning change's own state — accumulating it here under a
+          // new name is precisely what this branch removed.
+          // `failure` is optional and its source is nullable — truthiness, never
+          // `=== undefined` (AGENTS.md, "Reading a nullable column").
+          const failure = outcome.status === "failure" ? outcome.failure : undefined
+          const classified = failure ? { kind: failure.kind, cause: failure.name } : {}
+          if (failure && !failure.retryable) {
+            log.warn(
+              "checkpoint writer failed deterministically — this will recur at every threshold until the cause is fixed; leaving watermark unchanged so the delta is re-covered",
+              { sessionID: input.sessionID, status: outcome.status, ...classified },
+            )
+          } else {
+            log.warn("checkpoint writer did not succeed — leaving watermark unchanged so the delta is re-covered", {
+              sessionID: input.sessionID,
+              status: outcome.status,
+              ...classified,
+            })
+          }
         }
 
         // F40: capture pending before deleting the slot so a queued writer
@@ -973,20 +1059,59 @@ export const layer: Layer.Layer<
       return "started" as const
     })
 
-    const waitForWriter = Effect.fn("SessionCheckpoint.waitForWriter")(function* (sessionID: SessionID) {
+    const waitForWriterSettlement = Effect.fn("SessionCheckpoint.waitForWriterSettlement")(function* (
+      sessionID: SessionID,
+    ) {
       const state = writers.get(sessionID)
-      if (!state) return "no-writer" as const
+      if (!state) return { outcome: "no-writer" as const }
 
-      // v2 writers manage 3 file types and frequently take 60-180s; pad to
-      // 5min so a long-but-honest writer is not mistaken for a failure by
-      // the prune retry watcher. AgentOutcome → WriterOutcome translation:
-      // success → "success", failure / cancelled → "failure".
+      // v2 writers manage 3 file types and frequently take 60-180s, so the
+      // wait is bounded at 5min rather than left unbounded. AgentOutcome →
+      // WriterOutcome translation: success → "success", failure / cancelled →
+      // "failure", bound expired with the writer still unsettled → "timeout".
+      //
+      // The bound expiring is NOT a writer failure — the padding is not what
+      // keeps the two apart, the distinct return value is. This timeout does
+      // not cancel the writer, and the settle watcher that owns the watermark
+      // advance (see tryStartCheckpointWriter) awaits the SAME Deferred with no
+      // bound — so a slow-but-successful writer still advances
+      // last_checkpoint_message_id after we stop waiting. Reporting "failure"
+      // here made a slow-but-working writer indistinguishable from a broken
+      // one, which is why the two outcomes stay distinct. Callers must be able
+      // to tell "still in flight" from "settled unsuccessfully": prune arms its
+      // recovery gate on a settled TRANSIENT failure only, and "timeout" must
+      // never reach that gate — the writer may still be about to succeed.
       const outcome = yield* Deferred.await(state.writing).pipe(
         Effect.timeout(300_000),
-        Effect.catch(() => Effect.succeed<AgentOutcome>({ status: "failure", error: "timeout" })),
+        Effect.catch(() => Effect.succeed("timeout" as const)),
       )
-      return outcome.status === "success" ? ("success" as const) : ("failure" as const)
+      if (outcome === "timeout") {
+        // Hitting the bound must stay observable: the caller reports neither a
+        // success nor a failure, so without this line a writer stuck past 5min
+        // produces no log at all until it finally settles.
+        log.info("checkpoint writer wait bound expired — writer still in flight", {
+          sessionID,
+          boundMs: 300_000,
+        })
+        return { outcome: "timeout" as const }
+      }
+      if (outcome.status === "success") return { outcome: "success" as const }
+      // `failure` is optional and its source is nullable — truthiness, never
+      // `=== undefined` (AGENTS.md, "Reading a nullable column"). A cancelled
+      // outcome has no failure arm at all, so it lands here unclassified.
+      const failure = outcome.status === "failure" ? outcome.failure : undefined
+      return failure ? { outcome: "failure" as const, failure } : { outcome: "failure" as const }
     })
+
+    // #1938's contract, unchanged: three flat values, "timeout" distinct from
+    // "failure". Projected off waitForWriterSettlement rather than duplicated,
+    // so the classification-aware caller and this one can never disagree.
+    const waitForWriter: (sessionID: SessionID) => Effect.Effect<WriterOutcome | "no-writer"> = Effect.fn(
+      "SessionCheckpoint.waitForWriter",
+    )(function* (sessionID: SessionID) {
+      return (yield* waitForWriterSettlement(sessionID)).outcome
+    })
+
 
     const drainWriters = Effect.fn("SessionCheckpoint.drainWriters")(function* (input?: { timeoutMs?: number }) {
       const timeoutMs = input?.timeoutMs ?? 120_000
@@ -1418,7 +1543,36 @@ export const layer: Layer.Layer<
             .get(),
         ),
       )
-      return row?.last_checkpoint_message_id as MessageID | undefined
+      // Two independent absences meet in this one expression, and only one of
+      // them is `undefined`:
+      //
+      //   row is undefined      -> no such session row. Drizzle normalises the
+      //                            driver's null to undefined here (measured:
+      //                            bun:sqlite's .get() returns null, Drizzle
+      //                            returns undefined), so this half is honest.
+      //   column is null        -> the session exists but no writer has set the
+      //                            watermark yet. SQL NULL, faithfully mapped to
+      //                            JS null, because the column is nullable
+      //                            (session.sql.ts: text().$type<MessageID>()
+      //                            with no .notNull()).
+      //
+      // So `row?.last_checkpoint_message_id` is `MessageID | null | undefined`.
+      // Callers only ever ask "is there a boundary to rebuild from", for which
+      // the last two are the same answer, so flattening to `undefined` is right
+      // — it also matches Drizzle's own row-level convention.
+      //
+      // The flattening is written as an ANNOTATION rather than an `as` cast on
+      // purpose. A cast would let the union be narrowed by assertion, which is
+      // how this went wrong before: the previous version claimed
+      // `as MessageID | undefined` while returning `null`, and a caller that
+      // then wrote `boundary !== undefined` got a condition that is always true
+      // — a guard that typechecks, reads correctly, and does nothing. Every
+      // other caller happened to test truthiness (`!boundary` at prompt.ts:413
+      // and `watermarkBefore ?` at :1131) and so never noticed. With an
+      // annotation, dropping the `?? undefined` is a
+      // compile error instead of a silent lie.
+      const boundary: MessageID | undefined = row?.last_checkpoint_message_id ?? undefined
+      return boundary
     })
 
     const isWriterRunning = Effect.fn("SessionCheckpoint.isWriterRunning")(function* (sessionID: SessionID) {
@@ -1548,6 +1702,7 @@ export const layer: Layer.Layer<
     return Service.of({
       tryStartCheckpointWriter,
       waitForWriter,
+      waitForWriterSettlement,
       drainWriters,
       hasCheckpoint,
       hasMemoryOrTasks,
@@ -1570,8 +1725,9 @@ export const layer: Layer.Layer<
 // the Actor implementation through the late-bound `spawnRef` (see
 // `actor/spawn-ref.ts`). This deliberately breaks the otherwise-unresolvable
 // layer cycle Actor → SessionPrompt → SessionCheckpoint → Actor. The AppLayer
-// constructs `Actor.defaultLayer` separately; its initialiser populates
-// `spawnRef`, which `tryStartCheckpointWriter` reads at call time.
+// constructs `Actor.appLayer` separately; that variant wraps the same
+// `Actor.layer`, whose initialiser populates `spawnRef` (see
+// `actor/spawn.ts`), and `tryStartCheckpointWriter` reads the ref at call time.
 export const defaultLayer = Layer.suspend(() =>
   layer.pipe(
     Layer.provide(Session.defaultLayer),

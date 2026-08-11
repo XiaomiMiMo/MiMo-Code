@@ -1,6 +1,6 @@
 ---
 name: claude-code
-description: "Delegate coding tasks to Claude Code CLI (v2.1+) via the terminal. Use this skill whenever the task involves writing/fixing/refactoring code, reviewing diffs or PRs, running tests, git workflows, or any multi-step change to a codebase — even if the user doesn't say 'Claude Code'. Covers print mode (-p), interactive tmux sessions, and background (--bg) orchestration."
+description: "Operate Claude Code CLI (v2.1+) via the terminal only when the user explicitly requests Claude Code or names this skill. Covers print mode (-p), interactive tmux sessions, and background (--bg) orchestration."
 version: 2.0.0
 license: MIT
 platforms: [linux, macos, windows]

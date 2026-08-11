@@ -1,4 +1,5 @@
 import { Effect } from "effect"
+import { isMemoryWriteEnabled } from "@/memory/write-gate"
 import { Database, eq, desc, asc, isNull } from "@/storage"
 import { SessionTable } from "./session.sql"
 import { Log } from "@/util"
@@ -107,7 +108,10 @@ function shouldAutoRun(input: {
 }
 
 export function shouldAutoDream(cfg: Config.Info) {
-  const enabled = cfg.dream?.auto !== false
+  // Memory writing off → the consolidation pass that rewrites project memory
+  // must not run either.
+  if (!isMemoryWriteEnabled(cfg)) return Effect.succeed(false)
+  const enabled = cfg.dream?.auto === true
   if (!enabled) return Effect.succeed(false)
   const now = Date.now()
   if (now - lastDreamSpawnTime < MIN_SPAWN_GAP_MS) return Effect.succeed(false)
@@ -117,7 +121,10 @@ export function shouldAutoDream(cfg: Config.Info) {
 }
 
 export function shouldAutoDistill(cfg: Config.Info) {
-  const enabled = cfg.distill?.auto !== false
+  // Distill reads memory to mine patterns and then auto-produces artifacts in the
+  // background. With writing off, nothing should be produced automatically.
+  if (!isMemoryWriteEnabled(cfg)) return Effect.succeed(false)
+  const enabled = cfg.distill?.auto === true
   if (!enabled) return Effect.succeed(false)
   const now = Date.now()
   if (now - lastDistillSpawnTime < MIN_SPAWN_GAP_MS) return Effect.succeed(false)

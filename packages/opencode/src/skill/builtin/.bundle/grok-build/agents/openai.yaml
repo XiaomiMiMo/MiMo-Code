@@ -1,0 +1,7 @@
+interface:
+  display_name: "Grok Build CLI"
+  short_description: "Operate Grok Build from the command line"
+  default_prompt: "Use $grok-build to run a Grok Build CLI workflow safely."
+
+policy:
+  allow_implicit_invocation: false

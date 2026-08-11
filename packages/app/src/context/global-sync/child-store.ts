@@ -165,7 +165,7 @@ export function createChildStoreManager(input: {
             projectMeta: initialMeta,
             icon: initialIcon,
             provider_ready: false,
-            provider: { all: [], connected: [], default: {} },
+            provider: { all: [], connected: [], authenticated: [], default: {} },
             config: {},
             get path() {
               if (pathQuery.isLoading || !pathQuery.data)

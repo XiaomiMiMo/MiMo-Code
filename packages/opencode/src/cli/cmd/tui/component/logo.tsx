@@ -1,6 +1,7 @@
 import { BoxRenderable, MouseButton, MouseEvent, RGBA, TextAttributes } from "@opentui/core"
-import { For, createMemo, createSignal, onCleanup, onMount, type JSX } from "solid-js"
+import { For, createEffect, createMemo, createSignal, onCleanup, type JSX } from "solid-js"
 import { useTheme, tint } from "@tui/context/theme"
+import { useVisualMode } from "@tui/context/visual"
 import * as Sound from "@tui/util/sound"
 import { go, logo } from "@/cli/logo"
 
@@ -576,7 +577,7 @@ function buildIdleState(t: number, ctx: LogoContext): IdleState {
   return { cfg, reach, rings, active }
 }
 
-export function Logo(props: { shape?: LogoShape; ink?: RGBA; idle?: boolean; sweep?: boolean } = {}) {
+export function Logo(props: { shape?: LogoShape; ink?: RGBA; animated?: boolean; idle?: boolean; sweep?: boolean } = {}) {
   const ctx = props.shape ? build(props.shape) : DEFAULT
   const { theme } = useTheme()
   const [rings, setRings] = createSignal<Ring[]>([])
@@ -638,8 +639,7 @@ export function Logo(props: { shape?: LogoShape; ink?: RGBA; idle?: boolean; swe
     timer = setInterval(tick, 16)
   }
 
-  onCleanup(() => {
-    stop()
+  const stopSweep = () => {
     if (sweepStart) {
       clearTimeout(sweepStart)
       sweepStart = undefined
@@ -648,21 +648,46 @@ export function Logo(props: { shape?: LogoShape; ink?: RGBA; idle?: boolean; swe
       clearInterval(sweepTimer)
       sweepTimer = undefined
     }
+    setSweep(undefined)
+  }
+
+  createEffect(() => {
+    if (props.animated === false || !props.sweep) {
+      stopSweep()
+      return
+    }
+    if (sweepStart || sweepTimer) return
+    sweepStart = setTimeout(() => {
+      sweepStart = undefined
+      if (!props.sweep) return
+      fireSweep()
+      sweepTimer = setInterval(fireSweep, SWEEP_INTERVAL)
+    }, 1500)
+  })
+
+  createEffect(() => {
+    if (props.animated !== false) {
+      if (props.idle) {
+        setNow(performance.now())
+        start()
+      }
+      return
+    }
+    stopSweep()
+    setRings([])
+    setHold(undefined)
+    setRelease(undefined)
+    setGlow(undefined)
+    stop()
     hum = false
     Sound.dispose()
   })
 
-  onMount(() => {
-    if (props.idle) {
-      setNow(performance.now())
-      start()
-    }
-    if (props.sweep) {
-      sweepStart = setTimeout(() => {
-        fireSweep()
-        sweepTimer = setInterval(fireSweep, SWEEP_INTERVAL)
-      }, 1500)
-    }
+  onCleanup(() => {
+    stop()
+    stopSweep()
+    hum = false
+    Sound.dispose()
   })
 
   const hit = (x: number, y: number) => {
@@ -883,6 +908,7 @@ export function Logo(props: { shape?: LogoShape; ink?: RGBA; idle?: boolean; swe
   }
 
   const mouse = (evt: MouseEvent) => {
+    if (props.animated === false) return
     if (!box) return
     if ((evt.type === "down" || evt.type === "drag") && evt.button === MouseButton.LEFT) {
       const x = evt.x - box.x
@@ -956,6 +982,7 @@ export function Logo(props: { shape?: LogoShape; ink?: RGBA; idle?: boolean; swe
 
 export function GoLogo() {
   const { theme } = useTheme()
+  const visual = useVisualMode()
   const base = tint(theme.background, theme.text, 0.62)
-  return <Logo shape={go} ink={base} idle />
+  return <Logo shape={go} ink={base} animated={visual.motion()} idle />
 }

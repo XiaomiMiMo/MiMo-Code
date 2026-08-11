@@ -8,6 +8,7 @@ import { cmd } from "./cmd"
 import { JsonMigration } from "../../storage"
 import { EOL } from "os"
 import { errorMessage } from "../../util/error"
+import { Log } from "../../util"
 
 const QueryCommand = cmd({
   command: "$0 [query]",
@@ -42,7 +43,7 @@ const QueryCommand = cmd({
         }
       } catch (err) {
         UI.error(errorMessage(err))
-        process.exit(1)
+        await Log.exit(1)
       }
       db.close()
       return
@@ -103,7 +104,7 @@ const MigrateCommand = cmd({
     } catch (err) {
       if (tty) process.stderr.write("\x1b[?25h")
       UI.error(`Migration failed: ${errorMessage(err)}`)
-      process.exit(1)
+      await Log.exit(1)
     } finally {
       sqlite.close()
     }

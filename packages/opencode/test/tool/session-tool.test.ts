@@ -10,6 +10,7 @@ import { Agent } from "../../src/agent/agent"
 import { Actor } from "../../src/actor/spawn"
 import { ActorRegistry } from "../../src/actor/registry"
 import { ActorRegistryTable } from "../../src/actor/actor.sql"
+import { DEFAULT_LIVENESS_STALL_MS } from "../../src/actor/schema"
 import { Database, and, eq } from "../../src/storage"
 import { Bus } from "../../src/bus"
 import { TuiEvent } from "../../src/cli/cmd/tui/event"
@@ -628,6 +629,12 @@ describe("session tool", () => {
         expect(running.output).toContain("progressing")
         expect(running.output).toContain("turnCount:")
         expect(running.output).toContain("lastTurnTime:")
+        // The dump must also show the quantity the verdict was DERIVED from, and
+        // label which of the two clocks that is. Showing only the step clock next
+        // to an activity-derived verdict is how this signal got misread.
+        expect(running.output).toContain("lastActivityTime:")
+        expect(running.output).toContain("liveness derives from this")
+        expect(running.output).toContain("not the liveness input")
 
         // Flip to a terminal idle+success: derived liveness surfaces the outcome.
         yield* actorReg.updateStatus(SessionID.make(childID), childID, { status: "idle", lastOutcome: "success" })
@@ -671,12 +678,18 @@ describe("session tool", () => {
         )
         const progID = prog.metadata.sessionID!
 
-        // A stalled peer: running, having run at least one turn, but with an old
-        // last_turn_time far past the default staleness window → deriveLiveness
-        // reports stalled. Force status running and turn_count >= 1 (a
-        // not-yet-started child with turnCount 0 is exempt from the stall path),
-        // then age its last_turn_time via a direct row update (updateTurn would
-        // bump last_turn_time to now; we need it OLD while turn_count stays put).
+        // A stalled peer: running, but with nothing landed for far longer than the
+        // default staleness window → deriveLiveness reports stalled. Age
+        // last_activity_time (the field the derivation reads) via a direct row
+        // update; last_turn_time is aged with it so the row stays internally
+        // consistent.
+        // REWRITTEN: this used a bare `5 * 60_000`, justified in-line as "past the
+        // 90s stall window and comfortably inside the 10-minute abandonment bound".
+        // The window is now 6 minutes, so that literal quietly became a
+        // `progressing` fixture asserting `stalled`. Derived from the constant
+        // instead — one minute past the window, still well inside the bound — so it
+        // cannot silently invert again.
+        const silentForMs = DEFAULT_LIVENESS_STALL_MS + 60_000
         const stalled = yield* tool.execute(
           { operation: { action: "create", task: "wedged", mode: "build", title: "Wedged" } },
           ctx(parent.id),
@@ -687,7 +700,11 @@ describe("session tool", () => {
           Database.use((db) =>
             db
               .update(ActorRegistryTable)
-              .set({ last_turn_time: Date.now() - 10 * 60_000, turn_count: 1 })
+              .set({
+                last_turn_time: Date.now() - silentForMs,
+                last_activity_time: Date.now() - silentForMs,
+                turn_count: 1,
+              })
               .where(and(eq(ActorRegistryTable.session_id, SessionID.make(stalledID)), eq(ActorRegistryTable.actor_id, stalledID)))
               .run(),
           ),
@@ -696,7 +713,10 @@ describe("session tool", () => {
         const result = yield* tool.execute({ operation: { action: "list" } }, ctx(parent.id))
 
         expect(result.output).toContain("In progress — progressing (running/pending, advancing) (1):")
-        expect(result.output).toContain("In progress — stalled (running/pending, no recent turn) (1):")
+        // Heading reworded with the signal: the bucket means "no recent ACTIVITY",
+        // not "no recent turn" — a child mid-step advances activity and never lands
+        // in this bucket.
+        expect(result.output).toContain("In progress — stalled (running/pending, no recent activity) (1):")
         expect(result.output).toContain("(1 progressing, 1 stalled)")
         // Each child lands under its own group.
         const progSection = result.output.split("In progress — progressing")[1]?.split("In progress — stalled")[0] ?? ""
@@ -936,6 +956,85 @@ describe("recoverSessionArgs", () => {
   test("ignores an invalid mode on a bare create", () => {
     expect(recoverSessionArgs({ task: "x", mode: "bogus" })).toEqual({
       operation: { action: "create", task: "x" },
+    })
+  })
+
+  // --- route-first safety -------------------------------------------------
+  // The recovery fallback must never answer a malformed call with a `create`
+  // when the payload carries evidence of a different intent. A silently
+  // synthesized `create` spawns a DUPLICATE child instead of relaying to the
+  // existing one — the route-first violation #1741 exists to prevent, and it is
+  // invisible (no error, just an extra session). A loud failure is acceptable;
+  // silent misrouting is not.
+
+  test("NEVER yields a create when the payload carries a routing field", () => {
+    // Each of these names an existing session (or an ask/grant target), so the
+    // model cannot have meant "spawn a new child".
+    const routed = [
+      { task: "relay this", sessionID: "ses_abc" },
+      { task: "relay this", session_id: "ses_abc" },
+      { task: "relay this", sessionIDs: ["ses_abc"] },
+      { task: "relay this", question: "what is the status?" },
+      { task: "relay this", target: "ses_abc" },
+      { task: "relay this", sessionID: "ses_abc", mode: "compose", model: "standard", title: "T" },
+    ]
+    for (const args of routed) {
+      const out = recoverSessionArgs(args)
+      expect(out?.operation?.action).not.toBe("create")
+      // Nothing here is a complete, unambiguous operation, so recovery declines
+      // and the call surfaces as an "invalid arguments" error the model can fix.
+      expect(out).toBeUndefined()
+    }
+  })
+
+  test("reconstructs the FLATTENED send that mimo-v2.5 actually emits", () => {
+    // Observed verbatim from mimo-v2.5: the discriminator is hoisted to the top
+    // level and the operands become its siblings.
+    expect(recoverSessionArgs({ operation: "send", sessionID: "ses_abc", task: "continue the refactor" })).toEqual({
+      operation: { action: "send", sessionID: "ses_abc", task: "continue the refactor" },
+    })
+    // Same shape with `action` as the top-level discriminator.
+    expect(recoverSessionArgs({ action: "send", sessionID: "ses_abc", task: "continue the refactor" })).toEqual({
+      operation: { action: "send", sessionID: "ses_abc", task: "continue the refactor" },
+    })
+  })
+
+  test("reconstructs other flattened operations", () => {
+    expect(recoverSessionArgs({ operation: "status", sessionID: "ses_abc" })).toEqual({
+      operation: { action: "status", sessionID: "ses_abc" },
+    })
+    expect(recoverSessionArgs({ operation: "cancel", sessionID: "ses_abc" })).toEqual({
+      operation: { action: "cancel", sessionID: "ses_abc" },
+    })
+    expect(recoverSessionArgs({ action: "ask", session_id: "ses_abc", question: "done?" })).toEqual({
+      operation: { action: "ask", session_id: "ses_abc", question: "done?" },
+    })
+    expect(recoverSessionArgs({ operation: "list" })).toEqual({ operation: { action: "list" } })
+    // A flattened create is still a create — the verb, not the field set, decides.
+    expect(recoverSessionArgs({ operation: "create", task: "build a login page" })).toEqual({
+      operation: { action: "create", task: "build a login page" },
+    })
+  })
+
+  test("a flattened operation that does not validate fails loudly instead of degrading to a create", () => {
+    // `send` without its required `task`: recovery must not fall through to the
+    // bare-{task} create branch, and must not hand execute a half-built op
+    // (shell-wrap routes a recovered value to def.execute WITHOUT re-validating).
+    expect(recoverSessionArgs({ operation: "send", sessionID: "ses_abc" })).toBeUndefined()
+    // `send` without its required `sessionID`.
+    expect(recoverSessionArgs({ operation: "send", task: "relay this" })).toBeUndefined()
+    // An unknown verb, with a task present that would previously have been
+    // rewritten into a create.
+    expect(recoverSessionArgs({ operation: "teleport", task: "relay this" })).toBeUndefined()
+    expect(recoverSessionArgs({ action: "teleport", task: "relay this" })).toBeUndefined()
+  })
+
+  test("a bare {task} with no routing evidence still creates (unchanged)", () => {
+    expect(recoverSessionArgs({ task: "build a login page" })).toEqual({
+      operation: { action: "create", task: "build a login page" },
+    })
+    expect(recoverSessionArgs({ task: "x", topic: "auth" })).toEqual({
+      operation: { action: "create", task: "x", topic: "auth" },
     })
   })
 })
@@ -1397,6 +1496,175 @@ describe("session tool ask (fork-query) functional", () => {
     ),
     60000,
   )
+
+  // DEFECT 2 (a): the topic label is a MODEL-authored free-text key, so exact
+  // string matching made find-or-reuse fail on the near-misses a model actually
+  // types — and every miss is a duplicate child for one theme. The key is now
+  // normalized (case-folded, separators collapsed), so `--topic "PR 1741"` and
+  // `--topic pr_1741` are one topic.
+  askIt.live("DEFECT 2: --topic reuse is robust to casing and separator drift in the label", () =>
+    provideTmpdirServer(
+      Effect.fnUntraced(function* ({ llm }) {
+        const sessions = yield* Session.Service
+        const actorReg = yield* ActorRegistry.Service
+        const parent = yield* sessions.create({
+          title: "topic-normalization parent",
+          permission: [{ permission: "*", pattern: "*", action: "allow" }],
+        })
+        yield* llm.hang
+
+        const info = yield* SessionTool
+        const tool = yield* info.init()
+
+        const peerCount = () =>
+          Effect.gen(function* () {
+            const kids = yield* sessions.children(parent.id)
+            const enriched = yield* Effect.forEach(kids, (child) =>
+              actorReg.get(child.id, child.id).pipe(Effect.map((a) => ({ child, actor: a }))),
+            )
+            return enriched.filter(({ actor }) => actor?.mode === "peer")
+          })
+
+        const first = yield* tool.execute(
+          { operation: { action: "create", task: "review the roster", mode: "build", topic: "PR 1741" } },
+          ctx(parent.id),
+        )
+        const firstID = first.metadata.sessionID!
+        expect(firstID).toBeDefined()
+        expect((yield* peerCount()).length).toBe(1)
+
+        // Same theme, differently spelled label → MUST reuse, not duplicate.
+        const second = yield* tool.execute(
+          { operation: { action: "create", task: "also fix the drift", mode: "build", topic: "pr_1741" } },
+          ctx(parent.id),
+        )
+        expect(second.metadata.sessionID).toBe(firstID)
+        expect(second.title).toContain("Reused topic")
+        expect((yield* peerCount()).length).toBe(1)
+
+        // And a genuinely different topic still gets its own child — the
+        // normalization forgives spelling, it does not merge distinct themes.
+        const third = yield* tool.execute(
+          { operation: { action: "create", task: "unrelated work", mode: "build", topic: "pr-1782" } },
+          ctx(parent.id),
+        )
+        expect(third.metadata.sessionID).not.toBe(firstID)
+        expect((yield* peerCount()).length).toBe(2)
+      }),
+      { git: true, config: askProviderCfg },
+    ),
+    60000,
+  )
+
+  // DEFECT 2 (b): the <active-sessions> roster is assembled once per REQUEST, so
+  // a child dispatched earlier in the SAME turn is invisible to the model until
+  // the next request — that is how one live turn spawned two children for the same
+  // docs topic and had to cancel one. A tool RESULT, unlike the system prompt, is
+  // read before the model's next tool call, so every dispatch echoes the routable
+  // sibling roster into its own output.
+  //
+  // MECHANISM-LEVEL (deterministic): these assert the exact bytes the model will
+  // read back from its own dispatch, not what a model then decides to do with
+  // them. The behavioural half — that a real model actually routes instead of
+  // re-dispatching — lives in test/session/orchestrator-live-behavior.test.ts and
+  // asserts on the tool call the model emitted.
+  askIt.live("DEFECT 2: session create echoes the routable sibling roster so the same turn can route instead", () =>
+    provideTmpdirServer(
+      Effect.fnUntraced(function* ({ llm }) {
+        const sessions = yield* Session.Service
+        const parent = yield* sessions.create({
+          title: "same-turn dedup parent",
+          permission: [{ permission: "*", pattern: "*", action: "allow" }],
+        })
+        yield* llm.hang
+
+        const info = yield* SessionTool
+        const tool = yield* info.init()
+
+        // FIRST create of the turn. Even with no siblings, the result must carry a
+        // ledger naming the child THIS call just made: the failure being fixed is
+        // self-duplication, and an empty notice here leaves the model's next tool
+        // call with no record of its own dispatch (which is how #4/#5 happened —
+        // the pair that duplicated was create-then-create, so the FIRST create's
+        // result is the only thing that could have prevented the second).
+        const first = yield* tool.execute(
+          { operation: { action: "create", task: "write the docs page", mode: "build", title: "docs page" } },
+          ctx(parent.id),
+        )
+        const firstID = first.metadata.sessionID!
+        expect(firstID).toBeDefined()
+        expect(first.output).toContain("ROUTE FIRST")
+        expect(first.output).toContain(firstID)
+        expect(first.output).toContain("YOU JUST CREATED THIS, IN THE CURRENT TURN")
+        // The brief is echoed too, so "I already dispatched this exact work" is
+        // legible and not just "some child exists".
+        expect(first.output).toContain("write the docs page")
+
+        // Second create in the SAME turn: the output must hand back BOTH the
+        // existing sibling's id and its own, so the model's very next tool call
+        // can `session send` instead of creating a third.
+        const second = yield* tool.execute(
+          { operation: { action: "create", task: "polish the docs page", mode: "build", title: "docs polish" } },
+          ctx(parent.id),
+        )
+        const secondID = second.metadata.sessionID!
+        expect(second.output).toContain("ROUTE FIRST")
+        expect(second.output).toContain(firstID)
+        expect(second.output).toContain("session send <id> <task>")
+        // It advertises the sibling AND itself — the self row is exactly what makes
+        // a repeat self-evident, so excluding it defeated the purpose.
+        const ledger = second.output.slice(second.output.indexOf("ROUTE FIRST"))
+        expect(ledger).toContain(secondID)
+        expect(ledger).toContain("polish the docs page")
+        // Only the just-dispatched row is marked; the sibling is a plain roster line.
+        expect(ledger.split("\n").filter((l) => l.includes("YOU JUST")).length).toBe(1)
+        expect(ledger.split("\n").find((l) => l.includes("YOU JUST"))).toContain(secondID)
+        // Roster shape matches the system-prompt roster: id | title | agent | status
+        expect(second.output).toMatch(new RegExp(`${firstID} \\| .*docs page.* \\| build \\| (progressing|idle)`))
+        expect(secondID).toBeDefined()
+      }),
+      { git: true, config: askProviderCfg },
+    ),
+    60000,
+  )
+
+  // The same intra-turn hole exists after a `send`: the live duplicate pair was
+  // create→create, but "dispatch twice for the same work in one turn" is equally
+  // reachable as send→create or send→send, and `send` emitted no ledger at all.
+  askIt.live("DEFECT 2: session send echoes the same ledger, marking the child it just sent to", () =>
+    provideTmpdirServer(
+      Effect.fnUntraced(function* ({ llm }) {
+        const sessions = yield* Session.Service
+        const parent = yield* sessions.create({
+          title: "send ledger parent",
+          permission: [{ permission: "*", pattern: "*", action: "allow" }],
+        })
+        yield* llm.hang
+
+        const tool = yield* (yield* SessionTool).init()
+        const created = yield* tool.execute(
+          { operation: { action: "create", task: "own the README", mode: "build", title: "readme owner" } },
+          ctx(parent.id),
+        )
+        const childID = created.metadata.sessionID!
+
+        const sent = yield* tool.execute(
+          { operation: { action: "send", sessionID: childID, task: "add usage examples to the README" } },
+          ctx(parent.id),
+        )
+        expect(sent.output).toContain("Enqueued the task")
+        expect(sent.output).toContain("ROUTE FIRST")
+        const ledger = sent.output.slice(sent.output.indexOf("ROUTE FIRST"))
+        expect(ledger).toContain(childID)
+        expect(ledger).toContain("YOU JUST SENT THIS TASK TO THIS, IN THE CURRENT TURN")
+        // The relayed brief — NOT the child's title, which still shows the original
+        // task — is what makes a second identical send visible as a repeat.
+        expect(ledger).toContain("add usage examples to the README")
+      }),
+      { git: true, config: askProviderCfg },
+    ),
+    60000,
+  )
 })
 
 // === T38: fan-in aggregation (session join) ===
@@ -1623,5 +1891,122 @@ describe("session tool join (fan-in aggregation, T38)", () => {
       }),
     ),
     30000,
+  )
+})
+
+// === #1741: `session send` is RESUME, not relay-only ===
+// The route-first redesign claims a finished child stays resumable: status is
+// informational and does NOT gate resume, so recovering an interrupted/terminal
+// child is a `send` into the SAME session rather than a `create` re-described
+// from memory. These drive the real session tool over a real DB: a real child
+// session with real persisted history, driven to a terminal outcome, then sent
+// to — asserting the observable consequences (same session id, no new child,
+// history intact), not the wording of orchestrator.txt.
+describe("session send as resume (#1741 route-first)", () => {
+  const peerChild = (parentID: SessionID, label: string) =>
+    Effect.gen(function* () {
+      const sessions = yield* Session.Service
+      const registry = yield* ActorRegistry.Service
+      const child = yield* sessions.create({ parentID, title: label })
+      yield* registry.register({
+        sessionID: child.id,
+        actorID: child.id,
+        mode: "peer",
+        parentActorID: "main",
+        agent: "build",
+        description: label,
+        contextMode: "none",
+        background: true,
+        lifecycle: "persistent",
+      })
+      return child.id
+    })
+
+  askIt.live(
+    "send to a TERMINAL child resumes that same session — no new child, history preserved",
+    () =>
+      provideTmpdirServer(
+        Effect.fnUntraced(function* ({ llm }) {
+          const sessions = yield* Session.Service
+          const registry = yield* ActorRegistry.Service
+          const parent = yield* sessions.create({
+            title: "orchestrator",
+            permission: [{ permission: "*", pattern: "*", action: "allow" }],
+          })
+          const childID = yield* peerChild(parent.id, "PR-1741 worker")
+
+          // Real persisted history — the thing a resume continues FROM.
+          yield* seedAssistantText(childID, childID, "I finished step one and stopped")
+          // Drive it to a TERMINAL outcome (the redesign's claim: still resumable).
+          yield* registry.updateStatus(childID, childID, { status: "idle", lastOutcome: "success" })
+          const live = yield* registry.liveness(childID, childID)
+          expect(live?.liveness).toBe("success")
+
+          // Hang so a woken turn cannot complete — the assertions are about
+          // routing/relay, not about what the child then does.
+          yield* llm.hang
+
+          const tool = yield* (yield* SessionTool).init()
+          const before = yield* sessions.children(parent.id)
+
+          const sent = yield* tool.execute(
+            { operation: { action: "send", sessionID: childID, task: "continue from where you stopped" } },
+            ctx(parent.id),
+          )
+
+          // Terminal status did NOT block the resume.
+          expect(sent.metadata.sessionID).toBe(childID)
+          expect(sent.title).toContain(`Relayed task to ${childID}`)
+          expect(sent.output).toContain("Enqueued the task")
+          expect(sent.output).not.toContain("not reachable")
+
+          // No new child session was spawned: send resumed, it did not recreate.
+          const after = yield* sessions.children(parent.id)
+          expect(after.length).toBe(before.length)
+          expect(after.map((c) => c.id)).toContain(childID)
+
+          // Exactly one peer child still owns this work (no duplicate actor row).
+          const peers = yield* registry.listPeerChildren(parent.id, "main")
+          expect(peers.filter((p) => p.actor.sessionID === childID).length).toBe(1)
+
+          // The history the resume continues from is still persisted.
+          const msgs = yield* sessions.messages({ sessionID: childID, agentID: "*" })
+          const text = msgs
+            .flatMap((m) => m.parts)
+            .flatMap((part) => (part.type === "text" ? [part.text] : []))
+            .join("\n")
+          expect(text).toContain("I finished step one and stopped")
+        }),
+        { git: true, config: askProviderCfg },
+      ),
+    60000,
+  )
+
+  askIt.live(
+    "send to an id that was never a child fails loudly instead of silently creating one",
+    () =>
+      provideTmpdirServer(
+        Effect.fnUntraced(function* () {
+          const sessions = yield* Session.Service
+          const parent = yield* sessions.create({
+            title: "orchestrator",
+            permission: [{ permission: "*", pattern: "*", action: "allow" }],
+          })
+          const tool = yield* (yield* SessionTool).init()
+          const before = yield* sessions.children(parent.id)
+
+          const sent = yield* tool.execute(
+            { operation: { action: "send", sessionID: "ses_nonexistent", task: "do something" } },
+            ctx(parent.id),
+          )
+
+          expect(sent.title).toContain("Send failed")
+          // Route-first must never silently degrade into create-a-new-child.
+          const after = yield* sessions.children(parent.id)
+          expect(after.length).toBe(before.length)
+        }),
+        { git: true, config: askProviderCfg },
+      ),
+    60000,
   )
 })

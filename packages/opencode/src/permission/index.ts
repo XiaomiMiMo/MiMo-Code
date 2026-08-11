@@ -280,6 +280,22 @@ export const layer = Layer.effect(
       // hold isn't matched → we do NOT return here → it fails closed at the
       // non-interactive gate. No human wait, no hang.
       if (needsAsk && input.inherit && !forced) {
+        // An EXPLICIT `session grant-approval <child|all>` pre-authorizes this
+        // child. That grant is DB-backed (write-through in forwardRef.setGrant),
+        // so unlike the in-memory parentGrants snapshot it survives a restart and
+        // is visible to a child running in its own Instance/process. Checked here
+        // because `decideAskRouting` routes an ordinary background subagent to
+        // `inherit`, never to `forward` — the only other place grantAllowed is
+        // consulted — so without this the documented command silently does
+        // nothing for subagents and their asks fail closed below.
+        if (forwardRef.grantAllowed(input.inherit.parentSessionID, request.sessionID)) {
+          log.info("parent holds an explicit approval grant, auto-allowing", {
+            permission: request.permission,
+            patterns: request.patterns,
+            parentSessionID: input.inherit.parentSessionID,
+          })
+          return
+        }
         const parentSnapshot = forwardRef.getParentGrants(input.inherit.parentSessionID)
         if (parentSnapshot) {
           // Mirror the parent's own two-phase evaluation (see the deny loop
@@ -378,14 +394,27 @@ export const layer = Layer.effect(
       // Spec ③ P3: race against caller's abortSignal so a stranded ask
       // doesn't block forever when the surrounding scope is interrupted.
       // NOTE: Effect.callback (not Effect.promise) — when Deferred.await
-      // wins the race, Effect.race interrupts the callback and runs the
+      // wins the race, the race interrupts the callback and runs the
       // cleanup returned from the body, which removes the addEventListener.
       // Effect.promise has no such hook: listener leaks for the lifetime
       // of the AbortSignal + unhandled-rejection when the eventual abort
       // tries to reject the already-dead Promise.
+      //
+      // raceFirst, NOT race. `Effect.race` resolves with the first
+      // *success* and treats a failure as "not a winner", so it keeps
+      // waiting on the loser; `Effect.raceFirst` resolves with the first
+      // side to *complete*, success or failure. A human rejection FAILS
+      // this Deferred, so under `race` the ask parked forever whenever an
+      // abortSignal was passed — the abort side never settles on its own
+      // and there is nothing left to win. Measured on effect@4.0.0-beta.48:
+      // race(failed Deferred, never) never settles; raceFirst yields the
+      // RejectedError. Interruption still composes: an interrupt of this
+      // fiber exits with a cause for which Cause.hasInterrupts is true
+      // rather than being flattened into a plain failure, which is why
+      // this is not done by wrapping a side in Effect.exit.
       const deferredAwait = Deferred.await(deferred)
       const main = abortSignal
-        ? Effect.race(
+        ? Effect.raceFirst(
             deferredAwait,
             Effect.callback<never, RejectedError>((resume) => {
               const onAbort = () => {
@@ -407,8 +436,12 @@ export const layer = Layer.effect(
       // A forwarded ask that no approver resolves must still terminate (deny),
       // never hang. Race the bounded timeout; the grant path above already
       // resolved the Deferred, so it wins instantly when pre-authorized.
+      // raceFirst for the same reason as above: under `race` a forwarded ask
+      // that the approver DENIED failed the Deferred, which counted as no
+      // winner, so the caller waited out the whole FORWARD_DENY_TIMEOUT_MS
+      // before seeing the rejection it already had.
       let guarded = input.forward
-        ? Effect.race(
+        ? Effect.raceFirst(
             main,
             Effect.sleep(`${FORWARD_DENY_TIMEOUT_MS} millis`).pipe(
               Effect.andThen(() => Deferred.fail(deferred, new RejectedError())),
@@ -422,8 +455,10 @@ export const layer = Layer.effect(
       // Bound it with a timeout; CorrectedError (not RejectedError) so the
       // processor does NOT set ctx.blocked — the model sees an error result with
       // actionable feedback and the session loop continues to the next step.
-      // NOTE: Effect.race with a permanently-blocked Deferred hangs under the
-      // current Effect v4 beta, so use Effect.timeoutOrElse instead.
+      // NOTE: keep Effect.timeoutOrElse here rather than racing a failing
+      // sleep. The reason is the same "a failure is not a winner" rule that
+      // forced raceFirst above: a timeout side that FAILS never wins an
+      // Effect.race, so the race would sit on the still-blocked Deferred.
       if (s.skipAll && forced) {
         const timeoutMs = skipAllForcedAskTimeoutMs()
         guarded = Effect.timeoutOrElse(guarded, {
@@ -589,6 +624,7 @@ export function merge(...rulesets: Ruleset[]): Ruleset {
 }
 
 const EDIT_TOOLS = ["edit", "write", "apply_patch", "multiedit"]
+const READ_TOOLS = ["read", "view_image"]
 
 export function disabled(tools: string[], ruleset: Ruleset): Set<string> {
   const result = new Set<string>()
@@ -602,7 +638,8 @@ export function disabled(tools: string[], ruleset: Ruleset): Set<string> {
     const rule = ruleset.findLast(
       (r) =>
         Wildcard.match(tool, r.permission) ||
-        (EDIT_TOOLS.includes(tool) && Wildcard.match("edit", r.permission)),
+        (EDIT_TOOLS.includes(tool) && Wildcard.match("edit", r.permission)) ||
+        (READ_TOOLS.includes(tool) && Wildcard.match("read", r.permission)),
     )
     if (!rule) continue
     if (rule.pattern === "*" && rule.action === "deny") result.add(tool)

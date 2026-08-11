@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
 
-// This regex is duplicated from src/session/prompt.ts:684 to pin its behavior.
+// This regex is duplicated from `mentionRe` in src/session/prompt.ts to pin its behavior.
 // If the source regex changes, this test must be updated to match.
 const mentionRe = /(?:^|\s)\/([A-Za-z][A-Za-z0-9_:-]*)(?=[^A-Za-z0-9_:-]|$)/g
 

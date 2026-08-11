@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import * as path from "path"
-import { assertMemoryWriteAllowed } from "../../src/tool/memory-path-guard"
+import { assertMemoryWriteAllowed, assertAgentWriteSandbox } from "../../src/tool/memory-path-guard"
 import { ProjectID } from "../../src/project/schema"
 import { SessionID } from "../../src/session/schema"
 import {
@@ -590,5 +590,250 @@ describe("assertMemoryWriteAllowed", () => {
       const tail = path.relative(memoryRootFromResolver, resolverOutput)
       expect(tail).toBe(path.join("sessions", "sid", "checkpoint.md"))
     })
+  })
+})
+
+describe("assertAgentWriteSandbox", () => {
+  const WORKTREE = "/repo"
+
+  test("non-sandboxed agent may write anywhere", () => {
+    expect(() =>
+      assertAgentWriteSandbox({
+        target: "/repo/src/index.ts",
+        agentName: "build",
+        memoryRoot: MEMORY_ROOT,
+        worktree: WORKTREE,
+      }),
+    ).not.toThrow()
+  })
+
+  test("checkpoint-writer may write under the memory tree", () => {
+    expect(() =>
+      assertAgentWriteSandbox({
+        target: path.join(MEMORY_ROOT, "sessions", "sid", "checkpoint.md"),
+        agentName: "checkpoint-writer",
+        memoryRoot: MEMORY_ROOT,
+        worktree: WORKTREE,
+      }),
+    ).not.toThrow()
+  })
+
+  test("checkpoint-writer may NOT write a source file", () => {
+    expect(() =>
+      assertAgentWriteSandbox({
+        target: path.join(WORKTREE, "src", "index.ts"),
+        agentName: "checkpoint-writer",
+        memoryRoot: MEMORY_ROOT,
+        worktree: WORKTREE,
+      }),
+    ).toThrow(/may only write under the memory tree/)
+  })
+
+  test("checkpoint-writer may NOT write under <worktree>/.mimocode", () => {
+    expect(() =>
+      assertAgentWriteSandbox({
+        target: path.join(WORKTREE, ".mimocode", "skills", "unsafe", "SKILL.md"),
+        agentName: "checkpoint-writer",
+        memoryRoot: MEMORY_ROOT,
+        worktree: WORKTREE,
+      }),
+    ).toThrow(/may only write under the memory tree/)
+  })
+
+  for (const agent of ["dream", "distill"] as const) {
+    test(`${agent} may write under the memory tree`, () => {
+      expect(() =>
+        assertAgentWriteSandbox({
+          target: path.join(MEMORY_ROOT, "projects", "p", "MEMORY.md"),
+          agentName: agent,
+          memoryRoot: MEMORY_ROOT,
+          worktree: WORKTREE,
+        }),
+      ).not.toThrow()
+    })
+
+    test(`${agent} may write under <worktree>/.mimocode`, () => {
+      expect(() =>
+        assertAgentWriteSandbox({
+          target: path.join(WORKTREE, ".mimocode", "skills", "foo", "SKILL.md"),
+          agentName: agent,
+          memoryRoot: MEMORY_ROOT,
+          worktree: WORKTREE,
+        }),
+      ).not.toThrow()
+    })
+
+    test(`${agent} may NOT write a source file in the worktree`, () => {
+      expect(() =>
+        assertAgentWriteSandbox({
+          target: path.join(WORKTREE, "src", "index.ts"),
+          agentName: agent,
+          memoryRoot: MEMORY_ROOT,
+          worktree: WORKTREE,
+        }),
+      ).toThrow(/may only write/)
+    })
+
+    test(`${agent} may NOT write an arbitrary external path`, () => {
+      expect(() =>
+        assertAgentWriteSandbox({
+          target: "/etc/passwd",
+          agentName: agent,
+          memoryRoot: MEMORY_ROOT,
+          worktree: WORKTREE,
+        }),
+      ).toThrow(/may only write/)
+    })
+
+    test(`${agent} may NOT escape .mimocode via .. into a source file`, () => {
+      expect(() =>
+        assertAgentWriteSandbox({
+          target: path.join(WORKTREE, ".mimocode", "..", "src", "index.ts"),
+          agentName: agent,
+          memoryRoot: MEMORY_ROOT,
+          worktree: WORKTREE,
+        }),
+      ).toThrow(/may only write/)
+    })
+
+    test(`${agent} may NOT escape the memory tree via ..`, () => {
+      expect(() =>
+        assertAgentWriteSandbox({
+          target: path.join(MEMORY_ROOT, "..", "secret.txt"),
+          agentName: agent,
+          memoryRoot: MEMORY_ROOT,
+          worktree: WORKTREE,
+        }),
+      ).toThrow(/may only write/)
+    })
+
+    test(`${agent} unnormalized-but-in-bounds path still passes`, () => {
+      expect(() =>
+        assertAgentWriteSandbox({
+          target: path.join(WORKTREE, ".mimocode", "skills", "..", "agent", "x.md"),
+          agentName: agent,
+          memoryRoot: MEMORY_ROOT,
+          worktree: WORKTREE,
+        }),
+      ).not.toThrow()
+    })
+
+    test(`${agent} sibling of memory root does not match by prefix`, () => {
+      expect(() =>
+        assertAgentWriteSandbox({
+          target: MEMORY_ROOT + "-evil/x.md",
+          agentName: agent,
+          memoryRoot: MEMORY_ROOT,
+          worktree: WORKTREE,
+        }),
+      ).toThrow(/may only write/)
+    })
+  }
+})
+
+describe("assertMemoryWriteAllowed — memory write switch", () => {
+  const CANONICAL = [
+    ["project MEMORY.md", path.join(MEMORY_ROOT, "projects", "p_test", "MEMORY.md")],
+    ["session checkpoint.md", path.join(MEMORY_ROOT, "sessions", "sid", "checkpoint.md")],
+    ["session notes.md", path.join(MEMORY_ROOT, "sessions", "sid", "notes.md")],
+    ["task progress.md", path.join(MEMORY_ROOT, "sessions", "sid", "tasks", "T1", "progress.md")],
+  ] as const
+
+  for (const [label, target] of CANONICAL) {
+    test(`writeEnabled: false refuses ${label} for the checkpoint-writer`, () => {
+      expect(() =>
+        assertMemoryWriteAllowed({
+          target,
+          agentName: "checkpoint-writer",
+          memoryRoot: MEMORY_ROOT,
+          projectID: PROJECT_ID,
+          sessionID: SESSION_ID,
+          writeEnabled: false,
+        }),
+      ).toThrow(/Memory WRITING is disabled/)
+    })
+
+    test(`writeEnabled: true still allows ${label} for the checkpoint-writer`, () => {
+      expect(() =>
+        assertMemoryWriteAllowed({
+          target,
+          agentName: "checkpoint-writer",
+          memoryRoot: MEMORY_ROOT,
+          projectID: PROJECT_ID,
+          sessionID: SESSION_ID,
+          writeEnabled: true,
+        }),
+      ).not.toThrow()
+    })
+  }
+
+  test("writeEnabled: false refuses the main agent's MEMORY.md edit", () => {
+    expect(() =>
+      assertMemoryWriteAllowed({
+        target: path.join(MEMORY_ROOT, "projects", "p_test", "MEMORY.md"),
+        agentName: "build",
+        memoryRoot: MEMORY_ROOT,
+        projectID: PROJECT_ID,
+        sessionID: SESSION_ID,
+        writeEnabled: false,
+      }),
+    ).toThrow(/Memory WRITING is disabled/)
+  })
+
+  test("writeEnabled: false refuses a task-bound subagent's own progress.md", () => {
+    expect(() =>
+      assertMemoryWriteAllowed({
+        target: path.join(MEMORY_ROOT, "sessions", "sid", "tasks", "T1", "progress.md"),
+        agentName: "general",
+        memoryRoot: MEMORY_ROOT,
+        projectID: PROJECT_ID,
+        sessionID: SESSION_ID,
+        taskId: "T1",
+        writeEnabled: false,
+      }),
+    ).toThrow(/Memory WRITING is disabled/)
+  })
+
+  test("writeEnabled: false leaves non-memory paths untouched", () => {
+    expect(() =>
+      assertMemoryWriteAllowed({
+        target: "/some/cwd/foo.txt",
+        agentName: "build",
+        memoryRoot: MEMORY_ROOT,
+        projectID: PROJECT_ID,
+        sessionID: SESSION_ID,
+        writeEnabled: false,
+      }),
+    ).not.toThrow()
+  })
+
+  test("omitted writeEnabled defaults to ON (backward compatible)", () => {
+    expect(() =>
+      assertMemoryWriteAllowed({
+        target: path.join(MEMORY_ROOT, "sessions", "sid", "checkpoint.md"),
+        agentName: "checkpoint-writer",
+        memoryRoot: MEMORY_ROOT,
+        projectID: PROJECT_ID,
+        sessionID: SESSION_ID,
+      }),
+    ).not.toThrow()
+  })
+
+  test("refusal names the config key and forbids retrying another memory path", () => {
+    let message = ""
+    try {
+      assertMemoryWriteAllowed({
+        target: path.join(MEMORY_ROOT, "sessions", "sid", "notes.md"),
+        agentName: "build",
+        memoryRoot: MEMORY_ROOT,
+        projectID: PROJECT_ID,
+        sessionID: SESSION_ID,
+        writeEnabled: false,
+      })
+    } catch (err) {
+      message = (err as Error).message
+    }
+    expect(message).toContain("memory.disable_write")
+    expect(message).toContain("Do NOT retry with another memory path")
   })
 })

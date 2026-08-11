@@ -5,7 +5,7 @@ import { useLocal } from "@tui/context/local"
 import { useDialog } from "@tui/ui/dialog"
 import { useTheme } from "../context/theme"
 import { useLanguage } from "../context/language"
-import { createDialogProviderOptions } from "./dialog-provider"
+import { AutoMethod, createDialogProviderOptions } from "./dialog-provider"
 import { DialogSelect } from "@tui/ui/dialog-select"
 import { DialogPrompt } from "../ui/dialog-prompt"
 import { useToast } from "../ui/toast"
@@ -42,6 +42,31 @@ export function DialogMimoLogin() {
           }
           dialog.replace(() => (
             <MimoOAuthFlow url={result.data!.url} instructions={result.data!.instructions} />
+          ))
+        },
+      },
+      {
+        title: "Codex",
+        value: "codex",
+        description: "ChatGPT Pro/Plus",
+        category: "Recommended",
+        onSelect: async () => {
+          const result = await sdk.client.provider.oauth.authorize({
+            providerID: "openai",
+            method: 0,
+          })
+          if (result.error) {
+            toast.show({ message: t("tui.dialog.login.start_failed"), variant: "error" })
+            dialog.clear()
+            return
+          }
+          dialog.replace(() => (
+            <AutoMethod
+              providerID="openai"
+              index={0}
+              title="Codex"
+              authorization={result.data!}
+            />
           ))
         },
       },

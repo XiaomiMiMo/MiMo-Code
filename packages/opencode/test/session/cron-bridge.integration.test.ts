@@ -67,6 +67,7 @@ const makeCaptureLayer = (captured: { value: CapturedPrompt[] }) =>
       command: () => Effect.die("command not expected in cron-bridge test"),
       resolvePromptParts: () => Effect.succeed([]),
       sweepOrphanAssistants: () => Effect.void,
+      sweepOrphanToolParts: () => Effect.void,
       predict: () => Effect.succeed(""),
     }),
   )

@@ -2,23 +2,37 @@ Launch a new actor (subagent) to handle complex, multi-step tasks autonomously.
 
 JSON calls wrap the action payload inside an `operation` object; `action` is the discriminator field.
 
+**`spawn` is the DEFAULT.** It launches the subagent in the BACKGROUND and returns
+its actor_id immediately, so several subagents run in PARALLEL and you keep
+responding to the user while they work. `run` BLOCKS the entire conversation until
+the subagent finishes — it is the rare exception, not the normal path.
+
 Examples:
-{"operation":{"action":"run","subagent_type":"explore","description":"Find error recovery","prompt":"<full task>"}}
-{"operation":{"action":"run","subagent_type":"explore","description":"Investigate T4","prompt":"<full task>","task_id":"T4"}}
-{"operation":{"action":"spawn","subagent_type":"general","description":"Long-running search","prompt":"<full task>"}}
+{"operation":{"action":"spawn","subagent_type":"explore","description":"Find error recovery","prompt":"<full task>"}}
+{"operation":{"action":"spawn","subagent_type":"explore","description":"Investigate T4","prompt":"<full task>","task_id":"T4"}}
 {"operation":{"action":"status","actor_id":"<existing>"}}
 {"operation":{"action":"wait","actor_id":"<existing>"}}
 {"operation":{"action":"cancel","actor_id":"<existing>"}}
 {"operation":{"action":"send","to_actor_id":"<existing>","content":"<message>"}}
+THE EXCEPTION — `run` blocks the conversation; only for a tiny lookup that gates this very turn:
+{"operation":{"action":"run","subagent_type":"explore","description":"One tiny blocking lookup","prompt":"<full task>"}}
 
 ## Operations (the `operation.action` field selects one)
 
-- run:    spawn a subagent and BLOCK until completion; result returned inline.
-          required: subagent_type, description, prompt
-          optional: actor_id, timeout_ms, command, context
-- spawn:  spawn a subagent and return actor_id IMMEDIATELY (background).
+- spawn:  **THE DEFAULT.** Launch a subagent in the BACKGROUND; returns actor_id
+          IMMEDIATELY so work proceeds in PARALLEL and your turn stays responsive.
+          Use it for essentially all delegation: investigation, analysis, review,
+          implementation, long searches — anything that takes real time.
           required: subagent_type, description, prompt
           optional: actor_id, command, context
+- run:    **RARE EXCEPTION.** Same launch, but BLOCKS the whole conversation until
+          the subagent finishes; result returned inline. Allowed ONLY when you
+          cannot make your very next decision without the result in THIS turn, and
+          the work is a tiny, fast, strictly-blocking lookup. NEVER use `run` for
+          ordinary analysis, review, or implementation work — those go to `spawn`.
+          If you are unsure, use `spawn`.
+          required: subagent_type, description, prompt
+          optional: actor_id, timeout_ms, command, context
 - status: poll actor state without blocking. required: actor_id.
           Returns: { status: "pending"|"running"|"idle"|"unknown", actor_id, turnCount, ... }
 - wait:   block until actor completes (success/failure/cancelled) or timeout (default 10 min).
@@ -32,12 +46,28 @@ Examples:
 
 ## When to use actor
 
-- **Parallelize**: spawn multiple independent searches/analyses concurrently; `wait` on each.
-- **Isolate heavy lifting**: delegate 10+ file reads to a subagent; you get only the synthesis.
+- **Parallelize (the normal case)**: `spawn` every independent search/analysis at once so
+  they run concurrently; collect later via notification, or `wait`/`status` when you must
+  synchronize.
+- **Isolate heavy lifting**: `spawn` a subagent for 10+ file reads; you get only the synthesis.
 - **Specialized search**: use `explore` for read-only code discovery (finding definitions, callers).
 - **Custom review**: `general` subagent verifies implementation against spec without bias.
-- **Working on a tracked task**: when you spawn a subagent to do work for one of your active tasks (T1, T2, …) — investigation, focused review, dedicated implementation — pass `task_id` so the subagent's verbatim findings get captured to `tasks/<TID>/progress.md` and reconciled into the next checkpoint. Pass ONLY a task ID the `task` tool returned this session; never invent one. If you haven't created the task yet, create it with the `task` tool first, or omit `task_id` and run ad-hoc.
-- **Don't spawn for**: trivial single-file lookups, answers already in your context, or decisions on partial outputs.
+- **Working on a tracked task**: when you spawn a subagent to do work for one of your active tasks (T1, T2, …) — investigation, focused review, dedicated implementation — pass `task_id` so the subagent's verbatim findings get captured to `tasks/<TID>/progress.md` and reconciled into the next checkpoint. Pass ONLY a task ID the `task` tool returned this session; never invent one. If you haven't created the task yet, create it with the `task` tool first, or omit `task_id` and spawn ad-hoc.
+- **Don't delegate at all for**: trivial single-file lookups, answers already in your context, or decisions on partial outputs.
+
+## Collecting spawned work
+
+`spawn` hands you an actor_id, not a result. Three ways to pick the result up:
+
+- **Notification (preferred)**: when the background actor finishes, its result arrives as a
+  notification in this conversation. Your turn does NOT auto-wake — you'll see it the next
+  time you respond. Keep working or keep talking to the user in the meantime.
+- **`wait`**: block on one actor_id only when you have genuinely run out of other work and
+  must have that result before continuing.
+- **`status`**: non-blocking poll of one actor (pending/running/idle) — use it to report
+  progress without stalling the conversation.
+
+Fan-out then fan-in: `spawn` 2-3 subagents in one message, then `wait` on each in turn.
 
 ## Writing the prompt
 
@@ -60,10 +90,10 @@ You are the subagent's only briefing — it hasn't seen this conversation.
 
 ## Binding a subagent to a task
 
-When you `run` or `spawn` a subagent that's doing work for a specific task,
-pass the task's TID via `task_id` (e.g. `task_id: "T4"`) — but only a TID the
-`task` tool actually returned this session. After the subagent finishes, the
-system checks that `tasks/<task_id>/progress.md` exists with the required
+When you `spawn` (or, exceptionally, `run`) a subagent that's doing work for a
+specific task, pass the task's TID via `task_id` (e.g. `task_id: "T4"`) — but only
+a TID the `task` tool actually returned this session. After the subagent finishes,
+the system checks that `tasks/<task_id>/progress.md` exists with the required
 structure — if not, the subagent gets one more chance to write it before
 terminating. The next checkpoint writer then reads that file and integrates
 verbatim commands, outcome, and discoveries into the main checkpoint.
@@ -75,9 +105,9 @@ postStop check then becomes a no-op.
 
 ## Usage notes
 
-- **Resume the same subagent**: pass `actor_id` to `run`/`spawn` and the call resumes that subagent's session (continues with its prior messages and tool outputs). Without `actor_id`, a fresh subagent is created.
-- **`run` vs `spawn` result delivery**: `run` blocks and returns the result inline. `spawn` returns the actor_id immediately; when the background actor finishes, its result appears as a notification in this conversation — your turn does NOT auto-wake to process it; you'll see it the next time you respond to the user. Use `wait` to block on the actor_id explicitly.
-- **`wait` on persistent peers caveat**: `wait` is designed for ephemeral subagents you spawned via `run`/`spawn`. Persistent peers idle between turns and never produce a "done" outcome on success — `wait` on a peer will block until that peer fails or is cancelled. Use `send` + `status` to coordinate with peers instead.
+- **Resume the same subagent**: pass `actor_id` to `spawn`/`run` and the call resumes that subagent's session (continues with its prior messages and tool outputs). Without `actor_id`, a fresh subagent is created.
+- **`spawn` vs `run` result delivery**: `spawn` returns the actor_id immediately; when the background actor finishes, its result appears as a notification in this conversation — your turn does NOT auto-wake to process it; you'll see it the next time you respond to the user. Use `wait` to block on the actor_id explicitly. `run` instead blocks the conversation and returns the result inline — that stall is exactly why it's the exception.
+- **`wait` on persistent peers caveat**: `wait` is designed for ephemeral subagents you spawned via `spawn`/`run`. Persistent peers idle between turns and never produce a "done" outcome on success — `wait` on a peer will block until that peer fails or is cancelled. Use `send` + `status` to coordinate with peers instead.
 - **`send` semantics**: fire-and-forget; returns within ~5 ms regardless of receiver load. The receiver picks the message up at the head of its next runLoop iteration. On unknown `to_actor_id`, `send` returns `{inboxID: null, error: "receiver not found"}` rather than throwing — handle the error path.
 - Trust the subagent's outputs generally, but the subagent doesn't see your full context (unless you pass `context="full"`); brief it accordingly.
 
@@ -86,18 +116,29 @@ postStop check then becomes a no-op.
 
 <example>
 user: "Find all places where parser.ts handles error recovery"
-assistant: I'll spawn an explore subagent to scan parser-related files.
-[actor({"operation":{"action":"run","subagent_type":"explore","description":"Find error recovery in parser","prompt":"Search src/parser.ts and adjacent files for error-recovery patterns. Return: each location's file:line + a one-sentence description of how it recovers. If you find catch blocks, panic-mode synchronization, or recovery sentinels, list them all."}})]
+assistant: I'll spawn an explore subagent in the background to scan parser-related files.
+[actor({"operation":{"action":"spawn","subagent_type":"explore","description":"Find error recovery in parser","prompt":"Search src/parser.ts and adjacent files for error-recovery patterns. Return: each location's file:line + a one-sentence description of how it recovers. If you find catch blocks, panic-mode synchronization, or recovery sentinels, list them all."}})]
 </example>
 
 <example>
-user: "Verify the type checker is correct against spec.md §3"
-assistant: I'll spawn a general subagent to do an independent review.
-[actor({"operation":{"action":"run","subagent_type":"general","description":"Type checker spec review","prompt":"Read docs/spec.md §3 (Type System), then read src/types.ts and tests/types.test.ts. Report: (1) any §3 requirement not implemented; (2) any test that fails to cover a §3 requirement. Don't fix anything — just report findings."}})]
+user: "Audit the type checker: spec compliance, test coverage, and perf hot spots"
+assistant: Three independent questions — I'll spawn all three at once so they run in parallel, then collect.
+[actor({"operation":{"action":"spawn","subagent_type":"general","description":"Type checker spec review","prompt":"Read docs/spec.md §3 (Type System), then src/types.ts. Report every §3 requirement not implemented. Don't fix anything."}})]
+[actor({"operation":{"action":"spawn","subagent_type":"general","description":"Type checker coverage gaps","prompt":"Read docs/spec.md §3 and tests/types.test.ts. Report every §3 requirement with no test covering it. Don't fix anything."}})]
+[actor({"operation":{"action":"spawn","subagent_type":"explore","description":"Type checker hot spots","prompt":"Find the hottest loops and repeated allocations in src/types.ts. Report file:line + why it's hot."}})]
+assistant: All three are running. I'll fold their results in as they report; if I need them before then I'll `wait` on each actor_id.
 </example>
 
 <example>
 user: "investigate T4's failing tests in the type checker"
 assistant: T4 is an active task in my tracker. I'll spawn an explore subagent bound to T4 so its findings end up in tasks/T4/progress.md and the next checkpoint can integrate them.
-[actor({"operation":{"action":"run","subagent_type":"explore","description":"Investigate T4 type checker failures","prompt":"Run `bun test src/types.test.ts` and report each failing case. For each failure: file:line of the assertion, the expected vs actual values, and the most likely root-cause hypothesis based on reading src/types.ts. Don't fix anything.","task_id":"T4"}})]
+[actor({"operation":{"action":"spawn","subagent_type":"explore","description":"Investigate T4 type checker failures","prompt":"Run `bun test src/types.test.ts` and report each failing case. For each failure: file:line of the assertion, the expected vs actual values, and the most likely root-cause hypothesis based on reading src/types.ts. Don't fix anything.","task_id":"T4"}})]
+</example>
+
+<example>
+THE EXCEPTION — `run` blocks the conversation, so only for a tiny lookup whose answer
+gates your very next decision in this same turn.
+user: "Rename the config field everywhere — but only if it isn't part of the public API"
+assistant: I can't pick between a rename and a deprecation shim until I know whether the field is exported. That's a one-shot blocking lookup, so I'll use `run`.
+[actor({"operation":{"action":"run","subagent_type":"explore","description":"Is the field public API","prompt":"Check whether `retryLimit` in src/config.ts is re-exported from src/index.ts or any public entrypoint. Answer yes/no with file:line evidence. Nothing else."}})]
 </example>

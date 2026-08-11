@@ -1,13 +1,15 @@
-import { PlanEnterTool, PlanExitTool } from "./plan"
+import { PlanExitTool } from "./plan"
 import { Session } from "../session"
 import { QuestionTool } from "./question"
-import { BashTool } from "./bash"
+import { BashTool, bashDescription } from "./bash"
 import { EditTool } from "./edit"
+import { MultiEditTool } from "./multiedit"
 import { GlobTool } from "./glob"
 import { GrepTool } from "./grep"
 import { HistoryTool } from "./history"
 import { MemoryTool } from "./memory"
 import { ReadTool } from "./read"
+import { ViewImageTool } from "./view-image"
 import { ActorTool } from "./actor"
 import { TaskTool } from "./task"
 import { CronTool } from "./cron"
@@ -19,6 +21,7 @@ import { NotebookEditTool } from "./notebook-edit"
 import { InvalidTool } from "./invalid"
 import { SkillTool } from "./skill"
 import { SkillSearchTool } from "./skill-search"
+import { MCP_TOOL_SEARCH_ID, McpToolSearchTool } from "./mcp-tool-search"
 import * as Tool from "./tool"
 import { Config } from "../config"
 import { type ToolContext as PluginToolContext, type ToolDefinition } from "@mimo-ai/plugin"
@@ -70,7 +73,8 @@ import * as BashInteractive from "./bash-interactive"
 import { resolveInvocationStyle } from "./invocation-style"
 import { BuiltinWorkflow } from "@/workflow/builtin"
 import { ToolScriptTool, renderToolScriptDeclarations } from "./tool-script"
-import { toolScriptRegistry, toolScriptMcp } from "./tool-script-ref"
+import { toolScriptRegistry } from "./tool-script-ref"
+import { usesGPTToolset } from "./gpt"
 
 const log = Log.create({ service: "tool.registry" })
 
@@ -94,6 +98,7 @@ export function renderWorkflowCatalog(): string {
 }
 
 const fallbackWarned = new Set<string>()
+const reservedConflictWarned = new Set<string>()
 function warnShellFallbackOnce(id: string) {
   if (fallbackWarned.has(id)) return
   fallbackWarned.add(id)
@@ -136,10 +141,10 @@ export const layer = Layer.effect(
     const invalid = yield* InvalidTool
     const actor = yield* ActorTool
     const read = yield* ReadTool
+    const viewimage = yield* ViewImageTool
     const question = yield* QuestionTool
     const lsptool = yield* LspTool
     const planexit = yield* PlanExitTool
-    const planenter = yield* PlanEnterTool
     const webfetch = yield* WebFetchTool
     const websearch = yield* WebSearchTool
     const bash = yield* BashTool
@@ -153,6 +158,7 @@ export const layer = Layer.effect(
     const changedirtool = yield* ChangeDirectoryTool
     const skilltool = yield* SkillTool
     const skillsearch = yield* SkillSearchTool
+    const mcptoolsearch = yield* McpToolSearchTool
     const historytool = yield* HistoryTool
     const memorytool = yield* MemoryTool
     const tasktool = yield* TaskTool
@@ -234,6 +240,7 @@ export const layer = Layer.effect(
           invalid: Tool.init(invalid),
           bash: Tool.init(bash),
           read: Tool.init(read),
+          viewimage: Tool.init(viewimage),
           glob: Tool.init(globtool),
           grep: Tool.init(greptool),
           edit: Tool.init(edit),
@@ -245,12 +252,12 @@ export const layer = Layer.effect(
           code: Tool.init(codesearch),
           skill: Tool.init(skilltool),
           skillsearch: Tool.init(skillsearch),
+          mcptoolsearch: Tool.init(mcptoolsearch),
           patch: Tool.init(patchtool),
           changedir: Tool.init(changedirtool),
           question: Tool.init(question),
           lsp: Tool.init(lsptool),
           planexit: Tool.init(planexit),
-          planenter: Tool.init(planenter),
           memory: Tool.init(memorytool),
           history: Tool.init(historytool),
           task: Tool.init(tasktool),
@@ -267,6 +274,7 @@ export const layer = Layer.effect(
             ...(questionEnabled ? [tool.question] : []),
             tool.bash,
             tool.read,
+            tool.viewimage,
             tool.glob,
             tool.grep,
             tool.edit,
@@ -276,17 +284,17 @@ export const layer = Layer.effect(
             tool.fetch,
             tool.search,
             tool.code,
+            tool.mcptoolsearch,
             tool.skillsearch,
             tool.skill,
             tool.patch,
             tool.changedir,
             ...(Flag.MIMOCODE_EXPERIMENTAL_LSP_TOOL ? [tool.lsp] : []),
             tool.planexit,
-            tool.planenter,
             tool.memory,
             tool.history,
             tool.task,
-            ...(Flag.MIMOCODE_ENABLE_TOOL_SCRIPT ? [tool.toolscript] : []),
+            tool.toolscript,
             ...(Flag.MIMOCODE_EXPERIMENTAL_CRON ? [tool.cron] : []),
             ...(Flag.MIMOCODE_EXPERIMENTAL_ORCHESTRATOR ? [tool.session] : []),
             ...(Flag.MIMOCODE_EXPERIMENTAL_WORKFLOW_TOOL ? [tool.workflow] : []),
@@ -299,21 +307,25 @@ export const layer = Layer.effect(
 
     const all: Interface["all"] = Effect.fn("ToolRegistry.all")(function* () {
       const s = yield* InstanceState.get(state)
-      const customIds = new Set(s.custom.map((t) => t.id))
+      const custom = s.custom.filter((tool) => {
+        if (tool.id !== MCP_TOOL_SEARCH_ID) return true
+        if (!reservedConflictWarned.has(tool.id)) {
+          reservedConflictWarned.add(tool.id)
+          log.warn(`custom tool '${tool.id}' conflicts with a reserved built-in and was ignored`)
+        }
+        return false
+      })
+      const customIds = new Set(custom.map((t) => t.id))
       const builtins = s.builtin.filter((t) => !customIds.has(t.id))
-      return [...builtins, ...s.custom] as Tool.Def[]
+      return [...builtins, ...custom] as Tool.Def[]
     })
-
-    // Late-bound ref (see tool-script-ref.ts): tool_script dispatches guest RPC
-    // calls through the same def list the agent sees, without a module cycle.
-    toolScriptRegistry.current = all
 
     const ids: Interface["ids"] = Effect.fn("ToolRegistry.ids")(function* () {
       return (yield* all()).map((tool) => tool.id)
     })
 
     const describeSkill = Effect.fn("ToolRegistry.describeSkill")(function* (agent: Agent.Info) {
-      const list = yield* skill.available(agent)
+      const list = yield* skill.modelInvocable(agent)
       if (list.length === 0) return "No skills are currently available."
       return [
         "Load a specialized skill that provides domain-specific instructions and workflows.",
@@ -335,11 +347,8 @@ export const layer = Layer.effect(
       return renderWorkflowCatalog()
     })
 
-    const describeToolScript = Effect.fn("ToolRegistry.describeToolScript")(function* () {
-      // MCP declarations ride along when SessionPrompt has populated the ref
-      // (interactive sessions); registry-only contexts render builtins only.
-      const mcp = toolScriptMcp.current ? yield* toolScriptMcp.current() : {}
-      return renderToolScriptDeclarations(yield* all(), mcp)
+    const describeToolScript = Effect.fn("ToolRegistry.describeToolScript")(function* (defs: Tool.Def[]) {
+      return renderToolScriptDeclarations(defs)
     })
 
     const describeTask = Effect.fn("ToolRegistry.describeTask")(function* (agent: Agent.Info) {
@@ -359,8 +368,14 @@ export const layer = Layer.effect(
       return ["Available agent types and the tools they have access to:", description].join("\n")
     })
 
-    const tools: Interface["tools"] = Effect.fn("ToolRegistry.tools")(function* (input) {
+    const available = Effect.fn("ToolRegistry.available")(function* (input: {
+      providerID: ProviderID
+      modelID: ModelID
+      agent: Agent.Info
+    }) {
+      const useGPTTools = usesGPTToolset(input.modelID)
       let filtered = (yield* all()).filter((tool) => {
+        if (tool.id === ToolScriptTool.id) return useGPTTools || Flag.MIMOCODE_ENABLE_EXEC_TOOL
         if (tool.id === CodeSearchTool.id || tool.id === WebSearchTool.id) {
           if (tool.id === WebSearchTool.id) {
             return (
@@ -372,17 +387,26 @@ export const layer = Layer.effect(
           return input.providerID === ProviderID.opencode || Flag.MIMOCODE_ENABLE_EXA
         }
 
-        const usePatch =
-          input.modelID.includes("gpt-") && !input.modelID.includes("oss") && !input.modelID.includes("gpt-4")
-        if (tool.id === ApplyPatchTool.id) return usePatch
-        if (tool.id === EditTool.id || tool.id === WriteTool.id) return !usePatch
+        if (tool.id === ApplyPatchTool.id || tool.id === ViewImageTool.id) return useGPTTools
+        if (
+          tool.id === EditTool.id ||
+          tool.id === MultiEditTool.id ||
+          tool.id === WriteTool.id ||
+          tool.id === ReadTool.id ||
+          tool.id === GrepTool.id ||
+          tool.id === GlobTool.id ||
+          tool.id === NotebookEditTool.id
+        )
+          return !useGPTTools
 
         return true
       })
 
       if (input.agent.toolAllowlist) {
         const allowed = new Set(input.agent.toolAllowlist)
-        filtered = filtered.filter((tool) => tool.id === "invalid" || allowed.has(tool.id))
+        filtered = filtered.filter(
+          (tool) => tool.id === "invalid" || tool.id === MCP_TOOL_SEARCH_ID || allowed.has(tool.id),
+        )
       }
 
       // The `session` tool is orchestrator-only. Orchestrator is a
@@ -391,15 +415,27 @@ export const layer = Layer.effect(
       // allowlist (build/plan/compose) and subagents — must not see `session`.
       filtered = filtered.filter((tool) => tool.id !== "session" || input.agent.name === "orchestrator")
 
+      return { filtered, useGPTTools }
+    })
+
+    // Late-bound ref (see tool-script-ref.ts): exec dispatches through the same
+    // model- and agent-filtered definitions advertised by the outer tool set.
+    // The optional fallback is only for direct tool tests without model context.
+    toolScriptRegistry.current = (input) =>
+      input ? available(input).pipe(Effect.map((result) => result.filtered)) : all()
+
+    const tools: Interface["tools"] = Effect.fn("ToolRegistry.tools")(function* (input) {
+      const availableTools = yield* available(input)
+
       const cfg = yield* config.get()
       const resolveStyle = (toolId: string): "json" | "shell" => resolveInvocationStyle(cfg.tool, toolId)
 
       return yield* Effect.forEach(
-        filtered,
+        availableTools.filtered,
         Effect.fnUntraced(function* (tool: Tool.Def) {
           using _ = log.time(tool.id)
           const output = {
-            description: tool.description,
+            description: tool.id === BashTool.id && availableTools.useGPTTools ? bashDescription(true) : tool.description,
             parameters: tool.parameters,
           }
           yield* plugin.trigger("tool.definition", { toolID: tool.id }, output)
@@ -417,7 +453,7 @@ export const layer = Layer.effect(
               tool.id === ActorTool.id ? yield* describeTask(input.agent) : undefined,
               tool.id === SkillTool.id ? yield* describeSkill(input.agent) : undefined,
               tool.id === WorkflowTool.id ? yield* describeWorkflow() : undefined,
-              tool.id === ToolScriptTool.id ? yield* describeToolScript() : undefined,
+              tool.id === ToolScriptTool.id ? yield* describeToolScript(availableTools.filtered) : undefined,
             ]
               .filter(Boolean)
               .join("\n"),

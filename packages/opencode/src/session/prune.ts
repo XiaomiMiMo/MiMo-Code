@@ -24,7 +24,6 @@ const DEFAULT_CACHE_TTL = 300_000
 // Default safety buffer subtracted from windowSize to derive maxAllowed for
 // checkpoint thresholds. Users can override via cfg.checkpoint.reserved.
 const CHECKPOINT_RESERVED = 13_000
-const MAX_WRITER_FAILURES = 3
 
 /**
  * Default checkpoint thresholds by context window size.
@@ -63,20 +62,22 @@ function isCacheCold(model?: Provider.Model, lastAssistantTime?: number): boolea
  * "1.5M"/"1.5m" (megatokens), or plain number.
  */
 export function parseThreshold(s: string, windowSize: number): number {
-  const trimmed = s.trim()
-  if (trimmed.endsWith("%")) {
-    const pct = parseFloat(trimmed.slice(0, -1))
-    if (!Number.isFinite(pct) || pct <= 0 || pct > 100) {
-      throw new Error(`Invalid checkpoint threshold percentage: "${s}" (must be 0 < n <= 100)`)
-    }
-    return Math.floor((windowSize * pct) / 100)
+  const value = Token.parseQuantity(s, windowSize)
+  if (value !== undefined) return value
+  if (s.trim().endsWith("%")) {
+    throw new Error(`Invalid checkpoint threshold percentage: "${s}" (must be 0 < n <= 100)`)
   }
-  const match = trimmed.match(/^(\d+(?:\.\d+)?)([KkMm]?)$/)
-  if (!match) throw new Error(`Invalid checkpoint threshold format: "${s}"`)
-  let n = parseFloat(match[1])
-  if (match[2] === "K" || match[2] === "k") n *= 1_000
-  else if (match[2] === "M" || match[2] === "m") n *= 1_000_000
-  return Math.floor(n)
+  throw new Error(`Invalid checkpoint threshold format: "${s}"`)
+}
+
+/**
+ * The highest token count at which a checkpoint write is still meaningful:
+ * the window minus the safety buffer. Thresholds are clamped to it, and it is
+ * also the hard ceiling on prune's post-failure recovery gate — past this
+ * point there is no room left in the window for another attempt.
+ */
+export function maxAllowedFor(windowSize: number, reserved?: number): number {
+  return windowSize - (reserved ?? CHECKPOINT_RESERVED)
 }
 
 /**
@@ -91,7 +92,7 @@ export function parseThreshold(s: string, windowSize: number): number {
  */
 export function resolveThresholds(raw: readonly string[], windowSize: number, reserved?: number): number[] {
   const effectiveReserved = reserved ?? CHECKPOINT_RESERVED
-  const maxAllowed = windowSize - effectiveReserved
+  const maxAllowed = maxAllowedFor(windowSize, reserved)
   if (maxAllowed <= 0) {
     throw new Error(
       `Model window size (${windowSize}) is too small for checkpoints ` +
@@ -151,8 +152,6 @@ export interface Interface {
     promptOps: ActorPromptOps
     agentID?: string
   }) => Effect.Effect<void>
-  /** True when the current tokens have just crossed the max checkpoint threshold. */
-  readonly maxThresholdCrossed: (sessionID: SessionID) => Effect.Effect<boolean>
   /** Clear the crossed-threshold state for a session (e.g. after discard+rebuild). */
   readonly resetThresholds: (sessionID: SessionID) => Effect.Effect<void>
 }
@@ -175,14 +174,15 @@ export const layer: Layer.Layer<
     // (and had a checkpoint writer enqueued). Prevents re-firing on the same
     // threshold every turn.
     const crossed = new Map<SessionID, Set<number>>()
-    // Per-session signal: the max threshold was just crossed; prompt.ts should
-    // trigger discard+rebuild on the next loop iteration.
-    const maxCrossed = new Set<SessionID>()
-    // Per-session consecutive writer-failure count. Resets on success.
-    // After the configured `max_writer_failures` (default MAX_WRITER_FAILURES)
-    // consecutive failures, the session stops retrying checkpoint writes
-    // until the process restarts.
-    const writerFailures = new Map<SessionID, number>()
+    // Per-session RECOVERY GATE: the token count at or above which the FINAL
+    // threshold is allowed to fire a second time, armed only when that
+    // threshold's writer settled with a TRANSIENT failure.
+    //
+    // This is a position on the token axis, not a tally of failures. It is
+    // overwritten rather than accumulated, its value is derived from the
+    // threshold ladder and the window, and it is dropped the moment it fires.
+    // See the arming site below for why that distinction is the whole design.
+    const finalRetryAt = new Map<SessionID, number>()
 
     const stripNonEssential = Effect.fn("SessionPrune.stripNonEssential")(function* (input: {
       sessionID: SessionID
@@ -280,18 +280,37 @@ export const layer: Layer.Layer<
       const thresholds = resolveThresholds(raw, windowSize, cfg.checkpoint?.reserved)
       if (thresholds.length === 0) return
 
-      const maxFailures = cfg.checkpoint?.max_writer_failures ?? MAX_WRITER_FAILURES
-
       const currentTokens =
         input.tokens.total ||
         input.tokens.input + input.tokens.output + input.tokens.cache.read + input.tokens.cache.write
 
       const already = crossed.get(input.sessionID) ?? new Set<number>()
       const maxThreshold = thresholds[thresholds.length - 1]
+      // The ladder's own spacing: the token growth the design already accepts
+      // as worth one writer. Used below as the recovery gate's step so a retry
+      // can never fire faster than a normal threshold would have.
+      const step = thresholds.length > 1 ? maxThreshold - thresholds[thresholds.length - 2] : maxThreshold
+      const maxAllowed = maxAllowedFor(windowSize, cfg.checkpoint?.reserved)
 
       for (const t of thresholds) {
         if (currentTokens < t) break // sorted ascending; nothing more to trigger
-        if (already.has(t)) continue
+        if (already.has(t)) {
+          // The FINAL threshold is the only one that may fire twice, and only
+          // once its recovery gate has been reached. Every other threshold has
+          // a successor in the ladder, which is its retry.
+          const gate = finalRetryAt.get(input.sessionID)
+          if (t !== maxThreshold || gate == null || currentTokens < gate) continue
+          // Consume the gate before firing: one gate is one attempt. A further
+          // transient failure re-arms it a step higher (below), which is what
+          // makes the retry budget the remaining window rather than a count.
+          finalRetryAt.delete(input.sessionID)
+          log.info("checkpoint recovery gate reached — re-firing the final threshold", {
+            sessionID: input.sessionID,
+            threshold: t,
+            gate,
+            currentTokens,
+          })
+        }
 
         const outcome = yield* checkpoint
           .tryStartCheckpointWriter({
@@ -302,50 +321,96 @@ export const layer: Layer.Layer<
           .pipe(Effect.catch(() => Effect.succeed<"started" | "queued" | "skipped">("skipped")))
 
         if (outcome === "started") {
-          // Fork a watcher that settles after the detached writer fiber
-          // finishes. On success, clear the failure counter. On failure,
-          // increment the counter; if below MAX_WRITER_FAILURES, clear the
-          // session's crossed thresholds so the next iteration retries.
+          // No accounting, no in-place retry on an arbitrary threshold. A failed
+          // write is self-healing, so there is nothing to book:
+          //   - ensureCheckpointTemplate (checkpoint.ts:117-121) writes the
+          //     template ONLY when the file is absent, so a failed writer
+          //     cannot clobber the previous checkpoint.
+          //   - last_checkpoint_message_id advances ONLY on success
+          //     (checkpoint.ts:954).
+          // A failure therefore leaves file and watermark mutually consistent,
+          // both pointing at the last good checkpoint, and a rebuild uses that
+          // automatically. The cost of a failure is a STALER checkpoint, never
+          // a missing one, and the NEXT THRESHOLD CROSSING is a natural retry
+          // with fresher context than an in-place one. Repeated failures mean
+          // the provider is broken — the writer runs on the SAME model the
+          // foreground turn passed in (this call's `model`, which wins over any
+          // agent-configured model at prompt.ts's `inputModel ?? agentModel`),
+          // so the user's own turns are failing too and they already know. The
+          // writer's LLM calls also run through the same retry ladder as the
+          // foreground (retry.ts), so any failure reaching here is already
+          // post-retry; counting it again adds nothing.
           //
-          // Known narrow race: between tryStartCheckpointWriter returning "started" and
-          // the watcher's forkDetach scheduling, a very-fast writer fiber can
-          // complete and delete itself from the writers map. waitForWriter
-          // then returns "no-writer" and the watcher exits without touching
-          // the counter. Impact is low — real writers run an LLM round-trip
-          // (seconds) vs. microseconds to schedule the fork, so observable
-          // failures tick the counter in practice. Proper fix: have
-          // tryStartCheckpointWriter return the Deferred handle so the watcher doesn't
-          // re-read the writers map.
+          // WHAT THAT ARGUMENT DOES NOT COVER — the FINAL threshold. "The next
+          // threshold is the retry" presumes a next threshold; the last one has
+          // none. Without a recovery gate, a transient failure there would
+          // leave the checkpoint stale until the actual context trigger causes
+          // a rebuild and re-arms the ladder.
+          //
+          // So the final threshold gets a gate, on two conditions that between
+          // them replace the deleted counter:
+          //   1. CLASS, not history — arm only when the settled failure is
+          //      retryable. A deterministic one (overflow / auth / bad request)
+          //      recurs identically, so re-firing is pure waste; an unclassified
+          //      one carries no evidence a retry helps, so it is treated the
+          //      same. This reads ONLY this failure, so it needs no memory.
+          //   2. PROGRESS, not attempts — the gate sits one ladder STEP above
+          //      the token count that fired, clamped to maxAllowed. A retry can
+          //      therefore never fire faster than a normal threshold would, the
+          //      number of retries is whatever the remaining window affords
+          //      (zero once firedAt + step is past maxAllowed), and a
+          //      conversation that stops growing stops retrying by itself.
+          // Neither condition accumulates anything across attempts, which is
+          // what makes this a gate rather than MAX_WRITER_FAILURES renamed.
+          //
+          // The wait is also still what makes a stuck writer observable: the
+          // bound-expiry log inside waitForWriterSettlement. A writer stuck past
+          // the 5min bound otherwise leaves no trace at all until it settles,
+          // and a log line exactly like it is what diagnosed #1938. Terminal
+          // outcomes are already logged by the settle watcher, so nothing else
+          // is reported from here.
+          const isFinal = t === maxThreshold
+          const firedAt = currentTokens
           yield* Effect.gen(function* () {
-            const result = yield* checkpoint.waitForWriter(input.sessionID)
-            if (result === "success") {
-              writerFailures.delete(input.sessionID)
+            const settled = yield* checkpoint.waitForWriterSettlement(input.sessionID)
+            if (!isFinal) return
+            // "timeout" means STILL IN FLIGHT — the writer may yet succeed and
+            // advance the watermark, so it must not arm anything.
+            if (settled.outcome !== "failure") return
+            // Truthiness, not `=== undefined` (AGENTS.md, "Reading a nullable
+            // column"): absent classification is "unknown", not "retryable".
+            if (!settled.failure?.retryable) {
+              log.info("final checkpoint threshold failed without a retryable class — no recovery gate armed", {
+                sessionID: input.sessionID,
+                threshold: t,
+                kind: settled.failure?.kind,
+                cause: settled.failure?.name,
+              })
               return
             }
-            if (result !== "failure") return
-            const next = (writerFailures.get(input.sessionID) ?? 0) + 1
-            writerFailures.set(input.sessionID, next)
-            if (next < maxFailures) {
-              crossed.delete(input.sessionID)
-              maxCrossed.delete(input.sessionID)
-              log.info("checkpoint writer failed — cleared thresholds for retry", {
+            const gate = Math.min(firedAt + step, maxAllowed)
+            if (gate <= firedAt) {
+              log.info("final checkpoint threshold failed transiently but the window has no room left for a retry", {
                 sessionID: input.sessionID,
-                attempt: next,
-                maxAttempts: maxFailures,
+                threshold: t,
+                firedAt,
+                maxAllowed,
               })
-            } else {
-              log.warn("checkpoint writer gave up after max consecutive failures", {
-                sessionID: input.sessionID,
-                maxAttempts: maxFailures,
-              })
+              return
             }
+            finalRetryAt.set(input.sessionID, gate)
+            log.info("final checkpoint threshold failed transiently — recovery gate armed", {
+              sessionID: input.sessionID,
+              threshold: t,
+              firedAt,
+              gate,
+              kind: settled.failure.kind,
+            })
           }).pipe(Effect.forkDetach)
         }
 
         already.add(t)
         log.info("checkpoint triggered", { threshold: t, currentTokens })
-
-        if (t === maxThreshold) maxCrossed.add(input.sessionID)
       }
 
       crossed.set(input.sessionID, already)
@@ -443,18 +508,15 @@ export const layer: Layer.Layer<
       }
     })
 
-    const maxThresholdCrossed = Effect.fn("SessionPrune.maxThresholdCrossed")(function* (
-      sessionID: SessionID,
-    ) {
-      return maxCrossed.has(sessionID)
-    })
-
     const resetThresholds = Effect.fn("SessionPrune.resetThresholds")(function* (sessionID: SessionID) {
       crossed.delete(sessionID)
-      maxCrossed.delete(sessionID)
+      // A rebuild re-arms the whole ladder, which supersedes any pending
+      // recovery gate — leaving it set would let the (now re-armable) final
+      // threshold fire out of order.
+      finalRetryAt.delete(sessionID)
     })
 
-    return Service.of({ prune, fireCheckpoints, maxThresholdCrossed, resetThresholds })
+    return Service.of({ prune, fireCheckpoints, resetThresholds })
   }),
 )
 

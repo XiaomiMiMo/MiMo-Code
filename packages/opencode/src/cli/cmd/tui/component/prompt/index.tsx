@@ -18,12 +18,14 @@ import { useKeybind } from "@tui/context/keybind"
 import { usePromptHistory, type PromptInfo } from "./history"
 import { assign, expandPlaceholders } from "./part"
 import { usePromptStash } from "./stash"
+import { clampStatusMessage } from "./footer"
 import { DialogStash } from "../dialog-stash"
 import { type AutocompleteRef, Autocomplete } from "./autocomplete"
 import { useCommandDialog } from "../dialog-command"
 import { useLanguage } from "@tui/context/language"
 import { useRenderer, type JSX } from "@opentui/solid"
 import * as Editor from "@tui/util/editor"
+import * as Model from "@tui/util/model"
 import * as Voice from "@tui/util/voice"
 import { useExit } from "../../context/exit"
 import * as Clipboard from "../../util/clipboard"
@@ -39,7 +41,9 @@ import { DialogProvider as DialogProviderConnect } from "../dialog-provider"
 import { DialogAlert } from "../../ui/dialog-alert"
 import { DialogPrompt } from "../../ui/dialog-prompt"
 import { useToast } from "../../ui/toast"
+import { createPress } from "../../ui/press"
 import { useKV } from "../../context/kv"
+import { useVisualMode } from "../../context/visual"
 import { createFadeIn } from "../../util/signal"
 import { useTextareaKeybindings } from "../textarea-keybindings"
 import { DialogSkill } from "../dialog-skill"
@@ -48,6 +52,11 @@ import { DialogWorkspaceUnavailable } from "../dialog-workspace-unavailable"
 import { DialogAgreement, FREE_AGREEMENT_KEY, FREE_MODEL_IDS } from "../dialog-agreement"
 import { useArgs } from "@tui/context/args"
 import { resolveSkillSlash } from "@tui/i18n/skill"
+import {
+  isFreeApiModel,
+  isFreeApiSunset,
+  shouldBlockFreeApiRequest,
+} from "@tui/util/free-api-sunset"
 
 export type PromptProps = {
   sessionID?: string
@@ -127,7 +136,8 @@ export function Prompt(props: PromptProps) {
   const renderer = useRenderer()
   const { theme, syntax } = useTheme()
   const kv = useKV()
-  const animationsEnabled = createMemo(() => kv.get("animations_enabled", true))
+  const visual = useVisualMode()
+  const animationsEnabled = visual.motion
   const voiceEnabled = createMemo(() => kv.get("voice_enabled", false))
   const voiceSendEnabled = createMemo(() => kv.get("voice_send_command", false))
   const voiceControlEnabled = createMemo(() => kv.get("voice_control_enabled", false))
@@ -360,6 +370,8 @@ export function Prompt(props: PromptProps) {
     setVoiceState("listening")
   }
 
+  const voicePress = createPress(() => void voiceToggle())
+
   const list = createMemo(() => props.placeholders?.normal ?? [])
   const shell = createMemo(() => props.placeholders?.shell ?? [])
   const [auto, setAuto] = createSignal<AutocompleteRef>()
@@ -464,19 +476,29 @@ export function Prompt(props: PromptProps) {
   const usage = createMemo(() => {
     if (!props.sessionID) return
     const msg = sync.data.message[props.sessionID]?.["main"] ?? []
+    // Resolve the window from the last measured assistant turn's model, matching
+    // the record `computeContextUsage` reads for the token count.
     const last = msg.findLast((item): item is AssistantMessage => item.role === "assistant" && item.tokens.output > 0)
     if (!last) return
-
-    const tokens =
-      last.tokens.input + last.tokens.output + last.tokens.reasoning + last.tokens.cache.read + last.tokens.cache.write
-    if (tokens <= 0) return
-
     const model = sync.data.provider.find((item) => item.id === last.providerID)?.models[last.modelID]
-    const pct = model?.limit.context ? `${Math.round((tokens / model.limit.context) * 100)}%` : undefined
-    const cost = msg.reduce((sum, item) => sum + (item.role === "assistant" ? item.cost : 0), 0)
+    const win = Model.contextWindow(sync.data.config, model)
+    // A /rebuild boundary is a message carrying a `checkpoint` part (stored in
+    // sync.data.part, keyed by message id). Its `coveredUpTo` is the watermark it
+    // collapsed up to; computeContextUsage uses that (not message order) to decide
+    // the measured turn is stale and report pending until the next assistant turn.
+    const result = Model.computeContextUsage({
+      messages: msg,
+      window: win,
+      checkpointCoverage: (id) =>
+        (sync.data.part[id] ?? []).find((p) => p.type === "checkpoint")?.coveredUpTo,
+    })
+    if (!result) return
     return {
-      context: pct ? `${Locale.number(tokens)} (${pct})` : Locale.number(tokens),
-      cost: cost > 0 ? money.format(cost) : undefined,
+      // computeContextUsage owns the pending placeholder (it renders `—/<win>`
+      // so the footer stops asserting the pre-rebuild fill while keeping the
+      // frame), so `context` is the final string in every case — render it as-is.
+      context: result.context,
+      cost: result.cost > 0 ? money.format(result.cost) : undefined,
     }
   })
 
@@ -1031,10 +1053,34 @@ export function Prompt(props: PromptProps) {
       return false
     }
 
+    const clientSlashSubmission =
+      store.mode !== "shell" && trimmed.startsWith("/") && command.slashes().some((slash) => slash.display === trimmed)
+    const modelClientSlash = ["/btw", "/compact", "/summarize"].includes(trimmed)
+    const freeApiSunset = isFreeApiSunset()
+    const sunsetFreeApi = freeApiSunset && isFreeApiModel(selectedModel)
+    if (
+      shouldBlockFreeApiRequest(selectedModel, {
+        sunset: freeApiSunset,
+        localOnly: clientSlashSubmission && !modelClientSlash,
+        shell: store.mode === "shell",
+      })
+    ) {
+      void DialogAlert.show(
+        dialog,
+        t("tui.dialog.free_api_sunset.title"),
+        t("tui.dialog.free_api_sunset.message"),
+      )
+      return false
+    }
+
     // Free models require a one-time acknowledgment of the terms and privacy
     // policy. Gate submission until the user accepts; the flag is stored in KV.
     const isFreeModel = FREE_MODEL_IDS.has(selectedModel.modelID)
-    if (isFreeModel && !kv.get(FREE_AGREEMENT_KEY)) {
+    if (
+      isFreeModel &&
+      !kv.get(FREE_AGREEMENT_KEY) &&
+      !(sunsetFreeApi && ((clientSlashSubmission && !modelClientSlash) || store.mode === "shell"))
+    ) {
       submitLock = true
       DialogAgreement.show(dialog, {
         onConfirm: () => {
@@ -1173,7 +1219,12 @@ export function Prompt(props: PromptProps) {
           question,
           (active) =>
             sdk.client.session
-              .ask({ sessionID, question })
+              .ask({
+                sessionID,
+                question,
+                providerID: selectedModel.providerID,
+                modelID: selectedModel.modelID,
+              })
               .then((res) => {
                 if (!active()) return
                 return DialogAlert.show(dialog, "/btw", res.data?.answer ?? "(no answer)")
@@ -1738,7 +1789,11 @@ export function Prompt(props: PromptProps) {
                   {(agent) => (
                     <>
                       <text fg={fadeColor(highlight(), agentMetaAlpha())}>
-                        {store.mode === "shell" ? "Shell" : Locale.titlecase(agent().name)}
+                        {store.mode === "shell"
+                          ? "Shell"
+                          : agent().name === "compose"
+                            ? `${Locale.titlecase(agent().name)} (legacy)`
+                            : Locale.titlecase(agent().name)}
                       </text>
                       <Show when={store.mode === "normal"}>
                         <box flexDirection="row" gap={1}>
@@ -1781,22 +1836,22 @@ export function Prompt(props: PromptProps) {
                 <Show when={voiceEnabled()}>
                   <Switch>
                     <Match when={voiceState() === "idle"}>
-                      <text fg={theme.textMuted} selectable={false} onMouseUp={() => voiceToggle()}>
+                      <text fg={theme.textMuted} selectable={false} {...voicePress.props}>
                         {"[ 🎙  Voice ]"}
                       </text>
                     </Match>
                     <Match when={voiceState() === "listening"}>
-                      <text fg={theme.primary} selectable={false} onMouseUp={() => voiceToggle()}>
+                      <text fg={theme.primary} selectable={false} {...voicePress.props}>
                         {"[ 🎙  -:-- ]"}
                       </text>
                     </Match>
                     <Match when={voiceState() === "speaking"}>
-                      <text fg={theme.primary} selectable={false} onMouseUp={() => voiceToggle()}>
+                      <text fg={theme.primary} selectable={false} {...voicePress.props}>
                         {`[ 🎙  ${Math.floor(voiceElapsed() / 60)}:${String(voiceElapsed() % 60).padStart(2, "0")} ]`}
                       </text>
                     </Match>
                     <Match when={voiceState() === "processing"}>
-                      <text fg={theme.primary} selectable={false} onMouseUp={() => voiceToggle()}>
+                      <text fg={theme.primary} selectable={false} {...voicePress.props}>
                         {"[ 🎙  .... ]"}
                       </text>
                     </Match>
@@ -1845,18 +1900,20 @@ export function Prompt(props: PromptProps) {
             >
               <box flexShrink={0} flexDirection="row" gap={1}>
                 <box marginLeft={1}>
-                  <Show when={kv.get("animations_enabled", true)} fallback={<text fg={theme.textMuted}>[⋯]</text>}>
+                  <Show when={visual.motion()} fallback={<text fg={theme.textMuted}>⋯</text>}>
                     <spinner color={spinnerDef().color} frames={spinnerDef().frames} interval={40} />
                   </Show>
                 </box>
                 {(() => {
                   const busyMessage = createMemo(() => {
                     const s = status()
-                    return s.type === "busy" ? s.message : undefined
+                    return s.type === "busy" ? clampStatusMessage(s.message) : undefined
                   })
                   return (
                     <Show when={busyMessage()}>
-                      <text fg={theme.textMuted}>{busyMessage()}</text>
+                      <text fg={theme.textMuted} wrapMode="none" flexShrink={1}>
+                        {busyMessage()}
+                      </text>
                     </Show>
                   )
                 })()}
@@ -1947,7 +2004,10 @@ export function Prompt(props: PromptProps) {
                   <box gap={2} flexDirection="row">
                     <Show when={usage()}>
                       {(item) => (
-                        <text fg={theme.textMuted} wrapMode="none">
+                        // flexShrink=0: the context counter is the one number the
+                        // footer must never clip (`52.4K/96` instead of
+                        // `52.4K/960K`); the hints beside it can give way first.
+                        <text fg={theme.textMuted} wrapMode="none" flexShrink={0}>
                           {[item().context, item().cost].filter(Boolean).join(" · ")}
                         </text>
                       )}

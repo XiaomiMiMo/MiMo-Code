@@ -1,4 +1,4 @@
-import { afterEach, describe, expect } from "bun:test"
+import { afterEach, beforeEach, describe, expect } from "bun:test"
 import { Effect, Layer } from "effect"
 import * as fs from "fs/promises"
 import path from "path"
@@ -11,6 +11,8 @@ import { checkpointPath } from "../../src/session/checkpoint-paths"
 import { SessionCompaction } from "../../src/session/compaction"
 import { TaskRegistry } from "../../src/task/registry"
 import { ActorRegistry } from "../../src/actor/registry"
+import { ActorRegistryTable } from "../../src/actor/actor.sql"
+import { Database } from "../../src/storage"
 import { MessageID, PartID, SessionID } from "../../src/session/schema"
 import { ModelID, ProviderID } from "../../src/provider/schema"
 import { Instance } from "../../src/project/instance"
@@ -28,6 +30,17 @@ const ref = {
 
 afterEach(async () => {
   await Instance.disposeAll()
+})
+
+// renderRebuildContext's "Active actors" section reads ActorRegistry.listActive(),
+// which is process-wide (pending/running + background), not session-scoped — peer
+// actors legitimately live in child sessions. Database.Client is a process-level
+// singleton and orphan recovery only clears rows from OTHER instance_ids, so
+// background actors left running by earlier test files survive into this one and
+// make the "nothing to push" context non-empty. Wipe them, same as
+// checkpoint-rebuild-v3.test.ts.
+beforeEach(() => {
+  Database.use((db) => db.delete(ActorRegistryTable).run())
 })
 
 const it = testEffect(

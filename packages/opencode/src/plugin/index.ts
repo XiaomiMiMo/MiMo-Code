@@ -18,6 +18,7 @@ import { Log } from "../util"
 import { createOpencodeClient } from "@mimo-ai/sdk"
 import { Flag } from "../flag/flag"
 import { CodexAuthPlugin } from "./codex"
+import { XaiAuthPlugin } from "./xai"
 import { MimoAuthPlugin, AnthropicProxyPlugin } from "./mimo"
 import { Session } from "../session"
 import type { SessionID } from "../session/schema"
@@ -142,6 +143,7 @@ const INTERNAL_PLUGINS: PluginInstance[] = [
   MimoAuthPlugin,
   AnthropicProxyPlugin,
   CodexAuthPlugin,
+  XaiAuthPlugin,
   CopilotAuthPlugin,
   // gitlab/poe auth are external npm packages typed against the published
   // upstream plugin package, which carries a duplicate (nominal) copy of the
@@ -312,7 +314,7 @@ export const layer = Layer.effect(
             ([exportName, v]) => typeof v === "function" && exportName.endsWith("Plugin"),
           )?.[1] as PluginInstance | undefined
           if (!overlay) continue
-          log.info("loading extension", { name })
+          // log.info("loading extension", { name })
           const init = yield* Effect.tryPromise({
             try: () => overlay(input),
             catch: (err) => log.error("failed to load extension", { name, error: err }),

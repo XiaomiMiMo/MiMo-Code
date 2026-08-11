@@ -6,10 +6,13 @@ import { Skill } from "../../src/skill"
 import { loadComposeBundle } from "../../src/skill/compose/bundle.macro"
 import { provideTmpdirInstance } from "../fixture/fixture"
 import { testEffect } from "../lib/effect"
+import { withEnv } from "../lib/env"
 
-process.env.MIMOCODE_DISABLE_EXTERNAL_SKILLS = "true"
-delete process.env.MIMOCODE_DISABLE_BUILTIN_SKILLS
-delete process.env.MIMOCODE_DISABLE_COMPOSE_SKILLS
+withEnv({
+  MIMOCODE_DISABLE_EXTERNAL_SKILLS: "true",
+  MIMOCODE_DISABLE_BUILTIN_SKILLS: undefined,
+  MIMOCODE_DISABLE_COMPOSE_SKILLS: undefined,
+})
 
 const it = testEffect(Layer.mergeAll(Skill.defaultLayer, CrossSpawnSpawner.defaultLayer))
 
@@ -23,6 +26,7 @@ describe("bundled skill discovery", () => {
           const names = new Set(list.map((item) => item.name))
 
           expect(names.has("data-analytics")).toBe(true)
+          expect(names.has("grok-build")).toBe(true)
           expect(names.has("product-design")).toBe(true)
           expect(names.has("sales")).toBe(true)
           expect(

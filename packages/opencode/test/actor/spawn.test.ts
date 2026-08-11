@@ -59,6 +59,7 @@ import { TestLLMServer } from "../lib/llm-server"
 import { reply } from "../lib/llm-server"
 import { Inbox } from "../../src/inbox"
 import { inboxServiceRef } from "../../src/inbox/inbox-ref"
+import { Flag } from "../../src/flag/flag"
 
 afterEach(async () => {
   await Instance.disposeAll()
@@ -120,7 +121,7 @@ const status = SessionStatus.layer.pipe(Layer.provideMerge(Bus.layer))
 const run = SessionRunState.layer.pipe(Layer.provide(status))
 const infra = Layer.mergeAll(NodeFileSystem.layer, CrossSpawnSpawner.defaultLayer)
 
-function makeLayer() {
+function makeLayer(opts?: { settledError: () => NonNullable<MessageV2.Assistant["error"]> | undefined }) {
   const deps = Layer.mergeAll(
     Session.defaultLayer,
     Snapshot.defaultLayer,
@@ -186,7 +187,7 @@ function makeLayer() {
   return Layer.mergeAll(
     TestLLMServer.layer,
     Actor.layer.pipe(
-      Layer.provideMerge(prompt),
+      Layer.provideMerge(opts?.settledError ? settledPromptLayer(opts.settledError, prompt) : prompt),
       Layer.provide(Worktree.defaultLayer),
       Layer.provideMerge(taskRegistry),
       Layer.provide(TaskRegistry.defaultLayer),
@@ -194,6 +195,52 @@ function makeLayer() {
       Layer.provide(Inbox.defaultLayer),
     ),
   ).pipe(Layer.provide(summary))
+}
+
+/**
+ * Failure-classification tests only. Replaces SessionPrompt.prompt so the child's
+ * turn settles with a CHOSEN assistant error, then hands that to the real spawn
+ * machinery. Everything under test downstream of this point is production code:
+ * runAgentLoop's classify call, the failure carrier, Cause.squash in onFailure and
+ * the AgentOutcome assembly. Only the upstream provider round-trip is stood in for,
+ * which is what makes a transient case testable at all — SessionRetry's ladder is
+ * uncapped, so a genuinely retryable provider error never settles on its own.
+ */
+function settledPromptLayer<A, E, R>(
+  settledError: () => NonNullable<MessageV2.Assistant["error"]> | undefined,
+  real: Layer.Layer<A, E, R>,
+) {
+  return Layer.effect(
+    SessionPrompt.Service,
+    Effect.gen(function* () {
+      const inner = yield* SessionPrompt.Service
+      return SessionPrompt.Service.of({
+        ...inner,
+        prompt: (input) => {
+          const settled = settledError()
+          // Truthiness, not `!== undefined` — see AGENTS.md "Reading a nullable column".
+          if (!settled) return inner.prompt(input)
+          const info: MessageV2.Assistant = {
+            id: MessageID.ascending(),
+            sessionID: input.sessionID,
+            agentID: input.agentID,
+            role: "assistant",
+            time: { created: Date.now(), completed: Date.now() },
+            error: settled,
+            parentID: MessageID.ascending(),
+            modelID: ModelID.make("test-model"),
+            providerID: ProviderID.make("test"),
+            mode: "build",
+            agent: input.agent ?? "build",
+            path: { cwd: process.cwd(), root: process.cwd() },
+            cost: 0,
+            tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+          }
+          return Effect.succeed({ info, parts: [] } satisfies MessageV2.WithParts)
+        },
+      })
+    }),
+  ).pipe(Layer.provideMerge(real))
 }
 
 const it = testEffect(makeLayer())
@@ -244,6 +291,28 @@ function providerCfg(url: string) {
         options: {
           ...cfg.provider.test.options,
           baseURL: url,
+        },
+      },
+    },
+  }
+}
+
+function gptProviderCfg(url: string) {
+  const config = providerCfg(url)
+  return {
+    ...config,
+    provider: {
+      ...config.provider,
+      "gpt-test": {
+        ...config.provider.test,
+        id: "gpt-test",
+        name: "GPT Test",
+        models: {
+          "gpt-5.4": {
+            ...config.provider.test.models["test-model"],
+            id: "deployment-primary",
+            name: "GPT-5.4",
+          },
         },
       },
     },
@@ -348,6 +417,126 @@ describe("Actor.spawn peer mode", () => {
 })
 
 describe("Actor.spawn subagent mode", () => {
+  it.live("exposes GPT orchestration and read tools to read-only GPT subagents", () =>
+    provideTmpdirServer(
+      Effect.fnUntraced(function* ({ llm }) {
+        const actor = yield* Actor.Service
+        const session = yield* Session.Service
+        const parent = yield* session.create({ title: "GPT subagent tools" })
+
+        yield* llm.text("done")
+        const result = yield* actor.spawn({
+          mode: "subagent",
+          sessionID: parent.id,
+          agentType: "explore",
+          task: "verify tools",
+          context: "none",
+          tools: "INHERIT",
+          background: false,
+          model: { providerID: ProviderID.make("gpt-test"), modelID: ModelID.make("gpt-5.4") },
+        })
+        yield* Deferred.await(result.outcome)
+
+        const request = (yield* llm.hits).find(
+          (hit) =>
+            Array.isArray(hit.body.tools) &&
+            hit.body.tools.some(
+              (tool) => (tool as { function?: { name?: string } }).function?.name === "view_image",
+            ),
+        )
+        const names = (request?.body.tools as Array<{ function?: { name?: string } }> | undefined)?.map(
+          (tool) => tool.function?.name,
+        )
+        expect(names).toContain("exec")
+        expect(names).toContain("view_image")
+        expect(names).not.toContain("apply_patch")
+        expect(names).not.toContain("read")
+        expect(names).not.toContain("edit")
+        expect(names).not.toContain("write")
+      }),
+      { git: true, config: gptProviderCfg },
+    ),
+    30000,
+  )
+
+  it.live("exposes the full GPT-specific tool set to general GPT subagents", () =>
+    provideTmpdirServer(
+      Effect.fnUntraced(function* ({ llm }) {
+        const actor = yield* Actor.Service
+        const session = yield* Session.Service
+        const parent = yield* session.create({ title: "General GPT subagent tools" })
+
+        yield* llm.text("done")
+        const result = yield* actor.spawn({
+          mode: "subagent",
+          sessionID: parent.id,
+          agentType: "general",
+          task: "verify tools",
+          context: "none",
+          tools: "INHERIT",
+          background: false,
+          model: { providerID: ProviderID.make("gpt-test"), modelID: ModelID.make("gpt-5.4") },
+        })
+        yield* Deferred.await(result.outcome)
+
+        const request = (yield* llm.hits).find(
+          (hit) =>
+            Array.isArray(hit.body.tools) &&
+            hit.body.tools.some(
+              (tool) => (tool as { function?: { name?: string } }).function?.name === "view_image",
+            ),
+        )
+        const names = (request?.body.tools as Array<{ function?: { name?: string } }> | undefined)?.map(
+          (tool) => tool.function?.name,
+        )
+        expect(names).toContain("exec")
+        expect(names).toContain("apply_patch")
+        expect(names).toContain("view_image")
+        expect(names).not.toContain("read")
+        expect(names).not.toContain("edit")
+        expect(names).not.toContain("write")
+      }),
+      { git: true, config: gptProviderCfg },
+    ),
+    30000,
+  )
+
+  it.live("keeps the legacy tool set for non-GPT subagents", () =>
+    provideTmpdirServer(
+      Effect.fnUntraced(function* ({ llm }) {
+        const actor = yield* Actor.Service
+        const session = yield* Session.Service
+        const parent = yield* session.create({ title: "General non-GPT subagent tools" })
+
+        yield* llm.text("done")
+        const result = yield* actor.spawn({
+          mode: "subagent",
+          sessionID: parent.id,
+          agentType: "general",
+          task: "verify tools",
+          context: "none",
+          tools: "INHERIT",
+          background: false,
+          model: ref,
+        })
+        yield* Deferred.await(result.outcome)
+
+        const request = (yield* llm.hits).find((hit) => Array.isArray(hit.body.tools))
+        const names = (request?.body.tools as Array<{ function?: { name?: string } }> | undefined)?.map(
+          (tool) => tool.function?.name,
+        )
+        expect(names).toContain("read")
+        expect(names).toContain("edit")
+        expect(names).toContain("write")
+        expect(names).not.toContain("exec")
+        expect(names).not.toContain("apply_patch")
+        expect(names).not.toContain("view_image")
+      }),
+      { git: true, config: providerCfg },
+    ),
+    30000,
+  )
+
   it.live("does NOT create new session, allocates <type>-<n> actorID", () =>
     provideTmpdirServer(
       Effect.fnUntraced(function* ({ llm }) {
@@ -947,6 +1136,38 @@ describe("Actor.spawn structured output (P3)", () => {
       { git: true, config: providerCfg },
     ),
   )
+
+  it.live("exhausted checkpoint-writer invalid output produces a failed actor outcome", () =>
+    provideTmpdirServer(
+      Effect.fnUntraced(function* ({ llm }) {
+        const actor = yield* Actor.Service
+        const session = yield* Session.Service
+        const parent = yield* session.create({
+          title: "invalid actor output",
+          permission: [{ permission: "*", pattern: "*", action: "allow" }],
+        })
+
+        yield* llm.push(
+          ...Array.from({ length: Flag.MIMOCODE_INVALID_OUTPUT_CONTINUATION_LIMIT + 1 }, () => reply().stop()),
+        )
+
+        const result = yield* actor.spawn({
+          mode: "subagent",
+          sessionID: parent.id,
+          agentType: "checkpoint-writer",
+          task: "return a result",
+          context: "none",
+          tools: ["read"],
+          background: false,
+          model: ref,
+        })
+
+        const outcome = yield* Deferred.await(result.outcome)
+        expect(outcome.status).toBe("failure")
+      }),
+      { git: true, config: providerCfg },
+    ),
+  )
 })
 
 describe("Actor.spawn onActorID pre-registration (MR104 #2)", () => {
@@ -1161,6 +1382,158 @@ describe("Actor.spawn return-format injection (F21)", () => {
         const subAgentUser = msgs.find((m) => m.info.role === "user" && m.info.agentID === result.actorID)
         const text = subAgentUser?.parts.find((p) => p.type === "text")?.text ?? ""
         expect(text).not.toContain("Return format (required)")
+      }),
+      { git: true, config: providerCfg },
+    ),
+  )
+})
+
+// ---------------------------------------------------------------------------
+// AgentOutcome failure classification (see actor/spawn.ts FailureInfo).
+//
+// The point of these tests is that a consumer can tell a transient failure from
+// a deterministic one WITHOUT string-matching `error`. Both drive the real
+// construction path: runAgentLoop classifies the settled assistant error, raises
+// the carrier, and forkWork's onFailure squashes it back out and assembles the
+// AgentOutcome. Nothing here hand-builds an outcome object.
+// ---------------------------------------------------------------------------
+let settled: NonNullable<MessageV2.Assistant["error"]> | undefined
+const itSettled = testEffect(makeLayer({ settledError: () => settled }))
+
+describe("AgentOutcome failure classification", () => {
+  itSettled.live("a transient provider failure is classified retryable/transient", () =>
+    provideTmpdirServer(
+      Effect.fnUntraced(function* () {
+        const actor = yield* Actor.Service
+        const session = yield* Session.Service
+        const parent = yield* session.create({
+          title: "x",
+          permission: [{ permission: "*", pattern: "*", action: "allow" }],
+        })
+        // A 429 the provider SDK itself marked retryable — SessionRetry.retryable
+        // returns a status for it, which is the oracle spawn.ts reuses.
+        settled = new MessageV2.APIError(
+          { message: "Too Many Requests", statusCode: 429, isRetryable: true },
+        ).toObject()
+        const result = yield* actor.spawn({
+          mode: "subagent",
+          sessionID: parent.id,
+          agentType: "build",
+          task: "t",
+          context: "none",
+          tools: ["read"],
+          background: false,
+          model: ref,
+        })
+        const outcome = yield* Deferred.await(result.outcome)
+        expect(outcome.status).toBe("failure")
+        if (outcome.status !== "failure") throw new Error("expected failure")
+        // The human string is still there and unchanged.
+        expect(outcome.error).toContain("Actor assistant failed: APIError")
+        // ...and the classification is there alongside it.
+        expect(outcome.failure).toBeTruthy()
+        expect(outcome.failure?.retryable).toBe(true)
+        expect(outcome.failure?.kind).toBe("transient")
+        expect(outcome.failure?.name).toBe("APIError")
+      }),
+      { git: true, config: providerCfg },
+    ),
+  )
+
+  itSettled.live("a deterministic overflow failure is classified non-retryable/overflow", () =>
+    provideTmpdirServer(
+      Effect.fnUntraced(function* () {
+        const actor = yield* Actor.Service
+        const session = yield* Session.Service
+        const parent = yield* session.create({
+          title: "x",
+          permission: [{ permission: "*", pattern: "*", action: "allow" }],
+        })
+        // Context overflow is the canonical "will recur identically" failure:
+        // ProviderError.isOverflow matched it upstream and SessionRetry.retryable
+        // explicitly refuses to retry it.
+        settled = new MessageV2.ContextOverflowError({
+          message: "Input exceeds context window of this model",
+        }).toObject()
+        const result = yield* actor.spawn({
+          mode: "subagent",
+          sessionID: parent.id,
+          agentType: "build",
+          task: "t",
+          context: "none",
+          tools: ["read"],
+          background: false,
+          model: ref,
+        })
+        const outcome = yield* Deferred.await(result.outcome)
+        expect(outcome.status).toBe("failure")
+        if (outcome.status !== "failure") throw new Error("expected failure")
+        expect(outcome.error).toContain("Actor assistant failed: ContextOverflowError")
+        expect(outcome.failure).toBeTruthy()
+        expect(outcome.failure?.retryable).toBe(false)
+        expect(outcome.failure?.kind).toBe("overflow")
+        expect(outcome.failure?.name).toBe("ContextOverflowError")
+      }),
+      { git: true, config: providerCfg },
+    ),
+  )
+
+  itSettled.live("a rejected credential is classified non-retryable/auth", () =>
+    provideTmpdirServer(
+      Effect.fnUntraced(function* () {
+        const actor = yield* Actor.Service
+        const session = yield* Session.Service
+        const parent = yield* session.create({
+          title: "x",
+          permission: [{ permission: "*", pattern: "*", action: "allow" }],
+        })
+        settled = new MessageV2.APIError(
+          { message: "Unauthorized", statusCode: 401, isRetryable: false },
+        ).toObject()
+        const result = yield* actor.spawn({
+          mode: "subagent",
+          sessionID: parent.id,
+          agentType: "build",
+          task: "t",
+          context: "none",
+          tools: ["read"],
+          background: false,
+          model: ref,
+        })
+        const outcome = yield* Deferred.await(result.outcome)
+        if (outcome.status !== "failure") throw new Error("expected failure")
+        expect(outcome.failure?.retryable).toBe(false)
+        expect(outcome.failure?.kind).toBe("auth")
+      }),
+      { git: true, config: providerCfg },
+    ),
+  )
+
+  it.live("a failure that never reached a provider carries no classification", () =>
+    provideTmpdirServer(
+      Effect.fnUntraced(function* ({ llm }) {
+        const actor = yield* Actor.Service
+        const session = yield* Session.Service
+        const parent = yield* session.create({
+          title: "x",
+          permission: [{ permission: "*", pattern: "*", action: "allow" }],
+        })
+        yield* llm.text("done")
+        const result = yield* actor.spawn({
+          mode: "subagent",
+          sessionID: parent.id,
+          agentType: "build",
+          task: "t",
+          context: "none",
+          tools: ["read"],
+          background: false,
+          model: ref,
+        })
+        const outcome = yield* Deferred.await(result.outcome)
+        // A clean turn must not invent a classification; `failure` is only ever
+        // present on a settled-assistant-error failure.
+        if (outcome.status === "failure") expect(outcome.failure == null).toBe(true)
+        else expect(outcome.status).toBe("success")
       }),
       { git: true, config: providerCfg },
     ),

@@ -1,0 +1,8 @@
+View a local image file from the filesystem when visual inspection is needed. Use this for images already available on disk.
+
+Usage:
+- The path may be absolute or relative to the current session working directory.
+- Supported image formats are JPEG, PNG, GIF, and WebP.
+- The detail parameter defaults to `high`; use `original` to request the original image detail when the provider supports it.
+- Call this tool in parallel when you need to inspect multiple independent images.
+

@@ -61,7 +61,7 @@ Primary agents shipped in-box:
 - **max** (experimental, opt-in via `experimental.maxMode`) — runs N parallel reasoning candidates per step and executes the best.
 
 Subagents shipped in-box:
-- **general** — general-purpose multi-step worker. `change_directory: deny` so it stays pinned to the caller's cwd.
+- **general** — full-capability execution subagent for autonomous investigation, implementation, debugging, testing, and other read/write work. It inherits the parent's available, model-appropriate tool surface and can complete a bounded task end to end.
 - **explore** — fast, READ-ONLY codebase explorer. Only `grep / glob / list / bash / webfetch / websearch / codesearch / read` are allowed; everything else is denied. Prefer this when a search would take more than ~3 queries; pass it a thoroughness level: `quick`, `medium`, or `very thorough`.
 - **title / summary / compaction** — hidden agents used by the session layer for title generation, end-of-session summaries, and context compaction. Their tool allowlists are empty.
 - **checkpoint-writer** — a *fork agent*. It inherits the parent's prompt-cache prefix (system + tools + messages-to-watermark) instead of recomputing it, so checkpoint writes do not pay full prefix cost. Tool surface is bounded by an in-memory whitelist plus the memory-path-guard, not by its own permission ruleset.
@@ -84,7 +84,7 @@ The tool registry lives in `packages/opencode/src/tool/`. Each tool is a `.ts` i
 - **Shell**: `bash`, `bash-interactive`, `change-directory`
 - **Knowledge**: `webfetch`, `websearch`, `memory`, `history`, `lsp`
 - **Orchestration**: `actor` (spawn subagent), `task` (plan tracking), `workflow` (multi-agent scripts), `skill` (invoke a skill)
-- **Mode / safety**: `plan-enter`, `plan-exit`, `question`
+- **Mode / safety**: `plan-exit`, `question`
 
 Prefer dedicated tools over shelling out (`bash cat / find / grep / sed`). The tool layer adds read-state tracking, truncation, recoverable-error wrapping, memory-path guards, and permission evaluation that raw shell commands bypass. All file writes route through a single `ctx.ask({ permission: "edit" })`, so one rule governs every write path.
 
@@ -129,9 +129,7 @@ Plan mode is the canonical example of MiMoCode encoding safety as data, not code
 2. `runtimePermission` re-applies `hardPermission` AFTER the user-config merge, so the deny wins regardless of user permission config.
 3. Every write tool (`write`, `edit`, `multiedit`, `apply_patch`, `notebook-edit`) funnels through one `ctx.ask({ permission: "edit" })` call, so the single rule governs them all.
 4. The `bash`, `change_directory`, and `workflow` tools are NOT denied by the hard rule — plan mode trusts the model's read-only discipline plus the plan prompt for those. The permission layer is a backstop, not the only line of defense.
-5. Exit plan mode only via the plan-exit tool, and only after the user approves the plan.
-
-Enter plan mode for non-trivial implementation work: anything multi-file, anything with multiple valid approaches, anything where wrong design costs more than a paragraph of planning. The cost of confirming the plan is small; the cost of a wrong implementation is large.
+5. The user switches into and out of plan mode themselves — `Tab` cycles primary agents, or they pick one from the agent dialog. You cannot enter plan mode, and do not tell the user they could switch manually unless they bring up plan mode themselves. Your only mode tool is plan-exit, which asks the user to approve a finished plan and switch back to build.
 
 ### Extension points: MCP and skills
 

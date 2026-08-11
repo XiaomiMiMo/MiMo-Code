@@ -14,6 +14,21 @@ const ISSUER = "https://auth.openai.com"
 const CODEX_API_ENDPOINT = "https://chatgpt.com/backend-api/codex/responses"
 const OAUTH_PORT = 1455
 const OAUTH_POLLING_SAFETY_MARGIN_MS = 3000
+// Hard prompt capacity of the ChatGPT Codex backend for gpt-* models, lower than what
+// models.dev reports for the raw OpenAI API. OpenAI's Codex model registry declares
+// context_window = max_context_window = 372000 for the gpt-5.6 variants
+// (openai/codex#31860 quotes the served catalog), and a direct Codex request with
+// 350,317 input tokens completes (can1357/oh-my-pi#5705), so 372K is capacity rather
+// than a billing boundary.
+//
+// Not to be confused with 272K: OpenAI prices prompts above 272K input at 2x input /
+// 1.5x output for the whole request, and Codex's bundled metadata was lowered to 272000
+// (openai/codex#33972) to keep default sessions under that line. That is a spending
+// policy, not a capacity limit, so it belongs in `compaction.max_context` — see the
+// Compaction section of the config docs.
+//
+// Applied as a clamp, so models whose real window is already smaller keep it.
+const CODEX_GPT_CONTEXT_CAP = 372_000
 
 interface PkceCodes {
   verifier: string
@@ -128,9 +143,10 @@ async function exchangeCodeForTokens(code: string, redirectUri: string, pkce: Pk
   return response.json()
 }
 
-async function refreshAccessToken(refreshToken: string): Promise<TokenResponse> {
+async function refreshAccessToken(refreshToken: string, signal?: AbortSignal | null): Promise<TokenResponse> {
   const response = await fetch(`${ISSUER}/oauth/token`, {
     method: "POST",
+    signal,
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
     body: new URLSearchParams({
       grant_type: "refresh_token",
@@ -368,29 +384,25 @@ export async function CodexAuthPlugin(input: PluginInput): Promise<Hooks> {
         const auth = await getAuth()
         if (auth.type !== "oauth") return {}
 
-        // Filter models to only allowed Codex models for OAuth
-        const allowedModels = new Set([
-          "gpt-5.1-codex",
-          "gpt-5.1-codex-max",
-          "gpt-5.1-codex-mini",
-          "gpt-5.2",
-          "gpt-5.2-codex",
-          "gpt-5.3-codex",
-          "gpt-5.4",
-          "gpt-5.4-mini",
-        ])
-        for (const [modelId, model] of Object.entries(provider.models)) {
-          if (modelId.includes("codex")) continue
-          if (allowedModels.has(model.api.id)) continue
-          delete provider.models[modelId]
-        }
-
         // Zero out costs for Codex (included with ChatGPT subscription)
-        for (const model of Object.values(provider.models)) {
+        for (const [modelID, model] of Object.entries(provider.models)) {
           model.cost = {
             input: 0,
             output: 0,
             cache: { read: 0, write: 0 },
+          }
+          // The Codex backend accepts a smaller prompt than the raw OpenAI API for
+          // gpt-* models. Clamp, never raise: models whose real window is already
+          // below the cap (gpt-4o at 128K) must keep it, and limit.context === 0 is
+          // the sentinel that disables overflow handling entirely.
+          // limit.input is what Overflow.usable() reads when present, so it must be
+          // clamped too — but only when the catalog already publishes it. Introducing
+          // one would switch usable() to the input branch and drop the output reserve.
+          // The v1 SDK model type predates limit.input; the runtime object carries it.
+          const limit = model.limit as { context: number; output: number; input?: number }
+          if (modelID.startsWith("gpt-") && limit.context > 0) {
+            limit.context = Math.min(limit.context, CODEX_GPT_CONTEXT_CAP)
+            if (limit.input) limit.input = Math.min(limit.input, CODEX_GPT_CONTEXT_CAP)
           }
         }
 
@@ -419,7 +431,7 @@ export async function CodexAuthPlugin(input: PluginInput): Promise<Hooks> {
             // Check if token needs refresh
             if (!currentAuth.access || currentAuth.expires < Date.now()) {
               log.info("refreshing codex access token")
-              const tokens = await refreshAccessToken(currentAuth.refresh)
+              const tokens = await refreshAccessToken(currentAuth.refresh, init?.signal)
               const newAccountId = extractAccountId(tokens) || authWithAccount.accountId
               await input.client.auth.set({
                 path: { id: "openai" },
@@ -478,7 +490,7 @@ export async function CodexAuthPlugin(input: PluginInput): Promise<Hooks> {
       },
       methods: [
         {
-          label: "ChatGPT Pro/Plus (browser)",
+          label: "Codex via ChatGPT Pro/Plus (browser)",
           type: "oauth",
           authorize: async () => {
             const { redirectUri } = await startOAuthServer()
@@ -490,7 +502,7 @@ export async function CodexAuthPlugin(input: PluginInput): Promise<Hooks> {
 
             return {
               url: authUrl,
-              instructions: "Complete authorization in your browser. This window will close automatically.",
+              instructions: "Complete Codex authorization in your browser. This window will close automatically.",
               method: "auto" as const,
               callback: async () => {
                 const tokens = await callbackPromise
@@ -508,7 +520,7 @@ export async function CodexAuthPlugin(input: PluginInput): Promise<Hooks> {
           },
         },
         {
-          label: "ChatGPT Pro/Plus (headless)",
+          label: "Codex via ChatGPT Pro/Plus (headless)",
           type: "oauth",
           authorize: async () => {
             const deviceResponse = await fetch(`${ISSUER}/api/accounts/deviceauth/usercode`, {

@@ -1,5 +1,26 @@
 import { describe, expect, test } from "bun:test"
-import { decideAskRouting } from "../../src/agent/config"
+import {
+  decideAskRouting,
+  resolveInvalidOutputPolicy,
+  SYSTEM_INVALID_OUTPUT_POLICIES,
+  SYSTEM_SPAWNED_AGENT_TYPES,
+} from "../../src/agent/config"
+
+describe("invalid-output policy", () => {
+  test("every system-spawned agent declares a policy", () => {
+    expect(Object.keys(SYSTEM_INVALID_OUTPUT_POLICIES).sort()).toEqual([...SYSTEM_SPAWNED_AGENT_TYPES].sort())
+  })
+
+  test("system policy takes precedence over main agentID", () => {
+    expect(resolveInvalidOutputPolicy({ agentName: "checkpoint-writer", agentID: "main" })).toBe("checkpoint")
+    expect(resolveInvalidOutputPolicy({ agentName: "dream", agentID: "main" })).toBe("actor")
+  })
+
+  test("primary and ordinary actors use role-specific policies", () => {
+    expect(resolveInvalidOutputPolicy({ agentName: "build", agentID: "main" })).toBe("primary")
+    expect(resolveInvalidOutputPolicy({ agentName: "general", agentID: "general-1" })).toBe("actor")
+  })
+})
 
 describe("decideAskRouting", () => {
   test("system agent (by actor) -> non-interactive, no forward", () => {

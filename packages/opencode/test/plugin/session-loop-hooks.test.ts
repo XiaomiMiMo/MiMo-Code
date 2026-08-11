@@ -107,6 +107,7 @@ describe("SessionPrompt session loop hooks", () => {
             "export default async () => ({",
             '  "session.pre": async (input) => { await push(`pre:${input.agentID}`) },',
             '  "session.userQuery.pre": async (input) => { await push(`query.pre:${input.step}:${input.query}`) },',
+            '  "session.llm.request": async (input) => { await push(`llm.request:${input.trajectory.map((message) => message.role).join(",")}`) },',
           '  "session.userQuery.post": async (input) => { await push(`query.post:${input.step}:${input.finalText ?? ""}:${input.trajectory.length}`) },',
           '  "session.post": async (input) => { await push(`post:${input.outcome}:${input.finalText ?? ""}:${input.trajectory.length}`) },',
             "})",
@@ -146,9 +147,10 @@ describe("SessionPrompt session loop hooks", () => {
         const events = JSON.parse(await Bun.file(markerPath).text()) as string[]
         expect(events[0]).toBe("pre:main")
         expect(events[1]).toMatch(/^query\.pre:1:/)
-        expect(events[2]).toMatch(/^query\.post:1:hook answer:\d+$/)
-        expect(events[3]).toMatch(/^post:completed:hook answer:\d+$/)
-        expect(Number(events[3]?.split(":").pop())).toBeGreaterThan(0)
+        expect(events[2]).toBe("llm.request:system,user")
+        expect(events[3]).toMatch(/^query\.post:1:hook answer:\d+$/)
+        expect(events[4]).toMatch(/^post:completed:hook answer:\d+$/)
+        expect(Number(events[4]?.split(":").pop())).toBeGreaterThan(0)
         expect(stub.captures.length).toBe(1)
       } finally {
         await stub.stop()

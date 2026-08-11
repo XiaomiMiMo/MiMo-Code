@@ -1,11 +1,21 @@
 import type { InboxRow } from "./inbox.sql"
 
+// A blank body must fall back to the placeholder, not just a missing one.
+// `?? placeholder` only catches null/undefined, but a blank body is stored as
+// "" (or whitespace) — and for actor_notification the body is passed through
+// RAW, so "" would become a user text part with text:"". The AI SDK's user
+// branch filters empty text parts out with no backfill, leaving `content: []`
+// and a provider 400 ("user messages must have non-empty content").
+function blankTo(text: string | undefined, placeholder: string) {
+  return text !== undefined && text.trim().length > 0 ? text : placeholder
+}
+
 export function renderInboxRow(row: InboxRow): string {
   if (row.type === "actor_notification") {
     // Pre-rendered notification text — sender produced the full
     // <actor-notification>...</actor-notification> wrapper.
     const content = row.content as { text?: string }
-    return content.text ?? "(no notification body)"
+    return blankTo(content.text, "(no notification body)")
   }
   // Default: type === "text" or unknown — wrap as <inbox> element so
   // the LLM can route by sender; the wrapper format mirrors the
@@ -15,7 +25,7 @@ export function renderInboxRow(row: InboxRow): string {
     ? `${row.sender_session_id}:${row.sender_actor_id ?? "?"}`
     : "system"
   const sentAt = new Date(row.created_at).toISOString()
-  return `<inbox from="${sender}" sent_at="${sentAt}">\n${content.text ?? "(empty)"}\n</inbox>`
+  return `<inbox from="${sender}" sent_at="${sentAt}">\n${blankTo(content.text, "(empty)")}\n</inbox>`
 }
 
 export function renderActorNotification(event: {
@@ -26,7 +36,10 @@ export function renderActorNotification(event: {
   error?: string
   reportedStatus?: string
   reportedSummary?: string
-  // For a stalled notification: how long (ms) since the child's last turn advanced.
+  // For a stalled notification: how long (ms) the child has been SILENT — nothing
+  // has landed for its slice. NOT time since the last completed step: the T40
+  // watchdog classifies on last_activity_time (actor/schema.ts deriveLiveness),
+  // and a child inside one long step keeps writing parts, so it never lands here.
   stalledForMs?: number
 }): string {
   const header = `Background sub-session "${event.description}" (actor_id: ${event.actorID})`
@@ -58,9 +71,14 @@ export function renderActorNotification(event: {
     return `<actor-notification>\n${header} failed.\nError: ${event.error ?? "unknown"}\n</actor-notification>`
   }
   if (event.status === "stalled") {
+    // "no activity", not "no turn advance". The quantity is silence since the last
+    // part write; saying "turn" described a signal the derivation stopped reading
+    // and made healthy children inside long steps look wedged. Likewise "nothing
+    // has landed" rather than "has made no progress" — a long step IS progress,
+    // and we cannot see inside one, only whether anything is coming out.
     const forLine =
-      event.stalledForMs !== undefined ? ` (no turn advance for ${Math.floor(event.stalledForMs / 1000)}s)` : ""
-    return `<actor-notification>\n${header} appears stalled${forLine}. It is still running but has made no progress. Consider checking on it, sending it a nudge, or cancelling it.\n</actor-notification>`
+      event.stalledForMs !== undefined ? ` (no activity for ${Math.floor(event.stalledForMs / 1000)}s)` : ""
+    return `<actor-notification>\n${header} appears stalled${forLine}. It is still running, but nothing has landed for it in that time. Consider checking on it, sending it a nudge, or cancelling it.\n</actor-notification>`
   }
   return `<actor-notification>\n${header} was cancelled.\n</actor-notification>`
 }

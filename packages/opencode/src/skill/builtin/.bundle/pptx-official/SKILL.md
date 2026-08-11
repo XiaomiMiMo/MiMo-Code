@@ -30,6 +30,8 @@ If the task mixes several of these, do them in this order:
 
 ## One-time environment setup
 
+> **Bundled runtime:** when the `MIMO_PYTHON` environment variable is set, skip `uv`/pip installs — run every Python command below with `uv run` replaced by `"$MIMO_PYTHON"` (python-pptx/Pillow/lxml preinstalled; pip console scripts unavailable, use `"$MIMO_PYTHON" -m <module>`). A bundled LibreOffice is exposed as `MIMO_SOFFICE` (picked up automatically by `soffice_bridge.py`/`render_pdf.py`), and slide rasterisation automatically falls back to pypdfium2 in that interpreter when Poppler (`pdftoppm`) is absent. For the PptxGenJS authoring path, bundled Node.js is exposed as `MIMO_NODE`, with pptxgenjs/react/react-dom/sharp/react-icons/mathjax-full preinstalled in `MIMO_NODE_MODULES` — run scripts as `NODE_PATH="$MIMO_NODE_MODULES" "$MIMO_NODE" <script.js>` instead of `npm install`.
+
 ### Prerequisites
 
 If `uv` or `bun` are not yet installed:
@@ -337,24 +339,31 @@ actor({
   operation: {
     action: "run",
     subagent_type: "general",
-    model: "xiaomi/mimo-v2.5",   // recommended: vision-capable model
+    // omit `model` when your current model is vision-capable (preferred — see Model selection)
     description: "Visual QA slides",
     prompt: "Inspect the rendered slide images in qa/ for: text overflow, overlapping shapes, cut-off labels, wrong-scale icons, off-brand colors. Report each issue as 'slide N: <problem>'. Images: qa/slide-1.png through qa/slide-<N>.png."
   }
 })
 ```
 
-**Model selection (recommended, not enforced):**
+**Model selection (in priority order):**
 
-| Your current model | Recommended vision subagent model | Notes |
-|--------------------|-----------------------------------|-------|
-| `xiaomi/mimo-v2.5-pro` | `xiaomi/mimo-v2.5` | mimo-v2.5-pro is text-only; mimo-v2.5 is multimodal |
-| Any non-vision model | A vision-capable model | Query available vision models to pick one |
-| Already a vision model | Same model or any vision model | No change needed |
+1. **Prefer the user's current model.** Query the servable vision models via
+   `actor({ operation: { action: "models", vision: true } })`. If your current
+   model is in the list, **omit the `model` parameter** — the subagent inherits
+   it, and visual QA runs on the model the user chose.
+2. **Fallback: lightweight vision model, stated explicitly.** If your current
+   model is not vision-capable, pick a **lightweight** vision model from the
+   query result (haiku/flash/lite-class if present, otherwise the cheapest
+   listed) and **tell the user in your reply** which model you used for visual
+   QA and why (current model cannot inspect images).
+3. **No vision model available.** If the query returns an empty list, do not
+   guess a model id — skip the visual QA subagent, run the structural checks
+   only, and tell the user visual inspection could not be performed.
 
-Pick a vision-capable model for the subagent. If unsure what's available,
-query available vision models via
-`actor({ operation: { action: "models", vision: true } })`.
+**Never hardcode a model id.** Which models are servable varies per
+deployment and changes over time; only ids returned by the vision models
+query are guaranteed to work. A guessed id fails the subagent outright.
 
 **Exception — direct inspection in the main context:** Only load slide
 images directly (without a subagent) when the user explicitly requests

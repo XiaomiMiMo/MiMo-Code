@@ -111,7 +111,13 @@ export function classifyAssistantStep(input: {
     )
   )
     return assistant.finish === "other" ? { type: "final", degraded: true } : { type: "final" }
-  if (input.parts.some((part) => part.type === "reasoning" && part.text.trim().length > 0))
+  if (input.parts.some((part) => part.type === "reasoning" && part.text.trim().length > 0)) {
+    // GPT reasoning models may legitimately end a step with reasoning and no
+    // separate text part. Match upstream termination semantics for that family
+    // without weakening think-only recovery for other reasoning models.
+    if (/(^|\/)gpt-\d/i.test(assistant.modelID))
+      return assistant.finish === "other" ? { type: "final", degraded: true } : { type: "final" }
     return { type: "think-only" }
+  }
   return { type: "invalid", reason: "empty output" }
 }

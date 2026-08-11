@@ -15,6 +15,7 @@ import { useLanguage } from "@tui/context/language"
 import * as Model from "../util/model"
 import { PROVIDER_PRIORITY } from "@/util/provider-priority"
 import * as fuzzysort from "fuzzysort"
+import { createFreeApiSunsetSignal, freeApiModelNameKey, isFreeApiModel } from "@tui/util/free-api-sunset"
 
 const ADD_MODEL_SENTINEL = "__add_model__"
 
@@ -37,8 +38,11 @@ export function DialogModel(props: { providerID?: string }) {
   const connected = useConnected()
   const providers = createDialogProviderOptions()
   const t = useLanguage().t
+  const freeApiSunset = createFreeApiSunsetSignal()
   const modelName = (providerID: string, modelID: string) =>
-    modelID === "mimo-auto" ? t("tui.model.mimo_auto.name") : Model.name(sync.data.provider, providerID, modelID)
+    isFreeApiModel({ providerID, modelID })
+      ? t(freeApiModelNameKey(freeApiSunset()))
+      : Model.name(sync.data.provider, providerID, modelID)
 
   const showExtra = createMemo(() => connected() && !props.providerID)
 

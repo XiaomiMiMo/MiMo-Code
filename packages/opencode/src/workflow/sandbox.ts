@@ -28,7 +28,7 @@ export type SandboxOptions = {
    * tests / one-off callers that don't care can omit this. */
   seed?: number
   /** Default true: strip Date/Math.random/WeakRef for resume-replay determinism
-   * (the workflow contract). Pass false for single-shot callers (tool_script)
+   * (the workflow contract). Pass false for single-shot callers (exec)
    * that have no replay requirement and want the standard JS environment. */
   deterministic?: boolean
   /** Optional ACTIVE-time budget: counts only time when NO host hook promise is

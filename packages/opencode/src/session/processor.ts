@@ -31,6 +31,30 @@ import { monitor as tryBestMonitor, type TryBestIncident } from "./try-best-dete
 const DOOM_LOOP_THRESHOLD = 3
 const log = Log.create({ service: "session.processor" })
 
+function isToolExecutionResult(output: unknown): output is {
+  title: string
+  metadata: Record<string, any>
+  output: string
+  attachments?: MessageV2.FilePart[]
+} {
+  return (
+    isRecord(output) &&
+    typeof output.title === "string" &&
+    isRecord(output.metadata) &&
+    typeof output.output === "string"
+  )
+}
+
+function displayToolOutput(output: unknown) {
+  if (typeof output === "string") return output
+  return JSON.stringify(output, null, 2) ?? String(output)
+}
+
+function jsonToolOutput(output: unknown): MessageV2.ToolStateCompleted["providerOutput"] {
+  const serialized = JSON.stringify(output)
+  return serialized === undefined ? null : JSON.parse(serialized)
+}
+
 function describeTryBest(incident: TryBestIncident) {
   if (incident.reason === "edit_repeat") {
     return `A near-identical edit to ${incident.evidence.path ?? "the same file"} repeated ${incident.evidence.count} times.`
@@ -105,12 +129,8 @@ export interface Handle {
   ) => Effect.Effect<MessageV2.ToolPart | undefined>
   readonly completeToolCall: (
     toolCallID: string,
-    output: {
-      title: string
-      metadata: Record<string, any>
-      output: string
-      attachments?: MessageV2.FilePart[]
-    },
+    output: unknown,
+    providerMetadata?: Record<string, any>,
   ) => Effect.Effect<void>
   readonly process: (streamInput: LLM.StreamInput) => Effect.Effect<Result>
   /**
@@ -321,25 +341,25 @@ export const layer: Layer.Layer<
 
       const completeToolCall = Effect.fn("SessionProcessor.completeToolCall")(function* (
         toolCallID: string,
-        output: {
-          title: string
-          metadata: Record<string, any>
-          output: string
-          attachments?: MessageV2.FilePart[]
-        },
+        output: unknown,
+        providerMetadata?: Record<string, any>,
       ) {
         const match = yield* readToolCall(toolCallID)
         if (!match || match.part.state.status !== "running") return
+        const result = isToolExecutionResult(output) ? output : undefined
+        const structured = !result && match.part.metadata?.providerExecuted
         const part = yield* session.updatePart({
           ...match.part,
           state: {
             status: "completed",
             input: match.part.state.input,
-            output: output.output,
-            metadata: output.metadata,
-            title: output.title,
+            output: result?.output ?? displayToolOutput(output),
+            ...(structured ? { providerOutput: jsonToolOutput(output) } : {}),
+            ...(providerMetadata ? { providerMetadata } : {}),
+            metadata: result?.metadata ?? {},
+            title: result?.title ?? "",
             time: { start: match.part.state.time.start, end: Date.now() },
-            attachments: output.attachments,
+            attachments: result?.attachments,
           },
         })
         yield* detectTryBest(part)
@@ -513,7 +533,7 @@ export const layer: Layer.Layer<
           }
 
           case "tool-result": {
-            yield* completeToolCall(value.toolCallId, value.output)
+            yield* completeToolCall(value.toolCallId, value.output, value.providerMetadata)
             return
           }
 
@@ -723,21 +743,28 @@ export const layer: Layer.Layer<
         for (const toolCallID of Object.keys(ctx.toolcalls)) {
           const match = yield* readToolCall(toolCallID)
           if (!match) continue
-          const part = match.part
-          const end = Date.now()
-          const metadata = "metadata" in part.state && isRecord(part.state.metadata) ? part.state.metadata : {}
           yield* session.updatePart({
-            ...part,
-            state: {
-              ...part.state,
-              status: "error",
-              error: "Tool execution aborted",
-              metadata: { ...metadata, interrupted: true },
-              time: { start: "time" in part.state ? part.state.time.start : end, end },
-            },
+            ...match.part,
+            state: MessageV2.abortedToolState(match.part.state),
           })
         }
         ctx.toolcalls = {}
+        // Second pass, DB-driven. The loop above can only see calls this process
+        // still holds in `ctx.toolcalls`, so a call whose registration lost the race
+        // with teardown, or that arrived after the map was cleared, or whose
+        // `readToolCall` lookup missed, keeps its persisted `running` status forever
+        // — the transcript then shows a tool call that will never finish. Every tool
+        // part of THIS assistant message belongs to the turn being torn down here,
+        // so any part still `pending`/`running` is unfinalized by definition.
+        // Idempotent: the pass above already rewrote the tracked ones.
+        for (const part of yield* Effect.sync(() => MessageV2.parts(ctx.assistantMessage.id))) {
+          if (part.type !== "tool") continue
+          if (part.state.status !== "pending" && part.state.status !== "running") continue
+          yield* session.updatePart({
+            ...part,
+            state: MessageV2.abortedToolState(part.state),
+          })
+        }
         ctx.assistantMessage.time.completed = Date.now()
         yield* session.updateMessage(ctx.assistantMessage)
       })

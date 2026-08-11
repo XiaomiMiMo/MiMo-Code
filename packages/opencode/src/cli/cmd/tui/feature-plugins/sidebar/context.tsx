@@ -2,6 +2,8 @@ import type { AssistantMessage } from "@mimo-ai/sdk/v2"
 import type { TuiPlugin, TuiPluginApi, TuiPluginModule } from "@mimo-ai/plugin/tui"
 import { Show, createEffect, createMemo, createSignal, onCleanup } from "solid-js"
 import { completedTPS, formatTPS, streamingTPS } from "./tps"
+import * as Model from "@tui/util/model"
+import { Token } from "@/util"
 
 const id = "internal:sidebar-context"
 const REFRESH_MS = 1000
@@ -11,7 +13,7 @@ const money = new Intl.NumberFormat("en-US", {
   currency: "USD",
 })
 
-function View(props: { api: TuiPluginApi; session_id: string }) {
+export function ContextSidebar(props: { api: TuiPluginApi; session_id: string }) {
   const theme = () => props.api.theme.current
   const msg = createMemo(() => props.api.state.session.messages(props.session_id))
   const cost = createMemo(() => msg().reduce((sum, item) => sum + (item.role === "assistant" ? item.cost : 0), 0))
@@ -70,15 +72,18 @@ function View(props: { api: TuiPluginApi; session_id: string }) {
       return {
         tokens: 0,
         percent: null,
+        limit: null,
       }
     }
 
     const tokens =
       last.tokens.input + last.tokens.output + last.tokens.reasoning + last.tokens.cache.read + last.tokens.cache.write
     const model = props.api.state.provider.find((item) => item.id === last.providerID)?.models[last.modelID]
+    const win = Model.contextWindow(props.api.state.config, model)
     return {
       tokens,
-      percent: model?.limit.context ? Math.round((tokens / model.limit.context) * 100) : null,
+      percent: win ? Math.round((tokens / win.effective) * 100) : null,
+      limit: win,
     }
   })
 
@@ -89,6 +94,14 @@ function View(props: { api: TuiPluginApi; session_id: string }) {
       </text>
       <text fg={theme().textMuted}>{state().tokens.toLocaleString()} tokens</text>
       <text fg={theme().textMuted}>{state().percent ?? 0}% used</text>
+      <Show when={state().limit}>
+        {(win) => (
+          <text fg={theme().textMuted}>
+            limit {Token.format(win().effective)}
+            {win().source === "config" ? ` of ${Token.format(win().hard)}` : ""}
+          </text>
+        )}
+      </Show>
       <Show when={tpsLabel()}>{(label) => <text fg={theme().textMuted}>{label()}</text>}</Show>
       <text fg={theme().textMuted}>{money.format(cost())} spent</text>
     </box>
@@ -100,7 +113,7 @@ const tui: TuiPlugin = async (api) => {
     order: 100,
     slots: {
       sidebar_content(_ctx, props) {
-        return <View api={api} session_id={props.session_id} />
+        return <ContextSidebar api={api} session_id={props.session_id} />
       },
     },
   })

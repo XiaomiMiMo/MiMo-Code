@@ -25,8 +25,8 @@ function uid() {
   return SessionID.make(crypto.randomUUID())
 }
 
-function seed(opts: { id: SessionID; dir: string; project: ProjectID }) {
-  const now = Date.now()
+function seed(opts: { id: SessionID; dir: string; project: ProjectID; time?: number }) {
+  const now = opts.time ?? Date.now()
   Database.use((db) =>
     db
       .insert(SessionTable)
@@ -148,5 +148,32 @@ describe("migrateFromGlobal", () => {
     expect(row).toBeDefined()
     // Should remain under "global" — not stolen
     expect(row!.project_id).toBe(ProjectID.global)
+  })
+
+  test("preserves time_updated when migrating (re-parent is bookkeeping, not activity)", async () => {
+    // Regression: the schema's $onUpdate hook injects time_updated=Date.now()
+    // into every UPDATE, so the re-parent used to flatten the recency of every
+    // migrated session to one identical timestamp — scrambling recency-ordered
+    // session lists (newest conversations sank below older ones).
+    await using tmp = await tmpdir({ git: true })
+    const { project } = await run((svc) => svc.fromDirectory(tmp.path))
+    expect(project.id).not.toBe(ProjectID.global)
+
+    ensureGlobal()
+
+    const old = uid()
+    const older = uid()
+    const oldTime = Date.now() - 7 * 24 * 60 * 60 * 1000
+    seed({ id: old, dir: tmp.path, project: ProjectID.global, time: oldTime })
+    seed({ id: older, dir: tmp.path, project: ProjectID.global, time: oldTime - 60_000 })
+
+    await run((svc) => svc.fromDirectory(tmp.path))
+
+    const rows = Database.use((db) =>
+      db.select().from(SessionTable).where(eq(SessionTable.project_id, project.id)).all(),
+    )
+    const byId = new Map(rows.map((r) => [r.id, r]))
+    expect(byId.get(old)?.time_updated).toBe(oldTime)
+    expect(byId.get(older)?.time_updated).toBe(oldTime - 60_000)
   })
 })

@@ -14,14 +14,9 @@ import { RGBA } from "@opentui/core"
 import { Filesystem } from "@/util"
 import * as Model from "../util/model"
 import { useLanguage } from "@tui/context/language"
+import { createFreeApiSunsetSignal, freeApiModelNameKey, isFreeApiModel } from "@tui/util/free-api-sunset"
 
-export function parseModel(model: string) {
-  const [providerID, ...rest] = model.split("/")
-  return {
-    providerID: providerID,
-    modelID: rest.join("/"),
-  }
-}
+export { parse as parseModel } from "../util/model"
 
 export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
   name: "Local",
@@ -30,6 +25,7 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
     const sdk = useSDK()
     const toast = useToast()
     const t = useLanguage().t
+    const freeApiSunset = createFreeApiSunsetSignal()
 
     function isModelValid(model: { providerID: string; modelID: string }) {
       const provider = sync.data.provider.find((x) => x.id === model.providerID)
@@ -108,6 +104,10 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
             switchBlockedToast()
             return
           }
+          this.set(name)
+        },
+        // bypasses the mid-session canSwitchTo lock; set() still validates the name
+        forceSwitch(name: string) {
           this.set(name)
         },
         move(direction: 1 | -1) {
@@ -205,33 +205,15 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
 
       const args = useArgs()
       const fallbackModel = createMemo(() => {
-        if (args.model) {
-          const { providerID, modelID } = parseModel(args.model)
-          if (isModelValid({ providerID, modelID })) {
-            return {
-              providerID,
-              modelID,
-            }
-          }
-        }
+        const initial = Model.initial(sync.data.provider, {
+          argument: args.model,
+          ready: modelStore.ready,
+          recent: modelStore.recent,
+          configured: sync.data.config.model,
+        })
+        if (initial || !modelStore.ready) return initial
 
-        if (sync.data.config.model) {
-          const { providerID, modelID } = parseModel(sync.data.config.model)
-          if (isModelValid({ providerID, modelID })) {
-            return {
-              providerID,
-              modelID,
-            }
-          }
-        }
-
-        for (const item of modelStore.recent) {
-          if (isModelValid(item)) {
-            return item
-          }
-        }
-
-        // No args/config/recent match: prefer the free mimo-auto channel so a
+        // No args/recent/config match: prefer the free mimo-auto channel so a
         // clean install defaults to a usable free model rather than whatever
         // provider happens to sit first (e.g. paid xiaomi/ultraspeed).
         const mimo = sync.data.provider.find((p) => p.id === "mimo")
@@ -287,8 +269,8 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
           return {
             provider: provider?.name || value.providerID,
             model:
-              value.modelID === "mimo-auto"
-                ? t("tui.model.mimo_auto.name")
+              isFreeApiModel(value)
+                ? t(freeApiModelNameKey(freeApiSunset()))
                 : Model.name(sync.data.provider, value.providerID, value.modelID),
             reasoning: info?.capabilities?.reasoning ?? false,
           }

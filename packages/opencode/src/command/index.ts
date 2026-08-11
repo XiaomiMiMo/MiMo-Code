@@ -296,10 +296,16 @@ export const layer = Layer.effect(
   }),
 )
 
-export const defaultLayer = layer.pipe(
+/**
+ * Application composition variant. The process-wide AppLayer supplies the
+ * MCP service so Command and SessionPrompt share one client set instead of
+ * each hiding a separately scoped transport layer.
+ */
+export const appLayer = layer.pipe(
   Layer.provide(Config.defaultLayer),
-  Layer.provide(MCP.defaultLayer),
   Layer.provide(Skill.defaultLayer),
 )
+
+export const defaultLayer = appLayer.pipe(Layer.provide(MCP.defaultLayer))
 
 export * as Command from "."

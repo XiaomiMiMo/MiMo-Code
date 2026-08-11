@@ -44,7 +44,10 @@ export interface FleetRow {
   liveness: Liveness
   status: string
   turnCount: number
-  // ms since the last turn advanced; undefined when there is no actor row.
+  // ms since anything last LANDED for this actor (falling back to spawn time when
+  // nothing has); undefined when there is no actor row. Not the step clock — the
+  // field name means what it says, and it is the quantity the liveness above was
+  // derived from.
   lastActivityMs?: number
   // Worktree correlation — present only for isolated children whose directory
   // matched a `git worktree list` entry.
@@ -104,7 +107,12 @@ export function assembleFleet(
       liveness,
       status: actor?.status ?? "unknown",
       turnCount: actor?.turnCount ?? 0,
-      ...(actor ? { lastActivityMs: Math.max(0, now - actor.lastTurnTime) } : {}),
+      // Age of the last thing that actually landed, using the same reference
+      // deriveLiveness classifies on (activity, falling back to spawn) so the
+      // displayed age cannot disagree with the displayed liveness. It used to be
+      // computed from lastTurnTime, i.e. the last COMPLETED step, which made a
+      // column named "last activity" report something else.
+      ...(actor ? { lastActivityMs: Math.max(0, now - (actor.lastActivityTime ?? actor.time.created)) } : {}),
       ...(wt ? { worktreeDir: wt.directory, branch: wt.branch, ahead: wt.ahead } : {}),
     }
   })
@@ -144,7 +152,7 @@ function worktreeCell(r: FleetRow): string {
 
 const HEADINGS: Record<FleetBucket, string> = {
   progressing: "In progress — progressing (advancing)",
-  stalled: "In progress — stalled (no recent turn)",
+  stalled: "In progress — stalled (no recent activity)",
   idle: "Finished / idle",
   failed: "Failed",
   cancelled: "Cancelled",

@@ -32,6 +32,8 @@ page 1 looks like a scan.
 
 ## First install
 
+> **Bundled runtime:** when the `MIMO_PYTHON` environment variable is set, skip the installs below — run every command with `python3`/`uv run` replaced by `"$MIMO_PYTHON"` (pypdf/pypdfium2/reportlab/Pillow preinstalled; pip console scripts unavailable, use `"$MIMO_PYTHON" -m <module>`). A bundled qpdf is exposed as `MIMO_QPDF` (picked up automatically by the scripts here); invoke it directly as `"$MIMO_QPDF" --check file.pdf`.
+
 Python-only path (all BSD / MIT / Apache) — covers 95% of tasks:
 
 ```bash

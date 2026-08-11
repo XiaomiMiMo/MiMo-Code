@@ -3,7 +3,7 @@ import { cmd } from "./cmd"
 import { AppRuntime } from "@/effect/app-runtime"
 import { Git } from "@/git"
 import { Instance } from "@/project/instance"
-import { Process } from "@/util"
+import { Log, Process } from "@/util"
 
 export const PrCommand = cmd({
   command: "pr <number>",
@@ -21,7 +21,7 @@ export const PrCommand = cmd({
         const project = Instance.project
         if (project.vcs !== "git") {
           UI.error("Could not find git repository. Please run this command from a git repository.")
-          process.exit(1)
+          await Log.exit(1)
         }
 
         const prNumber = args.number
@@ -38,7 +38,7 @@ export const PrCommand = cmd({
 
         if (result.code !== 0) {
           UI.error(`Failed to checkout PR #${prNumber}. Make sure you have gh CLI installed and authenticated.`)
-          process.exit(1)
+          await Log.exit(1)
         }
 
         // Fetch PR info for fork handling and session link detection

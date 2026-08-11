@@ -134,7 +134,7 @@ export type ParsedStreamError =
   | {
       type: "api_error"
       message: string
-      isRetryable: false
+      isRetryable: boolean
       responseBody: string
     }
 
@@ -146,6 +146,13 @@ export function parseStreamError(input: unknown): ParsedStreamError | undefined 
   if (body.type !== "error") return
 
   switch (body?.error?.code) {
+    case "server_error":
+      return {
+        type: "api_error",
+        message: typeof body?.error?.message === "string" ? body.error.message : "OpenAI server error",
+        isRetryable: true,
+        responseBody,
+      }
     case "context_length_exceeded":
       return {
         type: "context_overflow",

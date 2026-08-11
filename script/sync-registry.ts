@@ -39,8 +39,8 @@ const REGISTRIES = {
 type RegistryKey = keyof typeof REGISTRIES
 
 const CONCURRENCY = 5
-const POLL_INTERVAL = 3000
-const POLL_TIMEOUT = 120000
+const POLL_INTERVAL = 10000
+const POLL_TIMEOUT = 600000
 
 async function syncNpmmirror(packageName: string) {
   const encoded = encodeURIComponent(packageName)
@@ -68,9 +68,12 @@ async function pollSyncStatus(packageName: string, taskId: string) {
       `${REGISTRIES.npmmirror.syncUrl}/-/package/${encoded}/syncs/${taskId}`,
     )
     if (!res.ok) continue
-    const data = (await res.json()) as { state?: string }
+    const data = (await res.json()) as { state?: string; error?: string }
     if (data.state === "success") return "success"
-    if (data.state === "error") return "error"
+    if (data.state === "fail" || data.state === "error") {
+      if (data.error) console.error(`  ✗ ${packageName}: ${data.error}`)
+      return "error"
+    }
   }
   return "timeout"
 }
@@ -103,25 +106,34 @@ async function syncToNpmmirror() {
   console.log(`  Triggering sync for ${PACKAGES.length} packages...\n`)
 
   const tasks: { pkg: string; taskId: string }[] = []
+  const failed: string[] = []
   await runConcurrent(PACKAGES, CONCURRENCY, async (name) => {
     const taskId = await syncNpmmirror(name)
-    if (taskId) {
-      console.log(`  ↻ ${name} → queued (${taskId})`)
-      tasks.push({ pkg: name, taskId })
+    if (!taskId) {
+      failed.push(name)
+      return
     }
+    console.log(`  ↻ ${name} → queued (${taskId})`)
+    tasks.push({ pkg: name, taskId })
   })
 
-  if (tasks.length === 0) {
-    console.log("  No sync tasks created.")
-    return
-  }
-
-  console.log(`\n  Polling ${tasks.length} sync tasks...`)
+  if (tasks.length > 0) console.log(`\n  Polling ${tasks.length} sync tasks...`)
   await runConcurrent(tasks, CONCURRENCY, async (task) => {
     const result = await pollSyncStatus(task.pkg, task.taskId)
     const icon = result === "success" ? "✓" : result === "error" ? "✗" : "⏱"
     console.log(`  ${icon} ${task.pkg}: ${result}`)
+    if (result !== "success") failed.push(task.pkg)
   })
+
+  if (failed.length === 0) {
+    console.log(`\n  ✓ All packages synced.`)
+    return failed
+  }
+
+  console.log(`\n  ⚠️  ${failed.length}/${PACKAGES.length} packages NOT synced:`)
+  for (const pkg of failed) console.log(`     ✗ ${pkg}`)
+  console.log(`\n  ↳ Re-run \`./script/sync-registry.ts npmmirror\` to retry.`)
+  return failed
 }
 
 async function syncToProxy(key: RegistryKey) {
@@ -143,14 +155,17 @@ console.log("═══ MiMoCode Registry Sync ═══")
 console.log(`Version: ${Script.version} (${Script.channel})`)
 console.log(`Packages: ${PACKAGES.length}`)
 
-if (!target || target === "all" || target === "npmmirror") {
-  await syncToNpmmirror()
-}
+const failed = !target || target === "all" || target === "npmmirror" ? await syncToNpmmirror() : []
 if (!target || target === "all" || target === "tencent") {
   await syncToProxy("tencent")
 }
 if (!target || target === "all" || target === "huawei") {
   await syncToProxy("huawei")
+}
+
+if (failed.length > 0) {
+  console.log(`\n═══ Failed: ${failed.length} package(s) not synced to npmmirror ═══`)
+  process.exit(1)
 }
 
 console.log("\n═══ Done ═══")

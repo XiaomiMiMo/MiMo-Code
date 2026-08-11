@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import { APICallError } from "ai"
-import { parseAPICallError } from "../../src/provider/error"
+import { parseAPICallError, parseStreamError } from "../../src/provider/error"
 import { ProviderID } from "../../src/provider/schema"
 
 const xiaomi = ProviderID.make("xiaomi")
@@ -156,5 +156,27 @@ describe("provider error message", () => {
       }),
     })
     expect(parsed.message).toBe("Insufficient account balance")
+  })
+})
+
+describe("provider stream error", () => {
+  test("marks OpenAI server_error events as retryable", () => {
+    const input = {
+      type: "error",
+      sequence_number: 3,
+      error: {
+        type: "server_error",
+        code: "server_error",
+        message: "An error occurred while processing your request. You can retry your request.",
+        param: null,
+      },
+    }
+
+    expect(parseStreamError(input)).toStrictEqual({
+      type: "api_error",
+      message: input.error.message,
+      isRetryable: true,
+      responseBody: JSON.stringify(input),
+    })
   })
 })

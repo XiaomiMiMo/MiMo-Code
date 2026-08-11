@@ -716,12 +716,14 @@ export const SessionRoutes = lazy(() =>
         "json",
         z.object({
           question: z.string().min(1),
+          providerID: ProviderID.zod.optional(),
+          modelID: ModelID.zod.optional(),
         }),
       ),
       async (c) =>
         jsonRequest("SessionRoutes.ask", c, function* () {
           const sessionID = c.req.valid("param").sessionID
-          const question = c.req.valid("json").question
+          const body = c.req.valid("json")
           const sessions = yield* Session.Service
           const provider = yield* Provider.Service
           // Resolve the Actor through the late-bound spawnRef rather than a layer
@@ -730,9 +732,11 @@ export const SessionRoutes = lazy(() =>
           const actor = spawnRef.current
           if (!actor)
             return yield* Effect.fail(
-              new Error("Actor service unavailable — Actor.defaultLayer must be running to ask a side question"),
+              new Error("Actor service unavailable — Actor.appLayer must be running to ask a side question"),
             )
-          const answer = yield* forkQuery({ sessions, provider, actor }, sessionID, question)
+          const selectedModel =
+            body.providerID && body.modelID ? { providerID: body.providerID, modelID: body.modelID } : undefined
+          const answer = yield* forkQuery({ sessions, provider, actor }, sessionID, body.question, selectedModel)
           return { answer }
         }),
     )

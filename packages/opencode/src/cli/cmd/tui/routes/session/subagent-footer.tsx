@@ -6,7 +6,8 @@ import { SplitBorder } from "@tui/component/border"
 import type { AssistantMessage } from "@mimo-ai/sdk/v2"
 import { useCommandDialog } from "@tui/component/dialog-command"
 import { useKeybind } from "../../context/keybind"
-import { Locale } from "@/util"
+import * as Model from "@tui/util/model"
+import { Locale, Token } from "@/util"
 import { useTerminalDimensions } from "@opentui/solid"
 
 export function SubagentFooter() {
@@ -51,16 +52,18 @@ export function SubagentFooter() {
       last.tokens.cache.write
     if (tokens <= 0) return
     const model = sync.data.provider.find((item) => item.id === last.providerID)?.models[last.modelID]
-    const pct = model?.limit.context
-      ? `${Math.round((tokens / model.limit.context) * 100)}%`
-      : undefined
+    const win = Model.contextWindow(sync.data.config, model)
     const cost = msg.reduce(
       (sum, item) => sum + (item.role === "assistant" ? item.cost : 0),
       0,
     )
     const money = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" })
     return {
-      context: pct ? `${Locale.number(tokens)} (${pct})` : Locale.number(tokens),
+      context: win
+        ? `${Locale.number(tokens)}/${Token.format(win.usable)}${win.source === "config" ? "↓" : ""} (${Math.round(
+            (tokens / win.usable) * 100,
+          )}%)`
+        : Locale.number(tokens),
       cost: cost > 0 ? money.format(cost) : undefined,
     }
   })

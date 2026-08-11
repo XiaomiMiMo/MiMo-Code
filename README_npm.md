@@ -34,7 +34,9 @@ mimo
 The first launch guides you through configuration automatically. Supported options:
 - **MiMo Auto (free for a limited time)** — anonymous channel, zero configuration
 - **Xiaomi MiMo Platform** — OAuth login
+- **Codex (ChatGPT Pro/Plus)** — OpenAI OAuth login
 - **Import from Claude Code** — migrate existing authentication in one step
+- **Provider list** — connect catalog providers by API key, or OAuth where supported (e.g. xAI/Grok)
 - **Custom Provider** — add any OpenAI-compatible API in the TUI
 
 ---
@@ -47,7 +49,9 @@ The first launch guides you through configuration automatically. Supported optio
 - **Task Tracking** — tree-shaped task system integrated with the checkpoint system
 - **Subagent System** — parallel subagents with lifecycle tracking, cancellation, and background execution
 - **Goal / Stop Condition** — judge model prevents premature stops during autonomous work
-- **Compose Mode** — structured workflow for specs-driven development with built-in skills
+- **Compose Mode** — structured workflow for specs-driven development; recommended via the `/compose-next` skill on the build agent
+- **Builtin Skills** — 20+ reusable instruction sets (PDF/Office generation, research, design, and more), invoked via `/skill-name` or auto-matched by relevance
+- **Workflows** — deterministic multi-agent orchestration scripts, including built-in compose, deep-research, fact-check, and research-experiment pipelines
 - **Voice Input** — real-time streaming voice input powered by TenVAD and MiMo ASR
 - **Dream & Distill** — extract knowledge into memory (`/dream`) and discover reusable workflows (`/distill`)
 

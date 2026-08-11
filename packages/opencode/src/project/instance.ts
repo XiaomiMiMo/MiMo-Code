@@ -19,6 +19,7 @@ export interface InstanceContext {
 const context = LocalContext.create<InstanceContext>("instance")
 const cache = new Map<string, Promise<InstanceContext>>()
 const directoryDisposals = new Map<string, Promise<void>>()
+const active = new Map<string, number>()
 const project = makeRuntime(Project.Service, Project.defaultLayer)
 const DIRECTORY_DISPOSE_TIMEOUT = 2_000
 
@@ -81,6 +82,19 @@ function track(directory: string, next: Promise<InstanceContext>) {
   return task
 }
 
+function enter(directory: string) {
+  active.set(directory, (active.get(directory) ?? 0) + 1)
+}
+
+function leave(directory: string) {
+  const count = (active.get(directory) ?? 1) - 1
+  if (count > 0) {
+    active.set(directory, count)
+    return
+  }
+  active.delete(directory)
+}
+
 async function disposeCached(directory: string, current: Promise<InstanceContext>) {
   const ctx = await current.catch(() => undefined)
   if (!ctx || cache.get(directory) !== current) return
@@ -119,9 +133,12 @@ export const Instance = {
       )
     }
     const ctx = await existing
-    return context.provide(ctx, async () => {
-      return input.fn()
-    })
+    enter(directory)
+    try {
+      return await context.provide(ctx, async () => input.fn())
+    } finally {
+      leave(directory)
+    }
   },
   get current() {
     return context.use()
@@ -251,6 +268,9 @@ export const Instance = {
           continue
         }
 
+        if (cache.get(key) !== value) continue
+
+        if (active.has(key)) continue
         if (cache.get(key) !== value) continue
 
         await context.provide(ctx, async () => {

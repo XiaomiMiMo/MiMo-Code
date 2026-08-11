@@ -17,6 +17,7 @@ import { useLanguage } from "@tui/context/language"
 import { TuiPluginRuntime } from "../plugin"
 import { Global } from "@/global"
 import { isPlainTerminal } from "../util/terminal"
+import { useVisualMode } from "../context/visual"
 
 let once = false
 
@@ -31,6 +32,7 @@ export function Home() {
   const kv = useKV()
   const t = useLanguage().t
   const plainTerminal = isPlainTerminal()
+  const visual = useVisualMode()
   const bgImagePath = createMemo(() => {
     const filename = kv.get("background_image")
     if (!filename || typeof filename !== "string") return undefined
@@ -40,8 +42,6 @@ export function Home() {
     const key = kv.get("logo_design")
     return typeof key === "string" && key in logos ? (key as LogoKey) : "thin"
   })
-  // 所有 logo 变体(含默认的 thin 纤细半块)都显示流星特效。
-  const showMeteor = () => true
   const placeholder = {
     get normal() {
       return [
@@ -83,7 +83,14 @@ export function Home() {
   return (
     <>
       <Show when={!plainTerminal}>
-        <Show when={bgImagePath()} fallback={<StarryBackground meteor={showMeteor} />}>
+        <Show
+          when={bgImagePath()}
+          fallback={
+            <Show when={visual.vivid()}>
+              <StarryBackground animated={visual.motion} />
+            </Show>
+          }
+        >
           {(p) => <BackgroundImage path={p()} />}
         </Show>
       </Show>
@@ -96,7 +103,7 @@ export function Home() {
             fallback={
               <TuiPluginRuntime.Slot name="home_logo" mode="replace">
                 <Show when={logoKey()} keyed>
-                  {(k) => <Logo shape={logos[k]} sweep />}
+                  {(k) => <Logo shape={logos[k]} animated={visual.motion()} sweep={visual.motion()} />}
                 </Show>
               </TuiPluginRuntime.Slot>
             }

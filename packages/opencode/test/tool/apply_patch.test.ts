@@ -586,6 +586,92 @@ EOF`
 })
 
 describe("tool.apply_patch memory-path-guard", () => {
+  test("checkpoint-writer cannot patch a source file", async () => {
+    await using fixture = await tmpdir({ git: true })
+    const { ctx: base } = makeCtx()
+    const ctx = { ...base, agent: "checkpoint-writer" }
+    const target = path.join(fixture.path, "source.ts")
+    await fs.writeFile(target, "before\n", "utf-8")
+
+    await Instance.provide({
+      directory: fixture.path,
+      fn: async () => {
+        await expect(
+          execute(
+            {
+              patch_text: `*** Begin Patch\n*** Update File: ${target}\n@@\n-before\n+after\n*** End Patch`,
+            },
+            ctx,
+          ),
+        ).rejects.toThrow(/may only write under the memory tree/)
+        expect(await fs.readFile(target, "utf-8")).toBe("before\n")
+      },
+    })
+  })
+
+  test("checkpoint-writer cannot patch under .mimocode", async () => {
+    await using fixture = await tmpdir({ git: true })
+    const { ctx: base } = makeCtx()
+    const ctx = { ...base, agent: "checkpoint-writer" }
+    const target = path.join(fixture.path, ".mimocode", "skills", "unsafe", "SKILL.md")
+
+    await Instance.provide({
+      directory: fixture.path,
+      fn: async () => {
+        await expect(
+          execute(
+            {
+              patch_text: `*** Begin Patch\n*** Add File: ${target}\n+unsafe\n*** End Patch`,
+            },
+            ctx,
+          ),
+        ).rejects.toThrow(/may only write under the memory tree/)
+      },
+    })
+  })
+
+  test("checkpoint-writer can patch its checkpoint file", async () => {
+    await using fixture = await tmpdir({ git: true })
+    const { ctx: base, calls } = makeCtx()
+    const ctx = { ...base, agent: "checkpoint-writer" }
+    const target = path.join(Global.Path.data, "memory", "sessions", "ses_test", "checkpoint.md")
+
+    await Instance.provide({
+      directory: fixture.path,
+      fn: async () => {
+        await execute(
+          {
+            patch_text: `*** Begin Patch\n*** Add File: ${target}\n+Topic: safe checkpoint\n*** End Patch`,
+          },
+          ctx,
+        )
+        expect(await fs.readFile(target, "utf-8")).toBe("Topic: safe checkpoint\n")
+        expect(calls).toHaveLength(0)
+      },
+    })
+  })
+
+  test("checkpoint-writer can patch project MEMORY.md", async () => {
+    await using fixture = await tmpdir({ git: true })
+    const { ctx: base, calls } = makeCtx()
+    const ctx = { ...base, agent: "checkpoint-writer" }
+    const target = path.join(Global.Path.data, "memory", "projects", "p_test", "MEMORY.md")
+
+    await Instance.provide({
+      directory: fixture.path,
+      fn: async () => {
+        await execute(
+          {
+            patch_text: `*** Begin Patch\n*** Add File: ${target}\n+# Project memory\n*** End Patch`,
+          },
+          ctx,
+        )
+        expect(await fs.readFile(target, "utf-8")).toBe("# Project memory\n")
+        expect(calls).toHaveLength(0)
+      },
+    })
+  })
+
   test("rejects writing another task's memory (taskId=T3 → tasks/T5)", async () => {
     await using fixture = await tmpdir({ git: true })
     const { ctx: base } = makeCtx()

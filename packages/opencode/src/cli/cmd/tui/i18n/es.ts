@@ -59,10 +59,18 @@ export const dict = {
     "Ejecuta {highlight}/dark{/highlight} para el modo oscuro o {highlight}/light{/highlight} para el modo claro",
   "tui.tips.doc": "Ejecuta {highlight}/doc{/highlight} para abrir la documentación de usuario",
   "tui.tips.free_models": "Modelos gratuitos disponibles por tiempo limitado — ¡pruébalos ahora!",
+  "tui.tips.free_api_sunset":
+    "El servicio de API gratuita ha finalizado. Ejecuta {highlight}/login{/highlight} para iniciar sesión. Suscríbete a MiMo Token Plan o configura una API de terceros para usar MiMo Code.",
   "tui.tips.multi_skills":
     "Combina varios {highlight}/skill-name{/highlight} en un mismo mensaje para usar varias Skills a la vez",
+  "tui.tips.ask_slash_commands":
+    "¿Buscas un atajo? Pregunta {highlight}¿Qué comandos slash puedo usar?{/highlight} directamente en el chat",
   "tui.tips.background":
     "Ejecuta {highlight}/background{/highlight} para usar una imagen personalizada como fondo de inicio",
+  "tui.tips.vivid":
+    "Ejecuta {highlight}/vivid{/highlight} para alternar entre las vistas enriquecida y mínima según sea necesario",
+  "tui.tips.compose_next":
+    "Prueba {highlight}/compose-next{/highlight} en vez del agente Compose para modelos avanzados",
   "tui.tips.undo":
     "Usa {highlight}/undo{/highlight} para revertir el último mensaje y los cambios en archivos",
   "tui.tips.redo":
@@ -285,8 +293,10 @@ export const dict = {
   "tui.skill.skill-creator.description": "Crea, revisa y mejora skills de agente",
   "tui.skill.drive-mimo.description": "Controla programáticamente otro proceso MiMoCode — eventos JSON headless o TUI interactiva vía tmux",
   "tui.skill.research-paper-writing.description": "Redacta, pule y critica artículos académicos con perspectiva de revisor",
+  "tui.skill.playwright.description": "Automatiza flujos de navegador reales desde la terminal",
   "tui.skill.codex.description": "Ejecuta Codex CLI de forma autónoma en scripts, CI, Docker y Kubernetes",
   "tui.skill.claude-code.description": "Delega tareas de programación a Claude Code CLI",
+  "tui.skill.grok-build.description": "Opera Grok Build desde la línea de comandos",
   "tui.skill.design-blueprint.description":
     "Producir un plano de diseño (DESIGN.md + Decision Trace) antes de crear cualquier mockup",
   "tui.skill.super-research.description":
@@ -314,6 +324,8 @@ export const dict = {
   "tui.skill.compose:tdd.description": "Desarrollo guiado por tests — tests antes que código",
   "tui.skill.compose:verify.description": "Ejecutar verificación y confirmar resultado exitoso",
   "tui.skill.compose:worktree.description": "Crear un espacio de trabajo aislado para desarrollo",
+  "tui.skill.compose-next.description":
+    "Nueva orquestación: trabajo de función de extremo a extremo (grill, spec, implementar, verificar, revisar, finalizar) para modelos avanzados",
 
   // Language switching
   "tui.command.language.switch.title": "Cambiar idioma",
@@ -362,6 +374,10 @@ export const dict = {
   "tui.command.opencode.status.title": "Ver estado",
   "tui.command.theme.switch.title": "Cambiar tema",
   "tui.command.logo.switch.title": "Cambiar diseño de logo",
+  "tui.command.visual_mode.title_on": "Vista enriquecida activa - cambiar a mínima",
+  "tui.command.visual_mode.title_off": "Vista mínima activa - cambiar a enriquecida",
+  "tui.visual_mode.enabled": "Vista enriquecida activada: se restauraron el cielo estrellado y los efectos del logo; los meteoros y los indicadores animados dependen del ajuste de animación",
+  "tui.visual_mode.disabled": "Vista enriquecida desactivada: se ocultaron estrellas, meteoros y efectos del logo; los indicadores permanecen estables",
   "tui.dialog.logo.title": "Diseño de logo",
   "tui.dialog.logo.option.classic": "Clásico (negrita)",
   "tui.dialog.logo.option.thin": "Fino (medio bloque)",
@@ -380,11 +396,15 @@ export const dict = {
   "tui.dialog.agreement.title": "Términos y privacidad",
   "tui.dialog.agreement.message": "Revísalos y acepta para continuar.",
   "tui.dialog.agreement.confirm": "Aceptar y continuar",
+  "tui.dialog.free_api_sunset.title": "El servicio de API gratuita ha finalizado",
+  "tui.dialog.free_api_sunset.message":
+    "Ejecuta /login para iniciar sesión. Suscríbete a MiMo Token Plan o configura una API de terceros para usar MiMo Code.",
   "tui.command.consent.revoke.title": "Revocar el acuerdo de modelo gratuito",
   "tui.consent.revoked": "Acuerdo de modelo gratuito revocado: se te pedirá aceptarlo de nuevo",
   "tui.dialog.select.placeholder": "Buscar",
   "tui.dialog.model.login_hint": "Consejo: ejecuta /login para iniciar sesión antes de cambiar de modelo",
-  "tui.model.mimo_auto.name": "MiMo Auto (MiMo-V2.5, gratis por tiempo limitado)",
+  "tui.model.mimo_auto.name": "MiMo Auto (MiMo-V2.5 gratis hasta el 26 de julio, 18:00 · UTC+8)",
+  "tui.model.mimo_auto.sunset_name": "MiMo Auto (MiMo-V2.5)",
   "tui.dialog.token_plan.title": "Suscríbete a un Token Plan o espera en la cola",
   "tui.dialog.token_plan.line1":
     "En el modo gratuito, las solicitudes están en cola. Para un servicio estable y de calidad,",
@@ -543,14 +563,6 @@ export const dict = {
   "tui.command.tips.toggle.hide": "Ocultar sugerencias",
   "tui.command.plugins.list.title": "Plugins",
   "tui.command.plugins.install.title": "Instalar plugin",
-
-  // Question i18n — plan_enter
-  "tui.question.plan_enter.question": "¿Desea cambiar al modo plan para una planificación estructurada?",
-  "tui.question.plan_enter.header": "Entrar al plan",
-  "tui.question.plan_enter.option.0.label": "Sí",
-  "tui.question.plan_enter.option.0.description": "Cambiar al agente plan para planificación de solo lectura",
-  "tui.question.plan_enter.option.1.label": "No",
-  "tui.question.plan_enter.option.1.description": "Permanecer en el modo actual",
 
   // Question i18n — plan_exit
   "tui.question.plan_exit.question": "El plan en {{plan}} está completo. ¿Desea cambiar al agente build para comenzar la implementación?",

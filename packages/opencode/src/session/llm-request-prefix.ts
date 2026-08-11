@@ -3,7 +3,6 @@ import { tool, jsonSchema, type Tool as AITool } from "ai"
 import z from "zod"
 import { MessageV2 } from "./message-v2"
 import type { SessionID } from "./schema"
-import { ModelID } from "../provider/schema"
 import type { Agent } from "../agent/agent"
 import type { Provider } from "../provider"
 import { LLM } from "./llm"
@@ -65,7 +64,7 @@ export const buildLLMRequestPrefix = Effect.fn("Session.buildLLMRequestPrefix")(
 
   // Resolve tools using parent agent's permission and toolAllowlist
   const toolDefs = yield* toolRegistry.tools({
-    modelID: ModelID.make(input.model.api.id),
+    modelID: input.model.id,
     providerID: input.model.providerID,
     agent: input.agent,
   })

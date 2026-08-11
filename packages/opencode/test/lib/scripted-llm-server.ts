@@ -70,6 +70,16 @@ export function reasoningStopResponse(reasoning: string): string[] {
   ]
 }
 
+/** Build SSE lines for reasoning-only output that exhausted the output token budget */
+export function reasoningLengthResponse(reasoning: string): string[] {
+  return [
+    sseChunk({ role: "assistant" }),
+    sseChunk({ reasoning_content: reasoning }),
+    sseChunk({}, "length"),
+    "data: [DONE]\n\n",
+  ]
+}
+
 /**
  * Build SSE lines for a step halted by the provider's content safety filter
  * (`finish_reason: "content_filter"`, mapped to unified "content-filter").

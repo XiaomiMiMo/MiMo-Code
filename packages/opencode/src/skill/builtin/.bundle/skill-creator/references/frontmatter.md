@@ -29,6 +29,7 @@ Structure: `[What it does] + [When to use it] + [Key capabilities / negative tri
 ## Optional fields
 
 ```yaml
+disable-model-invocation: true    # user-only: hidden from the agent, still reachable via /skill-name
 license: MIT                     # for open-source skills
 compatibility: Requires network access and Python 3.10+   # 1-500 chars, environment requirements
 allowed-tools: "Bash(python:*) Bash(npm:*) WebFetch"      # restrict tool access
@@ -39,6 +40,19 @@ metadata:                        # any custom key-value pairs
   category: productivity
   tags: [project-management, automation]
 ```
+
+### disable-model-invocation
+
+Controls model reachability, not authorization. With `true`:
+
+| Surface | Behavior |
+|---------|----------|
+| Skill catalog in the system prompt | omitted |
+| `skill_search` | never returned, never auto-loaded |
+| `skill` tool | refuses, telling the agent the user must run `/skill-name` |
+| `/skill-name` typed by the user | loads normally |
+
+Use it when the workflow is long, interrupting, or has side effects and the user should own the timing. Default is `false` — an unseen skill is one the agent cannot offer. Authorization is separate: a `permission.skill` `deny` rule makes a skill unusable by everyone, the user included.
 
 ## Security restrictions
 

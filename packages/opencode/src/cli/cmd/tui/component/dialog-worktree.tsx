@@ -5,6 +5,7 @@ import { useSDK } from "../context/sdk"
 import { useSync } from "@tui/context/sync"
 import { useRoute } from "@tui/context/route"
 import { useToast } from "../ui/toast"
+import { isDirectoryDeniedError } from "@/server/routes/instance/access"
 import path from "path"
 
 const CREATE_SENTINEL = "__create_worktree__"
@@ -53,9 +54,31 @@ export function DialogWorktree() {
 
   async function switchTo(directory: string) {
     setBusy("Switching to worktree...")
+    const previous = sdk.directory
     await sdk.client.instance.dispose().catch(() => {})
     sdk.switchDirectory(directory)
-    await sync.bootstrap()
+    // The server rejects any directory outside its cwd (instance middleware 403).
+    // That used to propagate out of bootstrap into the TUI's fatal-exit path and
+    // kill the whole session; treat it as a recoverable error: point the SDK back
+    // at the directory that was working, re-sync, and tell the user which path was
+    // refused and why.
+    const failure = await sync.bootstrap().then(
+      () => undefined,
+      (e) => e,
+    )
+    if (failure) {
+      if (previous) sdk.switchDirectory(previous)
+      await sync.bootstrap({ fatal: false }).catch(() => {})
+      setBusy(undefined)
+      dialog.clear()
+      toast.show({
+        message: isDirectoryDeniedError(failure)
+          ? `Cannot switch to ${directory}: outside this server's working directory`
+          : `Failed to switch to ${path.basename(directory)}`,
+        variant: "error",
+      })
+      return
+    }
     route.navigate({ type: "home" })
     dialog.clear()
     toast.show({ message: `Switched to ${path.basename(directory)}`, variant: "success" })

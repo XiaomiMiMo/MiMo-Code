@@ -2,7 +2,7 @@ import path from "path"
 import { describe, expect, test } from "bun:test"
 import { NamedError } from "@mimo-ai/shared/util/error"
 import { fileURLToPath } from "url"
-import { Effect, Layer } from "effect"
+import { Effect, Exit, Layer } from "effect"
 import { Instance } from "../../src/project/instance"
 import { ModelID, ProviderID } from "../../src/provider/schema"
 import { Session } from "../../src/session"
@@ -128,6 +128,48 @@ function hanging(ready: () => void) {
     },
   })
 }
+
+describe("session.prompt terminal model errors", () => {
+  test("persists an assistant error before a missing model fails the prompt", async () => {
+    await using tmp = await tmpdir({ git: true })
+
+    await Instance.provide({
+      directory: tmp.path,
+      fn: () =>
+        run(
+          Effect.gen(function* () {
+            const prompt = yield* SessionPrompt.Service
+            const sessions = yield* Session.Service
+            const session = yield* sessions.create({ title: "Missing model" })
+            const providerID = ProviderID.make("missing-provider")
+            const modelID = ModelID.make("missing-model")
+
+            const exit = yield* prompt
+              .prompt({
+                sessionID: session.id,
+                agent: "build",
+                model: { providerID, modelID },
+                parts: [{ type: "text", text: "hello" }],
+              })
+              .pipe(Effect.exit)
+
+            expect(Exit.isFailure(exit)).toBe(true)
+            const messages = yield* sessions.messages({ sessionID: session.id, agentID: "*" })
+            expect(messages).toHaveLength(2)
+            expect(messages[0]?.info.role).toBe("user")
+            const assistant = messages[1]?.info
+            expect(assistant?.role).toBe("assistant")
+            if (assistant?.role !== "assistant") return
+            expect(assistant.parentID).toBe(messages[0]?.info.id)
+            expect(assistant.providerID).toBe(providerID)
+            expect(assistant.modelID).toBe(modelID)
+            expect(assistant.error?.data.message).toContain("Model not found: missing-provider/missing-model")
+            expect(assistant.time.completed).toBeNumber()
+          }),
+        ),
+    })
+  })
+})
 
 describe("session.prompt missing file", () => {
   test("does not fail the prompt when a file part is missing", async () => {

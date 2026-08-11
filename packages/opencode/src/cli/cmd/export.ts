@@ -8,6 +8,7 @@ import { UI } from "../ui"
 import * as prompts from "@clack/prompts"
 import { EOL } from "os"
 import { AppRuntime } from "@/effect/app-runtime"
+import { Log } from "../../util"
 
 function redact(kind: string, id: string, value: string) {
   return value.trim() ? `[redacted:${kind}:${id}]` : value
@@ -299,7 +300,7 @@ export const ExportCommand = cmd({
         process.stdout.write(EOL)
       } catch {
         UI.error(`Session not found: ${sessionID!}`)
-        process.exit(1)
+        await Log.exit(1)
       }
     })
   },

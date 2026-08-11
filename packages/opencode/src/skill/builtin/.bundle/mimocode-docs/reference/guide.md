@@ -4,9 +4,34 @@ How-to for the features users most often ask about. For config keys see @config.
 
 ## Getting started & auth
 
-1. **Sign in** — `mimo account login <url>` runs a device flow: it prints a URL + code and opens your browser. `/connect` does the same from inside the TUI (e.g. to add OpenRouter). Other account subcommands: `logout`, `switch`, `orgs`, `open`, `console`.
+1. **Sign in** — `mimo account login <url>` runs a device flow: it prints a URL + code and opens your browser. `/connect` does the same from inside the TUI (e.g. to add OpenRouter). OAuth logins are available for Xiaomi MiMo, Codex (ChatGPT Pro/Plus), and xAI (Grok); Claude Code auth can be imported from `~/.claude/settings*.json`. Other account subcommands: `logout`, `switch`, `orgs`, `open`, `console`.
 2. **Pick a model** — set `"model": "provider/model"` in config, or switch live in the TUI model dialog. Provider API keys are auto-detected from environment variables (unless `MIMOCODE_MIMO_ONLY=1`).
 3. **List what's available** — `mimo models`, `mimo providers`.
+
+For a custom base URL, API key, or OpenAI-/Anthropic-compatible model, read @providers.md before editing config; it covers protocol selection, adapter names, provider reuse, secret handling, and local verification.
+
+## TUI rendering, lag & remote use
+
+**macOS default terminal** — MiMoCode does not support the built-in Terminal.app. For misaligned output, flicker, or other rendering problems, use the VS Code integrated terminal or install iTerm2:
+
+```bash
+brew install --cask iterm2
+```
+
+**SSH rendering** — if running the TUI directly over SSH is slow, render it locally and run only the server from the remote project directory:
+
+```bash
+# Remote host
+mimo serve --port 4096
+
+# Local host: keep this tunnel open
+ssh -N -L 4096:127.0.0.1:4096 user@remote-host
+
+# Local host: connect from another terminal
+mimo attach http://127.0.0.1:4096
+```
+
+**Decorative animation** — run `/vivid`, or configure the visual-mode option in `ctrl+p`, to switch between Vivid and Minimal visuals as needed. The separate animation override can stop high-frequency motion without changing the selected visual mode.
 
 ## Memory: making MiMoCode remember
 
@@ -106,11 +131,14 @@ Inspect/manage with `mimo mcp`. Request timeout defaults to 5000ms (`timeout` pe
 
 ## Compose mode
 
-Compose is a specs-driven orchestration agent: it coordinates built-in skills (plan, tdd, debug, review, verify, merge) across the full spec→ship lifecycle. Switch to it with `Tab`.
+Compose is MiMoCode's specs-driven spec→ship lifecycle. Two interactive paths:
+
+- **Recommended: `/compose-next` on Build** — one self-contained skill covering grill → spec → workspace → implement → verify → review → finalize → finish, with feature documents at `docs/compose/spec/<feature>.md`. Built for frontier models (Fable/Sol-class); hidden from auto-discovery by design, so invoke it explicitly.
+- **Legacy: the `compose` agent** (switch with `Tab`) — coordinates built-in skills (plan, tdd, debug, review, verify, merge) across the lifecycle; its step-by-step curriculum remains useful for weaker models.
 
 Artifacts land under `docs/compose/` by default (`specs/`, `plans/`, `reports/`). Change the location with `compose.docs`; set `compose.docs_absolute: true` to anchor a relative path to the worktree root.
 
-For well-defined tasks that split into independent subtasks, prefer the deterministic **`compose` workflow** (fire-and-forget, auto-parallelized) over the agent — see @workflows.md.
+For well-defined tasks that split into independent subtasks, prefer the deterministic **`compose` workflow** (fire-and-forget, auto-parallelized) over either interactive path — see @workflows.md.
 
 ## Jupyter notebooks
 

@@ -1,7 +1,7 @@
 {
   "name": "@mimo-ai/desktop",
   "private": true,
-  "version": "0.1.6",
+  "version": "0.1.11",
   "type": "module",
   "license": "MIT",
   "homepage": "https://opencode.ai",
@@ -34,7 +34,6 @@
     "marked": "^15"
   },
   "devDependencies": {
-    "@actions/artifact": "4.0.0",
     "@lydell/node-pty": "catalog:",
     "@mimo-ai/app": "workspace:*",
     "@mimo-ai/ui": "workspace:*",

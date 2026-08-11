@@ -437,6 +437,19 @@ test("disabled - disables edit/write/apply_patch/multiedit when edit denied", ()
   expect(result.has("bash")).toBe(false)
 })
 
+test("disabled - disables view_image when read is denied", () => {
+  const result = Permission.disabled(
+    ["read", "view_image", "glob"],
+    [
+      { permission: "*", pattern: "*", action: "allow" },
+      { permission: "read", pattern: "*", action: "deny" },
+    ],
+  )
+  expect(result.has("read")).toBe(true)
+  expect(result.has("view_image")).toBe(true)
+  expect(result.has("glob")).toBe(false)
+})
+
 test("disabled - does not disable when partially denied", () => {
   const result = Permission.disabled(
     ["bash"],

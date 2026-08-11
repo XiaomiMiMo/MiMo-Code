@@ -2309,6 +2309,8 @@ export class Session2 extends HeyApiClient {
       directory?: string
       workspace?: string
       question?: string
+      providerID?: string
+      modelID?: string
     },
     options?: Options<never, ThrowOnError>,
   ) {
@@ -2321,6 +2323,8 @@ export class Session2 extends HeyApiClient {
             { in: "query", key: "directory" },
             { in: "query", key: "workspace" },
             { in: "body", key: "question" },
+            { in: "body", key: "providerID" },
+            { in: "body", key: "modelID" },
           ],
         },
       ],
