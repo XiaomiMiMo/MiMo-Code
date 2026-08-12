@@ -1,14 +1,13 @@
 ---
 name: compose-next
-description: Use for multi-step feature work, bug fixes, or refactors where requirements need to settle, a feature document should carry design + tasks + delivery evidence, and the change deserves independent review before merge. Only start this when the user invoked `/compose-next` or asked for this workflow by name — never pick it up on your own, because the grill and spec phases interrupt a user who just wanted the change made. Not for one-shot edits, single-file tweaks, or answering questions — those need no orchestration overhead.
-disable-model-invocation: true
+description: Use for multi-step feature work, bug fixes, or refactors where requirements need to settle, a feature document should carry design + tasks + delivery evidence, and the change deserves independent review before merge. Use it only when the user explicitly requests this workflow, whether with `/compose-next`, by name, or in any other clear natural language; do not infer the request from task complexity alone. Not for one-shot edits, single-file tweaks, or answering questions — those need no orchestration overhead.
 ---
 
 # Compose Next
 
 Compact end-to-end contract for grill → spec → workspace → implement → verify → review → finalize → finish. One skill load, no internal skill hand-offs.
 
-Enter this workflow only on an explicit user request — they invoked `/compose-next`, or they named this workflow. Absent that, do the work directly and run none of the phases below; an unrequested grill or spec pass is an interruption, not a service.
+Enter this workflow only on an explicit user request. Any clear natural-language instruction to use this workflow counts just like `/compose-next`; the user does not need to know or name the skill. If the user has not clearly requested the workflow, do the work directly and run none of the phases below; do not infer consent merely because the task is large or resembles a Compose task.
 
 ## Step 0 — Orient
 
@@ -19,6 +18,12 @@ Decide the shape of the work:
 - **Fully constrained mechanical change with no durable design surface** → skip Grill and Spec, go to Workspace then Implement.
 - **Requirements or design ambiguous** → Grill first.
 - **Requirements clear, feature deserves a durable document** → Spec first.
+
+User gates and project overrides:
+
+- If the user explicitly says `without worktree`, "do not use a worktree", or gives an equivalent workspace preference, skip the worktree gate and work in the current checkout. Do not ask again for worktree consent.
+- If the user explicitly says `without spec`, "no spec needed", "this is a small fix", or gives an equivalent instruction, skip the durable feature document and its spec gate. Keep verification and review when the task still warrants them.
+- An explicit project instruction, `AGENTS.md`, or user-provided agent/worktree configuration may define a project-specific worktree path, branch convention, spec path, or spec format. Use that configuration instead of the defaults in this skill. Record the override in the feature document or final report when it changes the normal artifact location.
 
 Every path passes through Workspace before Implement; no branch skips it.
 
@@ -100,7 +105,7 @@ Update only affected sections, bump `updated:`, preserve anchors, and keep only 
 Never begin implementation on `main` or `master` without explicit user consent.
 
 1. Compare `git rev-parse --git-dir` with `git rev-parse --git-common-dir`. If they differ, use the current linked worktree; do not nest another. A non-empty `git rev-parse --show-superproject-working-tree` indicates a submodule, not a linked worktree.
-2. Unless the user or harness already chose the workspace, create a linked worktree under `.worktrees/` by default, or the path specified by the prompt or `AGENTS.md`. Verify the directory is ignored with `git check-ignore -q <directory>`. If not, write `*` to `.worktrees/.gitignore`; modify and commit the repo's `.gitignore` only when the user or repository instructions require a shared convention. Then create the worktree with `git worktree add "$path" -b "$branch"`. If the environment prevents worktree creation, report that limitation and work in place on a non-base branch.
+2. Unless the user or harness already chose the workspace, create a linked worktree under `.worktrees/` by default, or use the path specified by the prompt, `AGENTS.md`, or project agent configuration. Verify the directory is ignored with `git check-ignore -q <directory>`. If not, write `*` to `.worktrees/.gitignore`; modify and commit the repo's `.gitignore` only when the user or repository instructions require a shared convention. Then create the worktree with `git worktree add "$path" -b "$branch"`. If the environment prevents worktree creation, report that limitation and work in place on a non-base branch.
 3. Install dependencies per repository instructions. Prefer lockfile-frozen, hardlink-friendly modes (`bun ci`, `uv sync --frozen`) over commands that mutate the lockfile. Confirm the toolchain is usable before continuing.
 
 ## Implement
@@ -115,7 +120,7 @@ For failures, reproduce before editing and identify the root cause from errors, 
 
 ### Parallel work
 
-Dispatch independent tasks in parallel when isolation prevents collisions; keep tightly coupled work together. Prefer giving parallel subagents disjoint file sets and keeping commits with the orchestrator. Give each subagent the worktree path, task, acceptance criteria, relevant spec sections, and required verification. Do not pass session history. Treat its report as a claim and inspect the resulting diff.
+Dispatch independent tasks in parallel when isolation prevents collisions; keep tightly coupled work together. Prefer giving parallel subagents disjoint file sets and keeping commits with the orchestrator. Give every subagent the absolute workspace path (the worktree path when worktree is enabled, otherwise the current checkout path), task, acceptance criteria, relevant spec sections, and required verification. Every subagent must know that absolute path is authoritative, begin by using MiMoCode's `change_directory` tool to switch to it, then verify `pwd` and `git rev-parse --show-toplevel`. Recommend this session-scoped `cd` equivalent over a shell `cd`. The switch changes only that subagent session's relative command/file root; it does not change the parent session or another subagent's cwd. When no worktree is used, the current checkout remains the shared write boundary. Do not pass session history. Treat its report as a claim and inspect the resulting diff.
 
 Continue through tasks without routine approval pauses. Stop only for an unresolved product decision, a blocker that cannot be worked around, a destructive action requiring consent, or completion.
 

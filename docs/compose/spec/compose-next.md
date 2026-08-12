@@ -9,6 +9,8 @@ predecessor: compose-slim (draft PR #1850)
 
 # Compose Next
 
+> **Current status (2026-08-12):** Compose Next no longer sets `disable-model-invocation`, so models may discover and invoke it. The generic field contract remains valid for other skills; see `skill-invocation-control.md`. Compose Next's own description and body require explicit user authorization, including any clear natural-language request for the workflow.
+
 ## Superseded in part (2026-07-31)
 
 The invisibility mechanism described below was replaced by

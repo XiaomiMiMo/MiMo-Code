@@ -25,22 +25,16 @@ function composeAgentSkillRules() {
   )
 }
 
-// compose-next graduated: permission no longer carries its invisibility. Hiding
-// it from the model is now the SKILL.md `disable-model-invocation` field, and
-// permission means authorization only — a `deny` makes a skill unusable by
-// everyone, the user included. Denying compose-next here would break the user's
-// own `/compose-next`, since the slash body injection resolves against
-// Skill.available().
-test("default agent allows compose-next so user slash invocation still resolves", () => {
+test("default agent allows compose-next for user and model invocation", () => {
   const rule = Permission.evaluate("skill", "compose-next", defaultAgentSkillRules())
   expect(rule.action).toBe("allow")
 })
 
-test("compose-next is hidden from the model by frontmatter, not by permission", async () => {
+test("compose-next allows model invocation by omitting the opt-out frontmatter", async () => {
   const skill = await Bun.file(
     path.join(import.meta.dir, "../../src/skill/builtin/.bundle/compose-next/SKILL.md"),
   ).text()
-  expect(skill).toContain("\ndisable-model-invocation: true\n")
+  expect(skill).not.toContain("disable-model-invocation")
 })
 
 test("default agent still denies legacy compose:* skills", () => {

@@ -9,6 +9,8 @@ NEVER decide to skip a skill based on its description alone. The skip conditions
 The execution flow is always a complete closed loop — every task must pass through the appropriate skill(s) before implementation begins.
 </EXTREMELY-IMPORTANT>
 
+Compose Next boundary: do not load or recommend the `compose-next` skill from legacy Compose. Compose Next is the Build-agent workflow; legacy Compose must continue using its `compose:*` skills and its own curriculum. If a user explicitly asks for Compose Next, direct them to switch to Build and use it there.
+
 ## Asking the User
 
 Route every decision, clarification, or approval through the `compose:ask` skill (it drives the `question` tool). Never stop the loop with a natural-language question — that ends your turn without finishing the task.

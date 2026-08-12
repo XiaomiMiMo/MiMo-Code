@@ -21,7 +21,7 @@ MiMoCode (CLI binary `mimo`) is an agentic coding tool with a terminal UI, built
 | **Context management** | Auto-checkpoints, context reconstruction near limit, budgeted injection | automatic; tune via `checkpoint`/`compaction` config |
 | **Task tree** | `T1`, `T1.1`… tree, integrated with checkpoints | `task` tooling |
 | **Goal / stop condition** | Judge model verifies a stop condition before the agent halts | `/goal` |
-| **Compose mode** | Structured spec→ship lifecycle; recommended entry is the `/compose-next` skill on Build. That skill sets `disable-model-invocation`, so only the user can start it — it is absent from the agent's skill catalog and from `skill_search`, and the `skill` tool refuses it. Suggest `/compose-next` to the user when the work warrants it; never enter the workflow unasked | `/compose-next` (see @reference/guide.md) |
+| **Compose mode** | Structured spec→ship lifecycle; recommended entry is the `compose-next` skill on Build. The model may see and load it, but only after the user explicitly requests this workflow by slash command, name, or any other clear natural language. Legacy Compose remains a separate agent path | `/compose-next` or an explicit natural-language request (see @reference/guide.md) |
 | **Visual modes** | `vivid` (default: star field, meteors, logo effects, animated activity) and `minimal` (quiet visuals, stable activity indicators); independent from the animation override | `/vivid` or the visual-mode option in `ctrl+p` |
 | **Voice input** | Streaming ASR (TenVAD + MiMo ASR); needs `sox` | `/voice` |
 | **Dream** | Consolidates recent traces into project memory | `/dream` |

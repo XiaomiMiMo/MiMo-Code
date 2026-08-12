@@ -133,7 +133,7 @@ Inspect/manage with `mimo mcp`. Request timeout defaults to 5000ms (`timeout` pe
 
 Compose is MiMoCode's specs-driven spec→ship lifecycle. Two interactive paths:
 
-- **Recommended: `/compose-next` on Build** — one self-contained skill covering grill → spec → workspace → implement → verify → review → finalize → finish, with feature documents at `docs/compose/spec/<feature>.md`. Built for frontier models (Fable/Sol-class); hidden from auto-discovery by design, so invoke it explicitly.
+- **Recommended: `compose-next` on Build** — one self-contained skill covering grill → spec → workspace → implement → verify → review → finalize → finish, with feature documents at `docs/compose/spec/<feature>.md`. Built for frontier models (Fable/Sol-class). The model may invoke it after the user explicitly requests this workflow by slash command, name, or any other clear natural language; it must not infer that request from task complexity.
 - **Legacy: the `compose` agent** (switch with `Tab`) — coordinates built-in skills (plan, tdd, debug, review, verify, merge) across the lifecycle; its step-by-step curriculum remains useful for weaker models.
 
 Artifacts land under `docs/compose/` by default (`specs/`, `plans/`, `reports/`). Change the location with `compose.docs`; set `compose.docs_absolute: true` to anchor a relative path to the worktree root.

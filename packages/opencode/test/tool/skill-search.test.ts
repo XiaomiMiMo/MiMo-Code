@@ -13,7 +13,7 @@ import { SessionID, MessageID } from "../../src/session/schema"
 import { testEffect } from "../lib/effect"
 import { withEnv } from "../lib/env"
 
-// The compose-next invisibility test below needs the builtin bundle extracted,
+// The Compose Next discovery test below needs the builtin bundle extracted,
 // and sibling files disable it, so force it back on for this file only.
 withEnv({ MIMOCODE_DISABLE_BUILTIN_SKILLS: undefined })
 
@@ -193,13 +193,9 @@ description: Analyze quasar telemetry and operational metrics.
     ),
   )
 
-  // Regression: compose-next is a builtin skill that ships in Skill.all() and
-  // is permission-allowed so the /compose-next slash command works, but its
-  // SKILL.md sets disable-model-invocation, which must keep it out of
-  // Skill.modelInvocable(agent) — and skill_search reads from modelInvocable,
-  // not available() or all(). A model asking a query that would otherwise match
-  // compose-next must get no hit under Build, Plan, or Compose.
-  it.live.skip("does not surface compose-next to any primary agent's skill_search", () =>
+  // Compose Next is available to the model; its description and body carry the
+  // semantic explicit-request boundary. Legacy compose:* remains filtered.
+  it.live("surfaces compose-next to primary agents", () =>
     provideTmpdirInstance(
       () =>
         Effect.gen(function* () {
@@ -208,15 +204,14 @@ description: Analyze quasar telemetry and operational metrics.
           const skills = yield* Skill.Service
 
           // Precondition: compose-next is discoverable at the registry level
-          // (ships in Skill.all()) so /compose-next slash still works. If this
-          // fails the test below is vacuous — bail early with a clear signal.
+          // (ships in Skill.all()) so both slash and model surfaces are tested.
           const all = yield* skills.all()
           expect(
             all.some((s) => s.name === "compose-next"),
-            "compose-next must be present in Skill.all() as a builtin; otherwise the invisibility test below is vacuous",
+            "compose-next must be present in Skill.all() as a builtin; otherwise the discovery test below is vacuous",
           ).toBe(true)
 
-          const query = "end to end feature orchestration grill spec implement verify review finish"
+          const query = "use compose-next for end to end feature orchestration grill spec implement verify review finish"
 
           for (const agentName of ["build", "plan", "compose"] as const) {
             const agent = yield* agents.get(agentName)
@@ -229,11 +224,12 @@ description: Analyze quasar telemetry and operational metrics.
               `compose-next must stay in Skill.available(${agentName}) so /compose-next injects its body`,
             ).toBe(true)
 
-            // The model surface drops it, via disable-model-invocation.
+            // The model surface includes it; the skill itself instructs the
+            // model to require an explicit user request before invoking it.
             const modelInvocable = yield* skills.modelInvocable(agent!)
             expect(
-              modelInvocable.every((s) => s.name !== "compose-next"),
-              `compose-next must be absent from Skill.modelInvocable(${agentName}) via disable-model-invocation`,
+              modelInvocable.some((s) => s.name === "compose-next"),
+              `compose-next must be present in Skill.modelInvocable(${agentName})`,
             ).toBe(true)
 
             const tool = (yield* registry.tools({
@@ -260,16 +256,8 @@ description: Analyze quasar telemetry and operational metrics.
             const [payloadStr] = result.output.split("\n\n<skill_content")
             const payload = JSON.parse(payloadStr)
 
-            if (payload.status === "matched") {
-              expect(
-                payload.results.every((r: { skill_id: string }) => r.skill_id !== "compose-next"),
-                `compose-next must not appear in skill_search results for agent=${agentName}`,
-              ).toBe(true)
-              expect(
-                payload.loaded_skill_id,
-                `skill_search must not auto-load compose-next for agent=${agentName}`,
-              ).not.toBe("compose-next")
-            }
+            expect(payload.status).toBe("matched")
+            expect(payload.results.some((r: { skill_id: string }) => r.skill_id === "compose-next")).toBe(true)
           }
         }),
       { git: true },
