@@ -3,14 +3,14 @@ feature: rl-training-mode
 status: delivered
 updated: 2026-08-12
 branch: feat/codex-rl-mode
-commits: 3d3bf2eb0c13cdd4b45a9166b9d12e353e17af10..d27c6e82
+commits: 3d3bf2eb0c13cdd4b45a9166b9d12e353e17af10..7a062e63ee38f2e11fc9398dc38ec1ef16469823
 ---
 
 # RL Training Mode
 
 ## Report
 
-**What was built** — `MIMOCODE_RL_MODE=true` now enables an isolated training runtime without changing ordinary interactive behavior. RL actions use one non-streaming provider sample with all model-request and recovery retries disabled, while completed responses are converted back into the existing processor event protocol for normal persistence.
+**What was built** — RL training behavior is enabled by default. Set `MIMOCODE_RL_MODE=false` or `0` to restore the ordinary interactive runtime. RL actions use one non-streaming provider sample with all model-request and recovery retries disabled, while completed responses are converted back into the existing processor event protocol for normal persistence.
 
 RL trajectories are append-only, auxiliary title/checkpoint/dream/distill/prediction calls are suppressed, and permissions are fully bypassed for sandboxed training. Automatic compaction and ordinary subagents remain available; compaction may append summaries and boundaries but cannot rewrite historical parts.
 
@@ -18,10 +18,11 @@ RL trajectories are append-only, auxiliary title/checkpoint/dream/distill/predic
 
 **Journey log**
 
-- The historical RL commit was used as intent evidence only; its global-default behavior was replaced with an explicit default-off master switch.
+- The historical RL commit was used as intent evidence only; its behavior was reimplemented against the current mainline behind a default-on master switch with an explicit normal-mode opt-out.
 - A live mock-provider integration test exposed that returning a bare `generateText` Promise from an Effect generator did not await it; wrapping it in `Effect.promise` fixed the real request path.
 - The test runner environment injected `MIMOCODE_DANGEROUSLY_SKIP_PERMISSIONS=1`; permission regression verification explicitly removed it to avoid a false baseline failure.
 - Synthetic events only carry fields consumed by the current processor; if processor persistence later consumes additional start/finish metadata, the adapter must evolve with it.
+- The test preload pins `MIMOCODE_RL_MODE=false` so the existing suite continues to verify normal interactive behavior; RL tests opt in explicitly and the flag test separately verifies the production default.
 
 ## [S1] Problem
 
@@ -29,7 +30,7 @@ RL training runs need an auditable trajectory in which each agent action maps to
 
 ## [S2] Mode Contract
 
-`MIMOCODE_RL_MODE=true` enables the complete training contract. It defaults to false and is the only switch required by the training harness. When false, existing interactive behavior remains unchanged.
+RL mode enables the complete training contract by default. `MIMOCODE_RL_MODE=false` or `0` restores existing interactive behavior; `true` or `1` explicitly keeps RL mode enabled.
 
 In RL mode:
 
@@ -53,7 +54,7 @@ The mode improves trajectory auditability but does not guarantee identical model
 
 Tests must prove both sides of the mode boundary:
 
-- The master flag defaults off and parses true/false values correctly.
+- The master flag defaults on and parses explicit true/false values correctly.
 - RL mode makes a single non-streaming, zero-retry provider request and persists its synthetic processor events; normal mode still streams and retains configured retries.
 - Each recovery category covered by the implementation makes one request in RL mode and preserves existing normal-mode retry behavior.
 - RL mode does not mutate historical tool/reasoning/media parts during prune, compaction, or checkpoint rebuild.
@@ -62,7 +63,7 @@ Tests must prove both sides of the mode boundary:
 
 ## Tasks
 
-- [x] T1: Add the isolated RL master flag and mode-boundary tests — acceptance: `MIMOCODE_RL_MODE` defaults false, recognizes true/false values, and normal-mode flag behavior is unchanged (covers: S2, S3, S4)
+- [x] T1: Add the isolated RL master flag and mode-boundary tests — acceptance: `MIMOCODE_RL_MODE` defaults true, recognizes true/false values, and explicit opt-out restores normal-mode behavior (covers: S2, S3, S4)
 - [x] T2: Implement single-sample main-session requests in RL mode — acceptance: RL uses one `generateText` call with `maxRetries: 0`, converts all supported result parts into processor events, and normal mode still uses `streamText` (covers: S2, S4; depends: T1)
 - [x] T3: Disable recovery resampling in RL mode — acceptance: provider, output, structured-output, loop, max-mode, and workflow failure paths terminate after their first model attempt while normal mode retains its current policies (covers: S2, S3, S4; depends: T1)
 - [x] T4: Make persisted RL trajectories append-only — acceptance: prune, compaction, and checkpoint rebuild do not rewrite prior parts in RL mode, while compaction may append a summary boundary (covers: S2, S4; depends: T1)
