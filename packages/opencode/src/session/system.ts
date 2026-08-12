@@ -189,7 +189,7 @@ export const layer = Layer.effect(
           "Rewrite the user's request into a concise Skill Query with these dimensions when available: action, input, output, audience.",
           "Preserve an explicitly mentioned skill ID, name, or alias verbatim in the Skill Query so exact matching can take priority over BM25.",
           "If skill_search returns a loaded_skill_id, follow the loaded instructions. If it returns uncertain candidates, choose the best fit or continue without a skill. If it returns no_match, continue normally.",
-          "Compose skills are not searchable; load an explicitly requested Compose skill directly with the skill tool. Compose Next is the exception and remains searchable.",
+          "`compose:*` skills are not searchable; load an explicitly requested one directly with the skill tool. `compose-next` remains searchable.",
           "Use the skill tool to load a skill when a task matches its description.",
           // the agents seem to ingest the information about skills a bit better if we present a more verbose
           // version of them here and a less verbose version in tool description, rather than vice versa.

@@ -23,7 +23,7 @@ Decide the shape of the work:
 
 User gates and project overrides:
 
-- If the user explicitly requests `without worktree` or specifies a worktree or workspace path, use that workspace choice and skip the default worktree gate. Do not ask again for worktree consent.
+- If the user explicitly requests `without worktree`, use the current checkout and skip the worktree-specific Workspace steps. If the user specifies a worktree or workspace path, use it and skip default worktree creation. Do not ask again for worktree consent.
 - If the user explicitly says `without spec`, "no spec needed", "this is a small fix", or gives an equivalent instruction, skip the durable feature document and its spec gate. Keep verification and review when the task still warrants them.
 - An explicit project instruction, `AGENTS.md`, or user-provided agent/worktree configuration may define a project-specific worktree path, branch convention, spec path, or spec format. Use that configuration instead of the defaults in this skill. Record the override in the feature document or final report when it changes the normal artifact location.
 
@@ -107,7 +107,7 @@ Update only affected sections, bump `updated:`, preserve anchors, and keep only 
 Never begin implementation on `main` or `master` without explicit user consent.
 
 1. Compare `git rev-parse --git-dir` with `git rev-parse --git-common-dir`. If they differ, use the current linked worktree; do not nest another. A non-empty `git rev-parse --show-superproject-working-tree` indicates a submodule, not a linked worktree.
-2. Create a linked worktree at `.worktrees/<slug>` by default. Run `git check-ignore -q "$path"`; if it is not ignored, write `*` to `.worktrees/.gitignore`. Then run `git worktree add "$path" -b "$branch"`.
+2. Otherwise, create a linked worktree at `.worktrees/<slug>`. Run `git check-ignore -q "$path"`; if it is not ignored, write `*` to `.worktrees/.gitignore`. Then run `git worktree add "$path" -b "$branch"`.
 3. Once the worktree path is resolved, use MiMoCode's `change_directory` tool to switch into it and continue the workflow there.
 4. Install dependencies per repository instructions. Prefer lockfile-frozen, hardlink-friendly modes (`bun ci`, `uv sync --frozen`) over commands that mutate the lockfile. Confirm the toolchain is usable before continuing.
 
@@ -159,9 +159,9 @@ For human review feedback, verify each item against the codebase, clarify ambigu
 
 For parallel task work, review integrated task diffs at useful boundaries only when delaying review would compound risk.
 
-## Finalize — commit the feature document
+## Finalize — commit the feature document when present
 
-After review passes, before finishing the branch, finalize the feature document:
+When a feature document exists, finalize it after review passes and before finishing the branch:
 
 1. Set `status: delivered`, bump `updated:`, and record the reviewed range as `<base-sha>..<head-sha>`.
 2. Check off completed tasks; leave incomplete tasks unchecked and do not claim delivery if they block acceptance.
@@ -181,7 +181,7 @@ Update a design section only when it contradicts the delivered behavior. Commit 
 
 ## Finish
 
-Do not auto-finish. After Finalize, report branch, base, head SHA, worktree, feature-doc path, and suggest a closing action.
+Do not auto-finish. After Finalize when applicable, report branch, base, head SHA, worktree, the feature-doc path when one exists, and suggest a closing action.
 
 If the user asks to finish but the path is unclear, use the `question` tool to settle:
 
