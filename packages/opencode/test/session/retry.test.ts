@@ -148,6 +148,30 @@ describe("session.retry.retryable", () => {
     expect(SessionRetry.retryable(error)).toBe(input.error.message)
   })
 
+  test("retries OpenAI overloaded service unavailable stream events", () => {
+    const input = {
+      type: "error",
+      sequence_number: 3,
+      error: {
+        type: "service_unavailable_error",
+        code: "server_is_overloaded",
+        message: "Our servers are currently overloaded. Please try again later.",
+        param: null,
+      },
+    }
+    const error = MessageV2.fromError(input, { providerID })
+
+    expect(error).toStrictEqual({
+      name: "APIError",
+      data: {
+        message: input.error.message,
+        isRetryable: true,
+        responseBody: JSON.stringify(input),
+      },
+    })
+    expect(SessionRetry.retryable(error)).toBe(input.error.message)
+  })
+
   test("maps too_many_requests json messages", () => {
     const error = wrap(JSON.stringify({ type: "error", error: { type: "too_many_requests" } }))
     expect(SessionRetry.retryable(error)).toBe("Too Many Requests")

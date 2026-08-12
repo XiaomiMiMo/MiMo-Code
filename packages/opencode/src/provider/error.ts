@@ -144,9 +144,12 @@ export function parseStreamError(input: unknown): ParsedStreamError | undefined 
 
   const responseBody = JSON.stringify(body)
   if (body.type !== "error") return
+  const errorCode = typeof body?.error?.code === "string" ? body.error.code : ""
+  const errorType = typeof body?.error?.type === "string" ? body.error.type : ""
 
-  switch (body?.error?.code) {
+  switch (errorCode) {
     case "server_error":
+    case "server_is_overloaded":
       return {
         type: "api_error",
         message: typeof body?.error?.message === "string" ? body.error.message : "OpenAI server error",
@@ -180,6 +183,14 @@ export function parseStreamError(input: unknown): ParsedStreamError | undefined 
         isRetryable: false,
         responseBody,
       }
+  }
+  if (errorType === "service_unavailable_error") {
+    return {
+      type: "api_error",
+      message: typeof body?.error?.message === "string" ? body.error.message : "OpenAI service unavailable",
+      isRetryable: true,
+      responseBody,
+    }
   }
 }
 
