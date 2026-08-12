@@ -179,7 +179,6 @@ export const layer = Layer.effect(
           return [
             "Skills provide specialized instructions and workflows for specific tasks.",
             "Use the skill tool to load a skill when a task matches its description.",
-            "Compose Next is an exception: load it only after the user explicitly requests that workflow, whether by slash command, name, or equivalent natural language. Do not infer that request from task complexity alone.",
             Skill.fmt(list, { verbose: true }),
           ].join("\n")
         }
