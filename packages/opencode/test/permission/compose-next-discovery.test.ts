@@ -25,6 +25,14 @@ function composeAgentSkillRules() {
   )
 }
 
+// Compose Next discovery evolved in three steps. It was first hidden by an
+// exact permission deny, but that also broke the user's own /compose-next
+// invocation because permission means authorization for every caller. The
+// generic disable-model-invocation frontmatter field then separated model
+// reachability from user slash invocation. Compose Next has now graduated from
+// that opt-out: it stays permission-allowed and omits the field, so models can
+// discover and invoke it. Its description and body still require explicit user
+// authorization for the workflow, including clear natural-language requests.
 test("default agent allows compose-next for user and model invocation", () => {
   const rule = Permission.evaluate("skill", "compose-next", defaultAgentSkillRules())
   expect(rule.action).toBe("allow")

@@ -219,7 +219,7 @@ MiMoCode 打包了以下内置技能：
 | `arxiv` | 搜索、阅读、引用和分析 arXiv 论文 |
 | `claude-code` | 将编码、测试、审查和 Git 任务委派给 Claude Code CLI |
 | `codex` | 在无头自动化、CI、容器和远程环境中运行及排查 Codex CLI |
-| `compose-next` | 推荐的 spec→ship 功能交付工作流（grill → spec → implement → verify → review → finish）；仅在用户通过 slash 或自然语言明确授意使用该工作流时调用 |
+| `compose-next` | 推荐的 spec→ship 功能交付工作流；仅在用户明确授意时调用 |
 | `data-analytics` | 通过数据质量、KPI、仪表盘、报告、Notebook 和市场规模测算等工作流分析产品与业务数据 |
 | `deep-research` | 使用并行子智能体和内置 Web 工具生成带引用的多源深度调研报告 |
 | `design-blueprint` | 动手做视觉前先出设计蓝图（DESIGN.md + 决策轨迹）|
