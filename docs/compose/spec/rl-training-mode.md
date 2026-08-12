@@ -1,14 +1,27 @@
 ---
 feature: rl-training-mode
-status: in-progress
+status: delivered
 updated: 2026-08-12
 branch: feat/codex-rl-mode
-commits:
+commits: 3d3bf2eb0c13cdd4b45a9166b9d12e353e17af10..d27c6e82
 ---
 
 # RL Training Mode
 
 ## Report
+
+**What was built** — `MIMOCODE_RL_MODE=true` now enables an isolated training runtime without changing ordinary interactive behavior. RL actions use one non-streaming provider sample with all model-request and recovery retries disabled, while completed responses are converted back into the existing processor event protocol for normal persistence.
+
+RL trajectories are append-only, auxiliary title/checkpoint/dream/distill/prediction calls are suppressed, and permissions are fully bypassed for sandboxed training. Automatic compaction and ordinary subagents remain available; compaction may append summaries and boundaries but cannot rewrite historical parts.
+
+**Verification** — `bun typecheck` passed from `packages/opencode`. `env -u MIMOCODE_DANGEROUSLY_SKIP_PERMISSIONS bun test test/flag test/permission test/session/llm.test.ts test/session/llm-rl.test.ts test/session/llm-retry.test.ts test/session/processor-effect.test.ts test/session/structured-output-retry.test.ts test/session/invalid-output-continuation.test.ts test/session/text-loop-detection.test.ts test/session/text-loop-integration.test.ts test/session/max-mode-econnreset.test.ts test/session/auto-dream-memory-write.test.ts test/session/checkpoint-memory-write.test.ts test/session/prune.test.ts test/session/prune-main-slice.test.ts test/session/rebuild-microcompact.test.ts test/session/compaction-agent-scope.test.ts test/workflow/retry.test.ts --timeout 20000` passed with 287 tests passing, 3 skipped, and 0 failing across 33 files. Independent review and the post-fix targeted review found no critical or important findings.
+
+**Journey log**
+
+- The historical RL commit was used as intent evidence only; its global-default behavior was replaced with an explicit default-off master switch.
+- A live mock-provider integration test exposed that returning a bare `generateText` Promise from an Effect generator did not await it; wrapping it in `Effect.promise` fixed the real request path.
+- The test runner environment injected `MIMOCODE_DANGEROUSLY_SKIP_PERMISSIONS=1`; permission regression verification explicitly removed it to avoid a false baseline failure.
+- Synthetic events only carry fields consumed by the current processor; if processor persistence later consumes additional start/finish metadata, the adapter must evolve with it.
 
 ## [S1] Problem
 
@@ -49,10 +62,10 @@ Tests must prove both sides of the mode boundary:
 
 ## Tasks
 
-- [ ] T1: Add the isolated RL master flag and mode-boundary tests — acceptance: `MIMOCODE_RL_MODE` defaults false, recognizes true/false values, and normal-mode flag behavior is unchanged (covers: S2, S3, S4)
-- [ ] T2: Implement single-sample main-session requests in RL mode — acceptance: RL uses one `generateText` call with `maxRetries: 0`, converts all supported result parts into processor events, and normal mode still uses `streamText` (covers: S2, S4; depends: T1)
-- [ ] T3: Disable recovery resampling in RL mode — acceptance: provider, output, structured-output, loop, max-mode, and workflow failure paths terminate after their first model attempt while normal mode retains its current policies (covers: S2, S3, S4; depends: T1)
-- [ ] T4: Make persisted RL trajectories append-only — acceptance: prune, compaction, and checkpoint rebuild do not rewrite prior parts in RL mode, while compaction may append a summary boundary (covers: S2, S4; depends: T1)
-- [ ] T5: Suppress auxiliary model calls in RL mode — acceptance: title, checkpoint, dream, distill, and next-prompt prediction do not run; compaction and ordinary subagents remain enabled (covers: S2, S3, S4; depends: T1)
-- [ ] T6: Enable RL-only full permission — acceptance: RL bypasses explicit deny, `bash_delete` confirmation, and tool hiding while normal mode preserves all checks (covers: S2, S4; depends: T1)
-- [ ] T7: Run focused and package-level verification, then independent review — acceptance: relevant tests and `bun typecheck` pass from `packages/opencode`, and review finds no critical spec-compliance, correctness, or consistency issue (covers: S4; depends: T2, T3, T4, T5, T6)
+- [x] T1: Add the isolated RL master flag and mode-boundary tests — acceptance: `MIMOCODE_RL_MODE` defaults false, recognizes true/false values, and normal-mode flag behavior is unchanged (covers: S2, S3, S4)
+- [x] T2: Implement single-sample main-session requests in RL mode — acceptance: RL uses one `generateText` call with `maxRetries: 0`, converts all supported result parts into processor events, and normal mode still uses `streamText` (covers: S2, S4; depends: T1)
+- [x] T3: Disable recovery resampling in RL mode — acceptance: provider, output, structured-output, loop, max-mode, and workflow failure paths terminate after their first model attempt while normal mode retains its current policies (covers: S2, S3, S4; depends: T1)
+- [x] T4: Make persisted RL trajectories append-only — acceptance: prune, compaction, and checkpoint rebuild do not rewrite prior parts in RL mode, while compaction may append a summary boundary (covers: S2, S4; depends: T1)
+- [x] T5: Suppress auxiliary model calls in RL mode — acceptance: title, checkpoint, dream, distill, and next-prompt prediction do not run; compaction and ordinary subagents remain enabled (covers: S2, S3, S4; depends: T1)
+- [x] T6: Enable RL-only full permission — acceptance: RL bypasses explicit deny, `bash_delete` confirmation, and tool hiding while normal mode preserves all checks (covers: S2, S4; depends: T1)
+- [x] T7: Run focused and package-level verification, then independent review — acceptance: relevant tests and `bun typecheck` pass from `packages/opencode`, and review finds no critical spec-compliance, correctness, or consistency issue (covers: S4; depends: T2, T3, T4, T5, T6)
