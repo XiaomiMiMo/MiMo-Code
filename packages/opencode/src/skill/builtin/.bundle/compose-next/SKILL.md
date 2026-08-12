@@ -23,7 +23,7 @@ Decide the shape of the work:
 
 User gates and project overrides:
 
-- If the user explicitly says `without worktree`, "do not use a worktree", or gives an equivalent workspace preference, skip the worktree gate and work in the current checkout. Do not ask again for worktree consent.
+- If the user explicitly requests `without worktree` or specifies a worktree or workspace path, use that workspace choice and skip the default worktree gate. Do not ask again for worktree consent.
 - If the user explicitly says `without spec`, "no spec needed", "this is a small fix", or gives an equivalent instruction, skip the durable feature document and its spec gate. Keep verification and review when the task still warrants them.
 - An explicit project instruction, `AGENTS.md`, or user-provided agent/worktree configuration may define a project-specific worktree path, branch convention, spec path, or spec format. Use that configuration instead of the defaults in this skill. Record the override in the feature document or final report when it changes the normal artifact location.
 
@@ -107,8 +107,9 @@ Update only affected sections, bump `updated:`, preserve anchors, and keep only 
 Never begin implementation on `main` or `master` without explicit user consent.
 
 1. Compare `git rev-parse --git-dir` with `git rev-parse --git-common-dir`. If they differ, use the current linked worktree; do not nest another. A non-empty `git rev-parse --show-superproject-working-tree` indicates a submodule, not a linked worktree.
-2. If no workspace is already selected, create a linked worktree under `.worktrees/` by default, or use the path specified by the prompt, `AGENTS.md`, or project agent configuration. Verify the directory is ignored with `git check-ignore -q <directory>`. If not, write `*` to `.worktrees/.gitignore`; modify and commit the repo's `.gitignore` only when the user or repository instructions require a shared convention. Then create the worktree with `git worktree add "$path" -b "$branch"`. Once the worktree is selected or created, use MiMoCode's `change_directory` tool to switch into it and continue the workflow there. If the environment prevents worktree creation, report that limitation and work in place on a non-base branch.
-3. Install dependencies per repository instructions. Prefer lockfile-frozen, hardlink-friendly modes (`bun ci`, `uv sync --frozen`) over commands that mutate the lockfile. Confirm the toolchain is usable before continuing.
+2. Create a linked worktree at `.worktrees/<slug>` by default. Run `git check-ignore -q "$path"`; if it is not ignored, write `*` to `.worktrees/.gitignore`. Then run `git worktree add "$path" -b "$branch"`.
+3. Once the worktree path is resolved, use MiMoCode's `change_directory` tool to switch into it and continue the workflow there.
+4. Install dependencies per repository instructions. Prefer lockfile-frozen, hardlink-friendly modes (`bun ci`, `uv sync --frozen`) over commands that mutate the lockfile. Confirm the toolchain is usable before continuing.
 
 ## Implement
 
