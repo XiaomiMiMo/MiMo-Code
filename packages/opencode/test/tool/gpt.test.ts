@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { isGPTModel, isMcpToolSearchEnabled } from "../../src/tool/gpt"
+import { isGPTModel, isMcpToolSearchEnabled, usesCodexMode } from "../../src/tool/gpt"
 
 describe("isGPTModel", () => {
   test("recognizes GPT versions and API aliases", () => {
@@ -17,10 +17,25 @@ describe("isGPTModel", () => {
 })
 
 describe("isMcpToolSearchEnabled", () => {
-  test("defaults to GPT models and allows explicit non-GPT opt-in", () => {
+  test("uses GPT models as the fallback when the global route is disabled", () => {
     expect(isMcpToolSearchEnabled(false, "claude-opus-4-6")).toBe(false)
     expect(isMcpToolSearchEnabled(false, "gpt-5.2")).toBe(true)
     expect(isMcpToolSearchEnabled(false, "gpt-oss-120b")).toBe(false)
     expect(isMcpToolSearchEnabled(true, "claude-opus-4-6")).toBe(true)
+  })
+})
+
+describe("usesCodexMode", () => {
+  test("applies Codex mode to every model when enabled", () => {
+    expect(usesCodexMode(true, "claude-opus-4-6")).toBe(true)
+    expect(usesCodexMode(true, "mimo-v2.5-pro")).toBe(true)
+    expect(usesCodexMode(true, "gpt-oss-120b")).toBe(true)
+  })
+
+  test("falls back to the legacy GPT-5+ route when disabled", () => {
+    expect(usesCodexMode(false, "gpt-5.4")).toBe(true)
+    expect(usesCodexMode(false, "gpt-4o")).toBe(false)
+    expect(usesCodexMode(false, "gpt-oss-120b")).toBe(false)
+    expect(usesCodexMode(false, "claude-opus-4-6")).toBe(false)
   })
 })

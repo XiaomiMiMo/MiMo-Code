@@ -25,6 +25,7 @@ function nonNegativeNumber(key: string) {
 }
 
 const MIMOCODE_EXPERIMENTAL = truthy("MIMOCODE_EXPERIMENTAL")
+const MIMOCODE_CODEX_MODE = !falsy("MIMOCODE_CODEX_MODE")
 
 // Defaults to false. When enabled, mimocode runs in pure-mimo mode:
 //   — does NOT inherit Claude Code's settings (CLAUDE.md, ~/.claude/skills, etc.)
@@ -216,14 +217,16 @@ export const Flag = {
   MIMOCODE_EXPERIMENTAL_OXFMT: MIMOCODE_EXPERIMENTAL || truthy("MIMOCODE_EXPERIMENTAL_OXFMT"),
   MIMOCODE_EXPERIMENTAL_LSP_TY: truthy("MIMOCODE_EXPERIMENTAL_LSP_TY"),
   MIMOCODE_EXPERIMENTAL_LSP_TOOL: MIMOCODE_EXPERIMENTAL || truthy("MIMOCODE_EXPERIMENTAL_LSP_TOOL"),
-  // Defaults to OFF: exec (tool_script orchestration) is registered only for
-  // GPT-toolset models. Opt in here to expose it to every model.
+  // Defaults to ON: every model uses the Codex tool route (exec + apply_patch +
+  // view_image, without the legacy file tools). Set MIMOCODE_CODEX_MODE=false
+  // to restore model-family routing, where only GPT-5+ models use this route.
+  MIMOCODE_CODEX_MODE,
+  // Independent compatibility switch for exposing exec outside Codex mode.
   MIMOCODE_ENABLE_EXEC_TOOL: truthy("MIMOCODE_ENABLE_EXEC_TOOL"),
-  // Defaults to OFF for non-GPT models. GPT models enable MCP Tool Search in
-  // SessionPrompt regardless of this flag. Opt in here to enable it for every
-  // function-calling model.
+  // Defaults to ON through MIMOCODE_CODEX_MODE. The experimental switch remains
+  // available when Codex mode is disabled.
   MIMOCODE_EXPERIMENTAL_MCP_TOOL_SEARCH:
-    MIMOCODE_EXPERIMENTAL || truthy("MIMOCODE_EXPERIMENTAL_MCP_TOOL_SEARCH"),
+    MIMOCODE_CODEX_MODE || MIMOCODE_EXPERIMENTAL || truthy("MIMOCODE_EXPERIMENTAL_MCP_TOOL_SEARCH"),
   // Defaults to OFF (opt-in): the Orchestrator primary mode — a general
   // coordinator that delegates to child sessions via the `session` tool, with a
   // global singleton workspace and child permission-approval routing. Enable with

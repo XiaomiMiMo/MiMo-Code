@@ -8,6 +8,6 @@ export function isMcpToolSearchEnabled(enabled: boolean, ...modelIDs: Array<stri
   return enabled || isGPTModel(...modelIDs)
 }
 
-export function usesGPTToolset(modelID: string) {
-  return modelID.includes("gpt-") && !modelID.includes("oss") && !modelID.includes("gpt-4")
+export function usesCodexMode(enabled: boolean, modelID: string) {
+  return enabled || (modelID.includes("gpt-") && !modelID.includes("oss") && !modelID.includes("gpt-4"))
 }

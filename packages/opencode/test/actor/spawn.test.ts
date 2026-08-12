@@ -501,7 +501,7 @@ describe("Actor.spawn subagent mode", () => {
     30000,
   )
 
-  it.live("keeps the legacy tool set for non-GPT subagents", () =>
+  it.live("uses the Codex tool set for non-GPT subagents", () =>
     provideTmpdirServer(
       Effect.fnUntraced(function* ({ llm }) {
         const actor = yield* Actor.Service
@@ -525,12 +525,12 @@ describe("Actor.spawn subagent mode", () => {
         const names = (request?.body.tools as Array<{ function?: { name?: string } }> | undefined)?.map(
           (tool) => tool.function?.name,
         )
-        expect(names).toContain("read")
-        expect(names).toContain("edit")
-        expect(names).toContain("write")
-        expect(names).not.toContain("exec")
-        expect(names).not.toContain("apply_patch")
-        expect(names).not.toContain("view_image")
+        expect(names).toContain("exec")
+        expect(names).toContain("apply_patch")
+        expect(names).toContain("view_image")
+        expect(names).not.toContain("read")
+        expect(names).not.toContain("edit")
+        expect(names).not.toContain("write")
       }),
       { git: true, config: providerCfg },
     ),

@@ -99,7 +99,7 @@ describe("ToolRegistry.tools: invocation style resolution", () => {
     ),
   )
 
-  it.live("keeps the specialized-tool bash description for non-GPT models", () =>
+  it.live("uses the filesystem-capable bash description for non-GPT models in Codex mode", () =>
     provideTmpdirInstance(() =>
       Effect.gen(function* () {
         const reg = yield* ToolRegistry.Service
@@ -112,11 +112,12 @@ describe("ToolRegistry.tools: invocation style resolution", () => {
           agent: general,
         })
         const bash = tools.find((tool) => tool.id === "bash")
-        expect(bash?.description).toContain("DO NOT use it for file operations")
-        expect(bash?.description).not.toContain("the dedicated `read`, `write`, and `edit` tools are unavailable")
-        expect(tools.some((tool) => tool.id === "notebook_edit")).toBeTrue()
-        expect(tools.some((tool) => tool.id === "grep")).toBeTrue()
-        expect(tools.some((tool) => tool.id === "glob")).toBeTrue()
+        expect(bash?.description).toContain("the dedicated `read`, `write`, and `edit` tools are unavailable")
+        expect(bash?.description).toContain("Use `apply_patch`")
+        expect(bash?.description).not.toContain("DO NOT use it for file operations")
+        expect(tools.some((tool) => tool.id === "notebook_edit")).toBeFalse()
+        expect(tools.some((tool) => tool.id === "grep")).toBeFalse()
+        expect(tools.some((tool) => tool.id === "glob")).toBeFalse()
       }),
     ),
   )
@@ -207,7 +208,7 @@ describe("ToolRegistry.tools: invocation style resolution", () => {
       ),
   )
 
-  it.live("invocationStyleByTool.read='shell' falls back to JSON (read has no shell field)", () =>
+  it.live("invocationStyleByTool.apply_patch='shell' falls back to JSON when no shell field exists", () =>
     provideTmpdirInstance(
       () =>
         Effect.gen(function* () {
@@ -220,14 +221,13 @@ describe("ToolRegistry.tools: invocation style resolution", () => {
             modelID: ModelID.make("opencode/claude-sonnet-4-6"),
             agent: general,
           })
-          const read = tools.find((t) => t.id === "read")
-          expect(read).toBeDefined()
-          const schema = read!.parameters as any
-          // Original `read` parameters has file_path; shell wrap would expose `script`
-          expect(schema.shape?.file_path ?? schema._def?.shape?.file_path).toBeDefined()
+          const applyPatch = tools.find((t) => t.id === "apply_patch")
+          expect(applyPatch).toBeDefined()
+          const schema = applyPatch!.parameters as any
+          expect(schema.shape?.patch_text ?? schema._def?.shape?.patch_text).toBeDefined()
           expect(schema.shape?.script ?? schema._def?.shape?.script).toBeUndefined()
         }),
-      { config: { tool: { invocation_style_by_tool: { read: "shell" } } } },
+      { config: { tool: { invocation_style_by_tool: { apply_patch: "shell" } } } },
     ),
   )
 })

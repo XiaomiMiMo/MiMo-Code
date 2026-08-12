@@ -74,7 +74,7 @@ import { resolveInvocationStyle } from "./invocation-style"
 import { BuiltinWorkflow } from "@/workflow/builtin"
 import { ToolScriptTool, renderToolScriptDeclarations } from "./tool-script"
 import { toolScriptRegistry } from "./tool-script-ref"
-import { usesGPTToolset } from "./gpt"
+import { usesCodexMode } from "./gpt"
 
 const log = Log.create({ service: "tool.registry" })
 
@@ -373,9 +373,9 @@ export const layer = Layer.effect(
       modelID: ModelID
       agent: Agent.Info
     }) {
-      const useGPTTools = usesGPTToolset(input.modelID)
+      const useCodexMode = usesCodexMode(Flag.MIMOCODE_CODEX_MODE, input.modelID)
       let filtered = (yield* all()).filter((tool) => {
-        if (tool.id === ToolScriptTool.id) return useGPTTools || Flag.MIMOCODE_ENABLE_EXEC_TOOL
+        if (tool.id === ToolScriptTool.id) return useCodexMode || Flag.MIMOCODE_ENABLE_EXEC_TOOL
         if (tool.id === CodeSearchTool.id || tool.id === WebSearchTool.id) {
           if (tool.id === WebSearchTool.id) {
             return (
@@ -387,7 +387,7 @@ export const layer = Layer.effect(
           return input.providerID === ProviderID.opencode || Flag.MIMOCODE_ENABLE_EXA
         }
 
-        if (tool.id === ApplyPatchTool.id || tool.id === ViewImageTool.id) return useGPTTools
+        if (tool.id === ApplyPatchTool.id || tool.id === ViewImageTool.id) return useCodexMode
         if (
           tool.id === EditTool.id ||
           tool.id === MultiEditTool.id ||
@@ -397,7 +397,7 @@ export const layer = Layer.effect(
           tool.id === GlobTool.id ||
           tool.id === NotebookEditTool.id
         )
-          return !useGPTTools
+          return !useCodexMode
 
         return true
       })
@@ -415,7 +415,7 @@ export const layer = Layer.effect(
       // allowlist (build/plan/compose) and subagents — must not see `session`.
       filtered = filtered.filter((tool) => tool.id !== "session" || input.agent.name === "orchestrator")
 
-      return { filtered, useGPTTools }
+      return { filtered, useCodexMode }
     })
 
     // Late-bound ref (see tool-script-ref.ts): exec dispatches through the same
@@ -435,7 +435,8 @@ export const layer = Layer.effect(
         Effect.fnUntraced(function* (tool: Tool.Def) {
           using _ = log.time(tool.id)
           const output = {
-            description: tool.id === BashTool.id && availableTools.useGPTTools ? bashDescription(true) : tool.description,
+            description:
+              tool.id === BashTool.id && availableTools.useCodexMode ? bashDescription(true) : tool.description,
             parameters: tool.parameters,
           }
           yield* plugin.trigger("tool.definition", { toolID: tool.id }, output)
