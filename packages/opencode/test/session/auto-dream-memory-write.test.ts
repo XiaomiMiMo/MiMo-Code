@@ -15,7 +15,7 @@ import * as CrossSpawnSpawner from "../../src/effect/cross-spawn-spawner"
 void Log.init({ print: false })
 
 afterEach(() => {
-  delete process.env.MIMOCODE_RL_MODE
+  process.env.MIMOCODE_RL_MODE = "false"
 })
 
 const it = testEffect(

@@ -229,7 +229,7 @@ beforeEach(() => {
 })
 
 afterEach(() => {
-  delete process.env.MIMOCODE_RL_MODE
+  process.env.MIMOCODE_RL_MODE = "false"
 })
 
 afterAll(() => {

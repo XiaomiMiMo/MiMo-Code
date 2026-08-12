@@ -6,7 +6,7 @@ import type { LLM } from "../../src/session/llm"
 import { Flag } from "../../src/flag/flag"
 
 afterEach(() => {
-  delete process.env.MIMOCODE_RL_MODE
+  process.env.MIMOCODE_RL_MODE = "false"
 })
 
 function expectCandidate(value: Candidate | null | "text-repeat"): Candidate {

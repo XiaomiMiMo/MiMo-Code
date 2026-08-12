@@ -67,8 +67,10 @@ export const Flag = {
   MIMOCODE_DISABLE_TERMINAL_TITLE: truthy("MIMOCODE_DISABLE_TERMINAL_TITLE"),
   MIMOCODE_SHOW_TTFD: truthy("MIMOCODE_SHOW_TTFD"),
   MIMOCODE_PERMISSION: process.env["MIMOCODE_PERMISSION"],
+  // Defaults to ON for training deployments. Set MIMOCODE_RL_MODE=false to
+  // restore interactive streaming, retries, permission checks, and pruning.
   get MIMOCODE_RL_MODE() {
-    return truthy("MIMOCODE_RL_MODE")
+    return !falsy("MIMOCODE_RL_MODE")
   },
 
   // Defaults to false. When false, the bash tool intercepts irreversible

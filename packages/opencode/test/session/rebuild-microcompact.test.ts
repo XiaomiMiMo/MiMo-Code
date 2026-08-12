@@ -26,7 +26,7 @@ const ref = {
 }
 
 afterEach(async () => {
-  delete process.env.MIMOCODE_RL_MODE
+  process.env.MIMOCODE_RL_MODE = "false"
   await Instance.disposeAll()
 })
 

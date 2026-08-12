@@ -14,7 +14,7 @@ import { Flag } from "../../src/flag/flag"
 
 afterEach(async () => {
   delete process.env.MIMOCODE_TEST_SPAWN_FAIL_ONCE
-  delete process.env.MIMOCODE_RL_MODE
+  process.env.MIMOCODE_RL_MODE = "false"
   await Instance.disposeAll()
 })
 
@@ -53,7 +53,7 @@ describe("WorkflowRuntime agent() retry", () => {
         expect(outcome.status).toBe("completed")
         yield* Effect.sleep("100 millis")
         expect(failed).toEqual(["spawn-reject"])
-        delete process.env.MIMOCODE_RL_MODE
+        process.env.MIMOCODE_RL_MODE = "false"
       }),
       { git: true, config: providerCfg },
     ),

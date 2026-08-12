@@ -8,7 +8,7 @@ function ruleset(config: Parameters<typeof Permission.fromConfig>[0]) {
 }
 
 afterEach(() => {
-  delete process.env.MIMOCODE_RL_MODE
+  process.env.MIMOCODE_RL_MODE = "false"
 })
 
 test("RL mode keeps tools visible despite explicit deny rules", () => {

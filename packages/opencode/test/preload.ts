@@ -55,6 +55,9 @@ process.env["USERPROFILE"] = testHome
 const testManagedConfigDir = path.join(dir, "managed")
 process.env["MIMOCODE_TEST_MANAGED_CONFIG_DIR"] = testManagedConfigDir
 process.env["MIMOCODE_DISABLE_DEFAULT_PLUGINS"] = "true"
+// Production defaults to RL mode. The existing suite primarily verifies normal
+// interactive behavior; RL-specific tests opt in explicitly and restore this.
+process.env["MIMOCODE_RL_MODE"] = "false"
 
 // Write the cache version file to prevent global/index.ts from clearing the cache
 const cacheDir = path.join(dir, "cache", "mimocode")

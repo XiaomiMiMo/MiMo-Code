@@ -11,7 +11,7 @@ import { Log } from "../../src/util"
 void Log.init({ print: false })
 
 afterEach(async () => {
-  delete process.env.MIMOCODE_RL_MODE
+  process.env.MIMOCODE_RL_MODE = "false"
   await Instance.disposeAll()
 })
 

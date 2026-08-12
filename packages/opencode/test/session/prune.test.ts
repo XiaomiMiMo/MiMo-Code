@@ -26,7 +26,7 @@ const ref = {
 }
 
 afterEach(() => {
-  delete process.env.MIMOCODE_RL_MODE
+  process.env.MIMOCODE_RL_MODE = "false"
   mock.restore()
 })
 
