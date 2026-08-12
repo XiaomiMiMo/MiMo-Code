@@ -7,6 +7,8 @@ description: Use for multi-step feature work, bug fixes, or refactors where requ
 
 Compact end-to-end contract for grill → spec → workspace → implement → verify → review → finalize → finish. One skill load, no internal skill hand-offs.
 
+When writing a checkpoint or compacting context, preserve this recovery instruction in the checkpoint or compacted summary: on resumption, if the Compose Next instructions are absent, reload the `compose-next` skill before continuing.
+
 Enter this workflow only on an explicit user request. Any clear natural-language instruction to use this workflow counts just like `/compose-next`; the user does not need to know or name the skill. If the user has not clearly requested the workflow, do the work directly and run none of the phases below; do not infer consent merely because the task is large or resembles a Compose task.
 
 ## Step 0 — Orient
