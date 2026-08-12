@@ -790,6 +790,28 @@ export const layer: Layer.Layer<
         ctx.needsOverflowHandling = false
         ctx.shouldBreak = (yield* config.get()).experimental?.continue_loop_on_deny !== true
 
+        const retryProvider = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+          Flag.MIMOCODE_RL_MODE
+            ? effect
+            : effect.pipe(
+                Effect.retry(
+                  SessionRetry.policy({
+                    parse,
+                    silentRetry: (error) =>
+                      SessionRetry.isGptModel(input.model) && SessionRetry.isGptServerOverloadedError(error),
+                    set: (info) =>
+                      isMain
+                        ? status.set(ctx.sessionID, {
+                            type: "retry",
+                            attempt: info.attempt,
+                            message: info.message,
+                            next: info.next,
+                          })
+                        : Effect.void,
+                  }),
+                ),
+              )
+
         return yield* Effect.gen(function* () {
           yield* Effect.gen(function* () {
             ctx.currentText = undefined
@@ -830,22 +852,7 @@ export const layer: Layer.Layer<
                 ctx.stepPartIds = []
               }),
             ),
-            Effect.retry(
-              SessionRetry.policy({
-                parse,
-                silentRetry: (error) =>
-                  SessionRetry.isGptModel(input.model) && SessionRetry.isGptServerOverloadedError(error),
-                set: (info) =>
-                  isMain
-                    ? status.set(ctx.sessionID, {
-                        type: "retry",
-                        attempt: info.attempt,
-                        message: info.message,
-                        next: info.next,
-                      })
-                    : Effect.void,
-              }),
-            ),
+            retryProvider,
             Effect.catch(halt),
             Effect.ensuring(cleanup()),
           )

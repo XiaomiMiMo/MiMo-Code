@@ -978,6 +978,12 @@ export const layer = Layer.effect(
           result.permission = mergeDeep(perms, result.permission ?? {})
         }
 
+        // RL keeps automatic compaction enabled but disables its
+        // history-rewriting cleanup phase.
+        if (Flag.MIMOCODE_RL_MODE) {
+          result.compaction = { ...result.compaction, prune: false }
+        }
+
         if (!result.username) result.username = os.userInfo().username
 
         if (result.autoshare === true && !result.share) {

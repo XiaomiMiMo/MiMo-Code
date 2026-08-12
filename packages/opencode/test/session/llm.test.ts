@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, beforeEach, describe, expect, test } from "bun:test"
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from "bun:test"
 import path from "path"
 import { tool, type ModelMessage } from "ai"
 import { Cause, Effect, Exit, Stream } from "effect"
@@ -228,6 +228,10 @@ beforeEach(() => {
   state.queue.length = 0
 })
 
+afterEach(() => {
+  delete process.env.MIMOCODE_RL_MODE
+})
+
 afterAll(() => {
   void state.server?.stop()
 })
@@ -299,6 +303,89 @@ function createEventResponse(chunks: unknown[], includeDone = false) {
 }
 
 describe("session.llm.stream", () => {
+  test("RL mode uses a non-streaming request and exposes generated output through the stream interface", async () => {
+    const server = state.server
+    if (!server) throw new Error("Server not initialized")
+
+    const providerID = "vivgrid"
+    const fixture = await loadFixture(providerID, "gemini-3.1-pro-preview")
+    const request = waitRequest(
+      "/chat/completions",
+      Response.json({
+        id: "chatcmpl-rl",
+        object: "chat.completion",
+        created: 1,
+        model: fixture.model.id,
+        choices: [{ index: 0, message: { role: "assistant", content: "RL answer" }, finish_reason: "stop" }],
+        usage: { prompt_tokens: 3, completion_tokens: 2, total_tokens: 5 },
+      }),
+    )
+
+    await using tmp = await tmpdir({
+      init: async (dir) => {
+        await Bun.write(
+          path.join(dir, "mimocode.json"),
+          JSON.stringify({
+            enabled_providers: [providerID],
+            provider: {
+              [providerID]: { options: { apiKey: "test-key", baseURL: `${server.url.origin}/v1` } },
+            },
+          }),
+        )
+      },
+    })
+
+    process.env.MIMOCODE_RL_MODE = "true"
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () => {
+        const model = await getModel(ProviderID.make(providerID), ModelID.make(fixture.model.id))
+        const sessionID = SessionID.make("session-rl-generate")
+        const agent = {
+          name: "test",
+          mode: "primary",
+          options: {},
+          permission: [{ permission: "*", pattern: "*", action: "allow" }],
+        } satisfies Agent.Info
+        const user = {
+          id: MessageID.make("user-rl-generate"),
+          sessionID,
+          role: "user",
+          time: { created: Date.now() },
+          agent: agent.name,
+          model: { providerID: ProviderID.make(providerID), modelID: model.id },
+        } satisfies MessageV2.User
+
+        const events = await llm.runPromise((svc) =>
+          svc
+            .stream({
+              user,
+              sessionID,
+              model,
+              agent,
+              system: ["You are helpful."],
+              messages: [{ role: "user", content: "Hello" }],
+              tools: {},
+            })
+            .pipe(Stream.runCollect),
+        )
+        expect(Array.from(events).map((event) => event.type)).toEqual([
+          "start",
+          "start-step",
+          "text-start",
+          "text-delta",
+          "text-end",
+          "finish-step",
+          "finish",
+        ])
+        expect(Array.from(events).find((event) => event.type === "text-delta")).toMatchObject({ text: "RL answer" })
+
+        const capture = await request
+        expect(capture.body.stream).not.toBe(true)
+      },
+    })
+  })
+
   test("sends temperature, tokens, and reasoning options for openai-compatible models", async () => {
     const server = state.server
     if (!server) {

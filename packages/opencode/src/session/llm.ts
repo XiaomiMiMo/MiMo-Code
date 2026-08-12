@@ -3,7 +3,16 @@ import { Provider } from "@/provider"
 import { Log } from "@/util"
 import { Context, Duration, Effect, Layer, Record, Schedule, Ref, Cause } from "effect"
 import * as Stream from "effect/Stream"
-import { streamText, wrapLanguageModel, type ModelMessage, type Tool, tool, jsonSchema } from "ai"
+import {
+  generateText,
+  streamText,
+  wrapLanguageModel,
+  type ModelMessage,
+  type ProviderMetadata,
+  type Tool,
+  tool,
+  jsonSchema,
+} from "ai"
 import { mergeDeep, pipe } from "remeda"
 import { GitLabWorkflowLanguageModel } from "gitlab-ai-provider"
 import { ProviderTransform } from "@/provider"
@@ -35,6 +44,7 @@ import { isRetryableTransientError } from "./retry"
 import { MCP_TOOL_SEARCH_ID } from "@/tool/mcp-tool-search"
 import { deriveLiveness } from "@/actor/schema"
 import { SYSTEM_SPAWNED_AGENT_TYPES } from "@/agent/config"
+import { Flag } from "@/flag/flag"
 
 const log = Log.create({ service: "llm" })
 export const OUTPUT_TOKEN_MAX = ProviderTransform.OUTPUT_TOKEN_MAX
@@ -83,6 +93,87 @@ export const ROSTER_HEADER =
 // a window would not actually bound the block.
 export const ROSTER_IDLE_LIMIT = 5
 type Result = Awaited<ReturnType<typeof streamText>>
+
+type GenerateResult = {
+  steps: Array<{
+    content: Array<
+      | { type: "reasoning"; text: string; providerMetadata?: ProviderMetadata }
+      | { type: "text"; text: string; providerMetadata?: ProviderMetadata }
+      | {
+          type: "tool-call"
+          toolCallId: string
+          toolName: string
+          input: unknown
+          providerExecuted?: boolean
+          providerMetadata?: ProviderMetadata
+        }
+      | {
+          type: "tool-result"
+          toolCallId: string
+          toolName: string
+          output: unknown
+          providerMetadata?: ProviderMetadata
+        }
+      | {
+          type: "tool-error"
+          toolCallId: string
+          toolName: string
+          input: unknown
+          error: unknown
+          providerMetadata?: ProviderMetadata
+        }
+    >
+    finishReason: string
+    usage: unknown
+    providerMetadata?: ProviderMetadata
+  }>
+}
+
+export function eventsFromGenerateResult(result: GenerateResult): Event[] {
+  return [
+    { type: "start" } as Event,
+    ...result.steps.flatMap((step, stepIndex) => [
+      { type: "start-step" } as Event,
+      ...step.content.flatMap((part, partIndex): Event[] => {
+        if (part.type === "reasoning") {
+          const id = `reasoning-${stepIndex}-${partIndex}`
+          return [
+            { type: "reasoning-start", id, providerMetadata: part.providerMetadata } as Event,
+            { type: "reasoning-delta", id, text: part.text, providerMetadata: part.providerMetadata } as Event,
+            { type: "reasoning-end", id, providerMetadata: part.providerMetadata } as Event,
+          ]
+        }
+        if (part.type === "text")
+          return [
+            { type: "text-start", id: `text-${stepIndex}-${partIndex}`, providerMetadata: part.providerMetadata } as Event,
+            { type: "text-delta", id: `text-${stepIndex}-${partIndex}`, text: part.text, providerMetadata: part.providerMetadata } as Event,
+            { type: "text-end", id: `text-${stepIndex}-${partIndex}`, providerMetadata: part.providerMetadata } as Event,
+          ]
+        if (part.type === "tool-call")
+          return [
+            {
+              type: "tool-input-start",
+              id: part.toolCallId,
+              toolName: part.toolName,
+              providerExecuted: part.providerExecuted,
+            } as Event,
+            { type: "tool-input-end", id: part.toolCallId } as Event,
+            { ...part, type: "tool-call" } as Event,
+          ]
+        if (part.type === "tool-result") return [{ ...part, type: "tool-result" } as Event]
+        if (part.type === "tool-error") return [{ ...part, type: "tool-error" } as Event]
+        return []
+      }),
+      {
+        type: "finish-step",
+        finishReason: step.finishReason,
+        usage: step.usage,
+        providerMetadata: step.providerMetadata,
+      } as Event,
+    ]),
+    { type: "finish" } as Event,
+  ]
+}
 
 /**
  * Match transient errors that the PERSISTENT_RETRY layer should retry.
@@ -687,18 +778,8 @@ const live: Layer.Layer<
         )
         .pipe(Effect.ignore)
 
-      return streamText({
-        onError(error) {
-          l.debug("streamText error", {
-            messageID: input.user.id,
-            error: error instanceof Error ? error.message : String(error),
-            elapsedMs: Date.now() - streamStartTs,
-          })
-          l.error("stream error", {
-            error,
-          })
-        },
-        async experimental_repairToolCall(failed) {
+      const request = {
+        async experimental_repairToolCall(failed: Parameters<NonNullable<Parameters<typeof streamText>[0]["experimental_repairToolCall"]>>[0]) {
           const repaired = await ToolCompat.repairToolCall({
             toolName: failed.toolCall.toolName,
             input: failed.toolCall.input,
@@ -750,7 +831,7 @@ const live: Layer.Layer<
         // VISIBLE processor-level SessionRetry.policy own long-haul resilience —
         // it publishes `type: "retry"` so the `[retrying attempt #N]` banner
         // shows, and its per-attempt delay is capped at 30s.
-        maxRetries: input.retries ?? 2,
+        maxRetries: Flag.MIMOCODE_RL_MODE ? 0 : (input.retries ?? 2),
         messages,
         model: wrapLanguageModel({
           model: language,
@@ -780,6 +861,18 @@ const live: Layer.Layer<
             userId: cfg.username ?? "unknown",
             sessionId: input.sessionID,
           },
+        },
+      }
+      if (Flag.MIMOCODE_RL_MODE) return yield* Effect.promise(() => generateText(request))
+      return streamText({
+        ...request,
+        onError(error) {
+          l.debug("streamText error", {
+            messageID: input.user.id,
+            error: error instanceof Error ? error.message : String(error),
+            elapsedMs: Date.now() - streamStartTs,
+          })
+          l.error("stream error", { error })
         },
       })
     })
@@ -822,19 +915,21 @@ const live: Layer.Layer<
 
               const streamWithTelemetry = run({ ...input, abort: ctrl.signal, dropAssistantPrefill }).pipe(
                 Effect.tapError((error) => {
-                  if (!isTransientCapacityError(error)) return Effect.void
+                  if (Flag.MIMOCODE_RL_MODE || !isTransientCapacityError(error)) return Effect.void
                   return Ref.updateAndGet(attemptRef, (n) => n + 1).pipe(
                     Effect.flatMap((nextAttempt) => publishRetryEvent(error, nextAttempt))
                   )
                 })
               )
 
-              const result = yield* streamWithTelemetry.pipe(
-                Effect.retry({
-                  while: isTransientCapacityError,
-                  schedule: persistentRetrySchedule,
-                }),
-              )
+              const result = yield* (Flag.MIMOCODE_RL_MODE
+                ? streamWithTelemetry
+                : streamWithTelemetry.pipe(
+                    Effect.retry({
+                      while: isTransientCapacityError,
+                      schedule: persistentRetrySchedule,
+                    }),
+                  ))
 
               // Structurally identical to the pre-guard stream: a bare scoped
               // stream over the provider's fullStream. No per-event combinator, no
@@ -842,7 +937,9 @@ const live: Layer.Layer<
               // AbortController scope teardown are exactly as before. The reactive
               // prefill retry is layered lazily below and only pays a cost when an
               // actual error surfaces.
-              return Stream.fromAsyncIterable(result.fullStream, (e) =>
+              if (Flag.MIMOCODE_RL_MODE)
+                return Stream.fromIterable(eventsFromGenerateResult(result as unknown as GenerateResult))
+              return Stream.fromAsyncIterable((result as Result).fullStream, (e) =>
                 e instanceof Error ? e : new Error(String(e)),
               )
             }),
@@ -875,6 +972,7 @@ const live: Layer.Layer<
       // hard-pruned. Guarded to a single reprune so a persistent failure surfaces
       // the retry's OWN error, falling back to the original prefill cause only when
       // the resend is again prefill-rejected.
+      if (Flag.MIMOCODE_RL_MODE) return attempt(false)
       return promotePrefillRejection(attempt(false)).pipe(
         Stream.catchCause((primaryCause) => {
           if (!ProviderTransform.isAssistantPrefillRejection(Cause.squash(primaryCause)))

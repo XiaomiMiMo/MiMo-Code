@@ -1,4 +1,4 @@
-import { describe, expect } from "bun:test"
+import { afterEach, describe, expect } from "bun:test"
 import { Effect, Layer } from "effect"
 import { eq } from "drizzle-orm"
 import { Bus } from "../../src/bus"
@@ -13,6 +13,10 @@ import { testEffect } from "../lib/effect"
 import * as CrossSpawnSpawner from "../../src/effect/cross-spawn-spawner"
 
 void Log.init({ print: false })
+
+afterEach(() => {
+  delete process.env.MIMOCODE_RL_MODE
+})
 
 const it = testEffect(
   Layer.mergeAll(CrossSpawnSpawner.defaultLayer, Bus.defaultLayer, Config.defaultLayer, SessionNs.defaultLayer),
@@ -54,6 +58,18 @@ const seedOldProject = Effect.fn("seedOldProject")(function* () {
 // assertions below hold regardless of throttle state.
 describe("shouldAutoDream × memory write switch", () => {
   it.live(
+    "RL mode disables auto dream even when configured",
+    provideTmpdirInstance(
+      () =>
+        Effect.gen(function* () {
+          process.env.MIMOCODE_RL_MODE = "true"
+          yield* seedOldProject()
+          expect(yield* AutoDream.shouldAutoDream(yield* (yield* Config.Service).get())).toBe(false)
+        }),
+      { outsideGit: true, config: { dream: { auto: true } } },
+    ),
+  )
+  it.live(
     "disable_write: true → no auto dream, even on a project old enough to be due",
     provideTmpdirInstance(
       () =>
@@ -83,6 +99,18 @@ describe("shouldAutoDream × memory write switch", () => {
 })
 
 describe("shouldAutoDistill × memory write switch", () => {
+  it.live(
+    "RL mode disables auto distill even when configured",
+    provideTmpdirInstance(
+      () =>
+        Effect.gen(function* () {
+          process.env.MIMOCODE_RL_MODE = "true"
+          yield* seedOldProject()
+          expect(yield* AutoDream.shouldAutoDistill(yield* (yield* Config.Service).get())).toBe(false)
+        }),
+      { outsideGit: true, config: { distill: { auto: true } } },
+    ),
+  )
   it.live(
     "disable_write: true → no auto distill, even on a project old enough to be due",
     provideTmpdirInstance(

@@ -26,6 +26,7 @@ const ref = {
 }
 
 afterEach(() => {
+  delete process.env.MIMOCODE_RL_MODE
   mock.restore()
 })
 
@@ -160,6 +161,31 @@ const seedSessionWithOldToolOutput = Effect.fn("PruneTest.seed")(function* (inpu
 })
 
 describe("SessionPrune.prune", () => {
+  it.live(
+    "RL mode leaves old completed tool output unchanged",
+    provideTmpdirInstance(
+      (dir) =>
+        Effect.gen(function* () {
+          process.env.MIMOCODE_RL_MODE = "true"
+          const svc = yield* SessionPrune.Service
+          const ssn = yield* SessionNs.Service
+          const model = createModel({ context: 100_000, output: 32_000 })
+          const info = yield* ssn.create({})
+          yield* seedSessionWithOldToolOutput({ sessionID: info.id, dir, tool: "bash" })
+          yield* svc.prune({
+            sessionID: info.id,
+            model,
+            tokens: { input: 95_000, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+            lastAssistantTime: Date.now() - 86_400_000,
+          })
+          const part = (yield* ssn.messages({ sessionID: info.id }))
+            .flatMap((msg) => msg.parts)
+            .find((item) => item.type === "tool")
+          expect(part?.type === "tool" && part.state.status === "completed" ? part.state.time.compacted : undefined).toBeUndefined()
+        }),
+      { config: { compaction: { prune: true } } },
+    ),
+  )
   it.live(
     "compacts old completed tool output",
     provideTmpdirInstance(

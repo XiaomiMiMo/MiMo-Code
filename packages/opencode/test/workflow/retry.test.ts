@@ -10,9 +10,11 @@ import { WorkflowAgentFailed } from "../../src/workflow/events"
 import { Worktree } from "../../src/worktree"
 import { Bus } from "../../src/bus"
 import { makeLayer, ref, providerCfg } from "./lib"
+import { Flag } from "../../src/flag/flag"
 
 afterEach(async () => {
   delete process.env.MIMOCODE_TEST_SPAWN_FAIL_ONCE
+  delete process.env.MIMOCODE_RL_MODE
   await Instance.disposeAll()
 })
 
@@ -27,6 +29,36 @@ const it = testEffect(makeLayer())
 // no-deliverable, stream errors are retried inside the model layer, hangs don't
 // release for a retry — none of which cleanly drive the engine retry path).
 describe("WorkflowRuntime agent() retry", () => {
+  it.live("RL mode ignores workflow retry options", () =>
+    provideTmpdirServer(
+      Effect.fnUntraced(function* () {
+        process.env.MIMOCODE_RL_MODE = "true"
+        process.env.MIMOCODE_TEST_SPAWN_FAIL_ONCE = "1"
+        expect(Flag.MIMOCODE_RL_MODE).toBe(true)
+        const runtime = yield* WorkflowRuntime.Service
+        const session = yield* Session.Service
+        const bus = yield* Bus.Service
+        const failed: string[] = []
+        yield* bus.subscribeCallback(WorkflowAgentFailed, (e) => failed.push(e.properties.reason))
+        const parent = yield* session.create({
+          title: "wf rl no retry",
+          permission: [{ permission: "*", pattern: "*", action: "allow" }],
+        })
+        const script = [
+          `export const meta = { name: "t", description: "d" }`,
+          `return await agent("go", { retry: { attempts: 3, baseMs: 1, maxMs: 2 } })`,
+        ].join("\n")
+        const { runID } = yield* runtime.start({ script, sessionID: parent.id, parentActorID: "main", model: ref })
+        const outcome = yield* runtime.wait({ runID })
+        expect(outcome.status).toBe("completed")
+        yield* Effect.sleep("100 millis")
+        expect(failed).toEqual(["spawn-reject"])
+        delete process.env.MIMOCODE_RL_MODE
+      }),
+      { git: true, config: providerCfg },
+    ),
+  )
+
   it.live("retries a spawn-reject and succeeds on the second attempt", () =>
     provideTmpdirServer(
       Effect.fnUntraced(function* ({ llm }) {

@@ -11,6 +11,7 @@ import { pressureLevel, usable } from "./overflow"
 import { SessionCheckpoint } from "./checkpoint"
 import { ActorRegistry } from "@/actor/registry"
 import type { ActorPromptOps } from "@/tool/actor"
+import { Flag } from "@/flag/flag"
 
 const log = Log.create({ service: "session.prune" })
 
@@ -189,6 +190,7 @@ export const layer: Layer.Layer<
       model: Provider.Model
       lastAssistantTime?: number
     }) {
+      if (Flag.MIMOCODE_RL_MODE) return
       if (!isCacheCold(input.model, input.lastAssistantTime)) return
 
       const msgs = yield* session
@@ -244,6 +246,7 @@ export const layer: Layer.Layer<
       promptOps: ActorPromptOps
       agentID?: string
     }) {
+      if (Flag.MIMOCODE_RL_MODE) return
       // Checkpoint serves main/peer only; subagents use per-actor compaction
       // (independent layers — see 2026-05-22-checkpoint-v8-design.md:71), and
       // system-spawned agents (checkpoint-writer/dream/distill) are the writers
@@ -428,6 +431,7 @@ export const layer: Layer.Layer<
       lastAssistantTime?: number
       promptOps?: ActorPromptOps
     }) {
+      if (Flag.MIMOCODE_RL_MODE) return
       const cfg = yield* config.get()
       if (!cfg.compaction?.prune) return
 

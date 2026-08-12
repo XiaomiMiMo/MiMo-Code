@@ -42,6 +42,7 @@ import { alignToNonToolResultUser } from "./checkpoint-align"
 import { loadPriorDiscoveredTitles } from "./checkpoint-retry"
 import * as CheckpointContext from "./checkpoint-context"
 import { buildProgressDiff } from "./checkpoint-progress-reconcile"
+import { Flag } from "@/flag/flag"
 
 const log = Log.create({ service: "session.checkpoint" })
 
@@ -589,6 +590,7 @@ export const layer: Layer.Layer<
     ) => Effect.Effect<TryStartCheckpointWriterResult> = Effect.fn("SessionCheckpoint.tryStartCheckpointWriter")(function* (
       input: TryStartCheckpointWriterInput,
     ) {
+      if (Flag.MIMOCODE_RL_MODE) return "skipped" as const
       // Memory writing disabled — stop producing NEW memory. This is the single
       // gate for the whole write side of checkpointing: template bootstrap
       // (ensureCheckpointTemplate / ensureMemoryTemplate / ensureNotesTemplate),
@@ -1649,6 +1651,8 @@ export const layer: Layer.Layer<
           text: actorsText,
         })
       }
+
+      if (Flag.MIMOCODE_RL_MODE) return true
 
       // Microcompact: messages strictly newer than the boundary will survive
       // into the rebuild context. Clear tool_result content for compactable

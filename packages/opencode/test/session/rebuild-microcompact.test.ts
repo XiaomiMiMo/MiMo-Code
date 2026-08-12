@@ -26,6 +26,7 @@ const ref = {
 }
 
 afterEach(async () => {
+  delete process.env.MIMOCODE_RL_MODE
   await Instance.disposeAll()
 })
 
@@ -91,6 +92,36 @@ async function seedAssistantWithTool(
 }
 
 describe("rebuild microcompact", () => {
+  it.live(
+    "RL mode appends the rebuild boundary without compacting historical tool results",
+    provideTmpdirInstance(() =>
+      Effect.gen(function* () {
+        process.env.MIMOCODE_RL_MODE = "true"
+        const ssn = yield* SessionNs.Service
+        const cp = yield* SessionCheckpoint.Service
+        const info = yield* ssn.create({})
+        yield* Effect.promise(async () => {
+          await fs.mkdir(checkpointPath(info.id).replace(/\/[^/]+$/, ""), { recursive: true })
+          await Bun.write(checkpointPath(info.id), "## §1 Active intent\n\nRL rebuild test\n")
+        })
+        const pre = yield* Effect.promise(() => seedAssistantWithTool(info.id, 1_700_000_000_000, "read", "PRE"))
+        const post = yield* Effect.promise(() => seedAssistantWithTool(info.id, 1_700_000_000_020, "bash", "POST"))
+        expect(
+          yield* cp.insertRebuildBoundary({
+            sessionID: info.id,
+            boundary: pre.msg.id,
+            agent: "build",
+            model: { providerID: "anthropic", modelID: "claude" },
+            boundaryCreatedAt: 1_700_000_000_010,
+          }),
+        ).toBe(true)
+        const part = (yield* ssn.messages({ sessionID: info.id }))
+          .find((msg) => msg.info.id === post.msg.id)
+          ?.parts.find((item) => item.type === "tool")
+        expect(part?.type === "tool" && part.state.status === "completed" ? part.state.time.compacted : undefined).toBeUndefined()
+      }),
+    ),
+  )
   it.live(
     "clears completed compactable tool_result strictly newer than boundary; preserves non-compactable and pre-boundary",
     provideTmpdirInstance(() =>

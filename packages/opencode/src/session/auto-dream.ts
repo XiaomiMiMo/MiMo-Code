@@ -4,6 +4,7 @@ import { Database, eq, desc, asc, isNull } from "@/storage"
 import { SessionTable } from "./session.sql"
 import { Log } from "@/util"
 import type { Config } from "@/config"
+import { Flag } from "@/flag/flag"
 
 const log = Log.create({ service: "auto-dream" })
 
@@ -108,6 +109,7 @@ function shouldAutoRun(input: {
 }
 
 export function shouldAutoDream(cfg: Config.Info) {
+  if (Flag.MIMOCODE_RL_MODE) return Effect.succeed(false)
   // Memory writing off → the consolidation pass that rewrites project memory
   // must not run either.
   if (!isMemoryWriteEnabled(cfg)) return Effect.succeed(false)
@@ -121,6 +123,7 @@ export function shouldAutoDream(cfg: Config.Info) {
 }
 
 export function shouldAutoDistill(cfg: Config.Info) {
+  if (Flag.MIMOCODE_RL_MODE) return Effect.succeed(false)
   // Distill reads memory to mine patterns and then auto-produces artifacts in the
   // background. With writing off, nothing should be produced automatically.
   if (!isMemoryWriteEnabled(cfg)) return Effect.succeed(false)

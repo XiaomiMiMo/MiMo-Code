@@ -67,6 +67,9 @@ export const Flag = {
   MIMOCODE_DISABLE_TERMINAL_TITLE: truthy("MIMOCODE_DISABLE_TERMINAL_TITLE"),
   MIMOCODE_SHOW_TTFD: truthy("MIMOCODE_SHOW_TTFD"),
   MIMOCODE_PERMISSION: process.env["MIMOCODE_PERMISSION"],
+  get MIMOCODE_RL_MODE() {
+    return truthy("MIMOCODE_RL_MODE")
+  },
 
   // Defaults to false. When false, the bash tool intercepts irreversible
   // deletion commands (rm, rmdir, unlink, shred, del, erase, rd, remove-item,

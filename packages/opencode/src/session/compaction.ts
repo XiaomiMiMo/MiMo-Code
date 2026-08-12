@@ -18,6 +18,7 @@ import { InstanceState } from "@/effect"
 import { isOverflow as overflow, usable } from "./overflow"
 import { makeRuntime } from "@/effect/run-service"
 import { fn } from "@/util/fn"
+import { Flag } from "@/flag/flag"
 
 const log = Log.create({ service: "session.compaction" })
 
@@ -183,6 +184,7 @@ export const layer: Layer.Layer<
       sessionID: SessionID
       agentID?: string
     }) {
+      if (Flag.MIMOCODE_RL_MODE) return
       const cfg = yield* config.get()
       if (!cfg.compaction?.prune) return
       log.info("pruning", { agentID: input.agentID ?? "main" })

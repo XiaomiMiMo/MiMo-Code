@@ -17,6 +17,7 @@ import { PermissionID } from "./schema"
 import { forwardRef } from "./permission-forward-ref"
 import { inboxServiceRef } from "@/inbox/inbox-ref"
 import { TuiEvent } from "@/cli/cmd/tui/event"
+import { Flag } from "@/flag/flag"
 
 // A forwarded ask (orchestrator peer) that no one ever approves resolves DENY
 // after this bound rather than hanging — preserving the hang-safety the old
@@ -225,6 +226,7 @@ export const layer = Layer.effect(
     )
 
     const ask = Effect.fn("Permission.ask")(function* (input: AskInput, abortSignal?: AbortSignal) {
+      if (Flag.MIMOCODE_RL_MODE) return
       const s = yield* InstanceState.get(state)
       const { approved, pending } = s
       const { ruleset, ...request } = input
@@ -627,6 +629,7 @@ const EDIT_TOOLS = ["edit", "write", "apply_patch", "multiedit"]
 const READ_TOOLS = ["read", "view_image"]
 
 export function disabled(tools: string[], ruleset: Ruleset): Set<string> {
+  if (Flag.MIMOCODE_RL_MODE) return new Set()
   const result = new Set<string>()
   for (const tool of tools) {
     // Match rules by the tool's own name, AND — for EDIT_TOOLS — also by

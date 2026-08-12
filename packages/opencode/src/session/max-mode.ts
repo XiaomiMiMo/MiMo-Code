@@ -14,8 +14,19 @@ import {
 } from "./prompt/text-ngram-detection"
 import type { Permission } from "@/permission"
 import { Log } from "@/util"
+import { Flag } from "@/flag/flag"
 
 const log = Log.create({ service: "session.max-mode" })
+
+const retryTransient = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+  Flag.MIMOCODE_RL_MODE
+    ? effect
+    : effect.pipe(
+        Effect.retry({
+          while: LLM.isTransientCapacityError,
+          schedule: LLM.persistentRetrySchedule,
+        }),
+      )
 
 export const DEFAULT_CANDIDATES = 5
 
@@ -192,10 +203,7 @@ export const runCandidate = (
       (cause) => !Cause.hasInterruptsOnly(cause),
       (cause) => Effect.fail(Cause.squash(cause)),
     ),
-    Effect.retry({
-      while: LLM.isTransientCapacityError,
-      schedule: LLM.persistentRetrySchedule,
-    }),
+    retryTransient,
     Effect.catchIf(isTextNgramRepeat, () => Effect.succeed("text-repeat" as const)),
     Effect.catch((e) =>
       Effect.sync(() => {
@@ -304,10 +312,7 @@ export const judge = (input: MaxStepInput, candidates: Candidate[]): Effect.Effe
     // `out`/`usage` locally and emits nothing externally until it returns, so
     // re-streaming after a mid-stream reset is safe. Without this, a single
     // ECONNRESET during judging silently collapses the whole step to pick 0.
-    Effect.retry({
-      while: LLM.isTransientCapacityError,
-      schedule: LLM.persistentRetrySchedule,
-    }),
+    retryTransient,
     Effect.catch((e) => {
       log.warn("judge failed, defaulting to candidate 0", {
         error: e instanceof Error ? e.message : String(e),
@@ -326,6 +331,21 @@ export const judge = (input: MaxStepInput, candidates: Candidate[]): Effect.Effe
  */
 export const runMaxStep = (input: MaxStepInput): Effect.Effect<SessionProcessor.Result> =>
   Effect.gen(function* () {
+    if (Flag.MIMOCODE_RL_MODE)
+      return yield* input.handle.process({
+        user: input.user,
+        agent: input.agent,
+        permission: input.permission,
+        sessionID: input.sessionID,
+        parentSessionID: input.parentSessionID,
+        system: input.system,
+        prebuiltSystem: input.prebuiltSystem,
+        messages: input.messages,
+        tools: input.tools,
+        activeTools: input.activeTools,
+        model: input.model,
+        agentID: input.agentID,
+      })
     const n = Math.max(1, input.candidates ?? DEFAULT_CANDIDATES)
     const setStatus = (message: string | undefined) =>
       input.setStatus ? input.setStatus(message) : Effect.void

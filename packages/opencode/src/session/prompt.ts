@@ -695,6 +695,7 @@ export const layer = Layer.effect(
       providerID: ProviderID
       modelID: ModelID
     }) {
+      if (Flag.MIMOCODE_RL_MODE) return
       if (input.session.parentID) return
 
       // Persistent orchestrator root session: keep a stable, task-independent
@@ -767,6 +768,7 @@ export const layer = Layer.effect(
     })
 
     const predict = Effect.fn("SessionPrompt.predict")(function* (input: { sessionID: SessionID }) {
+      if (Flag.MIMOCODE_RL_MODE) return ""
       const cfg = yield* config.get()
       if (cfg.experimental?.predict_next_prompt === false) return ""
 
@@ -2826,6 +2828,16 @@ NOTE: At any point in time through this workflow you should feel free to ask the
           lastUser: MessageV2.User
           assistant: MessageV2.Assistant
         }) {
+          if (Flag.MIMOCODE_RL_MODE) {
+            if (input.assistant.finish !== "length" || input.assistant.error || input.assistant.summary) return false
+            input.assistant.error = new MessageV2.OutputLengthError({}).toObject()
+            yield* sessions.updateMessage(input.assistant)
+            yield* bus.publish(Session.Event.Error, {
+              sessionID: input.assistant.sessionID,
+              error: input.assistant.error,
+            })
+            return false
+          }
           if (input.assistant.finish !== "length" || input.assistant.error || input.assistant.summary) return false
           if (
             MessageV2.parts(input.assistant.id).some((part) => part.type === "tool" && !part.metadata?.providerExecuted)
@@ -2881,6 +2893,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
         // re-entry, which only fires for spawned actors. fail-open on any judge
         // error so a flaky judge can never trap the user.
         const goalGate = Effect.fn("SessionPrompt.goalGate")(function* (lastUser: MessageV2.User) {
+          if (Flag.MIMOCODE_RL_MODE) return false
           if ((agentID ?? "main") !== "main") return false
           const active = yield* goal.get(sessionID)
           if (!active) return false
@@ -2993,6 +3006,15 @@ NOTE: At any point in time through this workflow you should feel free to ask the
           assistant: MessageV2.Assistant
           reason: string
         }) {
+          if (Flag.MIMOCODE_RL_MODE) {
+            input.assistant.error = new MessageV2.InvalidOutputError({ message: input.reason }).toObject()
+            yield* sessions.updateMessage(input.assistant)
+            yield* bus.publish(Session.Event.Error, {
+              sessionID: input.assistant.sessionID,
+              error: input.assistant.error,
+            })
+            return false
+          }
           if (input.assistant.error || input.assistant.summary || input.assistant.structured !== undefined) return false
           if (invalidContinuations >= INVALID_OUTPUT_CONTINUATION_LIMIT) {
             input.assistant.error = new MessageV2.InvalidOutputError({ message: input.reason }).toObject()
@@ -3072,6 +3094,13 @@ NOTE: At any point in time through this workflow you should feel free to ask the
             message: "Model emitted a tool call as text instead of a structured tool call.",
           }).toObject()
           yield* sessions.updateMessage(input.assistant)
+          if (Flag.MIMOCODE_RL_MODE) {
+            yield* bus.publish(Session.Event.Error, {
+              sessionID: input.assistant.sessionID,
+              error: input.assistant.error,
+            })
+            return false
+          }
           if (textToolCallRetries >= TEXT_TOOL_CALL_RETRY_LIMIT) {
             yield* bus.publish(Session.Event.Error, {
               sessionID: input.assistant.sessionID,
@@ -3123,6 +3152,18 @@ NOTE: At any point in time through this workflow you should feel free to ask the
           lastUser: MessageV2.User
           assistant: MessageV2.Assistant
         }) {
+          if (Flag.MIMOCODE_RL_MODE) {
+            input.assistant.error = new MessageV2.StructuredOutputError({
+              message: "Model did not produce structured output",
+              retries: 0,
+            }).toObject()
+            yield* sessions.updateMessage(input.assistant)
+            yield* bus.publish(Session.Event.Error, {
+              sessionID: input.assistant.sessionID,
+              error: input.assistant.error,
+            })
+            return false
+          }
           if (input.assistant.error || input.assistant.summary || input.assistant.structured !== undefined) return false
           const limit = input.lastUser.format?.type === "json_schema" ? input.lastUser.format.retryCount : 0
           if (structuredRetries >= limit) {
@@ -3175,7 +3216,19 @@ NOTE: At any point in time through this workflow you should feel free to ask the
         // hit (>= TEXT_NGRAM_MAX_RECOVERY) writes an error and signals break.
         const handleTextRepeat = Effect.fn("SessionPrompt.handleTextRepeat")(function* (input: {
           lastUser: MessageV2.User
+          assistant: MessageV2.Assistant
         }) {
+          if (Flag.MIMOCODE_RL_MODE) {
+            input.assistant.error = new NamedError.Unknown({
+              message: "Text repetition detected. Session terminated without recovery in RL mode.",
+            }).toObject()
+            yield* sessions.updateMessage(input.assistant)
+            yield* bus.publish(Session.Event.Error, {
+              sessionID,
+              error: input.assistant.error,
+            })
+            return false
+          }
           if (textNgramRecoveryAttempts >= TEXT_NGRAM_MAX_RECOVERY) {
             yield* slog.info("text n-gram: max recovery exceeded, terminating")
             yield* bus.publish(Session.Event.Error, {
@@ -3395,7 +3448,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
               history: msgs,
             }).pipe(Effect.ignore, Effect.forkIn(scope))
 
-          if (step === 1 && !session.parentID) {
+          if (step === 1 && !session.parentID && !Flag.MIMOCODE_RL_MODE) {
             const cfg = yield* config.get()
             const dreamTrigger = yield* shouldAutoDream(cfg).pipe(Effect.catch(() => Effect.succeed(false)))
             const distillTrigger = yield* shouldAutoDistill(cfg).pipe(Effect.catch(() => Effect.succeed(false)))
@@ -3891,7 +3944,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
               }
 
               if (result === "text-repeat") {
-                if (yield* handleTextRepeat({ lastUser })) return "continue" as const
+                if (yield* handleTextRepeat({ lastUser, assistant: handle.message })) return "continue" as const
                 return "break" as const
               }
               if (result === "stop") return "break" as const
@@ -4003,7 +4056,10 @@ NOTE: At any point in time through this workflow you should feel free to ask the
             lastSystemPrompt = prebuiltSystem
             const maxModeCfg = (yield* config.get()).experimental?.maxMode
             const useMaxMode =
-              agent.name === MaxMode.MAX_MODE_AGENT && maxModeCfg !== undefined && format.type !== "json_schema"
+              !Flag.MIMOCODE_RL_MODE &&
+              agent.name === MaxMode.MAX_MODE_AGENT &&
+              maxModeCfg !== undefined &&
+              format.type !== "json_schema"
 
             const processArgs = {
               user: lastUser,
@@ -4109,7 +4165,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
             }
 
             if (result === "text-repeat") {
-              if (yield* handleTextRepeat({ lastUser })) return "continue" as const
+              if (yield* handleTextRepeat({ lastUser, assistant: handle.message })) return "continue" as const
               return "break" as const
             }
             if (result === "stop") return "break" as const
@@ -4243,6 +4299,17 @@ NOTE: At any point in time through this workflow you should feel free to ask the
               const isTextLoop = detectTextLoop(textLoopBuffer, TEXT_LOOP_TRIGGER_COUNT)
 
               if (isTextLoop) {
+                if (Flag.MIMOCODE_RL_MODE) {
+                  handle.message.error = new NamedError.Unknown({
+                    message: "Text loop detected. Session terminated without recovery in RL mode.",
+                  }).toObject()
+                  yield* sessions.updateMessage(handle.message)
+                  yield* bus.publish(Session.Event.Error, {
+                    sessionID,
+                    error: handle.message.error,
+                  })
+                  break
+                }
                 if (textLoopRecoveryAttempts >= TEXT_LOOP_MAX_RECOVERY) {
                   yield* slog.info("text loop: max recovery exceeded, terminating")
                   yield* bus.publish(Session.Event.Error, {

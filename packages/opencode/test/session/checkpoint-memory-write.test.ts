@@ -1,4 +1,4 @@
-import { describe, expect } from "bun:test"
+import { afterEach, describe, expect } from "bun:test"
 import { Deferred, Effect, Layer } from "effect"
 import * as fs from "fs/promises"
 import path from "path"
@@ -24,6 +24,10 @@ import { testEffect } from "../lib/effect"
 import * as CrossSpawnSpawner from "../../src/effect/cross-spawn-spawner"
 
 void Log.init({ print: false })
+
+afterEach(() => {
+  delete process.env.MIMOCODE_RL_MODE
+})
 
 const ref = {
   providerID: ProviderID.make("test"),
@@ -107,6 +111,26 @@ const seedSession = Effect.fn("seedSession")(function* () {
 })
 
 describe("memory write gate (W1)", () => {
+  it.live(
+    "RL mode skips checkpoint writer auxiliary calls",
+    provideTmpdirInstance(() =>
+      Effect.gen(function* () {
+        process.env.MIMOCODE_RL_MODE = "true"
+        yield* reset
+        const cp = yield* SessionCheckpoint.Service
+        const info = yield* seedSession()
+        expect(
+          yield* cp.tryStartCheckpointWriter({
+            sessionID: info.id,
+            model: { providerID: "test", modelID: "test-model" },
+            promptOps: {} as never,
+          }),
+        ).toBe("skipped")
+        expect(spawnLog.count).toBe(0)
+      }),
+    ),
+  )
+
   it.live(
     "absent config → writer starts and memory files are bootstrapped (today's behavior)",
     provideTmpdirInstance(

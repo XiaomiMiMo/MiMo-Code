@@ -23,6 +23,7 @@ import { WorkflowAgentFailed, WorkflowChildFailed, WorkflowFinished, WorkflowLog
 import { WorkflowPersistence, journalKeyBase } from "./persistence"
 import type { RunSummary } from "./persistence"
 import { Log, Lock } from "@/util"
+import { Flag } from "@/flag/flag"
 
 const log = Log.create({ service: "workflow.runtime" })
 
@@ -1097,7 +1098,7 @@ export const layer = Layer.effect(
                 // (each attempt is a real spawn). A call that succeeds on retry N
                 // therefore shows N-1 failed + 1 succeeded — intended: the live
                 // view reflects actual spawns, while the guest sees a single result.
-                const maxAttempts = Math.max(1, o.retry?.attempts ?? 1)
+                const maxAttempts = Flag.MIMOCODE_RL_MODE ? 1 : Math.max(1, o.retry?.attempts ?? 1)
                 const baseMs = o.retry?.baseMs ?? 400
                 const maxMs = o.retry?.maxMs ?? 4000
                 let last: { value: unknown; reason: FailReason | null } = { value: null, reason: "actor-error" }
@@ -1148,7 +1149,7 @@ export const layer = Layer.effect(
             // Same bounded-retry contract as the shared path; each attempt makes a
             // fresh worktree (spawnIsolated does this internally + tracks it for
             // reclaim). markAgentNode flips once, on the final disposition.
-            const maxAttempts = Math.max(1, o.retry?.attempts ?? 1)
+            const maxAttempts = Flag.MIMOCODE_RL_MODE ? 1 : Math.max(1, o.retry?.attempts ?? 1)
             const baseMs = o.retry?.baseMs ?? 400
             const maxMs = o.retry?.maxMs ?? 4000
             let last: { value: unknown; reason: FailReason | null } = { value: null, reason: "actor-error" }

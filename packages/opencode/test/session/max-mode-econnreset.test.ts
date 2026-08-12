@@ -1,8 +1,13 @@
-import { describe, expect, test } from "bun:test"
+import { afterEach, describe, expect, test } from "bun:test"
 import { Effect } from "effect"
 import * as Stream from "effect/Stream"
 import { runCandidate, judge, type Candidate, type MaxStepInput } from "../../src/session/max-mode"
 import type { LLM } from "../../src/session/llm"
+import { Flag } from "../../src/flag/flag"
+
+afterEach(() => {
+  delete process.env.MIMOCODE_RL_MODE
+})
 
 function expectCandidate(value: Candidate | null | "text-repeat"): Candidate {
   if (!value || value === "text-repeat") throw new Error(`expected candidate, got ${String(value)}`)
@@ -62,6 +67,18 @@ function baseInput(llm: LLM.Interface): MaxStepInput {
 }
 
 describe("max-mode ECONNRESET handling (integration)", () => {
+  test("RL mode does not retry a transient candidate failure", async () => {
+    const previous = process.env.MIMOCODE_RL_MODE
+    process.env.MIMOCODE_RL_MODE = "true"
+    const { llm, attempts } = mockLLM({ failTimes: 1, makeError: econnreset, goodEvents: [] })
+
+    expect(Flag.MIMOCODE_RL_MODE).toBe(true)
+    expect(await Effect.runPromise(runCandidate(baseInput(llm), 0))).toBeNull()
+    expect(attempts()).toBe(1)
+    if (previous === undefined) delete process.env.MIMOCODE_RL_MODE
+    else process.env.MIMOCODE_RL_MODE = previous
+  })
+
   test("candidate preserves the model-visible active tool subset", async () => {
     let captured: LLM.StreamInput | undefined
     const llm = {

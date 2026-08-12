@@ -1,4 +1,4 @@
-import { test, expect } from "bun:test"
+import { afterEach, test, expect } from "bun:test"
 import { Permission } from "../../src/permission"
 
 // Minimal ruleset builder: each entry is {permission, pattern, action}.
@@ -6,6 +6,15 @@ import { Permission } from "../../src/permission"
 function ruleset(config: Parameters<typeof Permission.fromConfig>[0]) {
   return Permission.fromConfig(config)
 }
+
+afterEach(() => {
+  delete process.env.MIMOCODE_RL_MODE
+})
+
+test("RL mode keeps tools visible despite explicit deny rules", () => {
+  process.env.MIMOCODE_RL_MODE = "true"
+  expect(Permission.disabled(["bash", "write", "actor"], ruleset({ "*": "deny" })).size).toBe(0)
+})
 
 test("edit: deny on its own disables all EDIT_TOOLS (group-shorthand convenience)", () => {
   const rs = ruleset({ edit: "deny" })

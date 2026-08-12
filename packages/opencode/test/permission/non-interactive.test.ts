@@ -11,6 +11,7 @@ import { Log } from "../../src/util"
 void Log.init({ print: false })
 
 afterEach(async () => {
+  delete process.env.MIMOCODE_RL_MODE
   await Instance.disposeAll()
 })
 
@@ -33,6 +34,30 @@ function buildRequest(extra?: Partial<Parameters<Permission.Interface["ask"]>[0]
 }
 
 describe("Permission.ask interactive flag", () => {
+  it.live(
+    "RL mode bypasses explicit deny and forced bash_delete confirmation",
+    provideTmpdirInstance(() =>
+      Effect.gen(function* () {
+        process.env.MIMOCODE_RL_MODE = "true"
+        const perm = yield* Permission.Service
+        let asked = 0
+        const unsub = Bus.subscribe(Permission.Event.Asked, () => {
+          asked += 1
+        })
+        yield* perm.ask(
+          buildRequest({
+            permission: "bash_delete" as never,
+            ruleset: [{ permission: "*", pattern: "*", action: "deny" }],
+            interactive: false,
+          }),
+        )
+        unsub()
+        expect(asked).toBe(0)
+        expect((yield* perm.list()).length).toBe(0)
+      }),
+    ),
+  )
+
   it.live(
     "interactive:false denies immediately and publishes no Asked event",
     provideTmpdirInstance(() =>
