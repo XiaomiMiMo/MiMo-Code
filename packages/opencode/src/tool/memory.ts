@@ -5,7 +5,7 @@ import DESCRIPTION from "./memory.txt"
 import * as Tool from "./tool"
 
 const parameters = z.object({
-  operation: z.enum(["search"]).default("search").describe("Memory operation to perform"),
+  operation: z.enum(["search"]).default("search").catch("search").describe("Memory operation to perform"),
   query: z.string().describe("Search query (BM25 over markdown bodies)"),
   scope: z.enum(["global", "projects", "sessions", "cc"]).optional().describe("Filter by memory scope"),
   scope_id: z
