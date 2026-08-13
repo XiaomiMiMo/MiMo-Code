@@ -396,16 +396,28 @@ const SPEECH_MEDIA_TYPES: Record<string, string> = {
 }
 
 /**
+ * The one media type that carries no information.
+ *
+ * `generateSpeech` reports `detectMediaType(bytes) ?? "audio/mp3"`, and the
+ * detection table spells a successfully sniffed mp3 as `audio/mpeg` — so
+ * `audio/mp3` is reached ONLY when sniffing failed. Treating it as authoritative
+ * would relabel a flac the caller explicitly asked for as mp3.
+ */
+const UNDETERMINED_MEDIA_TYPE = "audio/mp3"
+
+/**
  * Content type for a synthesized audio body.
  *
- * The provider's own reported media type wins, because it describes the bytes
- * that actually exist. The requested format is only a fallback for providers that
- * report nothing, and `application/octet-stream` is the last resort — mislabeling
- * audio is worse than declining to name it.
+ * A media type the provider genuinely determined wins, because it describes the
+ * bytes that actually exist. Failing that, the requested format is the better
+ * guess: it is what was actually sent upstream, so it is what the bytes most
+ * likely are. `application/octet-stream` is the last resort — mislabeling audio is
+ * worse than declining to name it.
  */
 export function speechContentType(input: { reported?: string; requested?: string }) {
-  if (input.reported) return input.reported
+  if (input.reported && input.reported !== UNDETERMINED_MEDIA_TYPE) return input.reported
   if (input.requested) return SPEECH_MEDIA_TYPES[input.requested] ?? "application/octet-stream"
+  // Never the non-standard `audio/mp3` alias, even when that is what was reported.
   return SPEECH_MEDIA_TYPES.mp3!
 }
 

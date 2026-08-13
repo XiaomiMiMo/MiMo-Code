@@ -281,6 +281,15 @@ matching `Content-Type`.
 Not supported, stated rather than implied: streaming TTS. The AI SDK exposes
 `generateSpeech` and no `streamSpeech`, so audio is returned as one complete
 body. Long inputs will show the full synthesis latency as time-to-first-byte.
+`stream_format: sse` is therefore refused with a 400 rather than ignored, which
+would strand a client waiting to read frames.
+
+The response content type prefers what the provider determined, but `audio/mp3`
+is deliberately treated as NO answer: `generateSpeech` reports
+`detectMediaType(bytes) ?? "audio/mp3"`, and a successfully sniffed mp3 is spelled
+`audio/mpeg`, so that exact string means sniffing failed. Honouring it would
+relabel a flac the caller explicitly requested. In that case the requested format
+wins, because it is what was actually sent upstream.
 
 ### [S2.9] CLI
 
@@ -333,11 +342,10 @@ NOT addressed here:
 - [x] T6: Derive model kind from modalities and reject cross-endpoint misuse — acceptance: a speech model posted to `/v1/chat/completions` returns 400 naming `/v1/audio/speech`, and vice versa (covers: S2.4, S2.7; depends: T1)
 - [x] T7: Add `Provider.getSpeech` — acceptance: resolves a speech model through `resolveSDK` with the constructed model cached, and maps an unknown id to `ModelNotFoundError` (covers: S2.8; depends: T6)
 - [x] T8: Add `POST /v1/audio/speech` — acceptance: returns audio bytes with a matching `Content-Type`, enforces the allowlist, and 404s an unknown model (covers: S2.8; depends: T7)
-      NOTE: the allowlist and 404 paths are covered by tests, and the 501
-      "provider cannot synthesize" path exercises `getSpeech` for real. The SUCCESS
-      path — actual audio bytes — is NOT verified: no TTS model is configured in
-      this environment, and `@ai-sdk/openai-compatible` (the only provider the test
-      fixture can build) exposes no speech factory at all. Verifying it needs a
-      reachable `@ai-sdk/openai`-family credential plus a declared speech model.
+      Verified end to end, including the success path: `test/llm-server/e2e-speech.test.ts`
+      drives the demo skill's `speak.mjs` as a real subprocess against a real
+      listener, with an `@ai-sdk/openai` provider aimed at a local fake vendor. The
+      audio is asserted byte-exact. Still NOT verified against a live vendor, since
+      no TTS model is configured in this environment.
 - [x] T9: Tests for protocol conversion, auth, validation policy, model-kind gating, and SSE framing — acceptance: `bun test` passes from `packages/opencode` (covers: S2.2, S2.4, S2.5, S2.6, S2.7)
 - [x] T10: Verify and review — acceptance: `bun typecheck` and `bun test` clean, live smoke test of every route, and an independent review with no unresolved critical findings (covers: S2)

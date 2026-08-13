@@ -294,6 +294,22 @@ describe("speech content type", () => {
     expect(speechContentType({ reported: "audio/flac", requested: "mp3" })).toBe("audio/flac")
   })
 
+  test("treats `audio/mp3` as no answer, because that is the SDK's sniff-failed fallback", () => {
+    // generateSpeech reports `detectMediaType(bytes) ?? "audio/mp3"`, and a
+    // successfully sniffed mp3 is spelled `audio/mpeg`. So `audio/mp3` means "could
+    // not tell", and honouring it would relabel a flac the caller asked for.
+    expect(speechContentType({ reported: "audio/mp3", requested: "flac" })).toBe("audio/flac")
+    expect(speechContentType({ reported: "audio/mp3", requested: "wav" })).toBe("audio/wav")
+  })
+
+  test("a genuinely sniffed mp3 is honoured, since it arrives as audio/mpeg", () => {
+    expect(speechContentType({ reported: "audio/mpeg", requested: "flac" })).toBe("audio/mpeg")
+  })
+
+  test("never emits the non-standard audio/mp3 alias, even when that is all it got", () => {
+    expect(speechContentType({ reported: "audio/mp3" })).toBe("audio/mpeg")
+  })
+
   test("falls back to the requested format when the provider reports nothing", () => {
     expect(speechContentType({ requested: "wav" })).toBe("audio/wav")
     expect(speechContentType({ requested: "opus" })).toBe("audio/opus")

@@ -1,14 +1,14 @@
 ---
 name: llm-endpoint-demo
-description: Demo and end-to-end fixture for MiMoCode's temporary local LLM server. Use when verifying that a skill can borrow a configured model through a local base_url and a throwaway token instead of a real provider API key, or when testing the expire-and-reissue loop. Not a general-purpose skill.
+description: Demo and end-to-end fixture for MiMoCode's temporary local LLM server. Use when verifying that a skill can borrow a configured chat or text-to-speech model through a local base_url and a throwaway token instead of a real provider API key, or when testing the expire-and-reissue loop. Not a general-purpose skill.
 ---
 
 # LLM endpoint demo
 
-A minimal skill that needs "a model" and is given one **without ever seeing a
-provider API key**. It reads exactly two environment variables and calls an
-OpenAI-compatible endpoint; it knows nothing about MiMoCode's provider config or
-credential store.
+A minimal skill that needs "a model" — for chat and for speech — and is given one
+**without ever seeing a provider API key**. It reads a handful of environment
+variables and calls an OpenAI-compatible endpoint; it knows nothing about
+MiMoCode's provider config or credential store.
 
 Its purpose is to be a black-box witness. If this skill works, the claim "a skill
 can use a configured model without the secret entering the model's context or a
@@ -20,7 +20,24 @@ readable config file" is demonstrated rather than asserted.
 | --- | --- |
 | `OPENAI_BASE_URL` | The local endpoint, e.g. `http://127.0.0.1:53854/v1` |
 | `OPENAI_API_KEY` | A temporary token, NOT a provider key |
-| `OPENAI_MODEL` | A `provider/model` reference, e.g. `anthropic/claude-haiku-4-5` |
+| `OPENAI_MODEL` | Chat: a `provider/model` reference, e.g. `anthropic/claude-haiku-4-5` |
+| `OPENAI_TTS_MODEL` | Speech: a `provider/model` whose output modality is audio |
+| `OPENAI_TTS_OUT` | Speech: where to write the audio file |
+| `OPENAI_TTS_VOICE` | Speech, optional. Default `alloy` |
+| `OPENAI_TTS_FORMAT` | Speech, optional. `mp3`/`opus`/`aac`/`flac`/`wav`/`pcm`. Default `wav` |
+
+A speech model has to be **declared** as one. Model kind is derived from output
+modality, and the models OpenAI ships for TTS are absent from the public registry,
+so give them modalities in config:
+
+```json
+{ "provider": { "openai": { "models": {
+  "tts-1": { "modalities": { "input": ["text"], "output": ["audio"] } }
+} } } }
+```
+
+Without that, the endpoint treats `tts-1` as a chat model and the request is
+refused with a 400 that names the right route.
 
 ## Setting it up
 
@@ -53,28 +70,47 @@ readable config file" is demonstrated rather than asserted.
    so a renewal is equivalent rather than merely valid.
 
    Pass `--model` so the key cannot reach models this task has no business calling.
+   One key may carry several `--model` flags, so a task that both writes and speaks
+   gets one token covering the chat model and the speech model.
    Pass `--ttl none` only for a job with no natural end.
 
-3. **Export and run.**
+3. **Export and run.** Chat:
 
    ```
    OPENAI_BASE_URL=<base_url> OPENAI_API_KEY=<api_key> OPENAI_MODEL=<provider/model> \
      node summarize.mjs "one sentence about the sea"
    ```
 
+   Speech:
+
+   ```
+   OPENAI_BASE_URL=<base_url> OPENAI_API_KEY=<api_key> \
+   OPENAI_TTS_MODEL=<provider/model> OPENAI_TTS_OUT=out.wav \
+     node speak.mjs "one sentence about the sea"
+   ```
+
+   `speak.mjs` prints `<bytes> <content-type> <path>`. Trust the reported content
+   type over the format you asked for: the provider decides what it actually
+   produced.
+
+   Speech is returned as one complete body — there is no streaming TTS, because the
+   SDK offers no streaming speech call. Long input shows the whole synthesis time as
+   time-to-first-byte, so keep requests short or expect the wait.
+
 ## Handling expiry
 
 The token has a lifetime. It slides forward on every use, so an actively working
 task is not interrupted, but an idle one will age out.
 
-`summarize.mjs` exits with a distinct code so the failure is actionable:
+Both scripts exit with a distinct code so the failure is actionable:
 
 | Exit | Meaning | What to do |
 | --- | --- | --- |
-| 0 | success | completion is on stdout |
+| 0 | success | completion on stdout, or the audio file written |
 | 2 | `expired_api_key` | run `renew_argv`, replace `OPENAI_API_KEY`, retry once |
 | 3 | other failure | report it; do not retry blindly |
 | 4 | environment missing | go back to step 2 |
+| 5 | `unsupported_capability` (speech only) | this provider package cannot synthesize; choose a different model. Retrying and re-keying both fail |
 
 On exit code 2, `base_url` does **not** change — tokens live outside the server
 process, so only the key needs replacing. Do not restart the server and do not
