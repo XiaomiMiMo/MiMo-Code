@@ -1,60 +1,245 @@
 import type { Argv } from "yargs"
+import { Effect } from "effect"
 import { cmd } from "./cmd"
+import { AppRuntime } from "@/effect/app-runtime"
+import { Config } from "@/config"
+import { Instance } from "@/project/instance"
 import { LLMServer } from "../../llm-server/server"
+import { LLMServerTokens } from "../../llm-server/tokens"
 import { UI } from "../ui"
 
 /**
- * Start a temporary OpenAI-compatible endpoint for the models this instance is
- * configured with.
+ * A temporary OpenAI-compatible endpoint for the models this instance already has.
  *
  * The point is to stop handing real provider keys to things that only need "a
- * model": a skill, a subprocess, or a script gets `--base-url` plus a throwaway
- * token, and the actual credential never leaves `Provider.Service`. Because the
- * token dies with the process, one server per task is the isolation boundary.
+ * model": a skill, a subprocess, or a script gets a `base_url` plus a throwaway
+ * token, and the actual credential never leaves `Provider.Service`.
+ *
+ * Split into a long-running `mimo llm-server` and a family of short subcommands
+ * (`issue`, `list`, `revoke`, `status`) rather than a tool, because minting a key is
+ * a rare, scriptable act. The two halves meet through the on-disk token store, so
+ * `issue` can hand out a working credential from a completely separate process.
  */
+
+const DEFAULT_TTL = "1d"
+
+/**
+ * Parse a duration, where "no limit" is a value rather than an absence.
+ *
+ * `none` has to be expressible: a token minted for an open-ended job should be able
+ * to say so, and spelling it out keeps "unlimited" distinguishable from "the flag
+ * was forgotten".
+ */
+export function duration(input: string | undefined, fallback: string): number | undefined {
+  const value = (input ?? fallback).trim().toLowerCase()
+  if (value === "none" || value === "never" || value === "0") return undefined
+  const match = /^(\d+(?:\.\d+)?)(ms|s|m|h|d)?$/.exec(value)
+  if (!match) throw new Error(`Invalid duration \`${input}\`; use forms like 30m, 12h, 7d, or none`)
+  const scale = { ms: 1, s: 1000, m: 60_000, h: 3_600_000, d: 86_400_000 }[match[2] ?? "ms"]!
+  return Number(match[1]) * scale
+}
+
+function defaults() {
+  return AppRuntime.runPromise(
+    Effect.gen(function* () {
+      const cfg = yield* (yield* Config.Service).get()
+      return { ttl: cfg.llmServer?.ttl, maxAge: cfg.llmServer?.maxAge }
+    }),
+  )
+}
+
+async function inInstance(fn: () => Promise<void>) {
+  await Instance.provide({ directory: process.cwd(), fn })
+}
+
+function relative(at: number | undefined) {
+  if (at === undefined) return "never"
+  const ms = at - Date.now()
+  if (ms <= 0) return "expired"
+  const mins = Math.round(ms / 60_000)
+  if (mins < 60) return `in ${mins}m`
+  const hours = Math.round(mins / 60)
+  if (hours < 48) return `in ${hours}h`
+  return `in ${Math.round(hours / 24)}d`
+}
+
+const issue = cmd({
+  command: "issue",
+  describe: "mint a token for the local LLM server and print how to reach it",
+  builder: (yargs: Argv) =>
+    yargs
+      .option("ttl", {
+        type: "string",
+        describe: "sliding lifetime, measured from last use (e.g. 30m, 12h, 1d, none)",
+      })
+      .option("max-age", {
+        type: "string",
+        describe: "absolute ceiling from issue regardless of activity (e.g. 7d, none)",
+      })
+      .option("model", {
+        type: "string",
+        array: true,
+        describe: "restrict this token to the given provider/model (repeatable)",
+        default: [] as string[],
+      })
+      .option("label", { type: "string", describe: "a note for `llm-server list`, e.g. the skill's name" })
+      .option("json", { type: "boolean", describe: "print connection details as JSON", default: false }),
+  handler: (args) =>
+    inInstance(async () => {
+      const cfg = await defaults()
+      const expiry = {
+        idleMs: duration(args.ttl, cfg.ttl ?? DEFAULT_TTL),
+        maxAgeMs: duration(args["max-age"], cfg.maxAge ?? "none"),
+      }
+      const address = await LLMServerTokens.address(process.cwd())
+      const issued = await LLMServerTokens.issue({
+        directory: process.cwd(),
+        expiry,
+        models: args.model,
+        label: args.label,
+      })
+
+      if (args.json) {
+        // Machine-first: a wrapper reads one line and exports the two env vars the
+        // skill asked for. `base_url` is null rather than absent when no server is
+        // running, so a consumer fails on a missing value instead of on a missing key.
+        process.stdout.write(
+          JSON.stringify({
+            base_url: address?.url ?? null,
+            api_key: issued.token,
+            id: issued.record.id,
+            expires_at: LLMServerTokens.expiresAt(issued.record) ?? null,
+            models: issued.record.models.length > 0 ? issued.record.models : "all",
+            server_running: address !== undefined,
+          }) + "\n",
+        )
+        return
+      }
+
+      UI.println(UI.Style.TEXT_SUCCESS_BOLD + "token issued" + UI.Style.TEXT_NORMAL)
+      UI.println(`  api_key   ${issued.token}`)
+      UI.println(`  id        ${issued.record.id}`)
+      UI.println(`  expires   ${relative(LLMServerTokens.expiresAt(issued.record))}`)
+      UI.println(`  models    ${issued.record.models.length > 0 ? issued.record.models.join(", ") : "all configured"}`)
+      if (address) UI.println(`  base_url  ${address.url}`)
+      UI.println("")
+      if (!address) {
+        UI.println("No server is running for this directory, so there is no base_url yet.")
+        UI.println("Start one with `mimo llm-server` (the token above already works against it).")
+        return
+      }
+      UI.println("The plaintext token is shown once and is not stored; only its hash is.")
+    }),
+})
+
+const list = cmd({
+  command: "list",
+  describe: "list tokens issued for this directory",
+  builder: (yargs: Argv) => yargs.option("json", { type: "boolean", default: false }),
+  handler: (args) =>
+    inInstance(async () => {
+      const tokens = await LLMServerTokens.list(process.cwd())
+      const address = await LLMServerTokens.address(process.cwd())
+      if (args.json) {
+        process.stdout.write(JSON.stringify({ server: address ?? null, tokens }) + "\n")
+        return
+      }
+      UI.println(address ? `server    ${address.url} (pid ${address.pid})` : "server    not running")
+      if (tokens.length === 0) {
+        UI.println("tokens    none")
+        return
+      }
+      UI.println("")
+      for (const token of tokens) {
+        UI.println(
+          `  ${token.id}  ${token.expired ? "EXPIRED" : relative(token.expires_at).padEnd(10)}  ${
+            token.models.length > 0 ? token.models.join(",") : "all"
+          }${token.label ? `  (${token.label})` : ""}`,
+        )
+      }
+    }),
+})
+
+const revoke = cmd({
+  command: "revoke [id]",
+  describe: "revoke a token by id, or every token with --all",
+  builder: (yargs: Argv) =>
+    yargs
+      .positional("id", { type: "string", describe: "token id from `llm-server list`" })
+      .option("all", { type: "boolean", describe: "revoke every token for this directory", default: false }),
+  handler: (args) =>
+    inInstance(async () => {
+      if (args.all) {
+        UI.println(`revoked ${await LLMServerTokens.revokeAll(process.cwd())} token(s)`)
+        return
+      }
+      if (!args.id) {
+        UI.error("pass a token id, or --all")
+        process.exitCode = 1
+        return
+      }
+      const done = await LLMServerTokens.revoke(process.cwd(), args.id)
+      if (!done) {
+        UI.error(`no token with id \`${args.id}\``)
+        process.exitCode = 1
+        return
+      }
+      UI.println(`revoked ${args.id}`)
+    }),
+})
+
+const status = cmd({
+  command: "status",
+  describe: "report whether a server is running for this directory",
+  builder: (yargs: Argv) => yargs.option("json", { type: "boolean", default: false }),
+  handler: (args) =>
+    inInstance(async () => {
+      const address = await LLMServerTokens.address(process.cwd())
+      if (args.json) {
+        process.stdout.write(JSON.stringify({ running: address !== undefined, server: address ?? null }) + "\n")
+        return
+      }
+      if (!address) {
+        UI.println("not running")
+        process.exitCode = 1
+        return
+      }
+      UI.println(`running   ${address.url} (pid ${address.pid})`)
+    }),
+})
+
 export const LlmServerCommand = cmd({
   command: "llm-server",
   describe: "start a temporary OpenAI-compatible API for configured models",
   builder: (yargs: Argv) =>
     yargs
-      .option("port", {
-        type: "number",
-        describe: "port to listen on (0 picks a free port)",
-        default: 0,
-      })
+      .command(issue)
+      .command(list)
+      .command(revoke)
+      .command(status)
+      .option("port", { type: "number", describe: "port to listen on (0 picks a free port)", default: 0 })
       .option("model", {
         type: "string",
         array: true,
         describe: "restrict this server to the given provider/model (repeatable)",
         default: [] as string[],
       })
-      .option("token", {
-        type: "string",
-        describe: "use this bearer token instead of generating one",
-      })
-      .option("json", {
-        type: "boolean",
-        describe: "print connection details as JSON",
-        default: false,
-      }),
+      .option("token", { type: "string", describe: "also accept this token, with no expiry and no model scope" })
+      .option("json", { type: "boolean", describe: "print connection details as JSON", default: false }),
   handler: async (args) => {
     const server = await LLMServer.listen({
       port: args.port,
       directory: process.cwd(),
-      // A caller-supplied token lets a parent process know the value before the
-      // child prints anything; otherwise one is minted per process.
-      token: args.token || LLMServer.generateToken(),
+      token: args.token,
       models: args.model,
     })
 
     if (args.json) {
-      // Deliberately machine-first: a wrapper reads one line, sets OPENAI_BASE_URL
-      // and OPENAI_API_KEY from it, and never has to scrape prose.
       process.stdout.write(
         JSON.stringify({
           base_url: server.url,
-          api_key: server.token,
           port: server.port,
+          static_token: server.token ?? null,
           models: args.model.length > 0 ? args.model : "all",
         }) + "\n",
       )
@@ -63,17 +248,16 @@ export const LlmServerCommand = cmd({
     if (!args.json) {
       UI.println(UI.Style.TEXT_SUCCESS_BOLD + "llm-server" + UI.Style.TEXT_NORMAL + " listening")
       UI.println(`  base_url  ${server.url}`)
-      UI.println(`  api_key   ${server.token}`)
-      UI.println(
-        `  models    ${args.model.length > 0 ? args.model.join(", ") : "all configured models"}`,
-      )
+      UI.println(`  models    ${args.model.length > 0 ? args.model.join(", ") : "all configured models"}`)
+      if (server.token) UI.println(`  api_key   ${server.token}  (from --token; never expires)`)
       UI.println("")
-      UI.println("The token lives in memory only and is revoked when this process exits.")
+      UI.println("Mint a scoped, expiring key with `mimo llm-server issue --json`.")
     }
 
     const shutdown = async () => {
-      // The token dies with the process, so stopping the listener first is
-      // courtesy to in-flight requests rather than a correctness requirement.
+      // The listener is stopped first as a courtesy to in-flight requests; issued
+      // tokens outlive this process on purpose, so a restarted server keeps
+      // honouring the keys a skill is already using.
       await server.stop().catch(() => {})
       process.exit(0)
     }

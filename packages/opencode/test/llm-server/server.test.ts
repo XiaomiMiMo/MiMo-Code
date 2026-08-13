@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test"
 import { Instance } from "../../src/project/instance"
 import { LLMServer } from "../../src/llm-server/server"
+import { LLMServerTokens } from "../../src/llm-server/tokens"
 import { tmpdir } from "../fixture/fixture"
 
 afterEach(async () => {
@@ -311,6 +312,104 @@ describe("speech capability", () => {
     const app = LLMServer.create({ token: TOKEN, directory: tmp.path })
     const res = await post(app, "/v1/audio/speech", { model: "test/nope", input: "hello" })
     expect(res.status).toBe(404)
+  })
+})
+
+describe("issued tokens", () => {
+  /** Ask with an issued token rather than the static `--token` escape hatch. */
+  function get(app: ReturnType<typeof LLMServer.create>, token: string) {
+    return app.fetch(
+      new Request("http://llm-server.test/v1/models", { headers: { authorization: `Bearer ${token}` } }),
+    )
+  }
+
+  test("a token from the store is accepted with no static token configured", async () => {
+    await using tmp = await tmpdir({ config })
+    const issued = await LLMServerTokens.issue({ directory: tmp.path, expiry: { idleMs: 60_000 } })
+    const app = LLMServer.create({ directory: tmp.path })
+    expect((await get(app, issued.token)).status).toBe(200)
+  })
+
+  test("an expired token is 401 expired_api_key, distinct from an invalid one", async () => {
+    // This distinction is the whole reason a lifetime exists: the caller has to be
+    // able to tell "ask for another key" from "stop retrying, this was never valid".
+    await using tmp = await tmpdir({ config })
+    const issued = await LLMServerTokens.issue({ directory: tmp.path, expiry: { idleMs: 250 } })
+    const app = LLMServer.create({ directory: tmp.path })
+    expect((await get(app, issued.token)).status).toBe(200)
+
+    await Bun.sleep(600)
+    const expired = await get(app, issued.token)
+    expect(expired.status).toBe(401)
+    const body = (await expired.json()) as { error: { code: string; message: string } }
+    expect(body.error.code).toBe("expired_api_key")
+    expect(body.error.message).toContain("llm-server issue")
+
+    const bogus = await get(app, "never-issued-at-all")
+    expect(bogus.status).toBe(401)
+    expect((await bogus.json()).error.code).toBe("invalid_api_key")
+  })
+
+  test("re-issuing after expiry restores access without restarting the server", async () => {
+    // The use case: a skill's key ages out mid-job, a new one is minted, and the
+    // same long-lived endpoint keeps working — base_url never changes.
+    await using tmp = await tmpdir({ config })
+    const first = await LLMServerTokens.issue({ directory: tmp.path, expiry: { idleMs: 250 } })
+    const app = LLMServer.create({ directory: tmp.path })
+    await Bun.sleep(600)
+    expect((await get(app, first.token)).status).toBe(401)
+
+    const second = await LLMServerTokens.issue({ directory: tmp.path, expiry: { idleMs: 60_000 } })
+    expect((await get(app, second.token)).status).toBe(200)
+  })
+
+  test("use keeps a sliding token alive across requests", async () => {
+    await using tmp = await tmpdir({ config })
+    const issued = await LLMServerTokens.issue({ directory: tmp.path, expiry: { idleMs: 1_500 } })
+    const app = LLMServer.create({ directory: tmp.path })
+    // Warm up first: the very first request pays for instance bootstrap, and that
+    // one-off cost would otherwise count against the idle window.
+    expect((await get(app, issued.token)).status).toBe(200)
+    // Three gaps totalling more than the window, none of them exceeding it. A fixed
+    // lifetime would have expired by the last one.
+    for (let i = 0; i < 3; i++) {
+      await Bun.sleep(600)
+      expect((await get(app, issued.token)).status).toBe(200)
+    }
+  })
+
+  test("a token's model scope narrows the listing", async () => {
+    await using tmp = await tmpdir({ config })
+    const issued = await LLMServerTokens.issue({
+      directory: tmp.path,
+      expiry: {},
+      models: ["test/chat-model"],
+    })
+    const app = LLMServer.create({ directory: tmp.path })
+    const body = (await (await get(app, issued.token)).json()) as { data: { id: string }[] }
+    expect(body.data.map((m) => m.id)).toEqual(["test/chat-model"])
+  })
+
+  test("a token cannot widen the server's own scope", async () => {
+    // Intersection, not union: a narrowly-started server must stay narrow no matter
+    // what a token asks for.
+    await using tmp = await tmpdir({ config })
+    const issued = await LLMServerTokens.issue({
+      directory: tmp.path,
+      expiry: {},
+      models: ["test/chat-model", "test/tts-model"],
+    })
+    const app = LLMServer.create({ directory: tmp.path, models: ["test/tts-model"] })
+    const body = (await (await get(app, issued.token)).json()) as { data: { id: string }[] }
+    expect(body.data.map((m) => m.id)).toEqual(["test/tts-model"])
+  })
+
+  test("a token issued for another directory is rejected", async () => {
+    await using mine = await tmpdir({ config })
+    await using other = await tmpdir({ config })
+    const issued = await LLMServerTokens.issue({ directory: other.path, expiry: {} })
+    const app = LLMServer.create({ directory: mine.path })
+    expect((await get(app, issued.token)).status).toBe(401)
   })
 })
 

@@ -10,6 +10,7 @@ import { Instance } from "@/project/instance"
 import { Provider } from "@/provider"
 import { Log } from "@/util"
 import { collect, RequestError, start, stream, synthesize } from "./completions"
+import { LLMServerTokens } from "./tokens"
 import { ChatCompletionRequest, errorBody, SpeechRequest, speechUnsupported, unsupported } from "./protocol"
 
 const log = Log.create({ service: "llm-server" })
@@ -35,24 +36,22 @@ export const COMPLETIONS_PATH = "/v1/chat/completions"
 export const SPEECH_PATH = "/v1/audio/speech"
 
 /**
- * Mint a bearer token for one server process.
+ * Mint a bearer token without registering it.
  *
- * 256 bits from the CSPRNG, held only in memory: it is never written to disk, so
- * killing the process is what revokes it, and two servers started for two
- * different tasks cannot replay each other's token.
+ * Kept for callers that supply their own token out of band. Ordinary issuance goes
+ * through `LLMServerTokens.issue`, which records the hash and the expiry policy.
  */
 export function generateToken() {
-  return Buffer.from(crypto.getRandomValues(new Uint8Array(32))).toString("base64url")
+  return LLMServerTokens.generate()
 }
 
 /**
- * Compare in constant time, and only after the lengths match.
+ * Compare an out-of-band static token in constant time, after a length check.
  *
- * `timingSafeEqual` throws on a length mismatch rather than returning false, so
- * the length check is required for correctness here, not just for speed. Length
- * is not a secret — every token this server mints is the same size.
+ * `timingSafeEqual` throws on a length mismatch rather than returning false, so the
+ * check is required for correctness, not just speed. Length is not a secret.
  */
-function tokenMatches(expected: string, actual: string) {
+function staticTokenMatches(expected: string, actual: string) {
   const a = Buffer.from(expected)
   const b = Buffer.from(actual)
   if (a.length !== b.length) return false
@@ -82,19 +81,56 @@ function presentedToken(header: (name: string) => string | undefined) {
 }
 
 export type Options = {
-  /** Token clients must present. Generated per process by the CLI. */
-  token: string
+  /**
+   * A token accepted IN ADDITION to the ones registered in the token store, for a
+   * caller that supplied its own out of band (`--token`). Ordinary tokens are
+   * issued with `mimo llm-server issue` and carry their own expiry and model
+   * scope; this one has neither.
+   */
+  token?: string
   /** Directory whose MiMoCode instance (and therefore provider config) is used. */
   directory: string
   /**
-   * Models this token may call, as `provider/model`. Empty means every model the
-   * instance has configured.
+   * Models this SERVER may call, as `provider/model`. Empty means every model the
+   * instance has configured. A token may narrow this further but never widen it.
    */
   models?: readonly string[]
 }
 
+/**
+ * Effective model scope for one request.
+ *
+ * Two independent restrictions meet here — the server's `--model` flags and the
+ * token's own list — and the answer has to be their INTERSECTION. Taking a union,
+ * or letting the token's list win, would turn a narrowly-issued key into a way to
+ * widen the server it was issued against.
+ */
+function effectiveAllowlist(server: readonly string[], token: readonly string[]) {
+  if (server.length === 0) return [...token]
+  if (token.length === 0) return [...server]
+  return server.filter((ref) => token.includes(ref))
+}
+
+/**
+ * Per-request model scope, handed from the auth middleware to the route.
+ *
+ * A WeakMap keyed on the raw `Request` rather than hono's `c.set`/`c.get`, because
+ * typing those requires a parameterised `Hono<{Variables}>` that the shared
+ * `adapter.create(app: Hono)` will not accept — and neither widening that shared
+ * signature nor augmenting hono's global `ContextVariableMap` is worth it for one
+ * private key. Weak keys mean a finished request drops out on its own.
+ */
+const requestAllowlist = new WeakMap<Request, string[]>()
+
+function allowlistFor(request: Request) {
+  // Absent only if a route somehow ran without the auth middleware, which would be
+  // a wiring bug. Failing closed on the narrowest possible scope beats defaulting
+  // to "every configured model".
+  return requestAllowlist.get(request) ?? []
+}
+
 export function create(opts: Options) {
-  const allowlist = opts.models ?? []
+  const serverAllowlist = opts.models ?? []
 
   const app = new Hono()
     .onError((err, c) => {
@@ -141,12 +177,35 @@ export function create(opts: Options) {
           401,
         )
       }
-      if (!tokenMatches(opts.token, provided)) {
+
+      if (opts.token && staticTokenMatches(opts.token, provided)) {
+        requestAllowlist.set(c.req.raw, [...serverAllowlist])
+        return next()
+      }
+
+      const verdict = await LLMServerTokens.verify(opts.directory, provided)
+      if (!verdict.ok) {
+        // Expiry is reported with its OWN code and says what to do about it. A
+        // caller cannot otherwise tell "this key aged out, ask for another" from
+        // "this key was never valid, stop retrying" — and that difference is the
+        // whole point of having a lifetime.
+        if (verdict.reason === "expired") {
+          return c.json(
+            errorBody({
+              message: "Token expired; request a new one with `mimo llm-server issue`",
+              type: "invalid_request_error",
+              code: "expired_api_key",
+            }),
+            401,
+          )
+        }
         return c.json(
           errorBody({ message: "Invalid bearer token", type: "invalid_request_error", code: "invalid_api_key" }),
           401,
         )
       }
+
+      requestAllowlist.set(c.req.raw, effectiveAllowlist(serverAllowlist, verdict.record.models))
       return next()
     })
     // The instance is pinned to the directory the server was started in. Unlike
@@ -168,6 +227,7 @@ export function create(opts: Options) {
           )
         }),
       )
+      const allowlist = allowlistFor(c.req.raw)
       const visible = allowlist.length > 0 ? models.filter((id) => allowlist.includes(id)) : models
       return c.json({
         object: "list",
@@ -193,7 +253,7 @@ export function create(opts: Options) {
       const rejection = unsupported(req)
       if (rejection) throw new RequestError(400, rejection, "invalid_request_error")
 
-      const started = await start({ req, allowlist, abort: c.req.raw.signal })
+      const started = await start({ req, allowlist: allowlistFor(c.req.raw), abort: c.req.raw.signal })
 
       if (req.stream !== true) {
         return c.json(await collect({ id: started.id, ref: started.ref, result: started.result }))
@@ -256,7 +316,7 @@ export function create(opts: Options) {
       const rejection = speechUnsupported(parsed.data)
       if (rejection) throw new RequestError(400, rejection, "invalid_request_error")
 
-      const result = await synthesize({ req: parsed.data, allowlist, abort: c.req.raw.signal })
+      const result = await synthesize({ req: parsed.data, allowlist: allowlistFor(c.req.raw), abort: c.req.raw.signal })
       // Re-wrapped because the SDK types its bytes over `ArrayBufferLike`, which
       // admits a shared buffer, while a response body must be the non-shared form.
       // The copy is what makes the narrowing true rather than asserted.
@@ -270,7 +330,8 @@ export type Listener = {
   hostname: string
   port: number
   url: string
-  token: string
+  /** Only set when the caller supplied a static token; issued tokens live in the store. */
+  token?: string
   stop: () => Promise<void>
 }
 
@@ -319,15 +380,29 @@ export async function listen(opts: Options & { port: number; hostname?: string }
     port: opts.port === 0 ? await ephemeralPort(hostname) : opts.port,
     hostname,
   })
+  const url = `http://${hostname === "::1" ? "[::1]" : hostname}:${server.port}/v1`
+
+  // Advertise where we are so `mimo llm-server issue`, running in a DIFFERENT
+  // process, can print a base_url that actually works. Removed on stop, and any
+  // reader treats a dead pid as no address at all.
+  await LLMServerTokens.publish(opts.directory, {
+    pid: process.pid,
+    hostname,
+    port: server.port,
+    url,
+    started: Date.now(),
+  })
 
   let closing: Promise<void> | undefined
   return {
     hostname,
     port: server.port,
-    url: `http://${hostname === "::1" ? "[::1]" : hostname}:${server.port}/v1`,
+    url,
     token: opts.token,
     stop() {
-      closing ??= server.stop(true)
+      closing ??= LLMServerTokens.unpublish(opts.directory)
+        .catch(() => {})
+        .then(() => server.stop(true))
       return closing
     },
   }

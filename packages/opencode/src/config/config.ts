@@ -42,6 +42,7 @@ import { ConfigPermission } from "./permission"
 import { ConfigPlugin } from "./plugin"
 import { ConfigProvider } from "./provider"
 import { ConfigServer } from "./server"
+import { ConfigLLMServer } from "./llm-server"
 import { ConfigSkills } from "./skills"
 import { ConfigVariable } from "./variable"
 import { Npm } from "@/npm"
@@ -103,6 +104,9 @@ const InfoSchema = Schema.Struct({
   logLevel: Schema.optional(LogLevelRef).annotate({ description: "Log level" }),
   server: Schema.optional(ConfigServer.Server).annotate({
     description: "Server configuration for mimo serve and web commands",
+  }),
+  llmServer: Schema.optional(ConfigLLMServer.LLMServer).annotate({
+    description: "Token lifetime defaults for the temporary local LLM server (mimo llm-server)",
   }),
   command: Schema.optional(Schema.Record(Schema.String, ConfigCommand.Info)).annotate({
     description: "Command configuration, see https://mimo.xiaomi.com/mimocode/commands",
