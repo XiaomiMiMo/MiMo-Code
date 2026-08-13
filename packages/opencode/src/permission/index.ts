@@ -206,7 +206,7 @@ export function evaluate(permission: string, pattern: string, ...rulesets: Rules
 // perform an irreversible action must be recorded in-band, not inherited from
 // a broad blanket rule. Explicit deny still wins; the tool-side env opt-out
 // (e.g. MIMOCODE_AUTO_APPROVE_DELETE for bash_delete) is the only bypass.
-const FORCED_ASK = new Set(["bash_delete"])
+const FORCED_ASK = new Set(["bash_delete", "bash_process_kill"])
 
 export class Service extends Context.Service<Service, Interface>()("@opencode/Permission") {}
 

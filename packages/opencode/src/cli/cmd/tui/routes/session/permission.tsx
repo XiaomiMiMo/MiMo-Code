@@ -331,6 +331,31 @@ export function PermissionPrompt(props: { request: PermissionRequest }) {
               }
             }
 
+            if (permission === "bash_process_kill") {
+              const meta = props.request.metadata ?? {}
+              const command = typeof meta["command"] === "string" ? meta["command"] : ""
+              const processKills = (props.request.patterns ?? []).filter((p): p is string => typeof p === "string")
+              return {
+                icon: "!",
+                title: "Confirm process termination",
+                body: (
+                  <box paddingLeft={1} gap={1}>
+                    <Show when={command}>
+                      <text fg={theme.text}>{"$ " + command}</text>
+                    </Show>
+                    <Show when={processKills.length > 0}>
+                      <box gap={0}>
+                        <text fg={theme.textMuted}>Detected process termination</text>
+                        <box>
+                          <For each={processKills}>{(cmd) => <text fg={theme.warning}>{"- " + cmd}</text>}</For>
+                        </box>
+                      </box>
+                    </Show>
+                  </box>
+                ),
+              }
+            }
+
             if (permission === "task") {
               const type = typeof data.subagent_type === "string" ? data.subagent_type : "Unknown"
               const desc = typeof data.description === "string" ? data.description : ""
@@ -449,7 +474,7 @@ export function PermissionPrompt(props: { request: PermissionRequest }) {
           // click looks like durable trust but the next invocation still
           // prompts. Offer only "once" and "reject" for those.
           const options: Record<string, string> =
-            props.request.permission === "bash_delete"
+            props.request.permission === "bash_delete" || props.request.permission === "bash_process_kill"
               ? { once: "Allow once", reject: "Reject" }
               : { once: "Allow once", always: "Allow always", reject: "Reject" }
 
