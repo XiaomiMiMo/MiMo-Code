@@ -3,7 +3,7 @@ feature: local-llm-server
 status: delivered
 updated: 2026-08-13
 branch: feat/llm-server
-commits: 42dcbf34f..6343b8c62
+commits: c2059d510..25b9a9c51
 ---
 
 # Temporary local LLM server (`mimo llm-server`)
