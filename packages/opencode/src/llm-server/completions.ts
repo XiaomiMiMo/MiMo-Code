@@ -177,6 +177,43 @@ export function resolveTranscriptionModel(ref: string, allowlist: ModelScope) {
 }
 
 /**
+ * Packages whose endpoint speaks OpenAI chat completions.
+ *
+ * The audio-over-chat fallback is only sound for these. Everything else in the
+ * family talks something entirely different — Anthropic's `/v1/messages`, Google's
+ * `:generateContent`, Bedrock's signed API — and POSTing a chat completion there
+ * produces a 404 that looks like the provider's fault rather than our wrong guess.
+ *
+ * This matters against real registry data, not hypotheticals:
+ * `google/gemini-2.5-pro-preview-tts` is declared `output: ["audio"]`, and
+ * `@ai-sdk/google` exposes no speech factory, so without this gate any operator with
+ * a Google provider would hit the nonsense path.
+ */
+const OPENAI_CHAT_SHAPED = ["@ai-sdk/openai", "@ai-sdk/azure", "@ai-sdk/openai-compatible"]
+
+/**
+ * Can this model's audio be carried over chat completions?
+ *
+ * Answered from the provider PACKAGE rather than from the absence of a speech
+ * factory. "No factory" only means the SDK cannot help; it says nothing about which
+ * protocol the endpoint actually speaks.
+ */
+function audioOverChat(model: Provider.Model) {
+  return OPENAI_CHAT_SHAPED.includes(model.api.npm)
+}
+
+function unsupportedAudio(model: Provider.Model, capability: "synthesize speech" | "transcribe audio") {
+  return new RequestError(
+    501,
+    `Model \`${model.providerID}/${model.id}\` cannot ${capability} through this server: ` +
+      `provider package \`${model.api.npm}\` exposes no ${capability === "synthesize speech" ? "speech" : "transcription"} ` +
+      `model, and its endpoint does not speak OpenAI chat completions, so audio cannot be carried there either`,
+    "invalid_request_error",
+    "unsupported_capability",
+  )
+}
+
+/**
  * Translate an OpenAI `reasoning_effort` into whatever this model's provider calls it.
  *
  * No mapping table is invented here. `ProviderTransform.variants` already encodes the
@@ -469,6 +506,7 @@ export async function synthesize(input: {
   // completions. Serving both conventions behind one route is the point: a skill
   // should not have to know which one its configured model uses.
   if (!resolved.speech) {
+    if (!audioOverChat(resolved.model)) throw unsupportedAudio(resolved.model, "synthesize speech")
     const out = await AudioChat.synthesize({
       providerID: resolved.model.providerID,
       modelID: resolved.model.api.id,
@@ -529,6 +567,10 @@ export async function transcribe(input: {
   abort: AbortSignal
 }) {
   const resolved = await resolveTranscriptionModel(input.req.model, input.allowlist)
+  // Same gate as synthesis: `@ai-sdk/openai-compatible` has no transcription factory
+  // either, but that is not licence to assume every other package's endpoint would
+  // understand a chat completion.
+  if (!audioOverChat(resolved.model)) throw unsupportedAudio(resolved.model, "transcribe audio")
   return AudioChat.transcribe({
     providerID: resolved.model.providerID,
     modelID: resolved.model.api.id,

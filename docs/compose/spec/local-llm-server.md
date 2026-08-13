@@ -331,7 +331,20 @@ route, the audio route answered 501), and declared with text output it produced 
 opaque 502.
 
 So `src/llm-server/audio-chat.ts` talks HTTP directly when the provider package has no
-native audio factory. That is a deliberate, contained exception to "always go through
+native audio factory AND its endpoint is known to speak OpenAI chat completions
+(`@ai-sdk/openai`, `@ai-sdk/azure`, `@ai-sdk/openai-compatible`). The second condition
+is not decoration: "no speech factory" only means the SDK cannot help, and says nothing
+about the protocol. `@ai-sdk/google`, `@ai-sdk/anthropic`, and `@ai-sdk/amazon-bedrock`
+also lack one while speaking `:generateContent`, `/v1/messages`, and a signed AWS API
+respectively — and `google/gemini-2.5-pro-preview-tts` is declared `output: ["audio"]`
+in the registry, so an operator with a Google provider would reach that path. Without
+the gate they would get a 404 reported as the provider's fault instead of ours. Outside
+the list the answer is 501 naming the package.
+
+A provider that IS OpenAI-shaped but does not use the audio-in-message convention fails
+differently: the call succeeds and answers with text. That case reports what was
+attempted rather than a bare "no audio", so a convention mismatch does not read as the
+provider misbehaving. That is a deliberate, contained exception to "always go through
 the SDK", and it does not weaken the credential boundary: the key is read from the
 provider's own config INSIDE this process and never travels to the caller, exactly as
 when the SDK builds the request.

@@ -196,7 +196,15 @@ export async function synthesize(input: {
 
   const audio = firstMessage(body)["audio"]
   if (!fields(audio)) {
-    throw new AudioChatError(502, "upstream returned a message with no audio")
+    // Names what was attempted, because this is the shape of failure when a provider
+    // speaks OpenAI chat completions but does NOT use the audio-in-message convention:
+    // the call succeeds and simply answers with text. Reporting only "no audio" would
+    // read as the provider misbehaving rather than as a convention mismatch.
+    throw new AudioChatError(
+      502,
+      "upstream accepted the request but returned no audio in `message.audio`; " +
+        "this provider speaks OpenAI chat completions but may not carry synthesized audio there",
+    )
   }
   const data = text(audio["data"])
   if (data === undefined || data.length === 0) {

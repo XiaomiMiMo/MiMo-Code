@@ -366,6 +366,72 @@ describe("kind derivation routes each model to one endpoint", () => {
   })
 })
 
+describe("providers whose endpoint is not OpenAI-shaped", () => {
+  /**
+   * The fallback must be gated on the provider PACKAGE, not on the absence of a
+   * speech factory. `@ai-sdk/google` and `@ai-sdk/anthropic` have no speech factory
+   * either, but their endpoints speak `:generateContent` and `/v1/messages`.
+   *
+   * This is not hypothetical: `google/gemini-2.5-pro-preview-tts` is declared
+   * `output: ["audio"]` in the registry, so any operator with a Google provider would
+   * reach this path.
+   */
+  function foreign(npm: string) {
+    return {
+      provider: {
+        other: {
+          name: "Not OpenAI shaped",
+          npm,
+          options: { apiKey: "k", baseURL: "http://127.0.0.1:1/v1" },
+          models: {
+            tts: { name: "TTS", modalities: { input: ["text" as const], output: ["audio" as const] } },
+            asr: { name: "ASR", modalities: { input: ["audio" as const], output: ["text" as const] } },
+          },
+        },
+      },
+    }
+  }
+
+  for (const npm of ["@ai-sdk/google", "@ai-sdk/anthropic", "@ai-sdk/amazon-bedrock"]) {
+    test(`refuses synthesis for ${npm} instead of posting a chat completion at it`, async () => {
+      await using tmp = await tmpdir({ config: foreign(npm) })
+      const issued = await LLMServerTokens.issue({ directory: tmp.path, expiry: {} })
+      const app = LLMServer.create({ directory: tmp.path })
+      const res = await speech(app, issued.token, { model: "other/tts", input: "hi" })
+      expect(res.status).toBe(501)
+      const body = (await res.json()) as { error: { message: string; code: string } }
+      expect(body.error.code).toBe("unsupported_capability")
+      // The message must name the package, so the operator knows what to change.
+      expect(body.error.message).toContain(npm)
+      expect(body.error.message).toContain("chat completions")
+    })
+  }
+
+  test("refuses transcription for a non-OpenAI-shaped package too", async () => {
+    await using tmp = await tmpdir({ config: foreign("@ai-sdk/google") })
+    const issued = await LLMServerTokens.issue({ directory: tmp.path, expiry: {} })
+    const app = LLMServer.create({ directory: tmp.path })
+    const res = await upload(app, issued.token, {
+      file: new File([wav("a")], "a.wav", { type: "audio/wav" }),
+      model: "other/asr",
+    })
+    expect(res.status).toBe(501)
+    expect((await res.json()).error.code).toBe("unsupported_capability")
+  })
+
+  test("an OpenAI-shaped provider that answers with text is told it is a convention mismatch", async () => {
+    // The other failure shape: the call SUCCEEDS and returns an ordinary completion.
+    // Reporting only "no audio" would read as the provider misbehaving.
+    const result = await harness({ transcript: "just text, no audio" }, async ({ app, token }) => {
+      const res = await speech(app, token, { model: "audiochat/tts", input: "hi" })
+      return { status: res.status, body: (await res.json()) as { error: { message: string } } }
+    })
+    expect(result.status).toBe(502)
+    expect(result.body.error.message).toContain("message.audio")
+    expect(result.body.error.message).toContain("may not carry synthesized audio")
+  })
+})
+
 describe("upload media types", () => {
   test("normalises the aliases platforms actually report", () => {
     // `File` reports a wav as `audio/x-wav` on some platforms, and MiMo rejects that
