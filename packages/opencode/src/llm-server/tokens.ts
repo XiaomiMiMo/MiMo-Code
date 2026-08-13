@@ -156,12 +156,25 @@ async function write(directory: string, store: Store) {
   await fs.rename(tmp, file(directory))
 }
 
-/** Serialize read-modify-write so two `issue` calls cannot clobber each other. */
+/**
+ * Serialize read-modify-write so two `issue` calls cannot clobber each other.
+ *
+ * Writes only when the mutator actually changed something. Every request passes
+ * through `verify`, so writing unconditionally let an UNAUTHENTICATED caller drive
+ * an unbounded stream of file writes, and made read-only outcomes queue behind a
+ * write for no reason.
+ *
+ * A successful `verify` does still write, because sliding expiry has to persist the
+ * slide. Throttling that to a coarse granularity would be cheaper but is not safe in
+ * general: a token whose idle window is shorter than the granularity would expire
+ * while actively in use.
+ */
 function mutate<T>(directory: string, fn: (store: Store) => Promise<T> | T) {
   return Flock.withLock(`llm-server-tokens:${dir(directory)}`, async () => {
     const store = await read(directory)
+    const before = JSON.stringify(store)
     const result = await fn(store)
-    await write(directory, store)
+    if (JSON.stringify(store) !== before) await write(directory, store)
     return result
   })
 }

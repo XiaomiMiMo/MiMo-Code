@@ -17,15 +17,34 @@ import type { FinishReason, LanguageModelUsage, ModelMessage } from "ai"
  * wrong shape with no signal to the caller; that is the case worth a 400.
  */
 
+/**
+ * The only `data:` form this server can carry, shared by the validator and the
+ * converter so the two cannot drift apart.
+ *
+ * A `data:` URL without `;base64,` — `data:image/svg+xml,<svg/>` — is a real thing
+ * clients send. The AI SDK intercepts any `data:` URL and tries to base64-decode it,
+ * so an un-encoded one throws "The string contains invalid characters" deep inside
+ * the call and surfaced as a 502. Validating against the exact same pattern the
+ * converter uses turns that into a 400 that says what is wrong.
+ */
+const DATA_URL = /^data:([^;,]+);base64,(.*)$/s
+
+function acceptableImageUrl(value: string) {
+  if (!URL.canParse(value)) return false
+  if (!value.startsWith("data:")) return true
+  return DATA_URL.test(value)
+}
+
 const ContentPart = z.discriminatedUnion("type", [
   z.object({ type: z.literal("text"), text: z.string() }),
   z.object({
     type: z.literal("image_url"),
     image_url: z.object({
-      // Parseability is checked HERE so an unparseable URL is a 400 from
-      // validation rather than a 502 from `new URL` throwing inside the handler.
-      // `URL.canParse` accepts `data:` URLs too, so both accepted forms pass.
-      url: z.string().refine((value) => URL.canParse(value), "must be a data: URL or an absolute URL"),
+      // Checked HERE so a URL this server cannot carry is a 400 from validation
+      // rather than an opaque 5xx from somewhere inside the provider call.
+      url: z
+        .string()
+        .refine(acceptableImageUrl, "must be an absolute URL or a base64-encoded `data:` URL"),
       detail: z.string().optional(),
     }),
   }),
@@ -147,7 +166,7 @@ const toText = (content: string | Array<{ type: "text"; text: string }>) =>
  * else is a reference the provider fetches itself, so it stays a URL.
  */
 function imagePart(url: string) {
-  const match = /^data:([^;,]+);base64,(.*)$/s.exec(url)
+  const match = DATA_URL.exec(url)
   if (match) return { type: "image" as const, image: match[2], mediaType: match[1] }
   return { type: "image" as const, image: new URL(url) }
 }

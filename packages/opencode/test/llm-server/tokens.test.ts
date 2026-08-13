@@ -78,6 +78,35 @@ describe("token store", () => {
   })
 })
 
+describe("write discipline", () => {
+  test("a rejected token does not rewrite the store", async () => {
+    // Every request goes through verify, so writing unconditionally let an
+    // unauthenticated caller drive unbounded disk writes.
+    await using tmp = await tmpdir()
+    await LLMServerTokens.issue({ directory: tmp.path, expiry: {} })
+    const target = await pathOf(tmp.path)
+    const before = (await fs.stat(target)).mtimeMs
+
+    await Bun.sleep(20)
+    expect(await LLMServerTokens.verify(tmp.path, "never-issued")).toEqual({ ok: false, reason: "unknown" })
+
+    expect((await fs.stat(target)).mtimeMs).toBe(before)
+  })
+
+  test("a successful verify does persist the slide", async () => {
+    // The counterpart: the sliding window is only meaningful if it survives.
+    await using tmp = await tmpdir()
+    const issued = await LLMServerTokens.issue({ directory: tmp.path, expiry: { idleMs: 60_000 } })
+    const target = await pathOf(tmp.path)
+    const before = await fs.readFile(target, "utf8")
+
+    await Bun.sleep(20)
+    expect(await LLMServerTokens.verify(tmp.path, issued.token)).toMatchObject({ ok: true })
+
+    expect(await fs.readFile(target, "utf8")).not.toBe(before)
+  })
+})
+
 describe("expiry", () => {
   test("no limits means it never expires", async () => {
     await using tmp = await tmpdir()

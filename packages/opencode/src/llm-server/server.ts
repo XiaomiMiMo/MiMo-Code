@@ -9,7 +9,7 @@ import { InstanceBootstrap } from "@/project/bootstrap"
 import { Instance } from "@/project/instance"
 import { Provider } from "@/provider"
 import { Log, Self } from "@/util"
-import { collect, RequestError, start, stream, synthesize } from "./completions"
+import { collect, RequestError, start, stream, synthesize, type ModelScope } from "./completions"
 import { LLMServerTokens } from "./tokens"
 import { ChatCompletionRequest, errorBody, SpeechRequest, speechUnsupported, unsupported } from "./protocol"
 
@@ -98,16 +98,33 @@ export type Options = {
 }
 
 /**
- * Effective model scope for one request.
+ * `ModelScope` is the load-bearing distinction in this file: `undefined` means NO
+ * RESTRICTION, an array means EXACTLY those refs, and an empty array therefore means
+ * DENY EVERYTHING.
  *
- * Two independent restrictions meet here — the server's `--model` flags and the
- * token's own list — and the answer has to be their INTERSECTION. Taking a union,
- * or letting the token's list win, would turn a narrowly-issued key into a way to
- * widen the server it was issued against.
+ * The two must be distinct values. An earlier version used `[]` for both
+ * "unrestricted" and "empty intersection", so a token whose models were disjoint
+ * from the server's granted access to every configured model — widening the token
+ * and the server at once, the exact opposite of the invariant. A typo in
+ * `issue --model` produced the same full access.
  */
-function effectiveAllowlist(server: readonly string[], token: readonly string[]) {
-  if (server.length === 0) return [...token]
-  if (token.length === 0) return [...server]
+
+/** An empty `--model` list from the CLI means "no restriction", not "deny all". */
+function asScope(list: readonly string[] | undefined): ModelScope {
+  return list && list.length > 0 ? list : undefined
+}
+
+/**
+ * Effective scope for one request: the INTERSECTION of the server's scope and the
+ * token's.
+ *
+ * A union, or letting either side win, would turn a narrowly-issued key into a way
+ * to widen the server it was issued against. The result may legitimately be empty,
+ * which denies everything.
+ */
+function intersectScope(server: ModelScope, token: ModelScope): ModelScope {
+  if (!server) return token
+  if (!token) return server
   return server.filter((ref) => token.includes(ref))
 }
 
@@ -119,18 +136,24 @@ function effectiveAllowlist(server: readonly string[], token: readonly string[])
  * `adapter.create(app: Hono)` will not accept — and neither widening that shared
  * signature nor augmenting hono's global `ContextVariableMap` is worth it for one
  * private key. Weak keys mean a finished request drops out on its own.
+ *
+ * The value is WRAPPED because `undefined` is a meaningful scope ("unrestricted")
+ * and a bare `WeakMap.get` miss is also `undefined`. Without the wrapper, a route
+ * that somehow ran without the auth middleware would be indistinguishable from an
+ * unrestricted one — and would therefore get everything.
  */
-const requestAllowlist = new WeakMap<Request, string[]>()
+const requestScope = new WeakMap<Request, { models: ModelScope }>()
 
-function allowlistFor(request: Request) {
-  // Absent only if a route somehow ran without the auth middleware, which would be
-  // a wiring bug. Failing closed on the narrowest possible scope beats defaulting
-  // to "every configured model".
-  return requestAllowlist.get(request) ?? []
+function scopeFor(request: Request): ModelScope {
+  const entry = requestScope.get(request)
+  // Absent only if a route ran without the auth middleware, which would be a wiring
+  // bug. An empty list denies everything, so this genuinely fails closed.
+  if (!entry) return []
+  return entry.models
 }
 
 export function create(opts: Options) {
-  const serverAllowlist = opts.models ?? []
+  const serverScope = asScope(opts.models)
 
   const app = new Hono()
     .onError((err, c) => {
@@ -179,7 +202,7 @@ export function create(opts: Options) {
       }
 
       if (opts.token && staticTokenMatches(opts.token, provided)) {
-        requestAllowlist.set(c.req.raw, [...serverAllowlist])
+        requestScope.set(c.req.raw, { models: serverScope })
         return next()
       }
 
@@ -209,7 +232,7 @@ export function create(opts: Options) {
         )
       }
 
-      requestAllowlist.set(c.req.raw, effectiveAllowlist(serverAllowlist, verdict.record.models))
+      requestScope.set(c.req.raw, { models: intersectScope(serverScope, asScope(verdict.record.models)) })
       return next()
     })
     // The instance is pinned to the directory the server was started in. Unlike
@@ -231,8 +254,10 @@ export function create(opts: Options) {
           )
         }),
       )
-      const allowlist = allowlistFor(c.req.raw)
-      const visible = allowlist.length > 0 ? models.filter((id) => allowlist.includes(id)) : models
+      // `undefined` lists everything; an array lists exactly it, so an empty scope
+      // correctly advertises nothing.
+      const scope = scopeFor(c.req.raw)
+      const visible = scope ? models.filter((id) => scope.includes(id)) : models
       return c.json({
         object: "list",
         data: visible.sort().map((id) => ({
@@ -257,7 +282,7 @@ export function create(opts: Options) {
       const rejection = unsupported(req)
       if (rejection) throw new RequestError(400, rejection, "invalid_request_error")
 
-      const started = await start({ req, allowlist: allowlistFor(c.req.raw), abort: c.req.raw.signal })
+      const started = await start({ req, allowlist: scopeFor(c.req.raw), abort: c.req.raw.signal })
 
       if (req.stream !== true) {
         return c.json(await collect({ id: started.id, ref: started.ref, result: started.result }))
@@ -320,7 +345,7 @@ export function create(opts: Options) {
       const rejection = speechUnsupported(parsed.data)
       if (rejection) throw new RequestError(400, rejection, "invalid_request_error")
 
-      const result = await synthesize({ req: parsed.data, allowlist: allowlistFor(c.req.raw), abort: c.req.raw.signal })
+      const result = await synthesize({ req: parsed.data, allowlist: scopeFor(c.req.raw), abort: c.req.raw.signal })
       // Re-wrapped because the SDK types its bytes over `ArrayBufferLike`, which
       // admits a shared buffer, while a response body must be the non-shared form.
       // The copy is what makes the narrowing true rather than asserted.

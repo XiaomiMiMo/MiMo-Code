@@ -245,6 +245,22 @@ describe("request validation at the route", () => {
     expect(res.status).toBe(400)
   })
 
+  test("400s a data: URL that is not base64-encoded, instead of an opaque 502", async () => {
+    // The AI SDK intercepts any `data:` URL and tries to base64-decode it, so an
+    // un-encoded one threw "The string contains invalid characters" from inside the
+    // provider call and surfaced as a 502 — a client mistake dressed as an outage.
+    await using tmp = await tmpdir({ config })
+    const app = LLMServer.create({ token: TOKEN, directory: tmp.path })
+    for (const url of ["data:image/svg+xml,<svg/>", "data:,hello"]) {
+      const res = await post(app, "/v1/chat/completions", {
+        model: "test/chat-model",
+        messages: [{ role: "user", content: [{ type: "image_url", image_url: { url } }] }],
+      })
+      expect(res.status).toBe(400)
+      expect((await res.json()).error.message).toContain("base64-encoded")
+    }
+  })
+
   test("accepts both accepted image_url forms", async () => {
     await using tmp = await tmpdir({ config })
     const app = LLMServer.create({ token: TOKEN, directory: tmp.path })
@@ -402,6 +418,54 @@ describe("issued tokens", () => {
     const app = LLMServer.create({ directory: tmp.path, models: ["test/tts-model"] })
     const body = (await (await get(app, issued.token)).json()) as { data: { id: string }[] }
     expect(body.data.map((m) => m.id)).toEqual(["test/tts-model"])
+  })
+
+  test("a disjoint scope denies everything rather than granting everything", async () => {
+    // The dangerous case: the token's list and the server's list share nothing, so
+    // the intersection is empty. Empty must mean DENY here. An earlier version
+    // reused `[]` for both "no restriction" and "empty intersection", so this
+    // combination granted access to every configured model — widening the token AND
+    // the server at once. A typo in `issue --model` produced the same result.
+    await using tmp = await tmpdir({ config })
+    const issued = await LLMServerTokens.issue({
+      directory: tmp.path,
+      expiry: {},
+      models: ["test/tts-model"],
+    })
+    const app = LLMServer.create({ directory: tmp.path, models: ["test/chat-model"] })
+
+    const listed = (await (await get(app, issued.token)).json()) as { data: { id: string }[] }
+    expect(listed.data).toEqual([])
+
+    for (const model of ["test/chat-model", "test/tts-model"]) {
+      const res = await post(
+        app,
+        "/v1/chat/completions",
+        { model, messages: [{ role: "user", content: "hi" }] },
+        issued.token,
+      )
+      expect(res.status).toBe(404)
+    }
+  })
+
+  test("a token naming a model the server does not serve reaches nothing", async () => {
+    // Same shape as a typo'd `--model`, which must fail closed.
+    await using tmp = await tmpdir({ config })
+    const issued = await LLMServerTokens.issue({
+      directory: tmp.path,
+      expiry: {},
+      models: ["test/chat-modle"],
+    })
+    const app = LLMServer.create({ directory: tmp.path, models: ["test/chat-model"] })
+    const listed = (await (await get(app, issued.token)).json()) as { data: { id: string }[] }
+    expect(listed.data).toEqual([])
+    const res = await post(
+      app,
+      "/v1/chat/completions",
+      { model: "test/chat-model", messages: [{ role: "user", content: "hi" }] },
+      issued.token,
+    )
+    expect(res.status).toBe(404)
   })
 
   test("a token issued for another directory is rejected", async () => {

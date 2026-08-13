@@ -26,6 +26,15 @@ import {
 
 const log = Log.create({ service: "llm-server.completions" })
 
+/**
+ * Which models a request may reach: `undefined` is unrestricted, an array is exactly
+ * those refs, and an empty array denies everything.
+ *
+ * Declared here rather than imported from `server.ts` to keep the dependency
+ * one-directional; `server.ts` re-exports the same shape.
+ */
+export type ModelScope = readonly string[] | undefined
+
 export class RequestError extends Error {
   constructor(
     // Typed as hono's contentful status so the error handler can hand it to
@@ -47,14 +56,16 @@ export class RequestError extends Error {
  * `Provider.Service`. The key is never returned, never serialized, and never
  * crosses this boundary — the caller only ever learns whether the model exists.
  */
-function lookupModel(ref: string, allowlist: readonly string[]) {
+function lookupModel(ref: string, allowlist: ModelScope) {
   // Shape first: a caller who wrote the reference wrong should hear about the
   // shape, not be told the model is unavailable to their token.
   const parsed = Provider.parseModel(ref)
   if (!parsed.modelID) {
     throw new RequestError(400, `Model \`${ref}\` must be given as \`provider/model\``, "invalid_request_error")
   }
-  if (allowlist.length > 0 && !allowlist.includes(ref)) {
+  // `undefined` is unrestricted; an array is exactly it. An EMPTY array therefore
+  // denies everything, which is what an empty server/token intersection must mean.
+  if (allowlist && !allowlist.includes(ref)) {
     throw new RequestError(
       404,
       `Model \`${ref}\` is not available to this token`,
@@ -74,7 +85,7 @@ function notFound(ref: string) {
   }
 }
 
-export function resolveLanguageModel(ref: string, allowlist: readonly string[]) {
+export function resolveLanguageModel(ref: string, allowlist: ModelScope) {
   const found = lookupModel(ref, allowlist)
   return AppRuntime.runPromise(
     Effect.gen(function* () {
@@ -95,7 +106,7 @@ export function resolveLanguageModel(ref: string, allowlist: readonly string[]) 
   ).catch(notFound(ref))
 }
 
-export function resolveSpeechModel(ref: string, allowlist: readonly string[]) {
+export function resolveSpeechModel(ref: string, allowlist: ModelScope) {
   const found = lookupModel(ref, allowlist)
   return AppRuntime.runPromise(
     Effect.gen(function* () {
@@ -143,7 +154,7 @@ function toolSet(tools: NonNullable<ChatCompletionRequest["tools"]>): ToolSet {
  */
 export async function start(input: {
   req: ChatCompletionRequest
-  allowlist: readonly string[]
+  allowlist: ModelScope
   abort: AbortSignal
 }) {
   const resolved = await resolveLanguageModel(input.req.model, input.allowlist)
@@ -358,7 +369,7 @@ export async function* stream(input: {
  */
 export async function synthesize(input: {
   req: SpeechRequest
-  allowlist: readonly string[]
+  allowlist: ModelScope
   abort: AbortSignal
 }) {
   const resolved = await resolveSpeechModel(input.req.model, input.allowlist)
