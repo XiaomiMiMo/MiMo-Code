@@ -124,6 +124,7 @@ Routes, and nothing else:
 - `GET /v1/models`
 - `POST /v1/chat/completions`
 - `POST /v1/audio/speech`
+- `POST /v1/audio/transcriptions`
 
 The instance is pinned to the startup directory. Unlike the control server's
 `InstanceMiddleware` there is no `?directory=` override: a task token must not be
@@ -162,8 +163,24 @@ be a language model. Kind is DERIVED from the existing modality capabilities
 (`provider.ts:990-991`, fed from models.dev or the user's own per-model
 `modalities` config at `config/provider.ts:47-52`):
 
-- speech model: `capabilities.output.audio && !capabilities.output.text`
-- language model: `capabilities.output.text`
+- speech: `output.audio && !output.text`
+- transcription: `input.audio && !input.text && output.text`
+- language: everything else
+
+Both tie-breaks are load-bearing against real registry data. Audio AND text output is a
+live/multimodal chat model (Gemini live, `lyria-3-pro`), not a synthesizer, so text
+output wins. Audio input WITH text input is a multimodal chat model that happens to hear
+— `mimo-v2.5` declares `input: [text, image, audio, video]` and every Gemini does the
+same — not a transcriber; only audio-in-without-text-in is ASR, which is exactly how
+`whisper-large-v3` is declared. Without the second guard the entire multimodal fleet
+would be routed away from chat.
+
+That guard tracks a protocol fact rather than a taxonomy preference: a dedicated ASR
+endpoint REFUSES text parts (MiMo answers 400 "ASR request must not include text parts;
+text prompt is injected by the gateway") while a multimodal chat model REQUIRES an
+instruction to know what to do with the audio. One request builder cannot serve both, so
+`/v1/audio/transcriptions` serves dedicated ASR models and multimodal models stay on the
+chat route where the caller supplies the instruction explicitly.
 
 This deliberately adds no schema field. A model absent from models.dev (OpenAI's
 `tts-1` and `gpt-4o-mini-tts` are both absent) is declared by the user as:
@@ -292,6 +309,45 @@ lazy, so the streaming route drains ONE frame before committing a status line;
 until then a failure is reported with a real status code. Otherwise an expired
 credential and a stream that died at token 500 would be indistinguishable — both
 `200` with an error frame.
+
+### [S2.7.1] Two audio conventions behind one façade
+
+Providers carry audio two incompatible ways, and a skill must not have to know which
+one its configured model uses:
+
+- **OpenAI's dedicated endpoints.** `POST /v1/audio/speech` returns raw bytes and
+  `POST /v1/audio/transcriptions` takes multipart. The AI SDK models this, and
+  `Provider.getSpeech` covers it.
+- **Audio inside chat completions.** MiMo's TTS/ASR, `gpt-4o-audio-preview`, Gemini's
+  audio-out models. Synthesis text goes in an ASSISTANT message and audio returns
+  base64 in `message.audio`; transcription sends an `input_audio` content part and the
+  transcript arrives as ordinary `message.content`.
+
+The AI SDK cannot carry the second one: `@ai-sdk/openai-compatible`'s response schema
+has no `audio` field, so any audio a provider returns is dropped before `streamText`
+yields anything. Measured against the live MiMo endpoint before the fallback existed: a
+model declared with audio output was refused by BOTH routes (chat sent it to the audio
+route, the audio route answered 501), and declared with text output it produced an
+opaque 502.
+
+So `src/llm-server/audio-chat.ts` talks HTTP directly when the provider package has no
+native audio factory. That is a deliberate, contained exception to "always go through
+the SDK", and it does not weaken the credential boundary: the key is read from the
+provider's own config INSIDE this process and never travels to the caller, exactly as
+when the SDK builds the request.
+
+Verified end to end against `api.xiaomimimo.com`: `mimo-v2.5-tts` returned a 130 KB
+`audio/wav` body through `/v1/audio/speech`, and feeding that audio back through
+`/v1/audio/transcriptions` with `mimo-v2.5-asr` recovered the sentence.
+
+Two upstream findings recorded because they cost real debugging time:
+
+- `File` reports a wav upload as `audio/x-wav` on some platforms and MiMo rejects that
+  spelling outright, so upload media types are normalised to canonical form.
+- `asr_options.language: "en"` makes `mimo-v2.5-asr` prefix the transcript with
+  `think>\n<chinese> `. Reproduced three times in a row; `auto`, `zh`, and omitting the
+  field are all clean. Left un-stripped on purpose: silently rewriting a transcript
+  would hide an upstream bug and risks corrupting legitimate text.
 
 ### [S2.8] Speech synthesis
 

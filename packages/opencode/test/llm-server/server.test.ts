@@ -300,19 +300,20 @@ describe("request validation at the route", () => {
 })
 
 describe("speech capability", () => {
-  test("501s, naming the package, when the provider has no speech factory", async () => {
-    // Reaches Provider.getSpeech for real. `@ai-sdk/openai-compatible` — the
-    // package behind every custom endpoint — exposes no speech factory, and the
-    // distinction matters: the model exists and the request is well formed, so
-    // this is neither a 404 telling the caller to hunt for a typo nor a 502
-    // implying an outage.
+  test("falls back to chat completions when the provider has no speech factory", async () => {
+    // Reaches Provider.getSpeech for real. `@ai-sdk/openai-compatible` — the package
+    // behind every custom endpoint — exposes no speech factory, and this used to be a
+    // 501. It is now the signal to carry audio over chat completions instead, which is
+    // how MiMo, Gemini's audio-out models, and gpt-4o-audio-preview all work.
+    //
+    // The fixture's baseURL points at a port nothing listens on, so the attempt fails
+    // at the transport rather than at our routing: 502, not 501. That distinction is
+    // the whole point — the request was well formed and the route accepted it.
     await using tmp = await tmpdir({ config })
     const app = LLMServer.create({ token: TOKEN, directory: tmp.path })
     const res = await post(app, "/v1/audio/speech", { model: "test/tts-model", input: "hello" })
-    expect(res.status).toBe(501)
-    const body = (await res.json()) as { error: { message: string; code: string } }
-    expect(body.error.code).toBe("unsupported_capability")
-    expect(body.error.message).toContain("@ai-sdk/openai-compatible")
+    expect(res.status).toBe(502)
+    expect((await res.json()).error.code).not.toBe("unsupported_capability")
   })
 
   test("enforces the allowlist on the speech route as well", async () => {

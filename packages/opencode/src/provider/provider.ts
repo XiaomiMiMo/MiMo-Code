@@ -2008,24 +2008,47 @@ export function parseModel(model: string) {
 }
 
 /**
- * What kind of model this is, DERIVED from its declared output modalities.
+ * What kind of model this is, DERIVED from its declared modalities.
  *
  * `Model` carries no `type` field — everything is otherwise assumed to be a
- * language model — but `capabilities.output` already distinguishes them, fed
+ * language model — but `capabilities.input`/`output` already distinguish them, fed
  * either from models.dev or from the user's own per-model `modalities` config.
  * Deriving beats adding a field: a model absent from models.dev (OpenAI's `tts-1`
- * and `gpt-4o-mini-tts` are both absent) is already declarable today as
+ * is) is already declarable today as
  * `"modalities": { "input": ["text"], "output": ["audio"] }`.
  *
- * Audio AND text output means a live/multimodal chat model (Gemini live,
- * `lyria-3-pro`), not a speech synthesizer, so text output wins the tie.
+ * The two tie-breaks are what make this safe against real registry data:
+ *
+ *  - Audio AND text output is a live/multimodal chat model (Gemini live,
+ *    `lyria-3-pro`), not a synthesizer, so TEXT OUTPUT WINS.
+ *  - Audio input with TEXT INPUT TOO is a multimodal chat model that happens to
+ *    hear (`mimo-v2.5` declares `input: [text, image, audio, video]`, every Gemini
+ *    does the same), not a transcriber. Only audio-in-without-text-in is ASR —
+ *    which is exactly how `whisper-large-v3` is declared: `input: ["audio"]`.
+ *
+ * Without the second guard every multimodal chat model in the registry would be
+ * classified as a transcription model and routed away from chat.
  *
  * Not derivable: embedding models. `text-embedding-3-small` reports
  * `output: ["text"]`, indistinguishable from a chat model. Misusing one still
  * fails at the provider.
  */
+export type ModelKind = "language" | "speech" | "transcription"
+
+export function modelKind(model: Model): ModelKind {
+  const input = model.capabilities.input
+  const output = model.capabilities.output
+  if (output.audio && !output.text) return "speech"
+  if (input.audio && !input.text && output.text) return "transcription"
+  return "language"
+}
+
 export function isSpeechModel(model: Model) {
-  return model.capabilities.output.audio && !model.capabilities.output.text
+  return modelKind(model) === "speech"
+}
+
+export function isTranscriptionModel(model: Model) {
+  return modelKind(model) === "transcription"
 }
 
 export const ModelNotFoundError = NamedError.create(

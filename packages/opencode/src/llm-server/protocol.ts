@@ -465,3 +465,82 @@ export function speechContentType(input: { reported?: string; requested?: string
   return SPEECH_MEDIA_TYPES.mp3
 }
 
+/**
+ * OpenAI `POST /v1/audio/transcriptions`.
+ *
+ * The wire form is multipart, not JSON, because that is what the official clients
+ * send: `openai.audio.transcriptions.create({ file, model })` builds a form. The
+ * route parses the form and validates the non-file fields here.
+ */
+export const TranscriptionRequest = z.object({
+  model: z.string().min(1),
+  /** ISO-639-1 hint. Omitted means let the provider detect it. */
+  language: z.string().optional(),
+  /** Accepted for client compatibility; only `json` and `text` differ in shape. */
+  response_format: z.enum(["json", "text", "verbose_json", "srt", "vtt"]).optional(),
+  // Declared so it can be REFUSED rather than ignored: a caller who supplies a
+  // biasing prompt and silently gets an unbiased transcript cannot tell.
+  prompt: z.string().optional(),
+  temperature: z.number().optional(),
+})
+export type TranscriptionRequest = z.infer<typeof TranscriptionRequest>
+
+export function transcriptionUnsupported(req: TranscriptionRequest): string | undefined {
+  // A dedicated ASR endpoint refuses text parts outright, so there is nowhere to put
+  // a prompt. Measured against MiMo: "ASR request must not include text parts".
+  if (req.prompt != null) return "prompt is not supported by transcription models on this server"
+  if (req.temperature != null) return "temperature is not supported for transcription"
+  if (req.response_format === "verbose_json" || req.response_format === "srt" || req.response_format === "vtt")
+    return `response_format ${req.response_format} is not supported; use json or text`
+  return undefined
+}
+
+/** Audio containers a transcription request may upload, mapped to their media type. */
+const TRANSCRIBE_MEDIA_TYPES: Record<string, string> = {
+  wav: "audio/wav",
+  mp3: "audio/mpeg",
+  mpeg: "audio/mpeg",
+  mpga: "audio/mpeg",
+  m4a: "audio/mp4",
+  mp4: "audio/mp4",
+  flac: "audio/flac",
+  ogg: "audio/ogg",
+  webm: "audio/webm",
+}
+
+/**
+ * Historic aliases for the same containers, normalised to the canonical spelling.
+ *
+ * Not cosmetic. `File` reports a wav upload as `audio/x-wav` on some platforms, and
+ * MiMo answers `mime type must be one of: audio/wav, audio/mpeg, audio/mp3. Got:
+ * audio/x-wav` — a rejection caused purely by the alias. Passing whatever the
+ * platform said through verbatim makes the caller pay for a naming accident.
+ */
+const MEDIA_TYPE_ALIASES: Record<string, string> = {
+  "audio/x-wav": "audio/wav",
+  "audio/wave": "audio/wav",
+  "audio/vnd.wave": "audio/wav",
+  "audio/x-mpeg": "audio/mpeg",
+  "audio/mp3": "audio/mpeg",
+  "audio/x-m4a": "audio/mp4",
+  "audio/x-flac": "audio/flac",
+}
+
+/**
+ * Media type for an uploaded file.
+ *
+ * The upload's own type is preferred when it names audio, after alias normalisation;
+ * a form upload from a script frequently reports `application/octet-stream`, in which
+ * case the extension is the only signal left. Nothing is guessed beyond that — an
+ * unknown container is reported rather than assumed to be wav, because handing a
+ * provider mislabelled bytes fails in ways that point at the wrong thing.
+ */
+export function transcriptionMediaType(input: { reported?: string; filename?: string }) {
+  const reported = input.reported?.toLowerCase().split(";")[0]?.trim()
+  if (reported) {
+    const canonical = MEDIA_TYPE_ALIASES[reported] ?? reported
+    if (canonical.startsWith("audio/")) return canonical
+  }
+  const ext = input.filename?.toLowerCase().split(".").pop()
+  return ext ? TRANSCRIBE_MEDIA_TYPES[ext] : undefined
+}

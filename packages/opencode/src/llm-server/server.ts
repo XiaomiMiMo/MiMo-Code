@@ -9,9 +9,18 @@ import { InstanceBootstrap } from "@/project/bootstrap"
 import { Instance } from "@/project/instance"
 import { Provider } from "@/provider"
 import { Log, Self } from "@/util"
-import { collect, RequestError, start, stream, synthesize, type ModelScope } from "./completions"
+import { collect, RequestError, start, stream, synthesize, transcribe, type ModelScope } from "./completions"
 import { LLMServerTokens } from "./tokens"
-import { ChatCompletionRequest, errorBody, SpeechRequest, speechUnsupported, unsupported } from "./protocol"
+import {
+  ChatCompletionRequest,
+  errorBody,
+  SpeechRequest,
+  speechUnsupported,
+  TranscriptionRequest,
+  transcriptionMediaType,
+  transcriptionUnsupported,
+  unsupported,
+} from "./protocol"
 
 const log = Log.create({ service: "llm-server" })
 
@@ -34,6 +43,7 @@ const log = Log.create({ service: "llm-server" })
 export const MODELS_PATH = "/v1/models"
 export const COMPLETIONS_PATH = "/v1/chat/completions"
 export const SPEECH_PATH = "/v1/audio/speech"
+export const TRANSCRIPTIONS_PATH = "/v1/audio/transcriptions"
 
 /**
  * Mint a bearer token without registering it.
@@ -350,6 +360,54 @@ export function create(opts: Options) {
       // admits a shared buffer, while a response body must be the non-shared form.
       // The copy is what makes the narrowing true rather than asserted.
       return c.body(new Uint8Array(result.audio), 200, { "content-type": result.contentType })
+    })
+    .post(TRANSCRIPTIONS_PATH, async (c) => {
+      // Multipart, not JSON, because that is what the official clients send:
+      // `openai.audio.transcriptions.create({ file, model })` builds a form.
+      const form = await c.req.parseBody().catch(() => undefined)
+      if (!form) throw new RequestError(400, "expected a multipart/form-data body", "invalid_request_error")
+
+      const file = form["file"]
+      if (!(file instanceof File)) {
+        throw new RequestError(400, "file: a multipart file field is required", "invalid_request_error")
+      }
+      const parsed = TranscriptionRequest.safeParse({
+        model: form["model"],
+        language: form["language"],
+        response_format: form["response_format"],
+        prompt: form["prompt"],
+        // Form values are strings; a numeric field has to be converted before it can
+        // be judged, and a non-numeric one must fail validation rather than vanish.
+        temperature: typeof form["temperature"] === "string" ? Number(form["temperature"]) : undefined,
+      })
+      if (!parsed.success) {
+        const issue = parsed.error.issues[0]
+        throw new RequestError(400, `${issue.path.join(".") || "body"}: ${issue.message}`, "invalid_request_error")
+      }
+      const rejection = transcriptionUnsupported(parsed.data)
+      if (rejection) throw new RequestError(400, rejection, "invalid_request_error")
+
+      const mediaType = transcriptionMediaType({ reported: file.type, filename: file.name })
+      if (!mediaType) {
+        throw new RequestError(
+          400,
+          `file: could not determine an audio media type from \`${file.name || "the upload"}\`; send a recognised extension or an audio/* content type`,
+          "invalid_request_error",
+        )
+      }
+
+      const result = await transcribe({
+        req: parsed.data,
+        audio: new Uint8Array(await file.arrayBuffer()),
+        mediaType,
+        allowlist: scopeFor(c.req.raw),
+        abort: c.req.raw.signal,
+      })
+
+      // `text` returns the bare transcript, which is what the format asks for; `json`
+      // (the default) returns OpenAI's one-key object.
+      if (parsed.data.response_format === "text") return c.text(result.text)
+      return c.json({ text: result.text })
     })
 
   return app

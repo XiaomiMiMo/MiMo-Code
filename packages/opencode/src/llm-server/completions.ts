@@ -11,6 +11,7 @@ import { mergeDeep, pipe } from "remeda"
 import type { ContentfulStatusCode } from "hono/utils/http-status"
 import { AppRuntime } from "@/effect/app-runtime"
 import { Provider, ProviderTransform } from "@/provider"
+import { AudioChat } from "./audio-chat"
 import { Log } from "@/util"
 import {
   ChatCompletionRequest,
@@ -19,6 +20,7 @@ import {
   completionID,
   speechContentType,
   SpeechRequest,
+  TranscriptionRequest,
   toModelMessages,
   toToolChoice,
   usageChunk,
@@ -95,10 +97,16 @@ export function resolveLanguageModel(ref: string, allowlist: ModelScope) {
       // Naming the right endpoint matters more than the status code here: a caller
       // that posts a TTS model to the chat route would otherwise get whatever
       // opaque failure the provider produces for a nonsensical request.
-      if (Provider.isSpeechModel(model)) {
+      // Naming the right endpoint matters more than the status code: a caller who
+      // posts an audio model here would otherwise get whatever opaque failure the
+      // provider produces for a nonsensical request.
+      const kind = Provider.modelKind(model)
+      if (kind !== "language") {
         throw new RequestError(
           400,
-          `Model \`${ref}\` synthesizes speech; use POST /v1/audio/speech`,
+          kind === "speech"
+            ? `Model \`${ref}\` synthesizes speech; use POST /v1/audio/speech`
+            : `Model \`${ref}\` transcribes audio; use POST /v1/audio/transcriptions`,
           "invalid_request_error",
         )
       }
@@ -107,22 +115,65 @@ export function resolveLanguageModel(ref: string, allowlist: ModelScope) {
   ).catch(notFound(ref))
 }
 
-export function resolveSpeechModel(ref: string, allowlist: ModelScope) {
-  const found = lookupModel(ref, allowlist)
+/**
+ * Resolve a model for one of the audio routes.
+ *
+ * Returns the model plus, when the provider package has one, its native factory. A
+ * MISSING factory is not an error: providers that carry audio over chat completions
+ * (MiMo, `gpt-4o-audio-preview`) have no such factory and are served by
+ * `AudioChat` instead. Refusing here is what made such a model unusable in both
+ * directions — the chat route sent it to the audio route and the audio route
+ * refused it.
+ */
+export function resolveAudioModel(input: {
+  ref: string
+  allowlist: ModelScope
+  kind: "speech" | "transcription"
+  wrongEndpoint: string
+}) {
+  const found = lookupModel(input.ref, input.allowlist)
   return AppRuntime.runPromise(
     Effect.gen(function* () {
       const provider = yield* Provider.Service
       const model = yield* provider.getModel(found.parsed.providerID, found.parsed.modelID)
-      if (!Provider.isSpeechModel(model)) {
+      if (Provider.modelKind(model) !== input.kind) {
         throw new RequestError(
           400,
-          `Model \`${ref}\` does not synthesize speech; use POST /v1/chat/completions`,
+          `Model \`${input.ref}\` is a ${Provider.modelKind(model)} model; use ${input.wrongEndpoint}`,
           "invalid_request_error",
         )
       }
-      return { model, speech: yield* provider.getSpeech(model) }
+      return { model }
     }),
-  ).catch(notFound(ref))
+  )
+    .then(async ({ model }) => {
+      if (input.kind !== "speech") return { model, speech: undefined }
+      // `getSpeech` raises SpeechUnsupportedError with a bare `throw` inside
+      // `Effect.promise`, which makes it a DEFECT rather than a failure — so
+      // `Effect.catch` never sees it. Caught here at the promise boundary instead,
+      // where `runPromise` rejects with the raw error.
+      //
+      // A missing factory means "this provider carries audio over chat completions",
+      // not "give up": that is the fallback, not the failure.
+      const speech = await AppRuntime.runPromise(
+        Effect.gen(function* () {
+          return yield* (yield* Provider.Service).getSpeech(model)
+        }),
+      ).catch((cause) => {
+        if (cause instanceof Provider.SpeechUnsupportedError) return undefined
+        throw cause
+      })
+      return { model, speech }
+    })
+    .catch(notFound(input.ref))
+}
+
+export function resolveSpeechModel(ref: string, allowlist: ModelScope) {
+  return resolveAudioModel({ ref, allowlist, kind: "speech", wrongEndpoint: "POST /v1/chat/completions" })
+}
+
+export function resolveTranscriptionModel(ref: string, allowlist: ModelScope) {
+  return resolveAudioModel({ ref, allowlist, kind: "transcription", wrongEndpoint: "POST /v1/chat/completions" })
 }
 
 /**
@@ -411,7 +462,27 @@ export async function synthesize(input: {
     model: `${resolved.model.providerID}/${resolved.model.id}`,
     characters: input.req.input.length,
     format: input.req.response_format ?? "default",
+    path: resolved.speech ? "sdk" : "chat-completions",
   })
+
+  // No native speech factory means this provider carries audio over chat
+  // completions. Serving both conventions behind one route is the point: a skill
+  // should not have to know which one its configured model uses.
+  if (!resolved.speech) {
+    const out = await AudioChat.synthesize({
+      providerID: resolved.model.providerID,
+      modelID: resolved.model.api.id,
+      text: input.req.input,
+      voice: input.req.voice,
+      format: input.req.response_format,
+      instructions: input.req.instructions,
+      abort: input.abort,
+    })
+    return {
+      audio: out.audio,
+      contentType: speechContentType({ requested: out.format }),
+    }
+  }
 
   const result = await generateSpeech({
     model: resolved.speech,
@@ -437,4 +508,33 @@ export async function synthesize(input: {
       requested: input.req.response_format,
     }),
   }
+}
+
+/**
+ * Transcribe one audio payload.
+ *
+ * Only reached for `transcription`-kind models — audio in, text out, and NO text
+ * input. That last part is a protocol fact rather than a taxonomy preference: a
+ * dedicated ASR endpoint REFUSES text parts (MiMo answers 400 "ASR request must not
+ * include text parts; text prompt is injected by the gateway"), while a multimodal
+ * chat model REQUIRES an instruction to know what to do with the audio. One request
+ * builder cannot serve both, so this route serves the former and the latter stays on
+ * the chat route where the caller supplies the instruction explicitly.
+ */
+export async function transcribe(input: {
+  req: TranscriptionRequest
+  audio: Uint8Array
+  mediaType: string
+  allowlist: ModelScope
+  abort: AbortSignal
+}) {
+  const resolved = await resolveTranscriptionModel(input.req.model, input.allowlist)
+  return AudioChat.transcribe({
+    providerID: resolved.model.providerID,
+    modelID: resolved.model.api.id,
+    audio: input.audio,
+    mediaType: input.mediaType,
+    language: input.req.language,
+    abort: input.abort,
+  })
 }
