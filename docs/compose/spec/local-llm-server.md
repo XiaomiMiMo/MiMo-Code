@@ -223,6 +223,29 @@ would silently produce a result in the wrong shape or quantity:
 - `logprobs`, `top_logprobs`
 - non-empty `logit_bias`
 - any `response_format`
+- `verbosity`, which changes the answer and has no provider-agnostic mapping
+
+### [S2.6.1] Reasoning
+
+Reasoning is carried in BOTH directions, because a proxy that drops it turns a
+reasoning model into a worse ordinary one.
+
+Outbound: `reasoning_content` on the non-streaming message and on streaming deltas,
+plus `completion_tokens_details.reasoning_tokens` in usage.
+
+Inbound, request parameter: `reasoning_effort` is HONORED, not ignored, by looking up
+`Model.variants[effort]` — the table `ProviderTransform.variants` already fills in with
+each provider's own spelling (`reasoningEffort` for OpenAI, a `thinking` budget for
+Anthropic, `thinkingConfig.thinkingBudget` for Google). No mapping is invented here, so
+effort behaves exactly as it does in a session. It is deliberately not a fixed enum:
+providers extend the set (`none`, `xhigh`, `max`), so the check happens where the model
+is known. An effort the model does not offer is a 400 listing what it does, because a
+silent downgrade is undetectable by the caller.
+
+Inbound, conversation history: an assistant message may carry `reasoning_content`, which
+is replayed as the SDK's `ReasoningPart` and placed BEFORE text and tool calls. Providers
+that interleave thinking with tool use read the order, not just the set. The field name
+matches what the server emits, so a client can hand back verbatim what it received.
 
 Documented no-op defaults (`n: 1`, zero penalties) are accepted, because an
 untouched client sends them without requesting anything.
@@ -238,12 +261,16 @@ provider. `ProviderTransform.options()` produces a flat map and
 matching the order `session/llm.ts` uses. Both routes take the same flat shape and
 nest through the same helper, so one field name never means two shapes.
 
-Known limitation, pre-existing and product-wide: for `@ai-sdk/openai-compatible`
-providers the escape hatch is inert. `sdkKey()` in `provider/transform.ts` has no
-case for that package, so options land under the provider id while the SDK reads
-another namespace. Same root cause as custom-endpoint `options` being dropped
-today; fixing it changes behaviour for every custom provider, so it is out of
-scope here.
+Keys are the SDK's own provider-option names, which are camelCase
+(`reasoningEffort`, not `reasoning_effort`). Verified reaching the wire through an
+`@ai-sdk/openai-compatible` provider. An unrecognised key is discarded silently,
+which is inherent to an open passthrough — prefer `reasoning_effort` where a
+portable spelling exists.
+
+An earlier revision of this document claimed the escape hatch was inert for
+`@ai-sdk/openai-compatible` because of `sdkKey()`. That was wrong: the probe behind
+the claim used a snake_case key the SDK does not read. Recorded here because the
+false claim also reached the pull request description.
 
 ### [S2.7] Error taxonomy
 

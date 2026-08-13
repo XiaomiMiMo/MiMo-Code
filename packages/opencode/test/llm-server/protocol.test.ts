@@ -54,6 +54,20 @@ describe("request validation policy", () => {
     expect(unsupported(parse({ ...base, response_format: { type: "json_object" } }))).toContain("response_format")
   })
 
+  test("refuses verbosity rather than dropping a field the caller sent deliberately", () => {
+    // Unlike reasoning effort there is no provider-agnostic mapping for it, and it
+    // changes the answer, so silence is the one unacceptable outcome.
+    expect(unsupported(parse({ ...base, verbosity: "low" }))).toContain("verbosity")
+    expect(unsupported(parse({ ...base, verbosity: "low" }))).toContain("provider_options")
+  })
+
+  test("reasoning_effort is accepted at the schema level and resolved per model later", () => {
+    // Deliberately not an enum: providers extend the set (none/xhigh/max), so the
+    // check belongs where the model is known.
+    expect(parse({ ...base, reasoning_effort: "high" }).reasoning_effort).toBe("high")
+    expect(unsupported(parse({ ...base, reasoning_effort: "high" }))).toBeUndefined()
+  })
+
   test("an empty logit_bias is not a request for anything", () => {
     expect(unsupported(parse({ ...base, logit_bias: {} }))).toBeUndefined()
   })
@@ -151,6 +165,44 @@ describe("message conversion", () => {
       content: [
         { type: "text", text: "checking" },
         { type: "tool-call", toolCallId: "c1", toolName: "f", input: {} },
+      ],
+    })
+  })
+
+  test("replays assistant reasoning as a reasoning part, ahead of text and tool calls", () => {
+    // Providers that interleave thinking with tool use read the ORDER, not just the
+    // set, so reasoning has to come first. Dropping it silently degrades the next turn.
+    const messages = parse({
+      ...base,
+      messages: [
+        {
+          role: "assistant",
+          content: "checking",
+          reasoning_content: "the user wants the weather",
+          tool_calls: [{ id: "c1", type: "function", function: { name: "f", arguments: "{}" } }],
+        },
+      ],
+    }).messages
+    expect(toModelMessages(messages)[0]).toEqual({
+      role: "assistant",
+      content: [
+        { type: "reasoning", text: "the user wants the weather" },
+        { type: "text", text: "checking" },
+        { type: "tool-call", toolCallId: "c1", toolName: "f", input: {} },
+      ],
+    })
+  })
+
+  test("reasoning alone still produces a part array, not a bare string", () => {
+    const messages = parse({
+      ...base,
+      messages: [{ role: "assistant", content: "answer", reasoning_content: "thought" }],
+    }).messages
+    expect(toModelMessages(messages)[0]).toEqual({
+      role: "assistant",
+      content: [
+        { type: "reasoning", text: "thought" },
+        { type: "text", text: "answer" },
       ],
     })
   })

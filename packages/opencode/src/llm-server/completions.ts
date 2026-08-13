@@ -7,6 +7,7 @@ import {
   type ToolSet,
 } from "ai"
 import { Effect } from "effect"
+import { mergeDeep, pipe } from "remeda"
 import type { ContentfulStatusCode } from "hono/utils/http-status"
 import { AppRuntime } from "@/effect/app-runtime"
 import { Provider, ProviderTransform } from "@/provider"
@@ -125,6 +126,33 @@ export function resolveSpeechModel(ref: string, allowlist: ModelScope) {
 }
 
 /**
+ * Translate an OpenAI `reasoning_effort` into whatever this model's provider calls it.
+ *
+ * No mapping table is invented here. `ProviderTransform.variants` already encodes the
+ * per-provider spelling — `reasoningEffort` for OpenAI, a `thinking` budget for
+ * Anthropic, `thinkingConfig.thinkingBudget` for Google — and `Model.variants` carries
+ * the result, merged with whatever the user configured. Reusing it means the proxy
+ * honors effort exactly as a session does.
+ *
+ * An effort the model does not offer is a 400 that lists what it does, because the
+ * alternative is a silent downgrade: a caller who asked for `high` and received the
+ * default has no way to notice.
+ */
+function variantFor(model: Provider.Model, effort: string) {
+  const available = model.variants ?? {}
+  const variant = available[effort]
+  if (variant) return variant
+  const names = Object.keys(available)
+  throw new RequestError(
+    400,
+    names.length === 0
+      ? `Model \`${model.providerID}/${model.id}\` does not support reasoning_effort`
+      : `reasoning_effort \`${effort}\` is not available for \`${model.providerID}/${model.id}\`; supported: ${names.join(", ")}`,
+    "invalid_request_error",
+  )
+}
+
+/**
  * Declare the caller's tools to the SDK without ever executing them.
  *
  * A proxy must not run tools: the caller owns that loop. Each tool is registered
@@ -168,10 +196,15 @@ export async function start(input: {
   // `ProviderTransform.providerOptions` below is what nests the result under the
   // SDK's namespace. Merging a per-provider-keyed object in here would survive
   // typechecking and then be silently dropped by the provider.
-  const merged = {
-    ...ProviderTransform.options({ model, sessionID: requestID }),
-    ...input.req.provider_options,
-  }
+  // Same layering as `session/llm.ts`: derived options first, then the variant that
+  // reasoning effort selects, then the caller's explicit escape hatch. `mergeDeep`
+  // rather than a spread because variant values are nested (a thinking budget lives
+  // under its own object) and a shallow merge would drop siblings.
+  const merged = pipe(
+    ProviderTransform.options({ model, sessionID: requestID }),
+    mergeDeep(input.req.reasoning_effort ? variantFor(model, input.req.reasoning_effort) : {}),
+    mergeDeep(input.req.provider_options ?? {}),
+  )
 
   log.info("upstream request", {
     model: `${model.providerID}/${model.id}`,

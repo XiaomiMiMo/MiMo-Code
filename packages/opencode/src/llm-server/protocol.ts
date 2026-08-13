@@ -74,6 +74,12 @@ const Message = z.discriminatedUnion("role", [
     content: z.union([TextContent, z.null()]).optional(),
     tool_calls: z.array(ToolCall).optional(),
     name: z.string().optional(),
+    // Accepted so a multi-turn conversation with a reasoning model can hand its own
+    // thinking back. Dropping it silently degrades the next turn, and for providers
+    // whose tool use is interleaved with thinking blocks it can break continuity
+    // outright. `reasoning_content` is the field name emitted on the way out, so a
+    // client can replay verbatim what it received.
+    reasoning_content: z.string().optional(),
   }),
   z.object({
     role: z.literal("tool"),
@@ -115,6 +121,12 @@ export const ChatCompletionRequest = z
     stream_options: z.object({ include_usage: z.boolean().optional() }).optional(),
     // Accepted-and-ignored: identifies the caller, never reaches the provider.
     user: z.string().optional(),
+    // Honored by mapping onto whatever the model's provider actually calls it — see
+    // `variantFor` in completions.ts. Not a free-form passthrough: an effort the
+    // model does not offer is a 400 rather than a silent downgrade.
+    reasoning_effort: z.string().optional(),
+    // Declared so it can be REFUSED rather than dropped. See `unsupported`.
+    verbosity: z.string().optional(),
     // Accepted only at their no-op defaults; see `unsupported`.
     n: z.number().int().optional(),
     presence_penalty: z.number().optional(),
@@ -123,14 +135,17 @@ export const ChatCompletionRequest = z
     top_logprobs: z.number().int().nullish(),
     logit_bias: z.record(z.string(), z.number()).nullish(),
     response_format: z.unknown().optional(),
-    // Escape hatch for MiMoCode/provider-native knobs (reasoning effort, thinking
-    // budgets, cache controls) that have no OpenAI equivalent.
+    // Escape hatch for provider-native knobs (thinking budgets, cache controls,
+    // reasoning summaries) that have no OpenAI equivalent.
     //
-    // FLAT, keyed by the provider-native option name — not keyed by provider.
+    // FLAT, keyed by the SDK's own provider-option name — not keyed by provider.
     // `ProviderTransform.options()` produces a flat map and
-    // `ProviderTransform.providerOptions()` is what nests it under the SDK's
-    // namespace, so a nested value here would be nested twice and silently
-    // ignored by the provider.
+    // `ProviderTransform.providerOptions()` nests it under the SDK's namespace, so a
+    // per-provider-keyed value here would be nested twice and dropped.
+    //
+    // Those names are camelCase (`reasoningEffort`, not `reasoning_effort`). A key the
+    // SDK does not recognise is discarded without complaint, which is the price of an
+    // open passthrough: use `reasoning_effort` instead when a portable spelling exists.
     provider_options: z.record(z.string(), z.json()).optional(),
   })
   // No `.strict()`: zod strips unknown keys, which is the documented policy above.
@@ -152,6 +167,11 @@ export function unsupported(req: ChatCompletionRequest): string | undefined {
   if (req.top_logprobs != null) return "top_logprobs is not supported"
   if (req.logit_bias && Object.keys(req.logit_bias).length > 0) return "logit_bias is not supported"
   if (req.response_format != null) return "response_format is not supported; ask the model for JSON in the prompt"
+  // No provider-agnostic mapping exists for this the way `variants` provides one for
+  // reasoning effort, and it demonstrably changes the answer, so silently dropping it
+  // is the one outcome that must not happen.
+  if (req.verbosity != null)
+    return "verbosity is not supported; pass the provider's own option through `provider_options`"
   return undefined
 }
 
@@ -222,10 +242,15 @@ export function toModelMessages(messages: ChatCompletionRequest["messages"]): Mo
       toolName: call.function.name,
       input: parseArguments(call.function.arguments),
     }))
-    if (calls.length === 0) return { role: "assistant", content: text }
+    // Reasoning goes FIRST, matching the order the model produced it: providers that
+    // interleave thinking with tool use read the sequence, not just the set.
+    const thinking = msg.reasoning_content
+      ? [{ type: "reasoning" as const, text: msg.reasoning_content }]
+      : []
+    if (calls.length === 0 && thinking.length === 0) return { role: "assistant", content: text }
     return {
       role: "assistant",
-      content: [...(text ? [{ type: "text" as const, text }] : []), ...calls],
+      content: [...thinking, ...(text ? [{ type: "text" as const, text }] : []), ...calls],
     }
   })
 }

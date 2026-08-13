@@ -33,6 +33,10 @@ async function withUpstream<T>(
               "chat-model": {
                 name: "Chat Model",
                 modalities: { input: ["text" as const], output: ["text" as const] },
+                reasoning: true,
+                // Declared explicitly rather than relying on the per-provider
+                // heuristics, so this asserts OUR merge, not transform's guesswork.
+                variants: { high: { reasoningEffort: "high" }, low: { reasoningEffort: "low" } },
               },
             },
           },
@@ -337,25 +341,58 @@ describe("what actually reaches the provider", () => {
     expect(body.temperature).toBeUndefined()
   })
 
-  test("merges provider_options at the flat level, never as a provider-keyed body field", async () => {
-    // `ProviderTransform.options()` yields a FLAT map and `providerOptions()` is
-    // what nests it under the SDK namespace — the same order `session/llm.ts` uses.
-    // Merging a per-provider-keyed object in instead used to nest twice, and the
-    // inner object leaked onto the wire as a top-level field named after the
-    // provider. That symptom is what this guards.
-    //
-    // The value itself does not reach the wire for `@ai-sdk/openai-compatible`
-    // providers: `sdkKey()` has no case for that package, so the options land under
-    // the provider id and the SDK looks elsewhere. That gap is pre-existing and
-    // product-wide (it is why a custom endpoint's `options` are dropped today), so
-    // it is out of scope here — hence this asserts the absence of the leak rather
-    // than the presence of the option.
+  test("reasoning_effort reaches the wire under the provider's own option name", async () => {
+    // Honored, not ignored: `ProviderTransform.variants` already knows each provider's
+    // spelling, so the proxy applies effort exactly as a session would.
     const body = await sentBody({
       model: "test/chat-model",
       messages: [{ role: "user", content: "hi" }],
-      provider_options: { reasoning_effort: "high" },
+      reasoning_effort: "high",
     })
-    expect(body.test).toBeUndefined()
-    expect(body.provider_options).toBeUndefined()
+    expect(body.reasoning_effort).toBe("high")
+  })
+
+  test("an unavailable reasoning_effort is a 400 listing what the model does offer", async () => {
+    // A silent downgrade is the failure worth preventing: a caller who asked for
+    // `high` and got the default cannot tell.
+    const res = await withUpstream(
+      () => sse([frame({ content: "unused" })]),
+      async ({ app }) =>
+        app.fetch(chatRequest({
+          model: "test/chat-model",
+          messages: [{ role: "user", content: "hi" }],
+          reasoning_effort: "ludicrous",
+        })),
+    )
+    expect(res.status).toBe(400)
+    const body = (await res.json()) as { error: { message: string } }
+    expect(body.error.message).toContain("ludicrous")
+    expect(body.error.message).toContain("high")
+  })
+
+  test("provider_options reaches the wire, merged flat and never provider-keyed", async () => {
+    // `ProviderTransform.options()` yields a FLAT map and `providerOptions()` nests it
+    // under the SDK namespace — the same order `session/llm.ts` uses. Merging a
+    // per-provider-keyed object in instead nested twice, and the inner object leaked
+    // onto the wire as a top-level field named after the provider.
+    //
+    // Keys are the SDK's provider-option names, which are camelCase. A snake_case key
+    // is silently unknown to the SDK and dropped, so both directions are asserted here
+    // — the escape hatch is only an escape hatch if the caller can tell which it is.
+    const honored = await sentBody({
+      model: "test/chat-model",
+      messages: [{ role: "user", content: "hi" }],
+      provider_options: { reasoningEffort: "low" },
+    })
+    expect(honored.reasoning_effort).toBe("low")
+    expect(honored.test).toBeUndefined()
+    expect(honored.provider_options).toBeUndefined()
+
+    const wrongCase = await sentBody({
+      model: "test/chat-model",
+      messages: [{ role: "user", content: "hi" }],
+      provider_options: { reasoning_effort: "low" },
+    })
+    expect(wrongCase.reasoning_effort).toBeUndefined()
   })
 })
