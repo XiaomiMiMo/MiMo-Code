@@ -1,0 +1,281 @@
+import { afterEach, describe, expect, test } from "bun:test"
+import { Instance } from "../../src/project/instance"
+import { LLMServer } from "../../src/llm-server/server"
+import { tmpdir } from "../fixture/fixture"
+
+afterEach(async () => {
+  await Instance.disposeAll()
+})
+
+const TOKEN = "streaming-token"
+
+/**
+ * Drive the real streaming path against a real HTTP upstream.
+ *
+ * The upstream is a throwaway `Bun.serve` speaking OpenAI-compatible SSE rather
+ * than a mock of our own code, so the SDK's own parsing sits between the two —
+ * which is the part a hand-rolled fake would quietly skip.
+ */
+async function withUpstream<T>(
+  handler: (req: Request) => Response | Promise<Response>,
+  run: (input: { app: ReturnType<typeof LLMServer.create> }) => Promise<T>,
+) {
+  const upstream = Bun.serve({ port: 0, fetch: handler })
+  try {
+    await using tmp = await tmpdir({
+      config: {
+        provider: {
+          test: {
+            name: "Test",
+            npm: "@ai-sdk/openai-compatible",
+            options: { apiKey: "unused", baseURL: `http://127.0.0.1:${upstream.port}/v1` },
+            models: {
+              "chat-model": {
+                name: "Chat Model",
+                modalities: { input: ["text" as const], output: ["text" as const] },
+              },
+            },
+          },
+        },
+      },
+    })
+    return await run({ app: LLMServer.create({ token: TOKEN, directory: tmp.path }) })
+  } finally {
+    await upstream.stop(true)
+  }
+}
+
+function chatRequest(body: unknown) {
+  return new Request("http://llm-server.test/v1/chat/completions", {
+    method: "POST",
+    headers: { "content-type": "application/json", authorization: `Bearer ${TOKEN}` },
+    body: JSON.stringify(body),
+  })
+}
+
+function sse(chunks: unknown[]) {
+  const body = chunks.map((c) => `data: ${JSON.stringify(c)}\n\n`).join("") + "data: [DONE]\n\n"
+  return new Response(body, { headers: { "content-type": "text/event-stream" } })
+}
+
+const frame = (delta: unknown, finish: string | null = null) => ({
+  id: "upstream-1",
+  object: "chat.completion.chunk",
+  created: 1,
+  model: "chat-model",
+  choices: [{ index: 0, delta, finish_reason: finish }],
+})
+
+/** Split an SSE body into its `data:` payloads, in order. */
+function payloads(text: string) {
+  return text
+    .split("\n\n")
+    .map((block) => block.trim())
+    .filter(Boolean)
+    .map((block) => block.replace(/^data:\s*/, ""))
+}
+
+describe("streaming responses", () => {
+  test("emits the OpenAI frame sequence and terminates with exactly one [DONE]", async () => {
+    const body = await withUpstream(
+      () => sse([frame({ role: "assistant", content: "" }), frame({ content: "Hi" }), frame({}, "stop")]),
+      async ({ app }) => {
+        const res = await app.fetch(chatRequest({
+          model: "test/chat-model",
+          messages: [{ role: "user", content: "hi" }],
+          stream: true,
+        }))
+        expect(res.status).toBe(200)
+        expect(res.headers.get("content-type")).toContain("text/event-stream")
+        return await res.text()
+      },
+    )
+
+    const frames = payloads(body)
+    expect(frames.filter((f) => f === "[DONE]")).toHaveLength(1)
+    expect(frames[frames.length - 1]).toBe("[DONE]")
+
+    const parsed = frames.slice(0, -1).map((f) => JSON.parse(f))
+    expect(parsed[0].choices[0].delta).toEqual({ role: "assistant", content: "" })
+    expect(parsed.map((f) => f.choices[0]?.delta?.content).filter(Boolean).join("")).toBe("Hi")
+
+    const terminal = parsed.at(-1)
+    expect(terminal.choices[0].finish_reason).toBe("stop")
+    expect(terminal.object).toBe("chat.completion.chunk")
+    // Every frame echoes the reference the caller asked for, not an internal name.
+    expect(parsed.every((f) => f.model === "test/chat-model")).toBe(true)
+  })
+
+  test("appends a usage-only frame when the caller asks for it", async () => {
+    const body = await withUpstream(
+      () => sse([frame({ content: "ok" }), frame({}, "stop")]),
+      async ({ app }) => {
+        const res = await app.fetch(chatRequest({
+          model: "test/chat-model",
+          messages: [{ role: "user", content: "hi" }],
+          stream: true,
+          stream_options: { include_usage: true },
+        }))
+        return await res.text()
+      },
+    )
+
+    const parsed = payloads(body)
+      .filter((f) => f !== "[DONE]")
+      .map((f) => JSON.parse(f))
+    const last = parsed.at(-1)
+    expect(last.choices).toEqual([])
+    expect(last.usage).toMatchObject({
+      prompt_tokens: expect.any(Number),
+      completion_tokens: expect.any(Number),
+      total_tokens: expect.any(Number),
+    })
+  })
+
+  test("reports a mid-stream failure as ONE in-band frame with nothing after [DONE]", async () => {
+    // Regression guard. hono's streamSSE runner appends its own `event: error`
+    // frame after invoking an onError callback, so delegating the failure to it
+    // produced two error frames AND content after the sentinel.
+    const body = await withUpstream(
+      () => new Response(JSON.stringify({ error: { message: "upstream exploded" } }), { status: 500 }),
+      async ({ app }) => {
+        const res = await app.fetch(chatRequest({
+          model: "test/chat-model",
+          messages: [{ role: "user", content: "hi" }],
+          stream: true,
+        }))
+        // The status line is committed before the body fails, so the transport
+        // status stays 200 and the failure has to travel in band.
+        expect(res.status).toBe(200)
+        return await res.text()
+      },
+    )
+
+    expect(body).not.toContain("event: error")
+
+    const frames = payloads(body)
+    expect(frames.at(-1)).toBe("[DONE]")
+    expect(frames.filter((f) => f === "[DONE]")).toHaveLength(1)
+
+    const errors = frames.filter((f) => f !== "[DONE]").map((f) => JSON.parse(f)).filter((f) => f.error)
+    expect(errors).toHaveLength(1)
+    expect(errors[0].error.type).toBe("api_error")
+  })
+
+  test("a non-streaming upstream failure surfaces as 502, not 500", async () => {
+    // So a caller can tell "MiMoCode broke" from "the provider broke".
+    const status = await withUpstream(
+      () => new Response(JSON.stringify({ error: { message: "upstream exploded" } }), { status: 500 }),
+      async ({ app }) => {
+        const res = await app.fetch(chatRequest({
+          model: "test/chat-model",
+          messages: [{ role: "user", content: "hi" }],
+        }))
+        return res.status
+      },
+    )
+    expect(status).toBe(502)
+  })
+
+  test("collects a non-streaming answer from the same code path", async () => {
+    const body = await withUpstream(
+      () => sse([frame({ content: "Hello" }), frame({}, "stop")]),
+      async ({ app }) => {
+        const res = await app.fetch(chatRequest({
+          model: "test/chat-model",
+          messages: [{ role: "user", content: "hi" }],
+        }))
+        expect(res.status).toBe(200)
+        return (await res.json()) as {
+          object: string
+          model: string
+          choices: { message: { content: string }; finish_reason: string }[]
+        }
+      },
+    )
+    expect(body.object).toBe("chat.completion")
+    expect(body.model).toBe("test/chat-model")
+    expect(body.choices[0]!.message.content).toBe("Hello")
+    expect(body.choices[0]!.finish_reason).toBe("stop")
+  })
+
+  test("streams tool calls as an opener plus argument fragments", async () => {
+    const body = await withUpstream(
+      () =>
+        sse([
+          frame({
+            tool_calls: [{ index: 0, id: "call_1", type: "function", function: { name: "get_weather", arguments: "" } }],
+          }),
+          frame({ tool_calls: [{ index: 0, function: { arguments: '{"city":' } }] }),
+          frame({ tool_calls: [{ index: 0, function: { arguments: '"BJ"}' } }] }),
+          frame({}, "tool_calls"),
+        ]),
+      async ({ app }) => {
+        const res = await app.fetch(chatRequest({
+          model: "test/chat-model",
+          messages: [{ role: "user", content: "weather?" }],
+          tools: [
+            {
+              type: "function",
+              function: {
+                name: "get_weather",
+                parameters: { type: "object", properties: { city: { type: "string" } } },
+              },
+            },
+          ],
+          stream: true,
+        }))
+        return await res.text()
+      },
+    )
+
+    const parsed = payloads(body)
+      .filter((f) => f !== "[DONE]")
+      .map((f) => JSON.parse(f))
+    const calls = parsed.flatMap((f) => f.choices[0]?.delta?.tool_calls ?? [])
+    // The opener carries index/id/name; the fragments carry arguments only.
+    expect(calls[0]).toMatchObject({ index: 0, id: "call_1", function: { name: "get_weather" } })
+    expect(calls.map((c: { function?: { arguments?: string } }) => c.function?.arguments ?? "").join("")).toBe(
+      '{"city":"BJ"}',
+    )
+    expect(parsed.at(-1).choices[0].finish_reason).toBe("tool_calls")
+  })
+
+  test("returns completed tool arguments in a non-streaming answer, never a truncated fragment", async () => {
+    const body = await withUpstream(
+      () =>
+        sse([
+          frame({
+            tool_calls: [{ index: 0, id: "call_1", type: "function", function: { name: "get_weather", arguments: "" } }],
+          }),
+          frame({ tool_calls: [{ index: 0, function: { arguments: '{"city":' } }] }),
+          frame({ tool_calls: [{ index: 0, function: { arguments: '"BJ"}' } }] }),
+          frame({}, "tool_calls"),
+        ]),
+      async ({ app }) => {
+        const res = await app.fetch(chatRequest({
+          model: "test/chat-model",
+          messages: [{ role: "user", content: "weather?" }],
+          tools: [
+            {
+              type: "function",
+              function: {
+                name: "get_weather",
+                parameters: { type: "object", properties: { city: { type: "string" } } },
+              },
+            },
+          ],
+        }))
+        return (await res.json()) as {
+          choices: {
+            message: { content: string | null; tool_calls?: { function: { name: string; arguments: string } }[] }
+            finish_reason: string
+          }[]
+        }
+      },
+    )
+    expect(body.choices[0]!.finish_reason).toBe("tool_calls")
+    expect(body.choices[0]!.message.tool_calls).toHaveLength(1)
+    expect(JSON.parse(body.choices[0]!.message.tool_calls![0]!.function.arguments)).toEqual({ city: "BJ" })
+  })
+})

@@ -9,7 +9,7 @@ import { Npm } from "../npm"
 import { Hash } from "@mimo-ai/shared/util/hash"
 import { Plugin } from "../plugin"
 import { NamedError } from "@mimo-ai/shared/util/error"
-import { type LanguageModelV3 } from "@ai-sdk/provider"
+import { type LanguageModelV3, type SpeechModelV3 } from "@ai-sdk/provider"
 import * as ModelsDev from "./models"
 import { Auth } from "../auth"
 import { Env } from "../env"
@@ -1075,6 +1075,7 @@ export interface Interface {
   readonly getProvider: (providerID: ProviderID) => Effect.Effect<Info>
   readonly getModel: (providerID: ProviderID, modelID: ModelID) => Effect.Effect<Model>
   readonly getLanguage: (model: Model) => Effect.Effect<LanguageModelV3>
+  readonly getSpeech: (model: Model) => Effect.Effect<SpeechModelV3>
   readonly closest: (
     providerID: ProviderID,
     query: string[],
@@ -1087,6 +1088,7 @@ export interface Interface {
 
 interface State {
   models: Map<string, LanguageModelV3>
+  speech: Map<string, SpeechModelV3>
   providers: Record<ProviderID, Info>
   sdk: Map<string, BundledSDK>
   modelLoaders: Record<string, CustomModelLoader>
@@ -1234,6 +1236,7 @@ const layer: Layer.Layer<
 
         const providers: Record<ProviderID, Info> = {} as Record<ProviderID, Info>
         const languages = new Map<string, LanguageModelV3>()
+        const speeches = new Map<string, SpeechModelV3>()
         const modelLoaders: {
           [providerID: string]: CustomModelLoader
         } = {}
@@ -1569,6 +1572,7 @@ const layer: Layer.Layer<
 
         return {
           models: languages,
+          speech: speeches,
           providers,
           sdk,
           modelLoaders,
@@ -1787,6 +1791,59 @@ const layer: Layer.Layer<
       })
     })
 
+    /**
+     * Find a provider SDK's speech-model factory.
+     *
+     * Two names exist for the same thing and neither is guaranteed: the standard
+     * provider interface calls it `speechModel`, `@ai-sdk/openai` calls it
+     * `speech`, and `ai`'s own `Provider` type declares neither — so the member
+     * has to be probed at runtime rather than read off the type. The
+     * `typeof === "function"` check is what makes the narrowing honest.
+     */
+    function speechFactory(sdk: object) {
+      const candidate: { speechModel?: unknown; speech?: unknown } = sdk
+      const factory = candidate.speechModel ?? candidate.speech
+      if (typeof factory !== "function") return undefined
+      return factory as (modelId: string) => SpeechModelV3
+    }
+
+    /**
+     * Build the speech-synthesis model for `model`, mirroring `getLanguage`.
+     *
+     * Same contract and same reason for existing: the upstream SDK is constructed
+     * from credentials held in this service, so a caller gets synthesis without
+     * ever seeing the key. Cached separately from language models because the two
+     * keyspaces would otherwise collide on a provider that offers both under one
+     * id.
+     */
+    const getSpeech = Effect.fn("Provider.getSpeech")(function* (model: Model) {
+      const s = yield* InstanceState.get(state)
+      const envs = yield* env.all()
+      const key = `${model.providerID}/${model.id}`
+      if (s.speech.has(key)) return s.speech.get(key)!
+
+      return yield* Effect.promise(async () => {
+        const sdk = await resolveSDK(model, s, envs)
+        const factory = speechFactory(sdk)
+        if (!factory)
+          throw new ModelNotFoundError({
+            modelID: model.id,
+            providerID: model.providerID,
+            suggestions: [`provider \`${model.providerID}\` has no speech model support`],
+          })
+
+        try {
+          const speech = factory.call(sdk, model.api.id)
+          s.speech.set(key, speech)
+          return speech
+        } catch (e) {
+          if (e instanceof NoSuchModelError)
+            throw new ModelNotFoundError({ modelID: model.id, providerID: model.providerID }, { cause: e })
+          throw e
+        }
+      })
+    })
+
     const closest = Effect.fn("Provider.closest")(function* (providerID: ProviderID, query: string[]) {
       const s = yield* InstanceState.get(state)
       const provider = s.providers[providerID]
@@ -1913,7 +1970,7 @@ const layer: Layer.Layer<
       }
     })
 
-    return Service.of({ list, getProvider, getModel, getLanguage, closest, getSmallModel, getVisionModel, defaultModel, resolveModelRef })
+    return Service.of({ list, getProvider, getModel, getLanguage, getSpeech, closest, getSmallModel, getVisionModel, defaultModel, resolveModelRef })
   }),
 )
 
@@ -1944,6 +2001,32 @@ export function parseModel(model: string) {
     modelID: ModelID.make(rest.join("/")),
   }
 }
+
+/**
+ * What kind of model this is, DERIVED from its declared output modalities.
+ *
+ * `Model` carries no `type` field — everything is otherwise assumed to be a
+ * language model — but `capabilities.output` already distinguishes them, fed
+ * either from models.dev or from the user's own per-model `modalities` config.
+ * Deriving beats adding a field: a model absent from models.dev (OpenAI's `tts-1`
+ * and `gpt-4o-mini-tts` are both absent) is already declarable today as
+ * `"modalities": { "input": ["text"], "output": ["audio"] }`.
+ *
+ * Audio AND text output means a live/multimodal chat model (Gemini live,
+ * `lyria-3-pro`), not a speech synthesizer, so text output wins the tie.
+ *
+ * Not derivable: embedding models. `text-embedding-3-small` reports
+ * `output: ["text"]`, indistinguishable from a chat model. Misusing one still
+ * fails at the provider.
+ */
+export function isSpeechModel(model: Model) {
+  return model.capabilities.output.audio && !model.capabilities.output.text
+}
+
+export function isLanguageModel(model: Model) {
+  return !isSpeechModel(model)
+}
+
 
 export const ModelNotFoundError = NamedError.create(
   "ProviderModelNotFoundError",
