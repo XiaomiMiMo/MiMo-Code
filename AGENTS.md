@@ -17,7 +17,9 @@ Our core development focus is the **TUI** (terminal UI) implementation in `packa
 - Keep things in one function unless composable or reusable
 - Avoid `try`/`catch` where possible
 - Avoid using the `any` type
-- Use Bun APIs when possible, like `Bun.file()`
+- Use Bun APIs where the runtime is Bun-only, like `Bun.file()` in the TUI (`src/cli/cmd/tui/`); build-time macros are fine anywhere, as they never reach the shipped runtime
+- In core code reachable from `src/node.ts`, prefer the Node equivalent when one exists — `createHash` over `Bun.CryptoHasher`, `prepare()` over bun:sqlite's `query()` — as that code also ships through `script/build-node.ts` and must run on plain Node
+- Bun-only calls in core escape both `typecheck` and `bun test`, which run on Bun; existing usage needs no urgent removal, and APIs with no Node equivalent may stay until a runtime seam exists
 - Rely on type inference when possible; avoid explicit type annotations or interfaces unless necessary for exports or clarity
 - Prefer functional array methods (flatMap, filter, map) over for loops; use type guards on filter to maintain type inference downstream
 - In `src/config`, follow the existing self-export pattern at the top of the file (for example `export * as ConfigAgent from "./agent"`) when adding a new config module.
