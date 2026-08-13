@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto"
 import type { JSONObject } from "@ai-sdk/provider"
 import { Effect } from "effect"
 import z from "zod"
@@ -167,7 +168,7 @@ function index(entries: McpToolSearchEntry[]) {
 
 export function createMcpToolSearchCatalog(entries: McpToolSearchEntry[]): McpToolSearchCatalog {
   return {
-    key: new Bun.CryptoHasher("sha256").update(JSON.stringify(entries)).digest("hex"),
+    key: createHash("sha256").update(JSON.stringify(entries)).digest("hex"),
     entries,
   }
 }
