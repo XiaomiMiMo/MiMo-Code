@@ -21,7 +21,13 @@ const ContentPart = z.discriminatedUnion("type", [
   z.object({ type: z.literal("text"), text: z.string() }),
   z.object({
     type: z.literal("image_url"),
-    image_url: z.object({ url: z.string(), detail: z.string().optional() }),
+    image_url: z.object({
+      // Parseability is checked HERE so an unparseable URL is a 400 from
+      // validation rather than a 502 from `new URL` throwing inside the handler.
+      // `URL.canParse` accepts `data:` URLs too, so both accepted forms pass.
+      url: z.string().refine(URL.canParse, "must be a data: URL or an absolute URL"),
+      detail: z.string().optional(),
+    }),
   }),
 ])
 
@@ -99,9 +105,14 @@ export const ChatCompletionRequest = z
     logit_bias: z.record(z.string(), z.number()).nullish(),
     response_format: z.unknown().optional(),
     // Escape hatch for MiMoCode/provider-native knobs (reasoning effort, thinking
-    // budgets, cache controls) that have no OpenAI equivalent. Merged over the
-    // provider options MiMoCode derives for the model.
-    provider_options: z.record(z.string(), z.record(z.string(), z.json())).optional(),
+    // budgets, cache controls) that have no OpenAI equivalent.
+    //
+    // FLAT, keyed by the provider-native option name — not keyed by provider.
+    // `ProviderTransform.options()` produces a flat map and
+    // `ProviderTransform.providerOptions()` is what nests it under the SDK's
+    // namespace, so a nested value here would be nested twice and silently
+    // ignored by the provider.
+    provider_options: z.record(z.string(), z.json()).optional(),
   })
   // No `.strict()`: zod strips unknown keys, which is the documented policy above.
   // Fields that must not be silently dropped are caught by `unsupported` instead.
@@ -365,7 +376,8 @@ export const SpeechRequest = z.object({
   // it is impossible and silently returning one buffer would strand a client
   // that is waiting to read incremental frames.
   stream_format: z.enum(["sse", "audio"]).optional(),
-  provider_options: z.record(z.string(), z.record(z.string(), z.json())).optional(),
+  // Flat, for the same reason as the chat route's field of the same name.
+  provider_options: z.record(z.string(), z.json()).optional(),
 })
 export type SpeechRequest = z.infer<typeof SpeechRequest>
 

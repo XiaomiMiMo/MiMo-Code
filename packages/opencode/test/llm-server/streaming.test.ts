@@ -132,20 +132,48 @@ describe("streaming responses", () => {
     })
   })
 
+  test("a failure BEFORE the first frame gets a real status code, not 200 plus an error frame", async () => {
+    // `streamText` is lazy, so without draining one frame inside the handler an
+    // expired credential would look identical to dying at token 500.
+    const res = await withUpstream(
+      () => new Response(JSON.stringify({ error: { message: "upstream exploded" } }), { status: 500 }),
+      async ({ app }) => {
+        const response = await app.fetch(chatRequest({
+          model: "test/chat-model",
+          messages: [{ role: "user", content: "hi" }],
+          stream: true,
+        }))
+        return { status: response.status, body: await response.text() }
+      },
+    )
+    expect(res.status).toBe(502)
+    expect(res.body).not.toContain("data:")
+    expect(JSON.parse(res.body).error.type).toBe("api_error")
+  })
+
   test("reports a mid-stream failure as ONE in-band frame with nothing after [DONE]", async () => {
     // Regression guard. hono's streamSSE runner appends its own `event: error`
     // frame after invoking an onError callback, so delegating the failure to it
     // produced two error frames AND content after the sentinel.
+    //
+    // The upstream here succeeds far enough to commit the status line and then
+    // reports an error frame, which is the only situation where an in-band report
+    // is the honest option. (A truncated body would NOT do: the SDK treats a
+    // severed connection as a clean end-of-stream, so it produces no error at all.)
     const body = await withUpstream(
-      () => new Response(JSON.stringify({ error: { message: "upstream exploded" } }), { status: 500 }),
+      () =>
+        new Response(
+          `data: ${JSON.stringify(frame({ content: "partial" }))}\n\n` +
+            `data: ${JSON.stringify({ error: { message: "upstream died mid-stream", type: "server_error" } })}\n\n`,
+          { headers: { "content-type": "text/event-stream" } },
+        ),
       async ({ app }) => {
         const res = await app.fetch(chatRequest({
           model: "test/chat-model",
           messages: [{ role: "user", content: "hi" }],
           stream: true,
         }))
-        // The status line is committed before the body fails, so the transport
-        // status stays 200 and the failure has to travel in band.
+        // The status line is already committed, so the failure has to travel in band.
         expect(res.status).toBe(200)
         return await res.text()
       },
@@ -241,8 +269,7 @@ describe("streaming responses", () => {
     expect(parsed.at(-1).choices[0].finish_reason).toBe("tool_calls")
   })
 
-  test("returns completed tool arguments in a non-streaming answer, never a truncated fragment", async () => {
-    const body = await withUpstream(
+  test("returns completed tool arguments in a non-streaming answer, never a truncated fragment", async () => {    const body = await withUpstream(
       () =>
         sse([
           frame({
@@ -277,5 +304,58 @@ describe("streaming responses", () => {
     expect(body.choices[0]!.finish_reason).toBe("tool_calls")
     expect(body.choices[0]!.message.tool_calls).toHaveLength(1)
     expect(JSON.parse(body.choices[0]!.message.tool_calls![0]!.function.arguments)).toEqual({ city: "BJ" })
+  })
+})
+
+describe("what actually reaches the provider", () => {
+  /** Capture the upstream request body so assertions read the wire, not our code. */
+  async function sentBody(request: unknown) {
+    const seen: Record<string, unknown>[] = []
+    await withUpstream(
+      async (req) => {
+        seen.push((await req.json()) as Record<string, unknown>)
+        return sse([frame({ content: "ok" }), frame({}, "stop")])
+      },
+      async ({ app }) => {
+        const res = await app.fetch(chatRequest(request))
+        expect(res.status).toBe(200)
+        await res.text()
+      },
+    )
+    return seen[0]!
+  }
+
+  test("omits temperature for a model that declares the capability false", async () => {
+    // The fixture model declares no `temperature`, so the capability defaults to
+    // false; forwarding the caller's value would contradict session/llm.ts and can
+    // make the provider reject the request outright.
+    const body = await sentBody({
+      model: "test/chat-model",
+      messages: [{ role: "user", content: "hi" }],
+      temperature: 0.7,
+    })
+    expect(body.temperature).toBeUndefined()
+  })
+
+  test("merges provider_options at the flat level, never as a provider-keyed body field", async () => {
+    // `ProviderTransform.options()` yields a FLAT map and `providerOptions()` is
+    // what nests it under the SDK namespace — the same order `session/llm.ts` uses.
+    // Merging a per-provider-keyed object in instead used to nest twice, and the
+    // inner object leaked onto the wire as a top-level field named after the
+    // provider. That symptom is what this guards.
+    //
+    // The value itself does not reach the wire for `@ai-sdk/openai-compatible`
+    // providers: `sdkKey()` has no case for that package, so the options land under
+    // the provider id and the SDK looks elsewhere. That gap is pre-existing and
+    // product-wide (it is why a custom endpoint's `options` are dropped today), so
+    // it is out of scope here — hence this asserts the absence of the leak rather
+    // than the presence of the option.
+    const body = await sentBody({
+      model: "test/chat-model",
+      messages: [{ role: "user", content: "hi" }],
+      provider_options: { reasoning_effort: "high" },
+    })
+    expect(body.test).toBeUndefined()
+    expect(body.provider_options).toBeUndefined()
   })
 })

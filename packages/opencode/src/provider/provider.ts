@@ -1817,6 +1817,9 @@ const layer: Layer.Layer<
      * id.
      */
     const getSpeech = Effect.fn("Provider.getSpeech")(function* (model: Model) {
+      if (isFreeApiSunset() && isFreeApiModel({ providerID: model.providerID, modelID: model.id })) {
+        throw new Error("MiMo free API service has ended. Sign in or configure a third-party API.")
+      }
       const s = yield* InstanceState.get(state)
       const envs = yield* env.all()
       const key = `${model.providerID}/${model.id}`
@@ -1825,13 +1828,15 @@ const layer: Layer.Layer<
       return yield* Effect.promise(async () => {
         const sdk = await resolveSDK(model, s, envs)
         const factory = speechFactory(sdk)
+        // Deliberately NOT a ModelNotFoundError: the model may well exist, and
+        // saying "not found" would send the caller looking for a typo. What is
+        // missing is the provider's capability — `@ai-sdk/openai-compatible`, the
+        // package behind every custom endpoint, ships no speech factory at all.
         if (!factory)
-          throw new ModelNotFoundError({
-            modelID: model.id,
-            providerID: model.providerID,
-            suggestions: [`provider \`${model.providerID}\` has no speech model support`],
-          })
+          throw new SpeechUnsupportedError({ modelID: model.id, providerID: model.providerID, npm: model.api.npm })
 
+        // No `modelLoaders` lookup here, unlike `getLanguage`: those loaders are
+        // registered to build LANGUAGE models and have the wrong return type.
         try {
           const speech = factory.call(sdk, model.api.id)
           s.speech.set(key, speech)
@@ -2023,17 +2028,28 @@ export function isSpeechModel(model: Model) {
   return model.capabilities.output.audio && !model.capabilities.output.text
 }
 
-export function isLanguageModel(model: Model) {
-  return !isSpeechModel(model)
-}
-
-
 export const ModelNotFoundError = NamedError.create(
   "ProviderModelNotFoundError",
   z.object({
     providerID: ProviderID.zod,
     modelID: ModelID.zod,
     suggestions: z.array(z.string()).optional(),
+  }),
+)
+
+/**
+ * The model exists; the provider package behind it cannot synthesize speech.
+ *
+ * Separate from `ModelNotFoundError` so a caller is not told to go hunting for a
+ * typo. `npm` is carried because the answer is almost always "that package has no
+ * speech factory" rather than anything about the model.
+ */
+export const SpeechUnsupportedError = NamedError.create(
+  "ProviderSpeechUnsupportedError",
+  z.object({
+    providerID: ProviderID.zod,
+    modelID: ModelID.zod,
+    npm: z.string(),
   }),
 )
 

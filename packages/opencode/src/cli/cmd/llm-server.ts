@@ -71,11 +71,14 @@ export const LlmServerCommand = cmd({
       UI.println("The token lives in memory only and is revoked when this process exits.")
     }
 
-    const shutdown = () => {
-      server.stop().finally(() => process.exit(0))
+    const shutdown = async () => {
+      // The token dies with the process, so stopping the listener first is
+      // courtesy to in-flight requests rather than a correctness requirement.
+      await server.stop().catch(() => {})
+      process.exit(0)
     }
-    process.on("SIGINT", shutdown)
-    process.on("SIGTERM", shutdown)
+    process.on("SIGINT", () => void shutdown())
+    process.on("SIGTERM", () => void shutdown())
 
     await new Promise(() => {})
   },

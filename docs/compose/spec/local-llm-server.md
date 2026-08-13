@@ -1,14 +1,85 @@
 ---
 feature: local-llm-server
-status: in-progress
+status: delivered
 updated: 2026-08-13
 branch: feat/llm-server
-commits: 42dcbf34f..HEAD
+commits: 42dcbf34f..6343b8c62
 ---
 
 # Temporary local LLM server (`mimo llm-server`)
 
 ## Report
+
+**What was built** — `mimo llm-server` starts a loopback-only, OpenAI-compatible
+HTTP server in front of the models the running MiMoCode instance is already
+configured for. A caller receives a `base_url` and a 256-bit process-scoped bearer
+token; the real provider credential never leaves `Provider.Service`, so it never
+enters a prompt, a transcript, or a file a skill can read. Three routes:
+`GET /v1/models`, `POST /v1/chat/completions` (streaming and not, with tools), and
+`POST /v1/audio/speech`. Repeatable `--model provider/model` forms an allowlist
+enforced on every path, and one server per task is the isolation boundary — two
+servers cannot replay each other's token.
+
+Model kind is derived from the modality capabilities that already existed rather
+than from a new schema field, which is what let TTS land without touching the
+config schema: a model absent from models.dev is declarable today via per-model
+`modalities`. `Provider` gained `getSpeech`, mirroring `getLanguage`.
+
+The starting point was a 967-line draft from two earlier sessions that had never
+been typechecked or executed. It typechecked clean on first run, and live testing
+then found five real defects — the request schema's `.strict()` rejecting the
+fields every stock OpenAI client sends, `x-api-key` demanding a `Bearer` prefix no
+client adds, duplicated SSE error frames with content after `[DONE]`, an
+unguarded `temperature`, and opaque failures when a model met the wrong endpoint.
+Independent review then found two more: `provider_options` nested one level too
+deep and silently dropped, and an unparseable `image_url` returning 502 instead of
+400.
+
+**Verification**
+
+- `bun typecheck` from `packages/opencode` — PASS (clean). Confirmed it actually
+  covers the new files by injecting a deliberate type error and seeing it caught.
+- `bun test test/llm-server/` — PASS, 64 tests across 3 files.
+- `bun test` (full suite, ~23 min) — 5007 pass. Every failure sits outside
+  `test/llm-server/`. Four were reproduced on a pristine `origin/main` worktree and
+  are therefore PRE-EXISTING: WorkflowRuntime "8 agents under cap=2",
+  checkpoint-splitover "CheckpointContext producer", checkpoint-splitover
+  "parentSessionID end-to-end", prompt-effect "failed subtask preserves metadata".
+  `test/agent/orchestrator.test.ts` is load-sensitive — it fails under full-suite
+  parallelism and passes alone in 40s. Failure counts differed between two runs of
+  identical code (6 then 11), which is itself the signature of timing flakiness.
+- Live, against real providers: auth 401 paths, `/v1/models` (88 models),
+  non-streaming and streaming completions, tool calls, an OAuth-credentialed
+  provider (`codex/gpt-5.6-sol`, which also hit the prompt cache), allowlist
+  enforcement, cross-token isolation in both directions, raw `x-api-key`, a stock
+  OpenAI-client payload, wrong-endpoint 400, unparseable `image_url` 400,
+  unauthenticated `OPTIONS` 401, and a pre-first-byte streaming failure returning a
+  real status.
+- Independent review of `6343b8c62` against this document: all ten acceptance
+  criteria met; two major and several minor findings, all addressed above except
+  those explicitly recorded as out of scope.
+
+**Journey log**
+
+1. Two prior sessions had already written the whole draft and left it uncommitted
+   in a stale worktree. Reading it before deciding was worth more than either
+   rewriting or trusting it: the design was sound and the code typechecked, but
+   nothing had ever run. "Unverified" and "wrong" are different problems.
+2. Live testing beat reasoning repeatedly. The `.strict()` and `x-api-key` defects
+   were both invisible in review and obvious on the first curl.
+3. Attribution discipline paid off three times. `eager_input_streaming` on
+   `haiku-4-5`, `Token refresh failed: 401` on `openai/*`, and four test failures
+   all looked like regressions and were all reproduced on an untouched baseline.
+   The cheap move each time was to run the same thing on `origin/main` rather than
+   argue from the code.
+4. A truncated upstream body does NOT produce an SDK error — the AI SDK treats a
+   severed connection as a clean end-of-stream. Testing a mid-stream failure
+   requires the upstream to emit an actual error frame.
+5. Researching alternatives before building saved nothing and confirmed plenty:
+   upstream opencode has an open feature request for exactly this and no
+   implementation, `@ai-sdk-tool/proxy` has no model routing at all (the request's
+   `model` is a decorative echo), and the external-proxy route cannot cover
+   `oauth`-credentialed providers because there is no static key to export.
 
 ## [S1] Problem
 
@@ -156,6 +227,24 @@ would silently produce a result in the wrong shape or quantity:
 Documented no-op defaults (`n: 1`, zero penalties) are accepted, because an
 untouched client sends them without requesting anything.
 
+Structural validity is still enforced, and enforced IN the schema rather than in
+the handler. An unparseable `image_url` is the case that motivates the
+distinction: `new URL` throwing inside the handler surfaces as a 502, dressing a
+permanent client mistake as a retryable outage.
+
+`provider_options` is FLAT — keyed by the provider-native option name, not by
+provider. `ProviderTransform.options()` produces a flat map and
+`ProviderTransform.providerOptions()` is what nests it under the SDK's namespace,
+matching the order `session/llm.ts` uses. Both routes take the same flat shape and
+nest through the same helper, so one field name never means two shapes.
+
+Known limitation, pre-existing and product-wide: for `@ai-sdk/openai-compatible`
+providers the escape hatch is inert. `sdkKey()` in `provider/transform.ts` has no
+case for that package, so options land under the provider id while the SDK reads
+another namespace. Same root cause as custom-endpoint `options` being dropped
+today; fixing it changes behaviour for every custom provider, so it is out of
+scope here.
+
 ### [S2.7] Error taxonomy
 
 - validation → 400, OpenAI-shaped `error` body
@@ -163,10 +252,19 @@ untouched client sends them without requesting anything.
 - wrong endpoint for the model's kind → 400 naming the correct endpoint, so a
   caller that sends a speech model to `/v1/chat/completions` learns where to go
   instead of receiving an opaque upstream error
+- model real, request well formed, provider package incapable → 501
+  `unsupported_capability`, naming the package. Neither a 404 (which would send
+  the caller hunting for a typo) nor a 5xx implying an outage
 - upstream provider failure → 502, not 500, so a caller can distinguish
   "MiMoCode broke" from "the provider broke"
 - mid-stream failure, where the status line is already sent → exactly ONE in-band
   SSE error frame followed by the `[DONE]` sentinel, and nothing after `[DONE]`
+
+The last rule applies only once a frame has actually been emitted. `streamText` is
+lazy, so the streaming route drains ONE frame before committing a status line;
+until then a failure is reported with a real status code. Otherwise an expired
+credential and a stream that died at token 500 would be indistinguishable — both
+`200` with an error frame.
 
 ### [S2.8] Speech synthesis
 
@@ -228,12 +326,18 @@ NOT addressed here:
 ## Tasks
 
 - [x] T1: Create a worktree on latest `origin/main` and migrate the prior draft — acceptance: `bun typecheck` clean in `packages/opencode` (covers: S2)
-- [ ] T2: Accept unknown request fields; keep the semantic-guard rejections — acceptance: a payload carrying `parallel_tool_calls`/`store`/`metadata`/`service_tier` returns 200; `response_format` and `n: 2` still return 400 (covers: S2.6)
-- [ ] T3: Accept a raw `x-api-key` token — acceptance: `x-api-key: <token>` returns 200 and `x-api-key: wrong` returns 401 (covers: S2.2; depends: T1)
-- [ ] T4: Emit exactly one SSE error frame, with nothing after `[DONE]` — acceptance: a forced mid-stream failure yields one error frame then `[DONE]` and no trailing `event: error` (covers: S2.7; depends: T1)
-- [ ] T5: Gate `temperature` on `capabilities.temperature` — acceptance: a model whose capability is false receives no temperature even when the caller sends one (covers: S2.5; depends: T1)
-- [ ] T6: Derive model kind from modalities and reject cross-endpoint misuse — acceptance: a speech model posted to `/v1/chat/completions` returns 400 naming `/v1/audio/speech`, and vice versa (covers: S2.4, S2.7; depends: T1)
-- [ ] T7: Add `Provider.getSpeech` — acceptance: resolves a speech model through `resolveSDK` with the constructed model cached, and maps an unknown id to `ModelNotFoundError` (covers: S2.8; depends: T6)
-- [ ] T8: Add `POST /v1/audio/speech` — acceptance: returns audio bytes with a matching `Content-Type`, enforces the allowlist, and 404s an unknown model (covers: S2.8; depends: T7)
-- [ ] T9: Tests for protocol conversion, auth, validation policy, model-kind gating, and SSE framing — acceptance: `bun test` passes from `packages/opencode` (covers: S2.2, S2.4, S2.5, S2.6, S2.7)
-- [ ] T10: Verify and review — acceptance: `bun typecheck` and `bun test` clean, live smoke test of every route, and an independent review with no unresolved critical findings (covers: S2)
+- [x] T2: Accept unknown request fields; keep the semantic-guard rejections — acceptance: a payload carrying `parallel_tool_calls`/`store`/`metadata`/`service_tier` returns 200; `response_format` and `n: 2` still return 400 (covers: S2.6)
+- [x] T3: Accept a raw `x-api-key` token — acceptance: `x-api-key: <token>` returns 200 and `x-api-key: wrong` returns 401 (covers: S2.2; depends: T1)
+- [x] T4: Emit exactly one SSE error frame, with nothing after `[DONE]` — acceptance: a forced mid-stream failure yields one error frame then `[DONE]` and no trailing `event: error` (covers: S2.7; depends: T1)
+- [x] T5: Gate `temperature` on `capabilities.temperature` — acceptance: a model whose capability is false receives no temperature even when the caller sends one (covers: S2.5; depends: T1)
+- [x] T6: Derive model kind from modalities and reject cross-endpoint misuse — acceptance: a speech model posted to `/v1/chat/completions` returns 400 naming `/v1/audio/speech`, and vice versa (covers: S2.4, S2.7; depends: T1)
+- [x] T7: Add `Provider.getSpeech` — acceptance: resolves a speech model through `resolveSDK` with the constructed model cached, and maps an unknown id to `ModelNotFoundError` (covers: S2.8; depends: T6)
+- [x] T8: Add `POST /v1/audio/speech` — acceptance: returns audio bytes with a matching `Content-Type`, enforces the allowlist, and 404s an unknown model (covers: S2.8; depends: T7)
+      NOTE: the allowlist and 404 paths are covered by tests, and the 501
+      "provider cannot synthesize" path exercises `getSpeech` for real. The SUCCESS
+      path — actual audio bytes — is NOT verified: no TTS model is configured in
+      this environment, and `@ai-sdk/openai-compatible` (the only provider the test
+      fixture can build) exposes no speech factory at all. Verifying it needs a
+      reachable `@ai-sdk/openai`-family credential plus a declared speech model.
+- [x] T9: Tests for protocol conversion, auth, validation policy, model-kind gating, and SSE framing — acceptance: `bun test` passes from `packages/opencode` (covers: S2.2, S2.4, S2.5, S2.6, S2.7)
+- [x] T10: Verify and review — acceptance: `bun typecheck` and `bun test` clean, live smoke test of every route, and an independent review with no unresolved critical findings (covers: S2)

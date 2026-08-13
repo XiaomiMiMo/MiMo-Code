@@ -7,6 +7,7 @@ import {
   type ToolSet,
 } from "ai"
 import { Effect } from "effect"
+import type { ContentfulStatusCode } from "hono/utils/http-status"
 import { AppRuntime } from "@/effect/app-runtime"
 import { Provider, ProviderTransform } from "@/provider"
 import { Log } from "@/util"
@@ -27,7 +28,9 @@ const log = Log.create({ service: "llm-server.completions" })
 
 export class RequestError extends Error {
   constructor(
-    readonly status: number,
+    // Typed as hono's contentful status so the error handler can hand it to
+    // `c.json` without a narrowing cast that would claim more than it knows.
+    readonly status: ContentfulStatusCode,
     message: string,
     readonly type = "invalid_request_error",
     readonly code?: string,
@@ -45,6 +48,12 @@ export class RequestError extends Error {
  * crosses this boundary — the caller only ever learns whether the model exists.
  */
 function lookupModel(ref: string, allowlist: readonly string[]) {
+  // Shape first: a caller who wrote the reference wrong should hear about the
+  // shape, not be told the model is unavailable to their token.
+  const parsed = Provider.parseModel(ref)
+  if (!parsed.modelID) {
+    throw new RequestError(400, `Model \`${ref}\` must be given as \`provider/model\``, "invalid_request_error")
+  }
   if (allowlist.length > 0 && !allowlist.includes(ref)) {
     throw new RequestError(
       404,
@@ -52,10 +61,6 @@ function lookupModel(ref: string, allowlist: readonly string[]) {
       "invalid_request_error",
       "model_not_found",
     )
-  }
-  const parsed = Provider.parseModel(ref)
-  if (!parsed.modelID) {
-    throw new RequestError(400, `Model \`${ref}\` must be given as \`provider/model\``, "invalid_request_error")
   }
   return { parsed, ref }
 }
@@ -148,10 +153,14 @@ export async function start(input: {
   // prompt cache on it (Azure) then scope that cache to one request instead of
   // sharing it across unrelated callers of this server.
   const requestID = completionID()
-  const options = ProviderTransform.options({ model, sessionID: requestID })
-  const merged = input.req.provider_options
-    ? { ...options, ...input.req.provider_options }
-    : options
+  // Both sides of this merge are FLAT provider-native option maps;
+  // `ProviderTransform.providerOptions` below is what nests the result under the
+  // SDK's namespace. Merging a per-provider-keyed object in here would survive
+  // typechecking and then be silently dropped by the provider.
+  const merged = {
+    ...ProviderTransform.options({ model, sessionID: requestID }),
+    ...input.req.provider_options,
+  }
 
   log.info("upstream request", {
     model: `${model.providerID}/${model.id}`,
@@ -327,9 +336,10 @@ export async function* stream(input: {
   }
 
   if (!started) yield open()
-  const usage = await input.result.totalUsage
   yield chunk({ ...base, delta: {}, finishReason: await input.result.finishReason })
-  if (input.includeUsage) yield usageChunk({ ...base, usage })
+  // Only touched when asked for. These SDK fields are lazy promises, so reading
+  // one the caller never requested adds a rejection path for no benefit.
+  if (input.includeUsage) yield usageChunk({ ...base, usage: await input.result.totalUsage })
 }
 
 /**
@@ -340,9 +350,11 @@ export async function* stream(input: {
  * The caller is told this outright rather than being handed a stalled stream (see
  * `speechUnsupported`).
  *
- * `providerOptions` carries the request's escape hatch straight through. Unlike
- * the chat path there is nothing to merge it over: `ProviderTransform` has no
- * speech-side compatibility rules to contribute.
+ * The request's `provider_options` is flat, exactly as on the chat route, and is
+ * nested through the same `ProviderTransform.providerOptions` helper so one field
+ * name does not mean two different shapes depending on the endpoint.
+ * `ProviderTransform` has no speech-side compatibility rules to contribute, so
+ * there is nothing to merge it over.
  */
 export async function synthesize(input: {
   req: SpeechRequest
@@ -364,7 +376,9 @@ export async function synthesize(input: {
     outputFormat: input.req.response_format,
     instructions: input.req.instructions,
     speed: input.req.speed,
-    providerOptions: input.req.provider_options,
+    providerOptions: input.req.provider_options
+      ? ProviderTransform.providerOptions(resolved.model, input.req.provider_options)
+      : undefined,
     headers: resolved.model.headers,
     // Same reasoning as the chat path: retry policy belongs to the caller, not to
     // a proxy that would bill several syntheses for one request.

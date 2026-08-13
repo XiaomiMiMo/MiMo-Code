@@ -88,6 +88,13 @@ describe("authentication", () => {
     )
     expect(res.status).toBe(401)
   })
+
+  test("requires a credential for OPTIONS too, so no unauthenticated request boots an instance", async () => {
+    // CORS headers are not served, so exempting OPTIONS would buy nothing while
+    // letting an anonymous request reach the instance middleware.
+    const res = await app().fetch(new Request("http://llm-server.test/v1/models", { method: "OPTIONS" }))
+    expect(res.status).toBe(401)
+  })
 })
 
 describe("accepted credential forms", () => {
@@ -96,13 +103,14 @@ describe("accepted credential forms", () => {
     const app = LLMServer.create({ token: TOKEN, directory: tmp.path })
     const url = "http://llm-server.test/v1/models"
 
-    for (const headers of [
+    const headerForms: Record<string, string>[] = [
       { authorization: `Bearer ${TOKEN}` },
       // The convention of x-api-key is a RAW value; clients that send this header
       // do not add a scheme, and requiring one produced a confusing 401.
       { "x-api-key": TOKEN },
       { "x-api-key": `Bearer ${TOKEN}` },
-    ]) {
+    ]
+    for (const headers of headerForms) {
       const res = await app.fetch(new Request(url, { headers }))
       expect(res.status).toBe(200)
     }
@@ -224,8 +232,32 @@ describe("request validation at the route", () => {
     expect((await res.json()).error.message).toContain("response_format")
   })
 
-  test("400s a malformed body", async () => {
+  test("400s an unparseable image_url rather than letting it become a 502", async () => {
+    // `new URL` throwing inside the handler used to land in the generic error
+    // branch, which made a permanent client mistake look like a retryable outage.
     await using tmp = await tmpdir({ config })
+    const app = LLMServer.create({ token: TOKEN, directory: tmp.path })
+    const res = await post(app, "/v1/chat/completions", {
+      model: "test/chat-model",
+      messages: [{ role: "user", content: [{ type: "image_url", image_url: { url: "not-a-url" } }] }],
+    })
+    expect(res.status).toBe(400)
+  })
+
+  test("accepts both accepted image_url forms", async () => {
+    await using tmp = await tmpdir({ config })
+    const app = LLMServer.create({ token: TOKEN, directory: tmp.path })
+    for (const url of ["data:image/png;base64,AAAB", "https://example.com/a.png"]) {
+      const res = await post(app, "/v1/chat/completions", {
+        model: "test/nope-so-we-stop-before-the-network",
+        messages: [{ role: "user", content: [{ type: "image_url", image_url: { url } }] }],
+      })
+      // 404 on the model proves validation accepted the URL.
+      expect(res.status).toBe(404)
+    }
+  })
+
+  test("400s a malformed body", async () => {    await using tmp = await tmpdir({ config })
     const app = LLMServer.create({ token: TOKEN, directory: tmp.path })
     const res = await app.fetch(
       new Request("http://llm-server.test/v1/chat/completions", {
@@ -247,6 +279,38 @@ describe("request validation at the route", () => {
     })
     expect(res.status).toBe(400)
     expect((await res.json()).error.message).toContain("stream_format")
+  })
+})
+
+describe("speech capability", () => {
+  test("501s, naming the package, when the provider has no speech factory", async () => {
+    // Reaches Provider.getSpeech for real. `@ai-sdk/openai-compatible` — the
+    // package behind every custom endpoint — exposes no speech factory, and the
+    // distinction matters: the model exists and the request is well formed, so
+    // this is neither a 404 telling the caller to hunt for a typo nor a 502
+    // implying an outage.
+    await using tmp = await tmpdir({ config })
+    const app = LLMServer.create({ token: TOKEN, directory: tmp.path })
+    const res = await post(app, "/v1/audio/speech", { model: "test/tts-model", input: "hello" })
+    expect(res.status).toBe(501)
+    const body = (await res.json()) as { error: { message: string; code: string } }
+    expect(body.error.code).toBe("unsupported_capability")
+    expect(body.error.message).toContain("@ai-sdk/openai-compatible")
+  })
+
+  test("enforces the allowlist on the speech route as well", async () => {
+    await using tmp = await tmpdir({ config })
+    const app = LLMServer.create({ token: TOKEN, directory: tmp.path, models: ["test/chat-model"] })
+    const res = await post(app, "/v1/audio/speech", { model: "test/tts-model", input: "hello" })
+    expect(res.status).toBe(404)
+    expect(await res.json()).toMatchObject({ error: { code: "model_not_found" } })
+  })
+
+  test("404s an unknown model on the speech route", async () => {
+    await using tmp = await tmpdir({ config })
+    const app = LLMServer.create({ token: TOKEN, directory: tmp.path })
+    const res = await post(app, "/v1/audio/speech", { model: "test/nope", input: "hello" })
+    expect(res.status).toBe(404)
   })
 })
 

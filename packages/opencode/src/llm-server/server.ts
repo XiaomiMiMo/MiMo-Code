@@ -3,6 +3,7 @@ import { streamSSE, type SSEStreamingApi } from "hono/streaming"
 import { adapter } from "#hono"
 import { Effect } from "effect"
 import { timingSafeEqual } from "node:crypto"
+import { createServer } from "node:net"
 import { AppRuntime } from "@/effect/app-runtime"
 import { InstanceBootstrap } from "@/project/bootstrap"
 import { Instance } from "@/project/instance"
@@ -98,12 +99,26 @@ export function create(opts: Options) {
   const app = new Hono()
     .onError((err, c) => {
       if (err instanceof RequestError) {
-        return c.json(errorBody({ message: err.message, type: err.type, code: err.code }), err.status as 400)
+        return c.json(errorBody({ message: err.message, type: err.type, code: err.code }), err.status)
       }
       if (err instanceof Provider.ModelNotFoundError) {
         return c.json(
           errorBody({ message: err.message, type: "invalid_request_error", code: "model_not_found" }),
           404,
+        )
+      }
+      // The model is real and the request was well formed; the provider package
+      // simply cannot do this. That is neither the caller's mistake (4xx) nor a
+      // failure (5xx-as-outage), so it gets the status that means "not implemented
+      // here" and a message naming the package.
+      if (err instanceof Provider.SpeechUnsupportedError) {
+        return c.json(
+          errorBody({
+            message: `Model \`${err.data.providerID}/${err.data.modelID}\` cannot synthesize speech: provider package \`${err.data.npm}\` exposes no speech model`,
+            type: "invalid_request_error",
+            code: "unsupported_capability",
+          }),
+          501,
         )
       }
       log.error("request failed", { error: err })
@@ -116,7 +131,9 @@ export function create(opts: Options) {
       )
     })
     .use(async (c, next) => {
-      if (c.req.method === "OPTIONS") return next()
+      // No OPTIONS carve-out: CORS headers are not served (see the spec), so
+      // exempting the method would buy nothing while letting an unauthenticated
+      // request reach the instance middleware and boot an instance.
       const provided = presentedToken((name) => c.req.header(name))
       if (!provided) {
         return c.json(
@@ -182,6 +199,23 @@ export function create(opts: Options) {
         return c.json(await collect({ id: started.id, ref: started.ref, result: started.result }))
       }
 
+      // Pull the FIRST frame before committing a status line.
+      //
+      // `streamText` is lazy, so `start()` above performs no upstream I/O: an
+      // expired credential or an unreachable provider would otherwise surface as
+      // `200` plus an in-band error frame, leaving the caller unable to tell a
+      // rejected request from one that died at token 500. Draining one frame here
+      // lets a pre-first-byte failure propagate to `onError` and get the status it
+      // deserves. Only failures after this point are reported in band, which is
+      // what §S2.7 actually promises.
+      const frames = stream({
+        id: started.id,
+        ref: started.ref,
+        result: started.result,
+        includeUsage: req.stream_options?.include_usage === true,
+      })[Symbol.asyncIterator]()
+      const first = await frames.next()
+
       // The SSE body is written after this handler returns, i.e. outside the
       // instance async-local context established above. `Instance.bind` captures
       // that context so provider lookups inside the generator still resolve.
@@ -193,13 +227,9 @@ export function create(opts: Options) {
         // `writeSSE({ event: "error" })`), so delegating to `onError` would always
         // produce two error frames and put content AFTER `[DONE]`.
         try {
-          for await (const payload of stream({
-            id: started.id,
-            ref: started.ref,
-            result: started.result,
-            includeUsage: req.stream_options?.include_usage === true,
-          })) {
-            await sse.writeSSE({ data: JSON.stringify(payload) })
+          if (!first.done) await sse.writeSSE({ data: JSON.stringify(first.value) })
+          for (let next = await frames.next(); !next.done; next = await frames.next()) {
+            await sse.writeSSE({ data: JSON.stringify(next.value) })
           }
         } catch (err) {
           log.error("stream failed", { error: err })
@@ -260,10 +290,9 @@ const LOOPBACK = ["127.0.0.1", "localhost", "::1"]
  * principle take it in between — the rebind then fails loudly on startup, which
  * is recoverable, unlike quietly answering on 4096.
  */
-async function ephemeralPort(hostname: string) {
-  const net = await import("node:net")
+function ephemeralPort(hostname: string) {
   return new Promise<number>((resolve, reject) => {
-    const probe = net.createServer()
+    const probe = createServer()
     probe.once("error", reject)
     probe.listen({ port: 0, host: hostname }, () => {
       const address = probe.address()
