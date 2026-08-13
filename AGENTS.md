@@ -1,14 +1,18 @@
+# MiMo-Code
+
+## Conventions
+
 - Use MiMoCode Compose skills when available, otherwise use superpowers skill if installed.
 - To regenerate the JavaScript SDK, run `./packages/sdk/js/script/build.ts`.
 - ALWAYS USE PARALLEL TOOLS WHEN APPLICABLE.
 - The default branch in this repo is `main`.
-- CI triggers on both `main` and `dev` branches.
+- CI triggers on `main`.
 - Prefer automation: execute requested actions without confirmation unless blocked by missing info or safety/irreversibility.
 - Install deps with `bun ci` (= `bun install --frozen-lockfile`) — install per `bun.lock`, don't mutate the lockfile. ⛔ Do NOT use `bun install`/`npm install`.
 
-## Core Focus (as of 2025-06-18)
+## Core Focus
 
-Our core development focus is the **TUI** (terminal UI) implementation in `packages/opencode/src/cli/cmd/tui/`. We do not currently provide support for Web or App interfaces. All operations should default to checking the TUI implementation first.
+Development focuses on the **TUI** (`packages/opencode/src/cli/cmd/tui/`) and the **engine core** it runs on. The Web, App and Desktop surfaces are not currently maintained. In practice this means an operation should default to checking the TUI path first.
 
 ## Style Guide
 
