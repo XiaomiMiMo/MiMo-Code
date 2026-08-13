@@ -6,6 +6,7 @@ import { Config } from "@/config"
 import { Instance } from "@/project/instance"
 import { LLMServer } from "../../llm-server/server"
 import { LLMServerTokens } from "../../llm-server/tokens"
+import { Self } from "@/util"
 import { UI } from "../ui"
 
 /**
@@ -63,6 +64,20 @@ function relative(at: number | undefined) {
   return `in ${Math.round(hours / 24)}d`
 }
 
+/**
+ * Reproduce the flags that shaped this token, so a renewal is equivalent rather
+ * than merely valid. Dropping `--model` would quietly widen the replacement key.
+ */
+function renewArgs(args: { ttl?: string; "max-age"?: string; model: string[]; label?: string }) {
+  return [
+    ...(args.ttl ? ["--ttl", args.ttl] : []),
+    ...(args["max-age"] ? ["--max-age", args["max-age"]] : []),
+    ...args.model.flatMap((ref) => ["--model", ref]),
+    ...(args.label ? ["--label", args.label] : []),
+    "--json",
+  ]
+}
+
 const issue = cmd({
   command: "issue",
   describe: "mint a token for the local LLM server and print how to reach it",
@@ -111,6 +126,12 @@ const issue = cmd({
             expires_at: LLMServerTokens.expiresAt(issued.record) ?? null,
             models: issued.record.models.length > 0 ? issued.record.models : "all",
             server_running: address !== undefined,
+            // How to get another key when this one ages out, resolved for THIS
+            // installation. A skill that only ever sees this JSON can therefore
+            // recover from `expired_api_key` without knowing whether mimocode came
+            // from npx, a global install, or a source checkout.
+            renew_argv: Self.argv("llm-server", "issue", ...renewArgs(args)),
+            renew_command: Self.commandLine("llm-server", "issue", ...renewArgs(args)),
           }) + "\n",
         )
         return
@@ -125,7 +146,7 @@ const issue = cmd({
       UI.println("")
       if (!address) {
         UI.println("No server is running for this directory, so there is no base_url yet.")
-        UI.println("Start one with `mimo llm-server` (the token above already works against it).")
+        UI.println(`Start one with \`${Self.commandLine("llm-server")}\` (the token above already works against it).`)
         return
       }
       UI.println("The plaintext token is shown once and is not stored; only its hash is.")
@@ -251,7 +272,7 @@ export const LlmServerCommand = cmd({
       UI.println(`  models    ${args.model.length > 0 ? args.model.join(", ") : "all configured models"}`)
       if (server.token) UI.println(`  api_key   ${server.token}  (from --token; never expires)`)
       UI.println("")
-      UI.println("Mint a scoped, expiring key with `mimo llm-server issue --json`.")
+      UI.println(`Mint a scoped, expiring key with \`${Self.commandLine("llm-server", "issue", "--json")}\`.`)
     }
 
     const shutdown = async () => {

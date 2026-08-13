@@ -8,7 +8,7 @@ import { AppRuntime } from "@/effect/app-runtime"
 import { InstanceBootstrap } from "@/project/bootstrap"
 import { Instance } from "@/project/instance"
 import { Provider } from "@/provider"
-import { Log } from "@/util"
+import { Log, Self } from "@/util"
 import { collect, RequestError, start, stream, synthesize } from "./completions"
 import { LLMServerTokens } from "./tokens"
 import { ChatCompletionRequest, errorBody, SpeechRequest, speechUnsupported, unsupported } from "./protocol"
@@ -192,7 +192,11 @@ export function create(opts: Options) {
         if (verdict.reason === "expired") {
           return c.json(
             errorBody({
-              message: "Token expired; request a new one with `mimo llm-server issue`",
+              // The command is DERIVED, not the literal string `mimo`: this process
+              // may have been started through npx, a node_modules shim, or a source
+              // checkout, in which case `mimo` is not a command and naming it would
+              // be advice the caller cannot act on.
+              message: `Token expired; request a new one with \`${Self.commandLine("llm-server", "issue")}\``,
               type: "invalid_request_error",
               code: "expired_api_key",
             }),
