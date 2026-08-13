@@ -25,7 +25,7 @@ const ContentPart = z.discriminatedUnion("type", [
       // Parseability is checked HERE so an unparseable URL is a 400 from
       // validation rather than a 502 from `new URL` throwing inside the handler.
       // `URL.canParse` accepts `data:` URLs too, so both accepted forms pass.
-      url: z.string().refine(URL.canParse, "must be a data: URL or an absolute URL"),
+      url: z.string().refine((value) => URL.canParse(value), "must be a data: URL or an absolute URL"),
       detail: z.string().optional(),
     }),
   }),
@@ -418,6 +418,6 @@ export function speechContentType(input: { reported?: string; requested?: string
   if (input.reported && input.reported !== UNDETERMINED_MEDIA_TYPE) return input.reported
   if (input.requested) return SPEECH_MEDIA_TYPES[input.requested] ?? "application/octet-stream"
   // Never the non-standard `audio/mp3` alias, even when that is what was reported.
-  return SPEECH_MEDIA_TYPES.mp3!
+  return SPEECH_MEDIA_TYPES.mp3
 }
 

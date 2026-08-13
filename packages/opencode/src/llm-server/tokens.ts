@@ -85,33 +85,67 @@ export async function unpublish(directory: string) {
 }
 
 /**
+ * Read a JSON file as `unknown`.
+ *
+ * Typed `unknown` rather than asserted into shape, because these files are state on
+ * disk that another process wrote: a truncated write or a version skew must be
+ * narrowed, not declared. A missing or unparseable file is simply absent.
+ */
+async function readJson(target: string): Promise<unknown> {
+  const text = await fs.readFile(target, "utf8").catch(() => undefined)
+  if (text === undefined) return undefined
+  try {
+    return JSON.parse(text)
+  } catch {
+    return undefined
+  }
+}
+
+/** A type predicate rather than a cast, so the narrowing is checked, not claimed. */
+function fields(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+}
+
+/**
  * Read the advertised address, treating a dead process as no address at all.
  *
  * A crashed server leaves its file behind, and handing that stale port to a skill
  * would produce a connection error far away from the cause. `kill(pid, 0)` costs
  * nothing and turns it into an honest "nothing is running".
  */
-export async function address(directory: string) {
-  const raw = await fs
-    .readFile(addressFile(directory), "utf8")
-    .then((t) => JSON.parse(t) as Address)
-    .catch(() => undefined)
-  if (!raw) return undefined
+export async function address(directory: string): Promise<Address | undefined> {
+  const raw = await readJson(addressFile(directory))
+  if (!fields(raw)) return undefined
+  if (typeof raw["pid"] !== "number" || typeof raw["port"] !== "number") return undefined
+  if (typeof raw["hostname"] !== "string" || typeof raw["url"] !== "string") return undefined
   try {
-    process.kill(raw.pid, 0)
+    process.kill(raw["pid"], 0)
   } catch {
     return undefined
   }
-  return raw
+  return {
+    pid: raw["pid"],
+    hostname: raw["hostname"],
+    port: raw["port"],
+    url: raw["url"],
+    started: typeof raw["started"] === "number" ? raw["started"] : 0,
+  }
 }
 
 async function read(directory: string): Promise<Store> {
-  const raw = await fs
-    .readFile(file(directory), "utf8")
-    .then((t) => JSON.parse(t) as Store)
-    .catch(() => undefined)
-  if (!raw || raw.version !== 1 || !Array.isArray(raw.tokens)) return { ...EMPTY }
-  return raw
+  const raw = await readJson(file(directory))
+  if (!fields(raw) || raw["version"] !== 1 || !Array.isArray(raw["tokens"])) return { ...EMPTY }
+  // Records are filtered rather than trusted wholesale: one corrupt entry should
+  // cost its own token, not every token in the file.
+  return { version: 1, tokens: raw["tokens"].filter(isRecord) }
+}
+
+function isRecord(value: unknown): value is Record_ {
+  if (!fields(value)) return false
+  const raw = value
+  if (typeof raw["id"] !== "string" || typeof raw["hash"] !== "string") return false
+  if (typeof raw["created"] !== "number") return false
+  return Array.isArray(raw["models"])
 }
 
 async function write(directory: string, store: Store) {
