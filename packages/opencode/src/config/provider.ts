@@ -13,6 +13,23 @@ export const Model = Schema.Struct({
   reasoning: Schema.optional(Schema.Boolean),
   temperature: Schema.optional(Schema.Boolean),
   tool_call: Schema.optional(Schema.Boolean),
+  /**
+   * This model builds a voice from a natural-language description.
+   *
+   * Declared rather than derived, because it is INDISTINGUISHABLE from ordinary
+   * text-to-speech by modality: both are text in, audio out. Deriving it would mean
+   * matching model names in our source, which is the coupling this avoids.
+   */
+  voice_design: Schema.optional(Schema.Boolean),
+  /**
+   * This model reproduces a voice from a reference sample.
+   *
+   * Also declared, even though `input: [text, audio] → output: [audio]` looks like enough
+   * to infer it: a model with that shape could equally be speech-to-speech conversion. An
+   * inference that is right most of the time is the wrong kind of right for choosing which
+   * model a request is routed to.
+   */
+  voice_clone: Schema.optional(Schema.Boolean),
   interleaved: Schema.optional(
     Schema.Union([
       Schema.Literal(true),

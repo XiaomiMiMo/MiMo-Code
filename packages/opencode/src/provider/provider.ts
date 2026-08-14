@@ -987,6 +987,17 @@ const ProviderCapabilities = Schema.Struct({
   reasoning: Schema.Boolean,
   attachment: Schema.Boolean,
   toolcall: Schema.Boolean,
+  /**
+   * Builds a voice from a text description. Declared in config, never derived.
+   *
+   * Optional rather than a defaulted boolean, and the reason is worth keeping: absence
+   * genuinely means "not declared", which is the same thing as false here. Making it
+   * required would force every hand-built model fixture in the suite to state a capability
+   * it has no opinion about, adding noise to unrelated diffs for no semantic gain.
+   */
+  voiceDesign: Schema.optional(Schema.Boolean),
+  /** Reproduces a voice from a reference sample. Same provenance as `voiceDesign`. */
+  voiceClone: Schema.optional(Schema.Boolean),
   input: ProviderModalities,
   output: ProviderModalities,
   interleaved: ProviderInterleaved,
@@ -1153,6 +1164,8 @@ function fromModelsDevModel(provider: ModelsDev.Provider, model: ModelsDev.Model
       reasoning: model.reasoning ?? false,
       attachment: model.attachment ?? false,
       toolcall: model.tool_call ?? true,
+      voiceDesign: model.voice_design ?? false,
+      voiceClone: model.voice_clone ?? false,
       input: {
         text: model.modalities?.input?.includes("text") ?? false,
         audio: model.modalities?.input?.includes("audio") ?? false,
@@ -1341,6 +1354,12 @@ const layer: Layer.Layer<
                     model.modalities?.output?.includes("video") ?? existingModel?.capabilities.output.video ?? false,
                   pdf: model.modalities?.output?.includes("pdf") ?? existingModel?.capabilities.output.pdf ?? false,
                 },
+                // Declared per model, never derived: design is indistinguishable from plain
+                // TTS by modality, and a sample-taking model could be speech-to-speech
+                // conversion. `existingModel` carries the value forward when a config entry
+                // only overrides other fields.
+                voiceDesign: model.voice_design ?? existingModel?.capabilities.voiceDesign,
+                voiceClone: model.voice_clone ?? existingModel?.capabilities.voiceClone,
                 interleaved:
                   model.interleaved ??
                   existingModel?.capabilities.interleaved ??

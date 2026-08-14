@@ -459,7 +459,40 @@ export function errorBody(input: { message: string; type: string; code?: string;
 export const SpeechRequest = z.object({
   model: z.string().min(1),
   input: z.string().min(1),
-  voice: z.string().optional(),
+  /**
+   * Where the timbre comes from. Exactly one source, because a voice has exactly one.
+   *
+   * A bare string is OpenAI's preset form and stays byte-compatible with it. The object arms
+   * are ours, and the shape is not an invention: OpenAI's own `voice` is a union that already
+   * admits an object (`{ id }` for a custom voice), so a client library that types this field
+   * can express an object arm.
+   *
+   * A discriminated union rather than sibling `voice_design` / `voice_clone` parameters. That
+   * is the whole point: "what if both are supplied" becomes unrepresentable instead of a
+   * precedence rule someone has to invent, document, and be surprised by. Two keys inside one
+   * object match NEITHER arm under strict parsing, so it is a 400 from the schema rather than
+   * hand-written logic.
+   *
+   * `{ id }` is deliberately absent for now — a voice as a stored resource needs somewhere to
+   * store it, and nothing needs that yet. Adding an arm later is backward compatible.
+   */
+  voice: z
+    .union([
+      z.string().min(1),
+      z.object({ design: z.string().min(1) }).strict(),
+      z
+        .object({
+          clone: z
+            .object({
+              /** Base64, or a `data:` URL. */
+              audio: z.string().min(1),
+              format: z.enum(["wav", "mp3", "mpeg"]).optional(),
+            })
+            .strict(),
+        })
+        .strict(),
+    ])
+    .optional(),
   response_format: z.enum(["mp3", "opus", "aac", "flac", "wav", "pcm"]).optional(),
   speed: z.number().min(0.25).max(4).optional(),
   instructions: z.string().optional(),

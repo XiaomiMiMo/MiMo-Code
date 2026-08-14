@@ -559,12 +559,68 @@ export async function* stream(input: {
  * `ProviderTransform` has no speech-side compatibility rules to contribute, so
  * there is nothing to merge it over.
  */
+/**
+ * Read the `voice` union into the three things a request actually needs to know.
+ *
+ * Written as a narrowing over the arms rather than optional-field plucking, so adding an arm
+ * later is a compile error at every site that has to care instead of a silent fallthrough.
+ */
+/**
+ * The instruction a vendor sees, with a voice DESIGN description folded in.
+ *
+ * Folded rather than sent as a separate field because that is where the convention puts it:
+ * the description IS the style instruction for a design model. Kept ahead of the caller's own
+ * instructions so those can refine it rather than be buried by it.
+ */
+function instructionsFor(source: ReturnType<typeof voiceSource>, instructions?: string) {
+  if (source.kind !== "design") return instructions
+  return instructions ? `${source.description}\n\n${instructions}` : source.description
+}
+
+export function voiceSource(voice: SpeechRequest["voice"]) {
+  if (voice === undefined) return { kind: "default" as const }
+  if (typeof voice === "string") return { kind: "preset" as const, preset: voice }
+  if ("design" in voice) return { kind: "design" as const, description: voice.design }
+  return { kind: "clone" as const, sample: voice.clone }
+}
+
+/**
+ * Which declared capability a voice source needs.
+ *
+ * `undefined` means "no special capability" — a preset voice or none is what every speech
+ * model can do. The other two are DECLARED per model in config (`voice_design` /
+ * `voice_clone`), never inferred, because design is indistinguishable from plain TTS by
+ * modality and a sample-taking model could equally be speech-to-speech conversion.
+ */
+function requiredCapability(source: ReturnType<typeof voiceSource>) {
+  if (source.kind === "design") return "voiceDesign" as const
+  if (source.kind === "clone") return "voiceClone" as const
+  return undefined
+}
+
 export async function synthesize(input: {
   req: SpeechRequest
   allowlist: ModelScope
   abort: AbortSignal
 }) {
   const resolved = await resolveSpeechModel(input.req.model, input.allowlist)
+
+  // Checked BEFORE any upstream call, and against the model the caller actually named. The
+  // alternative — let the vendor reject it — spends a request to learn something we already
+  // knew, and reports it in the vendor's words rather than ours.
+  const source = voiceSource(input.req.voice)
+  const needed = requiredCapability(source)
+  if (needed && !resolved.model.capabilities[needed]) {
+    throw new RequestError(
+      400,
+      `Model \`${resolved.model.providerID}/${resolved.model.id}\` does not declare ` +
+        `\`${needed === "voiceDesign" ? "voice_design" : "voice_clone"}\`, so it cannot take a ` +
+        `${source.kind === "design" ? "voice description" : "reference sample"}. Declare the ` +
+        `capability on a model that supports it, or send a preset voice name instead`,
+      "invalid_request_error",
+      "unsupported_capability",
+    )
+  }
 
   log.info("upstream speech request", {
     model: `${resolved.model.providerID}/${resolved.model.id}`,
@@ -582,9 +638,13 @@ export async function synthesize(input: {
       providerID: resolved.model.providerID,
       modelID: resolved.model.api.id,
       text: input.req.input,
-      voice: input.req.voice,
+      // A preset name and a reference sample both ride in the vendor's single `voice` field;
+      // a design description does not ride there at all — it goes in the instruction, which is
+      // where that vendor convention puts it.
+      voice: source.kind === "preset" ? source.preset : source.kind === "clone" ? source.sample.audio : undefined,
+      sampleFormat: source.kind === "clone" ? source.sample.format : undefined,
       format: input.req.response_format,
-      instructions: input.req.instructions,
+      instructions: instructionsFor(source, input.req.instructions),
       abort: input.abort,
     })
     return {
@@ -596,7 +656,10 @@ export async function synthesize(input: {
   const result = await generateSpeech({
     model: resolved.speech,
     text: input.req.input,
-    voice: input.req.voice,
+    // The SDK's speech API takes a preset name only. Design and clone were already refused
+    // above unless declared, and a provider with a native speech factory that declares them
+    // would need its own arm here rather than a silent downgrade to "no voice".
+    voice: source.kind === "preset" ? source.preset : undefined,
     outputFormat: input.req.response_format,
     instructions: input.req.instructions,
     speed: input.req.speed,

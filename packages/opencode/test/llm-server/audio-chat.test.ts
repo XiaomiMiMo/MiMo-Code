@@ -582,6 +582,164 @@ describe("providers whose endpoint is not OpenAI-shaped", () => {
   })
 })
 
+describe("voice sources", () => {
+  /**
+   * `voice` carries exactly one source, so "both supplied" is unrepresentable rather than a
+   * precedence rule. These lock the three arms and the two refusals.
+   */
+  function speechConfig(port: number, caps: Record<string, boolean> = {}) {
+    return {
+      provider: {
+        audiochat: {
+          name: "Audio over chat",
+          npm: "@ai-sdk/openai-compatible",
+          options: { apiKey: "k", baseURL: `http://127.0.0.1:${port}/v1` },
+          models: {
+            tts: {
+              name: "TTS",
+              modalities: { input: ["text" as const], output: ["audio" as const] },
+              ...caps,
+            },
+          },
+        },
+      },
+    }
+  }
+
+  async function speak(port: number, dir: string, body: unknown) {
+    const issued = await LLMServerTokens.issue({ directory: dir, expiry: {} })
+    const app = capabilityApp(dir)
+    return app.fetch(
+      new Request("http://x/v1/audio/speech", {
+        method: "POST",
+        headers: { "content-type": "application/json", authorization: `Bearer ${issued.token}` },
+        body: JSON.stringify(body),
+      }),
+    )
+  }
+
+  test("a preset name rides in the vendor's voice field", async () => {
+    const result = await harness({ audio: Buffer.from("RIFFxxxx") }, async ({ app, token, seen }) => {
+      const res = await speech(app, token, { model: "audiochat/tts", input: "hi", voice: "Chloe" })
+      return { status: res.status, seen }
+    })
+    expect(result.status).toBe(200)
+    expect(result.seen[0]!.body["audio"]).toMatchObject({ voice: "Chloe" })
+  })
+
+  test("a design description is refused unless the model declares voice_design", async () => {
+    const upstream = Bun.serve({ port: 0, fetch: () => new Response("{}") })
+    try {
+      await using tmp = await tmpdir({ config: speechConfig(upstream.port!) })
+      const res = await speak(upstream.port!, tmp.path, {
+        model: "audiochat/tts",
+        input: "hi",
+        voice: { design: "a calm elderly man" },
+      })
+      expect(res.status).toBe(400)
+      const body = (await res.json()) as { error: { message: string; code: string } }
+      expect(body.error.code).toBe("unsupported_capability")
+      // Names the config field, so the message is something an operator can act on.
+      expect(body.error.message).toContain("voice_design")
+    } finally {
+      await upstream.stop(true)
+    }
+  })
+
+  test("a declared design model gets the description folded into the instruction", async () => {
+    // That is where the vendor convention puts a voice description: it IS the style
+    // instruction, not a separate field.
+    const seen: Seen[] = []
+    const upstream = Bun.serve({
+      port: 0,
+      fetch: async (req) => {
+        seen.push({ body: (await req.json()) as Record<string, unknown> })
+        return new Response(
+          JSON.stringify({
+            choices: [
+              {
+                index: 0,
+                message: { role: "assistant", content: "", audio: { data: Buffer.from("RIFF").toString("base64") } },
+                finish_reason: "stop",
+              },
+            ],
+          }),
+          { headers: { "content-type": "application/json" } },
+        )
+      },
+    })
+    try {
+      await using tmp = await tmpdir({ config: speechConfig(upstream.port!, { voice_design: true }) })
+      const res = await speak(upstream.port!, tmp.path, {
+        model: "audiochat/tts",
+        input: "hi",
+        voice: { design: "a calm elderly man" },
+        instructions: "slowly",
+      })
+      expect(res.status).toBe(200)
+      const messages = seen[0]!.body["messages"] as { role: string; content: string }[]
+      const user = messages.find((m) => m.role === "user")?.content ?? ""
+      expect(user).toContain("a calm elderly man")
+      // The caller's own instruction refines the description rather than being buried by it.
+      expect(user.indexOf("a calm elderly man")).toBeLessThan(user.indexOf("slowly"))
+      // A design model takes no preset, so nothing must be smuggled into `voice`.
+      expect((seen[0]!.body["audio"] as Record<string, unknown>)["voice"]).toBeUndefined()
+    } finally {
+      await upstream.stop(true)
+    }
+  })
+
+  test("a bare base64 sample is given a data: URL so the container is legible", async () => {
+    const seen: Seen[] = []
+    const upstream = Bun.serve({
+      port: 0,
+      fetch: async (req) => {
+        seen.push({ body: (await req.json()) as Record<string, unknown> })
+        return new Response(
+          JSON.stringify({
+            choices: [
+              {
+                index: 0,
+                message: { role: "assistant", content: "", audio: { data: Buffer.from("RIFF").toString("base64") } },
+                finish_reason: "stop",
+              },
+            ],
+          }),
+          { headers: { "content-type": "application/json" } },
+        )
+      },
+    })
+    try {
+      await using tmp = await tmpdir({ config: speechConfig(upstream.port!, { voice_clone: true }) })
+      const res = await speak(upstream.port!, tmp.path, {
+        model: "audiochat/tts",
+        input: "hi",
+        voice: { clone: { audio: "QUJD", format: "wav" } },
+      })
+      expect(res.status).toBe(200)
+      expect((seen[0]!.body["audio"] as Record<string, string>)["voice"]).toBe("data:audio/wav;base64,QUJD")
+    } finally {
+      await upstream.stop(true)
+    }
+  })
+
+  test("two sources in one object match no arm and are rejected by the schema", async () => {
+    const upstream = Bun.serve({ port: 0, fetch: () => new Response("{}") })
+    try {
+      await using tmp = await tmpdir({ config: speechConfig(upstream.port!) })
+      const res = await speak(upstream.port!, tmp.path, {
+        model: "audiochat/tts",
+        input: "hi",
+        voice: { design: "x", clone: { audio: "QUJD" } },
+      })
+      // 400 from the union itself — no hand-written precedence rule to get wrong.
+      expect(res.status).toBe(400)
+    } finally {
+      await upstream.stop(true)
+    }
+  })
+})
+
 describe("upload media types", () => {
   test("normalises the aliases platforms actually report", () => {
     // `File` reports a wav as `audio/x-wav` on some platforms, and MiMo rejects that

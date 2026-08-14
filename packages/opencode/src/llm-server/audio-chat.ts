@@ -154,6 +154,19 @@ function firstMessage(body: Record<string, unknown>) {
 }
 
 /**
+ * A preset name passes through; a reference sample must arrive as a `data:` URL.
+ *
+ * The vendor reads the container from that prefix, so bare base64 with a known format is
+ * given one rather than sent as-is and rejected for a reason the caller cannot see. A bare
+ * payload with no format is left alone: guessing wav would mislabel whatever it really is,
+ * and the vendor's own error is then the honest answer.
+ */
+function voiceField(voice: string, sampleFormat?: string) {
+  if (!sampleFormat || voice.startsWith("data:")) return voice
+  return `data:${sampleFormat === "mp3" || sampleFormat === "mpeg" ? "audio/mpeg" : "audio/wav"};base64,${voice}`
+}
+
+/**
  * Synthesize by putting the text in an assistant message.
  *
  * That placement is the convention's requirement, not a preference: MiMo's docs are
@@ -165,7 +178,15 @@ export async function synthesize(input: {
   providerID: string
   modelID: string
   text: string
+  /**
+   * Preset voice name, or a reference sample for cloning.
+   *
+   * One field because that is what the vendor convention uses for both: a preset is a name, a
+   * clone is the sample itself. `sampleFormat` disambiguates the second case when the payload
+   * is bare base64 rather than a `data:` URL.
+   */
   voice?: string
+  sampleFormat?: string
   format?: string
   instructions?: string
   abort: AbortSignal
@@ -188,7 +209,7 @@ export async function synthesize(input: {
         // `wav` rather than the provider's default, so the bytes are self-describing
         // and the response content type can be trusted downstream.
         format: input.format ?? "wav",
-        ...(input.voice ? { voice: input.voice } : {}),
+        ...(input.voice ? { voice: voiceField(input.voice, input.sampleFormat) } : {}),
       },
     },
     input.abort,
