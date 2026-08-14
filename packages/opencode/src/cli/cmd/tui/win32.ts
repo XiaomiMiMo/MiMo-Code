@@ -4,6 +4,27 @@ import type { ReadStream } from "node:tty"
 const STD_INPUT_HANDLE = -10
 const ENABLE_PROCESSED_INPUT = 0x0001
 
+/**
+ * Disable all terminal mouse tracking modes.
+ *
+ * Sends the appropriate CSI sequences to turn off X10, VT200, button-event,
+ * any-event and SGR extended mouse tracking. Safe to call even when mouse
+ * tracking was never enabled.
+ */
+export function disableMouseTracking() {
+  if (!process.stdout.isTTY) return
+  // X10 (normal tracking)
+  process.stdout.write("\x1b[?1000l")
+  // VT200 highlight tracking
+  process.stdout.write("\x1b[?1001l")
+  // Button-event tracking
+  process.stdout.write("\x1b[?1002l")
+  // Any-event tracking
+  process.stdout.write("\x1b[?1003l")
+  // SGR extended coordinate mode
+  process.stdout.write("\x1b[?1006l")
+}
+
 const kernel = () =>
   dlopen("kernel32.dll", {
     GetStdHandle: { args: ["i32"], returns: "ptr" },

@@ -37,11 +37,14 @@ export const { use: useExit, provider: ExitProvider } = createSimpleContext({
           // Reset window title before destroying renderer
           renderer.setTerminalTitle("")
           renderer.destroy()
-          // SGR reset + show cursor + OSC 110/111/112 reset terminal fg/bg/cursor color.
-          // Without the OSC resets, whatever fg/bg the active mimocode theme pushed
-          // via OSC 10/11/12 would persist in the terminal session, leaving the
-          // shell prompt unreadable (e.g. white-on-white).
-          process.stdout.write("\x1b[0m\x1b[?25h\x1b]110\x07\x1b]111\x07\x1b]112\x07")
+          // Disable mouse event tracking (X10/buttons/all-motion/SGR) + SGR reset +
+          // show cursor + OSC 110/111/112 reset terminal fg/bg/cursor color.
+          // Without mouse disable, abnormal exit (e.g. killed by signal) leaves the
+          // terminal in mouse-tracking mode, producing garbage [row;colM sequences on
+          // every mouse move. Without the OSC resets, whatever fg/bg the active
+          // mimocode theme pushed via OSC 10/11/12 would persist in the terminal
+          // session, leaving the shell prompt unreadable (e.g. white-on-white).
+          process.stdout.write("\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1006l\x1b[0m\x1b[?25h\x1b]110\x07\x1b]111\x07\x1b]112\x07")
           win32FlushInputBuffer()
           if (reason) {
             const formatted = FormatError(reason) ?? FormatUnknownError(reason)
@@ -60,6 +63,9 @@ export const { use: useExit, provider: ExitProvider } = createSimpleContext({
       },
     )
     process.on("SIGHUP", () => exit())
+    process.on("SIGINT", () => exit())
+    process.on("SIGTERM", () => exit())
+    process.on("beforeExit", () => exit())
     return exit
   },
 })

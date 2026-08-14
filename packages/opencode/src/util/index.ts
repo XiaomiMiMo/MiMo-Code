@@ -1,6 +1,7 @@
 export * as Archive from "./archive"
 export * as Color from "./color"
 export { getEnvInfo } from "./env-info"
+export * as EsMemory from "./es-memory"
 export * as Filesystem from "./filesystem"
 export * as Keybind from "./keybind"
 export * as LocalContext from "./local-context"

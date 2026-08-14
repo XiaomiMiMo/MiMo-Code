@@ -26,6 +26,7 @@ import type { ActorPromptOps } from "@/tool/actor"
 import type { ProviderID, ModelID } from "../provider/schema"
 import PROMPT_CHECKPOINT_WRITER from "@/agent/prompt/checkpoint-writer.txt"
 import { WriterCachePerf } from "@/actor/events"
+import { EsMemory } from "../util/es-memory"
 import {
   metaDir,
   checkpointPath,
@@ -395,6 +396,32 @@ function aggregateWriterCacheMetrics(
       cache_write_tokens: cacheWrite,
       cache_hit_rate: hitRate,
       num_llm_calls: assistantCount,
+    }
+  })
+}
+
+function indexCheckpointToEsMemory(sessionID: SessionID, projectID: ProjectID | undefined) {
+  return Effect.gen(function* () {
+    const ckptPath = checkpointPath(sessionID)
+    const ckptContent = yield* Effect.promise(() =>
+      Bun.file(ckptPath).text().catch(() => ""),
+    )
+    if (ckptContent) {
+      yield* Effect.promise(() =>
+        EsMemory.index(ckptContent, { memory_type: "checkpoint" }),
+      )
+    }
+
+    if (projectID) {
+      const memPath = memoryPath(projectID)
+      const memContent = yield* Effect.promise(() =>
+        Bun.file(memPath).text().catch(() => ""),
+      )
+      if (memContent) {
+        yield* Effect.promise(() =>
+          EsMemory.index(memContent, { memory_type: "project_memory" }),
+        )
+      }
     }
   })
 }
@@ -1012,6 +1039,16 @@ export const layer: Layer.Layer<
               ...classified,
             })
           }
+        }
+
+        // Index checkpoint + memory into es_memory (cross-tool shared memory).
+        // Fire-and-forget: failures are silent — es_memory unavailability must
+        // never block checkpoint settlement.
+        if (outcome.status === "success") {
+          yield* indexCheckpointToEsMemory(input.sessionID, projectID).pipe(
+            Effect.catch(() => Effect.void),
+            Effect.ignore,
+          )
         }
 
         // F40: capture pending before deleting the slot so a queued writer
