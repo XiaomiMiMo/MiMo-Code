@@ -4,6 +4,8 @@ import { capabilityApp, type CapabilityApp } from "./harness"
 import { LLMServerTokens } from "../../src/llm-server/tokens"
 import { transcriptionMediaType } from "../../src/llm-server/protocol"
 import { tmpdir } from "../fixture/fixture"
+import { pathToFileURL } from "node:url"
+import path from "node:path"
 
 afterEach(async () => {
   await Instance.disposeAll()
@@ -18,13 +20,13 @@ afterEach(async () => {
  * transcription returns the transcript in `message.content`.
  */
 
-const TOKEN = "audio-chat-token-0"
 
 function wav(payload: string) {
   return Buffer.concat([Buffer.from("RIFF"), Buffer.from("....WAVE"), Buffer.from(payload)])
 }
 
-type Seen = { body: Record<string, unknown>; auth?: string }
+/** `headers` is captured only where a test asserts on them, hence optional. */
+type Seen = { body: Record<string, unknown>; auth?: string; headers?: Headers }
 
 function vendor(input: { seen: Seen[]; audio?: Buffer; transcript?: string; status?: number; error?: unknown }) {
   return Bun.serve({
@@ -579,6 +581,107 @@ describe("providers whose endpoint is not OpenAI-shaped", () => {
     expect(result.status).toBe(502)
     expect(result.body.error.message).toContain("message.audio")
     expect(result.body.error.message).toContain("may not carry synthesized audio")
+  })
+})
+
+describe("plugin hooks on the model path", () => {
+  /**
+   * THE REASON THIS SURFACE LIVES ON THE INSTANCE SERVER.
+   *
+   * Some providers are authenticated by a plugin: `src/plugin/mimo.ts` supplies its headers
+   * from `chat.headers`, applied on the agent's LLM path at `session/llm.ts:508`. A request
+   * path that never triggers the hook cannot reach such a provider — being in the same process
+   * is necessary but NOT sufficient. Without these two tests that behaviour is invisible until
+   * someone configures such a provider and gets an unexplained 401.
+   */
+  async function withPlugin<T>(
+    body: string[],
+    fn: (input: { dir: string; token: string; seen: Seen[] }) => Promise<T>,
+  ): Promise<T> {
+    const seen: Seen[] = []
+    const upstream = Bun.serve({
+      port: 0,
+      fetch: async (req) => {
+        seen.push({ body: (await req.json()) as Record<string, unknown>, headers: req.headers })
+        return new Response(
+          JSON.stringify({
+            id: "up",
+            object: "chat.completion",
+            created: 1,
+            model: "m",
+            choices: [{ index: 0, message: { role: "assistant", content: "ok" }, finish_reason: "stop" }],
+            usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+          }),
+          { headers: { "content-type": "application/json" } },
+        )
+      },
+    })
+    try {
+      await using tmp = await tmpdir({ git: true })
+      const file = path.join(tmp.path, "plugin.ts")
+      await Bun.write(file, ["export default async () => ({", ...body, "})", ""].join("\n"))
+      await Bun.write(
+        path.join(tmp.path, "mimocode.json"),
+        JSON.stringify({
+          plugin: [pathToFileURL(file).href],
+          provider: {
+            hooked: {
+              name: "Hooked",
+              npm: "@ai-sdk/openai-compatible",
+              options: { apiKey: "k", baseURL: `http://127.0.0.1:${upstream.port!}/v1` },
+              models: { chat: { name: "Chat", modalities: { input: ["text"], output: ["text"] } } },
+            },
+          },
+        }),
+      )
+      const issued = await LLMServerTokens.issue({ directory: tmp.path, expiry: {} })
+      return await fn({ dir: tmp.path, token: issued.token, seen })
+    } finally {
+      await upstream.stop(true)
+    }
+  }
+
+  async function complete(dir: string, token: string) {
+    return capabilityApp(dir).fetch(
+      new Request("http://x/v1/chat/completions", {
+        method: "POST",
+        headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
+        body: JSON.stringify({ model: "hooked/chat", messages: [{ role: "user", content: "hi" }] }),
+      }),
+    )
+  }
+
+  test("chat.headers reaches the upstream request", async () => {
+    await withPlugin(
+      [
+        '  "chat.headers": async (input, output) => {',
+        '    output.headers["x-plugin-added"] = input.model.providerID',
+        "  },",
+      ],
+      async ({ dir, token, seen }) => {
+        const res = await complete(dir, token)
+        expect(res.status).toBe(200)
+        // On the wire, not merely returned by the hook.
+        expect(seen[0]!.headers?.get("x-plugin-added")).toBe("hooked")
+      },
+    )
+  })
+
+  test("chat.params can adjust what the caller asked for", async () => {
+    await withPlugin(
+      [
+        '  "chat.params": async (_input, output) => {',
+        "    output.temperature = 0.125",
+        "  },",
+      ],
+      async ({ dir, token, seen }) => {
+        const res = await complete(dir, token)
+        expect(res.status).toBe(200)
+        // The hook's value wins over the request's, because the request seeds the hook and the
+        // hook's output is what gets sent — the same order `session/llm.ts` uses.
+        expect(seen[0]!.body["temperature"]).toBe(0.125)
+      },
+    )
   })
 })
 
