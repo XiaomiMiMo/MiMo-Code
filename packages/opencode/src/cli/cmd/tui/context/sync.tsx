@@ -158,6 +158,85 @@ export function bucketMessages<M extends { agentID?: string | null }>(
 }
 
 /**
+ * Client-side mirror of MessageV2.compare — chronological order of two messages.
+ *
+ * Message ids are NOT a clock. The id encoder packs `Date.now() * 0x1000 + counter`
+ * into 6 bytes, so the sortable prefix wraps every 2^36 ms (~2.18 years); the last
+ * boundary was 2026-08-14T11:19:55Z. Across a wrap a NEWER message gets a SMALLER
+ * id, so `a.id < b.id` inverts for any session whose history straddles it.
+ *
+ * This matters more here than it looks: the store keeps each bucket sorted and uses
+ * Binary.search over that order both to locate an existing message and to pick the
+ * splice index for a new one. With ids as the key, a fresh message lands at index 0
+ * — which is what put new messages at the top of the transcript — and the >100
+ * trim then treats `list[0]` as "oldest" and deletes it along with its parts.
+ *
+ * `time.created` is an independent field, unaffected by the packing, so it is the
+ * primary key; the id only breaks ties inside the same millisecond.
+ */
+export function compareMessages(
+  a: { id: string; time: { created: number } },
+  b: { id: string; time: { created: number } },
+) {
+  return a.time.created !== b.time.created ? a.time.created - b.time.created : a.id < b.id ? -1 : a.id > b.id ? 1 : 0
+}
+
+/**
+ * Compare a message against a MARKER id (revert point, pending watermark) held by
+ * the session rather than by a message object.
+ *
+ * Returns `< 0` if `msg` precedes the marker, `> 0` if it follows, `0` if it IS the
+ * marker. When the marker is not present in `list` there is no anchor to compare
+ * against and the caller gets `undefined` — callers decide what that means rather
+ * than silently treating the marker as position 0 or infinity.
+ *
+ * Resolving the marker through the list is what makes this wrap-safe: the marker id
+ * alone carries no time, and comparing id strings inverts across a wrap boundary
+ * (see compareMessages).
+ */
+export function compareToMarker<M extends { id: string; time: { created: number } }>(
+  list: M[],
+  msg: M,
+  markerID: string,
+): number | undefined {
+  const marker = list.find((m) => m.id === markerID)
+  if (!marker) return undefined
+  return compareMessages(msg, marker)
+}
+
+/**
+ * Locate `id` in a chronologically-sorted message list, or the index it should be
+ * inserted at. Same contract as Binary.search, but keyed on (time.created, id) —
+ * Binary.search compares id strings only and cannot express this order.
+ *
+ * `probe` is the incoming message when inserting. Lookups that only have an id
+ * (message.removed) pass none and fall back to a linear scan: without a time there
+ * is nothing to bisect on, and a wrong bisect here would splice out an unrelated
+ * message.
+ */
+export function searchMessages<M extends { id: string; time: { created: number } }>(
+  list: M[],
+  id: string,
+  probe?: { id: string; time: { created: number } },
+): { found: boolean; index: number } {
+  if (!probe) {
+    const index = list.findIndex((m) => m.id === id)
+    return index === -1 ? { found: false, index: list.length } : { found: true, index }
+  }
+  let left = 0
+  let right = list.length
+  while (left < right) {
+    const mid = Math.floor((left + right) / 2)
+    if (compareMessages(list[mid], probe) < 0) left = mid + 1
+    else right = mid
+  }
+  // `left` is the first element not ordered before probe — an exact id match can
+  // only be there, since compare is a total order and probe carries its own id.
+  if (left < list.length && list[left].id === id) return { found: true, index: left }
+  return { found: false, index: left }
+}
+
+/**
  * A `session.status` event is authoritative for the WHOLE status object.
  *
  * Solid's store setter merges plain objects into the existing node
@@ -193,7 +272,7 @@ export function nextSessionStatus(status: SessionStatus) {
 // read-only local-DB snapshot and they drift — this arm's population grew
 // 1294 → 1313 across this branch's own revisions — so trust the split's shape,
 // not the absolute numbers.
-export function selectMessages<M extends { id: string }>(
+export function selectMessages<M extends { id: string; time: { created: number } }>(
   buckets: Record<string, M[]> | undefined,
   agentID: string,
   sessionID: string,
@@ -202,7 +281,10 @@ export function selectMessages<M extends { id: string }>(
   if (buckets?.[sessionID]?.length) return buckets[sessionID]
   const newest = Object.entries(buckets ?? {})
     .filter(([key, msgs]) => key !== "main" && msgs.length > 0)
-    .sort(([, a], [, b]) => (b.at(-1)?.id ?? "").localeCompare(a.at(-1)?.id ?? ""))
+    // "Newest bucket" by its last message's time, not its id — an id compare
+    // inverts across an id wrap (see compareMessages) and would pick the bucket
+    // that happens to hold a pre-wrap tail.
+    .sort(([, a], [, b]) => (b.at(-1)?.time.created ?? 0) - (a.at(-1)?.time.created ?? 0))
     .at(0)
   return newest?.[1] ?? []
 }
@@ -567,7 +649,7 @@ export const { use: useSync, provider: SyncProvider } = createSimpleContext({
             break
           }
           const messages = store.message[sid][aid]
-          const result = Binary.search(messages, event.properties.info.id, (m) => m.id)
+          const result = searchMessages(messages, event.properties.info.id, event.properties.info)
           if (result.found) {
             setStore("message", sid, aid, result.index, reconcile(event.properties.info))
             break
@@ -608,7 +690,7 @@ export const { use: useSync, provider: SyncProvider } = createSimpleContext({
           if (!buckets) break
           for (const aid of Object.keys(buckets)) {
             const messages = buckets[aid]
-            const result = Binary.search(messages, event.properties.messageID, (m) => m.id)
+            const result = searchMessages(messages, event.properties.messageID)
             if (result.found) {
               setStore(
                 "message",
@@ -1005,8 +1087,16 @@ export const { use: useSync, provider: SyncProvider } = createSimpleContext({
               draft.todo[sessionID] = todo.data ?? []
               draft.task[sessionID] = task.data ?? []
               const flat = (messages.data ?? []).map((x) => x.info)
-              // Server returns messages id-ordered and message.updated keeps that order; the footer's post-/rebuild pending-detection deliberately does NOT depend on it (it keys off checkpoint coveredUpTo, model.ts), so reordering here won't resurface the stale-context bug.
-              draft.message[sessionID] = bucketMessages(flat)
+              // Server returns messages in (time_created, id) order and
+              // message.updated keeps that order via searchMessages. Sorting here
+              // too is belt-and-braces: it makes the store's invariant hold from
+              // its own code rather than from a property of the endpoint, so a
+              // paging/ordering change server-side can't silently corrupt the
+              // splice indices the trim and message.removed both rely on. The
+              // footer's post-/rebuild pending-detection deliberately does NOT
+              // depend on this order (it keys off checkpoint coveredUpTo, model.ts),
+              // so ordering here won't resurface the stale-context bug.
+              draft.message[sessionID] = bucketMessages(flat.toSorted(compareMessages))
               for (const message of messages.data ?? []) {
                 draft.part[message.info.id] = message.parts
               }
