@@ -83,6 +83,37 @@ describe("ProviderTransform.options - setCacheKey", () => {
     expect(result.promptCacheKey).toBe(sessionID)
   })
 
+  test("should set promptCacheKey for a custom provider that speaks the OpenAI protocol", () => {
+    // A user-configured provider (e.g. a gateway fronting several upstream
+    // instances) still needs the cache-affinity key, or its turns scatter across
+    // machines and the prefix cache misses even for identical prefixes.
+    const gatewayModel = {
+      ...mockModel,
+      providerID: "codex",
+      api: {
+        id: "gpt-5.6-sol",
+        url: "http://gateway.internal/v1",
+        npm: "@ai-sdk/openai",
+      },
+    }
+    const result = ProviderTransform.options({ model: gatewayModel, sessionID, providerOptions: {} })
+    expect(result.promptCacheKey).toBe(sessionID)
+  })
+
+  test("should not set promptCacheKey for openai-compatible proxies that reject unknown params", () => {
+    const litellmModel = {
+      ...mockModel,
+      providerID: "litellm",
+      api: {
+        id: "gpt-5.2",
+        url: "http://litellm.internal/v1",
+        npm: "@ai-sdk/openai-compatible",
+      },
+    }
+    const result = ProviderTransform.options({ model: litellmModel, sessionID, providerOptions: {} })
+    expect(result.promptCacheKey).toBeUndefined()
+  })
+
   test("should set store=false for openai provider", () => {
     const openaiModel = {
       ...mockModel,

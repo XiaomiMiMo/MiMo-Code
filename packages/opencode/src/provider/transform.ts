@@ -1648,7 +1648,21 @@ export function options(input: {
     }
   }
 
-  if (input.model.providerID === "openai" || input.model.api.npm === "@ai-sdk/xai" || input.providerOptions?.setCacheKey) {
+  // Cache-affinity key. Providers that speak the real OpenAI protocol route a
+  // request to the machine holding its cached prefix by hashing the prompt head
+  // plus this key; without it a gateway fronting several upstream instances
+  // scatters the turns of one session and the prefix cache misses outright
+  // (observed on a custom @ai-sdk/openai provider: cached reads of 0 even for
+  // consecutive steps of the SAME turn, whose prefix is identical by
+  // construction). Scoped to `@ai-sdk/openai` on purpose — `openai-compatible`
+  // proxies (LiteLLM et al.) reject unknown parameters, same reason
+  // `reasoningSummary` below is gated that way.
+  if (
+    input.model.providerID === "openai" ||
+    input.model.api.npm === "@ai-sdk/openai" ||
+    input.model.api.npm === "@ai-sdk/xai" ||
+    input.providerOptions?.setCacheKey
+  ) {
     result["promptCacheKey"] = input.sessionID
   }
 
