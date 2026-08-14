@@ -616,10 +616,28 @@ export async function transcribe(input: {
 }) {
   const resolved = await resolveTranscriptionModel(input.req.model, input.allowlist)
 
-  // A multimodal chat model transcribes by being TOLD to, and the SDK can carry that:
-  // an audio file part becomes `input_audio` on the wire. So this half needs no raw
-  // HTTP, and it works for any provider package the SDK supports rather than only the
-  // OpenAI-shaped ones.
+  // A multimodal chat model transcribes by being TOLD to. Two paths can carry that, and
+  // the raw one is PREFERRED where it applies:
+  //
+  //  - Raw, for OpenAI-shaped providers: lets `thinking: {type: "disabled"}` go out,
+  //    which is what turns this from best-effort into a stable contract. A reasoning
+  //    model otherwise puts the transcript in `reasoning_content` some of the time.
+  //    `@ai-sdk/openai-compatible` cannot express that field — closed provider-options
+  //    schema, no extra-body escape — so the SDK path structurally cannot ask for it.
+  //  - SDK, for everything else: an audio file part becomes `input_audio` on the wire,
+  //    so any package the SDK supports still works, just without thinking control.
+  if (Provider.modelKind(resolved.model) === "language" && audioOverChat(resolved.model)) {
+    return AudioChat.transcribe({
+      providerID: resolved.model.providerID,
+      modelID: resolved.model.api.id,
+      audio: input.audio,
+      mediaType: input.mediaType,
+      instruction: instructionFor(input.req.language),
+      disableThinking: true,
+      abort: input.abort,
+    })
+  }
+
   if (Provider.modelKind(resolved.model) === "language") {
     const result = start({
       req: {

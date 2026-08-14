@@ -393,7 +393,54 @@ describe("multimodal fallback for transcription", () => {
    * The two need different requests, which is why kind still decides the shape: an ASR
    * endpoint REFUSES text parts while a chat model REQUIRES the instruction.
    */
-  test("serves a multimodal chat model by instructing it, through the SDK", async () => {
+  test("suppresses thinking so the transcript lands in content, not reasoning", async () => {
+    // The fix that makes this a contract instead of a coin flip. A reasoning model asked
+    // to transcribe otherwise emits the transcript as `reasoning_content` with
+    // `content: null` some of the time. `thinking: {type: "disabled"}` is MiMo's control,
+    // and measured three consecutive runs it moved the transcript into `content` with
+    // `reasoning_tokens: 0`.
+    //
+    // It can only be sent on the RAW path: `@ai-sdk/openai-compatible` validates provider
+    // options against a closed schema with no `thinking` and offers no extra-body escape,
+    // so the SDK path structurally cannot ask for it.
+    const result = await harness({ transcript: "spoken words" }, async ({ app, token, seen }) => {
+      const res = await upload(app, token, {
+        file: new File([wav("a")], "a.wav", { type: "audio/wav" }),
+        model: "audiochat/multimodal",
+      })
+      return { status: res.status, seen }
+    })
+    expect(result.status).toBe(200)
+    const sent = result.seen[0]!.body
+    expect(sent["thinking"]).toEqual({ type: "disabled" })
+    // The instruction rides along, and asr_options does NOT: that belongs to the
+    // dedicated endpoint, which refuses text parts entirely.
+    const messages = sent["messages"] as { content: { type: string; text?: string }[] }[]
+    expect(messages[0]!.content.some((p) => p.type === "input_audio")).toBe(true)
+    expect(messages[0]!.content.find((p) => p.type === "text")?.text).toContain("verbatim")
+    expect(sent["asr_options"]).toBeUndefined()
+  })
+
+  test("a dedicated ASR model gets no instruction and no thinking control", async () => {
+    // The opposite shape, on the same route. MiMo answers 400 "ASR request must not
+    // include text parts", so sending one would break it.
+    const result = await harness({ transcript: "clean" }, async ({ app, token, seen }) => {
+      const res = await upload(app, token, {
+        file: new File([wav("a")], "a.wav", { type: "audio/wav" }),
+        model: "audiochat/asr",
+        language: "auto",
+      })
+      return { status: res.status, seen }
+    })
+    expect(result.status).toBe(200)
+    const sent = result.seen[0]!.body
+    const messages = sent["messages"] as { content: { type: string }[] }[]
+    expect(messages[0]!.content.every((p) => p.type === "input_audio")).toBe(true)
+    expect(sent["thinking"]).toBeUndefined()
+    expect(sent["asr_options"]).toEqual({ language: "auto" })
+  })
+
+  test.skip("superseded by the raw path: served through the SDK instead", async () => {
     const result = await harness({ transcript: "spoken words here" }, async ({ app, token, seen }) => {
       const res = await upload(app, token, {
         file: new File([wav("a")], "a.wav", { type: "audio/wav" }),

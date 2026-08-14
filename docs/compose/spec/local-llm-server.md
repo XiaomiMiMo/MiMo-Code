@@ -188,14 +188,32 @@ demands, and a multimodal model that can hear by instructing it. Measured on
 `input_audio` on the wire — so it needs no raw HTTP and works for any package the SDK
 supports.
 
-Best-effort, and knowingly so. A reasoning model sometimes emits the whole transcript as
-`reasoning_content` with `content: null`; reading reasoning as the transcript is NOT safe,
-because on other calls that same field held "The user wants a verbatim transcription… The
-audio contains the phrase: …". So an empty `content` is a legible 502 naming what
-happened and recommending a dedicated model, rather than a guess or a silent retry. The
-chat route also accepts `input_audio` parts now, which is the right home for the other
-audio task — reasoning ABOUT audio ("what did they agree to?") rather than transcribing
-it.
+A reasoning model asked to transcribe emits the transcript as `reasoning_content` with
+`content: null` some of the time, which no consumer can rely on. Reading reasoning as the
+transcript is NOT safe either — on other calls that same field held "The user wants a
+verbatim transcription… The audio contains the phrase: …".
+
+The fix is to suppress thinking, and doing so decides which path carries the request:
+
+- **Raw, for OpenAI-shaped providers.** `thinking: {type: "disabled"}` is MiMo's control
+  for it. Measured: three consecutive runs then returned the transcript in `content` with
+  `reasoning_tokens: 0`. This is the preferred path because it makes the contract stable.
+- **SDK, for everything else.** An audio file part becomes `input_audio` on the wire, so
+  any package the SDK supports still works — without thinking control.
+
+`thinking` cannot go out through the SDK, and the reason is worth recording: it is an
+ANTHROPIC-style field on an OPENAI-shaped endpoint. `@ai-sdk/anthropic` models it (54
+references), but `@ai-sdk/openai-compatible` validates provider options against a closed
+schema that has no `thinking` and offers no extra-body escape. The SDK is not wrong about
+either protocol; MiMo's combination falls between them.
+
+When thinking cannot be suppressed and `content` still comes back empty, the answer is a
+legible 502 naming what happened and recommending a dedicated model — not a guess and not
+a silent retry.
+
+The chat route also accepts `input_audio` parts now, which is the right home for the
+other audio task: reasoning ABOUT audio ("what did they agree to?") rather than
+transcribing it, which returns an answer instead of the words.
 
 This deliberately adds no schema field. A model absent from models.dev (OpenAI's
 `tts-1` and `gpt-4o-mini-tts` are both absent) is declared by the user as:

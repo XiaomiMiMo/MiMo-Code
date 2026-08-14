@@ -227,6 +227,23 @@ export async function transcribe(input: {
   audio: Uint8Array
   mediaType: string
   language?: string
+  /** Set for a multimodal model, which needs telling what to do with the audio. */
+  instruction?: string
+  /**
+   * Suppress the model's thinking.
+   *
+   * A reasoning model asked to transcribe otherwise emits the transcript as
+   * `reasoning_content` with `content: null` some of the time, which no consumer can
+   * rely on. `thinking: {type: "disabled"}` is MiMo's control for it — an
+   * Anthropic-style field on an OpenAI-shaped endpoint, which is exactly the
+   * combination `@ai-sdk/openai-compatible` cannot express: its provider options are
+   * validated against a closed schema with no `thinking` and no extra-body escape.
+   * Being on the raw path is what makes sending it possible at all.
+   *
+   * Measured: three consecutive runs with it disabled all returned the transcript in
+   * `content` with `reasoning_tokens: 0`.
+   */
+  disableThinking?: boolean
   abort: AbortSignal
 }) {
   log.info("audio-over-chat transcription", {
@@ -248,17 +265,37 @@ export async function transcribe(input: {
               type: "input_audio",
               input_audio: { data: `data:${input.mediaType};base64,${Buffer.from(input.audio).toString("base64")}` },
             },
+            // A dedicated ASR endpoint REFUSES text parts; a multimodal model requires
+            // one. The caller of this function knows which it is talking to.
+            ...(input.instruction ? [{ type: "text", text: input.instruction }] : []),
           ],
         },
       ],
-      ...(input.language ? { asr_options: { language: input.language } } : {}),
+      // `asr_options` belongs to the dedicated endpoint only.
+      ...(input.instruction ? {} : input.language ? { asr_options: { language: input.language } } : {}),
+      ...(input.disableThinking ? { thinking: { type: "disabled" } } : {}),
+      ...(input.instruction ? { max_tokens: 4096 } : {}),
     },
     input.abort,
   )
 
-  const content = text(firstMessage(body)["content"])
-  if (content === undefined) {
-    throw new AudioChatError(502, "upstream returned a transcript that is not text")
+  const message = firstMessage(body)
+  const content = text(message["content"])
+  if (content === undefined || content.length === 0) {
+    // Distinguish the case that actually happens. A reasoning model asked to transcribe
+    // sometimes puts the whole answer in `reasoning_content` with `content: null`, and
+    // reading that as the transcript is NOT safe — on other calls the same field held
+    // "The user wants a verbatim transcription… The audio contains the phrase: …". So the
+    // answer names what happened instead of guessing, and points at the fix.
+    if (text(message["reasoning_content"]) !== undefined) {
+      throw new AudioChatError(
+        502,
+        "model returned its answer as reasoning rather than content, so no transcript can be read; " +
+          "thinking could not be suppressed for this model — configure a dedicated speech-to-text model " +
+          "for a stable contract",
+      )
+    }
+    throw new AudioChatError(502, "upstream returned no transcript text")
   }
   return { text: content }
 }
