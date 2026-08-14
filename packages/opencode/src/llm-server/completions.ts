@@ -129,6 +129,8 @@ export function resolveAudioModel(input: {
   ref: string
   allowlist: ModelScope
   kind: "speech" | "transcription"
+  /** A second kind this route can serve, with a different request shape. */
+  alsoAccept?: (model: Provider.Model) => boolean
   wrongEndpoint: string
 }) {
   const found = lookupModel(input.ref, input.allowlist)
@@ -136,7 +138,7 @@ export function resolveAudioModel(input: {
     Effect.gen(function* () {
       const provider = yield* Provider.Service
       const model = yield* provider.getModel(found.parsed.providerID, found.parsed.modelID)
-      if (Provider.modelKind(model) !== input.kind) {
+      if (Provider.modelKind(model) !== input.kind && !input.alsoAccept?.(model)) {
         throw new RequestError(
           400,
           `Model \`${input.ref}\` is a ${Provider.modelKind(model)} model; use ${input.wrongEndpoint}`,
@@ -172,8 +174,26 @@ export function resolveSpeechModel(ref: string, allowlist: ModelScope) {
   return resolveAudioModel({ ref, allowlist, kind: "speech", wrongEndpoint: "POST /v1/chat/completions" })
 }
 
+/**
+ * Resolve a model for transcription, accepting a multimodal chat model as a fallback.
+ *
+ * A dedicated ASR model is preferred and served with the shape it demands. But a
+ * multimodal model that can hear will transcribe perfectly well when told to — measured
+ * on `mimo-v2.5`, whose verbatim output was actually CLEANER than the dedicated
+ * `mimo-v2.5-asr` under `language: "en"`, which leaks `think>\n<chinese> `.
+ *
+ * The two need different requests, which is why the kind still matters: an ASR endpoint
+ * REFUSES text parts while a chat model REQUIRES the instruction. The caller does not
+ * have to care, and the response says which mode served it.
+ */
 export function resolveTranscriptionModel(ref: string, allowlist: ModelScope) {
-  return resolveAudioModel({ ref, allowlist, kind: "transcription", wrongEndpoint: "POST /v1/chat/completions" })
+  return resolveAudioModel({
+    ref,
+    allowlist,
+    kind: "transcription",
+    alsoAccept: (model) => Provider.modelKind(model) === "language" && model.capabilities.input.audio,
+    wrongEndpoint: "POST /v1/chat/completions",
+  })
 }
 
 /**
@@ -549,6 +569,34 @@ export async function synthesize(input: {
 }
 
 /**
+ * The instruction a multimodal model needs in order to transcribe rather than answer.
+ *
+ * Explicit about "only the transcript" because these models default to being helpful:
+ * without it they add commentary, and a transcription endpoint that returns commentary
+ * is worse than one that refuses.
+ */
+function instructionFor(language?: string) {
+  const scope = language && language !== "auto" ? ` The audio is in ${language}.` : ""
+  return `Transcribe the audio verbatim.${scope} Output only the transcript, with no commentary, labels, or quotation marks.`
+}
+
+/**
+ * The short container name the wire format uses, derived back from the media type.
+ *
+ * Constrained to the set the request schema accepts so the two cannot drift; anything
+ * outside it was already rejected upstream by `transcriptionMediaType`.
+ */
+const AUDIO_FORMATS = ["wav", "mp3", "mpeg", "m4a", "flac", "ogg", "webm"] as const
+type AudioFormat = (typeof AUDIO_FORMATS)[number]
+
+function audioFormat(mediaType: string): AudioFormat {
+  const suffix = mediaType.split("/")[1]
+  if (suffix === "mpeg") return "mp3"
+  const match = AUDIO_FORMATS.find((f) => f === suffix)
+  return match ?? "wav"
+}
+
+/**
  * Transcribe one audio payload.
  *
  * Only reached for `transcription`-kind models — audio in, text out, and NO text
@@ -567,6 +615,53 @@ export async function transcribe(input: {
   abort: AbortSignal
 }) {
   const resolved = await resolveTranscriptionModel(input.req.model, input.allowlist)
+
+  // A multimodal chat model transcribes by being TOLD to, and the SDK can carry that:
+  // an audio file part becomes `input_audio` on the wire. So this half needs no raw
+  // HTTP, and it works for any provider package the SDK supports rather than only the
+  // OpenAI-shaped ones.
+  if (Provider.modelKind(resolved.model) === "language") {
+    const result = start({
+      req: {
+        model: input.req.model,
+        messages: [
+          {
+            role: "user",
+            content: [
+              { type: "input_audio", input_audio: { data: Buffer.from(input.audio).toString("base64"), format: audioFormat(input.mediaType) } },
+              { type: "text", text: instructionFor(input.req.language) },
+            ],
+          },
+        ],
+        // Reasoning models spend tokens thinking before answering; the earlier probe
+        // returned an EMPTY answer at 300 because 222 went to reasoning first.
+        max_tokens: 4096,
+      },
+      allowlist: input.allowlist,
+      abort: input.abort,
+    })
+    const collected = await result.then((started) =>
+      collect({ id: started.id, ref: started.ref, result: started.result }),
+    )
+    const text = collected.choices[0]?.message.content
+    if (typeof text !== "string" || text.length === 0) {
+      // Measured on `mimo-v2.5`: a reasoning model sometimes emits the whole transcript
+      // as `reasoning_content` with `content: null`. Reading reasoning as the transcript
+      // is NOT safe — on other calls that same field held "The user wants a verbatim
+      // transcription... The audio contains the phrase: ..." — so the answer is a
+      // legible failure rather than a guess. Nor is it retried: a proxy that retries
+      // silently bills twice with nothing to show for it.
+      throw new RequestError(
+        502,
+        `Model \`${resolved.model.providerID}/${resolved.model.id}\` returned its answer as reasoning rather than ` +
+          `content, so no transcript can be read. Reasoning models are best-effort transcription backends; ` +
+          `configure a dedicated speech-to-text model for a stable contract`,
+        "api_error",
+      )
+    }
+    return { text, mode: "instructed" as const }
+  }
+
   // Same gate as synthesis: `@ai-sdk/openai-compatible` has no transcription factory
   // either, but that is not licence to assume every other package's endpoint would
   // understand a chat completion.

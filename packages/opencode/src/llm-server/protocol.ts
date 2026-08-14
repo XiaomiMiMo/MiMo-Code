@@ -38,6 +38,18 @@ function acceptableImageUrl(value: string) {
 const ContentPart = z.discriminatedUnion("type", [
   z.object({ type: z.literal("text"), text: z.string() }),
   z.object({
+    // OpenAI's audio-input part, which `gpt-4o-audio-preview`, MiMo, and Gemini all
+    // accept. Distinct from transcription: this is audio a caller wants REASONED
+    // about ("what did they agree to?"), which needs an instruction alongside it and
+    // returns an answer rather than the words.
+    type: z.literal("input_audio"),
+    input_audio: z.object({
+      /** Base64, or a `data:` URL. The container is named by `format` or the URL. */
+      data: z.string().min(1),
+      format: z.enum(["wav", "mp3", "mpeg", "m4a", "flac", "ogg", "webm"]).optional(),
+    }),
+  }),
+  z.object({
     type: z.literal("image_url"),
     image_url: z.object({
       // Checked HERE so a URL this server cannot carry is a 400 from validation
@@ -185,6 +197,40 @@ const toText = (content: string | Array<{ type: "text"; text: string }>) =>
  * (with the media type preserved, since some providers require it); anything
  * else is a reference the provider fetches itself, so it stays a URL.
  */
+/**
+ * Decode an OpenAI `input_audio` part into the AI SDK's file part.
+ *
+ * A media type is REQUIRED by the SDK — it selects the wire format and throws on an
+ * unknown one — so a bare base64 payload without `format` cannot be carried. Saying
+ * so beats guessing wav and having the provider reject bytes that are not.
+ */
+function audioPart(part: { data: string; format?: string }) {
+  const dataUrl = DATA_URL.exec(part.data)
+  const mediaType = dataUrl
+    ? dataUrl[1]!
+    : part.format
+      ? (AUDIO_FORMAT_MEDIA_TYPES[part.format] ?? `audio/${part.format}`)
+      : undefined
+  if (!mediaType) {
+    throw new Error("input_audio requires `format` when `data` is not a data: URL")
+  }
+  return {
+    type: "file" as const,
+    data: dataUrl ? dataUrl[2]! : part.data,
+    mediaType,
+  }
+}
+
+const AUDIO_FORMAT_MEDIA_TYPES: Record<string, string> = {
+  wav: "audio/wav",
+  mp3: "audio/mpeg",
+  mpeg: "audio/mpeg",
+  m4a: "audio/mp4",
+  flac: "audio/flac",
+  ogg: "audio/ogg",
+  webm: "audio/webm",
+}
+
 function imagePart(url: string) {
   const match = DATA_URL.exec(url)
   if (match) return { type: "image" as const, image: match[2], mediaType: match[1] }
@@ -215,9 +261,11 @@ export function toModelMessages(messages: ChatCompletionRequest["messages"]): Mo
       if (typeof msg.content === "string") return { role: "user", content: msg.content }
       return {
         role: "user",
-        content: msg.content.map((part) =>
-          part.type === "text" ? { type: "text" as const, text: part.text } : imagePart(part.image_url.url),
-        ),
+        content: msg.content.map((part) => {
+          if (part.type === "text") return { type: "text" as const, text: part.text }
+          if (part.type === "input_audio") return audioPart(part.input_audio)
+          return imagePart(part.image_url.url)
+        }),
       }
     }
 

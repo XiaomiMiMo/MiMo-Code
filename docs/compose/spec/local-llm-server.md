@@ -178,9 +178,24 @@ would be routed away from chat.
 That guard tracks a protocol fact rather than a taxonomy preference: a dedicated ASR
 endpoint REFUSES text parts (MiMo answers 400 "ASR request must not include text parts;
 text prompt is injected by the gateway") while a multimodal chat model REQUIRES an
-instruction to know what to do with the audio. One request builder cannot serve both, so
-`/v1/audio/transcriptions` serves dedicated ASR models and multimodal models stay on the
-chat route where the caller supplies the instruction explicitly.
+instruction to know what to do with the audio. One request builder cannot serve both — so
+the kind selects the SHAPE, not who is allowed in.
+
+`/v1/audio/transcriptions` therefore serves both: a dedicated ASR model with the shape it
+demands, and a multimodal model that can hear by instructing it. Measured on
+`mimo-v2.5`, whose verbatim output was actually CLEANER than `mimo-v2.5-asr` under
+`language: "en"`. The multimodal half goes through the SDK — an audio file part becomes
+`input_audio` on the wire — so it needs no raw HTTP and works for any package the SDK
+supports.
+
+Best-effort, and knowingly so. A reasoning model sometimes emits the whole transcript as
+`reasoning_content` with `content: null`; reading reasoning as the transcript is NOT safe,
+because on other calls that same field held "The user wants a verbatim transcription… The
+audio contains the phrase: …". So an empty `content` is a legible 502 naming what
+happened and recommending a dedicated model, rather than a guess or a silent retry. The
+chat route also accepts `input_audio` parts now, which is the right home for the other
+audio task — reasoning ABOUT audio ("what did they agree to?") rather than transcribing
+it.
 
 This deliberately adds no schema field. A model absent from models.dev (OpenAI's
 `tts-1` and `gpt-4o-mini-tts` are both absent) is declared by the user as:

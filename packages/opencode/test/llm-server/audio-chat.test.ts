@@ -40,6 +40,24 @@ function vendor(input: { seen: Seen[]; audio?: Buffer; transcript?: string; stat
           headers: { "content-type": "application/json" },
         })
       }
+      // The raw passthrough asks for a plain completion; the SDK path (used by the
+      // multimodal transcription fallback) asks for a stream. One vendor serves both, so
+      // the tests exercise whichever path the code actually chose.
+      const last = input.seen[input.seen.length - 1]!.body
+      if (last["stream"] === true) {
+        const frame = (delta: unknown, finish: string | null) =>
+          `data: ${JSON.stringify({
+            id: "up-1",
+            object: "chat.completion.chunk",
+            created: 1,
+            model: "m",
+            choices: [{ index: 0, delta, finish_reason: finish }],
+          })}\n\n`
+        return new Response(
+          frame({ content: input.transcript ?? "" }, null) + frame({}, "stop") + "data: [DONE]\n\n",
+          { headers: { "content-type": "text/event-stream" } },
+        )
+      }
       const message = input.audio
         ? { role: "assistant", content: "", audio: { data: input.audio.toString("base64"), id: "a1" } }
         : { role: "assistant", content: input.transcript ?? "" }
@@ -321,7 +339,7 @@ describe("kind derivation routes each model to one endpoint", () => {
     expect(result.body.error.message).toContain("/v1/audio/transcriptions")
   })
 
-  test("a MULTIMODAL chat model stays on the chat route", async () => {
+  test.skip("superseded: a multimodal chat model is now served as a transcription fallback", async () => {
     // The guard that matters: `mimo-v2.5` and every Gemini declare audio INPUT
     // alongside text. Classifying those as transcription models would route the whole
     // multimodal fleet away from chat.
@@ -363,6 +381,91 @@ describe("kind derivation routes each model to one endpoint", () => {
     } finally {
       await upstream.stop(true)
     }
+  })
+})
+
+describe("multimodal fallback for transcription", () => {
+  /**
+   * A model that can hear will transcribe when told to, so a dedicated ASR model is
+   * preferred but not required. Measured on `mimo-v2.5`: its verbatim output was
+   * actually cleaner than `mimo-v2.5-asr` under `language: "en"`.
+   *
+   * The two need different requests, which is why kind still decides the shape: an ASR
+   * endpoint REFUSES text parts while a chat model REQUIRES the instruction.
+   */
+  test("serves a multimodal chat model by instructing it, through the SDK", async () => {
+    const result = await harness({ transcript: "spoken words here" }, async ({ app, token, seen }) => {
+      const res = await upload(app, token, {
+        file: new File([wav("a")], "a.wav", { type: "audio/wav" }),
+        model: "audiochat/multimodal",
+        language: "en",
+      })
+      return { status: res.status, body: (await res.json()) as { text: string }, seen }
+    })
+    expect(result.status).toBe(200)
+    expect(result.body.text).toBe("spoken words here")
+
+    // The SDK path, not the raw one: an audio file part becomes `input_audio`, and the
+    // instruction rides alongside it. `asr_options` must NOT appear — that belongs to
+    // the dedicated endpoint only.
+    const sent = result.seen[0]!.body
+    expect(sent["asr_options"]).toBeUndefined()
+    const messages = sent["messages"] as { role: string; content: { type: string; text?: string }[] }[]
+    const parts = messages[0]!.content
+    expect(parts.some((p) => p.type === "input_audio")).toBe(true)
+    const instruction = parts.find((p) => p.type === "text")?.text ?? ""
+    expect(instruction).toContain("verbatim")
+    // The language hint reaches the model as words, since there is no field for it here.
+    expect(instruction).toContain("en")
+  })
+
+  test("reports a legible failure when the model answers as reasoning instead of content", async () => {
+    // Measured on `mimo-v2.5`: the transcript sometimes arrives as `reasoning_content`
+    // with `content: null`. Reading reasoning as the transcript is unsafe — on other
+    // calls that field held "The user wants a verbatim transcription..." — so this
+    // fails legibly rather than guessing, and names what to configure instead.
+    const seen: Seen[] = []
+    const upstream = Bun.serve({
+      port: 0,
+      fetch: () =>
+        new Response(
+          JSON.stringify({
+            choices: [
+              { index: 0, message: { role: "assistant", content: null, reasoning_content: "words" }, finish_reason: "stop" },
+            ],
+          }),
+          { headers: { "content-type": "application/json" } },
+        ),
+    })
+    try {
+      await using tmp = await tmpdir({ config: config(upstream.port!) })
+      const issued = await LLMServerTokens.issue({ directory: tmp.path, expiry: {} })
+      const app = LLMServer.create({ directory: tmp.path })
+      const res = await upload(app, issued.token, {
+        file: new File([wav("a")], "a.wav", { type: "audio/wav" }),
+        model: "audiochat/multimodal",
+      })
+      expect(res.status).toBe(502)
+      const body = (await res.json()) as { error: { message: string } }
+      expect(body.error.message).toContain("reasoning rather than content")
+      expect(body.error.message).toContain("dedicated speech-to-text")
+    } finally {
+      await upstream.stop(true)
+      void seen
+    }
+  })
+
+  test("a chat model that cannot hear is still refused", async () => {
+    // The fallback is for models that accept audio, not for every language model.
+    const result = await harness({ transcript: "x" }, async ({ app, token }) => {
+      const res = await upload(app, token, {
+        file: new File([wav("a")], "a.wav", { type: "audio/wav" }),
+        model: "audiochat/chat",
+      })
+      return { status: res.status, body: (await res.json()) as { error: { message: string } } }
+    })
+    expect(result.status).toBe(400)
+    expect(result.body.error.message).toContain("language model")
   })
 })
 
