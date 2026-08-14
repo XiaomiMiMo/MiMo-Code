@@ -555,6 +555,16 @@ function custom(dep: CustomDep): Record<string, CustomLoader> {
           },
         },
       }),
+    orcarouter: () =>
+      Effect.succeed({
+        autoload: false,
+        options: {
+          headers: {
+            "HTTP-Referer": "https://mimo.xiaomi.com/coder/",
+            "X-Title": "mimocode",
+          },
+        },
+      }),
     nvidia: () =>
       Effect.succeed({
         autoload: false,
