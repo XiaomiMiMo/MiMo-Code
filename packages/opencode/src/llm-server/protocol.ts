@@ -205,19 +205,19 @@ const toText = (content: string | Array<{ type: "text"; text: string }>) =>
  * so beats guessing wav and having the provider reject bytes that are not.
  */
 function audioPart(part: { data: string; format?: string }) {
+  // A `data:` URL names its own type and carries its own payload; a bare base64 string
+  // depends on `format` to say what the bytes are.
   const dataUrl = DATA_URL.exec(part.data)
-  const mediaType = dataUrl
-    ? dataUrl[1]!
-    : part.format
-      ? (AUDIO_FORMAT_MEDIA_TYPES[part.format] ?? `audio/${part.format}`)
-      : undefined
-  if (!mediaType) {
+  if (dataUrl) {
+    return { type: "file" as const, data: dataUrl[2], mediaType: dataUrl[1] }
+  }
+  if (!part.format) {
     throw new Error("input_audio requires `format` when `data` is not a data: URL")
   }
   return {
     type: "file" as const,
-    data: dataUrl ? dataUrl[2]! : part.data,
-    mediaType,
+    data: part.data,
+    mediaType: AUDIO_FORMAT_MEDIA_TYPES[part.format] ?? `audio/${part.format}`,
   }
 }
 
