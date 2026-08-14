@@ -3283,13 +3283,27 @@ NOTE: At any point in time through this workflow you should feel free to ask the
           }
 
           if (!lastUser) throw new Error("No user message found in stream. This should never happen.")
+          // Deliberately NOT MessageV2.compare, and not a raw id compare either.
+          //
+          // `msgs` comes from filterCompacted (message-v2.ts:1077), which walks
+          // newest-first and STOPS at the first checkpoint/compaction marker, then
+          // reverses. So the slice contains at most one marker and it is always
+          // msgs[0] — the boundary the slice starts at. "A marker exists in this
+          // slice" is therefore exactly "this turn's context was already rebuilt",
+          // with no ordering question to get wrong.
+          //
+          // The two orderings that look plausible here are both wrong: a position
+          // compare against lastFinished never fires (the marker precedes every
+          // message in the slice, so nothing follows it), and a time compare never
+          // fires either, because the marker carries the SYNTHETIC time
+          // `boundary.time.created + 1` (checkpoint.ts:1599) and so sorts earlier
+          // than lastFinished rather than later. The original `id > lastFinished.id`
+          // only worked by accident — a freshly minted marker id happens to sort
+          // highest, which stops being true across an id wrap (see MessageV2.compare).
+          // Either mistake un-guards the overflow path and rebuilds the turn twice.
           const usageRecovered =
             !!lastFinished &&
-            msgs.some(
-              (msg) =>
-                msg.info.id > lastFinished.id &&
-                msg.parts.some((part) => part.type === "checkpoint" || part.type === "compaction"),
-            )
+            msgs.some((msg) => msg.parts.some((part) => part.type === "checkpoint" || part.type === "compaction"))
 
           // Per-user-message active recall reminder. Once the session has
           // any memory artifacts (memory dir populated OR tasks recorded),
@@ -3340,7 +3354,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
           if (
             lastAssistant?.finish === "length" &&
             !hasToolCalls &&
-            lastUser.id < lastAssistant.id &&
+            MessageV2.compare(lastUser, lastAssistant) < 0 &&
             (yield* autoContinueOutputLength({ lastUser, assistant: lastAssistant }))
           ) {
             continue
@@ -3720,7 +3734,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
 
             if (step > 1 && lastFinished) {
               for (const m of msgs) {
-                if (m.info.role !== "user" || m.info.id <= lastFinished.id) continue
+                if (m.info.role !== "user" || MessageV2.compare(m.info, lastFinished) <= 0) continue
                 for (const p of m.parts) {
                   if (p.type !== "text" || p.ignored || p.synthetic) continue
                   if (!p.text.trim()) continue
@@ -3774,8 +3788,16 @@ NOTE: At any point in time through this workflow you should feel free to ask the
                   .pipe(Effect.ignore)
                 return "break" as const
               }
+              // Resolve the watermark to its message so the comparison can use
+              // (time.created, id) — a bare id compare inverts across an id wrap
+              // (see MessageV2.compare). If the watermark message is no longer in
+              // the list, fall back to the agent_id check alone, which the
+              // ForkContext.watermarkMsgID JSDoc documents as sufficient on its own.
+              const watermarkMsg = msgs.find((m) => m.info.id === forkCtx.watermarkMsgID)?.info
               const ownNew = msgs.filter(
-                (m) => m.info.id > forkCtx.watermarkMsgID && m.info.agentID === lastUser.agentID,
+                (m) =>
+                  m.info.agentID === lastUser.agentID &&
+                  (!watermarkMsg || MessageV2.compare(m.info, watermarkMsg) > 0),
               )
               const ownNewModelMsgs = yield* MessageV2.toModelMessagesEffect(ownNew, model)
               const prebuiltSystem = forkCtx.system

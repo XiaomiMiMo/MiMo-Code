@@ -607,6 +607,27 @@ const part = (row: typeof PartTable.$inferSelect) =>
 const older = (row: Cursor) =>
   or(lt(MessageTable.time_created, row.time), and(eq(MessageTable.time_created, row.time), lt(MessageTable.id, row.id)))
 
+/**
+ * Chronological order of two messages: `< 0` if a precedes b, `> 0` if a follows
+ * b, `0` if they are the same message.
+ *
+ * Message IDs are NOT a usable clock. `Identifier.create` packs
+ * `Date.now() * 0x1000 + counter` into 6 bytes, so the sortable prefix wraps
+ * every 2^36 ms (~2.18 years); the last wrap was 2026-08-14 12:39:55 UTC and the
+ * next is ~Oct 2028. Across a wrap, a NEWER message gets a SMALLER id — post-wrap
+ * ids restart near `msg_000…` while pre-wrap ids sit near `msg_fff…`. Any bare
+ * `a.id > b.id` therefore inverts for every session whose history straddles a
+ * boundary, which silently wedged the session loop (a fresh user prompt sorted
+ * before all history, so the loop saw no new work and exited at step 0).
+ *
+ * `time.created` is an independent integer column and is not affected, so it is
+ * the primary key of the order; the id only breaks ties inside the same
+ * millisecond, which is exactly the ambiguity the counter was added to resolve.
+ */
+export function compare(a: { id: string; time: { created: number } }, b: { id: string; time: { created: number } }) {
+  return a.time.created !== b.time.created ? a.time.created - b.time.created : a.id < b.id ? -1 : a.id > b.id ? 1 : 0
+}
+
 function hydrate(rows: (typeof MessageTable.$inferSelect)[]) {
   const ids = rows.map((row) => row.id)
   const partByMessage = new Map<string, Part[]>()

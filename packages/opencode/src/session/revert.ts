@@ -74,7 +74,8 @@ export const layer = Layer.effect(
       if (session.revert?.snapshot) yield* snap.restore(session.revert.snapshot)
       yield* snap.revert(patches)
       if (rev.snapshot) rev.diff = yield* snap.diff(rev.snapshot as string)
-      const range = all.filter((msg) => msg.info.id >= rev!.messageID)
+      const revertPoint = all.find((msg) => msg.info.id === rev!.messageID)?.info
+      const range = revertPoint ? all.filter((msg) => MessageV2.compare(msg.info, revertPoint) >= 0) : []
       const diffs = yield* summary.computeDiff({ messages: range })
       yield* storage.write(["session_diff", input.sessionID], diffs).pipe(Effect.ignore)
       yield* bus.publish(Session.Event.Diff, { sessionID: input.sessionID, diff: diffs })
@@ -107,9 +108,16 @@ export const layer = Layer.effect(
       const messageID = session.revert.messageID
       const remove = [] as MessageV2.WithParts[]
       let target: MessageV2.WithParts | undefined
-      for (const msg of msgs) {
-        if (msg.info.id < messageID) continue
-        if (msg.info.id > messageID) {
+      // Order by (time.created, id): a bare id compare inverts across an id wrap
+      // (see MessageV2.compare), and this loop DELETES everything it classifies as
+      // "after" the revert point — an inverted compare would delete the session's
+      // history instead of the reverted tail. If the revert point is missing from
+      // the list there is nothing to anchor on, so remove nothing.
+      const anchor = msgs.find((msg) => msg.info.id === messageID)?.info
+      for (const msg of anchor ? msgs : []) {
+        const rel = MessageV2.compare(msg.info, anchor!)
+        if (rel < 0) continue
+        if (rel > 0) {
           remove.push(msg)
           continue
         }
