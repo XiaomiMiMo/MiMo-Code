@@ -420,6 +420,31 @@ is deliberately treated as NO answer: `generateSpeech` reports
 relabel a flac the caller explicitly requested. In that case the requested format
 wins, because it is what was actually sent upstream.
 
+### [S2.8.1] Declaring a capability instead of a model
+
+A skill that names `mimo-v2.5-tts` is bound to one installation. `llm-server issue
+--capability speech|transcription|chat` resolves what a skill NEEDS to whatever this
+installation HAS, mints a token scoped to that single model, and reports the model it
+picked so the skill can fill its own env var. `Provider` already resolves by capability
+internally — `getVisionModel`, `getSmallModel` — so this follows an existing shape.
+
+Three properties make it more than sugar:
+
+- **It fails before the skill starts.** No speech model configured answers with what to
+  declare, rather than letting the skill fail deep in its own code with a 501.
+- **It distinguishes absent from unreachable.** A speech model on `@ai-sdk/google` is
+  declared but has no transport here, and offering it would hand out a token that cannot
+  work. That case names the package.
+- **It reports a fallback as a fallback.** `fallback: true` means a multimodal chat model
+  is standing in for a dedicated one — measured on this machine, `transcription` resolves
+  to `mimo/mimo-v2.5` because no dedicated ASR is configured.
+
+The chosen model is the configured DEFAULT where one qualifies, because the alternative is
+whatever sorts first: on a real installation that was
+`anthropic-mify/ppio/pa/claude-haiku-4-5`, which is alphabetical noise rather than a
+decision. `--capability` and `--model` are mutually exclusive, since accepting both would
+leave the caller guessing which won.
+
 ### [S2.9] CLI
 
 `mimo llm-server` with `--port`, repeatable `--model`, `--token`, and `--json`.

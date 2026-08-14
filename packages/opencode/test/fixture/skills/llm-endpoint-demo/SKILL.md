@@ -58,11 +58,25 @@ refused with a 400 that names the right route.
    Prefer a fixed `--port` if the endpoint has to survive a restart, because the
    default port is chosen at random and `base_url` would otherwise change.
 
-2. **Mint a token scoped to this task.**
+2. **Mint a token scoped to this task.** Ask by CAPABILITY, not by model name:
 
    ```
-   <mimocode> llm-server issue --model <provider/model> --label llm-endpoint-demo --json
+   <mimocode> llm-server issue --capability speech --label llm-endpoint-demo --json
+   <mimocode> llm-server issue --capability transcription --json
+   <mimocode> llm-server issue --capability chat --json
    ```
+
+   The response includes the `model` it resolved, so set your own env var from that
+   rather than hard-coding an id — a skill that names `mimo-v2.5-tts` only runs where
+   that model happens to be configured. `fallback: true` means a multimodal chat model
+   is standing in for a dedicated one, which works but has a looser contract.
+
+   If nothing can serve the capability the command FAILS before your script starts, with
+   a message saying what to declare. That is the point: failing here beats failing deep
+   inside your own code with a 501.
+
+   To pin an exact model instead, use `--model <provider/model>`. The two are mutually
+   exclusive.
 
    The response carries `base_url`, `api_key`, `expires_at`, and — importantly —
    `renew_command` / `renew_argv`, which is the invocation to use later for a
