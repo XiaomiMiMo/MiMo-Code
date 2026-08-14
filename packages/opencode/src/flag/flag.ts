@@ -151,9 +151,9 @@ export const Flag = {
   MIMOCODE_SKILL_SEARCH_STEM_MIN_LENGTH: 3,
   MIMOCODE_SKILL_SEARCH_FILE_SAMPLE_LIMIT: 10,
   MIMOCODE_SKILL_SEARCH_REFRESH_INTERVAL_MS: 12 * 60 * 60 * 1000,
-  // Defaults to true. Set MIMOCODE_ENABLE_SKILL_SEARCH_REMINDER=false (or 0)
-  // to stop injecting skill-search reminders into user queries.
-  MIMOCODE_ENABLE_SKILL_SEARCH_REMINDER: !falsy("MIMOCODE_ENABLE_SKILL_SEARCH_REMINDER"),
+  // Defaults to false. Set MIMOCODE_ENABLE_SKILL_SEARCH_REMINDER=true (or 1)
+  // to inject skill-search reminders into user queries.
+  MIMOCODE_ENABLE_SKILL_SEARCH_REMINDER: truthy("MIMOCODE_ENABLE_SKILL_SEARCH_REMINDER"),
 
   // Defaults to false. When enabled, skill-source commands appear in the `/`
   // autocomplete dropdown alongside user commands and MCP prompts. Skills are

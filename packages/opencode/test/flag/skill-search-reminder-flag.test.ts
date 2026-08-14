@@ -18,11 +18,16 @@ function read(value?: string) {
 }
 
 describe("MIMOCODE_ENABLE_SKILL_SEARCH_REMINDER", () => {
-  test("is enabled by default", () => {
-    expect(read()).toBe("true")
+  test("is disabled by default", () => {
+    expect(read()).toBe("false")
   })
 
-  test("accepts false and zero to disable reminder injection", () => {
+  test("accepts true and one to enable reminder injection", () => {
+    expect(read("true")).toBe("true")
+    expect(read("1")).toBe("true")
+  })
+
+  test("accepts false and zero to keep reminder injection disabled", () => {
     expect(read("false")).toBe("false")
     expect(read("0")).toBe("false")
   })
