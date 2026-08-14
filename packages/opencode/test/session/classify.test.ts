@@ -6,12 +6,22 @@ import { ProviderID, ModelID } from "../../src/provider/schema"
 
 const sessionID = SessionID.make("session")
 
+// `created` mirrors the numeric suffix of `id` so fixtures order the same way
+// under MessageV2.compare (time first, id only as a same-millisecond tie-break)
+// as they read on the page. Leaving every fixture at created: 0 would collapse
+// the suite onto the id tie-break and stop exercising the time ordering the
+// staleness guards at classify.ts #3a/#4 actually use.
+function seq(id: string) {
+  const n = Number(id.replace(/^\D*/, ""))
+  return Number.isNaN(n) ? 0 : n
+}
+
 function userInfo(id: string): MessageV2.User {
   return {
     id: MessageID.make(id),
     sessionID,
     role: "user",
-    time: { created: 0 },
+    time: { created: seq(id) },
     agent: "user",
     model: { providerID: ProviderID.make("test"), modelID: ModelID.make("test") },
     tools: {},
@@ -27,7 +37,7 @@ function assistantInfo(
     id: MessageID.make(id),
     sessionID,
     role: "assistant",
-    time: { created: 0 },
+    time: { created: seq(id) },
     parentID: MessageID.make("m-parent"),
     modelID: "test",
     providerID: "test",
@@ -61,7 +71,7 @@ function toolPart(messageID: string, opts?: { providerExecuted?: boolean }) {
   } as unknown as MessageV2.Part
 }
 
-// User "m-1" precedes assistant "m-2" so the stale guard (lastUser.id < assistant.id) is satisfied.
+// User "m-1" precedes assistant "m-2" so the stale guard (compare(lastUser, assistant) < 0) is satisfied.
 const lastUser = userInfo("m-1")
 
 describe("classifyAssistantStep", () => {
@@ -274,7 +284,7 @@ describe("classifyAssistantStep", () => {
     ).toBe("invalid")
   })
 
-  test("existing-assistant phase + stale assistant (lastUser.id >= assistant.id) => continue", () => {
+  test("existing-assistant phase + stale assistant (assistant predates current user) => continue", () => {
     // user "m-2" comes after assistant "m-1": assistant predates the current turn.
     expect(
       classifyAssistantStep({
@@ -407,6 +417,55 @@ describe("classifyAssistantStep", () => {
         parts: [textPart("m-2", '<invoke name="bash"><parameter name="command">ls</parameter></invoke>')],
       })
       expect(result.type).toBe("continue")
+    })
+  })
+
+  // Message ids encode a 48-bit timestamp that wraps every ~2.18 years (last
+  // boundary 2026-08-14T11:19:55Z), so across a wrap a NEWER message carries a
+  // SMALLER id. Both staleness guards (#3a and #4) must follow time, not the id,
+  // or a live turn is judged stale and vice versa. Ids below are real ones from
+  // a session that straddled the boundary.
+  describe("staleness guards across an id wraparound", () => {
+    const preWrap = "msg_fd708d21e001JXYNUE1Jba3VEw" // 2026-08-06
+    const postWrap = "msg_0006f768700114fd6bDaDwzOWs" // 2026-08-14
+    const withTime = <T extends { time: { created: number } }>(info: T, created: number) =>
+      ({ ...info, time: { created } }) as T
+
+    test("id order is inverted for this pair — the premise of the cases below", () => {
+      expect(postWrap < preWrap).toBe(true)
+    })
+
+    test("fresh post-wrap assistant is not judged stale", () => {
+      const result = classifyAssistantStep({
+        phase: "existing-assistant",
+        lastUser: withTime(userInfo(preWrap), 1786019107358),
+        assistant: withTime(assistantInfo(postWrap, { finish: "stop" }), 1786713700254),
+        parts: [textPart(postWrap, "fresh answer")],
+      })
+      // A raw id compare reads postWrap < preWrap and returns "continue" here.
+      expect(result).toEqual({ type: "final" })
+    })
+
+    test("genuinely stale pre-wrap assistant is still judged stale", () => {
+      const result = classifyAssistantStep({
+        phase: "existing-assistant",
+        lastUser: withTime(userInfo(postWrap), 1786713700254),
+        assistant: withTime(assistantInfo(preWrap, { finish: "stop" }), 1786019107358),
+        parts: [textPart(preWrap, "old answer")],
+      })
+      expect(result).toEqual({ type: "continue" })
+    })
+
+    test("text-form tool call in a fresh post-wrap turn is still detected", () => {
+      const result = classifyAssistantStep({
+        phase: "existing-assistant",
+        lastUser: withTime(userInfo(preWrap), 1786019107358),
+        assistant: withTime(assistantInfo(postWrap, { finish: "tool-calls" }), 1786713700254),
+        parts: [textPart(postWrap, '<invoke name="bash"><parameter name="command">ls</parameter></invoke>')],
+      })
+      // A raw id compare skips #3a and falls through to the unconditional
+      // tool-calls continue at #3, losing the text-tool-call retry.
+      expect(result.type).toBe("text-tool-call")
     })
   })
 })
