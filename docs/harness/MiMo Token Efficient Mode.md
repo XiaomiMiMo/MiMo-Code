@@ -1,4 +1,4 @@
-# MiM Token Efficient Mode
+# MiMo Token Efficient Mode
 
 **一句话总结**：使用通用正则过滤pipeline \+ 启发式过滤pipeline过滤Bash Output中冗余token（实验功能，默认关闭）
 
