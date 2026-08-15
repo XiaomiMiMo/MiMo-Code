@@ -33,6 +33,8 @@ import { SessionPrompt } from "../../src/session/prompt"
 import { SessionRevert } from "../../src/session/revert"
 import { SessionRunState } from "../../src/session/run-state"
 import { Goal } from "../../src/session/goal"
+import { ReviewGateState } from "../../src/session/review-gate-state"
+import { Git } from "../../src/git"
 import { SessionStatus } from "../../src/session/status"
 import { Skill } from "../../src/skill"
 import { SystemPrompt } from "../../src/session/system"
@@ -188,6 +190,8 @@ function makeLayers() {
   const trunc = Truncate.layer.pipe(Layer.provideMerge(deps))
   return SessionPrompt.layer.pipe(
     Layer.provide(Goal.defaultLayer),
+    Layer.provide(ReviewGateState.defaultLayer),
+    Layer.provide(Git.defaultLayer),
     Layer.provide(TaskRegistry.defaultLayer),
     Layer.provide(SchedulerDefaultLayer),
     Layer.provide(SessionRevert.defaultLayer),

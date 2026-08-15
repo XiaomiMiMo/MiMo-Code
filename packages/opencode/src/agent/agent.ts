@@ -14,6 +14,7 @@ import PROMPT_GENERATE from "./generate.txt"
 import PROMPT_GENERATE_GPT from "./prompt/generate-gpt.txt"
 import PROMPT_GENERAL from "./prompt/general.txt"
 import PROMPT_EXPLORE from "./prompt/explore.txt"
+import PROMPT_REVIEW from "./prompt/review.txt"
 import PROMPT_DREAM from "./prompt/dream.txt"
 import PROMPT_DISTILL from "./prompt/distill.txt"
 import PROMPT_SUMMARY from "./prompt/summary.txt"
@@ -291,6 +292,28 @@ export const layer = Layer.effect(
             options: {},
             mode: "subagent",
             native: true,
+          },
+          review: {
+            name: "review",
+            color: "#8ab4f8",
+            description:
+              "Reviews uncommitted changes for bugs, structure, performance, and behavior changes. Read-only.",
+            prompt: PROMPT_REVIEW,
+            options: {},
+            permission: Permission.merge(
+              defaults,
+              Permission.fromConfig({
+                "*": "deny",
+                grep: "allow",
+                glob: "allow",
+                read: "allow",
+                codesearch: "allow",
+              }),
+              user,
+            ),
+            mode: "subagent",
+            native: true,
+            hidden: true,
           },
           title: {
             name: "title",

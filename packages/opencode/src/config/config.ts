@@ -388,6 +388,17 @@ const InfoSchema = Schema.Struct({
       }),
     }),
   ).annotate({ description: "Voice input provider and model configuration." }),
+  review: Schema.optional(
+    Schema.Struct({
+      auto: Schema.optional(Schema.Boolean).annotate({
+        description:
+          "Auto-trigger an independent review of uncommitted changes at the main-loop stop decision. Default: true.",
+      }),
+      max_review_rounds: Schema.optional(NonNegativeInt).annotate({
+        description: "Maximum review-driven re-entry rounds per session. Default: 3.",
+      }),
+    }),
+  ),
   experimental: Schema.optional(
     Schema.Struct({
       disable_paste_summary: Schema.optional(Schema.Boolean),

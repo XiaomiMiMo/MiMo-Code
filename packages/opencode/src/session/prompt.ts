@@ -120,6 +120,9 @@ import {
   type McpToolSearchMetadata,
 } from "@/tool/mcp-tool-search"
 import { isMcpToolSearchEnabled } from "@/tool/gpt"
+import { Git } from "@/git"
+import { ReviewGate } from "./review"
+import { ReviewGateState } from "./review-gate-state"
 
 // @ts-ignore
 globalThis.AI_SDK_LOG_WARNINGS = false
@@ -279,7 +282,9 @@ export const layer = Layer.effect(
     const instruction = yield* Instruction.Service
     const state = yield* SessionRunState.Service
     const goal = yield* Goal.Service
-
+    const taskRegistry = yield* TaskRegistry.Service
+    const reviewGateState = yield* ReviewGateState.Service
+    const git = yield* Git.Service
     const revert = yield* SessionRevert.Service
     const summary = yield* SessionSummary.Service
     const sys = yield* SystemPrompt.Service
@@ -3024,6 +3029,42 @@ NOTE: At any point in time through this workflow you should feel free to ask the
           return true
         })
 
+        // Auto-review stop gate (main agent only). Before honoring a stop, run
+        // an independent read-only review of uncommitted changes. Findings are
+        // injected as a synthetic user turn and the loop re-enters so the main
+        // agent fixes them. Runs AFTER taskGate/goalGate: work that isn't done
+        // (tasks open, goal unmet) shouldn't be reviewed yet. Fail-open on any
+        // reviewer error so a flaky reviewer can never trap the user.
+        const reviewGate = Effect.fn("SessionPrompt.reviewGate")(function* (lastUser: MessageV2.User) {
+          if ((agentID ?? "main") !== "main") return false
+          // Actor is late-bound via spawnRef (NOT `yield* Actor.Service`) to
+          // break the Actor → SessionPrompt → Actor layer cycle — same pattern
+          // SessionCheckpoint uses for checkpoint-writer. A missing Actor
+          // (render-only/test paths) fails open so the reviewer can never trap.
+          const actor = spawnRef.current
+          if (!actor) {
+            slog.debug("review gate: actor unavailable, skipping auto-review")
+            return false
+          }
+          const cfg = yield* config.get()
+          return yield* ReviewGate.shouldReenter({
+            sessionID,
+            worktree: ctx.worktree,
+            // Pass the agent IDENTITY (`agentID`, e.g. "main"), not the agent
+            // TYPE name (`lastUser.agent`, e.g. "build") — ReviewGate.decide
+            // derives isMain from `agent === "main"`. Same expression as the
+            // main-agent guard above and the taskGate/goalGate guards.
+            agent: agentID ?? "main",
+            lastUser,
+            cfg,
+            state: reviewGateState,
+            taskReg: taskRegistry,
+            git,
+            actor,
+            sessions,
+          })
+        })
+
         // think-only (reasoning only) / empty (nothing at all) steps finish with
         // a non-tool stop but carry no usable answer. Without intervention the loop
         // breaks and hands the user an assistant with no final text. Nudge the model
@@ -3419,6 +3460,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
               yield* slog.warn("degraded final on abnormal finish", { finish: lastAssistant.finish })
             if (classification.type !== "continue") {
               if (yield* goalGate(lastUser)) continue
+              if (yield* reviewGate(lastUser)) continue
               yield* slog.info("exiting loop", { classification: classification.type })
               break
             }
@@ -4796,6 +4838,8 @@ export const appLayer = Layer.suspend(() =>
         Inbox.defaultLayer,
         Goal.defaultLayer,
         TaskRegistry.defaultLayer,
+        ReviewGateState.defaultLayer,
+        Git.defaultLayer,
       ),
     ),
   ),
