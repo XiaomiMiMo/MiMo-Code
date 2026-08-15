@@ -434,6 +434,19 @@ describe("tool.read truncation", () => {
     }),
   )
 
+  it.live("audio files are returned as model attachments", () =>
+    Effect.gen(function* () {
+      const dir = yield* tmpdirScoped()
+      yield* put(path.join(dir, "voice.mp3"), Buffer.from([0x49, 0x44, 0x33, 0x04, 0x00, 0x00, 0x00, 0x00]))
+
+      const result = yield* exec(dir, { file_path: path.join(dir, "voice.mp3") })
+      expect(result.output).toBe("Audio read successfully")
+      expect(result.metadata.truncated).toBe(false)
+      expect(result.attachments?.[0].mime).toBe("audio/mpeg")
+      expect(result.attachments?.[0].url.startsWith("data:audio/mpeg;base64,")).toBe(true)
+    }),
+  )
+
   it.live("large image files are properly attached without error", () =>
     Effect.gen(function* () {
       const result = yield* exec(FIXTURES_DIR, { file_path: path.join(FIXTURES_DIR, "large-image.png") })

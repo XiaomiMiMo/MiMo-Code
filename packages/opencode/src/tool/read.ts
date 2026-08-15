@@ -12,7 +12,7 @@ import { assertExternalDirectoryEffect } from "./external-directory"
 import { SessionCwd } from "./session-cwd"
 import { Instruction } from "../session/instruction"
 import { Provider } from "@/provider"
-import { isImageAttachment, isPdfAttachment, sniffAttachmentMime } from "@/util/media"
+import { isAudioAttachment, isImageAttachment, isPdfAttachment, sniffAttachmentMime } from "@/util/media"
 
 const DEFAULT_READ_LIMIT = 2000
 const MAX_LINE_LENGTH = 2000
@@ -231,11 +231,11 @@ export const ReadTool = Tool.define(
             : undefined)
         const supportsImage = model?.capabilities.input.image ?? false
         if (!supportsImage) {
-        const preferred = yield* provider.getVisionModel().pipe(Effect.orElseSucceed(() => undefined))
-        const preferredRef = preferred ? `${preferred.providerID}/${preferred.id}` : undefined
-        const dispatch = preferredRef
-          ? `dispatch a vision-capable subagent: actor run <type> "<desc>" "analyze the image at ${filepath}" --model ${preferredRef} (run \`actor models --vision\` for the full list)`
-          : `no vision-capable model is configured — ask the user to configure one or use an OCR tool`
+          const preferred = yield* provider.getVisionModel().pipe(Effect.orElseSucceed(() => undefined))
+          const preferredRef = preferred ? `${preferred.providerID}/${preferred.id}` : undefined
+          const dispatch = preferredRef
+            ? `dispatch a vision-capable subagent: actor run <type> "<desc>" "analyze the image at ${filepath}" --model ${preferredRef} (run \`actor models --vision\` for the full list)`
+            : `no vision-capable model is configured — ask the user to configure one or use an OCR tool`
           const warning = [
             `Cannot read image "${path.basename(filepath)}" — the current model has no vision support, so its visual content is unavailable.`,
             `If you need to understand the image visually, ${dispatch}.`,
@@ -266,13 +266,14 @@ export const ReadTool = Tool.define(
         }
       }
 
-      if (isPdfAttachment(mime)) {
+      if (isPdfAttachment(mime) || isAudioAttachment(mime)) {
         const bytes = yield* fs.readFile(filepath)
+        const msg = isAudioAttachment(mime) ? "Audio read successfully" : "PDF read successfully"
         return {
           title,
-          output: "PDF read successfully",
+          output: msg,
           metadata: {
-            preview: "PDF read successfully",
+            preview: msg,
             truncated: false,
             loaded: loaded.map((item) => item.filepath),
           },
