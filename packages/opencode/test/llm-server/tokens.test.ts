@@ -222,6 +222,37 @@ describe("server address", () => {
       started: Date.now(),
     })
     expect(await LLMServerTokens.address(tmp.path)).toBeUndefined()
+    // And the file is gone, so a directory does not accumulate one entry per crash.
+    expect(await Bun.file(LLMServerTokens.addressFile(tmp.path, 0x7ffffffe)).exists()).toBe(false)
+  })
+
+  test("keeps every live listener, newest first, without one overwriting another", async () => {
+    // Several sessions can be open on one project and each binds its own port. A single
+    // shared file would hand a caller whichever session happened to write last.
+    await using tmp = await tmpdir()
+    const now = Date.now()
+    await LLMServerTokens.publish(tmp.path, {
+      pid: process.pid,
+      hostname: "127.0.0.1",
+      port: 1111,
+      url: "http://127.0.0.1:1111/",
+      started: now - 5000,
+    })
+    await LLMServerTokens.publish(tmp.path, {
+      pid: process.ppid,
+      hostname: "127.0.0.1",
+      port: 2222,
+      url: "http://127.0.0.1:2222/",
+      started: now,
+    })
+
+    expect(await LLMServerTokens.addresses(tmp.path)).toMatchObject([{ port: 2222 }, { port: 1111 }])
+    // The newest, because with several sessions open that is the one just started.
+    expect(await LLMServerTokens.address(tmp.path)).toMatchObject({ port: 2222 })
+
+    // Withdrawing one leaves the other reachable.
+    await LLMServerTokens.unpublish(tmp.path, process.ppid)
+    expect(await LLMServerTokens.addresses(tmp.path)).toMatchObject([{ port: 1111 }])
   })
 })
 
@@ -229,6 +260,9 @@ describe("server address", () => {
 async function pathOf(directory: string) {
   const { Hash } = await import("@mimo-ai/shared/util/hash")
   const { Global } = await import("../../src/global")
+  const { Filesystem } = await import("../../src/util")
   const path = await import("path")
-  return path.join(Global.Path.state, "llm-server", Hash.fast(path.resolve(directory)), "tokens.json")
+  // `Filesystem.resolve`, matching the module: it canonicalises symlinks, so on macOS
+  // `/var/…` and `/private/var/…` land in one bucket instead of two.
+  return path.join(Global.Path.state, "llm-server", Hash.fast(Filesystem.resolve(directory)), "tokens.json")
 }

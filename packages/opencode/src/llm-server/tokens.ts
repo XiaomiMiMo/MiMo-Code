@@ -4,7 +4,7 @@ import { createHash, timingSafeEqual } from "node:crypto"
 import { Hash } from "@mimo-ai/shared/util/hash"
 import { Flock } from "@mimo-ai/shared/util/flock"
 import { Global } from "@/global"
-import { Log } from "@/util"
+import { Filesystem, Log } from "@/util"
 
 const log = Log.create({ service: "llm-server.tokens" })
 
@@ -61,27 +61,40 @@ type Store = {
 const EMPTY: Store = { version: 1, tokens: [] }
 
 function dir(directory: string) {
-  return path.join(Global.Path.state, "llm-server", Hash.fast(path.resolve(directory)))
+  // `Filesystem.resolve` and not `path.resolve`: the bucket is keyed by the directory
+  // STRING, and on macOS one directory has two spellings — `mkdtemp` and a shell hand
+  // back `/var/folders/…` while a process's own `cwd` resolves to `/private/var/…`. Two
+  // spellings meant two buckets, so a token issued seconds earlier came back invalid.
+  // Canonicalising here, at the single entry point, is what keeps issuer and verifier
+  // looking at the same file.
+  return path.join(Global.Path.state, "llm-server", Hash.fast(Filesystem.resolve(directory)))
 }
 
 function file(directory: string) {
   return path.join(dir(directory), "tokens.json")
 }
 
-/** Where a running server advertises how to reach it, for `issue` to read. */
-export function addressFile(directory: string) {
-  return path.join(dir(directory), "server.json")
+/**
+ * Where a running server advertises how to reach it, for `issue` to read.
+ *
+ * One file PER PROCESS, because every mimocode process that serves this project binds
+ * its own loopback listener. A single `server.json` would make them overwrite each
+ * other and hand a caller whichever session wrote last — reachable, but not the one
+ * that spawned them. The pid in the name is also the liveness check (see `addresses`).
+ */
+export function addressFile(directory: string, pid = process.pid) {
+  return path.join(dir(directory), `server-${pid}.json`)
 }
 
 export type Address = { pid: number; hostname: string; port: number; url: string; started: number }
 
 export async function publish(directory: string, address: Address) {
   await fs.mkdir(dir(directory), { recursive: true, mode: 0o700 })
-  await fs.writeFile(addressFile(directory), JSON.stringify(address), { mode: 0o600 })
+  await fs.writeFile(addressFile(directory, address.pid), JSON.stringify(address), { mode: 0o600 })
 }
 
-export async function unpublish(directory: string) {
-  await fs.rm(addressFile(directory), { force: true })
+export async function unpublish(directory: string, pid = process.pid) {
+  await fs.rm(addressFile(directory, pid), { force: true })
 }
 
 /**
@@ -107,29 +120,54 @@ function fields(value: unknown): value is Record<string, unknown> {
 }
 
 /**
- * Read the advertised address, treating a dead process as no address at all.
+ * Every live listener serving this project, newest first.
  *
  * A crashed server leaves its file behind, and handing that stale port to a skill
  * would produce a connection error far away from the cause. `kill(pid, 0)` costs
- * nothing and turns it into an honest "nothing is running".
+ * nothing and turns it into an honest "nothing is running"; the dead file is removed
+ * on the way past, so the directory does not accumulate one entry per crash.
+ */
+export async function addresses(directory: string): Promise<Address[]> {
+  const names = await fs.readdir(dir(directory)).catch(() => [] as string[])
+  const found = await Promise.all(
+    names
+      .filter((name) => name.startsWith("server-") && name.endsWith(".json"))
+      .map(async (name) => {
+        const target = path.join(dir(directory), name)
+        const raw = await readJson(target)
+        if (!fields(raw)) return undefined
+        if (typeof raw["pid"] !== "number" || typeof raw["port"] !== "number") return undefined
+        if (typeof raw["hostname"] !== "string" || typeof raw["url"] !== "string") return undefined
+        try {
+          process.kill(raw["pid"], 0)
+        } catch {
+          // EPERM means a live process we do not own, which is still a live process —
+          // but it cannot be one of ours, and its port is not ours to advertise.
+          await fs.rm(target, { force: true }).catch(() => {})
+          return undefined
+        }
+        return {
+          pid: raw["pid"],
+          hostname: raw["hostname"],
+          port: raw["port"],
+          url: raw["url"],
+          started: typeof raw["started"] === "number" ? raw["started"] : 0,
+        }
+      }),
+  )
+  return found.filter((item): item is Address => item !== undefined).sort((a, b) => b.started - a.started)
+}
+
+/**
+ * One live listener, or nothing.
+ *
+ * The most recently started, because with several sessions open on one project that is
+ * the one a human just launched and therefore the one they mean. A CHILD process must
+ * not resolve its endpoint this way — it is told the exact URL by whoever spawned it;
+ * this is the fallback for a person at a shell.
  */
 export async function address(directory: string): Promise<Address | undefined> {
-  const raw = await readJson(addressFile(directory))
-  if (!fields(raw)) return undefined
-  if (typeof raw["pid"] !== "number" || typeof raw["port"] !== "number") return undefined
-  if (typeof raw["hostname"] !== "string" || typeof raw["url"] !== "string") return undefined
-  try {
-    process.kill(raw["pid"], 0)
-  } catch {
-    return undefined
-  }
-  return {
-    pid: raw["pid"],
-    hostname: raw["hostname"],
-    port: raw["port"],
-    url: raw["url"],
-    started: typeof raw["started"] === "number" ? raw["started"] : 0,
-  }
+  return (await addresses(directory))[0]
 }
 
 async function read(directory: string): Promise<Store> {

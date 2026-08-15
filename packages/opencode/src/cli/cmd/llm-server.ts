@@ -151,6 +151,11 @@ const issue = cmd({
         label: args.label,
       })
 
+      // Resolved rather than guessed: a mimocode process serving this project advertises
+      // its loopback address, so the two halves of "where" and "with what" can finally be
+      // printed together. Absent when nothing is serving this directory right now.
+      const address = await LLMServerTokens.address(process.cwd())
+
       if (args.json) {
         // Machine-first: a wrapper reads one line and exports the two env vars the
         // skill asked for. `base_url` is null rather than absent when no server is
@@ -159,6 +164,7 @@ const issue = cmd({
           JSON.stringify({
             api_key: issued.token,
             id: issued.record.id,
+            base_url: address ? `${address.url.replace(/\/$/, "")}/v1` : null,
             expires_at: LLMServerTokens.expiresAt(issued.record) ?? null,
             models: issued.record.models.length > 0 ? issued.record.models : "all",
             // The resolved model, so a skill can set its own env var without knowing which
@@ -189,6 +195,7 @@ const issue = cmd({
       UI.println(UI.Style.TEXT_SUCCESS_BOLD + "token issued" + UI.Style.TEXT_NORMAL)
       UI.println(`  api_key   ${issued.token}`)
       UI.println(`  id        ${issued.record.id}`)
+      UI.println(`  base_url  ${address ? `${address.url.replace(/\/$/, "")}/v1` : "(no instance is serving this directory)"}`)
       UI.println(`  expires   ${relative(LLMServerTokens.expiresAt(issued.record))}`)
       UI.println(`  models    ${issued.record.models.length > 0 ? issued.record.models.join(", ") : "all configured"}`)
       if (chosen) {
@@ -198,13 +205,14 @@ const issue = cmd({
         )
       }
       UI.println("")
-      // No base_url here on purpose. The endpoint belongs to whichever mimocode process
-      // is serving — a TUI, a `serve`, the desktop's engine — and each has its own port.
-      // A subprocess is told the URL by the process that spawned it; a CLI invocation in
-      // some other terminal has no way to know which one the caller meant, and printing
-      // a guess would be worse than printing nothing.
       UI.println("The plaintext token is shown once and is not stored; only its hash is.")
-      UI.println("Point the consumer at the base_url of the mimocode instance serving this project.")
+      // The endpoint belongs to whichever mimocode process serves this project, and each
+      // binds its own port — so this is read from what that process advertised, not
+      // guessed. Nothing serving means nothing to point at: say so instead of printing a
+      // URL that will refuse connections.
+      if (!address) {
+        UI.println("Start a session in this directory (or `mimo serve --port <n>`) and issue again.")
+      }
     }),
 })
 
@@ -215,12 +223,15 @@ const list = cmd({
   handler: (args) =>
     inInstance(async () => {
       const tokens = await LLMServerTokens.list(process.cwd())
-      const address = await LLMServerTokens.address(process.cwd())
+      // All of them, not just one: several sessions can be open on the same project, and
+      // "which port do I use" is exactly the question this command is asked.
+      const servers = await LLMServerTokens.addresses(process.cwd())
       if (args.json) {
-        process.stdout.write(JSON.stringify({ server: address ?? null, tokens }) + "\n")
+        process.stdout.write(JSON.stringify({ servers, server: servers[0] ?? null, tokens }) + "\n")
         return
       }
-      UI.println(address ? `server    ${address.url} (pid ${address.pid})` : "server    not running")
+      if (servers.length === 0) UI.println("server    none serving this directory")
+      for (const server of servers) UI.println(`server    ${server.url} (pid ${server.pid})`)
       if (tokens.length === 0) {
         UI.println("tokens    none")
         return
