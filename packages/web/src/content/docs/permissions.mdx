@@ -135,7 +135,6 @@ OpenCode permissions are keyed by tool name, plus a couple of safety guards:
 - `grep` — content search (matches the regex pattern)
 - `bash` — running shell commands (matches parsed commands like `git status --porcelain`)
 - `task` — launching subagents (matches the subagent type)
-- `actor` — the `actor` tool, which spawns and manages subagents (matches the subagent type)
 - `skill` — loading a skill (matches the skill name)
 - `lsp` — running LSP queries (currently non-granular)
 - `question` — asking the user questions during execution
@@ -152,19 +151,6 @@ If you don’t specify anything, OpenCode starts from permissive defaults:
 
 - Most permissions default to `"allow"`.
 - `doom_loop` and `external_directory` default to `"ask"`.
-- `actor` is denied for subagents, so a subagent cannot spawn another subagent — delegation is one level deep. Give the
-  agent an explicit `actor` rule to opt back in:
-
-```json title="opencode.json"
-{
-  "agent": {
-    "general": {
-      "permission": { "actor": "allow" }
-    }
-  }
-}
-```
-
 - `read` is `"allow"`, but `.env` files are denied by default:
 
 ```json title="opencode.json"

@@ -78,8 +78,6 @@ Tests guard only against the old invitation (`"You may delegate"`). The wider "n
 
 **Comment budget.** The rationale above lives in this document, not in the source. `agent.ts` keeps three lines at the injection site — enough to stop a future reader "fixing" the merge order — and `recallHintLines` one clause about `hasActor`.
 
-**Docs.** `packages/web/src/content/docs/permissions.mdx` lists `actor` among the available permissions and documents the subagent default plus the opt-back-in snippet.
-
 **Behavior after the change.** Peer/orchestrator sessions (`session` tool, already orchestrator-only), `workflow()`'s internal `spawnRef` spawns, `@agent`-mention spawns (`bypassAgentCheck`), and `checkpoint-writer` forks are all untouched — none of them route through the subagent's `actor` tool schema. A subagent loses `actor`'s non-spawn verbs (`status`/`wait`/`cancel`/`send`/`models`) as an accepted cost of full invisibility.
 
 ## [S3] Out of Scope
@@ -88,6 +86,7 @@ Tests guard only against the old invitation (`"You may delegate"`). The wider "n
 - No change to the `session` tool, orchestrator peers, or the workflow runtime's own spawn cap. Subtask commands (`prompt.ts:4681`) and the flag-gated `workflow` tool can still start agents from a subagent.
 - Not fixing the pre-existing permission-name split where `registry.ts:340` filters spawnable types with `evaluate("task", ...)` while `actor.ts:696` asks with `permission: "actor"`; `permission.task` is consequently not an opt-back-in.
 - No new config key or experimental flag; the existing `agent.<name>.permission.actor` is the opt-back-in.
+- No change to `packages/web/src/content/docs/`. That docs site is upstream content this fork does not maintain, so the `actor` permission and the new subagent default are recorded here instead.
 
 ## Tasks
 
@@ -95,4 +94,4 @@ Tests guard only against the old invitation (`"You may delegate"`). The wider "n
 - [x] T2: Drop the delegation bullet from `prompt/general.txt` so the prompt neither invites delegation nor names the tool — acceptance: the file no longer contains "You may delegate" (covers: S2; depends: T1)
 - [x] T3: Add regression tests — every `mode === "subagent"` agent has `actor` disabled, a user `actor: "allow"` override re-enables it, and `checkpoint-writer` under a parent primary's `parentPermission` still sees `actor` — acceptance: the new tests pass and the subagent-deny guard fails on `main`'s behavior (covers: S2; depends: T1)
 - [x] T4: Verify with `bun typecheck`, `bun lint`, the agent/actor test files, and a live `bun dev debug agent` for `general` + `explore` — acceptance: recorded commands with PASS/PRE-EXISTING status (covers: S2; depends: T1, T2, T3)
-- [x] T5: Gate the recall reminder's `actor` hint on the acting agent's tool visibility and document `permission.actor` — acceptance: `recallHintLines(cfg, false)` omits the actor line under test, and the permissions doc lists `actor` with the subagent default (covers: S2; depends: T1)
+- [x] T5: Gate the recall reminder's `actor` hint on the acting agent's tool visibility — acceptance: `recallHintLines(cfg, false)` omits the actor line under test (covers: S2; depends: T1)
