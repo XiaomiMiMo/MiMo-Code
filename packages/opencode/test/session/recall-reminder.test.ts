@@ -34,4 +34,11 @@ describe("recallHintLines", () => {
     expect(lines[1]).toBe("- task list")
     expect(lines[2]).toBe("- actor status <actor_id>")
   })
+
+  test("an agent without the actor tool is not told to call it", () => {
+    const lines = recallHintLines({ invocation_style: "shell" }, false)
+    expect(lines).toHaveLength(2)
+    expect(lines.some((l) => l.includes("actor"))).toBe(false)
+    expect(lines[1]).toBe("- task list")
+  })
 })

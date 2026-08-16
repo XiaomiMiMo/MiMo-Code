@@ -128,8 +128,11 @@ globalThis.AI_SDK_LOG_WARNINGS = false
 // Recall-reminder hints, rendered in each tool's configured invocation style so
 // shell-mode sessions never see a JSON-shaped example (which primes models to
 // emit JSON and crash the shell parser). `memory` has no shell form, so it is
-// always JSON. Exported for unit testing.
-export function recallHintLines(toolCfg: ToolStyleConfig | undefined): string[] {
+// always JSON. `hasActor` is false for an agent the `actor` tool was filtered
+// out for — subagents, which are denied it by default (see agent/agent.ts) —
+// because naming an absent tool costs the model a wasted call. Exported for
+// unit testing.
+export function recallHintLines(toolCfg: ToolStyleConfig | undefined, hasActor = true): string[] {
   const taskHint =
     resolveInvocationStyle(toolCfg, "task") === "shell" ? "- task list" : `- task({ operation: "list" })`
   const actorHint =
@@ -137,7 +140,7 @@ export function recallHintLines(toolCfg: ToolStyleConfig | undefined): string[] 
       ? "- actor status <actor_id>"
       : `- actor({ operation: "status", actor_id: "<id>" })`
   // memory has no shell form (no shell.parse) → always JSON.
-  return [`- memory({ operation: "search", query: "<keyword>" })`, taskHint, actorHint]
+  return [`- memory({ operation: "search", query: "<keyword>" })`, taskHint, ...(hasActor ? [actorHint] : [])]
 }
 
 // The orchestrator root session is PERSISTENT and coordinates many tasks over
@@ -3346,7 +3349,11 @@ NOTE: At any point in time through this workflow you should feel free to ask the
               .pipe(Effect.catch(() => Effect.succeed(false)))
             if (hasRecallTarget) {
               const sessMemDir = path.join(Global.Path.data, "memory", "sessions", sessionID)
-              const hints = recallHintLines((yield* config.get()).tool)
+              const recallAgent = yield* agents.get(lastUser.agent)
+              const hints = recallHintLines(
+                (yield* config.get()).tool,
+                !Permission.disabled(["actor"], Agent.runtimePermission(recallAgent, session.permission)).has("actor"),
+              )
               lastUserMsgForRecall.parts.push({
                 id: PartID.ascending(),
                 messageID: lastUserMsgForRecall.info.id,
@@ -3359,8 +3366,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
                   "not in your context with:",
                   hints[0],
                   `- Read(file_path="${sessMemDir}/...")`,
-                  hints[1],
-                  hints[2],
+                  ...hints.slice(1),
                   "",
                   "Don't ask the user about something memory may already record.",
                   "</system-reminder>",

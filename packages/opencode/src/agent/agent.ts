@@ -513,17 +513,17 @@ export const layer = Layer.effect(
         // deliberately does not re-enable nesting.
         //
         // checkpoint-writer is a subagent with no toolAllowlist because a fork
-        // must mirror the parent's tool schema for prefix-cache parity. Its
-        // visibility ruleset is merge(writer.permission, parentPermission) with
-        // parentPermission last, so the parent primary's "*":"allow" out-ranks
-        // this deny and parity holds (pinned by a test in agent.test.ts).
+        // must mirror the parent's tool schema for prefix-cache parity. On the
+        // fork path its visibility ruleset is merge(writer.permission,
+        // parentPermission) with parentPermission last, so the parent primary's
+        // "*":"allow" out-ranks this deny and parity holds (pinned by a test in
+        // agent.test.ts). A cold-start writer (fork:false) is filtered against
+        // its own permission and does lose `actor` — harmless, it never spawns.
         for (const name in agents) {
-          if (agents[name].mode !== "subagent") continue
-          if (agents[name].permission.some((rule) => rule.permission === "actor")) continue
-          agents[name].permission = Permission.merge(
-            agents[name].permission,
-            Permission.fromConfig({ actor: "deny" }),
-          )
+          const agent = agents[name]
+          if (agent.mode !== "subagent") continue
+          if (agent.permission.some((rule) => rule.permission === "actor")) continue
+          agent.permission = Permission.merge(agent.permission, Permission.fromConfig({ actor: "deny" }))
         }
 
         const get = Effect.fnUntraced(function* (agent: string) {
