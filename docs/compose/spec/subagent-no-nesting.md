@@ -22,14 +22,14 @@ Programmatic spawn paths are untouched by design, because none of them reads the
 - `bun lint` (oxlint, repo root) — 0 errors, 4092 warnings PRE-EXISTING
 - `bun test test/agent/ test/tool/actor.test.ts test/tool/actor-recover.test.ts test/actor/` — 233 pass / 9 fail; the identical 9 failures reproduce on clean `main` → PRE-EXISTING (this machine's global config sets `edit: "ask"`, which un-denies edit-family tools for read-only agents). `main` additionally flaked `runLoop emits a per-step turn heartbeat`.
 - `bun test test/session/prompt-effect.test.ts test/session/recall-reminder.test.ts test/tool/actor.test.ts` — 74 pass, 0 fail
-- New tests (5) all PASS: subagent-wide `actor` deny with primaries as the negative control, config opt-back-in, `checkpoint-writer` fork parity, `general` prompt wording, recall hint omission.
+- New tests (5) all PASS: subagent-wide `actor` deny with primaries as the negative control, config opt-back-in, `checkpoint-writer` fork parity, absence of the old prompt invitation, recall hint omission.
 - Live `bun dev debug agent` — before: `general actor=true`; after: `build actor=true`, `general actor=false`, `explore actor=false`.
 
 **Journey log**
 
 - The obvious placement was wrong. Merging `actor: "deny"` *before* the agent's own ruleset — intended to let user config win by `findLast` — left `general` with `actor` still visible, because `defaults` carries `"*": "allow"` and the wildcard rule matches every tool name. The rule must be appended last, with an explicit-rule skip guard as the escape hatch. Live `debug agent` caught this immediately; the reasoning alone had not.
 - `agent.prompt` replaces the base system prompt entirely (`System.agent`, `session/system.ts:52`), so `default.txt`'s "spawn Agent with subagent_type=Explore" guidance never reaches `general`. Only per-agent prompts needed editing.
-- Removing a tool from an agent leaves *prose* references behind. `recallHintLines` was advertising `actor({operation:"status"})` into any session with memory or tasks, ungated by agent mode — found by review, not by tests. When a change hides a tool, grep the synthetic reminders too.
+- Removing a tool from an agent leaves *prose* references behind. `recallHintLines` was advertising `actor({operation:"status"})` into any session with memory or tasks, ungated by agent mode — found by review, not by tests. When a change hides a tool, grep the synthetic reminders too. Related tone lesson: the first rewrite of the prompt bullet *explained* that delegation was unavailable, which both plants the concept and addresses a human reader; deleting it outright was the right move.
 - Baselining on the untouched `main` worktree before judging failures was essential here: 9 of the failing tests in scope fail identically on `main` because of this machine's global permission config.
 - The review's two CRITICAL findings were both against this document, not the code: a stale `[S2]` mechanism (the pre-fix merge order) and unrecorded verification. Commit `7b5f766d` fixes the MEDIUM findings it raised and was verified afterwards, but landed after the reviewed head `3c2527bf`.
 
@@ -70,7 +70,13 @@ Because the pattern is `"*"`, `Permission.disabled` removes `actor` from the sub
 
 **checkpoint-writer parity.** `checkpoint-writer` is the one hidden subagent with no `toolAllowlist`, because a fork must mirror the parent's tool schema for prefix-cache alignment. On the fork path its visibility ruleset is `merge(writer.permission, parentPermission)` (`llm.ts` `resolveTools` via `prompt.ts:3896`), and `parentPermission` is merged last, so the parent primary's `"*": "allow"` out-ranks the injected deny under `findLast`. Parity therefore holds, pinned by a test. A cold-start writer (`fork: false`, `checkpoint.ts:888`) is filtered against its own permission and does lose `actor`; harmless, since it never spawns.
 
-**Prompt alignment.** `prompt/general.txt` states that the assignment is the subagent's own to finish, that it has no ability to delegate, and that out-of-scope work is reported back to the parent. `System.agent` (`session/system.ts:52`) returns `[agent.prompt]` when an agent declares one, so the base prompt's orchestration guidance never reaches `general` and needs no change. The per-turn recall reminder is the other prose surface that names the tool: `recallHintLines` takes a `hasActor` flag and the injection site computes it from the acting agent's own visibility, so a subagent is never pointed at an absent tool.
+**Prompt alignment.** The subagent prompt must not name the capability at all — neither inviting delegation nor explaining that delegation is unavailable. A prompt that says "you have no ability to delegate" still plants the concept and sends the model looking for the tool, and it reads as an explanation aimed at a human reviewer rather than instruction for the model; the correct tone is silence. So `prompt/general.txt` drops the delegation bullet entirely and keeps only a scope statement — "Work outside the delegated scope is not yours to start. Name it in your final report and leave it to the parent." — with the opening line's "Own that task and complete it end to end" carrying the ownership framing. The word `actor` does not appear in the file.
+
+Tests guard only against the old invitation (`"You may delegate"`). The wider "never names the tool" property stays design intent rather than an assertion: it is prose-shaped, hard to express without false positives, and would make any legitimate rewording fail for the wrong reason.
+
+`System.agent` (`session/system.ts:52`) returns `[agent.prompt]` when an agent declares one, so the base prompt's orchestration guidance never reaches `general` and needs no change. The per-turn recall reminder is the other prose surface that names the tool: `recallHintLines` takes a `hasActor` flag and the injection site computes it from the acting agent's own visibility, so a subagent is never pointed at an absent tool.
+
+**Comment budget.** The rationale above lives in this document, not in the source. `agent.ts` keeps three lines at the injection site — enough to stop a future reader "fixing" the merge order — and `recallHintLines` one clause about `hasActor`.
 
 **Docs.** `packages/web/src/content/docs/permissions.mdx` lists `actor` among the available permissions and documents the subagent default plus the opt-back-in snippet.
 
@@ -86,7 +92,7 @@ Because the pattern is `"*"`, `Permission.disabled` removes `actor` from the sub
 ## Tasks
 
 - [x] T1: Inject `actor: "deny"` for every `mode === "subagent"` agent in `agent.ts` — acceptance: `bun dev debug agent general` reports `"actor": false`, and a config `agent.general.permission.actor: "allow"` restores `true` (covers: S2)
-- [x] T2: Rewrite the delegation bullet in `prompt/general.txt` so it neither invites delegation nor names an absent tool — acceptance: the file no longer contains "You may delegate", and states that the subagent completes or reports back (covers: S2; depends: T1)
+- [x] T2: Drop the delegation bullet from `prompt/general.txt` so the prompt neither invites delegation nor names the tool — acceptance: the file no longer contains "You may delegate" (covers: S2; depends: T1)
 - [x] T3: Add regression tests — every `mode === "subagent"` agent has `actor` disabled, a user `actor: "allow"` override re-enables it, and `checkpoint-writer` under a parent primary's `parentPermission` still sees `actor` — acceptance: the new tests pass and the subagent-deny guard fails on `main`'s behavior (covers: S2; depends: T1)
 - [x] T4: Verify with `bun typecheck`, `bun lint`, the agent/actor test files, and a live `bun dev debug agent` for `general` + `explore` — acceptance: recorded commands with PASS/PRE-EXISTING status (covers: S2; depends: T1, T2, T3)
 - [x] T5: Gate the recall reminder's `actor` hint on the acting agent's tool visibility and document `permission.actor` — acceptance: `recallHintLines(cfg, false)` omits the actor line under test, and the permissions doc lists `actor` with the subagent default (covers: S2; depends: T1)

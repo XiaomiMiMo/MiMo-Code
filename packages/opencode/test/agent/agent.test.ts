@@ -273,7 +273,6 @@ test("checkpoint-writer fork keeps actor visible under the parent's permission (
 
 test("general prompt does not invite delegation", () => {
   expect(PROMPT_GENERAL).not.toContain("You may delegate")
-  expect(PROMPT_GENERAL).toContain("no ability to delegate")
 })
 
 test("explore agent asks for external directories and allows Truncate.GLOB", async () => {

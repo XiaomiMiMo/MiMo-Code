@@ -128,10 +128,8 @@ globalThis.AI_SDK_LOG_WARNINGS = false
 // Recall-reminder hints, rendered in each tool's configured invocation style so
 // shell-mode sessions never see a JSON-shaped example (which primes models to
 // emit JSON and crash the shell parser). `memory` has no shell form, so it is
-// always JSON. `hasActor` is false for an agent the `actor` tool was filtered
-// out for — subagents, which are denied it by default (see agent/agent.ts) —
-// because naming an absent tool costs the model a wasted call. Exported for
-// unit testing.
+// always JSON. `hasActor` false drops the actor line for agents the tool was
+// filtered out for. Exported for unit testing.
 export function recallHintLines(toolCfg: ToolStyleConfig | undefined, hasActor = true): string[] {
   const taskHint =
     resolveInvocationStyle(toolCfg, "task") === "shell" ? "- task list" : `- task({ operation: "list" })`
