@@ -501,6 +501,31 @@ export const layer = Layer.effect(
           )
         }
 
+        // One level of delegation is the default: a subagent does not see the
+        // `actor` tool at all. The rule's pattern is "*", so Permission.disabled
+        // drops `actor` from the subagent's LLM-visible tool schema (llm.ts
+        // resolveTools), which also makes its ctx.ask({ permission: "actor" })
+        // unreachable. Appended LAST because evaluate() uses findLast and the
+        // ruleset already carries `"*": "allow"` from defaults — a rule merged
+        // earlier would lose to it. The opt-back-in is therefore an EXPLICIT
+        // `actor` rule (global `permission.actor` or `agent.<name>.permission.
+        // actor`), which this pass leaves untouched; a blanket `"*": "allow"`
+        // deliberately does not re-enable nesting.
+        //
+        // checkpoint-writer is a subagent with no toolAllowlist because a fork
+        // must mirror the parent's tool schema for prefix-cache parity. Its
+        // visibility ruleset is merge(writer.permission, parentPermission) with
+        // parentPermission last, so the parent primary's "*":"allow" out-ranks
+        // this deny and parity holds (pinned by a test in agent.test.ts).
+        for (const name in agents) {
+          if (agents[name].mode !== "subagent") continue
+          if (agents[name].permission.some((rule) => rule.permission === "actor")) continue
+          agents[name].permission = Permission.merge(
+            agents[name].permission,
+            Permission.fromConfig({ actor: "deny" }),
+          )
+        }
+
         const get = Effect.fnUntraced(function* (agent: string) {
           return agents[agent]
         })

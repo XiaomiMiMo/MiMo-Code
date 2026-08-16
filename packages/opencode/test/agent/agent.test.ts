@@ -12,6 +12,7 @@ import { testEffect } from "../lib/effect"
 import PROMPT_GENERATE from "../../src/agent/generate.txt"
 import PROMPT_GENERATE_GPT from "../../src/agent/prompt/generate-gpt.txt"
 import PROMPT_EXPLORE from "../../src/agent/prompt/explore.txt"
+import PROMPT_GENERAL from "../../src/agent/prompt/general.txt"
 
 const itTool = testEffect(Layer.mergeAll(ToolRegistry.defaultLayer, Agent.defaultLayer, CrossSpawnSpawner.defaultLayer))
 
@@ -215,6 +216,64 @@ test("explore agent denies edit and write", async () => {
       expect(evalPerm(explore, "todowrite")).toBe("deny")
     },
   })
+})
+
+test("subagents cannot spawn subagents — actor is disabled for every subagent, not for primaries", async () => {
+  await using tmp = await tmpdir()
+  await Instance.provide({
+    directory: tmp.path,
+    fn: async () => {
+      const agents = await load(tmp.path, (svc) => svc.list())
+      const subagents = agents.filter((a) => a.mode === "subagent")
+      expect(subagents.length).toBeGreaterThan(0)
+      for (const agent of subagents) {
+        expect(Permission.disabled(["actor"], Agent.runtimePermission(agent, [])).has("actor")).toBe(true)
+      }
+      for (const name of ["build", "plan", "compose"]) {
+        const primary = agents.find((a) => a.name === name)
+        expect(primary).toBeDefined()
+        expect(Permission.disabled(["actor"], Agent.runtimePermission(primary!, [])).has("actor")).toBe(false)
+      }
+    },
+  })
+})
+
+test("an explicit actor rule in config opts subagent nesting back in", async () => {
+  await using tmp = await tmpdir({ config: { agent: { general: { permission: { actor: "allow" } } } } })
+  await Instance.provide({
+    directory: tmp.path,
+    fn: async () => {
+      const agents = await load(tmp.path, (svc) => svc.list())
+      const general = agents.find((a) => a.name === "general")
+      expect(Permission.disabled(["actor"], Agent.runtimePermission(general!, [])).has("actor")).toBe(false)
+      // Scoped to the agent that asked for it — explore stays single-level.
+      const explore = agents.find((a) => a.name === "explore")
+      expect(Permission.disabled(["actor"], Agent.runtimePermission(explore!, [])).has("actor")).toBe(true)
+    },
+  })
+})
+
+test("checkpoint-writer fork keeps actor visible under the parent's permission (prefix-cache parity)", async () => {
+  await using tmp = await tmpdir()
+  await Instance.provide({
+    directory: tmp.path,
+    fn: async () => {
+      const agents = await load(tmp.path, (svc) => svc.list())
+      const writer = agents.find((a) => a.name === "checkpoint-writer")
+      const build = agents.find((a) => a.name === "build")
+      expect(writer?.toolAllowlist).toBeUndefined()
+      // Mirrors llm.ts resolveTools for the fork branch (prompt.ts passes the
+      // captured parentPermission as `permission`), so the fork's visible tool
+      // set must still match the parent's despite the subagent-wide actor deny.
+      const visibility = Agent.runtimePermission(writer!, build!.permission)
+      expect(Permission.disabled(["actor"], visibility).has("actor")).toBe(false)
+    },
+  })
+})
+
+test("general prompt does not invite delegation", () => {
+  expect(PROMPT_GENERAL).not.toContain("You may delegate")
+  expect(PROMPT_GENERAL).toContain("no ability to delegate")
 })
 
 test("explore agent asks for external directories and allows Truncate.GLOB", async () => {
