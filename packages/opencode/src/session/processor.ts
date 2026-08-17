@@ -772,11 +772,21 @@ export const layer: Layer.Layer<
       const halt = Effect.fn("SessionProcessor.halt")(function* (e: unknown) {
         slog.error("process", { error: errorMessage(e), stack: e instanceof Error ? e.stack : undefined })
         const error = parse(e)
+
+        // Enhanced context overflow handling with recovery
+        // See: https://github.com/XiaomiMiMo/MiMo-Code/issues/1221
+        // Ported from OpenCode commit 820c984d
         if (MessageV2.ContextOverflowError.isInstance(error)) {
+          slog.warn("context.overflow.detected", {
+            sessionID: ctx.sessionID,
+            attemptingRecovery: true,
+            message: error.message,
+          })
           ctx.needsOverflowHandling = true
           yield* bus.publish(Session.Event.Error, { sessionID: ctx.sessionID, error })
           return
         }
+
         ctx.assistantMessage.error = error
         yield* bus.publish(Session.Event.Error, {
           sessionID: ctx.assistantMessage.sessionID,

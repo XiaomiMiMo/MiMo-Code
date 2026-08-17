@@ -383,7 +383,25 @@ export const layer: Layer.Layer<
         model,
       })
 
+      // Handle overflow with recovery attempt
+      // See: https://github.com/XiaomiMiMo/MiMo-Code/issues/1221
+      // Ported from OpenCode commit 820c984d
       if (result === "overflow") {
+        log.warn("context.overflow.detected", {
+          sessionID: input.sessionID,
+          messageCount: messages.length,
+          attemptingRecovery: !replay, // Only attempt recovery on first overflow
+        })
+
+        // If we haven't tried replay yet, attempt to recover by stripping more content
+        if (!replay) {
+          log.info("context.overflow.attempting.recovery", { sessionID: input.sessionID })
+          // Return "text-repeat" to trigger retry with overflow flag
+          // This allows the caller to strip media and try again
+          return "text-repeat"
+        }
+
+        // If we already tried replay (stripped media) and still overflow, it's truly too large
         processor.message.error = new MessageV2.ContextOverflowError({
           message: replay
             ? "Conversation history too large to compact - exceeds model context limit"
