@@ -135,9 +135,9 @@ export const CapabilityRoutes = lazy(() =>
       }
 
       scopes.set(c.req.raw, {
-        // `undefined` = unrestricted, `[]` = deny all. Keeping those distinct is what a
-        // previous review caught as a real escalation: collapsing an empty scope to
-        // "unrestricted" let a token reach every configured model.
+        // `undefined` = unrestricted. A token with an empty `models` array means "all
+        // configured models" (see tokens.ts), and is mapped to `undefined` here so
+        // downstream code sees one shape for "unrestricted" rather than two.
         models: verdict.record.models.length > 0 ? verdict.record.models : undefined,
       })
       return next()
