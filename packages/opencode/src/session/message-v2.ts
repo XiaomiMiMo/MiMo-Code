@@ -640,6 +640,17 @@ function providerMeta(metadata: Record<string, any> | undefined) {
   return Object.keys(rest).length > 0 ? rest : undefined
 }
 
+// OpenAI-compatible Python backends (SenseNova, many HF chat templates) do
+// `json.loads(tool_call.function.arguments)` then `.items()`. A primitive
+// input serializes as `"0"` / `"true"` / `"..."`, parses back as int/bool/str,
+// and 400s with `'int' object has no attribute 'items'`. Keep replay as a
+// mapping so every provider sees the same shape.
+function modelToolInput(input: unknown) {
+  if (input !== null && typeof input === "object" && !Array.isArray(input)) return input
+  if (input === undefined || input === null) return {}
+  return { value: input }
+}
+
 export const toModelMessagesEffect = Effect.fnUntraced(function* (
   input: WithParts[],
   model: Provider.Model,
@@ -860,7 +871,7 @@ export const toModelMessagesEffect = Effect.fnUntraced(function* (
               type: ("tool-" + part.tool) as `tool-${string}`,
               state: "output-available",
               toolCallId: part.callID,
-              input: part.state.input,
+              input: modelToolInput(part.state.input),
               output,
               ...(part.metadata?.providerExecuted ? { providerExecuted: true } : {}),
               ...(differentModel ? {} : { callProviderMetadata: providerMeta(part.metadata) }),
@@ -882,7 +893,7 @@ export const toModelMessagesEffect = Effect.fnUntraced(function* (
                 type: ("tool-" + part.tool) as `tool-${string}`,
                 state: "output-available",
                 toolCallId: part.callID,
-                input: part.state.input,
+                input: modelToolInput(part.state.input),
                 output,
                 ...(part.metadata?.providerExecuted ? { providerExecuted: true } : {}),
                 ...(differentModel ? {} : { callProviderMetadata: providerMeta(part.metadata) }),
@@ -892,7 +903,7 @@ export const toModelMessagesEffect = Effect.fnUntraced(function* (
                 type: ("tool-" + part.tool) as `tool-${string}`,
                 state: "output-error",
                 toolCallId: part.callID,
-                input: part.state.input,
+                input: modelToolInput(part.state.input),
                 errorText: part.state.error,
                 ...(part.metadata?.providerExecuted ? { providerExecuted: true } : {}),
                 ...(differentModel ? {} : { callProviderMetadata: providerMeta(part.metadata) }),
@@ -906,7 +917,7 @@ export const toModelMessagesEffect = Effect.fnUntraced(function* (
               type: ("tool-" + part.tool) as `tool-${string}`,
               state: "output-error",
               toolCallId: part.callID,
-              input: part.state.input,
+              input: modelToolInput(part.state.input),
               errorText: "[Tool execution was interrupted]",
               ...(part.metadata?.providerExecuted ? { providerExecuted: true } : {}),
               ...(differentModel ? {} : { callProviderMetadata: providerMeta(part.metadata) }),

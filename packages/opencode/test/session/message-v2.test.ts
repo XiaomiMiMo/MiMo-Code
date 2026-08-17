@@ -1383,6 +1383,40 @@ describe("session.message-v2.toModelMessage", () => {
       },
     ])
   })
+
+  test("coerces a primitive tool input to a mapping so OpenAI-compatible arguments stay a dict", async () => {
+    const userID = "m-user"
+    const assistantID = "m-assistant"
+    const input: MessageV2.WithParts[] = [
+      {
+        info: userInfo(userID),
+        parts: [{ ...basePart(userID, "u1"), type: "text", text: "go" }] as MessageV2.Part[],
+      },
+      {
+        info: assistantInfo(assistantID, userID),
+        parts: [
+          {
+            ...basePart(assistantID, "a1"),
+            type: "tool",
+            callID: "call-num",
+            tool: "bash",
+            state: {
+              status: "completed",
+              input: 0 as never,
+              output: "ok",
+              title: "",
+              metadata: {},
+              time: { start: 0, end: 1 },
+            },
+          },
+        ] as MessageV2.Part[],
+      },
+    ]
+
+    const messages = await MessageV2.toModelMessages(input, model)
+    const call = (messages[1].content as { type: string; input: unknown }[]).find((part) => part.type === "tool-call")
+    expect(call?.input).toEqual({ value: 0 })
+  })
 })
 
 describe("session.message-v2.fromError", () => {

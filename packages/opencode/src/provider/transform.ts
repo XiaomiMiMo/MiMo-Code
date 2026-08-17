@@ -964,10 +964,56 @@ function mapProviderOptions(
   })
 }
 
+function asToolInput(input: unknown) {
+  const obj = record(input)
+  if (obj) return obj
+  if (input === undefined || input === null) return {}
+  return { value: input }
+}
+
+// SenseNova / HF chat templates iterate `messages` and `tool_call.function.arguments`
+// with `.items()`. A stray primitive in the list, or a tool-call input that JSON
+// stringifies as `"0"`, 400s every model that shares that history until the session
+// is restarted. Subagent spawn concatenates a frozen ModelMessage[] snapshot, so
+// this has to hold at the pre-send choke point, not only at toModelMessages.
+function dropNonObjectMessages(msgs: ModelMessage[]): ModelMessage[] {
+  return msgs.filter((msg) => !!record(msg) && typeof (msg as { role?: unknown }).role === "string")
+}
+
+function dropNonObjectContentParts(msgs: ModelMessage[]): ModelMessage[] {
+  return msgs.map((msg) => {
+    if (!Array.isArray(msg.content)) return msg
+    const filtered = msg.content.filter((part) => {
+      const obj = record(part)
+      return !!obj && typeof obj.type === "string"
+    })
+    if (filtered.length === msg.content.length) return msg
+    return { ...msg, content: filtered } as typeof msg
+  })
+}
+
+function normalizeToolCallInputs(msgs: ModelMessage[]): ModelMessage[] {
+  return msgs.map((msg) => {
+    if (!Array.isArray(msg.content)) return msg
+    return {
+      ...msg,
+      content: msg.content.map((part) => {
+        if (part.type !== "tool-call") return part
+        return { ...part, input: asToolInput(part.input) }
+      }),
+    } as typeof msg
+  })
+}
+
 export function message(msgs: ModelMessage[], model: Provider.Model, options: Record<string, unknown>) {
+  // Drop non-message entries first: a number in this list is what SenseNova
+  // reports as `'int' object has no attribute 'items'` when it iterates messages.
+  msgs = dropNonObjectMessages(msgs)
   // Guard against genuinely-invalid content (object/undefined/null) that would
   // blow up downstream .map() calls. Strings are valid and left untouched.
   msgs = normalizeContentArray(msgs)
+  msgs = dropNonObjectContentParts(msgs)
+  msgs = normalizeToolCallInputs(msgs)
   msgs = unsupportedParts(msgs, model)
   msgs = limitImages(msgs, model)
   msgs = normalizeMessages(msgs, model, options)
