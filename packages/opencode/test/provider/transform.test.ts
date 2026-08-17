@@ -1,5 +1,7 @@
 import { describe, expect, test } from "bun:test"
+import { PNG } from "pngjs"
 import { ProviderTransform, type Provider } from "../../src/provider"
+import { DEFAULT_MAX_IMAGE_DIMENSION, imageDimensions } from "../../src/provider/image"
 import { ModelID, ProviderID } from "../../src/provider/schema"
 
 describe("ProviderTransform.options - setCacheKey", () => {
@@ -1524,9 +1526,126 @@ describe("ProviderTransform.message - provider-aware image size cap", () => {
   // an unambiguous signal that no cap was applied.
   const sixMbJunk = Buffer.alloc(6_000_000, 0x42).toString("base64")
   const wrappedSixMbJunk = sixMbJunk.replace(/.{76}/g, "$&\n")
+  const widePng = (() => {
+    const png = new PNG({ width: 2_100, height: 10 })
+    png.data.fill(0x80)
+    return PNG.sync.write(png).toString("base64")
+  })()
+  const wideWebp = (() => {
+    const bytes = Buffer.alloc(30)
+    bytes.write("RIFF", 0, "ascii")
+    bytes.writeUInt32LE(22, 4)
+    bytes.write("WEBP", 8, "ascii")
+    bytes.write("VP8X", 12, "ascii")
+    bytes.writeUIntLE(2_099, 24, 3)
+    bytes.writeUIntLE(9, 27, 3)
+    return bytes.toString("base64")
+  })()
+  const wideGif = (() => {
+    const bytes = Buffer.alloc(10)
+    bytes.write("GIF89a", 0, "ascii")
+    bytes.writeUInt16LE(2_100, 6)
+    bytes.writeUInt16LE(10, 8)
+    return bytes.toString("base64")
+  })()
 
   test("baseline: fixture exceeds the anthropic 5MB hard limit", () => {
     expect(base64ByteSize(sixMbJunk)).toBeGreaterThan(PROVIDER_HARD_LIMIT)
+  })
+
+  test.each([
+    ["native Anthropic", "anthropic", "claude-sonnet-4", "@ai-sdk/anthropic"],
+    ["Vertex Anthropic", "google-vertex-anthropic", "claude-sonnet-4", "@ai-sdk/google-vertex/anthropic"],
+    ["Bedrock", "amazon-bedrock", "anthropic.claude-sonnet-4", "@ai-sdk/amazon-bedrock"],
+    ["Gateway Claude", "gateway", "anthropic/claude-sonnet-4", "@ai-sdk/gateway"],
+    ["OpenRouter Claude", "openrouter", "anthropic/claude-sonnet-4", "@openrouter/ai-sdk-provider"],
+    ["Copilot Claude", "github-copilot", "claude-sonnet-4", "@ai-sdk/github-copilot"],
+  ])("%s scales a small-byte image whose edge exceeds 2000px", (_, providerID, apiID, npm) => {
+    const model = withApi(providerID, { id: apiID, url: "https://example.invalid", npm })
+    const result = ProviderTransform.message(
+      [{ role: "user", content: [{ type: "image", image: `data:image/png;base64,${widePng}` }] }] as any[],
+      model,
+      {},
+    )
+    const part = (result[0].content as any[])[0]
+    expect(part.type).toBe("image")
+    const base64 = String(part.image).replace(/^data:[^;]+;base64,/, "")
+    const dimensions = imageDimensions(part.mediaType, Buffer.from(base64, "base64"))
+    expect(dimensions && Math.max(dimensions.width, dimensions.height)).toBe(DEFAULT_MAX_IMAGE_DIMENSION)
+  })
+
+  test("non-Claude gateway leaves the same over-2000px image untouched", () => {
+    const image = `data:image/png;base64,${widePng}`
+    const model = withApi("gateway", { id: "openai/gpt-5", url: "https://example.invalid", npm: "@ai-sdk/gateway" })
+    const part = (
+      ProviderTransform.message([{ role: "user", content: [{ type: "image", image }] }] as any[], model, {})[0]
+        .content as any[]
+    )[0]
+    expect(part).toEqual({ type: "image", image })
+  })
+
+  test("malformed PNG becomes a placeholder instead of reaching Anthropic", () => {
+    const model = withApi("anthropic", {
+      id: "claude-sonnet-4",
+      url: "https://api.anthropic.com",
+      npm: "@ai-sdk/anthropic",
+    })
+    const image = Buffer.from("not really a png").toString("base64")
+    const part = (
+      ProviderTransform.message(
+        [{ role: "user", content: [{ type: "image", image: `data:image/png;base64,${image}` }] }] as any[],
+        model,
+        {},
+      )[0].content as any[]
+    )[0]
+    expect(part.type).toBe("text")
+    expect(part.text).toContain("Image omitted")
+  })
+
+  test.each([
+    ["WebP", "image/webp", wideWebp],
+    ["GIF", "image/gif", wideGif],
+  ])("small-byte over-2000px %s becomes a placeholder", (_, mime, data) => {
+    const model = withApi("anthropic", {
+      id: "claude-sonnet-4",
+      url: "https://api.anthropic.com",
+      npm: "@ai-sdk/anthropic",
+    })
+    const part = (ProviderTransform.message(
+      [{ role: "user", content: [{ type: "image", image: `data:${mime};base64,${data}` }] }] as any[],
+      model,
+      {},
+    )[0].content as any[])[0]
+    expect(part.type).toBe("text")
+    expect(part.text).toContain("Image omitted")
+  })
+
+  test("small-byte over-2000px WebP tool result becomes a placeholder", () => {
+    const model = withApi("anthropic", {
+      id: "claude-sonnet-4",
+      url: "https://api.anthropic.com",
+      npm: "@ai-sdk/anthropic",
+    })
+    const result = ProviderTransform.message(
+      [
+        {
+          role: "tool",
+          content: [
+            {
+              type: "tool-result",
+              toolCallId: "call_1",
+              toolName: "read",
+              output: { type: "content", value: [{ type: "media", mediaType: "image/webp", data: wideWebp }] },
+            },
+          ],
+        },
+      ] as any[],
+      model,
+      {},
+    )
+    const entry = (result[0].content[0] as any).output.value[0]
+    expect(entry.type).toBe("text")
+    expect(entry.text).toContain("Image omitted")
   })
 
   const userMsgs = () =>
