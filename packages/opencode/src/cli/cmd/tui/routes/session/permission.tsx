@@ -129,6 +129,86 @@ function TextBody(props: { title: string; description?: string; icon?: string })
   )
 }
 
+type PromptTheme = ReturnType<typeof useTheme>["theme"]
+
+// Command and deletions each live in an explicitly sized scrollbox: the
+// Prompt's maxHeight used to make yoga silently drop overflowing rows (hiding
+// deletion targets), and the unpainted space cells of the warning lines leaked
+// stale glyphs from earlier frames — so deletion lines also paint every cell
+// with an explicit warning background. Theme comes in as a prop so tests can
+// mount this without the full ThemeProvider context chain.
+export function BashDeleteBody(props: {
+  command: string
+  deletes: string[]
+  theme: PromptTheme
+  scrollAcceleration?: ReturnType<typeof getScrollAcceleration>
+}) {
+  const dimensions = useTerminalDimensions()
+  // A scrollbox stretches to fill available height (its viewport chain is
+  // flexGrow:1 with minHeight:"100%" content), so cap it from a wrap estimate.
+  // The divisor matches the body's horizontal insets (border + paddings = 6),
+  // so word wrap produces at least this many rows and the estimate never
+  // over-allocates — worst case the content scrolls.
+  const wrapRows = (text: string) => {
+    const width = Math.max(20, dimensions().width - 6)
+    return text.split("\n").reduce((acc, line) => acc + Math.max(1, Math.ceil(line.length / width)), 0)
+  }
+  const commandRows = createMemo(() => wrapRows("$ " + props.command))
+  // Long deletion paths word-wrap too; budgeting one row per entry would let a
+  // wrapping entry push later ones behind the scroll despite free space below.
+  const deleteRows = createMemo(() => props.deletes.reduce((acc, cmd) => acc + wrapRows(" - " + cmd + " "), 0))
+
+  // Guaranteed visible deletion rows. Don't lower the cap below 4: once the
+  // list is long enough to scroll, a scrollbox minHeight smaller than the
+  // vertical scrollbar's minimum extent makes yoga stop shrinking the section
+  // entirely, overflowing the footer. (For 1-3 deletions minHeight equals the
+  // full list height, so no scrollbar appears and the collision can't happen.)
+  const deletesFloor = createMemo(() => Math.min(props.deletes.length, 4))
+
+  const trackOptions = () => ({
+    backgroundColor: props.theme.background,
+    foregroundColor: props.theme.borderActive,
+  })
+
+  return (
+    <box paddingLeft={1} gap={1} flexShrink={1} minHeight={0}>
+      <Show when={props.command}>
+        <scrollbox
+          maxHeight={commandRows()}
+          flexShrink={1}
+          minHeight={1}
+          scrollAcceleration={props.scrollAcceleration}
+          verticalScrollbarOptions={{ trackOptions: trackOptions() }}
+        >
+          <text fg={props.theme.text}>{"$ " + props.command}</text>
+        </scrollbox>
+      </Show>
+      <Show when={props.deletes.length > 0}>
+        <box gap={0} flexShrink={1} minHeight={deletesFloor() + 1}>
+          <text fg={props.theme.textMuted} flexShrink={0}>
+            Detected deletions
+          </text>
+          <scrollbox
+            maxHeight={deleteRows()}
+            flexShrink={1}
+            minHeight={deletesFloor()}
+            scrollAcceleration={props.scrollAcceleration}
+            verticalScrollbarOptions={{ trackOptions: trackOptions() }}
+          >
+            <For each={props.deletes}>
+              {(cmd) => (
+                <text fg={selectedForeground(props.theme, props.theme.warning)} bg={props.theme.warning}>
+                  {" - " + cmd + " "}
+                </text>
+              )}
+            </For>
+          </scrollbox>
+        </box>
+      </Show>
+    </box>
+  )
+}
+
 export function PermissionPrompt(props: { request: PermissionRequest }) {
   const sdk = useSDK()
   const sync = useSync()
@@ -151,6 +231,7 @@ export function PermissionPrompt(props: { request: PermissionRequest }) {
   })
 
   const { theme } = useTheme()
+  const config = useTuiConfig()
 
   return (
     <Switch>
@@ -314,19 +395,12 @@ export function PermissionPrompt(props: { request: PermissionRequest }) {
                 icon: "✗",
                 title: "Confirm irreversible deletion",
                 body: (
-                  <box paddingLeft={1} gap={1}>
-                    <Show when={command}>
-                      <text fg={theme.text}>{"$ " + command}</text>
-                    </Show>
-                    <Show when={deletes.length > 0}>
-                      <box gap={0}>
-                        <text fg={theme.textMuted}>Detected deletions</text>
-                        <box>
-                          <For each={deletes}>{(cmd) => <text fg={theme.warning}>{"- " + cmd}</text>}</For>
-                        </box>
-                      </box>
-                    </Show>
-                  </box>
+                  <BashDeleteBody
+                    command={command}
+                    deletes={deletes}
+                    theme={theme}
+                    scrollAcceleration={getScrollAcceleration(config)}
+                  />
                 ),
               }
             }
