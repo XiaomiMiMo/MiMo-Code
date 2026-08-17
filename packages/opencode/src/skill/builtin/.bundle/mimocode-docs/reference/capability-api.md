@@ -95,10 +95,15 @@ so a stock OpenAI client works by changing `base_url` alone. Provider-native kno
 **flat** `provider_options` map keyed by the SDK's own camelCase option names.
 
 `voice` on `/v1/audio/speech` is a discriminated union with exactly one source — a preset
-string (`"Chloe"`), `{"design": "<description>"}`, or
+string, `{"design": "<description>"}`, or
 `{"clone": {"audio": "<base64 or data: URL>", "format": "wav|mp3|mpeg"}}`. Two sources in one
 object is a 400 from the schema. The response `content-type` is derived from the bytes that came
 back, not from the requested `response_format`.
+
+The only preset voice currently available on the MiMo TTS API is `"Chloe"`; other names
+are rejected upstream with 502. Voice design and voice clone are separate capabilities that
+must be declared on the model (`voice_design: true` / `voice_clone: true` in config) — see
+the `mimo-v2.5-tts-voicedesign` and `mimo-v2.5-tts-voiceclone` models.
 
 ## Error codes a consumer must distinguish
 
