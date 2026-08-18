@@ -3812,19 +3812,23 @@ NOTE: At any point in time through this workflow you should feel free to ask the
             // spawnRef to break the Actor → SessionPrompt → Actor layer cycle).
             // If forkCtx is missing (race / cleanup bug / spawn skipped), fail the
             // actor so the next prune turn can spawn a fresh fork.
+            // Fork path: use frozen ForkContext when available; fall back to
+            // normal path if forkContext is missing (e.g., actor tool with
+            // context="full" that didn't construct a ForkContext).
+            let isForkWithCtx = isForkAgent
+            let forkCtx: import("./actor/spawn.js").ForkContext | undefined
             if (isForkAgent) {
               const forkCtxEffect = spawnRef.current?.getForkContext(lastUser.agentID!)
-              const forkCtx = forkCtxEffect ? yield* forkCtxEffect : undefined
+              forkCtx = forkCtxEffect ? yield* forkCtxEffect : undefined
               if (!forkCtx) {
-                yield* slog.warn("fork agent runLoop: missing forkContext, failing actor", {
+                yield* slog.warn("fork agent runLoop: missing forkContext, falling back to normal path", {
                   sessionID,
                   agentID: lastUser.agentID,
                 })
-                yield* actorRegistry
-                  .updateStatus(sessionID, lastUser.agentID!, { status: "idle", lastOutcome: "failure", lastError: "missing fork context" })
-                  .pipe(Effect.ignore)
-                return "break" as const
+                isForkWithCtx = false
               }
+            }
+            if (isForkWithCtx && forkCtx) {
               const ownNew = msgs.filter(
                 (m) => m.info.id > forkCtx.watermarkMsgID && m.info.agentID === lastUser.agentID,
               )
