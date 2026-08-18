@@ -1,17 +1,11 @@
+import { createMemo } from "solid-js"
 import { DialogSelect } from "@tui/ui/dialog-select"
 import { useDialog, type DialogContext } from "@tui/ui/dialog"
 import { useLocal } from "@tui/context/local"
 import { useLanguage } from "@tui/context/language"
 import { useToast } from "../ui/toast"
 
-const TIERS: { label: string; value: number | null }[] = [
-  { label: "Never", value: null },
-  { label: "30 seconds", value: 30_000 },
-  { label: "1 minute", value: 60_000 },
-  { label: "2 minutes", value: 120_000 },
-  { label: "5 minutes", value: 300_000 },
-  { label: "10 minutes", value: 600_000 },
-]
+const TIERS: (number | null)[] = [null, 30_000, 60_000, 120_000, 300_000, 600_000]
 
 export function DialogPermissionTimeout() {
   const dialog = useDialog()
@@ -19,20 +13,25 @@ export function DialogPermissionTimeout() {
   const toast = useToast()
   const t = useLanguage().t
 
-  const options = TIERS.map((tier) => ({
-    title: tier.value === null ? t("tui.permission_timeout.option.never") : formatDuration(tier.value),
-    value: tier.value,
-    description:
-      tier.value === null
-        ? t("tui.permission_timeout.option.never_description")
-        : t("tui.permission_timeout.option.tier_description", { duration: formatDuration(tier.value) }),
-  }))
+  const options = createMemo(() => {
+    const current = local.permissionAskTimeout.current()
+    const values =
+      current !== null && !TIERS.includes(current) ? [current, ...TIERS] : TIERS
+    return values.map((value) => ({
+      title: value === null ? t("tui.permission_timeout.option.never") : formatDuration(value),
+      value,
+      description:
+        value === null
+          ? t("tui.permission_timeout.option.never_description")
+          : t("tui.permission_timeout.option.tier_description", { duration: formatDuration(value) }),
+    }))
+  })
 
   return (
     <DialogSelect<number | null>
       title={t("tui.permission_timeout.title")}
       hint={t("tui.permission_timeout.hint")}
-      options={options}
+      options={options()}
       current={local.permissionAskTimeout.current()}
       onSelect={(option) => {
         local.permissionAskTimeout.set(option.value)

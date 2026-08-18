@@ -492,8 +492,13 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
 
     // permission ask timeout: null = no timeout (wait indefinitely), positive
     // number = ms before auto-reject. Orthogonal to skipPermissions.
+    // Initialized from server so the TUI reflects the actual value (e.g. one
+    // set via MIMOCODE_SKIP_ALL_FORCED_ASK_TIMEOUT_MS env var).
     const permissionAskTimeout = iife(() => {
       const [ms, setMs] = createSignal<number | null>(null)
+      void sdk.client.permission.askTimeout().then((res) => {
+        if (res.data !== undefined) setMs(res.data)
+      })
       return {
         current: ms,
         set(value: number | null) {
