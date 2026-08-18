@@ -6,6 +6,7 @@ import { GlobalBus } from "../../src/bus/global"
 import { Database, desc, eq } from "../../src/storage"
 import { Instance } from "../../src/project/instance"
 import { Session } from "../../src/session"
+import { MessageV2 } from "../../src/session/message-v2"
 import { SessionPrompt } from "../../src/session/prompt"
 import { MessageTable, SessionTable } from "../../src/session/session.sql"
 import { checkpointPath } from "../../src/session/checkpoint-paths"
@@ -301,6 +302,57 @@ async function seedFinishedAssistant(sessionID: SessionID, parentID: MessageID, 
 // with no summary at all. Degrading is therefore a real loss, not a cheaper
 // summary.
 describe("Auto context overflow: write a checkpoint before degrading to compaction", () => {
+  test(
+    "checkpoint disabled + empty compaction summary restores the original context",
+    async () => {
+      const previous = process.env.MIMOCODE_DISABLE_CHECKPOINT
+      process.env.MIMOCODE_DISABLE_CHECKPOINT = "true"
+      const llm = startLLM("")
+      try {
+        await using tmp = await tmpdir({
+          git: true,
+          init: (dir) => Bun.write(path.join(dir, "mimocode.json"), mimocodeConfig(llm.origin)),
+        })
+
+        await Instance.provide({
+          directory: tmp.path,
+          fn: () =>
+            run(
+              Effect.gen(function* () {
+                const prompt = yield* SessionPrompt.Service
+                const sessions = yield* Session.Service
+                const info = yield* sessions.create({ title: "checkpoint-off-empty-compaction" })
+                const first = yield* Effect.promise(() => seedUserMessage(info.id, "context that must survive"))
+                yield* Effect.promise(() => seedFinishedAssistant(info.id, first.id, 50_000))
+
+                yield* prompt.prompt({
+                  sessionID: info.id,
+                  parts: [{ type: "text", text: "next question that triggers compaction" }],
+                  agent: "build",
+                })
+
+                const after = yield* sessions.messages({ sessionID: info.id, agentID: "main" })
+                expect(after.some((message) => message.parts.some((part) => part.type === "compaction"))).toBe(false)
+                expect(
+                  after.some((message) =>
+                    message.parts.some((part) => part.type === "text" && part.text === "context that must survive"),
+                  ),
+                ).toBe(true)
+                expect(
+                  MessageV2.filterCompacted(after).some((message) => message.info.id === first.id),
+                ).toBe(true)
+              }),
+            ),
+        })
+      } finally {
+        if (previous === undefined) delete process.env.MIMOCODE_DISABLE_CHECKPOINT
+        else process.env.MIMOCODE_DISABLE_CHECKPOINT = previous
+        await llm.stop()
+      }
+    },
+    { timeout: 60_000 },
+  )
+
   test(
     "a completed high-usage turn is rebuilt exactly once",
     async () => {

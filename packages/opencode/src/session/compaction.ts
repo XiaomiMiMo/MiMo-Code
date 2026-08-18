@@ -383,6 +383,16 @@ export const layer: Layer.Layer<
         model,
       })
 
+      const rollback = Effect.fn("SessionCompaction.rollback")(function* (message: string) {
+        if (!processor.message.error) {
+          processor.message.error = new MessageV2.InvalidOutputError({ message }).toObject()
+          processor.message.finish = "error"
+          yield* session.updateMessage(processor.message)
+        }
+        yield* session.removeMessage({ sessionID: input.sessionID, messageID: input.parentID })
+        return "stop" as const
+      })
+
       if (result === "overflow") {
         processor.message.error = new MessageV2.ContextOverflowError({
           message: replay
@@ -391,10 +401,15 @@ export const layer: Layer.Layer<
         }).toObject()
         processor.message.finish = "error"
         yield* session.updateMessage(processor.message)
-        return "stop"
+        return yield* rollback("Compaction exceeded the model context limit")
       }
 
-      if (result === "text-repeat") return "stop"
+      if (result === "text-repeat") return yield* rollback("Compaction produced repeated text")
+      if (result === "stop") return yield* rollback("Compaction failed before producing a summary")
+      if (
+        !MessageV2.parts(msg.id).some((part) => part.type === "text" && part.text.trim().length > 0)
+      )
+        return yield* rollback("Compaction produced no usable summary")
 
       if (compactionPart && selected.tail_start_id && compactionPart.tail_start_id !== selected.tail_start_id) {
         yield* session.updatePart({
