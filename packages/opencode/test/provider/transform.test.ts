@@ -3108,13 +3108,14 @@ describe("ProviderTransform.message - cache control on gateway", () => {
     expect(result[0].providerOptions).toBeUndefined()
   })
 
-  test("multi-turn anthropic pins breakpoints to last system + last two messages", () => {
+  test("[TP-R16-02] multi-turn anthropic pins breakpoints to stable first system + last two messages", () => {
     const model = createModel({
       providerID: "anthropic",
       api: { id: "claude-sonnet-4", url: "https://api.anthropic.com", npm: "@ai-sdk/anthropic" },
     })
     const msgs = [
-      { role: "system", content: "You are a helpful assistant" },
+      { role: "system", content: "stable session system" },
+      { role: "system", content: "dynamic turn system" },
       { role: "user", content: "first question" },
       { role: "assistant", content: "first answer" },
       { role: "user", content: "second question" },
@@ -3124,7 +3125,7 @@ describe("ProviderTransform.message - cache control on gateway", () => {
 
     const result = ProviderTransform.message(msgs, model, {}) as any[]
 
-    // The last system message plus the last TWO messages carry a breakpoint
+    // The stable first system message plus the last TWO messages carry a breakpoint
     // (rolling double buffer): the prior turn's tail marker survives as the
     // read point while the new tail marker is the next write.
     const marked = result
@@ -3133,12 +3134,13 @@ describe("ProviderTransform.message - cache control on gateway", () => {
 
     expect(marked).toEqual([
       { index: 0, role: "system", hasCache: true },
-      { index: 4, role: "assistant", hasCache: true },
-      { index: 5, role: "user", hasCache: true },
+      { index: 5, role: "assistant", hasCache: true },
+      { index: 6, role: "user", hasCache: true },
     ])
+    expect(result[1].providerOptions?.anthropic).toBeUndefined()
     // No drifting midpoint marker on earlier turns.
-    expect(result[2].providerOptions?.anthropic).toBeUndefined()
     expect(result[3].providerOptions?.anthropic).toBeUndefined()
+    expect(result[4].providerOptions?.anthropic).toBeUndefined()
   })
 
   test("content-level provider marks the last two messages regardless of role", () => {

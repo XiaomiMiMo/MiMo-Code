@@ -36,6 +36,7 @@ import { MCP_TOOL_SEARCH_ID } from "@/tool/mcp-tool-search"
 import { deriveLiveness } from "@/actor/schema"
 import { SYSTEM_SPAWNED_AGENT_TYPES } from "@/agent/config"
 import { Flag } from "@/flag/flag"
+import * as SessionSystemSnapshot from "./system-snapshot"
 
 const log = Log.create({ service: "llm" })
 export const OUTPUT_TOKEN_MAX = ProviderTransform.OUTPUT_TOKEN_MAX
@@ -317,47 +318,56 @@ const live: Layer.Layer<
       sessionID: string
       agentID?: string
     }) {
-      const system: string[] = []
-      system.push(
-        [
-          ...SystemPrompt.agent(input.agent, input.model),
-          // any custom prompt passed into this call
-          ...input.system,
-          // any custom prompt from last user message
-          ...(input.user.system ? [input.user.system] : []),
-        ]
-          .filter((x) => x)
-          .join("\n"),
-      )
-
-      // v5: memory-instructions section. Teaches the agent how/where/when to
-      // maintain `MEMORY.md` and (when checkpointing is on) `checkpoint.md`.
-      // Project ID is resolved from the ALS-bound Instance with a safe fallback
-      // to `ProjectID.global` (mirrors the pattern in session/checkpoint.ts so the
-      // path the prompt advertises matches the path the writer actually writes).
-      // Injected only for actors whose context the checkpoint flow serves —
-      // main + peer. Subagents (explore/general/compose) use per-actor compaction
-      // and have no checkpoint duty; system-spawned actors (checkpoint-writer et al.)
-      // are the writers themselves. Shares the exact `servesCheckpoint` judgement
-      // with SessionPrune.fireCheckpoints so the "who owns a checkpoint" and "who is
-      // taught about it" sets can never drift apart. Disabling checkpoints also
-      // disables this memory-system prompt block.
       const servesCheckpoint = yield* actorReg.servesCheckpoint(SessionID.make(input.sessionID), input.agentID)
-      if (servesCheckpoint && !Flag.MIMOCODE_DISABLE_CHECKPOINT) {
-        const projectID =
-          (yield* Effect.try({
-            try: () => Instance.current?.project?.id as ProjectID | undefined,
-            catch: () => undefined,
-          }).pipe(Effect.orElseSucceed(() => undefined))) ?? ProjectID.global
-        // Bootstrap the memory.md → MEMORY.md migration at session start so a
-        // legacy lowercase file is renamed before the agent's first direct
-        // Edit/Write (which would otherwise miss it on a case-sensitive FS, or
-        // create an uppercase sibling and orphan the legacy content). The two
-        // checkpoint-flow call sites cover the writer/rebuild paths; this covers
-        // the "agent edits MEMORY.md before any checkpoint" path. Idempotent.
-        yield* Effect.promise(() => migrateProjectMemory(projectID)).pipe(Effect.ignore)
-        system.push(buildMemoryInstructions(SessionID.make(input.sessionID), projectID, yield* memory.root()))
+      const identity: SessionSystemSnapshot.SessionSystemSnapshotIdentity = {
+        protocol: SessionSystemSnapshot.SESSION_SYSTEM_SNAPSHOT_PROTOCOL,
+        sessionID: SessionID.make(input.sessionID),
+        providerID: input.model.providerID,
+        modelID: input.model.id,
+        agent: input.agent.name,
+        agentID: input.agentID ?? "main",
+        edition: process.env["MIMO_EDITION"] ?? "unscoped",
+        checkpoint: servesCheckpoint && !Flag.MIMOCODE_DISABLE_CHECKPOINT,
       }
+      const existing = yield* Effect.promise(() => SessionSystemSnapshot.read(identity))
+      const stable = existing ?? (yield* Effect.gen(function* () {
+        const system = [SystemPrompt.agent(input.agent, input.model).filter((x) => x).join("\n")]
+
+        // Memory instructions contain session-scoped paths. They are stable for
+        // this compatibility domain and therefore belong in the persisted first
+        // system block rather than in the per-turn suffix.
+        if (identity.checkpoint) {
+          const projectID =
+            (yield* Effect.try({
+              try: () => Instance.current?.project?.id as ProjectID | undefined,
+              catch: () => undefined,
+            }).pipe(Effect.orElseSucceed(() => undefined))) ?? ProjectID.global
+          yield* Effect.promise(() => migrateProjectMemory(projectID)).pipe(Effect.ignore)
+          system.push(buildMemoryInstructions(identity.sessionID, projectID, yield* memory.root()))
+        }
+
+        // The hook input exposes only session/model identity, so treat it as a
+        // session-stable transform. Its first complete output is frozen with the
+        // base instead of being re-run when a session is reopened.
+        yield* plugin.trigger(
+          "experimental.chat.system.transform",
+          { sessionID: input.sessionID, model: input.model },
+          { system },
+        )
+        const candidate = system.filter((x) => x).join("\n\n")
+        return yield* Effect.promise(() => SessionSystemSnapshot.publish(identity, candidate))
+      }))
+
+      const dynamic: string[] = []
+      const turn = [
+        // custom prompt passed into this call (environment/instructions/format)
+        ...input.system,
+        // custom prompt from the current user message (goal/plugins/attachments)
+        ...(input.user.system ? [input.user.system] : []),
+      ]
+        .filter((x) => x)
+        .join("\n")
+      if (turn) dynamic.push(turn)
 
       // Orchestrator fleet roster: inject a compact one-line-per-session
       // list of the orchestrator's ROUTABLE child sessions. Only for the orchestrator
@@ -401,26 +411,13 @@ const live: Layer.Layer<
           ({ actor, title, live }) =>
             `  ${actor.sessionID} | ${title} | ${actor.agent} | ${live === "success" ? "idle" : live}`,
         )
-        if (lines.length > 0) system.push(`${ROSTER_HEADER}\n${lines.join("\n")}`)
+        if (lines.length > 0) dynamic.push(`${ROSTER_HEADER}\n${lines.join("\n")}`)
       }
 
-      // Plugins still see the multi-part array (base prompt as [0], memory as a
-      // trailing element) so hooks that index or append parts keep working.
-      yield* plugin.trigger(
-        "experimental.chat.system.transform",
-        { sessionID: input.sessionID, model: input.model },
-        { system },
-      )
-
-      // Collapse to a single system message. The historical 2-part split existed
-      // only to keep a byte-stable cache prefix separate from the memory block's
-      // per-session paths — but within a session those paths are fixed, so the
-      // whole thing is stable and one block caches just as well. One message also
-      // keeps the fork-prefix parity invariant trivial (nothing to misalign) and
-      // spares subagents/providers a stray extra system turn. Join with a blank
-      // line (\n\n) so adjacent markdown sections (base prompt, "# Memory system")
-      // don't run together into one heading.
-      return system.length <= 1 ? system : [system.filter((x) => x).join("\n\n")]
+      // Keep the persisted bytes as the first provider block. Turn-scoped data
+      // follows in a separate block so it can change without invalidating or
+      // mutating the session prefix snapshot.
+      return [stable, dynamic.join("\n\n")].filter((x) => x)
     })
 
     const run = Effect.fn("LLM.run")(function* (input: StreamRequest) {
@@ -479,7 +476,7 @@ const live: Layer.Layer<
         mergeDeep(variant),
       )
       if (isOpenaiOauth) {
-        options.instructions = system.join("\n")
+        options.instructions = system.join("\n\n")
       }
 
       const isWorkflow = language instanceof GitLabWorkflowLanguageModel
@@ -591,7 +588,7 @@ const live: Layer.Layer<
           approvalHandler?: (approvalTools: { name: string; args: string }[]) => Promise<{ approved: boolean }>
         }
         workflowModel.sessionID = input.sessionID
-        workflowModel.systemPrompt = system.join("\n")
+        workflowModel.systemPrompt = system.join("\n\n")
         workflowModel.toolExecutor = async (toolName, argsJson, _requestID) => {
           const registered = Object.keys(tools)
           const resolvedName = ToolCompat.resolveName(toolName, registered) ?? toolName

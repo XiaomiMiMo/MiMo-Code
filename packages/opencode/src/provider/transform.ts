@@ -552,7 +552,7 @@ function applyCaching(msgs: ModelMessage[], model: Provider.Model): ModelMessage
   // a prior write). The markers that grow the cached prefix are pinned to the
   // *tail* of the request. We place up to three stable breakpoints (Anthropic
   // allows max 4):
-  // 1. Last system message — the immutable prompt prefix.
+  // 1. First system message — the immutable, session-snapshotted prompt prefix.
   // 2+3. The last TWO messages — a "rolling double buffer". Each turn marks
   //      messages[-2] and messages[-1]; next turn the old [-1] is now [-2] and
   //      still carries its marker, so the lookback gets a cache READ hit, while
@@ -577,7 +577,7 @@ function applyCaching(msgs: ModelMessage[], model: Provider.Model): ModelMessage
   const targets: ModelMessage[] = []
 
   const systemMsgs = msgs.filter((msg) => msg.role === "system")
-  if (systemMsgs.length > 0) targets.push(systemMsgs[systemMsgs.length - 1])
+  if (systemMsgs.length > 0) targets.push(systemMsgs[0])
 
   const nonSystem = msgs.filter((msg) => msg.role !== "system")
   for (const msg of nonSystem.slice(-2)) targets.push(msg)

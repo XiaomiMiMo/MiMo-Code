@@ -24,6 +24,7 @@ import { Snapshot } from "@/snapshot"
 import { ProjectID } from "../project/schema"
 import { WorkspaceID } from "../control-plane/schema"
 import { SessionID, MessageID, PartID } from "./schema"
+import * as SessionSystemSnapshot from "./system-snapshot"
 
 import type { Provider } from "@/provider"
 import { Permission } from "@/permission"
@@ -581,6 +582,7 @@ export const layer: Layer.Layer<Service, never, Bus.Service | Storage.Service | 
           // can no longer have background children that need to inherit from it.
           forwardRef.clearParentGrants(sessionID)
         })
+        yield* Effect.promise(() => SessionSystemSnapshot.remove(sessionID)).pipe(Effect.ignore)
       } catch (e) {
         log.error(e)
       }
