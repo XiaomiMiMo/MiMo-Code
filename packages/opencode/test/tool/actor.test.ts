@@ -249,13 +249,30 @@ describe("tool.actor", () => {
     ),
   )
 
-  it.live("execute resumes an existing task session from actor_id", () =>
+  it.live("execute resumes an idle subagent from actor_id", () =>
     provideTmpdirInstance(() =>
       Effect.gen(function* () {
-        yield* installMockSpawn()
+        let spawns = 0
+        yield* installMockSpawn(() => {
+          spawns++
+        })
         const { chat, assistant } = yield* seed()
+        const registry = yield* ActorRegistry.Service
+        const actorID = yield* registry.allocateActorID(chat.id, "general")
+        yield* registry.register({
+          sessionID: chat.id,
+          actorID,
+          mode: "subagent",
+          agent: "general",
+          description: "inspect bug",
+          contextMode: "none",
+          background: false,
+          lifecycle: "ephemeral",
+        })
+        yield* registry.updateStatus(chat.id, actorID, { status: "idle", lastOutcome: "success" })
         const tool = yield* ActorTool
         const def = yield* tool.init()
+        const prompts: SessionPrompt.PromptInput[] = []
 
         const result = yield* def.execute(
           {
@@ -264,7 +281,7 @@ describe("tool.actor", () => {
               description: "inspect bug",
               prompt: "look into the cache key path",
               subagent_type: "general",
-              actor_id: "ses_missing", // v9: actor_id in run action is ignored — always creates new
+              actor_id: actorID,
             },
           },
           {
@@ -272,16 +289,21 @@ describe("tool.actor", () => {
             messageID: assistant.id,
             agent: "build",
             abort: new AbortController().signal,
-            extra: {},
+            extra: { promptOps: stubOps({ onPrompt: (input) => prompts.push(input), text: "resumed done" }) },
             messages: [],
             metadata: () => Effect.void,
             ask: () => Effect.void,
           },
         )
 
-        // v9: run always creates a new actor under the parent session
+        expect(spawns).toBe(0)
+        expect(prompts).toHaveLength(1)
+        expect(prompts[0]?.agentID).toBe(actorID)
+        expect(prompts[0]?.agent).toBe("general")
         expect(result.metadata.sessionId).toBe(chat.id)
-        expect(result.output).toContain("actor_id:")
+        expect(result.metadata.actorId).toBe(actorID)
+        expect(result.output).toContain(`actor_id: ${actorID}`)
+        expect(result.output).toContain("resumed done")
       }),
     ),
   )

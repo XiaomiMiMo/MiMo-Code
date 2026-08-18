@@ -23,6 +23,8 @@ import { TaskID } from "@/task/schema"
 import { SessionCheckpoint } from "@/session/checkpoint"
 import { inboxServiceRef } from "@/inbox/inbox-ref"
 import { Effect, Deferred } from "effect"
+import { EffectLogger } from "@/effect"
+import { runTurn } from "@/actor/turn"
 
 export interface ActorPromptOps {
   cancel(sessionID: SessionID): void
@@ -588,6 +590,8 @@ export const ActorTool = Tool.define(
               inboxID: sendResult.inboxID,
               receiver_actor_id: op.to_actor_id,
               receiver_session_id: targetSid,
+              sessionId: targetSid,
+              actorId: op.to_actor_id,
             } as Record<string, any>,
           }
         }
@@ -781,6 +785,73 @@ export const ActorTool = Tool.define(
             if (!existing) {
               effectiveTaskId = undefined
               taskNotice = `note: task_id "${op.task_id}" does not exist in this session; ran ad-hoc. Create it with the \`task\` tool first, or omit task_id.`
+            }
+          }
+        }
+
+        if (op.actor_id) {
+          const found = yield* findActor(op.actor_id)
+          if (found?.entry.status === "idle") {
+            const promptOps = (ctx.extra as any)?.promptOps as ActorPromptOps | undefined
+            if (!promptOps) {
+              return yield* Effect.fail(new Error("Actor prompt operations unavailable — cannot resume actor"))
+            }
+            const promptInput: SessionPrompt.PromptInput = {
+              sessionID: ctx.sessionID,
+              agent: op.subagent_type,
+              agentID: op.actor_id,
+              parts: [{ type: "text", text: prompt }],
+              model,
+              ...(op.output_schema
+                ? { format: { type: "json_schema" as const, schema: op.output_schema, retryCount: 2 } }
+                : {}),
+              ...(effectiveTaskId ? { task_id: effectiveTaskId } : {}),
+            }
+
+            yield* ctx.metadata({
+              title: op.description,
+              metadata: {
+                sessionId: ctx.sessionID,
+                actorId: op.actor_id,
+                model,
+              },
+            })
+
+            if (op.action === "spawn") {
+              Effect.runFork(
+                runTurn(ctx.sessionID, op.actor_id, promptOps.prompt(promptInput)).pipe(
+                  Effect.provideService(ActorRegistry.Service, actorRegistry),
+                  Effect.provide(EffectLogger.layer),
+                ),
+              )
+              return {
+                title: op.description,
+                metadata: { sessionId: ctx.sessionID, actorId: op.actor_id, model },
+                output:
+                  (taskNotice ? taskNotice + "\n" : "") +
+                  `Background actor resumed. actor_id: ${op.actor_id}\nThe result will be delivered as a notification when complete.`,
+              }
+            }
+
+            const resumed = yield* runTurn(
+              ctx.sessionID,
+              op.actor_id,
+              promptOps.prompt(promptInput),
+            ).pipe(Effect.provideService(ActorRegistry.Service, actorRegistry))
+            const textPart = resumed.parts.filter((part) => part.type === "text").at(-1)
+            const structured = resumed.info.role === "assistant" ? resumed.info.structured : undefined
+            const resultText = structured !== undefined ? JSON.stringify(structured) : (textPart?.text ?? "(no output)")
+            return {
+              title: op.description,
+              metadata: { sessionId: ctx.sessionID, actorId: op.actor_id, model } as Record<string, any>,
+              output: [
+                ...(taskNotice ? [taskNotice, ""] : []),
+                `actor_id: ${op.actor_id} (for resuming to continue this task if needed)`,
+                "",
+                `<actor_result status="success">`,
+                resultText,
+                "</actor_result>",
+              ].join("\n"),
             }
           }
         }
