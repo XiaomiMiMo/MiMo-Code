@@ -14,9 +14,9 @@ import type { MessageID } from "./schema"
 
 const log = Log.create({ service: "instruction" })
 
-const FILES = [
+const filesForProject = (disableClaudeCodePrompt: boolean) => [
   "AGENTS.md",
-  ...(Flag.MIMOCODE_DISABLE_CLAUDE_CODE_PROMPT ? [] : ["CLAUDE.md"]),
+  ...(disableClaudeCodePrompt || Flag.MIMOCODE_DISABLE_CLAUDE_CODE_PROMPT ? [] : ["CLAUDE.md"]),
   "CONTEXT.md", // deprecated
 ]
 
@@ -24,13 +24,13 @@ const FILES = [
 // sparse and also load CLAUDE.md so its guidance isn't dropped by the first-match-wins rule.
 const CLAUDE_FALLBACK_MAX_CHARS = 500
 
-function globalFiles() {
+function globalFiles(disableClaudeCodePrompt: boolean) {
   const files = []
   if (Flag.MIMOCODE_CONFIG_DIR) {
     files.push(path.join(Flag.MIMOCODE_CONFIG_DIR, "AGENTS.md"))
   }
   files.push(path.join(Global.Path.config, "AGENTS.md"))
-  if (!Flag.MIMOCODE_DISABLE_CLAUDE_CODE_PROMPT) {
+  if (!disableClaudeCodePrompt && !Flag.MIMOCODE_DISABLE_CLAUDE_CODE_PROMPT) {
     files.push(path.join(os.homedir(), ".claude", "CLAUDE.md"))
   }
   return files
@@ -132,7 +132,7 @@ export const layer: Layer.Layer<Service, never, AppFileSystem.Service | Config.S
           if (agents.length > 0) {
             agents.forEach((item) => paths.add(path.resolve(item)))
             // A sparse AGENTS.md likely doesn't carry the full project guidance, so pull in CLAUDE.md too.
-            if (!Flag.MIMOCODE_DISABLE_CLAUDE_CODE_PROMPT) {
+            if (!config.disable_claude_code_prompt && !Flag.MIMOCODE_DISABLE_CLAUDE_CODE_PROMPT) {
               const content = (yield* Effect.forEach(agents, read, { concurrency: 8 })).join("").trim()
               if (content.length < CLAUDE_FALLBACK_MAX_CHARS) {
                 const claude = yield* fs.findUp("CLAUDE.md", ctx.directory, ctx.worktree)
@@ -140,7 +140,7 @@ export const layer: Layer.Layer<Service, never, AppFileSystem.Service | Config.S
               }
             }
           } else {
-            for (const file of FILES) {
+            for (const file of filesForProject(config.disable_claude_code_prompt ?? false)) {
               if (file === "AGENTS.md") continue
               const matches = yield* fs.findUp(file, ctx.directory, ctx.worktree)
               if (matches.length > 0) {
@@ -151,7 +151,7 @@ export const layer: Layer.Layer<Service, never, AppFileSystem.Service | Config.S
           }
         }
 
-        for (const file of globalFiles()) {
+        for (const file of globalFiles(config.disable_claude_code_prompt ?? false)) {
           if (yield* fs.existsSafe(file)) {
             paths.add(path.resolve(file))
             break
@@ -198,7 +198,8 @@ export const layer: Layer.Layer<Service, never, AppFileSystem.Service | Config.S
       })
 
       const find = Effect.fn("Instruction.find")(function* (dir: string) {
-        for (const file of FILES) {
+        const config = yield* cfg.get()
+        for (const file of filesForProject(config.disable_claude_code_prompt ?? false)) {
           const filepath = path.resolve(path.join(dir, file))
           if (yield* fs.existsSafe(filepath)) return filepath
         }
