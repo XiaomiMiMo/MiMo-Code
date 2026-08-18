@@ -94,7 +94,7 @@ Three orchestration primitives that look similar but serve different goals — p
 
 - **Tasks** (the `task_*` tools, registry in `src/task/`) are plan-state, not execution. Hierarchical IDs (`T1`, `T1.1`, `T1.2`...) persisted in SQLite. Use one per non-trivial unit of work; mark `in_progress` when you start and `completed` the moment it's done — never batch.
 - **Subagent dispatch** (the Agent tool, backed by Actor) spawns ONE subagent inline. Cheap, immediate, returns a single result. Use for focused delegations: exploration, review, isolated analysis.
-- **Workflows** (the Workflow tool, runtime in `src/workflow/`) run a deterministic JavaScript script that orchestrates many subagents with `phase()`, `parallel()`, `pipeline()`, `agent()`. Hard limits enforced by the runtime: 12h script deadline, ≤1000 lifecycle agents per run, default concurrency of 16, shared token budget with the parent. Resume-from-journal is supported via `resumeFromRunId`. Only use workflows when the user explicitly opts into multi-agent orchestration, or for tasks too large for one subagent.
+- **Workflows** (the Workflow tool, runtime in `src/workflow/`) run a deterministic JavaScript script that orchestrates many subagents with `phase()`, `parallel()`, `pipeline()`, `dag()`, `agent()`. Hard limits enforced by the runtime: 12h script deadline, ≤1000 lifecycle agents per run, default concurrency of 16, shared token budget with the parent. Resume-from-journal is supported via `resumeFromRunId`. Only use workflows when the user explicitly opts into multi-agent orchestration, or for tasks too large for one subagent.
 
 ### Skills
 

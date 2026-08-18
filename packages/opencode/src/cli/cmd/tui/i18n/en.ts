@@ -201,6 +201,8 @@ export const dict: Record<string, string> = {
     "find repeated workflows in recent work and package them into skills, subagents, or commands",
   "tui.slash.goal.description":
     "set a stop-condition goal; runs until a judge says it's met. /goal clear to abort",
+  "tui.slash.workflow.description":
+    "generate and run a customizable verified multi-agent DAG for a task",
   "tui.slash.deep-research.description":
     "deep multi-source, fact-checked research report (runs the deep-research workflow)",
 
@@ -261,7 +263,9 @@ export const dict: Record<string, string> = {
   // App-level commands
   "tui.command.session.list.title": "Switch session",
   "tui.command.session.new.title": "New session",
-  "tui.command.workflow.list.title": "Workflows",
+  "tui.command.workflow.list.title": "Workflow run list",
+  "tui.command.workflow.list.description":
+    "Browse and open workflow runs in this session (not /workflow)",
   "tui.command.model.list.title": "Switch model",
   "tui.command.model.cycle_recent.title": "Model cycle",
   "tui.command.model.cycle_recent_reverse.title": "Model cycle reverse",

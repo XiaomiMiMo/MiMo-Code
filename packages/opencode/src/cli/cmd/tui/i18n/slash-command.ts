@@ -1,4 +1,4 @@
-const BUILTIN = new Set(["init", "review", "dream", "distill", "goal", "deep-research"])
+const BUILTIN = new Set(["init", "review", "dream", "distill", "goal", "workflow", "deep-research"])
 
 export function slashCommandDescription(
   t: (key: string) => string,

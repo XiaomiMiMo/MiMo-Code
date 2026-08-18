@@ -1,4 +1,4 @@
-Execute a workflow script that orchestrates multiple subagents deterministically. The script is plain JavaScript that runs in a sandbox and fans out subagents via agent(), parallel(), and pipeline(). The "run" operation BLOCKS until the workflow reaches a terminal status (completed/failed/cancelled) and returns the full transcript (phase transitions + log() messages) followed by the script's return value. Phase and log lines stream into the conversation as the workflow runs.
+Execute a workflow script that orchestrates multiple subagents deterministically. The script is plain JavaScript that runs in a sandbox and fans out subagents via agent(), parallel(), pipeline(), and dag(). The "run" operation BLOCKS until the workflow reaches a terminal status (completed/failed/cancelled) and returns the full transcript (phase transitions + log() messages) followed by the script's return value. Phase and log lines stream into the conversation as the workflow runs.
 
 operation "run": start a workflow and block until it terminates. Provide either `name` (a built-in workflow, see the catalog below) or `script` (inline JS; must begin with `export const meta = { name, description }`). Returns the transcript + result. Optionally provide `workspace` (a dir the script's file primitives are jailed to; defaults to the worktree). Note: long workflows (e.g. deep-research) hold the agent's turn for the full duration — that is intentional, mirroring skill semantics.
 operation "status": check a run's status by run_id.
@@ -8,8 +8,9 @@ operation "resume": re-launch a persisted workflow by run_id under the same run_
 
 Inside the script you can call:
 - agent(prompt, opts?) -> Promise: spawn one subagent; resolves to its result (a validated object if opts.schema given, else its final text) or null on failure. Never throws.
-- parallel(thunks) -> Promise<any[]>: run thunks concurrently; a thunk that throws resolves to null.
+- parallel(thunks) -> Promise<any[]>: run thunks concurrently; a thunk that throws rejects the batch.
 - pipeline(items, ...stages) -> Promise<any[]>: run each item through all stages; no barrier between stages.
+- dag(nodes, run) -> Promise<{id,result}[]>: validate and execute a dependency DAG. Each node needs a unique non-empty `id` and may have `dependsOn: string[]`. Invalid references, duplicate ids/dependencies, self-dependencies, and cycles throw BEFORE run is called. Every ready batch runs concurrently; run(node, dependencies) receives ordered `{id,result}` dependency outputs. Results preserve node declaration order. Use agent() inside run, so host concurrency limits and journal recovery still apply.
 - workflow(nameOrScript, args?, opts?) -> Promise: run a CHILD workflow as its own sub-run and await its result. nameOrScript is either an inline script (starts with `export const meta`) or a saved workflow name resolved from .mimocode/workflows/ or .claude/workflows/. args is passed to the child as its `args`. opts: { workspace?, maxConcurrentAgents? }. A failed child resolves to null (never throws); an unknown name or a cycle/over-depth throws (fails the run). Children share the process-wide concurrency ceiling and inherit the parent workspace by default.
 - readFile(path) -> Promise<string|null>: read a file in the workspace (null if absent).
 - writeFile(path, content) -> Promise: write a file in the workspace (parent dirs auto-created).
@@ -19,6 +20,10 @@ Inside the script you can call:
 - args: the JSON value passed when starting the workflow.
 
 Concurrency is capped by the host (default min(16, 2x cores)); excess agent() calls queue automatically.
+
+Persistence is attached to agent() calls, not to a separate DAG table. On resume the saved script runs again: completed agent calls replay from the content journal and unfinished calls execute. Keep node ids, prompts, roles, models, schemas, phases, and call order deterministic. A changed script SHA starts with a fresh journal.
+
+For acceptance-gated workflows, invoke a fresh independent verifier agent after the implementation DAG settles. Give it the original task, concrete outputs, a strict `{accepted, findings, evidence}` schema, and a separate role/model from implementers. Semantic verifier rejection is NOT an agent transport retry: feed findings into bounded rework (recommended default 2, maximum 3), then run a new verifier. Report `accepted: false` when the bound is exhausted.
 
 Communicate between workflows by dataflow: return a value from a child and pass it as args to the next (or write a shared file via writeFile and read it in a later phase). Workflows do not message each other directly. File primitives are jailed to the workspace root (the project worktree by default, or the `workspace` you pass to the run op) by a LEXICAL name check — it blocks `..` and absolute escapes, but does not resolve symlinks, so treat it as scoping, not a hard security boundary.
 

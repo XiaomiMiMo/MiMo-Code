@@ -1,6 +1,6 @@
 # MiMoCode Dynamic Workflows Reference
 
-Dynamic workflows let you orchestrate many subagents **deterministically** from a small JavaScript script — fan-out, pipelines, nested workflows — instead of driving each subagent by hand. The script runs in a sandbox; you call `agent()` to spawn work and combine results with plain JS.
+Dynamic workflows let you orchestrate many subagents **deterministically** from a small JavaScript script — fan-out, dependency DAGs, pipelines, nested workflows — instead of driving each subagent by hand. The script runs in a sandbox; you call `agent()` to spawn work and combine results with plain JS.
 
 ## Where to write workflow files
 
@@ -46,6 +46,7 @@ Only `name` and `description` are required. The body is ordinary async JS with t
 | `agent(prompt, opts?)` | spawn one subagent | Promise → its deliverable (text, or a validated object if `opts.schema`), or **`null`** on failure. Never throws. |
 | `parallel(thunks)` | run an array of `() => Promise` concurrently | `Promise<any[]>` (a throwing thunk rejects the batch) |
 | `pipeline(items, ...stages)` | run each item through sequential stages, items in parallel | `Promise<any[]>` |
+| `dag(nodes, run)` | validate and execute dependency nodes in ready batches | `Promise<Array<{ id, result }>>` in declaration order |
 | `workflow(nameOrScript, args?, opts?)` | run a child workflow as its own sub-run and await it | Promise → child result, or `null` on runtime failure |
 | `readFile(path)` | read a workspace file | `Promise<string \| null>` (null if absent) |
 | `writeFile(path, content)` | write a workspace file (auto-creates dirs) | `Promise<void>` |
@@ -72,6 +73,30 @@ const out = await agent("Summarize src/parser.ts", {
 ```
 
 With `schema`, the deliverable is a **validated object** (never prose). Without it, you get the agent's final text.
+
+### `dag()` nodes
+
+Use `dag()` when work has explicit prerequisites:
+
+```js
+const outputs = await dag(
+  [
+    { id: "api", role: "implementer", prompt: "Build the API", model: "standard" },
+    { id: "ui", role: "implementer", prompt: "Build the UI", model: "standard" },
+    { id: "integration", role: "integrator", prompt: "Connect both", dependsOn: ["api", "ui"] },
+  ],
+  (node, dependencies) => agent(
+    node.prompt + "\nDependency outputs:\n" + JSON.stringify(dependencies),
+    { agentType: node.role, model: node.model, label: node.id },
+  ),
+)
+```
+
+Every node needs a unique non-empty string `id`; `dependsOn` defaults to `[]`. The complete graph is validated before the callback runs. Unknown references, duplicate IDs or dependencies, self-dependencies, and cycles throw actionable `dag:` errors and launch zero nodes. Nodes ready at the same time run concurrently. The callback receives dependency outputs in `dependsOn` order, and the final array preserves declaration order.
+
+`dag()` is a deterministic guest scheduler, not a second persistence engine. Calls to `agent()` inside the callback use the normal host semaphore and result journal. Resuming replays completed calls and executes unfinished calls, so keep the script and node-derived agent parameters deterministic.
+
+For workflows that modify or deliver artifacts, add a separate verifier `agent()` after `dag()` completes. Give it the original requirements, concrete outputs, and a strict structured schema such as `{ accepted, findings, evidence }`. If it rejects the result, feed its findings into a bounded rework pass and invoke a fresh verifier; do not confuse semantic rework with `agent({ retry })`, which only retries transient execution failures.
 
 ## Determinism constraints
 

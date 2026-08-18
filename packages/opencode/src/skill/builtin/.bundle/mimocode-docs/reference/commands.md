@@ -44,7 +44,7 @@ Most client commands run only when the whole input is the command. `/btw <questi
 | Command | Aliases | Purpose / availability |
 |---------|---------|------------------------|
 | `/sessions` | `/resume`, `/continue` | List and continue previous sessions |
-| `/workflows` | — | Open the workflow list; shown when the workflow experiment is enabled |
+| `/worklist` | — | Browse and open workflow runs in this session; shown when the workflow experiment is enabled (not `/workflow`) |
 | `/new` | `/clear` | Start a new session |
 | `/models` | — | Switch models |
 | `/agents` | — | Switch agents |
@@ -115,6 +115,7 @@ These commands submit a predefined prompt to the agent and may accept trailing a
 | `/rebuild` | Rebuild conversation context from the latest checkpoint while keeping recent messages verbatim |
 | `/context-limit` | Pick where the current model compacts (`200K`/`300K`/`500K`/`1M`/custom, or the model default); persists per model as `compaction.max_context`. Refuses while a session is running, because the config write reloads the instance |
 | `/deep-research <question>` | Run deep multi-source research; the prompt-command implementation requires the workflow experiment |
+| `/workflow <task>` | Generate and run a customizable verified multi-agent DAG; requires the workflow experiment |
 | `/loops [cancel <id>]` | List or cancel scheduled jobs; requires the cron experiment |
 
 ### Skills and other dynamic commands

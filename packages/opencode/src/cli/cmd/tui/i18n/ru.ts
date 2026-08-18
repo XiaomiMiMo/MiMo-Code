@@ -278,6 +278,8 @@ export const dict = {
     "найти повторяющиеся workflow в недавней работе и упаковать их в skills, субагентов или команды",
   "tui.slash.goal.description":
     "задать цель с условием остановки; выполняется, пока судья не подтвердит. /goal clear для отмены",
+  "tui.slash.workflow.description":
+    "сгенерировать и запустить настраиваемый проверенный multi-agent DAG для задачи",
   "tui.slash.deep-research.description":
     "глубокий многоисточниковый проверенный отчёт (запускает workflow deep-research)",
 
@@ -340,7 +342,9 @@ export const dict = {
   // App-level commands
   "tui.command.session.list.title": "Сменить сессию",
   "tui.command.session.new.title": "Новая сессия",
-  "tui.command.workflow.list.title": "Рабочие процессы",
+  "tui.command.workflow.list.title": "Список запусков workflow",
+  "tui.command.workflow.list.description":
+    "Просмотреть и открыть запуски workflow в этой сессии (не /workflow)",
   "tui.command.model.list.title": "Сменить модель",
   "tui.command.model.cycle_recent.title": "Цикл моделей",
   "tui.command.model.cycle_recent_reverse.title": "Цикл моделей (в обратном порядке)",

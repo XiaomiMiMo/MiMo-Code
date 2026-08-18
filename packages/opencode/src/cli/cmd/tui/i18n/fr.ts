@@ -264,6 +264,8 @@ export const dict = {
     "trouver les workflows répétés dans le travail récent et les empaqueter en skills, sous-agents ou commandes",
   "tui.slash.goal.description":
     "définir un objectif avec condition d'arrêt ; s'exécute jusqu'à ce qu'un juge confirme. /goal clear pour annuler",
+  "tui.slash.workflow.description":
+    "générer et exécuter un DAG multi-agents personnalisable et vérifié pour une tâche",
   "tui.slash.deep-research.description":
     "rapport de recherche approfondi multi-sources et vérifié (exécute le workflow deep-research)",
 
@@ -325,7 +327,9 @@ export const dict = {
   // App-level commands
   "tui.command.session.list.title": "Changer de session",
   "tui.command.session.new.title": "Nouvelle session",
-  "tui.command.workflow.list.title": "Workflows",
+  "tui.command.workflow.list.title": "Liste des exécutions de workflow",
+  "tui.command.workflow.list.description":
+    "Parcourir et ouvrir les exécutions de workflow de cette session (pas /workflow)",
   "tui.command.model.list.title": "Changer de modèle",
   "tui.command.model.cycle_recent.title": "Modèles récents",
   "tui.command.model.cycle_recent_reverse.title": "Modèles récents (inverse)",

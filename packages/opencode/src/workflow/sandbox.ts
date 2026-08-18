@@ -72,6 +72,71 @@ globalThis.parallel = (thunks) =>
 globalThis.pipeline = (items, ...stages) =>
   Promise.all(items.map((item, index) =>
     stages.reduce((acc, stage) => acc.then((prev) => stage(prev, item, index)), Promise.resolve(item))));
+globalThis.dag = async (nodes, run) => {
+  if (typeof run !== "function") throw new TypeError("dag: run must be a function");
+  if (!Array.isArray(nodes)) throw new TypeError("dag: nodes must be an array");
+
+  const byId = Object.create(null);
+  const dependencies = Object.create(null);
+  for (let index = 0; index < nodes.length; index++) {
+    const node = nodes[index];
+    if (!node || typeof node !== "object" || Array.isArray(node)) {
+      throw new TypeError("dag: node at index " + index + " must be an object");
+    }
+    if (typeof node.id !== "string" || !node.id.trim()) {
+      throw new TypeError("dag: node at index " + index + " needs a non-empty string id");
+    }
+    if (byId[node.id]) throw new TypeError("dag: duplicate node id " + JSON.stringify(node.id));
+    if (node.dependsOn !== undefined && !Array.isArray(node.dependsOn)) {
+      throw new TypeError("dag: node " + JSON.stringify(node.id) + " dependsOn must be an array");
+    }
+    const deps = node.dependsOn || [];
+    const seen = Object.create(null);
+    for (const dependency of deps) {
+      if (typeof dependency !== "string" || !dependency.trim()) {
+        throw new TypeError("dag: node " + JSON.stringify(node.id) + " dependency ids must be non-empty strings");
+      }
+      if (seen[dependency]) {
+        throw new TypeError("dag: node " + JSON.stringify(node.id) + " has duplicate dependency " + JSON.stringify(dependency));
+      }
+      if (dependency === node.id) throw new TypeError("dag: node " + JSON.stringify(node.id) + " cannot depend on itself");
+      seen[dependency] = true;
+    }
+    byId[node.id] = node;
+    dependencies[node.id] = deps;
+  }
+
+  for (const node of nodes) {
+    for (const dependency of dependencies[node.id]) {
+      if (!byId[dependency]) {
+        throw new TypeError("dag: node " + JSON.stringify(node.id) + " depends on unknown node " + JSON.stringify(dependency));
+      }
+    }
+  }
+
+  const pending = nodes.map((node) => node.id);
+  const completed = Object.create(null);
+  const batches = [];
+  while (pending.length) {
+    const ready = pending.filter((id) => dependencies[id].every((dependency) => completed[dependency]));
+    if (!ready.length) throw new TypeError("dag: cycle detected among " + pending.join(", "));
+    batches.push(ready);
+    for (const id of ready) completed[id] = true;
+    for (let index = pending.length - 1; index >= 0; index--) {
+      if (completed[pending[index]]) pending.splice(index, 1);
+    }
+  }
+
+  const results = Object.create(null);
+  for (const batch of batches) {
+    const values = await Promise.all(batch.map((id) => Promise.resolve().then(() => run(
+      byId[id],
+      dependencies[id].map((dependency) => ({ id: dependency, result: results[dependency] })),
+    ))));
+    for (let index = 0; index < batch.length; index++) results[batch[index]] = values[index];
+  }
+  return nodes.map((node) => ({ id: node.id, result: results[node.id] }));
+};
 // Minimal, deterministic URL for dedup/host-extraction in workflow scripts.
 // The bare QuickJS guest has no Web URL. Covers protocol/hostname/pathname/
 // search/hash — enough for normURL-style dedup — and THROWS on inputs without

@@ -169,7 +169,7 @@ describe("Sandbox resource guards + hygiene", () => {
   })
 })
 
-describe("Sandbox prelude (parallel/pipeline/args)", () => {
+describe("Sandbox prelude (parallel/pipeline/dag/args)", () => {
   test("parallel is provided without a guest helper", async () => {
     const hooks = { agent: async (n: unknown) => `done-${n}` }
     const body = `return (await parallel([() => agent("a"), () => agent("b")]))`
@@ -198,6 +198,75 @@ describe("Sandbox prelude (parallel/pipeline/args)", () => {
       return r
     `
     await expect(evalScript(body, {})).rejects.toThrow(/boom-stage/)
+  })
+
+  test("dag runs ready nodes concurrently and passes ordered dependency results", async () => {
+    const events: string[] = []
+    const hooks = {
+      agent: async (id: unknown) => {
+        events.push(`start:${id}`)
+        await new Promise((resolve) => setTimeout(resolve, id === "A" ? 20 : 5))
+        events.push(`end:${id}`)
+        return `result:${id}`
+      },
+    }
+    const body = `
+      return await dag([
+        { id: "A", dependsOn: [] },
+        { id: "B" },
+        { id: "C", dependsOn: ["B", "A"] },
+      ], async (node, dependencies) => ({
+        value: await agent(node.id),
+        dependencies,
+      }))
+    `
+    const result = await evalScript(body, hooks)
+    expect(events.slice(0, 2).sort()).toEqual(["start:A", "start:B"])
+    expect(events.indexOf("start:C")).toBeGreaterThan(events.indexOf("end:A"))
+    expect(events.indexOf("start:C")).toBeGreaterThan(events.indexOf("end:B"))
+    expect(result).toEqual([
+      { id: "A", result: { value: "result:A", dependencies: [] } },
+      { id: "B", result: { value: "result:B", dependencies: [] } },
+      {
+        id: "C",
+        result: {
+          value: "result:C",
+          dependencies: [
+            { id: "B", result: { value: "result:B", dependencies: [] } },
+            { id: "A", result: { value: "result:A", dependencies: [] } },
+          ],
+        },
+      },
+    ])
+  })
+
+  test.each([
+    ["nodes must be an array", `{}`],
+    ["node at index 0 must be an object", `[null]`],
+    ["node at index 0 needs a non-empty string id", `[{ id: "" }]`],
+    ["duplicate node id", `[{ id: "A" }, { id: "A" }]`],
+    ["dependsOn must be an array", `[{ id: "A", dependsOn: "B" }]`],
+    ["dependency ids must be non-empty strings", `[{ id: "A", dependsOn: [""] }]`],
+    ["duplicate dependency", `[{ id: "A" }, { id: "B", dependsOn: ["A", "A"] }]`],
+    ["cannot depend on itself", `[{ id: "A", dependsOn: ["A"] }]`],
+    ["depends on unknown node", `[{ id: "A", dependsOn: ["missing"] }]`],
+    ["cycle detected", `[{ id: "A", dependsOn: ["B"] }, { id: "B", dependsOn: ["A"] }]`],
+  ])("dag rejects %s before running a node", async (message, nodes) => {
+    let calls = 0
+    const hooks = {
+      agent: async () => {
+        calls++
+        return "unexpected"
+      },
+    }
+    await expect(evalScript(`return await dag(${nodes}, (node) => agent(node.id))`, hooks)).rejects.toThrow(
+      new RegExp(`dag:.*${message}`),
+    )
+    expect(calls).toBe(0)
+  })
+
+  test("dag requires a run callback before validating or executing nodes", async () => {
+    await expect(evalScript(`return await dag([], null)`, {})).rejects.toThrow(/dag: run must be a function/)
   })
 
   test("args is injected as a guest global", async () => {

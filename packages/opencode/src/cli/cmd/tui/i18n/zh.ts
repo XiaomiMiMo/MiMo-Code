@@ -191,6 +191,7 @@ export const dict = {
   "tui.slash.dream.description": "从 memory 文件与原始轨迹中手动整合项目记忆",
   "tui.slash.distill.description": "在最近工作中发现重复流程，打包为 skill、子智能体或命令",
   "tui.slash.goal.description": "设置终止条件目标；运行直到判定达成。使用 /goal clear 中止",
+  "tui.slash.workflow.description": "根据任务生成并运行可自定义的、带验证的多智能体 DAG",
   "tui.slash.deep-research.description": "深度多来源、事实核查的研究报告（运行 deep-research 工作流）",
 
   // Built-in bundled skill descriptions (user-facing, decoupled from SKILL.md description which targets the LLM)
@@ -284,7 +285,8 @@ export const dict = {
   // App-level commands
   "tui.command.session.list.title": "切换会话",
   "tui.command.session.new.title": "新建会话",
-  "tui.command.workflow.list.title": "工作流",
+  "tui.command.workflow.list.title": "工作流运行列表",
+  "tui.command.workflow.list.description": "浏览并打开本会话中的工作流运行（不是 /workflow）",
   "tui.command.model.list.title": "切换模型",
   "tui.command.model.cycle_recent.title": "循环切换模型",
   "tui.command.model.cycle_recent_reverse.title": "反向循环切换模型",
