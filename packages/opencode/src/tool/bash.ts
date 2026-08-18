@@ -92,8 +92,11 @@ const FILES = new Set([
   "remove-item",
   "new-item",
   "rename-item",
+  "invoke-webrequest",
+  "out-file",
+  "start-bitstransfer",
 ])
-const FLAGS = new Set(["-destination", "-literalpath", "-path"])
+const FLAGS = new Set(["-destination", "-filepath", "-literalpath", "-outfile", "-path"])
 const SWITCHES = new Set(["-confirm", "-debug", "-force", "-nonewline", "-recurse", "-verbose", "-whatif"])
 
 export function bashDescription(gpt = false) {
@@ -223,6 +226,30 @@ function source(node: Node) {
 
 function commands(node: Node) {
   return node.descendantsOfType("command").filter((child): child is Node => Boolean(child))
+}
+
+function redirectionArgs(node: Node) {
+  return [
+    ...node
+      .descendantsOfType("file_redirect")
+      .filter((child): child is Node => Boolean(child))
+      .filter((child) => !child.text.trimStart().startsWith("<<"))
+      .flatMap((child) =>
+        Array.from({ length: child.childCount }, (_, i) => child.child(i))
+          .filter((item): item is Node => Boolean(item))
+          .filter((item) => item.type === "word" || item.type === "string" || item.type === "raw_string")
+          .map((item) => item.text),
+      ),
+    ...node
+      .descendantsOfType("redirection")
+      .filter((child): child is Node => Boolean(child))
+      .flatMap((child) =>
+        child
+          .descendantsOfType("redirected_file_name")
+          .filter((item): item is Node => Boolean(item))
+          .map((item) => item.text.trim()),
+      ),
+  ]
 }
 
 // Returns true when `tokens` (the flat argv of a single command node) invokes
@@ -621,6 +648,14 @@ export const BashTool = Tool.define(
         deletes: new Set<string>(),
       }
 
+      const addExternalPath = Effect.fn("BashTool.collect.addExternalPath")(function* (arg: string) {
+        const resolved = yield* argPath(arg, cwd, ps, shell)
+        log.info("resolved path", { arg, resolved })
+        if (!resolved || Instance.containsPath(resolved)) return
+        const dir = (yield* fs.isDir(resolved)) ? resolved : path.dirname(resolved)
+        scan.dirs.add(dir)
+      })
+
       for (const node of commands(root)) {
         const command = parts(node)
         const tokens = command.map((item) => item.text)
@@ -628,11 +663,7 @@ export const BashTool = Tool.define(
 
         if (cmd && FILES.has(cmd)) {
           for (const arg of pathArgs(command, ps)) {
-            const resolved = yield* argPath(arg, cwd, ps, shell)
-            log.info("resolved path", { arg, resolved })
-            if (!resolved || Instance.containsPath(resolved)) continue
-            const dir = (yield* fs.isDir(resolved)) ? resolved : path.dirname(resolved)
-            scan.dirs.add(dir)
+            yield* addExternalPath(arg)
           }
         }
 
@@ -642,6 +673,10 @@ export const BashTool = Tool.define(
         }
 
         if (isDelete(tokens, ps)) scan.deletes.add(source(node))
+      }
+
+      for (const arg of redirectionArgs(root)) {
+        yield* addExternalPath(arg)
       }
 
       return scan
