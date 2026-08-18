@@ -294,7 +294,7 @@ export const dict = {
   "tui.command.skip_permissions.toast_off": "権限確認スキップをオフにしました — 権限リクエストは再びあなたの承認が必要です。",
   "tui.command.permission_timeout.title": "権限リクエストのタイムアウト設定",
   "tui.permission_timeout.title": "権限リクエストのタイムアウト",
-  "tui.permission_timeout.hint": "自動拒否するまでに人間の承認を待つ時間。権限スキップとは独立しています。",
+  "tui.permission_timeout.hint": "自動拒否するまでに人間の承認を待つ時間。",
   "tui.permission_timeout.option.never": "なし",
   "tui.permission_timeout.option.never_description": "人間の承認を無限に待つ",
   "tui.permission_timeout.option.tier_description": "{{duration}}後に自動拒否",

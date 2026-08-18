@@ -363,7 +363,7 @@ export const dict = {
   "tui.command.skip_permissions.toast_off": "Omitir permisos DESACTIVADO — las solicitudes vuelven a requerir tu aprobación.",
   "tui.command.permission_timeout.title": "Tiempo de espera de permisos",
   "tui.permission_timeout.title": "Tiempo de espera de permisos",
-  "tui.permission_timeout.hint": "Cuánto esperar la aprobación humana antes del rechazo automático. Independiente de omitir permisos.",
+  "tui.permission_timeout.hint": "Cuánto esperar la aprobación humana antes del rechazo automático.",
   "tui.permission_timeout.option.never": "Nunca",
   "tui.permission_timeout.option.never_description": "Esperar indefinidamente la aprobación humana",
   "tui.permission_timeout.option.tier_description": "Rechazo automático después de {{duration}}",

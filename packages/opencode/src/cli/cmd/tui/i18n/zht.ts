@@ -330,7 +330,7 @@ export const dict = {
   "tui.command.skip_permissions.toast_off": "已關閉跳過權限確認 — 權限請求將重新需要你確認。",
   "tui.command.permission_timeout.title": "設定權限詢問超時",
   "tui.permission_timeout.title": "權限詢問超時",
-  "tui.permission_timeout.hint": "等待人工確認的超時時間，超時後自動拒絕。與跳過權限確認正交。",
+  "tui.permission_timeout.hint": "等待人工確認的超時時間，超時後自動拒絕。",
   "tui.permission_timeout.option.never": "永不超時",
   "tui.permission_timeout.option.never_description": "無限等待人工確認",
   "tui.permission_timeout.option.tier_description": "{{duration}}後自動拒絕",

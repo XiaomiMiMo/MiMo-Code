@@ -351,7 +351,7 @@ export const dict = {
   "tui.command.skip_permissions.toast_off": "Ignorer les autorisations DÉSACTIVÉ — les demandes nécessitent à nouveau ton approbation.",
   "tui.command.permission_timeout.title": "Délai d'attente des autorisations",
   "tui.permission_timeout.title": "Délai d'attente des autorisations",
-  "tui.permission_timeout.hint": "Combien de temps attendre l'approbation humaine avant rejet automatique. Orthogonal à ignorer les autorisations.",
+  "tui.permission_timeout.hint": "Combien de temps attendre l'approbation humaine avant rejet automatique.",
   "tui.permission_timeout.option.never": "Jamais",
   "tui.permission_timeout.option.never_description": "Attendre indéfiniment l'approbation humaine",
   "tui.permission_timeout.option.tier_description": "Rejet automatique après {{duration}}",

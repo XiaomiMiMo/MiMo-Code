@@ -366,7 +366,7 @@ export const dict = {
   "tui.command.skip_permissions.toast_off": "Пропуск разрешений ВЫКЛ — запросы снова требуют вашего подтверждения.",
   "tui.command.permission_timeout.title": "Таймаут запроса разрешения",
   "tui.permission_timeout.title": "Таймаут запроса разрешения",
-  "tui.permission_timeout.hint": "Сколько ждать подтверждения человека перед авто-отклонением. Независим от пропуска разрешений.",
+  "tui.permission_timeout.hint": "Сколько ждать подтверждения человека перед авто-отклонением.",
   "tui.permission_timeout.option.never": "Никогда",
   "tui.permission_timeout.option.never_description": "Ждать подтверждения бесконечно",
   "tui.permission_timeout.option.tier_description": "Авто-отклонение через {{duration}}",

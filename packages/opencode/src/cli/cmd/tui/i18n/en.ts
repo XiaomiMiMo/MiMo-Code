@@ -307,7 +307,7 @@ export const dict: Record<string, string> = {
   "tui.command.skip_permissions.toast_off": "Skip-permissions OFF — asks need your approval again.",
   "tui.command.permission_timeout.title": "Set permission ask timeout",
   "tui.permission_timeout.title": "Permission ask timeout",
-  "tui.permission_timeout.hint": "How long to wait for human approval before auto-rejecting. Orthogonal to skip-permissions.",
+  "tui.permission_timeout.hint": "How long to wait for human approval before auto-rejecting.",
   "tui.permission_timeout.option.never": "Never",
   "tui.permission_timeout.option.never_description": "Wait indefinitely for human approval",
   "tui.permission_timeout.option.tier_description": "Auto-reject after {{duration}}",
