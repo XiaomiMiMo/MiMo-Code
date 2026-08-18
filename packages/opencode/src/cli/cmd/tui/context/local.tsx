@@ -490,6 +490,27 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
       }
     })
 
+    // permission ask timeout: null = no timeout (wait indefinitely), positive
+    // number = ms before auto-reject. Orthogonal to skipPermissions.
+    const permissionAskTimeout = iife(() => {
+      const [ms, setMs] = createSignal<number | null>(null)
+      return {
+        current: ms,
+        set(value: number | null) {
+          const previous = ms()
+          setMs(value)
+          void sdk.client.permission.setAskTimeout({ ms: value }).catch(() => {
+            setMs(previous)
+            toast.show({
+              variant: "error",
+              message: "Failed to update permission ask timeout",
+              duration: 4000,
+            })
+          })
+        },
+      }
+    })
+
     // Automatically update model when agent changes
     createEffect(() => {
       const value = agent.current()
@@ -529,6 +550,7 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
       mcp,
       neverAsk,
       skipPermissions,
+      permissionAskTimeout,
       orchestrator,
     }
     return result

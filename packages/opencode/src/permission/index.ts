@@ -23,11 +23,13 @@ import { TuiEvent } from "@/cli/cmd/tui/event"
 // after this bound rather than hanging — preserving the hang-safety the old
 // interactive:false gate guaranteed. Aligned with the actor registry stuck bound.
 const FORWARD_DENY_TIMEOUT_MS = 5 * 60 * 1000
-// In skip-all mode, forced-ask permissions (bash_delete etc.) still require a
-// human — but the human is likely away. Bounded wait, then auto-reject with
-// model-actionable feedback instead of hanging the unattended run.
-// Read lazily so tests (and unusual deployments) can override via env.
-const skipAllForcedAskTimeoutMs = () => Number(process.env.MIMOCODE_SKIP_ALL_FORCED_ASK_TIMEOUT_MS) || 60 * 1000
+// Legacy env var — maps to permissionAskTimeoutMs initial value for backward
+// compat. When set to a positive integer, new instances start with that timeout.
+// When unset or 0, permissionAskTimeoutMs starts as null (no timeout).
+const envInitialAskTimeoutMs = (): number | null => {
+  const raw = Number(process.env.MIMOCODE_SKIP_ALL_FORCED_ASK_TIMEOUT_MS)
+  return raw > 0 ? raw : null
+}
 
 const log = Log.create({ service: "permission" })
 
@@ -168,6 +170,8 @@ export interface Interface {
   readonly setSkipAll: (enabled: boolean) => Effect.Effect<void>
   readonly autoApproveDelete: () => Effect.Effect<boolean>
   readonly setAutoApproveDelete: (enabled: boolean) => Effect.Effect<void>
+  readonly permissionAskTimeout: () => Effect.Effect<number | null>
+  readonly setPermissionAskTimeout: (ms: number | null) => Effect.Effect<void>
 }
 
 interface PendingEntry {
@@ -194,6 +198,13 @@ interface State {
   // --yolo truly skips every non-denied approval; an embedder can override it
   // per instance at runtime.
   autoApproveDelete: boolean
+  // Timeout in ms for permission asks that require human confirmation.
+  // null = no timeout (wait indefinitely). When set, any ask (normal or
+  // forced-ask) that reaches the human-confirmation path auto-rejects after
+  // this duration. Orthogonal to skipAll: skipAll controls auto-allow for
+  // normal asks; this controls timeout for asks that still require a human.
+  // Initialized from MIMOCODE_SKIP_ALL_FORCED_ASK_TIMEOUT_MS for backward compat.
+  permissionAskTimeoutMs: number | null
 }
 
 export function evaluate(permission: string, pattern: string, ...rulesets: Ruleset[]): Rule {
@@ -225,6 +236,7 @@ export const layer = Layer.effect(
           approved: row?.data ?? [],
           skipAll: false,
           autoApproveDelete: Flag.MIMOCODE_AUTO_APPROVE_DELETE || Flag.MIMOCODE_DANGEROUSLY_SKIP_PERMISSIONS,
+          permissionAskTimeoutMs: envInitialAskTimeoutMs(),
         }
 
         yield* Effect.addFinalizer(() =>
@@ -477,17 +489,17 @@ export const layer = Layer.effect(
           )
         : main
 
-      // Skip-all mode: the user opted into unattended execution, so a forced-ask
-      // (the only ask that still blocks here) must not hang the run forever.
-      // Bound it with a timeout; CorrectedError (not RejectedError) so the
-      // processor does NOT set ctx.blocked — the model sees an error result with
-      // actionable feedback and the session loop continues to the next step.
+      // Permission ask timeout: when permissionAskTimeoutMs is set, any ask
+      // that reaches the human-confirmation path (normal or forced-ask) is
+      // bounded by this timeout. CorrectedError (not RejectedError) so the
+      // processor does NOT set ctx.blocked — the model sees an error result
+      // with actionable feedback and the session loop continues.
       // NOTE: keep Effect.timeoutOrElse here rather than racing a failing
       // sleep. The reason is the same "a failure is not a winner" rule that
       // forced raceFirst above: a timeout side that FAILS never wins an
       // Effect.race, so the race would sit on the still-blocked Deferred.
-      if (s.skipAll && forced) {
-        const timeoutMs = skipAllForcedAskTimeoutMs()
+      const timeoutMs = s.permissionAskTimeoutMs
+      if (timeoutMs != null) {
         guarded = Effect.timeoutOrElse(guarded, {
           duration: `${timeoutMs} millis`,
           orElse: () =>
@@ -501,7 +513,7 @@ export const layer = Layer.effect(
                 Effect.andThen(() =>
                   Effect.fail(
                     new CorrectedError({
-                      feedback: `No user response within ${Math.round(timeoutMs / 1000)}s (skip-permissions mode is on, user likely away). This destructive action was auto-rejected as a safety measure — NOT an explicit user denial. Skip this operation and continue with the rest of the task; leave the cleanup/deletion for the user to do manually.`,
+                      feedback: `No user response within ${Math.round(timeoutMs / 1000)}s. This action was auto-rejected as a safety measure — NOT an explicit user denial. Skip this operation and continue with the rest of the task.`,
                     }),
                   ),
                 ),
@@ -633,7 +645,27 @@ export const layer = Layer.effect(
       log.info("auto-approve-delete set", { enabled })
     })
 
-    return Service.of({ ask, reply, list, skipAll, setSkipAll, autoApproveDelete, setAutoApproveDelete })
+    const permissionAskTimeout = Effect.fn("Permission.permissionAskTimeout")(function* () {
+      return (yield* InstanceState.get(state)).permissionAskTimeoutMs
+    })
+
+    const setPermissionAskTimeout = Effect.fn("Permission.setPermissionAskTimeout")(function* (ms: number | null) {
+      const s = yield* InstanceState.get(state)
+      s.permissionAskTimeoutMs = ms
+      log.info("permission ask timeout set", { ms })
+    })
+
+    return Service.of({
+      ask,
+      reply,
+      list,
+      skipAll,
+      setSkipAll,
+      autoApproveDelete,
+      setAutoApproveDelete,
+      permissionAskTimeout,
+      setPermissionAskTimeout,
+    })
   }),
 )
 

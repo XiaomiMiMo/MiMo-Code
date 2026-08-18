@@ -5483,6 +5483,58 @@ export type PermissionSetAutoApproveDeleteResponses = {
 export type PermissionSetAutoApproveDeleteResponse =
   PermissionSetAutoApproveDeleteResponses[keyof PermissionSetAutoApproveDeleteResponses]
 
+export type PermissionAskTimeoutData = {
+  body?: never
+  path?: never
+  query?: {
+    directory?: string
+    workspace?: string
+  }
+  url: "/permission/ask-timeout"
+}
+
+export type PermissionAskTimeoutResponses = {
+  /**
+   * Current ask timeout in ms, or null
+   */
+  200: number | null
+}
+
+export type PermissionAskTimeoutResponse = PermissionAskTimeoutResponses[keyof PermissionAskTimeoutResponses]
+
+export type PermissionSetAskTimeoutData = {
+  body?: {
+    /**
+     * Timeout in ms, or null to disable
+     */
+    ms: number | null
+  }
+  path?: never
+  query?: {
+    directory?: string
+    workspace?: string
+  }
+  url: "/permission/ask-timeout"
+}
+
+export type PermissionSetAskTimeoutErrors = {
+  /**
+   * Bad request
+   */
+  400: BadRequestError
+}
+
+export type PermissionSetAskTimeoutError = PermissionSetAskTimeoutErrors[keyof PermissionSetAskTimeoutErrors]
+
+export type PermissionSetAskTimeoutResponses = {
+  /**
+   * Updated ask timeout in ms, or null
+   */
+  200: number | null
+}
+
+export type PermissionSetAskTimeoutResponse = PermissionSetAskTimeoutResponses[keyof PermissionSetAskTimeoutResponses]
+
 export type WorkflowListData = {
   body?: never
   path?: never
