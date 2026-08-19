@@ -1,14 +1,28 @@
 ---
 feature: desktop-child-process-env
-status: in-progress
+status: delivered
 updated: 2026-08-17
 branch: fix/desktop-runtime-boundaries
-commits: # filled at delivery
+commits: 17c9cdcb70b27116456f742f2b0d384b76f79108..8683c89ae49f2eec9cf50f2a7aa5605b3ac0d9a3
 ---
 
 # Desktop Child Process Environment
 
 ## Report
+
+**What was built** — MiMoCode now owns a process-level, replaceable child environment baseline. Embedding hosts can set it at startup through `Server.listen({ childEnv })` or refresh it later through the Node entry's `ChildProcessEnv.set(env)`. Hosts that never set a baseline retain existing behavior and read the current `process.env` for each spawn.
+
+All inherited external process paths now resolve through the same boundary, including direct and Effect process wrappers, Bash, PTY, LSP, MCP, ripgrep and remaining native `child_process` calls. Inherited credentials are still scrubbed before explicit per-child environment overrides are applied.
+
+**Verification** — `bun typecheck` passed. The affected regression suite passed 99 tests with 0 failures across child-process environment, credential environment, process, PTY, LSP, MCP, ripgrep and Bash coverage. `git diff --check` passed. Independent review passed spec compliance, correctness and codebase consistency after all critical findings were fixed.
+
+**Journey log** —
+
+- A frozen baseline was rejected because a future Desktop environment-sync action must replace the baseline for new child processes without changing session state.
+- The no-host path reads current `process.env` on every spawn; freezing that fallback broke existing CLI runtime environment updates.
+- Review found Effect commands with undefined env and native `child_process` calls could still inherit the engine process; both paths now explicitly resolve the shared baseline.
+- LSP environment deltas are resolved at each spawn so a baseline refresh affects later commands in the same workflow.
+- The structural guard uses the TypeScript AST to validate every native process call, rather than only checking whether a file mentions the helper.
 
 ## [S1] Problem
 
