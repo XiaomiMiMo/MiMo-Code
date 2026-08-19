@@ -24,7 +24,12 @@ export function InstanceMiddleware(workspaceID?: WorkspaceID): MiddlewareHandler
       })(),
     )
 
-    if (!Flag.MIMOCODE_SERVER_PASSWORD) {
+    // Keyed on who SUPPLIED the credential, not on whether one exists. An implicit
+    // loopback listener generates a password of its own, and if that flipped this
+    // check off it would trade one wall for another: `/v1` bypasses basic auth by
+    // design, so a token holder could then aim `?directory=` at any project on the
+    // machine. An operator who sets the password themselves keeps the old freedom.
+    if (!Flag.MIMOCODE_SERVER_PASSWORD_SUPPLIED) {
       const cwd = Filesystem.resolve(process.cwd())
       // The fixed global Orchestrator workspace is app-owned (under Global.Path.data),
       // not user-supplied, so entering Orchestrator mode may switch to it even though

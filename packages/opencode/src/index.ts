@@ -15,6 +15,7 @@ import { InstallationVersion } from "./installation/version"
 import { NamedError } from "@mimo-ai/shared/util/error"
 import { FormatError } from "./cli/error"
 import { ServeCommand } from "./cli/cmd/serve"
+import { LlmServerCommand } from "./cli/cmd/llm-server"
 import { Filesystem } from "./util"
 import { DebugCommand } from "./cli/cmd/debug"
 import { StatsCommand } from "./cli/cmd/stats"
@@ -195,6 +196,7 @@ const cli = yargs(args)
   .command(UpgradeCommand)
   .command(UninstallCommand)
   .command(ServeCommand)
+  .command(LlmServerCommand)
   // Web command temporarily disabled
   // .command(WebCommand)
   .command(ModelsCommand)

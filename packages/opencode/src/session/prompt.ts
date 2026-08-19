@@ -1252,6 +1252,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
       const tools: Record<string, AITool> = {}
       const activeTools = new Set<string>()
       const loadedMcpTools = new Set<string>()
+      const execMcpTools: Record<string, AITool> = {}
       const mcpSearchEntries: McpToolSearchEntry[] = []
       const mcpCatalog = { current: createMcpToolSearchCatalog([]) }
       // exec's request-scoped MCP view. Holder object (same pattern as
@@ -1510,7 +1511,11 @@ NOTE: At any point in time through this workflow you should feel free to ask the
           })
         }
         if (searchable && !useMcpToolSearch && input.model.capabilities.toolcall) activeTools.add(key)
-        item.execute = (args, opts) =>
+        const executeMcp = (
+          args: Parameters<typeof execute>[0],
+          opts: Parameters<typeof execute>[1],
+          requireLoaded: boolean,
+        ) =>
           run.promise(
             Effect.gen(function* () {
               const startTs = Date.now()
@@ -1526,7 +1531,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
                   new RecoverableError(`The MCP tool "${key}" is unavailable for this request.`),
                 )
               }
-              if (useMcpToolSearch && !loadedMcpTools.has(key)) {
+              if (requireLoaded && useMcpToolSearch && !loadedMcpTools.has(key)) {
                 return yield* Effect.fail(
                   new RecoverableError(
                     `The MCP tool "${key}" is not loaded for this request. Call ${MCP_TOOL_SEARCH_ID} first, then retry on the next step.`,
@@ -1644,7 +1649,14 @@ NOTE: At any point in time through this workflow you should feel free to ask the
               return output
             }),
           )
+        item.execute = (args, opts) => executeMcp(args, opts, true)
         tools[key] = item
+        if (searchable && input.model.capabilities.toolcall) {
+          execMcpTools[key] = {
+            ...item,
+            execute: (args, opts) => executeMcp(args, opts, false),
+          }
+        }
       }
       mcpCatalog.current = createMcpToolSearchCatalog(
         mcpSearchEntries.toSorted((a, b) => a.name.localeCompare(b.name)),
@@ -1710,15 +1722,13 @@ NOTE: At any point in time through this workflow you should feel free to ask the
       }
       loadedMcpTools.forEach((name) => activeTools.add(name))
 
-      // Fill exec's request-scoped MCP view (holder declared at the top of
-      // this pass, delivered via ctx.extra.execMcp): exactly the MCP tools
-      // active for this request. Under mcp_tool_search gating that means only
-      // search-loaded tools — exec must not bypass the discovery gate.
-      for (const [key] of mcpTools) {
-        if (!tools[key] || !activeTools.has(key)) continue
-        if (key === MCP_TOOL_SEARCH_ID) continue
-        execMcp.current[key] = tools[key]
-      }
+      // MCP Tool Search keeps full schemas out of the outer model tool list;
+      // it is a context-budget optimization, not an authorization boundary.
+      // exec therefore receives every request-authorized MCP tool so Codex can
+      // call a catalogued tool in the same step without a redundant search
+      // round-trip. These wrappers still run the ordinary permission, plugin,
+      // metrics, normalization, and truncation pipeline above.
+      execMcp.current = execMcpTools
 
       return {
         tools,

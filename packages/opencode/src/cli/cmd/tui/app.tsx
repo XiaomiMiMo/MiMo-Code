@@ -83,6 +83,7 @@ import type { EventSource } from "./context/sdk"
 import { DialogVariant } from "./component/dialog-variant"
 import { DialogModalities } from "./component/dialog-modalities"
 import { DialogContextLimit } from "./component/dialog-context-limit"
+import { DialogPermissionTimeout } from "./component/dialog-permission-timeout"
 
 function rendererConfig(_config: TuiConfig.Info, plainTerminal: boolean): CliRendererConfig {
   const mouseEnabled = !plainTerminal && !Flag.MIMOCODE_DISABLE_MOUSE && (_config.mouse ?? true)
@@ -752,6 +753,17 @@ function App(props: { onSnapshot?: () => Promise<string[]> }) {
           message: next ? t("tui.command.skip_permissions.toast_on") : t("tui.command.skip_permissions.toast_off"),
           duration: 5000,
         })
+      },
+    },
+    {
+      title: t("tui.command.permission_timeout.title"),
+      value: "permission.ask_timeout",
+      category: "agent",
+      slash: {
+        name: "permission-timeout",
+      },
+      onSelect: () => {
+        DialogPermissionTimeout.show(dialog)
       },
     },
     {

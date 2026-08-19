@@ -32,7 +32,7 @@ function createTestJwt(payload: object): string {
 
 describe("plugin.codex", () => {
   describe("loader", () => {
-    test("clamps gpt context to the Codex cap without raising smaller windows", async () => {
+    test("zeroes costs for Codex without modifying model limits", async () => {
       const hooks = await CodexAuthPlugin(fakeInput)
       const model = (modelID: string, limit: { context: number; input?: number }) =>
         [modelID, { api: { id: modelID }, cost: {}, limit }] as const
@@ -52,16 +52,16 @@ describe("plugin.codex", () => {
       )
 
       expect(Object.keys(provider.models)).toEqual(["gpt-5.6-sol", "gpt-5.3-codex", "gpt-4o", "gpt-image-1", "o3"])
-      expect(provider.models["gpt-5.6-sol"].limit).toEqual({ context: 372_000, input: 372_000 })
-      // 272K input cap is already below the Codex cap — it must survive untouched,
-      // otherwise we would raise the trigger above what the provider accepts.
-      expect(provider.models["gpt-5.3-codex"].limit).toEqual({ context: 372_000, input: 272_000 })
-      // Real window below the cap: never raised.
+      // Limits are no longer clamped — catalog values pass through unchanged.
+      expect(provider.models["gpt-5.6-sol"].limit).toEqual({ context: 1_050_000, input: 922_000 })
+      expect(provider.models["gpt-5.3-codex"].limit).toEqual({ context: 400_000, input: 272_000 })
       expect(provider.models["gpt-4o"].limit).toEqual({ context: 128_000 })
-      // context 0 is the "overflow handling disabled" sentinel — leave it alone.
       expect(provider.models["gpt-image-1"].limit).toEqual({ context: 0, input: 0 })
-      // Non-gpt models keep catalog limits.
       expect(provider.models.o3.limit).toEqual({ context: 200_000 })
+      // Costs are zeroed for all models.
+      for (const model of Object.values(provider.models)) {
+        expect(model.cost).toEqual({ input: 0, output: 0, cache: { read: 0, write: 0 } })
+      }
     })
 
     test("forwards request cancellation while refreshing an expired token", async () => {

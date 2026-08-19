@@ -86,6 +86,7 @@ import type {
   PartUpdateErrors,
   PartUpdateResponses,
   PathGetResponses,
+  PermissionAskTimeoutResponses,
   PermissionAutoApproveDeleteResponses,
   PermissionListResponses,
   PermissionReplyErrors,
@@ -93,6 +94,8 @@ import type {
   PermissionRespondErrors,
   PermissionRespondResponses,
   PermissionRuleset,
+  PermissionSetAskTimeoutErrors,
+  PermissionSetAskTimeoutResponses,
   PermissionSetAutoApproveDeleteErrors,
   PermissionSetAutoApproveDeleteResponses,
   PermissionSetSkipAllErrors,
@@ -3164,6 +3167,77 @@ export class Permission extends HeyApiClient {
       ThrowOnError
     >({
       url: "/permission/auto-approve-delete",
+      ...options,
+      ...params,
+      headers: {
+        "Content-Type": "application/json",
+        ...options?.headers,
+        ...params.headers,
+      },
+    })
+  }
+
+  /**
+   * Get permission ask timeout
+   *
+   * Timeout in milliseconds for permission asks that require human confirmation. null means no timeout (wait indefinitely). Applies to all asks — normal and forced-ask. Orthogonal to skip-all.
+   */
+  public askTimeout<ThrowOnError extends boolean = false>(
+    parameters?: {
+      directory?: string
+      workspace?: string
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "query", key: "directory" },
+            { in: "query", key: "workspace" },
+          ],
+        },
+      ],
+    )
+    return (options?.client ?? this.client).get<PermissionAskTimeoutResponses, unknown, ThrowOnError>({
+      url: "/permission/ask-timeout",
+      ...options,
+      ...params,
+    })
+  }
+
+  /**
+   * Set permission ask timeout
+   *
+   * Set the timeout in milliseconds for permission asks that require human confirmation. null disables the timeout (wait indefinitely). Applies instance-wide; subagents inherit it. Orthogonal to skip-all — both can be enabled independently.
+   */
+  public setAskTimeout<ThrowOnError extends boolean = false>(
+    parameters?: {
+      directory?: string
+      workspace?: string
+      ms?: number | null
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "query", key: "directory" },
+            { in: "query", key: "workspace" },
+            { in: "body", key: "ms" },
+          ],
+        },
+      ],
+    )
+    return (options?.client ?? this.client).post<
+      PermissionSetAskTimeoutResponses,
+      PermissionSetAskTimeoutErrors,
+      ThrowOnError
+    >({
+      url: "/permission/ask-timeout",
       ...options,
       ...params,
       headers: {

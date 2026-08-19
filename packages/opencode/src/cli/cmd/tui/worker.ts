@@ -7,7 +7,8 @@ import { Rpc } from "@/util"
 import { upgrade } from "@/cli/upgrade"
 import { Config } from "@/config"
 import { GlobalBus } from "@/bus/global"
-import { Flag } from "@/flag/flag"
+import { Flag, clearGeneratedServerPassword, generateServerPassword } from "@/flag/flag"
+import { LLMServerTokens } from "@/llm-server/tokens"
 import { writeHeapSnapshot } from "node:v8"
 import { Heap } from "@/cli/heap"
 import { AppRuntime } from "@/effect/app-runtime"
@@ -45,6 +46,7 @@ GlobalBus.on("event", (event) => {
 })
 
 let server: Awaited<ReturnType<typeof Server.listen>> | undefined
+let serverPromise: ReturnType<typeof Server.listen> | undefined
 
 export const rpc = {
   async fetch(input: { url: string; method: string; headers: Record<string, string>; body?: string }) {
@@ -70,9 +72,34 @@ export const rpc = {
     const result = writeHeapSnapshot("server.heapsnapshot")
     return result
   },
-  async server(input: { port: number; hostname: string; mdns?: boolean; cors?: string[] }) {
-    if (server) await server.stop(true)
-    server = await Server.listen(input)
+  async server(input?: { port: number; hostname: string; mdns?: boolean; cors?: string[] }) {
+    // Idempotent. The previous behaviour was to stop and rebind, which moves the port
+    // out from under whoever is already talking to it — and now that a listener is
+    // bound unasked, a second caller is the normal case rather than a mistake.
+    // Memoized: two calls arriving before the first `await Server.listen` resolves
+    // must not both pass the guard and create two listeners.
+    if (server) return { url: server.url.toString() }
+    if (!serverPromise) {
+      // No input means nobody asked for a reachable server: we are binding one anyway so
+      // that the `/v1` capability API exists at all (it is only reachable over a socket,
+      // and a consumer spawned mid-session cannot ask for one retroactively). That makes
+      // every other instance route reachable by any process running as this user, so it
+      // gets a credential first — generated before `listen`, never after.
+      if (!input) generateServerPassword()
+      serverPromise = Server.listen(input ?? { port: 0, hostname: "127.0.0.1" })
+    }
+    server = await serverPromise
+
+    // Advertised for a human at a shell (`mimo llm-server issue` prints it). A child
+    // process is told its endpoint directly and does not read this.
+    await LLMServerTokens.publish(process.cwd(), {
+      pid: process.pid,
+      hostname: server.hostname,
+      port: server.port,
+      url: server.url.toString(),
+      started: Date.now(),
+    }).catch((error) => Log.Default.warn("failed to advertise server address", { error: String(error) }))
+
     return { url: server.url.toString() }
   },
   async checkUpgrade(input: { directory: string }) {
@@ -108,7 +135,16 @@ export const rpc = {
     )
 
     await Instance.disposeAll()
-    if (server) await server.stop(true)
+    if (server) {
+      // Withdraw the advertisement before the socket goes away, so a reader sees
+      // "nothing is serving" rather than a port that refuses connections. A crash skips
+      // this, which is what the pid liveness check in `addresses` is for.
+      await LLMServerTokens.unpublish(process.cwd()).catch(() => {})
+      await server.stop(true)
+      server = undefined
+      serverPromise = undefined
+      clearGeneratedServerPassword()
+    }
     await Log.shutdown()
   },
 }

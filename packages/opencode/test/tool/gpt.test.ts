@@ -1,5 +1,16 @@
-import { describe, expect, test } from "bun:test"
-import { isGPTModel, isMcpToolSearchEnabled } from "../../src/tool/gpt"
+import { afterEach, beforeEach, describe, expect, test } from "bun:test"
+import { isGPTModel, isMcpToolSearchEnabled, usesGPTToolset } from "../../src/tool/gpt"
+
+const codexMode = process.env.MIMOCODE_CODEX_MODE
+
+beforeEach(() => {
+  delete process.env.MIMOCODE_CODEX_MODE
+})
+
+afterEach(() => {
+  if (codexMode === undefined) delete process.env.MIMOCODE_CODEX_MODE
+  else process.env.MIMOCODE_CODEX_MODE = codexMode
+})
 
 describe("isGPTModel", () => {
   test("recognizes GPT versions and API aliases", () => {
@@ -22,5 +33,18 @@ describe("isMcpToolSearchEnabled", () => {
     expect(isMcpToolSearchEnabled(false, "gpt-5.2")).toBe(true)
     expect(isMcpToolSearchEnabled(false, "gpt-oss-120b")).toBe(false)
     expect(isMcpToolSearchEnabled(true, "claude-opus-4-6")).toBe(true)
+  })
+
+  test("is enabled for non-GPT models in Codex mode", () => {
+    process.env.MIMOCODE_CODEX_MODE = "true"
+    expect(isMcpToolSearchEnabled(false, "claude-opus-4-6")).toBe(true)
+  })
+})
+
+describe("usesGPTToolset", () => {
+  test("uses the GPT toolset for every model in Codex mode", () => {
+    expect(usesGPTToolset("claude-opus-4-6")).toBe(false)
+    process.env.MIMOCODE_CODEX_MODE = "true"
+    expect(usesGPTToolset("claude-opus-4-6")).toBe(true)
   })
 })

@@ -2,6 +2,7 @@ import z from "zod"
 import os from "os"
 import fs from "fs"
 import path from "path"
+import ts from "typescript"
 import { Effect } from "effect"
 import type { Tool as AiTool } from "ai"
 import { EffectBridge, InstanceState } from "@/effect"
@@ -88,9 +89,11 @@ export function renderToolScriptDeclarations(defs: Tool.Def[]): string {
     "declare const tools: {",
     ...lines,
     ...aliasLines,
-    "  /** Active MCP tools (if any) are also callable as tools.<name>(input). MCP results carry parsed structuredContent in `structured` when the server provides it. */",
+    "  /** Request-authorized MCP tools are callable by exact catalog name, normally mcp__<server>__<tool>. */",
     "  [mcpToolName: string]: (input: Record<string, unknown>) => Promise<ToolResult>",
     "}",
+    "/** Every tool callable in this execution. Filter by name to discover MCP tools without mcp_tool_search. */",
+    "declare const ALL_TOOLS: ReadonlyArray<{ name: string; description: string }>",
     "// Raw file IO for machine-to-machine data (pipelines across executions).",
     "declare const files: {",
     "  /** Raw file contents — no line numbers, no truncation. null if missing. Paths: worktree or OS tmp. */",
@@ -306,7 +309,7 @@ export const ToolScriptTool = Tool.define(
         code: z
           .string()
           .describe(
-            "TypeScript (or JavaScript) source for the body of an async function. Call tools via the global `tools` object; `return` the final aggregated value.",
+            "Raw JavaScript or TypeScript source for the body of an async function, not JSON or a Markdown code block. Call tools via the global `tools` object; inspect `ALL_TOOLS` when needed; `return` the final aggregated value.",
           ),
         max_tool_calls: z
           .number()
@@ -378,16 +381,25 @@ export const ToolScriptTool = Tool.define(
             )
           ).filter((def) => !TOOL_SCRIPT_EXCLUDED.has(def.id) && (!whitelist || whitelist.has(def.id)))
           const byId = new Map(defs.map((def) => [def.id, def]))
-          // MCP tools (request-scoped view delivered via ctx.extra.execMcp,
-          // filled by SessionPrompt's resolveTools for THIS request — under
-          // mcp_tool_search gating only search-loaded tools appear, so exec
-          // cannot bypass the discovery gate; a module-level ref would be
-          // overwritten by concurrent sessions). Builtin ids win on collision
-          // — an MCP server must not shadow `read`/`grep`.
+          // Request-authorized MCP tools (delivered via ctx.extra.execMcp and
+          // filled by SessionPrompt's resolveTools for THIS request). Tool Search
+          // only limits the outer model's schema list; exec receives the full
+          // authorized view so it can call tools[exactCatalogName](...) directly.
+          // A module-level ref would be overwritten by concurrent sessions.
+          // Builtin ids win on collision — an MCP server must not shadow `read`.
           const mcpTools = (ctx.extra?.execMcp as { current?: Record<string, AiTool> } | undefined)?.current ?? {}
           const mcpById = new Map(
             Object.entries(mcpTools).filter(([id]) => !byId.has(id) && (!whitelist || whitelist.has(id))),
           )
+          const allTools = [
+            ...[...byId.values()].map((def) => ({ name: def.id, description: def.description })),
+            ...Object.entries(TOOL_SCRIPT_ALIASES).flatMap(([name, target]) => {
+              const def = byId.get(target)
+              if (!def) return []
+              return [{ name, description: `Alias for ${target}. ${def.description}` }]
+            }),
+            ...[...mcpById.entries()].map(([name, tool]) => ({ name, description: tool.description ?? "" })),
+          ]
           // Non-git projects report worktree === "/" (see Instance.containsPath) —
           // "/" as a jail root would allow EVERYTHING. Fall back to the project
           // directory in that case. Relative guest paths resolve against roots[0].
@@ -403,38 +415,44 @@ export const ToolScriptTool = Tool.define(
           const bridge = yield* EffectBridge.make()
 
           // Wrap before transpiling: the code is the BODY of an async function
-          // (top-level `return`/`await`), which is invalid at module top level —
-          // Bun.Transpiler would reject it. The wrapped form transpiles to a plain
-          // JS async-arrow expression the guest body can invoke.
-          // Bun surfaces syntax errors as BuildMessage (single) or AggregateError
-          // (several), each carrying a position. Report line/column relative to
-          // the CALLER's code (the wrapper adds one line above), plus the source
-          // line text — a bare "Parse error" is undebuggable in a 100-line script.
-          const formatBuildError = (err: unknown): string => {
-            const messages = err instanceof AggregateError ? err.errors : [err]
-            const rendered = messages
-              .map((m: any) => {
-                const pos = m?.position
-                if (!pos || typeof pos.line !== "number") return String(m?.message ?? m)
-                return `line ${pos.line - 1}, column ${pos.column}: ${m.message}\n  ${pos.lineText ?? ""}`
+          // (top-level `return`/`await`), which is invalid at module top level.
+          // The wrapped form transpiles to a plain JS async-arrow expression the
+          // guest body can invoke. Use TypeScript rather than Bun.Transpiler: this
+          // core module also ships in the Node bundle, and some standalone Bun
+          // runtimes expose Transpiler without a constructible implementation.
+          // Report line/column relative to the CALLER's code (the wrapper adds one
+          // line above), plus source text — a bare parse error is undebuggable.
+          const source = `globalThis.__main = async () => {\n${params.code}\n}`
+          const result = ts.transpileModule(source, {
+            reportDiagnostics: true,
+            compilerOptions: {
+              module: ts.ModuleKind.ESNext,
+              target: ts.ScriptTarget.ESNext,
+            },
+          })
+          const hasImport = /^\s*(import|export)\s/m.test(params.code)
+          const formatDiagnostics = (diagnostics: readonly ts.Diagnostic[]): string => {
+            const rendered = diagnostics
+              .map((diagnostic) => {
+                if (!diagnostic.file || diagnostic.start === undefined)
+                  return ts.flattenDiagnosticMessageText(diagnostic.messageText, "\n")
+                const pos = diagnostic.file.getLineAndCharacterOfPosition(diagnostic.start)
+                return `line ${pos.line}, column ${pos.character + 1}: ${ts.flattenDiagnosticMessageText(diagnostic.messageText, "\n")}\n  ${diagnostic.file.text.split("\n")[pos.line] ?? ""}`
               })
               .join("\n")
-            const importHint = /^\s*(import|export)\s/m.test(params.code)
+            const importHint = hasImport
               ? "\nnote: import/export are NOT supported — the code runs as a sandboxed function body. Use the provided `tools` / `files` globals instead of Node modules."
               : ""
-            return `TypeScript transpile failed:\n${rendered}${importHint}`
+            return `TypeScript transpile failed:\n${rendered || "import/export declaration is not supported"}${importHint}`
           }
-          const transpiled = yield* Effect.try({
-            try: () => new Bun.Transpiler({ loader: "ts" }).transformSync(`globalThis.__main = async () => {\n${params.code}\n}`),
-            catch: (err) => err,
-          }).pipe(Effect.catch((err) => Effect.succeed({ error: formatBuildError(err) })))
-          if (typeof transpiled === "object") {
+          if (result.diagnostics?.length || hasImport) {
             return {
               title: "transpile error",
               metadata: { status: "code_error", toolCalls: 0, counts: tally(), recent: recentTail() },
-              output: `<exec status="code_error">\n<error_message>\n${transpiled.error}\n</error_message>\n</exec>`,
+              output: `<exec status="code_error">\n<error_message>\n${formatDiagnostics(result.diagnostics ?? [])}\n</error_message>\n</exec>`,
             }
           }
+          const transpiled = result.outputText
 
           const logs: string[] = []
           let logBytes = 0
@@ -586,7 +604,8 @@ export const ToolScriptTool = Tool.define(
               // and lossy conversions (NaN→null, Map→array, Error→plain object) are
               // reported as warnings. The envelope crosses the boundary as plain JSON.
               evalScript(
-                GUEST_PRELUDE +
+                `const ALL_TOOLS = Object.freeze(${JSON.stringify(allTools)}.map(Object.freeze));\n` +
+                  GUEST_PRELUDE +
                   "\n" +
                   transpiled +
                   `\nconst __ret = await globalThis.__main();

@@ -15,14 +15,18 @@ function load<A>(dir: string, fn: (svc: Agent.Interface) => Effect.Effect<A>) {
 }
 
 const dynamicSystemPrompt = process.env.MIMOCODE_ENABLE_DYNAMIC_SYSTEM_PROMPT
+const codexMode = process.env.MIMOCODE_CODEX_MODE
 
 beforeEach(() => {
   process.env.MIMOCODE_ENABLE_DYNAMIC_SYSTEM_PROMPT = "true"
+  delete process.env.MIMOCODE_CODEX_MODE
 })
 
 afterEach(() => {
   if (dynamicSystemPrompt === undefined) delete process.env.MIMOCODE_ENABLE_DYNAMIC_SYSTEM_PROMPT
   else process.env.MIMOCODE_ENABLE_DYNAMIC_SYSTEM_PROMPT = dynamicSystemPrompt
+  if (codexMode === undefined) delete process.env.MIMOCODE_CODEX_MODE
+  else process.env.MIMOCODE_CODEX_MODE = codexMode
 })
 
 describe("session.system", () => {
@@ -178,6 +182,33 @@ describe("session.system", () => {
     expect(prompt).not.toContain("When possible, prefer parallelization over sequential tool calls")
   })
 
+  test("uses the GPT prompt for Codex and MiMo models", () => {
+    const gpt = SystemPrompt.provider(ProviderTest.model({ id: ModelID.make("gpt-5.4") }))[0]
+    const prompts = ["gpt-5.4-codex", "mimo-v2.5"].map(
+      (id) =>
+        SystemPrompt.provider(
+          ProviderTest.model({
+            id: ModelID.make(id),
+          }),
+        )[0],
+    )
+
+    expect(prompts).toEqual([gpt, gpt])
+  })
+
+  test("Codex mode forces the GPT prompt for non-GPT models", () => {
+    const gpt = SystemPrompt.provider(ProviderTest.model({ id: ModelID.make("gpt-5.4") }))[0]
+    process.env.MIMOCODE_CODEX_MODE = "true"
+    const prompt = SystemPrompt.provider(
+      ProviderTest.model({
+        id: ModelID.make("claude-sonnet-4-6"),
+        providerID: ProviderID.make("anthropic"),
+      }),
+    )[0]
+
+    expect(prompt).toBe(gpt)
+  })
+
   test("uses the same prompted subagent system across models", () => {
     const subagent = {
       name: "general",
@@ -207,7 +238,7 @@ describe("session.system", () => {
       }),
     )[0]
 
-    expect(prompt).toContain("You are MiMoCode, an agent based on the GPT-5 family")
+    expect(prompt).toBe(SystemPrompt.provider(ProviderTest.model({ id: ModelID.make("gpt-5.4") }))[0])
   })
 
   test("does not inject vision capability guidance for GPT, Claude, or Gemini models", async () => {

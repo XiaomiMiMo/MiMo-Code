@@ -16,6 +16,7 @@ Invoked from the shell. `mimo` with no command opens the TUI.
 | `mimo upgrade` | Update to the latest version |
 | `mimo uninstall` | Uninstall MiMoCode |
 | `mimo serve` | Run the server |
+| `mimo llm-server issue`/`list`/`revoke` | Mint and manage tokens that let a task reach this instance's models over `/v1`; it starts nothing — see @capability-api.md |
 | `mimo stats` | Usage statistics |
 | `mimo export` / `mimo import` | Export / import sessions |
 | `mimo session` | Manage sessions |

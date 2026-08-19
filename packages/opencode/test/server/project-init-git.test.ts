@@ -5,7 +5,6 @@ import { GlobalBus } from "../../src/bus/global"
 import { Snapshot } from "../../src/snapshot"
 import { Instance } from "../../src/project/instance"
 import { Server } from "../../src/server/server"
-import { Flag } from "../../src/flag/flag"
 import { Filesystem } from "../../src/util"
 import { Log } from "../../src/util"
 import { resetDatabase } from "../fixture/db"
@@ -18,15 +17,18 @@ afterEach(async () => {
 })
 
 // This test needs a tmpdir OUTSIDE any git repo so project detection doesn't
-// inherit a parent .git. We temporarily set Flag.MIMOCODE_SERVER_PASSWORD to
-// bypass the middleware cwd containment check and include auth headers.
+// inherit a parent .git. Serving a directory outside cwd is only allowed when the
+// OPERATOR secured the server, so the password is set the way an operator sets it —
+// in the environment. Poking the `Flag` object would no longer work and would not be
+// the real mechanism: `Flag` reads the env var to tell an operator-supplied password
+// apart from one an implicit listener generated for itself.
 const TEST_PASSWORD = "init-git-test"
 const authHeader = `Basic ${Buffer.from(`mimocode:${TEST_PASSWORD}`).toString("base64")}`
 
 describe("project.initGit endpoint", () => {
   test("initializes git and reloads immediately", async () => {
-    const prevFlag = (Flag as any).MIMOCODE_SERVER_PASSWORD
-    ;(Flag as any).MIMOCODE_SERVER_PASSWORD = TEST_PASSWORD
+    const prevFlag = process.env["MIMOCODE_SERVER_PASSWORD"]
+    process.env["MIMOCODE_SERVER_PASSWORD"] = TEST_PASSWORD
     try {
       await using tmp = await tmpdir({ outsideGit: true })
       const app = Server.Default().app
@@ -86,7 +88,8 @@ describe("project.initGit endpoint", () => {
         GlobalBus.off("event", fn)
       }
     } finally {
-      ;(Flag as any).MIMOCODE_SERVER_PASSWORD = prevFlag
+      if (prevFlag === undefined) delete process.env["MIMOCODE_SERVER_PASSWORD"]
+      else process.env["MIMOCODE_SERVER_PASSWORD"] = prevFlag
     }
   })
 

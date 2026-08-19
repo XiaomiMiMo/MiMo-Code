@@ -1022,6 +1022,47 @@ mcpIt.live("MCP structuredContent is persisted and reaches the model alongside t
   ),
 )
 
+mcpIt.live("exec can call a catalogued MCP tool without loading its outer schema", () =>
+  provideTmpdirServer(
+    Effect.fnUntraced(function* ({ llm }) {
+      const prompt = yield* SessionPrompt.Service
+      const sessions = yield* Session.Service
+      const session = yield* sessions.create({
+        title: "Exec MCP",
+        permission: [{ permission: "*", pattern: "*", action: "allow" }],
+      })
+
+      yield* prompt.prompt({
+        sessionID: session.id,
+        agent: "build",
+        model: mcpRef,
+        noReply: true,
+        parts: [{ type: "text", text: "inspect the window through exec" }],
+      })
+      yield* llm.tool("exec", {
+        code: "const result = await tools.mcp_success({}); return result.structured",
+      })
+      yield* llm.text("done")
+
+      yield* prompt.loop({ sessionID: session.id })
+
+      const tool = (yield* MessageV2.filterCompactedEffect(session.id))
+        .flatMap((message) => message.parts)
+        .find(
+          (part): part is CompletedToolPart =>
+            part.type === "tool" && part.tool === "exec" && part.state.status === "completed",
+        )
+      expect(tool?.state.output).toContain('"changed": true')
+      expect(tool?.state.output).toContain('"windowID": 42')
+
+      const tools = (yield* llm.inputs)[0].tools as Array<Record<string, unknown>>
+      expect(tools.map(wireToolName)).toContain("mcp_tool_search")
+      expect(tools.map(wireToolName)).not.toContain("mcp_success")
+    }),
+    { git: true, config: providerCfg },
+  ),
+)
+
 mcpIt.live("rejects an MCP call that was not loaded by search", () =>
   provideTmpdirServer(
     Effect.fnUntraced(function* ({ llm }) {

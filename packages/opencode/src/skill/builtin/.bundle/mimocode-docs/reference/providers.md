@@ -107,6 +107,12 @@ Add optional metadata only when the user supplied it or a current authoritative 
 
 For input modalities specifically, the user can set them in the TUI with `/modalities` (multi-select image/audio/video/pdf; persists to `provider.<id>.models.<id>.modalities` in global config) — prefer pointing them there over hand-editing.
 
+For TTS models, two additional boolean flags control voice capabilities — neither is inferred from the model name:
+- `voice_design: true` — the model accepts a natural-language voice description instead of a preset name.
+- `voice_clone: true` — the model reproduces a voice from a reference audio sample.
+
+Without these flags, the `/v1/audio/speech` route rejects a `voice:{design:...}` or `voice:{clone:...}` request before it reaches the provider. A preset voice (a bare string like `"Chloe"`) works on any speech model and needs no flag.
+
 ## Credential handling
 
 - Treat any API key as a secret even when the user pasted it into the prompt. Never repeat it in commentary, tool summaries, diffs, or the final response.

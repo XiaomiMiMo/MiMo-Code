@@ -171,5 +171,59 @@ export const PermissionRoutes = lazy(() =>
           yield* svc.setAutoApproveDelete(c.req.valid("json").enabled)
           return yield* svc.autoApproveDelete()
         }),
+    )
+    .get(
+      "/ask-timeout",
+      describeRoute({
+        summary: "Get permission ask timeout",
+        description:
+          "Timeout in milliseconds for permission asks that require human confirmation. null means no timeout (wait indefinitely). Applies to all asks — normal and forced-ask. Orthogonal to skip-all.",
+        operationId: "permission.askTimeout",
+        responses: {
+          200: {
+            description: "Current ask timeout in ms, or null",
+            content: {
+              "application/json": {
+                schema: resolver(z.number().nullable()),
+              },
+            },
+          },
+        },
+      }),
+      async (c) =>
+        jsonRequest("PermissionRoutes.askTimeout", c, function* () {
+          const svc = yield* Permission.Service
+          return yield* svc.permissionAskTimeout()
+        }),
+    )
+    .post(
+      "/ask-timeout",
+      describeRoute({
+        summary: "Set permission ask timeout",
+        description:
+          "Set the timeout in milliseconds for permission asks that require human confirmation. null disables the timeout (wait indefinitely). Applies instance-wide; subagents inherit it. Orthogonal to skip-all — both can be enabled independently.",
+        operationId: "permission.setAskTimeout",
+        responses: {
+          200: {
+            description: "Updated ask timeout in ms, or null",
+            content: {
+              "application/json": {
+                schema: resolver(z.number().nullable()),
+              },
+            },
+          },
+          ...errors(400),
+        },
+      }),
+      validator(
+        "json",
+        z.object({ ms: z.number().int().positive().nullable().describe("Timeout in ms, or null to disable") }),
+      ),
+      async (c) =>
+        jsonRequest("PermissionRoutes.setAskTimeout", c, function* () {
+          const svc = yield* Permission.Service
+          yield* svc.setPermissionAskTimeout(c.req.valid("json").ms)
+          return yield* svc.permissionAskTimeout()
+        }),
     ),
 )

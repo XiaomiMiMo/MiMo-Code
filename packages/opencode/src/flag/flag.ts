@@ -41,6 +41,41 @@ const MIMOCODE_DISABLE_CLAUDE_CODE_SKILLS =
   MIMOCODE_DISABLE_EXTERNAL_SKILLS || MIMOCODE_DISABLE_CLAUDE_CODE || truthy("MIMOCODE_DISABLE_CLAUDE_CODE_SKILLS")
 const copy = process.env["MIMOCODE_EXPERIMENTAL_DISABLE_COPY_ON_SELECT"]
 
+/**
+ * Password for a listener nobody asked for, held in memory only.
+ *
+ * Opening a socket makes every instance route reachable by any process running as
+ * this user — `/file` reads and writes the project, `/pty` and `/bash-interactive`
+ * run commands. The token-authenticated `/v1` routes are carved out of basic auth on
+ * purpose (see `server/middleware.ts`), so generating this closes everything else
+ * without closing the surface the listener exists for.
+ */
+let generatedServerPassword: string | undefined
+
+/**
+ * Generate the password for an implicit listener, once.
+ *
+ * Idempotent: a second listener in the same process must not invalidate the
+ * credential the first one is already authenticating against. A user-supplied
+ * password always wins, and in that case nothing is generated at all — the operator
+ * has already said what auth should be.
+ */
+export function generateServerPassword() {
+  if (process.env["MIMOCODE_SERVER_PASSWORD"]) return
+  generatedServerPassword ??= Buffer.from(crypto.getRandomValues(new Uint8Array(32))).toString("base64url")
+}
+
+/**
+ * Disarm the generated password once its listener is gone.
+ *
+ * A credential outliving the socket it was minted for is state with no owner: nothing can
+ * present it any more, but every in-process request still has to satisfy it. Clearing it
+ * belongs with `stop()` for the same reason unpublishing the address does.
+ */
+export function clearGeneratedServerPassword() {
+  generatedServerPassword = undefined
+}
+
 export const Flag = {
   OTEL_EXPORTER_OTLP_ENDPOINT: process.env["OTEL_EXPORTER_OTLP_ENDPOINT"],
   OTEL_EXPORTER_OTLP_HEADERS: process.env["OTEL_EXPORTER_OTLP_HEADERS"],
@@ -99,6 +134,11 @@ export const Flag = {
   },
   MIMOCODE_DISABLE_AUTOCOMPACT: truthy("MIMOCODE_DISABLE_AUTOCOMPACT"),
   MIMOCODE_DISABLE_MODELS_FETCH: truthy("MIMOCODE_DISABLE_MODELS_FETCH"),
+  // Defaults to false. When enabled, every model uses the GPT system prompt
+  // and Codex toolset regardless of its model ID.
+  get MIMOCODE_CODEX_MODE() {
+    return truthy("MIMOCODE_CODEX_MODE")
+  },
   MIMOCODE_DISABLE_MOUSE: truthy("MIMOCODE_DISABLE_MOUSE"),
   MIMOCODE_OUTPUT_LENGTH_CONTINUATION_LIMIT: number("MIMOCODE_OUTPUT_LENGTH_CONTINUATION_LIMIT") ?? 3,
   MIMOCODE_INVALID_OUTPUT_CONTINUATION_LIMIT: number("MIMOCODE_INVALID_OUTPUT_CONTINUATION_LIMIT") ?? 2,
@@ -177,7 +217,31 @@ export const Flag = {
   // the working directory. Use to avoid touching git in restricted/sandboxed
   // environments or where git startup probing is undesirable.
   MIMOCODE_DISABLE_GIT: truthy("MIMOCODE_DISABLE_GIT"),
-  MIMOCODE_SERVER_PASSWORD: process.env["MIMOCODE_SERVER_PASSWORD"],
+
+  /**
+   * The password every non-`/v1` route is authenticated against.
+   *
+   * A getter rather than a snapshot, because a listener the user did not ask for
+   * generates one at bind time (see `generateServerPassword`). The generated value
+   * is deliberately NOT written to `process.env`: every child we spawn inherits the
+   * environment, and a subprocess is supposed to hold a scoped task token, never the
+   * credential that opens the whole instance API.
+   */
+  get MIMOCODE_SERVER_PASSWORD() {
+    return process.env["MIMOCODE_SERVER_PASSWORD"] || generatedServerPassword
+  },
+  /**
+   * Did the OPERATOR configure auth, as opposed to us generating a password for a
+   * listener we opened on our own initiative?
+   *
+   * The difference is load-bearing for `InstanceMiddleware`: a user-secured server is
+   * allowed to serve directories outside its cwd (the desktop engine does exactly
+   * that), while an implicit listener must stay pinned to one project no matter what
+   * credential guards it.
+   */
+  get MIMOCODE_SERVER_PASSWORD_SUPPLIED() {
+    return Boolean(process.env["MIMOCODE_SERVER_PASSWORD"])
+  },
   MIMOCODE_SERVER_USERNAME: process.env["MIMOCODE_SERVER_USERNAME"],
   MIMOCODE_ENABLE_QUESTION_TOOL: truthy("MIMOCODE_ENABLE_QUESTION_TOOL"),
 
