@@ -2159,13 +2159,21 @@ function ToolPart(props: { last: boolean; part: ToolPart; message: AssistantMess
   const sync = useSync()
 
   // A completed exec may be the assistant's entire visible turn. Keep its
-  // clickable summary even when generic tool details are hidden, otherwise a
-  // successful side effect (for example creating a PR) renders as a blank turn.
+  // clickable summary when it ran sub-tools, but omit successful no-op scripts
+  // that would otherwise leave a distracting `exec 0 calls` row.
   const shouldHide = createMemo(() =>
     shouldHideTool({
       showDetails: ctx.showDetails(),
       tool: props.part.tool,
       status: props.part.state.status,
+      toolCalls:
+        props.part.state.status === "pending"
+          ? undefined
+          : (props.part.state.metadata?.toolCalls as number | undefined),
+      execStatus:
+        props.part.state.status === "pending"
+          ? undefined
+          : (props.part.state.metadata?.status as string | undefined),
     }),
   )
 
