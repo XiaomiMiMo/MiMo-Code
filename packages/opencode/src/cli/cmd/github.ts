@@ -23,6 +23,7 @@ import { Instance } from "@/project/instance"
 import { bootstrap } from "../bootstrap"
 import { SessionShare } from "@/share"
 import { Session } from "../../session"
+import { childProcessEnv } from "@/util/child-process-env"
 import type { SessionID } from "../../session/schema"
 import { MessageID, PartID } from "../../session/schema"
 import { Provider } from "../../provider"
@@ -339,7 +340,7 @@ export const GithubInstallCommand = cmd({
                   ? `start "" "${url}"`
                   : `xdg-open "${url}"`
 
-            exec(command, (error) => {
+            exec(command, { env: childProcessEnv() }, (error) => {
               if (error) {
                 prompts.log.warn(`Could not open browser. Please visit: ${url}`)
               }

@@ -1,5 +1,5 @@
 import type * as Arr from "effect/Array"
-import { withoutCredentials } from "@/util/credential-env"
+import { childProcessEnv } from "@/util/child-process-env"
 import { NodeFileSystem, NodeSink, NodeStream } from "@effect/platform-node"
 import * as NodePath from "@effect/platform-node/NodePath"
 import * as Deferred from "effect/Deferred"
@@ -105,11 +105,11 @@ export const make = Effect.gen(function* () {
     return path.resolve(opts.cwd)
   })
 
-  // withoutCredentials on the *inherited* half only: every `extendEnv: true` caller funnels
+  // childProcessEnv scrubs the inherited half only: every `extendEnv: true` caller funnels
   // through here, including the agent-controlled shell part in session/prompt.ts. A caller that
   // passes credentials in `opts.env` on purpose (control-plane workspaces) is left alone.
   const env = (opts: ChildProcess.CommandOptions) =>
-    opts.extendEnv ? { ...withoutCredentials(globalThis.process.env), ...opts.env } : opts.env
+    opts.extendEnv || Predicate.isUndefined(opts.env) ? childProcessEnv(opts.env) : opts.env
 
   const input = (x: ChildProcess.CommandInput | undefined): NodeChildProcess.IOType | undefined =>
     Stream.isStream(x) ? "pipe" : x
@@ -298,7 +298,7 @@ export const make = Effect.gen(function* () {
   ) => {
     if (globalThis.process.platform === "win32") {
       return Effect.callback<void, PlatformError.PlatformError>((resume) => {
-        NodeChildProcess.exec(`taskkill /pid ${proc.pid} /T /F`, { windowsHide: true }, (err) => {
+        NodeChildProcess.exec(`taskkill /pid ${proc.pid} /T /F`, { windowsHide: true, env: childProcessEnv() }, (err) => {
           if (err) return resume(Effect.fail(toPlatformError("kill", toError(err), command)))
           resume(Effect.void)
         })

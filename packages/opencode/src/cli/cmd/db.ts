@@ -9,6 +9,7 @@ import { JsonMigration } from "../../storage"
 import { EOL } from "os"
 import { errorMessage } from "../../util/error"
 import { Log } from "../../util"
+import { childProcessEnv } from "@/util/child-process-env"
 
 const QueryCommand = cmd({
   command: "$0 [query]",
@@ -50,6 +51,7 @@ const QueryCommand = cmd({
     }
     const child = spawn("sqlite3", [Database.Path], {
       stdio: "inherit",
+      env: childProcessEnv(),
     })
     await new Promise((resolve) => child.on("close", resolve))
   },

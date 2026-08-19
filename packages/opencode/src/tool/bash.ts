@@ -1,5 +1,5 @@
 import z from "zod"
-import { withoutCredentials } from "@/util/credential-env"
+import { childProcessEnv } from "@/util/child-process-env"
 import os from "os"
 import { createWriteStream, existsSync, readFileSync, realpathSync } from "node:fs"
 import * as Tool from "./tool"
@@ -513,7 +513,7 @@ export const BashTool = Tool.define(
     //     lifetime of the process, a `git config user.name ...` performed
     //     mid-session is NOT picked up until the process restarts.
     //   - Operator-set GIT_AUTHOR_*/GIT_COMMITTER_* still win: shellEnv only
-    //     fills the vars that are absent from process.env (see below).
+    //     fills the vars that are absent from the child environment baseline (see below).
     //
     // resolveGitIdentity and gitIdentityCache live in this outer setup block,
     // not inside shellEnv, precisely so the cache persists across every bash
@@ -654,24 +654,25 @@ export const BashTool = Tool.define(
         { env: {} },
       )
       const identity = yield* resolveGitIdentity()
+      const inherited = childProcessEnv()
       // Only fill vars the operator hasn't already set, so an explicit
       // GIT_AUTHOR_* in the environment still wins over our floor — and only
       // fields the repo itself resolved, so an unresolved field is left for git.
       const gitFloor: Record<string, string> = {}
-      if (identity.name && !process.env["GIT_AUTHOR_NAME"]) gitFloor["GIT_AUTHOR_NAME"] = identity.name
-      if (identity.email && !process.env["GIT_AUTHOR_EMAIL"]) gitFloor["GIT_AUTHOR_EMAIL"] = identity.email
-      if (identity.name && !process.env["GIT_COMMITTER_NAME"]) gitFloor["GIT_COMMITTER_NAME"] = identity.name
-      if (identity.email && !process.env["GIT_COMMITTER_EMAIL"]) gitFloor["GIT_COMMITTER_EMAIL"] = identity.email
-      // withoutCredentials: this env goes to agent-authored commands.
+      if (identity.name && !inherited["GIT_AUTHOR_NAME"]) gitFloor["GIT_AUTHOR_NAME"] = identity.name
+      if (identity.email && !inherited["GIT_AUTHOR_EMAIL"]) gitFloor["GIT_AUTHOR_EMAIL"] = identity.email
+      if (identity.name && !inherited["GIT_COMMITTER_NAME"]) gitFloor["GIT_COMMITTER_NAME"] = identity.name
+      if (identity.email && !inherited["GIT_COMMITTER_EMAIL"]) gitFloor["GIT_COMMITTER_EMAIL"] = identity.email
+      // childProcessEnv: this env goes to agent-authored commands.
       return {
-        ...withoutCredentials(process.env),
+        ...inherited,
         // Python ignores the console code page when stdout is a pipe and falls
         // back to the ANSI code page (GBK on zh-CN), producing mojibake. Force
         // UTF-8 for child Python processes on Windows.
         ...(process.platform === "win32" ? { PYTHONIOENCODING: "utf-8" } : {}),
         // Git authorship floor. Placed after process.env so the spread order
         // reads naturally, but it can never clobber an operator value: gitFloor
-        // only ever holds keys that were absent from process.env. A plugin's
+        // only ever holds keys that were absent from the child baseline. A plugin's
         // extra.env comes last and so can still override the floor.
         ...gitFloor,
         ...extra.env,
