@@ -1,5 +1,4 @@
 import type { ChildProcessWithoutNullStreams } from "child_process"
-import { childProcessEnv } from "@/util/child-process-env"
 import path from "path"
 import os from "os"
 import { Global } from "../global"
@@ -107,7 +106,6 @@ export const Typescript: Info = {
     if (!bin) return
     const proc = spawn(bin, ["--stdio"], {
       cwd: root,
-      env: childProcessEnv(),
     })
     return {
       process: proc,
@@ -136,7 +134,6 @@ export const Vue: Info = {
     args.push("--stdio")
     const proc = spawn(binary, args, {
       cwd: root,
-      env: childProcessEnv(),
     })
     return {
       process: proc,
@@ -193,7 +190,6 @@ export const ESLint: Info = {
 
     const proc = spawn("node", [serverPath, "--stdio"], {
       cwd: root,
-      env: childProcessEnv(),
     })
 
     return {
@@ -326,7 +322,6 @@ export const Biome: Info = {
 
     const proc = spawn(bin, args, {
       cwd: root,
-      env: childProcessEnv(),
     })
 
     return {
@@ -351,7 +346,7 @@ export const Gopls: Info = {
 
       log.info("installing gopls")
       const proc = Process.spawn(["go", "install", "golang.org/x/tools/gopls@latest"], {
-        env: childProcessEnv({ GOBIN: Global.Path.bin }),
+        env: { GOBIN: Global.Path.bin },
         stdout: "pipe",
         stderr: "pipe",
         stdin: "pipe",
@@ -507,7 +502,6 @@ export const Pyright: Info = {
 
     const proc = spawn(binary, args, {
       cwd: root,
-      env: childProcessEnv(),
     })
     return {
       process: proc,
@@ -1006,7 +1000,6 @@ export const Svelte: Info = {
     args.push("--stdio")
     const proc = spawn(binary, args, {
       cwd: root,
-      env: childProcessEnv(),
     })
     return {
       process: proc,
@@ -1038,7 +1031,6 @@ export const Astro: Info = {
     args.push("--stdio")
     const proc = spawn(binary, args, {
       cwd: root,
-      env: childProcessEnv(),
     })
     return {
       process: proc,
@@ -1287,7 +1279,6 @@ export const YamlLS: Info = {
     args.push("--stdio")
     const proc = spawn(binary, args, {
       cwd: root,
-      env: childProcessEnv(),
     })
     return {
       process: proc,
@@ -1452,7 +1443,6 @@ export const PHPIntelephense: Info = {
     args.push("--stdio")
     const proc = spawn(binary, args, {
       cwd: root,
-      env: childProcessEnv(),
     })
     return {
       process: proc,
@@ -1534,7 +1524,6 @@ export const BashLS: Info = {
     args.push("start")
     const proc = spawn(binary, args, {
       cwd: root,
-      env: childProcessEnv(),
     })
     return {
       process: proc,
@@ -1727,7 +1716,6 @@ export const DockerfileLS: Info = {
     args.push("--stdio")
     const proc = spawn(binary, args, {
       cwd: root,
-      env: childProcessEnv(),
     })
     return {
       process: proc,
@@ -1797,7 +1785,6 @@ export const Nixd: Info = {
     return {
       process: spawn(nixd, [], {
         cwd: root,
-        env: childProcessEnv(),
       }),
     }
   },

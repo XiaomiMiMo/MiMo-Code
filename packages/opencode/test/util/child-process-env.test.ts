@@ -70,11 +70,8 @@ test("all inherited external process paths use childProcessEnv", async () => {
     "effect/cross-spawn-spawner.ts",
     "tool/bash.ts",
     "pty/index.ts",
-    "lsp/server.ts",
-    "lsp/lsp.ts",
     "mcp/index.ts",
     "file/ripgrep.ts",
-    "cli/cmd/uninstall.ts",
   ]
 
   for (const file of funnels) {
@@ -92,7 +89,21 @@ test("all inherited external process paths use childProcessEnv", async () => {
   expect(bash).not.toMatch(/!process\.env\["GIT_(?:AUTHOR|COMMITTER)_/)
 
   const lsp = await Bun.file(path.join(root, "lsp", "server.ts")).text()
+  expect(lsp).not.toContain("childProcessEnv")
   expect(lsp).not.toContain('const env = childProcessEnv({ MIX_ENV: "prod" })')
+  expect(lsp).toContain("env: { GOBIN: Global.Path.bin }")
+
+  const lspConfig = await Bun.file(path.join(root, "lsp", "lsp.ts")).text()
+  expect(lspConfig).not.toContain("childProcessEnv")
+  expect(lspConfig).toContain("env: item.env")
+
+  const lspLaunch = await Bun.file(path.join(root, "lsp", "launch.ts")).text()
+  expect(lspLaunch).toContain("Process.spawn")
+  expect(lspLaunch).toContain("...cfg")
+
+  const uninstall = await Bun.file(path.join(root, "cli", "cmd", "uninstall.ts")).text()
+  expect(uninstall).not.toContain("childProcessEnv")
+  expect(uninstall).toContain("env: { MIMOCODE_UNINSTALL_DIR: installDir }")
 
   const ripgrep = await Bun.file(path.join(root, "file", "ripgrep.ts")).text()
   expect(ripgrep).not.toMatch(/env: env\(\),\s*extendEnv: true/)
