@@ -14,6 +14,45 @@ const it = testEffect(
 )
 
 describe("ToolRegistry.tools: invocation style resolution", () => {
+  it.live("exposes Codex tools through exec instead of top-level function tools", () =>
+    provideTmpdirInstance(() =>
+      Effect.gen(function* () {
+        const reg = yield* ToolRegistry.Service
+        const agents = yield* Agent.Service
+        const build = yield* agents.get("build")
+        const tools = yield* reg.tools({
+          providerID: ProviderID.opencode,
+          modelID: ModelID.make("openai/gpt-5.4"),
+          agent: build,
+        })
+        const ids = tools.map((tool) => tool.id)
+        const nested = [
+          "bash",
+          "apply_patch",
+          "view_image",
+          "actor",
+          "task",
+          "question",
+          "webfetch",
+          "skill_search",
+          "skill",
+          "change_directory",
+          "plan_exit",
+          "memory",
+          "history",
+          "cron",
+        ]
+
+        expect(ids).toContain("exec")
+        nested.forEach((id) => expect(ids).not.toContain(id))
+
+        const description = tools.find((tool) => tool.id === "exec")?.description ?? ""
+        nested.forEach((id) => expect(description).toContain(`${id}(input:`))
+        expect(description).toContain("timeout measured in milliseconds")
+      }),
+    ),
+  )
+
   it.live.skip("exposes exec by default only to GPT models", () =>
     provideTmpdirInstance(() =>
       Effect.gen(function* () {

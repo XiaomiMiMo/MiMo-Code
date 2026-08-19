@@ -20,8 +20,8 @@ const log = Log.create({ service: "tool.exec" })
 const MAX_TOOL_CALLS_DEFAULT = 50
 const MAX_TOOL_CALLS_CEILING = 500
 const MAX_CONCURRENT = 8
-const ACTIVE_DEADLINE_S_DEFAULT = 60
-const ACTIVE_DEADLINE_S_CEILING = 600
+const ACTIVE_DEADLINE_MS_DEFAULT = 60_000
+const ACTIVE_DEADLINE_MS_CEILING = 600_000
 const WALL_DEADLINE_MS = 30 * 60 * 1000
 const MAX_RESULT_BYTES = 256 * 1024
 const MAX_LOG_BYTES = 64 * 1024
@@ -98,7 +98,7 @@ export function renderToolScriptDeclarations(defs: Tool.Def[]): string {
     "declare const files: {",
     "  /** Raw file contents — no line numbers, no truncation. null if missing. Paths: worktree or OS tmp. */",
     "  readText(path: string): Promise<string | null>",
-    "  /** Write raw text; parent dirs auto-created. OS tmp dir ONLY — project writes go through tools.write/edit. */",
+    "  /** Write raw text; parent dirs auto-created. OS tmp dir ONLY — project writes go through tools.apply_patch. */",
     "  writeText(path: string, content: string): Promise<void>",
     "}",
     "```",
@@ -244,7 +244,7 @@ const files = {
 `
 
 /** Jail for the `files` raw-IO primitives. Read: worktree + OS tmp. Write: OS
- * tmp ONLY — project writes must go through tools.write/edit so Permission.ask
+ * tmp ONLY — project writes must go through tools.apply_patch so Permission.ask
  * applies (enforced here, not just advised in the prompt). Containment is
  * checked on REALPATHS: macOS /tmp and /var are symlinks into /private, so a
  * lexical check rejects the literal "/tmp/x" even though it lives inside the
@@ -271,7 +271,7 @@ function resolveJailed(roots: string[], p: string, kind: "read" | "write"): stri
   if (canonRoots.some((root) => abs === root || Filesystem.contains(root, abs))) return abs
   throw new Error(
     kind === "write"
-      ? `files.writeText is limited to the OS temp dir — write project files via tools.write/tools.edit: ${JSON.stringify(p)}`
+      ? `files.writeText is limited to the OS temp dir — write project files via tools.apply_patch: ${JSON.stringify(p)}`
       : `path outside allowed roots (worktree, tmp): ${JSON.stringify(p)}`,
   )
 }
@@ -320,20 +320,20 @@ export const ToolScriptTool = Tool.define(
           .describe(
             `Tool call budget for this execution (default ${MAX_TOOL_CALLS_DEFAULT}, max ${MAX_TOOL_CALLS_CEILING}). Raise it only when the work genuinely needs more calls.`,
           ),
-        timeout_seconds: z
+        timeout: z
           .number()
           .int()
           .min(1)
-          .max(ACTIVE_DEADLINE_S_CEILING)
+          .max(ACTIVE_DEADLINE_MS_CEILING)
           .optional()
           .describe(
-            `Compute-time budget in seconds (default ${ACTIVE_DEADLINE_S_DEFAULT}, max ${ACTIVE_DEADLINE_S_CEILING}). Counts only active script compute — time parked on tool calls is not charged.`,
+            `Compute-time budget in milliseconds (default ${ACTIVE_DEADLINE_MS_DEFAULT}, max ${ACTIVE_DEADLINE_MS_CEILING}). Counts only active script compute — time parked on tool calls is not charged.`,
           ),
       }),
-      execute: (params: { code: string; max_tool_calls?: number; timeout_seconds?: number }, ctx: Tool.Context) =>
+      execute: (params: { code: string; max_tool_calls?: number; timeout?: number }, ctx: Tool.Context) =>
         Effect.gen(function* () {
           const maxToolCalls = params.max_tool_calls ?? MAX_TOOL_CALLS_DEFAULT
-          const activeDeadlineMs = (params.timeout_seconds ?? ACTIVE_DEADLINE_S_DEFAULT) * 1000
+          const activeDeadlineMs = params.timeout ?? ACTIVE_DEADLINE_MS_DEFAULT
           const trace: TraceEntry[] = []
           // completeToolCall REPLACES part metadata with execute()'s return value,
           // so every terminal return re-publishes these counts — otherwise the
@@ -567,7 +567,7 @@ export const ToolScriptTool = Tool.define(
           // Raw file IO (`files.*`): machine-to-machine data channel, bypassing the
           // agent-facing read/write formatting (line numbers, truncation). Reads are
           // jailed to worktree + OS tmp; writes to OS tmp ONLY (project writes must
-          // carry permissions → tools.write/edit). Read side also caps size so a
+          // carry permissions → tools.apply_patch). Read side also caps size so a
           // giant file can't blow the guest memory limit.
           const readText: HostFn = async (p: unknown) => {
             const abs = resolveJailed(jailRoots, String(p), "read")
@@ -644,7 +644,7 @@ return { __undef: __out.value === undefined, json: __out.value === undefined ? "
             // reads like an engine fault — explain which budget was exhausted.
             const explained =
               status === "timeout"
-                ? `execution exceeded its time budget (${activeDeadlineMs / 1000}s of active compute, ${WALL_DEADLINE_MS / 60000}min wall clock — time parked on tool calls is not charged against the compute budget; raise via timeout_seconds, max ${ACTIVE_DEADLINE_S_CEILING}). Original error: ${message}`
+                ? `execution exceeded its time budget (${activeDeadlineMs}ms of active compute, ${WALL_DEADLINE_MS / 60000}min wall clock — time parked on tool calls is not charged against the compute budget; raise via timeout, max ${ACTIVE_DEADLINE_MS_CEILING}ms). Original error: ${message}`
                 : message
             log.warn("exec failed", { status, message: explained.slice(0, 500) })
             return {

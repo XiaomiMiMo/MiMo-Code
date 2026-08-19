@@ -92,7 +92,7 @@ async function runToolScript(
   opts?: {
     ask?: () => Effect.Effect<void>
     maxToolCalls?: number
-    timeoutSeconds?: number
+    timeoutMs?: number
     toolWhitelist?: string[]
     mcp?: Record<string, any>
   },
@@ -110,7 +110,7 @@ async function runToolScript(
             {
               code,
               ...(opts?.maxToolCalls !== undefined && { max_tool_calls: opts.maxToolCalls }),
-              ...(opts?.timeoutSeconds !== undefined && { timeout_seconds: opts.timeoutSeconds }),
+              ...(opts?.timeoutMs !== undefined && { timeout: opts.timeoutMs }),
             },
             {
               sessionID: "ses_test" as any,
@@ -136,6 +136,16 @@ async function runToolScript(
 }
 
 describe("exec", () => {
+  test("declares the exec timeout in milliseconds", async () => {
+    const info = await runtime.runPromise(ToolScriptTool)
+    const def = await runtime.runPromise(Tool.init(info))
+    const parsed = def.parameters.parse({ code: "return 1", timeout: 120_000 })
+
+    expect(parsed.timeout).toBe(120_000)
+    expect(def.description).toContain("`timeout` is always measured in milliseconds")
+    expect(def.description).toContain("600000 milliseconds")
+  })
+
   test("cannot call tools outside the actor runtime whitelist", async () => {
     const result = await runToolScript(
       `return await tools.echo({ value: "blocked" })`,
@@ -283,11 +293,11 @@ describe("exec", () => {
     expect(result.output).toContain("tool call budget exceeded (5 per execution)")
   })
 
-  test("timeout_seconds bounds compute time and the error names the budget", async () => {
-    const result = await runToolScript(`while (true) {}`, [], undefined, { timeoutSeconds: 1 })
+  test("timeout bounds compute time in milliseconds and the error names the budget", async () => {
+    const result = await runToolScript(`while (true) {}`, [], undefined, { timeoutMs: 100 })
     expect(result.metadata.status).toBe("timeout")
-    expect(result.output).toContain("1s of active compute")
-    expect(result.output).toContain("timeout_seconds")
+    expect(result.output).toContain("100ms of active compute")
+    expect(result.output).toContain("raise via timeout")
   }, 15_000)
 
   test("syntax error → code_error", async () => {
@@ -305,16 +315,18 @@ describe("exec", () => {
     expect(result.metadata.status).toBe("cancelled")
   }, 15_000)
 
-  test("excluded tools are not dispatchable", async () => {
+  test("internal tools are excluded while Codex control-flow tools remain dispatchable", async () => {
     const defs = [
-      fakeDef("task", async () => "should never run"),
+      fakeDef("task", async () => "task ran"),
       fakeDef("mcp_tool_search", async () => "should never run"),
     ]
     const result = await runToolScript(
-      `const listed = ALL_TOOLS.some((tool) => tool.name === "mcp_tool_search");
-       try { await tools.mcp_tool_search({ query: "docs" }) } catch (e) { return { listed, error: e.message } }`,
+      `const task = await tools.task({});
+       const listed = ALL_TOOLS.some((tool) => tool.name === "mcp_tool_search");
+       try { await tools.mcp_tool_search({ query: "docs" }) } catch (e) { return { task: task.output, listed, error: e.message } }`,
       defs,
     )
+    expect(result.output).toContain('"task": "task ran"')
     expect(result.output).toContain('"listed": false')
     expect(result.output).toContain("unknown tool: mcp_tool_search")
   })
@@ -339,6 +351,42 @@ describe("exec", () => {
     expect(result.output).toContain("ran:direct")
     expect(result.output).toContain("ran:alias")
     expect(seen.toSorted()).toEqual(["alias", "direct"])
+  })
+
+  test("supports parallel bash calls with millisecond timeouts", async () => {
+    const seen: Array<{ command: string; timeout?: number }> = []
+    const parameters = z.object({
+      command: z.string(),
+      description: z.string(),
+      workdir: z.string().optional(),
+      timeout: z.number().optional(),
+    })
+    const bash: Tool.Def<typeof parameters> = {
+      id: "bash",
+      description: "Runs a command with a timeout measured in milliseconds.",
+      parameters,
+      execute: (args) => {
+        seen.push({ command: args.command, timeout: args.timeout })
+        return Effect.succeed({ title: args.description, output: args.command, metadata: { timeout: args.timeout } })
+      },
+    }
+    const result = await runToolScript(
+      `const results = await Promise.allSettled([
+        tools.bash({ command: "git status --short --branch && git diff --check", description: "Confirm branch state and check diff whitespace", timeout: 120000 }),
+        tools.bash({ command: "bun test --timeout 30000", workdir: ${JSON.stringify(tmp)}, description: "Run the complete opencode test suite", timeout: 600000 }),
+        tools.bash({ command: "bun typecheck", workdir: ${JSON.stringify(tmp)}, description: "Run opencode TypeScript checks", timeout: 600000 }),
+      ]);
+      return results.map((x, i) => x.status === "fulfilled"
+        ? { index: i, output: x.value.output, metadata: x.value.metadata }
+        : { index: i, error: String(x.reason) });`,
+      [bash],
+    )
+
+    expect(result.metadata.status).toBe("completed")
+    expect(result.metadata.toolCalls).toBe(3)
+    expect(seen.map((item) => item.timeout).toSorted()).toEqual([120_000, 600_000, 600_000])
+    expect(result.output).toContain('"index": 2')
+    expect(result.output).toContain('"timeout": 600000')
   })
 
   test("concurrency is capped at 8", async () => {
@@ -417,7 +465,7 @@ describe("exec", () => {
       [],
     )
     expect(result.metadata.status).toBe("completed")
-    expect(result.output).toContain("tools.write/tools.edit")
+    expect(result.output).toContain("tools.apply_patch")
   })
 
   test("files.readText reads worktree files raw (no line numbers)", async () => {
@@ -583,16 +631,18 @@ describe("renderToolScriptDeclarations", () => {
     expect(text).not.toContain("mcp_tool_search(input:")
     expect(text).toContain("mcp__<server>__<tool>")
     expect(text).toContain("declare const ALL_TOOLS")
-    expect(text).not.toContain("task(input:")
-    expect(text).not.toContain("question(input:")
+    expect(text).toContain("task(input:")
+    expect(text).toContain("question(input:")
     expect(text).toContain("declare const tools")
   })
 
-  test("exclusion list covers agent control-flow tools and MCP search but allows bash", () => {
-    for (const id of ["task", "question", "actor", "skill", "plan_exit", "exec", "mcp_tool_search"]) {
+  test("exclusion list covers recursive and internal tools but allows Codex nested tools", () => {
+    for (const id of ["exec", "mcp_tool_search", "invalid", "session", "workflow"]) {
       expect(TOOL_SCRIPT_EXCLUDED.has(id)).toBe(true)
     }
-    expect(TOOL_SCRIPT_EXCLUDED.has("bash")).toBe(false)
+    for (const id of ["bash", "task", "question", "actor", "skill", "plan_exit", "cron", "change_directory"]) {
+      expect(TOOL_SCRIPT_EXCLUDED.has(id)).toBe(false)
+    }
   })
 
   test("renders exec_command as an alias for bash", () => {

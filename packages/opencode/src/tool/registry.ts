@@ -74,7 +74,7 @@ import * as BashInteractive from "./bash-interactive"
 import { resolveInvocationStyle } from "./invocation-style"
 import { BuiltinWorkflow } from "@/workflow/builtin"
 import { ToolScriptTool, renderToolScriptDeclarations } from "./tool-script"
-import { toolScriptRegistry } from "./tool-script-ref"
+import { GPT_TOOL_SCRIPT_ONLY, toolScriptRegistry } from "./tool-script-ref"
 import { usesGPTToolset } from "./gpt"
 
 const log = Log.create({ service: "tool.registry" })
@@ -427,12 +427,15 @@ export const layer = Layer.effect(
 
     const tools: Interface["tools"] = Effect.fn("ToolRegistry.tools")(function* (input) {
       const availableTools = yield* available(input)
+      const visibleTools = availableTools.useGPTTools
+        ? availableTools.filtered.filter((tool) => !GPT_TOOL_SCRIPT_ONLY.has(tool.id))
+        : availableTools.filtered
 
       const cfg = yield* config.get()
       const resolveStyle = (toolId: string): "json" | "shell" => resolveInvocationStyle(cfg.tool, toolId)
 
       return yield* Effect.forEach(
-        availableTools.filtered,
+        visibleTools,
         Effect.fnUntraced(function* (tool: Tool.Def) {
           using _ = log.time(tool.id)
           const output = {

@@ -1,4 +1,4 @@
-Runs a shell command and returns its output, with optional timeout and interactive terminal support.
+Runs a shell command and returns its output, with an optional timeout measured in milliseconds and interactive terminal support.
 
 Environment: OS: ${os}, Shell: ${shell}
 

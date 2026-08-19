@@ -7,7 +7,7 @@ const results = await Promise.all(urls.map((url) => tools.webfetch({ url, format
 return results.map((result) => result.output)
 ```
 
-Use `exec` when JavaScript can batch multiple independent tool calls, programmatically transform their results, or keep large intermediate outputs out of the conversation. Run independent calls with `Promise.all` or `Promise.allSettled`, but keep dependent operations sequential. Prefer direct tool calls when a result needs model judgment before the next call or only one small call is needed; do not use `exec` merely to force concurrency.
+Use `exec` for every tool declared below, including one small call. JavaScript can also batch multiple independent calls, programmatically transform their results, or keep large intermediate outputs out of the conversation. Run independent calls with `Promise.all` or `Promise.allSettled`, but keep dependent operations sequential.
 
 MCP tools inside `exec` are called through the same global `tools` object as built-in tools. Their names normally use `mcp__<server_name>__<tool_name>`:
 
@@ -43,9 +43,9 @@ The script environment provides JavaScript built-ins plus `tools`, `files`, and 
 - Tool permissions are enforced for every nested call.
 - State does not persist between executions. For temporary cross-execution data, use `files.writeText` and `files.readText` under the OS temp directory.
 - `bash` is available as both `tools.bash(...)` and its alias `tools.exec_command(...)`; both use the same permission and execution path.
-- Conversation-control tools are not available inside `exec`.
+- Declared conversation-control tools such as `question`, `task`, `actor`, `skill`, `plan_exit`, and `cron` are available through the same `tools` object. Recursive `session` and `workflow` orchestration are excluded.
 
-By default an execution may make 50 tool calls and use 60 seconds of active compute. The `max_tool_calls` and `timeout_seconds` inputs can raise those limits to 500 calls and 600 seconds. Time waiting for nested tools does not count toward active compute.
+By default an execution may make 50 tool calls and use 60000 milliseconds of active compute. The `max_tool_calls` and `timeout` inputs can raise those limits to 500 calls and 600000 milliseconds. `timeout` is always measured in milliseconds. Time waiting for nested tools does not count toward active compute.
 
 The result is wrapped in `<exec status="...">` and may contain `<return_value>`, `<warnings>`, `<logs>`, `<trace>`, and `<error_message>` blocks.
 

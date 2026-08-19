@@ -178,7 +178,8 @@ describe("session.system", () => {
 
     expect(prompt).toContain("Parallelize only tool calls that are independent")
     expect(prompt).toContain("keep dependencies sequential")
-    expect(prompt).toContain("only one small call is needed")
+    expect(prompt).toContain("including a single small call")
+    expect(prompt).toContain("tools.<name>(...)")
     expect(prompt).not.toContain("When possible, prefer parallelization over sequential tool calls")
   })
 

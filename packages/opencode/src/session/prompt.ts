@@ -119,7 +119,8 @@ import {
   type McpToolSearchEntry,
   type McpToolSearchMetadata,
 } from "@/tool/mcp-tool-search"
-import { isMcpToolSearchEnabled } from "@/tool/gpt"
+import { isMcpToolSearchEnabled, usesGPTToolset } from "@/tool/gpt"
+import { GPT_TOOL_SCRIPT_ONLY } from "@/tool/tool-script-ref"
 import { isSkillCatalogReminder, SKILL_CATALOG_REMINDER_MARKER } from "./skill-catalog"
 
 // @ts-ignore
@@ -1282,6 +1283,10 @@ NOTE: At any point in time through this workflow you should feel free to ask the
         return new Set(actor.tools)
       })
       const whitelist = yield* whitelistFor()
+      const execAllowedByWhitelist =
+        usesGPTToolset(input.model.id) &&
+        !!whitelist &&
+        [...whitelist].some((toolID) => GPT_TOOL_SCRIPT_ONLY.has(toolID))
       // Whether a permission ask must be non-interactive (fail clean, never hang):
       // true for system-spawned actors (checkpoint-writer/dream/distill) AND any
       // background actor such as compose workflow subagents (spawned as "general"
@@ -1395,7 +1400,12 @@ NOTE: At any point in time through this workflow you should feel free to ask the
                   sessionID: input.session.id,
                 })
                 const ctx = context(args, options)
-                if (whitelist && !whitelist.has(item.id) && item.id !== MCP_TOOL_SEARCH_ID) {
+                if (
+                  whitelist &&
+                  !whitelist.has(item.id) &&
+                  item.id !== MCP_TOOL_SEARCH_ID &&
+                  !(item.id === "exec" && execAllowedByWhitelist)
+                ) {
                   const output = rejectionFor(item.id)
                   log.debug("tool execute rejected", {
                     tool: item.id,
