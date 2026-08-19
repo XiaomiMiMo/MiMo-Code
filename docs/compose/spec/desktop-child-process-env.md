@@ -3,7 +3,7 @@ feature: desktop-child-process-env
 status: delivered
 updated: 2026-08-17
 branch: fix/desktop-runtime-boundaries
-commits: 17c9cdcb70b27116456f742f2b0d384b76f79108..8683c89ae49f2eec9cf50f2a7aa5605b3ac0d9a3
+commits: 17c9cdcb70b27116456f742f2b0d384b76f79108..0d3d0dcadf999cd05cb5ea0ae22e5e43ac1bd305
 ---
 
 # Desktop Child Process Environment
@@ -22,7 +22,7 @@ All inherited external process paths now resolve through the same boundary, incl
 - The no-host path reads current `process.env` on every spawn; freezing that fallback broke existing CLI runtime environment updates.
 - Review found Effect commands with undefined env and native `child_process` calls could still inherit the engine process; both paths now explicitly resolve the shared baseline.
 - LSP environment deltas are resolved at each spawn so a baseline refresh affects later commands in the same workflow.
-- The structural guard uses the TypeScript AST to validate every native process call, rather than only checking whether a file mentions the helper.
+- The structural guard uses the TypeScript AST to validate every native process call; Process wrapper clients pass only env deltas so the final spawn boundary resolves the baseline exactly once.
 
 ## [S1] Problem
 
