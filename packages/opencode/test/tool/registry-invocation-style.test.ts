@@ -8,6 +8,8 @@ import { ProviderID, ModelID } from "../../src/provider/schema"
 import * as CrossSpawnSpawner from "../../src/effect/cross-spawn-spawner"
 import { testEffect } from "../lib/effect"
 import { provideTmpdirInstance } from "../fixture/fixture"
+import { CODE_MODE_EXEC_GRAMMAR } from "../../src/tool/tool-script"
+import z from "zod"
 
 const it = testEffect(
   Layer.mergeAll(ToolRegistry.defaultLayer, Agent.defaultLayer, CrossSpawnSpawner.defaultLayer),
@@ -44,11 +46,36 @@ describe("ToolRegistry.tools: invocation style resolution", () => {
         ]
 
         expect(ids).toContain("exec")
+        expect(ids).toContain("wait")
         nested.forEach((id) => expect(ids).not.toContain(id))
 
-        const description = tools.find((tool) => tool.id === "exec")?.description ?? ""
-        nested.forEach((id) => expect(description).toContain(`${id}(input:`))
-        expect(description).toContain("timeout measured in milliseconds")
+        const exec = tools.find((tool) => tool.id === "exec")
+        const description = exec?.description ?? ""
+        nested
+          .filter((id) => id !== "apply_patch")
+          .forEach((id) => expect(description).toContain(`${id}(args:`))
+        expect(description).toContain("apply_patch(input: string)")
+        expect(exec?.freeform?.format).toEqual({
+          type: "grammar",
+          syntax: "lark",
+          definition: CODE_MODE_EXEC_GRAMMAR,
+        })
+        const wait = tools.find((tool) => tool.id === "wait")
+        expect(z.toJSONSchema(wait!.parameters)).toMatchObject({
+          type: "object",
+          required: ["cell_id"],
+          additionalProperties: false,
+          properties: {
+            cell_id: { type: "string", description: "Identifier of the running exec cell." },
+            yield_time_ms: { type: "number", description: "Wait before yielding more output. Defaults to 10000 ms." },
+            max_tokens: { type: "number", description: "Output token budget for this wait call. Defaults to 10000 tokens." },
+            terminate: {
+              type: "boolean",
+              description: "True stops the running exec cell; false or omitted waits for output.",
+            },
+          },
+        })
+        expect(wait?.description).toContain("only the new output since the last yield")
       }),
     ),
   )

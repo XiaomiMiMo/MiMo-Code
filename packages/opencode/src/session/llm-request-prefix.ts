@@ -5,6 +5,7 @@ import { MessageV2 } from "./message-v2"
 import type { SessionID } from "./schema"
 import type { Agent } from "../agent/agent"
 import type { Provider } from "../provider"
+import { openai } from "@ai-sdk/openai"
 import { LLM } from "./llm"
 import { ToolRegistry } from "../tool"
 import { ProviderTransform } from "../provider"
@@ -70,11 +71,19 @@ export const buildLLMRequestPrefix = Effect.fn("Session.buildLLMRequestPrefix")(
   })
   const tools: Record<string, AITool> = {}
   for (const item of toolDefs) {
-    const schema = ProviderTransform.schema(input.model, z.toJSONSchema(item.parameters))
-    tools[item.id] = tool({
-      description: item.description,
-      inputSchema: jsonSchema(schema),
-    })
+    tools[item.id] =
+      item.freeform &&
+      (input.model.api.npm === "@ai-sdk/openai" ||
+        (input.model.api.npm === "@ai-sdk/azure" && input.model.options["useCompletionUrls"] !== true))
+        ? openai.tools.customTool({
+            name: item.id,
+            description: item.description,
+            format: item.freeform.format,
+          })
+        : tool({
+            description: item.description,
+            inputSchema: jsonSchema(ProviderTransform.schema(input.model, z.toJSONSchema(item.parameters))),
+          })
   }
 
   return { system, tools, inheritedMessages }

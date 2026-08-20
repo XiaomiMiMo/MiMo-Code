@@ -4,6 +4,7 @@ import {
   canonical,
   normalizeInput,
   parseToolInput,
+  repairNestedToolCallAsExec,
   repairToolCall,
   resolveName,
 } from "../../src/util/tool-compat"
@@ -185,6 +186,69 @@ describe("util.tool-compat", () => {
       })
 
       expect(repaired).toBeUndefined()
+    })
+  })
+
+  describe("repairNestedToolCallAsExec", () => {
+    test("wraps an unavailable top-level webfetch call in freeform exec source", () => {
+      const repaired = repairNestedToolCallAsExec({
+        toolName: "webfetch",
+        input: JSON.stringify({ url: "https://example.com", format: "markdown" }),
+        nestedToolNames: ["webfetch"],
+        execSchema: { type: "string" },
+      })
+
+      expect(repaired?.toolName).toBe("exec")
+      expect(JSON.parse(repaired!.input)).toContain(
+        'tools["webfetch"]({"url":"https://example.com","format":"markdown"})',
+      )
+      expect(JSON.parse(repaired!.input)).toContain("text(")
+    })
+
+    test("wraps source in { code } for providers that expose exec as a function tool", () => {
+      const repaired = repairNestedToolCallAsExec({
+        toolName: "WebFetch",
+        input: JSON.stringify({ url: "https://example.com" }),
+        nestedToolNames: ["webfetch"],
+        execSchema: { type: "object", properties: { code: { type: "string" } } },
+      })
+
+      expect(repaired?.toolName).toBe("exec")
+      expect(JSON.parse(repaired!.input).code).toContain('tools["webfetch"]')
+    })
+
+    test("serializes hostile arguments as data instead of executable source", async () => {
+      const url = 'https://example.com/"; globalThis.injected = true; //'
+      const repaired = repairNestedToolCallAsExec({
+        toolName: "webfetch",
+        input: JSON.stringify({ url }),
+        nestedToolNames: ["webfetch"],
+        execSchema: { type: "string" },
+      })
+      let received: unknown
+      const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor
+      await new AsyncFunction("tools", "text", JSON.parse(repaired!.input))(
+        {
+          webfetch: async (args: unknown) => {
+            received = args
+            return { output: "ok" }
+          },
+        },
+        () => {},
+      )
+      expect(received).toEqual({ url })
+      expect((globalThis as { injected?: boolean }).injected).toBeUndefined()
+    })
+
+    test("does not rewrite tools that are not nested exec capabilities", () => {
+      expect(
+        repairNestedToolCallAsExec({
+          toolName: "unknown",
+          input: "{}",
+          nestedToolNames: ["webfetch"],
+          execSchema: { type: "string" },
+        }),
+      ).toBeUndefined()
     })
   })
 

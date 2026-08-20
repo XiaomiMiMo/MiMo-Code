@@ -263,6 +263,7 @@ export type StreamInput = {
   small?: boolean
   tools: Record<string, Tool>
   activeTools?: string[]
+  execToolNames?: string[]
   retries?: number
   toolChoice?: "auto" | "required" | "none"
   agentID?: string
@@ -739,6 +740,24 @@ const live: Layer.Layer<
               ...failed.toolCall,
               toolName: repaired.toolName,
               input: repaired.input,
+            }
+          }
+          if (activeTools.includes("exec") && input.execToolNames?.length) {
+            const nested = ToolCompat.repairNestedToolCallAsExec({
+              toolName: failed.toolCall.toolName,
+              input: failed.toolCall.input,
+              nestedToolNames: input.execToolNames,
+              execSchema: await failed.inputSchema({ toolName: "exec" }),
+            })
+            if (nested) {
+              l.info("repairing nested tool call through exec", {
+                tool: failed.toolCall.toolName,
+              })
+              return {
+                ...failed.toolCall,
+                toolName: nested.toolName,
+                input: nested.input,
+              }
             }
           }
           return {

@@ -7,9 +7,17 @@ import path from "path"
 import { evalScript } from "../../src/workflow/sandbox"
 import { Agent } from "../../src/agent/agent"
 import { Truncate, Tool } from "../../src/tool"
-import { ToolScriptTool, renderToolScriptDeclarations } from "../../src/tool/tool-script"
-import { toolScriptRegistry, TOOL_SCRIPT_EXCLUDED } from "../../src/tool/tool-script-ref"
+import {
+  CODE_MODE_EXEC_GRAMMAR,
+  ToolScriptTool,
+  parseExecSource,
+  renderToolScriptDeclarations,
+  renderMcpToolScriptDeclarations,
+} from "../../src/tool/tool-script"
+import { toolScriptRegistry, NOT_CALLABLE_IN_EXEC } from "../../src/tool/tool-script-ref"
 import { Instance } from "../../src/project/instance"
+import { CodeModeWaitTool } from "../../src/tool/code-mode-wait"
+import { createCodeModeOutputBuffer, startCell, waitCell } from "../../src/tool/code-mode-cell"
 
 describe("sandbox non-deterministic mode", () => {
   test("deterministic:false keeps Date and Math.random", async () => {
@@ -93,8 +101,11 @@ async function runToolScript(
     ask?: () => Effect.Effect<void>
     maxToolCalls?: number
     timeoutMs?: number
+    yieldTimeMs?: number
+    maxOutputTokens?: number
     toolWhitelist?: string[]
     mcp?: Record<string, any>
+    metadata?: (input: { title?: string; metadata: Tool.Metadata }) => Effect.Effect<void>
   },
 ) {
   const prev = toolScriptRegistry.current
@@ -111,6 +122,8 @@ async function runToolScript(
               code,
               ...(opts?.maxToolCalls !== undefined && { max_tool_calls: opts.maxToolCalls }),
               ...(opts?.timeoutMs !== undefined && { timeout: opts.timeoutMs }),
+              ...(opts?.yieldTimeMs !== undefined && { yield_time_ms: opts.yieldTimeMs }),
+              ...(opts?.maxOutputTokens !== undefined && { max_output_tokens: opts.maxOutputTokens }),
             },
             {
               sessionID: "ses_test" as any,
@@ -123,7 +136,7 @@ async function runToolScript(
                 ...(opts?.mcp ? { execMcp: { current: opts.mcp } } : {}),
               },
               messages: [],
-              metadata: () => Effect.void,
+              metadata: opts?.metadata ?? (() => Effect.void),
               ask: opts?.ask ?? (() => Effect.void),
             },
           ),
@@ -136,14 +149,183 @@ async function runToolScript(
 }
 
 describe("exec", () => {
-  test("declares the exec timeout in milliseconds", async () => {
+  test("uses the Codex freeform grammar and pragma schema", async () => {
     const info = await runtime.runPromise(ToolScriptTool)
     const def = await runtime.runPromise(Tool.init(info))
-    const parsed = def.parameters.parse({ code: "return 1", timeout: 120_000 })
 
-    expect(parsed.timeout).toBe(120_000)
-    expect(def.description).toContain("`timeout` is always measured in milliseconds")
-    expect(def.description).toContain("600000 milliseconds")
+    expect(def.freeform?.format).toEqual({
+      type: "grammar",
+      syntax: "lark",
+      definition: CODE_MODE_EXEC_GRAMMAR,
+    })
+    expect(def.description).toContain('// @exec: {"yield_time_ms": 10000, "max_output_tokens": 1000}')
+    expect(def.description).toContain("captured `console`")
+    expect(def.description).toContain("jailed `files` helper")
+    expect(def.description).toContain("Not part of the final return text")
+    expect(def.description).toContain("It may be called repeatedly")
+    expect(def.freeform?.parse('// @exec: {"yield_time_ms": 25, "max_output_tokens": 128}\nreturn 1')).toEqual({
+      code: "return 1",
+      yield_time_ms: 25,
+      max_output_tokens: 128,
+    })
+  })
+
+  test("parseExecSource rejects malformed pragmas like Codex", () => {
+    expect(() => parseExecSource("")).toThrow("exec expects raw JavaScript or TypeScript source text")
+    expect(() => parseExecSource('// @exec: {"yield_time_ms": 1}')).toThrow(
+      "exec pragma must be followed by JavaScript source",
+    )
+    expect(() => parseExecSource('// @exec: {"unknown": 1}\nreturn 1')).toThrow(
+      "exec pragma only supports `yield_time_ms` and `max_output_tokens`; got `unknown`",
+    )
+    expect(() => parseExecSource('// @exec: {"yield_time_ms": -1}\nreturn 1')).toThrow(
+      "exec pragma field `yield_time_ms` must be a non-negative safe integer",
+    )
+    expect(() => parseExecSource('\n// @exec: {"yield_time_ms": 1}\nreturn 1')).toThrow(
+      "exec pragma must be the first line",
+    )
+  })
+
+  test("text helper emits output without requiring a return value", async () => {
+    const result = await runToolScript(`text("first"); text({ second: 2 })`, [])
+    expect(result.metadata.status).toBe("completed")
+    expect(result.output).toContain('first\n{"second":2}')
+    expect(result.output).not.toContain("<return_value>\nundefined")
+  })
+
+  test("notify publishes metadata without entering the final return text", async () => {
+    const notifications: string[] = []
+    const result = await runToolScript(`notify("building"); return "done"`, [], undefined, {
+      metadata: (input) =>
+        Effect.sync(() => {
+          if (typeof input.metadata.notification === "string") notifications.push(input.metadata.notification)
+        }),
+    })
+    expect(result.output).toContain("done")
+    expect(result.output).not.toContain("building")
+    expect(notifications).toContain("building")
+  })
+
+  test("yielded scripts resume through the Codex wait tool", async () => {
+    const result = await runToolScript(
+      `const result = await tools.slow({}); text(result.output)`,
+      [
+        fakeDef("slow", async () => {
+          await new Promise((resolve) => setTimeout(resolve, 50))
+          return "finished"
+        }),
+      ],
+      undefined,
+      { yieldTimeMs: 0 },
+    )
+    expect(result.output).toContain("Script running with cell ID")
+    const cellID = /Script running with cell ID ([^\s]+)/.exec(result.output)?.[1]
+    expect(cellID).toBeDefined()
+
+    const info = await runtime.runPromise(CodeModeWaitTool)
+    const def = await runtime.runPromise(Tool.init(info))
+    const waited = await Instance.provide({
+      directory: tmp,
+      fn: () =>
+        runtime.runPromise(
+          def.execute(
+            { cell_id: cellID!, yield_time_ms: 1000 },
+            {
+              sessionID: "ses_test" as any,
+              messageID: "msg_wait" as any,
+              agent: "build",
+              abort: new AbortController().signal,
+              messages: [],
+              metadata: () => Effect.void,
+              ask: () => Effect.void,
+            },
+          ),
+        ),
+    })
+    expect(waited.output).toContain("Script completed")
+    expect(waited.output).toContain("finished")
+  })
+
+  test("wait drains only output added since the previous yield", async () => {
+    const result = await runToolScript(
+      `text("one"); yield_control();
+       await tools.pause({});
+       text("two"); yield_control();
+       await tools.pause({});
+       text("three")`,
+      [
+        fakeDef("pause", async () => {
+          await new Promise((resolve) => setTimeout(resolve, 30))
+          return "ok"
+        }),
+      ],
+    )
+    const cellID = /Script running with cell ID ([^\s]+)/.exec(result.output)?.[1]
+    expect(cellID).toBeDefined()
+    expect(result.output).toContain("one")
+
+    const second = await waitCell({ sessionID: "ses_test" as any, cellID: cellID!, yieldTimeMs: 1000 })
+    expect(second.output).toContain("two")
+    expect(second.output).not.toContain("one")
+
+    const final = await waitCell({ sessionID: "ses_test" as any, cellID: cellID!, yieldTimeMs: 1000 })
+    expect(final.output).toContain("three")
+    expect(final.output).not.toContain("one")
+    expect(final.output).not.toContain("two")
+  })
+
+  test("terminating an already-settled cell preserves its attachments", async () => {
+    const promise = new Promise<Tool.ExecuteResult>((resolve) =>
+      setTimeout(
+        () =>
+          resolve({
+            title: "done",
+            output: "done",
+            metadata: { status: "completed" },
+            attachments: [{ type: "file", mime: "image/png", url: "data:image/png;base64,eA==" }],
+          }),
+        20,
+      ),
+    )
+    const started = await startCell({
+      sessionID: "ses_attachments" as any,
+      promise,
+      controller: new AbortController(),
+      output: createCodeModeOutputBuffer(),
+      yieldTimeMs: 0,
+    })
+    const cellID = /Script running with cell ID ([^\s]+)/.exec(started.output)?.[1]
+    expect(cellID).toBeDefined()
+    await promise
+    const terminated = await waitCell({
+      sessionID: "ses_attachments" as any,
+      cellID: cellID!,
+      yieldTimeMs: 0,
+      terminate: true,
+    })
+    expect(terminated.metadata.status).toBe("terminated")
+    expect(terminated.attachments).toHaveLength(1)
+  })
+
+  test("store writes commit only after successful script completion", async () => {
+    const stored = await runToolScript(`store("committed", { ok: true }); return "stored"`, [])
+    expect(stored.metadata.status).toBe("completed")
+    const loaded = await runToolScript(`return load("committed")`, [])
+    expect(loaded.output).toContain('"ok": true')
+
+    const failed = await runToolScript(`store("failed", "leak"); throw new Error("stop")`, [])
+    expect(failed.metadata.status).toBe("code_error")
+    const afterFailure = await runToolScript(`return load("failed") ?? "missing"`, [])
+    expect(afterFailure.output).toContain("missing")
+    expect(afterFailure.output).not.toContain("leak")
+
+    const cancelled = await runToolScript(`store("cancelled", "leak"); while (true) {}`, [], undefined, {
+      timeoutMs: 50,
+    })
+    expect(cancelled.metadata.status).toBe("timeout")
+    const afterCancel = await runToolScript(`return load("cancelled") ?? "missing"`, [])
+    expect(afterCancel.output).toContain("missing")
+    expect(afterCancel.output).not.toContain("leak")
   })
 
   test("cannot call tools outside the actor runtime whitelist", async () => {
@@ -218,9 +400,8 @@ describe("exec", () => {
     expect(result.output).toContain("[\n  2,\n  4,\n  6\n]")
   })
 
-  test("console.log is captured into Logs block", async () => {
+  test("console.log is captured into live output", async () => {
     const result = await runToolScript(`console.log("hello", { a: 1 }); return 1`, [])
-    expect(result.output).toContain("<logs>")
     expect(result.output).toContain('hello {"a":1}')
   })
 
@@ -351,6 +532,33 @@ describe("exec", () => {
     expect(result.output).toContain("ran:direct")
     expect(result.output).toContain("ran:alias")
     expect(seen.toSorted()).toEqual(["alias", "direct"])
+  })
+
+  test("an exec_command-only runtime whitelist authorizes its bash target", async () => {
+    const result = await runToolScript(
+      `return await tools.exec_command({ value: "allowed" })`,
+      [fakeDef("bash", async (args) => `ran:${args.value}`)],
+      undefined,
+      { toolWhitelist: ["exec_command"] },
+    )
+    expect(result.metadata.status).toBe("completed")
+    expect(result.output).toContain("ran:allowed")
+  })
+
+  test("apply_patch uses the Codex freeform string declaration and dispatch shape", async () => {
+    let seen: unknown
+    const defs = [
+      fakeDef("apply_patch", async (args) => {
+        seen = args
+        return "done"
+      }),
+    ]
+    const result = await runToolScript(`return await tools.apply_patch("*** Begin Patch")`, defs)
+    const description = renderToolScriptDeclarations(defs)
+
+    expect(description).toContain("apply_patch(input: string)")
+    expect(result.metadata.status).toBe("completed")
+    expect(seen).toEqual({ patch_text: "*** Begin Patch" })
   })
 
   test("supports parallel bash calls with millisecond timeouts", async () => {
@@ -512,6 +720,7 @@ describe("exec", () => {
     expect(result.output).toContain("NaN at $.n serialized as null")
     expect(result.output).toContain('"m": [')
     expect(result.output).toContain('"message": "msg"')
+    expect(result.output).not.toContain('"stack"')
     expect(result.output).toContain('"r": "/x/g"')
   })
 
@@ -535,6 +744,7 @@ describe("exec", () => {
     const result = await runToolScript(`return "line1\\nline2 with \\"quotes\\""`, [])
     expect(result.metadata.status).toBe("completed")
     expect(result.output).toContain('line1\nline2 with "quotes"')
+    expect(result.output).not.toContain("<return_value>")
   })
 
   test("syntax error reports line, column, and source line", async () => {
@@ -627,29 +837,61 @@ describe("renderToolScriptDeclarations", () => {
       fakeDef("question", async () => "x"),
     ]
     const text = renderToolScriptDeclarations(defs)
-    expect(text).toContain("read(input:")
-    expect(text).not.toContain("mcp_tool_search(input:")
-    expect(text).toContain("mcp__<server>__<tool>")
-    expect(text).toContain("declare const ALL_TOOLS")
-    expect(text).toContain("task(input:")
-    expect(text).toContain("question(input:")
+    expect(text).toContain("read(args:")
+    expect(text).not.toContain("mcp_tool_search(args:")
+    expect(text).toContain("task(args:")
+    expect(text).toContain("question(args:")
     expect(text).toContain("declare const tools")
   })
 
-  test("exclusion list covers recursive and internal tools but allows Codex nested tools", () => {
-    for (const id of ["exec", "mcp_tool_search", "invalid", "session", "workflow"]) {
-      expect(TOOL_SCRIPT_EXCLUDED.has(id)).toBe(true)
+  test("not-callable set covers recursive and internal tools but allows Codex nested tools", () => {
+    for (const id of ["exec", "wait", "mcp_tool_search", "invalid", "session", "workflow"]) {
+      expect(NOT_CALLABLE_IN_EXEC.has(id)).toBe(true)
     }
     for (const id of ["bash", "task", "question", "actor", "skill", "plan_exit", "cron", "change_directory"]) {
-      expect(TOOL_SCRIPT_EXCLUDED.has(id)).toBe(false)
+      expect(NOT_CALLABLE_IN_EXEC.has(id)).toBe(false)
     }
   })
 
   test("renders exec_command as an alias for bash", () => {
     const text = renderToolScriptDeclarations([fakeDef("bash", async () => "x")])
-    expect(text).toContain("bash(input:")
-    expect(text).toContain("exec_command(input:")
+    expect(text).toContain("bash(args:")
+    expect(text).toContain("exec_command(args:")
     expect(text).toContain("Alias for bash")
+  })
+
+  test("renders schema property descriptions as TypeScript comments", () => {
+    const parameters = z.object({ query: z.string().describe("Search terms supplied by the user") })
+    const def: Tool.Def<typeof parameters> = {
+      id: "search",
+      description: "Search",
+      parameters,
+      execute: () => Effect.succeed({ title: "", output: "", metadata: {} }),
+    }
+    expect(renderToolScriptDeclarations([def])).toContain("// Search terms supplied by the user")
+  })
+
+  test("renders the shared MCP preamble once and preserves structured output types", async () => {
+    const declarations = await renderMcpToolScriptDeclarations({
+      mcp__sample__search: {
+        description: "Search structured records",
+        inputSchema: z.object({ query: z.string().describe("Query sent to the MCP server") }),
+        outputSchema: z.object({
+          content: z.array(z.object({ type: z.string() })),
+          isError: z.boolean(),
+          _meta: z.record(z.string(), z.unknown()),
+          structuredContent: z.object({
+            results: z.array(z.object({ id: z.string() })).describe("Structured search hits"),
+          }),
+        }),
+        execute: async () => ({ content: [], isError: false, _meta: {}, structuredContent: { results: [] } }),
+      },
+    })
+    expect(declarations.match(/Shared MCP Types:/g)).toHaveLength(1)
+    expect(declarations).toContain("type CallToolResult")
+    expect(declarations).toContain("Promise<CallToolResult<")
+    expect(declarations).toContain("// Query sent to the MCP server")
+    expect(declarations).toContain("// Structured search hits")
   })
 
 })
@@ -732,6 +974,22 @@ describe("exec MCP dispatch", () => {
       { mcp },
     )
     expect(result.output).toContain("builtin version")
+  })
+
+  test("reserved aliases cannot be shadowed by MCP tools", async () => {
+    const mcp = {
+      exec_command: fakeMcpTool(async () => ({ output: "mcp version", metadata: {}, attachments: [] })),
+    }
+    const result = await runToolScript(
+      `const listed = ALL_TOOLS.some((tool) => tool.name === "exec_command");
+       try { await tools.exec_command({}) } catch (e) { return { listed, error: e.message } }`,
+      [],
+      undefined,
+      { mcp },
+    )
+    expect(result.output).toContain('"listed": false')
+    expect(result.output).toContain("unknown tool: exec_command")
+    expect(result.output).not.toContain("mcp version")
   })
 
   test("attachments are dropped with a note", async () => {

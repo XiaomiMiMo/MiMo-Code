@@ -74,7 +74,8 @@ import * as BashInteractive from "./bash-interactive"
 import { resolveInvocationStyle } from "./invocation-style"
 import { BuiltinWorkflow } from "@/workflow/builtin"
 import { ToolScriptTool, renderToolScriptDeclarations } from "./tool-script"
-import { GPT_TOOL_SCRIPT_ONLY, toolScriptRegistry } from "./tool-script-ref"
+import { CodeModeWaitTool } from "./code-mode-wait"
+import { NOT_CALLABLE_IN_EXEC, TOOL_SCRIPT_ALIASES, toolScriptRegistry } from "./tool-script-ref"
 import { usesGPTToolset } from "./gpt"
 
 const log = Log.create({ service: "tool.registry" })
@@ -167,6 +168,7 @@ export const layer = Layer.effect(
     const sessiontool = yield* SessionTool
     const workflowtool = yield* WorkflowTool
     const toolscript = yield* ToolScriptTool
+    const codemodewait = yield* CodeModeWaitTool
     const agent = yield* Agent.Service
 
     const state = yield* InstanceState.make<State>(
@@ -266,6 +268,7 @@ export const layer = Layer.effect(
           session: Tool.init(sessiontool),
           workflow: Tool.init(workflowtool),
           toolscript: Tool.init(toolscript),
+          codemodewait: Tool.init(codemodewait),
         })
 
         return {
@@ -296,6 +299,7 @@ export const layer = Layer.effect(
             tool.history,
             tool.task,
             tool.toolscript,
+            tool.codemodewait,
             ...(Flag.MIMOCODE_EXPERIMENTAL_CRON ? [tool.cron] : []),
             ...(Flag.MIMOCODE_EXPERIMENTAL_ORCHESTRATOR ? [tool.session] : []),
             ...(Flag.MIMOCODE_EXPERIMENTAL_WORKFLOW_TOOL ? [tool.workflow] : []),
@@ -357,7 +361,8 @@ export const layer = Layer.effect(
     }) {
       const useGPTTools = usesGPTToolset(input.modelID)
       let filtered = (yield* all()).filter((tool) => {
-        if (tool.id === ToolScriptTool.id) return useGPTTools || Flag.MIMOCODE_ENABLE_EXEC_TOOL
+        if (tool.id === ToolScriptTool.id || tool.id === CodeModeWaitTool.id)
+          return useGPTTools || Flag.MIMOCODE_ENABLE_EXEC_TOOL
         if (tool.id === CodeSearchTool.id || tool.id === WebSearchTool.id) {
           if (tool.id === WebSearchTool.id) {
             return (
@@ -428,7 +433,7 @@ export const layer = Layer.effect(
     const tools: Interface["tools"] = Effect.fn("ToolRegistry.tools")(function* (input) {
       const availableTools = yield* available(input)
       const visibleTools = availableTools.useGPTTools
-        ? availableTools.filtered.filter((tool) => !GPT_TOOL_SCRIPT_ONLY.has(tool.id))
+        ? availableTools.filtered.filter((tool) => NOT_CALLABLE_IN_EXEC.has(tool.id))
         : availableTools.filtered
 
       const cfg = yield* config.get()
@@ -456,13 +461,25 @@ export const layer = Layer.effect(
               description,
               tool.id === ActorTool.id ? yield* describeTask(input.agent) : undefined,
               tool.id === WorkflowTool.id ? yield* describeWorkflow() : undefined,
-              tool.id === ToolScriptTool.id ? yield* describeToolScript(availableTools.filtered) : undefined,
+              tool.id === ToolScriptTool.id ? `\n${yield* describeToolScript(availableTools.filtered)}` : undefined,
             ]
               .filter(Boolean)
               .join("\n"),
             parameters: useShell ? effective.parameters : output.parameters,
             execute: effective.execute,
             formatValidationError: effective.formatValidationError,
+            freeform: effective.freeform,
+            nestedToolNames:
+              tool.id === ToolScriptTool.id
+                ? [
+                    ...availableTools.filtered
+                      .filter((item) => !NOT_CALLABLE_IN_EXEC.has(item.id))
+                      .map((item) => item.id),
+                    ...Object.entries(TOOL_SCRIPT_ALIASES).flatMap(([alias, target]) =>
+                      availableTools.filtered.some((item) => item.id === target) ? [alias] : [],
+                    ),
+                  ]
+                : undefined,
           }
         }),
         { concurrency: "unbounded" },

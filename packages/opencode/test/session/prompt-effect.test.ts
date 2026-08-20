@@ -338,31 +338,52 @@ const mcpSuccessResult: CallToolResult = {
   structuredContent: { changed: true, windowID: 42 },
   _meta: { privateToken: "success-meta-is-client-only" },
 }
+const mcpCallResultOutputSchema = jsonSchema({
+  type: "object",
+  properties: {
+    content: { type: "array", items: { type: "object", properties: {}, additionalProperties: true } },
+    isError: { type: "boolean" },
+    _meta: { type: "object", additionalProperties: true },
+    structuredContent: {
+      type: "object",
+      description: "Structured MCP result visible to exec",
+      additionalProperties: true,
+    },
+  },
+  required: ["content"],
+  additionalProperties: true,
+})
 const mcpIt = testEffect(
   makeHttp(
     mcpLayer(() => ({
-      mcp_success: dynamicTool({
-        description: "Return a standard structured MCP success result",
-        inputSchema: jsonSchema({
-          type: "object",
-          properties: {
-            private_window_id: { type: "number", description: "Secret nested MCP window selector" },
-          },
-          additionalProperties: false,
+      mcp_success: Object.assign(
+        dynamicTool({
+          description: "Return a standard structured MCP success result",
+          inputSchema: jsonSchema({
+            type: "object",
+            properties: {
+              private_window_id: { type: "number", description: "Secret nested MCP window selector" },
+            },
+            additionalProperties: false,
+          }),
+          execute: async () => mcpSuccessResult,
         }),
-        execute: async () => mcpSuccessResult,
-      }),
-      mcp_result: dynamicTool({
-        description: "Return a standard MCP tool execution error",
-        inputSchema: jsonSchema({
-          type: "object",
-          properties: {
-            private_error_code: { type: "string", description: "Secret nested MCP error selector" },
-          },
-          additionalProperties: false,
+        { outputSchema: mcpCallResultOutputSchema },
+      ),
+      mcp_result: Object.assign(
+        dynamicTool({
+          description: "Return a standard MCP tool execution error",
+          inputSchema: jsonSchema({
+            type: "object",
+            properties: {
+              private_error_code: { type: "string", description: "Secret nested MCP error selector" },
+            },
+            additionalProperties: false,
+          }),
+          execute: async () => mcpErrorResult,
         }),
-        execute: async () => mcpErrorResult,
-      }),
+        { outputSchema: mcpCallResultOutputSchema },
+      ),
     })),
   ),
 )
@@ -1010,7 +1031,7 @@ mcpIt.live("MCP structuredContent is persisted and reaches the model alongside t
       expect(catalog).toContain("mcp_success — Return a standard structured MCP success result")
       expect(catalog).not.toContain("private_error_code")
       expect(catalog).not.toContain("Secret nested MCP window selector")
-      expect(loadedTools.map(wireToolName)).toContain("mcp_success")
+      expect(loadedTools.map(wireToolName)).not.toContain("mcp_success")
       expect(loadedTools.map(wireToolName)).not.toContain("mcp_result")
 
       const followup = JSON.stringify(requests[2])
@@ -1058,8 +1079,53 @@ mcpIt.live("exec can call a catalogued MCP tool without loading its outer schema
       const tools = (yield* llm.inputs)[0].tools as Array<Record<string, unknown>>
       expect(tools.map(wireToolName)).toContain("mcp_tool_search")
       expect(tools.map(wireToolName)).not.toContain("mcp_success")
+      const execDescription = wireToolDescription(wireTool(tools, "exec") ?? {}) ?? ""
+      expect(execDescription.match(/Shared MCP Types:/g)).toHaveLength(1)
+      expect(execDescription).toContain("mcp_success")
+      expect(execDescription).toContain("Promise<CallToolResult<")
+      expect(execDescription).toContain("// Secret nested MCP window selector")
     }),
     { git: true, config: providerCfg },
+  ),
+)
+
+mcpIt.live("repairs unavailable top-level webfetch and memory calls through exec", () =>
+  provideTmpdirServer(
+    Effect.fnUntraced(function* ({ llm }) {
+      const prompt = yield* SessionPrompt.Service
+      const sessions = yield* Session.Service
+      const session = yield* sessions.create({
+        title: "Repair nested webfetch",
+        permission: [{ permission: "*", pattern: "*", action: "allow" }],
+      })
+
+      yield* prompt.prompt({
+        sessionID: session.id,
+        agent: "build",
+        model: { providerID: ProviderID.openai, modelID: ModelID.make("gpt-5.2") },
+        noReply: true,
+        parts: [{ type: "text", text: "fetch a URL" }],
+      })
+      yield* llm.tool("webfetch", { url: "http://127.0.0.1/private", format: "text" })
+      yield* llm.tool("memory", { operation: "search", query: "missing-memory-entry" })
+      yield* llm.text("done")
+
+      yield* prompt.loop({ sessionID: session.id })
+
+      const parts = (yield* MessageV2.filterCompactedEffect(session.id)).flatMap((message) => message.parts)
+      const exec = parts.filter(
+        (part): part is CompletedToolPart =>
+          part.type === "tool" && part.tool === "exec" && part.state.status === "completed",
+      )
+      expect(exec).toHaveLength(2)
+      expect(exec.map((part) => part.state.output).join("\n")).not.toContain("Model tried to call unavailable tool")
+      expect(parts.some((part) => part.type === "tool" && part.tool === "invalid")).toBeFalse()
+      const tools = (yield* llm.inputs)[0].tools as Array<Record<string, unknown>>
+      expect(tools.map(wireToolName)).toContain("exec")
+      expect(tools.map(wireToolName)).not.toContain("webfetch")
+      expect(tools.map(wireToolName)).not.toContain("memory")
+    }),
+    { git: true, config: gptProviderCfg },
   ),
 )
 
@@ -1132,7 +1198,7 @@ mcpIt.live("resets loaded MCP tools for a new user request", () =>
       yield* prompt.loop({ sessionID: session.id })
 
       const requests = yield* llm.inputs
-      expect((requests[1].tools as Array<Record<string, unknown>>).map(wireToolName)).toContain("mcp_success")
+      expect((requests[1].tools as Array<Record<string, unknown>>).map(wireToolName)).not.toContain("mcp_success")
       expect((requests[3].tools as Array<Record<string, unknown>>).map(wireToolName)).not.toContain("mcp_success")
       expect((requests[3].tools as Array<Record<string, unknown>>).map(wireToolName)).toContain("mcp_tool_search")
     }),
@@ -1160,10 +1226,10 @@ mcpIt.live("accumulates MCP matches across searches in one user request", () =>
       yield* prompt.loop({ sessionID: session.id })
 
       const requests = yield* llm.inputs
-      expect((requests[1].tools as Array<Record<string, unknown>>).map(wireToolName)).toContain("mcp_result")
+      expect((requests[1].tools as Array<Record<string, unknown>>).map(wireToolName)).not.toContain("mcp_result")
       expect((requests[1].tools as Array<Record<string, unknown>>).map(wireToolName)).not.toContain("mcp_success")
-      expect((requests[2].tools as Array<Record<string, unknown>>).map(wireToolName)).toContain("mcp_result")
-      expect((requests[2].tools as Array<Record<string, unknown>>).map(wireToolName)).toContain("mcp_success")
+      expect((requests[2].tools as Array<Record<string, unknown>>).map(wireToolName)).not.toContain("mcp_result")
+      expect((requests[2].tools as Array<Record<string, unknown>>).map(wireToolName)).not.toContain("mcp_success")
     }),
     { git: true, config: providerCfg },
   ),
@@ -1200,7 +1266,7 @@ mcpIt.live("keeps discovery reachable when permissions allow only an MCP tool", 
       expect(catalog).toContain("mcp_success — Return a standard structured MCP success result")
       expect(catalog).not.toContain("mcp_result")
       expect(catalog).not.toContain("standard MCP tool execution error")
-      expect((requests[1].tools as Array<Record<string, unknown>>).map(wireToolName)).toContain("mcp_success")
+      expect((requests[1].tools as Array<Record<string, unknown>>).map(wireToolName)).not.toContain("mcp_success")
       expect((requests[1].tools as Array<Record<string, unknown>>).map(wireToolName)).not.toContain("mcp_result")
     }),
     { git: true, config: providerCfg },
@@ -1231,10 +1297,7 @@ mcpIt.live("searches only MCP tools allowed by the configured agent", () =>
       expect(initialTools.map(wireToolName)).toEqual(["mcp_tool_search"])
       expect(catalog).toContain("mcp_success — Return a standard structured MCP success result")
       expect(catalog).not.toContain("mcp_result")
-      expect((requests[1].tools as Array<Record<string, unknown>>).map(wireToolName)).toEqual([
-        "mcp_tool_search",
-        "mcp_success",
-      ])
+      expect((requests[1].tools as Array<Record<string, unknown>>).map(wireToolName)).toEqual(["mcp_tool_search"])
     }),
     { git: true, config: restrictedAgentProviderCfg },
   ),
@@ -1266,8 +1329,8 @@ mcpIt.live(
         expect(tools.map(wireToolName)).not.toContain("mcp_result")
         expect(catalog).toContain("mcp_success — Return a standard structured MCP success result")
         expect(catalog).toContain("mcp_result — Return a standard MCP tool execution error")
-        expect(JSON.stringify(tools)).not.toContain("private_window_id")
-        expect(JSON.stringify(tools)).not.toContain("Secret nested MCP error selector")
+        expect(catalog).not.toContain("private_window_id")
+        expect(catalog).not.toContain("Secret nested MCP error selector")
       }),
       { git: true, config: gptProviderCfg },
     ),

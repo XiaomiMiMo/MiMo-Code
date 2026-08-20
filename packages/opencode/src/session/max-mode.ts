@@ -59,6 +59,8 @@ export type MaxStepInput = {
   tools: Record<string, AITool>
   /** Model-visible subset of the execute-bearing tool registry. */
   activeTools?: string[]
+  /** Request-scoped tool names callable through exec's nested namespace. */
+  execToolNames?: string[]
   agentID?: string
   /**
    * Tool-choice from the per-step args. Accepted (so the same processArgs object
@@ -137,6 +139,7 @@ export const runCandidate = (
       messages: input.messages,
       tools: schemaOnly,
       activeTools: input.activeTools,
+      execToolNames: input.execToolNames,
       agentID: input.agentID,
     })
 
@@ -357,6 +360,7 @@ export const runMaxStep = (input: MaxStepInput): Effect.Effect<SessionProcessor.
         messages: input.messages,
         tools: input.tools,
         activeTools: input.activeTools,
+        execToolNames: input.execToolNames,
         model: input.model,
         agentID: input.agentID,
       })
