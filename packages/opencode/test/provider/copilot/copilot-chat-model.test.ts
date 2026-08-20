@@ -71,6 +71,14 @@ const FIXTURES = {
     `data: {"choices":[{"finish_reason":"tool_calls","index":0,"delta":{"content":null,"role":"assistant","tool_calls":[{"function":{"arguments":"{}","name":"read_file"},"id":"call_reasoning_only_2","index":1,"type":"function"}]}}],"created":1769917420,"id":"opaque-only","usage":{"completion_tokens":12,"prompt_tokens":123,"prompt_tokens_details":{"cached_tokens":0},"total_tokens":135,"reasoning_tokens":0},"model":"gemini-3-flash-preview"}`,
     `data: [DONE]`,
   ],
+
+  // Gateway omits finish_reason entirely but sends tool calls — flush() must
+  // default to "tool-calls" so the agent loop continues for tool execution.
+  toolCallsNoFinishReason: [
+    `data: {"choices":[{"index":0,"delta":{"role":"assistant","content":null,"tool_calls":[{"function":{"arguments":"{}","name":"list_files"},"id":"call_no_fr_1","index":0,"type":"function"}]}}],"created":1770000000,"id":"no-fr-1","usage":{"completion_tokens":0,"prompt_tokens":0,"prompt_tokens_details":{"cached_tokens":0},"total_tokens":0,"reasoning_tokens":0},"model":"muse-spark-1.2-contributor"}`,
+    `data: {"choices":[{"index":0,"delta":{"content":null,"tool_calls":[{"function":{"arguments":"{}","name":"read_file"},"id":"call_no_fr_2","index":1,"type":"function"}]}}],"created":1770000001,"id":"no-fr-1","usage":{"completion_tokens":0,"prompt_tokens":0,"prompt_tokens_details":{"cached_tokens":0},"total_tokens":0,"reasoning_tokens":0},"model":"muse-spark-1.2-contributor"}`,
+    `data: [DONE]`,
+  ],
 }
 
 function createMockFetch(chunks: string[]) {
@@ -532,6 +540,28 @@ describe("doStream", () => {
 
     const rawChunks = parts.filter((p) => p.type === "raw")
     expect(rawChunks.length).toBeGreaterThan(0)
+  })
+
+  test("should default finish to tool-calls when gateway omits finish_reason but sends tool calls", async () => {
+    const mockFetch = createMockFetch(FIXTURES.toolCallsNoFinishReason)
+    const model = createModel(mockFetch)
+
+    const { stream } = await model.doStream({
+      prompt: TEST_PROMPT,
+      includeRawChunks: false,
+    })
+
+    const parts = await convertReadableStreamToArray(stream)
+
+    const finish = parts.find((p) => p.type === "finish")
+    expect(finish).toBeDefined()
+    expect(finish).toMatchObject({
+      type: "finish",
+      finishReason: { unified: "tool-calls", raw: undefined },
+    })
+
+    const toolCalls = parts.filter((p) => p.type === "tool-call")
+    expect(toolCalls.length).toBe(2)
   })
 })
 
