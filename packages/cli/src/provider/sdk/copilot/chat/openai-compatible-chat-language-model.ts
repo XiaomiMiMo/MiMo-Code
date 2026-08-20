@@ -342,7 +342,11 @@ export class OpenAICompatibleChatLanguageModel implements LanguageModelV3 {
       unified: ReturnType<typeof mapOpenAICompatibleFinishReason>
       raw: string | undefined
     } = {
-      unified: "other",
+      // Default to "stop" rather than "other". Some gateways (e.g. muse-spark
+      // via zen/go) never send a finish_reason chunk — the stream ends and the
+      // response is delivered normally. Keeping the old default of "other"
+      // caused every such response to be classified as degraded / think-only.
+      unified: "stop",
       raw: undefined,
     }
     const usage: {
