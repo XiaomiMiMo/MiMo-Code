@@ -649,6 +649,13 @@ export class OpenAICompatibleChatLanguageModel implements LanguageModelV3 {
           },
 
           flush(controller) {
+            // If no explicit finish_reason was received (gateway omits it) and
+            // tool calls are present, default to "tool-calls" so the agent loop
+            // continues for tool execution rather than terminating as "stop".
+            if (finishReason.raw == null && toolCalls.length > 0) {
+              finishReason = { unified: "tool-calls", raw: undefined }
+            }
+
             if (isActiveReasoning) {
               controller.enqueue({
                 type: "reasoning-end",
