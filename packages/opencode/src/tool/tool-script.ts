@@ -4,16 +4,16 @@ import fs from "fs"
 import path from "path"
 import ts from "typescript"
 import { Effect } from "effect"
-import type { Tool as AiTool } from "ai"
+import { asSchema, type Tool as AiTool } from "ai"
 import { EffectBridge, InstanceState } from "@/effect"
 import { Log, Filesystem } from "@/util"
 import { Agent } from "@/agent/agent"
 import type { ModelID, ProviderID } from "../provider/schema"
 import { evalScript, type HostFn } from "../workflow/sandbox"
-import { toolScriptRegistry, TOOL_SCRIPT_ALIASES, TOOL_SCRIPT_EXCLUDED } from "./tool-script-ref"
+import { toolScriptRegistry, TOOL_SCRIPT_ALIASES, NOT_CALLABLE_IN_EXEC } from "./tool-script-ref"
 import DESCRIPTION from "./tool-script.txt"
 import * as Tool from "./tool"
-import * as Truncate from "./truncate"
+import { createCodeModeOutputBuffer, startCell } from "./code-mode-cell"
 
 const log = Log.create({ service: "tool.exec" })
 
@@ -28,15 +28,43 @@ const MAX_LOG_BYTES = 64 * 1024
 const MAX_CODE_BYTES = 128 * 1024
 const MAX_FILE_BYTES = 10 * 1024 * 1024
 const TRACE_TAIL_ENTRIES = 20
+const SESSION_STORE_RETENTION_MS = 30 * 60 * 1000
+
+type SessionStore = {
+  values: Map<string, unknown>
+  cleanup: ReturnType<typeof setTimeout>
+}
+
+const sessionStores = new Map<string, SessionStore>()
+
+function sessionStore(sessionID: string) {
+  const existing = sessionStores.get(sessionID)
+  if (existing) clearTimeout(existing.cleanup)
+  const store: SessionStore = {
+    values: existing?.values ?? new Map<string, unknown>(),
+    cleanup: setTimeout(() => sessionStores.delete(sessionID), SESSION_STORE_RETENTION_MS),
+  }
+  store.cleanup.unref?.()
+  sessionStores.set(sessionID, store)
+  return store.values
+}
+
+const Parameters = z.object({
+  code: z.string(),
+  yield_time_ms: z.number().int().nonnegative().safe().optional(),
+  max_output_tokens: z.number().int().nonnegative().safe().optional(),
+  max_tool_calls: z.number().int().min(1).max(MAX_TOOL_CALLS_CEILING).optional(),
+  timeout: z.number().int().min(1).max(ACTIVE_DEADLINE_MS_CEILING).optional(),
+})
 
 /** JSON Schema (zod v4 toJSONSchema output) → compact TS type text. Best-effort:
  * anything unrecognized renders as `unknown`, which is safe for declarations. */
-function schemaToTs(schema: any): string {
+function schemaToTs(schema: any, depth = 0): string {
   if (!schema || typeof schema !== "object") return "unknown"
   if (schema.const !== undefined) return JSON.stringify(schema.const)
   if (schema.enum) return schema.enum.map((v: unknown) => JSON.stringify(v)).join(" | ")
   const variants = schema.anyOf ?? schema.oneOf
-  if (variants) return variants.map(schemaToTs).join(" | ")
+  if (variants) return variants.map((variant: unknown) => schemaToTs(variant, depth)).join(" | ")
   switch (schema.type) {
     case "string":
       return "string"
@@ -48,61 +76,243 @@ function schemaToTs(schema: any): string {
     case "null":
       return "null"
     case "array":
-      return `Array<${schemaToTs(schema.items)}>`
+      return `Array<${schemaToTs(schema.items, depth)}>`
     case "object": {
       if (!schema.properties) {
         if (schema.additionalProperties && typeof schema.additionalProperties === "object")
-          return `Record<string, ${schemaToTs(schema.additionalProperties)}>`
+          return `Record<string, ${schemaToTs(schema.additionalProperties, depth)}>`
         return "Record<string, unknown>"
       }
+      if (Object.keys(schema.properties).length === 0) return "{}"
       const required = new Set<string>(schema.required ?? [])
-      const fields = Object.entries(schema.properties).map(
-        ([key, value]) => `${key}${required.has(key) ? "" : "?"}: ${schemaToTs(value)}`,
-      )
-      return `{ ${fields.join("; ")} }`
+      const indent = "  ".repeat(depth + 1)
+      const fields = Object.entries(schema.properties).flatMap(([key, value]) => {
+        const description =
+          value && typeof value === "object" && "description" in value && typeof value.description === "string"
+            ? value.description
+            : undefined
+        return [
+          ...(description
+            ? description.split("\n").map((line: string) => `${indent}// ${line}`)
+            : []),
+          `${indent}${key}${required.has(key) ? "" : "?"}: ${schemaToTs(value, depth + 1)};`,
+        ]
+      })
+      return `{\n${fields.join("\n")}\n${"  ".repeat(depth)}}`
     }
     default:
       return "unknown"
   }
 }
 
-/** Render the `tools` API declaration block appended to the tool description. */
+export const MCP_TYPESCRIPT_PREAMBLE = `type Role = "user" | "assistant";
+type MetaObject = Record<string, unknown>;
+type Annotations = {
+  audience?: Role[];
+  priority?: number;
+  lastModified?: string;
+};
+type Icon = {
+  src: string;
+  mimeType?: string;
+  sizes?: string[];
+  theme?: "light" | "dark";
+};
+type TextResourceContents = {
+  uri: string;
+  mimeType?: string;
+  _meta?: MetaObject;
+  text: string;
+};
+type BlobResourceContents = {
+  uri: string;
+  mimeType?: string;
+  _meta?: MetaObject;
+  blob: string;
+};
+type TextContent = {
+  type: "text";
+  text: string;
+  annotations?: Annotations;
+  _meta?: MetaObject;
+};
+type ImageContent = {
+  type: "image";
+  data: string;
+  mimeType: string;
+  annotations?: Annotations;
+  _meta?: MetaObject;
+};
+type AudioContent = {
+  type: "audio";
+  data: string;
+  mimeType: string;
+  annotations?: Annotations;
+  _meta?: MetaObject;
+};
+type ResourceLink = {
+  icons?: Icon[];
+  name: string;
+  title?: string;
+  uri: string;
+  description?: string;
+  mimeType?: string;
+  annotations?: Annotations;
+  size?: number;
+  _meta?: MetaObject;
+  type: "resource_link";
+};
+type EmbeddedResource = {
+  type: "resource";
+  resource: TextResourceContents | BlobResourceContents;
+  annotations?: Annotations;
+  _meta?: MetaObject;
+};
+type ContentBlock =
+  | TextContent
+  | ImageContent
+  | AudioContent
+  | ResourceLink
+  | EmbeddedResource;
+type CallToolResult<TStructured = { [key: string]: unknown }> = {
+  _meta?: MetaObject;
+  content: ContentBlock[];
+  isError?: boolean;
+  structuredContent?: TStructured;
+  [key: string]: unknown;
+};`
+
+function mcpStructuredContentSchema(schema: any) {
+  if (!schema || typeof schema !== "object" || !schema.properties) return undefined
+  const content = schema.properties.content
+  const isError = schema.properties.isError
+  const meta = schema.properties._meta
+  if (content?.type !== "array" || content.items?.type !== "object") return undefined
+  if (isError?.type !== "boolean" || meta?.type !== "object") return undefined
+  return schema.properties.structuredContent ?? true
+}
+
+export async function renderMcpToolScriptDeclarations(tools: Record<string, AiTool>) {
+  const sections = (
+    await Promise.all(
+      Object.entries(tools).map(async ([rawName, tool]) => {
+        if (!tool.outputSchema) return undefined
+        const outputSchema = await Promise.resolve(asSchema(tool.outputSchema).jsonSchema)
+        const structured = mcpStructuredContentSchema(outputSchema)
+        if (!structured) return undefined
+        const inputSchema = await Promise.resolve(asSchema(tool.inputSchema).jsonSchema)
+        const name = normalizeCodeModeIdentifier(rawName)
+        const heading = name === rawName ? `### \`${name}\`` : `### \`${name}\` (\`${rawName}\`)`
+        const structuredType = structured === true ? "unknown" : schemaToTs(structured)
+        const resultType = structuredType === "unknown" ? "CallToolResult" : `CallToolResult<${structuredType}>`
+        return `${heading}\n${tool.description?.trim() ?? ""}\n\nexec tool declaration:\n\`\`\`ts\ndeclare const tools: { ${name}(args: ${schemaToTs(inputSchema)}): Promise<${resultType}>; };\n\`\`\``
+      }),
+    )
+  ).filter((section): section is string => !!section)
+  if (sections.length === 0) return ""
+  return [`Shared MCP Types:\n\`\`\`ts\n${MCP_TYPESCRIPT_PREAMBLE}\n\`\`\``, ...sections].join("\n\n")
+}
+
+export const CODE_MODE_EXEC_GRAMMAR = `
+start: pragma_source | plain_source
+pragma_source: PRAGMA_LINE NEWLINE SOURCE
+plain_source: SOURCE
+
+PRAGMA_LINE: /[ \\t]*\\/\\/ @exec:[^\\r\\n]*/
+NEWLINE: /\\r?\\n/
+SOURCE: /[\\s\\S]+/
+`
+
+const MAX_JS_SAFE_INTEGER = 2 ** 53 - 1
+
+export function parseExecSource(input: string) {
+  if (!input.trim()) {
+    throw new Error(
+      'exec expects raw JavaScript or TypeScript source text (non-empty). Provide source only, optionally with first-line `// @exec: {"yield_time_ms": 10000, "max_output_tokens": 1000}`.',
+    )
+  }
+
+  const newline = input.indexOf("\n")
+  const firstLine = newline === -1 ? input : input.slice(0, newline)
+  const trimmed = firstLine.trimStart()
+  if (!trimmed.startsWith("// @exec:")) {
+    if (input.split(/\r?\n/).slice(1).some((line) => line.trimStart().startsWith("// @exec:"))) {
+      throw new Error("exec pragma must be the first line of the tool input")
+    }
+    return { code: input, yield_time_ms: undefined, max_output_tokens: undefined }
+  }
+  const code = newline === -1 ? "" : input.slice(newline + 1)
+  if (!code.trim()) throw new Error("exec pragma must be followed by JavaScript source on subsequent lines")
+  const directive = trimmed.slice("// @exec:".length).trim()
+  if (!directive) {
+    throw new Error(
+      "exec pragma must be a JSON object with supported fields `yield_time_ms` and `max_output_tokens`",
+    )
+  }
+
+  const value = (() => {
+    try {
+      return JSON.parse(directive) as unknown
+    } catch (error) {
+      throw new Error(
+        `exec pragma must be valid JSON with supported fields \`yield_time_ms\` and \`max_output_tokens\`: ${error}`,
+      )
+    }
+  })()
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error(
+      "exec pragma must be a JSON object with supported fields `yield_time_ms` and `max_output_tokens`",
+    )
+  }
+  const pragma = value as Record<string, unknown>
+  const unsupported = Object.keys(pragma).find((key) => !["yield_time_ms", "max_output_tokens"].includes(key))
+  if (unsupported) {
+    throw new Error(
+      `exec pragma only supports \`yield_time_ms\` and \`max_output_tokens\`; got \`${unsupported}\``,
+    )
+  }
+  for (const key of ["yield_time_ms", "max_output_tokens"] as const) {
+    const field = pragma[key]
+    if (field === undefined) continue
+    if (typeof field !== "number" || !Number.isSafeInteger(field) || field < 0 || field > MAX_JS_SAFE_INTEGER) {
+      throw new Error(`exec pragma field \`${key}\` must be a non-negative safe integer`)
+    }
+  }
+  return {
+    code,
+    yield_time_ms: pragma["yield_time_ms"] as number | undefined,
+    max_output_tokens: pragma.max_output_tokens as number | undefined,
+  }
+}
+
+function normalizeCodeModeIdentifier(name: string) {
+  const normalized = [...name]
+    .map((char, index) => (/[$_A-Za-z]/.test(char) || (index > 0 && /[0-9]/.test(char)) ? char : "_"))
+    .join("")
+  return normalized || "_"
+}
+
+/** Render the Codex code-mode declarations appended to the tool description. */
 export function renderToolScriptDeclarations(defs: Tool.Def[]): string {
   const aliases = new Set(Object.keys(TOOL_SCRIPT_ALIASES))
-  const lines = defs
-    .filter((def) => !TOOL_SCRIPT_EXCLUDED.has(def.id) && !aliases.has(def.id))
+  const sections = defs
+    .filter((def) => !NOT_CALLABLE_IN_EXEC.has(def.id) && !aliases.has(def.id))
     .map((def) => {
-      const summary = def.description.split("\n").find((l) => l.trim()) ?? ""
-      const input = schemaToTs(z.toJSONSchema(def.parameters))
-      return `  /** ${summary.trim().slice(0, 200)} */\n  ${def.id}(input: ${input}): Promise<ToolResult>`
+      const input = def.id === "apply_patch" ? "string" : schemaToTs(z.toJSONSchema(def.parameters))
+      const inputName = def.id === "apply_patch" ? "input" : "args"
+      const name = normalizeCodeModeIdentifier(def.id)
+      const heading = name === def.id ? `### \`${name}\`` : `### \`${name}\` (\`${def.id}\`)`
+      return `${heading}\n${def.description.trim()}\n\nexec tool declaration:\n\`\`\`ts\ndeclare const tools: { ${name}(${inputName}: ${input}): Promise<unknown>; };\n\`\`\``
     })
-  const aliasLines = Object.entries(TOOL_SCRIPT_ALIASES).flatMap(([alias, target]) => {
+  const aliasSections = Object.entries(TOOL_SCRIPT_ALIASES).flatMap(([alias, target]) => {
     const def = defs.find((item) => item.id === target)
     if (!def) return []
-    const summary = def.description.split("\n").find((line) => line.trim()) ?? ""
     const input = schemaToTs(z.toJSONSchema(def.parameters))
-    return [`  /** Alias for ${target}. ${summary.trim().slice(0, 180)} */\n  ${alias}(input: ${input}): Promise<ToolResult>`]
+    return [
+      `### \`${alias}\`\nAlias for ${target}. ${def.description.trim()}\n\nexec tool declaration:\n\`\`\`ts\ndeclare const tools: { ${alias}(args: ${input}): Promise<unknown>; };\n\`\`\``,
+    ]
   })
-  return [
-    "```ts",
-    "type ToolResult = { title: string; output: string; metadata: Record<string, unknown>; structured?: unknown }",
-    "declare const tools: {",
-    ...lines,
-    ...aliasLines,
-    "  /** Request-authorized MCP tools are callable by exact catalog name, normally mcp__<server>__<tool>. */",
-    "  [mcpToolName: string]: (input: Record<string, unknown>) => Promise<ToolResult>",
-    "}",
-    "/** Every tool callable in this execution. Filter by name to discover MCP tools without mcp_tool_search. */",
-    "declare const ALL_TOOLS: ReadonlyArray<{ name: string; description: string }>",
-    "// Raw file IO for machine-to-machine data (pipelines across executions).",
-    "declare const files: {",
-    "  /** Raw file contents — no line numbers, no truncation. null if missing. Paths: worktree or OS tmp. */",
-    "  readText(path: string): Promise<string | null>",
-    "  /** Write raw text; parent dirs auto-created. OS tmp dir ONLY — project writes go through tools.apply_patch. */",
-    "  writeText(path: string, content: string): Promise<void>",
-    "}",
-    "```",
-  ].join("\n")
+  return [...sections, ...aliasSections].join("\n\n")
 }
 
 /** Guest-side prelude: `tools` proxy → __callTool RPC, console → __log capture.
@@ -116,6 +326,45 @@ const tools = new Proxy({}, {
       throw e instanceof Error ? e : new Error(String(e));
     }),
 });
+const __attachments = [];
+const text = (value) => __text(__fmt(value));
+const __dataAttachment = (value, kind) => {
+  let url;
+  let mime;
+  if (typeof value === "string") url = value;
+  else if (value && typeof value === "object" && typeof value.data === "string" && typeof value.mimeType === "string") {
+    mime = value.mimeType;
+    url = "data:" + mime + ";base64," + value.data;
+  } else if (value && typeof value === "object") {
+    url = kind === "image" ? value.image_url : value.audio_url;
+  }
+  if (typeof url !== "string" || !url.startsWith("data:")) throw new Error(kind + " expects a base64-encoded data URL");
+  mime = mime || /^data:([^;,]+)/.exec(url)?.[1] || (kind === "image" ? "image/png" : "audio/mpeg");
+  __attachments.push({ type: "file", mime, url });
+};
+const image = (value) => __dataAttachment(value, "image");
+const audio = (value) => __dataAttachment(value, "audio");
+const generatedImage = (result) => {
+  __dataAttachment(result && result.image_url, "image");
+  if (result && result.output_hint) text(result.output_hint);
+};
+const exit = () => { throw { __codeModeExit: true }; };
+const store = (key, value) => __store(String(key), value);
+const load = (key) => __load(String(key));
+const notify = (value) => __notify(__fmt(value));
+let __timerID = 0;
+const __timers = new Map();
+const setTimeout = (callback, delayMs = 0) => {
+  const id = ++__timerID;
+  __timers.set(id, true);
+  __sleep(Math.max(0, Number(delayMs) || 0)).then(() => {
+    if (!__timers.delete(id)) return;
+    callback();
+  });
+  return id;
+};
+const clearTimeout = (id) => { __timers.delete(id); };
+const yield_control = () => __yieldControl();
 // Explicit JSON-safe serializer. JSON.stringify (and the sandbox marshal
 // fallback) silently degrades non-JSON values — circular refs became
 // "[object Object]", NaN became null with no signal, Error lost its message.
@@ -156,8 +405,8 @@ function __serialize(root, lenient) {
       return undefined;
     }
     if (v instanceof Error) {
-      if (!lenient) warn("Error at " + at() + " serialized as {name, message, stack}");
-      return { name: v.name, message: v.message, stack: v.stack };
+      if (!lenient) warn("Error at " + at() + " serialized as {name, message}");
+      return { name: v.name, message: v.message };
     }
     if (v instanceof Promise) {
       if (lenient) return "[Promise]";
@@ -301,36 +550,12 @@ function makeSemaphore(max: number) {
 export const ToolScriptTool = Tool.define(
   "exec",
   Effect.gen(function* () {
-    const truncate = yield* Truncate.Service
     const agents = yield* Agent.Service
-    return {
-      description: DESCRIPTION,
-      parameters: z.object({
-        code: z
-          .string()
-          .describe(
-            "Raw JavaScript or TypeScript source for the body of an async function, not JSON or a Markdown code block. Call tools via the global `tools` object; inspect `ALL_TOOLS` when needed; `return` the final aggregated value.",
-          ),
-        max_tool_calls: z
-          .number()
-          .int()
-          .min(1)
-          .max(MAX_TOOL_CALLS_CEILING)
-          .optional()
-          .describe(
-            `Tool call budget for this execution (default ${MAX_TOOL_CALLS_DEFAULT}, max ${MAX_TOOL_CALLS_CEILING}). Raise it only when the work genuinely needs more calls.`,
-          ),
-        timeout: z
-          .number()
-          .int()
-          .min(1)
-          .max(ACTIVE_DEADLINE_MS_CEILING)
-          .optional()
-          .describe(
-            `Compute-time budget in milliseconds (default ${ACTIVE_DEADLINE_MS_DEFAULT}, max ${ACTIVE_DEADLINE_MS_CEILING}). Counts only active script compute — time parked on tool calls is not charged.`,
-          ),
-      }),
-      execute: (params: { code: string; max_tool_calls?: number; timeout?: number }, ctx: Tool.Context) =>
+    const executeScript = (
+      params: z.infer<typeof Parameters>,
+      ctx: Tool.Context,
+      output: ReturnType<typeof createCodeModeOutputBuffer>,
+    ) =>
         Effect.gen(function* () {
           const maxToolCalls = params.max_tool_calls ?? MAX_TOOL_CALLS_DEFAULT
           const activeDeadlineMs = params.timeout ?? ACTIVE_DEADLINE_MS_DEFAULT
@@ -379,7 +604,15 @@ export const ToolScriptTool = Tool.define(
                 ? { providerID: model.providerID, modelID: model.id, agent: agentInfo }
                 : undefined,
             )
-          ).filter((def) => !TOOL_SCRIPT_EXCLUDED.has(def.id) && (!whitelist || whitelist.has(def.id)))
+          ).filter(
+            (def) =>
+              !NOT_CALLABLE_IN_EXEC.has(def.id) &&
+              (!whitelist ||
+                whitelist.has(def.id) ||
+                Object.entries(TOOL_SCRIPT_ALIASES).some(
+                  ([alias, target]) => target === def.id && whitelist.has(alias),
+                )),
+          )
           const byId = new Map(defs.map((def) => [def.id, def]))
           // Request-authorized MCP tools (delivered via ctx.extra.execMcp and
           // filled by SessionPrompt's resolveTools for THIS request). Tool Search
@@ -388,17 +621,33 @@ export const ToolScriptTool = Tool.define(
           // A module-level ref would be overwritten by concurrent sessions.
           // Builtin ids win on collision — an MCP server must not shadow `read`.
           const mcpTools = (ctx.extra?.execMcp as { current?: Record<string, AiTool> } | undefined)?.current ?? {}
+          const reservedNames = new Set([
+            ...Object.keys(TOOL_SCRIPT_ALIASES),
+            ...[...byId.keys()],
+            ...[...byId.keys()].map(normalizeCodeModeIdentifier),
+          ])
           const mcpById = new Map(
-            Object.entries(mcpTools).filter(([id]) => !byId.has(id) && (!whitelist || whitelist.has(id))),
+            Object.entries(mcpTools).filter(
+              ([id]) =>
+                !reservedNames.has(id) &&
+                !reservedNames.has(normalizeCodeModeIdentifier(id)) &&
+                (!whitelist || whitelist.has(id)),
+            ),
           )
           const allTools = [
-            ...[...byId.values()].map((def) => ({ name: def.id, description: def.description })),
+            ...[...byId.values()].map((def) => ({
+              name: normalizeCodeModeIdentifier(def.id),
+              description: def.description,
+            })),
             ...Object.entries(TOOL_SCRIPT_ALIASES).flatMap(([name, target]) => {
               const def = byId.get(target)
               if (!def) return []
               return [{ name, description: `Alias for ${target}. ${def.description}` }]
             }),
-            ...[...mcpById.entries()].map(([name, tool]) => ({ name, description: tool.description ?? "" })),
+            ...[...mcpById.entries()].map(([name, tool]) => ({
+              name: normalizeCodeModeIdentifier(name),
+              description: tool.description ?? "",
+            })),
           ]
           // Non-git projects report worktree === "/" (see Instance.containsPath) —
           // "/" as a jail root would allow EVERYTHING. Fall back to the project
@@ -454,7 +703,6 @@ export const ToolScriptTool = Tool.define(
           }
           const transpiled = result.outputText
 
-          const logs: string[] = []
           let logBytes = 0
           let calls = 0
           const withSlot = makeSemaphore(MAX_CONCURRENT)
@@ -478,8 +726,11 @@ export const ToolScriptTool = Tool.define(
           const callTool: HostFn = (name: unknown, args: unknown) => {
             const id = String(name)
             const alias = TOOL_SCRIPT_ALIASES[id as keyof typeof TOOL_SCRIPT_ALIASES]
-            const def = byId.get(alias ?? id)
-            const mcpDef = def ? undefined : mcpById.get(id)
+            const def = byId.get(alias ?? id) ?? [...byId.values()].find((item) => normalizeCodeModeIdentifier(item.id) === id)
+            const mcpDef = def
+              ? undefined
+              : (mcpById.get(id) ??
+                [...mcpById.entries()].find(([name]) => normalizeCodeModeIdentifier(name) === id)?.[1])
             if (!def && !mcpDef) return Promise.reject(new Error(`unknown tool: ${id}`))
             calls++
             if (calls > maxToolCalls)
@@ -499,8 +750,8 @@ export const ToolScriptTool = Tool.define(
             // truncation. Here we only adapt the wrapped result shape for the
             // guest: structuredContent (when the server sent it) crosses as a
             // parsed value under `structured` so scripts can filter/aggregate
-            // without re-parsing text; media attachments cannot cross the
-            // sandbox string boundary and are dropped with a note.
+            // without re-parsing text; media attachments from the nested call
+            // are not represented in this adapter and are dropped with a note.
             const executeMcp = (tool: AiTool) =>
               Effect.tryPromise({
                 try: () =>
@@ -516,24 +767,32 @@ export const ToolScriptTool = Tool.define(
                 Effect.map((result) => {
                   const r = result as {
                     output?: unknown
-                    metadata?: { mcp?: { structuredContent?: unknown } }
+                    metadata?: { mcp?: { isError?: boolean; structuredContent?: unknown; _meta?: Record<string, unknown> } }
                     attachments?: unknown[]
                   }
                   const structured = r?.metadata?.mcp?.structuredContent
                   const dropped = Array.isArray(r?.attachments) && r.attachments.length
-                    ? `\n[note: ${r.attachments.length} non-text attachment(s) dropped — binary content cannot cross the exec sandbox]`
+                    ? `\n[note: ${r.attachments.length} non-text attachment(s) dropped before the nested result entered the exec isolate]`
                     : ""
                   return {
                     title: id,
                     output: String(r?.output ?? "") + dropped,
                     metadata: (r?.metadata ?? {}) as Record<string, unknown>,
+                    content: [{ type: "text", text: String(r?.output ?? "") }],
+                    isError: r?.metadata?.mcp?.isError,
+                    _meta: r?.metadata?.mcp?._meta,
                     ...(structured !== undefined && { structured }),
+                    ...(structured !== undefined && { structuredContent: structured }),
                   }
                 }),
               )
             return withSlot(() =>
               bridge
-                .promise(def ? def.execute(args, subCtx) : executeMcp(mcpDef!))
+                .promise(
+                  def
+                    ? def.execute(def.id === "apply_patch" && typeof args === "string" ? { patch_text: args } : args, subCtx)
+                    : executeMcp(mcpDef!),
+                )
                 .then(
                   (result) => {
                     trace.push({ name: id, status: "success", durationMs: Date.now() - start })
@@ -560,7 +819,11 @@ export const ToolScriptTool = Tool.define(
             const text = String(message)
             if (logBytes >= MAX_LOG_BYTES) return undefined
             logBytes += Buffer.byteLength(text, "utf8")
-            logs.push(logBytes >= MAX_LOG_BYTES ? text.slice(0, 200) + " …(log budget exhausted)" : text)
+            output.append(`${logBytes >= MAX_LOG_BYTES ? text.slice(0, 200) + " …(log budget exhausted)" : text}\n`)
+            return undefined
+          }
+          const textHook: HostFn = (value: unknown) => {
+            output.append(`${String(value)}\n`)
             return undefined
           }
 
@@ -595,6 +858,28 @@ export const ToolScriptTool = Tool.define(
             await Filesystem.write(abs, text)
             return undefined
           }
+          const pendingStoreWrites = new Map<string, unknown>()
+          const storeValue: HostFn = (key: unknown, value: unknown) => {
+            pendingStoreWrites.set(String(key), value)
+            return undefined
+          }
+          const loadValue: HostFn = (key: unknown) => {
+            const name = String(key)
+            if (pendingStoreWrites.has(name)) return pendingStoreWrites.get(name)
+            return sessionStore(ctx.sessionID).get(name)
+          }
+          const notifyValue: HostFn = (value: unknown) => {
+            bridge
+              .promise(ctx.metadata({ metadata: { running: true, notification: String(value) } }))
+              .catch(() => {})
+            return undefined
+          }
+          const sleep: HostFn = (delay: unknown) =>
+            new Promise((resolve) => setTimeout(resolve, Math.max(0, Number(delay) || 0)))
+          const yieldControl: HostFn = () => {
+            output.yield()
+            return undefined
+          }
 
           const outcome = yield* Effect.tryPromise({
             try: () =>
@@ -608,14 +893,22 @@ export const ToolScriptTool = Tool.define(
                   GUEST_PRELUDE +
                   "\n" +
                   transpiled +
-                  `\nconst __ret = await globalThis.__main();
+                  `\nlet __ret;
+try { __ret = await globalThis.__main(); }
+catch (e) { if (!e || e.__codeModeExit !== true) throw e; }
 const __out = __serialize(__ret, false);
-return { __undef: __out.value === undefined, json: __out.value === undefined ? "" : JSON.stringify(__out.value), warnings: __out.warnings };`,
+return { __undef: __out.value === undefined, json: __out.value === undefined ? "" : JSON.stringify(__out.value), warnings: __out.warnings, attachments: __attachments };`,
                 {
                 __callTool: callTool,
                 __log: logHook,
+                __text: textHook,
                 __readText: readText,
                 __writeText: writeText,
+                __store: storeValue,
+                __load: loadValue,
+                __notify: notifyValue,
+                __sleep: sleep,
+                __yieldControl: yieldControl,
               }, {
                 deterministic: false,
                 deadlineMs: WALL_DEADLINE_MS,
@@ -628,7 +921,6 @@ return { __undef: __out.value === undefined, json: __out.value === undefined ? "
           const traceLines = trace.map(
             (t) => `- ${t.name} → ${t.status}${t.error ? ` (${t.error.slice(0, 200)})` : ""} [${t.durationMs}ms]`,
           )
-          const logBlock = logs.length ? `<logs>\n${logs.join("\n")}\n</logs>\n` : ""
           const traceBlock = trace.length ? `<trace count="${trace.length}">\n${traceLines.join("\n")}\n</trace>\n` : ""
 
           if (outcome._tag === "Failure") {
@@ -650,17 +942,22 @@ return { __undef: __out.value === undefined, json: __out.value === undefined ? "
             return {
               title: status,
               metadata: { status, toolCalls: trace.length, counts: tally(), recent: recentTail() },
-              output: `<exec status="${status}">\n<error_message>\n${explained}\n</error_message>\n${logBlock}${traceBlock}</exec>`,
+              output: `<exec status="${status}">\n<error_message>\n${explained}\n</error_message>\n${traceBlock}</exec>`,
             }
           }
 
-          // XML-wrap the return value verbatim: no JSON.stringify → no \n / \" escaping
-          // pollution. Strings pass through as-is; non-strings arrive as guest-side
-          // strict-serialized JSON (see __serialize) and are re-indented for readability.
-          const envelope = outcome.success as { __undef: boolean; json: string; warnings: string[] }
+          // Keep top-level return for backward compatibility, but emit it directly
+          // rather than inventing a `<return_value>` content channel. `text()` and
+          // console output have already streamed through the cell output buffer.
+          const envelope = outcome.success as {
+            __undef: boolean
+            json: string
+            warnings: string[]
+            attachments: Array<{ type: "file"; mime: string; url: string }>
+          }
           const parsed = envelope.__undef ? undefined : (JSON.parse(envelope.json) as unknown)
           const returnedText =
-            parsed === undefined ? "undefined" : typeof parsed === "string" ? parsed : JSON.stringify(parsed, null, 2)
+            parsed === undefined ? "" : typeof parsed === "string" ? parsed : JSON.stringify(parsed, null, 2)
           const warningsBlock = envelope.warnings.length
             ? `<warnings>\n${envelope.warnings.map((w) => `- ${w}`).join("\n")}\n</warnings>\n`
             : ""
@@ -669,15 +966,53 @@ return { __undef: __out.value === undefined, json: __out.value === undefined ? "
             return {
               title: "result too large",
               metadata: { status: "budget_exceeded", toolCalls: trace.length, counts: tally(), recent: recentTail() },
-              output: `<exec status="budget_exceeded">\n<error_message>\nreturned value is ${returnedBytes} bytes (max ${MAX_RESULT_BYTES}). Aggregate or slice the data before returning.\n</error_message>\n${warningsBlock}${logBlock}${traceBlock}</exec>`,
+              output: `<exec status="budget_exceeded">\n<error_message>\nreturned value is ${returnedBytes} bytes (max ${MAX_RESULT_BYTES}). Aggregate or slice the data before returning.\n</error_message>\n${warningsBlock}${traceBlock}</exec>`,
             }
           }
 
+          if (pendingStoreWrites.size > 0) {
+            const committed = sessionStore(ctx.sessionID)
+            pendingStoreWrites.forEach((value, key) => committed.set(key, value))
+          }
           return {
             title: `${trace.length} tool calls`,
             metadata: { status: "completed", toolCalls: trace.length, counts: tally(), recent: recentTail() },
-            output: `<exec status="completed">\n<return_value>\n${returnedText}\n</return_value>\n${warningsBlock}${logBlock}${traceBlock}</exec>`,
+            output: [returnedText, warningsBlock, traceBlock].filter(Boolean).join("\n"),
+            attachments: envelope.attachments,
           }
+        }).pipe(Effect.orDie)
+
+    return {
+      description: DESCRIPTION,
+      parameters: Parameters,
+      freeform: {
+        format: {
+          type: "grammar" as const,
+          syntax: "lark" as const,
+          definition: CODE_MODE_EXEC_GRAMMAR,
+        },
+        parse: parseExecSource,
+      },
+      execute: (params: z.infer<typeof Parameters>, ctx: Tool.Context) =>
+        Effect.gen(function* () {
+          const bridge = yield* EffectBridge.make()
+          const controller = new AbortController()
+          if (ctx.abort.aborted) controller.abort()
+          const abort = () => controller.abort()
+          ctx.abort.addEventListener("abort", abort, { once: true })
+          const output = createCodeModeOutputBuffer()
+          const promise = bridge.promise(executeScript(params, { ...ctx, abort: controller.signal }, output))
+          promise.finally(() => ctx.abort.removeEventListener("abort", abort)).catch(() => {})
+          return yield* Effect.promise(() =>
+            startCell({
+              sessionID: ctx.sessionID,
+              promise,
+              controller,
+              output,
+              yieldTimeMs: params.yield_time_ms,
+              maxTokens: params.max_output_tokens,
+            }),
+          )
         }).pipe(Effect.orDie),
     }
   }),

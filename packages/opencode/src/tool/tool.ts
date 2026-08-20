@@ -50,6 +50,15 @@ export interface Def<Parameters extends z.ZodType = z.ZodType, M extends Metadat
   parameters: Parameters
   execute(args: z.infer<Parameters>, ctx: Context): Effect.Effect<ExecuteResult<M>>
   formatValidationError?(error: z.ZodError): string
+  freeform?: {
+    format: {
+      type: "grammar"
+      syntax: "lark"
+      definition: string
+    }
+    parse(input: string): z.infer<Parameters>
+  }
+  nestedToolNames?: string[]
   shell?: {
     description: string
     parse(script: string): Effect.Effect<z.infer<Parameters>[], unknown>

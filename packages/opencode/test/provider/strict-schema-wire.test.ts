@@ -5,6 +5,7 @@ import { createXai } from "@ai-sdk/xai"
 import { dynamicTool, generateObject, generateText, jsonSchema, tool } from "ai"
 import z from "zod"
 import { ProviderTransform } from "../../src/provider"
+import { CODE_MODE_EXEC_GRAMMAR } from "../../src/tool/tool-script"
 
 // WIRE-LEVEL proof that function tools ship with an explicit `strict: false` to
 // the OpenAI Responses API.
@@ -125,6 +126,29 @@ const anthropicMessages = (tools: Record<string, any>) =>
   outbound(tools, anthropicReply, (fetch) => createAnthropic({ apiKey: "test-key", fetch })("claude-sonnet-4"))
 
 describe("function tools reach the OpenAI Responses API with an explicit strict: false", () => {
+  test("exec reaches the wire as the Codex custom tool with the exact Lark grammar", async () => {
+    const body = await openaiResponses(
+      ProviderTransform.tools(
+        {
+          exec: createOpenAI({ apiKey: "unused" }).tools.customTool({
+            name: "exec",
+            description: "Run JavaScript code to orchestrate/compose tool calls",
+            format: { type: "grammar", syntax: "lark", definition: CODE_MODE_EXEC_GRAMMAR },
+          }),
+        },
+        model("@ai-sdk/openai"),
+      ),
+    )
+    expect(body.tools).toEqual([
+      {
+        type: "custom",
+        name: "exec",
+        description: "Run JavaScript code to orchestrate/compose tool calls",
+        format: { type: "grammar", syntax: "lark", definition: CODE_MODE_EXEC_GRAMMAR },
+      },
+    ])
+  })
+
   test("CONTROL: untransformed tools omit `strict` entirely (the defect)", async () => {
     const body = await openaiResponses(toolset())
     expect(body.tools).toHaveLength(2)

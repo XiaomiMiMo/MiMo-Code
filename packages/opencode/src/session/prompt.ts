@@ -25,6 +25,7 @@ import {
 } from "ai"
 import { InstallationVersion } from "@/installation/version"
 import type { JSONObject, JSONSchema7 } from "@ai-sdk/provider"
+import { openai } from "@ai-sdk/openai"
 import { SessionPrune } from "./prune"
 import { SessionCheckpoint } from "./checkpoint"
 import { SessionCompaction } from "./compaction"
@@ -119,7 +120,8 @@ import {
   type McpToolSearchMetadata,
 } from "@/tool/mcp-tool-search"
 import { isMcpToolSearchEnabled, usesGPTToolset } from "@/tool/gpt"
-import { GPT_TOOL_SCRIPT_ONLY } from "@/tool/tool-script-ref"
+import { NOT_CALLABLE_IN_EXEC, TOOL_SCRIPT_ALIASES } from "@/tool/tool-script-ref"
+import { renderMcpToolScriptDeclarations } from "@/tool/tool-script"
 import { isSkillCatalogReminder, SKILL_CATALOG_REMINDER_MARKER } from "./skill-catalog"
 
 // @ts-ignore
@@ -1238,6 +1240,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
       const activeTools = new Set<string>()
       const loadedMcpTools = new Set<string>()
       const execMcpTools: Record<string, AITool> = {}
+      const execNestedToolNames = new Set<string>()
       const mcpSearchEntries: McpToolSearchEntry[] = []
       const mcpCatalog = { current: createMcpToolSearchCatalog([]) }
       // exec's request-scoped MCP view. Holder object (same pattern as
@@ -1270,7 +1273,9 @@ NOTE: At any point in time through this workflow you should feel free to ask the
       const execAllowedByWhitelist =
         usesGPTToolset(input.model.id) &&
         !!whitelist &&
-        [...whitelist].some((toolID) => GPT_TOOL_SCRIPT_ONLY.has(toolID))
+        [...whitelist].some(
+          (toolID) => !NOT_CALLABLE_IN_EXEC.has(toolID) || toolID in TOOL_SCRIPT_ALIASES,
+        )
       // Whether a permission ask must be non-interactive (fail clean, never hang):
       // true for system-spawned actors (checkpoint-writer/dream/distill) AND any
       // background actor such as compose workflow subagents (spawned as "general"
@@ -1369,12 +1374,9 @@ NOTE: At any point in time through this workflow you should feel free to ask the
         providerID: input.model.providerID,
         agent: input.agent,
       })) {
-        const schema = ProviderTransform.schema(input.model, z.toJSONSchema(item.parameters))
-        tools[item.id] = tool({
-          description: item.description,
-          inputSchema: jsonSchema(schema),
-          execute(args, options) {
-            return run.promise(
+        if (item.id === "exec") item.nestedToolNames?.forEach((name) => execNestedToolNames.add(name))
+        const execute = (args: unknown, options: ToolExecutionOptions) => {
+          return run.promise(
               Effect.gen(function* () {
                 const startTs = Date.now()
                 const callID = options?.toolCallId ?? "?"
@@ -1468,8 +1470,27 @@ NOTE: At any point in time through this workflow you should feel free to ask the
                 return output
               }),
             )
-          },
-        })
+        }
+        const supportsFreeform =
+          input.model.api.npm === "@ai-sdk/openai" ||
+          (input.model.api.npm === "@ai-sdk/azure" && input.model.options["useCompletionUrls"] !== true)
+        tools[item.id] =
+          item.freeform && supportsFreeform
+            ? openai.tools.customTool({
+                name: item.id,
+                description: item.description,
+                format: item.freeform.format,
+                execute: (source, options) => execute(item.freeform!.parse(source), options),
+                toModelOutput: ({ output }) => ({
+                  type: "text",
+                  value: (output as Tool.ExecuteResult).output,
+                }),
+              })
+            : tool({
+                description: item.description,
+                inputSchema: jsonSchema(ProviderTransform.schema(input.model, z.toJSONSchema(item.parameters))),
+                execute,
+              })
         if (item.id !== MCP_TOOL_SEARCH_ID) activeTools.add(item.id)
       }
 
@@ -1714,7 +1735,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
       ) {
         activeTools.add(MCP_TOOL_SEARCH_ID)
       }
-      loadedMcpTools.forEach((name) => activeTools.add(name))
+      if (!usesGPTToolset(input.model.id)) loadedMcpTools.forEach((name) => activeTools.add(name))
 
       // MCP Tool Search keeps full schemas out of the outer model tool list;
       // it is a context-budget optimization, not an authorization boundary.
@@ -1723,10 +1744,21 @@ NOTE: At any point in time through this workflow you should feel free to ask the
       // round-trip. These wrappers still run the ordinary permission, plugin,
       // metrics, normalization, and truncation pipeline above.
       execMcp.current = execMcpTools
+      Object.keys(execMcpTools).forEach((name) => execNestedToolNames.add(name))
+      const mcpDeclarations = yield* Effect.promise(() => renderMcpToolScriptDeclarations(execMcpTools))
+      const execTool = tools["exec"]
+      if (mcpDeclarations && execTool?.type === "provider") {
+        const description = typeof execTool.args.description === "string" ? execTool.args.description : ""
+        execTool.args = { ...execTool.args, description: `${description}\n\n${mcpDeclarations}` }
+      }
+      if (mcpDeclarations && execTool && execTool.type !== "provider") {
+        execTool.description = `${execTool.description ?? ""}\n\n${mcpDeclarations}`
+      }
 
       return {
         tools,
         activeTools: [...activeTools].filter((name) => tools[name]),
+        execToolNames: [...execNestedToolNames],
       }
     })
 
@@ -3759,6 +3791,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
             })
             const tools = resolvedTools.tools
             const activeTools = resolvedTools.activeTools
+            const execToolNames = resolvedTools.execToolNames
 
             if (lastUser.format?.type === "json_schema") {
               tools["StructuredOutput"] = createStructuredOutputTool({
@@ -4074,6 +4107,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
               messages: [...modelMsgs, ...(isLastStep ? [{ role: "user" as const, content: MAX_STEPS }] : [])],
               tools,
               activeTools,
+              execToolNames,
               model,
               toolChoice: isLastStep ? ("none" as const) : format.type === "json_schema" ? ("required" as const) : undefined,
               agentID: lastUser.agentID,

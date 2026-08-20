@@ -16,28 +16,11 @@ export const toolScriptRegistry: {
     | undefined
 } = { current: undefined }
 
-export const GPT_TOOL_SCRIPT_ONLY = new Set([
-  "bash",
-  "apply_patch",
-  "view_image",
-  "actor",
-  "task",
-  "question",
-  "webfetch",
-  "skill_search",
-  "skill",
-  "change_directory",
-  "plan_exit",
-  "memory",
-  "history",
-  "cron",
-])
-
-// Recursive orchestration and internal sentinel tools stay outside scripts.
-// Other control-flow tools are intentionally callable through `tools.<id>` so
-// the GPT/Codex toolset can expose a single outer `exec` surface.
-export const TOOL_SCRIPT_EXCLUDED = new Set([
+// Tools that must not be callable from inside `exec`, regardless of whether
+// they exist in the surrounding registry.
+export const NOT_CALLABLE_IN_EXEC = new Set([
   "exec",
+  "wait",
   "mcp_tool_search",
   "invalid",
   "session",

@@ -191,6 +191,23 @@ export type RepairedToolCall = {
   input: string
 }
 
+export function repairNestedToolCallAsExec(input: {
+  toolName: string
+  input: string
+  nestedToolNames: readonly string[]
+  execSchema: JSONSchema7
+}): RepairedToolCall | undefined {
+  const toolName = resolveName(input.toolName, input.nestedToolNames)
+  if (!toolName) return undefined
+  const args = JSON.stringify(parseToolInput(input.input))
+  if (args === undefined) return undefined
+  const code = `const result = await tools[${JSON.stringify(toolName)}](${args});\ntext(result && typeof result === "object" && "output" in result ? result.output : result);`
+  return {
+    toolName: "exec",
+    input: input.execSchema.type === "string" ? JSON.stringify(code) : JSON.stringify({ code }),
+  }
+}
+
 /** Repair tool name and/or argument keys so AI SDK validation can succeed. */
 export async function repairToolCall(input: RepairToolCallInput): Promise<RepairedToolCall | undefined> {
   const resolvedName = resolveName(input.toolName, input.toolNames)
