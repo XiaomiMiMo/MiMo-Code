@@ -274,7 +274,12 @@ export class OpenAICompatibleChatLanguageModel implements LanguageModelV3 {
     return {
       content,
       finishReason: {
-        unified: mapOpenAICompatibleFinishReason(choice.finish_reason),
+        // Mirror the streaming flush() fallback: gateways that omit
+        // finish_reason but return tool calls ended in a tool call.
+        unified:
+          choice.finish_reason == null && choice.message.tool_calls != null && choice.message.tool_calls.length > 0
+            ? "tool-calls"
+            : mapOpenAICompatibleFinishReason(choice.finish_reason),
         raw: choice.finish_reason ?? undefined,
       },
       usage: {
@@ -649,10 +654,13 @@ export class OpenAICompatibleChatLanguageModel implements LanguageModelV3 {
           },
 
           flush(controller) {
-            // If no explicit finish_reason was received (gateway omits it) and
-            // tool calls are present, default to "tool-calls" so the agent loop
-            // continues for tool execution rather than terminating as "stop".
-            if (finishReason.raw == null && toolCalls.length > 0) {
+            // Gateways that omit finish_reason entirely (e.g. muse-spark via
+            // zen/go) leave the pristine default untouched. If tool call deltas
+            // were streamed, the turn ended in a tool call, not a plain stop —
+            // report "tool-calls" so agent loops continue for tool execution.
+            // Checking unified === "stop" keeps explicit reasons (and the
+            // "error" state, whose raw is also undefined) from being clobbered.
+            if (finishReason.unified === "stop" && finishReason.raw == null && toolCalls.length > 0) {
               finishReason = { unified: "tool-calls", raw: undefined }
             }
 
