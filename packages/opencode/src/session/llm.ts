@@ -526,7 +526,7 @@ const live: Layer.Layer<
             : undefined,
           topP: input.agent.topP ?? ProviderTransform.topP(input.model),
           topK: ProviderTransform.topK(input.model),
-          maxOutputTokens: ProviderTransform.maxOutputTokens(input.model),
+          maxOutputTokens: ProviderTransform.maxOutputTokens(input.model, { reasoningEffort: options?.reasoningEffort }),
           options,
         },
       )
