@@ -82,6 +82,13 @@ export function create(prefix: string, direction: "descending" | "ascending", ti
   }
 
   const mark = direction === "descending" ? "-" : "g"
+  // Session IDs are copied into the resume command. Session lists primarily
+  // order by update time, so keep this user-facing payload hexadecimal instead
+  // of exposing the v2 sort marker.
+  if (prefix === prefixes.session) {
+    return prefix + "_" + timeBytes.toString("hex") + randomBase62(LENGTH - TIME_BYTES * 2)
+  }
+
   return prefix + "_" + mark + timeBytes.toString("hex") + randomBase62(LENGTH - 1 - TIME_BYTES * 2)
 }
 

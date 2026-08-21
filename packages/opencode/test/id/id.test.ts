@@ -29,10 +29,15 @@ describe("Identifier", () => {
   })
 
   test("descending v2 starts with - so it sorts before every v1 id", () => {
-    const next = Identifier.descending("session")
+    const next = Identifier.descending("message")
     expect(next[4]).toBe("-")
-    expect(next < v1("ses", "000000000000")).toBe(true)
-    expect(next < v1("ses", "ffffffffffff")).toBe(true)
+    expect(next < v1("msg", "000000000000")).toBe(true)
+    expect(next < v1("msg", "ffffffffffff")).toBe(true)
+  })
+
+  test("session IDs keep a hexadecimal payload without a sort marker", () => {
+    const next = Identifier.descending("session")
+    expect(next).toMatch(/^ses_[0-9a-f]{16}[0-9A-Za-z]{10}$/)
   })
 
   test("ascending ids stay ordered across the old 48-bit wrap", () => {
