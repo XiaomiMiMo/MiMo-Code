@@ -1,5 +1,5 @@
 import { Context, Effect, Layer } from "effect"
-import { and, asc, desc, eq, gt, sql } from "drizzle-orm"
+import { and, asc, desc, eq, gt, or, sql } from "drizzle-orm"
 import { Database } from "../storage"
 import { Config } from "../config"
 import { PartTable, SessionTable } from "../session/session.sql"
@@ -49,7 +49,12 @@ function scanSession(
   enabled: ReadonlySet<Kind>,
 ) {
   return Effect.gen(function* () {
-    let cursor = ""
+    // Composite (time_created, id) cursor. Part ids share the message-id clock,
+    // which wraps every ~2.18 years (see MessageV2.compare), so a bare
+    // `gt(id, cursor)` walk stops dead at a wrap boundary: every post-wrap part
+    // has a SMALLER id than the pre-wrap tail and would never be visited, leaving
+    // the newest history permanently unindexed.
+    let cursor: { time: number; id: string } | undefined
     while (true) {
       const parts = Database.use((db) =>
         db
@@ -58,18 +63,26 @@ function scanSession(
           .where(
             and(
               eq(PartTable.session_id, session.id as any),
-              gt(PartTable.id, cursor as any),
+              ...(cursor
+                ? [
+                    or(
+                      gt(PartTable.time_created, cursor.time),
+                      and(eq(PartTable.time_created, cursor.time), gt(PartTable.id, cursor.id as any)),
+                    )!,
+                  ]
+                : []),
               sql`NOT EXISTS (SELECT 1 FROM history_fts WHERE history_fts.part_id = ${PartTable.id})`,
             ),
           )
-          .orderBy(asc(PartTable.id))
+          .orderBy(asc(PartTable.time_created), asc(PartTable.id))
           .limit(BATCH)
           .all(),
       )
       if (parts.length === 0) return
 
       yield* writeBatch(parts, session.project_id, resolver, enabled)
-      cursor = parts[parts.length - 1]!.id
+      const last = parts[parts.length - 1]!
+      cursor = { time: last.time_created, id: last.id }
       yield* Effect.sleep("10 millis")
     }
   })

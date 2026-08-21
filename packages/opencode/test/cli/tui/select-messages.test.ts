@@ -1,7 +1,12 @@
 import { describe, test, expect } from "bun:test"
 import { bucketMessages, selectMessages } from "../../../src/cli/cmd/tui/context/sync"
 
-const msg = (id: string, agentID?: string) => ({ id, agentID }) as any
+// `time.created` mirrors the numeric suffix of `id`. selectMessages picks the
+// newest bucket by its last message's TIME (ids wrap every ~2.18 years and invert
+// across the boundary — see compareMessages), so a fixture without a time would
+// leave every bucket tied and stop exercising the choice at all.
+const msg = (id: string, agentID?: string) =>
+  ({ id, agentID, time: { created: Number(id.replace(/^\D*/, "")) || 0 } }) as any
 
 describe("selectMessages", () => {
   test("renders the main bucket for a normal session", () => {

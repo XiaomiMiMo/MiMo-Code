@@ -664,9 +664,15 @@ export const layer: Layer.Layer<Service, never, Bus.Service | Storage.Service | 
       })
       const msgs = yield* messages({ sessionID: input.sessionID, agentID: "*" })
       const idMap = new Map<string, MessageID>()
+      // Fork cuts the history at input.messageID. Compare on (time.created, id) —
+      // a bare id compare inverts across an id wrap (see MessageV2.compare), which
+      // would either truncate at message 0 (empty fork) or never trigger (full
+      // copy). `messages` already returns chronological order, so the break is
+      // still a single forward scan.
+      const cutoff = input.messageID ? msgs.find((m) => m.info.id === input.messageID)?.info : undefined
 
       for (const msg of msgs) {
-        if (input.messageID && msg.info.id >= input.messageID) break
+        if (cutoff && MessageV2.compare(msg.info, cutoff) >= 0) break
         const newID = MessageID.ascending()
         idMap.set(msg.info.id, newID)
 
@@ -811,7 +817,11 @@ export const layer: Layer.Layer<Service, never, Bus.Service | Storage.Service | 
           .select({ id: MessageTable.id })
           .from(MessageTable)
           .where(and(eq(MessageTable.session_id, sessionID), eq(MessageTable.agent_id, "main")))
-          .orderBy(desc(MessageTable.id))
+          // time_created first: message ids wrap every ~2.18 years (see
+          // MessageV2.compare), so `desc(id)` alone returns a pre-wrap message as
+          // "last" for any session straddling a boundary. id only breaks ties
+          // within one millisecond.
+          .orderBy(desc(MessageTable.time_created), desc(MessageTable.id))
           .limit(1)
           .get(),
       )

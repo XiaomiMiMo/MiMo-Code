@@ -15,7 +15,7 @@ import { Dynamic } from "solid-js/web"
 import path from "path"
 import { useCurrentAgentID, useRoute, useRouteData } from "@tui/context/route"
 import { useProject } from "@tui/context/project"
-import { selectMessages, useSync } from "@tui/context/sync"
+import { compareMessages, compareToMarker, selectMessages, useSync } from "@tui/context/sync"
 import { useEvent } from "@tui/context/event"
 import { SplitBorder } from "@tui/component/border"
 import { Spinner } from "@tui/component/spinner"
@@ -189,8 +189,11 @@ export function Session() {
   )
   const disabled = createMemo(() => permissions().length > 0 || questions().length > 0)
 
+  // The in-flight assistant message itself, not just its id: `queued` compares
+  // against it chronologically (see compareMessages) and an id compare inverts
+  // across an id wrap, which would mark settled messages as queued.
   const pending = createMemo(() => {
-    return messages().findLast((x) => x.role === "assistant" && !x.time.completed)?.id
+    return messages().findLast((x) => x.role === "assistant" && !x.time.completed)
   })
 
   const lastAssistant = createMemo(() => {
@@ -734,7 +737,17 @@ export function Session() {
         const status = sync.data.session_status?.[route.sessionID]
         if (status?.type !== "idle") await sdk.client.session.abort({ sessionID: route.sessionID }).catch(() => {})
         const revert = session()?.revert?.messageID
-        const message = messages().findLast((x) => (!revert || x.id < revert) && x.role === "user")
+        const all = messages()
+        // Ordered against the revert marker via compareToMarker, not by raw id: an
+        // id compare inverts across an id wrap and would undo the wrong turn.
+        // An unresolvable marker (outside the loaded window) yields undefined, which
+        // excludes the message rather than defaulting it into the "before" side.
+        const before = (x: (typeof all)[number]) => {
+          if (!revert) return true
+          const rel = compareToMarker(all, x, revert)
+          return rel !== undefined && rel < 0
+        }
+        const message = all.findLast((x) => x.role === "user" && before(x))
         if (!message) return
         void sdk.client.session
           .revert({
@@ -773,7 +786,13 @@ export function Session() {
         dialog.clear()
         const messageID = session()?.revert?.messageID
         if (!messageID) return
-        const message = messages().find((x) => x.role === "user" && x.id > messageID)
+        const all = messages()
+        // Ordered via compareToMarker, not by raw id (inverts across an id wrap).
+        const message = all.find((x) => {
+          if (x.role !== "user") return false
+          const rel = compareToMarker(all, x, messageID)
+          return rel !== undefined && rel > 0
+        })
         if (!message) {
           void sdk.client.session.unrevert({
             sessionID: route.sessionID,
@@ -1020,9 +1039,14 @@ export function Session() {
       category: "session",
       onSelect: (dialog) => {
         const revertID = session()?.revert?.messageID
-        const lastAssistantMessage = messages().findLast(
-          (msg) => msg.role === "assistant" && (!revertID || msg.id < revertID),
-        )
+        const all = messages()
+        // Ordered via compareToMarker, not by raw id (inverts across an id wrap).
+        const lastAssistantMessage = all.findLast((msg) => {
+          if (msg.role !== "assistant") return false
+          if (!revertID) return true
+          const rel = compareToMarker(all, msg, revertID)
+          return rel !== undefined && rel < 0
+        })
         if (!lastAssistantMessage) {
           toast.show({ message: "No assistant messages found", variant: "error" })
           dialog.clear()
@@ -1226,7 +1250,13 @@ export function Session() {
   const revertRevertedMessages = createMemo(() => {
     const messageID = revertMessageID()
     if (!messageID) return []
-    return messages().filter((x) => x.id >= messageID && x.role === "user")
+    const all = messages()
+    // Ordered via compareToMarker, not by raw id (inverts across an id wrap).
+    return all.filter((x) => {
+      if (x.role !== "user") return false
+      const rel = compareToMarker(all, x, messageID)
+      return rel !== undefined && rel >= 0
+    })
   })
 
   const revert = createMemo(() => {
@@ -1406,7 +1436,7 @@ export function Session() {
                         )
                       })()}
                     </Match>
-                    <Match when={revert()?.messageID && message.id >= revert()!.messageID}>
+                    <Match when={revert()?.messageID && (compareToMarker(messages(), message, revert()!.messageID) ?? -1) >= 0}>
                       <></>
                     </Match>
                     <Match when={message.role === "user"}>
@@ -1522,7 +1552,7 @@ function UserMessage(props: {
   parts: Part[]
   onMouseUp: () => void
   index: number
-  pending?: string
+  pending?: { id: string; time: { created: number } }
 }) {
   const ctx = use()
   const local = useLocal()
@@ -1573,7 +1603,7 @@ function UserMessage(props: {
   const { theme } = useTheme()
   const t = useLanguage().t
   const [hover, setHover] = createSignal(false)
-  const queued = createMemo(() => props.pending && props.message.id > props.pending)
+  const queued = createMemo(() => !!props.pending && compareMessages(props.message, props.pending) > 0)
   const color = createMemo(() => local.agent.color(props.message.agent))
   const queuedFg = createMemo(() => selectedForeground(theme, color()))
   const metadataVisible = createMemo(() => queued() || ctx.showTimestamps())

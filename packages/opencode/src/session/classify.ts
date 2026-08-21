@@ -71,7 +71,7 @@ export function classifyAssistantStep(input: {
   if (
     assistant.finish === "tool-calls" &&
     !assistant.error &&
-    input.lastUser.id < assistant.id &&
+    MessageV2.compare(input.lastUser, assistant) < 0 &&
     !input.parts.some((part) => part.type === "tool") &&
     input.parts.some(
       (part) =>
@@ -87,7 +87,13 @@ export function classifyAssistantStep(input: {
   if (assistant.finish === "tool-calls") return { type: "continue" }
 
   // 4. Stale assistant predating the current user turn — don't terminate on it.
-  if (input.phase === "existing-assistant" && !(input.lastUser.id < assistant.id))
+  // Ordered by (time.created, id) via MessageV2.compare, not by raw id: message
+  // ids encode a 48-bit timestamp that wraps every ~2.18 years, so across a wrap
+  // a NEWER assistant gets a SMALLER id and a bare compare calls a fresh reply
+  // "stale" (or a genuinely stale one fresh). Both misjudgements are load-bearing
+  // here and at #3a — this is the same guard prompt.ts applies before
+  // auto-continue, and it must agree with it.
+  if (input.phase === "existing-assistant" && !(MessageV2.compare(input.lastUser, assistant) < 0))
     return { type: "continue" }
 
   // 5. Errored step — checked before content so an errored message that also
