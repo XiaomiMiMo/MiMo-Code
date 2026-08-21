@@ -997,6 +997,85 @@ export const SessionRoutes = lazy(() =>
         })
       },
     )
+    .get(
+      "/:sessionID/recovery",
+      describeRoute({
+        summary: "List interrupted turn recovery candidates",
+        description: "Return the latest incomplete assistant turn that can be resumed without creating a user message.",
+        operationId: "session.recovery",
+        responses: {
+          200: {
+            description: "Recovery candidates",
+            content: {
+              "application/json": {
+                schema: resolver(z.object({
+                  assistantMessageID: MessageID.zod,
+                  parentMessageID: MessageID.zod,
+                  created: z.number(),
+                  hasPendingTool: z.boolean(),
+                }).array()),
+              },
+            },
+          },
+          ...errors(400, 404),
+        },
+      }),
+      validator("param", z.object({ sessionID: SessionID.zod })),
+      async (c) =>
+        jsonRequest("SessionRoutes.recovery", c, function* () {
+          const sessionID = c.req.valid("param").sessionID
+          const svc = yield* SessionPrompt.Service
+          return yield* svc.recovery({ sessionID })
+        }),
+    )
+    .post(
+      "/:sessionID/turn/:assistantMessageID/resume",
+      describeRoute({
+        summary: "Resume an interrupted turn",
+        description: "Resume an incomplete assistant turn without creating another user message.",
+        operationId: "session.resume",
+        responses: {
+          202: { description: "Resume accepted" },
+          ...errors(400, 404, 409),
+        },
+      }),
+      validator("param", z.object({
+        sessionID: SessionID.zod,
+        assistantMessageID: MessageID.zod,
+      })),
+      async (c) => {
+        const params = c.req.valid("param")
+        await runRequest(
+          "SessionRoutes.resume.assertNotBusy",
+          c,
+          SessionRunState.Service.use((svc) => svc.assertNotBusy(params.sessionID)),
+        )
+        await runRequest(
+          "SessionRoutes.resume.validate",
+          c,
+          SessionPrompt.Service.use((svc) =>
+            svc.recovery({ sessionID: params.sessionID }).pipe(
+              Effect.flatMap((candidates) =>
+                candidates.some((candidate) => candidate.assistantMessageID === params.assistantMessageID)
+                  ? Effect.void
+                  : Effect.die(new Error("No resumable interrupted turn found for assistant message " + params.assistantMessageID)),
+              ),
+            ),
+          ),
+        )
+        void runRequest(
+          "SessionRoutes.resume",
+          c,
+          SessionPrompt.Service.use((svc) => svc.resume({
+            sessionID: params.sessionID,
+            assistantMessageID: params.assistantMessageID,
+          })),
+        ).catch((error) => {
+          log.error("session resume failed", { sessionID: params.sessionID, error })
+        })
+        return c.body(null, 202)
+      },
+    )
     .post(
       "/:sessionID/message",
       describeRoute({

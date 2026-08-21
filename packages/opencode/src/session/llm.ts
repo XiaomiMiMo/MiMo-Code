@@ -280,6 +280,16 @@ export type StreamRequest = StreamInput & {
 
 export type Event = Result["fullStream"] extends AsyncIterable<infer T> ? T : never
 
+/** Convert per-turn context into the final model-visible user segment. */
+export function turnContextMessages(user: MessageV2.User): ModelMessage[] {
+  const context = user.system?.trim()
+  if (!context) return []
+  return [{
+    role: "user",
+    content: `<system-reminder>\n${context}\n</system-reminder>`,
+  }]
+}
+
 export interface Interface {
   readonly stream: (input: StreamInput) => Stream.Stream<Event, unknown>
   readonly buildSystemArray: (input: {
@@ -323,8 +333,6 @@ const live: Layer.Layer<
           ...SystemPrompt.agent(input.agent, input.model),
           // any custom prompt passed into this call
           ...input.system,
-          // any custom prompt from last user message
-          ...(input.user.system ? [input.user.system] : []),
         ]
           .filter((x) => x)
           .join("\n"),
@@ -496,10 +504,11 @@ const live: Layer.Layer<
       const requestMessages = input.dropAssistantPrefill
         ? ProviderTransform.dropTrailingAssistantPrefill(input.messages)
         : input.messages
+      const requestMessagesWithContext = [...requestMessages, ...turnContextMessages(input.user)]
       const messages = isOpenaiOauth
-        ? requestMessages
+        ? requestMessagesWithContext
         : isWorkflow
-          ? requestMessages
+          ? requestMessagesWithContext
           : [
               ...system.map(
                 (x): ModelMessage => ({
@@ -507,7 +516,7 @@ const live: Layer.Layer<
                   content: x,
                 }),
               ),
-              ...requestMessages,
+              ...requestMessagesWithContext,
             ]
 
       const params = yield* plugin.trigger(
@@ -704,7 +713,7 @@ const live: Layer.Layer<
             modelID: input.model.id,
             trajectory: [
               ...system.map((content) => ({ role: "system", content })),
-              ...requestMessages,
+              ...requestMessagesWithContext,
             ],
             systemPrompt: system,
           },
