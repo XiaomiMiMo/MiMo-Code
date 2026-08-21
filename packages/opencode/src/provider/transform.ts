@@ -1854,7 +1854,8 @@ export function maxOutputTokens(model: Provider.Model, opts?: { reasoningEffort?
   // shortfall. Effort-demanding requests earn the wide budget, bounded by
   // the model's own output limit.
   const deep = opts?.reasoningEffort === "high" || opts?.reasoningEffort === "xhigh" || opts?.reasoningEffort === "max"
-  if (deep || usesLargeModelDefaults(model)) return Math.min(model.limit.output, LARGE_MODEL_OUTPUT_TOKEN_MAX)
+  if (usesLargeModelDefaults(model)) return LARGE_MODEL_OUTPUT_TOKEN_MAX
+  if (deep) return Math.min(model.limit.output, LARGE_MODEL_OUTPUT_TOKEN_MAX)
   return Math.min(model.limit.output, OUTPUT_TOKEN_MAX) || OUTPUT_TOKEN_MAX
 }
 

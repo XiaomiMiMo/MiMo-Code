@@ -386,7 +386,11 @@ describe("session.llm.stream", () => {
         expect(body.stream).toBe(true)
 
         const maxTokens = (body.max_tokens as number | undefined) ?? (body.max_output_tokens as number | undefined)
-        const expectedMaxTokens = ProviderTransform.maxOutputTokens(resolved)
+        // The request budget is effort-aware; derive the effort from the same
+        // merged options the provider saw (reflected on the request body).
+        const requestedEffort =
+          (body.reasoningEffort as string | undefined) ?? (body.reasoning_effort as string | undefined)
+        const expectedMaxTokens = ProviderTransform.maxOutputTokens(resolved, { reasoningEffort: requestedEffort })
         expect(maxTokens).toBe(expectedMaxTokens)
 
         const reasoning = (body.reasoningEffort as string | undefined) ?? (body.reasoning_effort as string | undefined)
