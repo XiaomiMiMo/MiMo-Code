@@ -5,6 +5,7 @@ import { Effect, Layer } from "effect"
 import { Instance } from "../../src/project/instance"
 import * as CrossSpawnSpawner from "../../src/effect/cross-spawn-spawner"
 import { ToolRegistry } from "../../src/tool"
+import { MessageID, SessionID } from "../../src/session/schema"
 import { provideTmpdirInstance } from "../fixture/fixture"
 import { testEffect } from "../lib/effect"
 
@@ -69,6 +70,58 @@ describe("tool.registry", () => {
         const registry = yield* ToolRegistry.Service
         const ids = yield* registry.ids()
         expect(ids).toContain("hello")
+      }),
+    ),
+  )
+
+  it.live("validates custom tool arguments invoked through exec", () =>
+    provideTmpdirInstance((dir) =>
+      Effect.gen(function* () {
+        const tools = path.join(dir, ".mimocode", "tools")
+        const marker = path.join(dir, "executed")
+        yield* Effect.promise(() => fs.mkdir(tools, { recursive: true }))
+        yield* Effect.promise(() =>
+          Bun.write(
+            path.join(tools, "validate.ts"),
+            [
+              "import z from 'zod'",
+              "export default {",
+              "  description: 'validated custom tool',",
+              "  args: { path: z.string() },",
+              "  execute: async () => {",
+              `    await Bun.write(${JSON.stringify(marker)}, "yes")`,
+              "    return 'executed'",
+              "  },",
+              "}",
+              "",
+            ].join("\n"),
+          ),
+        )
+
+        const registry = yield* ToolRegistry.Service
+        const script = (yield* registry.all()).find((tool) => tool.id === "exec")
+        expect(script).toBeDefined()
+        if (!script) return
+        const result = yield* script.execute(
+          {
+            code: `try { await tools.validate({ path: 123 }); return "executed" } catch (error) { return error.message }`,
+          },
+          {
+            sessionID: SessionID.make("ses_test"),
+            messageID: MessageID.make("msg_test"),
+            agent: "build",
+            abort: new AbortController().signal,
+            callID: "call_test",
+            messages: [],
+            metadata: () => Effect.void,
+            ask: () => Effect.void,
+          },
+        )
+
+        expect(result.metadata.status).toBe("completed")
+        expect(result.output).toContain("Invalid arguments for the validate tool")
+        expect(result.output).toContain("path")
+        expect(yield* Effect.promise(() => Bun.file(marker).exists())).toBe(false)
       }),
     ),
   )
