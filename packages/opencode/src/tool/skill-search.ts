@@ -7,6 +7,7 @@ import { Skill } from "../skill"
 import { searchSkills } from "../skill/search"
 import * as Tool from "./tool"
 import { renderSkillContent } from "./skill-content"
+import { applyVisibilityPolicy, type VisibilityPolicy } from "../skill/policy"
 
 const Parameters = z.object({
   query: z
@@ -33,7 +34,10 @@ export const SkillSearchTool = Tool.define(
       execute: (params: z.infer<typeof Parameters>, ctx: Tool.Context) =>
         Effect.gen(function* () {
           const agent = yield* agents.get(ctx.agent)
-          const available = yield* skill.modelInvocable(agent)
+          const policy = ctx.extra?.skillPolicy as VisibilityPolicy | undefined
+          const available = yield* (policy
+            ? skill.available(agent).pipe(Effect.map((items) => applyVisibilityPolicy(items, policy)))
+            : skill.modelInvocable(agent))
           const results = searchSkills(params.query, available)
           if (results.length === 0) {
             return {

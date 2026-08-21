@@ -19,6 +19,7 @@ import { SYSTEM_SPAWNED_AGENT_TYPES } from "@/agent/config"
 import { Bus } from "@/bus"
 import { TuiEvent } from "@/cli/cmd/tui/event"
 import { MessageV2 } from "@/session/message-v2"
+import type { VisibilityPolicy } from "@/skill/policy"
 import { SessionRetry } from "@/session/retry"
 import { Inbox } from "@/inbox"
 import { renderActorNotification } from "@/inbox/render"
@@ -244,6 +245,11 @@ export interface SpawnInput {
    * object is surfaced on AgentOutcome.structured.
    */
   format?: MessageV2.OutputFormat
+  executionProfile?: "claude" | "gpt"
+  system?: string
+  replaceAgentPrompt?: boolean
+  codexMode?: boolean
+  skillPolicy?: VisibilityPolicy
   /**
    * Fired SYNCHRONOUSLY with the freshly-allocated actorID inside the spawn
    * Effect — right after the actor is registered, BEFORE its work fiber detaches
@@ -336,6 +342,11 @@ export const layer = Layer.effect(
       source: "spawn" | "hook"
       provenance?: MessageV2.Provenance
       format?: MessageV2.OutputFormat
+      executionProfile?: "claude" | "gpt"
+      system?: string
+      replaceAgentPrompt?: boolean
+      codexMode?: boolean
+      skillPolicy?: VisibilityPolicy
     }) {
       const result = yield* sessionPrompt.prompt({
         sessionID: input.sessionID,
@@ -347,6 +358,11 @@ export const layer = Layer.effect(
         task_id: input.task_id,
         parts: [{ type: "text", text: input.task }],
         ...(input.format ? { format: input.format } : {}),
+        executionProfile: input.executionProfile,
+        system: input.system,
+        replaceAgentPrompt: input.replaceAgentPrompt,
+        codexMode: input.codexMode,
+        skillPolicy: input.skillPolicy,
       })
       // structured output (json_schema) takes precedence over finalText: when the
       // child produced a validated object it IS the authoritative result and the
@@ -391,6 +407,11 @@ export const layer = Layer.effect(
       // gate; specialized/system agents and peers create no user tasks.
       gateEligible?: boolean
       format?: MessageV2.OutputFormat
+      executionProfile?: "claude" | "gpt"
+      system?: string
+      replaceAgentPrompt?: boolean
+      codexMode?: boolean
+      skillPolicy?: VisibilityPolicy
       // When set, the child's work fiber runs under this InstanceContext (via
       // InstanceRef) instead of inheriting the spawner's. Used by peers placed
       // in their own git worktree so their tools resolve paths/write-boundary
@@ -812,6 +833,11 @@ export const layer = Layer.effect(
         lifecycle: input.lifecycle ?? "persistent",
         task_id: input.task_id,
         format: input.format,
+        executionProfile: input.executionProfile,
+        system: input.system,
+        replaceAgentPrompt: input.replaceAgentPrompt,
+        codexMode: input.codexMode,
+        skillPolicy: input.skillPolicy,
         ...(instanceRef ? { instanceRef } : {}),
       })
       if (!input.background) yield* Fiber.join(fiber).pipe(Effect.ignore)
@@ -869,6 +895,11 @@ export const layer = Layer.effect(
         task_id: input.task_id,
         gateEligible,
         format: input.format,
+        executionProfile: input.executionProfile,
+        system: input.system,
+        replaceAgentPrompt: input.replaceAgentPrompt,
+        codexMode: input.codexMode,
+        skillPolicy: input.skillPolicy,
       })
       if (input.onReady) yield* Effect.ignore(input.onReady({ actorID, sessionID: input.sessionID }))
       if (!input.background) yield* Fiber.join(fiber).pipe(Effect.ignore)

@@ -997,6 +997,14 @@ export type UserMessage = {
     variant?: string
   }
   system?: string
+  executionProfile?: "claude" | "gpt"
+  replaceAgentPrompt?: boolean
+  codexMode?: boolean
+  skillPolicy?: {
+    includeMimocodeBundled: true
+    allowedDesktopSkillNames: Array<string>
+    explicitlySelectedSkillNames: Array<string>
+  }
   tools?: {
     [key: string]: boolean
   }
@@ -2218,7 +2226,7 @@ export type Config = {
      */
     preserve_recent_tokens?: number
     /**
-     * Token buffer for compaction. Leaves enough window to avoid overflow during compaction.
+     * Token buffer for compaction. Leaves enough window to avoid overflow during compaction (default: up to 33000, capped by the model's maximum output).
      */
     reserved?: number
     /**
@@ -4812,6 +4820,14 @@ export type SessionPromptData = {
     }
     format?: OutputFormat
     system?: string
+    executionProfile?: "claude" | "gpt"
+    replaceAgentPrompt?: boolean
+    codexMode?: boolean
+    skillPolicy?: {
+      includeMimocodeBundled: true
+      allowedDesktopSkillNames: Array<string>
+      explicitlySelectedSkillNames: Array<string>
+    }
     variant?: string
     parts: Array<TextPartInput | FilePartInput | AgentPartInput | SubtaskPartInput>
   }
@@ -5027,6 +5043,14 @@ export type SessionPromptAsyncData = {
     }
     format?: OutputFormat
     system?: string
+    executionProfile?: "claude" | "gpt"
+    replaceAgentPrompt?: boolean
+    codexMode?: boolean
+    skillPolicy?: {
+      includeMimocodeBundled: true
+      allowedDesktopSkillNames: Array<string>
+      explicitlySelectedSkillNames: Array<string>
+    }
     variant?: string
     parts: Array<TextPartInput | FilePartInput | AgentPartInput | SubtaskPartInput>
   }
@@ -5070,6 +5094,15 @@ export type SessionCommandData = {
     arguments: string
     command: string
     variant?: string
+    system?: string
+    executionProfile?: "claude" | "gpt"
+    replaceAgentPrompt?: boolean
+    codexMode?: boolean
+    skillPolicy?: {
+      includeMimocodeBundled: true
+      allowedDesktopSkillNames: Array<string>
+      explicitlySelectedSkillNames: Array<string>
+    }
     parts?: Array<{
       id?: string
       type: "file"

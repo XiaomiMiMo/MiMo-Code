@@ -790,6 +790,8 @@ export const ActorTool = Tool.define(
         // the agent loop, and sending inbox notifications on terminal — replacing
         // the legacy session.create + manual fork path that lived here pre-Task-29.
         const actor = yield* requireActor()
+        const parentUser = ctx.messages.findLast((message) => message.info.role === "user")
+        const execution = parentUser?.info.role === "user" ? parentUser.info : undefined
         const spawnResult = yield* actor.spawn({
           mode: "subagent",
           sessionID: ctx.sessionID,
@@ -801,6 +803,11 @@ export const ActorTool = Tool.define(
           model,
           background,
           task_id: effectiveTaskId,
+          executionProfile: execution?.executionProfile,
+          system: execution?.system,
+          replaceAgentPrompt: execution?.replaceAgentPrompt,
+          codexMode: execution?.codexMode,
+          skillPolicy: execution?.skillPolicy,
           onReady: ({ actorID, sessionID }) =>
             ctx.metadata({
               title: op.description,

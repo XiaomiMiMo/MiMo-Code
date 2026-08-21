@@ -431,6 +431,14 @@ export const User = Base.extend({
     variant: z.string().optional(),
   }),
   system: z.string().optional(),
+  executionProfile: z.enum(["claude", "gpt"]).optional(),
+  replaceAgentPrompt: z.boolean().optional(),
+  codexMode: z.boolean().optional(),
+  skillPolicy: z.object({
+    includeMimocodeBundled: z.literal(true),
+    allowedDesktopSkillNames: z.array(z.string()),
+    explicitlySelectedSkillNames: z.array(z.string()),
+  }).optional(),
   tools: z.record(z.string(), z.boolean()).optional(),
   provenance: Provenance.optional(),
 }).meta({

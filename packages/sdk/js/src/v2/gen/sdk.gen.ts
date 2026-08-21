@@ -2412,6 +2412,14 @@ export class Session2 extends HeyApiClient {
       }
       format?: OutputFormat
       system?: string
+      executionProfile?: "claude" | "gpt"
+      replaceAgentPrompt?: boolean
+      codexMode?: boolean
+      skillPolicy?: {
+        includeMimocodeBundled: true
+        allowedDesktopSkillNames: Array<string>
+        explicitlySelectedSkillNames: Array<string>
+      }
       variant?: string
       parts?: Array<TextPartInput | FilePartInput | AgentPartInput | SubtaskPartInput>
     },
@@ -2437,6 +2445,10 @@ export class Session2 extends HeyApiClient {
             { in: "body", key: "tools" },
             { in: "body", key: "format" },
             { in: "body", key: "system" },
+            { in: "body", key: "executionProfile" },
+            { in: "body", key: "replaceAgentPrompt" },
+            { in: "body", key: "codexMode" },
+            { in: "body", key: "skillPolicy" },
             { in: "body", key: "variant" },
             { in: "body", key: "parts" },
           ],
@@ -2554,6 +2566,14 @@ export class Session2 extends HeyApiClient {
       }
       format?: OutputFormat
       system?: string
+      executionProfile?: "claude" | "gpt"
+      replaceAgentPrompt?: boolean
+      codexMode?: boolean
+      skillPolicy?: {
+        includeMimocodeBundled: true
+        allowedDesktopSkillNames: Array<string>
+        explicitlySelectedSkillNames: Array<string>
+      }
       variant?: string
       parts?: Array<TextPartInput | FilePartInput | AgentPartInput | SubtaskPartInput>
     },
@@ -2579,6 +2599,10 @@ export class Session2 extends HeyApiClient {
             { in: "body", key: "tools" },
             { in: "body", key: "format" },
             { in: "body", key: "system" },
+            { in: "body", key: "executionProfile" },
+            { in: "body", key: "replaceAgentPrompt" },
+            { in: "body", key: "codexMode" },
+            { in: "body", key: "skillPolicy" },
             { in: "body", key: "variant" },
             { in: "body", key: "parts" },
           ],
@@ -2613,6 +2637,15 @@ export class Session2 extends HeyApiClient {
       arguments?: string
       command?: string
       variant?: string
+      system?: string
+      executionProfile?: "claude" | "gpt"
+      replaceAgentPrompt?: boolean
+      codexMode?: boolean
+      skillPolicy?: {
+        includeMimocodeBundled: true
+        allowedDesktopSkillNames: Array<string>
+        explicitlySelectedSkillNames: Array<string>
+      }
       parts?: Array<{
         id?: string
         type: "file"
@@ -2638,6 +2671,11 @@ export class Session2 extends HeyApiClient {
             { in: "body", key: "arguments" },
             { in: "body", key: "command" },
             { in: "body", key: "variant" },
+            { in: "body", key: "system" },
+            { in: "body", key: "executionProfile" },
+            { in: "body", key: "replaceAgentPrompt" },
+            { in: "body", key: "codexMode" },
+            { in: "body", key: "skillPolicy" },
             { in: "body", key: "parts" },
           ],
         },

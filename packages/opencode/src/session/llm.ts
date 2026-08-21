@@ -278,6 +278,18 @@ export type StreamRequest = StreamInput & {
   dropAssistantPrefill?: boolean
 }
 
+export function executionProfileSystemSections(
+  agentPrompt: string[],
+  additions: string[],
+  user: Pick<MessageV2.User, "replaceAgentPrompt" | "system">,
+) {
+  return [
+    ...(user.replaceAgentPrompt ? [] : agentPrompt),
+    ...additions,
+    ...(user.system ? [user.system] : []),
+  ]
+}
+
 export type Event = Result["fullStream"] extends AsyncIterable<infer T> ? T : never
 
 export interface Interface {
@@ -319,13 +331,11 @@ const live: Layer.Layer<
     }) {
       const system: string[] = []
       system.push(
-        [
-          ...SystemPrompt.agent(input.agent, input.model),
-          // any custom prompt passed into this call
-          ...input.system,
-          // any custom prompt from last user message
-          ...(input.user.system ? [input.user.system] : []),
-        ]
+        executionProfileSystemSections(
+          SystemPrompt.agent(input.agent, input.model),
+          input.system,
+          input.user,
+        )
           .filter((x) => x)
           .join("\n"),
       )

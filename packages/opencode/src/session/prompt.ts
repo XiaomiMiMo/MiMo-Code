@@ -57,6 +57,7 @@ import {
   TEXT_NGRAM_RECOVERY_REPLAN,
 } from "../session/prompt/text-ngram-detection"
 import { builtinSkillRoot, matchDocumentSkills } from "@/skill/builtin/extract"
+import { VisibilityPolicy } from "@/skill/policy"
 import { ToolRegistry } from "../tool"
 import { MCP } from "../mcp"
 import { normalizeToolResult } from "../mcp/tool-result"
@@ -919,12 +920,13 @@ export const layer = Layer.effect(
     }) {
       const userMessage = input.messages.findLast((msg) => msg.info.role === "user")
       if (!userMessage) return input.messages
+      const skillPolicy = userMessage.info.role === "user" ? userMessage.info.skillPolicy : undefined
 
       const runtimeAgent = {
         ...input.agent,
         permission: Agent.runtimePermission(input.agent, input.session.permission),
       }
-      const skills = yield* sys.skills(runtimeAgent)
+      const skills = yield* sys.skills(runtimeAgent, skillPolicy)
       const catalogText = skills
         ? ["<system-reminder>", SKILL_CATALOG_REMINDER_MARKER, skills, "</system-reminder>"].join("\n")
         : undefined
@@ -1005,7 +1007,7 @@ ${entries}
 
       // Sole injection point for skill bodies — free-text mentions ("/foo ... /bar") and slash-command
       // invocations alike. Only harness-generated synthetic parts count as already loaded.
-      const allSkills = yield* sys.available(runtimeAgent)
+      const allSkills = yield* sys.available(runtimeAgent, skillPolicy)
       if (allSkills.length > 0) {
         const loaded = new Set(
           userMessage.parts.flatMap((part) => {
@@ -1232,6 +1234,8 @@ NOTE: At any point in time through this workflow you should feel free to ask the
       agentID?: string
       task_id?: string
       mcpContext: MCP.TurnContext
+      codexMode?: boolean
+      skillPolicy?: VisibilityPolicy
     }) {
       using _ = log.time("resolveTools")
       const tools: Record<string, AITool> = {}
@@ -1249,6 +1253,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
       const execMcp: { current: Record<string, AITool> } = { current: {} }
       const useMcpToolSearch = isMcpToolSearchEnabled(
         Flag.MIMOCODE_EXPERIMENTAL_MCP_TOOL_SEARCH,
+        input.codexMode,
         input.model.id,
         input.model.api.id,
         input.model.family,
@@ -1267,7 +1272,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
         return new Set(actor.tools)
       })
       const whitelist = yield* whitelistFor()
-      const useGPTTools = usesGPTToolset(input.model.id)
+      const useGPTTools = usesGPTToolset(input.model.id, input.codexMode)
       const execAllowedByWhitelist =
         useGPTTools &&
         !!whitelist &&
@@ -1322,6 +1327,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
           ...(whitelist ? { toolWhitelist: [...whitelist] } : {}),
           mcpToolSearch: mcpCatalog.current,
           execMcp,
+          skillPolicy: input.skillPolicy,
         },
         agent: input.agent.name,
         actorID: input.agentID,
@@ -1372,6 +1378,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
         modelID: input.model.id,
         providerID: input.model.providerID,
         agent: input.agent,
+        codexMode: input.codexMode,
       })) {
         const schema = ProviderTransform.schema(input.model, z.toJSONSchema(item.parameters))
         tools[item.id] = tool({
@@ -2224,6 +2231,10 @@ NOTE: At any point in time through this workflow you should feel free to ask the
           variant,
         },
         system: input.system,
+        executionProfile: input.executionProfile,
+        replaceAgentPrompt: input.replaceAgentPrompt,
+        codexMode: input.codexMode,
+        skillPolicy: input.skillPolicy,
         format: input.format,
         provenance: input.provenance,
       }
@@ -3765,6 +3776,8 @@ NOTE: At any point in time through this workflow you should feel free to ask the
               agentID: lastUser.agentID,
               task_id,
               mcpContext,
+              codexMode: lastUser.codexMode,
+              skillPolicy: lastUser.skillPolicy,
             })
             const tools = resolvedTools.tools
             const activeTools = resolvedTools.activeTools
@@ -4742,6 +4755,11 @@ NOTE: At any point in time through this workflow you should feel free to ask the
         agent: userAgent,
         parts,
         variant: input.variant,
+        system: input.system,
+        executionProfile: input.executionProfile,
+        replaceAgentPrompt: input.replaceAgentPrompt,
+        codexMode: input.codexMode,
+        skillPolicy: input.skillPolicy,
       })
       yield* bus.publish(Command.Event.Executed, {
         name: input.command,
@@ -4863,6 +4881,10 @@ export const PromptInput = z.object({
     .describe("@deprecated tools and permissions have been merged, you can set permissions on the session itself now"),
   format: MessageV2.Format.optional(),
   system: z.string().optional(),
+  executionProfile: z.enum(["claude", "gpt"]).optional(),
+  replaceAgentPrompt: z.boolean().optional(),
+  codexMode: z.boolean().optional(),
+  skillPolicy: VisibilityPolicy.optional(),
   variant: z.string().optional(),
   parts: z.array(
     z.discriminatedUnion("type", [
@@ -4950,6 +4972,11 @@ export const CommandInput = z.object({
   arguments: z.string(),
   command: z.string(),
   variant: z.string().optional(),
+  system: z.string().optional(),
+  executionProfile: z.enum(["claude", "gpt"]).optional(),
+  replaceAgentPrompt: z.boolean().optional(),
+  codexMode: z.boolean().optional(),
+  skillPolicy: VisibilityPolicy.optional(),
   parts: z
     .array(
       z.discriminatedUnion("type", [

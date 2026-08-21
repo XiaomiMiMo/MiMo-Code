@@ -24,6 +24,7 @@ import { Permission } from "@/permission"
 import { Skill } from "@/skill"
 import { Flag } from "@/flag/flag"
 import { usesMimoCodexMode } from "@/tool/gpt"
+import { applyVisibilityPolicy, type VisibilityPolicy } from "@/skill/policy"
 
 function renderGitResult(result: Git.Result, fallback = "(none)") {
   if (result.exitCode !== 0) return fallback
@@ -55,8 +56,8 @@ export function agent(agent: Agent.Info, model: Provider.Model) {
 
 export interface Interface {
   readonly environment: (model: Provider.Model, now: number) => Effect.Effect<string[]>
-  readonly skills: (agent: Agent.Info) => Effect.Effect<string | undefined>
-  readonly available: (agent?: Agent.Info) => Effect.Effect<Skill.Info[]>
+  readonly skills: (agent: Agent.Info, policy?: VisibilityPolicy) => Effect.Effect<string | undefined>
+  readonly available: (agent?: Agent.Info, policy?: VisibilityPolicy) => Effect.Effect<Skill.Info[]>
   readonly all: () => Effect.Effect<Skill.Info[]>
 }
 
@@ -169,10 +170,12 @@ export const layer = Layer.effect(
         return base
       }),
 
-      skills: Effect.fn("SystemPrompt.skills")(function* (agent: Agent.Info) {
+      skills: Effect.fn("SystemPrompt.skills")(function* (agent: Agent.Info, policy?: VisibilityPolicy) {
         if (Permission.disabled(["skill"], agent.permission).has("skill")) return
 
-        const list = yield* skill.modelInvocable(agent)
+        const list = policy
+          ? applyVisibilityPolicy(yield* skill.available(agent), policy)
+          : yield* skill.modelInvocable(agent)
 
         return [
           "Skills available in this session:",
@@ -185,8 +188,8 @@ export const layer = Layer.effect(
       // The user surface: authorization-filtered but NOT model-reachability
       // filtered, because it backs the mention scan that loads a skill the user
       // invoked explicitly. Do not switch this to modelInvocable.
-      available: Effect.fn("SystemPrompt.available")(function* (agent?: Agent.Info) {
-        return yield* skill.available(agent)
+      available: Effect.fn("SystemPrompt.available")(function* (agent?: Agent.Info, policy?: VisibilityPolicy) {
+        return applyVisibilityPolicy(yield* skill.available(agent), policy)
       }),
 
       all: Effect.fn("SystemPrompt.all")(function* () {
