@@ -59,6 +59,8 @@ export type MaxStepInput = {
   tools: Record<string, AITool>
   /** Model-visible subset of the execute-bearing tool registry. */
   activeTools?: string[]
+  /** Capability receipt for this step (ENGINE-1) — forwarded to replay's step-start. */
+  capabilities?: MessageV2.Capabilities
   agentID?: string
   /**
    * Tool-choice from the per-step args. Accepted (so the same processArgs object
@@ -408,6 +410,7 @@ export const runMaxStep = (input: MaxStepInput): Effect.Effect<SessionProcessor.
       selection: { winner: pick, total: survivors.length },
       thinkingMs: Date.now() - ensembleStartedAt,
       overhead,
+      capabilities: input.capabilities,
     })
   })
 

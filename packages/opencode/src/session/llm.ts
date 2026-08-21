@@ -264,6 +264,9 @@ export type StreamInput = {
   small?: boolean
   tools: Record<string, Tool>
   activeTools?: string[]
+  // Capability receipt for this step (ENGINE-1). Carried through here only so the
+  // processor can attach it to the step-start part; llm.stream itself ignores it.
+  capabilities?: MessageV2.Capabilities
   retries?: number
   toolChoice?: "auto" | "required" | "none"
   agentID?: string

@@ -58,6 +58,12 @@ export interface Interface {
   readonly skills: (agent: Agent.Info) => Effect.Effect<string | undefined>
   readonly available: (agent?: Agent.Info) => Effect.Effect<Skill.Info[]>
   readonly all: () => Effect.Effect<Skill.Info[]>
+  // The model-reachable skill NAMES for this agent — the same Skill.modelInvocable
+  // source that backs the injected available_skills list (permission- +
+  // disable_model_invocation-filtered). Used to build the capability receipt
+  // (ENGINE-1): the receipt's skills[] must match what the model can actually
+  // reach, so it reuses this source rather than reparsing the rendered prompt.
+  readonly skillNames: (agent: Agent.Info) => Effect.Effect<string[]>
 }
 
 export class Service extends Context.Service<Service, Interface>()("@opencode/SystemPrompt") {}
@@ -184,6 +190,15 @@ export const layer = Layer.effect(
           // version of them here and a less verbose version in tool description, rather than vice versa.
           Skill.fmt(list, { verbose: true }),
         ].join("\n")
+      }),
+
+      skillNames: Effect.fn("SystemPrompt.skillNames")(function* (agent: Agent.Info) {
+        // Mirror the guard in `skills` above: when the skill tool itself is
+        // permission-disabled the model reaches no skills this turn, so the
+        // receipt's skills[] must be empty — not the full modelInvocable set.
+        if (Permission.disabled(["skill"], agent.permission).has("skill")) return []
+        const list = yield* skill.modelInvocable(agent)
+        return list.map((s) => s.name)
       }),
 
       // The user surface: authorization-filtered but NOT model-reachability

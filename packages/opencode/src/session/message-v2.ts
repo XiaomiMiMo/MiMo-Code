@@ -266,9 +266,28 @@ export const RetryPart = PartBase.extend({
 })
 export type RetryPart = z.infer<typeof RetryPart>
 
+// The capability receipt: what the engine actually loaded for THIS step, so the
+// host can stop deriving "available" from install-state and instead trust what
+// the model was really given. Two halves because skills are not tools — the
+// tool table only ever holds a generic `skill`/`skill_search`, while the real
+// skill list is injected into the system prompt (see ENGINE-1). `tools` is the
+// active subset (what's callable this turn, not the full table); `skills` is
+// Skill.modelInvocable (already permission- + disable_model_invocation-filtered).
+export const Capabilities = z
+  .object({
+    tools: z.array(z.string()),
+    skills: z.array(z.string()),
+    hash: z.string(),
+  })
+  .meta({
+    ref: "Capabilities",
+  })
+export type Capabilities = z.infer<typeof Capabilities>
+
 export const StepStartPart = PartBase.extend({
   type: z.literal("step-start"),
   snapshot: z.string().optional(),
+  capabilities: Capabilities.optional(),
 }).meta({
   ref: "StepStartPart",
 })

@@ -1,5 +1,6 @@
 import path from "path"
 import os from "os"
+import { createHash } from "node:crypto"
 import z from "zod"
 import { SessionID, MessageID, PartID } from "./schema"
 import { MessageV2 } from "./message-v2"
@@ -189,6 +190,21 @@ function stableStringify(value: unknown): string {
     keys.map((k) => JSON.stringify(k) + ":" + stableStringify((value as Record<string, unknown>)[k])).join(",") +
     "}"
   )
+}
+
+/**
+ * Build the capability receipt for one step (ENGINE-1). `tools` is the active
+ * subset actually callable this turn (resolveTools' activeTools, not the full
+ * table), `skills` is the model-reachable skill names (Skill.modelInvocable via
+ * SystemPrompt.skillNames). Both arrays are sorted before hashing so the hash is
+ * a stable fingerprint of the SET, independent of assembly order — the host uses
+ * it to diff "expected vs actual" without walking each entry.
+ */
+function buildCapabilities(tools: string[], skills: string[]): MessageV2.Capabilities {
+  const t = [...new Set(tools)].sort()
+  const s = [...new Set(skills)].sort()
+  const hash = createHash("sha256").update(stableStringify({ tools: t, skills: s })).digest("hex")
+  return { tools: t, skills: s, hash }
 }
 
 /**
@@ -4097,6 +4113,16 @@ NOTE: At any point in time through this workflow you should feel free to ask the
                 Effect.provideService(ToolRegistry.Service, registry),
               )
             lastSystemPrompt = prebuiltSystem
+
+            // Capability receipt (ENGINE-1): what THIS step actually loaded, so the
+            // host trusts the engine instead of deriving "available" from install
+            // state. tools = the active subset (callable this turn); skills = the
+            // model-reachable names injected into the system prompt built just above
+            // (same `agent`, same Skill.modelInvocable source). Two halves because
+            // the tool table only ever holds a generic skill/skill_search.
+            const capabilitySkills = yield* sys.skillNames(agent)
+            const capabilities = buildCapabilities(activeTools, capabilitySkills)
+
             const maxModeCfg = (yield* config.get()).experimental?.maxMode
             const useMaxMode =
               agent.name === MaxMode.MAX_MODE_AGENT && maxModeCfg !== undefined && format.type !== "json_schema"
@@ -4114,6 +4140,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
               messages: [...modelMsgs, ...(isLastStep ? [{ role: "user" as const, content: MAX_STEPS }] : [])],
               tools,
               activeTools,
+              capabilities,
               model,
               toolChoice: isLastStep ? ("none" as const) : format.type === "json_schema" ? ("required" as const) : undefined,
               agentID: lastUser.agentID,

@@ -119,6 +119,8 @@ export type ReplayInput = {
    * overflow / prune estimation stays correct.
    */
   overhead?: { cost: number; tokensIn: number; tokensOut: number }
+  /** Capability receipt for this step (ENGINE-1) — see process(). */
+  capabilities?: MessageV2.Capabilities
 }
 
 export interface Handle {
@@ -182,6 +184,10 @@ interface ProcessorContext extends Input {
   textNgramMonitor: TextNgramMonitor | undefined
   textNgramRepeat: boolean
   textPartPersisted: boolean
+  // Capability receipt for the step currently streaming (ENGINE-1). Set from the
+  // StreamInput at the top of process()/replay so the start-step handler can
+  // attach it to the step-start part.
+  capabilities: MessageV2.Capabilities | undefined
 }
 
 type StreamEvent = Event
@@ -239,6 +245,7 @@ export const layer: Layer.Layer<
         textNgramMonitor: undefined,
         textNgramRepeat: false,
         textPartPersisted: false,
+        capabilities: undefined,
       }
       let aborted = false
       // Only the main agent owns session-level status. Subagents (explore,
@@ -568,6 +575,7 @@ export const layer: Layer.Layer<
               sessionID: ctx.sessionID,
               snapshot: ctx.snapshot,
               type: "step-start",
+              capabilities: ctx.capabilities,
             })
             ctx.stepPartIds.push(stepStartPartId)
             return
@@ -798,6 +806,7 @@ export const layer: Layer.Layer<
 
       const process = Effect.fn("SessionProcessor.process")(function* (streamInput: LLM.StreamInput) {
         slog.info("process")
+        ctx.capabilities = streamInput.capabilities
         ctx.needsOverflowHandling = false
         ctx.shouldBreak = (yield* config.get()).experimental?.continue_loop_on_deny !== true
 
@@ -870,6 +879,7 @@ export const layer: Layer.Layer<
 
       const replay = Effect.fn("SessionProcessor.replay")(function* (input: ReplayInput) {
         slog.info("replay", { toolCalls: input.toolCalls.length, finish: input.finishReason })
+        ctx.capabilities = input.capabilities
         ctx.needsOverflowHandling = false
         ctx.shouldBreak = (yield* config.get()).experimental?.continue_loop_on_deny !== true
 
