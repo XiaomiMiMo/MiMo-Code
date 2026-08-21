@@ -5027,6 +5027,82 @@ export type PartUpdateResponses = {
 
 export type PartUpdateResponse = PartUpdateResponses[keyof PartUpdateResponses]
 
+export type SessionRecoveryData = {
+  body?: never
+  path: {
+    sessionID: string
+  }
+  query?: {
+    directory?: string
+    workspace?: string
+  }
+  url: "/session/{sessionID}/recovery"
+}
+
+export type SessionRecoveryErrors = {
+  /**
+   * Bad request
+   */
+  400: BadRequestError
+  /**
+   * Not found
+   */
+  404: NotFoundError
+}
+
+export type SessionRecoveryError = SessionRecoveryErrors[keyof SessionRecoveryErrors]
+
+export type SessionRecoveryResponses = {
+  /**
+   * Recovery candidates
+   */
+  200: Array<{
+    assistantMessageID: string
+    parentMessageID: string
+    created: number
+    hasPendingTool: boolean
+  }>
+}
+
+export type SessionRecoveryResponse = SessionRecoveryResponses[keyof SessionRecoveryResponses]
+
+export type SessionResumeData = {
+  body?: never
+  path: {
+    sessionID: string
+    assistantMessageID: string
+  }
+  query?: {
+    directory?: string
+    workspace?: string
+  }
+  url: "/session/{sessionID}/turn/{assistantMessageID}/resume"
+}
+
+export type SessionResumeErrors = {
+  /**
+   * Bad request
+   */
+  400: BadRequestError
+  /**
+   * Not found
+   */
+  404: NotFoundError
+  /**
+   * Conflict — session resource is busy
+   */
+  409: ConflictError
+}
+
+export type SessionResumeError = SessionResumeErrors[keyof SessionResumeErrors]
+
+export type SessionResumeResponses = {
+  /**
+   * Resume accepted
+   */
+  202: unknown
+}
+
 export type SessionPromptAsyncData = {
   body?: {
     messageID?: string

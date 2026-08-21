@@ -1002,6 +1002,38 @@ it.live("serializes concurrent first-query pinning", () =>
   ),
 )
 
+it.live("resume continues an incomplete assistant without creating or rewriting a user message", () =>
+  provideTmpdirServer(
+    Effect.fnUntraced(function* ({ llm }) {
+      const prompt = yield* SessionPrompt.Service
+      const sessions = yield* Session.Service
+      const chat = yield* sessions.create({
+        title: "Pinned",
+        permission: [{ permission: "*", pattern: "*", action: "allow" }],
+      })
+      const seeded = yield* seed(chat.id)
+      const before = yield* sessions.messages({ sessionID: chat.id })
+      yield* llm.text("world")
+
+      const candidate = yield* prompt.recovery({ sessionID: chat.id })
+      expect(candidate).toEqual([{ assistantMessageID: seeded.assistant.id, parentMessageID: seeded.user.id, created: expect.any(Number) }])
+      const result = yield* prompt.resume({
+        sessionID: chat.id,
+        assistantMessageID: seeded.assistant.id,
+      })
+
+      const after = yield* sessions.messages({ sessionID: chat.id })
+      expect(after.filter((message) => message.info.role === "user")).toHaveLength(1)
+      expect(after.length).toBe(before.length + 1)
+      expect(after.find((message) => message.info.id === seeded.assistant.id)?.info).toMatchObject(seeded.assistant)
+      expect(result.info.role).toBe("assistant")
+      expect(result.info.id).not.toBe(seeded.assistant.id)
+      expect(result.parts.some((part) => part.type === "text" && part.text === "world")).toBe(true)
+    }),
+    { git: true, config: providerCfg },
+  ),
+)
+
 it.live("loop does not inject dynamic system prompt additions", () =>
   withoutDynamicSystemPrompt(() =>
     provideTmpdirServer(
