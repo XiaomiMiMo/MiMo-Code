@@ -92,7 +92,7 @@ describe("Anthropic cache tail", () => {
 
 describe("system prefix stability across turns", () => {
   // Two consecutive turns whose ONLY difference is the client-supplied per-turn
-  // context — exactly what MiMo Desktop's minute-precision clock produces. The
+  // context — exactly what a minute-precision client clock produces. The
   // system prefix must not move, or the provider's prefix cache is invalidated
   // for the entire conversation sitting behind it.
   it.live("a changed per-turn context leaves the system prefix byte-identical", () =>
