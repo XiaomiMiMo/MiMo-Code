@@ -144,6 +144,14 @@ const GIT_DESTRUCTIVE = new Map<string, Set<string>>([
 const Parameters = z.object({
   command: z.string().describe("The command to execute"),
   timeout: z.number().describe("Optional timeout in milliseconds").optional(),
+  max_output_tokens: z
+    .number()
+    .int()
+    .positive()
+    .describe(
+      "Maximum approximate tokens returned inline. Full output is saved to tool storage when this limit is exceeded.",
+    )
+    .optional(),
   workdir: z
     .string()
     .describe(
@@ -351,6 +359,14 @@ function head(text: string, maxLines: number, maxBytes: number): string {
     bytes += size
   }
   return out.join("\n")
+}
+
+function headBytes(text: string, maxBytes: number) {
+  const buf = Buffer.from(text, "utf-8")
+  if (buf.length <= maxBytes) return text
+  let end = maxBytes
+  while (end > 0 && (buf[end] & 0xc0) === 0x80) end--
+  return buf.subarray(0, end).toString("utf-8")
 }
 
 function tail(text: string, maxLines: number, maxBytes: number) {
@@ -687,17 +703,20 @@ export const BashTool = Tool.define(
         cwd: string
         env: NodeJS.ProcessEnv
         timeout: number
+        maxOutputTokens?: number
         description: string
       },
       ctx: Tool.Context,
     ) {
-      const bytes = Truncate.MAX_BYTES
-      const lines = Truncate.MAX_LINES
+      const bytes = input.maxOutputTokens ? input.maxOutputTokens * 4 : Truncate.MAX_BYTES
+      const lines = input.maxOutputTokens ? Number.MAX_SAFE_INTEGER : Truncate.MAX_LINES
       const keep = bytes * 2
       let full = ""
+      let first = ""
       let last = ""
       const list: Chunk[] = []
       let used = 0
+      let total = 0
       let file = ""
       let sink: ReturnType<typeof createWriteStream> | undefined
       let cut = false
@@ -718,6 +737,10 @@ export const BashTool = Tool.define(
           yield* Effect.forkScoped(
             Stream.runForEach(Stream.decodeText(handle.all), (chunk) => {
               const size = Buffer.byteLength(chunk, "utf-8")
+              total += size
+              if (input.maxOutputTokens && Buffer.byteLength(first, "utf-8") < Math.floor(bytes / 2)) {
+                first = headBytes(first + chunk, Math.floor(bytes / 2))
+              }
               list.push({ text: chunk, size })
               used += size
               while (used > keep && list.length > 1) {
@@ -845,24 +868,30 @@ export const BashTool = Tool.define(
       if (!output) output = "(no output)"
 
       if (cut && file) {
-        // Check if tail contains error patterns — if so, prepend head for context
-        const tailScan = end.text.length > 2048 ? end.text.slice(-2048) : end.text
-        const hasErrors = ERROR_PATTERN.test(tailScan)
-        if (hasErrors) {
-          let fileContent: string | undefined
-          try {
-            fileContent = readFileSync(file, "utf-8")
-          } catch {
-            fileContent = undefined
-          }
-          if (fileContent) {
-            const headText = head(fileContent, HEAD_LINES, HEAD_BYTES)
-            output = `...output truncated (head+tail shown due to errors)...\n\nFull output saved to: ${file}\n\n${headText}\n\n...middle omitted...\n\n${end.text}`
+        if (input.maxOutputTokens) {
+          const suffix = tail(raw, Number.MAX_SAFE_INTEGER, bytes - Buffer.byteLength(first, "utf-8")).text
+          const shown = Buffer.byteLength(first, "utf-8") + Buffer.byteLength(suffix, "utf-8")
+          output = `Warning: truncated output (original token count: ${Math.ceil(total / 4)})\n\n${first}\n…${Math.ceil((total - shown) / 4)} tokens truncated…\n${suffix}`
+        } else {
+          // Check if tail contains error patterns — if so, prepend head for context
+          const tailScan = end.text.length > 2048 ? end.text.slice(-2048) : end.text
+          const hasErrors = ERROR_PATTERN.test(tailScan)
+          if (hasErrors) {
+            let fileContent: string | undefined
+            try {
+              fileContent = readFileSync(file, "utf-8")
+            } catch {
+              fileContent = undefined
+            }
+            if (fileContent) {
+              const headText = head(fileContent, HEAD_LINES, HEAD_BYTES)
+              output = `...output truncated (head+tail shown due to errors)...\n\nFull output saved to: ${file}\n\n${headText}\n\n...middle omitted...\n\n${end.text}`
+            } else {
+              output = `...output truncated...\n\nFull output saved to: ${file}\n\n` + output
+            }
           } else {
             output = `...output truncated...\n\nFull output saved to: ${file}\n\n` + output
           }
-        } else {
-          output = `...output truncated...\n\nFull output saved to: ${file}\n\n` + output
         }
       }
 
@@ -874,14 +903,16 @@ export const BashTool = Tool.define(
       // unmerged paths, the result itself carries the rule (the conflict belongs
       // to the branch's owner) and the two literal commands that follow it —
       // because the model reads a tool result before its next tool call, and does
-      // not re-read a system prompt assembled requests ago. Appended LAST so it is
-      // the final thing in the result, and never blocking: see the module header.
+      // not re-read a system prompt assembled requests ago. Appended after command
+      // output and never blocking; a tool-storage pointer may follow it so a
+      // truncated result always ends with the address of its complete output.
       output += yield* MergeConflict.annotate({
         git: gitSvc,
         cwd: input.cwd,
         command: input.command,
         output,
       })
+      if (cut && file && input.maxOutputTokens) output += `\n\nFull output saved to: ${file}`
       if (sink) {
         const stream = sink
         yield* Effect.promise(
@@ -1008,6 +1039,7 @@ export const BashTool = Tool.define(
                   cwd,
                   env: yield* shellEnv(ctx, cwd),
                   timeout,
+                  maxOutputTokens: params.max_output_tokens,
                   description: params.description,
                 },
                 ctx,
