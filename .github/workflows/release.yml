@@ -1,0 +1,100 @@
+name: release-build
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [fix]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: build (${{ matrix.name }})
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-latest
+            name: linux-x64
+          - runner: macos-latest
+            name: darwin-arm64
+          - runner: macos-15-intel
+            name: darwin-x64
+          - runner: windows-latest
+            name: windows-x64
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Setup Bun
+        uses: ./.github/actions/setup-bun
+
+      - name: Build native binary
+        working-directory: packages/opencode
+        timeout-minutes: 30
+        run: bun run script/build.ts --single
+
+      - name: Ad-hoc sign macOS binary
+        if: runner.os == 'macOS'
+        run: codesign --force -s - "packages/opencode/dist/mimocode-${{ matrix.name }}/bin/mimo"
+
+      - name: Package (tar.gz)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          cd "packages/opencode/dist/mimocode-${{ matrix.name }}/bin"
+          tar -czf "$GITHUB_WORKSPACE/mimocode-${{ matrix.name }}.tar.gz" mimo
+
+      - name: Package (zip)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          Compress-Archive -Path "packages/opencode/dist/mimocode-windows-x64/bin/mimo.exe" -DestinationPath "$env:GITHUB_WORKSPACE/mimocode-windows-x64.zip"
+
+      - name: Upload binary artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: mimocode-${{ matrix.name }}
+          path: mimocode-${{ matrix.name }}.*
+          if-no-files-found: error
+
+  release:
+    name: Create pre-release
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Download binaries
+        uses: actions/download-artifact@v7
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: Compute pre-release version
+        id: version
+        shell: bash
+        run: |
+          SHA="$(git rev-parse --short HEAD)"
+          echo "version=0.0.0-fix-${SHA}" >> "$GITHUB_OUTPUT"
+
+      - name: Create pre-release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          cd artifacts
+          gh release create "${{ steps.version.outputs.version }}" mimocode-* \
+            --repo "${{ github.repository }}" \
+            --title "Pre-release ${{ steps.version.outputs.version }}" \
+            --notes "Automatic pre-release build from the fix branch (${{ github.sha }})." \
+            --prerelease

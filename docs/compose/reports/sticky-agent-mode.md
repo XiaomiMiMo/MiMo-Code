@@ -117,3 +117,11 @@ Key constraints that shaped the final approach:
 - Sticky state must be **derived** (`!!lastUserMessage()`), not manually managed — a boolean `lock()` breaks on `/new` and `/session` transitions
 - `move()` must skip blocked agents rather than stopping — otherwise Tab appears broken when the next agent in order is blocked
 - Plan tools use the existing `Permission.disabled()` pipeline in `llm.ts:resolveTools()` — no registry changes needed
+
+## Custom Primary Agent Exception
+
+Custom (non-native) `mode: "primary"` agents act as free-switch hubs. Mid-session they can be
+entered from any mode (compose/plan/etc.) and left to any mode, unlike native agents which stay
+isolated (compose) or confined to the build/plan group. Implemented in `canSwitchTo` in
+`packages/opencode/src/cli/cmd/tui/context/local.tsx`: if either the current or target agent is a
+custom primary agent (`mode === "primary" && !native`), the switch is allowed.

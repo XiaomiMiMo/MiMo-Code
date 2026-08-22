@@ -167,6 +167,36 @@ export function fromClaude(name: string, input: unknown): { config: Info } | { w
   return { warning: `skipped Claude Code MCP server "${name}"; missing command or url.` }
 }
 
+export function normalizeMcpServers(data: unknown): { data: unknown; warnings: string[] } {
+  if (!isRecord(data) || data.mcpServers === undefined) return { data, warnings: [] }
+
+  const servers = data.mcpServers
+  if (!isRecord(servers)) {
+    const { mcpServers: _removed, ...rest } = data
+    return { data: rest, warnings: ["mcpServers is not an object; ignored."] }
+  }
+
+  const warnings: string[] = []
+  const converted: Record<string, Info> = {}
+  for (const [name, server] of Object.entries(servers)) {
+    const result = fromClaude(name, server)
+    if ("warning" in result) {
+      warnings.push(result.warning)
+      continue
+    }
+    converted[name] = result.config
+  }
+
+  const { mcpServers: _removed, ...rest } = data
+  return {
+    data: {
+      ...rest,
+      mcp: { ...converted, ...(isRecord(data.mcp) ? data.mcp : {}) },
+    },
+    warnings,
+  }
+}
+
 export function redactString(input: string) {
   return input
     .replace(/(Bearer\s+)[^\s]+/gi, "$1****")

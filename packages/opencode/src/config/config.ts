@@ -588,7 +588,9 @@ export const layer = Layer.effect(
         ),
       )
       const parsed = ConfigParse.jsonc(expanded, source)
-      const data = ConfigParse.schema(Info, normalizeLoadedConfig(parsed, source), source)
+      const { data: normalized, warnings } = ConfigMCP.normalizeMcpServers(parsed)
+      for (const warning of warnings) log.warn(warning)
+      const data = ConfigParse.schema(Info, normalizeLoadedConfig(normalized, source), source)
       if (!("path" in options)) return data
 
       yield* Effect.promise(() => resolveLoadedPlugins(data, options.path))

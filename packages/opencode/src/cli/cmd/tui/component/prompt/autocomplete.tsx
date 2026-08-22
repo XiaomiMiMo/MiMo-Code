@@ -450,7 +450,7 @@ export function Autocomplete(props: {
       return mixed
     }
 
-    if (files.loading && prev && prev.length > 0) {
+    if (store.visible === "@" && files.loading && prev && prev.length > 0) {
       return prev
     }
 
@@ -460,7 +460,7 @@ export function Autocomplete(props: {
         "description",
         (obj) => obj.aliases?.join(" ") ?? "",
       ],
-      limit: 10,
+      ...(store.visible === "@" ? { limit: 10 } : {}),
       scoreFn: (objResults) => {
         const displayResult = objResults[0]
         let score = objResults.score
@@ -480,7 +480,7 @@ export function Autocomplete(props: {
     setStore("selected", 0)
   })
 
-  function move(direction: -1 | 1) {
+  function move(direction: number) {
     if (!store.visible) return
     if (!options().length) return
     let next = store.selected + direction
@@ -603,6 +603,18 @@ export function Autocomplete(props: {
             e.preventDefault()
             return
           }
+          if (name === "pageup") {
+            setStore("input", "keyboard")
+            move(-10)
+            e.preventDefault()
+            return
+          }
+          if (name === "pagedown") {
+            setStore("input", "keyboard")
+            move(10)
+            e.preventDefault()
+            return
+          }
           if (name === "escape") {
             clearTriggerRange()
             hide()
@@ -673,7 +685,7 @@ export function Autocomplete(props: {
         ref={(r: ScrollBoxRenderable) => (scroll = r)}
         backgroundColor={theme.backgroundMenu}
         height={height()}
-        scrollbarOptions={{ visible: false }}
+        scrollbarOptions={{}}
         scrollAcceleration={scrollAcceleration()}
       >
         <Index
