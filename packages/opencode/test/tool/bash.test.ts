@@ -1518,6 +1518,33 @@ describe("tool.bash truncation", () => {
     })
   })
 
+  test("limits output by approximate tokens and appends the tool storage path", async () => {
+    await Instance.provide({
+      directory: projectRoot,
+      fn: async () => {
+        const bash = await initBash()
+        const result = await Effect.runPromise(
+          bash.execute(
+            {
+              command: fill("bytes", 5000),
+              description: "Generate output exceeding token limit",
+              max_output_tokens: 100,
+            },
+            ctx,
+          ),
+        )
+        mustTruncate(result)
+
+        const filepath = (result.metadata as { outputPath?: string }).outputPath
+        expect(filepath).toBeTruthy()
+        expect(result.output).toContain("Warning: truncated output (original token count: 1250)")
+        expect(result.output).toContain("tokens truncated…")
+        expect(result.output.endsWith(`Full output saved to: ${filepath}`)).toBe(true)
+        expect(await Filesystem.readText(filepath!)).toBe("a".repeat(5000))
+      },
+    })
+  })
+
   test("does not truncate small output", async () => {
     await Instance.provide({
       directory: projectRoot,

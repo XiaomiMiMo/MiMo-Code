@@ -30,6 +30,7 @@ const MAX_CODE_BYTES = 128 * 1024
 const MAX_FILE_BYTES = 10 * 1024 * 1024
 const TRACE_TAIL_ENTRIES = 20
 const EXEC_COMMAND_DEFAULT_YIELD_TIME_MS = 10_000
+const EXEC_COMMAND_DEFAULT_MAX_OUTPUT_TOKENS = 10_000
 
 const ExecCommandParameters = z.object({
   cmd: z.string().describe("Shell command to execute."),
@@ -38,7 +39,15 @@ const ExecCommandParameters = z.object({
     .int()
     .min(1)
     .optional()
-    .describe(`Wait budget in milliseconds before the command is terminated. Defaults to ${EXEC_COMMAND_DEFAULT_YIELD_TIME_MS} ms.`),
+    .describe(
+      `Wait budget in milliseconds before the command is terminated. Defaults to ${EXEC_COMMAND_DEFAULT_YIELD_TIME_MS} ms.`,
+    ),
+  max_output_tokens: z
+    .number()
+    .int()
+    .positive()
+    .optional()
+    .describe(`Output token budget. Defaults to ${EXEC_COMMAND_DEFAULT_MAX_OUTPUT_TOKENS} tokens.`),
   workdir: z
     .string()
     .optional()
@@ -46,13 +55,14 @@ const ExecCommandParameters = z.object({
 })
 
 const EXEC_COMMAND_DESCRIPTION =
-  "Runs a shell command through the permission-gated bash executor. `cmd` is required; `yield_time_ms` is optional and defaults to 10000 ms."
+  "Runs a shell command through the permission-gated bash executor. `yield_time_ms` and `max_output_tokens` default to 10000. Output exceeding the token budget is saved to tool storage."
 
 function execCommandArgs(args: unknown) {
   const input = ExecCommandParameters.parse(args)
   return {
     command: input.cmd,
     timeout: input.yield_time_ms ?? EXEC_COMMAND_DEFAULT_YIELD_TIME_MS,
+    max_output_tokens: input.max_output_tokens ?? EXEC_COMMAND_DEFAULT_MAX_OUTPUT_TOKENS,
     workdir: input.workdir,
     description: input.cmd.length > 80 ? `${input.cmd.slice(0, 77)}...` : input.cmd,
   }
