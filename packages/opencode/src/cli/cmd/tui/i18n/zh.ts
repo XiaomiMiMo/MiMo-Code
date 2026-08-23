@@ -422,6 +422,7 @@ export const dict = {
   "tui.toast.session.recover.started": "正在继续中断回合",
   "tui.toast.session.recover.none": "没有可继续的中断回合",
   "tui.toast.session.recover.failed": "继续中断回合失败",
+  "tui.toast.session.recover.busy": "会话仍在运行，请等待空闲后再试",
   "tui.dialog.try_best.title": "检测到 Try-best 循环 — 当前轮次已暂停",
   "tui.dialog.try_best.reason.edit_repeat": "近似相同的编辑重复了 {{count}} 次。",
   "tui.dialog.try_best.reason.edit_repeat_path": "在 {{path}} 中，近似相同的编辑重复了 {{count}} 次。",

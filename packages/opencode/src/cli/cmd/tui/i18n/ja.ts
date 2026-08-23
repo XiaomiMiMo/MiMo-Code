@@ -376,6 +376,7 @@ export const dict = {
   "tui.toast.session.recover.started": "中断したターンを再開しています",
   "tui.toast.session.recover.none": "再開できる中断ターンはありません",
   "tui.toast.session.recover.failed": "中断したターンを再開できませんでした",
+  "tui.toast.session.recover.busy": "セッションがまだ実行中です。アイドル状態になってから再試行してください",
   "tui.dialog.try_best.title": "Try-best ループを検出 — ターンを一時停止しました",
   "tui.dialog.try_best.reason.edit_repeat": "ほぼ同じ編集が {{count}} 回繰り返されました。",
   "tui.dialog.try_best.reason.edit_repeat_path": "{{path}} でほぼ同じ編集が {{count}} 回繰り返されました。",

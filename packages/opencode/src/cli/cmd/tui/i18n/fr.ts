@@ -434,6 +434,7 @@ export const dict = {
   "tui.toast.session.recover.started": "Reprise du tour interrompu",
   "tui.toast.session.recover.none": "Aucun tour interrompu à reprendre",
   "tui.toast.session.recover.failed": "Impossible de reprendre le tour interrompu",
+  "tui.toast.session.recover.busy": "La session est encore active ; réessayez lorsqu'elle sera inactive",
   "tui.dialog.try_best.title": "Boucle try-best détectée — tour suspendu",
   "tui.dialog.try_best.reason.edit_repeat": "Des modifications presque identiques ont été répétées {{count}} fois.",
   "tui.dialog.try_best.reason.edit_repeat_path":

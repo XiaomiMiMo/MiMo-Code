@@ -445,6 +445,7 @@ export const dict = {
   "tui.toast.session.recover.started": "Continuando el turno interrumpido",
   "tui.toast.session.recover.none": "No hay ningún turno interrumpido que continuar",
   "tui.toast.session.recover.failed": "No se pudo continuar el turno interrumpido",
+  "tui.toast.session.recover.busy": "La sesión sigue ejecutándose; inténtalo cuando esté inactiva",
   "tui.dialog.try_best.title": "Bucle try-best detectado — turno pausado",
   "tui.dialog.try_best.reason.edit_repeat": "Se repitieron ediciones casi idénticas {{count}} veces.",
   "tui.dialog.try_best.reason.edit_repeat_path":

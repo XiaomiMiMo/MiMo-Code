@@ -206,7 +206,8 @@ export function Session() {
   })
 
   const canRecover = createMemo(() => {
-    return Boolean(recoveryCandidate()) && sync.session.status(route.sessionID) === "idle"
+    const status = sync.data.session_status[route.sessionID]
+    return Boolean(recoveryCandidate()) && status?.type !== "busy" && status?.type !== "retry"
   })
 
   const dimensions = useTerminalDimensions()
@@ -503,16 +504,19 @@ export function Session() {
 
   const command = useCommandDialog()
   const t = useLanguage().t
-  const recover = async (assistantMessageID: string) => {
-    if (!canRecover() || recoveryCandidate()?.assistantMessageID !== assistantMessageID) {
-      toast.show({ message: t("tui.toast.session.recover.none"), variant: "info" })
-      return
-    }
+  const recoveryErrorMessage = (error: unknown) => {
+    const message = error instanceof Error ? error.message : String(error)
+    return /busy|409/i.test(message) ? t("tui.toast.session.recover.busy") : message
+  }
+
+  const recover = async (assistantMessageID?: string) => {
     const candidates = await sdk.client.session.recovery(
       { sessionID: route.sessionID },
       { throwOnError: true },
     )
-    const candidate = candidates.data?.find((item) => item.assistantMessageID === assistantMessageID)
+    const candidate = assistantMessageID
+      ? candidates.data?.find((item) => item.assistantMessageID === assistantMessageID)
+      : candidates.data?.at(-1)
     if (!candidate) {
       toast.show({ message: t("tui.toast.session.recover.none"), variant: "info" })
       return
@@ -536,14 +540,13 @@ export function Session() {
       onSelect: async (dialog) => {
         try {
           const candidate = recoveryCandidate()
-          if (!candidate) {
-            toast.show({ message: t("tui.toast.session.recover.none"), variant: "info" })
-          } else {
-            await recover(candidate.assistantMessageID)
-          }
+          const status = sync.data.session_status[route.sessionID]
+          if (status?.type === "busy" || status?.type === "retry") {
+            toast.show({ message: t("tui.toast.session.recover.busy"), variant: "info" })
+          } else await recover(candidate?.assistantMessageID)
         } catch (error) {
           toast.show({
-            message: error instanceof Error ? error.message : t("tui.toast.session.recover.failed"),
+            message: recoveryErrorMessage(error),
             variant: "error",
           })
         }
@@ -1940,7 +1943,12 @@ function AssistantMessage(props: {
                 onMouseUp={() => {
                   void props.onRecover(props.message.id).catch((error) => {
                     toast.show({
-                      message: error instanceof Error ? error.message : t("tui.toast.session.recover.failed"),
+                      message:
+                        error instanceof Error && /busy|409/i.test(error.message)
+                          ? t("tui.toast.session.recover.busy")
+                          : error instanceof Error
+                            ? error.message
+                            : t("tui.toast.session.recover.failed"),
                       variant: "error",
                     })
                   })

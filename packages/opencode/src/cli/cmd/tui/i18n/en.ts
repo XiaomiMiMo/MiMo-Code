@@ -400,6 +400,7 @@ export const dict: Record<string, string> = {
   "tui.toast.session.recover.started": "Continuing interrupted turn",
   "tui.toast.session.recover.none": "No interrupted turn can be continued",
   "tui.toast.session.recover.failed": "Failed to continue interrupted turn",
+  "tui.toast.session.recover.busy": "The session is still running; try again when it is idle",
   "tui.dialog.try_best.title": "Try-best loop detected — turn paused",
   "tui.dialog.try_best.reason.edit_repeat": "Near-identical edits repeated {{count}} times.",
   "tui.dialog.try_best.reason.edit_repeat_path": "Near-identical edits repeated {{count}} times in {{path}}.",

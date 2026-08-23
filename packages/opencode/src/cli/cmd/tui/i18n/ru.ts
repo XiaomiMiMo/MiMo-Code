@@ -449,6 +449,7 @@ export const dict = {
   "tui.toast.session.recover.started": "Продолжаем прерванный ход",
   "tui.toast.session.recover.none": "Нет прерванного хода для продолжения",
   "tui.toast.session.recover.failed": "Не удалось продолжить прерванный ход",
+  "tui.toast.session.recover.busy": "Сеанс ещё выполняется; повторите попытку после перехода в режим ожидания",
   "tui.dialog.try_best.title": "Обнаружен цикл try-best — ход приостановлен",
   "tui.dialog.try_best.reason.edit_repeat": "Почти одинаковые правки повторились {{count}} раз.",
   "tui.dialog.try_best.reason.edit_repeat_path": "Почти одинаковые правки повторились {{count}} раз в {{path}}.",
