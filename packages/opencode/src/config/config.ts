@@ -37,6 +37,7 @@ import { ConfigManaged } from "./managed"
 import { ConfigMCP } from "./mcp"
 import { ConfigModelID } from "./model-id"
 import { ConfigParse } from "./parse"
+import { InvalidError } from "./error"
 import { ConfigPaths } from "./paths"
 import { ConfigPermission } from "./permission"
 import { ConfigPlugin } from "./plugin"
@@ -605,7 +606,13 @@ export const layer = Layer.effect(
         ),
       )
       const parsed = ConfigParse.jsonc(expanded, source)
-      const { data: normalized, warnings } = ConfigMCP.normalizeMcpServers(parsed)
+      if (isRecord(parsed) && "mcp" in parsed && "mcpServers" in parsed) {
+        throw new InvalidError({
+          path: source,
+          message: `"mcp" and "mcpServers" cannot both be set; use only one of them.`,
+        })
+      }
+      const { data: normalized, warnings } = ConfigMCP.normalizeMcp(parsed)
       for (const warning of warnings) log.warn(warning)
       const data = ConfigParse.schema(Info, normalizeLoadedConfig(normalized, source), source)
       if (!("path" in options)) return data

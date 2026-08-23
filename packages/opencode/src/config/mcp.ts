@@ -79,6 +79,7 @@ export type Origin = {
 
 const remoteTypes = new Set(["http", "streamable-http", "remote"])
 const localTypes = new Set(["stdio", "local"])
+const samplingValues = new Set<Sampling>(["deny", "ask", "allow"])
 const sensitive = ["authorization", "token", "api_key", "apikey", "key", "secret", "password", "credential"]
 
 function stringRecord(input: unknown) {
@@ -120,10 +121,15 @@ export function fromClaude(name: string, input: unknown): { config: Info } | { w
     return { warning: `skipped Claude Code MCP server "${name}"; args must contain only strings.` }
   }
 
+  if (input.sampling !== undefined && !(typeof input.sampling === "string" && samplingValues.has(input.sampling as Sampling))) {
+    return { warning: `skipped Claude Code MCP server "${name}"; sampling must be "deny", "ask", or "allow".` }
+  }
+
   const enabled = input.disabled === true ? false : input.enabled === false ? false : true
   const environment = stringRecord(input.environment) ?? stringRecord(input.env)
   const timeout = typeof input.timeout === "number" ? input.timeout : undefined
   const type = typeof input.type === "string" ? input.type : undefined
+  const sampling = input.sampling as Sampling | undefined
 
   if (typeof input.command === "string" && (!type || localTypes.has(type))) {
     return {
@@ -133,6 +139,7 @@ export function fromClaude(name: string, input: unknown): { config: Info } | { w
         ...(environment && { environment }),
         enabled,
         ...(timeout !== undefined && { timeout }),
+        ...(sampling && { sampling }),
       },
     }
   }
@@ -152,6 +159,7 @@ export function fromClaude(name: string, input: unknown): { config: Info } | { w
         ...(headers && { headers }),
         ...(oauthConfig !== undefined && { oauth: oauthConfig }),
         ...(timeout !== undefined && { timeout }),
+        ...(sampling && { sampling }),
       },
     }
   }
@@ -167,34 +175,56 @@ export function fromClaude(name: string, input: unknown): { config: Info } | { w
   return { warning: `skipped Claude Code MCP server "${name}"; missing command or url.` }
 }
 
-export function normalizeMcpServers(data: unknown): { data: unknown; warnings: string[] } {
-  if (!isRecord(data) || data.mcpServers === undefined) return { data, warnings: [] }
+// The `{ enabled: boolean }`-only form historically lives under `mcp` to
+// disable a server; keep it verbatim rather than routing it through fromClaude.
+function isLegacyDisable(input: unknown): input is { enabled: boolean } {
+  if (!isRecord(input)) return false
+  const keys = Object.keys(input)
+  return keys.length === 1 && keys[0] === "enabled" && typeof input.enabled === "boolean"
+}
 
-  const servers = data.mcpServers
-  if (!isRecord(servers)) {
-    const { mcpServers: _removed, ...rest } = data
-    return { data: rest, warnings: ["mcpServers is not an object; ignored."] }
+// Accept an entry in either the native mcp format (Local/Remote) or the Claude
+// Code format: native entries and the legacy disable form pass through, the
+// rest are converted via fromClaude so a block can mix both formats freely.
+function normalizeEntry(name: string, entry: unknown): { keep: unknown } | { warning: string } {
+  if (Info.zod.safeParse(entry).success || isLegacyDisable(entry)) return { keep: entry }
+  const result = fromClaude(name, entry)
+  if ("warning" in result) return { warning: result.warning }
+  return { keep: result.config }
+}
+
+export function normalizeMcp(data: unknown): { data: unknown; warnings: string[] } {
+  if (!isRecord(data) || (data.mcp === undefined && data.mcpServers === undefined)) {
+    return { data, warnings: [] }
+  }
+
+  // Both keys present is rejected by loadConfig before normalizeMcp runs; keep
+  // the pure function total by preferring `mcp` if it ever happens anyway.
+  const block = data.mcp !== undefined ? data.mcp : data.mcpServers
+  if (!isRecord(block)) {
+    if (data.mcp === undefined) {
+      const { mcpServers: _removed, ...rest } = data
+      return { data: rest, warnings: ["mcpServers is not an object; ignored."] }
+    }
+    return { data, warnings: [] }
   }
 
   const warnings: string[] = []
-  const converted: Record<string, Info> = {}
-  for (const [name, server] of Object.entries(servers)) {
-    const result = fromClaude(name, server)
+  const normalized: Record<string, unknown> = {}
+  for (const [name, server] of Object.entries(block)) {
+    const result = normalizeEntry(name, server)
     if ("warning" in result) {
       warnings.push(result.warning)
       continue
     }
-    converted[name] = result.config
+    normalized[name] = result.keep
   }
 
-  const { mcpServers: _removed, ...rest } = data
-  return {
-    data: {
-      ...rest,
-      mcp: { ...converted, ...(isRecord(data.mcp) ? data.mcp : {}) },
-    },
-    warnings,
+  if (data.mcpServers !== undefined) {
+    const { mcpServers: _removed, ...rest } = data
+    return { data: { ...rest, mcp: normalized }, warnings }
   }
+  return { data: { ...data, mcp: normalized }, warnings }
 }
 
 export function redactString(input: string) {
