@@ -10,7 +10,7 @@ commits: b7ff175e..dca3d16f
 
 ## Report
 
-**What was built** — Moved the complete `drive-mimo` skill from the built-in bundle to the repository-level `.mimocode/skills/drive-mimo/` path. Removed its built-in README entries and bundled-only TUI localization metadata while preserving the skill instructions and helper script.
+**What was built** — Moved the complete `drive-mimo` skill from the built-in bundle to the repository-level `.mimocode/skills/drive-mimo/` path. Removed its built-in README entries and bundled-only TUI localization metadata while preserving the skill behavior and helper script. Updated the helper invocation note to match the repository-managed executable bit.
 
 **Verification** — `bun ci` PASS; `bun test test/skill/skill.test.ts test/skill/bundle-discovery.test.ts test/skill/builtin.test.ts test/skill/skill-description.test.ts` PASS (34 tests); `bun typecheck` PASS; scope and `git diff --check` checks PASS. Independent review PASS for spec compliance, correctness, and codebase consistency.
 
@@ -20,10 +20,10 @@ commits: b7ff175e..dca3d16f
 `drive-mimo` is packaged and presented as a MiMoCode built-in skill even though it is repository-specific tooling for exercising MiMoCode. This makes it available outside the repository and gives it bundled-only TUI metadata.
 
 ## [S2] Design
-Move the complete `drive-mimo` skill directory to the repository root at `.mimocode/skills/drive-mimo/`, where the project skill discovery path loads it as a non-bundled repository skill. Remove the built-in bundle copy and bundled-only README and localization entries. Preserve the skill name, frontmatter, instructions, helper script, and normal slash invocation behavior.
+Move the complete `drive-mimo` skill directory to the repository root at `.mimocode/skills/drive-mimo/`, where the project skill discovery path loads it as a non-bundled repository skill. Remove the built-in bundle copy and bundled-only README and localization entries. Preserve the skill name, frontmatter, behavior, helper script, and normal slash invocation behavior; update documentation where the repository-managed file mode differs from the extracted bundle.
 
 ## [S3] Out of Scope
-Do not change the skill instructions, helper behavior, skill discovery implementation, or other built-in skills.
+Do not change the skill behavior, helper behavior, skill discovery implementation, or other built-in skills. Documentation corrections required by the new repository-managed layout are in scope.
 
 ## Tasks
 - [x] T1: Relocate the skill files to `.mimocode/skills/drive-mimo/` — acceptance: the repository contains the complete skill and no built-in bundle copy (covers: S2)

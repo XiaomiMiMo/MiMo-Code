@@ -46,9 +46,8 @@ which tmux || echo "tmux not found — install it for TUI mode"
 ```
 
 > **Running the `wait-for-text.sh` helper:** invoke it as
-> `bash scripts/wait-for-text.sh …` from this skill's directory. The extracted
-> copy is not marked executable, so calling it directly (`scripts/wait-for-text.sh`)
-> would fail with "Permission denied" — always prefix with `bash`.
+> `./scripts/wait-for-text.sh …` from this skill's directory. The repository copy
+> is executable and can be called directly.
 
 ---
 
