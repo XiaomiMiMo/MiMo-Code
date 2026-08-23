@@ -258,7 +258,6 @@ export interface RecoveryCandidate {
   assistantMessageID: MessageID
   parentMessageID: MessageID
   created: number
-  hasPendingTool: boolean
 }
 
 export interface ResumeTurnInput {
@@ -2774,9 +2773,6 @@ NOTE: At any point in time through this workflow you should feel free to ask the
           assistantMessageID: assistant.id,
           parentMessageID: assistant.parentID,
           created: assistant.time.created,
-          hasPendingTool: msg.parts.some(
-            (part) => part.type === "tool" && (part.state.status === "pending" || part.state.status === "running"),
-          ),
         })
       }
       return candidates

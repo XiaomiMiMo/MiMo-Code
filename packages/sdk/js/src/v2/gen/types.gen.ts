@@ -5061,7 +5061,6 @@ export type SessionRecoveryResponses = {
     assistantMessageID: string
     parentMessageID: string
     created: number
-    hasPendingTool: boolean
   }>
 }
 

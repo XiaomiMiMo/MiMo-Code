@@ -1013,7 +1013,6 @@ export const SessionRoutes = lazy(() =>
                   assistantMessageID: MessageID.zod,
                   parentMessageID: MessageID.zod,
                   created: z.number(),
-                  hasPendingTool: z.boolean(),
                 }).array()),
               },
             },
