@@ -197,9 +197,16 @@ export function Session() {
     return messages().findLast((x) => x.role === "assistant")
   })
 
-  const canRecover = createMemo(() => {
+  const recoveryCandidate = createMemo(() => {
     const message = lastAssistant()
-    return message?.role === "assistant" && message.time.completed === undefined
+    if (!message || currentAgentID() !== "main") return undefined
+    return sync.data.session_recovery[route.sessionID]?.find(
+      (candidate) => candidate.assistantMessageID === message.id,
+    )
+  })
+
+  const canRecover = createMemo(() => {
+    return Boolean(recoveryCandidate()) && sync.session.status(route.sessionID) === "idle"
   })
 
   const dimensions = useTerminalDimensions()
@@ -496,6 +503,23 @@ export function Session() {
 
   const command = useCommandDialog()
   const t = useLanguage().t
+  const recover = async () => {
+    const candidates = await sdk.client.session.recovery(
+      { sessionID: route.sessionID },
+      { throwOnError: true },
+    )
+    const candidate = candidates.data?.at(-1)
+    if (!candidate) {
+      toast.show({ message: t("tui.toast.session.recover.none"), variant: "info" })
+      return
+    }
+    await sdk.client.session.resume(
+      { sessionID: route.sessionID, assistantMessageID: candidate.assistantMessageID },
+      { throwOnError: true },
+    )
+    toast.show({ message: t("tui.toast.session.recover.started"), variant: "info" })
+  }
+
   command.register(() => [
     {
       title: t("tui.command.session.recover.title"),
@@ -507,21 +531,7 @@ export function Session() {
       },
       onSelect: async (dialog) => {
         try {
-          const candidates = await sdk.client.session.recovery(
-            { sessionID: route.sessionID },
-            { throwOnError: true },
-          )
-          const candidate = candidates.data?.at(-1)
-          if (!candidate) {
-            toast.show({ message: t("tui.toast.session.recover.none"), variant: "info" })
-            dialog.clear()
-            return
-          }
-          await sdk.client.session.resume(
-            { sessionID: route.sessionID, assistantMessageID: candidate.assistantMessageID },
-            { throwOnError: true },
-          )
-          toast.show({ message: t("tui.toast.session.recover.started"), variant: "info" })
+          await recover()
         } catch (error) {
           toast.show({
             message: error instanceof Error ? error.message : t("tui.toast.session.recover.failed"),
@@ -1471,6 +1481,11 @@ export function Session() {
                         last={lastAssistant()?.id === message.id}
                         message={message as AssistantMessage}
                         parts={sync.data.part[message.id] ?? []}
+                        recoverable={
+                          recoveryCandidate()?.assistantMessageID === message.id &&
+                          sync.session.status(route.sessionID) === "idle"
+                        }
+                        onRecover={recover}
                       />
                     </Match>
                   </Switch>
@@ -1763,7 +1778,13 @@ function UserMessage(props: {
   )
 }
 
-function AssistantMessage(props: { message: AssistantMessage; parts: Part[]; last: boolean }) {
+function AssistantMessage(props: {
+  message: AssistantMessage
+  parts: Part[]
+  last: boolean
+  recoverable: boolean
+  onRecover: () => Promise<void>
+}) {
   const ctx = use()
   const local = useLocal()
   const { theme } = useTheme()
@@ -1772,6 +1793,7 @@ function AssistantMessage(props: { message: AssistantMessage; parts: Part[]; las
   const renderer = useRenderer()
   const t = useLanguage().t
   const [copyHover, setCopyHover] = createSignal(false)
+  const [recoverHover, setRecoverHover] = createSignal(false)
   const messages = createMemo(() => sync.data.message[props.message.sessionID]?.[props.message.agentID ?? "main"] ?? [])
   const model = createMemo(() =>
     isFreeApiModel({ providerID: props.message.providerID, modelID: props.message.modelID })
@@ -1901,10 +1923,23 @@ function AssistantMessage(props: { message: AssistantMessage; parts: Part[]; las
               <Show when={props.message.error?.name === "MessageAbortedError"}>
                 <span style={{ fg: theme.textMuted }}> · interrupted</span>
               </Show>
-              <Show when={props.message.error?.name === "MessageAbortedError" && props.last}>
-                <span style={{ fg: theme.warning }}> · /recover</span>
-              </Show>
             </text>
+            <Show when={props.recoverable}>
+              <box
+                onMouseOver={() => setRecoverHover(true)}
+                onMouseOut={() => setRecoverHover(false)}
+                onMouseUp={() => {
+                  void props.onRecover().catch((error) => {
+                    toast.show({
+                      message: error instanceof Error ? error.message : t("tui.toast.session.recover.failed"),
+                      variant: "error",
+                    })
+                  })
+                }}
+              >
+                <text fg={recoverHover() ? theme.warning : theme.textMuted}>↻ /recover</text>
+              </box>
+            </Show>
             <Show when={props.message.time.completed}>
               <box
                 onMouseOver={() => setCopyHover(true)}

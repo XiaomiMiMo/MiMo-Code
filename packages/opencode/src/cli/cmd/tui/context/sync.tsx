@@ -17,6 +17,7 @@ import type {
   SessionStatus,
   ProviderListResponse,
   ProviderAuthMethod,
+  SessionRecoveryResponse,
   VcsInfo,
 } from "@mimo-ai/sdk/v2"
 import { createStore, produce, reconcile } from "solid-js/store"
@@ -230,6 +231,9 @@ export const { use: useSync, provider: SyncProvider } = createSimpleContext({
       session_status: {
         [sessionID: string]: SessionStatus
       }
+      session_recovery: {
+        [sessionID: string]: SessionRecoveryResponse
+      }
       session_goal: {
         [sessionID: string]: SessionGoal
       }
@@ -294,6 +298,7 @@ export const { use: useSync, provider: SyncProvider } = createSimpleContext({
       provider_default: {},
       session: [],
       session_status: {},
+      session_recovery: {},
       session_goal: {},
       session_diff: {},
       session_cwd: {},
@@ -317,6 +322,12 @@ export const { use: useSync, provider: SyncProvider } = createSimpleContext({
     const project = useProject()
     const sdk = useSDK()
     const toast = useToastOptional()
+    const refreshRecovery = (sessionID: string) => {
+      void sdk.client.session
+        .recovery({ sessionID }, { throwOnError: true })
+        .then((response) => setStore("session_recovery", sessionID, response.data ?? []))
+        .catch(() => setStore("session_recovery", sessionID, []))
+    }
 
     // A bootstrap that nobody awaits still must not fail silently when the
     // server's directory whitelist is the reason. `bootstrap` rethrows the
@@ -488,6 +499,7 @@ export const { use: useSync, provider: SyncProvider } = createSimpleContext({
               delete s.permission[sid]
               delete s.question[sid]
               delete s.session_status[sid]
+              delete s.session_recovery[sid]
               delete s.session_goal[sid]
               delete s.session_diff[sid]
               delete s.session_cwd[sid]
@@ -522,6 +534,7 @@ export const { use: useSync, provider: SyncProvider } = createSimpleContext({
 
         case "session.status": {
           setStore("session_status", event.properties.sessionID, nextSessionStatus(event.properties.status))
+          if (event.properties.status.type === "idle") refreshRecovery(event.properties.sessionID)
           break
         }
 
@@ -553,6 +566,9 @@ export const { use: useSync, provider: SyncProvider } = createSimpleContext({
         }
 
         case "message.updated": {
+          if ((event.properties.info.agentID ?? "main") === "main") {
+            refreshRecovery(event.properties.info.sessionID)
+          }
           // Bucket every message by agentID. Pre-rewire the TUI dropped non-main
           // messages here; now subagent slices are first-class buckets and the
           // session view renders whichever bucket matches route.agentID.
@@ -957,6 +973,8 @@ export const { use: useSync, provider: SyncProvider } = createSimpleContext({
           return { id: (await sdk.client.session.create({})).data?.id, created: true }
         },
         status(sessionID: string) {
+          const current = store.session_status[sessionID]
+          if (current) return current.type === "idle" ? "idle" : "working"
           const session = result.session.get(sessionID)
           if (!session) return "idle"
           if (session.time.compacting) return "compacting"
@@ -968,7 +986,7 @@ export const { use: useSync, provider: SyncProvider } = createSimpleContext({
         },
         async sync(sessionID: string) {
           if (fullSyncedSessions.has(sessionID)) return
-          const [session, messages, todo, diff, actors, task, children] = await Promise.all([
+          const [session, messages, recovery, todo, diff, actors, task, children] = await Promise.all([
             sdk.client.session.get({ sessionID }, { throwOnError: true }),
             // ⚠️`limit` is ONE budget shared across every agent bucket, not a
             // per-bucket limit. A session whose real `main` history is crowded out
@@ -979,6 +997,9 @@ export const { use: useSync, provider: SyncProvider } = createSimpleContext({
             // is needed to fix it, since this endpoint already returns up to 1000
             // when `limit` is omitted.
             sdk.client.session.messages({ sessionID, limit: 100, agent_id: "*" }),
+            sdk.client.session
+              .recovery({ sessionID }, { throwOnError: true })
+              .catch(() => ({ data: [] as SessionRecoveryResponse })),
             sdk.client.session.todo({ sessionID }),
             sdk.client.session.diff({ sessionID }),
             sdk.client.session.actors({ sessionID }),
@@ -1003,6 +1024,7 @@ export const { use: useSync, provider: SyncProvider } = createSimpleContext({
                 if (!childMatch.found) draft.session.splice(childMatch.index, 0, child)
               }
               draft.todo[sessionID] = todo.data ?? []
+              draft.session_recovery[sessionID] = recovery.data ?? []
               draft.task[sessionID] = task.data ?? []
               const flat = (messages.data ?? []).map((x) => x.info)
               // Server returns messages id-ordered and message.updated keeps that order; the footer's post-/rebuild pending-detection deliberately does NOT depend on it (it keys off checkpoint coveredUpTo, model.ts), so reordering here won't resurface the stale-context bug.
