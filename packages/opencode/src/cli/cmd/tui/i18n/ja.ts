@@ -267,6 +267,7 @@ export const dict = {
   // App-level commands
   "tui.command.session.list.title": "セッションを切り替え",
   "tui.command.session.new.title": "新規セッション",
+  "tui.command.session.recover.title": "中断したターンを再開",
   "tui.command.workflow.list.title": "ワークフロー",
   "tui.command.model.list.title": "モデルを切り替え",
   "tui.command.model.cycle_recent.title": "モデルを循環",
@@ -372,6 +373,9 @@ export const dict = {
   "tui.toast.try_best.paused_other": "Try-best ループを検出したため、セッション {{session}} を一時停止しました。",
   "tui.toast.try_best.handoff_failed": "選択したハーネスへの引き継ぎを開始できませんでした。",
   "tui.toast.try_best.continue_failed": "セッションを続行できませんでした",
+  "tui.toast.session.recover.started": "中断したターンを再開しています",
+  "tui.toast.session.recover.none": "再開できる中断ターンはありません",
+  "tui.toast.session.recover.failed": "中断したターンを再開できませんでした",
   "tui.dialog.try_best.title": "Try-best ループを検出 — ターンを一時停止しました",
   "tui.dialog.try_best.reason.edit_repeat": "ほぼ同じ編集が {{count}} 回繰り返されました。",
   "tui.dialog.try_best.reason.edit_repeat_path": "{{path}} でほぼ同じ編集が {{count}} 回繰り返されました。",

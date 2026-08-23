@@ -503,12 +503,16 @@ export function Session() {
 
   const command = useCommandDialog()
   const t = useLanguage().t
-  const recover = async () => {
+  const recover = async (assistantMessageID: string) => {
+    if (!canRecover() || recoveryCandidate()?.assistantMessageID !== assistantMessageID) {
+      toast.show({ message: t("tui.toast.session.recover.none"), variant: "info" })
+      return
+    }
     const candidates = await sdk.client.session.recovery(
       { sessionID: route.sessionID },
       { throwOnError: true },
     )
-    const candidate = candidates.data?.at(-1)
+    const candidate = candidates.data?.find((item) => item.assistantMessageID === assistantMessageID)
     if (!candidate) {
       toast.show({ message: t("tui.toast.session.recover.none"), variant: "info" })
       return
@@ -531,7 +535,12 @@ export function Session() {
       },
       onSelect: async (dialog) => {
         try {
-          await recover()
+          const candidate = recoveryCandidate()
+          if (!candidate) {
+            toast.show({ message: t("tui.toast.session.recover.none"), variant: "info" })
+          } else {
+            await recover(candidate.assistantMessageID)
+          }
         } catch (error) {
           toast.show({
             message: error instanceof Error ? error.message : t("tui.toast.session.recover.failed"),
@@ -1783,7 +1792,7 @@ function AssistantMessage(props: {
   parts: Part[]
   last: boolean
   recoverable: boolean
-  onRecover: () => Promise<void>
+  onRecover: (assistantMessageID: string) => Promise<void>
 }) {
   const ctx = use()
   const local = useLocal()
@@ -1929,7 +1938,7 @@ function AssistantMessage(props: {
                 onMouseOver={() => setRecoverHover(true)}
                 onMouseOut={() => setRecoverHover(false)}
                 onMouseUp={() => {
-                  void props.onRecover().catch((error) => {
+                  void props.onRecover(props.message.id).catch((error) => {
                     toast.show({
                       message: error instanceof Error ? error.message : t("tui.toast.session.recover.failed"),
                       variant: "error",

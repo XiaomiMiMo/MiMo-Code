@@ -33,6 +33,7 @@ import { Bus } from "@/bus"
 import { NamedError } from "@mimo-ai/shared/util/error"
 import { jsonRequest, runRequest } from "./trace"
 import { RateLimitMiddleware } from "../../rate-limit"
+import { NotFoundError } from "@/storage"
 
 const log = Log.create({ service: "server" })
 
@@ -1021,11 +1022,13 @@ export const SessionRoutes = lazy(() =>
         },
       }),
       validator("param", z.object({ sessionID: SessionID.zod })),
+      validator("query", z.object({ agentID: z.string().optional() })),
       async (c) =>
         jsonRequest("SessionRoutes.recovery", c, function* () {
           const sessionID = c.req.valid("param").sessionID
+          const query = c.req.valid("query")
           const svc = yield* SessionPrompt.Service
-          return yield* svc.recovery({ sessionID })
+          return yield* svc.recovery({ sessionID, agentID: query.agentID })
         }),
     )
     .post(
@@ -1043,8 +1046,15 @@ export const SessionRoutes = lazy(() =>
         sessionID: SessionID.zod,
         assistantMessageID: MessageID.zod,
       })),
+      validator("query", z.object({
+        directory: z.string().optional(),
+        workspace: z.string().optional(),
+        agentID: z.string().optional(),
+        task_id: z.string().optional(),
+      })),
       async (c) => {
         const params = c.req.valid("param")
+        const query = c.req.valid("query")
         await runRequest(
           "SessionRoutes.resume.assertNotBusy",
           c,
@@ -1058,7 +1068,11 @@ export const SessionRoutes = lazy(() =>
               Effect.flatMap((candidates) =>
                 candidates.some((candidate) => candidate.assistantMessageID === params.assistantMessageID)
                   ? Effect.void
-                  : Effect.die(new Error("No resumable interrupted turn found for assistant message " + params.assistantMessageID)),
+                  : Effect.fail(
+                      new NotFoundError({
+                        message: "No resumable interrupted turn found for assistant message " + params.assistantMessageID,
+                      }),
+                    ),
               ),
             ),
           ),
@@ -1069,9 +1083,15 @@ export const SessionRoutes = lazy(() =>
           SessionPrompt.Service.use((svc) => svc.resume({
             sessionID: params.sessionID,
             assistantMessageID: params.assistantMessageID,
+            agentID: query.agentID,
+            task_id: query.task_id,
           })),
         ).catch((error) => {
           log.error("session resume failed", { sessionID: params.sessionID, error })
+          void Bus.publish(Session.Event.Error, {
+            sessionID: params.sessionID,
+            error: new NamedError.Unknown({ message: error instanceof Error ? error.message : String(error) }).toObject(),
+          })
         })
         return c.body(null, 202)
       },

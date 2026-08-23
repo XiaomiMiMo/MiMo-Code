@@ -5035,6 +5035,7 @@ export type SessionRecoveryData = {
   query?: {
     directory?: string
     workspace?: string
+    agentID?: string
   }
   url: "/session/{sessionID}/recovery"
 }
@@ -5075,6 +5076,8 @@ export type SessionResumeData = {
   query?: {
     directory?: string
     workspace?: string
+    agentID?: string
+    task_id?: string
   }
   url: "/session/{sessionID}/turn/{assistantMessageID}/resume"
 }

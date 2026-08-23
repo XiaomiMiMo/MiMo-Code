@@ -2545,6 +2545,7 @@ export class Session2 extends HeyApiClient {
       sessionID: string
       directory?: string
       workspace?: string
+      agentID?: string
     },
     options?: Options<never, ThrowOnError>,
   ) {
@@ -2556,6 +2557,7 @@ export class Session2 extends HeyApiClient {
             { in: "path", key: "sessionID" },
             { in: "query", key: "directory" },
             { in: "query", key: "workspace" },
+            { in: "query", key: "agentID" },
           ],
         },
       ],
@@ -2578,6 +2580,8 @@ export class Session2 extends HeyApiClient {
       assistantMessageID: string
       directory?: string
       workspace?: string
+      agentID?: string
+      task_id?: string
     },
     options?: Options<never, ThrowOnError>,
   ) {
@@ -2590,6 +2594,8 @@ export class Session2 extends HeyApiClient {
             { in: "path", key: "assistantMessageID" },
             { in: "query", key: "directory" },
             { in: "query", key: "workspace" },
+            { in: "query", key: "agentID" },
+            { in: "query", key: "task_id" },
           ],
         },
       ],

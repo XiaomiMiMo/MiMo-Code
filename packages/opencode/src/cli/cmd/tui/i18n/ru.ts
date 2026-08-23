@@ -339,6 +339,7 @@ export const dict = {
   // App-level commands
   "tui.command.session.list.title": "Сменить сессию",
   "tui.command.session.new.title": "Новая сессия",
+  "tui.command.session.recover.title": "Продолжить прерванный ход",
   "tui.command.workflow.list.title": "Рабочие процессы",
   "tui.command.model.list.title": "Сменить модель",
   "tui.command.model.cycle_recent.title": "Цикл моделей",
@@ -445,6 +446,9 @@ export const dict = {
   "tui.toast.try_best.paused_other": "Обнаружен цикл try-best; сеанс {{session}} приостановлен.",
   "tui.toast.try_best.handoff_failed": "Не удалось запустить передачу выбранному исполнителю.",
   "tui.toast.try_best.continue_failed": "Не удалось продолжить сеанс",
+  "tui.toast.session.recover.started": "Продолжаем прерванный ход",
+  "tui.toast.session.recover.none": "Нет прерванного хода для продолжения",
+  "tui.toast.session.recover.failed": "Не удалось продолжить прерванный ход",
   "tui.dialog.try_best.title": "Обнаружен цикл try-best — ход приостановлен",
   "tui.dialog.try_best.reason.edit_repeat": "Почти одинаковые правки повторились {{count}} раз.",
   "tui.dialog.try_best.reason.edit_repeat_path": "Почти одинаковые правки повторились {{count}} раз в {{path}}.",

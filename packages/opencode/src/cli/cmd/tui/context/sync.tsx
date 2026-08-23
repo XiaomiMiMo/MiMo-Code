@@ -326,7 +326,12 @@ export const { use: useSync, provider: SyncProvider } = createSimpleContext({
       void sdk.client.session
         .recovery({ sessionID }, { throwOnError: true })
         .then((response) => setStore("session_recovery", sessionID, response.data ?? []))
-        .catch(() => setStore("session_recovery", sessionID, []))
+        .catch((error) =>
+          Log.Default.warn("tui recovery refresh failed", {
+            sessionID,
+            error: error instanceof Error ? error.message : String(error),
+          }),
+        )
     }
 
     // A bootstrap that nobody awaits still must not fail silently when the
@@ -566,9 +571,6 @@ export const { use: useSync, provider: SyncProvider } = createSimpleContext({
         }
 
         case "message.updated": {
-          if ((event.properties.info.agentID ?? "main") === "main") {
-            refreshRecovery(event.properties.info.sessionID)
-          }
           // Bucket every message by agentID. Pre-rewire the TUI dropped non-main
           // messages here; now subagent slices are first-class buckets and the
           // session view renders whichever bucket matches route.agentID.

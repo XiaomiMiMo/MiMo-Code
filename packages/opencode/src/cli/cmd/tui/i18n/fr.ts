@@ -324,6 +324,7 @@ export const dict = {
   // App-level commands
   "tui.command.session.list.title": "Changer de session",
   "tui.command.session.new.title": "Nouvelle session",
+  "tui.command.session.recover.title": "Reprendre le tour interrompu",
   "tui.command.workflow.list.title": "Workflows",
   "tui.command.model.list.title": "Changer de modèle",
   "tui.command.model.cycle_recent.title": "Modèles récents",
@@ -430,6 +431,9 @@ export const dict = {
   "tui.toast.try_best.paused_other": "Boucle try-best détectée ; la session {{session}} a été suspendue.",
   "tui.toast.try_best.handoff_failed": "Impossible de démarrer le transfert vers le harnais sélectionné.",
   "tui.toast.try_best.continue_failed": "Impossible de poursuivre la session",
+  "tui.toast.session.recover.started": "Reprise du tour interrompu",
+  "tui.toast.session.recover.none": "Aucun tour interrompu à reprendre",
+  "tui.toast.session.recover.failed": "Impossible de reprendre le tour interrompu",
   "tui.dialog.try_best.title": "Boucle try-best détectée — tour suspendu",
   "tui.dialog.try_best.reason.edit_repeat": "Des modifications presque identiques ont été répétées {{count}} fois.",
   "tui.dialog.try_best.reason.edit_repeat_path":

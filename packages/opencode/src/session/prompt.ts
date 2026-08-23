@@ -33,6 +33,7 @@ import { contextPressureLevel, usable, isOverflow as overflowCheck } from "./ove
 import { Config } from "@/config"
 import { isMemoryWriteEnabled } from "@/memory/write-gate"
 import { Global } from "@/global"
+import { NotFoundError } from "@/storage"
 import { Bus } from "../bus"
 import { ProviderTransform } from "../provider"
 import { SystemPrompt } from "./system"
@@ -242,8 +243,8 @@ const elog = EffectLogger.create({ service: "session.prompt" })
 export interface Interface {
   readonly cancel: (sessionID: SessionID) => Effect.Effect<void>
   readonly prompt: (input: PromptInput) => Effect.Effect<MessageV2.WithParts>
-  readonly recovery: (input: { sessionID: SessionID }) => Effect.Effect<RecoveryCandidate[]>
-  readonly resume: (input: ResumeTurnInput) => Effect.Effect<MessageV2.WithParts>
+  readonly recovery: (input: { sessionID: SessionID; agentID?: string }) => Effect.Effect<RecoveryCandidate[]>
+  readonly resume: (input: ResumeTurnInput) => Effect.Effect<MessageV2.WithParts, InstanceType<typeof NotFoundError>>
   readonly loop: (input: z.infer<typeof LoopInput>) => Effect.Effect<MessageV2.WithParts>
   readonly shell: (input: ShellInput) => Effect.Effect<MessageV2.WithParts>
   readonly command: (input: CommandInput) => Effect.Effect<MessageV2.WithParts>
@@ -2760,8 +2761,8 @@ NOTE: At any point in time through this workflow you should feel free to ask the
       throw new Error("Impossible")
     })
 
-    const recovery = Effect.fn("SessionPrompt.recovery")(function* (input: { sessionID: SessionID }) {
-      const msgs = yield* sessions.messages({ sessionID: input.sessionID, agentID: "main" })
+    const recovery = Effect.fn("SessionPrompt.recovery")(function* (input: { sessionID: SessionID; agentID?: string }) {
+      const msgs = yield* sessions.messages({ sessionID: input.sessionID, agentID: input.agentID ?? "main" })
       const candidates: RecoveryCandidate[] = []
       for (const [index, msg] of msgs.entries()) {
         if (msg.info.role !== "assistant" || msg.info.time.completed !== undefined) continue
@@ -2778,6 +2779,21 @@ NOTE: At any point in time through this workflow you should feel free to ask the
         })
       }
       return candidates.slice(-1)
+    })
+
+    const abandonRecoveredAssistant = Effect.fn("SessionPrompt.abandonRecoveredAssistant")(function* (input: {
+      sessionID: SessionID
+      assistantMessageID: MessageID
+      agentID?: string
+    }) {
+      const messages = yield* sessions.messages({ sessionID: input.sessionID, agentID: input.agentID ?? "main" })
+      const message = messages.find((item) => item.info.id === input.assistantMessageID)
+      if (!message || message.info.role !== "assistant" || message.info.time.completed !== undefined) return
+      yield* sessions.updateMessage({
+        ...message.info,
+        time: { ...message.info.time, completed: Date.now() },
+        error: new MessageV2.AbortedError({ message: "Abandoned: resumed as a new assistant turn" }).toObject(),
+      })
     })
 
     const runLoop: (
@@ -3981,6 +3997,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
                   system: additions,
                   prebuiltSystem,
                   messages: [...modelMsgs, ...(isLastStep ? [{ role: "user" as const, content: MAX_STEPS }] : [])],
+                  mergeTurnContextIntoLastUser: isLastStep,
                   tools,
                   activeTools,
                   model,
@@ -4148,6 +4165,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
               system: additions,
               prebuiltSystem,
               messages: [...modelMsgs, ...(isLastStep ? [{ role: "user" as const, content: MAX_STEPS }] : [])],
+              mergeTurnContextIntoLastUser: isLastStep,
               tools,
               activeTools,
               model,
@@ -4824,17 +4842,27 @@ NOTE: At any point in time through this workflow you should feel free to ask the
 
     const resume = Effect.fn("SessionPrompt.resume")(function* (input: ResumeTurnInput) {
       yield* state.assertNotBusy(input.sessionID)
-      const candidates = yield* recovery({ sessionID: input.sessionID })
+      const candidates = yield* recovery({ sessionID: input.sessionID, agentID: input.agentID })
       const candidate = candidates.find((item) => item.assistantMessageID === input.assistantMessageID)
       if (candidate === undefined) {
-        throw new Error("No resumable interrupted turn found for assistant message " + input.assistantMessageID)
+        return yield* Effect.fail(
+          new NotFoundError({
+            message: "No resumable interrupted turn found for assistant message " + input.assistantMessageID,
+          }),
+        )
       }
       const agentID = input.agentID ?? "main"
       return yield* state.ensureRunning(
         input.sessionID,
         agentID,
         lastAssistant(input.sessionID, agentID),
-        runLoop(input.sessionID, agentID, input.task_id),
+        runLoop(input.sessionID, agentID, input.task_id).pipe(
+          Effect.ensuring(
+            abandonRecoveredAssistant({ sessionID: input.sessionID, assistantMessageID: input.assistantMessageID, agentID }).pipe(
+              Effect.catchCause(() => Effect.void),
+            ),
+          ),
+        ),
       )
     })
 

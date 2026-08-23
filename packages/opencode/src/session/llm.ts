@@ -267,6 +267,7 @@ export type StreamInput = {
   retries?: number
   toolChoice?: "auto" | "required" | "none"
   agentID?: string
+  mergeTurnContextIntoLastUser?: boolean
 }
 
 export type StreamRequest = StreamInput & {
@@ -289,6 +290,16 @@ export function turnContextMessages(user: MessageV2.User): ModelMessage[] {
     role: "user",
     content: `<system-reminder>\n${context}\n</system-reminder>`,
   }]
+}
+
+export function appendTurnContext(messages: ModelMessage[], user: MessageV2.User, mergeWithLastUser = false) {
+  const context = turnContextMessages(user)
+  if (!context.length) return messages
+  const last = messages.at(-1)
+  if (!mergeWithLastUser || !last || last.role !== "user" || typeof last.content !== "string") {
+    return [...messages, ...context]
+  }
+  return [...messages.slice(0, -1), { ...last, content: last.content + "\n\n" + context[0].content }]
 }
 
 export interface Interface {
@@ -507,7 +518,7 @@ const live: Layer.Layer<
       const requestMessages = input.dropAssistantPrefill
         ? ProviderTransform.dropTrailingAssistantPrefill(input.messages)
         : input.messages
-      const requestMessagesWithContext = [...requestMessages, ...turnContextMessages(input.user)]
+      const requestMessagesWithContext = appendTurnContext(requestMessages, input.user, input.mergeTurnContextIntoLastUser)
       const messages = isOpenaiOauth
         ? requestMessagesWithContext
         : isWorkflow

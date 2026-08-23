@@ -336,6 +336,7 @@ export const dict = {
   // App-level commands
   "tui.command.session.list.title": "Cambiar sesión",
   "tui.command.session.new.title": "Nueva sesión",
+  "tui.command.session.recover.title": "Continuar turno interrumpido",
   "tui.command.workflow.list.title": "Flujos de trabajo",
   "tui.command.model.list.title": "Cambiar modelo",
   "tui.command.model.cycle_recent.title": "Ciclo de modelos",
@@ -441,6 +442,9 @@ export const dict = {
   "tui.toast.try_best.paused_other": "Se detectó un bucle try-best; la sesión {{session}} se ha pausado.",
   "tui.toast.try_best.handoff_failed": "No se pudo iniciar la transferencia al entorno seleccionado.",
   "tui.toast.try_best.continue_failed": "No se pudo continuar la sesión",
+  "tui.toast.session.recover.started": "Continuando el turno interrumpido",
+  "tui.toast.session.recover.none": "No hay ningún turno interrumpido que continuar",
+  "tui.toast.session.recover.failed": "No se pudo continuar el turno interrumpido",
   "tui.dialog.try_best.title": "Bucle try-best detectado — turno pausado",
   "tui.dialog.try_best.reason.edit_repeat": "Se repitieron ediciones casi idénticas {{count}} veces.",
   "tui.dialog.try_best.reason.edit_repeat_path":

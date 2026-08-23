@@ -2,7 +2,7 @@ import { describe, expect } from "bun:test"
 import { Effect, Layer } from "effect"
 import * as CrossSpawnSpawner from "../../src/effect/cross-spawn-spawner"
 import { Session as SessionNs } from "../../src/session"
-import { LLM, turnContextMessages } from "../../src/session/llm"
+import { appendTurnContext, LLM, turnContextMessages } from "../../src/session/llm"
 import { MessageV2 } from "../../src/session/message-v2"
 import { MessageID, SessionID } from "../../src/session/schema"
 import { ProviderID, ModelID } from "../../src/provider/schema"
@@ -61,6 +61,16 @@ describe("turnContextMessages", () => {
       expect(messages[0].content).toBe(
         "<system-reminder>\n## Current date and time\nlocal time 17:58.\n</system-reminder>",
       )
+    }),
+  )
+
+  it.effect("last-step context merges into the control user message", () =>
+    Effect.sync(() => {
+      const result = appendTurnContext([{ role: "user", content: "MAX_STEPS" }], makeUser("clock"), true)
+      expect(result).toEqual([{
+        role: "user",
+        content: "MAX_STEPS\n\n<system-reminder>\nclock\n</system-reminder>",
+      }])
     }),
   )
 })

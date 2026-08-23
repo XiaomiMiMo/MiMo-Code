@@ -49,13 +49,17 @@ describe("session turn recovery routes", () => {
         const query = `?directory=${encodeURIComponent(tmp.path)}`
         const listed = yield* Effect.promise(() => Promise.resolve(app.request(`/session/${session.id}/recovery${query}`)))
         const candidates = yield* Effect.promise(() => listed.json() as Promise<Array<{ assistantMessageID: string; parentMessageID: string; created: number; hasPendingTool: boolean }>>)
+        const missing = yield* Effect.promise(() =>
+          Promise.resolve(app.request(`/session/${session.id}/turn/${MessageID.ascending()}/resume${query}`, { method: "POST" })),
+        )
         const resumed = yield* Effect.promise(() => Promise.resolve(app.request(`/session/${session.id}/turn/${assistant.id}/resume${query}`, { method: "POST" })))
-        return { listed: listed.status, candidates, resumed: resumed.status, userID: user.id }
+        return { listed: listed.status, candidates, resumed: resumed.status, missing: missing.status, userID: user.id }
       })),
     })
 
     expect(result.listed).toBe(200)
     expect(result.candidates).toEqual([{ assistantMessageID: expect.any(String), parentMessageID: result.userID, created: expect.any(Number), hasPendingTool: false }])
     expect(result.resumed).toBe(202)
+    expect(result.missing).toBe(404)
   })
 })
