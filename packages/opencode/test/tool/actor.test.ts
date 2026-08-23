@@ -70,7 +70,7 @@ function installMockSpawn(onSpawn?: (input: SpawnInput) => void) {
           return { actorID, sessionID: input.sessionID, outcome }
         }),
       cancel: () => Effect.void,
-      getForkContext: () => Effect.succeed(undefined),
+      getForkContext: (_sessionID: string, _actorID: string) => Effect.succeed(undefined),
     }
   })
 }

@@ -59,7 +59,7 @@ const recordingActor = Layer.effect(
           }
         }),
       cancel: () => Effect.void,
-      getForkContext: () => Effect.succeed(undefined),
+      getForkContext: (_sessionID: string, _actorID: string) => Effect.succeed(undefined),
     })
     spawnRef.current = impl
     yield* Effect.addFinalizer(() =>

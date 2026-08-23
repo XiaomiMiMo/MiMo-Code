@@ -315,7 +315,7 @@ describe("Fork-agent inbox compat (Plan 4 / Task 5)", () => {
         const forkActorID = result.actorID
 
         // Tier 2 — structural: capture forkContext BEFORE inbox send.
-        const forkCtxBefore = yield* actor.getForkContext(forkActorID)
+        const forkCtxBefore = yield* actor.getForkContext(result.sessionID, forkActorID)
         expect(forkCtxBefore).toBeDefined()
         expect(forkCtxBefore?.system).toEqual(["inherited-system-prompt"])
         expect(forkCtxBefore?.inheritedMessages).toHaveLength(2)
@@ -356,7 +356,7 @@ describe("Fork-agent inbox compat (Plan 4 / Task 5)", () => {
 
         // Tier 2 — structural: forkContext must still have the exact same
         // inheritedMessages snapshot. Drain must not touch forkContexts.
-        const forkCtxAfter = yield* actor.getForkContext(forkActorID)
+        const forkCtxAfter = yield* actor.getForkContext(result.sessionID, forkActorID)
         expect(forkCtxAfter).toBeDefined()
         expect(forkCtxAfter?.inheritedMessages).toStrictEqual(forkCtxBefore?.inheritedMessages)
         expect(forkCtxAfter?.system).toEqual(["inherited-system-prompt"])

@@ -893,7 +893,7 @@ describe("Actor forkContext lifecycle", () => {
         })
 
         // Before cancel: forkContext must be present.
-        const before = yield* actor.getForkContext(result.actorID)
+        const before = yield* actor.getForkContext(result.sessionID, result.actorID)
         expect(before).toBeDefined()
         expect(before?.system).toEqual(["test-system"])
 
@@ -901,7 +901,7 @@ describe("Actor forkContext lifecycle", () => {
         yield* actor.cancel(result.sessionID, result.actorID, "forced")
 
         // After cancel: forkContext must be gone.
-        const after = yield* actor.getForkContext(result.actorID)
+        const after = yield* actor.getForkContext(result.sessionID, result.actorID)
         expect(after).toBeUndefined()
       }),
       { git: true, config: providerCfg },
@@ -944,11 +944,95 @@ describe("mode × contextMode matrix", () => {
           forkContext: fakeForkCtx,
         })
 
-        const ctx = yield* actor.getForkContext(result.actorID)
+        const ctx = yield* actor.getForkContext(result.sessionID, result.actorID)
         expect(ctx).toBeDefined()
         expect(ctx?.system).toEqual(["test-system"])
 
         yield* actor.cancel(result.sessionID, result.actorID, "forced")
+      }),
+      { git: true, config: providerCfg },
+    ),
+  )
+
+  it.live("forkContext does not leak across sessions that allocate the same actorID", () =>
+    provideTmpdirServer(
+      Effect.fnUntraced(function* ({ llm }) {
+        const actor = yield* Actor.Service
+        const session = yield* Session.Service
+
+        // Two independent sessions. allocateActorID scopes its incrementing
+        // suffix by (sessionID, agentType), so the first "explore" subagent
+        // spawned in each session below is expected to collide on the same
+        // actorID (e.g. "explore-1") even though the sessions are unrelated.
+        const sessionA = yield* session.create({
+          title: "forkCtx cross-session A",
+          permission: [{ permission: "*", pattern: "*", action: "allow" }],
+        })
+        const sessionB = yield* session.create({
+          title: "forkCtx cross-session B",
+          permission: [{ permission: "*", pattern: "*", action: "allow" }],
+        })
+
+        // Hang the LLM so both fibers stay alive while we verify state.
+        yield* llm.hang
+
+        const forkCtxA = {
+          system: ["session-a"],
+          tools: {},
+          inheritedMessages: [],
+          parentPermission: [],
+          watermarkMsgID: MessageID.ascending(),
+          model: ref,
+        }
+        const forkCtxB = {
+          system: ["session-b"],
+          tools: {},
+          inheritedMessages: [],
+          parentPermission: [],
+          watermarkMsgID: MessageID.ascending(),
+          model: ref,
+        }
+
+        const resultA = yield* actor.spawn({
+          mode: "subagent",
+          sessionID: sessionA.id,
+          agentType: "explore",
+          task: "noop",
+          context: "none",
+          tools: [],
+          background: true,
+          model: ref,
+          forkContext: forkCtxA,
+        })
+        const resultB = yield* actor.spawn({
+          mode: "subagent",
+          sessionID: sessionB.id,
+          agentType: "explore",
+          task: "noop",
+          context: "none",
+          tools: [],
+          background: true,
+          model: ref,
+          forkContext: forkCtxB,
+        })
+
+        // Confirms the collision precondition: both sessions allocated the
+        // same locally-scoped actorID.
+        expect(resultA.actorID).toBe(resultB.actorID)
+
+        // Each session must read back its own forkContext, not the other's.
+        const ctxA = yield* actor.getForkContext(sessionA.id, resultA.actorID)
+        const ctxB = yield* actor.getForkContext(sessionB.id, resultB.actorID)
+        expect(ctxA?.system).toEqual(["session-a"])
+        expect(ctxB?.system).toEqual(["session-b"])
+
+        yield* actor.cancel(sessionA.id, resultA.actorID, "forced")
+
+        // Cancelling session A's actor must not clear session B's forkContext.
+        const ctxBAfterCancelA = yield* actor.getForkContext(sessionB.id, resultB.actorID)
+        expect(ctxBAfterCancelA?.system).toEqual(["session-b"])
+
+        yield* actor.cancel(sessionB.id, resultB.actorID, "forced")
       }),
       { git: true, config: providerCfg },
     ),
@@ -979,7 +1063,7 @@ describe("mode × contextMode matrix", () => {
           // no forkContext
         })
 
-        const ctx = yield* actor.getForkContext(result.actorID)
+        const ctx = yield* actor.getForkContext(result.sessionID, result.actorID)
         expect(ctx).toBeUndefined()
 
         yield* actor.cancel(result.sessionID, result.actorID, "forced")
@@ -1015,7 +1099,7 @@ describe("mode × contextMode matrix", () => {
 
         // For peer, result.actorID === child.id (the new session id)
         expect(result.actorID).not.toBe(parent.id)
-        const ctx = yield* actor.getForkContext(result.actorID)
+        const ctx = yield* actor.getForkContext(result.sessionID, result.actorID)
         expect(ctx).toBeDefined()
         expect(ctx?.system).toEqual(["test-system"])
 
@@ -1050,7 +1134,7 @@ describe("mode × contextMode matrix", () => {
           // no forkContext
         })
 
-        const ctx = yield* actor.getForkContext(result.actorID)
+        const ctx = yield* actor.getForkContext(result.sessionID, result.actorID)
         expect(ctx).toBeUndefined()
 
         yield* actor.cancel(result.sessionID, result.actorID, "forced")

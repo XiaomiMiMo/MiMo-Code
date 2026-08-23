@@ -43,7 +43,7 @@ const controllableActor = Layer.effect(
           return { actorID: `${input.agentType}-${counter}`, sessionID: input.sessionID, outcome }
         }),
       cancel: () => Effect.void,
-      getForkContext: () => Effect.succeed(undefined),
+      getForkContext: (_sessionID: string, _actorID: string) => Effect.succeed(undefined),
     })
     spawnRef.current = impl
     yield* Effect.addFinalizer(() =>

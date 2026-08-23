@@ -71,7 +71,7 @@ beforeAll(() => {
           yield* installedRegistry.updateStatus(sessionID, actorID, { status: "idle", lastOutcome: "cancelled" }).pipe(Effect.ignore)
         }
       }),
-    getForkContext: () => Effect.succeed(undefined),
+    getForkContext: (_sessionID: string, _actorID: string) => Effect.succeed(undefined),
   } satisfies ActorInterface
 })
 afterAll(() => {

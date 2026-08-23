@@ -54,7 +54,7 @@ const stubActor = Layer.succeed(
   Actor.Service.of({
     spawn: () => Effect.die("Actor.spawn unexpectedly called in system-spawn skip path"),
     cancel: () => Effect.die("Actor.cancel unexpectedly called in system-spawn skip path"),
-    getForkContext: () => Effect.succeed(undefined),
+    getForkContext: (_sessionID: string, _actorID: string) => Effect.succeed(undefined),
   }),
 )
 
