@@ -283,6 +283,7 @@ export const dict = {
   "tui.command.session.list.title": "切换会话",
   "tui.command.session.new.title": "新建会话",
   "tui.command.session.recover.title": "继续中断回合",
+  "tui.session.recovering": "恢复中",
   "tui.command.workflow.list.title": "工作流",
   "tui.command.model.list.title": "切换模型",
   "tui.command.model.cycle_recent.title": "循环切换模型",

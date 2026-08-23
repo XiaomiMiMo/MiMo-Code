@@ -525,6 +525,7 @@ export function Session() {
       { sessionID: route.sessionID, assistantMessageID: candidate.assistantMessageID },
       { throwOnError: true },
     )
+    sync.set("session_recovery_active", route.sessionID, candidate.assistantMessageID)
     toast.show({ message: t("tui.toast.session.recover.started"), variant: "info" })
   }
 
@@ -1497,6 +1498,7 @@ export function Session() {
                           recoveryCandidate()?.assistantMessageID === message.id &&
                           sync.session.status(route.sessionID) === "idle"
                         }
+                        recovering={sync.data.session_recovery_active[route.sessionID] === message.id}
                         onRecover={recover}
                       />
                     </Match>
@@ -1795,6 +1797,7 @@ function AssistantMessage(props: {
   parts: Part[]
   last: boolean
   recoverable: boolean
+  recovering: boolean
   onRecover: (assistantMessageID: string) => Promise<void>
 }) {
   const ctx = use()
@@ -1828,6 +1831,7 @@ function AssistantMessage(props: {
   // while a last message is streaming (finish undefined) or for the final/aborted
   // message, which preserves non-orchestrator behavior.
   const showFooter = createMemo(() => {
+    if (props.recovering) return true
     if (props.message.error?.name === "MessageAbortedError") return true
     if (final()) return true
     return props.last && props.message.finish !== "tool-calls"
@@ -1934,6 +1938,9 @@ function AssistantMessage(props: {
               </Show>
               <Show when={props.message.error?.name === "MessageAbortedError"}>
                 <span style={{ fg: theme.textMuted }}> · interrupted</span>
+              </Show>
+              <Show when={props.recovering}>
+                <span style={{ fg: theme.warning }}> · {t("tui.session.recovering")}</span>
               </Show>
             </text>
             <Show when={props.recoverable}>

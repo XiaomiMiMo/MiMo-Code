@@ -234,6 +234,9 @@ export const { use: useSync, provider: SyncProvider } = createSimpleContext({
       session_recovery: {
         [sessionID: string]: SessionRecoveryResponse
       }
+      session_recovery_active: {
+        [sessionID: string]: string | undefined
+      }
       session_goal: {
         [sessionID: string]: SessionGoal
       }
@@ -299,6 +302,7 @@ export const { use: useSync, provider: SyncProvider } = createSimpleContext({
       session: [],
       session_status: {},
       session_recovery: {},
+      session_recovery_active: {},
       session_goal: {},
       session_diff: {},
       session_cwd: {},
@@ -505,6 +509,7 @@ export const { use: useSync, provider: SyncProvider } = createSimpleContext({
               delete s.question[sid]
               delete s.session_status[sid]
               delete s.session_recovery[sid]
+              delete s.session_recovery_active[sid]
               delete s.session_goal[sid]
               delete s.session_diff[sid]
               delete s.session_cwd[sid]
@@ -539,7 +544,10 @@ export const { use: useSync, provider: SyncProvider } = createSimpleContext({
 
         case "session.status": {
           setStore("session_status", event.properties.sessionID, nextSessionStatus(event.properties.status))
-          if (event.properties.status.type === "idle") refreshRecovery(event.properties.sessionID)
+          if (event.properties.status.type === "idle") {
+            setStore("session_recovery_active", event.properties.sessionID, undefined)
+            refreshRecovery(event.properties.sessionID)
+          }
           break
         }
 

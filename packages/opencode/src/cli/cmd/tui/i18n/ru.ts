@@ -340,6 +340,7 @@ export const dict = {
   "tui.command.session.list.title": "Сменить сессию",
   "tui.command.session.new.title": "Новая сессия",
   "tui.command.session.recover.title": "Продолжить прерванный ход",
+  "tui.session.recovering": "восстановление",
   "tui.command.workflow.list.title": "Рабочие процессы",
   "tui.command.model.list.title": "Сменить модель",
   "tui.command.model.cycle_recent.title": "Цикл моделей",

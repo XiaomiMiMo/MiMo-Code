@@ -268,6 +268,7 @@ export const dict = {
   "tui.command.session.list.title": "セッションを切り替え",
   "tui.command.session.new.title": "新規セッション",
   "tui.command.session.recover.title": "中断したターンを再開",
+  "tui.session.recovering": "復旧中",
   "tui.command.workflow.list.title": "ワークフロー",
   "tui.command.model.list.title": "モデルを切り替え",
   "tui.command.model.cycle_recent.title": "モデルを循環",

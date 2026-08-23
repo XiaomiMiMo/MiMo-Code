@@ -261,6 +261,7 @@ export const dict: Record<string, string> = {
   "tui.command.session.list.title": "Switch session",
   "tui.command.session.new.title": "New session",
   "tui.command.session.recover.title": "Continue interrupted turn",
+  "tui.session.recovering": "recovering",
   "tui.command.workflow.list.title": "Workflows",
   "tui.command.model.list.title": "Switch model",
   "tui.command.model.cycle_recent.title": "Model cycle",
