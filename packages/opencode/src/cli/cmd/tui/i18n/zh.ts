@@ -282,6 +282,7 @@ export const dict = {
   // App-level commands
   "tui.command.session.list.title": "切换会话",
   "tui.command.session.new.title": "新建会话",
+  "tui.command.session.recover.title": "继续中断回合",
   "tui.command.workflow.list.title": "工作流",
   "tui.command.model.list.title": "切换模型",
   "tui.command.model.cycle_recent.title": "循环切换模型",
@@ -418,6 +419,9 @@ export const dict = {
   "tui.toast.try_best.paused_other": "检测到 Try-best 循环；会话 {{session}} 已暂停。",
   "tui.toast.try_best.handoff_failed": "启动所选 harness 的交接失败。",
   "tui.toast.try_best.continue_failed": "继续会话失败",
+  "tui.toast.session.recover.started": "正在继续中断回合",
+  "tui.toast.session.recover.none": "没有可继续的中断回合",
+  "tui.toast.session.recover.failed": "继续中断回合失败",
   "tui.dialog.try_best.title": "检测到 Try-best 循环 — 当前轮次已暂停",
   "tui.dialog.try_best.reason.edit_repeat": "近似相同的编辑重复了 {{count}} 次。",
   "tui.dialog.try_best.reason.edit_repeat_path": "在 {{path}} 中，近似相同的编辑重复了 {{count}} 次。",

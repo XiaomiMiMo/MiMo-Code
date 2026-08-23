@@ -260,6 +260,7 @@ export const dict: Record<string, string> = {
   // App-level commands
   "tui.command.session.list.title": "Switch session",
   "tui.command.session.new.title": "New session",
+  "tui.command.session.recover.title": "Continue interrupted turn",
   "tui.command.workflow.list.title": "Workflows",
   "tui.command.model.list.title": "Switch model",
   "tui.command.model.cycle_recent.title": "Model cycle",
@@ -396,6 +397,9 @@ export const dict: Record<string, string> = {
   "tui.toast.try_best.paused_other": "Try-best loop detected; session {{session}} was paused.",
   "tui.toast.try_best.handoff_failed": "Failed to start the selected harness handoff.",
   "tui.toast.try_best.continue_failed": "Failed to continue session",
+  "tui.toast.session.recover.started": "Continuing interrupted turn",
+  "tui.toast.session.recover.none": "No interrupted turn can be continued",
+  "tui.toast.session.recover.failed": "Failed to continue interrupted turn",
   "tui.dialog.try_best.title": "Try-best loop detected — turn paused",
   "tui.dialog.try_best.reason.edit_repeat": "Near-identical edits repeated {{count}} times.",
   "tui.dialog.try_best.reason.edit_repeat_path": "Near-identical edits repeated {{count}} times in {{path}}.",

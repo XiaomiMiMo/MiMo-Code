@@ -197,6 +197,11 @@ export function Session() {
     return messages().findLast((x) => x.role === "assistant")
   })
 
+  const canRecover = createMemo(() => {
+    const message = lastAssistant()
+    return message?.role === "assistant" && message.time.completed === undefined
+  })
+
   const dimensions = useTerminalDimensions()
   const [sidebar, setSidebar] = kv.signal<SidebarPreference>("sidebar", "auto")
   const [conceal, setConceal] = createSignal(true)
@@ -492,6 +497,40 @@ export function Session() {
   const command = useCommandDialog()
   const t = useLanguage().t
   command.register(() => [
+    {
+      title: t("tui.command.session.recover.title"),
+      value: "session.recover",
+      suggested: canRecover(),
+      category: "session",
+      slash: {
+        name: "recover",
+      },
+      onSelect: async (dialog) => {
+        try {
+          const candidates = await sdk.client.session.recovery(
+            { sessionID: route.sessionID },
+            { throwOnError: true },
+          )
+          const candidate = candidates.data?.at(-1)
+          if (!candidate) {
+            toast.show({ message: t("tui.toast.session.recover.none"), variant: "info" })
+            dialog.clear()
+            return
+          }
+          await sdk.client.session.resume(
+            { sessionID: route.sessionID, assistantMessageID: candidate.assistantMessageID },
+            { throwOnError: true },
+          )
+          toast.show({ message: t("tui.toast.session.recover.started"), variant: "info" })
+        } catch (error) {
+          toast.show({
+            message: error instanceof Error ? error.message : t("tui.toast.session.recover.failed"),
+            variant: "error",
+          })
+        }
+        dialog.clear()
+      },
+    },
     {
       title: t(session()?.share?.url ? "tui.command.session.share.copy_link" : "tui.command.session.share.title"),
       value: "session.share",
@@ -1861,6 +1900,9 @@ function AssistantMessage(props: { message: AssistantMessage; parts: Part[]; las
               </Show>
               <Show when={props.message.error?.name === "MessageAbortedError"}>
                 <span style={{ fg: theme.textMuted }}> · interrupted</span>
+              </Show>
+              <Show when={props.message.error?.name === "MessageAbortedError" && props.last}>
+                <span style={{ fg: theme.warning }}> · /recover</span>
               </Show>
             </text>
             <Show when={props.message.time.completed}>
