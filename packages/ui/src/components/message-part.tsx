@@ -55,6 +55,7 @@ import { ToolStatusTitle } from "./tool-status-title"
 import { patchFiles } from "./apply-patch-file"
 import { animate } from "motion"
 import { attached, inline, kind } from "./message-file"
+import { ActorNotificationCard } from "./actor-notification-card"
 
 function ShellSubmessage(props: { text: string; animate?: boolean }) {
   let widthRef: HTMLSpanElement | undefined
@@ -965,6 +966,14 @@ export function UserMessageDisplay(props: { message: UserMessage; parts: PartTyp
 
   const agents = createMemo(() => (props.parts?.filter((p) => p.type === "agent") as AgentPart[]) ?? [])
 
+  // Synthetic text parts that contain <actor-notification> or <inbox> tags
+  // are rendered as notification cards instead of being filtered out.
+  const notificationParts = createMemo(() =>
+    (props.parts?.filter(
+      (p) => p.type === "text" && (p as TextPart).synthetic,
+    ) as TextPart[]) ?? [],
+  )
+
   const model = createMemo(() => {
     const providerID = props.message.model?.providerID
     const modelID = props.message.model?.modelID
@@ -1016,6 +1025,13 @@ export function UserMessageDisplay(props: { message: UserMessage; parts: PartTyp
 
   return (
     <div data-component="user-message">
+      <Show when={notificationParts().length > 0}>
+        <div data-slot="user-message-notifications">
+          <For each={notificationParts()}>
+            {(part) => <ActorNotificationCard text={part.text} />}
+          </For>
+        </div>
+      </Show>
       <Show when={attachments().length > 0}>
         <div data-slot="user-message-attachments">
           <For each={attachments()}>
