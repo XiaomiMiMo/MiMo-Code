@@ -62,7 +62,8 @@ describe("session turn recovery routes", () => {
         unsubscribe()
         const after = yield* sessions.messages({ sessionID: session.id, agentID: "main" })
         const abandoned = after.find((item) => item.info.id === assistant.id)?.info
-        return { listed: listed.status, candidates, resumed: resumed.status, missing: missing.status, userID: user.id, errors, abandoned }
+        const abandonedAssistant = abandoned?.role === "assistant" ? abandoned : undefined
+        return { listed: listed.status, candidates, resumed: resumed.status, missing: missing.status, userID: user.id, errors, abandoned: abandonedAssistant }
       })),
     })
 
