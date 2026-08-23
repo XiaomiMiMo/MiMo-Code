@@ -1,13 +1,11 @@
 import { createMemo, Show, type Component } from "solid-js"
 import { Card, CardTitle, CardDescription } from "./card"
-import { Icon } from "./icon"
 import {
   parseNotification,
   notificationStatusLabel,
   notificationStatusIcon,
   type ActorNotification,
   type InboxMessage,
-  type ParsedNotification,
 } from "./actor-notification"
 
 export interface ActorNotificationCardProps {
@@ -42,8 +40,12 @@ const ActorCard: Component<{ notification: ActorNotification }> = (props) => {
         return "success" as const
       case "failed":
         return "error" as const
+      case "cancelled":
+        return "warning" as const
       case "stalled":
         return "warning" as const
+      case "ended":
+        return "info" as const
       default:
         return "info" as const
     }

@@ -78,14 +78,16 @@ function parseActorNotification(text: string): ActorNotification | null {
 
 function parseInboxMessage(text: string): InboxMessage | null {
   // Match <inbox from="..." sent_at="...">content</inbox>
+  // Use greedy matching for content to handle nested </inbox> in code blocks
   const match = text.match(
-    /<inbox\s+from="([^"]*)"\s+sent_at="([^"]*)"\s*>([\s\S]*?)<\/inbox>/,
+    /<inbox\s+from="([^"]*)"\s+sent_at="([^"]*)"\s*>([\s\S]*)<\/inbox>\s*$/,
   )
   if (!match) return null
 
   const from = match[1]
   const sentAt = match[2]
-  const content = match[3].trim()
+  // Preserve leading/trailing whitespace for code blocks, but trim excess
+  const content = match[3].replace(/^\n/, "").replace(/\n$/, "")
 
   return { type: "inbox", from, sentAt, content }
 }

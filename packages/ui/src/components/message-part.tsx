@@ -56,6 +56,7 @@ import { patchFiles } from "./apply-patch-file"
 import { animate } from "motion"
 import { attached, inline, kind } from "./message-file"
 import { ActorNotificationCard } from "./actor-notification-card"
+import { parseNotification } from "./actor-notification"
 
 function ShellSubmessage(props: { text: string; animate?: boolean }) {
   let widthRef: HTMLSpanElement | undefined
@@ -970,7 +971,7 @@ export function UserMessageDisplay(props: { message: UserMessage; parts: PartTyp
   // are rendered as notification cards instead of being filtered out.
   const notificationParts = createMemo(() =>
     (props.parts?.filter(
-      (p) => p.type === "text" && (p as TextPart).synthetic,
+      (p) => p.type === "text" && (p as TextPart).synthetic && parseNotification((p as TextPart).text),
     ) as TextPart[]) ?? [],
   )
 
