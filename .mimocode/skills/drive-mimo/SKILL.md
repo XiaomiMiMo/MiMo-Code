@@ -1,6 +1,6 @@
 ---
 name: drive-mimo
-description: Use when you need to programmatically drive another MiMoCode (mimo) process — supports both headless `mimo run` with JSON events and interactive TUI via tmux for full terminal interaction testing. Covers driving either an installed `mimo` binary or a dev build launched from source with `bun dev` (for debugging mimocode itself). Reach for it to script, test, or automate a separate mimo instance and validate its behavior from parseable evidence.
+description: Use when developing or testing the MiMoCode repository and you need to programmatically drive another MiMoCode (mimo) process. Supports headless `mimo run` with JSON events and interactive TUI via tmux for behavior, integration, and visual regression testing. Covers an installed `mimo` binary or a dev build launched from source with `bun dev`; do not use it for ordinary MiMoCode task execution.
 ---
 
 # Drive MiMo
