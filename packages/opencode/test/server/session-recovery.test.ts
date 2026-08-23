@@ -48,8 +48,15 @@ describe("session turn recovery routes", () => {
         })
         const app = Server.Default().app
         const errors: unknown[] = []
+        let resolveError!: () => void
+        const errorSeen = new Promise<void>((resolve) => {
+          resolveError = resolve
+        })
         const unsubscribe = Bus.subscribe(Session.Event.Error, (event) => {
-          if (event.properties.sessionID === session.id) errors.push(event.properties.error)
+          if (event.properties.sessionID === session.id) {
+            errors.push(event.properties.error)
+            resolveError()
+          }
         })
         const query = `?directory=${encodeURIComponent(tmp.path)}`
         const listed = yield* Effect.promise(() => Promise.resolve(app.request(`/session/${session.id}/recovery${query}`)))
@@ -58,7 +65,9 @@ describe("session turn recovery routes", () => {
           Promise.resolve(app.request(`/session/${session.id}/turn/${MessageID.ascending()}/resume${query}`, { method: "POST" })),
         )
         const resumed = yield* Effect.promise(() => Promise.resolve(app.request(`/session/${session.id}/turn/${assistant.id}/resume${query}`, { method: "POST" })))
-        yield* Effect.promise(() => new Promise((resolve) => setTimeout(resolve, 1000)))
+        yield* Effect.promise(() =>
+          Promise.race([errorSeen, new Promise((resolve) => setTimeout(resolve, 10_000))]),
+        )
         unsubscribe()
         const after = yield* sessions.messages({ sessionID: session.id, agentID: "main" })
         const abandoned = after.find((item) => item.info.id === assistant.id)?.info

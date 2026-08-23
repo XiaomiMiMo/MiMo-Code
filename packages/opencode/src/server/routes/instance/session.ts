@@ -1064,7 +1064,7 @@ export const SessionRoutes = lazy(() =>
           "SessionRoutes.resume.validate",
           c,
           SessionPrompt.Service.use((svc) =>
-            svc.recovery({ sessionID: params.sessionID }).pipe(
+            svc.recovery({ sessionID: params.sessionID, agentID: query.agentID }).pipe(
               Effect.flatMap((candidates) =>
                 candidates.some((candidate) => candidate.assistantMessageID === params.assistantMessageID)
                   ? Effect.void
@@ -1088,10 +1088,11 @@ export const SessionRoutes = lazy(() =>
           })),
         ).catch((error) => {
           log.error("session resume failed", { sessionID: params.sessionID, error })
-          void Bus.publish(Session.Event.Error, {
-            sessionID: params.sessionID,
-            error: new NamedError.Unknown({ message: error instanceof Error ? error.message : String(error) }).toObject(),
-          })
+          const failure =
+            error instanceof Session.BusyError
+              ? new MessageV2.APIError({ message: error.message, statusCode: 409, isRetryable: true }).toObject()
+              : new NamedError.Unknown({ message: error instanceof Error ? error.message : String(error) }).toObject()
+          void Bus.publish(Session.Event.Error, { sessionID: params.sessionID, error: failure })
         })
         return c.body(null, 202)
       },

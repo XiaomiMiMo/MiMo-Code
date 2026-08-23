@@ -2762,10 +2762,11 @@ NOTE: At any point in time through this workflow you should feel free to ask the
     })
 
     const recovery = Effect.fn("SessionPrompt.recovery")(function* (input: { sessionID: SessionID; agentID?: string }) {
+      if ((yield* status.get(input.sessionID)).type !== "idle") return []
       const msgs = yield* sessions.messages({ sessionID: input.sessionID, agentID: input.agentID ?? "main" })
       const candidates: RecoveryCandidate[] = []
       for (const [index, msg] of msgs.entries()) {
-        if (msg.info.role !== "assistant" || msg.info.time.completed !== undefined) continue
+        if (msg.info.role !== "assistant" || "completed" in msg.info.time) continue
         const assistant = msg.info
         if (!msgs.some((parent) => parent.info.role === "user" && parent.info.id === assistant.parentID)) continue
         if (msgs.slice(index + 1).some((later) => later.info.role === "user" || later.info.role === "assistant")) continue
@@ -2778,7 +2779,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
           ),
         })
       }
-      return candidates.slice(-1)
+      return candidates
     })
 
     const abandonRecoveredAssistant = Effect.fn("SessionPrompt.abandonRecoveredAssistant")(function* (input: {
@@ -2788,7 +2789,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
     }) {
       const messages = yield* sessions.messages({ sessionID: input.sessionID, agentID: input.agentID ?? "main" })
       const message = messages.find((item) => item.info.id === input.assistantMessageID)
-      if (!message || message.info.role !== "assistant" || message.info.time.completed !== undefined) return
+      if (!message || message.info.role !== "assistant" || "completed" in message.info.time) return
       yield* sessions.updateMessage({
         ...message.info,
         time: { ...message.info.time, completed: Date.now() },
@@ -3997,7 +3998,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
                   system: additions,
                   prebuiltSystem,
                   messages: [...modelMsgs, ...(isLastStep ? [{ role: "user" as const, content: MAX_STEPS }] : [])],
-                  mergeTurnContextIntoLastUser: isLastStep,
+                  mergeTurnContextIntoLastUser: true,
                   tools,
                   activeTools,
                   model,
@@ -4165,7 +4166,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
               system: additions,
               prebuiltSystem,
               messages: [...modelMsgs, ...(isLastStep ? [{ role: "user" as const, content: MAX_STEPS }] : [])],
-              mergeTurnContextIntoLastUser: isLastStep,
+              mergeTurnContextIntoLastUser: true,
               tools,
               activeTools,
               model,
@@ -4859,7 +4860,13 @@ NOTE: At any point in time through this workflow you should feel free to ask the
         runLoop(input.sessionID, agentID, input.task_id).pipe(
           Effect.ensuring(
             abandonRecoveredAssistant({ sessionID: input.sessionID, assistantMessageID: input.assistantMessageID, agentID }).pipe(
-              Effect.catchCause(() => Effect.void),
+              Effect.catchCause((cause) =>
+                elog.warn("recovered-assistant-abandon-failed", {
+                  sessionID: input.sessionID,
+                  messageID: input.assistantMessageID,
+                  cause,
+                }),
+              ),
             ),
           ),
         ),

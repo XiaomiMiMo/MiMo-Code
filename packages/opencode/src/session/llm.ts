@@ -500,11 +500,10 @@ const live: Layer.Layer<
         mergeDeep(input.agent.options),
         mergeDeep(variant),
       )
-      if (isOpenaiOauth) {
-        options.instructions = system.join("\n")
-      }
-
       const isWorkflow = language instanceof GitLabWorkflowLanguageModel
+      const providerSystem =
+        (isOpenaiOauth || isWorkflow) && input.user.system?.trim() ? [...system, input.user.system] : system
+      if (isOpenaiOauth) options.instructions = providerSystem.join("\n")
       // Reactive prefill-rejection backstop. The PRIMARY mechanism is the
       // proactive guard in ProviderTransform.message()
       // (ensureTrailingUserMessage): we never send a request ending in an
@@ -520,11 +519,11 @@ const live: Layer.Layer<
         : input.messages
       const requestMessagesWithContext = appendTurnContext(requestMessages, input.user, input.mergeTurnContextIntoLastUser)
       const messages = isOpenaiOauth
-        ? requestMessagesWithContext
+        ? requestMessages
         : isWorkflow
-          ? requestMessagesWithContext
+          ? requestMessages
           : [
-              ...system.map(
+              ...providerSystem.map(
                 (x): ModelMessage => ({
                   role: "system",
                   content: x,
@@ -726,8 +725,8 @@ const live: Layer.Layer<
             providerID: input.model.providerID,
             modelID: input.model.id,
             trajectory: [
-              ...system.map((content) => ({ role: "system", content })),
-              ...requestMessagesWithContext,
+              ...providerSystem.map((content) => ({ role: "system", content })),
+              ...(isOpenaiOauth || isWorkflow ? requestMessages : requestMessagesWithContext),
             ],
             systemPrompt: system,
           },
