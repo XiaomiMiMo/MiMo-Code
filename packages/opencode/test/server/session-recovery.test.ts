@@ -7,6 +7,7 @@ import { Session } from "../../src/session"
 import { MessageID } from "../../src/session/schema"
 import { ModelID, ProviderID } from "../../src/provider/schema"
 import { Log } from "../../src/util"
+import { Bus } from "../../src/bus"
 import { tmpdir } from "../fixture/fixture"
 
 void Log.init({ print: false })
@@ -46,6 +47,10 @@ describe("session turn recovery routes", () => {
           time: { created: Date.now() },
         })
         const app = Server.Default().app
+        const errors: unknown[] = []
+        const unsubscribe = Bus.subscribe(Session.Event.Error, (event) => {
+          if (event.properties.sessionID === session.id) errors.push(event.properties.error)
+        })
         const query = `?directory=${encodeURIComponent(tmp.path)}`
         const listed = yield* Effect.promise(() => Promise.resolve(app.request(`/session/${session.id}/recovery${query}`)))
         const candidates = yield* Effect.promise(() => listed.json() as Promise<Array<{ assistantMessageID: string; parentMessageID: string; created: number; hasPendingTool: boolean }>>)
@@ -53,7 +58,11 @@ describe("session turn recovery routes", () => {
           Promise.resolve(app.request(`/session/${session.id}/turn/${MessageID.ascending()}/resume${query}`, { method: "POST" })),
         )
         const resumed = yield* Effect.promise(() => Promise.resolve(app.request(`/session/${session.id}/turn/${assistant.id}/resume${query}`, { method: "POST" })))
-        return { listed: listed.status, candidates, resumed: resumed.status, missing: missing.status, userID: user.id }
+        yield* Effect.promise(() => new Promise((resolve) => setTimeout(resolve, 1000)))
+        unsubscribe()
+        const after = yield* sessions.messages({ sessionID: session.id, agentID: "main" })
+        const abandoned = after.find((item) => item.info.id === assistant.id)?.info
+        return { listed: listed.status, candidates, resumed: resumed.status, missing: missing.status, userID: user.id, errors, abandoned }
       })),
     })
 
@@ -61,5 +70,8 @@ describe("session turn recovery routes", () => {
     expect(result.candidates).toEqual([{ assistantMessageID: expect.any(String), parentMessageID: result.userID, created: expect.any(Number), hasPendingTool: false }])
     expect(result.resumed).toBe(202)
     expect(result.missing).toBe(404)
+    expect(result.errors.length).toBeGreaterThan(0)
+    expect(result.abandoned?.time.completed).toEqual(expect.any(Number))
+    expect(result.abandoned?.error?.data.message).toContain("Abandoned")
   })
 })
