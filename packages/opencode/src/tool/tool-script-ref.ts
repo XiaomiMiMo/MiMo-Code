@@ -24,7 +24,6 @@ export const TOOL_SCRIPT_EXCLUDED = new Set([
   "invalid",
   "question",
   "task",
-  "actor",
   "skill",
   "plan_exit",
   "cron",
