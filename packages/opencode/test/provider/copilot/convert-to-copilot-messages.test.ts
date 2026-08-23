@@ -261,6 +261,33 @@ describe("tool calls", () => {
     ])
   })
 
+  test("should normalize non-object tool call arguments to an empty object", () => {
+    const result = convertToCopilotMessages([
+      {
+        role: "assistant",
+        content: [
+          {
+            type: "tool-call",
+            toolCallId: "call1",
+            toolName: "actor",
+            input: 600,
+          },
+        ],
+      },
+    ])
+
+    expect(result[0].tool_calls).toEqual([
+      {
+        id: "call1",
+        type: "function",
+        function: {
+          name: "actor",
+          arguments: "{}",
+        },
+      },
+    ])
+  })
+
   test("should handle text output type in tool results", () => {
     const result = convertToCopilotMessages([
       {

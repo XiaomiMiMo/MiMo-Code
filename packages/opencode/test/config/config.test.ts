@@ -2640,3 +2640,38 @@ describe("tool config inline struct", () => {
     ).toThrow()
   })
 })
+
+test("loads MCP servers from mcpServers in Claude Code format", async () => {
+  await using tmp = await tmpdir({
+    init: async (dir) => {
+      await Filesystem.write(
+        path.join(dir, "mimocode.json"),
+        JSON.stringify({
+          $schema: "https://opencode.ai/config.json",
+          mcpServers: {
+            firecrawl: {
+              command: "npx",
+              args: ["-y", "firecrawl-mcp"],
+              env: { FIRECRAWL_API_KEY: "key" },
+            },
+          },
+        }),
+      )
+    },
+  })
+
+  await Instance.provide({
+    directory: tmp.path,
+    fn: async () => {
+      const config = await load()
+      expect(config.mcp).toEqual({
+        firecrawl: {
+          type: "local",
+          command: ["npx", "-y", "firecrawl-mcp"],
+          environment: { FIRECRAWL_API_KEY: "key" },
+          enabled: true,
+        },
+      })
+    },
+  })
+})

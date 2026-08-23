@@ -497,13 +497,19 @@ export const layer: Layer.Layer<
             // A tool call may already have caused an external side effect before
             // the provider stream fails. Replaying the whole model step is unsafe.
             ctx.retrySafe = false
+            // The AI SDK marks tool calls whose arguments fail schema validation
+            // as invalid and may emit the parsed non-object input (e.g. a bare
+            // number like `600`). Normalize to a plain object so the stored
+            // history re-serializes to valid JSON arguments for every provider
+            // and the tool is never executed with malformed input.
+            const input = isRecord(value.input) ? value.input : {}
             yield* updateToolCall(value.toolCallId, (match) => ({
               ...match,
               tool: value.toolName,
               state: {
                 ...match.state,
                 status: "running",
-                input: value.input,
+                input,
                 time: { start: Date.now() },
               },
               metadata: match.metadata?.providerExecuted
@@ -521,7 +527,7 @@ export const layer: Layer.Layer<
                   part.type === "tool" &&
                   part.tool === value.toolName &&
                   part.state.status !== "pending" &&
-                  JSON.stringify(part.state.input) === JSON.stringify(value.input),
+                  JSON.stringify(part.state.input) === JSON.stringify(input),
               )
             ) {
               return
@@ -532,7 +538,7 @@ export const layer: Layer.Layer<
               permission: "doom_loop",
               patterns: [value.toolName],
               sessionID: ctx.assistantMessage.sessionID,
-              metadata: { tool: value.toolName, input: value.input },
+              metadata: { tool: value.toolName, input },
               always: [value.toolName],
               ruleset: agent.permission,
               // System-spawned background agents have no human to answer — fail clean.

@@ -13,6 +13,12 @@ function isFileId(data: string, prefixes?: readonly string[]): boolean {
   return prefixes.some((prefix) => data.startsWith(prefix))
 }
 
+// Tool call arguments must serialize to a JSON object; some providers reject a
+// bare value (e.g. an int) with a 400, so normalize non-object inputs to {}.
+function toolCallArguments(input: unknown): string {
+  return typeof input === "object" && input !== null && !Array.isArray(input) ? JSON.stringify(input) : "{}"
+}
+
 function customExecSource(input: unknown): string {
   if (typeof input !== "string") {
     if (input && typeof input === "object" && "code" in input && typeof input.code === "string") return input.code
@@ -185,7 +191,7 @@ export async function convertToOpenAIResponsesInput({
                 type: "function_call",
                 call_id: part.toolCallId,
                 name: part.toolName,
-                arguments: JSON.stringify(part.input),
+                arguments: toolCallArguments(part.input),
                 id: (part.providerOptions?.openai?.itemId as string) ?? undefined,
               })
               break
