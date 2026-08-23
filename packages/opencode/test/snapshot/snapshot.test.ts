@@ -84,6 +84,13 @@ test("revert should remove new files", async () => {
   })
 })
 
+test("revert rejects non-git projects", async () => {
+  await using tmp = await tmpdir({ outsideGit: true })
+  await expect(run(tmp.path, (snapshot) => snapshot.revert([]))).rejects.toThrow(
+    "Undo is unavailable because this directory is not a Git repository",
+  )
+})
+
 test("revert in subdirectory", async () => {
   await using tmp = await bootstrap()
   await Instance.provide({
