@@ -377,6 +377,8 @@ export const layer: Layer.Layer<
         const revert = Effect.fnUntraced(function* (patches: Patch[]) {
           return yield* locked(
             Effect.gen(function* () {
+              if (state.vcs !== "git")
+                throw new Error("Undo is unavailable because this directory is not a Git repository")
               const ops: { hash: string; file: string; rel: string }[] = []
               const seen = new Set<string>()
               for (const item of patches) {

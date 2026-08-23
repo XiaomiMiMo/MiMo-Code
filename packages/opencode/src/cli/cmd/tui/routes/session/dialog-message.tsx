@@ -6,6 +6,7 @@ import { useRoute } from "@tui/context/route"
 import * as Clipboard from "@tui/util/clipboard"
 import type { PromptInfo } from "@tui/component/prompt/history"
 import { strip } from "@tui/component/prompt/part"
+import { useToast } from "@tui/ui/toast"
 
 export function DialogMessage(props: {
   messageID: string
@@ -14,6 +15,7 @@ export function DialogMessage(props: {
 }) {
   const sync = useSync()
   const sdk = useSDK()
+  const toast = useToast()
   const message = createMemo(() => {
     const buckets = sync.data.message[props.sessionID]
     if (!buckets) return undefined
@@ -37,10 +39,17 @@ export function DialogMessage(props: {
             const msg = message()
             if (!msg) return
 
-            void sdk.client.session.revert({
-              sessionID: props.sessionID,
-              messageID: msg.id,
-            })
+            void sdk.client.session
+              .revert({
+                sessionID: props.sessionID,
+                messageID: msg.id,
+              })
+              .catch((error) => {
+                toast.show({
+                  message: error instanceof Error ? error.message : "Failed to revert changes",
+                  variant: "error",
+                })
+              })
 
             if (props.setPrompt) {
               const parts = sync.data.part[msg.id]
