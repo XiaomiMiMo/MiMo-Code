@@ -228,7 +228,6 @@ export const dict = {
   "tui.skill.html-to-video-pipeline.description": "ショート動画の神ツール - HTML でショート動画を制作",
   "tui.skill.arxiv.description": "arXiv 論文の検索・引用・ダウンロード・追跡",
   "tui.skill.skill-creator.description": "エージェントスキルの作成・レビュー・改善",
-  "tui.skill.drive-mimo.description": "別の MiMoCode プロセスをプログラムで操作——ヘッドレス JSON イベントまたは tmux 経由のインタラクティブ TUI",
   "tui.skill.research-paper-writing.description": "学術論文の執筆・推敲・査読者視点の批評",
   "tui.skill.playwright.description": "ターミナルから実ブラウザの操作を自動化",
   "tui.skill.codex.description": "スクリプト、CI、Docker、Kubernetes で Codex CLI を自律実行",

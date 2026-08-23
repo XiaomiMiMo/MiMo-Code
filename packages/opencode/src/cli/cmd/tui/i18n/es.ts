@@ -291,7 +291,6 @@ export const dict = {
   "tui.skill.html-to-video-pipeline.description": "El arma definitiva para vídeos cortos — crea vídeos cortos con HTML",
   "tui.skill.arxiv.description": "Busca, cita, descarga y sigue artículos de arXiv",
   "tui.skill.skill-creator.description": "Crea, revisa y mejora skills de agente",
-  "tui.skill.drive-mimo.description": "Controla programáticamente otro proceso MiMoCode — eventos JSON headless o TUI interactiva vía tmux",
   "tui.skill.research-paper-writing.description": "Redacta, pule y critica artículos académicos con perspectiva de revisor",
   "tui.skill.playwright.description": "Automatiza flujos de navegador reales desde la terminal",
   "tui.skill.codex.description": "Ejecuta Codex CLI de forma autónoma en scripts, CI, Docker y Kubernetes",
