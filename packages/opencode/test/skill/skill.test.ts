@@ -93,6 +93,33 @@ Instructions here.
     ),
   )
 
+  it.live("discovers repository skills without marking them as bundled", () =>
+    provideTmpdirInstance(
+      (dir) =>
+        Effect.gen(function* () {
+          yield* Effect.promise(() =>
+            Bun.write(
+              path.join(dir, ".mimocode", "skills", "repository-skill", "SKILL.md"),
+              `---
+name: repository-skill
+description: A repository-level skill for verification.
+---
+
+# Repository Skill
+`,
+            ),
+          )
+
+          const skill = yield* Skill.Service
+          const item = (yield* skill.all())[0]
+          expect(item?.name).toBe("repository-skill")
+          expect(item?.bundled).toBeUndefined()
+          expect(item?.location).toContain(path.join(".mimocode", "skills", "repository-skill", "SKILL.md"))
+        }),
+      { git: true },
+    ),
+  )
+
   it.live("returns skill directories from Skill.dirs", () =>
     provideTmpdirInstance(
       (dir) =>
