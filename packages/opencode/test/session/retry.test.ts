@@ -6,6 +6,7 @@ import { Effect, Schedule } from "effect"
 import { SessionRetry, decide, isRetryableTransientError, retryable } from "../../src/session/retry"
 import { MessageV2 } from "../../src/session/message-v2"
 import { ProviderID } from "../../src/provider/schema"
+import { allowsModelNotFoundRetry } from "../../src/provider/error"
 import { AppRuntime } from "../../src/effect/app-runtime"
 import { SessionID } from "../../src/session/schema"
 import { SessionStatus } from "../../src/session/status"
@@ -179,9 +180,11 @@ describe("session.retry.retryable", () => {
 
   test("only retries provider-specific compatible 404 responses", () => {
     const generic = new MessageV2.APIError({ message: "missing", statusCode: 404, isRetryable: true }).toObject()
-    const compatible = new MessageV2.APIError({ message: "missing", statusCode: 404, isRetryable: true, metadata: { providerID: "openai" } }).toObject()
+    const compatible = new MessageV2.APIError({ message: "missing", statusCode: 404, isRetryable: true, metadata: { allow404Retry: "true" } }).toObject()
     expect(decide(generic)).toMatchObject({ retryable: false, kind: "terminal" })
     expect(decide(compatible)).toMatchObject({ retryable: true, kind: "unknown" })
+    expect(allowsModelNotFoundRetry({ api: { npm: "@ai-sdk/openai-compatible" } })).toBe(true)
+    expect(allowsModelNotFoundRetry({ api: { npm: "custom-provider" } })).toBe(false)
   })
 
   test("jitter never exceeds the configured delay ceiling", () => {
@@ -551,7 +554,7 @@ describe("session.message-v2.fromError", () => {
       responseBody: '{"error":"boom"}',
       isRetryable: false,
     })
-    const result = MessageV2.fromError(error, { providerID: ProviderID.make("openai") }) as MessageV2.APIError
+    const result = MessageV2.fromError(error, { providerID: ProviderID.make("openai"), allow404Retry: true }) as MessageV2.APIError
     expect(result.data.isRetryable).toBe(true)
   })
 })

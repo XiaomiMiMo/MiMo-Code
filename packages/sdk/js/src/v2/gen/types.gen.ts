@@ -772,6 +772,8 @@ export type SessionStatus =
       attempt: number
       message: string
       next: number
+      phase?: "request" | "stream"
+      scope?: "request" | "live-step" | "max-candidate" | "max-judge"
     }
   | {
       type: "notice"

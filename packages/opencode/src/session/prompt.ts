@@ -246,10 +246,10 @@ export interface Interface {
   readonly cancel: (sessionID: SessionID) => Effect.Effect<void>
   readonly prompt: (input: PromptInput) => Effect.Effect<MessageV2.WithParts>
   readonly recovery: (input: { sessionID: SessionID; agentID?: string; allowBusy?: boolean }) => Effect.Effect<RecoveryCandidate[]>
-  readonly resume: (input: ResumeTurnInput) => Effect.Effect<MessageV2.WithParts, InstanceType<typeof NotFoundError>>
-  readonly resumeBackground: (input: ResumeTurnInput) => Effect.Effect<void, InstanceType<typeof NotFoundError>>
+  readonly resume: (input: ResumeTurnInput) => Effect.Effect<MessageV2.WithParts, InstanceType<typeof NotFoundError> | Session.BusyError>
+  readonly resumeBackground: (input: ResumeTurnInput) => Effect.Effect<void, InstanceType<typeof NotFoundError> | Session.BusyError>
   readonly loop: (input: z.infer<typeof LoopInput>) => Effect.Effect<MessageV2.WithParts>
-  readonly shell: (input: ShellInput) => Effect.Effect<MessageV2.WithParts>
+  readonly shell: (input: ShellInput) => Effect.Effect<MessageV2.WithParts, Session.BusyError>
   readonly command: (input: CommandInput) => Effect.Effect<MessageV2.WithParts>
   readonly resolvePromptParts: (template: string) => Effect.Effect<PromptInput["parts"]>
   readonly sweepOrphanAssistants: (sessionID: SessionID, immediate?: boolean) => Effect.Effect<void>
@@ -4566,7 +4566,7 @@ If this task is a simple fix, Q&A, or read-only operation, you can skip this not
       )
     })
 
-    const shell: (input: ShellInput) => Effect.Effect<MessageV2.WithParts> = Effect.fn("SessionPrompt.shell")(
+    const shell: (input: ShellInput) => Effect.Effect<MessageV2.WithParts, Session.BusyError> = Effect.fn("SessionPrompt.shell")(
       function* (input: ShellInput) {
         return yield* state.startShell(input.sessionID, lastAssistant(input.sessionID), shellImpl(input))
       },

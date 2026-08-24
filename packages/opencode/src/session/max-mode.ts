@@ -4,6 +4,7 @@ import type { ModelMessage, Tool as AITool } from "ai"
 import { LLM } from "./llm"
 import { SessionProcessor } from "./processor"
 import * as Session from "./session"
+import { ProviderError } from "@/provider"
 import type { Provider } from "@/provider"
 import type { Agent } from "@/agent/agent"
 import { MessageV2 } from "./message-v2"
@@ -82,7 +83,7 @@ function retryPolicy(input: MaxStepInput, scope: "max-candidate" | "max-judge", 
     scope,
     budget: (decision) => SessionRetry.budgetFor(retryConfig, decision),
     jitterRatio: retryConfig.jitterRatio,
-    parse: (error) => MessageV2.fromError(error, { providerID: input.model.providerID, aborted: aborted() }),
+    parse: (error) => MessageV2.fromError(error, { providerID: input.model.providerID, aborted: aborted(), allow404Retry: ProviderError.allowsModelNotFoundRetry(input.model) }),
     set: (info) =>
       input.onRetry
         ? input.onRetry({ ...info, nextDelayMs: Math.max(0, info.next - Date.now()) })

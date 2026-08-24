@@ -132,11 +132,24 @@ const OVERFLOW_PATTERNS = [
   /model_context_window_exceeded/i, // z.ai non-standard finish_reason surfaced as error text
 ]
 
-function isOpenAiErrorRetryable(e: APICallError) {
+function isApiErrorRetryable(e: APICallError, allow404Retry = false) {
   const status = e.statusCode
   if (!status) return e.isRetryable
-  // openai sometimes returns 404 for models that are actually available
-  return status === 404 || e.isRetryable
+  return (status === 404 && allow404Retry) || e.isRetryable
+}
+
+const MODEL_NOT_FOUND_RETRY_ADAPTERS = new Set([
+  "@ai-sdk/openai",
+  "@ai-sdk/openai-compatible",
+  "@ai-sdk/azure",
+  "@ai-sdk/groq",
+  "@ai-sdk/togetherai",
+  "@openrouter/ai-sdk-provider",
+  "@llmgateway/ai-sdk-provider",
+])
+
+export function allowsModelNotFoundRetry(model: { api: { npm: string } }): boolean {
+  return MODEL_NOT_FOUND_RETRY_ADAPTERS.has(model.api.npm)
 }
 
 // Providers not reliably handled in this function:
@@ -307,7 +320,7 @@ export type ParsedAPICallError =
       metadata?: Record<string, string>
     }
 
-export function parseAPICallError(input: { providerID: ProviderID; error: APICallError }): ParsedAPICallError {
+export function parseAPICallError(input: { providerID: ProviderID; error: APICallError; allow404Retry?: boolean }): ParsedAPICallError {
   const m = message(input.providerID, input.error)
   const body = json(input.error.responseBody)
   if (isOverflow(m) || input.error.statusCode === 413 || body?.error?.code === "context_length_exceeded") {
@@ -318,12 +331,16 @@ export function parseAPICallError(input: { providerID: ProviderID; error: APICal
     }
   }
 
-  const metadata = { providerID: input.providerID, ...(input.error.url ? { url: input.error.url } : {}) }
+  const metadata = {
+    providerID: input.providerID,
+    allow404Retry: input.allow404Retry ? "true" : "false",
+    ...(input.error.url ? { url: input.error.url } : {}),
+  }
   return {
     type: "api_error",
     message: m,
     statusCode: input.error.statusCode,
-    isRetryable: input.providerID.startsWith("openai") ? isOpenAiErrorRetryable(input.error) : input.error.isRetryable,
+    isRetryable: isApiErrorRetryable(input.error, input.allow404Retry),
     responseHeaders: input.error.responseHeaders,
     responseBody: input.error.responseBody,
     metadata,

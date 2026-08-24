@@ -17,6 +17,7 @@ import type { SessionID } from "./schema"
 import { SessionRetry } from "./retry"
 import { SessionStatus } from "./status"
 import { SessionSummary } from "./summary"
+import { ProviderError } from "@/provider"
 import type { Provider } from "@/provider"
 import { Question } from "@/question"
 import { errorMessage } from "@/util/error"
@@ -255,6 +256,7 @@ export const layer: Layer.Layer<
         MessageV2.fromError(e, {
           providerID: input.model.providerID,
           aborted,
+          allow404Retry: ProviderError.allowsModelNotFoundRetry(input.model),
         })
 
       const tryBestConfig = (yield* config.get()).experimental?.try_best
@@ -869,6 +871,8 @@ export const layer: Layer.Layer<
                         attempt: info.attempt,
                         message: info.message,
                         next: info.next,
+                        phase: info.phase,
+                        scope: info.scope,
                       })
                     }
                     yield* bus

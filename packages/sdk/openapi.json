@@ -11354,6 +11354,14 @@
               },
               "next": {
                 "type": "number"
+              },
+              "phase": {
+                "type": "string",
+                "enum": ["request", "stream"]
+              },
+              "scope": {
+                "type": "string",
+                "enum": ["request", "live-step", "max-candidate", "max-judge"]
               }
             },
             "required": ["type", "attempt", "message", "next"]

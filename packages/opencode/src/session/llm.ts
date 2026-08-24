@@ -1,5 +1,5 @@
 import path from "path"
-import { Provider } from "@/provider"
+import { Provider, ProviderError } from "@/provider"
 import { Log } from "@/util"
 import { Context, Duration, Effect, Layer, Record, Cause } from "effect"
 import * as Stream from "effect/Stream"
@@ -847,6 +847,7 @@ const live: Layer.Layer<
                       const normalized = MessageV2.fromError(event.error, {
                         providerID: input.model.providerID,
                         aborted: ctrl.signal.aborted,
+                        allow404Retry: ProviderError.allowsModelNotFoundRetry(input.model),
                       })
                       if (SessionRetry.decide(normalized, "request").retryable) return yield* Effect.fail(event.error)
                     }
@@ -901,7 +902,7 @@ const live: Layer.Layer<
                   if (prefillRepaired) return Stream.failCause(primaryCause)
                   return retryRequest(attempt(true, true), retryCount, startedAt, true)
                 }
-                const normalized = MessageV2.fromError(primaryError, { providerID: input.model.providerID })
+                const normalized = MessageV2.fromError(primaryError, { providerID: input.model.providerID, allow404Retry: ProviderError.allowsModelNotFoundRetry(input.model) })
                 const decision = SessionRetry.decide(normalized, "request")
                 if (!decision.retryable) return Stream.failCause(primaryCause)
                 const budget = SessionRetry.budgetFor(retryConfig, decision)
@@ -929,6 +930,8 @@ const live: Layer.Layer<
                       attempt: nextAttempt,
                       message: decision.message,
                       next: Date.now() + wait,
+                      phase: "request",
+                      scope: "request",
                     })
                     yield* Effect.promise(() =>
                       Bus.publish(Session.Event.RetryAttempt, {

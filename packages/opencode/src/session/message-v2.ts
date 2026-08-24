@@ -1146,8 +1146,8 @@ function fromParsedStreamError(
 }
 
 export function fromError(
-  e: unknown,
-  ctx: { providerID: ProviderID; aborted?: boolean },
+ e: unknown,
+  ctx: { providerID: ProviderID; aborted?: boolean; allow404Retry?: boolean },
 ): NonNullable<Assistant["error"]> {
   switch (true) {
     case e instanceof DOMException && e.name === "AbortError":
@@ -1218,6 +1218,7 @@ export function fromError(
       const parsed = ProviderError.parseAPICallError({
         providerID: ctx.providerID,
         error: e,
+        allow404Retry: ctx.allow404Retry,
       })
       if (parsed.type === "context_overflow") {
         return new ContextOverflowError(

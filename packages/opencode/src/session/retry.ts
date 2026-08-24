@@ -335,7 +335,7 @@ export function decide(
   if (signals.code === "SubscriptionUsageLimitError" || responseBody?.includes("SubscriptionUsageLimitError"))
     return terminal()
   if (status === 402 || status === 501 || status === 505) return terminal()
-  if (status === 404 && (!MessageV2.APIError.isInstance(error) || !error.data.metadata?.providerID?.startsWith("openai"))) return terminal()
+  if (status === 404 && (!MessageV2.APIError.isInstance(error) || error.data.metadata?.allow404Retry !== "true")) return terminal()
   if (signals.code === "stream_read_error" || signals.type === "upstream_error")
     return retry("stream", "stream", signals.message || "Upstream stream read failed")
   if (ProviderError.isRetryableNetworkError(error)) return retry("network")
