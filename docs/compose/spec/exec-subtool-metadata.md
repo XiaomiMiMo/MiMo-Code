@@ -1,14 +1,20 @@
 ---
 feature: exec-subtool-metadata
-status: in-progress
+status: delivered
 updated: 2026-08-24
 branch: codex/exec-subtool-metadata
-commits: # filled at delivery
+commits: 84f17b64233ae6bd4b65bb8ccd6325fb8a2cdf16..bc1abe91dc7334d709a7ab454269f58d50954b8f
 ---
 
 # Exec Sub-tool Metadata
 
 ## Report
+
+**What was built** — `exec` nested-tool progress now uses a 150 ms trailing-edge debounce while preserving the first admitted call's immediate running snapshot. Every outer terminal path cancels pending progress, terminalizes any nested calls still running, publishes the final complete `sub_parts` snapshot, and waits for the metadata write. Late nested completions cannot overwrite or republish stale terminal state. Existing result and attachment size limits remain unchanged.
+
+**Verification** — `bun test test/tool/tool-script.test.ts test/session/messages-default-main.test.ts` (64 pass, 0 fail); `bun typecheck` (PASS); `git diff --check` (PASS). Independent review of the complete diff and affected-area fixes (PASS; no critical findings).
+
+**Journey log** — The initial implementation was a fixed-window coalescer; review identified that true trailing-edge debounce requires resetting the timer on every update. Review also exposed detached nested promises that could leave persisted snapshots stuck in `running`; terminalization and a closed progress channel now make the terminal state deterministic. No new DB schema or size policy was introduced.
 
 ## [S1] Problem
 
@@ -62,7 +68,7 @@ The TUI `exec` block exposes nested records in its expanded view. Any nested `ac
 
 ## Tasks
 
-- [ ] T1: Define and collect versioned ToolPart-compatible `sub_parts`, including progressive callbacks and actor references — acceptance: every admitted nested call appears once with direct-call input/output/metadata/status/time fields, and a running snapshot is published through the coalesced progress path before it settles (covers: S2)
-- [ ] T2: Republish `sub_parts` on every terminal exec path and verify it survives outer tool-part completion/persistence — acceptance: terminal metadata cancels pending progress, flushes the latest snapshot immediately, retains all snapshots, and an SQLite-backed part round-trip returns the same envelope (covers: S2; depends: T1)
-- [ ] T3: Implement the pure `viewExecSubtools` projection and render valid nested actor records as clickable TUI subagent entries — acceptance: the view function returns only valid current snapshots in sequence order; actor rows with any supported action navigate to the actor route; non-actor/invalid rows remain safe summaries (covers: S2; depends: T1)
-- [ ] T4: Add regression coverage and document the Desktop MR !3727 data contract — acceptance: tool, view, persistence, and TUI tests cover partial live snapshots, complete fields, actor refs, terminal replacement, and fallback behavior (covers: S2)
+- [x] T1: Define and collect versioned ToolPart-compatible `sub_parts`, including progressive callbacks and actor references — acceptance: every admitted nested call appears once with direct-call input/output/metadata/status/time fields, and a running snapshot is published through the coalesced progress path before it settles (covers: S2)
+- [x] T2: Republish `sub_parts` on every terminal exec path and verify it survives outer tool-part completion/persistence — acceptance: terminal metadata cancels pending progress, flushes the latest snapshot immediately, retains all snapshots, and an SQLite-backed part round-trip returns the same envelope (covers: S2; depends: T1)
+- [x] T3: Implement the pure `viewExecSubtools` projection and render valid nested actor records as clickable TUI subagent entries — acceptance: the view function returns only valid current snapshots in sequence order; actor rows with any supported action navigate to the actor route; non-actor/invalid rows remain safe summaries (covers: S2; depends: T1)
+- [x] T4: Add regression coverage and document the Desktop MR !3727 data contract — acceptance: tool, view, persistence, and TUI tests cover partial live snapshots, complete fields, actor refs, terminal replacement, and fallback behavior (covers: S2)
