@@ -337,9 +337,8 @@ export const ExperimentalRoutes = lazy(() =>
       }),
       async (c) =>
         jsonRequest("ExperimentalRoutes.worktree.auto", c, function* () {
-          let body: any = {}
-          try { body = yield* Effect.promise(() => c.req.json()) } catch {}
-          const sessionID = (body as any)?.sessionID as string | undefined
+          const body = yield* Effect.promise(() => c.req.json())
+          const sessionID = typeof body?.sessionID === "string" ? body.sessionID : undefined
           const conflict = (yield* Effect.promise(() => checkConflict(Instance.directory, sessionID))) as ConflictResult
           if (!conflict.hasConflict) return null
           return yield* (yield* Worktree.Service).create()

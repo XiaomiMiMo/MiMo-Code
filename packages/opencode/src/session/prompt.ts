@@ -4128,10 +4128,10 @@ NOTE: At any point in time through this workflow you should feel free to ask the
             // Auto-worktree: inject hint on first assistant-less turn if conflict detected.
             // Checks for no assistant messages (survives compaction/rebuild) + in main worktree.
             const isFirstAssistantTurn = !msgs.some((m) => m.info.role === "assistant")
-            const directory = yield* InstanceState.directory
             const isMainWorktree = Instance.worktree === Instance.project.worktree
             const isGitProject = Instance.project.vcs === "git"
             if (isFirstAssistantTurn && isMainWorktree && isGitProject) {
+              const directory = yield* InstanceState.directory
               const conflict = (yield* Effect.promise(() => checkConflict(directory, sessionID))) as ConflictResult
               if (conflict.hasConflict) {
                 additions.push(`
@@ -4139,9 +4139,9 @@ NOTE: At any point in time through this workflow you should feel free to ask the
 
 This session is running in the main worktree. If you need to write or edit files, consider creating an isolated worktree first:
 
-- Create a worktree: run \`git worktree add <path> -b <branch>\`
+- Create a worktree: run \`git worktree add <project-parent>/<project-name>-<branch> -b <branch>\`
 - Base branch: consider fetching latest origin/main first, then branch from main
-- Worktree path convention: <data>/worktree/<project-id>/<name> (managed by MiMo)
+- Worktree path convention: <home>/MiMoWorktrees/<project>/<branch> (managed by MiMo)
 
 Conflict detected: ${conflict.reason}${conflict.activeSessionId ? ` (session: ${conflict.activeSessionId})` : ""}
 

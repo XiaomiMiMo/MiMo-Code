@@ -1,4 +1,4 @@
-import { Database, eq, and, isNull } from "@/storage"
+import { Database, eq, and, isNull, gte } from "@/storage"
 import { SessionTable } from "@/session/session.sql"
 import path from "path"
 import fs from "fs"
@@ -41,13 +41,15 @@ function hasActiveSessionsInDirectory(directory: string, excludeSessionId?: stri
   const sessions = Database.use((db) =>
     db.select({ id: SessionTable.id, time_updated: SessionTable.time_updated })
       .from(SessionTable)
-      .where(and(eq(SessionTable.directory, directory), isNull(SessionTable.time_archived)))
+      .where(and(
+        eq(SessionTable.directory, directory),
+        isNull(SessionTable.time_archived),
+        gte(SessionTable.time_updated, fiveMinutesAgo),
+      ))
       .all(),
   )
-  for (const session of sessions) {
-    if (session.id === excludeSessionId) continue
-    if (session.time_updated > fiveMinutesAgo) return session.id
-  }
+  const session = sessions.find((s) => s.id !== excludeSessionId)
+  if (session) return session.id
   return null
 }
 
