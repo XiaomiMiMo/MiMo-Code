@@ -54,7 +54,7 @@ function createModel(opts: {
       input: { text: true, image: false, audio: false, video: false },
       output: { text: true, image: false, audio: false, video: false },
     },
-    api: { npm: opts.npm ?? "@ai-sdk/anthropic" },
+    api: { id: "test-model", npm: opts.npm ?? "@ai-sdk/anthropic" },
     options: {},
   } as Provider.Model
 }
@@ -287,7 +287,10 @@ describe("SessionPrune.fireCheckpoints writer failure is not retried in place", 
     config?: Partial<Config.Info>,
   ): Promise<A> {
     return Effect.runPromise(
-      provideTmpdirInstance(() => body, { config }).pipe(Effect.scoped, Effect.provide(harness.env)),
+      provideTmpdirInstance(() => body, { config: { compaction: { reserved: 20_000 }, ...config } }).pipe(
+        Effect.scoped,
+        Effect.provide(harness.env),
+      ),
     )
   }
 
@@ -438,7 +441,9 @@ describe("SessionPrune.fireCheckpoints writer failure is not retried in place", 
   // successor in the ladder, only for a failure whose class says a retry could
   // succeed, and only once the token count has grown by a full ladder step.
   //
-  // Arithmetic all four cases depend on, stated once. createModel({ context:
+  // Arithmetic all four cases depend on, stated once. The harness pins the
+  // compaction reserve at 20K so these recovery-gate tests remain about writer
+  // retries rather than changes to the product default. createModel({ context:
   // 100_000, output: 32_000 }) with no `limit.input` gives usable = 100_000 -
   // (min(20_000, 32_000) compaction reserve + min(32_000, 20_000) output
   // reserve) = 60_000, so maxAllowed = 60_000 - CHECKPOINT_RESERVED(13_000) =

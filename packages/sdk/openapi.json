@@ -234,6 +234,134 @@
         ]
       }
     },
+    "/global/import/scan": {
+      "get": {
+        "operationId": "global.import.scan",
+        "summary": "Scan external session sources",
+        "description": "Detect availability and session counts of external AI tool session stores (Claude Code, Codex, opencode). Read-only.",
+        "responses": {
+          "200": {
+            "description": "Per-source availability and counts",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "propertyNames": {
+                    "type": "string",
+                    "enum": ["cc", "codex", "opencode"]
+                  },
+                  "additionalProperties": {
+                    "type": "object",
+                    "properties": {
+                      "available": {
+                        "type": "boolean"
+                      },
+                      "sessions": {
+                        "type": "number"
+                      },
+                      "imported": {
+                        "type": "number"
+                      }
+                    },
+                    "required": ["available", "sessions", "imported"]
+                  }
+                }
+              }
+            }
+          }
+        },
+        "x-codeSamples": [
+          {
+            "lang": "js",
+            "source": "import { createOpencodeClient } from \"@mimo-ai/sdk\n\nconst client = createOpencodeClient()\nawait client.global.import.scan({\n  ...\n})"
+          }
+        ]
+      }
+    },
+    "/global/import/run": {
+      "post": {
+        "operationId": "global.import.run",
+        "summary": "Import external sessions",
+        "description": "Import sessions from external AI tools (Claude Code, Codex, opencode) into mimocode. Idempotent; pass force to re-sync. Per-source failures are not thrown as HTTP errors — they are collected into the corresponding stats.errors[] while other sources continue.",
+        "responses": {
+          "200": {
+            "description": "Per-source import stats",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "propertyNames": {
+                    "type": "string",
+                    "enum": ["cc", "codex", "opencode"]
+                  },
+                  "additionalProperties": {
+                    "type": "object",
+                    "properties": {
+                      "scanned": {
+                        "type": "number"
+                      },
+                      "imported": {
+                        "type": "number"
+                      },
+                      "resynced": {
+                        "type": "number"
+                      },
+                      "skipped": {
+                        "type": "number"
+                      },
+                      "errors": {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        }
+                      }
+                    },
+                    "required": ["scanned", "imported", "resynced", "skipped", "errors"]
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BadRequestError"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "sources": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "enum": ["cc", "codex", "opencode"]
+                    }
+                  },
+                  "force": {
+                    "type": "boolean"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "x-codeSamples": [
+          {
+            "lang": "js",
+            "source": "import { createOpencodeClient } from \"@mimo-ai/sdk\n\nconst client = createOpencodeClient()\nawait client.global.import.run({\n  ...\n})"
+          }
+        ]
+      }
+    },
     "/auth/{providerID}": {
       "put": {
         "operationId": "auth.set",
@@ -1358,6 +1486,78 @@
           {
             "lang": "js",
             "source": "import { createOpencodeClient } from \"@mimo-ai/sdk\n\nconst client = createOpencodeClient()\nawait client.pty.remove({\n  ...\n})"
+          }
+        ]
+      }
+    },
+    "/pty/{ptyID}/connect-token": {
+      "post": {
+        "operationId": "pty.connectToken",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "directory",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "workspace",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "ptyID",
+            "schema": {
+              "type": "string",
+              "pattern": "^pty.*"
+            },
+            "required": true
+          }
+        ],
+        "summary": "Issue PTY connect ticket",
+        "description": "Issue a one-time ticket for authenticating a WebSocket connection to a PTY session. The ticket must be passed as the 'ticket' query parameter on the /connect WebSocket URL.",
+        "responses": {
+          "200": {
+            "description": "Issued ticket",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ticket": {
+                      "type": "string"
+                    },
+                    "expires_in": {
+                      "type": "number"
+                    }
+                  },
+                  "required": ["ticket", "expires_in"]
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden — missing required header or invalid origin"
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NotFoundError"
+                }
+              }
+            }
+          }
+        },
+        "x-codeSamples": [
+          {
+            "lang": "js",
+            "source": "import { createOpencodeClient } from \"@mimo-ai/sdk\n\nconst client = createOpencodeClient()\nawait client.pty.connectToken({\n  ...\n})"
           }
         ]
       }
@@ -2703,6 +2903,14 @@
               "pattern": "^ses.*"
             },
             "required": true
+          },
+          {
+            "in": "query",
+            "name": "visible",
+            "schema": {
+              "type": "boolean"
+            },
+            "description": "Only return user-visible children (peer sessions); hides internal subagent hosts"
           }
         ],
         "summary": "Get session children",
@@ -3452,6 +3660,104 @@
         ]
       }
     },
+    "/session/{sessionID}/ask": {
+      "post": {
+        "operationId": "session.ask",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "directory",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "workspace",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "sessionID",
+            "schema": {
+              "type": "string",
+              "pattern": "^ses.*"
+            },
+            "required": true
+          }
+        ],
+        "summary": "Ask session a side question",
+        "description": "Ask the session a one-shot, read-only side question over a frozen snapshot of its history and return the answer text. Does NOT inject a message into the conversation or disturb the session's turn.",
+        "responses": {
+          "200": {
+            "description": "Side question answer",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "answer": {
+                      "type": "string"
+                    }
+                  },
+                  "required": ["answer"]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BadRequestError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NotFoundError"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "question": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "providerID": {
+                    "type": "string"
+                  },
+                  "modelID": {
+                    "type": "string"
+                  }
+                },
+                "required": ["question"]
+              }
+            }
+          }
+        },
+        "x-codeSamples": [
+          {
+            "lang": "js",
+            "source": "import { createOpencodeClient } from \"@mimo-ai/sdk\n\nconst client = createOpencodeClient()\nawait client.session.ask({\n  ...\n})"
+          }
+        ]
+      }
+    },
     "/session/{sessionID}/message": {
       "get": {
         "operationId": "session.messages",
@@ -3485,9 +3791,9 @@
             "schema": {
               "type": "integer",
               "minimum": 0,
-              "maximum": 9007199254740991
+              "maximum": 1000
             },
-            "description": "Maximum number of messages to return"
+            "description": "Maximum number of messages to return (max 1000)"
           },
           {
             "in": "query",
@@ -3710,6 +4016,7 @@
                     "type": "string"
                   },
                   "parts": {
+                    "minItems": 1,
                     "type": "array",
                     "items": {
                       "anyOf": [
@@ -4212,6 +4519,7 @@
                     "type": "string"
                   },
                   "parts": {
+                    "minItems": 1,
                     "type": "array",
                     "items": {
                       "anyOf": [
@@ -5038,6 +5346,347 @@
         ]
       }
     },
+    "/permission/skip-all": {
+      "get": {
+        "operationId": "permission.skipAll",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "directory",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "workspace",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "summary": "Get skip-all state",
+        "description": "Whether permission asks are auto-allowed at runtime. Explicit deny rules and forced-ask permissions are unaffected.",
+        "responses": {
+          "200": {
+            "description": "Current skip-all state",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "boolean"
+                }
+              }
+            }
+          }
+        },
+        "x-codeSamples": [
+          {
+            "lang": "js",
+            "source": "import { createOpencodeClient } from \"@mimo-ai/sdk\n\nconst client = createOpencodeClient()\nawait client.permission.skipAll({\n  ...\n})"
+          }
+        ]
+      },
+      "post": {
+        "operationId": "permission.setSkipAll",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "directory",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "workspace",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "summary": "Set skip-all state",
+        "description": "Enable or disable runtime auto-allow for permission asks. Applies instance-wide, so subagents inherit it. Explicit deny rules and forced-ask permissions (e.g. bash_delete) still apply.",
+        "responses": {
+          "200": {
+            "description": "Updated skip-all state",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "boolean"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BadRequestError"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "enabled": {
+                    "description": "Whether skip-all is enabled",
+                    "type": "boolean"
+                  }
+                },
+                "required": ["enabled"]
+              }
+            }
+          }
+        },
+        "x-codeSamples": [
+          {
+            "lang": "js",
+            "source": "import { createOpencodeClient } from \"@mimo-ai/sdk\n\nconst client = createOpencodeClient()\nawait client.permission.setSkipAll({\n  ...\n})"
+          }
+        ]
+      }
+    },
+    "/permission/auto-approve-delete": {
+      "get": {
+        "operationId": "permission.autoApproveDelete",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "directory",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "workspace",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "summary": "Get auto-approve-delete state",
+        "description": "Whether irreversible deletes skip the extra bash_delete confirmation. Instance-scoped; defaults to the MIMOCODE_AUTO_APPROVE_DELETE env var.",
+        "responses": {
+          "200": {
+            "description": "Current auto-approve-delete state",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "boolean"
+                }
+              }
+            }
+          }
+        },
+        "x-codeSamples": [
+          {
+            "lang": "js",
+            "source": "import { createOpencodeClient } from \"@mimo-ai/sdk\n\nconst client = createOpencodeClient()\nawait client.permission.autoApproveDelete({\n  ...\n})"
+          }
+        ]
+      },
+      "post": {
+        "operationId": "permission.setAutoApproveDelete",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "directory",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "workspace",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "summary": "Set auto-approve-delete state",
+        "description": "Trust the model with irreversible deletes, skipping the extra bash_delete confirmation. Distinct from skip-all, which deliberately does NOT cover forced-ask permissions. Applies instance-wide (this directory only, so other directories served by the same process are unaffected) and subagents inherit it. Explicit `bash: deny` rules still block. Already-pending delete asks are left for a human — the command they guard is irreversible.",
+        "responses": {
+          "200": {
+            "description": "Updated auto-approve-delete state",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "boolean"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BadRequestError"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "enabled": {
+                    "description": "Whether auto-approve-delete is enabled",
+                    "type": "boolean"
+                  }
+                },
+                "required": ["enabled"]
+              }
+            }
+          }
+        },
+        "x-codeSamples": [
+          {
+            "lang": "js",
+            "source": "import { createOpencodeClient } from \"@mimo-ai/sdk\n\nconst client = createOpencodeClient()\nawait client.permission.setAutoApproveDelete({\n  ...\n})"
+          }
+        ]
+      }
+    },
+    "/permission/ask-timeout": {
+      "get": {
+        "operationId": "permission.askTimeout",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "directory",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "workspace",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "summary": "Get permission ask timeout",
+        "description": "Timeout in milliseconds for permission asks that require human confirmation. null means no timeout (wait indefinitely). Applies to all asks — normal and forced-ask. Orthogonal to skip-all.",
+        "responses": {
+          "200": {
+            "description": "Current ask timeout in ms, or null",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "type": "number"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        },
+        "x-codeSamples": [
+          {
+            "lang": "js",
+            "source": "import { createOpencodeClient } from \"@mimo-ai/sdk\n\nconst client = createOpencodeClient()\nawait client.permission.askTimeout({\n  ...\n})"
+          }
+        ]
+      },
+      "post": {
+        "operationId": "permission.setAskTimeout",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "directory",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "workspace",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "summary": "Set permission ask timeout",
+        "description": "Set the timeout in milliseconds for permission asks that require human confirmation. null disables the timeout (wait indefinitely). Applies instance-wide; subagents inherit it. Orthogonal to skip-all — both can be enabled independently.",
+        "responses": {
+          "200": {
+            "description": "Updated ask timeout in ms, or null",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "type": "number"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BadRequestError"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "ms": {
+                    "description": "Timeout in ms, or null to disable",
+                    "anyOf": [
+                      {
+                        "type": "integer",
+                        "exclusiveMinimum": 0,
+                        "maximum": 9007199254740991
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  }
+                },
+                "required": ["ms"]
+              }
+            }
+          }
+        },
+        "x-codeSamples": [
+          {
+            "lang": "js",
+            "source": "import { createOpencodeClient } from \"@mimo-ai/sdk\n\nconst client = createOpencodeClient()\nawait client.permission.setAskTimeout({\n  ...\n})"
+          }
+        ]
+      }
+    },
     "/workflows": {
       "get": {
         "operationId": "workflow.list",
@@ -5112,7 +5761,7 @@
             "name": "runID",
             "schema": {
               "type": "string",
-              "pattern": "^wf_[0-9A-Za-z]{26}$"
+              "pattern": "^wf_[0-9A-Za-z-]{26}$"
             },
             "required": true
           }
@@ -5144,6 +5793,138 @@
           {
             "lang": "js",
             "source": "import { createOpencodeClient } from \"@mimo-ai/sdk\n\nconst client = createOpencodeClient()\nawait client.workflow.resume({\n  ...\n})"
+          }
+        ]
+      }
+    },
+    "/workflows/{runID}/transcript": {
+      "get": {
+        "operationId": "workflow.transcript",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "directory",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "workspace",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "runID",
+            "schema": {
+              "type": "string",
+              "pattern": "^wf_(?:[0-9A-Za-z-]{26}|[0-9a-f]{64})$"
+            },
+            "required": true
+          }
+        ],
+        "summary": "Get a workflow run's full transcript",
+        "description": "Return the complete ordered phase/log transcript for one run, straight from the runtime's in-memory buffer (uncapped, unlike the tool-part metadata copy). Empty when the runtime is down or the run is unknown.",
+        "responses": {
+          "200": {
+            "description": "Full transcript",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "runID": {
+                      "type": "string"
+                    },
+                    "transcript": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "kind": {
+                            "type": "string",
+                            "enum": ["phase", "log"]
+                          },
+                          "text": {
+                            "type": "string"
+                          }
+                        },
+                        "required": ["kind", "text"]
+                      }
+                    }
+                  },
+                  "required": ["runID", "transcript"]
+                }
+              }
+            }
+          }
+        },
+        "x-codeSamples": [
+          {
+            "lang": "js",
+            "source": "import { createOpencodeClient } from \"@mimo-ai/sdk\n\nconst client = createOpencodeClient()\nawait client.workflow.transcript({\n  ...\n})"
+          }
+        ]
+      }
+    },
+    "/workflows/{runID}/structure": {
+      "get": {
+        "operationId": "workflow.structure",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "directory",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "workspace",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "runID",
+            "schema": {
+              "type": "string",
+              "pattern": "^wf_(?:[0-9A-Za-z-]{26}|[0-9a-f]{64})$"
+            },
+            "required": true
+          }
+        ],
+        "summary": "Get a workflow run's structure tree",
+        "description": "Return the observability-only structure tree (phase/agent/workflow nodes with live status) for one run. Empty when the runtime is down or the run is unknown.",
+        "responses": {
+          "200": {
+            "description": "Structure tree",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "runID": {
+                      "type": "string"
+                    },
+                    "nodes": {
+                      "type": "array",
+                      "items": {}
+                    }
+                  },
+                  "required": ["runID", "nodes"]
+                }
+              }
+            }
+          }
+        },
+        "x-codeSamples": [
+          {
+            "lang": "js",
+            "source": "import { createOpencodeClient } from \"@mimo-ai/sdk\n\nconst client = createOpencodeClient()\nawait client.workflow.structure({\n  ...\n})"
           }
         ]
       }
@@ -5654,9 +6435,15 @@
                       "items": {
                         "type": "string"
                       }
+                    },
+                    "authenticated": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
                     }
                   },
-                  "required": ["all", "default", "connected"]
+                  "required": ["all", "default", "connected", "authenticated"]
                 }
               }
             }
@@ -8055,13 +8842,22 @@
                       "description": {
                         "type": "string"
                       },
+                      "aliases": {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        }
+                      },
                       "location": {
                         "type": "string"
                       },
                       "content": {
                         "type": "string"
                       },
-                      "hidden": {
+                      "disable_model_invocation": {
+                        "type": "boolean"
+                      },
+                      "bundled": {
                         "type": "boolean"
                       }
                     },
@@ -8171,6 +8967,941 @@
   },
   "components": {
     "schemas": {
+      "Event.server.connected": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string",
+            "const": "server.connected"
+          },
+          "properties": {
+            "type": "object",
+            "properties": {}
+          }
+        },
+        "required": ["type", "properties"]
+      },
+      "Event.global.disposed": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string",
+            "const": "global.disposed"
+          },
+          "properties": {
+            "type": "object",
+            "properties": {}
+          }
+        },
+        "required": ["type", "properties"]
+      },
+      "Event.tui.prompt.append": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string",
+            "const": "tui.prompt.append"
+          },
+          "properties": {
+            "type": "object",
+            "properties": {
+              "text": {
+                "type": "string"
+              }
+            },
+            "required": ["text"]
+          }
+        },
+        "required": ["type", "properties"]
+      },
+      "Event.tui.command.execute": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string",
+            "const": "tui.command.execute"
+          },
+          "properties": {
+            "type": "object",
+            "properties": {
+              "command": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "enum": [
+                      "session.list",
+                      "session.new",
+                      "session.share",
+                      "session.interrupt",
+                      "session.compact",
+                      "session.page.up",
+                      "session.page.down",
+                      "session.line.up",
+                      "session.line.down",
+                      "session.half.page.up",
+                      "session.half.page.down",
+                      "session.first",
+                      "session.last",
+                      "prompt.clear",
+                      "prompt.submit",
+                      "agent.cycle"
+                    ]
+                  },
+                  {
+                    "type": "string"
+                  }
+                ]
+              }
+            },
+            "required": ["command"]
+          }
+        },
+        "required": ["type", "properties"]
+      },
+      "Event.tui.toast.show": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string",
+            "const": "tui.toast.show"
+          },
+          "properties": {
+            "type": "object",
+            "properties": {
+              "title": {
+                "type": "string"
+              },
+              "message": {
+                "type": "string"
+              },
+              "variant": {
+                "type": "string",
+                "enum": ["info", "success", "warning", "error"]
+              },
+              "duration": {
+                "description": "Duration in milliseconds",
+                "default": 5000,
+                "type": "number"
+              }
+            },
+            "required": ["message", "variant"]
+          }
+        },
+        "required": ["type", "properties"]
+      },
+      "Event.tui.session.select": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string",
+            "const": "tui.session.select"
+          },
+          "properties": {
+            "type": "object",
+            "properties": {
+              "sessionID": {
+                "description": "Session ID to navigate to",
+                "type": "string",
+                "pattern": "^ses.*"
+              }
+            },
+            "required": ["sessionID"]
+          }
+        },
+        "required": ["type", "properties"]
+      },
+      "Event.tui.instructions.loaded": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string",
+            "const": "tui.instructions.loaded"
+          },
+          "properties": {
+            "type": "object",
+            "properties": {
+              "files": {
+                "description": "Display labels of loaded instruction files: worktree-relative path, ~-path, or absolute",
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            },
+            "required": ["files"]
+          }
+        },
+        "required": ["type", "properties"]
+      },
+      "Event.actor.registered": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string",
+            "const": "actor.registered"
+          },
+          "properties": {
+            "type": "object",
+            "properties": {
+              "sessionID": {
+                "type": "string",
+                "pattern": "^ses.*"
+              },
+              "actorID": {
+                "type": "string"
+              },
+              "mode": {
+                "type": "string",
+                "enum": ["peer", "subagent", "main"]
+              },
+              "parentActorID": {
+                "type": "string"
+              },
+              "description": {
+                "type": "string"
+              },
+              "agent": {
+                "type": "string"
+              },
+              "background": {
+                "type": "boolean"
+              }
+            },
+            "required": ["sessionID", "actorID", "mode", "description", "agent", "background"]
+          }
+        },
+        "required": ["type", "properties"]
+      },
+      "Event.actor.status": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string",
+            "const": "actor.status"
+          },
+          "properties": {
+            "type": "object",
+            "properties": {
+              "sessionID": {
+                "type": "string",
+                "pattern": "^ses.*"
+              },
+              "actorID": {
+                "type": "string"
+              },
+              "status": {
+                "type": "string",
+                "enum": ["pending", "running", "idle"]
+              },
+              "lastOutcome": {
+                "type": "string",
+                "enum": ["success", "failure", "cancelled"]
+              },
+              "turnCount": {
+                "type": "number"
+              },
+              "lastTurnTime": {
+                "type": "number"
+              },
+              "error": {
+                "type": "string"
+              }
+            },
+            "required": ["sessionID", "actorID", "status", "turnCount", "lastTurnTime"]
+          }
+        },
+        "required": ["type", "properties"]
+      },
+      "Event.actor.stuck": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string",
+            "const": "actor.stuck"
+          },
+          "properties": {
+            "type": "object",
+            "properties": {
+              "sessionID": {
+                "type": "string",
+                "pattern": "^ses.*"
+              },
+              "actorID": {
+                "type": "string"
+              },
+              "description": {
+                "type": "string"
+              },
+              "lastTurnTime": {
+                "type": "number"
+              },
+              "stuckDuration": {
+                "type": "number"
+              }
+            },
+            "required": ["sessionID", "actorID", "description", "lastTurnTime", "stuckDuration"]
+          }
+        },
+        "required": ["type", "properties"]
+      },
+      "Event.actor.stalled": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string",
+            "const": "actor.stalled"
+          },
+          "properties": {
+            "type": "object",
+            "properties": {
+              "sessionID": {
+                "type": "string",
+                "pattern": "^ses.*"
+              },
+              "actorID": {
+                "type": "string"
+              },
+              "description": {
+                "type": "string"
+              },
+              "lastActivityTime": {
+                "type": "number"
+              },
+              "stalledDuration": {
+                "type": "number"
+              }
+            },
+            "required": ["sessionID", "actorID", "description", "lastActivityTime", "stalledDuration"]
+          }
+        },
+        "required": ["type", "properties"]
+      },
+      "Event.writer.cache_perf": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string",
+            "const": "writer.cache_perf"
+          },
+          "properties": {
+            "type": "object",
+            "properties": {
+              "sessionID": {
+                "type": "string",
+                "pattern": "^ses.*"
+              },
+              "writerActorID": {
+                "type": "string"
+              },
+              "status": {
+                "type": "string",
+                "enum": ["completed", "failed"]
+              },
+              "total_input_tokens": {
+                "type": "number"
+              },
+              "cache_read_tokens": {
+                "type": "number"
+              },
+              "cache_write_tokens": {
+                "type": "number"
+              },
+              "cache_hit_rate": {
+                "type": "number"
+              },
+              "num_llm_calls": {
+                "type": "number"
+              }
+            },
+            "required": [
+              "sessionID",
+              "writerActorID",
+              "status",
+              "total_input_tokens",
+              "cache_read_tokens",
+              "cache_write_tokens",
+              "cache_hit_rate",
+              "num_llm_calls"
+            ]
+          }
+        },
+        "required": ["type", "properties"]
+      },
+      "Event.inbox.arrived": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string",
+            "const": "inbox.arrived"
+          },
+          "properties": {
+            "type": "object",
+            "properties": {
+              "receiverSessionID": {
+                "type": "string",
+                "pattern": "^ses.*"
+              },
+              "receiverActorID": {
+                "type": "string"
+              },
+              "senderSessionID": {
+                "type": "string",
+                "pattern": "^ses.*"
+              },
+              "senderActorID": {
+                "type": "string"
+              },
+              "inboxID": {
+                "type": "string"
+              },
+              "type": {
+                "type": "string"
+              }
+            },
+            "required": ["receiverSessionID", "receiverActorID", "inboxID", "type"]
+          }
+        },
+        "required": ["type", "properties"]
+      },
+      "Event.task.created": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string",
+            "const": "task.created"
+          },
+          "properties": {
+            "type": "object",
+            "properties": {
+              "sessionID": {
+                "type": "string",
+                "pattern": "^ses.*"
+              },
+              "task": {
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "type": "string",
+                    "pattern": "^T\\d+(\\.\\d+)*$"
+                  },
+                  "session_id": {
+                    "type": "string",
+                    "pattern": "^ses.*"
+                  },
+                  "parent_task_id": {
+                    "type": "string",
+                    "pattern": "^T\\d+(\\.\\d+)*$"
+                  },
+                  "status": {
+                    "type": "string",
+                    "enum": ["open", "in_progress", "blocked", "done", "abandoned"]
+                  },
+                  "summary": {
+                    "type": "string"
+                  },
+                  "owner": {
+                    "type": "string"
+                  },
+                  "created_at": {
+                    "type": "number"
+                  },
+                  "last_event_at": {
+                    "type": "number"
+                  },
+                  "ended_at": {
+                    "type": "number"
+                  },
+                  "cleanup_after": {
+                    "type": "number"
+                  }
+                },
+                "required": ["id", "session_id", "status", "summary", "created_at", "last_event_at"]
+              }
+            },
+            "required": ["sessionID", "task"]
+          }
+        },
+        "required": ["type", "properties"]
+      },
+      "Event.task.updated": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string",
+            "const": "task.updated"
+          },
+          "properties": {
+            "type": "object",
+            "properties": {
+              "sessionID": {
+                "type": "string",
+                "pattern": "^ses.*"
+              },
+              "task": {
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "type": "string",
+                    "pattern": "^T\\d+(\\.\\d+)*$"
+                  },
+                  "session_id": {
+                    "type": "string",
+                    "pattern": "^ses.*"
+                  },
+                  "parent_task_id": {
+                    "type": "string",
+                    "pattern": "^T\\d+(\\.\\d+)*$"
+                  },
+                  "status": {
+                    "type": "string",
+                    "enum": ["open", "in_progress", "blocked", "done", "abandoned"]
+                  },
+                  "summary": {
+                    "type": "string"
+                  },
+                  "owner": {
+                    "type": "string"
+                  },
+                  "created_at": {
+                    "type": "number"
+                  },
+                  "last_event_at": {
+                    "type": "number"
+                  },
+                  "ended_at": {
+                    "type": "number"
+                  },
+                  "cleanup_after": {
+                    "type": "number"
+                  }
+                },
+                "required": ["id", "session_id", "status", "summary", "created_at", "last_event_at"]
+              },
+              "kind": {
+                "type": "string",
+                "enum": ["started", "unstarted", "blocked", "unblocked", "done", "abandoned", "renamed"]
+              }
+            },
+            "required": ["sessionID", "task", "kind"]
+          }
+        },
+        "required": ["type", "properties"]
+      },
+      "Event.metrics.model_call": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string",
+            "const": "metrics.model_call"
+          },
+          "properties": {
+            "type": "object",
+            "properties": {
+              "sessionID": {
+                "type": "string"
+              },
+              "finish_reason": {
+                "type": "string"
+              },
+              "ttft_ms": {
+                "type": "number"
+              },
+              "latency_ms": {
+                "type": "number"
+              },
+              "cached_read_tokens": {
+                "type": "number"
+              },
+              "model_id": {
+                "type": "string"
+              },
+              "provider": {
+                "type": "string"
+              },
+              "total_tokens_in": {
+                "type": "number"
+              },
+              "total_tokens_out": {
+                "type": "number"
+              }
+            },
+            "required": [
+              "sessionID",
+              "finish_reason",
+              "latency_ms",
+              "cached_read_tokens",
+              "model_id",
+              "provider",
+              "total_tokens_in",
+              "total_tokens_out"
+            ]
+          }
+        },
+        "required": ["type", "properties"]
+      },
+      "Event.metrics.tool_call": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string",
+            "const": "metrics.tool_call"
+          },
+          "properties": {
+            "type": "object",
+            "properties": {
+              "sessionID": {
+                "type": "string"
+              },
+              "tool_name": {
+                "type": "string"
+              },
+              "input_bytes": {
+                "type": "number"
+              },
+              "output_bytes": {
+                "type": "number"
+              },
+              "tool_call_id": {
+                "type": "string"
+              },
+              "tool_call_status": {
+                "type": "string",
+                "enum": ["success", "error", "cancelled"]
+              }
+            },
+            "required": ["sessionID", "tool_name", "input_bytes", "output_bytes", "tool_call_id", "tool_call_status"]
+          }
+        },
+        "required": ["type", "properties"]
+      },
+      "Event.metrics.agent_request": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string",
+            "const": "metrics.agent_request"
+          },
+          "properties": {
+            "type": "object",
+            "properties": {
+              "sessionID": {
+                "type": "string"
+              },
+              "phase": {
+                "type": "string"
+              },
+              "task_type": {
+                "type": "string"
+              },
+              "surface": {
+                "type": "string"
+              },
+              "total_tokens_in": {
+                "type": "number"
+              },
+              "total_tokens_out": {
+                "type": "number"
+              },
+              "files_changed": {
+                "type": "number"
+              },
+              "validation_status": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "sessionID",
+              "phase",
+              "task_type",
+              "surface",
+              "total_tokens_in",
+              "total_tokens_out",
+              "files_changed",
+              "validation_status"
+            ]
+          }
+        },
+        "required": ["type", "properties"]
+      },
+      "Event.metrics.try_best_detected": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string",
+            "const": "metrics.try_best_detected"
+          },
+          "properties": {
+            "type": "object",
+            "properties": {
+              "sessionID": {
+                "type": "string"
+              },
+              "reason": {
+                "type": "string",
+                "enum": ["edit_repeat", "bash_retry", "action_streak"]
+              },
+              "provider": {
+                "type": "string"
+              },
+              "model_id": {
+                "type": "string"
+              },
+              "count": {
+                "type": "integer",
+                "exclusiveMinimum": 0,
+                "maximum": 9007199254740991
+              },
+              "similarity": {
+                "type": "number"
+              },
+              "action": {
+                "type": "string",
+                "enum": ["edit", "verify"]
+              }
+            },
+            "required": ["sessionID", "reason", "provider", "model_id", "count"]
+          }
+        },
+        "required": ["type", "properties"]
+      },
+      "Event.team.created": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string",
+            "const": "team.created"
+          },
+          "properties": {
+            "type": "object",
+            "properties": {
+              "teamID": {
+                "type": "string"
+              },
+              "creatorSessionID": {
+                "type": "string",
+                "pattern": "^ses.*"
+              }
+            },
+            "required": ["teamID", "creatorSessionID"]
+          }
+        },
+        "required": ["type", "properties"]
+      },
+      "Event.team.member.joined": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string",
+            "const": "team.member.joined"
+          },
+          "properties": {
+            "type": "object",
+            "properties": {
+              "teamID": {
+                "type": "string"
+              },
+              "sessionID": {
+                "type": "string",
+                "pattern": "^ses.*"
+              },
+              "agent": {
+                "type": "string"
+              },
+              "role": {
+                "type": "string"
+              }
+            },
+            "required": ["teamID", "sessionID", "agent", "role"]
+          }
+        },
+        "required": ["type", "properties"]
+      },
+      "Event.workflow.phase": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string",
+            "const": "workflow.phase"
+          },
+          "properties": {
+            "type": "object",
+            "properties": {
+              "sessionID": {
+                "type": "string",
+                "pattern": "^ses.*"
+              },
+              "runID": {
+                "type": "string"
+              },
+              "title": {
+                "type": "string"
+              }
+            },
+            "required": ["sessionID", "runID", "title"]
+          }
+        },
+        "required": ["type", "properties"]
+      },
+      "Event.workflow.log": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string",
+            "const": "workflow.log"
+          },
+          "properties": {
+            "type": "object",
+            "properties": {
+              "sessionID": {
+                "type": "string",
+                "pattern": "^ses.*"
+              },
+              "runID": {
+                "type": "string"
+              },
+              "message": {
+                "type": "string"
+              }
+            },
+            "required": ["sessionID", "runID", "message"]
+          }
+        },
+        "required": ["type", "properties"]
+      },
+      "Event.workflow.started": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string",
+            "const": "workflow.started"
+          },
+          "properties": {
+            "type": "object",
+            "properties": {
+              "sessionID": {
+                "type": "string",
+                "pattern": "^ses.*"
+              },
+              "runID": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              }
+            },
+            "required": ["sessionID", "runID", "name"]
+          }
+        },
+        "required": ["type", "properties"]
+      },
+      "Event.workflow.finished": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string",
+            "const": "workflow.finished"
+          },
+          "properties": {
+            "type": "object",
+            "properties": {
+              "sessionID": {
+                "type": "string",
+                "pattern": "^ses.*"
+              },
+              "runID": {
+                "type": "string"
+              },
+              "status": {
+                "type": "string",
+                "enum": ["completed", "failed", "cancelled"]
+              },
+              "error": {
+                "type": "string"
+              }
+            },
+            "required": ["sessionID", "runID", "status"]
+          }
+        },
+        "required": ["type", "properties"]
+      },
+      "Event.workflow.agent_failed": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string",
+            "const": "workflow.agent_failed"
+          },
+          "properties": {
+            "type": "object",
+            "properties": {
+              "sessionID": {
+                "type": "string",
+                "pattern": "^ses.*"
+              },
+              "runID": {
+                "type": "string"
+              },
+              "actorID": {
+                "type": "string"
+              },
+              "agentType": {
+                "type": "string"
+              },
+              "label": {
+                "type": "string"
+              },
+              "phase": {
+                "type": "string"
+              },
+              "reason": {
+                "type": "string",
+                "enum": ["over-cap", "spawn-reject", "timeout", "actor-error", "no-deliverable"]
+              },
+              "errorMessage": {
+                "type": "string"
+              }
+            },
+            "required": ["sessionID", "runID", "agentType", "reason"]
+          }
+        },
+        "required": ["type", "properties"]
+      },
+      "Event.workflow.child_failed": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string",
+            "const": "workflow.child_failed"
+          },
+          "properties": {
+            "type": "object",
+            "properties": {
+              "sessionID": {
+                "type": "string",
+                "pattern": "^ses.*"
+              },
+              "runID": {
+                "type": "string"
+              },
+              "childRunID": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              },
+              "status": {
+                "type": "string",
+                "enum": ["failed", "cancelled"]
+              },
+              "error": {
+                "type": "string"
+              }
+            },
+            "required": ["sessionID", "runID", "childRunID", "name", "status"]
+          }
+        },
+        "required": ["type", "properties"]
+      },
       "Project": {
         "type": "object",
         "properties": {
@@ -8262,34 +9993,6 @@
               }
             },
             "required": ["directory"]
-          }
-        },
-        "required": ["type", "properties"]
-      },
-      "Event.server.connected": {
-        "type": "object",
-        "properties": {
-          "type": {
-            "type": "string",
-            "const": "server.connected"
-          },
-          "properties": {
-            "type": "object",
-            "properties": {}
-          }
-        },
-        "required": ["type", "properties"]
-      },
-      "Event.global.disposed": {
-        "type": "object",
-        "properties": {
-          "type": {
-            "type": "string",
-            "const": "global.disposed"
-          },
-          "properties": {
-            "type": "object",
-            "properties": {}
           }
         },
         "required": ["type", "properties"]
@@ -8396,6 +10099,9 @@
             "properties": {
               "version": {
                 "type": "string"
+              },
+              "method": {
+                "type": "string"
               }
             },
             "required": ["version"]
@@ -8414,6 +10120,9 @@
             "type": "object",
             "properties": {
               "version": {
+                "type": "string"
+              },
+              "method": {
                 "type": "string"
               }
             },
@@ -8542,204 +10251,6 @@
               }
             },
             "required": ["sessionID", "requestID", "reply"]
-          }
-        },
-        "required": ["type", "properties"]
-      },
-      "Event.actor.registered": {
-        "type": "object",
-        "properties": {
-          "type": {
-            "type": "string",
-            "const": "actor.registered"
-          },
-          "properties": {
-            "type": "object",
-            "properties": {
-              "sessionID": {
-                "type": "string",
-                "pattern": "^ses.*"
-              },
-              "actorID": {
-                "type": "string"
-              },
-              "mode": {
-                "type": "string",
-                "enum": ["peer", "subagent", "main"]
-              },
-              "parentActorID": {
-                "type": "string"
-              },
-              "description": {
-                "type": "string"
-              },
-              "agent": {
-                "type": "string"
-              },
-              "background": {
-                "type": "boolean"
-              }
-            },
-            "required": ["sessionID", "actorID", "mode", "description", "agent", "background"]
-          }
-        },
-        "required": ["type", "properties"]
-      },
-      "Event.actor.status": {
-        "type": "object",
-        "properties": {
-          "type": {
-            "type": "string",
-            "const": "actor.status"
-          },
-          "properties": {
-            "type": "object",
-            "properties": {
-              "sessionID": {
-                "type": "string",
-                "pattern": "^ses.*"
-              },
-              "actorID": {
-                "type": "string"
-              },
-              "status": {
-                "type": "string",
-                "enum": ["pending", "running", "idle"]
-              },
-              "lastOutcome": {
-                "type": "string",
-                "enum": ["success", "failure", "cancelled"]
-              },
-              "turnCount": {
-                "type": "number"
-              },
-              "lastTurnTime": {
-                "type": "number"
-              },
-              "error": {
-                "type": "string"
-              }
-            },
-            "required": ["sessionID", "actorID", "status", "turnCount", "lastTurnTime"]
-          }
-        },
-        "required": ["type", "properties"]
-      },
-      "Event.actor.stuck": {
-        "type": "object",
-        "properties": {
-          "type": {
-            "type": "string",
-            "const": "actor.stuck"
-          },
-          "properties": {
-            "type": "object",
-            "properties": {
-              "sessionID": {
-                "type": "string",
-                "pattern": "^ses.*"
-              },
-              "actorID": {
-                "type": "string"
-              },
-              "description": {
-                "type": "string"
-              },
-              "lastTurnTime": {
-                "type": "number"
-              },
-              "stuckDuration": {
-                "type": "number"
-              }
-            },
-            "required": ["sessionID", "actorID", "description", "lastTurnTime", "stuckDuration"]
-          }
-        },
-        "required": ["type", "properties"]
-      },
-      "Event.writer.cache_perf": {
-        "type": "object",
-        "properties": {
-          "type": {
-            "type": "string",
-            "const": "writer.cache_perf"
-          },
-          "properties": {
-            "type": "object",
-            "properties": {
-              "sessionID": {
-                "type": "string",
-                "pattern": "^ses.*"
-              },
-              "writerActorID": {
-                "type": "string"
-              },
-              "status": {
-                "type": "string",
-                "enum": ["completed", "failed"]
-              },
-              "total_input_tokens": {
-                "type": "number"
-              },
-              "cache_read_tokens": {
-                "type": "number"
-              },
-              "cache_write_tokens": {
-                "type": "number"
-              },
-              "cache_hit_rate": {
-                "type": "number"
-              },
-              "num_llm_calls": {
-                "type": "number"
-              }
-            },
-            "required": [
-              "sessionID",
-              "writerActorID",
-              "status",
-              "total_input_tokens",
-              "cache_read_tokens",
-              "cache_write_tokens",
-              "cache_hit_rate",
-              "num_llm_calls"
-            ]
-          }
-        },
-        "required": ["type", "properties"]
-      },
-      "Event.inbox.arrived": {
-        "type": "object",
-        "properties": {
-          "type": {
-            "type": "string",
-            "const": "inbox.arrived"
-          },
-          "properties": {
-            "type": "object",
-            "properties": {
-              "receiverSessionID": {
-                "type": "string",
-                "pattern": "^ses.*"
-              },
-              "receiverActorID": {
-                "type": "string"
-              },
-              "senderSessionID": {
-                "type": "string",
-                "pattern": "^ses.*"
-              },
-              "senderActorID": {
-                "type": "string"
-              },
-              "inboxID": {
-                "type": "string"
-              },
-              "type": {
-                "type": "string"
-              }
-            },
-            "required": ["receiverSessionID", "receiverActorID", "inboxID", "type"]
           }
         },
         "required": ["type", "properties"]
@@ -9129,6 +10640,68 @@
         },
         "required": ["type", "properties"]
       },
+      "Event.session.try_best.detected": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string",
+            "const": "session.try_best.detected"
+          },
+          "properties": {
+            "type": "object",
+            "properties": {
+              "sessionID": {
+                "type": "string",
+                "pattern": "^ses.*"
+              },
+              "agentID": {
+                "type": "string"
+              },
+              "providerID": {
+                "type": "string"
+              },
+              "modelID": {
+                "type": "string"
+              },
+              "reason": {
+                "type": "string",
+                "enum": ["edit_repeat", "bash_retry", "action_streak"]
+              },
+              "evidence": {
+                "type": "object",
+                "properties": {
+                  "tool": {
+                    "type": "string"
+                  },
+                  "path": {
+                    "type": "string"
+                  },
+                  "command": {
+                    "type": "string"
+                  },
+                  "count": {
+                    "type": "integer",
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  "similarity": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 1
+                  },
+                  "action": {
+                    "type": "string",
+                    "enum": ["edit", "verify"]
+                  }
+                },
+                "required": ["tool", "count"]
+              }
+            },
+            "required": ["sessionID", "providerID", "modelID", "reason", "evidence"]
+          }
+        },
+        "required": ["type", "properties"]
+      },
       "Event.hook.executed": {
         "type": "object",
         "properties": {
@@ -9506,222 +11079,6 @@
         },
         "required": ["type", "properties"]
       },
-      "Event.team.created": {
-        "type": "object",
-        "properties": {
-          "type": {
-            "type": "string",
-            "const": "team.created"
-          },
-          "properties": {
-            "type": "object",
-            "properties": {
-              "teamID": {
-                "type": "string"
-              },
-              "creatorSessionID": {
-                "type": "string",
-                "pattern": "^ses.*"
-              }
-            },
-            "required": ["teamID", "creatorSessionID"]
-          }
-        },
-        "required": ["type", "properties"]
-      },
-      "Event.team.member.joined": {
-        "type": "object",
-        "properties": {
-          "type": {
-            "type": "string",
-            "const": "team.member.joined"
-          },
-          "properties": {
-            "type": "object",
-            "properties": {
-              "teamID": {
-                "type": "string"
-              },
-              "sessionID": {
-                "type": "string",
-                "pattern": "^ses.*"
-              },
-              "agent": {
-                "type": "string"
-              },
-              "role": {
-                "type": "string"
-              }
-            },
-            "required": ["teamID", "sessionID", "agent", "role"]
-          }
-        },
-        "required": ["type", "properties"]
-      },
-      "Event.task.created": {
-        "type": "object",
-        "properties": {
-          "type": {
-            "type": "string",
-            "const": "task.created"
-          },
-          "properties": {
-            "type": "object",
-            "properties": {
-              "sessionID": {
-                "type": "string",
-                "pattern": "^ses.*"
-              },
-              "task": {
-                "type": "object",
-                "properties": {
-                  "id": {
-                    "type": "string",
-                    "pattern": "^T\\d+(\\.\\d+)*$"
-                  },
-                  "session_id": {
-                    "type": "string",
-                    "pattern": "^ses.*"
-                  },
-                  "parent_task_id": {
-                    "type": "string",
-                    "pattern": "^T\\d+(\\.\\d+)*$"
-                  },
-                  "status": {
-                    "type": "string",
-                    "enum": ["open", "in_progress", "blocked", "done", "abandoned"]
-                  },
-                  "summary": {
-                    "type": "string"
-                  },
-                  "owner": {
-                    "type": "string"
-                  },
-                  "created_at": {
-                    "type": "number"
-                  },
-                  "last_event_at": {
-                    "type": "number"
-                  },
-                  "ended_at": {
-                    "type": "number"
-                  },
-                  "cleanup_after": {
-                    "type": "number"
-                  }
-                },
-                "required": ["id", "session_id", "status", "summary", "created_at", "last_event_at"]
-              }
-            },
-            "required": ["sessionID", "task"]
-          }
-        },
-        "required": ["type", "properties"]
-      },
-      "Event.task.updated": {
-        "type": "object",
-        "properties": {
-          "type": {
-            "type": "string",
-            "const": "task.updated"
-          },
-          "properties": {
-            "type": "object",
-            "properties": {
-              "sessionID": {
-                "type": "string",
-                "pattern": "^ses.*"
-              },
-              "task": {
-                "type": "object",
-                "properties": {
-                  "id": {
-                    "type": "string",
-                    "pattern": "^T\\d+(\\.\\d+)*$"
-                  },
-                  "session_id": {
-                    "type": "string",
-                    "pattern": "^ses.*"
-                  },
-                  "parent_task_id": {
-                    "type": "string",
-                    "pattern": "^T\\d+(\\.\\d+)*$"
-                  },
-                  "status": {
-                    "type": "string",
-                    "enum": ["open", "in_progress", "blocked", "done", "abandoned"]
-                  },
-                  "summary": {
-                    "type": "string"
-                  },
-                  "owner": {
-                    "type": "string"
-                  },
-                  "created_at": {
-                    "type": "number"
-                  },
-                  "last_event_at": {
-                    "type": "number"
-                  },
-                  "ended_at": {
-                    "type": "number"
-                  },
-                  "cleanup_after": {
-                    "type": "number"
-                  }
-                },
-                "required": ["id", "session_id", "status", "summary", "created_at", "last_event_at"]
-              },
-              "kind": {
-                "type": "string",
-                "enum": ["started", "unstarted", "blocked", "unblocked", "done", "abandoned", "renamed"]
-              }
-            },
-            "required": ["sessionID", "task", "kind"]
-          }
-        },
-        "required": ["type", "properties"]
-      },
-      "Todo": {
-        "type": "object",
-        "properties": {
-          "content": {
-            "description": "Brief description of the task",
-            "type": "string"
-          },
-          "status": {
-            "description": "Current status of the task: pending, in_progress, completed, cancelled",
-            "type": "string"
-          }
-        },
-        "required": ["content", "status"]
-      },
-      "Event.todo.updated": {
-        "type": "object",
-        "properties": {
-          "type": {
-            "type": "string",
-            "const": "todo.updated"
-          },
-          "properties": {
-            "type": "object",
-            "properties": {
-              "sessionID": {
-                "type": "string",
-                "pattern": "^ses.*"
-              },
-              "todos": {
-                "type": "array",
-                "items": {
-                  "$ref": "#/components/schemas/Todo"
-                }
-              }
-            },
-            "required": ["sessionID", "todos"]
-          }
-        },
-        "required": ["type", "properties"]
-      },
       "SessionStatus": {
         "anyOf": [
           {
@@ -9811,349 +11168,20 @@
         },
         "required": ["type", "properties"]
       },
-      "Event.session.goal": {
+      "Event.vcs.branch.updated": {
         "type": "object",
         "properties": {
           "type": {
             "type": "string",
-            "const": "session.goal"
+            "const": "vcs.branch.updated"
           },
           "properties": {
             "type": "object",
             "properties": {
-              "sessionID": {
-                "type": "string",
-                "pattern": "^ses.*"
-              },
-              "goal": {
-                "type": "object",
-                "properties": {
-                  "condition": {
-                    "type": "string"
-                  }
-                },
-                "required": ["condition"]
-              },
-              "lastVerdict": {
-                "type": "object",
-                "properties": {
-                  "ok": {
-                    "type": "boolean"
-                  },
-                  "impossible": {
-                    "type": "boolean"
-                  },
-                  "reason": {
-                    "type": "string"
-                  },
-                  "attempt": {
-                    "type": "number"
-                  },
-                  "messageID": {
-                    "type": "string"
-                  },
-                  "error": {
-                    "type": "boolean"
-                  }
-                },
-                "required": ["ok", "reason", "attempt"]
-              }
-            },
-            "required": ["sessionID"]
-          }
-        },
-        "required": ["type", "properties"]
-      },
-      "Event.metrics.model_call": {
-        "type": "object",
-        "properties": {
-          "type": {
-            "type": "string",
-            "const": "metrics.model_call"
-          },
-          "properties": {
-            "type": "object",
-            "properties": {
-              "sessionID": {
-                "type": "string"
-              },
-              "finish_reason": {
-                "type": "string"
-              },
-              "ttft_ms": {
-                "type": "number"
-              },
-              "latency_ms": {
-                "type": "number"
-              },
-              "cached_read_tokens": {
-                "type": "number"
-              },
-              "model_id": {
-                "type": "string"
-              },
-              "provider": {
-                "type": "string"
-              },
-              "total_tokens_in": {
-                "type": "number"
-              },
-              "total_tokens_out": {
-                "type": "number"
-              }
-            },
-            "required": [
-              "sessionID",
-              "finish_reason",
-              "latency_ms",
-              "cached_read_tokens",
-              "model_id",
-              "provider",
-              "total_tokens_in",
-              "total_tokens_out"
-            ]
-          }
-        },
-        "required": ["type", "properties"]
-      },
-      "Event.metrics.tool_call": {
-        "type": "object",
-        "properties": {
-          "type": {
-            "type": "string",
-            "const": "metrics.tool_call"
-          },
-          "properties": {
-            "type": "object",
-            "properties": {
-              "sessionID": {
-                "type": "string"
-              },
-              "tool_name": {
-                "type": "string"
-              },
-              "input_bytes": {
-                "type": "number"
-              },
-              "output_bytes": {
-                "type": "number"
-              },
-              "tool_call_id": {
-                "type": "string"
-              },
-              "tool_call_status": {
-                "type": "string",
-                "enum": ["success", "error"]
-              }
-            },
-            "required": ["sessionID", "tool_name", "input_bytes", "output_bytes", "tool_call_id", "tool_call_status"]
-          }
-        },
-        "required": ["type", "properties"]
-      },
-      "Event.metrics.agent_request": {
-        "type": "object",
-        "properties": {
-          "type": {
-            "type": "string",
-            "const": "metrics.agent_request"
-          },
-          "properties": {
-            "type": "object",
-            "properties": {
-              "sessionID": {
-                "type": "string"
-              },
-              "phase": {
-                "type": "string"
-              },
-              "task_type": {
-                "type": "string"
-              },
-              "surface": {
-                "type": "string"
-              },
-              "total_tokens_in": {
-                "type": "number"
-              },
-              "total_tokens_out": {
-                "type": "number"
-              },
-              "files_changed": {
-                "type": "number"
-              },
-              "validation_status": {
+              "branch": {
                 "type": "string"
               }
-            },
-            "required": [
-              "sessionID",
-              "phase",
-              "task_type",
-              "surface",
-              "total_tokens_in",
-              "total_tokens_out",
-              "files_changed",
-              "validation_status"
-            ]
-          }
-        },
-        "required": ["type", "properties"]
-      },
-      "Event.session.compacted": {
-        "type": "object",
-        "properties": {
-          "type": {
-            "type": "string",
-            "const": "session.compacted"
-          },
-          "properties": {
-            "type": "object",
-            "properties": {
-              "sessionID": {
-                "type": "string",
-                "pattern": "^ses.*"
-              }
-            },
-            "required": ["sessionID"]
-          }
-        },
-        "required": ["type", "properties"]
-      },
-      "Event.tui.prompt.append": {
-        "type": "object",
-        "properties": {
-          "type": {
-            "type": "string",
-            "const": "tui.prompt.append"
-          },
-          "properties": {
-            "type": "object",
-            "properties": {
-              "text": {
-                "type": "string"
-              }
-            },
-            "required": ["text"]
-          }
-        },
-        "required": ["type", "properties"]
-      },
-      "Event.tui.command.execute": {
-        "type": "object",
-        "properties": {
-          "type": {
-            "type": "string",
-            "const": "tui.command.execute"
-          },
-          "properties": {
-            "type": "object",
-            "properties": {
-              "command": {
-                "anyOf": [
-                  {
-                    "type": "string",
-                    "enum": [
-                      "session.list",
-                      "session.new",
-                      "session.share",
-                      "session.interrupt",
-                      "session.compact",
-                      "session.page.up",
-                      "session.page.down",
-                      "session.line.up",
-                      "session.line.down",
-                      "session.half.page.up",
-                      "session.half.page.down",
-                      "session.first",
-                      "session.last",
-                      "prompt.clear",
-                      "prompt.submit",
-                      "agent.cycle"
-                    ]
-                  },
-                  {
-                    "type": "string"
-                  }
-                ]
-              }
-            },
-            "required": ["command"]
-          }
-        },
-        "required": ["type", "properties"]
-      },
-      "Event.tui.toast.show": {
-        "type": "object",
-        "properties": {
-          "type": {
-            "type": "string",
-            "const": "tui.toast.show"
-          },
-          "properties": {
-            "type": "object",
-            "properties": {
-              "title": {
-                "type": "string"
-              },
-              "message": {
-                "type": "string"
-              },
-              "variant": {
-                "type": "string",
-                "enum": ["info", "success", "warning", "error"]
-              },
-              "duration": {
-                "description": "Duration in milliseconds",
-                "default": 5000,
-                "type": "number"
-              }
-            },
-            "required": ["message", "variant"]
-          }
-        },
-        "required": ["type", "properties"]
-      },
-      "Event.tui.session.select": {
-        "type": "object",
-        "properties": {
-          "type": {
-            "type": "string",
-            "const": "tui.session.select"
-          },
-          "properties": {
-            "type": "object",
-            "properties": {
-              "sessionID": {
-                "description": "Session ID to navigate to",
-                "type": "string",
-                "pattern": "^ses.*"
-              }
-            },
-            "required": ["sessionID"]
-          }
-        },
-        "required": ["type", "properties"]
-      },
-      "Event.tui.instructions.loaded": {
-        "type": "object",
-        "properties": {
-          "type": {
-            "type": "string",
-            "const": "tui.instructions.loaded"
-          },
-          "properties": {
-            "type": "object",
-            "properties": {
-              "files": {
-                "description": "Display labels of loaded instruction files: worktree-relative path, ~-path, or absolute",
-                "type": "array",
-                "items": {
-                  "type": "string"
-                }
-              }
-            },
-            "required": ["files"]
+            }
           }
         },
         "required": ["type", "properties"]
@@ -10229,24 +11257,6 @@
         },
         "required": ["type", "properties"]
       },
-      "Event.vcs.branch.updated": {
-        "type": "object",
-        "properties": {
-          "type": {
-            "type": "string",
-            "const": "vcs.branch.updated"
-          },
-          "properties": {
-            "type": "object",
-            "properties": {
-              "branch": {
-                "type": "string"
-              }
-            }
-          }
-        },
-        "required": ["type", "properties"]
-      },
       "Event.worktree.ready": {
         "type": "object",
         "properties": {
@@ -10284,6 +11294,122 @@
               }
             },
             "required": ["message"]
+          }
+        },
+        "required": ["type", "properties"]
+      },
+      "Todo": {
+        "type": "object",
+        "properties": {
+          "content": {
+            "description": "Brief description of the task",
+            "type": "string"
+          },
+          "status": {
+            "description": "Current status of the task: pending, in_progress, completed, cancelled",
+            "type": "string"
+          }
+        },
+        "required": ["content", "status"]
+      },
+      "Event.todo.updated": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string",
+            "const": "todo.updated"
+          },
+          "properties": {
+            "type": "object",
+            "properties": {
+              "sessionID": {
+                "type": "string",
+                "pattern": "^ses.*"
+              },
+              "todos": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/Todo"
+                }
+              }
+            },
+            "required": ["sessionID", "todos"]
+          }
+        },
+        "required": ["type", "properties"]
+      },
+      "Event.session.goal": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string",
+            "const": "session.goal"
+          },
+          "properties": {
+            "type": "object",
+            "properties": {
+              "sessionID": {
+                "type": "string",
+                "pattern": "^ses.*"
+              },
+              "goal": {
+                "type": "object",
+                "properties": {
+                  "condition": {
+                    "type": "string"
+                  }
+                },
+                "required": ["condition"]
+              },
+              "lastVerdict": {
+                "type": "object",
+                "properties": {
+                  "ok": {
+                    "type": "boolean"
+                  },
+                  "impossible": {
+                    "type": "boolean"
+                  },
+                  "reason": {
+                    "type": "string"
+                  },
+                  "attempt": {
+                    "type": "number"
+                  },
+                  "messageID": {
+                    "type": "string"
+                  },
+                  "error": {
+                    "type": "boolean"
+                  }
+                },
+                "required": ["ok", "reason", "attempt"]
+              }
+            },
+            "required": ["sessionID"]
+          }
+        },
+        "required": ["type", "properties"]
+      },
+      "Event.session.compacted": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string",
+            "const": "session.compacted"
+          },
+          "properties": {
+            "type": "object",
+            "properties": {
+              "sessionID": {
+                "type": "string",
+                "pattern": "^ses.*"
+              },
+              "agentID": {
+                "type": "string"
+              }
+            },
+            "required": ["sessionID"]
           }
         },
         "required": ["type", "properties"]
@@ -10397,114 +11523,6 @@
               }
             },
             "required": ["id"]
-          }
-        },
-        "required": ["type", "properties"]
-      },
-      "Event.workflow.phase": {
-        "type": "object",
-        "properties": {
-          "type": {
-            "type": "string",
-            "const": "workflow.phase"
-          },
-          "properties": {
-            "type": "object",
-            "properties": {
-              "sessionID": {
-                "type": "string",
-                "pattern": "^ses.*"
-              },
-              "runID": {
-                "type": "string"
-              },
-              "title": {
-                "type": "string"
-              }
-            },
-            "required": ["sessionID", "runID", "title"]
-          }
-        },
-        "required": ["type", "properties"]
-      },
-      "Event.workflow.log": {
-        "type": "object",
-        "properties": {
-          "type": {
-            "type": "string",
-            "const": "workflow.log"
-          },
-          "properties": {
-            "type": "object",
-            "properties": {
-              "sessionID": {
-                "type": "string",
-                "pattern": "^ses.*"
-              },
-              "runID": {
-                "type": "string"
-              },
-              "message": {
-                "type": "string"
-              }
-            },
-            "required": ["sessionID", "runID", "message"]
-          }
-        },
-        "required": ["type", "properties"]
-      },
-      "Event.workflow.started": {
-        "type": "object",
-        "properties": {
-          "type": {
-            "type": "string",
-            "const": "workflow.started"
-          },
-          "properties": {
-            "type": "object",
-            "properties": {
-              "sessionID": {
-                "type": "string",
-                "pattern": "^ses.*"
-              },
-              "runID": {
-                "type": "string"
-              },
-              "name": {
-                "type": "string"
-              }
-            },
-            "required": ["sessionID", "runID", "name"]
-          }
-        },
-        "required": ["type", "properties"]
-      },
-      "Event.workflow.finished": {
-        "type": "object",
-        "properties": {
-          "type": {
-            "type": "string",
-            "const": "workflow.finished"
-          },
-          "properties": {
-            "type": "object",
-            "properties": {
-              "sessionID": {
-                "type": "string",
-                "pattern": "^ses.*"
-              },
-              "runID": {
-                "type": "string"
-              },
-              "status": {
-                "type": "string",
-                "enum": ["completed", "failed", "cancelled"]
-              },
-              "error": {
-                "type": "string"
-              }
-            },
-            "required": ["sessionID", "runID", "status"]
           }
         },
         "required": ["type", "properties"]
@@ -11343,6 +12361,14 @@
           },
           "output": {
             "type": "string"
+          },
+          "providerOutput": {},
+          "providerMetadata": {
+            "type": "object",
+            "propertyNames": {
+              "type": "string"
+            },
+            "additionalProperties": {}
           },
           "title": {
             "type": "string"
@@ -12599,16 +13625,91 @@
           "payload": {
             "anyOf": [
               {
-                "$ref": "#/components/schemas/Event.project.updated"
-              },
-              {
-                "$ref": "#/components/schemas/Event.server.instance.disposed"
-              },
-              {
                 "$ref": "#/components/schemas/Event.server.connected"
               },
               {
                 "$ref": "#/components/schemas/Event.global.disposed"
+              },
+              {
+                "$ref": "#/components/schemas/Event.tui.prompt.append"
+              },
+              {
+                "$ref": "#/components/schemas/Event.tui.command.execute"
+              },
+              {
+                "$ref": "#/components/schemas/Event.tui.toast.show"
+              },
+              {
+                "$ref": "#/components/schemas/Event.tui.session.select"
+              },
+              {
+                "$ref": "#/components/schemas/Event.tui.instructions.loaded"
+              },
+              {
+                "$ref": "#/components/schemas/Event.actor.registered"
+              },
+              {
+                "$ref": "#/components/schemas/Event.actor.status"
+              },
+              {
+                "$ref": "#/components/schemas/Event.actor.stuck"
+              },
+              {
+                "$ref": "#/components/schemas/Event.actor.stalled"
+              },
+              {
+                "$ref": "#/components/schemas/Event.writer.cache_perf"
+              },
+              {
+                "$ref": "#/components/schemas/Event.inbox.arrived"
+              },
+              {
+                "$ref": "#/components/schemas/Event.task.created"
+              },
+              {
+                "$ref": "#/components/schemas/Event.task.updated"
+              },
+              {
+                "$ref": "#/components/schemas/Event.metrics.model_call"
+              },
+              {
+                "$ref": "#/components/schemas/Event.metrics.tool_call"
+              },
+              {
+                "$ref": "#/components/schemas/Event.metrics.agent_request"
+              },
+              {
+                "$ref": "#/components/schemas/Event.metrics.try_best_detected"
+              },
+              {
+                "$ref": "#/components/schemas/Event.team.created"
+              },
+              {
+                "$ref": "#/components/schemas/Event.team.member.joined"
+              },
+              {
+                "$ref": "#/components/schemas/Event.workflow.phase"
+              },
+              {
+                "$ref": "#/components/schemas/Event.workflow.log"
+              },
+              {
+                "$ref": "#/components/schemas/Event.workflow.started"
+              },
+              {
+                "$ref": "#/components/schemas/Event.workflow.finished"
+              },
+              {
+                "$ref": "#/components/schemas/Event.workflow.agent_failed"
+              },
+              {
+                "$ref": "#/components/schemas/Event.workflow.child_failed"
+              },
+              {
+                "$ref": "#/components/schemas/Event.project.updated"
+              },
+              {
+                "$ref": "#/components/schemas/Event.server.instance.disposed"
               },
               {
                 "$ref": "#/components/schemas/Event.file.edited"
@@ -12638,21 +13739,6 @@
                 "$ref": "#/components/schemas/Event.permission.replied"
               },
               {
-                "$ref": "#/components/schemas/Event.actor.registered"
-              },
-              {
-                "$ref": "#/components/schemas/Event.actor.status"
-              },
-              {
-                "$ref": "#/components/schemas/Event.actor.stuck"
-              },
-              {
-                "$ref": "#/components/schemas/Event.writer.cache_perf"
-              },
-              {
-                "$ref": "#/components/schemas/Event.inbox.arrived"
-              },
-              {
                 "$ref": "#/components/schemas/Event.session.diff"
               },
               {
@@ -12660,6 +13746,9 @@
               },
               {
                 "$ref": "#/components/schemas/Event.session.retry.attempt"
+              },
+              {
+                "$ref": "#/components/schemas/Event.session.try_best.detected"
               },
               {
                 "$ref": "#/components/schemas/Event.hook.executed"
@@ -12689,55 +13778,13 @@
                 "$ref": "#/components/schemas/Event.bash.interactive.replied"
               },
               {
-                "$ref": "#/components/schemas/Event.team.created"
-              },
-              {
-                "$ref": "#/components/schemas/Event.team.member.joined"
-              },
-              {
-                "$ref": "#/components/schemas/Event.task.created"
-              },
-              {
-                "$ref": "#/components/schemas/Event.task.updated"
-              },
-              {
-                "$ref": "#/components/schemas/Event.todo.updated"
-              },
-              {
                 "$ref": "#/components/schemas/Event.session.status"
               },
               {
                 "$ref": "#/components/schemas/Event.session.idle"
               },
               {
-                "$ref": "#/components/schemas/Event.session.goal"
-              },
-              {
-                "$ref": "#/components/schemas/Event.metrics.model_call"
-              },
-              {
-                "$ref": "#/components/schemas/Event.metrics.tool_call"
-              },
-              {
-                "$ref": "#/components/schemas/Event.metrics.agent_request"
-              },
-              {
-                "$ref": "#/components/schemas/Event.session.compacted"
-              },
-              {
-                "$ref": "#/components/schemas/Event.tui.prompt.append"
-              },
-              {
-                "$ref": "#/components/schemas/Event.tui.command.execute"
-              },
-              {
-                "$ref": "#/components/schemas/Event.tui.toast.show"
-              },
-              {
-                "$ref": "#/components/schemas/Event.tui.session.select"
-              },
-              {
-                "$ref": "#/components/schemas/Event.tui.instructions.loaded"
+                "$ref": "#/components/schemas/Event.vcs.branch.updated"
               },
               {
                 "$ref": "#/components/schemas/Event.mcp.tools.changed"
@@ -12749,13 +13796,19 @@
                 "$ref": "#/components/schemas/Event.command.executed"
               },
               {
-                "$ref": "#/components/schemas/Event.vcs.branch.updated"
-              },
-              {
                 "$ref": "#/components/schemas/Event.worktree.ready"
               },
               {
                 "$ref": "#/components/schemas/Event.worktree.failed"
+              },
+              {
+                "$ref": "#/components/schemas/Event.todo.updated"
+              },
+              {
+                "$ref": "#/components/schemas/Event.session.goal"
+              },
+              {
+                "$ref": "#/components/schemas/Event.session.compacted"
               },
               {
                 "$ref": "#/components/schemas/Event.pty.created"
@@ -12768,18 +13821,6 @@
               },
               {
                 "$ref": "#/components/schemas/Event.pty.deleted"
-              },
-              {
-                "$ref": "#/components/schemas/Event.workflow.phase"
-              },
-              {
-                "$ref": "#/components/schemas/Event.workflow.log"
-              },
-              {
-                "$ref": "#/components/schemas/Event.workflow.started"
-              },
-              {
-                "$ref": "#/components/schemas/Event.workflow.finished"
               },
               {
                 "$ref": "#/components/schemas/Event.workspace.ready"
@@ -12873,6 +13914,20 @@
             "items": {
               "type": "string"
             }
+          }
+        }
+      },
+      "LLMServerConfig": {
+        "description": "Token lifetime defaults for the temporary local LLM server (mimo llm-server)",
+        "type": "object",
+        "properties": {
+          "ttl": {
+            "description": "Default sliding lifetime for issued tokens, measured from last use (e.g. '30m', '12h', '1d', or 'none'). Default '1d'.",
+            "type": "string"
+          },
+          "maxAge": {
+            "description": "Absolute ceiling from issue, regardless of activity (e.g. '7d', or 'none'). Default 'none', so an actively used token is not cut off.",
+            "type": "string"
           }
         }
       },
@@ -13122,6 +14177,20 @@
                   }
                 ]
               },
+              "headerTimeout": {
+                "description": "Timeout in milliseconds while waiting for response headers. OpenAI defaults to 300000 (5 minutes). Set to false to disable.",
+                "anyOf": [
+                  {
+                    "type": "integer",
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  {
+                    "type": "boolean",
+                    "const": false
+                  }
+                ]
+              },
               "chunkTimeout": {
                 "description": "Timeout in milliseconds between streamed SSE chunks for this provider. If no chunk arrives within this window, the request is aborted.",
                 "type": "integer",
@@ -13163,6 +14232,12 @@
                 "tool_call": {
                   "type": "boolean"
                 },
+                "voice_design": {
+                  "type": "boolean"
+                },
+                "voice_clone": {
+                  "type": "boolean"
+                },
                 "interleaved": {
                   "anyOf": [
                     {
@@ -13174,7 +14249,7 @@
                       "properties": {
                         "field": {
                           "type": "string",
-                          "enum": ["reasoning_content", "reasoning_details"]
+                          "enum": ["reasoning", "reasoning_content", "reasoning_details"]
                         }
                       },
                       "required": ["field"]
@@ -13310,8 +14385,17 @@
                 }
               }
             }
+          },
+          "only_configured_models": {
+            "description": "When true, show only the models listed in this provider's `models` map and hide the rest of the catalog (acts as an implicit whitelist). Defaults to false: `models` only augments/overrides the catalog without filtering it.",
+            "type": "boolean"
           }
         }
+      },
+      "McpSamplingPolicy": {
+        "description": "Policy for MCP client-side sampling (`sampling/createMessage`) from this server: deny, ask (default), or allow.",
+        "type": "string",
+        "enum": ["deny", "ask", "allow"]
       },
       "McpLocalConfig": {
         "type": "object",
@@ -13345,6 +14429,9 @@
           "timeout": {
             "description": "Timeout in ms for MCP server requests. Defaults to 5000 (5 seconds) if not specified.",
             "type": "number"
+          },
+          "sampling": {
+            "$ref": "#/components/schemas/McpSamplingPolicy"
           }
         },
         "required": ["type", "command"]
@@ -13411,6 +14498,9 @@
           "timeout": {
             "description": "Timeout in ms for MCP server requests. Defaults to 5000 (5 seconds) if not specified.",
             "type": "number"
+          },
+          "sampling": {
+            "$ref": "#/components/schemas/McpSamplingPolicy"
           }
         },
         "required": ["type", "url"]
@@ -13433,8 +14523,11 @@
           "server": {
             "$ref": "#/components/schemas/ServerConfig"
           },
+          "llmServer": {
+            "$ref": "#/components/schemas/LLMServerConfig"
+          },
           "command": {
-            "description": "Command configuration, see https://opencode.ai/docs/commands",
+            "description": "Command configuration, see https://mimo.xiaomi.com/mimocode/commands",
             "type": "object",
             "propertyNames": {
               "type": "string"
@@ -13478,6 +14571,20 @@
                 "items": {
                   "type": "string"
                 }
+              }
+            }
+          },
+          "compose": {
+            "description": "Compose mode configuration",
+            "type": "object",
+            "properties": {
+              "docs": {
+                "description": "Directory where compose skills save specs, plans, and reports. Relative paths are passed to the agent prompt verbatim; set docs_absolute: true to anchor them to the project root. Defaults to docs/compose.",
+                "type": "string"
+              },
+              "docs_absolute": {
+                "description": "Whether the docs directory injected into the compose prompt is an absolute path. When false (default), a relative `docs` value is passed through verbatim. When true, a relative `docs` is resolved against the active worktree root so it is unambiguous regardless of the agent's working directory. Ignored when `docs` is already absolute.",
+                "type": "boolean"
               }
             }
           },
@@ -13564,6 +14671,10 @@
             "description": "Small model to use for tasks like title generation in the format of provider/model",
             "type": "string"
           },
+          "vision_model": {
+            "description": "Model to use for image/vision subagent tasks in the format of provider/model. If unset, a vision-capable model is chosen automatically (in-house models preferred, then cheapest).",
+            "type": "string"
+          },
           "model_groups": {
             "description": "Named model groups (capability tiers, e.g. ultra/standard/lite). Each group has a default model and optional member models. A group name can be used anywhere a provider/model string is accepted.",
             "type": "object",
@@ -13617,7 +14728,7 @@
             }
           },
           "agent": {
-            "description": "Agent configuration, see https://opencode.ai/docs/agents",
+            "description": "Agent configuration, see https://mimo.xiaomi.com/mimocode/agents",
             "type": "object",
             "properties": {
               "plan": {
@@ -13874,6 +14985,41 @@
                 "type": "integer",
                 "minimum": 0,
                 "maximum": 9007199254740991
+              },
+              "max_context": {
+                "description": "Compact earlier than the model window. A token count (300000), a shorthand string (\"300K\", \"1M\", \"50%\"), or a map keyed by \"<providerID>/<modelID>\" with wildcards (\"openai/gpt-5*\"). Always clamped to the model's real window — it can only lower the compaction trigger, never raise it. 0 means no budget.",
+                "anyOf": [
+                  {
+                    "anyOf": [
+                      {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 9007199254740991
+                      },
+                      {
+                        "type": "string"
+                      }
+                    ]
+                  },
+                  {
+                    "type": "object",
+                    "propertyNames": {
+                      "type": "string"
+                    },
+                    "additionalProperties": {
+                      "anyOf": [
+                        {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 9007199254740991
+                        },
+                        {
+                          "type": "string"
+                        }
+                      ]
+                    }
+                  }
+                ]
               }
             }
           },
@@ -13892,6 +15038,10 @@
                 "type": "integer",
                 "minimum": 0,
                 "maximum": 9007199254740991
+              },
+              "fork": {
+                "description": "Whether to fork the parent agent's message prefix into the writer session for prefix-cache reuse. Requires provider cache-breakpoint support. Default: false.",
+                "type": "boolean"
               },
               "push_caps": {
                 "description": "Per-section token caps for rebuild context (renderRebuildContext). Each section is loaded up to its cap so the rebuild stays within a predictable budget.",
@@ -13956,6 +15106,18 @@
                     "type": "integer",
                     "exclusiveMinimum": 0,
                     "maximum": 9007199254740991
+                  },
+                  "recent_user": {
+                    "description": "Token cap for the recent user input section (verbatim user messages from the live DB, FIFO eviction). Default: 16000. Set 0 to disable.",
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  "recent_user_per_msg": {
+                    "description": "Per-message cap inside recent user input section; oversized messages get head/tail truncation with messageID elision marker. Default: 2000.",
+                    "type": "integer",
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991
                   }
                 }
               },
@@ -13974,6 +15136,81 @@
               "memory_reconcile_on_search": {
                 "description": "Whether to reconcile memory state on search operations. Default: true.",
                 "type": "boolean"
+              },
+              "memory_search_score_floor": {
+                "description": "Relative BM25 floor for memory.search (OR-joined query): keep results scoring >= this fraction of the top hit, dropping common-word-only noise. The #1 result is always kept. Default: 0.15. Set 0 to keep all matches.",
+                "type": "number"
+              }
+            }
+          },
+          "memory": {
+            "type": "object",
+            "properties": {
+              "disable_write": {
+                "description": "Stop WRITING new memory. Default: false (memory is written). When true, no new memory is produced — session checkpoint.md, project MEMORY.md, notes.md and per-task progress.md are never written, the high-pressure 'save your learnings to memory' nudge is suppressed, and automatic dream/distill runs are skipped. Existing memory stays READABLE on demand: the builtin `memory` search tool keeps working and the files can still be read directly. What does stop is the AUTOMATIC injection — checkpoint rebuild is short-circuited to compaction while writing is off, and the memory dumps that a rebuild would have placed in context are only produced by that rebuild, so nothing is loaded on its own; an agent that wants memory has to search or read for it. Nothing is ever deleted — set it back to false to resume writing on top of the existing files.",
+                "type": "boolean"
+              },
+              "cc_index": {
+                "description": "Index Claude Code memory (~/.claude/projects/<slug>/memory) and expose under scope='cc'. Default: false. Note: when enabled, every mimocode agent (build/explore/subagents) can search these memories via the builtin `memory` tool — including CC's `type: user` (your role/preferences) and `type: feedback` (your guidance) categories. CC originally writes them for future CC sessions; flipping this on widens the consumer set to mimocode agents on the same machine. Leave disabled (default) if you don't want personal context recallable from a prompt-injection-vulnerable agent.",
+                "type": "boolean"
+              }
+            }
+          },
+          "history": {
+            "description": "Trajectory (conversation history) FTS index configuration.",
+            "type": "object",
+            "properties": {
+              "kinds": {
+                "description": "Which part kinds the history FTS index should cover. Defaults to text (user/assistant) + tool input + tool errors. Add 'reasoning' or 'tool_output' to grow recall at the cost of database size. Note: enabling 'tool_output' reclassifies completed tools from kind='tool_input' to kind='tool_output' (input remains searchable in the body, but kind:['tool_input'] filter will then only match pending/error tools).",
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "enum": ["user_text", "assistant_text", "tool_input", "tool_error", "reasoning", "tool_output"]
+                }
+              }
+            }
+          },
+          "dream": {
+            "type": "object",
+            "properties": {
+              "auto": {
+                "description": "Auto-trigger dream memory consolidation on new session start. Default: false.",
+                "type": "boolean"
+              },
+              "interval_days": {
+                "description": "Minimum days between automatic dream runs. Set to 0 to trigger on every new session. Default: 7.",
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              }
+            }
+          },
+          "distill": {
+            "type": "object",
+            "properties": {
+              "auto": {
+                "description": "Auto-trigger distill workflow packaging on new session start. Default: false.",
+                "type": "boolean"
+              },
+              "interval_days": {
+                "description": "Minimum days between automatic distill runs. Default: 30.",
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              }
+            }
+          },
+          "voice": {
+            "description": "Voice input provider and model configuration.",
+            "type": "object",
+            "properties": {
+              "asr_model": {
+                "description": "Model to use for voice ASR transcription in provider/model format. Defaults to xiaomi/mimo-v2.5-asr.",
+                "type": "string"
+              },
+              "control_model": {
+                "description": "Model to use for voice control (multimodal) in provider/model format. Defaults to xiaomi/mimo-v2.5.",
+                "type": "string"
               }
             }
           },
@@ -14001,6 +15238,34 @@
               "continue_loop_on_deny": {
                 "description": "Continue the agent loop when a tool call is denied",
                 "type": "boolean"
+              },
+              "try_best": {
+                "description": "Try-best loop detector thresholds.",
+                "type": "object",
+                "properties": {
+                  "edit_window": {
+                    "description": "Recent edit events to compare (default 12).",
+                    "type": "integer",
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  "edit_similarity": {
+                    "description": "Jaccard threshold for near-identical edit detection (default 0.8).",
+                    "type": "number"
+                  },
+                  "edit_matches": {
+                    "description": "Prior similar edits required before pausing (default 2).",
+                    "type": "integer",
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  "action_streak": {
+                    "description": "Consecutive edit or verify actions without progress before pausing (default 4).",
+                    "type": "integer",
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991
+                  }
+                }
               },
               "mcp_timeout": {
                 "description": "Timeout in milliseconds for model context protocol (MCP) requests",
@@ -14031,7 +15296,15 @@
             "type": "object",
             "properties": {
               "maxConcurrentAgents": {
-                "description": "Max subagents running concurrently in one workflow run. Default min(16, 2x CPU cores). Hard-capped at 2x cores.",
+                "description": "Process-wide ceiling on subagents running concurrently across ALL workflow runs (including nested children). Default min(16, 2x CPU cores). No upper clamp: the previous 2x-cores hard cap was removed so an operator can match real provider capacity — but that also means a misconfigured value (e.g. an extra zero) can exhaust provider rate limits or host memory. This is the only concurrency ceiling, so set it deliberately.",
+                "type": "number"
+              },
+              "maxDepth": {
+                "description": "Max nesting depth for workflow()-calls-workflow. Default 8. Exceeding it fails the run.",
+                "type": "number"
+              },
+              "maxLifecycleAgents": {
+                "description": "Hard ceiling on total agents a single workflow run may spawn over its life. Default 1000. Over-cap agent() calls return null (graceful degradation). PER-RUN, not tree-wide: each child workflow has its own independent budget, so a deep nesting can spawn maxDepth × this over the whole tree (concurrent in-flight is still bounded by maxConcurrentAgents).",
                 "type": "number"
               },
               "scriptDeadlineMs": {
@@ -14251,6 +15524,12 @@
               "toolcall": {
                 "type": "boolean"
               },
+              "voiceDesign": {
+                "type": "boolean"
+              },
+              "voiceClone": {
+                "type": "boolean"
+              },
               "input": {
                 "type": "object",
                 "properties": {
@@ -14303,7 +15582,7 @@
                     "properties": {
                       "field": {
                         "type": "string",
-                        "enum": ["reasoning_content", "reasoning_details"]
+                        "enum": ["reasoning", "reasoning_content", "reasoning_details"]
                       }
                     },
                     "required": ["field"]
@@ -15146,16 +16425,91 @@
       "Event": {
         "anyOf": [
           {
-            "$ref": "#/components/schemas/Event.project.updated"
-          },
-          {
-            "$ref": "#/components/schemas/Event.server.instance.disposed"
-          },
-          {
             "$ref": "#/components/schemas/Event.server.connected"
           },
           {
             "$ref": "#/components/schemas/Event.global.disposed"
+          },
+          {
+            "$ref": "#/components/schemas/Event.tui.prompt.append"
+          },
+          {
+            "$ref": "#/components/schemas/Event.tui.command.execute"
+          },
+          {
+            "$ref": "#/components/schemas/Event.tui.toast.show"
+          },
+          {
+            "$ref": "#/components/schemas/Event.tui.session.select"
+          },
+          {
+            "$ref": "#/components/schemas/Event.tui.instructions.loaded"
+          },
+          {
+            "$ref": "#/components/schemas/Event.actor.registered"
+          },
+          {
+            "$ref": "#/components/schemas/Event.actor.status"
+          },
+          {
+            "$ref": "#/components/schemas/Event.actor.stuck"
+          },
+          {
+            "$ref": "#/components/schemas/Event.actor.stalled"
+          },
+          {
+            "$ref": "#/components/schemas/Event.writer.cache_perf"
+          },
+          {
+            "$ref": "#/components/schemas/Event.inbox.arrived"
+          },
+          {
+            "$ref": "#/components/schemas/Event.task.created"
+          },
+          {
+            "$ref": "#/components/schemas/Event.task.updated"
+          },
+          {
+            "$ref": "#/components/schemas/Event.metrics.model_call"
+          },
+          {
+            "$ref": "#/components/schemas/Event.metrics.tool_call"
+          },
+          {
+            "$ref": "#/components/schemas/Event.metrics.agent_request"
+          },
+          {
+            "$ref": "#/components/schemas/Event.metrics.try_best_detected"
+          },
+          {
+            "$ref": "#/components/schemas/Event.team.created"
+          },
+          {
+            "$ref": "#/components/schemas/Event.team.member.joined"
+          },
+          {
+            "$ref": "#/components/schemas/Event.workflow.phase"
+          },
+          {
+            "$ref": "#/components/schemas/Event.workflow.log"
+          },
+          {
+            "$ref": "#/components/schemas/Event.workflow.started"
+          },
+          {
+            "$ref": "#/components/schemas/Event.workflow.finished"
+          },
+          {
+            "$ref": "#/components/schemas/Event.workflow.agent_failed"
+          },
+          {
+            "$ref": "#/components/schemas/Event.workflow.child_failed"
+          },
+          {
+            "$ref": "#/components/schemas/Event.project.updated"
+          },
+          {
+            "$ref": "#/components/schemas/Event.server.instance.disposed"
           },
           {
             "$ref": "#/components/schemas/Event.file.edited"
@@ -15185,21 +16539,6 @@
             "$ref": "#/components/schemas/Event.permission.replied"
           },
           {
-            "$ref": "#/components/schemas/Event.actor.registered"
-          },
-          {
-            "$ref": "#/components/schemas/Event.actor.status"
-          },
-          {
-            "$ref": "#/components/schemas/Event.actor.stuck"
-          },
-          {
-            "$ref": "#/components/schemas/Event.writer.cache_perf"
-          },
-          {
-            "$ref": "#/components/schemas/Event.inbox.arrived"
-          },
-          {
             "$ref": "#/components/schemas/Event.session.diff"
           },
           {
@@ -15207,6 +16546,9 @@
           },
           {
             "$ref": "#/components/schemas/Event.session.retry.attempt"
+          },
+          {
+            "$ref": "#/components/schemas/Event.session.try_best.detected"
           },
           {
             "$ref": "#/components/schemas/Event.hook.executed"
@@ -15236,55 +16578,13 @@
             "$ref": "#/components/schemas/Event.bash.interactive.replied"
           },
           {
-            "$ref": "#/components/schemas/Event.team.created"
-          },
-          {
-            "$ref": "#/components/schemas/Event.team.member.joined"
-          },
-          {
-            "$ref": "#/components/schemas/Event.task.created"
-          },
-          {
-            "$ref": "#/components/schemas/Event.task.updated"
-          },
-          {
-            "$ref": "#/components/schemas/Event.todo.updated"
-          },
-          {
             "$ref": "#/components/schemas/Event.session.status"
           },
           {
             "$ref": "#/components/schemas/Event.session.idle"
           },
           {
-            "$ref": "#/components/schemas/Event.session.goal"
-          },
-          {
-            "$ref": "#/components/schemas/Event.metrics.model_call"
-          },
-          {
-            "$ref": "#/components/schemas/Event.metrics.tool_call"
-          },
-          {
-            "$ref": "#/components/schemas/Event.metrics.agent_request"
-          },
-          {
-            "$ref": "#/components/schemas/Event.session.compacted"
-          },
-          {
-            "$ref": "#/components/schemas/Event.tui.prompt.append"
-          },
-          {
-            "$ref": "#/components/schemas/Event.tui.command.execute"
-          },
-          {
-            "$ref": "#/components/schemas/Event.tui.toast.show"
-          },
-          {
-            "$ref": "#/components/schemas/Event.tui.session.select"
-          },
-          {
-            "$ref": "#/components/schemas/Event.tui.instructions.loaded"
+            "$ref": "#/components/schemas/Event.vcs.branch.updated"
           },
           {
             "$ref": "#/components/schemas/Event.mcp.tools.changed"
@@ -15296,13 +16596,19 @@
             "$ref": "#/components/schemas/Event.command.executed"
           },
           {
-            "$ref": "#/components/schemas/Event.vcs.branch.updated"
-          },
-          {
             "$ref": "#/components/schemas/Event.worktree.ready"
           },
           {
             "$ref": "#/components/schemas/Event.worktree.failed"
+          },
+          {
+            "$ref": "#/components/schemas/Event.todo.updated"
+          },
+          {
+            "$ref": "#/components/schemas/Event.session.goal"
+          },
+          {
+            "$ref": "#/components/schemas/Event.session.compacted"
           },
           {
             "$ref": "#/components/schemas/Event.pty.created"
@@ -15315,18 +16621,6 @@
           },
           {
             "$ref": "#/components/schemas/Event.pty.deleted"
-          },
-          {
-            "$ref": "#/components/schemas/Event.workflow.phase"
-          },
-          {
-            "$ref": "#/components/schemas/Event.workflow.log"
-          },
-          {
-            "$ref": "#/components/schemas/Event.workflow.started"
-          },
-          {
-            "$ref": "#/components/schemas/Event.workflow.finished"
           },
           {
             "$ref": "#/components/schemas/Event.workspace.ready"
@@ -15524,6 +16818,9 @@
             "type": "string",
             "enum": ["command", "mcp", "skill"]
           },
+          "bundled": {
+            "type": "boolean"
+          },
           "template": {
             "anyOf": [
               {
@@ -15577,6 +16874,9 @@
           "permission": {
             "$ref": "#/components/schemas/PermissionRuleset"
           },
+          "hardPermission": {
+            "$ref": "#/components/schemas/PermissionRuleset"
+          },
           "model": {
             "type": "object",
             "properties": {
@@ -15597,6 +16897,9 @@
           },
           "prompt": {
             "type": "string"
+          },
+          "completionGate": {
+            "type": "boolean"
           },
           "options": {
             "type": "object",

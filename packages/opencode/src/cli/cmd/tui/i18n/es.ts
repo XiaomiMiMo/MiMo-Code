@@ -291,7 +291,6 @@ export const dict = {
   "tui.skill.html-to-video-pipeline.description": "El arma definitiva para vídeos cortos — crea vídeos cortos con HTML",
   "tui.skill.arxiv.description": "Busca, cita, descarga y sigue artículos de arXiv",
   "tui.skill.skill-creator.description": "Crea, revisa y mejora skills de agente",
-  "tui.skill.drive-mimo.description": "Controla programáticamente otro proceso MiMoCode — eventos JSON headless o TUI interactiva vía tmux",
   "tui.skill.research-paper-writing.description": "Redacta, pule y critica artículos académicos con perspectiva de revisor",
   "tui.skill.playwright.description": "Automatiza flujos de navegador reales desde la terminal",
   "tui.skill.codex.description": "Ejecuta Codex CLI de forma autónoma en scripts, CI, Docker y Kubernetes",
@@ -337,6 +336,8 @@ export const dict = {
   // App-level commands
   "tui.command.session.list.title": "Cambiar sesión",
   "tui.command.session.new.title": "Nueva sesión",
+  "tui.command.session.recover.title": "Continuar turno interrumpido",
+  "tui.session.recovering": "recuperando",
   "tui.command.workflow.list.title": "Flujos de trabajo",
   "tui.command.model.list.title": "Cambiar modelo",
   "tui.command.model.cycle_recent.title": "Ciclo de modelos",
@@ -442,6 +443,10 @@ export const dict = {
   "tui.toast.try_best.paused_other": "Se detectó un bucle try-best; la sesión {{session}} se ha pausado.",
   "tui.toast.try_best.handoff_failed": "No se pudo iniciar la transferencia al entorno seleccionado.",
   "tui.toast.try_best.continue_failed": "No se pudo continuar la sesión",
+  "tui.toast.session.recover.started": "Continuando el turno interrumpido",
+  "tui.toast.session.recover.none": "No hay ningún turno interrumpido que continuar",
+  "tui.toast.session.recover.failed": "No se pudo continuar el turno interrumpido",
+  "tui.toast.session.recover.busy": "La sesión sigue ejecutándose; inténtalo cuando esté inactiva",
   "tui.dialog.try_best.title": "Bucle try-best detectado — turno pausado",
   "tui.dialog.try_best.reason.edit_repeat": "Se repitieron ediciones casi idénticas {{count}} veces.",
   "tui.dialog.try_best.reason.edit_repeat_path":

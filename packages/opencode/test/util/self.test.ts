@@ -14,11 +14,17 @@ describe("self invocation", () => {
   })
 
   test("carries the entry script when the runtime is the executable", () => {
-    // Otherwise `bun` alone would be invoked with no program to run.
-    const argv = Self.argv("llm-server", "issue")
-    expect(argv[0]).toBe(process.execPath)
-    expect(argv[1]).toBe(Bun.main)
-    expect(argv.slice(2)).toEqual(["llm-server", "issue"])
+    const previous = process.env["MIMOCODE_BIN_PATH"]
+    delete process.env["MIMOCODE_BIN_PATH"]
+    try {
+      // Otherwise `bun` alone would be invoked with no program to run.
+      const argv = Self.argv("llm-server", "issue")
+      expect(argv[0]).toBe(process.execPath)
+      expect(argv[1]).toBe(Bun.main)
+      expect(argv.slice(2)).toEqual(["llm-server", "issue"])
+    } finally {
+      if (previous != null) process.env["MIMOCODE_BIN_PATH"] = previous
+    }
   })
 
   test("honours MIMOCODE_BIN_PATH, the override bin/mimo already reads", () => {

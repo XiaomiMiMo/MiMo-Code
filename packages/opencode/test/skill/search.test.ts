@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import type { Skill } from "../../src/skill"
-import { isSkillSearchDisabled, searchSkills } from "../../src/skill/search"
+import { searchSkills } from "../../src/skill/search"
 
 const skill = (name: string, description: string, aliases?: string[]): Skill.Info => ({
   name,
@@ -11,14 +11,6 @@ const skill = (name: string, description: string, aliases?: string[]): Skill.Inf
 })
 
 describe("skill.search", () => {
-  test("disables skill search prompts for blacklisted model families", () => {
-    expect(isSkillSearchDisabled({ id: "gpt-5.4" })).toBe(true)
-    expect(isSkillSearchDisabled({ api: { id: "claude-sonnet-4-6" } })).toBe(true)
-    expect(isSkillSearchDisabled({ id: "k2p5", family: "kimi-thinking" })).toBe(true)
-    expect(isSkillSearchDisabled({ id: "mimo-v2" })).toBe(true)
-    expect(isSkillSearchDisabled({ id: "deepseek-v3.2" })).toBe(false)
-  })
-
   test("ranks an exact alias match above BM25 matches", () => {
     const results = searchSkills("quarterly-review", [
       skill("spreadsheet-analysis", "Analyze quarterly sales spreadsheets and business metrics."),

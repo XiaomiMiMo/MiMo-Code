@@ -7,6 +7,7 @@ import type { Tool } from "../../src/tool"
 import { Agent } from "../../src/agent/agent"
 import { Skill } from "../../src/skill"
 import { SkillSearchTool } from "../../src/tool/skill-search"
+import { ToolScriptTool } from "../../src/tool/tool-script"
 import { ToolRegistry } from "../../src/tool"
 import { provideTmpdirInstance } from "../fixture/fixture"
 import { SessionID, MessageID } from "../../src/session/schema"
@@ -236,12 +237,16 @@ description: Analyze quasar telemetry and operational metrics.
               providerID: "opencode" as any,
               modelID: "gpt-5" as any,
               agent: agent!,
-            })).find((item) => item.id === SkillSearchTool.id)
-            if (!tool) throw new Error(`Skill search tool not found for agent ${agentName}`)
+            })).find((item) => item.id === ToolScriptTool.id)
+            if (!tool) throw new Error(`Exec tool not found for agent ${agentName}`)
 
             const requests: Array<Omit<Permission.Request, "id" | "sessionID" | "tool">> = []
             const result = yield* tool.execute(
-              { query },
+              {
+                code: `const result = await tools.skill_search({ query: ${JSON.stringify(query)} })
+const [payload] = result.output.split("\\n\\n<skill_content")
+return JSON.parse(payload)`,
+              },
               {
                 sessionID: SessionID.make("ses_test"),
                 messageID: MessageID.make("msg_test"),
@@ -250,14 +255,12 @@ description: Analyze quasar telemetry and operational metrics.
                 messages: [],
                 metadata: () => Effect.void,
                 ask: (request) => Effect.sync(() => requests.push(request)),
+                extra: { model: { providerID: "opencode", id: "gpt-5" } },
               },
             )
-
-            const [payloadStr] = result.output.split("\n\n<skill_content")
-            const payload = JSON.parse(payloadStr)
-
-            expect(payload.status).toBe("matched")
-            expect(payload.results.some((r: { skill_id: string }) => r.skill_id === "compose-next")).toBe(true)
+            expect(result.metadata.status).toBe("completed")
+            expect(result.output).toContain('"status": "matched"')
+            expect(result.output).toContain('"skill_id": "compose-next"')
           }
         }),
       { git: true },

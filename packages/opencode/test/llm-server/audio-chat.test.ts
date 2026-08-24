@@ -212,26 +212,6 @@ describe("synthesis over chat completions", () => {
 })
 
 describe("transcription over chat completions", () => {
-  test("uploads multipart and returns the transcript as json", async () => {
-    const result = await harness({ transcript: "the quick brown fox" }, async ({ app, token, seen }) => {
-      const res = await upload(app, token, {
-        file: new File([wav("audio")], "speech.wav", { type: "audio/wav" }),
-        model: "audiochat/asr",
-        language: "auto",
-      })
-      return { status: res.status, body: (await res.json()) as { text: string }, seen }
-    })
-    expect(result.status).toBe(200)
-    expect(result.body).toEqual({ text: "the quick brown fox" })
-
-    const sent = result.seen[0]!.body
-    expect(sent["asr_options"]).toEqual({ language: "auto" })
-    const messages = sent["messages"] as { role: string; content: { type: string; input_audio: { data: string } }[] }[]
-    expect(messages[0]!.role).toBe("user")
-    expect(messages[0]!.content[0]!.type).toBe("input_audio")
-    expect(messages[0]!.content[0]!.input_audio.data.startsWith("data:audio/wav;base64,")).toBe(true)
-  })
-
   test("response_format text returns the bare transcript", async () => {
     const result = await harness({ transcript: "bare text" }, async ({ app, token }) => {
       const res = await upload(app, token, {

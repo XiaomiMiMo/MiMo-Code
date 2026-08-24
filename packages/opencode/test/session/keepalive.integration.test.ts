@@ -68,6 +68,8 @@ const stubPrompt = Layer.succeed(
         const out: MessageV2.WithParts = { info, parts: [text] }
         return out
       }),
+    recovery: () => Effect.succeed([]),
+    resume: () => Effect.die("resume not expected in keepalive test"),
     loop: () => Effect.die("loop not expected in keepalive test"),
     shell: () => Effect.die("shell not expected in keepalive test"),
     command: () => Effect.die("command not expected in keepalive test"),

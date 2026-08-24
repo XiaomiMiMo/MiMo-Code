@@ -279,7 +279,6 @@ export const dict = {
   "tui.skill.html-to-video-pipeline.description": "L'arme ultime pour vidéos courtes — créez des vidéos courtes avec du HTML",
   "tui.skill.arxiv.description": "Rechercher, citer, télécharger et suivre des articles arXiv",
   "tui.skill.skill-creator.description": "Créer, réviser et améliorer des skills d'agent",
-  "tui.skill.drive-mimo.description": "Piloter un autre processus MiMoCode — événements JSON headless ou TUI interactive via tmux",
   "tui.skill.research-paper-writing.description": "Rédiger, polir et critiquer des articles académiques avec l'œil d'un relecteur",
   "tui.skill.playwright.description": "Automatiser de vrais parcours navigateur depuis le terminal",
   "tui.skill.codex.description": "Exécuter Codex CLI de façon autonome dans les scripts, la CI, Docker et Kubernetes",
@@ -325,6 +324,8 @@ export const dict = {
   // App-level commands
   "tui.command.session.list.title": "Changer de session",
   "tui.command.session.new.title": "Nouvelle session",
+  "tui.command.session.recover.title": "Reprendre le tour interrompu",
+  "tui.session.recovering": "récupération en cours",
   "tui.command.workflow.list.title": "Workflows",
   "tui.command.model.list.title": "Changer de modèle",
   "tui.command.model.cycle_recent.title": "Modèles récents",
@@ -431,6 +432,10 @@ export const dict = {
   "tui.toast.try_best.paused_other": "Boucle try-best détectée ; la session {{session}} a été suspendue.",
   "tui.toast.try_best.handoff_failed": "Impossible de démarrer le transfert vers le harnais sélectionné.",
   "tui.toast.try_best.continue_failed": "Impossible de poursuivre la session",
+  "tui.toast.session.recover.started": "Reprise du tour interrompu",
+  "tui.toast.session.recover.none": "Aucun tour interrompu à reprendre",
+  "tui.toast.session.recover.failed": "Impossible de reprendre le tour interrompu",
+  "tui.toast.session.recover.busy": "La session est encore active ; réessayez lorsqu'elle sera inactive",
   "tui.dialog.try_best.title": "Boucle try-best détectée — tour suspendu",
   "tui.dialog.try_best.reason.edit_repeat": "Des modifications presque identiques ont été répétées {{count}} fois.",
   "tui.dialog.try_best.reason.edit_repeat_path":

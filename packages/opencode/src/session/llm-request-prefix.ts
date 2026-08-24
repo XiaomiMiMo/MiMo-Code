@@ -8,6 +8,7 @@ import type { Provider } from "../provider"
 import { LLM } from "./llm"
 import { ToolRegistry } from "../tool"
 import { ProviderTransform } from "../provider"
+import type { PromptConfig } from "./session"
 
 /**
  * Build the LLM request prefix (system + tools + inheritedMessages) from the
@@ -37,6 +38,7 @@ export const buildLLMRequestPrefix = Effect.fn("Session.buildLLMRequestPrefix")(
    * order. Caller is responsible for the ordering and content.
    */
   additions: string[]
+  prompt?: PromptConfig
 }) {
   const llm = yield* LLM.Service
   const toolRegistry = yield* ToolRegistry.Service
@@ -50,7 +52,14 @@ export const buildLLMRequestPrefix = Effect.fn("Session.buildLLMRequestPrefix")(
   const lastUserMsg = input.msgs.findLast((m) => m.info.role === "user")
   if (!lastUserMsg)
     return yield* Effect.die(new Error("buildLLMRequestPrefix: no user message in msgs"))
-  const lastUser = lastUserMsg.info as MessageV2.User
+  const lastUser = input.prompt
+    ? {
+        ...(lastUserMsg.info as MessageV2.User),
+        system: input.prompt.system,
+        systemMode: input.prompt.systemMode,
+        harness: input.prompt.harness,
+      }
+    : (lastUserMsg.info as MessageV2.User)
 
   // Build system using LLM.buildSystemArray (single source of truth shared with stream())
   const system = yield* llm.buildSystemArray({
@@ -67,6 +76,7 @@ export const buildLLMRequestPrefix = Effect.fn("Session.buildLLMRequestPrefix")(
     modelID: input.model.id,
     providerID: input.model.providerID,
     agent: input.agent,
+    harness: lastUser.harness,
   })
   const tools: Record<string, AITool> = {}
   for (const item of toolDefs) {

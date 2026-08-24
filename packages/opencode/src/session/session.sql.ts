@@ -34,6 +34,11 @@ export const SessionTable = sqliteTable(
     summary_diffs: text({ mode: "json" }).$type<Snapshot.FileDiff[]>(),
     revert: text({ mode: "json" }).$type<{ messageID: MessageID; partID?: PartID; snapshot?: string; diff?: string }>(),
     permission: text({ mode: "json" }).$type<Permission.Ruleset>(),
+    prompt: text({ mode: "json" }).$type<{
+      system?: string
+      systemMode?: "append" | "replace-agent"
+      harness: "auto" | "codex" | "default"
+    }>(),
     ...Timestamps,
     time_compacting: integer(),
     time_archived: integer(),

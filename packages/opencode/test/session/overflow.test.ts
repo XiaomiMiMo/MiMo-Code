@@ -36,7 +36,7 @@ function createModel(opts: {
       input: { text: true, image: false, audio: false, video: false },
       output: { text: true, image: false, audio: false, video: false },
     },
-    api: { npm: opts.npm ?? "@ai-sdk/anthropic" },
+    api: { id: opts.id ?? "test-model", npm: opts.npm ?? "@ai-sdk/anthropic" },
     options: {},
   } as Provider.Model
 }
@@ -576,15 +576,15 @@ describe("usable", () => {
     // 200K context with 32K output — without the cap, usable would be 200K - 32K = 168K.
     // With OUTPUT_CAP=20K, usable should be 200K - 20K - reserved.
     const model = createModel({ context: 200_000, output: 32_000 })
-    const cfg = mockCfg() // reserved defaults to min(20K, 32K) = 20K
-    expect(usable({ cfg, model })).toBe(160_000) // 200K - 20K (output cap) - 20K (reserved)
+    const cfg = mockCfg() // reserved defaults to min(33K, 32K) = 32K
+    expect(usable({ cfg, model })).toBe(148_000) // 200K - 20K (output cap) - 32K (reserved)
   })
 
   test("does not cap when model.limit.output is below 20K", () => {
     // 100K context with 8K output — output cap (20K) does not bite.
     // usable should be 100K - 8K - reserved.
     const model = createModel({ context: 100_000, output: 8_000 })
-    const cfg = mockCfg() // reserved defaults to min(20K, 8K) = 8K
+    const cfg = mockCfg() // reserved defaults to min(33K, 8K) = 8K
     expect(usable({ cfg, model })).toBe(84_000) // 100K - 8K (raw output, below cap) - 8K (reserved)
   })
 
@@ -603,11 +603,11 @@ describe("compaction.max_context", () => {
 
   test("no budget configured leaves the model window untouched", () => {
     const model = large()
-    expect(usable({ cfg: mockCfg(), model })).toBe(902_000)
+    expect(usable({ cfg: mockCfg(), model })).toBe(889_000)
     expect(contextWindow({ cfg: mockCfg(), model })).toEqual({
       hard: 922_000,
       effective: 922_000,
-      usable: 902_000,
+      usable: 889_000,
       source: "model",
     })
   })
@@ -618,19 +618,19 @@ describe("compaction.max_context", () => {
     expect(contextWindow({ cfg, model })).toEqual({
       hard: 922_000,
       effective: 300_000,
-      usable: 280_000,
+      usable: 267_000,
       source: "config",
     })
-    const tokens = { input: 280_000, output: 0, reasoning: 0, cache: { read: 0, write: 0 } } as any
+    const tokens = { input: 267_000, output: 0, reasoning: 0, cache: { read: 0, write: 0 } } as any
     expect(isOverflow({ cfg, tokens, model })).toBe(true)
-    const under = { input: 279_999, output: 0, reasoning: 0, cache: { read: 0, write: 0 } } as any
+    const under = { input: 266_999, output: 0, reasoning: 0, cache: { read: 0, write: 0 } } as any
     expect(isOverflow({ cfg, tokens: under, model })).toBe(false)
   })
 
   test("accepts a plain token count and a percentage", () => {
     const model = large()
-    expect(usable({ cfg: mockCfg({ max_context: 500_000 }), model })).toBe(480_000)
-    expect(usable({ cfg: mockCfg({ max_context: "50%" }), model })).toBe(441_000)
+    expect(usable({ cfg: mockCfg({ max_context: 500_000 }), model })).toBe(467_000)
+    expect(usable({ cfg: mockCfg({ max_context: "50%" }), model })).toBe(428_000)
   })
 
   test("never raises the window above the provider cap", () => {
@@ -646,19 +646,19 @@ describe("compaction.max_context", () => {
 
   test("matches per-model keys with wildcards, longest pattern wins", () => {
     const cfg = mockCfg({ max_context: { "test/gpt-5*": "300K", "test/gpt-5.6": "200K" } })
-    expect(usable({ cfg, model: large() })).toBe(180_000)
-    expect(usable({ cfg, model: createModel({ context: 1_050_000, input: 922_000, id: "gpt-5.4" }) })).toBe(280_000)
+    expect(usable({ cfg, model: large() })).toBe(167_000)
+    expect(usable({ cfg, model: createModel({ context: 1_050_000, input: 922_000, id: "gpt-5.4" }) })).toBe(267_000)
   })
 
   test("ignores keys that match no model", () => {
     const cfg = mockCfg({ max_context: { "openai/gpt-4o": "100K" } })
-    expect(usable({ cfg, model: large() })).toBe(902_000)
+    expect(usable({ cfg, model: large() })).toBe(889_000)
   })
 
   test("ignores a budget that leaves no room for the reserves", () => {
     const model = large()
-    expect(usable({ cfg: mockCfg({ max_context: 20_000 }), model })).toBe(902_000)
-    expect(usable({ cfg: mockCfg({ max_context: "not-a-budget" }), model })).toBe(902_000)
+    expect(usable({ cfg: mockCfg({ max_context: 20_000 }), model })).toBe(889_000)
+    expect(usable({ cfg: mockCfg({ max_context: "not-a-budget" }), model })).toBe(889_000)
   })
 
   test("keeps overflow handling disabled when the model reports no window", () => {
@@ -701,11 +701,11 @@ describe("util.token.parseQuantity", () => {
 describe("compaction.max_context reset sentinel", () => {
   test("0 restores the model window without a warning path", () => {
     const model = createModel({ context: 1_050_000, input: 922_000, id: "gpt-5.6" })
-    expect(usable({ cfg: mockCfg({ max_context: { "test/gpt-5.6": 0 } as any }), model })).toBe(902_000)
+    expect(usable({ cfg: mockCfg({ max_context: { "test/gpt-5.6": 0 } as any }), model })).toBe(889_000)
     expect(contextWindow({ cfg: mockCfg({ max_context: 0 }), model }).source).toBe("model")
     // The picker writes a number, but a hand-edited config may carry the string form.
-    expect(usable({ cfg: mockCfg({ max_context: { "test/gpt-5.6": "0" } }), model })).toBe(902_000)
-    expect(usable({ cfg: mockCfg({ max_context: "" }), model })).toBe(902_000)
+    expect(usable({ cfg: mockCfg({ max_context: { "test/gpt-5.6": "0" } }), model })).toBe(889_000)
+    expect(usable({ cfg: mockCfg({ max_context: "" }), model })).toBe(889_000)
   })
 })
 

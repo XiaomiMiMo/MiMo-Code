@@ -119,10 +119,16 @@ Route by the flags:
    reportlab** because Helvetica/Times/Courier don't ship those glyphs. Use
    `<sub>` / `<super>` XML in `Paragraph`, or move the pen manually on canvas.
    See [`compose.md`](compose.md) §5.
-4. **XFA forms are not AcroForms.** If `probe_fields.py` returns `[]` on a
+4. **CJK text renders as black boxes when the font never registered.**
+   reportlab does not consult the OS font system; a bad font name/path (思源黑体,
+   PingFang, Noto on machines that lack it) plus a swallowed exception means a
+   silent Helvetica fallback — and Helvetica has no CJK glyphs. Resolve fonts
+   with the ladder in [`compose.md`](compose.md) §4 (`resolve_cjk_font()`);
+   the terminal fallback is the built-in CID font, never Helvetica.
+5. **XFA forms are not AcroForms.** If `probe_fields.py` returns `[]` on a
    PDF that clearly has widgets in Adobe Reader, it's XFA — flatten it in
    Acrobat first.
-5. **`writer.encrypt(pw)` in pypdf uses RC4 by default**. For real AES-256,
+6. **`writer.encrypt(pw)` in pypdf uses RC4 by default**. For real AES-256,
    pass `algorithm="AES-256"`, or use `qpdf --encrypt … 256 --`.
 
 ## What's next

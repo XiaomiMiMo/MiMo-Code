@@ -33,6 +33,7 @@ import { ActorRegistry } from "@/actor/registry"
 import { Memory } from "@/memory"
 import { isRetryableTransientError } from "./retry"
 import { MCP_TOOL_SEARCH_ID } from "@/tool/mcp-tool-search"
+import { TOOL_SCRIPT_EXCLUDED } from "@/tool/tool-script-ref"
 import { deriveLiveness } from "@/actor/schema"
 import { SYSTEM_SPAWNED_AGENT_TYPES } from "@/agent/config"
 import { Flag } from "@/flag/flag"
@@ -266,6 +267,7 @@ export type StreamInput = {
   retries?: number
   toolChoice?: "auto" | "required" | "none"
   agentID?: string
+  mergeTurnContextIntoLastUser?: boolean
 }
 
 export type StreamRequest = StreamInput & {
@@ -279,6 +281,26 @@ export type StreamRequest = StreamInput & {
 }
 
 export type Event = Result["fullStream"] extends AsyncIterable<infer T> ? T : never
+
+/** Convert per-turn context into the final model-visible user segment. */
+export function turnContextMessages(user: MessageV2.User): ModelMessage[] {
+  const context = user.system?.trim()
+  if (!context) return []
+  return [{
+    role: "user",
+    content: `<system-reminder>\n${context}\n</system-reminder>`,
+  }]
+}
+
+export function appendTurnContext(messages: ModelMessage[], user: MessageV2.User, mergeWithLastUser = false) {
+  const context = turnContextMessages(user)
+  if (!context.length) return messages
+  const last = messages.at(-1)
+  if (!mergeWithLastUser || !last || last.role !== "user" || typeof last.content !== "string") {
+    return [...messages, ...context]
+  }
+  return [...messages.slice(0, -1), { ...last, content: last.content + "\n\n" + context[0].content }]
+}
 
 export interface Interface {
   readonly stream: (input: StreamInput) => Stream.Stream<Event, unknown>
@@ -320,11 +342,11 @@ const live: Layer.Layer<
       const system: string[] = []
       system.push(
         [
-          ...SystemPrompt.agent(input.agent, input.model),
+          ...(input.user.systemMode === "replace-agent"
+            ? []
+            : SystemPrompt.agent(input.agent, input.model, input.user.harness)),
           // any custom prompt passed into this call
           ...input.system,
-          // any custom prompt from last user message
-          ...(input.user.system ? [input.user.system] : []),
         ]
           .filter((x) => x)
           .join("\n"),
@@ -478,11 +500,10 @@ const live: Layer.Layer<
         mergeDeep(input.agent.options),
         mergeDeep(variant),
       )
-      if (isOpenaiOauth) {
-        options.instructions = system.join("\n")
-      }
-
       const isWorkflow = language instanceof GitLabWorkflowLanguageModel
+      const providerSystem =
+        (isOpenaiOauth || isWorkflow) && input.user.system?.trim() ? [...system, input.user.system] : system
+      if (isOpenaiOauth) options.instructions = providerSystem.join("\n")
       // Reactive prefill-rejection backstop. The PRIMARY mechanism is the
       // proactive guard in ProviderTransform.message()
       // (ensureTrailingUserMessage): we never send a request ending in an
@@ -496,18 +517,19 @@ const live: Layer.Layer<
       const requestMessages = input.dropAssistantPrefill
         ? ProviderTransform.dropTrailingAssistantPrefill(input.messages)
         : input.messages
+      const requestMessagesWithContext = appendTurnContext(requestMessages, input.user, input.mergeTurnContextIntoLastUser)
       const messages = isOpenaiOauth
         ? requestMessages
         : isWorkflow
           ? requestMessages
           : [
-              ...system.map(
+              ...providerSystem.map(
                 (x): ModelMessage => ({
                   role: "system",
                   content: x,
                 }),
               ),
-              ...requestMessages,
+              ...requestMessagesWithContext,
             ]
 
       const params = yield* plugin.trigger(
@@ -703,8 +725,8 @@ const live: Layer.Layer<
             providerID: input.model.providerID,
             modelID: input.model.id,
             trajectory: [
-              ...system.map((content) => ({ role: "system", content })),
-              ...requestMessages,
+              ...providerSystem.map((content) => ({ role: "system", content })),
+              ...(isOpenaiOauth || isWorkflow ? requestMessages : requestMessagesWithContext),
             ],
             systemPrompt: system,
           },
@@ -939,11 +961,18 @@ function resolveTools(input: Pick<StreamInput, "tools" | "activeTools" | "agent"
     Object.keys(input.tools),
     Agent.runtimePermission(input.agent, input.permission),
   )
+  const allowExecGateway =
+    input.activeTools?.includes("exec") === true &&
+    Object.keys(input.tools).some(
+      (key) => !TOOL_SCRIPT_EXCLUDED.has(key) && input.user.tools?.[key] !== false && !disabled.has(key),
+    )
   return Record.filter(
     input.tools,
     (_, key) =>
       input.user.tools?.[key] !== false &&
-      (!disabled.has(key) || (key === MCP_TOOL_SEARCH_ID && input.activeTools?.includes(key) === true)),
+      (!disabled.has(key) ||
+        (key === MCP_TOOL_SEARCH_ID && input.activeTools?.includes(key) === true) ||
+        (key === "exec" && allowExecGateway)),
   )
 }
 

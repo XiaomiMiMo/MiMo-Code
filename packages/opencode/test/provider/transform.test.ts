@@ -169,6 +169,24 @@ describe("ProviderTransform.maxOutputTokens", () => {
     ).toBe(128_000)
   })
 
+  test("uses 128K for claude models", () => {
+    expect(
+      ProviderTransform.maxOutputTokens({
+        ...baseModel,
+        id: ModelID.make("claude-sonnet-4-6"),
+      }),
+    ).toBe(128_000)
+  })
+
+  test("uses 128K for gpt models", () => {
+    expect(
+      ProviderTransform.maxOutputTokens({
+        ...baseModel,
+        api: { ...baseModel.api, id: "gpt-5.6" },
+      }),
+    ).toBe(128_000)
+  })
+
   test("keeps the default cap for non-mimo models", () => {
     expect(ProviderTransform.maxOutputTokens({ ...baseModel, limit: { context: 1_000_000, output: 64_000 } })).toBe(
       32_000,

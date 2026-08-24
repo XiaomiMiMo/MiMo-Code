@@ -417,7 +417,7 @@ describe("Actor.spawn peer mode", () => {
 })
 
 describe("Actor.spawn subagent mode", () => {
-  it.live("exposes GPT orchestration and read tools to read-only GPT subagents", () =>
+  it.live("exposes GPT tools through exec to read-only GPT subagents", () =>
     provideTmpdirServer(
       Effect.fnUntraced(function* ({ llm }) {
         const actor = yield* Actor.Service
@@ -440,19 +440,21 @@ describe("Actor.spawn subagent mode", () => {
         const request = (yield* llm.hits).find(
           (hit) =>
             Array.isArray(hit.body.tools) &&
-            hit.body.tools.some(
-              (tool) => (tool as { function?: { name?: string } }).function?.name === "view_image",
-            ),
+            hit.body.tools.some((tool) => (tool as { function?: { name?: string } }).function?.name === "exec"),
         )
         const names = (request?.body.tools as Array<{ function?: { name?: string } }> | undefined)?.map(
           (tool) => tool.function?.name,
         )
         expect(names).toContain("exec")
-        expect(names).toContain("view_image")
+        expect(names).not.toContain("view_image")
         expect(names).not.toContain("apply_patch")
         expect(names).not.toContain("read")
         expect(names).not.toContain("edit")
         expect(names).not.toContain("write")
+        const exec = (request?.body.tools as Array<{ function?: { name?: string; description?: string } }>).find(
+          (tool) => tool.function?.name === "exec",
+        )
+        expect(exec?.function?.description).toContain("view_image(input:")
       }),
       { git: true, config: gptProviderCfg },
     ),
@@ -482,19 +484,22 @@ describe("Actor.spawn subagent mode", () => {
         const request = (yield* llm.hits).find(
           (hit) =>
             Array.isArray(hit.body.tools) &&
-            hit.body.tools.some(
-              (tool) => (tool as { function?: { name?: string } }).function?.name === "view_image",
-            ),
+            hit.body.tools.some((tool) => (tool as { function?: { name?: string } }).function?.name === "exec"),
         )
         const names = (request?.body.tools as Array<{ function?: { name?: string } }> | undefined)?.map(
           (tool) => tool.function?.name,
         )
         expect(names).toContain("exec")
-        expect(names).toContain("apply_patch")
-        expect(names).toContain("view_image")
+        expect(names).not.toContain("apply_patch")
+        expect(names).not.toContain("view_image")
         expect(names).not.toContain("read")
         expect(names).not.toContain("edit")
         expect(names).not.toContain("write")
+        const exec = (request?.body.tools as Array<{ function?: { name?: string; description?: string } }>).find(
+          (tool) => tool.function?.name === "exec",
+        )
+        expect(exec?.function?.description).toContain("apply_patch(input:")
+        expect(exec?.function?.description).toContain("view_image(input:")
       }),
       { git: true, config: gptProviderCfg },
     ),

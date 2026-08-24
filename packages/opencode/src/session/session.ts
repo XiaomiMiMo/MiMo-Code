@@ -30,12 +30,21 @@ import { Permission } from "@/permission"
 import { forwardRef } from "@/permission/permission-forward-ref"
 import { Global } from "@/global"
 import { ActorRegistry } from "@/actor/registry"
-import { Effect, Layer, Option, Context } from "effect"
+import { Effect, Layer, Option, Context, Semaphore } from "effect"
 
 const log = Log.create({ service: "session" })
 
 const parentTitlePrefix = "New session - "
 const childTitlePrefix = "Child session - "
+const promptLocks = new Map<SessionID, Semaphore.Semaphore>()
+
+function promptLock(sessionID: SessionID) {
+  const current = promptLocks.get(sessionID)
+  if (current) return current
+  const next = Semaphore.makeUnsafe(1)
+  promptLocks.set(sessionID, next)
+  return next
+}
 
 function createDefaultTitle(isChild = false) {
   return (isChild ? childTitlePrefix : parentTitlePrefix) + new Date().toISOString()
@@ -76,6 +85,7 @@ export function fromRow(row: SessionRow): Info {
     share,
     revert,
     permission: row.permission ?? undefined,
+    prompt: row.prompt ? PromptConfig.parse(row.prompt) : undefined,
     time: {
       created: row.time_created,
       updated: row.time_updated,
@@ -104,6 +114,7 @@ export function toRow(info: Info) {
     summary_diffs: info.summary?.diffs,
     revert: info.revert ?? null,
     permission: info.permission,
+    prompt: info.prompt ?? null,
     time_created: info.time.created,
     time_updated: info.time.updated,
     time_compacting: info.time.compacting,
@@ -120,6 +131,13 @@ function getForkedTitle(title: string): string {
   }
   return `${title} (fork #1)`
 }
+
+export const PromptConfig = z.object({
+  system: z.string().optional(),
+  systemMode: z.enum(["append", "replace-agent"]).default("append"),
+  harness: z.enum(["auto", "codex", "default"]),
+})
+export type PromptConfig = z.output<typeof PromptConfig>
 
 export const Info = z
   .object({
@@ -153,6 +171,7 @@ export const Info = z
       archived: z.number().optional(),
     }),
     permission: Permission.Ruleset.zod.optional(),
+    prompt: PromptConfig.optional(),
     revert: z
       .object({
         messageID: MessageID.zod,
@@ -385,6 +404,10 @@ export interface Interface {
   readonly setTitle: (input: { sessionID: SessionID; title: string }) => Effect.Effect<void>
   readonly setArchived: (input: { sessionID: SessionID; time?: number }) => Effect.Effect<void>
   readonly setPermission: (input: { sessionID: SessionID; permission: Permission.Ruleset }) => Effect.Effect<void>
+  readonly resolvePrompt: (input: {
+    sessionID: SessionID
+    fallback?: Partial<PromptConfig>
+  }) => Effect.Effect<PromptConfig>
   readonly setRevert: (input: {
     sessionID: SessionID
     revert: Info["revert"]
@@ -461,6 +484,7 @@ export const layer: Layer.Layer<Service, never, Bus.Service | Storage.Service | 
       workspaceID?: WorkspaceID
       directory: string
       permission?: Permission.Ruleset
+      prompt?: PromptConfig
     }) {
       const ctx = yield* InstanceState.context
       const result: Info = {
@@ -475,6 +499,7 @@ export const layer: Layer.Layer<Service, never, Bus.Service | Storage.Service | 
         contextWatermark: input.contextWatermark,
         title: input.title ?? createDefaultTitle(!!input.parentID),
         permission: input.permission,
+        prompt: input.prompt,
         time: {
           created: Date.now(),
           updated: Date.now(),
@@ -580,6 +605,7 @@ export const layer: Layer.Layer<Service, never, Bus.Service | Storage.Service | 
           // process. Cleared here — the removal point — since a deleted session
           // can no longer have background children that need to inherit from it.
           forwardRef.clearParentGrants(sessionID)
+          promptLocks.delete(sessionID)
         })
       } catch (e) {
         log.error(e)
@@ -649,6 +675,7 @@ export const layer: Layer.Layer<Service, never, Bus.Service | Storage.Service | 
         directory,
         title: input?.title,
         permission: input?.permission,
+        prompt: input?.parentID ? (yield* get(input.parentID)).prompt : undefined,
         workspaceID: workspace,
       })
     })
@@ -661,6 +688,7 @@ export const layer: Layer.Layer<Service, never, Bus.Service | Storage.Service | 
         directory,
         workspaceID: original.workspaceID,
         title,
+        prompt: original.prompt,
       })
       const msgs = yield* messages({ sessionID: input.sessionID, agentID: "*" })
       const idMap = new Map<string, MessageID>()
@@ -710,6 +738,45 @@ export const layer: Layer.Layer<Service, never, Bus.Service | Storage.Service | 
       permission: Permission.Ruleset
     }) {
       yield* patch(input.sessionID, { permission: input.permission, time: { updated: Date.now() } })
+    })
+
+    const resolvePrompt = Effect.fn("Session.resolvePrompt")(function (input: {
+      sessionID: SessionID
+      fallback?: Partial<PromptConfig>
+    }) {
+      return promptLock(input.sessionID).withPermits(1)(
+        Effect.gen(function* () {
+          const session = yield* get(input.sessionID)
+          if (session.prompt) return session.prompt
+          const firstUser = (yield* messages({ sessionID: input.sessionID })).find(
+            (message) =>
+              message.info.role === "user" &&
+              message.parts.some((part) => !("synthetic" in part) || !part.synthetic),
+          )
+          if (firstUser?.info.role === "user") {
+            const prompt: PromptConfig = {
+              system: firstUser.info.system,
+              systemMode: firstUser.info.systemMode ?? "append",
+              harness: firstUser.info.harness ?? "auto",
+            }
+            if (input.fallback) yield* patch(input.sessionID, { prompt })
+            return prompt
+          }
+          if (input.fallback) {
+            const prompt: PromptConfig = {
+              system: input.fallback.system,
+              systemMode: input.fallback.systemMode ?? "append",
+              harness: input.fallback.harness ?? "auto",
+            }
+            yield* patch(input.sessionID, { prompt })
+            return prompt
+          }
+          return {
+            systemMode: "append",
+            harness: "auto",
+          } satisfies PromptConfig
+        }),
+      )
     })
 
     const setRevert = Effect.fn("Session.setRevert")(function* (input: {
@@ -826,6 +893,7 @@ export const layer: Layer.Layer<Service, never, Bus.Service | Storage.Service | 
       setTitle,
       setArchived,
       setPermission,
+      resolvePrompt,
       setRevert,
       clearRevert,
       setSummary,

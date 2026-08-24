@@ -431,6 +431,8 @@ export const User = Base.extend({
     variant: z.string().optional(),
   }),
   system: z.string().optional(),
+  systemMode: z.enum(["append", "replace-agent"]).optional(),
+  harness: z.enum(["auto", "codex", "default"]).optional(),
   tools: z.record(z.string(), z.boolean()).optional(),
   provenance: Provenance.optional(),
 }).meta({

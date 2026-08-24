@@ -76,6 +76,8 @@ const stubPrompt = Layer.succeed(
         const out: MessageV2.WithParts = { info, parts: [text] }
         return out
       }),
+    recovery: () => Effect.succeed([]),
+    resume: () => Effect.die("resume not expected in cron end-to-end test"),
     loop: () => Effect.die("loop not expected in end-to-end test"),
     shell: () => Effect.die("shell not expected in end-to-end test"),
     command: () => Effect.die("command not expected in end-to-end test"),

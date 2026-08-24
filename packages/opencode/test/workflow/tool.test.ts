@@ -214,6 +214,7 @@ const ref = {
 }
 
 const cfg = {
+  model: "test/test-model",
   provider: {
     test: {
       name: "Test",

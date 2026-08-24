@@ -1522,6 +1522,84 @@ test("provider with custom npm package", async () => {
   })
 })
 
+test("xiaomi models use the Responses harness for free-form exec PTC", async () => {
+  await using tmp = await tmpdir({
+    init: async (dir) => {
+      await Bun.write(
+        path.join(dir, "mimocode.json"),
+        JSON.stringify({
+          $schema: "https://opencode.ai/config.json",
+          enabled_providers: ["xiaomi"],
+          provider: {
+            xiaomi: {
+              npm: "@ai-sdk/openai-compatible",
+              models: {
+                "mimo-ptc-test": {
+                  name: "MiMo PTC Test",
+                  tool_call: true,
+                  limit: { context: 8192, output: 2048 },
+                },
+              },
+              options: {
+                apiKey: "test-key",
+                baseURL: "https://example.test/v1",
+              },
+            },
+          },
+        }),
+      )
+    },
+  })
+  await Instance.provide({
+    directory: tmp.path,
+    init: async () => {
+      set("XIAOMI_API_KEY", "test-key")
+    },
+    fn: async () => {
+      const model = await getModel(ProviderID.make("xiaomi"), ModelID.make("mimo-ptc-test"))
+      const language = await getLanguage(model)
+      expect(language.provider).toBe("xiaomi.responses")
+    },
+  })
+})
+
+test("xiaomi models outside PTC mode stay on Chat Completions", async () => {
+  await using tmp = await tmpdir({
+    init: async (dir) => {
+      await Bun.write(
+        path.join(dir, "mimocode.json"),
+        JSON.stringify({
+          $schema: "https://opencode.ai/config.json",
+          enabled_providers: ["xiaomi"],
+          provider: {
+            xiaomi: {
+              models: {
+                "mimo-v2.5": {
+                  name: "MiMo V2.5",
+                  tool_call: true,
+                  limit: { context: 8192, output: 2048 },
+                },
+              },
+              options: { apiKey: "test-key", baseURL: "https://example.test/v1" },
+            },
+          },
+        }),
+      )
+    },
+  })
+  await Instance.provide({
+    directory: tmp.path,
+    init: async () => {
+      set("XIAOMI_API_KEY", "test-key")
+    },
+    fn: async () => {
+      const model = await getModel(ProviderID.make("xiaomi"), ModelID.make("mimo-v2.5"))
+      const language = await getLanguage(model)
+      expect(language.provider).toBe("xiaomi.chat")
+    },
+  })
+})
+
 // Edge cases for model configuration
 
 test("model alias name defaults to alias key when id differs", async () => {
@@ -2124,7 +2202,7 @@ test("closest checks multiple query terms in order", async () => {
   })
 })
 
-test("model limit defaults to DEFAULT_CONTEXT_WINDOW (1M) when not specified (F41)", async () => {
+test("model limits use family defaults when not specified (F41)", async () => {
   await using tmp = await tmpdir({
     init: async (dir) => {
       await Bun.write(
@@ -2142,6 +2220,18 @@ test("model limit defaults to DEFAULT_CONTEXT_WINDOW (1M) when not specified (F4
                   tool_call: true,
                   // no limit specified
                 },
+                "claude-default": {
+                  name: "Claude",
+                  tool_call: true,
+                },
+                "gpt-default": {
+                  name: "GPT",
+                  tool_call: true,
+                },
+                "mimo-default": {
+                  name: "MiMo",
+                  tool_call: true,
+                },
               },
               options: { apiKey: "test" },
             },
@@ -2157,6 +2247,12 @@ test("model limit defaults to DEFAULT_CONTEXT_WINDOW (1M) when not specified (F4
       const model = providers[ProviderID.make("no-limit")].models["model"]
       expect(model.limit.context).toBe(1_000_000)
       expect(model.limit.output).toBe(0)
+      for (const id of ["claude-default", "gpt-default", "mimo-default"]) {
+        expect(providers[ProviderID.make("no-limit")].models[id].limit).toEqual({
+          context: 1_000_000,
+          output: 128_000,
+        })
+      }
     },
   })
 })
@@ -2942,4 +3038,3 @@ test("plugin config enabled and disabled providers are honored", async () => {
     },
   })
 })
-

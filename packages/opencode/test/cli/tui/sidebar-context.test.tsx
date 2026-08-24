@@ -15,6 +15,7 @@ test("sidebar compares the configured context limit with the model limit", async
             gpt: {
               id: "gpt",
               providerID: "test",
+              api: { id: "gpt", npm: "@ai-sdk/openai" },
               limit: { context: 922_000, input: 922_000, output: 128_000 },
             },
           },

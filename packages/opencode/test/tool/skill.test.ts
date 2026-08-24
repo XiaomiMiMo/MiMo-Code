@@ -1,12 +1,12 @@
 import * as CrossSpawnSpawner from "../../src/effect/cross-spawn-spawner"
-import { Cause, Effect, Layer } from "effect"
+import { Effect, Layer } from "effect"
 import { afterEach, describe, expect } from "bun:test"
 import path from "path"
 import { pathToFileURL } from "url"
 import type { Permission } from "../../src/permission"
 import type { Tool } from "../../src/tool"
 import { Instance } from "../../src/project/instance"
-import { SkillTool } from "../../src/tool/skill"
+import { ToolScriptTool } from "../../src/tool/tool-script"
 import { ToolRegistry } from "../../src/tool"
 import { provideTmpdirInstance } from "../fixture/fixture"
 import { SessionID, MessageID } from "../../src/session/schema"
@@ -69,8 +69,8 @@ Use this skill.
             providerID: "opencode" as any,
             modelID: "gpt-5" as any,
             agent,
-          })).find((tool) => tool.id === SkillTool.id)
-          if (!tool) throw new Error("Skill tool not found")
+          })).find((tool) => tool.id === ToolScriptTool.id)
+          if (!tool) throw new Error("Exec tool not found")
 
           const requests: Array<Omit<Permission.Request, "id" | "sessionID" | "tool">> = []
           const ctx: Tool.Context = {
@@ -81,17 +81,27 @@ Use this skill.
               }),
           }
 
-          const result = yield* tool.execute({ name: "tool-skill" }, ctx)
-          const file = path.resolve(skill, "scripts", "demo.txt")
-
+          const result = yield* tool.execute(
+            {
+              code: `const result = await tools.skill({ name: "tool-skill" })
+return {
+  dir: result.metadata.dir,
+  hasContent: result.output.includes('<skill_content name="tool-skill">'),
+  hasBase: result.output.includes(${JSON.stringify(`Base directory for this skill: ${pathToFileURL(skill).href}`)}),
+  hasFile: result.output.includes(${JSON.stringify(`<file>${path.resolve(skill, "scripts", "demo.txt")}</file>`)}),
+}`,
+            },
+            { ...ctx, extra: { model: { providerID: "opencode", id: "gpt-5" } } },
+          )
           expect(requests.length).toBe(1)
           expect(requests[0].permission).toBe("skill")
           expect(requests[0].patterns).toContain("tool-skill")
           expect(requests[0].always).toContain("tool-skill")
-          expect(result.metadata.dir).toBe(skill)
-          expect(result.output).toContain(`<skill_content name="tool-skill">`)
-          expect(result.output).toContain(`Base directory for this skill: ${pathToFileURL(skill).href}`)
-          expect(result.output).toContain(`<file>${file}</file>`)
+          expect(result.metadata.status).toBe("completed")
+          expect(result.output).toContain(`"dir": ${JSON.stringify(skill)}`)
+          expect(result.output).toContain('"hasContent": true')
+          expect(result.output).toContain('"hasBase": true')
+          expect(result.output).toContain('"hasFile": true')
         }),
       { git: true },
     ),
@@ -107,12 +117,22 @@ Use this skill.
             providerID: "opencode" as any,
             modelID: "gpt-5" as any,
             agent,
-          })).find((tool) => tool.id === SkillTool.id)
-          if (!tool) throw new Error("Skill tool not found")
+          })).find((tool) => tool.id === ToolScriptTool.id)
+          if (!tool) throw new Error("Exec tool not found")
           const ctx: Tool.Context = { ...baseCtx, ask: () => Effect.void }
-          const exit = yield* Effect.exit(tool.execute({ name: "fact-check" }, ctx))
-          expect(exit._tag).toBe("Failure")
-          const msg = exit._tag === "Failure" ? Cause.pretty(exit.cause) : ""
+          const result = yield* tool.execute(
+            {
+              code: `try {
+  await tools.skill({ name: "fact-check" })
+  return "unexpected success"
+} catch (error) {
+  return error.message
+}`,
+            },
+            { ...ctx, extra: { model: { providerID: "opencode", id: "gpt-5" } } },
+          )
+          expect(result.metadata.status).toBe("completed")
+          const msg = result.output
           expect(msg).toContain("built-in WORKFLOW")
           expect(msg).toContain("workflow tool")
           expect(msg).toContain('name: "fact-check"')
@@ -159,8 +179,8 @@ description: Anyone may start this one.
             providerID: "opencode" as any,
             modelID: "gpt-5" as any,
             agent,
-          })).find((tool) => tool.id === SkillTool.id)
-          if (!tool) throw new Error("Skill tool not found")
+          })).find((tool) => tool.id === ToolScriptTool.id)
+          if (!tool) throw new Error("Exec tool not found")
 
           const requests: Array<Omit<Permission.Request, "id" | "sessionID" | "tool">> = []
           const ctx: Tool.Context = {
@@ -171,9 +191,19 @@ description: Anyone may start this one.
               }),
           }
 
-          const exit = yield* Effect.exit(tool.execute({ name: "gated-skill" }, ctx))
-          expect(exit._tag).toBe("Failure")
-          const msg = exit._tag === "Failure" ? Cause.pretty(exit.cause) : ""
+          const result = yield* tool.execute(
+            {
+              code: `try {
+  await tools.skill({ name: "gated-skill" })
+  return "unexpected success"
+} catch (error) {
+  return error.message
+}`,
+            },
+            { ...ctx, extra: { model: { providerID: "opencode", id: "gpt-5" } } },
+          )
+          expect(result.metadata.status).toBe("completed")
+          const msg = result.output
           expect(msg).toContain("disable-model-invocation")
           expect(msg).toContain("/gated-skill")
           expect(msg).not.toContain("GATED_BODY_MARKER")
@@ -186,8 +216,18 @@ description: Anyone may start this one.
           expect(tool.description).not.toContain("gated-skill")
           expect(tool.description).not.toContain("open-skill")
           expect(tool.description).toContain("listed in the system prompt")
-          const miss = yield* Effect.exit(tool.execute({ name: "gated-skil" }, ctx))
-          const missMsg = miss._tag === "Failure" ? Cause.pretty(miss.cause) : ""
+          const miss = yield* tool.execute(
+            {
+              code: `try {
+  await tools.skill({ name: "gated-skil" })
+  return "unexpected success"
+} catch (error) {
+  return error.message
+}`,
+            },
+            { ...ctx, extra: { model: { providerID: "opencode", id: "gpt-5" } } },
+          )
+          const missMsg = miss.output
           expect(missMsg).toContain("not found")
           expect(missMsg).toContain("open-skill")
           expect(missMsg).not.toContain("gated-skill")

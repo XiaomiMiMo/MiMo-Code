@@ -3,7 +3,8 @@ import { isRecord } from "./record"
 
 /** Collapse PascalCase, camelCase, snake_case, and kebab-case to one comparable token. */
 export function canonical(name: string): string {
-  return name.replace(/[-_\s]+/g, "").toLowerCase()
+  const mcp = /^mcp__(.+?)__(.+)$/.exec(name)
+  return (mcp ? mcp[1] + "_" + mcp[2] : name).replace(/[-_\s]+/g, "").toLowerCase()
 }
 
 /** Resolve a model-provided identifier to a registered name when casing or separators differ. */
@@ -198,6 +199,18 @@ export async function repairToolCall(input: RepairToolCallInput): Promise<Repair
 
   const schema = await Promise.resolve(input.getSchema(resolvedName))
   const parsed = parseToolInput(input.input)
+  const codeSchema = isRecord(schema.properties) ? schema.properties.code : undefined
+  if (
+    resolvedName === "exec" &&
+    typeof parsed === "string" &&
+    isRecord(codeSchema) &&
+    codeSchema.type === "string"
+  ) {
+    return {
+      toolName: resolvedName,
+      input: JSON.stringify({ code: parsed }),
+    }
+  }
   const normalized = normalizeInput(parsed, schema)
   const repairedInput = stringifyToolInput(normalized)
 

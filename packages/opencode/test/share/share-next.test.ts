@@ -392,7 +392,10 @@ describe("ShareNext", () => {
               },
             ],
           })
-          yield* Effect.sleep(1_250)
+          yield* Effect.gen(function* () {
+            while (!seen.length) yield* Effect.sleep(50)
+          }).pipe(Effect.timeout(5_000))
+          yield* Effect.sleep(250)
 
           expect(seen).toHaveLength(1)
           expect(seen[0].url).toBe("https://legacy-share.example.com/api/share/shr_abc/sync")

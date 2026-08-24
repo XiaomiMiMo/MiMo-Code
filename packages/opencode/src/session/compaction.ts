@@ -243,7 +243,16 @@ export const layer: Layer.Layer<
       if (!parent || parent.info.role !== "user") {
         throw new Error(`Compaction parent must be a user message: ${input.parentID}`)
       }
-      const userMessage = parent.info
+      const promptConfig = yield* session.resolvePrompt({ sessionID: input.sessionID })
+      const userMessage = {
+        ...parent.info,
+        // The compaction agent owns its summarization prompt. The session's
+        // extra system prompt is already persisted and will be restored on the
+        // replay/next user turn; injecting it here can change the summary task.
+        system: undefined,
+        systemMode: undefined,
+        harness: promptConfig.harness,
+      }
       const compactionPart = parent.parts.find((part): part is MessageV2.CompactionPart => part.type === "compaction")
 
       // Truncate history at the previous compaction boundary so a repeat
@@ -431,7 +440,9 @@ export const layer: Layer.Layer<
             model: original.model,
             format: original.format,
             tools: original.tools,
-            system: original.system,
+            system: promptConfig.system,
+            systemMode: promptConfig.systemMode,
+            harness: promptConfig.harness,
           })
           for (const part of replay.parts) {
             if (part.type === "compaction") continue

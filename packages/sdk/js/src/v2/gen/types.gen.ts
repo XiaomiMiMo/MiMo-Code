@@ -997,6 +997,8 @@ export type UserMessage = {
     variant?: string
   }
   system?: string
+  systemMode?: "append" | "replace-agent"
+  harness?: "auto" | "codex" | "default"
   tools?: {
     [key: string]: boolean
   }
@@ -1402,6 +1404,11 @@ export type Session = {
     archived?: number
   }
   permission?: PermissionRuleset
+  prompt?: {
+    system?: string
+    systemMode?: "append" | "replace-agent"
+    harness: "auto" | "codex" | "default"
+  }
   revert?: {
     messageID: string
     partID?: string
@@ -1531,6 +1538,11 @@ export type SyncEventSessionUpdated = {
         archived: number | null
       }
       permission: PermissionRuleset | null
+      prompt: {
+        system?: string
+        systemMode?: "append" | "replace-agent"
+        harness: "auto" | "codex" | "default"
+      } | null
       revert: {
         messageID: string
         partID?: string
@@ -1673,6 +1685,20 @@ export type ServerConfig = {
    * Additional domains to allow for CORS
    */
   cors?: Array<string>
+}
+
+/**
+ * Token lifetime defaults for the temporary local LLM server (mimo llm-server)
+ */
+export type LlmServerConfig = {
+  /**
+   * Default sliding lifetime for issued tokens, measured from last use (e.g. '30m', '12h', '1d', or 'none'). Default '1d'.
+   */
+  ttl?: string
+  /**
+   * Absolute ceiling from issue, regardless of activity (e.g. '7d', or 'none'). Default 'none', so an actively used token is not cut off.
+   */
+  maxAge?: string
 }
 
 export type PermissionActionConfig = "ask" | "allow" | "deny"
@@ -1825,6 +1851,8 @@ export type ProviderConfig = {
       reasoning?: boolean
       temperature?: boolean
       tool_call?: boolean
+      voice_design?: boolean
+      voice_clone?: boolean
       interleaved?:
         | true
         | {
@@ -1979,6 +2007,7 @@ export type Config = {
   $schema?: string
   logLevel?: LogLevel
   server?: ServerConfig
+  llmServer?: LlmServerConfig
   /**
    * Command configuration, see https://mimo.xiaomi.com/mimocode/commands
    */
@@ -2201,7 +2230,7 @@ export type Config = {
      */
     preserve_recent_tokens?: number
     /**
-     * Token buffer for compaction. Leaves enough window to avoid overflow during compaction.
+     * Token buffer for compaction. Leaves enough window to avoid overflow during compaction (default: up to 33000, capped by the model's maximum output).
      */
     reserved?: number
     /**
@@ -2494,6 +2523,8 @@ export type Model = {
     reasoning: boolean
     attachment: boolean
     toolcall: boolean
+    voiceDesign?: boolean
+    voiceClone?: boolean
     input: {
       text: boolean
       audio: boolean
@@ -2637,6 +2668,11 @@ export type GlobalSession = {
     archived?: number
   }
   permission?: PermissionRuleset
+  prompt?: {
+    system?: string
+    systemMode?: "append" | "replace-agent"
+    harness: "auto" | "codex" | "default"
+  }
   revert?: {
     messageID: string
     partID?: string
@@ -4792,7 +4828,18 @@ export type SessionPromptData = {
       [key: string]: boolean
     }
     format?: OutputFormat
+    /**
+     * Additional system prompt selected by the session's first user query. Later values are ignored.
+     */
     system?: string
+    /**
+     * Whether the selected system prompt appends to or replaces the agent prompt. Later values are ignored.
+     */
+    systemMode?: "append" | "replace-agent"
+    /**
+     * Harness mode selected by the session's first user query. Later values are ignored. GPT models always use the Codex harness. For other models, auto preserves model/process inference and explicit default forces the native tool schema.
+     */
+    harness?: "auto" | "codex" | "default"
     variant?: string
     parts: Array<TextPartInput | FilePartInput | AgentPartInput | SubtaskPartInput>
   }
@@ -4980,6 +5027,84 @@ export type PartUpdateResponses = {
 
 export type PartUpdateResponse = PartUpdateResponses[keyof PartUpdateResponses]
 
+export type SessionRecoveryData = {
+  body?: never
+  path: {
+    sessionID: string
+  }
+  query?: {
+    directory?: string
+    workspace?: string
+    agentID?: string
+  }
+  url: "/session/{sessionID}/recovery"
+}
+
+export type SessionRecoveryErrors = {
+  /**
+   * Bad request
+   */
+  400: BadRequestError
+  /**
+   * Not found
+   */
+  404: NotFoundError
+}
+
+export type SessionRecoveryError = SessionRecoveryErrors[keyof SessionRecoveryErrors]
+
+export type SessionRecoveryResponses = {
+  /**
+   * Recovery candidates
+   */
+  200: Array<{
+    assistantMessageID: string
+    parentMessageID: string
+    created: number
+  }>
+}
+
+export type SessionRecoveryResponse = SessionRecoveryResponses[keyof SessionRecoveryResponses]
+
+export type SessionResumeData = {
+  body?: never
+  path: {
+    sessionID: string
+    assistantMessageID: string
+  }
+  query?: {
+    directory?: string
+    workspace?: string
+    agentID?: string
+    task_id?: string
+  }
+  url: "/session/{sessionID}/turn/{assistantMessageID}/resume"
+}
+
+export type SessionResumeErrors = {
+  /**
+   * Bad request
+   */
+  400: BadRequestError
+  /**
+   * Not found
+   */
+  404: NotFoundError
+  /**
+   * Conflict — session resource is busy
+   */
+  409: ConflictError
+}
+
+export type SessionResumeError = SessionResumeErrors[keyof SessionResumeErrors]
+
+export type SessionResumeResponses = {
+  /**
+   * Resume accepted
+   */
+  202: unknown
+}
+
 export type SessionPromptAsyncData = {
   body?: {
     messageID?: string
@@ -5007,7 +5132,18 @@ export type SessionPromptAsyncData = {
       [key: string]: boolean
     }
     format?: OutputFormat
+    /**
+     * Additional system prompt selected by the session's first user query. Later values are ignored.
+     */
     system?: string
+    /**
+     * Whether the selected system prompt appends to or replaces the agent prompt. Later values are ignored.
+     */
+    systemMode?: "append" | "replace-agent"
+    /**
+     * Harness mode selected by the session's first user query. Later values are ignored. GPT models always use the Codex harness. For other models, auto preserves model/process inference and explicit default forces the native tool schema.
+     */
+    harness?: "auto" | "codex" | "default"
     variant?: string
     parts: Array<TextPartInput | FilePartInput | AgentPartInput | SubtaskPartInput>
   }
@@ -5051,6 +5187,18 @@ export type SessionCommandData = {
     arguments: string
     command: string
     variant?: string
+    /**
+     * Additional system prompt selected by the session's first user command. Later values are ignored.
+     */
+    system?: string
+    /**
+     * Whether the selected system prompt appends to or replaces the agent prompt. Later values are ignored.
+     */
+    systemMode?: "append" | "replace-agent"
+    /**
+     * Harness mode selected by the session's first user command. Later values are ignored. GPT models always use the Codex harness. For other models, auto preserves model/process inference and explicit default forces the native tool schema.
+     */
+    harness?: "auto" | "codex" | "default"
     parts?: Array<{
       id?: string
       type: "file"

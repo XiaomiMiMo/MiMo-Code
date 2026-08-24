@@ -1,4 +1,4 @@
-Executes a given bash command in a persistent shell session with optional timeout, ensuring proper handling and security measures.
+Executes a given bash command in a persistent shell session with an optional timeout measured in milliseconds, ensuring proper handling and security measures.
 
 Be aware: OS: ${os}, Shell: ${shell}
 

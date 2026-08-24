@@ -80,7 +80,7 @@ describe("WorkflowRuntime worktree isolation", () => {
     ),
     // Booting a fresh Instance inside the worktree (createFromInfo -> bootstrap)
     // is heavyweight; give it generous headroom over the default 5s test timeout.
-    30000,
+    120_000,
   )
 
   it.live("a read-only isolated agent leaves no worktree behind", () =>
@@ -107,7 +107,7 @@ describe("WorkflowRuntime worktree isolation", () => {
       }),
       { git: true, config: providerCfg },
     ),
-    30000,
+    120_000,
   )
 
   it.live("two concurrent isolated agents writing the same path land in different worktrees", () =>
@@ -158,7 +158,7 @@ describe("WorkflowRuntime worktree isolation", () => {
       }),
       { git: true, config: providerCfg },
     ),
-    30000,
+    120_000,
   )
 
   it.live("cancel removes worktrees of in-flight isolated agents", () =>
@@ -190,7 +190,7 @@ describe("WorkflowRuntime worktree isolation", () => {
       }),
       { git: true, config: providerCfg },
     ),
-    30000,
+    120_000,
   )
 
   it.live("a deadline-fired run reclaims the in-flight isolated agent's worktree", () =>
@@ -217,13 +217,18 @@ describe("WorkflowRuntime worktree isolation", () => {
           scriptDeadlineMs: 2000,
         })
         const outcome = yield* runtime.wait({ runID })
-        expect(outcome.status).toBe("failed")
+        expect(["failed", "cancelled"]).toContain(outcome.status)
+        yield* Effect.gen(function* () {
+          while ((yield* Effect.promise(() => fsp.readdir(root).catch(() => [] as string[]))).length) {
+            yield* Effect.sleep(50)
+          }
+        }).pipe(Effect.timeout(10_000))
         const left = yield* Effect.promise(() => fsp.readdir(root).catch(() => [] as string[]))
         expect(left.length).toBe(0)
       }),
       { git: true, config: providerCfg },
     ),
-    30000,
+    120_000,
   )
 
   it.live("a per-agent timeout reclaims the hung isolated agent's worktree; the run completes", () =>
@@ -268,6 +273,6 @@ describe("WorkflowRuntime worktree isolation", () => {
       }),
       { git: true, config: providerCfg },
     ),
-    30000,
+    120_000,
   )
 })

@@ -14,6 +14,54 @@ const it = testEffect(
 )
 
 describe("ToolRegistry.tools: invocation style resolution", () => {
+  it.live("advertises only exec in Codex mode while keeping hidden tools registered", () =>
+    provideTmpdirInstance(() =>
+      Effect.gen(function* () {
+        const reg = yield* ToolRegistry.Service
+        const agents = yield* Agent.Service
+        const build = yield* agents.get("build")
+        const tools = yield* reg.tools({
+          providerID: ProviderID.opencode,
+          modelID: ModelID.make("openai/gpt-5.4"),
+          agent: build,
+        })
+        const registered = yield* reg.registered({
+          providerID: ProviderID.opencode,
+          modelID: ModelID.make("openai/gpt-5.4"),
+          agent: build,
+        })
+        const ids = tools.map((tool) => tool.id)
+        const nested = [
+          "bash",
+          "apply_patch",
+          "view_image",
+          "actor",
+          "task",
+          "question",
+          "webfetch",
+          "skill_search",
+          "skill",
+          "change_directory",
+          "plan_exit",
+          "memory",
+          "history",
+          "cron",
+        ]
+
+        expect(ids).toEqual(["exec"])
+        expect(registered.map((tool) => tool.id)).toContain("webfetch")
+        nested.forEach((id) => expect(ids).not.toContain(id))
+
+        const description = tools.find((tool) => tool.id === "exec")?.description ?? ""
+        expect(description).toContain("webfetch(input:")
+        nested.filter((id) => id !== "bash").forEach((id) => expect(description).toContain(`${id}(input:`))
+        expect(description).toContain("exec_command(input:")
+        expect(description).not.toContain("\n  bash(input:")
+        expect(description).toContain("`timeout` is always measured in milliseconds")
+      }),
+    ),
+  )
+
   it.live.skip("exposes exec by default only to GPT models", () =>
     provideTmpdirInstance(() =>
       Effect.gen(function* () {
@@ -41,8 +89,8 @@ describe("ToolRegistry.tools: invocation style resolution", () => {
         expect(exec?.description).toContain("keep dependent operations sequential")
         expect(exec?.description).toContain("do not use `exec` merely to force concurrency")
         expect(exec?.description).toContain("apply_patch(input:")
-        expect(exec?.description).toContain("bash(input:")
         expect(exec?.description).toContain("exec_command(input:")
+        expect(exec?.description).not.toContain("\n  bash(input:")
         expect(exec?.description).not.toContain("read(input:")
         expect(exec?.description).not.toContain("write(input:")
         expect(exec?.description).not.toContain("edit(input:")
@@ -53,7 +101,7 @@ describe("ToolRegistry.tools: invocation style resolution", () => {
     30000,
   )
 
-  it.live.skip("exposes skill_search to GPT and Claude models", () =>
+  it.live.skip("keeps skill_search registered but hidden for GPT models", () =>
     provideTmpdirInstance(() =>
       Effect.gen(function* () {
         const reg = yield* ToolRegistry.Service
@@ -69,7 +117,7 @@ describe("ToolRegistry.tools: invocation style resolution", () => {
             })
             .pipe(Effect.map((tools) => tools.map((tool) => tool.id)))
 
-        expect(yield* ids("openai/gpt-5.4")).toContain("skill_search")
+        expect(yield* ids("openai/gpt-5.4")).not.toContain("skill_search")
         expect(yield* ids("anthropic/claude-sonnet-4-6")).toContain("skill_search")
         expect(yield* ids("mimo-v2")).toContain("skill_search")
       }),
@@ -114,6 +162,7 @@ describe("ToolRegistry.tools: invocation style resolution", () => {
         const bash = tools.find((tool) => tool.id === "bash")
         expect(bash?.description).toContain("DO NOT use it for file operations")
         expect(bash?.description).not.toContain("the dedicated `read`, `write`, and `edit` tools are unavailable")
+        expect(tools.find((tool) => tool.id === "skill_search")?.description).not.toContain("first query")
         expect(tools.some((tool) => tool.id === "notebook_edit")).toBeTrue()
         expect(tools.some((tool) => tool.id === "grep")).toBeTrue()
         expect(tools.some((tool) => tool.id === "glob")).toBeTrue()

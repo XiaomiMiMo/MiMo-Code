@@ -258,7 +258,8 @@ const InfoSchema = Schema.Struct({
         description: "Maximum number of tokens from recent turns to preserve verbatim after compaction",
       }),
       reserved: Schema.optional(NonNegativeInt).annotate({
-        description: "Token buffer for compaction. Leaves enough window to avoid overflow during compaction.",
+        description:
+          "Token buffer for compaction. Leaves enough window to avoid overflow during compaction (default: up to 33000, capped by the model's maximum output).",
       }),
       max_context: Schema.optional(Schema.Union([TokenQuantity, Schema.Record(Schema.String, TokenQuantity)])).annotate(
         {

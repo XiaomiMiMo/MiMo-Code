@@ -63,6 +63,17 @@ describe("session.system", () => {
     expect(prompt).not.toContain("gitStatus:")
   })
 
+  test("GPT ignores harness while explicit default overrides MiMo Codex inference", () => {
+    const gpt = ProviderTest.model({ id: ModelID.make("gpt-5.2"), api: { id: "gpt-5.2" } as never })
+    expect(SystemPrompt.provider(gpt, "default")[0]).toContain("You are Codex")
+    expect(SystemPrompt.provider(gpt, "default")[0]).toContain("tools.apply_patch")
+
+    const mimo = ProviderTest.model({ id: ModelID.make("mimo-v2.6"), api: { id: "mimo-v2.6" } as never })
+    expect(SystemPrompt.provider(mimo, "codex")[0]).toContain("You are Codex")
+    expect(SystemPrompt.provider(mimo, "default")[0]).not.toContain("You are Codex")
+    expect(SystemPrompt.provider(mimo, "default")[0]).not.toContain("tools.apply_patch")
+  })
+
   test("renders machine and repository environment only for Claude models", async () => {
     await using tmp = await tmpdir({ git: true })
     await $`git branch -M prompt-test`.cwd(tmp.path).quiet()
@@ -135,12 +146,21 @@ describe("session.system", () => {
                 }),
                 now,
               ),
+              system.environment(
+                ProviderTest.model({
+                  id: ModelID.make("custom-model"),
+                  api: { id: "claude-sonnet-4-6" } as never,
+                }),
+                now,
+                "codex",
+              ),
             ])
           }).pipe(Effect.provide(SystemPrompt.defaultLayer)),
         )
 
         expect(prompts[0].join("\n")).not.toContain("gitStatus:")
         expect(prompts[1].join("\n")).toContain("gitStatus:")
+        expect(prompts[2].join("\n")).not.toContain("gitStatus:")
       },
     })
   })
@@ -178,13 +198,18 @@ describe("session.system", () => {
 
     expect(prompt).toContain("Parallelize only tool calls that are independent")
     expect(prompt).toContain("keep dependencies sequential")
-    expect(prompt).toContain("only one small call is needed")
+    expect(prompt).toContain("including a single small call")
+    expect(prompt).toContain("tools.<name>(...)")
+    expect(prompt).toContain('tools.skill({ name: "<skill-name>" })')
+    expect(prompt).toContain("return result.output")
+    expect(prompt).toContain("never call an unavailable top-level `skill`")
     expect(prompt).not.toContain("When possible, prefer parallelization over sequential tool calls")
   })
 
-  test("uses the GPT prompt for Codex and MiMo models", () => {
+  test("uses the GPT prompt for Codex models and the normal prompt for MiMo v2.5 models", () => {
     const gpt = SystemPrompt.provider(ProviderTest.model({ id: ModelID.make("gpt-5.4") }))[0]
-    const prompts = ["gpt-5.4-codex", "mimo-v2.5"].map(
+    const normal = SystemPrompt.provider(ProviderTest.model({ id: ModelID.make("model-default") }))[0]
+    const prompts = ["mimo-v2.5", "mimo-v2.5-pro"].map(
       (id) =>
         SystemPrompt.provider(
           ProviderTest.model({
@@ -193,7 +218,9 @@ describe("session.system", () => {
         )[0],
     )
 
-    expect(prompts).toEqual([gpt, gpt])
+    expect(SystemPrompt.provider(ProviderTest.model({ id: ModelID.make("gpt-5.4-codex") }))[0]).toBe(gpt)
+    expect(prompts).toEqual([normal, normal])
+    expect(SystemPrompt.provider(ProviderTest.model({ id: ModelID.make("mimo-v2.6") }))[0]).toBe(gpt)
   })
 
   test("Codex mode forces the GPT prompt for non-GPT models", () => {
@@ -207,6 +234,18 @@ describe("session.system", () => {
     )[0]
 
     expect(prompt).toBe(gpt)
+  })
+
+  test("allows the resolved session mode to override the process harness mode", () => {
+    const model = ProviderTest.model({
+      id: ModelID.make("claude-sonnet-4-6"),
+      providerID: ProviderID.make("anthropic"),
+    })
+    const gpt = SystemPrompt.provider(ProviderTest.model({ id: ModelID.make("gpt-5.4") }))[0]
+
+    expect(SystemPrompt.provider(model, "codex")[0]).toBe(gpt)
+    process.env.MIMOCODE_CODEX_MODE = "true"
+    expect(SystemPrompt.provider(model, "default")[0]).not.toBe(gpt)
   })
 
   test("uses the same prompted subagent system across models", () => {
@@ -282,7 +321,7 @@ describe("session.system", () => {
     })
   })
 
-  test("prompts the model to search skills from the first user query", async () => {
+  test("skill catalog does not include invocation reminders", async () => {
     await using tmp = await tmpdir({ git: true })
     const home = process.env.HOME
     const userProfile = process.env.USERPROFILE
@@ -300,13 +339,10 @@ describe("session.system", () => {
             }).pipe(Effect.provide(SystemPrompt.defaultLayer)),
           )
 
-          expect(prompt).toContain("first user query")
-          expect(prompt).toContain("might benefit from a specialized workflow")
-          expect(prompt).toContain("skill_search")
-          expect(prompt).toContain("action")
-          expect(prompt).toContain("input")
-          expect(prompt).toContain("output")
-          expect(prompt).toContain("audience")
+          expect(prompt).toContain("Skills available in this session:")
+          expect(prompt).not.toContain("first user query")
+          expect(prompt).not.toContain("skill_search")
+          expect(prompt).not.toContain("Use the skill tool")
         },
       })
     } finally {
@@ -374,34 +410,4 @@ description: ${description}
     }
   })
 
-  test("does not prompt blacklisted models to use skill_search", async () => {
-    await using tmp = await tmpdir({ git: true })
-
-    await Instance.provide({
-      directory: tmp.path,
-      fn: async () => {
-        const build = await load(tmp.path, (svc) => svc.get("build"))
-        const prompts = await Effect.runPromise(
-          Effect.gen(function* () {
-            const system = yield* SystemPrompt.Service
-            return yield* Effect.all([
-              system.skills(build!, { id: "gpt-5.4" }),
-              system.skills(build!, { id: "claude-sonnet-4-6" }),
-              system.skills(build!, { id: "kimi-k2.5" }),
-              system.skills(build!, { id: "k2p5", family: "kimi-thinking" }),
-              system.skills(build!, { id: "mimo-v2" }),
-              system.skills(build!, { id: "deepseek-v3.2" }),
-            ])
-          }).pipe(Effect.provide(SystemPrompt.defaultLayer)),
-        )
-
-        expect(prompts[0]).not.toContain("skill_search")
-        expect(prompts[1]).not.toContain("skill_search")
-        expect(prompts[2]).not.toContain("skill_search")
-        expect(prompts[3]).not.toContain("skill_search")
-        expect(prompts[4]).not.toContain("skill_search")
-        expect(prompts[5]).toContain("skill_search")
-      },
-    })
-  })
 })

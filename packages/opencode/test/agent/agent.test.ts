@@ -37,9 +37,9 @@ test("agent prompts use runtime tool names and GPT generation guidance", () => {
   expect(PROMPT_GENERATE).toContain("use the actor tool")
   expect(PROMPT_GENERATE).not.toContain("use the Agent tool")
   expect(PROMPT_GENERATE_GPT).toContain("`exec`")
-  expect(PROMPT_GENERATE_GPT).toContain("`apply_patch`")
-  expect(PROMPT_GENERATE_GPT).toContain("`view_image`")
-  expect(PROMPT_GENERATE_GPT).toContain("`actor`")
+  expect(PROMPT_GENERATE_GPT).toContain("`tools.apply_patch(...)`")
+  expect(PROMPT_GENERATE_GPT).toContain("`tools.view_image(...)`")
+  expect(PROMPT_GENERATE_GPT).toContain("`tools.actor(...)`")
 })
 
 test("returns default native agents when no config", async () => {
@@ -1041,11 +1041,15 @@ itTool.live("compose's tool list swaps GPT-specific file tools", () =>
         agent: compose!,
       })
       const gptIDs = gptTools.map((t) => t.id)
-      expect(gptIDs).toContain("apply_patch")
-      expect(gptIDs).toContain("view_image")
+      expect(gptIDs).toContain("exec")
+      expect(gptIDs).not.toContain("apply_patch")
+      expect(gptIDs).not.toContain("view_image")
       expect(gptIDs).not.toContain("edit")
       expect(gptIDs).not.toContain("write")
       expect(gptIDs).not.toContain("read")
+      const exec = gptTools.find((tool) => tool.id === "exec")
+      expect(exec?.description).toContain("apply_patch(input:")
+      expect(exec?.description).toContain("view_image(input:")
 
       const claudeTools = yield* registry.tools({
         modelID: ModelID.make("claude-opus-4-7"),
@@ -1058,6 +1062,19 @@ itTool.live("compose's tool list swaps GPT-specific file tools", () =>
       expect(claudeIDs).toContain("read")
       expect(claudeIDs).not.toContain("apply_patch")
       expect(claudeIDs).not.toContain("view_image")
+
+      const claudeCodexIDs = (
+        yield* registry.tools({
+          modelID: ModelID.make("claude-opus-4-7"),
+          providerID: ProviderID.make("anthropic"),
+          agent: compose!,
+          harness: "codex",
+        })
+      ).map((tool) => tool.id)
+      expect(claudeCodexIDs).toContain("exec")
+      expect(claudeCodexIDs).not.toContain("edit")
+      expect(claudeCodexIDs).not.toContain("write")
+      expect(claudeCodexIDs).not.toContain("read")
     }),
   ),
 )

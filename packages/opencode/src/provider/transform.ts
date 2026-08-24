@@ -25,7 +25,14 @@ function mimeToModality(mime: string): Modality | undefined {
 }
 
 export const OUTPUT_TOKEN_MAX = Flag.MIMOCODE_EXPERIMENTAL_OUTPUT_TOKEN_MAX || 32_000
-const MIMO_OUTPUT_TOKEN_MAX = 128_000
+export const LARGE_MODEL_OUTPUT_TOKEN_MAX = 128_000
+
+export function usesLargeModelDefaults(model: { id: string; providerID: string; api: { id: string } }) {
+  if (["mimo", "xiaomi"].includes(model.providerID.toLowerCase())) return true
+  return [model.id, model.api.id].some((id) =>
+    ["claude", "gpt", "mimo"].some((name) => id.toLowerCase().includes(name)),
+  )
+}
 
 // Maps npm package to the key the AI SDK expects for providerOptions
 function sdkKey(npm: string): string | undefined {
@@ -1887,9 +1894,7 @@ export function providerOptions(model: Provider.Model, options: { [x: string]: a
 }
 
 export function maxOutputTokens(model: Provider.Model): number {
-  if (model.providerID === "mimo" || model.providerID === "xiaomi" || model.id.toLowerCase().includes("mimo")) {
-    return MIMO_OUTPUT_TOKEN_MAX
-  }
+  if (usesLargeModelDefaults(model)) return LARGE_MODEL_OUTPUT_TOKEN_MAX
   return Math.min(model.limit.output, OUTPUT_TOKEN_MAX) || OUTPUT_TOKEN_MAX
 }
 

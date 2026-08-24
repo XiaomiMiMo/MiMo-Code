@@ -149,23 +149,78 @@ pdfmetrics.registerFont(TTFont("Inter-Bold", "Inter-Bold.ttf"))
 c.setFont("Inter-Bold", 18)
 ```
 
-CJK: use the built-in CID fonts — no external files needed.
+### CJK (Chinese / Japanese / Korean) — mandatory protocol
+
+reportlab does not consult the OS font system: every non-builtin font must be
+registered from a real file on disk (or be a built-in CID font). A font name
+that never registered — or a `try/except` that swallows the registration
+failure — silently falls back to Helvetica, which has **no CJK glyphs**: the
+entire document renders as black boxes (tofu). This is the single most common
+way a CJK PDF comes out unreadable, so:
+
+- **Never** reference a CJK font you have not verified on this machine.
+  "Source Han Sans / 思源黑体 / Noto Sans CJK" are usually NOT installed;
+  macOS `PingFang.ttc` and `Hiragino Sans GB` are CFF-flavored OpenType —
+  reportlab's `TTFont` only parses TrueType (`glyf`) outlines and raises on CFF.
+- The terminal fallback for CJK is the built-in CID font — **never Helvetica**.
+
+Resolve the font with this ladder (first hit wins) and use the returned name
+everywhere CJK text appears:
 
 ```python
+import os, platform
 from reportlab.pdfbase import pdfmetrics
+from reportlab.pdfbase.ttfonts import TTFont
 from reportlab.pdfbase.cidfonts import UnicodeCIDFont
 
-pdfmetrics.registerFont(UnicodeCIDFont("STSong-Light"))
-c.setFont("STSong-Light", 14)
+CJK_TTF_CANDIDATES = {
+    "Darwin": [
+        "/System/Library/Fonts/STHeiti Light.ttc",        # sans; 简/繁/日
+        "/System/Library/Fonts/STHeiti Medium.ttc",       # heavier weight
+        "/System/Library/Fonts/Supplemental/Songti.ttc",  # serif; full 简, partial 繁
+        "/Library/Fonts/Arial Unicode.ttf",               # widest coverage; macOS 11+ usually not preinstalled (comes with Office)
+    ],
+    "Windows": [
+        r"C:\Windows\Fonts\msyh.ttc",    # 微软雅黑 sans
+        r"C:\Windows\Fonts\simhei.ttf",  # 黑体 sans
+        r"C:\Windows\Fonts\simsun.ttc",  # 宋体 serif
+    ],
+    "Linux": [
+        "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",       # Debian/Ubuntu
+        "/usr/share/fonts/google-noto-cjk/NotoSansCJK-Regular.ttc",     # Fedora/RHEL
+        "/usr/share/fonts/noto-cjk/NotoSansCJK-Regular.ttc",            # Arch
+        "/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc",
+    ],
+}
+
+def resolve_cjk_font():
+    for p in CJK_TTF_CANDIDATES.get(platform.system(), []):
+        if os.path.exists(p):
+            try:
+                pdfmetrics.registerFont(TTFont("CJK", p))
+                return "CJK"              # embedded -> renders on any device
+            except Exception:
+                continue                  # unparseable face: try the next one
+    pdfmetrics.registerFont(UnicodeCIDFont("STSong-Light"))
+    return "STSong-Light"                 # ships with reportlab, never fails
+
+CJK_FONT = resolve_cjk_font()
+c.setFont(CJK_FONT, 14)
 c.drawString(50, 700, "简体中文示例")
 ```
 
-For a **Platypus** document (the multi-page report flow above), the CID font
+A registered TTF/TTC is embedded in the PDF and renders everywhere. The CID
+fallback `STSong-Light` always registers (its data ships with reportlab) but
+is **not embedded** — most modern viewers map it, yet fidelity depends on the
+viewing machine. Prefer the TTF ladder; treat CID as the safety net.
+
+For a **Platypus** document (the multi-page report flow above), the CJK font
 must also be set on the styles, not just the canvas — otherwise `Paragraph` /
-`Table` flowables fall back to Helvetica and CJK becomes black boxes. After
-`registerFont(UnicodeCIDFont("STSong-Light"))`, set `fontName="STSong-Light"`
-on each `ParagraphStyle` carrying CJK text and add `("FONTNAME", (0,0), (-1,-1),
-"STSong-Light")` to the `TableStyle` of any table with CJK cells.
+`Table` flowables fall back to Helvetica and CJK becomes black boxes. Set
+`fontName=CJK_FONT` on each `ParagraphStyle` carrying CJK text and add
+`("FONTNAME", (0, 0), (-1, -1), CJK_FONT)` to the `TableStyle` of any table
+with CJK cells. Headers/footers drawn in the `build` callback (§3) need
+`canv.setFont(CJK_FONT, …)` too if they contain CJK.
 
 ## 5. Subscripts / superscripts / inline markup
 
@@ -300,6 +355,8 @@ scripts/sanity_check.py out.pdf                # open + round-trip clean?
 
 Common regressions caught by the eyeball step:
 
+- Every CJK character is a black box → the CJK font never registered and
+  reportlab fell back to Helvetica → §4 `resolve_cjk_font()`
 - Black rectangles where subscripts should be → §5
 - Truncated table columns → widen `colWidths` or shrink `fontSize`
 - Missing images → paths are relative to `cwd`, not to the output file

@@ -38,6 +38,13 @@ describe("util.tool-compat", () => {
     test("returns undefined for unknown tools", () => {
       expect(resolveName("grep", tools)).toBeUndefined()
     })
+
+    test("resolves MCP-prefixed names to the registered catalog name", () => {
+      const mcpTools = ["feishu-mcp-pro_doc_read"] as const
+
+      expect(resolveName("mcp__feishu-mcp-pro__doc_read", mcpTools)).toBe("feishu-mcp-pro_doc_read")
+      expect(resolveName("mcp__feishu_mcp_pro__doc_read", mcpTools)).toBe("feishu-mcp-pro_doc_read")
+    })
   })
 
   describe("normalizeInput", () => {
@@ -180,6 +187,41 @@ describe("util.tool-compat", () => {
       const repaired = await repairToolCall({
         toolName: "read",
         input: JSON.stringify({ file_path: "/tmp/a.ts" }),
+        toolNames: ["read"],
+        getSchema: () => readSchema,
+      })
+
+      expect(repaired).toBeUndefined()
+    })
+
+    test("wraps raw exec source in the code argument object", async () => {
+      const execSchema = {
+        type: "object",
+        properties: {
+          code: { type: "string" },
+          max_tool_calls: { type: "number" },
+        },
+        required: ["code"],
+      } satisfies JSONSchema7
+      const source = 'const result = await tools.exec_command({ cmd: "pwd" }); return result.output'
+
+      const repaired = await repairToolCall({
+        toolName: "exec",
+        input: source,
+        toolNames: ["exec"],
+        getSchema: () => execSchema,
+      })
+
+      expect(repaired).toEqual({
+        toolName: "exec",
+        input: JSON.stringify({ code: source }),
+      })
+    })
+
+    test("does not wrap raw input for other object tools", async () => {
+      const repaired = await repairToolCall({
+        toolName: "read",
+        input: "/tmp/a.ts",
         toolNames: ["read"],
         getSchema: () => readSchema,
       })

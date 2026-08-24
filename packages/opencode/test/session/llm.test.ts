@@ -680,6 +680,7 @@ describe("session.llm.stream", () => {
     if (!server) throw new Error("Server not initialized")
 
     const source = await loadFixture("openai", "gpt-5.2")
+    let hiddenCalls = 0
     const request = waitRequest(
       "/responses",
       createEventResponse(
@@ -691,6 +692,46 @@ describe("session.llm.stream", () => {
               created_at: Math.floor(Date.now() / 1000),
               model: source.model.id,
               service_tier: null,
+            },
+          },
+          {
+            type: "response.output_item.added",
+            sequence_number: 1,
+            output_index: 0,
+            item: {
+              type: "function_call",
+              id: "fc_hidden",
+              call_id: "call_hidden",
+              name: "calendar_hidden",
+              arguments: "",
+              status: "in_progress",
+            },
+          },
+          {
+            type: "response.function_call_arguments.delta",
+            sequence_number: 2,
+            output_index: 0,
+            item_id: "fc_hidden",
+            delta: '{"private_field":"today"}',
+          },
+          {
+            type: "response.function_call_arguments.done",
+            sequence_number: 3,
+            output_index: 0,
+            item_id: "fc_hidden",
+            arguments: '{"private_field":"today"}',
+          },
+          {
+            type: "response.output_item.done",
+            sequence_number: 4,
+            output_index: 0,
+            item: {
+              type: "function_call",
+              id: "fc_hidden",
+              call_id: "call_hidden",
+              name: "calendar_hidden",
+              arguments: '{"private_field":"today"}',
+              status: "completed",
             },
           },
           {
@@ -765,7 +806,10 @@ describe("session.llm.stream", () => {
             calendar_hidden: tool({
               description: "Secret calendar MCP description",
               inputSchema: z.object({ private_field: z.string() }),
-              execute: async () => ({ title: "", output: "", metadata: {} }),
+              execute: async () => {
+                hiddenCalls++
+                return { title: "", output: "", metadata: {} }
+              },
             }),
             direct_tool: tool({
               description: "A directly exposed non-MCP tool",
@@ -781,6 +825,7 @@ describe("session.llm.stream", () => {
         expect(tools.map((item) => item.name)).not.toContain("calendar_hidden")
         expect(JSON.stringify(tools)).not.toContain("Secret calendar MCP description")
         expect(JSON.stringify(tools)).not.toContain("private_field")
+        expect(hiddenCalls).toBe(1)
       },
     })
   })
