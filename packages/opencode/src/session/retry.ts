@@ -363,12 +363,6 @@ export function isRetryableTransientError(error: unknown): boolean {
   return decide(error, "stream").retryable
 }
 
-export function delay(attempt: number, error?: MessageV2.APIError) {
-  const retryAfter = error ? retryAfterFromHeaders(error) : undefined
-  if (retryAfter !== undefined) return retryAfter
-  return cap(Math.min(RETRY_INITIAL_DELAY * Math.pow(RETRY_BACKOFF_FACTOR, attempt - 1), RETRY_MAX_DELAY_NO_HEADERS))
-}
-
 export function retryDelay(
   attempt: number,
   decision: RetryDecision,
