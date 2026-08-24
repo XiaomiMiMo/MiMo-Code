@@ -54,6 +54,36 @@ type Recorder = {
   pipeArgs: () => string[]
 }
 
+let cachedWin32Device: string | null | undefined
+
+async function detectWin32Device(): Promise<string | null> {
+  if (cachedWin32Device !== undefined) return cachedWin32Device
+  try {
+    const proc = Process.spawn(
+      [
+        "powershell",
+        "-NoProfile",
+        "-Command",
+        'Get-CimInstance Win32_SoundDevice | Select -First 1 -ExpandProperty Name',
+      ],
+      { stdout: "pipe", stderr: "ignore", timeout: 5_000 },
+    )
+    let out = ""
+    if (proc.stdout) {
+      for await (const chunk of proc.stdout as AsyncIterable<Buffer>) {
+        out += chunk.toString()
+      }
+    }
+    await proc.exited
+    const name = out.trim()
+    cachedWin32Device = name || null
+    return cachedWin32Device
+  } catch {
+    cachedWin32Device = null
+    return null
+  }
+}
+
 const RECORDERS: Record<string, Array<() => Recorder | null>> = {
   darwin: [
     () =>
@@ -80,7 +110,46 @@ const RECORDERS: Record<string, Array<() => Recorder | null>> = {
       which("sox")
         ? { cmd: "sox", pipeArgs: () => ["-d", "-r", "16000", "-c", "1", "-b", "16", "-t", "raw", "-"] }
         : null,
+    () => {
+      if (!which("ffmpeg")) return null
+      // Resolve the default audio input device via PowerShell so ffmpeg
+      // targets the correct DirectShow device on modern Windows where sox
+      // cannot find a default recording device (issue #2136).
+      const device = cachedWin32Device
+      if (device === null) return null // already tried and failed
+      if (device !== undefined) {
+        // Use cached device name
+        return {
+          cmd: "ffmpeg",
+          pipeArgs: () => [
+            "-hide_banner", "-loglevel", "error",
+            "-f", "dshow", "-i", `audio=${device}`,
+            "-f", "s16le", "-ar", "16000", "-ac", "1", "-",
+          ],
+        }
+      }
+      // Device not yet detected — attempt async detection.
+      // Return null for now; detectRecorderAsync will retry.
+      return null
+    },
   ],
+}
+
+async function detectRecorderAsync(): Promise<Recorder | null> {
+  if (process.platform !== "win32") return null
+  if (!which("ffmpeg")) return null
+  const device = await detectWin32Device()
+  if (!device) return null
+  const recorder: Recorder = {
+    cmd: "ffmpeg",
+    pipeArgs: () => [
+      "-hide_banner", "-loglevel", "error",
+      "-f", "dshow", "-i", `audio=${device}`,
+      "-f", "s16le", "-ar", "16000", "-ac", "1", "-",
+    ],
+  }
+  cachedRecorder = recorder
+  return recorder
 }
 
 let cachedRecorder: Recorder | null | undefined
@@ -99,8 +168,11 @@ function detectRecorder(): Recorder | null {
   return null
 }
 
-export function isAvailable(): boolean {
-  return detectRecorder() !== null
+export async function isAvailable(): Promise<boolean> {
+  if (detectRecorder() !== null) return true
+  // On Windows, try async ffmpeg detection (needs PowerShell device query)
+  const asyncRecorder = await detectRecorderAsync()
+  return asyncRecorder !== null
 }
 
 export type StreamingHandle = {
@@ -111,12 +183,13 @@ export type StreamingHandle = {
   reading: Promise<void>
 }
 
-export function startStreaming(opts: {
+export async function startStreaming(opts: {
   onSegment: (segment: VADSegment) => void
   onActiveChange?: (active: boolean) => void
   onError?: (err: Error) => void
-}): StreamingHandle | null {
-  const recorder = detectRecorder()
+}): Promise<StreamingHandle | null> {
+  let recorder = detectRecorder()
+  if (!recorder) recorder = await detectRecorderAsync()
   if (!recorder) return null
 
   log.info("recording started", { recorder: recorder.cmd })

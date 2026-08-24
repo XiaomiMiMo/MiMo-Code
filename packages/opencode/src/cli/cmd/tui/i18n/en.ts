@@ -516,7 +516,7 @@ export const dict: Record<string, string> = {
   "tui.voice.error.no_url": "Provider \"{{provider}}\" has no baseURL configured — set options.baseURL in the provider config",
   "tui.voice.error.no_device": "No microphone/audio device found — please check your system audio settings",
   "tui.voice.error.recorder_failed": "Recording failed",
-  "tui.voice.error.no_recorder": "No recording tool found, please install sox",
+  "tui.voice.error.no_recorder": "No recording tool found — install sox or ffmpeg",
   "tui.voice.error.too_short": "Recording too short",
   "tui.voice.error.network": "Transcription failed, please check your network",
   "tui.voice.error.empty_send": "Nothing to send",

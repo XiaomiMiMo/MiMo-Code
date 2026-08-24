@@ -255,7 +255,7 @@ export function Prompt(props: PromptProps) {
       toast.show({ message: msg, variant: "error" })
       return
     }
-    if (!Voice.isAvailable()) {
+    if (!(await Voice.isAvailable())) {
       toast.show({ message: t("tui.voice.error.no_recorder"), variant: "error" })
       return
     }
@@ -274,7 +274,7 @@ export function Prompt(props: PromptProps) {
 
     let voiceControlChain: Promise<void> = Promise.resolve()
 
-    const handle = Voice.startStreaming({
+    const handle = await Voice.startStreaming({
       onSegment: (segment) => {
         av.pending++
         av.setState("processing")
