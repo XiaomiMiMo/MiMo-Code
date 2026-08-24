@@ -4,8 +4,10 @@ import path from "path"
 import fs from "fs"
 import { execFile } from "child_process"
 import { promisify } from "util"
+import { Log } from "@/util"
 
 const execFileAsync = promisify(execFile)
+const log = Log.create({ service: "conflict-detection" })
 
 export interface ConflictResult {
   hasConflict: boolean
@@ -18,21 +20,25 @@ export interface ConflictResult {
  * Handles both main worktrees (.git is a directory) and linked worktrees (.git is a file).
  */
 function resolveGitDir(directory: string): string | null {
-  let dir = path.resolve(directory)
-  while (true) {
-    const dotGit = path.join(dir, ".git")
-    if (fs.existsSync(dotGit)) {
-      const stat = fs.statSync(dotGit)
-      if (stat.isDirectory()) return dotGit
-      const content = fs.readFileSync(dotGit, "utf-8").trim()
-      const match = content.match(/^gitdir:\s*(.+)$/)
-      if (!match) return null
-      const gitDir = path.resolve(path.dirname(dotGit), match[1].trim())
-      return fs.existsSync(gitDir) ? gitDir : null
+  try {
+    let dir = path.resolve(directory)
+    while (true) {
+      const dotGit = path.join(dir, ".git")
+      if (fs.existsSync(dotGit)) {
+        const stat = fs.statSync(dotGit)
+        if (stat.isDirectory()) return dotGit
+        const content = fs.readFileSync(dotGit, "utf-8").trim()
+        const match = content.match(/^gitdir:\s*(.+)$/)
+        if (!match) return null
+        const gitDir = path.resolve(path.dirname(dotGit), match[1].trim())
+        return fs.existsSync(gitDir) ? gitDir : null
+      }
+      const parent = path.dirname(dir)
+      if (parent === dir) return null
+      dir = parent
     }
-    const parent = path.dirname(dir)
-    if (parent === dir) return null
-    dir = parent
+  } catch {
+    return null
   }
 }
 
@@ -71,26 +77,25 @@ async function hasExternalAgentProcess(directory: string): Promise<boolean> {
   // Only include tools with known CLI binaries (not VSCode extensions like Cline).
   const agentPatterns = ["claude", "codex", "cursor"]
 
-  if (process.platform === "win32") {
-    // Windows: wmic lists all processes, match by name
-    const { stdout } = await execFileAsync("wmic", ["process", "get", "Name", "/FORMAT:LIST"], { timeout: 10000 })
-    return agentPatterns.some((p) => stdout.toLowerCase().includes(p))
-  }
-
-  // Linux/macOS: lsof finds processes with open files in directory, then check command name
-  const { stdout } = await execFileAsync("lsof", ["-t", "+D", directory], { timeout: 10000 })
-  const pids = stdout.trim().split("\n").filter(Boolean)
-
-  for (const pid of pids) {
-    try {
-      const { stdout: cmd } = await execFileAsync("ps", ["-p", pid, "-o", "comm="], { timeout: 3000 })
-      if (agentPatterns.some((p) => cmd.trim().toLowerCase().includes(p))) return true
-    } catch {
-      // Process may have exited between lsof and ps - skip
+  try {
+    if (process.platform === "win32") {
+      const { stdout } = await execFileAsync("wmic", ["process", "get", "Name", "/FORMAT:LIST"], { timeout: 10000 })
+      return agentPatterns.some((p) => stdout.toLowerCase().includes(p))
     }
-  }
 
-  return false
+    const { stdout } = await execFileAsync("lsof", ["-t", "+D", directory], { timeout: 10000 })
+    const pids = stdout.trim().split("\n").filter(Boolean)
+    if (pids.length === 0) return false
+
+    // Batch: single ps call for all PIDs instead of one-per-PID
+    const { stdout: cmdOutput } = await execFileAsync("ps", ["-o", "comm=", "-p", pids.join(",")], { timeout: 5000 })
+    const cmds = cmdOutput.toLowerCase()
+    return agentPatterns.some((p) => cmds.includes(p))
+  } catch (err) {
+    // Fail-open: lsof/wmic/ps unavailable (Alpine, Windows 24H2+, timeout) → no conflict detected
+    log.debug("external process check failed", { error: String(err) })
+    return false
+  }
 }
 
 /**
