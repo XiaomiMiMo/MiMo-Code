@@ -5,6 +5,10 @@ import { type Config } from "./gen/client/types.gen.js"
 import { OpencodeClient } from "./gen/sdk.gen.js"
 export { type Config as OpencodeClientConfig, OpencodeClient }
 
+export function genTitle(client: OpencodeClient, input: { text: string; locale?: string }) {
+  return client.experimental.title.generate(input)
+}
+
 function pick(value: string | null, fallback?: string, encode?: (value: string) => string) {
   if (!value) return
   if (!fallback) return value

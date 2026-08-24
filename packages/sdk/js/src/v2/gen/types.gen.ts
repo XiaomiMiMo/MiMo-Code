@@ -7447,3 +7447,12 @@ export type FormatterStatusResponses = {
 }
 
 export type FormatterStatusResponse = FormatterStatusResponses[keyof FormatterStatusResponses]
+
+export type ExperimentalTitleGenerateResponses = {
+  200: {
+    title: string
+    status: "generated" | "fallback" | "untitled"
+  }
+}
+
+export type ExperimentalTitleGenerateResponse = ExperimentalTitleGenerateResponses[keyof ExperimentalTitleGenerateResponses]

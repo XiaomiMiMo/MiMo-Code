@@ -9,6 +9,7 @@ import { Instance } from "@/project/instance"
 import { Project } from "@/project"
 import { MCP } from "@/mcp"
 import { Session } from "@/session"
+import { SessionPrompt } from "@/session/prompt"
 import { Config } from "@/config"
 import { ConsoleState } from "@/config/console-state"
 import { Account } from "@/account/account"
@@ -36,6 +37,9 @@ const ConsoleSwitchBody = z.object({
   accountID: z.string(),
   orgID: z.string(),
 })
+
+const GenTitleBody = z.object({ text: z.string().min(1).max(20_000), locale: z.string().optional() })
+const GenTitleResult = z.object({ title: z.string(), status: z.enum(["generated", "fallback", "untitled"]) })
 
 export const ExperimentalRoutes = lazy(() =>
   new Hono()
@@ -343,6 +347,18 @@ export const ExperimentalRoutes = lazy(() =>
           if (!conflict.hasConflict) return null
           return yield* (yield* Worktree.Service).create()
         }),
+    )
+    .post("/title", describeRoute({
+      summary: "Generate conversation title",
+      description: "Generate a short conversation title with the configured lite model and deterministic fallback.",
+      operationId: "experimental.title.generate",
+      responses: { 200: { description: "Generated conversation title", content: { "application/json": { schema: resolver(GenTitleResult) } } }, ...errors(400) },
+    }), validator("json", GenTitleBody), async (c) =>
+      jsonRequest("ExperimentalRoutes.title.generate", c, function* () {
+        const body = c.req.valid("json")
+        const prompt = yield* SessionPrompt.Service
+        return yield* prompt.genTitle(body)
+      }),
     )
     .get(
       "/session",

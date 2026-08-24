@@ -407,6 +407,7 @@ export interface Interface {
   readonly touch: (sessionID: SessionID) => Effect.Effect<void>
   readonly get: (id: SessionID) => Effect.Effect<Info>
   readonly setTitle: (input: { sessionID: SessionID; title: string }) => Effect.Effect<void>
+  readonly setTitleIfDefault: (input: { sessionID: SessionID; title: string }) => Effect.Effect<boolean>
   readonly setArchived: (input: { sessionID: SessionID; time?: number }) => Effect.Effect<void>
   readonly setPermission: (input: { sessionID: SessionID; permission: Permission.Ruleset }) => Effect.Effect<void>
   readonly resolvePrompt: (input: {
@@ -731,7 +732,18 @@ export const layer: Layer.Layer<Service, never, Bus.Service | Storage.Service | 
     })
 
     const setTitle = Effect.fn("Session.setTitle")(function* (input: { sessionID: SessionID; title: string }) {
-      yield* patch(input.sessionID, { title: input.title })
+      yield* promptLock(input.sessionID).withPermits(1)(patch(input.sessionID, { title: input.title }))
+    })
+
+    const setTitleIfDefault = Effect.fn("Session.setTitleIfDefault")(function* (input: { sessionID: SessionID; title: string }) {
+      return yield* promptLock(input.sessionID).withPermits(1)(
+        Effect.gen(function* () {
+          const current = yield* get(input.sessionID)
+          if (!isDefaultTitle(current.title)) return false
+          yield* patch(input.sessionID, { title: input.title })
+          return true
+        }),
+      )
     })
 
     const setArchived = Effect.fn("Session.setArchived")(function* (input: { sessionID: SessionID; time?: number }) {
@@ -896,6 +908,7 @@ export const layer: Layer.Layer<Service, never, Bus.Service | Storage.Service | 
       touch,
       get,
       setTitle,
+      setTitleIfDefault,
       setArchived,
       setPermission,
       resolvePrompt,
