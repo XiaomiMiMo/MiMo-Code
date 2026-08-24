@@ -4133,7 +4133,18 @@ NOTE: At any point in time through this workflow you should feel free to ask the
             if (isFirstAssistantTurn && isMainWorktree) {
               const conflict = (yield* Effect.promise(() => checkConflict(directory, sessionID))) as ConflictResult
               if (conflict.hasConflict) {
-                additions.push(`\n⚠️ Auto-Worktree Notice\n\nThis session is running in the main worktree. If you need to write or edit files, consider creating an isolated worktree first:\n\n- Create a worktree: use the \`worktree\` tool or run \`git worktree add <path> -b <branch>\`\n- Base branch: consider fetching latest origin/main first, then branch from main\n- Worktree path convention: <data>/worktree/<project-id>/<name> (managed by MiMo)\n\nConflict detected: ${conflict.reason}${conflict.activeSessionId ? ` (session: ${conflict.activeSessionId})` : ""}\n\nIf this task is a simple fix, Q&A, or read-only operation, you can skip this notice and continue.`)
+                additions.push(`
+⚠️ Auto-Worktree Notice
+
+This session is running in the main worktree. If you need to write or edit files, consider creating an isolated worktree first:
+
+- Create a worktree: run \`git worktree add <path> -b <branch>\`
+- Base branch: consider fetching latest origin/main first, then branch from main
+- Worktree path convention: <data>/worktree/<project-id>/<name> (managed by MiMo)
+
+Conflict detected: ${conflict.reason}${conflict.activeSessionId ? ` (session: ${conflict.activeSessionId})` : ""}
+
+If this task is a simple fix, Q&A, or read-only operation, you can skip this notice and continue.`)
               }
             }
             // Note: `buildLLMRequestPrefix` also returns a `tools` field, but we

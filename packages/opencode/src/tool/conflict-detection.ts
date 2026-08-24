@@ -55,7 +55,8 @@ function hasGitLock(directory: string): boolean {
 }
 
 async function hasExternalAgentProcess(directory: string): Promise<boolean> {
-  const agentPatterns = ["claude", "kilocode", "cline", "codex", "cursor", "omp", "openclaw", "pi", "zcode"]
+  // Use longer patterns to avoid false positives (e.g. "pi" matches picom/pipewire)
+  const agentPatterns = ["claude", "kilocode", "cline-bot", "codex", "cursor", "omp.sh", "openclaw", "pi.dev", "zcode"]
   try {
     if (process.platform === "win32") {
       const { stdout } = await execFileAsync("wmic", ["process", "get", "Name", "/FORMAT:LIST"], { timeout: 10000 })
