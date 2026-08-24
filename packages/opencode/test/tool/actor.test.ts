@@ -23,12 +23,126 @@ import type { SpawnInput, AgentOutcome } from "../../src/actor/spawn"
 import { Team } from "../../src/team"
 import { Truncate } from "../../src/tool"
 import { ToolRegistry } from "../../src/tool"
+import { RecoverableError } from "../../src/tool/recoverable"
 import { provideTmpdirInstance } from "../fixture/fixture"
 import { testEffect } from "../lib/effect"
 
 let prevSpawnRef: typeof spawnRef.current
 beforeAll(() => {
   prevSpawnRef = spawnRef.current
+})
+
+describe("Actor tool fromExec guard", () => {
+  it.live("subagent calling spawn via exec receives RecoverableError", () =>
+    provideTmpdirInstance(() =>
+      Effect.gen(function* () {
+        yield* installMockSpawn()
+        const { chat, assistant } = yield* seed()
+        const tool = yield* ActorTool
+        const def = yield* tool.init()
+
+        const exit = yield* Effect.exit(def.execute(
+          {
+            operation: {
+              action: "spawn",
+              description: "nested spawn attempt",
+              prompt: "should be blocked",
+              subagent_type: "general",
+            },
+          },
+          {
+            sessionID: chat.id,
+            messageID: assistant.id,
+            agent: "general",
+            abort: new AbortController().signal,
+            extra: { fromExec: true },
+            messages: [],
+            metadata: () => Effect.void,
+            ask: () => Effect.void,
+          },
+        ))
+
+        expect(exit._tag).toBe("Failure")
+        if (exit._tag === "Failure") {
+          const causeStr = String(exit.cause)
+          expect(causeStr).toContain("Subagents can only use actor send")
+        }
+      }),
+    ),
+  )
+
+  it.live("subagent calling send via exec is allowed", () =>
+    provideTmpdirInstance(() =>
+      Effect.gen(function* () {
+        const { chat, assistant } = yield* seed()
+        const tool = yield* ActorTool
+        const def = yield* tool.init()
+
+        const exit = yield* Effect.exit(def.execute(
+          {
+            operation: {
+              action: "send",
+              to_actor_id: "ses_nonexistent",
+              content: "hello",
+            },
+          },
+          {
+            sessionID: chat.id,
+            messageID: assistant.id,
+            agent: "general",
+            abort: new AbortController().signal,
+            extra: { fromExec: true },
+            messages: [],
+            metadata: () => Effect.void,
+            ask: () => Effect.void,
+          },
+        ))
+
+        // send is not blocked by the fromExec guard — it reaches the inbox service
+        // (which is not set up in this test, so we get an inbox error, not a guard error)
+        expect(exit._tag).toBe("Failure")
+        if (exit._tag === "Failure") {
+          const causeStr = String(exit.cause)
+          expect(causeStr).toContain("Inbox service unavailable")
+          expect(causeStr).not.toContain("Subagents can only use actor send")
+        }
+      }),
+    ),
+  )
+
+  it.live("primary agent calling spawn via exec is not blocked", () =>
+    provideTmpdirInstance(() =>
+      Effect.gen(function* () {
+        yield* installMockSpawn()
+        const { chat, assistant } = yield* seed()
+        const tool = yield* ActorTool
+        const def = yield* tool.init()
+
+        const result = yield* def.execute(
+          {
+            operation: {
+              action: "spawn",
+              description: "legitimate spawn",
+              prompt: "go do something",
+              subagent_type: "general",
+            },
+          },
+          {
+            sessionID: chat.id,
+            messageID: assistant.id,
+            agent: "build",
+            abort: new AbortController().signal,
+            extra: { fromExec: true },
+            messages: [],
+            metadata: () => Effect.void,
+            ask: () => Effect.void,
+          },
+        )
+
+        expect(result.metadata.sessionId).toBe(chat.id)
+      }),
+    ),
+  )
 })
 
 afterEach(async () => {

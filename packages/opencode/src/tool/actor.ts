@@ -524,6 +524,21 @@ export const ActorTool = Tool.define(
         const op = input.operation
         const cfg = yield* config.get()
 
+        // When called through exec, subagents may only use `send` to communicate
+        // with the parent. All other actions (spawn, run, cancel, status, wait,
+        // models) are restricted to primary agents. Peer actors have a primary
+        // agent type so they are unaffected by this guard.
+        if (ctx.extra?.fromExec) {
+          const caller = yield* agent.get(ctx.agent)
+          if (caller?.mode === "subagent" && op.action !== "send") {
+            return yield* Effect.fail(
+              new RecoverableError(
+                `Subagents can only use actor send to communicate with the parent agent. You are running as "${caller.name}"; use actor send with to_actor_id="main" to report progress or findings.`,
+              ),
+            )
+          }
+        }
+
         // Helper: "actor belongs to another session OR doesn't exist" response.
         // Same response for both cases — don't leak the difference (POSIX: you can
         // only reap your own children).

@@ -788,6 +788,7 @@ export const ToolScriptTool = Tool.define(
             publishProgress({ immediate: subParts.length === 1 })
             const subCtx = {
               ...ctx,
+              extra: { ...ctx.extra, fromExec: true },
               callID,
               // Capture nested metadata in its own record. Forwarding it to the
               // outer context would replace exec's title and lose sibling calls.

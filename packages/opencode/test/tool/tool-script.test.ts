@@ -938,6 +938,26 @@ return r.output;`,
     expect(result.metadata.status).toBe("completed")
     expect(result.output).toContain("navigated: https://example.com")
   })
+
+  test("sets fromExec flag in subCtx so downstream tools can detect exec origin", async () => {
+    let capturedExtra: Record<string, unknown> | undefined
+    const probeDef: Tool.Def = {
+      id: "probe",
+      description: "fake probe",
+      parameters: z.object({}),
+      execute: (_args: any, ctx: any) => {
+        capturedExtra = ctx.extra
+        return Effect.succeed({ title: "probe", output: "ok", metadata: {} })
+      },
+    }
+    const result = await runToolScript(
+      `return await tools.probe({})`,
+      [probeDef],
+    )
+    expect(result.metadata.status).toBe("completed")
+    expect(capturedExtra).toBeDefined()
+    expect(capturedExtra!.fromExec).toBe(true)
+  })
 })
 
 describe("renderToolScriptDeclarations", () => {

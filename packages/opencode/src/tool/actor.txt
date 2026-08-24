@@ -1,5 +1,10 @@
 Launch a new actor (subagent) to handle complex, multi-step tasks autonomously.
 
+**Subagent restriction:** When you are running as a subagent, you can ONLY use
+`actor send` to communicate with the parent agent. Other actions (spawn, run,
+cancel, etc.) are restricted to primary agents. Use `actor send` with
+to_actor_id="main" to report progress, findings, or blockers to the parent.
+
 JSON calls wrap the action payload inside an `operation` object; `action` is the discriminator field.
 
 **`spawn` is the DEFAULT.** It launches the subagent in the BACKGROUND and returns

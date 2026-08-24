@@ -1,5 +1,10 @@
 Launch a subagent for complex multi-step tasks autonomously.
 
+Subagent restriction: when running as a subagent, you can ONLY use
+`actor send` to communicate with the parent. All other actions (spawn, run,
+cancel, status, wait, models) are restricted to primary agents. Use
+`actor send main "..."` to report progress or findings.
+
 `actor spawn` is THE DEFAULT: it returns an actor_id immediately, so subagents run in
 PARALLEL in the background and you keep responding to the user. `actor run` BLOCKS the
 whole conversation until the subagent finishes and is a rare exception.
