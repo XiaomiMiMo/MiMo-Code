@@ -43,7 +43,6 @@ export const SessionTable = sqliteTable(
     time_compacting: integer(),
     time_archived: integer(),
     last_checkpoint_message_id: text().$type<MessageID>(),
-    auto_worktree_hint_sent: integer().$default(() => 0),
   },
   (table) => [
     index("session_project_idx").on(table.project_id),

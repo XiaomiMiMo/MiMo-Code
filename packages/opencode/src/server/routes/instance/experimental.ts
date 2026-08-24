@@ -337,7 +337,7 @@ export const ExperimentalRoutes = lazy(() =>
       }),
       async (c) =>
         jsonRequest("ExperimentalRoutes.worktree.auto", c, function* () {
-          const conflict = (yield* Effect.promise(() => checkConflict(Instance.directory))) as ConflictResult
+          const conflict = (yield* Effect.promise(() => checkConflict(Instance.directory, undefined))) as ConflictResult
           if (!conflict.hasConflict) return null
           return yield* (yield* Worktree.Service).create()
         }),

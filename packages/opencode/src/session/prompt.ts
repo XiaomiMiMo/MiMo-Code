@@ -99,6 +99,7 @@ import { Process } from "@/util"
 import { Cause, Effect, Exit, Layer, Option, Scope, Context } from "effect"
 import { EffectLogger } from "@/effect"
 import { InstanceState } from "@/effect"
+import { Instance } from "@/project/instance"
 import { ActorTool, type ActorPromptOps } from "@/tool/actor"
 import { SessionRunState } from "./run-state"
 import { Goal } from "./goal"
@@ -4124,13 +4125,13 @@ NOTE: At any point in time through this workflow you should feel free to ask the
               ...(Flag.MIMOCODE_ENABLE_DYNAMIC_SYSTEM_PROMPT ? [...env, ...instructions.content] : []),
               ...(format.type === "json_schema" ? [STRUCTURED_OUTPUT_SYSTEM_PROMPT] : []),
             ]
-            // Auto-worktree: inject hint if session has no messages yet (truly first turn)
-            // and conflict detected. Uses message count instead of isFirstTurn to survive
-            // compaction/rebuild which may reconstruct msgs without assistant messages.
-            const hasNoMessages = msgs.length === 0
-            if (hasNoMessages) {
-              const directory = yield* InstanceState.directory
-              const conflict = (yield* Effect.promise(() => checkConflict(directory))) as ConflictResult
+            // Auto-worktree: inject hint on first assistant-less turn if conflict detected.
+            // Checks for no assistant messages (survives compaction/rebuild) + in main worktree.
+            const isFirstAssistantTurn = !msgs.some((m) => m.info.role === "assistant")
+            const directory = yield* InstanceState.directory
+            const isMainWorktree = directory === Instance.worktree
+            if (isFirstAssistantTurn && isMainWorktree) {
+              const conflict = (yield* Effect.promise(() => checkConflict(directory, sessionID))) as ConflictResult
               if (conflict.hasConflict) {
                 additions.push(`\n⚠️ Auto-Worktree Notice\n\nThis session is running in the main worktree. If you need to write or edit files, consider creating an isolated worktree first:\n\n- Create a worktree: use the \`worktree\` tool or run \`git worktree add <path> -b <branch>\`\n- Base branch: consider fetching latest origin/main first, then branch from main\n- Worktree path convention: <data>/worktree/<project-id>/<name> (managed by MiMo)\n\nConflict detected: ${conflict.reason}${conflict.activeSessionId ? ` (session: ${conflict.activeSessionId})` : ""}\n\nIf this task is a simple fix, Q&A, or read-only operation, you can skip this notice and continue.`)
               }
