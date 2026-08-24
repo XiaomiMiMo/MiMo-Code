@@ -30,6 +30,7 @@ const MAX_RESULT_BYTES = 256 * 1024
 const MAX_LOG_BYTES = 64 * 1024
 const MAX_CODE_BYTES = 128 * 1024
 const MAX_FILE_BYTES = 10 * 1024 * 1024
+const EXEC_PROGRESS_DEBOUNCE_MS = 150
 const TRACE_TAIL_ENTRIES = 20
 const EXEC_COMMAND_DEFAULT_YIELD_TIME_MS = 10_000
 const EXEC_COMMAND_DEFAULT_MAX_OUTPUT_TOKENS = 10_000
@@ -485,7 +486,12 @@ export const ToolScriptTool = Tool.define(
           const trace: TraceEntry[] = []
           const subParts: ExecSubPartSnapshot[] = []
           const subPartByCallID = new Map<string, ExecSubPartSnapshot>()
-          const progress = { pending: Promise.resolve() }
+          const progress: {
+            pending: Promise<void>
+            timer?: ReturnType<typeof setTimeout>
+            dirty: boolean
+            closed: boolean
+          } = { pending: Promise.resolve(), dirty: false, closed: false }
           const snapshotSubParts = () =>
             subParts.map((part) => ({
               ...part,
@@ -639,7 +645,9 @@ export const ToolScriptTool = Tool.define(
           // display tail through the OUTER part's metadata. Nested records are
           // complete because actor references can arrive before the call settles.
           // Fire-and-forget — progress must never fail a call.
-          const publishProgress = () => {
+          const enqueueProgress = () => {
+            if (progress.closed || !progress.dirty) return
+            progress.dirty = false
             const metadata = {
               running: true,
               toolCalls: subParts.length,
@@ -652,7 +660,52 @@ export const ToolScriptTool = Tool.define(
               .then(() => bridge.promise(ctx.metadata({ metadata })))
               .catch(() => {})
           }
-          const flushProgress = () => Effect.promise(() => progress.pending)
+          const publishProgress = (options?: { immediate?: boolean }) => {
+            if (progress.closed) return
+            progress.dirty = true
+            if (options?.immediate) {
+              if (progress.timer) {
+                clearTimeout(progress.timer)
+                progress.timer = undefined
+              }
+              enqueueProgress()
+              return
+            }
+            if (progress.timer) clearTimeout(progress.timer)
+            progress.timer = setTimeout(() => {
+              progress.timer = undefined
+              enqueueProgress()
+            }, EXEC_PROGRESS_DEBOUNCE_MS)
+          }
+          const flushProgress = () =>
+            Effect.promise(async () => {
+              if (progress.timer) {
+                clearTimeout(progress.timer)
+                progress.timer = undefined
+              }
+              closeProgress()
+              enqueueProgress()
+              progress.closed = true
+              await progress.pending
+            })
+          const closeProgress = () => {
+            if (progress.closed) return
+            if (progress.timer) {
+              clearTimeout(progress.timer)
+              progress.timer = undefined
+            }
+            for (const part of subParts) {
+              if (part.state.status !== "running") continue
+              part.state = {
+                status: "error",
+                input: part.state.input,
+                error: "exec terminated before nested tool completed",
+                ...(part.state.metadata ? { metadata: part.state.metadata } : {}),
+                time: { ...part.state.time, end: Date.now() },
+              }
+            }
+            progress.dirty = true
+          }
 
           const callTool: HostFn = (name: unknown, args: unknown) => {
             const id = String(name)
@@ -681,7 +734,7 @@ export const ToolScriptTool = Tool.define(
             }
             subParts.push(subPart)
             subPartByCallID.set(callID, subPart)
-            publishProgress()
+            publishProgress({ immediate: subParts.length === 1 })
             const subCtx = {
               ...ctx,
               callID,
@@ -766,6 +819,12 @@ export const ToolScriptTool = Tool.define(
                 .promise(executeBuiltin)
                 .then(
                   (result) => {
+                    if (progress.closed || subPart.state.status !== "running")
+                      return {
+                        title: result.title,
+                        output: result.output,
+                        metadata: result.metadata,
+                      }
                     const durationMs = Date.now() - start
                     subPart.state = {
                       status: "completed",
@@ -789,6 +848,7 @@ export const ToolScriptTool = Tool.define(
                     }
                   },
                   (err) => {
+                    if (progress.closed || subPart.state.status !== "running") throw err
                     const message = err instanceof Error ? err.message : String(err)
                     const durationMs = Date.now() - start
                     const toolResultMetadata = getToolResultMetadata(err)

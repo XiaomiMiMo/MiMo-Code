@@ -319,6 +319,53 @@ describe("exec", () => {
     expect(viewExecSubtools(result.metadata)[0]?.state.status).toBe("completed")
   })
 
+  test("coalesces live metadata and flushes the latest snapshot at exec terminal", async () => {
+    const parameters = z.object({ value: z.string() })
+    const noisy: Tool.Def<typeof parameters> = {
+      id: "noisy",
+      description: "fake noisy tool",
+      parameters,
+      execute: (_args, ctx) =>
+        Effect.gen(function* () {
+          yield* ctx.metadata({ metadata: { phase: "one" } })
+          yield* ctx.metadata({ metadata: { phase: "two" } })
+          yield* ctx.metadata({ metadata: { phase: "three" } })
+          return { title: "Noisy", output: "done", metadata: { phase: "done" } }
+        }),
+    }
+    const live: ExecSubPartSnapshot[] = []
+    const result = await runToolScript(`return await tools.noisy({ value: "x" })`, [noisy], undefined, {
+      onMetadata: (metadata) => {
+        const part = viewExecSubtools(metadata)[0]
+        if (part) live.push(part)
+      },
+    })
+
+    expect(live).toHaveLength(2)
+    expect(live[0]?.state.status).toBe("running")
+    expect(live[1]?.state.status).toBe("completed")
+    expect(live[1]?.state.metadata).toEqual({ phase: "done" })
+    expect(viewExecSubtools(result.metadata)[0]?.state.status).toBe("completed")
+  })
+
+  test("does not persist a running nested part when exec terminates early", async () => {
+    const slow = fakeDef("slow", async () => {
+      await new Promise((resolve) => setTimeout(resolve, 100))
+      return "late"
+    })
+    const boom = fakeDef("boom", async () => {
+      throw new Error("kapow")
+    })
+    const result = await runToolScript(
+      `await Promise.all([tools.slow({}), tools.boom({})]); return "unreachable"`,
+      [slow, boom],
+    )
+    const parts = viewExecSubtools(result.metadata)
+    expect(result.metadata.status).toBe("code_error")
+    expect(parts).toHaveLength(2)
+    expect(parts.every((part) => part.state.status !== "running")).toBe(true)
+  })
+
   test("accepts TypeScript syntax (types stripped by transpiler)", async () => {
     const result = await runToolScript(
       `
