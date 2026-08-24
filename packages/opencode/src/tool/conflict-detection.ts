@@ -78,6 +78,8 @@ async function hasExternalAgentProcess(directory: string): Promise<boolean> {
 }
 
 export async function checkConflict(directory: string, newSessionId?: string): Promise<ConflictResult> {
+  // Quick exit: not a git repo → no conflict possible
+  if (!resolveGitDir(directory)) return { hasConflict: false, reason: null }
   const activeSessionId = hasActiveSessionsInDirectory(directory, newSessionId)
   if (activeSessionId) return { hasConflict: true, reason: "active-session", activeSessionId }
   if (hasGitLock(directory)) return { hasConflict: true, reason: "git-lock" }
