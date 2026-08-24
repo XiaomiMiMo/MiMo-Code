@@ -245,6 +245,7 @@ export type StreamInput = {
   small?: boolean
   tools: Record<string, Tool>
   activeTools?: string[]
+  retries?: number
   toolChoice?: "auto" | "required" | "none"
   agentID?: string
   mergeTurnContextIntoLastUser?: boolean
@@ -773,7 +774,7 @@ const live: Layer.Layer<
         },
         // Keep one SDK-level retry for a failure before response headers. The
         // processor owns the persistent stream retry budget below this layer.
-        maxRetries: 0,
+        maxRetries: input.retries ?? 0,
         messages,
         model: wrapLanguageModel({
           model: language,

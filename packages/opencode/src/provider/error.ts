@@ -250,7 +250,7 @@ export function parseStreamError(input: unknown): ParsedStreamError | undefined 
   const responseBody = JSON.stringify(body)
   if (body.type !== "error") return
 
-  switch (body?.error?.code ?? body?.error?.type) {
+  switch (body?.error?.code || body?.error?.type) {
     case "overloaded_error":
     case "server_is_overloaded":
     case "server_error":

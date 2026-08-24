@@ -79,7 +79,8 @@ function isAuthenticationFailure(error: APIError): boolean {
   if (error.data.statusCode !== 403) return false
   const body = error.data.responseBody?.toLowerCase() ?? ""
   const message = error.data.message.toLowerCase()
-  return /(?:invalid|expired|missing|malformed).*(?:api[ _-]?key|token|credential)|(?:api[ _-]?key|token|credential).*(?:invalid|expired|missing|malformed)|authentication|unauthorized/.test(`${message} ${body}`)
+  const text = `${message} ${body}`
+  return /(?:invalid|expired|missing|malformed)\s*(?:api[ _-]?key|token|credential)|(?:api[ _-]?key|token|credential)\s*(?:invalid|expired|missing|malformed)|\b(?:authentication|authorization)\s+(?:failed|required|invalid|missing)|\binvalid credentials?\b|\baccess denied\b/.test(text)
 }
 
 export function isAuthError(error: unknown): boolean {

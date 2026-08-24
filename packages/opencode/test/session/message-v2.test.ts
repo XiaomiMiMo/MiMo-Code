@@ -1516,6 +1516,18 @@ describe("session.message-v2.fromError", () => {
     expect(MessageV2.isAuthError(error)).toBe(true)
   })
 
+  test("does not treat an unrelated unauthorized word as authentication", () => {
+    const error = new MessageV2.APIError({ message: "CORS unauthorized origin", statusCode: 403, isRetryable: false }).toObject()
+    expect(MessageV2.isAuthError(error)).toBe(false)
+  })
+
+  test("recognizes explicit authorization-required and access-denied responses", () => {
+    for (const message of ["Authorization required", "Access denied"]) {
+      const error = new MessageV2.APIError({ message, statusCode: 403, isRetryable: false }).toObject()
+      expect(MessageV2.isAuthError(error)).toBe(true)
+    }
+  })
+
   test("does not crash on a RetryError without an errors array", () => {
     const error = new RetryError({ message: "retry failed", reason: "maxRetriesExceeded", errors: [] })
     ;(error as any).errors = undefined
