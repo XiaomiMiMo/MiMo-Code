@@ -3,6 +3,7 @@ import { SessionTable } from "@/session/session.sql"
 import { Global } from "@/global"
 import path from "path"
 import fs from "fs"
+import { execSync } from "child_process"
 
 /**
  * Conflict detection for auto-worktree.
@@ -14,7 +15,7 @@ import fs from "fs"
 
 export interface ConflictResult {
   hasConflict: boolean
-  reason: "active-session" | "uncommitted-changes" | null
+  reason: "active-session" | "uncommitted-changes" | "git-lock" | "external-process" | null
   activeSessionId?: string
 }
 
@@ -56,21 +57,28 @@ function hasActiveSessionsInDirectory(directory: string, excludeSessionId?: stri
 }
 
 /**
+ * Check for git lock files (indicates git operation in progress).
+ */
+function hasGitLock(directory: string): boolean {
+  try {
+    const gitDir = path.join(directory, ".git")
+    if (!fs.existsSync(gitDir)) return false
+    const lockFile = path.join(gitDir, "index.lock")
+    return fs.existsSync(lockFile)
+  } catch {
+    return false
+  }
+}
+
+/**
  * Check if there are uncommitted git changes in the directory.
- * This suggests external agent activity (Claude Code, Cursor, etc.).
+ * This suggests external agent activity.
  */
 function hasUncommittedChanges(directory: string): boolean {
   try {
     const gitDir = path.join(directory, ".git")
     if (!fs.existsSync(gitDir)) return false
     
-    // Check for git lock files (indicates git operation in progress)
-    const lockFile = path.join(gitDir, "index.lock")
-    if (fs.existsSync(lockFile)) return true
-    
-    // Check for uncommitted changes using git status
-    // This is a simplified check - in production, we'd use the git module
-    const { execSync } = require("child_process")
     const status = execSync("git status --porcelain", { 
       cwd: directory, 
       encoding: "utf-8",
@@ -78,6 +86,45 @@ function hasUncommittedChanges(directory: string): boolean {
     }).trim()
     
     return status.length > 0
+  } catch {
+    return false
+  }
+}
+
+/**
+ * Check if known external agent processes are running in the directory.
+ * Detects Claude Code, Cursor, Copilot, and other common AI coding tools.
+ */
+function hasExternalAgentProcess(directory: string): boolean {
+  try {
+    const normalizedDir = path.resolve(directory)
+    
+    // Check for known agent processes
+    const agentPatterns = [
+      "claude",      // Claude Code
+      "cursor",      // Cursor
+      "copilot",     // GitHub Copilot
+      "codeium",     // Codeium
+      "tabnine",     // Tabnine
+      "continue",    // Continue.dev
+      "aider",       // Aider
+      "gpt-engineer", // GPT Engineer
+      "devin",       // Devin
+    ]
+    
+    // Get process list with working directory
+    // This is platform-specific; on macOS/Linux we use ps
+    const psOutput = execSync("ps aux", { encoding: "utf-8", timeout: 5000 })
+    
+    for (const pattern of agentPatterns) {
+      if (psOutput.toLowerCase().includes(pattern)) {
+        // Check if the process is working in our directory
+        // This is a heuristic - we can't perfectly determine the cwd of all processes
+        return true
+      }
+    }
+    
+    return false
   } catch {
     return false
   }
@@ -98,11 +145,27 @@ export function checkConflict(directory: string, newSessionId?: string): Conflic
     }
   }
   
-  // Signal 2: Check for uncommitted changes (external agent)
+  // Signal 2: Check for git lock (git operation in progress)
+  if (hasGitLock(directory)) {
+    return {
+      hasConflict: true,
+      reason: "git-lock",
+    }
+  }
+  
+  // Signal 3: Check for uncommitted changes (external agent)
   if (hasUncommittedChanges(directory)) {
     return {
       hasConflict: true,
       reason: "uncommitted-changes",
+    }
+  }
+  
+  // Signal 4: Check for external agent processes
+  if (hasExternalAgentProcess(directory)) {
+    return {
+      hasConflict: true,
+      reason: "external-process",
     }
   }
   
