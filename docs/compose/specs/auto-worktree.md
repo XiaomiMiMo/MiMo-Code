@@ -49,8 +49,8 @@ topic: auto-worktree
 
 **信号 3：外部 agent 进程**
 - 检查已知 AI 编码工具的进程是否在运行
-- 覆盖（基于 OpenRouter app 排行榜）：Claude Code、Kilo Code、Cline、Codex、Cursor、omp、OpenClaw、pi、ZCode
-- 使用更长的模式匹配避免误报（如 "pi" 匹配 picom/pipewire）
+- 覆盖：Claude Code、Kilo Code、Codex、Cursor（匹配 ps -o comm= 真实命令名）
+- 已排除：Cline（VSCode 扩展，无独立进程）、omp/pi（无已知 CLI 二进制）
 - 实现：`lsof -t +D <directory>` + `ps -p <pid> -o comm=`（Linux/macOS）；`wmic`（Windows）
 
 ### 3.2 自动创建 worktree

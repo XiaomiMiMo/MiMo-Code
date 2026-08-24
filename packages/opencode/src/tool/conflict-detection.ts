@@ -55,8 +55,9 @@ function hasGitLock(directory: string): boolean {
 }
 
 async function hasExternalAgentProcess(directory: string): Promise<boolean> {
-  // Use longer patterns to avoid false positives (e.g. "pi" matches picom/pipewire)
-  const agentPatterns = ["claude", "kilocode", "cline-bot", "codex", "cursor", "omp.sh", "openclaw", "pi.dev", "zcode"]
+  // Patterns must match real command names in ps -o comm= output.
+  // Removed: cline (VSCode extension, no separate process), omp/pi (no known CLI binary).
+  const agentPatterns = ["claude", "kilocode", "codex", "cursor"]
   try {
     if (process.platform === "win32") {
       const { stdout } = await execFileAsync("wmic", ["process", "get", "Name", "/FORMAT:LIST"], { timeout: 10000 })
