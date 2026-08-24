@@ -74,6 +74,7 @@ import { SessionSummary } from "./summary"
 import { NamedError } from "@mimo-ai/shared/util/error"
 import { SessionProcessor } from "./processor"
 import { buildLLMRequestPrefix } from "./llm-request-prefix"
+import { checkConflict, type ConflictResult } from "@/tool/conflict-detection"
 import {
   serializeTrajectoryMessages,
   withAssistantParts,
@@ -4123,6 +4124,15 @@ NOTE: At any point in time through this workflow you should feel free to ask the
               ...(Flag.MIMOCODE_ENABLE_DYNAMIC_SYSTEM_PROMPT ? [...env, ...instructions.content] : []),
               ...(format.type === "json_schema" ? [STRUCTURED_OUTPUT_SYSTEM_PROMPT] : []),
             ]
+            // Auto-worktree: inject hint on first turn if conflict detected
+            const isFirstTurn = !msgs.some((m) => m.info.role === "assistant")
+            if (isFirstTurn) {
+              const directory = yield* InstanceState.directory
+              const conflict = (yield* Effect.promise(() => checkConflict(directory))) as ConflictResult
+              if (conflict.hasConflict) {
+                additions.push(`\n⚠️ Auto-Worktree Notice\n\nThis session is running in the main worktree. If you need to write or edit files, consider creating an isolated worktree first:\n\n- Create a worktree: use the \`worktree\` tool or run \`git worktree add <path> -b <branch>\`\n- Base branch: consider fetching latest origin/main first, then branch from main\n- Worktree path convention: <data>/worktree/<project-id>/<name> (managed by MiMo)\n\nConflict detected: ${conflict.reason}${conflict.activeSessionId ? ` (session: ${conflict.activeSessionId})` : ""}\n\nIf this task is a simple fix, Q&A, or read-only operation, you can skip this notice and continue.`)
+              }
+            }
             // Note: `buildLLMRequestPrefix` also returns a `tools` field, but we
             // intentionally don't use it here — the `tools` variable from `resolveTools`
             // (set earlier via `handle.process({tools: ...})`) carries `execute` closures

@@ -21,7 +21,6 @@ import { assertWriteAllowed, askEditUnlessMemory } from "./external-directory"
 import { assertFileRead } from "./read-state"
 import { AppFileSystem } from "@mimo-ai/shared/filesystem"
 import { Flag } from "@/flag/flag"
-import { injectHint } from "./auto-worktree-hint"
 
 function normalizeLineEndings(text: string): string {
   return text.replaceAll("\r\n", "\n")
@@ -179,8 +178,6 @@ export const EditTool = Tool.define(
           const normalizedFilePath = AppFileSystem.normalizePath(filePath)
           const block = LSP.Diagnostic.report(filePath, diagnostics[normalizedFilePath] ?? [])
           if (block) output += `\n\nLSP errors detected in this file, please fix:\n${block}`
-
-          output += yield* Effect.promise(() => injectHint(ctx.sessionID))
 
           return {
             metadata: {

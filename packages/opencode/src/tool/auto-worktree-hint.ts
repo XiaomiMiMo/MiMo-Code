@@ -7,7 +7,7 @@ const HINT_TEMPLATE = (conflict: ConflictResult) => `
 
 ⚠️ Auto-Worktree Notice
 
-You are writing to the main worktree. Consider creating an isolated worktree for this task:
+This session is running in the main worktree. If you need to write or edit files, consider creating an isolated worktree first:
 
 - Create a worktree: use the \`worktree\` tool or run \`git worktree add <path> -b <branch>\`
 - Base branch: consider fetching latest origin/main first, then branch from main
@@ -15,7 +15,7 @@ You are writing to the main worktree. Consider creating an isolated worktree for
 
 Conflict detected: ${conflict.reason}${conflict.activeSessionId ? ` (session: ${conflict.activeSessionId})` : ""}
 
-If this task is a simple fix or Q&A, you can skip this notice and continue.`
+If this task is a simple fix, Q&A, or read-only operation, you can skip this notice and continue.`
 
 export async function shouldInjectHint(sessionID: string): Promise<boolean> {
   if (hinted.has(sessionID)) return false

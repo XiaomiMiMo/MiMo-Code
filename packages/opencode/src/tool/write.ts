@@ -14,7 +14,6 @@ import { Instance } from "../project/instance"
 import { SessionCwd } from "./session-cwd"
 import { trimDiff } from "./edit"
 import { assertWriteAllowed, askEditUnlessMemory } from "./external-directory"
-import { injectHint } from "./auto-worktree-hint"
 
 const MAX_PROJECT_DIAGNOSTICS_FILES = 5
 
@@ -73,8 +72,6 @@ export const WriteTool = Tool.define(
             projectDiagnosticsCount++
             output += `\n\nLSP errors detected in other files:\n${block}`
           }
-
-          output += yield* Effect.promise(() => injectHint(ctx.sessionID))
 
           return {
             title: path.relative(Instance.worktree, filepath),
