@@ -4124,10 +4124,11 @@ NOTE: At any point in time through this workflow you should feel free to ask the
               ...(Flag.MIMOCODE_ENABLE_DYNAMIC_SYSTEM_PROMPT ? [...env, ...instructions.content] : []),
               ...(format.type === "json_schema" ? [STRUCTURED_OUTPUT_SYSTEM_PROMPT] : []),
             ]
-            // Auto-worktree: inject hint on first turn if conflict detected and session not compacted
-            const isFirstTurn = !msgs.some((m) => m.info.role === "assistant")
-            const hasCompacted = !!session.time.compacting
-            if (isFirstTurn && !hasCompacted) {
+            // Auto-worktree: inject hint if session has no messages yet (truly first turn)
+            // and conflict detected. Uses message count instead of isFirstTurn to survive
+            // compaction/rebuild which may reconstruct msgs without assistant messages.
+            const hasNoMessages = msgs.length === 0
+            if (hasNoMessages) {
               const directory = yield* InstanceState.directory
               const conflict = (yield* Effect.promise(() => checkConflict(directory))) as ConflictResult
               if (conflict.hasConflict) {
