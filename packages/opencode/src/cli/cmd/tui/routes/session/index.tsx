@@ -2397,6 +2397,7 @@ function ExecSubtoolGroup(props: {
   parts: ExecSubPartSnapshot[]
   parent: ToolPart
   message: AssistantMessage
+  clearParentHover: () => void
 }) {
   const { theme } = useTheme()
   return (
@@ -2406,6 +2407,14 @@ function ExecSubtoolGroup(props: {
       borderColor={theme.borderSubtle}
       customBorderChars={SplitBorder.customBorderChars}
       onMouseUp={(event: MouseEvent) => event.stopPropagation()}
+      onMouseOver={(event: MouseEvent) => {
+        event.stopPropagation()
+        props.clearParentHover()
+      }}
+      onMouseOut={(event: MouseEvent) => {
+        event.stopPropagation()
+        props.clearParentHover()
+      }}
     >
       <For each={props.parts}>
         {(part) => <ExecSubtoolRow part={part} parent={props.parent} message={props.message} />}
@@ -2420,6 +2429,7 @@ function ExecSubtoolGroup(props: {
 // the direct actor navigation path whenever a target reference is available.
 function ToolScript(props: ToolProps<typeof ToolScriptTool>) {
   const { theme } = useTheme()
+  const hoverControl = { clear: () => {} }
   const [expanded, setExpanded] = createSignal(false)
   const isRunning = createMemo(() => props.part.state.status === "running")
   const meta = createMemo(() =>
@@ -2495,11 +2505,16 @@ function ToolScript(props: ToolProps<typeof ToolScriptTool>) {
         </Show>
       }
     >
-      <BlockTool title={`# exec · ${summary()}`} part={props.part} onClick={() => setExpanded(false)}>
+      <BlockTool
+        title={`# exec · ${summary()}`}
+        part={props.part}
+        onClick={() => setExpanded(false)}
+        hoverControl={hoverControl}
+      >
         <box gap={1}>
           <text fg={theme.textMuted}>{((props.input.code as string | undefined) ?? "").trim()}</text>
           <Show when={subParts().length > 0}>
-            <ExecSubtoolGroup parts={subParts()} parent={props.part} message={props.message} />
+            <ExecSubtoolGroup parts={subParts()} parent={props.part} message={props.message} clearParentHover={hoverControl.clear} />
           </Show>
           <text fg={theme.textMuted}>Click to collapse</text>
         </box>
@@ -3029,10 +3044,12 @@ function BlockTool(props: {
   onClick?: () => void
   part?: ToolPart
   spinner?: boolean
+  hoverControl?: { clear: () => void }
 }) {
   const { theme } = useTheme()
   const renderer = useRenderer()
   const [hover, setHover] = createSignal(false)
+  if (props.hoverControl) props.hoverControl.clear = () => setHover(false)
   const error = createMemo(() => (props.part?.state.status === "error" ? props.part.state.error : undefined))
   return (
     <box
