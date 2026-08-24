@@ -4129,7 +4129,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
             // Checks for no assistant messages (survives compaction/rebuild) + in main worktree.
             const isFirstAssistantTurn = !msgs.some((m) => m.info.role === "assistant")
             const directory = yield* InstanceState.directory
-            const isMainWorktree = directory === Instance.worktree
+            const isMainWorktree = Instance.worktree === Instance.project.worktree
             if (isFirstAssistantTurn && isMainWorktree) {
               const conflict = (yield* Effect.promise(() => checkConflict(directory, sessionID))) as ConflictResult
               if (conflict.hasConflict) {
