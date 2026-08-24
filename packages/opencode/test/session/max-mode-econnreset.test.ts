@@ -19,7 +19,7 @@ function expectCandidate(value: Candidate | null | "text-repeat"): Candidate {
  *   3. a non-transient error part falls through to the catch fallback.
  *
  * The mock stream yields synchronously-constructed events, so the only real
- * wall-clock cost is persistentRetrySchedule's first backoff (~500ms/attempt).
+ * wall-clock cost is the coordinator's local max-mode backoff (~500ms/attempt).
  */
 
 const econnreset = () => Object.assign(new Error("socket connection closed unexpectedly"), { code: "ECONNRESET" })
@@ -204,7 +204,7 @@ describe("max-mode defect handling (SSE timeout surfaces as Cause.die)", () => {
 
   const sseTimeout = () => new Error("SSE read timed out")
   // A non-transient defect: not retried, so containment is proven in 1 attempt
-  // without waiting out persistentRetrySchedule's ~8min backoff exhaustion.
+  // without waiting out the coordinator's long backoff exhaustion.
   const fatalDefect = () => new Error("unexpected internal stream failure")
 
   test("candidate contains a transient defect and retries to recovery (no fiber crash)", async () => {

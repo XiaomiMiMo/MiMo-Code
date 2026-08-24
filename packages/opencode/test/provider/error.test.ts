@@ -180,6 +180,25 @@ describe("provider stream error", () => {
     })
   })
 
+  test("marks upstream stream_read_error events as retryable", () => {
+    const input = {
+      type: "error",
+      sequence_number: 0,
+      error: {
+        type: "upstream_error",
+        code: "stream_read_error",
+        message: "stream_read_error",
+      },
+    }
+
+    expect(parseStreamError(input)).toStrictEqual({
+      type: "api_error",
+      message: input.error.message,
+      isRetryable: true,
+      responseBody: JSON.stringify(input),
+    })
+  })
+
   test("marks OpenAI server_error events as retryable", () => {
     const input = {
       type: "error",

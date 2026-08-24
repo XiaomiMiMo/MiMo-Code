@@ -3,6 +3,111 @@ import { STATUS_CODES } from "http"
 import { iife } from "@/util/iife"
 import type { ProviderID } from "./schema"
 
+const RETRYABLE_NETWORK_CODES = new Set([
+  "ECONNABORTED",
+  "ECONNREFUSED",
+  "ECONNRESET",
+  "EHOSTDOWN",
+  "EHOSTUNREACH",
+  "EPIPE",
+  "ENETDOWN",
+  "ENETUNREACH",
+  "EAI_AGAIN",
+  "ETIMEDOUT",
+  "UND_ERR_BODY_TIMEOUT",
+  "UND_ERR_CONNECT_TIMEOUT",
+  "UND_ERR_HEADERS_TIMEOUT",
+  "UND_ERR_RES_CONTENT_LENGTH_MISMATCH",
+  "UND_ERR_ABORTED",
+  "UND_ERR_SOCKET",
+])
+
+const RETRYABLE_NETWORK_MESSAGES = [
+  /^fetch failed$/i,
+  /^SSE read timed out$/i,
+  /connection (?:aborted|closed|refused|reset)(?: by server)?$/i,
+  /network (?:connection|error)/i,
+  /response body (?:terminated|closed)/i,
+  /socket hang up/i,
+]
+
+export type CauseSummary = {
+  depth: number
+  name?: string
+  message?: string
+  code?: string
+  statusCode?: number
+  source: "cause" | "aggregate" | "root"
+}
+
+function codeOf(error: unknown): string | undefined {
+  if (typeof error !== "object" || error === null) return undefined
+  const code = (error as { code?: unknown }).code
+  return typeof code === "string" ? code : undefined
+}
+
+export function isAbortError(error: unknown): boolean {
+  if (typeof error !== "object" || error === null) return false
+  const code = codeOf(error)
+  if (code === "UND_ERR_ABORTED") return false
+  return (error as { name?: unknown }).name === "AbortError" || code === "ABORT_ERR"
+}
+
+export function summarizeCause(input: unknown): CauseSummary[] {
+  const seen = new Set<object>()
+  const queue: Array<{ value: unknown; depth: number; source: CauseSummary["source"] }> = [
+    { value: input, depth: 0, source: "root" },
+  ]
+  const result: CauseSummary[] = []
+  while (queue.length > 0 && result.length < 16) {
+    const node = queue.shift()!
+    if (typeof node.value !== "object" || node.value === null || seen.has(node.value)) continue
+    seen.add(node.value)
+    const object = node.value as {
+      name?: unknown
+      message?: unknown
+      code?: unknown
+      status?: unknown
+      statusCode?: unknown
+      cause?: unknown
+      errors?: unknown
+    }
+    const status = object.statusCode ?? object.status
+    const statusCode = typeof status === "string" ? Number.parseInt(status, 10) : status
+    result.push({
+      depth: node.depth,
+      name: typeof object.name === "string" ? object.name : undefined,
+      message: typeof object.message === "string" ? object.message : undefined,
+      code: typeof object.code === "string" ? object.code : undefined,
+      statusCode: typeof statusCode === "number" && !Number.isNaN(statusCode) ? statusCode : undefined,
+      source: node.source,
+    })
+    if (object.cause !== undefined && node.depth < 8)
+      queue.push({ value: object.cause, depth: node.depth + 1, source: "cause" })
+    if (Array.isArray(object.errors) && node.depth < 8) {
+      for (const error of object.errors) queue.push({ value: error, depth: node.depth + 1, source: "aggregate" })
+    }
+  }
+  return result
+}
+export function networkErrorCode(input: unknown): string | undefined {
+  return summarizeCause(input)
+    .map((cause) => cause.code)
+    .find((code): code is string => code !== undefined && RETRYABLE_NETWORK_CODES.has(code))
+}
+
+export function isRetryableNetworkError(input: unknown): boolean {
+  const chain = summarizeCause(input)
+  if (chain.some((cause) => (cause.name === "AbortError" && cause.code !== "UND_ERR_ABORTED") || cause.code === "ABORT_ERR")) return false
+
+  return chain.some((cause) => {
+    const code = cause.code
+    if (code && RETRYABLE_NETWORK_CODES.has(code)) return true
+    const message = cause.message
+    return message !== undefined && RETRYABLE_NETWORK_MESSAGES.some((pattern) => pattern.test(message))
+  })
+}
+
 // Adapted from overflow detection patterns in:
 // https://github.com/badlogic/pi-mono/blob/main/packages/ai/src/utils/overflow.ts
 const OVERFLOW_PATTERNS = [
@@ -148,6 +253,7 @@ export function parseStreamError(input: unknown): ParsedStreamError | undefined 
   switch (body?.error?.code) {
     case "server_is_overloaded":
     case "server_error":
+    case "stream_read_error":
       return {
         type: "api_error",
         message: typeof body?.error?.message === "string" ? body.error.message : "OpenAI server error",

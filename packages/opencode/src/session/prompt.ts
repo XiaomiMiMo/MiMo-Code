@@ -805,7 +805,6 @@ export const layer = Layer.effect(
           tools: {},
           model: mdl,
           sessionID: input.session.id,
-          retries: 2,
           messages: [{ role: "user", content: "Generate a title for this conversation:\n" }, ...msgs],
         })
         .pipe(
@@ -4172,7 +4171,8 @@ If this task is a simple fix, Q&A, or read-only operation, you can skip this not
                 Effect.provideService(ToolRegistry.Service, registry),
               )
             lastSystemPrompt = prebuiltSystem
-            const maxModeCfg = (yield* config.get()).experimental?.maxMode
+            const cfg = yield* config.get()
+            const maxModeCfg = cfg.experimental?.maxMode
             const useMaxMode =
               agent.name === MaxMode.MAX_MODE_AGENT && maxModeCfg !== undefined && format.type !== "json_schema"
 
@@ -4242,9 +4242,22 @@ If this task is a simple fix, Q&A, or read-only operation, you can skip this not
                   handle,
                   llm,
                   candidates: maxModeCfg?.candidates,
-                  setStatus: (message) =>
-                    status.set(sessionID, message ? { type: "busy", message } : { type: "busy" }),
-                })
+                  retryConfig: cfg,
+                 setStatus: (message) =>
+                   status.set(sessionID, message ? { type: "busy", message } : { type: "busy" }),
+                  onRetry: (info) =>
+                    bus.publish(Session.Event.RetryAttempt, {
+                      sessionID,
+                      messageID: handle.message.id,
+                      attempt: info.attempt,
+                      maxAttempts: info.maxAttempts,
+                      phase: info.phase,
+                      kind: info.kind,
+                      scope: info.scope,
+                      reason: info.message,
+                      nextDelayMs: info.nextDelayMs,
+                    }),
+               })
               : handle.process(processArgs)
 
             const result = yield* stepEffect.pipe(

@@ -583,6 +583,9 @@ export type EventSessionRetryAttempt = {
     messageID: string
     attempt: number
     maxAttempts: number
+    phase: "request" | "stream"
+    kind: "network" | "rate_limit" | "server" | "stream" | "unknown" | "terminal"
+    scope: "request" | "live-step" | "max-candidate" | "max-judge"
     reason: string
     nextDelayMs: number
   }
@@ -1841,6 +1844,68 @@ export type ProviderConfig = {
     chunkTimeout?: number
     [key: string]: unknown | string | boolean | number | false | number | false | number | undefined
   }
+  /**
+   * Provider-specific overrides for retry budgets
+   */
+  retry?: {
+    request?: {
+      mode?: "bounded" | "persistent"
+      maxRetries?: number
+      deadlineMs?: number
+      initialDelayMs?: number
+      maxDelayMs?: number
+    }
+    stream?: {
+      mode?: "bounded" | "persistent"
+      maxRetries?: number
+      deadlineMs?: number
+      initialDelayMs?: number
+      maxDelayMs?: number
+    }
+    maxCandidate?: {
+      mode?: "bounded" | "persistent"
+      maxRetries?: number
+      deadlineMs?: number
+      initialDelayMs?: number
+      maxDelayMs?: number
+    }
+    maxJudge?: {
+      mode?: "bounded" | "persistent"
+      maxRetries?: number
+      deadlineMs?: number
+      initialDelayMs?: number
+      maxDelayMs?: number
+    }
+    network?: {
+      mode?: "bounded" | "persistent"
+      maxRetries?: number
+      deadlineMs?: number
+      initialDelayMs?: number
+      maxDelayMs?: number
+    }
+    server?: {
+      mode?: "bounded" | "persistent"
+      maxRetries?: number
+      deadlineMs?: number
+      initialDelayMs?: number
+      maxDelayMs?: number
+    }
+    rateLimit?: {
+      mode?: "bounded" | "persistent"
+      maxRetries?: number
+      deadlineMs?: number
+      initialDelayMs?: number
+      maxDelayMs?: number
+    }
+    unknown?: {
+      mode?: "bounded" | "persistent"
+      maxRetries?: number
+      deadlineMs?: number
+      initialDelayMs?: number
+      maxDelayMs?: number
+    }
+    jitterRatio?: number
+  }
   models?: {
     [key: string]: {
       id?: string
@@ -2139,6 +2204,68 @@ export type Config = {
    */
   provider?: {
     [key: string]: ProviderConfig
+  }
+  /**
+   * Retry budgets for provider requests, streams, and long-running network recovery
+   */
+  retry?: {
+    request?: {
+      mode?: "bounded" | "persistent"
+      maxRetries?: number
+      deadlineMs?: number
+      initialDelayMs?: number
+      maxDelayMs?: number
+    }
+    stream?: {
+      mode?: "bounded" | "persistent"
+      maxRetries?: number
+      deadlineMs?: number
+      initialDelayMs?: number
+      maxDelayMs?: number
+    }
+    maxCandidate?: {
+      mode?: "bounded" | "persistent"
+      maxRetries?: number
+      deadlineMs?: number
+      initialDelayMs?: number
+      maxDelayMs?: number
+    }
+    maxJudge?: {
+      mode?: "bounded" | "persistent"
+      maxRetries?: number
+      deadlineMs?: number
+      initialDelayMs?: number
+      maxDelayMs?: number
+    }
+    network?: {
+      mode?: "bounded" | "persistent"
+      maxRetries?: number
+      deadlineMs?: number
+      initialDelayMs?: number
+      maxDelayMs?: number
+    }
+    server?: {
+      mode?: "bounded" | "persistent"
+      maxRetries?: number
+      deadlineMs?: number
+      initialDelayMs?: number
+      maxDelayMs?: number
+    }
+    rateLimit?: {
+      mode?: "bounded" | "persistent"
+      maxRetries?: number
+      deadlineMs?: number
+      initialDelayMs?: number
+      maxDelayMs?: number
+    }
+    unknown?: {
+      mode?: "bounded" | "persistent"
+      maxRetries?: number
+      deadlineMs?: number
+      initialDelayMs?: number
+      maxDelayMs?: number
+    }
+    jitterRatio?: number
   }
   /**
    * MCP (Model Context Protocol) server configurations

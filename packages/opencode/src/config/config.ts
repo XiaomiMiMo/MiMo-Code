@@ -41,6 +41,7 @@ import { ConfigPaths } from "./paths"
 import { ConfigPermission } from "./permission"
 import { ConfigPlugin } from "./plugin"
 import { ConfigProvider } from "./provider"
+import { ConfigRetry } from "./retry"
 import { ConfigServer } from "./server"
 import { ConfigLLMServer } from "./llm-server"
 import { ConfigSkills } from "./skills"
@@ -202,6 +203,9 @@ const InfoSchema = Schema.Struct({
   ).annotate({ description: "Agent configuration, see https://mimo.xiaomi.com/mimocode/agents" }),
   provider: Schema.optional(Schema.Record(Schema.String, ConfigProvider.Info)).annotate({
     description: "Custom provider configurations and model overrides",
+  }),
+  retry: Schema.optional(ConfigRetry.Info).annotate({
+    description: "Retry budgets for provider requests, streams, and long-running network recovery",
   }),
   mcp: Schema.optional(
     Schema.Record(
