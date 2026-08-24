@@ -583,6 +583,7 @@ export const ToolScriptTool = Tool.define(
             const start = Date.now()
             const subCtx = {
               ...ctx,
+              extra: { ...ctx.extra, fromExec: true },
               callID: `${ctx.callID ?? "exec"}:${seq}`,
               // Sub-call metadata would clobber the outer exec call's
               // title in the UI — swallow it; the trace covers observability.
