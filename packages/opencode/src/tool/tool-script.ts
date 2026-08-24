@@ -9,12 +9,13 @@ import { EffectBridge, InstanceState } from "@/effect"
 import { Log, Filesystem, ToolCompat } from "@/util"
 import { Agent } from "@/agent/agent"
 import type { ModelID, ProviderID } from "../provider/schema"
+import { MessageV2 } from "../session/message-v2"
 import { evalScript, type HostFn } from "../workflow/sandbox"
 import { toolScriptRegistry, TOOL_SCRIPT_ALIASES, TOOL_SCRIPT_EXCLUDED } from "./tool-script-ref"
 import type { HarnessMode } from "./gpt"
 import DESCRIPTION from "./tool-script.txt"
 import * as Tool from "./tool"
-import { getToolResultMetadata } from "./result-error"
+import { getToolResultAttachments, getToolResultMetadata } from "./result-error"
 import * as Truncate from "./truncate"
 
 const log = Log.create({ service: "tool.exec" })
@@ -340,8 +341,10 @@ export type ExecSubPartSnapshot = {
     output?: string
     error?: string
     metadata?: Record<string, unknown>
+    providerOutput?: unknown
+    providerMetadata?: Record<string, unknown>
     time: { start: number; end?: number }
-    attachments?: unknown[]
+    attachments?: Omit<MessageV2.FilePart, "id" | "sessionID" | "messageID">[]
   }
 }
 
@@ -355,6 +358,18 @@ function metadataRecord(value: unknown): Record<string, unknown> {
 function optionalMetadata(value: unknown): Record<string, unknown> | undefined {
   if (!value || typeof value !== "object" || Array.isArray(value)) return undefined
   return value as Record<string, unknown>
+}
+
+const ExecAttachment = MessageV2.FilePart.omit({ id: true, sessionID: true, messageID: true })
+type ExecAttachment = z.infer<typeof ExecAttachment>
+
+function normalizeAttachments(value: unknown): ExecAttachment[] | undefined {
+  if (!Array.isArray(value)) return undefined
+  const attachments = value.flatMap((item) => {
+    const parsed = ExecAttachment.safeParse(item)
+    return parsed.success ? [parsed.data] : []
+  })
+  return attachments.length ? attachments : undefined
 }
 
 export function viewExecSubtools(metadata: unknown): ExecSubPartSnapshot[] {
@@ -408,6 +423,8 @@ export function viewExecSubtools(metadata: unknown): ExecSubPartSnapshot[] {
             ...(typeof end === "number" && Number.isFinite(end) ? { end } : {}),
           },
           ...(Array.isArray(state.attachments) ? { attachments: state.attachments } : {}),
+          ...(state.providerOutput !== undefined ? { providerOutput: state.providerOutput } : {}),
+          ...(optionalMetadata(state.providerMetadata) ? { providerMetadata: optionalMetadata(state.providerMetadata) } : {}),
         },
       } satisfies ExecSubPartSnapshot]
     })
@@ -696,8 +713,10 @@ export const ToolScriptTool = Tool.define(
               title: string
               output: string
               metadata: Record<string, unknown>
-              attachments?: unknown[]
+              attachments?: ExecAttachment[]
               structured?: unknown
+              providerOutput?: unknown
+              providerMetadata?: Record<string, unknown>
             }
             const executeMcp = (tool: AiTool) =>
               Effect.tryPromise({
@@ -725,7 +744,7 @@ export const ToolScriptTool = Tool.define(
                     title: id,
                     output: String(r?.output ?? "") + dropped,
                     metadata: (r?.metadata ?? {}) as Record<string, unknown>,
-                    attachments: r?.attachments,
+                    attachments: normalizeAttachments(r?.attachments),
                     ...(structured !== undefined && { structured }),
                   }
                 }),
@@ -736,7 +755,9 @@ export const ToolScriptTool = Tool.define(
                     title: result.title,
                     output: result.output,
                     metadata: result.metadata,
-                    attachments: result.attachments,
+                    attachments: normalizeAttachments(result.attachments),
+                    providerOutput: (result as { providerOutput?: unknown }).providerOutput,
+                    providerMetadata: (result as { providerMetadata?: Record<string, unknown> }).providerMetadata,
                   })),
                 )
               : executeMcp(mcpDef!)
@@ -752,6 +773,8 @@ export const ToolScriptTool = Tool.define(
                       title: result.title,
                       output: result.output,
                       metadata: metadataRecord(result.metadata),
+                      ...(result.providerOutput !== undefined ? { providerOutput: result.providerOutput } : {}),
+                      ...(result.providerMetadata ? { providerMetadata: result.providerMetadata } : {}),
                       time: { start, end: Date.now() },
                       ...(result.attachments ? { attachments: result.attachments } : {}),
                     }
@@ -769,6 +792,7 @@ export const ToolScriptTool = Tool.define(
                     const message = err instanceof Error ? err.message : String(err)
                     const durationMs = Date.now() - start
                     const toolResultMetadata = getToolResultMetadata(err)
+                    const toolResultAttachments = normalizeAttachments(getToolResultAttachments(err))
                     const currentMetadata = subPart.state.metadata
                     subPart.state = {
                       status: "error",
@@ -778,6 +802,7 @@ export const ToolScriptTool = Tool.define(
                         ? { metadata: { ...currentMetadata, ...toolResultMetadata } }
                         : {}),
                       time: { start, end: Date.now() },
+                      ...(toolResultAttachments?.length ? { attachments: toolResultAttachments } : {}),
                     }
                     trace.push({ name: id, status: "error", durationMs, error: message })
                     publishProgress()

@@ -2345,17 +2345,34 @@ function WorkItemTask(props: ToolProps<typeof TaskTool>) {
   )
 }
 
-function ExecSubtoolRow(props: { part: ExecSubPartSnapshot; onOpenActor: (sessionID: string, actorID: string) => void }) {
+function ExecSubtoolRow(props: {
+  part: ExecSubPartSnapshot
+  parentSessionID: string
+  onOpenActor: (sessionID: string, actorID: string) => void
+}) {
   const { theme } = useTheme()
   const renderer = useRenderer()
   const state = () => props.part.state
-  const input = () => state().input as { operation?: { action?: unknown } }
+  const input = () => state().input as {
+    operation?: {
+      actor_id?: unknown
+      to_actor_id?: unknown
+      to_session_id?: unknown
+    }
+  }
   const actor = () => {
     const metadata = state().metadata
-    const sessionID = metadata?.sessionId
-    const actorID = metadata?.actorId
-    if (props.part.tool !== "actor" || input().operation?.action !== "spawn") return
-    if (typeof sessionID !== "string" || typeof actorID !== "string") return
+    if (props.part.tool !== "actor") return
+    const operation = input().operation
+    const sessionID = typeof metadata?.sessionId === "string"
+      ? metadata.sessionId
+      : typeof operation?.to_session_id === "string" ? operation.to_session_id : props.parentSessionID
+    const actorID = typeof metadata?.actorId === "string"
+      ? metadata.actorId
+      : typeof operation?.actor_id === "string"
+        ? operation.actor_id
+        : typeof operation?.to_actor_id === "string" ? operation.to_actor_id : undefined
+    if (!actorID) return
     return { sessionID, actorID }
   }
   const marker = () => state().status === "running" ? "…" : state().status === "error" ? "✗" : "✓"
@@ -2382,8 +2399,8 @@ function ExecSubtoolRow(props: { part: ExecSubPartSnapshot; onOpenActor: (sessio
 
 // Renderer for the `exec` batch-orchestration tool. Collapsed view is a compact
 // BlockTool with aggregate counts. Expanded view uses the pure nested-part view
-// so every admitted sub-call can be rendered as its own row; actor.spawn rows
-// reuse the direct actor navigation path.
+// so every admitted sub-call can be rendered as its own row; actor rows reuse
+// the direct actor navigation path whenever a target reference is available.
 function ToolScript(props: ToolProps<typeof ToolScriptTool>) {
   const { theme } = useTheme()
   const route = useRoute()
@@ -2447,7 +2464,7 @@ function ToolScript(props: ToolProps<typeof ToolScriptTool>) {
         // unit. An InlineTool with a loose text underneath read as two
         // elements and the click target was easy to miss.
         <Show
-          when={recentLines().length > 0}
+          when={recentLines().length > 0 || subParts().length > 0}
           fallback={
             <InlineTool
               icon="»"
@@ -2481,7 +2498,9 @@ function ToolScript(props: ToolProps<typeof ToolScriptTool>) {
           </Show>
           <Show when={subParts().length > 0}>
             <For each={subParts()}>
-              {(subPart) => <ExecSubtoolRow part={subPart} onOpenActor={openActor} />}
+              {(subPart) => (
+                <ExecSubtoolRow part={subPart} parentSessionID={props.part.sessionID} onOpenActor={openActor} />
+              )}
             </For>
           </Show>
           <Show when={output()}>

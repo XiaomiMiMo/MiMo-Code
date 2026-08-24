@@ -937,7 +937,7 @@ describe("exec MCP dispatch", () => {
       srv_img: fakeMcpTool(async () => ({
         output: "here is your chart",
         metadata: { mcp: { isError: false } },
-        attachments: [{ mime: "image/png", url: "data:image/png;base64,xxxx" }],
+        attachments: [{ type: "file", mime: "image/png", url: "data:image/png;base64,xxxx" }],
       })),
     }
     const result = await runToolScript(
@@ -949,7 +949,7 @@ describe("exec MCP dispatch", () => {
     expect(result.output).toContain("here is your chart")
     expect(result.output).toContain("non-text attachment(s) dropped")
     expect(viewExecSubtools(result.metadata)[0]?.state.attachments).toEqual([
-      { mime: "image/png", url: "data:image/png;base64,xxxx" },
+      { type: "file", mime: "image/png", url: "data:image/png;base64,xxxx" },
     ])
   })
 
