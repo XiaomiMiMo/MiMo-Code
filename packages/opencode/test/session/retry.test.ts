@@ -156,6 +156,9 @@ describe("session.retry.retryable", () => {
   test("parses retry hints with the declared units", () => {
     const error = new MessageV2.APIError({ message: "Please retry in 1 millisecond", statusCode: 429, isRetryable: false }).toObject()
     expect(decide(error).retryAfterMs).toBe(100)
+    expect(decide(new MessageV2.APIError({ message: "Please retry in 5s", statusCode: 429, isRetryable: false }).toObject()).retryAfterMs).toBe(5000)
+    expect(decide(new MessageV2.APIError({ message: "Please retry in 5m", statusCode: 429, isRetryable: false }).toObject()).retryAfterMs).toBe(5 * 60_000)
+    expect(decide(new MessageV2.APIError({ message: "Please retry in 1h", statusCode: 429, isRetryable: false }).toObject()).retryAfterMs).toBe(5 * 60_000)
   })
 
   test("rejects malformed retry-after-ms and floors zero delay", () => {
@@ -172,6 +175,13 @@ describe("session.retry.retryable", () => {
       const error = new MessageV2.APIError({ message: "failure", statusCode, isRetryable: true }).toObject()
       expect(decide(error)).toMatchObject({ retryable: false, kind: "terminal", statusCode })
     }
+  })
+
+  test("only retries provider-specific compatible 404 responses", () => {
+    const generic = new MessageV2.APIError({ message: "missing", statusCode: 404, isRetryable: true }).toObject()
+    const compatible = new MessageV2.APIError({ message: "missing", statusCode: 404, isRetryable: true, metadata: { providerID: "openai" } }).toObject()
+    expect(decide(generic)).toMatchObject({ retryable: false, kind: "terminal" })
+    expect(decide(compatible)).toMatchObject({ retryable: true, kind: "unknown" })
   })
 
   test("jitter never exceeds the configured delay ceiling", () => {

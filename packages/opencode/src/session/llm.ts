@@ -20,6 +20,7 @@ import { Wildcard, ToolCompat } from "@/util"
 import { asSchema } from "@ai-sdk/provider-utils"
 import { SessionID } from "@/session/schema"
 import * as Session from "@/session/session"
+import { SessionStatus } from "@/session/status"
 import { migrateProjectMemory } from "./checkpoint-paths"
 import { ProjectID } from "@/project/schema"
 import { Auth } from "@/auth"
@@ -307,6 +308,7 @@ const live: Layer.Layer<
   | Permission.Service
   | ActorRegistry.Service
   | Memory.Service
+  | SessionStatus.Service
 > = Layer.effect(
   Service,
   Effect.gen(function* () {
@@ -317,6 +319,7 @@ const live: Layer.Layer<
     const perm = yield* Permission.Service
     const actorReg = yield* ActorRegistry.Service
     const memory = yield* Memory.Service
+    const status = yield* SessionStatus.Service
 
     const buildSystemArray = Effect.fn("LLM.buildSystemArray")(function* (input: {
       agent: Agent.Info
@@ -921,6 +924,12 @@ const live: Layer.Layer<
                   return Stream.failCause(primaryCause)
                 return Stream.unwrap(
                   Effect.gen(function* () {
+                    yield* status.set(SessionID.make(input.sessionID), {
+                      type: "retry",
+                      attempt: nextAttempt,
+                      message: decision.message,
+                      next: Date.now() + wait,
+                    })
                     yield* Effect.promise(() =>
                       Bus.publish(Session.Event.RetryAttempt, {
                         sessionID: SessionID.make(input.sessionID),

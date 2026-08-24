@@ -318,7 +318,7 @@ export function parseAPICallError(input: { providerID: ProviderID; error: APICal
     }
   }
 
-  const metadata = input.error.url ? { url: input.error.url } : undefined
+  const metadata = { providerID: input.providerID, ...(input.error.url ? { url: input.error.url } : {}) }
   return {
     type: "api_error",
     message: m,

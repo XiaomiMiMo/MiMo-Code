@@ -262,7 +262,7 @@ function retryAfterFromMessage(message: string): number | undefined {
   if (!match) return undefined
   const value = Number.parseFloat(match[1])
   const unit = match[2].toLowerCase()
-  const multiplier = unit === "ms" || unit.startsWith("millisecond") ? 1 : unit.startsWith("second") ? 1000 : unit.startsWith("minute") ? 60_000 : 3_600_000
+  const multiplier = unit === "ms" || unit.startsWith("millisecond") ? 1 : unit === "s" || unit.startsWith("second") ? 1000 : unit === "m" || unit.startsWith("minute") ? 60_000 : 3_600_000
   return Math.min(capRetryHint(Math.ceil(value * multiplier)), RETRY_MAX_DELAY_MESSAGE)
 }
 
@@ -335,6 +335,7 @@ export function decide(
   if (signals.code === "SubscriptionUsageLimitError" || responseBody?.includes("SubscriptionUsageLimitError"))
     return terminal()
   if (status === 402 || status === 501 || status === 505) return terminal()
+  if (status === 404 && (!MessageV2.APIError.isInstance(error) || !error.data.metadata?.providerID?.startsWith("openai"))) return terminal()
   if (signals.code === "stream_read_error" || signals.type === "upstream_error")
     return retry("stream", "stream", signals.message || "Upstream stream read failed")
   if (ProviderError.isRetryableNetworkError(error)) return retry("network")
