@@ -84,7 +84,7 @@ async function hasExternalAgentProcess(directory: string): Promise<boolean> {
     if (process.platform === "win32") {
       const { stdout } = await execFileAsync("wmic", ["process", "get", "Name", "/FORMAT:LIST"], { timeout: 10000 })
       const cmds = stdout.toLowerCase().split("\n").map((c) => c.trim()).filter(Boolean)
-      return agentPatterns.some((p) => cmds.some((c) => c === p || c.startsWith(p + ".") || c.startsWith(p + "-") || c.includes(p)))
+      return agentPatterns.some((p) => cmds.some((c) => c === p || c.startsWith(p + ".") || c.startsWith(p + "-")))
     }
 
     const { stdout } = await execFileAsync("lsof", ["-t", "+D", directory], { timeout: 10000 })

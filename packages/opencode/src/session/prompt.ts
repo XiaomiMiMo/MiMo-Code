@@ -4131,11 +4131,11 @@ NOTE: At any point in time through this workflow you should feel free to ask the
             const isMainWorktree = Instance.worktree === Instance.project.worktree
             if (isGitProject && isMainWorktree) {
               const isFirstAssistantTurn = !msgs.some((m) => m.info.role === "assistant")
-              if (!isFirstAssistantTurn) continue
-              const directory = yield* InstanceState.directory
-              const conflict = (yield* Effect.promise(() => checkConflict(directory, sessionID))) as ConflictResult
-              if (conflict.hasConflict) {
-                additions.push(`
+              if (isFirstAssistantTurn) {
+                const directory = yield* InstanceState.directory
+                const conflict = (yield* Effect.promise(() => checkConflict(directory, sessionID))) as ConflictResult
+                if (conflict.hasConflict) {
+                  additions.push(`
 ⚠️ Auto-Worktree Notice
 
 This session is running in the main worktree. If you need to write or edit files, consider creating an isolated worktree first:
@@ -4145,6 +4145,7 @@ This session is running in the main worktree. If you need to write or edit files
 Conflict detected: ${conflict.reason}${conflict.activeSessionId ? ` (session: ${conflict.activeSessionId})` : ""}
 
 If this task is a simple fix, Q&A, or read-only operation, you can skip this notice and continue.`)
+                }
               }
             }
             // Note: `buildLLMRequestPrefix` also returns a `tools` field, but we
