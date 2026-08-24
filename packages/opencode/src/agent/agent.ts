@@ -304,6 +304,7 @@ export const layer = Layer.effect(
               defaults,
               Permission.fromConfig({
                 "*": "deny",
+                StructuredOutput: "allow",
               }),
               user,
             ),
