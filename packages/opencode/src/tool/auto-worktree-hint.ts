@@ -1,7 +1,7 @@
 import { Instance } from "@/project/instance"
-import { Database, eq } from "@/storage"
-import { SessionTable } from "@/session/session.sql"
 import { checkConflict, type ConflictResult } from "./conflict-detection"
+
+const hinted = new Set<string>()
 
 const HINT_TEMPLATE = (conflict: ConflictResult) => `
 
@@ -18,13 +18,7 @@ Conflict detected: ${conflict.reason}${conflict.activeSessionId ? ` (session: ${
 If this task is a simple fix or Q&A, you can skip this notice and continue.`
 
 export async function shouldInjectHint(sessionID: string): Promise<boolean> {
-  const sent = Database.use((db) =>
-    db.select({ val: SessionTable.auto_worktree_hint_sent })
-      .from(SessionTable)
-      .where(eq(SessionTable.id, sessionID as any))
-      .get(),
-  )
-  if (sent?.val) return false
+  if (hinted.has(sessionID)) return false
   if (Instance.project.vcs !== "git") return false
   if (Instance.directory !== Instance.project.worktree) return false
   const conflict = await checkConflict(Instance.directory)
@@ -33,12 +27,7 @@ export async function shouldInjectHint(sessionID: string): Promise<boolean> {
 
 export async function injectHint(sessionID: string): Promise<string> {
   if (!(await shouldInjectHint(sessionID))) return ""
-  Database.use((db) =>
-    db.update(SessionTable)
-      .set({ auto_worktree_hint_sent: 1 })
-      .where(eq(SessionTable.id, sessionID as any))
-      .run(),
-  )
+  hinted.add(sessionID)
   const conflict = await checkConflict(Instance.directory)
   return HINT_TEMPLATE(conflict)
 }
