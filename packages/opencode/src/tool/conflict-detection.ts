@@ -15,15 +15,22 @@ export interface ConflictResult {
 
 function resolveGitDir(directory: string): string | null {
   try {
-    const dotGit = path.join(directory, ".git")
-    if (!fs.existsSync(dotGit)) return null
-    const stat = fs.statSync(dotGit)
-    if (stat.isDirectory()) return dotGit
-    const content = fs.readFileSync(dotGit, "utf-8").trim()
-    const match = content.match(/^gitdir:\s*(.+)$/)
-    if (!match) return null
-    const gitDir = path.resolve(path.dirname(dotGit), match[1].trim())
-    return fs.existsSync(gitDir) ? gitDir : null
+    let dir = path.resolve(directory)
+    while (true) {
+      const dotGit = path.join(dir, ".git")
+      if (fs.existsSync(dotGit)) {
+        const stat = fs.statSync(dotGit)
+        if (stat.isDirectory()) return dotGit
+        const content = fs.readFileSync(dotGit, "utf-8").trim()
+        const match = content.match(/^gitdir:\s*(.+)$/)
+        if (!match) return null
+        const gitDir = path.resolve(path.dirname(dotGit), match[1].trim())
+        return fs.existsSync(gitDir) ? gitDir : null
+      }
+      const parent = path.dirname(dir)
+      if (parent === dir) return null
+      dir = parent
+    }
   } catch {
     return null
   }

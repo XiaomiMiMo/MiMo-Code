@@ -4130,7 +4130,8 @@ NOTE: At any point in time through this workflow you should feel free to ask the
             const isFirstAssistantTurn = !msgs.some((m) => m.info.role === "assistant")
             const directory = yield* InstanceState.directory
             const isMainWorktree = Instance.worktree === Instance.project.worktree
-            if (isFirstAssistantTurn && isMainWorktree) {
+            const isGitProject = Instance.project.vcs === "git"
+            if (isFirstAssistantTurn && isMainWorktree && isGitProject) {
               const conflict = (yield* Effect.promise(() => checkConflict(directory, sessionID))) as ConflictResult
               if (conflict.hasConflict) {
                 additions.push(`
