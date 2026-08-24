@@ -94,42 +94,53 @@ Ask the user:
 
 Use the `imagegen` skill to generate the spritesheet image. Construct the prompt with these guidelines:
 - Request a **sprite sheet** with specific grid layout (e.g., "8 frames in a single horizontal row, each frame 240×240 pixels")
-- Specify **transparent background** (PNG with alpha)
+- Specify **transparent background** (alpha channel)
 - Describe the **idle animation** motion: gentle breathing, blinking, tail wag, bobbing, etc.
 - Keep the character **centered** in each frame with consistent sizing
 - Style: match the user's preference; default to cute/kawaii if unspecified
 
-After receiving the generated image, convert it to WebP:
+If the generated image is already WebP, use it directly. If it is PNG or another format, convert to WebP:
 
 ```bash
-# Convert PNG to lossless WebP preserving transparency
+# Convert to lossless WebP preserving transparency
 cwebp -lossless -q 100 spritesheet.png -o spritesheet.webp
 ```
 
-If `cwebp` is not available, use `sips` (macOS built-in):
+If `cwebp` is not available, check for `sips` (macOS Ventura+ supports WebP export):
 
 ```bash
-# macOS fallback — sips can export to formats supported by ImageIO
-sips -s format png spritesheet.png --out spritesheet.webp 2>/dev/null \
-  || cp spritesheet.png spritesheet.webp
+sips -s format webp spritesheet.png --out spritesheet.webp
 ```
 
-If `imagegen` is unavailable (skill not enabled or image generation fails), fall back to generating pixel-art frames directly as SVG, then rasterize:
+If neither tool is available, instruct the user to install one:
+
+```
+brew install webp   # provides cwebp
+```
+
+Do NOT silently rename a PNG to .webp — the file must have valid WebP encoding (RIFF/WEBP header). If conversion genuinely cannot be performed, fail explicitly and tell the user what tool to install.
+
+If `imagegen` is unavailable (skill not enabled or image generation fails), fall back to generating pixel-art frames directly as SVG, then rasterize. Compute dimensions from the manifest:
 
 ```bash
-# Rasterize SVG spritesheet to PNG via rsvg-convert (if available)
-rsvg-convert -w 1920 -h 240 spritesheet.svg -o spritesheet.png
+# Calculate actual spritesheet dimensions from manifest
+WIDTH=$((frameWidth * columns))
+HEIGHT=$((frameHeight * rows))  # rows = max animation row index + 1
+
+# Rasterize SVG to PNG, then convert to WebP
+rsvg-convert -w $WIDTH -h $HEIGHT spritesheet.svg -o spritesheet.png
 cwebp -lossless spritesheet.png -o spritesheet.webp
 ```
 
-As a last resort, output the SVG file directly and instruct the user to convert it manually or use an online converter.
+As a last resort, output the SVG file directly and instruct the user to convert it manually.
 
 ### Step 3: Write the Manifest
 
 Generate `manifest.json` with correct dimensions matching the actual spritesheet output. Verify:
 - `frameWidth × columns` = spritesheet total width
-- `frameHeight × (totalFrames / columns)` = spritesheet total height
+- `frameHeight × (max animation row index + 1)` = spritesheet total height
 - `animations.idle` exists with valid `row`, `frames`, `fps`, `loop`
+- Each animation's `frames` ≤ `columns` (frames per row cannot exceed grid columns)
 
 ### Step 4: Deliver
 
