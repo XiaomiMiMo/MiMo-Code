@@ -1516,6 +1516,11 @@ describe("session.message-v2.fromError", () => {
     expect(MessageV2.isAuthError(error)).toBe(true)
   })
 
+  test("treats a bare 403 Unauthorized reason as authentication", () => {
+    const error = new MessageV2.APIError({ message: "Unauthorized", statusCode: 403, isRetryable: false }).toObject()
+    expect(MessageV2.isAuthError(error)).toBe(true)
+  })
+
   test("does not treat an unrelated unauthorized word as authentication", () => {
     const error = new MessageV2.APIError({ message: "CORS unauthorized origin", statusCode: 403, isRetryable: false }).toObject()
     expect(MessageV2.isAuthError(error)).toBe(false)

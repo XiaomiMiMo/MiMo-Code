@@ -13,6 +13,7 @@ export const Info = z
     z.object({
       type: z.literal("retry"),
       attempt: z.number(),
+      phaseAttempt: z.number().optional(),
       message: z.string(),
       next: z.number(),
       phase: z.enum(["request", "stream"]).optional(),
@@ -31,6 +32,7 @@ export const Info = z
     ref: "SessionStatus",
   })
 export type Info = z.infer<typeof Info>
+export type RetryInfo = Extract<Info, { type: "retry" }>
 
 export const Event = {
   Status: BusEvent.define(
@@ -53,6 +55,7 @@ export interface Interface {
   readonly get: (sessionID: SessionID) => Effect.Effect<Info>
   readonly list: () => Effect.Effect<Map<SessionID, Info>>
   readonly set: (sessionID: SessionID, status: Info) => Effect.Effect<void>
+  readonly setRetry: (sessionID: SessionID, status: RetryInfo) => Effect.Effect<number>
 }
 
 export class Service extends Context.Service<Service, Interface>()("@opencode/SessionStatus") {}
@@ -75,18 +78,37 @@ export const layer = Layer.effect(
       return new Map(yield* InstanceState.get(state))
     })
 
-    const set = Effect.fn("SessionStatus.set")(function* (sessionID: SessionID, status: Info) {
+    const commit = Effect.fn("SessionStatus.commit")(function* (sessionID: SessionID, status: Info) {
       const data = yield* InstanceState.get(state)
-      yield* bus.publish(Event.Status, { sessionID, status })
-      if (status.type === "idle") {
+      const previous = data.get(sessionID)
+      const normalized: Info =
+        status.type === "retry"
+          ? {
+              ...status,
+              attempt: previous?.type === "retry" ? previous.attempt + 1 : status.attempt,
+              phaseAttempt: status.phaseAttempt ?? status.attempt,
+            }
+          : status
+      yield* bus.publish(Event.Status, { sessionID, status: normalized })
+      if (normalized.type === "idle") {
         yield* bus.publish(Event.Idle, { sessionID })
         data.delete(sessionID)
-        return
+      } else {
+        data.set(sessionID, normalized)
       }
-      data.set(sessionID, status)
+      return normalized
     })
 
-    return Service.of({ get, list, set })
+    const set = Effect.fn("SessionStatus.set")(function* (sessionID: SessionID, status: Info) {
+      yield* commit(sessionID, status)
+    })
+
+    const setRetry = Effect.fn("SessionStatus.setRetry")(function* (sessionID: SessionID, status: RetryInfo) {
+      const normalized = yield* commit(sessionID, status)
+      return normalized.type === "retry" ? normalized.attempt : status.attempt
+    })
+
+    return Service.of({ get, list, set, setRetry })
   }),
 )
 

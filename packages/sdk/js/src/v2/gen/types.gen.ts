@@ -582,6 +582,7 @@ export type EventSessionRetryAttempt = {
     sessionID: string
     messageID: string
     attempt: number
+    phaseAttempt: number
     maxAttempts: number
     phase: "request" | "stream"
     kind: "network" | "rate_limit" | "server" | "stream" | "unknown" | "terminal"
@@ -770,6 +771,7 @@ export type SessionStatus =
   | {
       type: "retry"
       attempt: number
+      phaseAttempt?: number
       message: string
       next: number
       phase?: "request" | "stream"
@@ -1864,9 +1866,10 @@ export type ProviderConfig = {
        */
       maxRetries?: number
       /**
-       * Wall-clock retry deadline in milliseconds; 0 means no deadline
-       */
+      * Wall-clock retry deadline in milliseconds; use noDeadline for an explicit unlimited deadline
+      */
       deadlineMs?: number
+      noDeadline?: boolean
       initialDelayMs?: number
       maxDelayMs?: number
       jitterRatio?: number
@@ -1881,9 +1884,10 @@ export type ProviderConfig = {
        */
       maxRetries?: number
       /**
-       * Wall-clock retry deadline in milliseconds; 0 means no deadline
-       */
+      * Wall-clock retry deadline in milliseconds; use noDeadline for an explicit unlimited deadline
+      */
       deadlineMs?: number
+      noDeadline?: boolean
       initialDelayMs?: number
       maxDelayMs?: number
       jitterRatio?: number
@@ -1898,9 +1902,10 @@ export type ProviderConfig = {
        */
       maxRetries?: number
       /**
-       * Wall-clock retry deadline in milliseconds; 0 means no deadline
-       */
+      * Wall-clock retry deadline in milliseconds; use noDeadline for an explicit unlimited deadline
+      */
       deadlineMs?: number
+      noDeadline?: boolean
       initialDelayMs?: number
       maxDelayMs?: number
       jitterRatio?: number
@@ -1915,9 +1920,10 @@ export type ProviderConfig = {
        */
       maxRetries?: number
       /**
-       * Wall-clock retry deadline in milliseconds; 0 means no deadline
-       */
+      * Wall-clock retry deadline in milliseconds; use noDeadline for an explicit unlimited deadline
+      */
       deadlineMs?: number
+      noDeadline?: boolean
       initialDelayMs?: number
       maxDelayMs?: number
       jitterRatio?: number
@@ -1932,9 +1938,10 @@ export type ProviderConfig = {
        */
       maxRetries?: number
       /**
-       * Wall-clock retry deadline in milliseconds; 0 means no deadline
-       */
+      * Wall-clock retry deadline in milliseconds; use noDeadline for an explicit unlimited deadline
+      */
       deadlineMs?: number
+      noDeadline?: boolean
       initialDelayMs?: number
       maxDelayMs?: number
       jitterRatio?: number
@@ -1949,9 +1956,10 @@ export type ProviderConfig = {
        */
       maxRetries?: number
       /**
-       * Wall-clock retry deadline in milliseconds; 0 means no deadline
-       */
+      * Wall-clock retry deadline in milliseconds; use noDeadline for an explicit unlimited deadline
+      */
       deadlineMs?: number
+      noDeadline?: boolean
       initialDelayMs?: number
       maxDelayMs?: number
       jitterRatio?: number
@@ -1966,9 +1974,10 @@ export type ProviderConfig = {
        */
       maxRetries?: number
       /**
-       * Wall-clock retry deadline in milliseconds; 0 means no deadline
-       */
+      * Wall-clock retry deadline in milliseconds; use noDeadline for an explicit unlimited deadline
+      */
       deadlineMs?: number
+      noDeadline?: boolean
       initialDelayMs?: number
       maxDelayMs?: number
       jitterRatio?: number
@@ -1983,9 +1992,10 @@ export type ProviderConfig = {
        */
       maxRetries?: number
       /**
-       * Wall-clock retry deadline in milliseconds; 0 means no deadline
-       */
+      * Wall-clock retry deadline in milliseconds; use noDeadline for an explicit unlimited deadline
+      */
       deadlineMs?: number
+      noDeadline?: boolean
       initialDelayMs?: number
       maxDelayMs?: number
       jitterRatio?: number
@@ -2305,9 +2315,10 @@ export type Config = {
        */
       maxRetries?: number
       /**
-       * Wall-clock retry deadline in milliseconds; 0 means no deadline
-       */
+      * Wall-clock retry deadline in milliseconds; use noDeadline for an explicit unlimited deadline
+      */
       deadlineMs?: number
+      noDeadline?: boolean
       initialDelayMs?: number
       maxDelayMs?: number
       jitterRatio?: number
@@ -2322,9 +2333,10 @@ export type Config = {
        */
       maxRetries?: number
       /**
-       * Wall-clock retry deadline in milliseconds; 0 means no deadline
-       */
+      * Wall-clock retry deadline in milliseconds; use noDeadline for an explicit unlimited deadline
+      */
       deadlineMs?: number
+      noDeadline?: boolean
       initialDelayMs?: number
       maxDelayMs?: number
       jitterRatio?: number
@@ -2339,9 +2351,10 @@ export type Config = {
        */
       maxRetries?: number
       /**
-       * Wall-clock retry deadline in milliseconds; 0 means no deadline
-       */
+      * Wall-clock retry deadline in milliseconds; use noDeadline for an explicit unlimited deadline
+      */
       deadlineMs?: number
+      noDeadline?: boolean
       initialDelayMs?: number
       maxDelayMs?: number
       jitterRatio?: number
@@ -2356,9 +2369,10 @@ export type Config = {
        */
       maxRetries?: number
       /**
-       * Wall-clock retry deadline in milliseconds; 0 means no deadline
-       */
+      * Wall-clock retry deadline in milliseconds; use noDeadline for an explicit unlimited deadline
+      */
       deadlineMs?: number
+      noDeadline?: boolean
       initialDelayMs?: number
       maxDelayMs?: number
       jitterRatio?: number
@@ -2373,9 +2387,10 @@ export type Config = {
        */
       maxRetries?: number
       /**
-       * Wall-clock retry deadline in milliseconds; 0 means no deadline
-       */
+      * Wall-clock retry deadline in milliseconds; use noDeadline for an explicit unlimited deadline
+      */
       deadlineMs?: number
+      noDeadline?: boolean
       initialDelayMs?: number
       maxDelayMs?: number
       jitterRatio?: number
@@ -2390,9 +2405,10 @@ export type Config = {
        */
       maxRetries?: number
       /**
-       * Wall-clock retry deadline in milliseconds; 0 means no deadline
-       */
+      * Wall-clock retry deadline in milliseconds; use noDeadline for an explicit unlimited deadline
+      */
       deadlineMs?: number
+      noDeadline?: boolean
       initialDelayMs?: number
       maxDelayMs?: number
       jitterRatio?: number
@@ -2407,9 +2423,10 @@ export type Config = {
        */
       maxRetries?: number
       /**
-       * Wall-clock retry deadline in milliseconds; 0 means no deadline
-       */
+      * Wall-clock retry deadline in milliseconds; use noDeadline for an explicit unlimited deadline
+      */
       deadlineMs?: number
+      noDeadline?: boolean
       initialDelayMs?: number
       maxDelayMs?: number
       jitterRatio?: number
@@ -2424,9 +2441,10 @@ export type Config = {
        */
       maxRetries?: number
       /**
-       * Wall-clock retry deadline in milliseconds; 0 means no deadline
-       */
+      * Wall-clock retry deadline in milliseconds; use noDeadline for an explicit unlimited deadline
+      */
       deadlineMs?: number
+      noDeadline?: boolean
       initialDelayMs?: number
       maxDelayMs?: number
       jitterRatio?: number

@@ -286,6 +286,7 @@ export const Event = {
       sessionID: SessionID.zod,
       messageID: z.string(),
       attempt: z.number().int().min(1),
+      phaseAttempt: z.number().int().min(1),
       // 0 means persistent retry with no fixed attempt cap.
       maxAttempts: z.number().int().min(0),
       phase: z.enum(["request", "stream"]),

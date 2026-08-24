@@ -4252,6 +4252,7 @@ If this task is a simple fix, Q&A, or read-only operation, you can skip this not
                       sessionID,
                       messageID: handle.message.id,
                       attempt: info.attempt,
+                      phaseAttempt: info.attempt,
                       maxAttempts: info.maxAttempts,
                       phase: info.phase,
                       kind: info.kind,

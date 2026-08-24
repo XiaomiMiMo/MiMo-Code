@@ -12,8 +12,11 @@ export const Budget = Schema.Struct({
   maxRetries: Schema.optional(MaxRetries).annotate({
     description: "Retries after the initial attempt; 0 disables retries and the maximum is 100",
   }),
-  deadlineMs: Schema.optional(NonNegativeInt).annotate({
-    description: "Wall-clock retry deadline in milliseconds; 0 means no deadline",
+  deadlineMs: Schema.optional(PositiveInt).annotate({
+    description: "Wall-clock retry deadline in milliseconds; use noDeadline for an explicit unlimited deadline",
+  }),
+  noDeadline: Schema.optional(Schema.Boolean).annotate({
+    description: "Disable the wall-clock retry deadline explicitly; maxRetries still applies to bounded budgets",
   }),
   initialDelayMs: Schema.optional(PositiveInt),
   maxDelayMs: Schema.optional(PositiveInt),

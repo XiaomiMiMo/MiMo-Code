@@ -865,10 +865,12 @@ export const layer: Layer.Layer<
                     : Effect.void,
                 set: (info) =>
                   Effect.gen(function* () {
+                    let attempt = info.attempt
                     if (isMain) {
-                      yield* status.set(ctx.sessionID, {
+                      attempt = yield* status.setRetry(ctx.sessionID, {
                         type: "retry",
                         attempt: info.attempt,
+                        phaseAttempt: info.attempt,
                         message: info.message,
                         next: info.next,
                         phase: info.phase,
@@ -879,7 +881,8 @@ export const layer: Layer.Layer<
                       .publish(Session.Event.RetryAttempt, {
                         sessionID: ctx.sessionID,
                         messageID: ctx.assistantMessage.id,
-                        attempt: info.attempt,
+                        attempt,
+                        phaseAttempt: info.attempt,
                         maxAttempts: info.maxAttempts,
                         phase: info.phase,
                         kind: info.kind,

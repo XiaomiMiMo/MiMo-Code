@@ -80,7 +80,7 @@ function isAuthenticationFailure(error: APIError): boolean {
   const body = error.data.responseBody?.toLowerCase() ?? ""
   const message = error.data.message.toLowerCase()
   const text = `${message} ${body}`
-  return /(?:invalid|expired|missing|malformed)\s*(?:api[ _-]?key|token|credential)|(?:api[ _-]?key|token|credential)\s*(?:invalid|expired|missing|malformed)|\b(?:authentication|authorization)\s+(?:failed|required|invalid|missing)|\binvalid credentials?\b|\baccess denied\b/.test(text)
+  return /(?:invalid|expired|missing|malformed)\s*(?:api[ _-]?key|token|credential)|(?:api[ _-]?key|token|credential)\s*(?:invalid|expired|missing|malformed)|\b(?:authentication|authorization)\s+(?:failed|required|invalid|missing)|\binvalid credentials?\b|\baccess denied\b/.test(text) || message.trim() === "unauthorized" || body.trim() === "unauthorized"
 }
 
 export function isAuthError(error: unknown): boolean {

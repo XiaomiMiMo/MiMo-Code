@@ -2,7 +2,8 @@ import { describe, expect, test } from "bun:test"
 import type { NamedError } from "@mimo-ai/shared/util/error"
 import { APICallError, RetryError } from "ai"
 import { setTimeout as sleep } from "node:timers/promises"
-import { Effect, Schedule } from "effect"
+import { Effect, Schedule, Schema } from "effect"
+import { ConfigRetry } from "../../src/config/retry"
 import { SessionRetry, decide, isRetryableTransientError, retryable } from "../../src/session/retry"
 import { MessageV2 } from "../../src/session/message-v2"
 import { ProviderID } from "../../src/provider/schema"
@@ -121,6 +122,63 @@ describe("session.retry.delay", () => {
         })
       },
     })
+  })
+
+  test("status retry attempts stay global across request and stream phases", async () => {
+    await using tmp = await tmpdir()
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () => {
+        const sessionID = SessionID.make("session-retry-phase-counter")
+        const result = await AppRuntime.runPromise(
+          SessionStatus.Service.use((svc) =>
+            Effect.gen(function* () {
+              yield* svc.setRetry(sessionID, {
+                type: "retry",
+                attempt: 1,
+                phaseAttempt: 1,
+                message: "request",
+                next: Date.now(),
+                phase: "request",
+                scope: "request",
+              })
+              const attempt = yield* svc.setRetry(sessionID, {
+                type: "retry",
+                attempt: 1,
+                phaseAttempt: 1,
+                message: "stream",
+                next: Date.now(),
+                phase: "stream",
+                scope: "live-step",
+              })
+              const status = yield* svc.get(sessionID)
+              return { attempt, status }
+            }),
+          ),
+        )
+        expect(result.attempt).toBe(2)
+        expect(result.status).toMatchObject({ type: "retry", attempt: 2, phaseAttempt: 1, phase: "stream" })
+      },
+    })
+  })
+
+  test("requires explicit noDeadline instead of deadlineMs zero", () => {
+    const decode = Schema.decodeUnknownSync(ConfigRetry.Budget)
+    expect(() => decode({ deadlineMs: 0 })).toThrow()
+    expect(decode({ mode: "persistent", noDeadline: true })).toMatchObject({ noDeadline: true })
+    expect(SessionRetry.resolve({ retry: { server: { maxRetries: 2, noDeadline: true } } }).server.maxElapsedMs).toBe(0)
+    expect(
+      SessionRetry.resolve(
+        { retry: { server: { noDeadline: true } }, provider: { test: { retry: { server: { deadlineMs: 1000 } } } } },
+        "test",
+      ).server.maxElapsedMs,
+    ).toBe(1000)
+    expect(
+      SessionRetry.resolve(
+        { retry: { server: { deadlineMs: 1000 } }, provider: { test: { retry: { server: { noDeadline: true } } } } },
+        "test",
+      ).server.maxElapsedMs,
+    ).toBe(0)
   })
 })
 

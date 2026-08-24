@@ -925,9 +925,10 @@ const live: Layer.Layer<
                   return Stream.failCause(primaryCause)
                 return Stream.unwrap(
                   Effect.gen(function* () {
-                    yield* status.set(SessionID.make(input.sessionID), {
+                    const globalAttempt = yield* status.setRetry(SessionID.make(input.sessionID), {
                       type: "retry",
                       attempt: nextAttempt,
+                      phaseAttempt: nextAttempt,
                       message: decision.message,
                       next: Date.now() + wait,
                       phase: "request",
@@ -937,7 +938,8 @@ const live: Layer.Layer<
                       Bus.publish(Session.Event.RetryAttempt, {
                         sessionID: SessionID.make(input.sessionID),
                         messageID: input.user.id,
-                        attempt: nextAttempt,
+                        attempt: globalAttempt,
+                        phaseAttempt: nextAttempt,
                         maxAttempts: budget.maxRetries ?? 0,
                         phase: "request",
                         kind: decision.kind,

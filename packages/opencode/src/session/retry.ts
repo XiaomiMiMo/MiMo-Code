@@ -125,8 +125,20 @@ const DEFAULT_RETRY_CONFIG: ResolvedRetryConfig = {
 
 function mergeBudget(base: RetryBudget, ...overrides: (RetryBudgetConfig | undefined)[]): RetryBudget {
   const merged = overrides.reduce<RetryBudgetConfig>((result, override) => ({ ...result, ...override }), {})
-  const { deadlineMs, ...rest } = merged
-  const result = { ...base, ...rest, ...(deadlineMs !== undefined ? { maxElapsedMs: deadlineMs } : {}) }
+  const rest = { ...merged }
+  delete rest.deadlineMs
+  delete rest.noDeadline
+  const deadlineOverride = overrides.reduce<RetryBudgetConfig | undefined>(
+    (result, override) =>
+      override && (override.deadlineMs !== undefined || override.noDeadline !== undefined) ? override : result,
+    undefined,
+  )
+  const result = {
+    ...base,
+    ...rest,
+    ...(deadlineOverride?.deadlineMs !== undefined ? { maxElapsedMs: deadlineOverride.deadlineMs } : {}),
+    ...(deadlineOverride?.noDeadline === true ? { maxElapsedMs: 0 } : {}),
+  }
   return result.mode === "persistent" ? { ...result, maxRetries: undefined } : result
 }
 
