@@ -4139,9 +4139,8 @@ NOTE: At any point in time through this workflow you should feel free to ask the
 
 This session is running in the main worktree. If you need to write or edit files, consider creating an isolated worktree first:
 
-- Create a worktree: run \`git worktree add <project-parent>/<project-name>-<branch> -b <branch>\`
-- Base branch: consider fetching latest origin/main first, then branch from main
-- Worktree path convention: <home>/MiMoWorktrees/<project>/<branch> (managed by MiMo)
+- Use the \`worktree\` tool to create an isolated worktree (auto-named, auto-branched)
+- Or run: \`git worktree add <path> -b <branch>\` with a path outside the project directory
 
 Conflict detected: ${conflict.reason}${conflict.activeSessionId ? ` (session: ${conflict.activeSessionId})` : ""}
 
