@@ -2190,6 +2190,7 @@ function ToolPart(props: { last: boolean; part: ToolPart; message: AssistantMess
     get part() {
       return props.part
     },
+    message: props.message,
   }
 
   return (
@@ -2264,6 +2265,7 @@ type ToolProps<T> = {
   tool: string
   output?: string
   part: ToolPart
+  message: AssistantMessage
 }
 function PlanExit(props: ToolProps<any>) {
   const { theme } = useTheme()
@@ -2347,52 +2349,63 @@ function WorkItemTask(props: ToolProps<typeof TaskTool>) {
 
 function ExecSubtoolRow(props: {
   part: ExecSubPartSnapshot
-  parentSessionID: string
-  onOpenActor: (sessionID: string, actorID: string) => void
+  parent: ToolPart
+  message: AssistantMessage
+}) {
+  const synthetic = createMemo(() => {
+    const state = props.part.state
+    return {
+      id: props.part.callID as ToolPart["id"],
+      sessionID: props.parent.sessionID,
+      messageID: props.parent.messageID,
+      type: "tool" as const,
+      callID: props.part.callID,
+      tool: props.part.tool,
+      state: {
+        status: state.status,
+        input: state.input,
+        ...(state.status === "running" ? {
+          title: state.title,
+          ...(state.metadata ? { metadata: state.metadata } : {}),
+          time: state.time,
+        } : state.status === "completed" ? {
+          title: state.title ?? props.part.tool,
+          output: state.output ?? "",
+          metadata: state.metadata ?? {},
+          time: { start: state.time.start, end: state.time.end ?? state.time.start },
+          ...(state.attachments ? { attachments: state.attachments } : {}),
+          ...(state.providerOutput !== undefined ? { providerOutput: state.providerOutput } : {}),
+          ...(state.providerMetadata ? { providerMetadata: state.providerMetadata } : {}),
+        } : {
+          error: state.error ?? "Tool failed",
+          input: state.input,
+          ...(state.metadata ? { metadata: state.metadata } : {}),
+          time: { start: state.time.start, end: state.time.end ?? state.time.start },
+          ...(state.attachments ? { attachments: state.attachments } : {}),
+        }),
+      },
+    } as ToolPart
+  })
+
+  return <ToolPart last={false} part={synthetic()} message={props.message} />
+}
+
+function ExecSubtoolGroup(props: {
+  parts: ExecSubPartSnapshot[]
+  parent: ToolPart
+  message: AssistantMessage
 }) {
   const { theme } = useTheme()
-  const renderer = useRenderer()
-  const state = () => props.part.state
-  const input = () => state().input as {
-    operation?: {
-      actor_id?: unknown
-      to_actor_id?: unknown
-      to_session_id?: unknown
-    }
-  }
-  const actor = () => {
-    const metadata = state().metadata
-    if (props.part.tool !== "actor") return
-    const operation = input().operation
-    const sessionID = typeof metadata?.sessionId === "string"
-      ? metadata.sessionId
-      : typeof operation?.to_session_id === "string" ? operation.to_session_id : props.parentSessionID
-    const actorID = typeof metadata?.actorId === "string"
-      ? metadata.actorId
-      : typeof operation?.actor_id === "string"
-        ? operation.actor_id
-        : typeof operation?.to_actor_id === "string" ? operation.to_actor_id : undefined
-    if (!actorID) return
-    return { sessionID, actorID }
-  }
-  const marker = () => state().status === "running" ? "…" : state().status === "error" ? "✗" : "✓"
-  const title = () => state().title ?? state().error ?? "running"
-
   return (
     <box
-      paddingLeft={1}
-      onMouseUp={() => {
-        const ref = actor()
-        if (!ref || renderer.getSelection()?.getSelectedText()) return
-        props.onOpenActor(ref.sessionID, ref.actorID)
-      }}
+      border={["left"]}
+      paddingLeft={2}
+      borderColor={theme.borderSubtle}
+      customBorderChars={SplitBorder.customBorderChars}
     >
-      <text fg={actor() ? theme.primary : theme.textMuted}>
-        {marker()} {props.part.tool} · {title()}
-        <Show when={actor()}>
-          <span style={{ fg: theme.primary }}> ↗ subagent</span>
-        </Show>
-      </text>
+      <For each={props.parts}>
+        {(part) => <ExecSubtoolRow part={part} parent={props.parent} message={props.message} />}
+      </For>
     </box>
   )
 }
@@ -2403,7 +2416,6 @@ function ExecSubtoolRow(props: {
 // the direct actor navigation path whenever a target reference is available.
 function ToolScript(props: ToolProps<typeof ToolScriptTool>) {
   const { theme } = useTheme()
-  const route = useRoute()
   const [expanded, setExpanded] = createSignal(false)
   const isRunning = createMemo(() => props.part.state.status === "running")
   const meta = createMemo(() =>
@@ -2444,17 +2456,6 @@ function ToolScript(props: ToolProps<typeof ToolScriptTool>) {
       ),
   )
   const subParts = createMemo(() => viewExecSubtools(meta()))
-  const openActor = (sessionID: string, actorID: string) => {
-    if (route.data.type === "session" && sessionID === route.data.sessionID && actorID !== "main") {
-      route.navigate({ ...route.data, agentID: actorID })
-      return
-    }
-    route.navigate({ type: "session", sessionID, agentID: actorID !== "main" ? actorID : undefined })
-  }
-  // exec embeds nested tool output (a `bash` call's stdout) into <return_value>
-  // and <logs>, so escape sequences reach this renderer raw.
-  const output = createMemo(() => stripAnsi(props.output?.trim() ?? ""))
-
   return (
     <Show
       when={expanded()}
@@ -2493,18 +2494,8 @@ function ToolScript(props: ToolProps<typeof ToolScriptTool>) {
       <BlockTool title={`# exec · ${summary()}`} part={props.part} onClick={() => setExpanded(false)}>
         <box gap={1}>
           <text fg={theme.textMuted}>{((props.input.code as string | undefined) ?? "").trim()}</text>
-          <Show when={recentLines().length > 0}>
-            <text fg={theme.textMuted}>{recentLines().join("\n")}</text>
-          </Show>
           <Show when={subParts().length > 0}>
-            <For each={subParts()}>
-              {(subPart) => (
-                <ExecSubtoolRow part={subPart} parentSessionID={props.part.sessionID} onOpenActor={openActor} />
-              )}
-            </For>
-          </Show>
-          <Show when={output()}>
-            <text fg={failed() ? theme.error : theme.text}>{output()}</text>
+            <ExecSubtoolGroup parts={subParts()} parent={props.part} message={props.message} />
           </Show>
           <text fg={theme.textMuted}>Click to collapse</text>
         </box>
