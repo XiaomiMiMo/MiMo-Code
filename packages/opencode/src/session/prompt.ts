@@ -798,7 +798,15 @@ export const layer = Layer.effect(
       modelID?: ModelID
     }) {
       const text = titleInputText(input.text, input.parts)
+      const hasImage =
+        input.parts?.some((part) => part.type === "image") === true ||
+        input.context?.some((message) => message.parts.some((part) => part.type === "file" && part.mime.startsWith("image/"))) === true
+      const hasUserText =
+        Boolean(input.text?.trim()) ||
+        input.parts?.some((part) => part.type === "text" && part.text.trim().length > 0) === true ||
+        input.context?.some((message) => message.parts.some((part) => part.type === "text" && !part.synthetic && !part.ignored && part.text.trim().length > 0)) === true
       const fallback = () => {
+        if (hasImage && !hasUserText) return { title: input.locale?.toLowerCase().startsWith("zh") ? "图片对话" : "Image conversation", status: "fallback" as const }
         const line = text
           .split(/\r?\n/)
           .map((value) => value.trim())
@@ -818,9 +826,6 @@ export const layer = Layer.effect(
         : yield* provider.defaultModel().pipe(Effect.catchCause((cause) => elog.warn("title default model resolution failed", { error: Cause.squash(cause) }).pipe(Effect.as(undefined))))
       if (!requested) return fallback()
       const small = yield* provider.getSmallModel(requested.providerID).pipe(Effect.catchCause((cause) => elog.warn("title lite model resolution failed", { error: Cause.squash(cause) }).pipe(Effect.as(undefined))))
-      const hasImage =
-        input.parts?.some((part) => part.type === "image") === true ||
-        input.context?.some((message) => message.parts.some((part) => part.type === "file" && part.mime.startsWith("image/"))) === true
       const model = hasImage && (!small || !small.capabilities.input.image)
         ? yield* provider.getVisionModel().pipe(Effect.catchCause((cause) => elog.warn("title vision model resolution failed", { error: Cause.squash(cause) }).pipe(Effect.as(undefined))))
         : small
