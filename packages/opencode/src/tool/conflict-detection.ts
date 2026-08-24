@@ -112,14 +112,19 @@ function hasExternalAgentProcess(directory: string): boolean {
       "zcode",        // ZCode (143B tokens)
     ]
     
-    // Get process list with working directory
-    // This is platform-specific; on macOS/Linux we use ps
-    const psOutput = execSync("ps aux", { encoding: "utf-8", timeout: 5000 })
+    // Use lsof to find processes with open files in the target directory
+    // This is more accurate than just checking if the process exists
+    const lsofOutput = execSync(
+      `lsof +D ${normalizedDir} 2>/dev/null | head -100`,
+      { encoding: "utf-8", timeout: 10000 },
+    )
     
+    if (!lsofOutput.trim()) return false
+    
+    // Check if any of the processes with open files match our agent patterns
+    const lowerOutput = lsofOutput.toLowerCase()
     for (const pattern of agentPatterns) {
-      if (psOutput.toLowerCase().includes(pattern)) {
-        // Check if the process is working in our directory
-        // This is a heuristic - we can't perfectly determine the cwd of all processes
+      if (lowerOutput.includes(pattern)) {
         return true
       }
     }
