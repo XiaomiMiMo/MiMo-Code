@@ -16,6 +16,7 @@ import DESCRIPTION from "./apply_patch.txt"
 import { File } from "../file"
 import { Format } from "../format"
 import { Global } from "../global"
+import { injectHint } from "./auto-worktree-hint"
 
 const PatchParams = z.object({
   patch_text: z.string().describe("The full patch text that describes all changes to be made"),
@@ -287,6 +288,8 @@ export const ApplyPatchTool = Tool.define(
         const rel = path.relative(Instance.worktree, target).replaceAll("\\", "/")
         output += `\n\nLSP errors detected in ${rel}, please fix:\n${block}`
       }
+
+      output += yield* Effect.promise(() => injectHint(ctx.sessionID))
 
       return {
         title,
