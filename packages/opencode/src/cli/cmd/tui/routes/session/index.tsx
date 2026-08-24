@@ -1630,6 +1630,13 @@ function UserMessage(props: {
       return origin?.kind === "checkpoint-off" ? [x.text] : []
     })[0]
   })
+  const withheldInputNotice = createMemo(() => {
+    return props.parts.flatMap((x) => {
+      if (x.type !== "text" || !x.synthetic || !x.ignored) return []
+      const origin = (x.metadata as { origin?: { kind?: string } } | undefined)?.origin
+      return origin?.kind === "withheld-input" ? [x.text] : []
+    })[0]
+  })
   // A context rebuild (`/rebuild`) inserts a single user message carrying a
   // `checkpoint` part plus `synthetic: true` text parts (the rendered context
   // and index). Neither renders — `checkpoint` has no PART_MAPPING entry and
@@ -1711,6 +1718,16 @@ function UserMessage(props: {
           <box id={props.message.id} marginTop={props.index === 0 ? 0 : 1} paddingLeft={2} flexDirection="row" gap={1}>
             <text fg={theme.textMuted}>
               <span style={{ bg: theme.backgroundElement, fg: theme.warning, bold: true }}> checkpoint off </span>
+              <span style={{ fg: theme.text }}> {notice()}</span>
+            </text>
+          </box>
+        )}
+      </Show>
+      <Show when={withheldInputNotice()}>
+        {(notice) => (
+          <box id={props.message.id} marginTop={props.index === 0 ? 0 : 1} paddingLeft={2} flexDirection="row" gap={1}>
+            <text fg={theme.textMuted}>
+              <span style={{ bg: theme.backgroundElement, fg: theme.warning, bold: true }}> input withheld </span>
               <span style={{ fg: theme.text }}> {notice()}</span>
             </text>
           </box>

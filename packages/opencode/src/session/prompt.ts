@@ -2592,6 +2592,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
             type: "text",
             synthetic: true,
             ignored: true,
+            metadata: { origin: { kind: "withheld-input" } },
             time: { start: now, end: now },
             text:
               `Not sent to ${model.providerID}/${model.modelID}: ` +
