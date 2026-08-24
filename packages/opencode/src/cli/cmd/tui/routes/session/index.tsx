@@ -259,10 +259,19 @@ export function Session() {
 
   createEffect(async () => {
     const previousWorkspace = project.workspace.current()
-    const result = await sdk.client.session.get({ sessionID: route.sessionID }, { throwOnError: true })
+    const sessionID = route.sessionID
+    // No `throwOnError` here on purpose: with it, a nonexistent or malformed
+    // id REJECTS and the rejection escapes this async effect, leaving the
+    // route mounted on an unloadable session that renders black (#1936).
+    // Without it the client resolves `{ data: undefined }`, which the guard
+    // below turns into a toast plus a hop back to Home.
+    const result = await sdk.client.session.get({ sessionID })
+    // Route liveness: the user may have navigated away while the request was
+    // in flight; stale work must never touch the newly selected route.
+    if (route.sessionID !== sessionID) return
     if (!result.data) {
       toast.show({
-        message: `Session not found: ${route.sessionID}`,
+        message: `Session not found: ${sessionID}`,
         variant: "error",
       })
       navigate({ type: "home" })
@@ -291,6 +300,7 @@ export function Session() {
         .actors({ sessionID }, { throwOnError: true })
         .then((res) => res.data as SessionActorInput[] | undefined),
     )
+    if (route.sessionID !== sessionID) return
     if (!verdict.renderable) {
       toast.show({
         message: `Cannot open session: ${verdict.reason}`,
@@ -311,7 +321,9 @@ export function Session() {
         await sync.bootstrap({ fatal: false })
       } catch (e) {}
     }
-    await sync.session.sync(route.sessionID)
+    if (route.sessionID !== sessionID) return
+    await sync.session.sync(sessionID)
+    if (route.sessionID !== sessionID) return
     if (scroll) scroll.scrollBy(100_000)
   })
 
