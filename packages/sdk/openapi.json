@@ -14514,7 +14514,7 @@
                   "maxRetries": {
                     "type": "integer",
                     "minimum": 0,
-                    "maximum": 9007199254740991
+                    "maximum": 100
                   },
                   "deadlineMs": {
                     "type": "integer",
@@ -14530,6 +14530,11 @@
                     "type": "integer",
                     "exclusiveMinimum": 0,
                     "maximum": 9007199254740991
+                  },
+                  "jitterRatio": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 1
                   }
                 }
               },
@@ -14543,7 +14548,7 @@
                   "maxRetries": {
                     "type": "integer",
                     "minimum": 0,
-                    "maximum": 9007199254740991
+                    "maximum": 100
                   },
                   "deadlineMs": {
                     "type": "integer",
@@ -14559,6 +14564,11 @@
                     "type": "integer",
                     "exclusiveMinimum": 0,
                     "maximum": 9007199254740991
+                  },
+                  "jitterRatio": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 1
                   }
                 }
               },
@@ -14572,7 +14582,7 @@
                   "maxRetries": {
                     "type": "integer",
                     "minimum": 0,
-                    "maximum": 9007199254740991
+                    "maximum": 100
                   },
                   "deadlineMs": {
                     "type": "integer",
@@ -14588,6 +14598,11 @@
                     "type": "integer",
                     "exclusiveMinimum": 0,
                     "maximum": 9007199254740991
+                  },
+                  "jitterRatio": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 1
                   }
                 }
               },
@@ -14601,7 +14616,7 @@
                   "maxRetries": {
                     "type": "integer",
                     "minimum": 0,
-                    "maximum": 9007199254740991
+                    "maximum": 100
                   },
                   "deadlineMs": {
                     "type": "integer",
@@ -14617,6 +14632,11 @@
                     "type": "integer",
                     "exclusiveMinimum": 0,
                     "maximum": 9007199254740991
+                  },
+                  "jitterRatio": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 1
                   }
                 }
               },
@@ -14630,7 +14650,7 @@
                   "maxRetries": {
                     "type": "integer",
                     "minimum": 0,
-                    "maximum": 9007199254740991
+                    "maximum": 100
                   },
                   "deadlineMs": {
                     "type": "integer",
@@ -14646,6 +14666,11 @@
                     "type": "integer",
                     "exclusiveMinimum": 0,
                     "maximum": 9007199254740991
+                  },
+                  "jitterRatio": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 1
                   }
                 }
               },
@@ -14659,7 +14684,7 @@
                   "maxRetries": {
                     "type": "integer",
                     "minimum": 0,
-                    "maximum": 9007199254740991
+                    "maximum": 100
                   },
                   "deadlineMs": {
                     "type": "integer",
@@ -14675,6 +14700,11 @@
                     "type": "integer",
                     "exclusiveMinimum": 0,
                     "maximum": 9007199254740991
+                  },
+                  "jitterRatio": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 1
                   }
                 }
               },
@@ -14688,7 +14718,7 @@
                   "maxRetries": {
                     "type": "integer",
                     "minimum": 0,
-                    "maximum": 9007199254740991
+                    "maximum": 100
                   },
                   "deadlineMs": {
                     "type": "integer",
@@ -14704,6 +14734,11 @@
                     "type": "integer",
                     "exclusiveMinimum": 0,
                     "maximum": 9007199254740991
+                  },
+                  "jitterRatio": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 1
                   }
                 }
               },
@@ -14717,7 +14752,7 @@
                   "maxRetries": {
                     "type": "integer",
                     "minimum": 0,
-                    "maximum": 9007199254740991
+                    "maximum": 100
                   },
                   "deadlineMs": {
                     "type": "integer",
@@ -14733,6 +14768,11 @@
                     "type": "integer",
                     "exclusiveMinimum": 0,
                     "maximum": 9007199254740991
+                  },
+                  "jitterRatio": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 1
                   }
                 }
               },
@@ -15324,7 +15364,7 @@
                   "maxRetries": {
                     "type": "integer",
                     "minimum": 0,
-                    "maximum": 9007199254740991
+                    "maximum": 100
                   },
                   "deadlineMs": {
                     "type": "integer",
@@ -15340,6 +15380,11 @@
                     "type": "integer",
                     "exclusiveMinimum": 0,
                     "maximum": 9007199254740991
+                  },
+                  "jitterRatio": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 1
                   }
                 }
               },
@@ -15353,7 +15398,7 @@
                   "maxRetries": {
                     "type": "integer",
                     "minimum": 0,
-                    "maximum": 9007199254740991
+                    "maximum": 100
                   },
                   "deadlineMs": {
                     "type": "integer",
@@ -15369,6 +15414,11 @@
                     "type": "integer",
                     "exclusiveMinimum": 0,
                     "maximum": 9007199254740991
+                  },
+                  "jitterRatio": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 1
                   }
                 }
               },
@@ -15382,7 +15432,7 @@
                   "maxRetries": {
                     "type": "integer",
                     "minimum": 0,
-                    "maximum": 9007199254740991
+                    "maximum": 100
                   },
                   "deadlineMs": {
                     "type": "integer",
@@ -15398,6 +15448,11 @@
                     "type": "integer",
                     "exclusiveMinimum": 0,
                     "maximum": 9007199254740991
+                  },
+                  "jitterRatio": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 1
                   }
                 }
               },
@@ -15411,7 +15466,7 @@
                   "maxRetries": {
                     "type": "integer",
                     "minimum": 0,
-                    "maximum": 9007199254740991
+                    "maximum": 100
                   },
                   "deadlineMs": {
                     "type": "integer",
@@ -15427,6 +15482,11 @@
                     "type": "integer",
                     "exclusiveMinimum": 0,
                     "maximum": 9007199254740991
+                  },
+                  "jitterRatio": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 1
                   }
                 }
               },
@@ -15440,7 +15500,7 @@
                   "maxRetries": {
                     "type": "integer",
                     "minimum": 0,
-                    "maximum": 9007199254740991
+                    "maximum": 100
                   },
                   "deadlineMs": {
                     "type": "integer",
@@ -15456,6 +15516,11 @@
                     "type": "integer",
                     "exclusiveMinimum": 0,
                     "maximum": 9007199254740991
+                  },
+                  "jitterRatio": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 1
                   }
                 }
               },
@@ -15469,7 +15534,7 @@
                   "maxRetries": {
                     "type": "integer",
                     "minimum": 0,
-                    "maximum": 9007199254740991
+                    "maximum": 100
                   },
                   "deadlineMs": {
                     "type": "integer",
@@ -15485,6 +15550,11 @@
                     "type": "integer",
                     "exclusiveMinimum": 0,
                     "maximum": 9007199254740991
+                  },
+                  "jitterRatio": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 1
                   }
                 }
               },
@@ -15498,7 +15568,7 @@
                   "maxRetries": {
                     "type": "integer",
                     "minimum": 0,
-                    "maximum": 9007199254740991
+                    "maximum": 100
                   },
                   "deadlineMs": {
                     "type": "integer",
@@ -15514,6 +15584,11 @@
                     "type": "integer",
                     "exclusiveMinimum": 0,
                     "maximum": 9007199254740991
+                  },
+                  "jitterRatio": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 1
                   }
                 }
               },
@@ -15527,7 +15602,7 @@
                   "maxRetries": {
                     "type": "integer",
                     "minimum": 0,
-                    "maximum": 9007199254740991
+                    "maximum": 100
                   },
                   "deadlineMs": {
                     "type": "integer",
@@ -15543,6 +15618,11 @@
                     "type": "integer",
                     "exclusiveMinimum": 0,
                     "maximum": 9007199254740991
+                  },
+                  "jitterRatio": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 1
                   }
                 }
               },
