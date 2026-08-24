@@ -142,6 +142,7 @@ describe("session.retry.delay", () => {
                 phase: "request",
                 scope: "request",
               })
+              yield* svc.set(sessionID, { type: "busy" })
               const attempt = yield* svc.setRetry(sessionID, {
                 type: "retry",
                 attempt: 1,
@@ -165,6 +166,7 @@ describe("session.retry.delay", () => {
   test("requires explicit noDeadline instead of deadlineMs zero", () => {
     const decode = Schema.decodeUnknownSync(ConfigRetry.Budget)
     expect(() => decode({ deadlineMs: 0 })).toThrow()
+    expect(() => decode({ deadlineMs: 1000, noDeadline: true })).toThrow("deadlineMs and noDeadline cannot be configured together")
     expect(decode({ mode: "persistent", noDeadline: true })).toMatchObject({ noDeadline: true })
     expect(SessionRetry.resolve({ retry: { server: { maxRetries: 2, noDeadline: true } } }).server.maxElapsedMs).toBe(0)
     expect(

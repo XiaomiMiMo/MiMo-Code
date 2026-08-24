@@ -37,7 +37,7 @@ Persistent network retry 只适用于 transport connection failure，不适用�
 
 ## 配置
 
-全局配置提供默认预算，provider.<id>.retry 对同名字段做覆盖。maxRetries 是初始 attempt 之外的重试次数，schema 硬上限为 100；deadlineMs 必须是正整数。需要取消 wall-clock deadline 时必须显式设置 noDeadline: true；该选项不会取消 bounded budget 的 maxRetries 限制。
+全局配置提供默认预算，provider.<id>.retry 对同名字段做覆盖。maxRetries 是初始 attempt 之外的重试次数，schema 硬上限为 100；deadlineMs 必须是正整数，且不能与 noDeadline 同时出现。需要取消 wall-clock deadline 时必须显式设置 noDeadline: true；该选项不会取消 bounded budget 的 maxRetries 限制。
 
 配置示例：
 
@@ -67,7 +67,7 @@ Persistent network retry 仍受 AbortSignal、进程退出和 provider chunkTime
 
 ## 可观测性
 
-每次实际 retry 发布 session.retry.attempt，包含 phase、scope、kind、attempt、phaseAttempt、maxAttempts、nextDelayMs 和 reason。attempt 是当前 session 跨 request/stream 的连续序号，phaseAttempt 是当前 phase 内的局部序号；maxAttempts 为 0 表示 persistent retry。terminal UI notice 使用独立的 session status notice，不伪装成 retry attempt。Persistent network retry 不重复创建 transcript message；UI 只更新当前状态。成功、终止、取消都必须清理 retry 状态并回到 idle。
+每次实际 retry 发布 session.retry.attempt，包含 phase、scope、kind、attempt、phaseAttempt、maxAttempts、nextDelayMs 和 reason。attempt 是当前 session 跨 request/stream 的连续序号，phaseAttempt 是当前 phase 内的局部序号；attempt counter 独立于 busy/notice 状态，只在 session 回到 idle 时清零。maxAttempts 为 0 表示 persistent retry。terminal UI notice 使用独立的 session status notice，不伪装成 retry attempt。Persistent network retry 不重复创建 transcript message；UI 只更新当前状态。成功、终止、取消都必须清理 retry 状态并回到 idle。
 
 ## 兼容性
 

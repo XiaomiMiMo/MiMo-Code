@@ -66,35 +66,38 @@ export const layer = Layer.effect(
     const bus = yield* Bus.Service
 
     const state = yield* InstanceState.make(
-      Effect.fn("SessionStatus.state")(() => Effect.succeed(new Map<SessionID, Info>())),
+      Effect.fn("SessionStatus.state")(() =>
+        Effect.succeed({ statuses: new Map<SessionID, Info>(), retryAttempts: new Map<SessionID, number>() }),
+      ),
     )
 
     const get = Effect.fn("SessionStatus.get")(function* (sessionID: SessionID) {
       const data = yield* InstanceState.get(state)
-      return data.get(sessionID) ?? { type: "idle" as const }
+      return data.statuses.get(sessionID) ?? { type: "idle" as const }
     })
 
     const list = Effect.fn("SessionStatus.list")(function* () {
-      return new Map(yield* InstanceState.get(state))
+      return new Map((yield* InstanceState.get(state)).statuses)
     })
 
     const commit = Effect.fn("SessionStatus.commit")(function* (sessionID: SessionID, status: Info) {
       const data = yield* InstanceState.get(state)
-      const previous = data.get(sessionID)
       const normalized: Info =
         status.type === "retry"
           ? {
               ...status,
-              attempt: previous?.type === "retry" ? previous.attempt + 1 : status.attempt,
+              attempt: data.retryAttempts.get(sessionID) ?? status.attempt,
               phaseAttempt: status.phaseAttempt ?? status.attempt,
             }
           : status
+      if (normalized.type === "retry") data.retryAttempts.set(sessionID, normalized.attempt + 1)
       yield* bus.publish(Event.Status, { sessionID, status: normalized })
       if (normalized.type === "idle") {
         yield* bus.publish(Event.Idle, { sessionID })
-        data.delete(sessionID)
+        data.statuses.delete(sessionID)
+        data.retryAttempts.delete(sessionID)
       } else {
-        data.set(sessionID, normalized)
+        data.statuses.set(sessionID, normalized)
       }
       return normalized
     })

@@ -14548,16 +14548,16 @@
                     "minimum": 0,
                     "maximum": 100
                   },
-              "deadlineMs": {
-                "description": "Wall-clock retry deadline in milliseconds; use noDeadline for an explicit unlimited deadline",
-                "type": "integer",
-                "exclusiveMinimum": 0,
-                "maximum": 9007199254740991
-              },
-              "noDeadline": {
-                "description": "Disable the wall-clock retry deadline explicitly",
-                "type": "boolean"
-              },
+                  "deadlineMs": {
+                    "description": "Wall-clock retry deadline in milliseconds; use noDeadline for an explicit unlimited deadline",
+                    "type": "integer",
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  "noDeadline": {
+                    "description": "Disable the wall-clock retry deadline explicitly",
+                    "type": "boolean"
+                  },
                   "initialDelayMs": {
                     "type": "integer",
                     "exclusiveMinimum": 0,
@@ -14573,6 +14573,9 @@
                     "minimum": 0,
                     "maximum": 1
                   }
+                },
+                "not": {
+                  "required": ["deadlineMs", "noDeadline"]
                 }
               },
               "stream": {
@@ -14589,16 +14592,16 @@
                     "minimum": 0,
                     "maximum": 100
                   },
-              "deadlineMs": {
-                "description": "Wall-clock retry deadline in milliseconds; use noDeadline for an explicit unlimited deadline",
-                "type": "integer",
-                "exclusiveMinimum": 0,
-                "maximum": 9007199254740991
-              },
-              "noDeadline": {
-                "description": "Disable the wall-clock retry deadline explicitly",
-                "type": "boolean"
-              },
+                  "deadlineMs": {
+                    "description": "Wall-clock retry deadline in milliseconds; use noDeadline for an explicit unlimited deadline",
+                    "type": "integer",
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  "noDeadline": {
+                    "description": "Disable the wall-clock retry deadline explicitly",
+                    "type": "boolean"
+                  },
                   "initialDelayMs": {
                     "type": "integer",
                     "exclusiveMinimum": 0,
@@ -14614,6 +14617,9 @@
                     "minimum": 0,
                     "maximum": 1
                   }
+                },
+                "not": {
+                  "required": ["deadlineMs", "noDeadline"]
                 }
               },
               "maxCandidate": {
@@ -14630,16 +14636,16 @@
                     "minimum": 0,
                     "maximum": 100
                   },
-              "deadlineMs": {
-                "description": "Wall-clock retry deadline in milliseconds; use noDeadline for an explicit unlimited deadline",
-                "type": "integer",
-                "exclusiveMinimum": 0,
-                "maximum": 9007199254740991
-              },
-              "noDeadline": {
-                "description": "Disable the wall-clock retry deadline explicitly",
-                "type": "boolean"
-              },
+                  "deadlineMs": {
+                    "description": "Wall-clock retry deadline in milliseconds; use noDeadline for an explicit unlimited deadline",
+                    "type": "integer",
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  "noDeadline": {
+                    "description": "Disable the wall-clock retry deadline explicitly",
+                    "type": "boolean"
+                  },
                   "initialDelayMs": {
                     "type": "integer",
                     "exclusiveMinimum": 0,
@@ -14655,6 +14661,9 @@
                     "minimum": 0,
                     "maximum": 1
                   }
+                },
+                "not": {
+                  "required": ["deadlineMs", "noDeadline"]
                 }
               },
               "maxJudge": {
@@ -14671,16 +14680,16 @@
                     "minimum": 0,
                     "maximum": 100
                   },
-              "deadlineMs": {
-                "description": "Wall-clock retry deadline in milliseconds; use noDeadline for an explicit unlimited deadline",
-                "type": "integer",
-                "exclusiveMinimum": 0,
-                "maximum": 9007199254740991
-              },
-              "noDeadline": {
-                "description": "Disable the wall-clock retry deadline explicitly",
-                "type": "boolean"
-              },
+                  "deadlineMs": {
+                    "description": "Wall-clock retry deadline in milliseconds; use noDeadline for an explicit unlimited deadline",
+                    "type": "integer",
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  "noDeadline": {
+                    "description": "Disable the wall-clock retry deadline explicitly",
+                    "type": "boolean"
+                  },
                   "initialDelayMs": {
                     "type": "integer",
                     "exclusiveMinimum": 0,
@@ -14696,6 +14705,9 @@
                     "minimum": 0,
                     "maximum": 1
                   }
+                },
+                "not": {
+                  "required": ["deadlineMs", "noDeadline"]
                 }
               },
               "network": {
@@ -14712,16 +14724,16 @@
                     "minimum": 0,
                     "maximum": 100
                   },
-              "deadlineMs": {
-                "description": "Wall-clock retry deadline in milliseconds; use noDeadline for an explicit unlimited deadline",
-                "type": "integer",
-                "exclusiveMinimum": 0,
-                "maximum": 9007199254740991
-              },
-              "noDeadline": {
-                "description": "Disable the wall-clock retry deadline explicitly",
-                "type": "boolean"
-              },
+                  "deadlineMs": {
+                    "description": "Wall-clock retry deadline in milliseconds; use noDeadline for an explicit unlimited deadline",
+                    "type": "integer",
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  "noDeadline": {
+                    "description": "Disable the wall-clock retry deadline explicitly",
+                    "type": "boolean"
+                  },
                   "initialDelayMs": {
                     "type": "integer",
                     "exclusiveMinimum": 0,
@@ -14737,6 +14749,9 @@
                     "minimum": 0,
                     "maximum": 1
                   }
+                },
+                "not": {
+                  "required": ["deadlineMs", "noDeadline"]
                 }
               },
               "server": {
@@ -14753,16 +14768,16 @@
                     "minimum": 0,
                     "maximum": 100
                   },
-              "deadlineMs": {
-                "description": "Wall-clock retry deadline in milliseconds; use noDeadline for an explicit unlimited deadline",
-                "type": "integer",
-                "exclusiveMinimum": 0,
-                "maximum": 9007199254740991
-              },
-              "noDeadline": {
-                "description": "Disable the wall-clock retry deadline explicitly",
-                "type": "boolean"
-              },
+                  "deadlineMs": {
+                    "description": "Wall-clock retry deadline in milliseconds; use noDeadline for an explicit unlimited deadline",
+                    "type": "integer",
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  "noDeadline": {
+                    "description": "Disable the wall-clock retry deadline explicitly",
+                    "type": "boolean"
+                  },
                   "initialDelayMs": {
                     "type": "integer",
                     "exclusiveMinimum": 0,
@@ -14778,6 +14793,9 @@
                     "minimum": 0,
                     "maximum": 1
                   }
+                },
+                "not": {
+                  "required": ["deadlineMs", "noDeadline"]
                 }
               },
               "rateLimit": {
@@ -14794,16 +14812,16 @@
                     "minimum": 0,
                     "maximum": 100
                   },
-              "deadlineMs": {
-                "description": "Wall-clock retry deadline in milliseconds; use noDeadline for an explicit unlimited deadline",
-                "type": "integer",
-                "exclusiveMinimum": 0,
-                "maximum": 9007199254740991
-              },
-              "noDeadline": {
-                "description": "Disable the wall-clock retry deadline explicitly",
-                "type": "boolean"
-              },
+                  "deadlineMs": {
+                    "description": "Wall-clock retry deadline in milliseconds; use noDeadline for an explicit unlimited deadline",
+                    "type": "integer",
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  "noDeadline": {
+                    "description": "Disable the wall-clock retry deadline explicitly",
+                    "type": "boolean"
+                  },
                   "initialDelayMs": {
                     "type": "integer",
                     "exclusiveMinimum": 0,
@@ -14819,6 +14837,9 @@
                     "minimum": 0,
                     "maximum": 1
                   }
+                },
+                "not": {
+                  "required": ["deadlineMs", "noDeadline"]
                 }
               },
               "unknown": {
@@ -14835,16 +14856,16 @@
                     "minimum": 0,
                     "maximum": 100
                   },
-              "deadlineMs": {
-                "description": "Wall-clock retry deadline in milliseconds; use noDeadline for an explicit unlimited deadline",
-                "type": "integer",
-                "exclusiveMinimum": 0,
-                "maximum": 9007199254740991
-              },
-              "noDeadline": {
-                "description": "Disable the wall-clock retry deadline explicitly",
-                "type": "boolean"
-              },
+                  "deadlineMs": {
+                    "description": "Wall-clock retry deadline in milliseconds; use noDeadline for an explicit unlimited deadline",
+                    "type": "integer",
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  "noDeadline": {
+                    "description": "Disable the wall-clock retry deadline explicitly",
+                    "type": "boolean"
+                  },
                   "initialDelayMs": {
                     "type": "integer",
                     "exclusiveMinimum": 0,
@@ -14860,6 +14881,9 @@
                     "minimum": 0,
                     "maximum": 1
                   }
+                },
+                "not": {
+                  "required": ["deadlineMs", "noDeadline"]
                 }
               },
               "jitterRatio": {
@@ -15479,6 +15503,9 @@
                     "minimum": 0,
                     "maximum": 1
                   }
+                },
+                "not": {
+                  "required": ["deadlineMs", "noDeadline"]
                 }
               },
               "stream": {
@@ -15520,6 +15547,9 @@
                     "minimum": 0,
                     "maximum": 1
                   }
+                },
+                "not": {
+                  "required": ["deadlineMs", "noDeadline"]
                 }
               },
               "maxCandidate": {
@@ -15561,6 +15591,9 @@
                     "minimum": 0,
                     "maximum": 1
                   }
+                },
+                "not": {
+                  "required": ["deadlineMs", "noDeadline"]
                 }
               },
               "maxJudge": {
@@ -15602,6 +15635,9 @@
                     "minimum": 0,
                     "maximum": 1
                   }
+                },
+                "not": {
+                  "required": ["deadlineMs", "noDeadline"]
                 }
               },
               "network": {
@@ -15643,6 +15679,9 @@
                     "minimum": 0,
                     "maximum": 1
                   }
+                },
+                "not": {
+                  "required": ["deadlineMs", "noDeadline"]
                 }
               },
               "server": {
@@ -15684,6 +15723,9 @@
                     "minimum": 0,
                     "maximum": 1
                   }
+                },
+                "not": {
+                  "required": ["deadlineMs", "noDeadline"]
                 }
               },
               "rateLimit": {
@@ -15725,6 +15767,9 @@
                     "minimum": 0,
                     "maximum": 1
                   }
+                },
+                "not": {
+                  "required": ["deadlineMs", "noDeadline"]
                 }
               },
               "unknown": {
@@ -15766,6 +15811,9 @@
                     "minimum": 0,
                     "maximum": 1
                   }
+                },
+                "not": {
+                  "required": ["deadlineMs", "noDeadline"]
                 }
               },
               "jitterRatio": {

@@ -4,6 +4,12 @@ const NonNegativeInt = Schema.Number.check(Schema.isInt()).check(Schema.isGreate
 const MaxRetries = NonNegativeInt.check(Schema.isLessThanOrEqualTo(100))
 const PositiveInt = Schema.Number.check(Schema.isInt()).check(Schema.isGreaterThan(0))
 const Ratio = Schema.Number.check(Schema.isGreaterThanOrEqualTo(0)).check(Schema.isLessThanOrEqualTo(1))
+const DeadlineOptions = Schema.makeFilter<{ deadlineMs?: number; noDeadline?: boolean }>((input) =>
+  input.deadlineMs === undefined || input.noDeadline !== true || {
+    path: ["noDeadline"],
+    message: "deadlineMs and noDeadline cannot be configured together",
+  },
+)
 
 export const Budget = Schema.Struct({
   mode: Schema.optional(Schema.Literals(["bounded", "persistent"])).annotate({
@@ -21,7 +27,7 @@ export const Budget = Schema.Struct({
   initialDelayMs: Schema.optional(PositiveInt),
   maxDelayMs: Schema.optional(PositiveInt),
   jitterRatio: Schema.optional(Ratio),
-})
+}).check(DeadlineOptions)
 
 export const Info = Schema.Struct({
   request: Schema.optional(Budget),
