@@ -30,7 +30,7 @@ Retry 必须区分两个问题：错误是否可能恢复，以及当前 scope �
 | stream     | 5 次，2s 起步，10min deadline                                                 |
 | server     | 8 次，2s 起步，15min deadline                                                 |
 | rate_limit | 5 次，优先 Retry-After，最大 delay 5min                                       |
-| unknown    | 1 次，2s 起步，30s deadline                                                   |
+| unknown    | 8 次，2s 起步，15min deadline                                                 |
 | terminal   | 0 次                                                                          |
 
 Persistent network retry 只适用于 transport connection failure，不适用于 quota、auth、context overflow 或已经跨过 tool side-effect boundary 的 live step。每次等待只更新同一个 retry 状态，不能向 transcript 无限追加 Reconnecting 文本。
@@ -50,7 +50,7 @@ Persistent network retry 只适用于 transport connection failure，不适用�
         "network": { "mode": "persistent", "deadlineMs": 0, "initialDelayMs": 5000, "maxDelayMs": 60000 },
         "server": { "maxRetries": 8, "deadlineMs": 900000 },
         "rateLimit": { "maxRetries": 5, "maxDelayMs": 300000 },
-        "unknown": { "maxRetries": 1, "deadlineMs": 30000 },
+        "unknown": { "maxRetries": 8, "deadlineMs": 900000 },
         "jitterRatio": 0.2
       }
     }

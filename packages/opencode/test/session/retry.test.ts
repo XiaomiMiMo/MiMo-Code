@@ -142,6 +142,7 @@ describe("session.retry.retryable", () => {
     const resolved = SessionRetry.resolve(undefined, "test")
     expect(SessionRetry.budgetFor(resolved, { retryable: true, phase: "stream", scope: "live-step", kind: "network", message: "reset" }).mode).toBe("persistent")
     expect(SessionRetry.budgetFor(resolved, { retryable: true, phase: "request", scope: "request", kind: "server", message: "503" }).maxRetries).toBe(1)
+    expect(resolved.unknown).toMatchObject({ maxRetries: 8, maxElapsedMs: 15 * 60_000 })
   })
 
   test("caps retry-after by the selected budget", () => {

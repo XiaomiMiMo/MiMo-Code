@@ -24,7 +24,10 @@ export const NETWORK_MAX_DELAY_MS = 60_000
 export const SERVER_MAX_RETRIES = 8
 export const SERVER_RETRY_DEADLINE_MS = 15 * 60_000
 export const RATE_LIMIT_MAX_RETRIES = 5
-export const UNKNOWN_MAX_RETRIES = 1
+// Provider-declared retryable errors without a known subtype deserve the same
+// recovery window as server capacity errors; unknown means uncatalogued, not terminal.
+export const UNKNOWN_MAX_RETRIES = SERVER_MAX_RETRIES
+export const UNKNOWN_RETRY_DEADLINE_MS = SERVER_RETRY_DEADLINE_MS
 
 export type RetryBudget = {
   mode: "bounded" | "persistent"
@@ -103,7 +106,7 @@ const DEFAULT_RETRY_CONFIG: ResolvedRetryConfig = {
   unknown: {
     mode: "bounded",
     maxRetries: UNKNOWN_MAX_RETRIES,
-    maxElapsedMs: REQUEST_RETRY_DEADLINE_MS,
+    maxElapsedMs: UNKNOWN_RETRY_DEADLINE_MS,
     initialDelayMs: RETRY_INITIAL_DELAY,
     maxDelayMs: RETRY_MAX_DELAY_NO_HEADERS,
   },
