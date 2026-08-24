@@ -231,6 +231,19 @@ const TITLE_SCHEMA = {
   properties: { title: { type: "string", minLength: 1, maxLength: TITLE_MAX_LENGTH } },
 } as const
 
+export type GenTitlePart =
+  | { type: "text"; text: string }
+  | { type: "image"; data: string; mime: string; filename?: string }
+
+export function titleInputText(text: string | undefined, parts: GenTitlePart[] | undefined) {
+  const chunks = [text?.trim() ?? ""]
+  for (const part of parts ?? []) {
+    if (part.type === "text") chunks.push(part.text.trim())
+    else chunks.push(part.filename ? `Attachment: ${part.filename}` : `Attachment: ${part.mime}`)
+  }
+  return chunks.filter(Boolean).join("\n").trim()
+}
+
 export function truncateTitle(value: string) {
   if (value.length <= TITLE_MAX_LENGTH) return value
   const prefix = value.substring(0, TITLE_MAX_LENGTH)
@@ -277,7 +290,7 @@ export interface Interface {
   readonly shell: (input: ShellInput) => Effect.Effect<MessageV2.WithParts, Session.BusyError>
   readonly command: (input: CommandInput) => Effect.Effect<MessageV2.WithParts>
   readonly resolvePromptParts: (template: string) => Effect.Effect<PromptInput["parts"]>
-  readonly genTitle: (input: { text: string; context?: MessageV2.WithParts[]; locale?: string; sessionID?: SessionID; providerID?: ProviderID; modelID?: ModelID }) => Effect.Effect<{ title: string; status: "generated" | "fallback" | "untitled" }>
+  readonly genTitle: (input: { text?: string; parts?: GenTitlePart[]; context?: MessageV2.WithParts[]; locale?: string; sessionID?: SessionID; providerID?: ProviderID; modelID?: ModelID }) => Effect.Effect<{ title: string; status: "generated" | "fallback" | "untitled" }>
   readonly sweepOrphanAssistants: (sessionID: SessionID, immediate?: boolean) => Effect.Effect<void>
   readonly sweepOrphanToolParts: (sessionID: SessionID) => Effect.Effect<void>
   readonly predict: (input: { sessionID: SessionID }) => Effect.Effect<string>
@@ -776,14 +789,15 @@ export const layer = Layer.effect(
     })
 
     const genTitle = Effect.fn("SessionPrompt.genTitle")(function* (input: {
-      text: string
+      text?: string
+      parts?: GenTitlePart[]
       context?: MessageV2.WithParts[]
       locale?: string
       sessionID?: SessionID
       providerID?: ProviderID
       modelID?: ModelID
     }) {
-      const text = input.text.trim()
+      const text = titleInputText(input.text, input.parts)
       const fallback = () => {
         const line = text
           .split(/\r?\n/)
@@ -803,15 +817,30 @@ export const layer = Layer.effect(
         ? { providerID: input.providerID, modelID: input.modelID }
         : yield* provider.defaultModel().pipe(Effect.catchCause((cause) => elog.warn("title default model resolution failed", { error: Cause.squash(cause) }).pipe(Effect.as(undefined))))
       if (!requested) return fallback()
-      const model = yield* provider.getSmallModel(requested.providerID).pipe(Effect.catchCause((cause) => elog.warn("title lite model resolution failed", { error: Cause.squash(cause) }).pipe(Effect.as(undefined))))
-      if (!model) return fallback()
+      const small = yield* provider.getSmallModel(requested.providerID).pipe(Effect.catchCause((cause) => elog.warn("title lite model resolution failed", { error: Cause.squash(cause) }).pipe(Effect.as(undefined))))
+      const hasImage =
+        input.parts?.some((part) => part.type === "image") === true ||
+        input.context?.some((message) => message.parts.some((part) => part.type === "file" && part.mime.startsWith("image/"))) === true
+      const model = hasImage && (!small || !small.capabilities.input.image)
+        ? yield* provider.getVisionModel().pipe(Effect.catchCause((cause) => elog.warn("title vision model resolution failed", { error: Cause.squash(cause) }).pipe(Effect.as(undefined))))
+        : small
+      if (!model || !model.capabilities.input.text || !model.capabilities.toolcall) return fallback()
       let candidate: unknown
       const sessionID = input.sessionID ? String(input.sessionID) : "title-" + String(MessageID.ascending())
       const user: MessageV2.User = { id: MessageID.ascending(), sessionID: SessionID.make(sessionID), role: "user", time: { created: Date.now() }, agent: ag.name, model: { providerID: model.providerID, modelID: model.id } }
       const outputTool = createStructuredOutputTool({ schema: TITLE_SCHEMA, onSuccess: (value) => { if (candidate === undefined) candidate = value } })
+      const publicMessages = input.parts?.some((part) => part.type === "image")
+        ? [{
+            role: "user" as const,
+            content: [
+              { type: "text" as const, text: "Generate a title for this conversation:\n" + text },
+              ...input.parts.map((part) => part.type === "text" ? { type: "text" as const, text: part.text } : { type: "image" as const, image: `data:${part.mime};base64,${part.data}`, mediaType: part.mime }),
+            ],
+          }]
+        : [{ role: "user" as const, content: "Generate a title for this conversation:\n" + text }]
       const messages = input.context
         ? [{ role: "user" as const, content: "Generate a title for this conversation:\n" + text }, ...(yield* MessageV2.toModelMessagesEffect(input.context, model))]
-        : [{ role: "user" as const, content: "Generate a title for this conversation:\n" + text }]
+        : publicMessages
       yield* llm.stream({ agent: ag, user, system: [STRUCTURED_OUTPUT_SYSTEM_PROMPT], small: true, tools: { StructuredOutput: outputTool }, activeTools: ["StructuredOutput"], toolChoice: "required", model, sessionID, ephemeral: true, retries: 2, messages }).pipe(Stream.runDrain, Effect.catchCause((cause) => elog.warn("title generation failed", { error: Cause.squash(cause) }).pipe(Effect.as(undefined))))
       const raw = candidate && typeof candidate === "object" ? (candidate as Record<string, unknown>).title : undefined
       if (typeof raw !== "string") return fallback()

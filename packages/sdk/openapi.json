@@ -2319,14 +2319,58 @@
                 "properties": {
                   "text": {
                     "type": "string",
-                    "minLength": 1,
                     "maxLength": 20000
+                  },
+                  "parts": {
+                    "minItems": 1,
+                    "maxItems": 8,
+                    "type": "array",
+                    "items": {
+                      "anyOf": [
+                        {
+                          "type": "object",
+                          "properties": {
+                            "type": {
+                              "type": "string",
+                              "const": "text"
+                            },
+                            "text": {
+                              "type": "string",
+                              "maxLength": 20000
+                            }
+                          },
+                          "required": ["type", "text"]
+                        },
+                        {
+                          "type": "object",
+                          "properties": {
+                            "type": {
+                              "type": "string",
+                              "const": "image"
+                            },
+                            "data": {
+                              "type": "string",
+                              "maxLength": 16000000,
+                              "pattern": "^[A-Za-z0-9+/]+={0,2}$"
+                            },
+                            "mime": {
+                              "type": "string",
+                              "enum": ["image/jpeg", "image/png", "image/webp", "image/gif"]
+                            },
+                            "filename": {
+                              "type": "string",
+                              "maxLength": 512
+                            }
+                          },
+                          "required": ["type", "data", "mime"]
+                        }
+                      ]
+                    }
                   },
                   "locale": {
                     "type": "string"
                   }
-                },
-                "required": ["text"]
+                }
               }
             }
           }

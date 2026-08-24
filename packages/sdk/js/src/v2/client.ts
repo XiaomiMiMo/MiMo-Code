@@ -5,7 +5,15 @@ import { type Config } from "./gen/client/types.gen.js"
 import { OpencodeClient } from "./gen/sdk.gen.js"
 export { type Config as OpencodeClientConfig, OpencodeClient }
 
-export function genTitle(client: OpencodeClient, input: { text: string; locale?: string }) {
+export type GenTitlePart =
+  | { type: "text"; text: string }
+  | { type: "image"; data: string; mime: "image/jpeg" | "image/png" | "image/webp" | "image/gif"; filename?: string }
+
+export type GenTitleInput =
+  | { text: string; parts?: GenTitlePart[]; locale?: string }
+  | { text?: string; parts: GenTitlePart[]; locale?: string }
+
+export function genTitle(client: OpencodeClient, input: GenTitleInput) {
   return client.experimental.title.generate(input)
 }
 

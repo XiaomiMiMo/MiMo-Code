@@ -943,7 +943,19 @@ export class Title extends HeyApiClient {
     parameters: {
       directory?: string
       workspace?: string
-      text: string
+      text?: string
+      parts?: Array<
+        | {
+            type: "text"
+            text: string
+          }
+        | {
+            type: "image"
+            data: string
+            mime: "image/jpeg" | "image/png" | "image/webp" | "image/gif"
+            filename?: string
+          }
+      >
       locale?: string
     },
     options?: Options<never, ThrowOnError>,
@@ -956,6 +968,7 @@ export class Title extends HeyApiClient {
             { in: "query", key: "directory" },
             { in: "query", key: "workspace" },
             { in: "body", key: "text" },
+            { in: "body", key: "parts" },
             { in: "body", key: "locale" },
           ],
         },

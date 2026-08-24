@@ -43,9 +43,7 @@ const titleSdk = await Bun.file(titleSdkPath).text()
 const titleStart = titleSdk.indexOf("export class Title")
 const titleEnd = titleSdk.indexOf("export class Experimental", titleStart)
 const titleBlock = titleStart >= 0 && titleEnd > titleStart ? titleSdk.slice(titleStart, titleEnd) : ""
-const requiredTitleBlock = titleBlock
-  .replace("parameters?: {", "parameters: {")
-  .replace("text?: string;", "text: string;")
+const requiredTitleBlock = titleBlock.replace("parameters?: {", "parameters: {")
 const requiredTitleSdk =
   titleBlock && requiredTitleBlock !== titleBlock
     ? titleSdk.slice(0, titleStart) + requiredTitleBlock + titleSdk.slice(titleEnd)
