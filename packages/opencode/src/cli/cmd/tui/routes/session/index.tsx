@@ -2400,12 +2400,7 @@ function ExecSubtoolGroup(props: {
 }) {
   const { theme } = useTheme()
   return (
-    <box
-      border={["left"]}
-      paddingLeft={2}
-      borderColor={theme.borderSubtle}
-      customBorderChars={SplitBorder.customBorderChars}
-    >
+    <box border={["left"]} paddingLeft={2} borderColor={theme.borderSubtle} customBorderChars={SplitBorder.customBorderChars}>
       <For each={props.parts}>
         {(part) => <ExecSubtoolRow part={part} parent={props.parent} message={props.message} />}
       </For>
@@ -2494,15 +2489,17 @@ function ToolScript(props: ToolProps<typeof ToolScriptTool>) {
         </Show>
       }
     >
-      <BlockTool title={`# exec · ${summary()}`} part={props.part} onClick={() => setExpanded(false)}>
-        <box gap={1}>
-          <text fg={theme.textMuted}>{((props.input.code as string | undefined) ?? "").trim()}</text>
-          <Show when={subParts().length > 0}>
-            <ExecSubtoolGroup parts={subParts()} parent={props.part} message={props.message} />
-          </Show>
-          <text fg={theme.textMuted}>Click to collapse</text>
-        </box>
-      </BlockTool>
+      <box>
+        <BlockTool title={`# exec · ${summary()}`} part={props.part} onClick={() => setExpanded(false)}>
+          <box gap={1}>
+            <text fg={theme.textMuted}>{((props.input.code as string | undefined) ?? "").trim()}</text>
+            <text fg={theme.textMuted}>Click to collapse</text>
+          </box>
+        </BlockTool>
+        <Show when={subParts().length > 0}>
+          <ExecSubtoolGroup parts={subParts()} parent={props.part} message={props.message} />
+        </Show>
+      </box>
     </Show>
   )
 }
