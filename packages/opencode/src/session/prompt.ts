@@ -4127,10 +4127,11 @@ NOTE: At any point in time through this workflow you should feel free to ask the
             ]
             // Auto-worktree: inject hint on first assistant-less turn if conflict detected.
             // Checks for no assistant messages (survives compaction/rebuild) + in main worktree.
-            const isFirstAssistantTurn = !msgs.some((m) => m.info.role === "assistant")
-            const isMainWorktree = Instance.worktree === Instance.project.worktree
             const isGitProject = Instance.project.vcs === "git"
-            if (isFirstAssistantTurn && isMainWorktree && isGitProject) {
+            const isMainWorktree = Instance.worktree === Instance.project.worktree
+            if (isGitProject && isMainWorktree) {
+              const isFirstAssistantTurn = !msgs.some((m) => m.info.role === "assistant")
+              if (!isFirstAssistantTurn) continue
               const directory = yield* InstanceState.directory
               const conflict = (yield* Effect.promise(() => checkConflict(directory, sessionID))) as ConflictResult
               if (conflict.hasConflict) {

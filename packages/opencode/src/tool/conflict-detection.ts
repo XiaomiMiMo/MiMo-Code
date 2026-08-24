@@ -1,6 +1,5 @@
 import { Database, eq, and, isNull, gte } from "@/storage"
 import { SessionTable } from "@/session/session.sql"
-import type { SessionID } from "@/session/schema"
 import path from "path"
 import fs from "fs"
 import { execFile } from "child_process"
@@ -65,10 +64,6 @@ function resolveGitDir(directory: string): string | null {
 }
 
 /**
- * Check for active sessions in the directory (updated within last 5 minutes, not archived).
- * Returns the session ID of the first active session found, or null.
- */
-/**
  * Check for git lock file (git operation in progress).
  */
 function hasGitLock(gitDir: string): boolean {
@@ -88,7 +83,8 @@ async function hasExternalAgentProcess(directory: string): Promise<boolean> {
   try {
     if (process.platform === "win32") {
       const { stdout } = await execFileAsync("wmic", ["process", "get", "Name", "/FORMAT:LIST"], { timeout: 10000 })
-      return agentPatterns.some((p) => stdout.toLowerCase().includes(p))
+      const cmds = stdout.toLowerCase().split("\n").map((c) => c.trim()).filter(Boolean)
+      return agentPatterns.some((p) => cmds.some((c) => c === p || c.startsWith(p + ".") || c.startsWith(p + "-") || c.includes(p)))
     }
 
     const { stdout } = await execFileAsync("lsof", ["-t", "+D", directory], { timeout: 10000 })
