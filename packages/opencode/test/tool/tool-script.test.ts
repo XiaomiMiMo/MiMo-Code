@@ -8,6 +8,7 @@ import { evalScript } from "../../src/workflow/sandbox"
 import { Agent } from "../../src/agent/agent"
 import { Truncate, Tool } from "../../src/tool"
 import { ToolScriptTool, renderToolScriptDeclarations, viewExecSubtools, type ExecSubPartSnapshot } from "../../src/tool/tool-script"
+import { RecoverableError } from "../../src/tool/recoverable"
 import { toolScriptRegistry, TOOL_SCRIPT_EXCLUDED } from "../../src/tool/tool-script-ref"
 import { Instance } from "../../src/project/instance"
 
@@ -294,6 +295,29 @@ describe("exec", () => {
     expect(viewExecSubtools({ exec_schema: 2, sub_parts: metadata.sub_parts })).toEqual([])
   })
 
+  test("preserves scalar nested input and filters malformed persisted attachments", () => {
+    const metadata = {
+      exec_schema: 1,
+      sub_parts: [{
+        seq: 1,
+        type: "tool",
+        callID: "outer:1",
+        tool: "scalar_mcp",
+        state: {
+          status: "completed",
+          input: "literal",
+          title: "Scalar",
+          output: "ok",
+          time: { start: 1, end: 2 },
+          attachments: [{ bad: true }, { type: "file", mime: "text/plain", url: "data:text/plain;base64, b2s=" }],
+        },
+      }],
+    }
+    const part = viewExecSubtools(metadata)[0]
+    expect(part?.state.input).toBe("literal")
+    expect(part?.state.attachments).toEqual([{ type: "file", mime: "text/plain", url: "data:text/plain;base64, b2s=" }])
+  })
+
   test("publishes a running nested part before the nested tool settles", async () => {
     const parameters = z.object({ value: z.string() })
     const slow: Tool.Def<typeof parameters> = {
@@ -410,6 +434,27 @@ describe("exec", () => {
     expect(result.metadata.status).toBe("completed")
     expect(result.output).toContain("boom: kapow")
     expect(result.output).toContain("→ error")
+  })
+
+  test("nested recoverable failures retain the live title and muted marker", async () => {
+    const def: Tool.Def = {
+      id: "recoverable",
+      description: "fake recoverable tool",
+      parameters: z.object({}),
+      execute: (_args, ctx) =>
+        Effect.gen(function* () {
+          yield* ctx.metadata({ title: "Checking target" })
+          return yield* Effect.die(new RecoverableError("target missing"))
+        }),
+    }
+    const result = await runToolScript(`try { await tools.recoverable({}) } catch {}`, [def])
+    expect(viewExecSubtools(result.metadata)[0]).toMatchObject({
+      state: {
+        status: "error",
+        title: "Checking target",
+        metadata: { recoverable: true },
+      },
+    })
   })
 
   test("call budget exceeded → budget_exceeded status", async () => {

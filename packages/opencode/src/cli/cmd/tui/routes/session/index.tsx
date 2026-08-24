@@ -2357,6 +2357,9 @@ function ExecSubtoolRow(props: {
 }) {
   const synthetic = createMemo(() => {
     const state = props.part.state
+    const input = state.input && typeof state.input === "object" && !Array.isArray(state.input)
+      ? state.input
+      : {}
     return {
       id: props.part.callID as ToolPart["id"],
       sessionID: props.parent.sessionID,
@@ -2366,7 +2369,7 @@ function ExecSubtoolRow(props: {
       tool: props.part.tool,
       state: {
         status: state.status,
-        input: state.input,
+        input,
         ...(state.status === "running" ? {
           title: state.title,
           ...(state.metadata ? { metadata: state.metadata } : {}),
@@ -3133,7 +3136,7 @@ function Bash(props: ToolProps<typeof BashTool>) {
     const desc = props.input.description ?? "Shell"
     const wd = workdirDisplay()
     const prefix = props.tool === "exec_command" ? "# exec_command" : `# ${desc}`
-    if (!wd || desc.includes(wd)) return prefix
+    if (!wd || (props.tool !== "exec_command" && desc.includes(wd))) return prefix
     return `${prefix} in ${wd}`
   })
 

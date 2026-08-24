@@ -16,6 +16,7 @@ import type { HarnessMode } from "./gpt"
 import DESCRIPTION from "./tool-script.txt"
 import * as Tool from "./tool"
 import { getToolResultAttachments, getToolResultMetadata } from "./result-error"
+import { isRecoverableError } from "./recoverable"
 import * as Truncate from "./truncate"
 
 const log = Log.create({ service: "tool.exec" })
@@ -337,7 +338,7 @@ export type ExecSubPartSnapshot = {
   tool: string
   state: {
     status: "running" | "completed" | "error"
-    input: Record<string, unknown>
+    input: unknown
     title?: string
     output?: string
     error?: string
@@ -392,6 +393,7 @@ export function viewExecSubtools(metadata: unknown): ExecSubPartSnapshot[] {
       const start = time.start
       const end = time.end
       const stateMetadata = optionalMetadata(state.metadata)
+      const attachments = normalizeAttachments(state.attachments)
       if (
         typeof seq !== "number" || !Number.isInteger(seq) || seq < 1 ||
         type !== "tool" ||
@@ -399,7 +401,7 @@ export function viewExecSubtools(metadata: unknown): ExecSubPartSnapshot[] {
         seenSeq.has(seq) || seenCallID.has(callID) ||
         typeof tool !== "string" || tool.length === 0 ||
         (status !== "running" && status !== "completed" && status !== "error") ||
-        !input || typeof input !== "object" || Array.isArray(input) ||
+        !Object.prototype.hasOwnProperty.call(state, "input") ||
         typeof start !== "number" || !Number.isFinite(start) ||
         ((status === "completed" || status === "error") && (typeof end !== "number" || !Number.isFinite(end))) ||
         (status === "completed" && (typeof state.title !== "string" || typeof state.output !== "string")) ||
@@ -414,7 +416,7 @@ export function viewExecSubtools(metadata: unknown): ExecSubPartSnapshot[] {
         tool,
         state: {
           status,
-          input: metadataRecord(input),
+          input,
           ...(typeof state.title === "string" ? { title: state.title } : {}),
           ...(typeof state.output === "string" ? { output: state.output } : {}),
           ...(typeof state.error === "string" ? { error: state.error } : {}),
@@ -423,7 +425,7 @@ export function viewExecSubtools(metadata: unknown): ExecSubPartSnapshot[] {
             start,
             ...(typeof end === "number" && Number.isFinite(end) ? { end } : {}),
           },
-          ...(Array.isArray(state.attachments) ? { attachments: state.attachments } : {}),
+          ...(attachments ? { attachments } : {}),
           ...(state.providerOutput !== undefined ? { providerOutput: state.providerOutput } : {}),
           ...(optionalMetadata(state.providerMetadata) ? { providerMetadata: optionalMetadata(state.providerMetadata) } : {}),
         },
@@ -497,7 +499,12 @@ export const ToolScriptTool = Tool.define(
               ...part,
               state: {
                 ...part.state,
-                input: { ...part.state.input },
+                input:
+                  part.state.input && typeof part.state.input === "object"
+                    ? Array.isArray(part.state.input)
+                      ? [...part.state.input]
+                      : { ...part.state.input }
+                    : part.state.input,
                 ...(part.state.metadata ? { metadata: { ...part.state.metadata } } : {}),
                 ...(part.state.attachments ? { attachments: [...part.state.attachments] } : {}),
               },
@@ -728,7 +735,7 @@ export const ToolScriptTool = Tool.define(
               tool: id,
               state: {
                 status: "running",
-                input: metadataRecord(toolArgs),
+                input: toolArgs,
                 time: { start },
               },
             }
@@ -848,8 +855,8 @@ export const ToolScriptTool = Tool.define(
                     }
                   },
                   (err) => {
-                    if (progress.closed || subPart.state.status !== "running") throw err
                     const message = err instanceof Error ? err.message : String(err)
+                    if (progress.closed || subPart.state.status !== "running") throw new Error(`${id}: ${message}`)
                     const durationMs = Date.now() - start
                     const toolResultMetadata = getToolResultMetadata(err)
                     const toolResultAttachments = normalizeAttachments(getToolResultAttachments(err))
@@ -857,9 +864,11 @@ export const ToolScriptTool = Tool.define(
                     subPart.state = {
                       status: "error",
                       input: subPart.state.input,
+                      ...(typeof subPart.state.title === "string" ? { title: subPart.state.title } : {}),
                       error: message,
                       ...((currentMetadata || toolResultMetadata)
-                        ? { metadata: { ...currentMetadata, ...toolResultMetadata } }
+                        ? { metadata: { ...currentMetadata, ...toolResultMetadata, ...(isRecoverableError(err) ? { recoverable: true } : {}) } }
+                        : isRecoverableError(err) ? { metadata: { recoverable: true } }
                         : {}),
                       time: { start, end: Date.now() },
                       ...(toolResultAttachments?.length ? { attachments: toolResultAttachments } : {}),
