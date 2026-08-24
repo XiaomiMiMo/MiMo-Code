@@ -10,6 +10,10 @@ import { SessionRunState } from "@/session/run-state"
 import { SessionCompaction } from "@/session/compaction"
 import { SessionRevert } from "@/session/revert"
 import { SessionShare } from "@/share"
+import { Worktree } from "@/worktree"
+import { checkConflict } from "@/tool/conflict-detection"
+import { Instance } from "@/project/instance"
+import { InstanceState } from "@/effect"
 import { SessionStatus } from "@/session/status"
 import { SessionSummary } from "@/session/summary"
 import { Todo } from "@/session/todo"
@@ -315,6 +319,18 @@ export const SessionRoutes = lazy(() =>
       async (c) =>
         jsonRequest("SessionRoutes.create", c, function* () {
           const body = c.req.valid("json") ?? {}
+          
+          // Auto-worktree: check for conflicts and create worktree if needed
+          if (!body.directory) {
+            const directory = yield* InstanceState.directory
+            const conflict = checkConflict(directory)
+            if (conflict.hasConflict) {
+              const worktreeSvc = yield* Worktree.Service
+              const info = yield* worktreeSvc.create()
+              body.directory = info.directory
+            }
+          }
+          
           const svc = yield* SessionShare.Service
           return yield* svc.create(body)
         }),

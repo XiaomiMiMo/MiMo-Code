@@ -193,6 +193,7 @@ export const CreateInput = z
     title: z.string().optional(),
     permission: Info.shape.permission,
     workspaceID: WorkspaceID.zod.optional(),
+    directory: z.string().optional(),
   })
   .optional()
 export type CreateInput = z.output<typeof CreateInput>

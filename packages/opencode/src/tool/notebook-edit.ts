@@ -214,10 +214,11 @@ export const NotebookEditTool = Tool.define(
           yield* bus.publish(File.Event.Edited, { file: notebookPath })
           yield* bus.publish(FileWatcher.Event.Updated, { file: notebookPath, event: "change" })
 
+          const output = `Notebook updated: ${editMode} on ${path.relative(Instance.worktree, notebookPath)}.`
           return {
             title: `${path.relative(Instance.worktree, notebookPath)} — ${title}`,
             metadata: { diff, edit_mode: editMode, cell_id: params.cell_id },
-            output: `Notebook updated: ${editMode} on ${path.relative(Instance.worktree, notebookPath)}.`,
+            output,
           }
         }).pipe(Effect.orDie),
     }

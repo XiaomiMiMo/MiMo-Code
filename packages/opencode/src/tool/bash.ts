@@ -814,6 +814,7 @@ export const BashTool = Tool.define(
         )
       }
 
+      // Detect high-frequency file-writing bash commands and inject hint
       return {
         title: input.description,
         metadata: {
