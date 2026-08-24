@@ -6,8 +6,8 @@ describe("provider timeouts", () => {
     expect(DEFAULT_OPENAI_HEADER_TIMEOUT).toBe(300_000)
   })
 
-  test("DEFAULT_CHUNK_TIMEOUT is 5 minutes (300_000 ms)", () => {
-    expect(DEFAULT_CHUNK_TIMEOUT).toBe(300_000)
+  test("DEFAULT_CHUNK_TIMEOUT is 8 minutes (480_000 ms)", () => {
+    expect(DEFAULT_CHUNK_TIMEOUT).toBe(480_000)
   })
 
   test("user-supplied chunkTimeout (number) takes precedence over default", () => {

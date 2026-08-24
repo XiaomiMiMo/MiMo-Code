@@ -41,8 +41,10 @@ const BUILTIN_TIERS = new Set(["ultra", "standard", "lite"])
 const warnedContextDefaults = new Set<string>()
 
 export const DEFAULT_OPENAI_HEADER_TIMEOUT = 300_000
-export const DEFAULT_CHUNK_TIMEOUT = 300_000 // 5 minutes — bounds single-attempt SSE stall.
-// Matches the default stream idle budget used by the provider retry runtime. Override
+export const DEFAULT_CHUNK_TIMEOUT = 480_000 // 8 minutes — bounds single-attempt SSE stall.
+// Tuned for mimo-v2.5-pro on MiMo Router whose cold-path TTFT after context
+// rebuild can dip to ~5 minutes silent. Reasoning models with multi-minute
+// thinking still emit partial chunks / heartbeats within this window. Override
 // per-provider via mimocode.json's `chunkTimeout` config for tighter or looser
 // bounds.
 

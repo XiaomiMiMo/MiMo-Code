@@ -55,7 +55,7 @@ Persistent network retry 只适用于 transport connection failure，不适用�
       }
     }
 
-Persistent network retry 仍受 AbortSignal、进程退出和 provider chunkTimeout 约束。默认 provider chunkTimeout 为 5 分钟；provider 可以用 chunkTimeout 覆盖该单次 stream idle timeout。
+Persistent network retry 仍受 AbortSignal、进程退出和 provider chunkTimeout 约束。默认 provider chunkTimeout 为 8 分钟；provider 可以用 chunkTimeout 覆盖该单次 stream idle timeout。
 
 ## 退避
 
