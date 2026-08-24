@@ -1,4 +1,4 @@
-import { Database, eq } from "@/storage"
+import { Database, eq, and, isNull } from "@/storage"
 import { SessionTable } from "@/session/session.sql"
 import path from "path"
 import fs from "fs"
@@ -41,7 +41,7 @@ function hasActiveSessionsInDirectory(directory: string, excludeSessionId?: stri
   const sessions = Database.use((db) =>
     db.select({ id: SessionTable.id, time_updated: SessionTable.time_updated })
       .from(SessionTable)
-      .where(eq(SessionTable.directory, directory))
+      .where(and(eq(SessionTable.directory, directory), isNull(SessionTable.time_archived)))
       .all(),
   )
   for (const session of sessions) {
@@ -51,9 +51,8 @@ function hasActiveSessionsInDirectory(directory: string, excludeSessionId?: stri
   return null
 }
 
-function hasGitLock(directory: string): boolean {
+function hasGitLock(gitDir: string | null): boolean {
   try {
-    const gitDir = resolveGitDir(directory)
     if (!gitDir) return false
     return fs.existsSync(path.join(gitDir, "index.lock"))
   } catch {
@@ -85,11 +84,11 @@ async function hasExternalAgentProcess(directory: string): Promise<boolean> {
 }
 
 export async function checkConflict(directory: string, newSessionId?: string): Promise<ConflictResult> {
-  // Quick exit: not a git repo → no conflict possible
-  if (!resolveGitDir(directory)) return { hasConflict: false, reason: null }
+  const gitDir = resolveGitDir(directory)
+  if (!gitDir) return { hasConflict: false, reason: null }
   const activeSessionId = hasActiveSessionsInDirectory(directory, newSessionId)
   if (activeSessionId) return { hasConflict: true, reason: "active-session", activeSessionId }
-  if (hasGitLock(directory)) return { hasConflict: true, reason: "git-lock" }
+  if (hasGitLock(gitDir)) return { hasConflict: true, reason: "git-lock" }
   if (await hasExternalAgentProcess(directory)) return { hasConflict: true, reason: "external-process" }
   return { hasConflict: false, reason: null }
 }
