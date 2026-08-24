@@ -112,17 +112,27 @@ function hasExternalAgentProcess(directory: string): boolean {
       "zcode",        // ZCode (143B tokens)
     ]
     
-    // Use lsof to find processes with open files in the target directory
-    // This is more accurate than just checking if the process exists
-    const lsofOutput = execSync(
-      `lsof +D ${normalizedDir} 2>/dev/null | head -100`,
-      { encoding: "utf-8", timeout: 10000 },
-    )
+    // Platform-specific process detection with directory check
+    let processOutput: string
+    if (process.platform === "win32") {
+      // Windows: use wmic to list processes (can't easily check open files without handle.exe)
+      // Fall back to process name matching only
+      processOutput = execSync(
+        "wmic process get Name,CommandLine /FORMAT:LIST",
+        { encoding: "utf-8", timeout: 10000 },
+      )
+    } else {
+      // Linux/macOS: use lsof to find processes with open files in the target directory
+      processOutput = execSync(
+        `lsof +D ${normalizedDir} 2>/dev/null | head -100`,
+        { encoding: "utf-8", timeout: 10000 },
+      )
+    }
     
-    if (!lsofOutput.trim()) return false
+    if (!processOutput.trim()) return false
     
     // Check if any of the processes with open files match our agent patterns
-    const lowerOutput = lsofOutput.toLowerCase()
+    const lowerOutput = processOutput.toLowerCase()
     for (const pattern of agentPatterns) {
       if (lowerOutput.includes(pattern)) {
         return true
