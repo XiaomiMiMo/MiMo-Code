@@ -706,6 +706,7 @@ export const ToolScriptTool = Tool.define(
               part.state = {
                 status: "error",
                 input: part.state.input,
+                ...(typeof part.state.title === "string" ? { title: part.state.title } : {}),
                 error: "exec terminated before nested tool completed",
                 ...(part.state.metadata ? { metadata: part.state.metadata } : {}),
                 time: { ...part.state.time, end: Date.now() },

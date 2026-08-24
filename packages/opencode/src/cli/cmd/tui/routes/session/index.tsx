@@ -2359,7 +2359,7 @@ function ExecSubtoolRow(props: {
     const state = props.part.state
     const input = state.input && typeof state.input === "object" && !Array.isArray(state.input)
       ? state.input
-      : {}
+      : state.input === undefined ? {} : { value: state.input }
     return {
       id: props.part.callID as ToolPart["id"],
       sessionID: props.parent.sessionID,
@@ -2384,7 +2384,6 @@ function ExecSubtoolRow(props: {
           ...(state.providerMetadata ? { providerMetadata: state.providerMetadata } : {}),
         } : {
           error: state.error ?? "Tool failed",
-          input: state.input,
           ...(state.metadata ? { metadata: state.metadata } : {}),
           time: { start: state.time.start, end: state.time.end ?? state.time.start },
           ...(state.attachments ? { attachments: state.attachments } : {}),
