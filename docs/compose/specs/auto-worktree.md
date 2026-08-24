@@ -57,7 +57,7 @@ topic: auto-worktree
 
 **信号 4：外部 agent 进程**
 - 检查已知 AI 编码工具的进程是否在运行
-- 覆盖：Claude Code、Cursor、Copilot、Codeium、Tabnine、Continue、Aider、GPT Engineer、Devin
+- 覆盖（基于 OpenRouter app 排行榜）：Claude Code (685B tokens)、Kilo Code (401B)、Cline (297B)、Codex (123B)、Cursor (64.7B)、omp (343B)、OpenClaw (140B)、pi (258B)、ZCode (143B)
 - 实现：`ps aux` 检查进程列表
 
 ### 3.2 自动创建 worktree

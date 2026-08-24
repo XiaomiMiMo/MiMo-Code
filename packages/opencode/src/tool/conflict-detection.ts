@@ -99,17 +99,17 @@ function hasExternalAgentProcess(directory: string): boolean {
   try {
     const normalizedDir = path.resolve(directory)
     
-    // Check for known agent processes
+    // Check for known agent processes (based on OpenRouter app rankings)
     const agentPatterns = [
-      "claude",      // Claude Code
-      "cursor",      // Cursor
-      "copilot",     // GitHub Copilot
-      "codeium",     // Codeium
-      "tabnine",     // Tabnine
-      "continue",    // Continue.dev
-      "aider",       // Aider
-      "gpt-engineer", // GPT Engineer
-      "devin",       // Devin
+      "claude",       // Claude Code (685B tokens)
+      "kilocode",     // Kilo Code (401B tokens)
+      "cline",        // Cline (297B tokens)
+      "codex",        // Codex (123B tokens)
+      "cursor",       // Cursor (64.7B tokens)
+      "omp",          // omp (343B tokens)
+      "openclaw",     // OpenClaw (140B tokens)
+      "pi.dev",       // pi (258B tokens)
+      "zcode",        // ZCode (143B tokens)
     ]
     
     // Get process list with working directory
