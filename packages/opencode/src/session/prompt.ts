@@ -223,6 +223,31 @@ IMPORTANT:
 - This tool provides your final answer - no further actions are taken after calling it`
 
 const STRUCTURED_OUTPUT_SYSTEM_PROMPT = `IMPORTANT: The user has requested structured output. You MUST use the StructuredOutput tool to provide your final response. Do NOT respond with plain text - you MUST call the StructuredOutput tool with your answer formatted according to the schema.`
+const TITLE_MAX_LENGTH = 48
+const TITLE_SCHEMA = {
+  type: "object",
+  additionalProperties: false,
+  required: ["title"],
+  properties: { title: { type: "string", minLength: 1, maxLength: TITLE_MAX_LENGTH } },
+} as const
+
+export function truncateTitle(value: string) {
+  if (value.length <= TITLE_MAX_LENGTH) return value
+  const prefix = value.substring(0, TITLE_MAX_LENGTH)
+  const boundary = Math.max(prefix.lastIndexOf(" "), prefix.lastIndexOf("/"), prefix.lastIndexOf("-"), prefix.lastIndexOf("："), prefix.lastIndexOf("，"))
+  const end = boundary >= Math.floor(TITLE_MAX_LENGTH * 0.6) ? boundary : TITLE_MAX_LENGTH
+  return prefix.substring(0, end).trimEnd() + "…"
+}
+
+export function titleContext(input: MessageV2.WithParts) {
+  const chunks: string[] = []
+  for (const part of input.parts) {
+    if (part.type === "text" && !part.synthetic && !part.ignored && part.text.trim()) chunks.push(part.text.trim())
+    if (part.type === "subtask" && (part.prompt.trim() || part.description.trim())) chunks.push((part.prompt || part.description).trim())
+    if (part.type === "file") chunks.push(part.filename ? `Attachment: ${part.filename}` : `Attachment: ${part.mime}`)
+  }
+  return chunks.join("\n").trim()
+}
 
 const PREDICT_SYSTEM = `You predict the single most likely next message a user will send to a coding assistant, based on the conversation so far. Output only that next message as one short, natural first-person request (what the user would type). No preamble, no quotes, no explanation, no markdown. Keep it under 100 characters.`
 
@@ -252,7 +277,7 @@ export interface Interface {
   readonly shell: (input: ShellInput) => Effect.Effect<MessageV2.WithParts, Session.BusyError>
   readonly command: (input: CommandInput) => Effect.Effect<MessageV2.WithParts>
   readonly resolvePromptParts: (template: string) => Effect.Effect<PromptInput["parts"]>
-  readonly genTitle: (input: { text: string; locale?: string; sessionID?: SessionID; providerID?: ProviderID; modelID?: ModelID }) => Effect.Effect<{ title: string; status: "generated" | "fallback" | "untitled" }>
+  readonly genTitle: (input: { text: string; context?: MessageV2.WithParts[]; locale?: string; sessionID?: SessionID; providerID?: ProviderID; modelID?: ModelID }) => Effect.Effect<{ title: string; status: "generated" | "fallback" | "untitled" }>
   readonly sweepOrphanAssistants: (sessionID: SessionID, immediate?: boolean) => Effect.Effect<void>
   readonly sweepOrphanToolParts: (sessionID: SessionID) => Effect.Effect<void>
   readonly predict: (input: { sessionID: SessionID }) => Effect.Effect<string>
@@ -750,32 +775,49 @@ export const layer = Layer.effect(
       return parts
     })
 
-    const genTitle = Effect.fn("SessionPrompt.genTitle")(function* (input: { text: string; locale?: string; sessionID?: SessionID; providerID?: ProviderID; modelID?: ModelID }) {
+    const genTitle = Effect.fn("SessionPrompt.genTitle")(function* (input: {
+      text: string
+      context?: MessageV2.WithParts[]
+      locale?: string
+      sessionID?: SessionID
+      providerID?: ProviderID
+      modelID?: ModelID
+    }) {
       const text = input.text.trim()
       const fallback = () => {
-        const line = text.split("\n").map((value) => value.trim()).find(Boolean)
-        if (!line || line.startsWith("{") || line.startsWith("[") || /<\/?system-reminder>/i.test(line) || !/\p{L}/u.test(line)) return { title: input.locale?.toLowerCase().startsWith("zh") ? "未命名对话" : "Untitled conversation", status: "untitled" as const }
-        return { title: line.length > 18 ? line.substring(0, 17) + "…" : line, status: "fallback" as const }
+        const line = text
+          .split(/\r?\n/)
+          .map((value) => value.trim())
+          .find((value) => value && !value.startsWith("{") && !value.startsWith("[") && !/<\/?system-reminder>/i.test(value) && /\p{L}/u.test(value))
+        if (!line) return { title: input.locale?.toLowerCase().startsWith("zh") ? "未命名对话" : "Untitled conversation", status: "untitled" as const }
+        return { title: truncateTitle(line), status: "fallback" as const }
       }
       if (!text || !/\p{L}/u.test(text)) return fallback()
       const ag = yield* agents.get("title")
       if (!ag) return fallback()
+      if ((input.providerID && !input.modelID) || (!input.providerID && input.modelID)) {
+        yield* elog.warn("invalid title model selection", { providerID: input.providerID, modelID: input.modelID })
+        return fallback()
+      }
       const requested = input.providerID && input.modelID
         ? { providerID: input.providerID, modelID: input.modelID }
-        : yield* provider.defaultModel().pipe(Effect.orElseSucceed(() => undefined))
+        : yield* provider.defaultModel().pipe(Effect.catchCause((cause) => elog.warn("title default model resolution failed", { error: Cause.squash(cause) }).pipe(Effect.as(undefined))))
       if (!requested) return fallback()
-      const model = yield* provider.getSmallModel(requested.providerID).pipe(Effect.orElseSucceed(() => undefined))
+      const model = yield* provider.getSmallModel(requested.providerID).pipe(Effect.catchCause((cause) => elog.warn("title lite model resolution failed", { error: Cause.squash(cause) }).pipe(Effect.as(undefined))))
       if (!model) return fallback()
       let candidate: unknown
-      const sessionID = input.sessionID ?? SessionID.descending()
-      const user: MessageV2.User = { id: MessageID.ascending(), sessionID, role: "user", time: { created: Date.now() }, agent: ag.name, model: { providerID: model.providerID, modelID: model.id } }
-      const outputTool = createStructuredOutputTool({ schema: { type: "object", additionalProperties: false, required: ["title"], properties: { title: { type: "string", minLength: 1, maxLength: 24 } } }, onSuccess: (value) => { candidate = value } })
-      yield* llm.stream({ agent: ag, user, system: [STRUCTURED_OUTPUT_SYSTEM_PROMPT], small: true, tools: { StructuredOutput: outputTool }, toolChoice: "required", model, sessionID, retries: 2, messages: [{ role: "user", content: "Generate a title for this conversation:\n" + text }] }).pipe(Stream.runDrain, Effect.orElseSucceed(() => undefined))
+      const sessionID = input.sessionID ? String(input.sessionID) : "title-" + String(MessageID.ascending())
+      const user: MessageV2.User = { id: MessageID.ascending(), sessionID: SessionID.make(sessionID), role: "user", time: { created: Date.now() }, agent: ag.name, model: { providerID: model.providerID, modelID: model.id } }
+      const outputTool = createStructuredOutputTool({ schema: TITLE_SCHEMA, onSuccess: (value) => { if (candidate === undefined) candidate = value } })
+      const messages = input.context
+        ? [{ role: "user" as const, content: "Generate a title for this conversation:\n" + text }, ...(yield* MessageV2.toModelMessagesEffect(input.context, model))]
+        : [{ role: "user" as const, content: "Generate a title for this conversation:\n" + text }]
+      yield* llm.stream({ agent: ag, user, system: [STRUCTURED_OUTPUT_SYSTEM_PROMPT], small: true, tools: { StructuredOutput: outputTool }, activeTools: ["StructuredOutput"], toolChoice: "required", model, sessionID, ephemeral: true, retries: 2, messages }).pipe(Stream.runDrain, Effect.catchCause((cause) => elog.warn("title generation failed", { error: Cause.squash(cause) }).pipe(Effect.as(undefined))))
       const raw = candidate && typeof candidate === "object" ? (candidate as Record<string, unknown>).title : undefined
       if (typeof raw !== "string") return fallback()
-      const title = raw.replace(/<think>[\s\S]*?<\/think>\s*/gi, "").split("\n").map((line) => line.trim()).find(Boolean)?.replace(/^["'“”『「]+/, "").replace(/["'“”』」]+$/, "").replace(/^(?:title|标题)\s*[:：]\s*/i, "").trim()
+      const title = raw.replace(/<think>[\s\S]*?<\/think>\s*/gi, "").split(/\r?\n/).map((line) => line.trim()).find(Boolean)?.replace(/^["'“”‘’『「]+/, "").replace(/["'“”‘’』」]+$/, "").replace(/^(?:title|标题)\s*[:：]\s*/i, "").trim()
       if (!title || title.startsWith("{") || title.startsWith("[") || /<\/?system-reminder>/i.test(title) || !/\p{L}/u.test(title)) return fallback()
-      return { title: title.length > 24 ? title.substring(0, 23) + "…" : title, status: "generated" as const }
+      return { title: truncateTitle(title), status: "generated" as const }
     })
 
     const title = Effect.fn("SessionPrompt.ensureTitle")(function* (input: {
@@ -810,9 +852,9 @@ export const layer = Layer.effect(
       const context = input.history.slice(0, idx + 1)
       const firstUser = context[idx]
       if (!firstUser || firstUser.info.role !== "user") return
-      const inputText = firstUser.parts.filter((part): part is MessageV2.TextPart => part.type === "text" && !part.synthetic && !part.ignored).map((part) => part.text).join("\n").trim()
+      const inputText = titleContext(firstUser)
       if (!inputText) return
-      const result = yield* genTitle({ text: inputText, sessionID: input.session.id, providerID: input.providerID, modelID: input.modelID })
+      const result = yield* genTitle({ text: inputText, context, sessionID: input.session.id, providerID: input.providerID, modelID: input.modelID })
       yield* sessions
         .setTitleIfDefault({ sessionID: input.session.id, title: result.title })
         .pipe(Effect.catchCause((cause) => elog.error("failed to generate title", { error: Cause.squash(cause) })))
@@ -3525,7 +3567,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
               modelID: lastUser.model.modelID,
               providerID: lastUser.model.providerID,
               history: msgs,
-            }).pipe(Effect.ignore, Effect.forkIn(scope))
+            }).pipe(Effect.ignore, Effect.forkDetach({ startImmediately: true }))
 
           if (step === 1 && !session.parentID) {
             const cfg = yield* config.get()

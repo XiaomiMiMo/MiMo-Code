@@ -250,6 +250,7 @@ export type StreamInput = {
   toolChoice?: "auto" | "required" | "none"
   agentID?: string
   mergeTurnContextIntoLastUser?: boolean
+  ephemeral?: boolean
 }
 
 export type StreamRequest = StreamInput & {
@@ -294,6 +295,7 @@ export interface Interface {
     user: MessageV2.User
     sessionID: string
     agentID?: string
+    ephemeral?: boolean
   }) => Effect.Effect<string[]>
 }
 
@@ -329,6 +331,7 @@ const live: Layer.Layer<
       user: MessageV2.User
       sessionID: string
       agentID?: string
+      ephemeral?: boolean
     }) {
       const system: string[] = []
       system.push(
@@ -357,7 +360,7 @@ const live: Layer.Layer<
       // with SessionPrune.fireCheckpoints so the "who owns a checkpoint" and "who is
       // taught about it" sets can never drift apart. Disabling checkpoints also
       // disables this memory-system prompt block.
-      const servesCheckpoint = yield* actorReg.servesCheckpoint(SessionID.make(input.sessionID), input.agentID)
+      const servesCheckpoint = !input.ephemeral && (yield* actorReg.servesCheckpoint(SessionID.make(input.sessionID), input.agentID))
       if (servesCheckpoint && !Flag.MIMOCODE_DISABLE_CHECKPOINT) {
         const projectID =
           (yield* Effect.try({
@@ -381,7 +384,7 @@ const live: Layer.Layer<
       // AGENT (build/plan/compose) — the routing signal the model needs — not its
       // actor mode, which is always "peer" here and therefore carries no signal.
       // AI needs details on demand → session status/ask.
-      if (input.agent.name === "orchestrator") {
+      if (!input.ephemeral && input.agent.name === "orchestrator") {
         // listPeerChildren joins through the Session row's parent_id, because a
         // peer child registers its actor row under its OWN session id — a
         // session_id-keyed lookup (listByParent) never matches a peer.
@@ -440,7 +443,7 @@ const live: Layer.Layer<
         .clone()
         .tag("providerID", input.model.providerID)
         .tag("modelID", input.model.id)
-        .tag("session.id", input.sessionID)
+        .tag(input.ephemeral ? "request.id" : "session.id", input.sessionID)
         .tag("small", (input.small ?? false).toString())
         .tag("agent", input.agent.name)
         .tag("mode", input.agent.mode)
@@ -471,6 +474,7 @@ const live: Layer.Layer<
           user: input.user,
           sessionID: input.sessionID,
           agentID: input.agentID,
+          ephemeral: input.ephemeral,
         }))
 
       const variant =
@@ -695,7 +699,7 @@ const live: Layer.Layer<
               if (prop !== "startSpan") return Reflect.get(target, prop, receiver)
               return (...args: Parameters<typeof target.startSpan>) => {
                 const span = target.startSpan(...args)
-                span.setAttribute("session.id", input.sessionID)
+                span.setAttribute(input.ephemeral ? "request.id" : "session.id", input.sessionID)
                 return span
               }
             },
@@ -709,7 +713,7 @@ const live: Layer.Layer<
         registeredToolCount: Object.keys(tools).length,
         activeToolCount: activeTools.length,
       })
-      yield* plugin
+      if (!input.ephemeral) yield* plugin
         .trigger(
           "session.llm.request",
           {
@@ -774,8 +778,8 @@ const live: Layer.Layer<
         maxOutputTokens: params.maxOutputTokens,
         abortSignal: input.abort,
         headers: {
-          "x-session-affinity": input.sessionID,
-          ...(input.parentSessionID ? { "x-parent-session-id": input.parentSessionID } : {}),
+          ...(!input.ephemeral ? { "x-session-affinity": input.sessionID } : {}),
+          ...(!input.ephemeral && input.parentSessionID ? { "x-parent-session-id": input.parentSessionID } : {}),
           ...input.model.headers,
           ...headers,
           "User-Agent": `mimocode/${InstallationVersion}`,
@@ -806,7 +810,7 @@ const live: Layer.Layer<
         }),
         experimental_telemetry: {
           isEnabled: cfg.experimental?.openTelemetry,
-          functionId: "session.llm",
+          functionId: input.ephemeral ? "title.llm" : "session.llm",
           tracer: telemetryTracer,
           metadata: {
             userId: cfg.username ?? "unknown",
@@ -939,7 +943,7 @@ const live: Layer.Layer<
                       phase: "request",
                       scope: "request",
                     })
-                    yield* Effect.promise(() =>
+                    if (!input.ephemeral) yield* Effect.promise(() =>
                       Bus.publish(Session.Event.RetryAttempt, {
                         sessionID: SessionID.make(input.sessionID),
                         messageID: input.user.id,

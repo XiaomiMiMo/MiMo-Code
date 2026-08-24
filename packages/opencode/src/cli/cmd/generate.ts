@@ -15,7 +15,7 @@ export const GenerateCommand = {
           {
             lang: "js",
             source: [
-              `import { createOpencodeClient } from "@mimo-ai/sdk`,
+              `import { createOpencodeClient } from "@mimo-ai/sdk"`,
               ``,
               `const client = createOpencodeClient()`,
               `await client.${operation.operationId}({`,

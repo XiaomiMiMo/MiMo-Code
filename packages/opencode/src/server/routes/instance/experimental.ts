@@ -40,6 +40,12 @@ const ConsoleSwitchBody = z.object({
 
 const GenTitleBody = z.object({ text: z.string().min(1).max(20_000), locale: z.string().optional() })
 const GenTitleResult = z.object({ title: z.string(), status: z.enum(["generated", "fallback", "untitled"]) })
+type GenTitleOpenApiSchema = {
+  type: "object"
+  properties: { text: { type: "string"; minLength?: number; maxLength?: number }; locale?: { type: "string" } }
+  required: string[]
+  additionalProperties?: boolean
+}
 
 export const ExperimentalRoutes = lazy(() =>
   new Hono()
@@ -352,6 +358,7 @@ export const ExperimentalRoutes = lazy(() =>
       summary: "Generate conversation title",
       description: "Generate a short conversation title with the configured lite model and deterministic fallback.",
       operationId: "experimental.title.generate",
+      requestBody: { required: true, content: { "application/json": { schema: z.toJSONSchema(GenTitleBody) as unknown as GenTitleOpenApiSchema } } },
       responses: { 200: { description: "Generated conversation title", content: { "application/json": { schema: resolver(GenTitleResult) } } }, ...errors(400) },
     }), validator("json", GenTitleBody), async (c) =>
       jsonRequest("ExperimentalRoutes.title.generate", c, function* () {

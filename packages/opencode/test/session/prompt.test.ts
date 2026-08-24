@@ -7,11 +7,26 @@ import { Instance } from "../../src/project/instance"
 import { ModelID, ProviderID } from "../../src/provider/schema"
 import { Session } from "../../src/session"
 import { MessageV2 } from "../../src/session/message-v2"
-import { SessionPrompt } from "../../src/session/prompt"
+import { SessionPrompt, titleContext, truncateTitle } from "../../src/session/prompt"
 import { Log } from "../../src/util"
 import { tmpdir } from "../fixture/fixture"
 
 void Log.init({ print: false })
+
+describe("title helpers", () => {
+  test("keeps text, subtask prompts, and attachment labels while ignoring synthetic text", () => {
+    const parts = [
+      { type: "text", text: "visible request", synthetic: true },
+      { type: "subtask", prompt: "Inspect the parser", description: "Parser inspection", agent: "explore" },
+      { type: "file", mime: "image/png", url: "data:image/png;base64,AA==", filename: "diagram.png" },
+    ] as MessageV2.Part[]
+    expect(titleContext({ parts } as MessageV2.WithParts)).toBe("Inspect the parser\nAttachment: diagram.png")
+  })
+
+  test("truncates long Latin titles at a word boundary", () => {
+    expect(truncateTitle("Fix ThreadPoolExecutor concurrency issue in production")).toBe("Fix ThreadPoolExecutor concurrency issue in…")
+  })
+})
 
 function run<A, E>(fx: Effect.Effect<A, E, SessionPrompt.Service | Session.Service>) {
   return Effect.runPromise(

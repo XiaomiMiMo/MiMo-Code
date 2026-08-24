@@ -85,7 +85,8 @@ const stubPrompt = Layer.succeed(
     resolvePromptParts: () => Effect.succeed([]),
     sweepOrphanAssistants: () => Effect.void,
     sweepOrphanToolParts: () => Effect.void,
-    predict: () => Effect.succeed(""),
+      predict: () => Effect.succeed(""),
+      genTitle: () => Effect.succeed({ title: "", status: "fallback" as const }),
   }),
 )
 
