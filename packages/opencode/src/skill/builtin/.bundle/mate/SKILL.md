@@ -1,5 +1,5 @@
 ---
-name: mate-pet
+name: mate
 description: "Create custom desktop pet (Mate) characters with spritesheet and manifest. Use when the user asks to 'create a pet', 'make a desktop companion', 'design a mate character', 'generate a spritesheet for my pet', or wants to customize their desktop buddy. Generates a WebP spritesheet + manifest.json that can be loaded by MiMo Desktop's Mate system."
 ---
 
