@@ -51,7 +51,7 @@ import type { TaskTool } from "@/tool/task"
 import type { QuestionTool } from "@/tool/question"
 import type { SkillTool } from "@/tool/skill"
 import type { WorkflowTool } from "@/tool/workflow"
-import type { ToolScriptTool } from "@/tool/tool-script"
+import { viewExecSubtools, type ExecSubPartSnapshot, type ToolScriptTool } from "@/tool/tool-script"
 import { useKeyboard, useRenderer, useTerminalDimensions, type JSX } from "@opentui/solid"
 import { useSDK } from "@tui/context/sdk"
 import { useCommandDialog } from "@tui/component/dialog-command"
@@ -2345,14 +2345,48 @@ function WorkItemTask(props: ToolProps<typeof TaskTool>) {
   )
 }
 
+function ExecSubtoolRow(props: { part: ExecSubPartSnapshot; onOpenActor: (sessionID: string, actorID: string) => void }) {
+  const { theme } = useTheme()
+  const renderer = useRenderer()
+  const state = () => props.part.state
+  const input = () => state().input as { operation?: { action?: unknown } }
+  const actor = () => {
+    const metadata = state().metadata
+    const sessionID = metadata?.sessionId
+    const actorID = metadata?.actorId
+    if (props.part.tool !== "actor" || input().operation?.action !== "spawn") return
+    if (typeof sessionID !== "string" || typeof actorID !== "string") return
+    return { sessionID, actorID }
+  }
+  const marker = () => state().status === "running" ? "…" : state().status === "error" ? "✗" : "✓"
+  const title = () => state().title ?? state().error ?? "running"
+
+  return (
+    <box
+      paddingLeft={1}
+      onMouseUp={() => {
+        const ref = actor()
+        if (!ref || renderer.getSelection()?.getSelectedText()) return
+        props.onOpenActor(ref.sessionID, ref.actorID)
+      }}
+    >
+      <text fg={actor() ? theme.primary : theme.textMuted}>
+        {marker()} {props.part.tool} · {title()}
+        <Show when={actor()}>
+          <span style={{ fg: theme.primary }}> ↗ subagent</span>
+        </Show>
+      </text>
+    </box>
+  )
+}
+
 // Renderer for the `exec` batch-orchestration tool. Collapsed view is a compact
-// BlockTool: summary title (spinner + live aggregated call counts published
-// through ctx.metadata) plus the last few sub-calls — one bordered clickable
-// unit, visible while running and kept after completion. Clicking swaps to the
-// full BlockTool with code, result, logs and trace. Before any sub-call lands
-// it stays a one-line InlineTool.
+// BlockTool with aggregate counts. Expanded view uses the pure nested-part view
+// so every admitted sub-call can be rendered as its own row; actor.spawn rows
+// reuse the direct actor navigation path.
 function ToolScript(props: ToolProps<typeof ToolScriptTool>) {
   const { theme } = useTheme()
+  const route = useRoute()
   const [expanded, setExpanded] = createSignal(false)
   const isRunning = createMemo(() => props.part.state.status === "running")
   const meta = createMemo(() =>
@@ -2392,6 +2426,14 @@ function ToolScript(props: ToolProps<typeof ToolScriptTool>) {
           `  ${t.status === "error" ? "✗" : "✓"} ${t.name} [${t.durationMs}ms]${t.error ? ` ${t.error.slice(0, 80)}` : ""}`,
       ),
   )
+  const subParts = createMemo(() => viewExecSubtools(meta()))
+  const openActor = (sessionID: string, actorID: string) => {
+    if (route.data.type === "session" && sessionID === route.data.sessionID && actorID !== "main") {
+      route.navigate({ ...route.data, agentID: actorID })
+      return
+    }
+    route.navigate({ type: "session", sessionID, agentID: actorID !== "main" ? actorID : undefined })
+  }
   // exec embeds nested tool output (a `bash` call's stdout) into <return_value>
   // and <logs>, so escape sequences reach this renderer raw.
   const output = createMemo(() => stripAnsi(props.output?.trim() ?? ""))
@@ -2436,6 +2478,11 @@ function ToolScript(props: ToolProps<typeof ToolScriptTool>) {
           <text fg={theme.textMuted}>{((props.input.code as string | undefined) ?? "").trim()}</text>
           <Show when={recentLines().length > 0}>
             <text fg={theme.textMuted}>{recentLines().join("\n")}</text>
+          </Show>
+          <Show when={subParts().length > 0}>
+            <For each={subParts()}>
+              {(subPart) => <ExecSubtoolRow part={subPart} onOpenActor={openActor} />}
+            </For>
           </Show>
           <Show when={output()}>
             <text fg={failed() ? theme.error : theme.text}>{output()}</text>

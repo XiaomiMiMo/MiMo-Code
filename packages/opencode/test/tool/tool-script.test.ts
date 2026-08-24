@@ -7,7 +7,7 @@ import path from "path"
 import { evalScript } from "../../src/workflow/sandbox"
 import { Agent } from "../../src/agent/agent"
 import { Truncate, Tool } from "../../src/tool"
-import { ToolScriptTool, renderToolScriptDeclarations } from "../../src/tool/tool-script"
+import { ToolScriptTool, renderToolScriptDeclarations, viewExecSubtools, type ExecSubPartSnapshot } from "../../src/tool/tool-script"
 import { toolScriptRegistry, TOOL_SCRIPT_EXCLUDED } from "../../src/tool/tool-script-ref"
 import { Instance } from "../../src/project/instance"
 
@@ -95,6 +95,7 @@ async function runToolScript(
     timeoutMs?: number
     toolWhitelist?: string[]
     mcp?: Record<string, any>
+    onMetadata?: (metadata: Record<string, unknown>) => void
   },
 ) {
   const prev = toolScriptRegistry.current
@@ -123,7 +124,8 @@ async function runToolScript(
                 ...(opts?.mcp ? { execMcp: { current: opts.mcp } } : {}),
               },
               messages: [],
-              metadata: () => Effect.void,
+              metadata: (value) =>
+                Effect.sync(() => opts?.onMetadata?.((value.metadata ?? {}) as Record<string, unknown>)),
               ask: opts?.ask ?? (() => Effect.void),
             },
           ),
@@ -205,6 +207,118 @@ describe("exec", () => {
     })
   })
 
+  test("retains each nested tool metadata and actor reference", async () => {
+    const parameters = z.object({ operation: z.object({ action: z.string() }) })
+    const actor: Tool.Def<typeof parameters> = {
+      id: "actor",
+      description: "fake actor",
+      parameters,
+      execute: (args, ctx) =>
+        Effect.gen(function* () {
+          yield* ctx.metadata({
+            title: "Starting child",
+            metadata: { sessionId: "ses_child", actorId: "general-1", model: "test/model" },
+          })
+          return {
+            title: "Child task",
+            output: `action:${args.operation.action}`,
+            metadata: { sessionId: "ses_child", actorId: "general-1", model: "test/model" },
+          }
+        }),
+    }
+    const result = await runToolScript(
+      `return await tools.actor({ operation: { action: "spawn" } })`,
+      [actor],
+    )
+    const records = result.metadata.sub_parts as ExecSubPartSnapshot[]
+
+    expect(records).toHaveLength(1)
+    expect(records[0]).toMatchObject({
+      seq: 1,
+      callID: "call_test:1",
+      tool: "actor",
+      state: {
+        status: "completed",
+        title: "Child task",
+        input: { operation: { action: "spawn" } },
+        output: "action:spawn",
+        metadata: { sessionId: "ses_child", actorId: "general-1", model: "test/model" },
+      },
+    })
+    expect(viewExecSubtools(result.metadata)).toEqual(records)
+  })
+
+  test("views partial exec snapshots without evaluating or filling missing calls", () => {
+    const metadata = {
+      exec_schema: 1,
+      sub_parts: [
+        {
+          seq: 2,
+          type: "tool",
+          callID: "outer:2",
+          tool: "read",
+          state: { status: "running", input: { file_path: "b.txt" }, time: { start: 20 } },
+        },
+        {
+          seq: 1,
+          type: "tool",
+          callID: "outer:1",
+          tool: "bash",
+          state: {
+            status: "completed",
+            input: { command: "echo a" },
+            title: "Run command",
+            output: "a",
+            metadata: { exit: 0 },
+            time: { start: 10, end: 11 },
+          },
+        },
+        {
+          seq: 1,
+          type: "tool",
+          callID: "outer:duplicate",
+          tool: "bash",
+          state: {
+            status: "completed",
+            input: { command: "echo duplicate" },
+            title: "Duplicate",
+            output: "duplicate",
+            time: { start: 12, end: 13 },
+          },
+        },
+        { seq: "bad", type: "tool" },
+      ],
+    }
+
+    expect(viewExecSubtools(metadata).map((part) => part.callID)).toEqual(["outer:1", "outer:2"])
+    expect(viewExecSubtools({ exec_schema: 2, sub_parts: metadata.sub_parts })).toEqual([])
+  })
+
+  test("publishes a running nested part before the nested tool settles", async () => {
+    const parameters = z.object({ value: z.string() })
+    const slow: Tool.Def<typeof parameters> = {
+      id: "slow",
+      description: "fake slow tool",
+      parameters,
+      execute: (_args, ctx) =>
+        Effect.gen(function* () {
+          yield* ctx.metadata({ metadata: { phase: "started" } })
+          yield* Effect.promise(() => new Promise((resolve) => setTimeout(resolve, 30)))
+          return { title: "Slow", output: "done", metadata: { phase: "done" } }
+        }),
+    }
+    const live: ExecSubPartSnapshot[] = []
+    const result = await runToolScript(`return await tools.slow({ value: "x" })`, [slow], undefined, {
+      onMetadata: (metadata) => {
+        const part = viewExecSubtools(metadata)[0]
+        if (part) live.push(part)
+      },
+    })
+
+    expect(live.some((part) => part.state.status === "running")).toBe(true)
+    expect(viewExecSubtools(result.metadata)[0]?.state.status).toBe("completed")
+  })
+
   test("accepts TypeScript syntax (types stripped by transpiler)", async () => {
     const result = await runToolScript(
       `
@@ -276,6 +390,7 @@ describe("exec", () => {
     )
     expect(result.metadata.status).toBe("completed")
     expect(result.metadata.toolCalls).toBe(60)
+    expect((result.metadata.sub_parts as ExecSubPartSnapshot[]).length).toBe(60)
   })
 
   test("max_tool_calls lowers the call budget and the error names the limit", async () => {
@@ -833,6 +948,9 @@ describe("exec MCP dispatch", () => {
     )
     expect(result.output).toContain("here is your chart")
     expect(result.output).toContain("non-text attachment(s) dropped")
+    expect(viewExecSubtools(result.metadata)[0]?.state.attachments).toEqual([
+      { mime: "image/png", url: "data:image/png;base64,xxxx" },
+    ])
   })
 
   test("MCP calls count against the tool call budget", async () => {
