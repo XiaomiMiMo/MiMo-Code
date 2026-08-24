@@ -92,28 +92,50 @@ Ask the user:
 
 ### Step 2: Generate the Spritesheet
 
-Use the **image generation** tool (invoke the `image-gen` skill or use any available image generation capability) to create the spritesheet.
-
-Prompt construction guidelines for the image generator:
-- Request a **sprite sheet** with specific grid layout (e.g., "8 frames in a row, 240×240 each")
-- Specify **transparent background**
-- Describe the **idle animation** motion: gentle breathing, blinking, tail wag, etc.
+Use the `imagegen` skill to generate the spritesheet image. Construct the prompt with these guidelines:
+- Request a **sprite sheet** with specific grid layout (e.g., "8 frames in a single horizontal row, each frame 240×240 pixels")
+- Specify **transparent background** (PNG with alpha)
+- Describe the **idle animation** motion: gentle breathing, blinking, tail wag, bobbing, etc.
 - Keep the character **centered** in each frame with consistent sizing
 - Style: match the user's preference; default to cute/kawaii if unspecified
 
-If image generation is unavailable, create the spritesheet using SVG-to-WebP conversion:
-1. Generate an SVG with all animation frames arranged in the grid layout
-2. Use a script to convert the SVG to WebP format
+After receiving the generated image, convert it to WebP:
+
+```bash
+# Convert PNG to lossless WebP preserving transparency
+cwebp -lossless -q 100 spritesheet.png -o spritesheet.webp
+```
+
+If `cwebp` is not available, use `sips` (macOS built-in):
+
+```bash
+# macOS fallback — sips can export to formats supported by ImageIO
+sips -s format png spritesheet.png --out spritesheet.webp 2>/dev/null \
+  || cp spritesheet.png spritesheet.webp
+```
+
+If `imagegen` is unavailable (skill not enabled or image generation fails), fall back to generating pixel-art frames directly as SVG, then rasterize:
+
+```bash
+# Rasterize SVG spritesheet to PNG via rsvg-convert (if available)
+rsvg-convert -w 1920 -h 240 spritesheet.svg -o spritesheet.png
+cwebp -lossless spritesheet.png -o spritesheet.webp
+```
+
+As a last resort, output the SVG file directly and instruct the user to convert it manually or use an online converter.
 
 ### Step 3: Write the Manifest
 
-Generate `manifest.json` with correct dimensions matching the actual spritesheet output.
+Generate `manifest.json` with correct dimensions matching the actual spritesheet output. Verify:
+- `frameWidth × columns` = spritesheet total width
+- `frameHeight × (totalFrames / columns)` = spritesheet total height
+- `animations.idle` exists with valid `row`, `frames`, `fps`, `loop`
 
 ### Step 4: Deliver
 
 Write both files to the current working directory under a folder named with the pet ID. Tell the user to:
-1. Copy the folder to their MiMo Desktop pets directory
-2. Open Settings → Mate → click Refresh
+1. Copy the folder to their MiMo Desktop pets directory (Settings → Mate → click "Open Folder" to find it)
+2. Click "Refresh" in Settings → Mate
 3. Select their new pet from the list
 
 ## Constraints
