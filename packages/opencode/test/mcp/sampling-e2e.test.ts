@@ -1230,7 +1230,7 @@ describe("MCP client-side sampling, end to end", () => {
  *
  * THE SILENCE BOUND IS INJECTED HERE so the suite runs in CI time. That is a
  * property of the tests, not of the proofs: production passes nothing and inherits
- * `DEFAULT_CHUNK_TIMEOUT` (8 minutes), or whatever the operator configured for that
+ * `DEFAULT_CHUNK_TIMEOUT` (5 minutes), or whatever the operator configured for that
  * provider. Sub-second bounds prove the MECHANISM, never that a production value is
  * right; the inherited value is pinned separately by a constant assertion, and no
  * test that finishes in seconds also waits out eight minutes.
@@ -1473,7 +1473,7 @@ describe("sampling deadlines and liveness", () => {
         expect(result.isError).toBe(true)
         // THE CONFIGURED VALUE IS THE ONE REPORTED. Had sampling kept its own
         // default this would read 45_000; had it ignored config it would read
-        // 480_000 and this test would have timed out instead.
+        // 300_000 and this test would have timed out instead.
         const detail = h.samplingOutcomes[0].detail as any
         expect(detail.code).toBe(McpSampling.TIMEOUT_CODE)
         expect(detail.data).toMatchObject({ server: "fixture", phase: "stall", timeout: CONFIGURED })
@@ -1561,7 +1561,7 @@ describe("sampling deadlines and liveness", () => {
     // injected, sampling's silence bound IS the provider layer's, so the two cannot
     // drift apart the way 45 s and 480 s had.
     expect(McpSampling.chunkTimeoutFor({}, PROVIDER_ID)).toBe(DEFAULT_CHUNK_TIMEOUT)
-    expect(DEFAULT_CHUNK_TIMEOUT).toBe(480_000)
+    expect(DEFAULT_CHUNK_TIMEOUT).toBe(300_000)
 
     // AND THE DELETED BOUNDS STAY DELETED. Each was a number with no precedent in
     // this repo, so re-exporting any of them would mean one had come back.
@@ -1583,7 +1583,7 @@ describe("sampling deadlines and liveness", () => {
  *
  * EVERY BOUND HERE IS INJECTED so the suite runs in CI time, exactly as in the
  * block above: production passes none and inherits the provider's `chunkTimeout`
- * (8 minutes by default), with no total bound behind it. Sub-second bounds prove
+ * (5 minutes by default), with no total bound behind it. Sub-second bounds prove
  * the MECHANISM, never that any particular production value is right; the inherited
  * value is pinned separately by the constant assertions, and no test that finishes
  * in seconds also waits out eight minutes.

@@ -13,12 +13,12 @@ export const RETRY_MAX_DELAY_NO_HEADERS = 30_000
 export const RETRY_MAX_DELAY_MESSAGE = 5 * 60_000
 export const RETRY_MAX_DELAY = 2_147_483_647
 export const GPT_OVERLOAD_RETRIES = 3
-export const REQUEST_MAX_RETRIES = 1
-export const REQUEST_INITIAL_DELAY_MS = 250
+export const REQUEST_MAX_RETRIES = 4
+export const REQUEST_INITIAL_DELAY_MS = 200
 export const STREAM_MAX_RETRIES = 5
 export const REQUEST_RETRY_DEADLINE_MS = 30_000
 export const STREAM_RETRY_DEADLINE_MS = 10 * 60_000
-export const RETRY_JITTER_RATIO = 0.2
+export const RETRY_JITTER_RATIO = 0.1
 export const NETWORK_INITIAL_DELAY_MS = 5000
 export const NETWORK_MAX_DELAY_MS = 60_000
 export const SERVER_MAX_RETRIES = 8
@@ -35,6 +35,7 @@ export type RetryBudget = {
   maxElapsedMs: number
   initialDelayMs: number
   maxDelayMs: number
+  jitterRatio: number
 }
 
 export type RetryConfigSource = {
@@ -61,6 +62,7 @@ const DEFAULT_RETRY_CONFIG: ResolvedRetryConfig = {
     maxElapsedMs: REQUEST_RETRY_DEADLINE_MS,
     initialDelayMs: REQUEST_INITIAL_DELAY_MS,
     maxDelayMs: RETRY_MAX_DELAY_NO_HEADERS,
+    jitterRatio: RETRY_JITTER_RATIO,
   },
   stream: {
     mode: "bounded",
@@ -68,6 +70,7 @@ const DEFAULT_RETRY_CONFIG: ResolvedRetryConfig = {
     maxElapsedMs: STREAM_RETRY_DEADLINE_MS,
     initialDelayMs: RETRY_INITIAL_DELAY,
     maxDelayMs: RETRY_MAX_DELAY_NO_HEADERS,
+    jitterRatio: RETRY_JITTER_RATIO,
   },
   maxCandidate: {
     mode: "bounded",
@@ -75,6 +78,7 @@ const DEFAULT_RETRY_CONFIG: ResolvedRetryConfig = {
     maxElapsedMs: 3 * 60_000,
     initialDelayMs: 500,
     maxDelayMs: RETRY_MAX_DELAY_NO_HEADERS,
+    jitterRatio: RETRY_JITTER_RATIO,
   },
   maxJudge: {
     mode: "bounded",
@@ -82,12 +86,14 @@ const DEFAULT_RETRY_CONFIG: ResolvedRetryConfig = {
     maxElapsedMs: 3 * 60_000,
     initialDelayMs: 500,
     maxDelayMs: RETRY_MAX_DELAY_NO_HEADERS,
+    jitterRatio: RETRY_JITTER_RATIO,
   },
   network: {
     mode: "persistent",
     maxElapsedMs: 0,
     initialDelayMs: NETWORK_INITIAL_DELAY_MS,
     maxDelayMs: NETWORK_MAX_DELAY_MS,
+    jitterRatio: 0,
   },
   server: {
     mode: "bounded",
@@ -95,6 +101,7 @@ const DEFAULT_RETRY_CONFIG: ResolvedRetryConfig = {
     maxElapsedMs: SERVER_RETRY_DEADLINE_MS,
     initialDelayMs: RETRY_INITIAL_DELAY,
     maxDelayMs: RETRY_MAX_DELAY_NO_HEADERS,
+    jitterRatio: RETRY_JITTER_RATIO,
   },
   rateLimit: {
     mode: "bounded",
@@ -102,6 +109,7 @@ const DEFAULT_RETRY_CONFIG: ResolvedRetryConfig = {
     maxElapsedMs: SERVER_RETRY_DEADLINE_MS,
     initialDelayMs: RETRY_INITIAL_DELAY,
     maxDelayMs: RETRY_MAX_DELAY_MESSAGE,
+    jitterRatio: RETRY_JITTER_RATIO,
   },
   unknown: {
     mode: "bounded",
@@ -109,6 +117,7 @@ const DEFAULT_RETRY_CONFIG: ResolvedRetryConfig = {
     maxElapsedMs: UNKNOWN_RETRY_DEADLINE_MS,
     initialDelayMs: RETRY_INITIAL_DELAY,
     maxDelayMs: RETRY_MAX_DELAY_NO_HEADERS,
+    jitterRatio: RETRY_JITTER_RATIO,
   },
   jitterRatio: RETRY_JITTER_RATIO,
 }
@@ -363,9 +372,7 @@ export function retryDelay(
   maxDelayMs = RETRY_MAX_DELAY,
 ) {
   if (decision.retryAfterMs !== undefined) return cap(Math.min(decision.retryAfterMs, maxDelayMs))
-  const base = cap(
-    Math.min(initialDelayMs * Math.pow(RETRY_BACKOFF_FACTOR, attempt - 1), RETRY_MAX_DELAY_NO_HEADERS, maxDelayMs),
-  )
+  const base = cap(Math.min(initialDelayMs * Math.pow(RETRY_BACKOFF_FACTOR, attempt - 1), maxDelayMs))
   if (jitterRatio <= 0) return base
   const factor = 1 + (Math.random() * 2 - 1) * jitterRatio
   return cap(Math.round(base * factor))
@@ -433,6 +440,7 @@ export function policy(opts: {
         maxElapsedMs: opts.maxElapsedMs ?? (phase === "request" ? REQUEST_RETRY_DEADLINE_MS : STREAM_RETRY_DEADLINE_MS),
         initialDelayMs: opts.initialDelayMs ?? (phase === "request" ? REQUEST_INITIAL_DELAY_MS : RETRY_INITIAL_DELAY),
         maxDelayMs: RETRY_MAX_DELAY_NO_HEADERS,
+        jitterRatio: opts.jitterRatio ?? RETRY_JITTER_RATIO,
       }
       if (
         opts.replaySafe?.(decision) === false ||
@@ -446,7 +454,7 @@ export function policy(opts: {
       const now = Date.now()
       if (startedAt === undefined) startedAt = now
       const elapsed = now - startedAt
-      const wait = retryDelay(meta.attempt, decision, opts.jitterRatio, budget.initialDelayMs, budget.maxDelayMs)
+      const wait = retryDelay(meta.attempt, decision, budget.jitterRatio, budget.initialDelayMs, budget.maxDelayMs)
       if (budget.maxElapsedMs > 0 && (elapsed >= budget.maxElapsedMs || wait >= budget.maxElapsedMs - elapsed))
         return Cause.done(meta.attempt)
       return Effect.gen(function* () {

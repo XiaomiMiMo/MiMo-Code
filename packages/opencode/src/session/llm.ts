@@ -913,7 +913,7 @@ const live: Layer.Layer<
                 const wait = SessionRetry.retryDelay(
                   nextAttempt,
                   decision,
-                  retryConfig.jitterRatio,
+                  budget.jitterRatio,
                   budget.initialDelayMs,
                   budget.maxDelayMs,
                 )

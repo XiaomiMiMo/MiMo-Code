@@ -89,7 +89,7 @@ const log = Log.create({ service: "mcp.sampling" })
  * is now the whole of it. This value used to be justified against the silence bound
  * as well — "3x below it, so a peer sees at least two beats before a stall is
  * declared" — and that ratio is void: the silence bound is now the provider's
- * `chunkTimeout` (8 minutes by default), against which 15 s is ~32x rather than 3x.
+ * `chunkTimeout` (5 minutes by default), against which 15 s is 20x rather than 3x.
  * The surviving reason is the one that never depended on the stall bound: a beat
  * every 15 s sits well inside the MCP SDK's 60 s DEFAULT_REQUEST_TIMEOUT_MSEC, so
  * several land within one peer timeout window instead of one landing near its edge,
@@ -108,16 +108,16 @@ export const DEFAULT_LIVENESS_INTERVAL = 15_000
  * 3x the liveness interval. The repo already had this exact concept — "no output
  * for this long means the stream is dead" — as `chunkTimeout`, wired in
  * `provider.ts:wrapSSE`, configurable per provider in `mimocode.json`, default
- * `DEFAULT_CHUNK_TIMEOUT` = 8 minutes. Carrying a second, tighter, differently
+ * `DEFAULT_CHUNK_TIMEOUT` = 5 minutes. Carrying a second, tighter, differently
  * named silence bound in the same repo for the same question was the defect; 45 s
- * against 480 s is not a divergence to justify but a 10x disagreement about the
+ * against 300 s is still a tighter disagreement about the same
  * same fact.
  *
  * AND THE REPO'S NUMBER IS THE ARGUED ONE. `DEFAULT_CHUNK_TIMEOUT`'s comment
  * records a real observation — "mimo-v2.5-pro on MiMo Router whose cold-path TTFT
  * after context rebuild can dip to ~5 minutes silent" — which is the only
  * statement anywhere here about how long LEGITIMATE provider silence lasts. Our
- * 45 s was 10x tighter than a value tuned to tolerate a real 5-minute silent cold
+ * 45 s was still tighter than a value tuned to tolerate a real 5-minute silent cold
  * path, so it would have declared a stall on calls the main path is explicitly
  * built to survive. The false-positive risk the old constant's comment listed as
  * hypothetical was in fact already measured, elsewhere, against us.

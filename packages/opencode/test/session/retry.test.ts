@@ -141,13 +141,22 @@ describe("session.retry.retryable", () => {
   test("selects a long network budget without widening request server retries", () => {
     const resolved = SessionRetry.resolve(undefined, "test")
     expect(SessionRetry.budgetFor(resolved, { retryable: true, phase: "stream", scope: "live-step", kind: "network", message: "reset" }).mode).toBe("persistent")
-    expect(SessionRetry.budgetFor(resolved, { retryable: true, phase: "request", scope: "request", kind: "server", message: "503" }).maxRetries).toBe(1)
+    expect(SessionRetry.budgetFor(resolved, { retryable: true, phase: "request", scope: "request", kind: "server", message: "503" }).maxRetries).toBe(4)
     expect(resolved.unknown).toMatchObject({ maxRetries: 8, maxElapsedMs: 15 * 60_000 })
+    expect(resolved.request.jitterRatio).toBe(0.1)
+    expect(resolved.network.jitterRatio).toBe(0)
   })
 
   test("caps retry-after by the selected budget", () => {
     const decision = { retryable: true, phase: "stream" as const, scope: "live-step" as const, kind: "rate_limit" as const, message: "429", retryAfterMs: 120000 }
     expect(SessionRetry.retryDelay(1, decision, 0, 100, 5000)).toBe(5000)
+  })
+
+  test("uses the 5-to-60-second network backoff without jitter", () => {
+    const decision = { retryable: true, phase: "stream" as const, scope: "live-step" as const, kind: "network" as const, message: "connection failed" }
+    const resolved = SessionRetry.resolve(undefined, "test")
+    const budget = SessionRetry.budgetFor(resolved, decision)
+    expect([1, 2, 3, 4, 5].map((attempt) => SessionRetry.retryDelay(attempt, decision, budget.jitterRatio, budget.initialDelayMs, budget.maxDelayMs))).toStrictEqual([5000, 10000, 20000, 40000, 60000])
   })
 
   test("recognizes GPT models by configured or API model ID", () => {

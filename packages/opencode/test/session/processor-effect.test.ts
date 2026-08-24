@@ -616,7 +616,10 @@ it.live("session.processor effect tests publish retry status updates", () =>
         expect(states).toStrictEqual([1])
         expect(retryEvents).toStrictEqual([{ attempt: 1, maxAttempts: 8, phase: "stream", kind: "server", scope: "live-step" }])
       }),
-    { git: true, config: (url) => providerCfg(url) },
+    {
+      git: true,
+      config: (url) => ({ ...providerCfg(url), retry: { request: { maxRetries: 1 } } }),
+    },
   ),
 )
 

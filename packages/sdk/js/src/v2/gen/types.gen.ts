@@ -1854,6 +1854,7 @@ export type ProviderConfig = {
       deadlineMs?: number
       initialDelayMs?: number
       maxDelayMs?: number
+      jitterRatio?: number
     }
     stream?: {
       mode?: "bounded" | "persistent"
@@ -1861,6 +1862,7 @@ export type ProviderConfig = {
       deadlineMs?: number
       initialDelayMs?: number
       maxDelayMs?: number
+      jitterRatio?: number
     }
     maxCandidate?: {
       mode?: "bounded" | "persistent"
@@ -1868,6 +1870,7 @@ export type ProviderConfig = {
       deadlineMs?: number
       initialDelayMs?: number
       maxDelayMs?: number
+      jitterRatio?: number
     }
     maxJudge?: {
       mode?: "bounded" | "persistent"
@@ -1875,6 +1878,7 @@ export type ProviderConfig = {
       deadlineMs?: number
       initialDelayMs?: number
       maxDelayMs?: number
+      jitterRatio?: number
     }
     network?: {
       mode?: "bounded" | "persistent"
@@ -1882,6 +1886,7 @@ export type ProviderConfig = {
       deadlineMs?: number
       initialDelayMs?: number
       maxDelayMs?: number
+      jitterRatio?: number
     }
     server?: {
       mode?: "bounded" | "persistent"
@@ -1889,6 +1894,7 @@ export type ProviderConfig = {
       deadlineMs?: number
       initialDelayMs?: number
       maxDelayMs?: number
+      jitterRatio?: number
     }
     rateLimit?: {
       mode?: "bounded" | "persistent"
@@ -1896,6 +1902,7 @@ export type ProviderConfig = {
       deadlineMs?: number
       initialDelayMs?: number
       maxDelayMs?: number
+      jitterRatio?: number
     }
     unknown?: {
       mode?: "bounded" | "persistent"
@@ -1903,6 +1910,7 @@ export type ProviderConfig = {
       deadlineMs?: number
       initialDelayMs?: number
       maxDelayMs?: number
+      jitterRatio?: number
     }
     jitterRatio?: number
   }
@@ -2215,6 +2223,7 @@ export type Config = {
       deadlineMs?: number
       initialDelayMs?: number
       maxDelayMs?: number
+      jitterRatio?: number
     }
     stream?: {
       mode?: "bounded" | "persistent"
@@ -2222,6 +2231,7 @@ export type Config = {
       deadlineMs?: number
       initialDelayMs?: number
       maxDelayMs?: number
+      jitterRatio?: number
     }
     maxCandidate?: {
       mode?: "bounded" | "persistent"
@@ -2229,6 +2239,7 @@ export type Config = {
       deadlineMs?: number
       initialDelayMs?: number
       maxDelayMs?: number
+      jitterRatio?: number
     }
     maxJudge?: {
       mode?: "bounded" | "persistent"
@@ -2236,6 +2247,7 @@ export type Config = {
       deadlineMs?: number
       initialDelayMs?: number
       maxDelayMs?: number
+      jitterRatio?: number
     }
     network?: {
       mode?: "bounded" | "persistent"
@@ -2243,6 +2255,7 @@ export type Config = {
       deadlineMs?: number
       initialDelayMs?: number
       maxDelayMs?: number
+      jitterRatio?: number
     }
     server?: {
       mode?: "bounded" | "persistent"
@@ -2250,6 +2263,7 @@ export type Config = {
       deadlineMs?: number
       initialDelayMs?: number
       maxDelayMs?: number
+      jitterRatio?: number
     }
     rateLimit?: {
       mode?: "bounded" | "persistent"
@@ -2257,6 +2271,7 @@ export type Config = {
       deadlineMs?: number
       initialDelayMs?: number
       maxDelayMs?: number
+      jitterRatio?: number
     }
     unknown?: {
       mode?: "bounded" | "persistent"
@@ -2264,6 +2279,7 @@ export type Config = {
       deadlineMs?: number
       initialDelayMs?: number
       maxDelayMs?: number
+      jitterRatio?: number
     }
     jitterRatio?: number
   }
