@@ -1057,7 +1057,7 @@ export const SessionRoutes = lazy(() =>
         await runRequest(
           "SessionRoutes.resume.assertNotBusy",
           c,
-          SessionRunState.Service.use((svc) => svc.assertNotBusy(params.sessionID)),
+          SessionRunState.Service.use((svc) => svc.assertNotBusy(params.sessionID, query.agentID)),
         )
         await runRequest(
           "SessionRoutes.resume.validate",
@@ -1079,7 +1079,7 @@ export const SessionRoutes = lazy(() =>
         void runRequest(
           "SessionRoutes.resume",
           c,
-          SessionPrompt.Service.use((svc) => svc.resume({
+          SessionPrompt.Service.use((svc) => svc.resumeBackground({
             sessionID: params.sessionID,
             assistantMessageID: params.assistantMessageID,
             agentID: query.agentID,

@@ -774,6 +774,10 @@ export type SessionStatus =
       next: number
     }
   | {
+      type: "notice"
+      message: string
+    }
+  | {
       type: "busy"
       message?: string
     }
@@ -1849,64 +1853,136 @@ export type ProviderConfig = {
    */
   retry?: {
     request?: {
+      /**
+       * bounded stops after maxRetries; persistent ignores the retry count and waits until cancellation or deadline
+       */
       mode?: "bounded" | "persistent"
+      /**
+       * Retries after the initial attempt; 0 disables retries and the maximum is 100
+       */
       maxRetries?: number
+      /**
+       * Wall-clock retry deadline in milliseconds; 0 means no deadline
+       */
       deadlineMs?: number
       initialDelayMs?: number
       maxDelayMs?: number
       jitterRatio?: number
     }
     stream?: {
+      /**
+       * bounded stops after maxRetries; persistent ignores the retry count and waits until cancellation or deadline
+       */
       mode?: "bounded" | "persistent"
+      /**
+       * Retries after the initial attempt; 0 disables retries and the maximum is 100
+       */
       maxRetries?: number
+      /**
+       * Wall-clock retry deadline in milliseconds; 0 means no deadline
+       */
       deadlineMs?: number
       initialDelayMs?: number
       maxDelayMs?: number
       jitterRatio?: number
     }
     maxCandidate?: {
+      /**
+       * bounded stops after maxRetries; persistent ignores the retry count and waits until cancellation or deadline
+       */
       mode?: "bounded" | "persistent"
+      /**
+       * Retries after the initial attempt; 0 disables retries and the maximum is 100
+       */
       maxRetries?: number
+      /**
+       * Wall-clock retry deadline in milliseconds; 0 means no deadline
+       */
       deadlineMs?: number
       initialDelayMs?: number
       maxDelayMs?: number
       jitterRatio?: number
     }
     maxJudge?: {
+      /**
+       * bounded stops after maxRetries; persistent ignores the retry count and waits until cancellation or deadline
+       */
       mode?: "bounded" | "persistent"
+      /**
+       * Retries after the initial attempt; 0 disables retries and the maximum is 100
+       */
       maxRetries?: number
+      /**
+       * Wall-clock retry deadline in milliseconds; 0 means no deadline
+       */
       deadlineMs?: number
       initialDelayMs?: number
       maxDelayMs?: number
       jitterRatio?: number
     }
     network?: {
+      /**
+       * bounded stops after maxRetries; persistent ignores the retry count and waits until cancellation or deadline
+       */
       mode?: "bounded" | "persistent"
+      /**
+       * Retries after the initial attempt; 0 disables retries and the maximum is 100
+       */
       maxRetries?: number
+      /**
+       * Wall-clock retry deadline in milliseconds; 0 means no deadline
+       */
       deadlineMs?: number
       initialDelayMs?: number
       maxDelayMs?: number
       jitterRatio?: number
     }
     server?: {
+      /**
+       * bounded stops after maxRetries; persistent ignores the retry count and waits until cancellation or deadline
+       */
       mode?: "bounded" | "persistent"
+      /**
+       * Retries after the initial attempt; 0 disables retries and the maximum is 100
+       */
       maxRetries?: number
+      /**
+       * Wall-clock retry deadline in milliseconds; 0 means no deadline
+       */
       deadlineMs?: number
       initialDelayMs?: number
       maxDelayMs?: number
       jitterRatio?: number
     }
     rateLimit?: {
+      /**
+       * bounded stops after maxRetries; persistent ignores the retry count and waits until cancellation or deadline
+       */
       mode?: "bounded" | "persistent"
+      /**
+       * Retries after the initial attempt; 0 disables retries and the maximum is 100
+       */
       maxRetries?: number
+      /**
+       * Wall-clock retry deadline in milliseconds; 0 means no deadline
+       */
       deadlineMs?: number
       initialDelayMs?: number
       maxDelayMs?: number
       jitterRatio?: number
     }
     unknown?: {
+      /**
+       * bounded stops after maxRetries; persistent ignores the retry count and waits until cancellation or deadline
+       */
       mode?: "bounded" | "persistent"
+      /**
+       * Retries after the initial attempt; 0 disables retries and the maximum is 100
+       */
       maxRetries?: number
+      /**
+       * Wall-clock retry deadline in milliseconds; 0 means no deadline
+       */
       deadlineMs?: number
       initialDelayMs?: number
       maxDelayMs?: number
@@ -2218,64 +2294,136 @@ export type Config = {
    */
   retry?: {
     request?: {
+      /**
+       * bounded stops after maxRetries; persistent ignores the retry count and waits until cancellation or deadline
+       */
       mode?: "bounded" | "persistent"
+      /**
+       * Retries after the initial attempt; 0 disables retries and the maximum is 100
+       */
       maxRetries?: number
+      /**
+       * Wall-clock retry deadline in milliseconds; 0 means no deadline
+       */
       deadlineMs?: number
       initialDelayMs?: number
       maxDelayMs?: number
       jitterRatio?: number
     }
     stream?: {
+      /**
+       * bounded stops after maxRetries; persistent ignores the retry count and waits until cancellation or deadline
+       */
       mode?: "bounded" | "persistent"
+      /**
+       * Retries after the initial attempt; 0 disables retries and the maximum is 100
+       */
       maxRetries?: number
+      /**
+       * Wall-clock retry deadline in milliseconds; 0 means no deadline
+       */
       deadlineMs?: number
       initialDelayMs?: number
       maxDelayMs?: number
       jitterRatio?: number
     }
     maxCandidate?: {
+      /**
+       * bounded stops after maxRetries; persistent ignores the retry count and waits until cancellation or deadline
+       */
       mode?: "bounded" | "persistent"
+      /**
+       * Retries after the initial attempt; 0 disables retries and the maximum is 100
+       */
       maxRetries?: number
+      /**
+       * Wall-clock retry deadline in milliseconds; 0 means no deadline
+       */
       deadlineMs?: number
       initialDelayMs?: number
       maxDelayMs?: number
       jitterRatio?: number
     }
     maxJudge?: {
+      /**
+       * bounded stops after maxRetries; persistent ignores the retry count and waits until cancellation or deadline
+       */
       mode?: "bounded" | "persistent"
+      /**
+       * Retries after the initial attempt; 0 disables retries and the maximum is 100
+       */
       maxRetries?: number
+      /**
+       * Wall-clock retry deadline in milliseconds; 0 means no deadline
+       */
       deadlineMs?: number
       initialDelayMs?: number
       maxDelayMs?: number
       jitterRatio?: number
     }
     network?: {
+      /**
+       * bounded stops after maxRetries; persistent ignores the retry count and waits until cancellation or deadline
+       */
       mode?: "bounded" | "persistent"
+      /**
+       * Retries after the initial attempt; 0 disables retries and the maximum is 100
+       */
       maxRetries?: number
+      /**
+       * Wall-clock retry deadline in milliseconds; 0 means no deadline
+       */
       deadlineMs?: number
       initialDelayMs?: number
       maxDelayMs?: number
       jitterRatio?: number
     }
     server?: {
+      /**
+       * bounded stops after maxRetries; persistent ignores the retry count and waits until cancellation or deadline
+       */
       mode?: "bounded" | "persistent"
+      /**
+       * Retries after the initial attempt; 0 disables retries and the maximum is 100
+       */
       maxRetries?: number
+      /**
+       * Wall-clock retry deadline in milliseconds; 0 means no deadline
+       */
       deadlineMs?: number
       initialDelayMs?: number
       maxDelayMs?: number
       jitterRatio?: number
     }
     rateLimit?: {
+      /**
+       * bounded stops after maxRetries; persistent ignores the retry count and waits until cancellation or deadline
+       */
       mode?: "bounded" | "persistent"
+      /**
+       * Retries after the initial attempt; 0 disables retries and the maximum is 100
+       */
       maxRetries?: number
+      /**
+       * Wall-clock retry deadline in milliseconds; 0 means no deadline
+       */
       deadlineMs?: number
       initialDelayMs?: number
       maxDelayMs?: number
       jitterRatio?: number
     }
     unknown?: {
+      /**
+       * bounded stops after maxRetries; persistent ignores the retry count and waits until cancellation or deadline
+       */
       mode?: "bounded" | "persistent"
+      /**
+       * Retries after the initial attempt; 0 disables retries and the maximum is 100
+       */
       maxRetries?: number
+      /**
+       * Wall-clock retry deadline in milliseconds; 0 means no deadline
+       */
       deadlineMs?: number
       initialDelayMs?: number
       maxDelayMs?: number

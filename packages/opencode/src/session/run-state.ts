@@ -7,7 +7,8 @@ import { SessionID } from "./schema"
 import { SessionStatus } from "./status"
 
 export interface Interface {
-  readonly assertNotBusy: (sessionID: SessionID) => Effect.Effect<void>
+  readonly assertNotBusy: (sessionID: SessionID, agentID?: string) => Effect.Effect<void>
+  readonly start: (sessionID: SessionID, agentID: string, onInterrupt: Effect.Effect<MessageV2.WithParts>, work: Effect.Effect<MessageV2.WithParts>) => Effect.Effect<void>
   readonly cancel: (sessionID: SessionID) => Effect.Effect<void>
   readonly cancelActor: (sessionID: SessionID, agentID: string) => Effect.Effect<void>
   readonly ensureRunning: (
@@ -81,10 +82,21 @@ export const layer = Layer.effect(
       return next
     })
 
-    const assertNotBusy = Effect.fn("SessionRunState.assertNotBusy")(function* (sessionID: SessionID) {
+    const assertNotBusy = Effect.fn("SessionRunState.assertNotBusy")(function* (sessionID: SessionID, agentID = "main") {
       const data = yield* InstanceState.get(state)
-      const existing = data.runners.get(runnerKey(sessionID, "main"))
+      const existing = data.runners.get(runnerKey(sessionID, agentID))
       if (existing?.busy) throw new Session.BusyError(sessionID)
+    })
+
+    const start = Effect.fn("SessionRunState.start")(function* (
+      sessionID: SessionID,
+      agentID: string,
+      onInterrupt: Effect.Effect<MessageV2.WithParts>,
+      work: Effect.Effect<MessageV2.WithParts>,
+    ) {
+      const active = yield* runner(sessionID, agentID, onInterrupt)
+      yield* active.start(work)
+      return
     })
 
     const cancel = Effect.fn("SessionRunState.cancel")(function* (sessionID: SessionID) {
@@ -126,7 +138,7 @@ export const layer = Layer.effect(
       return yield* (yield* runner(sessionID, "main", onInterrupt)).startShell(work)
     })
 
-    return Service.of({ assertNotBusy, cancel, cancelActor, ensureRunning, startShell })
+    return Service.of({ assertNotBusy, cancel, cancelActor, ensureRunning, start, startShell })
   }),
 )
 

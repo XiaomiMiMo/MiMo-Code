@@ -859,7 +859,7 @@ export const layer: Layer.Layer<
                 silentRetry: (error) => isMain && SessionRetry.isGptServerOverloadedError(error),
                 onTerminal: (decision) =>
                   isMain && decision.uiMessage
-                    ? status.set(ctx.sessionID, { type: "retry", attempt: 0, message: decision.uiMessage, next: Date.now() })
+                    ? status.set(ctx.sessionID, { type: "notice", message: decision.uiMessage })
                     : Effect.void,
                 set: (info) =>
                   Effect.gen(function* () {

@@ -11,6 +11,7 @@ export const RETRY_INITIAL_DELAY = 2000
 export const RETRY_BACKOFF_FACTOR = 2
 export const RETRY_MAX_DELAY_NO_HEADERS = 30_000
 export const RETRY_MAX_DELAY_MESSAGE = 5 * 60_000
+export const RETRY_MIN_DELAY = 100
 export const RETRY_MAX_DELAY = 2_147_483_647
 export const GPT_OVERLOAD_RETRIES = 3
 export const REQUEST_MAX_RETRIES = 4
@@ -146,8 +147,8 @@ export function resolve(config: RetryConfigSource | undefined, providerID?: stri
 }
 
 export function budgetFor(config: ResolvedRetryConfig, decision: RetryDecision): RetryBudget {
-  if (decision.kind === "network") return config.network
   if (decision.phase === "request") return config.request
+  if (decision.kind === "network") return config.network
   if (decision.scope === "max-candidate") return config.maxCandidate
   if (decision.scope === "max-judge") return config.maxJudge
   if (decision.kind === "server") return config.server
@@ -187,6 +188,10 @@ export function isRateLimitMessage(message: string): boolean {
 
 function cap(ms: number) {
   return Math.min(Math.max(0, ms), RETRY_MAX_DELAY)
+}
+
+function capRetryHint(ms: number) {
+  return Math.min(Math.max(RETRY_MIN_DELAY, ms), RETRY_MAX_DELAY)
 }
 
 function parseBody(input: unknown): Record<string, any> | undefined {
@@ -234,18 +239,17 @@ function responseBodyOf(error: unknown): string | undefined {
 
 function retryAfterValue(value: string): number | undefined {
   const normalized = value.trim()
-  if (/^\d+(?:\.\d+)?$/.test(normalized)) return cap(Math.ceil(Number.parseFloat(normalized) * 1000))
+  if (/^\d+(?:\.\d+)?$/.test(normalized)) return capRetryHint(Math.ceil(Number.parseFloat(normalized) * 1000))
   const date = Date.parse(normalized) - Date.now()
-  return !Number.isNaN(date) && date > 0 ? cap(Math.ceil(date)) : undefined
+  return !Number.isNaN(date) && date > 0 ? capRetryHint(Math.ceil(date)) : undefined
 }
 
 function retryAfterFromHeaders(error: MessageV2.APIError): number | undefined {
   const headers = error.data.responseHeaders
   if (!headers) return undefined
-  const retryAfterMs = headers["retry-after-ms"]
-  if (retryAfterMs) {
-    const parsed = Number.parseFloat(retryAfterMs)
-    if (!Number.isNaN(parsed)) return cap(Math.ceil(parsed))
+  const retryAfterMs = headers["retry-after-ms"]?.trim()
+  if (retryAfterMs && /^\d+(?:\.\d+)?$/.test(retryAfterMs)) {
+    return capRetryHint(Math.ceil(Number.parseFloat(retryAfterMs)))
   }
   const retryAfter = headers["retry-after"]
   return retryAfter ? retryAfterValue(retryAfter) : undefined
@@ -258,8 +262,8 @@ function retryAfterFromMessage(message: string): number | undefined {
   if (!match) return undefined
   const value = Number.parseFloat(match[1])
   const unit = match[2].toLowerCase()
-  const multiplier = unit.startsWith("ms") ? 1 : unit.startsWith("s") ? 1000 : unit.startsWith("m") ? 60_000 : 3_600_000
-  return Math.min(cap(Math.ceil(value * multiplier)), RETRY_MAX_DELAY_MESSAGE)
+  const multiplier = unit === "ms" || unit.startsWith("millisecond") ? 1 : unit.startsWith("second") ? 1000 : unit.startsWith("minute") ? 60_000 : 3_600_000
+  return Math.min(capRetryHint(Math.ceil(value * multiplier)), RETRY_MAX_DELAY_MESSAGE)
 }
 
 function bodySignals(body: Record<string, any> | undefined) {
@@ -330,6 +334,7 @@ export function decide(
     return terminal("Usage limit reached", GO_UPSELL_MESSAGE)
   if (signals.code === "SubscriptionUsageLimitError" || responseBody?.includes("SubscriptionUsageLimitError"))
     return terminal()
+  if (status === 402 || status === 501 || status === 505) return terminal()
   if (signals.code === "stream_read_error" || signals.type === "upstream_error")
     return retry("stream", "stream", signals.message || "Upstream stream read failed")
   if (ProviderError.isRetryableNetworkError(error)) return retry("network")
@@ -345,7 +350,7 @@ export function decide(
   if (isRateLimitMessage(message)) return retry("rate_limit", phase, message)
   if (signals.code.includes("exhausted") || signals.code.includes("unavailable"))
     return retry("server", phase, "Provider is overloaded")
-  if (status !== undefined && (RETRYABLE_HTTP_STATUS.has(status) || (status >= 500 && status <= 599)))
+  if (status !== undefined && (RETRYABLE_HTTP_STATUS.has(status) || (status >= 500 && status <= 599 && status !== 501 && status !== 505)))
     return retry(status === 429 ? "rate_limit" : "server")
   if (MessageV2.APIError.isInstance(error)) {
     if (status === 400 || status === 401 || status === 403 || status === 422) return terminal()
@@ -371,11 +376,11 @@ export function retryDelay(
   initialDelayMs = RETRY_INITIAL_DELAY,
   maxDelayMs = RETRY_MAX_DELAY,
 ) {
-  if (decision.retryAfterMs !== undefined) return cap(Math.min(decision.retryAfterMs, maxDelayMs))
-  const base = cap(Math.min(initialDelayMs * Math.pow(RETRY_BACKOFF_FACTOR, attempt - 1), maxDelayMs))
+  if (decision.retryAfterMs !== undefined) return Math.min(maxDelayMs, Math.max(RETRY_MIN_DELAY, decision.retryAfterMs))
+  const base = Math.min(maxDelayMs, initialDelayMs * Math.pow(RETRY_BACKOFF_FACTOR, attempt - 1))
   if (jitterRatio <= 0) return base
   const factor = 1 + (Math.random() * 2 - 1) * jitterRatio
-  return cap(Math.round(base * factor))
+  return Math.min(maxDelayMs, Math.max(RETRY_MIN_DELAY, Math.round(base * factor)))
 }
 
 export function retryable(error: Err) {

@@ -26,7 +26,7 @@ Retry 必须区分两个问题：错误是否可能恢复，以及当前 scope �
 
 | Kind       | 默认策略                                                                      |
 | ---------- | ----------------------------------------------------------------------------- |
-| network    | persistent，5s 起步，最大间隔 60s，无 jitter；默认无次数上限，受用户取消和 deadline 控制 |
+| network    | live stream persistent，5s 起步，最大间隔 60s，无 jitter；request 阶段使用 request budget |
 | stream     | 5 次，2s 起步，10min deadline                                                 |
 | server     | 8 次，2s 起步，15min deadline                                                 |
 | rate_limit | 5 次，优先 Retry-After，最大 delay 5min                                       |
@@ -67,7 +67,7 @@ Persistent network retry 仍受 AbortSignal、进程退出和 provider chunkTime
 
 ## 可观测性
 
-每次实际 retry 发布 session.retry.attempt，包含 phase、scope、kind、attempt、maxAttempts、nextDelayMs 和 reason。maxAttempts 为 0 表示 persistent retry。Persistent network retry 不重复创建 transcript message；UI 只更新当前状态。成功、终止、取消都必须清理 retry 状态并回到 idle。
+每次实际 retry 发布 session.retry.attempt，包含 phase、scope、kind、attempt、maxAttempts、nextDelayMs 和 reason。maxAttempts 为 0 表示 persistent retry。terminal UI notice 使用独立的 session status notice，不伪装成 retry attempt。Persistent network retry 不重复创建 transcript message；UI 只更新当前状态。成功、终止、取消都必须清理 retry 状态并回到 idle。
 
 ## 兼容性
 

@@ -98,7 +98,7 @@ type Result = Awaited<ReturnType<typeof streamText>>
  *   is HTTP-byte-level: keep-alive comments still count as activity, so
  *   the error only fires when the underlying TCP stream is genuinely dead.
  *
- * Auth errors (401/403), client errors (400, 404, 422), and user-
+ * Authentication failures, client errors (400, 404, 422), and user-
  * initiated aborts are NOT retryable.
  *
  * @deprecated Use `isRetryableTransientError` from `./retry` directly.
@@ -888,18 +888,14 @@ const live: Layer.Layer<
             source: Stream.Stream<Event, unknown, never>,
             retryCount: number,
             startedAt?: number,
+            prefillRepaired = false,
           ): Stream.Stream<Event, unknown, never> =>
             source.pipe(
               Stream.catchCause((primaryCause) => {
                 const primaryError = Cause.squash(primaryCause)
                 if (ProviderTransform.isAssistantPrefillRejection(primaryError)) {
-                  return attempt(true, false).pipe(
-                    Stream.catchCause((retryCause) =>
-                      ProviderTransform.isAssistantPrefillRejection(Cause.squash(retryCause))
-                        ? Stream.failCause(primaryCause)
-                        : Stream.failCause(retryCause),
-                    ),
-                  )
+                  if (prefillRepaired) return Stream.failCause(primaryCause)
+                  return retryRequest(attempt(true, true), retryCount, startedAt, true)
                 }
                 const normalized = MessageV2.fromError(primaryError, { providerID: input.model.providerID })
                 const decision = SessionRetry.decide(normalized, "request")

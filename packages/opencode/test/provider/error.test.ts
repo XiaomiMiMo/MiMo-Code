@@ -218,4 +218,14 @@ describe("provider stream error", () => {
       responseBody: JSON.stringify(input),
     })
   })
+
+  test("marks Anthropic overloaded_error events as retryable without an error code", () => {
+    const input = { type: "error", error: { type: "overloaded_error", message: "Overloaded" } }
+    expect(parseStreamError(input)).toStrictEqual({
+      type: "api_error",
+      message: "Overloaded",
+      isRetryable: true,
+      responseBody: JSON.stringify(input),
+    })
+  })
 })

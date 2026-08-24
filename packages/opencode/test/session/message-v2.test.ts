@@ -1504,7 +1504,17 @@ describe("session.message-v2.fromError", () => {
  test("recognizes normalized credential rejection as an auth error", () => {
     const error = new MessageV2.APIError({ message: "Unauthorized", statusCode: 401, isRetryable: false }).toObject()
    expect(MessageV2.isAuthError(error)).toBe(true)
- })
+  })
+
+  test("does not treat a generic 403 permission failure as authentication", () => {
+    const error = new MessageV2.APIError({ message: "Forbidden", statusCode: 403, isRetryable: false }).toObject()
+    expect(MessageV2.isAuthError(error)).toBe(false)
+  })
+
+  test("treats an explicitly invalid 403 credential as authentication", () => {
+    const error = new MessageV2.APIError({ message: "Invalid API key", statusCode: 403, isRetryable: false }).toObject()
+    expect(MessageV2.isAuthError(error)).toBe(true)
+  })
 
   test("does not crash on a RetryError without an errors array", () => {
     const error = new RetryError({ message: "retry failed", reason: "maxRetriesExceeded", errors: [] })

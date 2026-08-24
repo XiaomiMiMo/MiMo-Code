@@ -345,8 +345,9 @@ export function Session() {
 
   event.on("session.status", (evt) => {
     if (evt.properties.sessionID !== route.sessionID) return
-    if (evt.properties.status.type !== "retry") return
-    if (evt.properties.status.message !== SessionRetry.GO_UPSELL_MESSAGE) return
+    const status = evt.properties.status
+    if (status.type === "idle" || status.type === "busy") return
+    if (status.message !== SessionRetry.GO_UPSELL_MESSAGE) return
     if (dialog.stack.length > 0) return
 
     const seen = kv.get(GO_UPSELL_LAST_SEEN_AT)

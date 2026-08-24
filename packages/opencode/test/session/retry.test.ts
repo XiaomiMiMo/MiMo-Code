@@ -142,6 +142,7 @@ describe("session.retry.retryable", () => {
     const resolved = SessionRetry.resolve(undefined, "test")
     expect(SessionRetry.budgetFor(resolved, { retryable: true, phase: "stream", scope: "live-step", kind: "network", message: "reset" }).mode).toBe("persistent")
     expect(SessionRetry.budgetFor(resolved, { retryable: true, phase: "request", scope: "request", kind: "server", message: "503" }).maxRetries).toBe(4)
+    expect(SessionRetry.budgetFor(resolved, { retryable: true, phase: "request", scope: "request", kind: "network", message: "reset" }).maxRetries).toBe(4)
     expect(resolved.unknown).toMatchObject({ maxRetries: 8, maxElapsedMs: 15 * 60_000 })
     expect(resolved.request.jitterRatio).toBe(0.1)
     expect(resolved.network.jitterRatio).toBe(0)
@@ -150,6 +151,32 @@ describe("session.retry.retryable", () => {
   test("caps retry-after by the selected budget", () => {
     const decision = { retryable: true, phase: "stream" as const, scope: "live-step" as const, kind: "rate_limit" as const, message: "429", retryAfterMs: 120000 }
     expect(SessionRetry.retryDelay(1, decision, 0, 100, 5000)).toBe(5000)
+  })
+
+  test("parses retry hints with the declared units", () => {
+    const error = new MessageV2.APIError({ message: "Please retry in 1 millisecond", statusCode: 429, isRetryable: false }).toObject()
+    expect(decide(error).retryAfterMs).toBe(100)
+  })
+
+  test("rejects malformed retry-after-ms and floors zero delay", () => {
+    const zero = new MessageV2.APIError({ message: "429", statusCode: 429, isRetryable: false, responseHeaders: { "retry-after-ms": "0" } }).toObject()
+    const garbage = new MessageV2.APIError({ message: "429", statusCode: 429, isRetryable: false, responseHeaders: { "retry-after-ms": "10oops" } }).toObject()
+    const negative = new MessageV2.APIError({ message: "429", statusCode: 429, isRetryable: false, responseHeaders: { "retry-after-ms": "-10" } }).toObject()
+    expect(decide(zero).retryAfterMs).toBe(SessionRetry.RETRY_MIN_DELAY)
+    expect(decide(garbage).retryAfterMs).toBeUndefined()
+    expect(decide(negative).retryAfterMs).toBeUndefined()
+  })
+
+  test("does not retry deterministic 402, 501, or 505 responses", () => {
+    for (const statusCode of [402, 501, 505]) {
+      const error = new MessageV2.APIError({ message: "failure", statusCode, isRetryable: true }).toObject()
+      expect(decide(error)).toMatchObject({ retryable: false, kind: "terminal", statusCode })
+    }
+  })
+
+  test("jitter never exceeds the configured delay ceiling", () => {
+    const decision = { retryable: true, phase: "stream" as const, scope: "live-step" as const, kind: "server" as const, message: "503" }
+    for (let i = 0; i < 100; i++) expect(SessionRetry.retryDelay(1, decision, 1, 100, 100)).toBeLessThanOrEqual(100)
   })
 
   test("uses the 5-to-60-second network backoff without jitter", () => {

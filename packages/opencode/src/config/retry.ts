@@ -6,9 +6,15 @@ const PositiveInt = Schema.Number.check(Schema.isInt()).check(Schema.isGreaterTh
 const Ratio = Schema.Number.check(Schema.isGreaterThanOrEqualTo(0)).check(Schema.isLessThanOrEqualTo(1))
 
 export const Budget = Schema.Struct({
-  mode: Schema.optional(Schema.Literals(["bounded", "persistent"])),
-  maxRetries: Schema.optional(MaxRetries),
-  deadlineMs: Schema.optional(NonNegativeInt),
+  mode: Schema.optional(Schema.Literals(["bounded", "persistent"])).annotate({
+    description: "bounded stops after maxRetries; persistent ignores the retry count and waits until cancellation or deadline",
+  }),
+  maxRetries: Schema.optional(MaxRetries).annotate({
+    description: "Retries after the initial attempt; 0 disables retries and the maximum is 100",
+  }),
+  deadlineMs: Schema.optional(NonNegativeInt).annotate({
+    description: "Wall-clock retry deadline in milliseconds; 0 means no deadline",
+  }),
   initialDelayMs: Schema.optional(PositiveInt),
   maxDelayMs: Schema.optional(PositiveInt),
   jitterRatio: Schema.optional(Ratio),

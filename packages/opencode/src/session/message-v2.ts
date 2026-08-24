@@ -74,8 +74,16 @@ export const APIError = NamedError.create(
 )
 export type APIError = z.infer<typeof APIError.Schema>
 
+function isAuthenticationFailure(error: APIError): boolean {
+  if (error.data.statusCode === 401) return true
+  if (error.data.statusCode !== 403) return false
+  const body = error.data.responseBody?.toLowerCase() ?? ""
+  const message = error.data.message.toLowerCase()
+  return /(?:invalid|expired|missing|malformed).*(?:api[ _-]?key|token|credential)|(?:api[ _-]?key|token|credential).*(?:invalid|expired|missing|malformed)|authentication|unauthorized/.test(`${message} ${body}`)
+}
+
 export function isAuthError(error: unknown): boolean {
-  return AuthError.isInstance(error) || (APIError.isInstance(error) && (error.data.statusCode === 401 || error.data.statusCode === 403))
+  return AuthError.isInstance(error) || (APIError.isInstance(error) && isAuthenticationFailure(error))
 }
 export const ContextOverflowError = NamedError.create(
   "ContextOverflowError",
@@ -1228,7 +1236,7 @@ export function fromError(
           responseHeaders: parsed.responseHeaders,
           responseBody: parsed.responseBody,
           metadata: (() => {
-            const metadata = { ...parsed.metadata, ...(causeMetadata(e) ?? {}) }
+            const metadata = { ...parsed.metadata, ...causeMetadata(e) }
             return Object.keys(metadata).length > 0 ? metadata : undefined
           })(),
         },

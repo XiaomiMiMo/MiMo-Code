@@ -17,6 +17,10 @@ export const Info = z
       next: z.number(),
     }),
     z.object({
+      type: z.literal("notice"),
+      message: z.string(),
+    }),
+    z.object({
       type: z.literal("busy"),
       message: z.string().optional(),
     }),

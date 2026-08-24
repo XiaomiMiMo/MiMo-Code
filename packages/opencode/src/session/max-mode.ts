@@ -75,14 +75,14 @@ export type MaxStepInput = {
   retryConfig?: SessionRetry.RetryConfigSource
 }
 
-function retryPolicy(input: MaxStepInput, scope: "max-candidate" | "max-judge") {
+function retryPolicy(input: MaxStepInput, scope: "max-candidate" | "max-judge", aborted: () => boolean) {
   const retryConfig = SessionRetry.resolve(input.retryConfig, input.model.providerID)
   return SessionRetry.policy({
     phase: "stream",
     scope,
     budget: (decision) => SessionRetry.budgetFor(retryConfig, decision),
     jitterRatio: retryConfig.jitterRatio,
-    parse: (error) => MessageV2.fromError(error, { providerID: input.model.providerID }),
+    parse: (error) => MessageV2.fromError(error, { providerID: input.model.providerID, aborted: aborted() }),
     set: (info) =>
       input.onRetry
         ? input.onRetry({ ...info, nextDelayMs: Math.max(0, info.next - Date.now()) })
@@ -120,8 +120,9 @@ export function toSchemaOnlyTools(tools: Record<string, AITool>): Record<string,
  */
 // Exported for integration tests (drives the real candidate path with a mock
 // llm.stream). Not part of the public surface — call sites use runMaxStep.
-export const runCandidate = (input: MaxStepInput, index: number): Effect.Effect<Candidate | null | "text-repeat"> =>
-  Effect.gen(function* () {
+export const runCandidate = (input: MaxStepInput, index: number): Effect.Effect<Candidate | null | "text-repeat"> => {
+  let aborted = false
+  return Effect.gen(function* () {
     const monitor = createTextNgramMonitor()
     // Fresh accumulator per attempt: the retry below re-runs this whole block,
     // so partial reasoning/text/toolCalls from a failed attempt must not carry
@@ -202,7 +203,7 @@ export const runCandidate = (input: MaxStepInput, index: number): Effect.Effect<
       (cause) => !Cause.hasInterruptsOnly(cause),
       (cause) => Effect.fail(Cause.squash(cause)),
     ),
-    Effect.retry(retryPolicy(input, "max-candidate")),
+    Effect.retry(retryPolicy(input, "max-candidate", () => aborted)),
     Effect.catchIf(isTextNgramRepeat, () => Effect.succeed("text-repeat" as const)),
     Effect.catch((e) =>
       Effect.sync(() => {
@@ -210,7 +211,9 @@ export const runCandidate = (input: MaxStepInput, index: number): Effect.Effect<
         return null
       }),
     ),
+    Effect.onInterrupt(() => Effect.sync(() => { aborted = true })),
   )
+}
 
 /** Render a candidate compactly for the judge. `label` is its judge-facing index. */
 function renderCandidate(c: Candidate, label: number): string {
@@ -254,8 +257,9 @@ export function parseJudgeIndex(out: string, count: number): number {
  * token usage. Falls back to index 0 on any parse/out-of-range issue.
  */
 /** Exported for integration tests; call sites go through runMaxStep. */
-export const judge = (input: MaxStepInput, candidates: Candidate[]): Effect.Effect<{ pick: number; usage?: any }> =>
-  Effect.gen(function* () {
+export const judge = (input: MaxStepInput, candidates: Candidate[]): Effect.Effect<{ pick: number; usage?: any }> => {
+  let aborted = false
+  return Effect.gen(function* () {
     if (candidates.length === 1) return { pick: 0, usage: undefined }
 
     const rendered = candidates.map((c, i) => renderCandidate(c, i)).join("\n\n")
@@ -309,14 +313,16 @@ export const judge = (input: MaxStepInput, candidates: Candidate[]): Effect.Effe
     // `out`/`usage` locally and emits nothing externally until it returns, so
     // re-streaming after a mid-stream reset is safe. Without this, a single
     // ECONNRESET during judging silently collapses the whole step to pick 0.
-    Effect.retry(retryPolicy(input, "max-judge")),
+    Effect.retry(retryPolicy(input, "max-judge", () => aborted)),
     Effect.catch((e) => {
       log.warn("judge failed, defaulting to candidate 0", {
         error: e instanceof Error ? e.message : String(e),
       })
       return Effect.succeed({ pick: 0, usage: undefined })
     }),
+    Effect.onInterrupt(() => Effect.sync(() => { aborted = true })),
   )
+}
 
 /**
  * Run one max-mode step: N parallel propose-only candidates → judge picks the

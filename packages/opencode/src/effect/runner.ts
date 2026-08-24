@@ -4,6 +4,7 @@ export interface Runner<A, E = never> {
   readonly state: State<A, E>
   readonly busy: boolean
   readonly ensureRunning: (work: Effect.Effect<A, E>) => Effect.Effect<A, E>
+  readonly start: (work: Effect.Effect<A, E>) => Effect.Effect<void, E>
   readonly startShell: (work: Effect.Effect<A, E>) => Effect.Effect<A, E>
   readonly cancel: Effect.Effect<void>
 }
@@ -163,6 +164,20 @@ export const make = <A, E = never>(
       }),
     ).pipe(Effect.flatten)
 
+  const start = (work: Effect.Effect<A, E>) =>
+    SynchronizedRef.modifyEffect(
+      ref,
+      Effect.fnUntraced(function* (st) {
+        if (st._tag !== "Idle") {
+          if (opts?.busy) opts.busy()
+          throw new Error("Runner is busy")
+        }
+        const done = yield* Deferred.make<A, E | Cancelled>()
+        const run = yield* startRun(work, done)
+        return [Effect.void, { _tag: "Running", run } as const] as const
+      }),
+    ).pipe(Effect.flatten)
+
   const cancel = SynchronizedRef.modify(ref, (st) => {
     switch (st._tag) {
       case "Idle":
@@ -204,6 +219,7 @@ export const make = <A, E = never>(
       return state()._tag !== "Idle"
     },
     ensureRunning,
+    start,
     startShell,
     cancel,
   }

@@ -11363,6 +11363,19 @@
             "properties": {
               "type": {
                 "type": "string",
+                "const": "notice"
+              },
+              "message": {
+                "type": "string"
+              }
+            },
+            "required": ["type", "message"]
+          },
+          {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string",
                 "const": "busy"
               },
               "message": {
@@ -14508,15 +14521,18 @@
                 "type": "object",
                 "properties": {
                   "mode": {
+                    "description": "bounded stops after maxRetries; persistent ignores the retry count and waits until cancellation or deadline",
                     "type": "string",
                     "enum": ["bounded", "persistent"]
                   },
                   "maxRetries": {
+                    "description": "Retries after the initial attempt; 0 disables retries and the maximum is 100",
                     "type": "integer",
                     "minimum": 0,
                     "maximum": 100
                   },
                   "deadlineMs": {
+                    "description": "Wall-clock retry deadline in milliseconds; 0 means no deadline",
                     "type": "integer",
                     "minimum": 0,
                     "maximum": 9007199254740991
@@ -14542,15 +14558,18 @@
                 "type": "object",
                 "properties": {
                   "mode": {
+                    "description": "bounded stops after maxRetries; persistent ignores the retry count and waits until cancellation or deadline",
                     "type": "string",
                     "enum": ["bounded", "persistent"]
                   },
                   "maxRetries": {
+                    "description": "Retries after the initial attempt; 0 disables retries and the maximum is 100",
                     "type": "integer",
                     "minimum": 0,
                     "maximum": 100
                   },
                   "deadlineMs": {
+                    "description": "Wall-clock retry deadline in milliseconds; 0 means no deadline",
                     "type": "integer",
                     "minimum": 0,
                     "maximum": 9007199254740991
@@ -14576,15 +14595,18 @@
                 "type": "object",
                 "properties": {
                   "mode": {
+                    "description": "bounded stops after maxRetries; persistent ignores the retry count and waits until cancellation or deadline",
                     "type": "string",
                     "enum": ["bounded", "persistent"]
                   },
                   "maxRetries": {
+                    "description": "Retries after the initial attempt; 0 disables retries and the maximum is 100",
                     "type": "integer",
                     "minimum": 0,
                     "maximum": 100
                   },
                   "deadlineMs": {
+                    "description": "Wall-clock retry deadline in milliseconds; 0 means no deadline",
                     "type": "integer",
                     "minimum": 0,
                     "maximum": 9007199254740991
@@ -14610,15 +14632,18 @@
                 "type": "object",
                 "properties": {
                   "mode": {
+                    "description": "bounded stops after maxRetries; persistent ignores the retry count and waits until cancellation or deadline",
                     "type": "string",
                     "enum": ["bounded", "persistent"]
                   },
                   "maxRetries": {
+                    "description": "Retries after the initial attempt; 0 disables retries and the maximum is 100",
                     "type": "integer",
                     "minimum": 0,
                     "maximum": 100
                   },
                   "deadlineMs": {
+                    "description": "Wall-clock retry deadline in milliseconds; 0 means no deadline",
                     "type": "integer",
                     "minimum": 0,
                     "maximum": 9007199254740991
@@ -14644,15 +14669,18 @@
                 "type": "object",
                 "properties": {
                   "mode": {
+                    "description": "bounded stops after maxRetries; persistent ignores the retry count and waits until cancellation or deadline",
                     "type": "string",
                     "enum": ["bounded", "persistent"]
                   },
                   "maxRetries": {
+                    "description": "Retries after the initial attempt; 0 disables retries and the maximum is 100",
                     "type": "integer",
                     "minimum": 0,
                     "maximum": 100
                   },
                   "deadlineMs": {
+                    "description": "Wall-clock retry deadline in milliseconds; 0 means no deadline",
                     "type": "integer",
                     "minimum": 0,
                     "maximum": 9007199254740991
@@ -14678,15 +14706,18 @@
                 "type": "object",
                 "properties": {
                   "mode": {
+                    "description": "bounded stops after maxRetries; persistent ignores the retry count and waits until cancellation or deadline",
                     "type": "string",
                     "enum": ["bounded", "persistent"]
                   },
                   "maxRetries": {
+                    "description": "Retries after the initial attempt; 0 disables retries and the maximum is 100",
                     "type": "integer",
                     "minimum": 0,
                     "maximum": 100
                   },
                   "deadlineMs": {
+                    "description": "Wall-clock retry deadline in milliseconds; 0 means no deadline",
                     "type": "integer",
                     "minimum": 0,
                     "maximum": 9007199254740991
@@ -14712,15 +14743,18 @@
                 "type": "object",
                 "properties": {
                   "mode": {
+                    "description": "bounded stops after maxRetries; persistent ignores the retry count and waits until cancellation or deadline",
                     "type": "string",
                     "enum": ["bounded", "persistent"]
                   },
                   "maxRetries": {
+                    "description": "Retries after the initial attempt; 0 disables retries and the maximum is 100",
                     "type": "integer",
                     "minimum": 0,
                     "maximum": 100
                   },
                   "deadlineMs": {
+                    "description": "Wall-clock retry deadline in milliseconds; 0 means no deadline",
                     "type": "integer",
                     "minimum": 0,
                     "maximum": 9007199254740991
@@ -14746,15 +14780,18 @@
                 "type": "object",
                 "properties": {
                   "mode": {
+                    "description": "bounded stops after maxRetries; persistent ignores the retry count and waits until cancellation or deadline",
                     "type": "string",
                     "enum": ["bounded", "persistent"]
                   },
                   "maxRetries": {
+                    "description": "Retries after the initial attempt; 0 disables retries and the maximum is 100",
                     "type": "integer",
                     "minimum": 0,
                     "maximum": 100
                   },
                   "deadlineMs": {
+                    "description": "Wall-clock retry deadline in milliseconds; 0 means no deadline",
                     "type": "integer",
                     "minimum": 0,
                     "maximum": 9007199254740991
@@ -15358,15 +15395,18 @@
                 "type": "object",
                 "properties": {
                   "mode": {
+                    "description": "bounded stops after maxRetries; persistent ignores the retry count and waits until cancellation or deadline",
                     "type": "string",
                     "enum": ["bounded", "persistent"]
                   },
                   "maxRetries": {
+                    "description": "Retries after the initial attempt; 0 disables retries and the maximum is 100",
                     "type": "integer",
                     "minimum": 0,
                     "maximum": 100
                   },
                   "deadlineMs": {
+                    "description": "Wall-clock retry deadline in milliseconds; 0 means no deadline",
                     "type": "integer",
                     "minimum": 0,
                     "maximum": 9007199254740991
@@ -15392,15 +15432,18 @@
                 "type": "object",
                 "properties": {
                   "mode": {
+                    "description": "bounded stops after maxRetries; persistent ignores the retry count and waits until cancellation or deadline",
                     "type": "string",
                     "enum": ["bounded", "persistent"]
                   },
                   "maxRetries": {
+                    "description": "Retries after the initial attempt; 0 disables retries and the maximum is 100",
                     "type": "integer",
                     "minimum": 0,
                     "maximum": 100
                   },
                   "deadlineMs": {
+                    "description": "Wall-clock retry deadline in milliseconds; 0 means no deadline",
                     "type": "integer",
                     "minimum": 0,
                     "maximum": 9007199254740991
@@ -15426,15 +15469,18 @@
                 "type": "object",
                 "properties": {
                   "mode": {
+                    "description": "bounded stops after maxRetries; persistent ignores the retry count and waits until cancellation or deadline",
                     "type": "string",
                     "enum": ["bounded", "persistent"]
                   },
                   "maxRetries": {
+                    "description": "Retries after the initial attempt; 0 disables retries and the maximum is 100",
                     "type": "integer",
                     "minimum": 0,
                     "maximum": 100
                   },
                   "deadlineMs": {
+                    "description": "Wall-clock retry deadline in milliseconds; 0 means no deadline",
                     "type": "integer",
                     "minimum": 0,
                     "maximum": 9007199254740991
@@ -15460,15 +15506,18 @@
                 "type": "object",
                 "properties": {
                   "mode": {
+                    "description": "bounded stops after maxRetries; persistent ignores the retry count and waits until cancellation or deadline",
                     "type": "string",
                     "enum": ["bounded", "persistent"]
                   },
                   "maxRetries": {
+                    "description": "Retries after the initial attempt; 0 disables retries and the maximum is 100",
                     "type": "integer",
                     "minimum": 0,
                     "maximum": 100
                   },
                   "deadlineMs": {
+                    "description": "Wall-clock retry deadline in milliseconds; 0 means no deadline",
                     "type": "integer",
                     "minimum": 0,
                     "maximum": 9007199254740991
@@ -15494,15 +15543,18 @@
                 "type": "object",
                 "properties": {
                   "mode": {
+                    "description": "bounded stops after maxRetries; persistent ignores the retry count and waits until cancellation or deadline",
                     "type": "string",
                     "enum": ["bounded", "persistent"]
                   },
                   "maxRetries": {
+                    "description": "Retries after the initial attempt; 0 disables retries and the maximum is 100",
                     "type": "integer",
                     "minimum": 0,
                     "maximum": 100
                   },
                   "deadlineMs": {
+                    "description": "Wall-clock retry deadline in milliseconds; 0 means no deadline",
                     "type": "integer",
                     "minimum": 0,
                     "maximum": 9007199254740991
@@ -15528,15 +15580,18 @@
                 "type": "object",
                 "properties": {
                   "mode": {
+                    "description": "bounded stops after maxRetries; persistent ignores the retry count and waits until cancellation or deadline",
                     "type": "string",
                     "enum": ["bounded", "persistent"]
                   },
                   "maxRetries": {
+                    "description": "Retries after the initial attempt; 0 disables retries and the maximum is 100",
                     "type": "integer",
                     "minimum": 0,
                     "maximum": 100
                   },
                   "deadlineMs": {
+                    "description": "Wall-clock retry deadline in milliseconds; 0 means no deadline",
                     "type": "integer",
                     "minimum": 0,
                     "maximum": 9007199254740991
@@ -15562,15 +15617,18 @@
                 "type": "object",
                 "properties": {
                   "mode": {
+                    "description": "bounded stops after maxRetries; persistent ignores the retry count and waits until cancellation or deadline",
                     "type": "string",
                     "enum": ["bounded", "persistent"]
                   },
                   "maxRetries": {
+                    "description": "Retries after the initial attempt; 0 disables retries and the maximum is 100",
                     "type": "integer",
                     "minimum": 0,
                     "maximum": 100
                   },
                   "deadlineMs": {
+                    "description": "Wall-clock retry deadline in milliseconds; 0 means no deadline",
                     "type": "integer",
                     "minimum": 0,
                     "maximum": 9007199254740991
@@ -15596,15 +15654,18 @@
                 "type": "object",
                 "properties": {
                   "mode": {
+                    "description": "bounded stops after maxRetries; persistent ignores the retry count and waits until cancellation or deadline",
                     "type": "string",
                     "enum": ["bounded", "persistent"]
                   },
                   "maxRetries": {
+                    "description": "Retries after the initial attempt; 0 disables retries and the maximum is 100",
                     "type": "integer",
                     "minimum": 0,
                     "maximum": 100
                   },
                   "deadlineMs": {
+                    "description": "Wall-clock retry deadline in milliseconds; 0 means no deadline",
                     "type": "integer",
                     "minimum": 0,
                     "maximum": 9007199254740991
