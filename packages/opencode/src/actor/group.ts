@@ -71,6 +71,7 @@ export function joinGroup(
   input: { members: Member[]; timeout_ms?: number },
 ): Effect.Effect<JoinResult> {
   return Effect.gen(function* () {
+    const context = yield* Effect.context()
     const timeoutMs = input.timeout_ms ?? DEFAULT_TIMEOUT_MS
 
     // Dedup members by sessionID:actorID — a caller may list the same child
@@ -177,7 +178,7 @@ export function joinGroup(
                 "complete",
               )
               Deferred.doneUnsafe(resolved, Effect.succeed(agg))
-            }).pipe(Effect.catchCause((cause) => Effect.logError(`group join snapshot failed: ${cause}`))),
+            }).pipe(Effect.catchCause((cause) => Effect.logError(`group join snapshot failed: ${cause}`)), Effect.provide(context)),
           )
         }),
       () =>

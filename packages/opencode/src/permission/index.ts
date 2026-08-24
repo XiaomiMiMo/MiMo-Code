@@ -18,6 +18,7 @@ import { PermissionID } from "./schema"
 import { forwardRef } from "./permission-forward-ref"
 import { inboxServiceRef } from "@/inbox/inbox-ref"
 import { TuiEvent } from "@/cli/cmd/tui/event"
+import { EffectBridge } from "@/effect"
 
 // A forwarded ask (orchestrator peer) that no one ever approves resolves DENY
 // after this bound rather than hanging — preserving the hang-safety the old
@@ -226,6 +227,7 @@ export const layer = Layer.effect(
   Service,
   Effect.gen(function* () {
     const bus = yield* Bus.Service
+    const bridge = yield* EffectBridge.make()
     const state = yield* InstanceState.make<State>(
       Effect.fn("Permission.state")(function* (ctx) {
         const row = Database.use((db) =>
@@ -401,7 +403,7 @@ export const layer = Layer.effect(
             childSessionID: info.sessionID,
             parentSessionID,
             resolve: (decision) =>
-              Effect.runFork(
+              bridge.fork(
                 decision === "allow"
                   ? Deferred.succeed(deferred, void 0)
                   : Deferred.fail(deferred, new RejectedError()),

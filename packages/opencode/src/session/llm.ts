@@ -973,6 +973,7 @@ export const defaultLayer = Layer.suspend(() =>
     Layer.provide(Plugin.defaultLayer),
     Layer.provide(ActorRegistry.defaultLayer),
     Layer.provide(Memory.defaultLayer),
+    Layer.provide(SessionStatus.defaultLayer),
   ),
 )
 

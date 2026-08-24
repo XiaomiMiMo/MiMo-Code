@@ -7,6 +7,7 @@ import { TaskTable, TaskEventTable } from "./task.sql"
 import type { Task, TaskEvent } from "./schema"
 import { Created as TaskCreated, Updated as TaskUpdated, type UpdatedKind } from "./events"
 import { RecoverableError } from "@/tool/recoverable"
+import { EffectBridge } from "@/effect"
 
 const DAY_MS = 24 * 60 * 60 * 1000
 
@@ -92,6 +93,7 @@ export const layer: Layer.Layer<Service, never, Bus.Service | Config.Service> = 
   Effect.gen(function* () {
     const bus = yield* Bus.Service
     const config = yield* Config.Service
+    const bridge = yield* EffectBridge.make()
 
     const cleanupAfter = Effect.fn("TaskRegistry.cleanupAfter")(function* (now: number) {
       const cfg = yield* config.get()
@@ -115,10 +117,10 @@ export const layer: Layer.Layer<Service, never, Bus.Service | Config.Service> = 
     }
 
     const publishCreated = (task: Task) =>
-      Effect.runFork(bus.publish(TaskCreated, { sessionID: task.session_id, task }))
+      bridge.fork(bus.publish(TaskCreated, { sessionID: task.session_id, task }))
 
     const publishUpdated = (task: Task, kind: UpdatedKind) =>
-      Effect.runFork(bus.publish(TaskUpdated, { sessionID: task.session_id, task, kind }))
+      bridge.fork(bus.publish(TaskUpdated, { sessionID: task.session_id, task, kind }))
 
     const create = Effect.fn("TaskRegistry.create")(function* (input: {
       session_id: SessionID
