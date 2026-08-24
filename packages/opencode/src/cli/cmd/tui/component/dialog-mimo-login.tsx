@@ -26,6 +26,26 @@ export function DialogMimoLogin() {
   const options = createMemo(() => {
     const recommended = [
       {
+        title: "DeepSeek V4 Flash (Fast)",
+        value: "deepseek-v4-flash",
+        description: "Fast inference, 1M context, tool calling support",
+        category: "Recommended",
+        onSelect: async () => {
+          // Configure DeepSeek provider with V4 Flash as default
+          await sdk.client.auth.set({
+            providerID: "deepseek",
+            auth: { type: "api", key: "" },
+          })
+          await sdk.client.instance.dispose()
+          await sync.bootstrap()
+          dialog.clear()
+          toast.show({
+            message: "DeepSeek V4 Flash configured — set your API key in provider settings",
+            variant: "info",
+          })
+        },
+      },
+      {
         title: t("tui.dialog.login.xiaomi"),
         value: "xiaomi",
         description: t("tui.dialog.login.xiaomi.desc"),

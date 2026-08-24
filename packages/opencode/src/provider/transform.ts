@@ -1236,6 +1236,14 @@ export function variants(model: Provider.Model): Record<string, Record<string, a
 
   if (id.includes("deepseek")) {
     if (model.providerID !== "deepseek" || model.api.npm !== "@ai-sdk/openai-compatible") return {}
+    // DeepSeek V4 Flash: optimized for speed with fast inference
+    if (id.includes("v4-flash")) {
+      return {
+        low: { reasoningEffort: "low", temperature: 0.3, topP: 0.7 },
+        medium: { reasoningEffort: "medium", temperature: 0.5, topP: 0.8 },
+        high: { reasoningEffort: "high", temperature: 0.7, topP: 0.9 },
+      }
+    }
     return {
       high: { reasoningEffort: "high" },
       max: { reasoningEffort: "max" },

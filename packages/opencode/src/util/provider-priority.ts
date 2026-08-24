@@ -1,7 +1,6 @@
-const HEAD_POPULAR_PROVIDERS = ["xiaomi", "openai", "anthropic"] as const
+const HEAD_POPULAR_PROVIDERS = ["xiaomi", "deepseek", "openai", "anthropic"] as const
 
 const CHINA_POPULAR_BEFORE_ALIBABA = [
-  "deepseek",
   "zai",
   "zhipuai",
   "moonshotai",
