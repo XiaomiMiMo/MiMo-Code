@@ -57,6 +57,13 @@ describe("mimocode-docs provider guidance", () => {
     expect(providers).toContain("Write the recent state only after `mimo models PROVIDER_ID`")
     expect(providers).toContain("Never put the API key, base URL, display name, or combined `provider/model` string")
   })
+
+  test("documents the checkpoint writer fork default", async () => {
+    const config = await Bun.file(path.join(root, "reference/config.md")).text()
+
+    expect(config).toContain("| `checkpoint.fork` | Fork parent prefix into writer session for cache reuse (default true) |")
+    expect(config).not.toContain("| `checkpoint.fork` | Fork parent prefix into writer session for cache reuse (default false) |")
+  })
 })
 
 describe("mimocode-docs TUI troubleshooting", () => {
