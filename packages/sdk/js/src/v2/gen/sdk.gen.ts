@@ -226,6 +226,8 @@ import type {
   WorkflowResumeResponses,
   WorkflowStructureResponses,
   WorkflowTranscriptResponses,
+  WorktreeAutoErrors,
+  WorktreeAutoResponses,
   WorktreeCreateErrors,
   WorktreeCreateInput,
   WorktreeCreateResponses,
@@ -1726,6 +1728,36 @@ export class Worktree extends HeyApiClient {
         ...options?.headers,
         ...params.headers,
       },
+    })
+  }
+
+  /**
+   * Auto-create worktree on conflict
+   *
+   * Check for conflicts and auto-create a worktree if needed.
+   */
+  public auto<ThrowOnError extends boolean = false>(
+    parameters?: {
+      directory?: string
+      workspace?: string
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "query", key: "directory" },
+            { in: "query", key: "workspace" },
+          ],
+        },
+      ],
+    )
+    return (options?.client ?? this.client).post<WorktreeAutoResponses, WorktreeAutoErrors, ThrowOnError>({
+      url: "/experimental/worktree/auto",
+      ...options,
+      ...params,
     })
   }
 }

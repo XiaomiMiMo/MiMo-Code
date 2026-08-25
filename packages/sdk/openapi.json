@@ -2289,6 +2289,64 @@
         ]
       }
     },
+    "/experimental/worktree/auto": {
+      "post": {
+        "operationId": "worktree.auto",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "directory",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "workspace",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "summary": "Auto-create worktree on conflict",
+        "description": "Check for conflicts and auto-create a worktree if needed.",
+        "responses": {
+          "200": {
+            "description": "Worktree info or null",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/Worktree"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BadRequestError"
+                }
+              }
+            }
+          }
+        },
+        "x-codeSamples": [
+          {
+            "lang": "js",
+            "source": "import { createOpencodeClient } from \"@mimo-ai/sdk\n\nconst client = createOpencodeClient()\nawait client.worktree.auto({\n  ...\n})"
+          }
+        ]
+      }
+    },
     "/experimental/session": {
       "get": {
         "operationId": "experimental.session.list",
@@ -4010,7 +4068,18 @@
                     "$ref": "#/components/schemas/OutputFormat"
                   },
                   "system": {
+                    "description": "Additional system prompt selected by the session's first user query. Later values are ignored.",
                     "type": "string"
+                  },
+                  "systemMode": {
+                    "description": "Whether the selected system prompt appends to or replaces the agent prompt. Later values are ignored.",
+                    "type": "string",
+                    "enum": ["append", "replace-agent"]
+                  },
+                  "harness": {
+                    "description": "Harness mode selected by the session's first user query. Later values are ignored. GPT models always use the Codex harness. For other models, auto preserves model/process inference and explicit default forces the native tool schema.",
+                    "type": "string",
+                    "enum": ["auto", "codex", "default"]
                   },
                   "variant": {
                     "type": "string"
@@ -4398,6 +4467,196 @@
         ]
       }
     },
+    "/session/{sessionID}/recovery": {
+      "get": {
+        "operationId": "session.recovery",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "directory",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "workspace",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "sessionID",
+            "schema": {
+              "type": "string",
+              "pattern": "^ses.*"
+            },
+            "required": true
+          },
+          {
+            "in": "query",
+            "name": "agentID",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "summary": "List interrupted turn recovery candidates",
+        "description": "Return the latest incomplete assistant turn that can be resumed without creating a user message.",
+        "responses": {
+          "200": {
+            "description": "Recovery candidates",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "assistantMessageID": {
+                        "type": "string",
+                        "pattern": "^msg.*"
+                      },
+                      "parentMessageID": {
+                        "type": "string",
+                        "pattern": "^msg.*"
+                      },
+                      "created": {
+                        "type": "number"
+                      }
+                    },
+                    "required": ["assistantMessageID", "parentMessageID", "created"]
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BadRequestError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NotFoundError"
+                }
+              }
+            }
+          }
+        },
+        "x-codeSamples": [
+          {
+            "lang": "js",
+            "source": "import { createOpencodeClient } from \"@mimo-ai/sdk\n\nconst client = createOpencodeClient()\nawait client.session.recovery({\n  ...\n})"
+          }
+        ]
+      }
+    },
+    "/session/{sessionID}/turn/{assistantMessageID}/resume": {
+      "post": {
+        "operationId": "session.resume",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "directory",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "workspace",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "sessionID",
+            "schema": {
+              "type": "string",
+              "pattern": "^ses.*"
+            },
+            "required": true
+          },
+          {
+            "in": "path",
+            "name": "assistantMessageID",
+            "schema": {
+              "type": "string",
+              "pattern": "^msg.*"
+            },
+            "required": true
+          },
+          {
+            "in": "query",
+            "name": "agentID",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "task_id",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "summary": "Resume an interrupted turn",
+        "description": "Resume an incomplete assistant turn without creating another user message.",
+        "responses": {
+          "202": {
+            "description": "Resume accepted"
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BadRequestError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NotFoundError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict — session resource is busy",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConflictError"
+                }
+              }
+            }
+          }
+        },
+        "x-codeSamples": [
+          {
+            "lang": "js",
+            "source": "import { createOpencodeClient } from \"@mimo-ai/sdk\n\nconst client = createOpencodeClient()\nawait client.session.resume({\n  ...\n})"
+          }
+        ]
+      }
+    },
     "/session/{sessionID}/prompt_async": {
       "post": {
         "operationId": "session.prompt_async",
@@ -4513,7 +4772,18 @@
                     "$ref": "#/components/schemas/OutputFormat"
                   },
                   "system": {
+                    "description": "Additional system prompt selected by the session's first user query. Later values are ignored.",
                     "type": "string"
+                  },
+                  "systemMode": {
+                    "description": "Whether the selected system prompt appends to or replaces the agent prompt. Later values are ignored.",
+                    "type": "string",
+                    "enum": ["append", "replace-agent"]
+                  },
+                  "harness": {
+                    "description": "Harness mode selected by the session's first user query. Later values are ignored. GPT models always use the Codex harness. For other models, auto preserves model/process inference and explicit default forces the native tool schema.",
+                    "type": "string",
+                    "enum": ["auto", "codex", "default"]
                   },
                   "variant": {
                     "type": "string"
@@ -4650,6 +4920,20 @@
                   },
                   "variant": {
                     "type": "string"
+                  },
+                  "system": {
+                    "description": "Additional system prompt selected by the session's first user command. Later values are ignored.",
+                    "type": "string"
+                  },
+                  "systemMode": {
+                    "description": "Whether the selected system prompt appends to or replaces the agent prompt. Later values are ignored.",
+                    "type": "string",
+                    "enum": ["append", "replace-agent"]
+                  },
+                  "harness": {
+                    "description": "Harness mode selected by the session's first user command. Later values are ignored. GPT models always use the Codex harness. For other models, auto preserves model/process inference and explicit default forces the native tool schema.",
+                    "type": "string",
+                    "enum": ["auto", "codex", "default"]
                   },
                   "parts": {
                     "type": "array",
@@ -10994,6 +11278,29 @@
         },
         "required": ["type", "properties"]
       },
+      "Event.session.cwd": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string",
+            "const": "session.cwd"
+          },
+          "properties": {
+            "type": "object",
+            "properties": {
+              "sessionID": {
+                "type": "string",
+                "pattern": "^ses.*"
+              },
+              "cwd": {
+                "type": "string"
+              }
+            },
+            "required": ["sessionID", "cwd"]
+          }
+        },
+        "required": ["type", "properties"]
+      },
       "Event.bash.interactive.asked": {
         "type": "object",
         "properties": {
@@ -11741,6 +12048,14 @@
           },
           "system": {
             "type": "string"
+          },
+          "systemMode": {
+            "type": "string",
+            "enum": ["append", "replace-agent"]
+          },
+          "harness": {
+            "type": "string",
+            "enum": ["auto", "codex", "default"]
           },
           "tools": {
             "type": "object",
@@ -12978,6 +13293,24 @@
           "permission": {
             "$ref": "#/components/schemas/PermissionRuleset"
           },
+          "prompt": {
+            "type": "object",
+            "properties": {
+              "system": {
+                "type": "string"
+              },
+              "systemMode": {
+                "default": "append",
+                "type": "string",
+                "enum": ["append", "replace-agent"]
+              },
+              "harness": {
+                "type": "string",
+                "enum": ["auto", "codex", "default"]
+              }
+            },
+            "required": ["harness"]
+          },
           "revert": {
             "type": "object",
             "properties": {
@@ -13500,6 +13833,31 @@
                       }
                     ]
                   },
+                  "prompt": {
+                    "anyOf": [
+                      {
+                        "type": "object",
+                        "properties": {
+                          "system": {
+                            "type": "string"
+                          },
+                          "systemMode": {
+                            "default": "append",
+                            "type": "string",
+                            "enum": ["append", "replace-agent"]
+                          },
+                          "harness": {
+                            "type": "string",
+                            "enum": ["auto", "codex", "default"]
+                          }
+                        },
+                        "required": ["harness"]
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
                   "revert": {
                     "anyOf": [
                       {
@@ -13541,6 +13899,7 @@
                   "title",
                   "version",
                   "permission",
+                  "prompt",
                   "revert"
                 ]
               }
@@ -13744,6 +14103,9 @@
               },
               {
                 "$ref": "#/components/schemas/Event.question.rejected"
+              },
+              {
+                "$ref": "#/components/schemas/Event.session.cwd"
               },
               {
                 "$ref": "#/components/schemas/Event.bash.interactive.asked"
@@ -14955,7 +15317,7 @@
                 "maximum": 9007199254740991
               },
               "reserved": {
-                "description": "Token buffer for compaction. Leaves enough window to avoid overflow during compaction.",
+                "description": "Token buffer for compaction. Leaves enough window to avoid overflow during compaction (default: up to 33000, capped by the model's maximum output).",
                 "type": "integer",
                 "minimum": 0,
                 "maximum": 9007199254740991
@@ -15920,6 +16282,24 @@
           "permission": {
             "$ref": "#/components/schemas/PermissionRuleset"
           },
+          "prompt": {
+            "type": "object",
+            "properties": {
+              "system": {
+                "type": "string"
+              },
+              "systemMode": {
+                "default": "append",
+                "type": "string",
+                "enum": ["append", "replace-agent"]
+              },
+              "harness": {
+                "type": "string",
+                "enum": ["auto", "codex", "default"]
+              }
+            },
+            "required": ["harness"]
+          },
           "revert": {
             "type": "object",
             "properties": {
@@ -16541,6 +16921,9 @@
           },
           {
             "$ref": "#/components/schemas/Event.question.rejected"
+          },
+          {
+            "$ref": "#/components/schemas/Event.session.cwd"
           },
           {
             "$ref": "#/components/schemas/Event.bash.interactive.asked"

@@ -730,6 +730,14 @@ export type EventQuestionRejected = {
   properties: QuestionRejected
 }
 
+export type EventSessionCwd = {
+  type: "session.cwd"
+  properties: {
+    sessionID: string
+    cwd: string
+  }
+}
+
 export type EventBashInteractiveAsked = {
   type: "bash.interactive.asked"
   properties: {
@@ -1610,6 +1618,7 @@ export type GlobalEvent = {
     | EventQuestionAsked
     | EventQuestionReplied
     | EventQuestionRejected
+    | EventSessionCwd
     | EventBashInteractiveAsked
     | EventBashInteractiveReplied
     | EventSessionStatus
@@ -2870,6 +2879,7 @@ export type Event =
   | EventQuestionAsked
   | EventQuestionReplied
   | EventQuestionRejected
+  | EventSessionCwd
   | EventBashInteractiveAsked
   | EventBashInteractiveReplied
   | EventSessionStatus
@@ -4085,6 +4095,34 @@ export type WorktreeResetResponses = {
 }
 
 export type WorktreeResetResponse = WorktreeResetResponses[keyof WorktreeResetResponses]
+
+export type WorktreeAutoData = {
+  body?: never
+  path?: never
+  query?: {
+    directory?: string
+    workspace?: string
+  }
+  url: "/experimental/worktree/auto"
+}
+
+export type WorktreeAutoErrors = {
+  /**
+   * Bad request
+   */
+  400: BadRequestError
+}
+
+export type WorktreeAutoError = WorktreeAutoErrors[keyof WorktreeAutoErrors]
+
+export type WorktreeAutoResponses = {
+  /**
+   * Worktree info or null
+   */
+  200: Worktree | null
+}
+
+export type WorktreeAutoResponse = WorktreeAutoResponses[keyof WorktreeAutoResponses]
 
 export type ExperimentalSessionListData = {
   body?: never
