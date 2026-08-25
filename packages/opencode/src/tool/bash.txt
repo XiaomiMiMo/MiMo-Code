@@ -100,7 +100,6 @@ Use `gh` for GitHub issues, pull requests, checks, and releases. Before creating
 Review the complete diff from the base branch, including all commits. Push the branch with `-u` if needed, then create the PR:
 ```bash
 body_file="$(mktemp)"
-trap 'rm -f "$body_file"' EXIT
 cat >"$body_file" <<'EOF'
 ## Summary
 - Describe the main change.
