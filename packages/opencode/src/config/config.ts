@@ -286,7 +286,7 @@ const InfoSchema = Schema.Struct({
       }),
       fork: Schema.optional(Schema.Boolean).annotate({
         description:
-          "Whether to fork the parent agent's message prefix into the writer session for prefix-cache reuse. Requires provider cache-breakpoint support. Default: false.",
+          "Whether to fork the parent agent's message prefix into the writer session for prefix-cache reuse. Requires provider cache-breakpoint support. Default: true.",
       }),
       push_caps: Schema.optional(
         Schema.Struct({
