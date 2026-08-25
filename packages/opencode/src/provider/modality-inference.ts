@@ -38,6 +38,11 @@ export type ModalityProvenance = "declared" | "builtin" | "provider-entry" | "di
 
 export type ModalityMap = Record<InputModality, boolean>
 
+export interface InputCapabilities {
+  readonly input: ModalityMap
+  readonly inferred?: { readonly input?: ModalityProvenance }
+}
+
 /**
  * Input modalities this repo itself ships the answer for, keyed `providerID/modelID`.
  *
@@ -76,6 +81,14 @@ export function isStated(provenance: ModalityProvenance): boolean {
   return provenance === "declared" || provenance === "builtin"
 }
 
+export function acceptsInput(capabilities: InputCapabilities, modality: InputModality): boolean {
+  return capabilities.input[modality]
+}
+
+export function hasEvidencedInput(capabilities: InputCapabilities, modality: InputModality): boolean {
+  return acceptsInput(capabilities, modality) && (modality === "text" || capabilities.inferred?.input !== "assumed")
+}
+
 export interface InputModalityVerdict {
   readonly modalities: ModalityMap
   readonly provenance: ModalityProvenance
@@ -83,7 +96,7 @@ export interface InputModalityVerdict {
   readonly source?: string
 }
 
-function mapOf(list: readonly string[] | undefined, fallback: boolean): ModalityMap {
+export function mapOf(list: readonly string[] | undefined, fallback: boolean): ModalityMap {
   const has = (modality: InputModality) => (list ? list.includes(modality) : fallback)
   return {
     text: has("text"),
@@ -155,20 +168,23 @@ export function directoryIndex(database: Record<string, ModelsDev.Provider>): Di
 
   const add = (index: Map<string, Set<string>>, key: string, value: string) => {
     const existing = index.get(key)
-    if (existing) existing.add(value)
-    else index.set(key, new Set([value]))
+    if (existing) {
+      existing.add(value)
+      return
+    }
+    index.set(key, new Set([value]))
   }
 
-  for (const [providerID, provider] of Object.entries(database)) {
-    for (const modelID of Object.keys(provider.models ?? {})) {
+  Object.entries(database)
+    .flatMap(([providerID, provider]) => Object.keys(provider.models ?? {}).map((modelID) => ({ providerID, modelID })))
+    .forEach(({ providerID, modelID }) => {
       const slash = modelID.indexOf("/")
       if (slash === -1) {
         add(holders, modelID, providerID)
-        continue
+        return
       }
       add(namespaces, modelID.slice(slash + 1), modelID.slice(0, slash))
-    }
-  }
+    })
 
   const resolved = new Map<string, { ref: string; model: ModelsDev.Model } | undefined>()
 
@@ -215,10 +231,16 @@ export interface ResolveInput {
 }
 
 export function resolveInput(input: ResolveInput): InputModalityVerdict {
-  if (input.declared) return { modalities: mapOf(input.declared, false), provenance: "declared" }
-  const builtin = BUILTIN_INPUT[`${input.providerID}/${input.modelID}`]
+  if (input.declared !== undefined) return { modalities: mapOf(input.declared, false), provenance: "declared" }
+  const builtin = BUILTIN_INPUT[input.providerID + "/" + input.modelID]
   if (builtin) return { modalities: mapOf(builtin, false), provenance: "builtin" }
-  if (input.inherited) return { modalities: { ...input.inherited }, provenance: "provider-entry" }
+  if (input.inherited) {
+    return {
+      modalities: { ...input.inherited },
+      provenance: "provider-entry",
+      source: input.providerID + "/" + input.modelID,
+    }
+  }
   const official = input.directory.official(input.apiID)
   if (official?.model.modalities?.input) {
     return {
@@ -241,8 +263,14 @@ export function resolveInput(input: ResolveInput): InputModalityVerdict {
  * aliases emit, so there is nothing for a builtin entry to state.
  */
 export function resolveOutput(input: ResolveInput): InputModalityVerdict {
-  if (input.declared) return { modalities: mapOf(input.declared, false), provenance: "declared" }
-  if (input.inherited) return { modalities: { ...input.inherited }, provenance: "provider-entry" }
+  if (input.declared !== undefined) return { modalities: mapOf(input.declared, false), provenance: "declared" }
+  if (input.inherited) {
+    return {
+      modalities: { ...input.inherited },
+      provenance: "provider-entry",
+      source: input.providerID + "/" + input.modelID,
+    }
+  }
   const official = input.directory.official(input.apiID)
   if (official?.model.modalities?.output) {
     return {

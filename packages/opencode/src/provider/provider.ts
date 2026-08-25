@@ -1007,9 +1007,11 @@ const ProviderInterleaved = Schema.Union([
  * capability must not treat it as evidence.
  */
 const ProviderModalityInference = Schema.Struct({
-  input: Schema.Literals(["declared", "builtin", "provider-entry", "directory", "assumed"]),
-  output: Schema.Literals(["declared", "builtin", "provider-entry", "directory", "assumed"]),
+  input: Schema.optional(Schema.Literals(["declared", "builtin", "provider-entry", "directory", "assumed"])),
+  output: Schema.optional(Schema.Literals(["declared", "builtin", "provider-entry", "directory", "assumed"])),
   source: Schema.optional(Schema.String),
+  inputSource: Schema.optional(Schema.String),
+  outputSource: Schema.optional(Schema.String),
 })
 
 const ProviderCapabilities = Schema.Struct({
@@ -1148,6 +1150,14 @@ export function sortVisionModels(models: Model[]): Model[] {
   })
 }
 
+export function acceptsInput(model: Model, modality: ModalityInference.InputModality): boolean {
+  return ModalityInference.acceptsInput(model.capabilities, modality)
+}
+
+export function hasEvidencedInput(model: Model, modality: ModalityInference.InputModality): boolean {
+  return ModalityInference.hasEvidencedInput(model.capabilities, modality)
+}
+
 /**
  * "Can an image be handed to THIS model?" — the permissive of the two image
  * questions, and the one to ask about a model the user has already chosen.
@@ -1163,7 +1173,7 @@ export function sortVisionModels(models: Model[]): Model[] {
  * the author meant, and the two silently drifted apart once already.
  */
 export function acceptsImageInput(model: Model): boolean {
-  return model.capabilities.input.image === true
+  return acceptsInput(model, "image")
 }
 
 /**
@@ -1187,7 +1197,7 @@ export function acceptsImageInput(model: Model): boolean {
  * default and only an explicit unknown is excluded.
  */
 export function hasEvidencedImageInput(model: Model): boolean {
-  return model.capabilities.input.image === true && model.capabilities.inferred?.input !== "assumed"
+  return hasEvidencedInput(model, "image")
 }
 
 function cost(c: ModelsDev.Model["cost"]): Model["cost"] {
@@ -1240,18 +1250,10 @@ function fromModelsDevModel(provider: ModelsDev.Provider, model: ModelsDev.Model
       voiceDesign: model.voice_design ?? false,
       voiceClone: model.voice_clone ?? false,
       input: {
-        text: model.modalities?.input?.includes("text") ?? false,
-        audio: model.modalities?.input?.includes("audio") ?? false,
-        image: model.modalities?.input?.includes("image") ?? false,
-        video: model.modalities?.input?.includes("video") ?? false,
-        pdf: model.modalities?.input?.includes("pdf") ?? false,
+        ...ModalityInference.mapOf(model.modalities?.input, false),
       },
       output: {
-        text: model.modalities?.output?.includes("text") ?? false,
-        audio: model.modalities?.output?.includes("audio") ?? false,
-        image: model.modalities?.output?.includes("image") ?? false,
-        video: model.modalities?.output?.includes("video") ?? false,
-        pdf: model.modalities?.output?.includes("pdf") ?? false,
+        ...ModalityInference.mapOf(model.modalities?.output, false),
       },
       interleaved: model.interleaved ?? false,
     },
@@ -1452,17 +1454,30 @@ const layer: Layer.Layer<
                   (!existingModel && apiNpm === "@ai-sdk/openai-compatible" && apiID.includes("deepseek")
                     ? { field: "reasoning_content" }
                     : false),
-                ...(inputModalities.provenance === "declared" && outputModalities.provenance === "declared"
-                  ? {}
-                  : {
-                      inferred: {
-                        input: inputModalities.provenance,
-                        output: outputModalities.provenance,
-                        ...((inputModalities.source ?? outputModalities.source)
-                          ? { source: inputModalities.source ?? outputModalities.source }
-                          : {}),
-                      },
-                    }),
+                ...(() => {
+                  const inputInferred = !ModalityInference.isStated(inputModalities.provenance)
+                  const outputInferred = !ModalityInference.isStated(outputModalities.provenance)
+                  if (!inputInferred && !outputInferred) return {}
+                  const inputSource = inputInferred ? inputModalities.source : undefined
+                  const outputSource = outputInferred ? outputModalities.source : undefined
+                  const sharedSource =
+                    inputSource && outputSource && inputSource === outputSource
+                      ? inputSource
+                      : inputInferred && !outputInferred
+                        ? inputSource
+                        : !inputInferred && outputInferred
+                          ? outputSource
+                          : undefined
+                  return {
+                    inferred: {
+                      ...(inputInferred ? { input: inputModalities.provenance } : {}),
+                      ...(outputInferred ? { output: outputModalities.provenance } : {}),
+                      ...(inputSource ? { inputSource } : {}),
+                      ...(outputSource ? { outputSource } : {}),
+                      ...(sharedSource ? { source: sharedSource } : {}),
+                    },
+                  }
+                })(),
               },
               cost: {
                 input: model?.cost?.input ?? existingModel?.cost?.input ?? 0,
@@ -1780,7 +1795,7 @@ const layer: Layer.Layer<
         const headerTimeout = options["headerTimeout"]
         const chunkTimeout =
           typeof userChunkTimeout === "number"
-            ? userChunkTimeout  // user-set value (incl. 0 / negative to disable)
+            ? userChunkTimeout // user-set value (incl. 0 / negative to disable)
             : DEFAULT_CHUNK_TIMEOUT
         delete options["chunkTimeout"]
         delete options["headerTimeout"]
@@ -2119,7 +2134,18 @@ const layer: Layer.Layer<
       }
     })
 
-    return Service.of({ list, getProvider, getModel, getLanguage, getSpeech, closest, getSmallModel, getVisionModel, defaultModel, resolveModelRef })
+    return Service.of({
+      list,
+      getProvider,
+      getModel,
+      getLanguage,
+      getSpeech,
+      closest,
+      getSmallModel,
+      getVisionModel,
+      defaultModel,
+      resolveModelRef,
+    })
   }),
 )
 

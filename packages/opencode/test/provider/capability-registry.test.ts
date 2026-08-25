@@ -12,6 +12,7 @@ function model(input: {
   text?: boolean
   image?: boolean
   audio?: boolean
+  inferredInput?: "declared" | "builtin" | "provider-entry" | "directory" | "assumed"
 }): Provider.Model {
   return {
     id: input.id,
@@ -31,6 +32,7 @@ function model(input: {
         pdf: false,
       },
       output: { text: true, audio: false, image: false, video: false, pdf: false },
+      ...(input.inferredInput ? { inferred: { input: input.inferredInput } } : {}),
     },
     cost: { input: 1, output: 1, cache: { read: 0, write: 0 } },
     limit: { context: 8000, output: 2000 },
@@ -80,6 +82,11 @@ describe("adapter declarations", () => {
 })
 
 describe("model declaration ANDs the model gate with the adapter gate", () => {
+  test("assumed non-text support is unknown for autonomous sampling selection", () => {
+    const subject = model({ id: "unknown-vision", image: true, inferredInput: "assumed" })
+    expect(ModelCapability.modelDeclaration(subject, "image").support).toBe("unknown")
+  })
+
   test("adapter can carry audio but model does not declare it → unsupported", () => {
     const subject = model({ id: "g", npm: "@ai-sdk/google", audio: false })
     expect(ModelCapability.modelDeclaration(subject, "audio").support).toBe("unsupported")
@@ -109,9 +116,7 @@ describe("rejectionFor", () => {
 
   test("rejects an audio MIME the adapter does not accept", () => {
     const subject = model({ id: "mimo-v2.5", audio: true })
-    const reason = ModelCapability.rejectionFor(subject, [
-      { modality: "audio", mimeType: "audio/flac", bytes: 1000 },
-    ])
+    const reason = ModelCapability.rejectionFor(subject, [{ modality: "audio", mimeType: "audio/flac", bytes: 1000 }])
     expect(reason).toEqual({ kind: "mime-unsupported", modality: "audio", mimeType: "audio/flac" })
   })
 

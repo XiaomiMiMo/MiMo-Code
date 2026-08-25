@@ -7,6 +7,7 @@ import { Instance } from "../../src/project/instance"
 import { Plugin } from "../../src/plugin/index"
 import { ModelsDev } from "../../src/provider"
 import { Provider } from "../../src/provider"
+import { ModalityInference } from "../../src/provider/modality-inference"
 import { ProviderID, ModelID } from "../../src/provider/schema"
 import { Env } from "../../src/env"
 import { Effect } from "effect"
@@ -1090,6 +1091,56 @@ test("model modalities default correctly", async () => {
       expect(model.capabilities.output.text).toBe(true)
     },
   })
+})
+
+test("an explicitly empty input modality list stays authoritative", async () => {
+  await using tmp = await tmpdir({
+    init: async (dir) => {
+      await Bun.write(
+        path.join(dir, "mimocode.json"),
+        JSON.stringify({
+          $schema: "https://opencode.ai/config.json",
+          provider: {
+            "test-provider": {
+              name: "Test",
+              npm: "@ai-sdk/openai-compatible",
+              env: [],
+              models: {
+                "test-model": {
+                  name: "Test Model",
+                  limit: { context: 8000, output: 2000 },
+                  modalities: { input: [], output: ["text"] },
+                },
+              },
+              options: { apiKey: "test" },
+            },
+          },
+        }),
+      )
+    },
+  })
+  await Instance.provide({
+    directory: tmp.path,
+    fn: async () => {
+      const providers = await list()
+      const model = providers[ProviderID.make("test-provider")].models["test-model"]
+      expect(model.capabilities.input).toEqual({ text: false, audio: false, image: false, video: false, pdf: false })
+      expect(model.capabilities.inferred).toBeUndefined()
+    },
+  })
+})
+
+test("provider-entry provenance identifies the catalog ref", () => {
+  const directory = ModalityInference.directoryIndex({})
+  const verdict = ModalityInference.resolveInput({
+    inherited: ModalityInference.mapOf(["text"], false),
+    apiID: "gpt-5",
+    directory,
+    providerID: "openai",
+    modelID: "gpt-5",
+  })
+  expect(verdict.provenance).toBe("provider-entry")
+  expect(verdict.source).toBe("openai/gpt-5")
 })
 
 test("model with custom cost values", async () => {
