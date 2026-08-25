@@ -5,6 +5,7 @@ import { EditTool } from "./edit"
 import DESCRIPTION from "./multiedit.txt"
 import path from "path"
 import { Instance } from "../project/instance"
+import { SessionCwd } from "./session-cwd"
 
 const EditEntry = z.object({
   old_string: z.string().describe("The text to replace"),
@@ -28,11 +29,14 @@ export const MultiEditTool = Tool.define(
       parameters: Parameters,
       execute: (params: z.infer<typeof Parameters>, ctx: Tool.Context) =>
         Effect.gen(function* () {
+          const filePath = path.isAbsolute(params.file_path)
+            ? params.file_path
+            : path.resolve(SessionCwd.get(ctx.sessionID), params.file_path)
           const results = []
           for (const [, entry] of params.edits.entries()) {
             const result = yield* edit.execute(
               {
-                file_path: params.file_path,
+                file_path: filePath,
                 old_string: entry.old_string,
                 new_string: entry.new_string,
                 replace_all: entry.replace_all,
@@ -42,7 +46,7 @@ export const MultiEditTool = Tool.define(
             results.push(result)
           }
           return {
-            title: path.relative(Instance.worktree, params.file_path),
+            title: path.relative(Instance.worktree, filePath),
             metadata: {
               results: results.map((r) => r.metadata),
             },
