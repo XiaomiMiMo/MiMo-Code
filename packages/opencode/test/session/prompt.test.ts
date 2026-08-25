@@ -42,6 +42,7 @@ describe("title helpers", () => {
 
   test("removes thinking blocks before accepting a title", () => {
     expect(sanitizeGeneratedTitle("<think>内部推理，不应成为标题</think>\n修复会话标题生成")).toBe("修复会话标题生成")
+    expect(sanitizeGeneratedTitle("<think>我可以调用 <tool_call>read</tool_call>，但最终直接生成标题</think>\n重构认证流程")).toBe("重构认证流程")
     expect(sanitizeGeneratedTitle("<think>只有推理，没有最终标题</think>")).toBeUndefined()
   })
 })

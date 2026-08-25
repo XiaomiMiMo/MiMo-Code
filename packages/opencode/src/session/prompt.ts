@@ -279,9 +279,9 @@ function looksLikeToolCall(value: string) {
 }
 
 export function sanitizeGeneratedTitle(value: string) {
-  if (looksLikeToolCall(value)) return undefined
-  const line = value
-    .replace(/<think>[\s\S]*?<\/think>\s*/gi, "")
+  const withoutThinking = value.replace(/<think>[\s\S]*?<\/think>\s*/gi, "")
+  if (looksLikeToolCall(withoutThinking)) return undefined
+  const line = withoutThinking
     .split(/\r?\n/)
     .map((item) => item.trim())
     .find(Boolean)
