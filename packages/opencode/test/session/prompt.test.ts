@@ -25,6 +25,7 @@ describe("title helpers", () => {
 
   test("truncates long Latin titles at a word boundary", () => {
     expect(truncateTitle("Fix ThreadPoolExecutor concurrency issue in production")).toBe("Fix ThreadPoolExecutor concurrency issue in…")
+    expect(truncateTitle("请修复 title 生成协议中的图片输入校验与模型选择逻辑。并补充更多回归测试覆盖多模态场景并保证兼容旧客户端")).toBe("请修复 title 生成协议中的图片输入校验与模型选择逻辑。…")
   })
 
   test("builds fallback context for image-only and mixed multimodal requests", () => {

@@ -247,8 +247,12 @@ export function titleInputText(text: string | undefined, parts: GenTitlePart[] |
 export function truncateTitle(value: string) {
   if (value.length <= TITLE_MAX_LENGTH) return value
   const prefix = value.substring(0, TITLE_MAX_LENGTH)
-  const boundary = Math.max(prefix.lastIndexOf(" "), prefix.lastIndexOf("/"), prefix.lastIndexOf("-"), prefix.lastIndexOf("："), prefix.lastIndexOf("，"))
-  const end = boundary >= Math.floor(TITLE_MAX_LENGTH * 0.6) ? boundary : TITLE_MAX_LENGTH
+  const boundary = Math.max(
+    ...[" ", "/", "-", "：", "，", "。", "、", "；", "！", "？", ",", ";", "!", "?", ".", "_"].map((separator) => prefix.lastIndexOf(separator)),
+  )
+  const atBoundary = prefix[boundary]
+  const includeBoundary = atBoundary && ![" ", "/", "-", "_"].includes(atBoundary) ? 1 : 0
+  const end = boundary >= Math.floor(TITLE_MAX_LENGTH * 0.6) ? boundary + includeBoundary : TITLE_MAX_LENGTH
   return prefix.substring(0, end).trimEnd() + "…"
 }
 
@@ -834,7 +838,12 @@ export const layer = Layer.effect(
         : small
       if (!model || !model.capabilities.input.text || !model.capabilities.toolcall) return fallback()
       let candidate: unknown
-      const sessionID = input.sessionID ? String(input.sessionID) : String(SessionID.descending())
+      const sessionID = input.sessionID
+        ? yield* Effect.try({
+            try: () => SessionID.zod.parse(String(input.sessionID)),
+            catch: () => undefined,
+          }).pipe(Effect.orElseSucceed(() => SessionID.descending()))
+        : SessionID.descending()
       const requestID = input.sessionID ? undefined : "title-" + String(MessageID.ascending())
       const user: MessageV2.User = { id: MessageID.ascending(), sessionID: SessionID.make(sessionID), role: "user", time: { created: Date.now() }, agent: ag.name, model: { providerID: model.providerID, modelID: model.id } }
       const outputTool = createStructuredOutputTool({
@@ -899,7 +908,10 @@ export const layer = Layer.effect(
       if (!firstUser || firstUser.info.role !== "user") return
       const inputText = titleContext(firstUser)
       if (!inputText) return
-      const result = yield* genTitle({ text: inputText, context, sessionID: input.session.id, providerID: input.providerID, modelID: input.modelID })
+      const result = yield* genTitle({ text: inputText, context, sessionID: input.session.id, providerID: input.providerID, modelID: input.modelID }).pipe(
+        Effect.catchCause((cause) => elog.warn("auto title generation failed", { error: Cause.squash(cause) }).pipe(Effect.as(undefined))),
+      )
+      if (!result) return
       yield* sessions
         .setTitleIfDefault({ sessionID: input.session.id, title: result.title })
         .pipe(Effect.catchCause((cause) => elog.error("failed to generate title", { error: Cause.squash(cause) })))
@@ -5280,7 +5292,8 @@ export function createStructuredOutputTool(input: {
     async execute(args) {
       // AI SDK validates args against inputSchema before calling execute()
       const accepted = input.onSuccess(args)
-      if (accepted === false) throw new Error("structured output was already captured")
+      if (accepted === false)
+        throw new Error("Structured output was already captured; treat the accepted result as final and do not retry this tool call.")
       return {
         output: "Structured output captured successfully.",
         title: "Structured Output",

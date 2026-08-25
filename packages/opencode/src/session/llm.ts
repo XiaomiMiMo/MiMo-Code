@@ -445,7 +445,7 @@ const live: Layer.Layer<
         .clone()
         .tag("providerID", input.model.providerID)
         .tag("modelID", input.model.id)
-        .tag(input.ephemeral ? "request.id" : "session.id", correlationID)
+        .tag(input.requestID ? "request.id" : "session.id", correlationID)
         .tag("small", (input.small ?? false).toString())
         .tag("agent", input.agent.name)
         .tag("mode", input.agent.mode)
@@ -701,7 +701,7 @@ const live: Layer.Layer<
               if (prop !== "startSpan") return Reflect.get(target, prop, receiver)
               return (...args: Parameters<typeof target.startSpan>) => {
                 const span = target.startSpan(...args)
-                span.setAttribute(input.ephemeral ? "request.id" : "session.id", correlationID)
+                span.setAttribute(input.requestID ? "request.id" : "session.id", correlationID)
                 return span
               }
             },
@@ -816,7 +816,7 @@ const live: Layer.Layer<
           tracer: telemetryTracer,
           metadata: {
             userId: cfg.username ?? "unknown",
-            ...(input.ephemeral ? { requestId: correlationID } : { sessionId: input.sessionID }),
+            ...(input.requestID ? { requestId: correlationID } : { sessionId: input.sessionID }),
           },
         },
       })
