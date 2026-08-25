@@ -60,7 +60,7 @@ const ExecCommandParameters = z.object({
 })
 
 const EXEC_COMMAND_DESCRIPTION =
-  "Runs a shell command through the permission-gated bash executor."
+  "Runs a shell command through the permission-gated bash executor. `workdir` defaults to the current session directory. If provided, prefer an absolute path. Avoid using `cd <directory> && <command>` to select the initial directory."
 
 function levenshtein(a: string, b: string): number {
   const distances = Array.from({ length: a.length + 1 }, (_, index) =>
