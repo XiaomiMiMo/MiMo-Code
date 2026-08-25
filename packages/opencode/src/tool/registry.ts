@@ -244,9 +244,10 @@ export const layer = Layer.effect(
           }
         }
 
-        yield* config.get()
+        const cfg = yield* config.get()
         const questionEnabled =
           ["app", "cli", "desktop"].includes(Flag.MIMOCODE_CLIENT) || Flag.MIMOCODE_ENABLE_QUESTION_TOOL
+        const lspEnabled = Boolean(cfg.lsp) || Flag.MIMOCODE_EXPERIMENTAL_LSP_TOOL
 
         const tool = yield* Effect.all({
           invalid: Tool.init(invalid),
@@ -301,7 +302,7 @@ export const layer = Layer.effect(
             tool.skill,
             tool.patch,
             tool.changedir,
-            ...(Flag.MIMOCODE_EXPERIMENTAL_LSP_TOOL ? [tool.lsp] : []),
+            ...(lspEnabled ? [tool.lsp] : []),
             tool.planexit,
             tool.memory,
             tool.history,
