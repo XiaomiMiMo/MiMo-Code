@@ -982,7 +982,7 @@ describe("renderToolScriptDeclarations", () => {
     for (const id of ["exec", "mcp_tool_search", "invalid", "session", "workflow"]) {
       expect(TOOL_SCRIPT_EXCLUDED.has(id)).toBe(true)
     }
-    for (const id of ["bash", "task", "question", "actor", "skill", "plan_exit", "cron", "change_directory"]) {
+    for (const id of ["bash", "task", "question", "actor", "skill", "plan_exit", "cron"]) {
       expect(TOOL_SCRIPT_EXCLUDED.has(id)).toBe(false)
     }
   })
@@ -998,7 +998,7 @@ describe("renderToolScriptDeclarations", () => {
     expect(text).not.toContain("timeout?: number")
     expect(text).not.toContain("interactive?: boolean")
     const declaration = text.split("\n").find((line) => line.includes("exec_command(input:"))
-    expect(declaration).not.toContain("description:")
+    expect(declaration).toContain("description?: string")
     expect(text).not.toContain("\n  bash(input:")
   })
 

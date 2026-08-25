@@ -705,6 +705,11 @@ it.live("locks system and harness to the first user query", () =>
       const request = JSON.stringify(input)
       expect(request).not.toContain("You are Codex")
       expect(request).toContain("first system prompt")
+      expect(
+        (input.messages as Array<{ role: string; content: unknown }>)
+          .filter((message) => JSON.stringify(message.content).includes("first system prompt"))
+          .map((message) => message.role),
+      ).toEqual(["system"])
       expect((input.tools as Array<Record<string, unknown>>).map(wireToolName)).toEqual(["exec"])
 
       yield* prompt.prompt({

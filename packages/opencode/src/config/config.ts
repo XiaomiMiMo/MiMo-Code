@@ -41,6 +41,7 @@ import { ConfigPaths } from "./paths"
 import { ConfigPermission } from "./permission"
 import { ConfigPlugin } from "./plugin"
 import { ConfigProvider } from "./provider"
+import { ConfigRetry } from "./retry"
 import { ConfigServer } from "./server"
 import { ConfigLLMServer } from "./llm-server"
 import { ConfigSkills } from "./skills"
@@ -203,6 +204,9 @@ const InfoSchema = Schema.Struct({
   provider: Schema.optional(Schema.Record(Schema.String, ConfigProvider.Info)).annotate({
     description: "Custom provider configurations and model overrides",
   }),
+  retry: Schema.optional(ConfigRetry.Info).annotate({
+    description: "Retry budgets for provider requests, streams, and long-running network recovery",
+  }),
   mcp: Schema.optional(
     Schema.Record(
       Schema.String,
@@ -282,7 +286,7 @@ const InfoSchema = Schema.Struct({
       }),
       fork: Schema.optional(Schema.Boolean).annotate({
         description:
-          "Whether to fork the parent agent's message prefix into the writer session for prefix-cache reuse. Requires provider cache-breakpoint support. Default: false.",
+          "Whether to fork the parent agent's message prefix into the writer session for prefix-cache reuse. Requires provider cache-breakpoint support. Default: true.",
       }),
       push_caps: Schema.optional(
         Schema.Struct({

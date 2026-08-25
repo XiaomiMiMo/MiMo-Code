@@ -20,16 +20,24 @@ export function isMcpToolSearchEnabled(
   ...modelIDs: Array<string | undefined>
 ) {
   if (isGPTModel(...modelIDs)) return true
-  return enabled || (codexHarnessOverride(harness) ?? (Flag.MIMOCODE_CODEX_MODE || usesMimoCodexMode(...modelIDs)))
+  return enabled || (codexHarnessOverride(harness) ?? Flag.MIMOCODE_CODEX_MODE)
 }
 
-export function usesMimoCodexMode(...values: Array<string | undefined>) {
+export function isMimoModel(...values: Array<string | undefined>) {
+  return values.some((value) => value && /(?:^|[/_-])mimo(?:$|[/_.-])/i.test(value))
+}
+
+export function usesMimoResponsesApi(...values: Array<string | undefined>) {
   const ids = values.flatMap((value) => (value ? [value.toLowerCase()] : []))
-  if (ids.some((id) => /(?:^|[/])mimo-v2\.5(?:-pro)?$/.test(id))) return false
-  return ids.some((id) => /(?:^|[/_-])mimo(?:$|[/_.-])/.test(id))
+  return isMimoModel(...ids) && ids.some((id) => /(?:^|[/_.-])ptc(?:$|[/_.-])/.test(id))
 }
 
-export function usesGPTToolset(modelID: string, harness?: HarnessMode) {
-  if (isGPTModel(modelID)) return true
-  return codexHarnessOverride(harness) ?? (Flag.MIMOCODE_CODEX_MODE || usesMimoCodexMode(modelID))
+export function usesGPTToolset(
+  modelID: string,
+  harness?: HarnessMode,
+  ...modelIDs: Array<string | undefined>
+) {
+  const ids = [modelID, ...modelIDs]
+  if (isGPTModel(...ids)) return true
+  return codexHarnessOverride(harness) ?? Flag.MIMOCODE_CODEX_MODE
 }

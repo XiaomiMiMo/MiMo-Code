@@ -905,7 +905,6 @@ describe("session.llm.stream", () => {
               system: ["You are a helpful assistant."],
               messages: [{ role: "user", content: "Hello" }],
               tools: {},
-              retries: 1,
             })
             .pipe(Stream.runCollect),
         )

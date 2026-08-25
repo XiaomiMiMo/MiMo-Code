@@ -749,14 +749,11 @@ export const layer: Layer.Layer<
       //          last_checkpoint_message_id (aligned past tool_use/tool_result).
       // See spec 2026-06-09-checkpoint-writer-child-session-and-no-fork-fallback-design.md §3.
       //
-      // Default-behavior change at this PR: previously the writer always forked
-      // the parent's full prefix (effectively fork: true). The default is now
-      // false (no-fork delta-only). Users on cache-breakpoint providers
-      // (Anthropic) who want to retain the prefix-cache benefit must set
-      // `checkpoint.fork: true` in their config. See the spec at
-      // docs/superpowers/specs/2026-06-09-checkpoint-writer-child-session-and-no-fork-fallback-design.md §4.5.
+      // The writer forks the parent's full prefix by default for prefix-cache
+      // reuse. Users who need cold-start delta-only behavior can set
+      // `checkpoint.fork: false` in their config.
       const cfg = yield* config.get()
-      const forkMode = cfg.checkpoint?.fork ?? false
+      const forkMode = cfg.checkpoint?.fork ?? true
 
       const parentRow = yield* Effect.sync(() =>
         Database.use((d) =>

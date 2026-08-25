@@ -207,6 +207,41 @@
   }
 }
 
+/* Actor notification cards (inbox messages from subagents) */
+[data-slot="user-message-notifications"] {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 100%;
+  max-width: min(82%, 64ch);
+  margin-left: auto;
+  margin-bottom: 8px;
+}
+
+[data-slot="user-message-notifications"] [data-component="card"] {
+  width: 100%;
+}
+
+[data-slot="actor-notification-status"] {
+  text-transform: capitalize;
+  font-weight: var(--font-weight-medium);
+}
+
+[data-slot="actor-notification-description"] {
+  color: var(--text-base);
+  font-weight: var(--font-weight-regular);
+}
+
+[data-slot="inbox-sender"] {
+  font-weight: var(--font-weight-medium);
+}
+
+[data-slot="inbox-time"] {
+  color: var(--text-weak);
+  font-size: var(--font-size-small);
+  font-weight: var(--font-weight-regular);
+}
+
 [data-component="text-part"] {
   width: 100%;
   margin-top: 24px;

@@ -62,6 +62,13 @@ describe("nextSessionStatus", () => {
     h.dispose()
   })
 
+  test("terminal notices are distinct from retry state", () => {
+    const h = harness()
+    h.apply("ses_6", { type: "notice", message: "usage limit" } as any)
+    expect(h.store.session_status["ses_6"]).toEqual({ type: "notice", message: "usage limit" })
+    h.dispose()
+  })
+
   test("first status for an unseen session is stored as-is", () => {
     const h = harness()
     h.apply("ses_5", { type: "busy", message: "Rebuilding context\u2026" })

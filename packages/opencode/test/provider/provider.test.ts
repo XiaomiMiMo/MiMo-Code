@@ -1563,7 +1563,7 @@ test("xiaomi models use the Responses harness for free-form exec PTC", async () 
   })
 })
 
-test("xiaomi models outside PTC mode stay on Chat Completions", async () => {
+test("xiaomi models outside PTC mode stay on Chat Completions regardless of version", async () => {
   await using tmp = await tmpdir({
     init: async (dir) => {
       await Bun.write(
@@ -1576,6 +1576,11 @@ test("xiaomi models outside PTC mode stay on Chat Completions", async () => {
               models: {
                 "mimo-v2.5": {
                   name: "MiMo V2.5",
+                  tool_call: true,
+                  limit: { context: 8192, output: 2048 },
+                },
+                "mimo-v2.6": {
+                  name: "MiMo V2.6",
                   tool_call: true,
                   limit: { context: 8192, output: 2048 },
                 },
@@ -1593,9 +1598,11 @@ test("xiaomi models outside PTC mode stay on Chat Completions", async () => {
       set("XIAOMI_API_KEY", "test-key")
     },
     fn: async () => {
-      const model = await getModel(ProviderID.make("xiaomi"), ModelID.make("mimo-v2.5"))
-      const language = await getLanguage(model)
-      expect(language.provider).toBe("xiaomi.chat")
+      const models = await Promise.all(
+        ["mimo-v2.5", "mimo-v2.6"].map((id) => getModel(ProviderID.make("xiaomi"), ModelID.make(id))),
+      )
+      const languages = await Promise.all(models.map((model) => getLanguage(model)))
+      expect(languages.map((language) => language.provider)).toEqual(["xiaomi.chat", "xiaomi.chat"])
     },
   })
 })

@@ -1,10 +1,11 @@
 import { Cause, Deferred, Effect, Exit, Fiber, Schema, Scope, SynchronizedRef } from "effect"
 
-export interface Runner<A, E = never> {
+export interface Runner<A, E = never, B = never> {
   readonly state: State<A, E>
   readonly busy: boolean
   readonly ensureRunning: (work: Effect.Effect<A, E>) => Effect.Effect<A, E>
-  readonly startShell: (work: Effect.Effect<A, E>) => Effect.Effect<A, E>
+  readonly start: (work: Effect.Effect<A, E>) => Effect.Effect<void, B>
+  readonly startShell: (work: Effect.Effect<A, E>) => Effect.Effect<A, E | B>
   readonly cancel: Effect.Effect<void>
 }
 
@@ -33,17 +34,17 @@ export type State<A, E> =
   | { readonly _tag: "Shell"; readonly shell: ShellHandle<A, E> }
   | { readonly _tag: "ShellThenRun"; readonly shell: ShellHandle<A, E>; readonly run: PendingHandle<A, E> }
 
-export const make = <A, E = never>(
+export const make = <A, E = never, B = never>(
   scope: Scope.Scope,
   opts?: {
     onIdle?: Effect.Effect<void>
     onBusy?: Effect.Effect<void>
     onInterrupt?: Effect.Effect<A, E>
-    busy?: () => never
+    busy?: () => B
     label?: string
     onReentryWarn?: (info: { label: string; existingRunId: number }) => Effect.Effect<void>
   },
-): Runner<A, E> => {
+): Runner<A, E, B> => {
   const ref = SynchronizedRef.makeUnsafe<State<A, E>>({ _tag: "Idle" })
   const idle = opts?.onIdle ?? Effect.void
   const busy = opts?.onBusy ?? Effect.void
@@ -86,6 +87,9 @@ export const make = <A, E = never>(
       )
       return { id, done, fiber } satisfies RunHandle<A, E>
     })
+
+  const busyFailure = <C>(): Effect.Effect<C, B> =>
+    opts?.busy ? Effect.fail(opts.busy()) : Effect.die(new Error("Runner is busy"))
 
   const finishShell = (id: number) =>
     SynchronizedRef.modifyEffect(
@@ -139,13 +143,7 @@ export const make = <A, E = never>(
       ref,
       Effect.fnUntraced(function* (st) {
         if (st._tag !== "Idle") {
-          return [
-            Effect.sync(() => {
-              if (opts?.busy) opts.busy()
-              throw new Error("Runner is busy")
-            }),
-            st,
-          ] as const
+          return [busyFailure<A>(), st] as readonly [Effect.Effect<A, E | B>, State<A, E>]
         }
         yield* busy
         const id = next()
@@ -159,7 +157,20 @@ export const make = <A, E = never>(
             return yield* Effect.failCause(exit.cause)
           }),
           { _tag: "Shell", shell },
-        ] as const
+        ] as readonly [Effect.Effect<A, E | B>, State<A, E>]
+      }),
+    ).pipe(Effect.flatten)
+
+  const start = (work: Effect.Effect<A, E>): Effect.Effect<void, B> =>
+    SynchronizedRef.modifyEffect(
+      ref,
+      Effect.fnUntraced(function* (st) {
+        if (st._tag !== "Idle") {
+          return [busyFailure<void>(), st] as const
+        }
+        const done = yield* Deferred.make<A, E | Cancelled>()
+        const run = yield* startRun(work, done)
+        return [Effect.void, { _tag: "Running", run } as const] as const
       }),
     ).pipe(Effect.flatten)
 
@@ -171,7 +182,6 @@ export const make = <A, E = never>(
         return [
           Effect.gen(function* () {
             yield* Fiber.interrupt(st.run.fiber)
-            yield* Deferred.await(st.run.done).pipe(Effect.exit, Effect.asVoid)
             yield* idleIfCurrent()
           }),
           { _tag: "Idle" } as const,
@@ -204,6 +214,7 @@ export const make = <A, E = never>(
       return state()._tag !== "Idle"
     },
     ensureRunning,
+    start,
     startShell,
     cancel,
   }

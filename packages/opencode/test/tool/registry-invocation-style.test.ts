@@ -41,7 +41,6 @@ describe("ToolRegistry.tools: invocation style resolution", () => {
           "webfetch",
           "skill_search",
           "skill",
-          "change_directory",
           "plan_exit",
           "memory",
           "history",
@@ -58,6 +57,45 @@ describe("ToolRegistry.tools: invocation style resolution", () => {
         expect(description).toContain("exec_command(input:")
         expect(description).not.toContain("\n  bash(input:")
         expect(description).toContain("`timeout` is always measured in milliseconds")
+      }),
+    ),
+  )
+
+  it.live("uses the harness rather than MiMo API transport to select the toolset", () =>
+    provideTmpdirInstance(() =>
+      Effect.gen(function* () {
+        const reg = yield* ToolRegistry.Service
+        const agents = yield* Agent.Service
+        const build = yield* agents.get("build")
+        const normalDefault = yield* reg.tools({
+          providerID: ProviderID.make("xiaomi"),
+          modelID: ModelID.make("mimo-v2.6"),
+          agent: build,
+        })
+        const responsesDefault = yield* reg.tools({
+          providerID: ProviderID.make("xiaomi"),
+          modelID: ModelID.make("mimo-v2.6-ptc"),
+          agent: build,
+        })
+        const normalCodex = yield* reg.tools({
+          providerID: ProviderID.make("xiaomi"),
+          modelID: ModelID.make("mimo-v2.6"),
+          agent: build,
+          harness: "codex",
+        })
+        const responsesCodex = yield* reg.tools({
+          providerID: ProviderID.make("xiaomi"),
+          modelID: ModelID.make("mimo-v2.6-ptc"),
+          agent: build,
+          harness: "codex",
+        })
+
+        expect(normalDefault.map((tool) => tool.id)).toContain("bash")
+        expect(normalDefault.map((tool) => tool.id)).not.toContain("exec")
+        expect(responsesDefault.map((tool) => tool.id)).toContain("bash")
+        expect(responsesDefault.map((tool) => tool.id)).not.toContain("exec")
+        expect(normalCodex.map((tool) => tool.id)).toEqual(["exec"])
+        expect(responsesCodex.map((tool) => tool.id)).toEqual(["exec"])
       }),
     ),
   )

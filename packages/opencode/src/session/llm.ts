@@ -1,7 +1,7 @@
 import path from "path"
-import { Provider } from "@/provider"
+import { Provider, ProviderError } from "@/provider"
 import { Log } from "@/util"
-import { Context, Duration, Effect, Layer, Record, Schedule, Ref, Cause } from "effect"
+import { Context, Duration, Effect, Layer, Record, Cause } from "effect"
 import * as Stream from "effect/Stream"
 import { streamText, wrapLanguageModel, type ModelMessage, type Tool, tool, jsonSchema } from "ai"
 import { mergeDeep, pipe } from "remeda"
@@ -10,7 +10,7 @@ import { ProviderTransform } from "@/provider"
 import { Config } from "@/config"
 import { Instance } from "@/project/instance"
 import { Agent } from "@/agent/agent"
-import type { MessageV2 } from "./message-v2"
+import { MessageV2 } from "./message-v2"
 import { Plugin } from "@/plugin"
 import { SystemPrompt } from "./system"
 import { Permission } from "@/permission"
@@ -20,6 +20,7 @@ import { Wildcard, ToolCompat } from "@/util"
 import { asSchema } from "@ai-sdk/provider-utils"
 import { SessionID } from "@/session/schema"
 import * as Session from "@/session/session"
+import { SessionStatus } from "@/session/status"
 import { migrateProjectMemory } from "./checkpoint-paths"
 import { ProjectID } from "@/project/schema"
 import { Auth } from "@/auth"
@@ -32,6 +33,7 @@ import * as OtelTracer from "@effect/opentelemetry/Tracer"
 import { ActorRegistry } from "@/actor/registry"
 import { Memory } from "@/memory"
 import { isRetryableTransientError } from "./retry"
+import * as SessionRetry from "./retry"
 import { MCP_TOOL_SEARCH_ID } from "@/tool/mcp-tool-search"
 import { TOOL_SCRIPT_EXCLUDED } from "@/tool/tool-script-ref"
 import { deriveLiveness } from "@/actor/schema"
@@ -75,7 +77,7 @@ export const OUTPUT_TOKEN_MAX = ProviderTransform.OUTPUT_TOKEN_MAX
 export const ROSTER_HEADER =
   "Your fleet — your routable child sessions right now. This list is internal working context, " +
   "not output: never repeat it, or these session ids and titles, back to the user — report the " +
-  "routing DECISION instead (\"routing this to the docs child\"). Format is id | title | agent | status:"
+  'routing DECISION instead ("routing this to the docs child"). Format is id | title | agent | status:'
 
 // How many FINISHED-but-resumable child sessions the fleet roster carries,
 // most-recently-active first. The roster is re-injected on EVERY request,
@@ -87,7 +89,7 @@ export const ROSTER_IDLE_LIMIT = 5
 type Result = Awaited<ReturnType<typeof streamText>>
 
 /**
- * Match transient errors that the PERSISTENT_RETRY layer should retry.
+ * Match transient errors that max-mode local retries should retry.
  *
  * - HTTP 429 / 5xx / 529 — capacity / overload responses
  * - ECONNRESET / EPIPE / ETIMEDOUT — network errors typically caused by
@@ -97,7 +99,7 @@ type Result = Awaited<ReturnType<typeof streamText>>
  *   is HTTP-byte-level: keep-alive comments still count as activity, so
  *   the error only fires when the underlying TCP stream is genuinely dead.
  *
- * Auth errors (401/403), client errors (400, 404, 422), and user-
+ * Authentication failures, client errors (400, 404, 422), and user-
  * initiated aborts are NOT retryable.
  *
  * @deprecated Use `isRetryableTransientError` from `./retry` directly.
@@ -106,26 +108,6 @@ type Result = Awaited<ReturnType<typeof streamText>>
 export function isTransientCapacityError(error: unknown): boolean {
   return isRetryableTransientError(error)
 }
-
-/**
- * Persistent-retry schedule with exponential backoff.
- *
- * Exponential backoff 500ms × 2 (i.e. 0.5, 1, 2, 4, 8, 16, 32, 64, 128, 256s),
- * each individual delay capped at 5 minutes, total attempts capped at 10.
- *
- * Worst-case total = 11 attempts × chunkTimeout + cumulative backoff
- *                  ≈ 11 × 8min + 9min ≈ 97 min (with DEFAULT_CHUNK_TIMEOUT = 8min).
- *
- * Intentionally NOT capped via Schedule.upTo() — retry persistence under
- * brief upstream outages is the design goal. Bounding per-attempt latency
- * via chunkTimeout is the primary lever for hang-time control.
- */
-export const persistentRetrySchedule = Schedule.exponential("500 millis", 2).pipe(
-  Schedule.modifyDelay((_, delay) =>
-    Effect.succeed(Duration.isLessThanOrEqualTo(delay, Duration.minutes(5)) ? delay : Duration.minutes(5)),
-  ),
-  Schedule.both(Schedule.recurs(10)),
-)
 
 /**
  * Memory-system instructions appended to the main agent's system prompt.
@@ -259,7 +241,7 @@ export type StreamInput = {
   agent: Agent.Info
   permission?: Permission.Ruleset
   system: string[]
-  prebuiltSystem?: string[]      // when set, skip buildSystemArray and use this verbatim
+  prebuiltSystem?: string[] // when set, skip buildSystemArray and use this verbatim
   messages: ModelMessage[]
   small?: boolean
   tools: Record<string, Tool>
@@ -284,11 +266,12 @@ export type Event = Result["fullStream"] extends AsyncIterable<infer T> ? T : ne
 
 /** Convert per-turn context into the final model-visible user segment. */
 export function turnContextMessages(user: MessageV2.User): ModelMessage[] {
+  if (user.systemMode === "replace-agent") return []
   const context = user.system?.trim()
   if (!context) return []
   return [{
-    role: "user",
-    content: `<system-reminder>\n${context}\n</system-reminder>`,
+      role: "user",
+      content: `<system-reminder>\n${context}\n</system-reminder>`,
   }]
 }
 
@@ -319,7 +302,14 @@ export class Service extends Context.Service<Service, Interface>()("@opencode/LL
 const live: Layer.Layer<
   Service,
   never,
-  Auth.Service | Config.Service | Provider.Service | Plugin.Service | Permission.Service | ActorRegistry.Service | Memory.Service
+  | Auth.Service
+  | Config.Service
+  | Provider.Service
+  | Plugin.Service
+  | Permission.Service
+  | ActorRegistry.Service
+  | Memory.Service
+  | SessionStatus.Service
 > = Layer.effect(
   Service,
   Effect.gen(function* () {
@@ -330,6 +320,7 @@ const live: Layer.Layer<
     const perm = yield* Permission.Service
     const actorReg = yield* ActorRegistry.Service
     const memory = yield* Memory.Service
+    const status = yield* SessionStatus.Service
 
     const buildSystemArray = Effect.fn("LLM.buildSystemArray")(function* (input: {
       agent: Agent.Info
@@ -347,6 +338,8 @@ const live: Layer.Layer<
             : SystemPrompt.agent(input.agent, input.model, input.user.harness)),
           // any custom prompt passed into this call
           ...input.system,
+          // replace-agent is a session system prompt, not per-turn user context
+          ...(input.user.systemMode === "replace-agent" && input.user.system ? [input.user.system] : []),
         ]
           .filter((x) => x)
           .join("\n"),
@@ -392,10 +385,7 @@ const live: Layer.Layer<
         // listPeerChildren joins through the Session row's parent_id, because a
         // peer child registers its actor row under its OWN session id — a
         // session_id-keyed lookup (listByParent) never matches a peer.
-        const children = yield* actorReg.listPeerChildren(
-          SessionID.make(input.sessionID),
-          input.agentID ?? "main",
-        )
+        const children = yield* actorReg.listPeerChildren(SessionID.make(input.sessionID), input.agentID ?? "main")
         const now = Date.now()
         const routable = children
           .filter(({ actor }) => !SYSTEM_SPAWNED_AGENT_TYPES.has(actor.agent))
@@ -502,7 +492,9 @@ const live: Layer.Layer<
       )
       const isWorkflow = language instanceof GitLabWorkflowLanguageModel
       const providerSystem =
-        (isOpenaiOauth || isWorkflow) && input.user.system?.trim() ? [...system, input.user.system] : system
+        input.user.systemMode !== "replace-agent" && (isOpenaiOauth || isWorkflow) && input.user.system?.trim()
+          ? [...system, input.user.system]
+          : system
       if (isOpenaiOauth) options.instructions = providerSystem.join("\n")
       // Reactive prefill-rejection backstop. The PRIMARY mechanism is the
       // proactive guard in ProviderTransform.message()
@@ -788,16 +780,9 @@ const live: Layer.Layer<
           ...headers,
           "User-Agent": `mimocode/${InstallationVersion}`,
         },
-        // AI SDK's internal retry loop is SILENT — it emits no events and does
-        // not update session status, so the TUI shows only a dead spinner while
-        // it runs. Its backoff is also UNCAPPED (delay *= 2 each attempt, capped
-        // only by a retry-after header), so the prior default of 10 meant up to
-        // ~34 min (2+4+…+1024s) of invisible retrying before the error surfaced.
-        // We keep this layer short (absorb a couple of quick blips) and let the
-        // VISIBLE processor-level SessionRetry.policy own long-haul resilience —
-        // it publishes `type: "retry"` so the `[retrying attempt #N]` banner
-        // shows, and its per-attempt delay is capped at 30s.
-        maxRetries: input.retries ?? 2,
+        // Keep one SDK-level retry for a failure before response headers. The
+        // processor owns the persistent stream retry budget below this layer.
+        maxRetries: input.retries ?? 0,
         messages,
         model: wrapLanguageModel({
           model: language,
@@ -835,7 +820,7 @@ const live: Layer.Layer<
       // Build the scoped stream for one attempt. `dropAssistantPrefill` forces
       // run() to hard-prune the trailing assistant prefill before send — used only
       // by the reactive one-shot retry below.
-      const attempt = (dropAssistantPrefill: boolean) =>
+      const attempt = (dropAssistantPrefill: boolean, allowRequestRetry: boolean) =>
         Stream.scoped(
           Stream.unwrap(
             Effect.gen(function* () {
@@ -843,45 +828,7 @@ const live: Layer.Layer<
                 Effect.sync(() => new AbortController()),
                 (ctrl) => Effect.sync(() => ctrl.abort()),
               )
-              const attemptRef = yield* Ref.make(0)
-
-              const publishRetryEvent = (error: unknown, nextAttempt: number) =>
-                Effect.gen(function* () {
-                  log.debug("retry attempt", {
-                    sessionID: input.sessionID,
-                    messageID: input.user.id,
-                    attempt: nextAttempt,
-                    reason: error instanceof Error ? error.message : String(error),
-                  })
-                  if (nextAttempt > 10) return
-                  const delayMs = Math.min(500 * 2 ** (nextAttempt - 1), 300_000)
-                  yield* Effect.promise(() =>
-                    Bus.publish(Session.Event.RetryAttempt, {
-                      sessionID: SessionID.make(input.sessionID),
-                      messageID: input.user.id,
-                      attempt: nextAttempt,
-                      maxAttempts: 10,
-                      reason: error instanceof Error ? error.message : String(error),
-                      nextDelayMs: delayMs,
-                    })
-                  )
-                })
-
-              const streamWithTelemetry = run({ ...input, abort: ctrl.signal, dropAssistantPrefill }).pipe(
-                Effect.tapError((error) => {
-                  if (!isTransientCapacityError(error)) return Effect.void
-                  return Ref.updateAndGet(attemptRef, (n) => n + 1).pipe(
-                    Effect.flatMap((nextAttempt) => publishRetryEvent(error, nextAttempt))
-                  )
-                })
-              )
-
-              const result = yield* streamWithTelemetry.pipe(
-                Effect.retry({
-                  while: isTransientCapacityError,
-                  schedule: persistentRetrySchedule,
-                }),
-              )
+              const result = yield* run({ ...input, abort: ctrl.signal, dropAssistantPrefill })
 
               // Structurally identical to the pre-guard stream: a bare scoped
               // stream over the provider's fullStream. No per-event combinator, no
@@ -889,8 +836,30 @@ const live: Layer.Layer<
               // AbortController scope teardown are exactly as before. The reactive
               // prefill retry is layered lazily below and only pays a cost when an
               // actual error surfaces.
-              return Stream.fromAsyncIterable(result.fullStream, (e) =>
+              const rawStream = Stream.fromAsyncIterable(result.fullStream, (e) =>
                 e instanceof Error ? e : new Error(String(e)),
+              )
+              let hasProviderOutput = false
+              return rawStream.pipe(
+                Stream.mapEffect((event) =>
+                  Effect.gen(function* () {
+                    if (
+                      event.type === "error" &&
+                      !hasProviderOutput &&
+                      allowRequestRetry &&
+                      !ProviderTransform.isAssistantPrefillRejection(event.error)
+                    ) {
+                      const normalized = MessageV2.fromError(event.error, {
+                        providerID: input.model.providerID,
+                        aborted: ctrl.signal.aborted,
+                        allow404Retry: ProviderError.allowsModelNotFoundRetry(input.model),
+                      })
+                      if (SessionRetry.decide(normalized, "request").retryable) return yield* Effect.fail(event.error)
+                    }
+                    if (event.type !== "start" && event.type !== "error") hasProviderOutput = true
+                    return event
+                  }),
+                ),
               )
             }),
           ),
@@ -903,7 +872,7 @@ const live: Layer.Layer<
       // per-event Effect fiber, unlike `Stream.mapEffect`), and the failing branch
       // is only ever constructed for the specific error event. On a clean stream
       // this is a transparent passthrough.
-      const promotePrefillRejection = (stream: Stream.Stream<Event, Error, never>) =>
+      const promotePrefillRejection = (stream: Stream.Stream<Event, unknown, never>) =>
         stream.pipe(
           Stream.flatMap((event) =>
             event.type === "error" && ProviderTransform.isAssistantPrefillRejection(event.error)
@@ -922,19 +891,75 @@ const live: Layer.Layer<
       // hard-pruned. Guarded to a single reprune so a persistent failure surfaces
       // the retry's OWN error, falling back to the original prefill cause only when
       // the resend is again prefill-rejected.
-      return promotePrefillRejection(attempt(false)).pipe(
-        Stream.catchCause((primaryCause) => {
-          if (!ProviderTransform.isAssistantPrefillRejection(Cause.squash(primaryCause)))
-            return Stream.failCause(primaryCause)
-          // Pruned resend passes events through untouched: any residual error flows
-          // to the processor and surfaces normally (no promotion, no loop).
-          return attempt(true).pipe(
-            Stream.catchCause((retryCause) =>
-              ProviderTransform.isAssistantPrefillRejection(Cause.squash(retryCause))
-                ? Stream.failCause(primaryCause)
-                : Stream.failCause(retryCause),
-            ),
-          )
+      return Stream.unwrap(
+        Effect.gen(function* () {
+          const retryConfig = SessionRetry.resolve(yield* config.get(), input.model.providerID)
+          const retryRequest = (
+            source: Stream.Stream<Event, unknown, never>,
+            retryCount: number,
+            startedAt?: number,
+            prefillRepaired = false,
+          ): Stream.Stream<Event, unknown, never> =>
+            source.pipe(
+              Stream.catchCause((primaryCause) => {
+                const primaryError = Cause.squash(primaryCause)
+                if (ProviderTransform.isAssistantPrefillRejection(primaryError)) {
+                  if (prefillRepaired) return Stream.failCause(primaryCause)
+                  return retryRequest(attempt(true, true), retryCount, startedAt, true)
+                }
+                const normalized = MessageV2.fromError(primaryError, { providerID: input.model.providerID, allow404Retry: ProviderError.allowsModelNotFoundRetry(input.model) })
+                const decision = SessionRetry.decide(normalized, "request")
+                if (!decision.retryable) return Stream.failCause(primaryCause)
+                const budget = SessionRetry.budgetFor(retryConfig, decision)
+                const nextAttempt = retryCount + 1
+                if (budget.mode === "bounded" && (budget.maxRetries ?? 0) < nextAttempt)
+                  return Stream.failCause(primaryCause)
+                const deadlineStart = startedAt ?? Date.now()
+                const elapsed = Date.now() - deadlineStart
+                const wait = SessionRetry.retryDelay(
+                  nextAttempt,
+                  decision,
+                  budget.jitterRatio,
+                  budget.initialDelayMs,
+                  budget.maxDelayMs,
+                )
+                if (
+                  budget.maxElapsedMs > 0 &&
+                  (elapsed >= budget.maxElapsedMs || wait >= budget.maxElapsedMs - elapsed)
+                )
+                  return Stream.failCause(primaryCause)
+                return Stream.unwrap(
+                  Effect.gen(function* () {
+                    const globalAttempt = yield* status.setRetry(SessionID.make(input.sessionID), {
+                      type: "retry",
+                      attempt: nextAttempt,
+                      phaseAttempt: nextAttempt,
+                      message: decision.message,
+                      next: Date.now() + wait,
+                      phase: "request",
+                      scope: "request",
+                    })
+                    yield* Effect.promise(() =>
+                      Bus.publish(Session.Event.RetryAttempt, {
+                        sessionID: SessionID.make(input.sessionID),
+                        messageID: input.user.id,
+                        attempt: globalAttempt,
+                        phaseAttempt: nextAttempt,
+                        maxAttempts: budget.maxRetries ?? 0,
+                        phase: "request",
+                        kind: decision.kind,
+                        scope: "request",
+                        reason: decision.message,
+                        nextDelayMs: wait,
+                      }),
+                    )
+                    yield* Effect.sleep(Duration.millis(wait))
+                    return retryRequest(attempt(false, true), nextAttempt, deadlineStart)
+                  }),
+                )
+              }),
+            )
+          return retryRequest(promotePrefillRejection(attempt(false, true)), 0)
         }),
       )
     }
@@ -953,14 +978,12 @@ export const defaultLayer = Layer.suspend(() =>
     Layer.provide(Plugin.defaultLayer),
     Layer.provide(ActorRegistry.defaultLayer),
     Layer.provide(Memory.defaultLayer),
+    Layer.provide(SessionStatus.defaultLayer),
   ),
 )
 
 function resolveTools(input: Pick<StreamInput, "tools" | "activeTools" | "agent" | "permission" | "user">) {
-  const disabled = Permission.disabled(
-    Object.keys(input.tools),
-    Agent.runtimePermission(input.agent, input.permission),
-  )
+  const disabled = Permission.disabled(Object.keys(input.tools), Agent.runtimePermission(input.agent, input.permission))
   const allowExecGateway =
     input.activeTools?.includes("exec") === true &&
     Object.keys(input.tools).some(

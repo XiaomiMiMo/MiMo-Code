@@ -17,6 +17,7 @@ import type { SessionID } from "./schema"
 import { SessionRetry } from "./retry"
 import { SessionStatus } from "./status"
 import { SessionSummary } from "./summary"
+import { ProviderError } from "@/provider"
 import type { Provider } from "@/provider"
 import { Question } from "@/question"
 import { errorMessage } from "@/util/error"
@@ -182,6 +183,7 @@ interface ProcessorContext extends Input {
   textNgramMonitor: TextNgramMonitor | undefined
   textNgramRepeat: boolean
   textPartPersisted: boolean
+  retrySafe: boolean
 }
 
 type StreamEvent = Event
@@ -239,6 +241,7 @@ export const layer: Layer.Layer<
         textNgramMonitor: undefined,
         textNgramRepeat: false,
         textPartPersisted: false,
+        retrySafe: true,
       }
       let aborted = false
       // Only the main agent owns session-level status. Subagents (explore,
@@ -253,6 +256,7 @@ export const layer: Layer.Layer<
         MessageV2.fromError(e, {
           providerID: input.model.providerID,
           aborted,
+          allow404Retry: ProviderError.allowsModelNotFoundRetry(input.model),
         })
 
       const tryBestConfig = (yield* config.get()).experimental?.try_best
@@ -490,6 +494,9 @@ export const layer: Layer.Layer<
             if (ctx.assistantMessage.summary) {
               throw new Error(`Tool call not allowed while generating summary: ${value.toolName}`)
             }
+            // A tool call may already have caused an external side effect before
+            // the provider stream fails. Replaying the whole model step is unsafe.
+            ctx.retrySafe = false
             yield* updateToolCall(value.toolCallId, (match) => ({
               ...match,
               tool: value.toolName,
@@ -619,8 +626,7 @@ export const layer: Layer.Layer<
               .publish(Metrics.ModelCall, {
                 sessionID: ctx.sessionID,
                 finish_reason: value.finishReason,
-                ttft_ms:
-                  ctx.firstTokenAt && ctx.stepStartedAt ? ctx.firstTokenAt - ctx.stepStartedAt : undefined,
+                ttft_ms: ctx.firstTokenAt && ctx.stepStartedAt ? ctx.firstTokenAt - ctx.stepStartedAt : undefined,
                 latency_ms: ctx.stepStartedAt ? Date.now() - ctx.stepStartedAt : 0,
                 cached_read_tokens: usage.tokens.cache.read,
                 model_id: ctx.model.id,
@@ -799,7 +805,9 @@ export const layer: Layer.Layer<
       const process = Effect.fn("SessionProcessor.process")(function* (streamInput: LLM.StreamInput) {
         slog.info("process")
         ctx.needsOverflowHandling = false
-        ctx.shouldBreak = (yield* config.get()).experimental?.continue_loop_on_deny !== true
+        const cfg = yield* config.get()
+        ctx.shouldBreak = cfg.experimental?.continue_loop_on_deny !== true
+        const retryConfig = SessionRetry.resolve(cfg, streamInput.model.providerID)
 
         return yield* Effect.gen(function* () {
           yield* Effect.gen(function* () {
@@ -807,6 +815,7 @@ export const layer: Layer.Layer<
             ctx.reasoningMap = {}
             ctx.stepPartIds = []
             ctx.toolcalls = {}
+            ctx.retrySafe = true
             ctx.textNgramRepeat = false
             ctx.textNgramMonitor = createTextNgramMonitor()
             const stream = llm.stream(streamInput)
@@ -831,6 +840,7 @@ export const layer: Layer.Layer<
             ),
             Effect.tapError(() =>
               Effect.gen(function* () {
+                if (!ctx.retrySafe) return
                 for (const partId of ctx.stepPartIds) {
                   yield* session.removePart({
                     sessionID: ctx.sessionID,
@@ -844,17 +854,44 @@ export const layer: Layer.Layer<
             Effect.retry(
               SessionRetry.policy({
                 parse,
-                silentRetry: (error) =>
-                  SessionRetry.isGptModel(input.model) && SessionRetry.isGptServerOverloadedError(error),
+                phase: "stream",
+                budget: (decision) => SessionRetry.budgetFor(retryConfig, decision),
+                jitterRatio: retryConfig.jitterRatio,
+                replaySafe: () => ctx.retrySafe,
+                silentRetry: (error) => isMain && SessionRetry.isGptServerOverloadedError(error),
+                onTerminal: (decision) =>
+                  isMain && decision.uiMessage
+                    ? status.set(ctx.sessionID, { type: "notice", message: decision.uiMessage })
+                    : Effect.void,
                 set: (info) =>
-                  isMain
-                    ? status.set(ctx.sessionID, {
+                  Effect.gen(function* () {
+                    let attempt = info.attempt
+                    if (isMain) {
+                      attempt = yield* status.setRetry(ctx.sessionID, {
                         type: "retry",
                         attempt: info.attempt,
+                        phaseAttempt: info.attempt,
                         message: info.message,
                         next: info.next,
+                        phase: info.phase,
+                        scope: info.scope,
                       })
-                    : Effect.void,
+                    }
+                    yield* bus
+                      .publish(Session.Event.RetryAttempt, {
+                        sessionID: ctx.sessionID,
+                        messageID: ctx.assistantMessage.id,
+                        attempt,
+                        phaseAttempt: info.attempt,
+                        maxAttempts: info.maxAttempts,
+                        phase: info.phase,
+                        kind: info.kind,
+                        scope: info.scope,
+                        reason: info.message,
+                        nextDelayMs: Math.max(0, info.next - Date.now()),
+                      })
+                      .pipe(Effect.ignore)
+                  }),
               }),
             ),
             Effect.catch(halt),
@@ -1018,7 +1055,10 @@ export const layer: Layer.Layer<
             // a supplementary ModelCall metric, but NOT to message.tokens (set
             // by the finish-step above from the winner only) so context
             // estimators stay honest.
-            if (input.overhead && (input.overhead.cost > 0 || input.overhead.tokensIn > 0 || input.overhead.tokensOut > 0)) {
+            if (
+              input.overhead &&
+              (input.overhead.cost > 0 || input.overhead.tokensIn > 0 || input.overhead.tokensOut > 0)
+            ) {
               ctx.assistantMessage.cost += input.overhead.cost
               yield* session.updateMessage(ctx.assistantMessage)
               if (ctx.agentMetrics) {

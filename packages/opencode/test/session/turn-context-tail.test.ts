@@ -25,7 +25,7 @@ const it = testEffect(
   ),
 )
 
-function makeUser(system?: string): MessageV2.User {
+function makeUser(system?: string, systemMode?: MessageV2.User["systemMode"]): MessageV2.User {
   return {
     id: MessageID.ascending(),
     sessionID: SessionID.make("ses_turncontext"),
@@ -34,6 +34,7 @@ function makeUser(system?: string): MessageV2.User {
     agent: "build",
     model: { providerID: ProviderID.make("test"), modelID: ModelID.make("test") },
     system,
+    systemMode,
   } as unknown as MessageV2.User
 }
 
@@ -71,6 +72,16 @@ describe("turnContextMessages", () => {
         role: "user",
         content: "MAX_STEPS\n\n<system-reminder>\nclock\n</system-reminder>",
       }])
+    }),
+  )
+
+  it.effect("replace-agent system never becomes a trailing user reminder", () =>
+    Effect.sync(() => {
+      const user = makeUser("replacement system", "replace-agent")
+      expect(turnContextMessages(user)).toEqual([])
+      expect(appendTurnContext([{ role: "user", content: "question" }], user, true)).toEqual([
+        { role: "user", content: "question" },
+      ])
     }),
   )
 })

@@ -27,7 +27,7 @@ import { AppFileSystem } from "@mimo-ai/shared/filesystem"
 import { isRecord } from "@/util/record"
 import { withStatics } from "@/util/schema"
 import { isFreeApiModel, isFreeApiSunset } from "@/util/free-api-sunset"
-import { usesMimoCodexMode } from "../tool/gpt"
+import { usesMimoResponsesApi } from "../tool/gpt"
 
 import * as ProviderTransform from "./transform"
 import { ModelID, ProviderID } from "./schema"
@@ -329,7 +329,7 @@ function custom(dep: CustomDep): Record<string, CustomLoader> {
       Effect.succeed({
         autoload: false,
         async getModel(sdk: any, modelID: string, _options?: Record<string, any>) {
-          return usesMimoCodexMode(modelID) ? sdk.responses(modelID) : sdk.languageModel(modelID)
+          return usesMimoResponsesApi(modelID) ? sdk.responses(modelID) : sdk.languageModel(modelID)
         },
         options: {},
       }),

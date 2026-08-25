@@ -81,7 +81,7 @@ Decisions are `allow` / `ask` / `deny`. By default `read` of `*.env` / `*.env.*`
 The tool registry lives in `packages/opencode/src/tool/`. Each tool is a `.ts` implementation paired with a `.txt` prompt visible to the model. Functional groups:
 - **File**: `read`, `edit`, `multiedit`, `write` (via `apply_patch`), `notebook-edit`
 - **Search**: `glob`, `grep`, `codesearch`
-- **Shell**: `bash`, `bash-interactive`, `change-directory`
+- **Shell**: `bash`, `bash-interactive`
 - **Knowledge**: `webfetch`, `websearch`, `memory`, `history`, `lsp`
 - **Orchestration**: `actor` (spawn subagent), `task` (plan tracking), `workflow` (multi-agent scripts), `skill` (invoke a skill)
 - **Mode / safety**: `plan-exit`, `question`
@@ -128,7 +128,7 @@ Plan mode is the canonical example of MiMoCode encoding safety as data, not code
 1. The `plan` agent's `hardPermission` denies `edit` everywhere EXCEPT plan-file paths.
 2. `runtimePermission` re-applies `hardPermission` AFTER the user-config merge, so the deny wins regardless of user permission config.
 3. Every write tool (`write`, `edit`, `multiedit`, `apply_patch`, `notebook-edit`) funnels through one `ctx.ask({ permission: "edit" })` call, so the single rule governs them all.
-4. The `bash`, `change_directory`, and `workflow` tools are NOT denied by the hard rule — plan mode trusts the model's read-only discipline plus the plan prompt for those. The permission layer is a backstop, not the only line of defense.
+4. The `bash` and `workflow` tools are NOT denied by the hard rule — plan mode trusts the model's read-only discipline plus the plan prompt for those. The permission layer is a backstop, not the only line of defense.
 5. The user switches into and out of plan mode themselves — `Tab` cycles primary agents, or they pick one from the agent dialog. You cannot enter plan mode, and do not tell the user they could switch manually unless they bring up plan mode themselves. Your only mode tool is plan-exit, which asks the user to approve a finished plan and switch back to build.
 
 ### Extension points: MCP and skills

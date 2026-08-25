@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { APICallError } from "ai"
+import { APICallError, RetryError } from "ai"
 import { convertToLanguageModelPrompt } from "ai/internal"
 import { MessageV2 } from "../../src/session/message-v2"
 import { ProviderTransform } from "../../src/provider"
@@ -1337,6 +1337,27 @@ describe("session.message-v2.toModelMessage", () => {
 })
 
 describe("session.message-v2.fromError", () => {
+  test("normalizes stream_read_error as a retryable APIError", () => {
+    const input = {
+      type: "error",
+      error: { type: "upstream_error", code: "stream_read_error", message: "stream_read_error" },
+    }
+    const result = MessageV2.fromError(input, { providerID })
+
+    expect(MessageV2.APIError.isInstance(result)).toBe(true)
+    expect((result as MessageV2.APIError).data.isRetryable).toBe(true)
+    expect((result as MessageV2.APIError).data.responseBody).toBe(JSON.stringify(input))
+  })
+
+  test("normalizes fetch failed with a retryable network cause", () => {
+    const cause = Object.assign(new Error("socket closed"), { code: "UND_ERR_SOCKET" })
+    const result = MessageV2.fromError(Object.assign(new TypeError("fetch failed"), { cause }), { providerID })
+
+    expect(MessageV2.APIError.isInstance(result)).toBe(true)
+    expect((result as MessageV2.APIError).data.isRetryable).toBe(true)
+    expect((result as MessageV2.APIError).data.metadata?.code).toBe("UND_ERR_SOCKET")
+  })
+
   test("serializes context_length_exceeded as ContextOverflowError", () => {
     const input = {
       type: "error",
@@ -1499,5 +1520,57 @@ describe("session.message-v2.fromError", () => {
     const result = MessageV2.fromError(zlibError, { providerID, aborted: true })
 
     expect(result.name).toBe("MessageAbortedError")
+  })
+
+  test("normalizes SSE timeout before the processor retry boundary", () => {
+    const result = MessageV2.fromError(new Error("SSE read timed out"), { providerID })
+    expect(MessageV2.APIError.isInstance(result)).toBe(true)
+    expect((result as MessageV2.APIError).data.isRetryable).toBe(true)
+  })
+
+ test("abort cause wins over a retryable network cause", () => {
+   const cause = Object.assign(new Error("socket reset"), { code: "ECONNRESET" })
+   const error = Object.assign(new DOMException("user aborted", "AbortError"), { cause })
+   const result = MessageV2.fromError(error, { providerID })
+   expect(result.name).toBe("MessageAbortedError")
+ })
+
+ test("recognizes normalized credential rejection as an auth error", () => {
+    const error = new MessageV2.APIError({ message: "Unauthorized", statusCode: 401, isRetryable: false }).toObject()
+   expect(MessageV2.isAuthError(error)).toBe(true)
+  })
+
+  test("does not treat a generic 403 permission failure as authentication", () => {
+    const error = new MessageV2.APIError({ message: "Forbidden", statusCode: 403, isRetryable: false }).toObject()
+    expect(MessageV2.isAuthError(error)).toBe(false)
+  })
+
+  test("treats an explicitly invalid 403 credential as authentication", () => {
+    const error = new MessageV2.APIError({ message: "Invalid API key", statusCode: 403, isRetryable: false }).toObject()
+    expect(MessageV2.isAuthError(error)).toBe(true)
+  })
+
+  test("treats a bare 403 Unauthorized reason as authentication", () => {
+    const error = new MessageV2.APIError({ message: "Unauthorized", statusCode: 403, isRetryable: false }).toObject()
+    expect(MessageV2.isAuthError(error)).toBe(true)
+  })
+
+  test("does not treat an unrelated unauthorized word as authentication", () => {
+    const error = new MessageV2.APIError({ message: "CORS unauthorized origin", statusCode: 403, isRetryable: false }).toObject()
+    expect(MessageV2.isAuthError(error)).toBe(false)
+  })
+
+  test("recognizes explicit authorization-required and access-denied responses", () => {
+    for (const message of ["Authorization required", "Access denied"]) {
+      const error = new MessageV2.APIError({ message, statusCode: 403, isRetryable: false }).toObject()
+      expect(MessageV2.isAuthError(error)).toBe(true)
+    }
+  })
+
+  test("does not crash on a RetryError without an errors array", () => {
+    const error = new RetryError({ message: "retry failed", reason: "maxRetriesExceeded", errors: [] })
+    ;(error as any).errors = undefined
+    const result = MessageV2.fromError(error, { providerID })
+    expect(result.name).toBe("UnknownError")
   })
 })

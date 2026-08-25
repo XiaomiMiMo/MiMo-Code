@@ -2,10 +2,12 @@ import { describe, expect, test } from "bun:test"
 import type { NamedError } from "@mimo-ai/shared/util/error"
 import { APICallError, RetryError } from "ai"
 import { setTimeout as sleep } from "node:timers/promises"
-import { Effect, Schedule } from "effect"
-import { SessionRetry, isRetryableTransientError, retryable } from "../../src/session/retry"
+import { Effect, Schedule, Schema } from "effect"
+import { ConfigRetry } from "../../src/config/retry"
+import { SessionRetry, decide, isRetryableTransientError, retryable } from "../../src/session/retry"
 import { MessageV2 } from "../../src/session/message-v2"
 import { ProviderID } from "../../src/provider/schema"
+import { allowsModelNotFoundRetry } from "../../src/provider/error"
 import { AppRuntime } from "../../src/effect/app-runtime"
 import { SessionID } from "../../src/session/schema"
 import { SessionStatus } from "../../src/session/status"
@@ -29,55 +31,55 @@ function wrap(message: unknown): ReturnType<NamedError["toObject"]> {
 describe("session.retry.delay", () => {
   test("caps delay at 30 seconds when headers missing", () => {
     const error = apiError()
-    const delays = Array.from({ length: 10 }, (_, index) => SessionRetry.delay(index + 1, error))
+    const delays = Array.from({ length: 10 }, (_, index) => SessionRetry.retryDelay(index + 1, decide(error), 0, 2000, 30_000))
     expect(delays).toStrictEqual([2000, 4000, 8000, 16000, 30000, 30000, 30000, 30000, 30000, 30000])
   })
 
   test("prefers retry-after-ms when shorter than exponential", () => {
     const error = apiError({ "retry-after-ms": "1500" })
-    expect(SessionRetry.delay(4, error)).toBe(1500)
+    expect(SessionRetry.retryDelay(4, decide(error), 0, 2000, SessionRetry.RETRY_MAX_DELAY)).toBe(1500)
   })
 
   test("uses retry-after seconds when reasonable", () => {
     const error = apiError({ "retry-after": "30" })
-    expect(SessionRetry.delay(3, error)).toBe(30000)
+    expect(SessionRetry.retryDelay(3, decide(error), 0, 2000, SessionRetry.RETRY_MAX_DELAY)).toBe(30000)
   })
 
   test("accepts http-date retry-after values", () => {
     const date = new Date(Date.now() + 20000).toUTCString()
     const error = apiError({ "retry-after": date })
-    const d = SessionRetry.delay(1, error)
+    const d = SessionRetry.retryDelay(1, decide(error), 0, 2000, SessionRetry.RETRY_MAX_DELAY)
     expect(d).toBeGreaterThanOrEqual(19000)
     expect(d).toBeLessThanOrEqual(20000)
   })
 
   test("ignores invalid retry hints", () => {
     const error = apiError({ "retry-after": "not-a-number" })
-    expect(SessionRetry.delay(1, error)).toBe(2000)
+    expect(SessionRetry.retryDelay(1, decide(error), 0, 2000, 30_000)).toBe(2000)
   })
 
   test("ignores malformed date retry hints", () => {
     const error = apiError({ "retry-after": "Invalid Date String" })
-    expect(SessionRetry.delay(1, error)).toBe(2000)
+    expect(SessionRetry.retryDelay(1, decide(error), 0, 2000, 30_000)).toBe(2000)
   })
 
   test("ignores past date retry hints", () => {
     const pastDate = new Date(Date.now() - 5000).toUTCString()
     const error = apiError({ "retry-after": pastDate })
-    expect(SessionRetry.delay(1, error)).toBe(2000)
+    expect(SessionRetry.retryDelay(1, decide(error), 0, 2000, 30_000)).toBe(2000)
   })
 
   test("uses retry-after values even when exceeding 10 minutes with headers", () => {
     const error = apiError({ "retry-after": "50" })
-    expect(SessionRetry.delay(1, error)).toBe(50000)
+    expect(SessionRetry.retryDelay(1, decide(error), 0, 2000, SessionRetry.RETRY_MAX_DELAY)).toBe(50000)
 
     const longError = apiError({ "retry-after-ms": "700000" })
-    expect(SessionRetry.delay(1, longError)).toBe(700000)
+    expect(SessionRetry.retryDelay(1, decide(longError), 0, 2000, SessionRetry.RETRY_MAX_DELAY)).toBe(700000)
   })
 
   test("caps oversized header delays to the runtime timer limit", () => {
     const error = apiError({ "retry-after-ms": "999999999999" })
-    expect(SessionRetry.delay(1, error)).toBe(SessionRetry.RETRY_MAX_DELAY)
+    expect(SessionRetry.retryDelay(1, decide(error), 0, 2000, SessionRetry.RETRY_MAX_DELAY)).toBe(SessionRetry.RETRY_MAX_DELAY)
   })
 
   test("policy updates retry status and increments attempts", async () => {
@@ -121,9 +123,143 @@ describe("session.retry.delay", () => {
       },
     })
   })
+
+  test("status retry attempts stay global across request and stream phases", async () => {
+    await using tmp = await tmpdir()
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () => {
+        const sessionID = SessionID.make("session-retry-phase-counter")
+        const result = await AppRuntime.runPromise(
+          SessionStatus.Service.use((svc) =>
+            Effect.gen(function* () {
+              yield* svc.setRetry(sessionID, {
+                type: "retry",
+                attempt: 1,
+                phaseAttempt: 1,
+                message: "request",
+                next: Date.now(),
+                phase: "request",
+                scope: "request",
+              })
+              yield* svc.set(sessionID, { type: "busy" })
+              const attempt = yield* svc.setRetry(sessionID, {
+                type: "retry",
+                attempt: 1,
+                phaseAttempt: 1,
+                message: "stream",
+                next: Date.now(),
+                phase: "stream",
+                scope: "live-step",
+              })
+              const status = yield* svc.get(sessionID)
+              return { attempt, status }
+            }),
+          ),
+        )
+        expect(result.attempt).toBe(2)
+        expect(result.status).toMatchObject({ type: "retry", attempt: 2, phaseAttempt: 1, phase: "stream" })
+      },
+    })
+  })
+
+  test("requires explicit noDeadline instead of deadlineMs zero", () => {
+    const decode = Schema.decodeUnknownSync(ConfigRetry.Budget)
+    expect(() => decode({ deadlineMs: 0 })).toThrow()
+    expect(() => decode({ deadlineMs: 1000, noDeadline: true })).toThrow("deadlineMs and noDeadline cannot be configured together")
+    expect(decode({ mode: "persistent", noDeadline: true })).toMatchObject({ noDeadline: true })
+    expect(SessionRetry.resolve({ retry: { server: { maxRetries: 2, noDeadline: true } } }).server.maxElapsedMs).toBe(0)
+    expect(
+      SessionRetry.resolve(
+        { retry: { server: { noDeadline: true } }, provider: { test: { retry: { server: { deadlineMs: 1000 } } } } },
+        "test",
+      ).server.maxElapsedMs,
+    ).toBe(1000)
+    expect(
+      SessionRetry.resolve(
+        { retry: { server: { deadlineMs: 1000 } }, provider: { test: { retry: { server: { noDeadline: true } } } } },
+        "test",
+      ).server.maxElapsedMs,
+    ).toBe(0)
+  })
 })
 
 describe("session.retry.retryable", () => {
+  test("resolves persistent network defaults and provider overrides", () => {
+    const resolved = SessionRetry.resolve({
+      retry: {
+        network: { mode: "bounded", maxRetries: 4, initialDelayMs: 100, maxDelayMs: 1000 },
+        stream: { maxRetries: 9 },
+      },
+      provider: {
+        test: { retry: { network: { mode: "persistent", deadlineMs: 60000 }, stream: { maxRetries: 12 } } },
+      },
+    }, "test")
+    expect(resolved.network).toMatchObject({ mode: "persistent", maxRetries: undefined, maxElapsedMs: 60000, initialDelayMs: 100, maxDelayMs: 1000 })
+    expect(resolved.stream.maxRetries).toBe(12)
+  })
+
+  test("selects a long network budget without widening request server retries", () => {
+    const resolved = SessionRetry.resolve(undefined, "test")
+    expect(SessionRetry.budgetFor(resolved, { retryable: true, phase: "stream", scope: "live-step", kind: "network", message: "reset" }).mode).toBe("persistent")
+    expect(SessionRetry.budgetFor(resolved, { retryable: true, phase: "request", scope: "request", kind: "server", message: "503" }).maxRetries).toBe(4)
+    expect(SessionRetry.budgetFor(resolved, { retryable: true, phase: "request", scope: "request", kind: "network", message: "reset" }).maxRetries).toBe(4)
+    expect(resolved.unknown).toMatchObject({ maxRetries: 8, maxElapsedMs: 15 * 60_000 })
+    expect(resolved.request.jitterRatio).toBe(0.1)
+    expect(resolved.network.jitterRatio).toBe(0)
+  })
+
+  test("caps retry-after by the selected budget", () => {
+    const decision = { retryable: true, phase: "stream" as const, scope: "live-step" as const, kind: "rate_limit" as const, message: "429", retryAfterMs: 120000 }
+    expect(SessionRetry.retryDelay(1, decision, 0, 100, 5000)).toBe(5000)
+  })
+
+  test("parses retry hints with the declared units", () => {
+    const error = new MessageV2.APIError({ message: "Please retry in 1 millisecond", statusCode: 429, isRetryable: false }).toObject()
+    expect(decide(error).retryAfterMs).toBe(100)
+    expect(decide(new MessageV2.APIError({ message: "Please retry in 5s", statusCode: 429, isRetryable: false }).toObject()).retryAfterMs).toBe(5000)
+    expect(decide(new MessageV2.APIError({ message: "Please retry in 5m", statusCode: 429, isRetryable: false }).toObject()).retryAfterMs).toBe(5 * 60_000)
+    expect(decide(new MessageV2.APIError({ message: "Please retry in 1h", statusCode: 429, isRetryable: false }).toObject()).retryAfterMs).toBe(5 * 60_000)
+  })
+
+  test("rejects malformed retry-after-ms and floors zero delay", () => {
+    const zero = new MessageV2.APIError({ message: "429", statusCode: 429, isRetryable: false, responseHeaders: { "retry-after-ms": "0" } }).toObject()
+    const garbage = new MessageV2.APIError({ message: "429", statusCode: 429, isRetryable: false, responseHeaders: { "retry-after-ms": "10oops" } }).toObject()
+    const negative = new MessageV2.APIError({ message: "429", statusCode: 429, isRetryable: false, responseHeaders: { "retry-after-ms": "-10" } }).toObject()
+    expect(decide(zero).retryAfterMs).toBe(SessionRetry.RETRY_MIN_DELAY)
+    expect(decide(garbage).retryAfterMs).toBeUndefined()
+    expect(decide(negative).retryAfterMs).toBeUndefined()
+  })
+
+  test("does not retry deterministic 402, 501, or 505 responses", () => {
+    for (const statusCode of [402, 501, 505]) {
+      const error = new MessageV2.APIError({ message: "failure", statusCode, isRetryable: true }).toObject()
+      expect(decide(error)).toMatchObject({ retryable: false, kind: "terminal", statusCode })
+    }
+  })
+
+  test("only retries provider-specific compatible 404 responses", () => {
+    const generic = new MessageV2.APIError({ message: "missing", statusCode: 404, isRetryable: true }).toObject()
+    const compatible = new MessageV2.APIError({ message: "missing", statusCode: 404, isRetryable: true, metadata: { allow404Retry: "true" } }).toObject()
+    expect(decide(generic)).toMatchObject({ retryable: false, kind: "terminal" })
+    expect(decide(compatible)).toMatchObject({ retryable: true, kind: "unknown" })
+    expect(allowsModelNotFoundRetry({ api: { npm: "@ai-sdk/openai-compatible" } })).toBe(true)
+    expect(allowsModelNotFoundRetry({ api: { npm: "custom-provider" } })).toBe(false)
+    expect(allowsModelNotFoundRetry({})).toBe(false)
+  })
+
+  test("jitter never exceeds the configured delay ceiling", () => {
+    const decision = { retryable: true, phase: "stream" as const, scope: "live-step" as const, kind: "server" as const, message: "503" }
+    for (let i = 0; i < 100; i++) expect(SessionRetry.retryDelay(1, decision, 1, 100, 100)).toBeLessThanOrEqual(100)
+  })
+
+  test("uses the 5-to-60-second network backoff without jitter", () => {
+    const decision = { retryable: true, phase: "stream" as const, scope: "live-step" as const, kind: "network" as const, message: "connection failed" }
+    const resolved = SessionRetry.resolve(undefined, "test")
+    const budget = SessionRetry.budgetFor(resolved, decision)
+    expect([1, 2, 3, 4, 5].map((attempt) => SessionRetry.retryDelay(attempt, decision, budget.jitterRatio, budget.initialDelayMs, budget.maxDelayMs))).toStrictEqual([5000, 10000, 20000, 40000, 60000])
+  })
+
   test("recognizes GPT models by configured or API model ID", () => {
     expect(SessionRetry.isGptModel({ id: "gpt-5.2", api: { id: "gpt-5.2" } })).toBe(true)
     expect(SessionRetry.isGptModel({ id: "coding-model", api: { id: "gpt-5.2" } })).toBe(true)
@@ -151,7 +287,10 @@ describe("session.retry.retryable", () => {
     expect(
       SessionRetry.isGptServerOverloadedError({
         ...error,
-        data: { ...error.data, responseBody: JSON.stringify({ ...body, error: { ...body.error, code: "server_error" } }) },
+        data: {
+          ...error.data,
+          responseBody: JSON.stringify({ ...body, error: { ...body.error, code: "server_error" } }),
+        },
       }),
     ).toBe(false)
   })
@@ -178,6 +317,7 @@ describe("session.retry.retryable", () => {
             SessionRetry.policy({
               parse: (input) => input as MessageV2.APIError,
               silentRetry: SessionRetry.isGptServerOverloadedError,
+              initialDelayMs: 0,
               set: (info) => Effect.sync(() => visible.push(info.attempt)),
             }),
           ),
@@ -185,7 +325,7 @@ describe("session.retry.retryable", () => {
       ),
     ).rejects.toBe(error)
     expect(attempts).toBe(4)
-    expect(visible).toEqual([])
+    expect(visible).toEqual([2, 3])
   })
 
   test("retries OpenAI server_error stream events", () => {
@@ -475,7 +615,7 @@ describe("session.message-v2.fromError", () => {
       responseBody: '{"error":"boom"}',
       isRetryable: false,
     })
-    const result = MessageV2.fromError(error, { providerID: ProviderID.make("openai") }) as MessageV2.APIError
+    const result = MessageV2.fromError(error, { providerID: ProviderID.make("openai"), allow404Retry: true }) as MessageV2.APIError
     expect(result.data.isRetryable).toBe(true)
   })
 })
@@ -537,7 +677,18 @@ describe("isRetryableTransientError", () => {
   })
 
   test("ECONNRESET / EPIPE / ETIMEDOUT codes", () => {
-    for (const code of ["ECONNRESET", "EPIPE", "ETIMEDOUT"]) {
+    for (const code of [
+      "ECONNABORTED",
+      "ECONNREFUSED",
+      "ECONNRESET",
+      "EAI_AGAIN",
+      "EPIPE",
+      "ETIMEDOUT",
+      "UND_ERR_BODY_TIMEOUT",
+      "UND_ERR_CONNECT_TIMEOUT",
+      "UND_ERR_HEADERS_TIMEOUT",
+      "UND_ERR_SOCKET",
+    ]) {
       const err = Object.assign(new Error("network"), { code })
       expect(isRetryableTransientError(err)).toBe(true)
     }
@@ -574,6 +725,18 @@ describe("isRetryableTransientError", () => {
     const err400 = Object.assign(new Error("bad req"), { status: 400 })
     expect(isRetryableTransientError(err400)).toBe(false)
   })
+
+  test("follows a wrapped network cause", () => {
+    const cause = Object.assign(new Error("socket closed"), { code: "UND_ERR_SOCKET" })
+    const error = Object.assign(new TypeError("fetch failed"), { cause })
+    expect(isRetryableTransientError(error)).toBe(true)
+  })
+
+  test("does not retry an aborted request with a network cause", () => {
+    const cause = Object.assign(new Error("socket reset"), { code: "ECONNRESET" })
+    const error = Object.assign(new DOMException("The user aborted the request", "AbortError"), { cause })
+    expect(isRetryableTransientError(error)).toBe(false)
+  })
 })
 
 describe("retryable() with raw Error (Spec ③ P2 regression)", () => {
@@ -590,5 +753,102 @@ describe("retryable() with raw Error (Spec ③ P2 regression)", () => {
   test("non-transient raw Error returns undefined (existing path)", () => {
     const rawErr = new Error("some user mistake")
     expect(retryable(rawErr as unknown as never)).toBeUndefined()
+  })
+})
+
+describe("retry decision and coordinator budget", () => {
+ test("terminal abort wins over a retryable status in its cause chain", () => {
+    const cause = Object.assign(new Error("socket reset"), { code: "ECONNRESET" })
+    const error = Object.assign(new DOMException("user aborted", "AbortError"), { cause, status: 503 })
+   expect(decide(error)).toMatchObject({ retryable: false, kind: "terminal" })
+ })
+
+  test("treats an Undici transport abort as network-transient, not user abort", () => {
+    const error = Object.assign(new Error("request aborted by transport"), { name: "AbortError", code: "UND_ERR_ABORTED" })
+    expect(decide(error)).toMatchObject({ retryable: true, kind: "network" })
+  })
+
+  test("classifies quota exhaustion as terminal instead of a retry", () => {
+    const error = new MessageV2.APIError({
+      message: "Rate limit exceeded",
+      statusCode: 429,
+      isRetryable: false,
+      responseBody: JSON.stringify({ type: "FreeUsageLimitError" }),
+    }).toObject()
+    expect(decide(error)).toMatchObject({ retryable: false, kind: "terminal", uiMessage: SessionRetry.GO_UPSELL_MESSAGE })
+  })
+
+  test("terminal UI notice is emitted without scheduling a retry", async () => {
+    const error = new MessageV2.APIError({
+      message: "Rate limit exceeded",
+      statusCode: 429,
+      isRetryable: false,
+      responseBody: JSON.stringify({ type: "FreeUsageLimitError" }),
+    }).toObject()
+    let attempts = 0
+    let notices = 0
+    const schedule = SessionRetry.policy({
+      onTerminal: (decision) => decision.uiMessage ? Effect.sync(() => notices++) : Effect.void,
+      parse: (input) => input as ReturnType<NamedError["toObject"]>,
+      set: () => Effect.void,
+    })
+    await expect(
+      Effect.runPromise(Effect.suspend(() => { attempts++; return Effect.fail(error) }).pipe(Effect.retry(schedule))),
+    ).rejects.toBe(error)
+    expect(attempts).toBe(1)
+    expect(notices).toBe(1)
+  })
+
+  test("caps natural-language retry delays and recognizes body-only rate limits", () => {
+    const error = new MessageV2.APIError({
+      message: "Try again in 24 hours",
+      statusCode: 429,
+      isRetryable: false,
+      responseBody: JSON.stringify({ error: { code: "rate_limit_error", message: "Try again in 24 hours" } }),
+    }).toObject()
+    expect(decide(error)).toMatchObject({ retryable: true, kind: "rate_limit", retryAfterMs: 5 * 60_000 })
+  })
+
+  test("starts the retry deadline at the first failure, not policy construction", async () => {
+    const error = new MessageV2.APIError({ message: "server", statusCode: 503, isRetryable: false }).toObject()
+    let attempts = 0
+    const schedule = SessionRetry.policy({
+      maxElapsedMs: 10,
+      initialDelayMs: 0,
+      jitterRatio: 0,
+      parse: (input) => input as ReturnType<NamedError["toObject"]>,
+      set: () => Effect.void,
+    })
+    const result = await Effect.runPromise(Effect.suspend(() => Effect.gen(function* () {
+      attempts++
+      if (attempts === 1) { yield* Effect.sleep("20 millis"); return yield* Effect.fail(error) }
+      return "ok"
+    })).pipe(Effect.retry(schedule)))
+    expect(result).toBe("ok")
+    expect(attempts).toBe(2)
+  })
+
+  test("does not schedule a retry after the attempt crossed the side-effect boundary", async () => {
+    const error = new MessageV2.APIError({ message: "server", statusCode: 503, isRetryable: false }).toObject()
+    let attempts = 0
+    let retryEvents = 0
+    const schedule = SessionRetry.policy({
+      phase: "stream",
+      maxRetries: 5,
+      replaySafe: () => false,
+      parse: (input) => input as ReturnType<NamedError["toObject"]>,
+      set: () => Effect.sync(() => retryEvents++),
+    })
+
+    await expect(
+      Effect.runPromise(
+        Effect.suspend(() => {
+          attempts++
+          return Effect.fail(error)
+        }).pipe(Effect.retry(schedule)),
+      ),
+    ).rejects.toBe(error)
+    expect(attempts).toBe(1)
+    expect(retryEvents).toBe(0)
   })
 })

@@ -39,7 +39,6 @@ import { errorMessage } from "@/util/error"
 import { LspTool } from "./lsp"
 import * as Truncate from "./truncate"
 import { ApplyPatchTool } from "./apply_patch"
-import { ChangeDirectoryTool } from "./change-directory"
 import { Glob } from "@mimo-ai/shared/util/glob"
 import path from "path"
 import { pathToFileURL } from "url"
@@ -123,12 +122,16 @@ export interface Interface {
   readonly tools: (model: {
     providerID: ProviderID
     modelID: ModelID
+    apiModelID?: string
+    family?: string
     agent: Agent.Info
     harness?: HarnessMode
   }) => Effect.Effect<Tool.Def[]>
   readonly registered: (model: {
     providerID: ProviderID
     modelID: ModelID
+    apiModelID?: string
+    family?: string
     agent: Agent.Info
     harness?: HarnessMode
   }) => Effect.Effect<Tool.Def[]>
@@ -167,7 +170,6 @@ export const layer = Layer.effect(
     const edit = yield* EditTool
     const greptool = yield* GrepTool
     const patchtool = yield* ApplyPatchTool
-    const changedirtool = yield* ChangeDirectoryTool
     const skilltool = yield* SkillTool
     const skillsearch = yield* SkillSearchTool
     const mcptoolsearch = yield* McpToolSearchTool
@@ -266,7 +268,6 @@ export const layer = Layer.effect(
           skillsearch: Tool.init(skillsearch),
           mcptoolsearch: Tool.init(mcptoolsearch),
           patch: Tool.init(patchtool),
-          changedir: Tool.init(changedirtool),
           question: Tool.init(question),
           lsp: Tool.init(lsptool),
           planexit: Tool.init(planexit),
@@ -300,7 +301,6 @@ export const layer = Layer.effect(
             tool.skillsearch,
             tool.skill,
             tool.patch,
-            tool.changedir,
             ...(Flag.MIMOCODE_EXPERIMENTAL_LSP_TOOL ? [tool.lsp] : []),
             tool.planexit,
             tool.memory,
@@ -364,10 +364,12 @@ export const layer = Layer.effect(
     const available = Effect.fn("ToolRegistry.available")(function* (input: {
       providerID: ProviderID
       modelID: ModelID
+      apiModelID?: string
+      family?: string
       agent: Agent.Info
       harness?: HarnessMode
     }) {
-      const useGPTTools = usesGPTToolset(input.modelID, input.harness)
+      const useGPTTools = usesGPTToolset(input.modelID, input.harness, input.apiModelID, input.family)
       let filtered = (yield* all()).filter((tool) => {
         if (tool.id === ToolScriptTool.id) return useGPTTools || Flag.MIMOCODE_ENABLE_EXEC_TOOL
         if (tool.id === CodeSearchTool.id || tool.id === WebSearchTool.id) {
@@ -446,7 +448,14 @@ export const layer = Layer.effect(
       input ? available(input).pipe(Effect.map((result) => result.filtered)) : all()
 
     const definitions = Effect.fn("ToolRegistry.definitions")(function* (
-      input: { providerID: ProviderID; modelID: ModelID; agent: Agent.Info; harness?: HarnessMode },
+      input: {
+        providerID: ProviderID
+        modelID: ModelID
+        apiModelID?: string
+        family?: string
+        agent: Agent.Info
+        harness?: HarnessMode
+      },
       includeHidden: boolean,
     ) {
       const availableTools = yield* available(input)

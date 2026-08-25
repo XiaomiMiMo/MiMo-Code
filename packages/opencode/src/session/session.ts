@@ -286,7 +286,12 @@ export const Event = {
       sessionID: SessionID.zod,
       messageID: z.string(),
       attempt: z.number().int().min(1),
-      maxAttempts: z.number().int().min(1),
+      phaseAttempt: z.number().int().min(1),
+      // 0 means persistent retry with no fixed attempt cap.
+      maxAttempts: z.number().int().min(0),
+      phase: z.enum(["request", "stream"]),
+      kind: z.enum(["network", "rate_limit", "server", "stream", "unknown", "terminal"]),
+      scope: z.enum(["request", "live-step", "max-candidate", "max-judge"]),
       reason: z.string(),
       nextDelayMs: z.number().int().nonnegative(),
     }),

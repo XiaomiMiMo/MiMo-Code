@@ -2289,6 +2289,64 @@
         ]
       }
     },
+    "/experimental/worktree/auto": {
+      "post": {
+        "operationId": "worktree.auto",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "directory",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "workspace",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "summary": "Auto-create worktree on conflict",
+        "description": "Check for conflicts and auto-create a worktree if needed.",
+        "responses": {
+          "200": {
+            "description": "Worktree info or null",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/Worktree"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BadRequestError"
+                }
+              }
+            }
+          }
+        },
+        "x-codeSamples": [
+          {
+            "lang": "js",
+            "source": "import { createOpencodeClient } from \"@mimo-ai/sdk\n\nconst client = createOpencodeClient()\nawait client.worktree.auto({\n  ...\n})"
+          }
+        ]
+      }
+    },
     "/experimental/session": {
       "get": {
         "operationId": "experimental.session.list",
@@ -4010,7 +4068,18 @@
                     "$ref": "#/components/schemas/OutputFormat"
                   },
                   "system": {
+                    "description": "Additional system prompt selected by the session's first user query. Later values are ignored.",
                     "type": "string"
+                  },
+                  "systemMode": {
+                    "description": "Whether the selected system prompt appends to or replaces the agent prompt. Later values are ignored.",
+                    "type": "string",
+                    "enum": ["append", "replace-agent"]
+                  },
+                  "harness": {
+                    "description": "Harness mode selected by the session's first user query. Later values are ignored. GPT models always use the Codex harness. For other models, auto preserves model/process inference and explicit default forces the native tool schema.",
+                    "type": "string",
+                    "enum": ["auto", "codex", "default"]
                   },
                   "variant": {
                     "type": "string"
@@ -4398,6 +4467,196 @@
         ]
       }
     },
+    "/session/{sessionID}/recovery": {
+      "get": {
+        "operationId": "session.recovery",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "directory",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "workspace",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "sessionID",
+            "schema": {
+              "type": "string",
+              "pattern": "^ses.*"
+            },
+            "required": true
+          },
+          {
+            "in": "query",
+            "name": "agentID",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "summary": "List interrupted turn recovery candidates",
+        "description": "Return the latest incomplete assistant turn that can be resumed without creating a user message.",
+        "responses": {
+          "200": {
+            "description": "Recovery candidates",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "assistantMessageID": {
+                        "type": "string",
+                        "pattern": "^msg.*"
+                      },
+                      "parentMessageID": {
+                        "type": "string",
+                        "pattern": "^msg.*"
+                      },
+                      "created": {
+                        "type": "number"
+                      }
+                    },
+                    "required": ["assistantMessageID", "parentMessageID", "created"]
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BadRequestError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NotFoundError"
+                }
+              }
+            }
+          }
+        },
+        "x-codeSamples": [
+          {
+            "lang": "js",
+            "source": "import { createOpencodeClient } from \"@mimo-ai/sdk\n\nconst client = createOpencodeClient()\nawait client.session.recovery({\n  ...\n})"
+          }
+        ]
+      }
+    },
+    "/session/{sessionID}/turn/{assistantMessageID}/resume": {
+      "post": {
+        "operationId": "session.resume",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "directory",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "workspace",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "sessionID",
+            "schema": {
+              "type": "string",
+              "pattern": "^ses.*"
+            },
+            "required": true
+          },
+          {
+            "in": "path",
+            "name": "assistantMessageID",
+            "schema": {
+              "type": "string",
+              "pattern": "^msg.*"
+            },
+            "required": true
+          },
+          {
+            "in": "query",
+            "name": "agentID",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "task_id",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "summary": "Resume an interrupted turn",
+        "description": "Resume an incomplete assistant turn without creating another user message.",
+        "responses": {
+          "202": {
+            "description": "Resume accepted"
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BadRequestError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NotFoundError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict — session resource is busy",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConflictError"
+                }
+              }
+            }
+          }
+        },
+        "x-codeSamples": [
+          {
+            "lang": "js",
+            "source": "import { createOpencodeClient } from \"@mimo-ai/sdk\n\nconst client = createOpencodeClient()\nawait client.session.resume({\n  ...\n})"
+          }
+        ]
+      }
+    },
     "/session/{sessionID}/prompt_async": {
       "post": {
         "operationId": "session.prompt_async",
@@ -4513,7 +4772,18 @@
                     "$ref": "#/components/schemas/OutputFormat"
                   },
                   "system": {
+                    "description": "Additional system prompt selected by the session's first user query. Later values are ignored.",
                     "type": "string"
+                  },
+                  "systemMode": {
+                    "description": "Whether the selected system prompt appends to or replaces the agent prompt. Later values are ignored.",
+                    "type": "string",
+                    "enum": ["append", "replace-agent"]
+                  },
+                  "harness": {
+                    "description": "Harness mode selected by the session's first user query. Later values are ignored. GPT models always use the Codex harness. For other models, auto preserves model/process inference and explicit default forces the native tool schema.",
+                    "type": "string",
+                    "enum": ["auto", "codex", "default"]
                   },
                   "variant": {
                     "type": "string"
@@ -4650,6 +4920,20 @@
                   },
                   "variant": {
                     "type": "string"
+                  },
+                  "system": {
+                    "description": "Additional system prompt selected by the session's first user command. Later values are ignored.",
+                    "type": "string"
+                  },
+                  "systemMode": {
+                    "description": "Whether the selected system prompt appends to or replaces the agent prompt. Later values are ignored.",
+                    "type": "string",
+                    "enum": ["append", "replace-agent"]
+                  },
+                  "harness": {
+                    "description": "Harness mode selected by the session's first user command. Later values are ignored. GPT models always use the Codex harness. For other models, auto preserves model/process inference and explicit default forces the native tool schema.",
+                    "type": "string",
+                    "enum": ["auto", "codex", "default"]
                   },
                   "parts": {
                     "type": "array",
@@ -10621,10 +10905,27 @@
                 "minimum": 1,
                 "maximum": 9007199254740991
               },
-              "maxAttempts": {
+              "phaseAttempt": {
                 "type": "integer",
                 "minimum": 1,
                 "maximum": 9007199254740991
+              },
+              "maxAttempts": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              "phase": {
+                "type": "string",
+                "enum": ["request", "stream"]
+              },
+              "kind": {
+                "type": "string",
+                "enum": ["network", "rate_limit", "server", "stream", "unknown", "terminal"]
+              },
+              "scope": {
+                "type": "string",
+                "enum": ["request", "live-step", "max-candidate", "max-judge"]
               },
               "reason": {
                 "type": "string"
@@ -10635,7 +10936,18 @@
                 "maximum": 9007199254740991
               }
             },
-            "required": ["sessionID", "messageID", "attempt", "maxAttempts", "reason", "nextDelayMs"]
+            "required": [
+              "sessionID",
+              "messageID",
+              "attempt",
+              "phaseAttempt",
+              "maxAttempts",
+              "phase",
+              "kind",
+              "scope",
+              "reason",
+              "nextDelayMs"
+            ]
           }
         },
         "required": ["type", "properties"]
@@ -11101,14 +11413,38 @@
               "attempt": {
                 "type": "number"
               },
+              "phaseAttempt": {
+                "type": "number"
+              },
               "message": {
                 "type": "string"
               },
               "next": {
                 "type": "number"
+              },
+              "phase": {
+                "type": "string",
+                "enum": ["request", "stream"]
+              },
+              "scope": {
+                "type": "string",
+                "enum": ["request", "live-step", "max-candidate", "max-judge"]
               }
             },
             "required": ["type", "attempt", "message", "next"]
+          },
+          {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string",
+                "const": "notice"
+              },
+              "message": {
+                "type": "string"
+              }
+            },
+            "required": ["type", "message"]
           },
           {
             "type": "object",
@@ -11764,6 +12100,14 @@
           },
           "system": {
             "type": "string"
+          },
+          "systemMode": {
+            "type": "string",
+            "enum": ["append", "replace-agent"]
+          },
+          "harness": {
+            "type": "string",
+            "enum": ["auto", "codex", "default"]
           },
           "tools": {
             "type": "object",
@@ -13001,6 +13345,24 @@
           "permission": {
             "$ref": "#/components/schemas/PermissionRuleset"
           },
+          "prompt": {
+            "type": "object",
+            "properties": {
+              "system": {
+                "type": "string"
+              },
+              "systemMode": {
+                "default": "append",
+                "type": "string",
+                "enum": ["append", "replace-agent"]
+              },
+              "harness": {
+                "type": "string",
+                "enum": ["auto", "codex", "default"]
+              }
+            },
+            "required": ["harness"]
+          },
           "revert": {
             "type": "object",
             "properties": {
@@ -13523,6 +13885,31 @@
                       }
                     ]
                   },
+                  "prompt": {
+                    "anyOf": [
+                      {
+                        "type": "object",
+                        "properties": {
+                          "system": {
+                            "type": "string"
+                          },
+                          "systemMode": {
+                            "default": "append",
+                            "type": "string",
+                            "enum": ["append", "replace-agent"]
+                          },
+                          "harness": {
+                            "type": "string",
+                            "enum": ["auto", "codex", "default"]
+                          }
+                        },
+                        "required": ["harness"]
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
                   "revert": {
                     "anyOf": [
                       {
@@ -13564,6 +13951,7 @@
                   "title",
                   "version",
                   "permission",
+                  "prompt",
                   "revert"
                 ]
               }
@@ -14200,6 +14588,369 @@
             },
             "additionalProperties": {}
           },
+          "retry": {
+            "description": "Provider-specific overrides for retry budgets",
+            "type": "object",
+            "properties": {
+              "request": {
+                "type": "object",
+                "properties": {
+                  "mode": {
+                    "description": "bounded stops after maxRetries; persistent ignores the retry count and waits until cancellation or deadline",
+                    "type": "string",
+                    "enum": ["bounded", "persistent"]
+                  },
+                  "maxRetries": {
+                    "description": "Retries after the initial attempt; 0 disables retries and the maximum is 100",
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 100
+                  },
+                  "deadlineMs": {
+                    "description": "Wall-clock retry deadline in milliseconds; use noDeadline for an explicit unlimited deadline",
+                    "type": "integer",
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  "noDeadline": {
+                    "description": "Disable the wall-clock retry deadline explicitly",
+                    "type": "boolean"
+                  },
+                  "initialDelayMs": {
+                    "type": "integer",
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  "maxDelayMs": {
+                    "type": "integer",
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  "jitterRatio": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 1
+                  }
+                },
+                "not": {
+                  "required": ["deadlineMs", "noDeadline"]
+                }
+              },
+              "stream": {
+                "type": "object",
+                "properties": {
+                  "mode": {
+                    "description": "bounded stops after maxRetries; persistent ignores the retry count and waits until cancellation or deadline",
+                    "type": "string",
+                    "enum": ["bounded", "persistent"]
+                  },
+                  "maxRetries": {
+                    "description": "Retries after the initial attempt; 0 disables retries and the maximum is 100",
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 100
+                  },
+                  "deadlineMs": {
+                    "description": "Wall-clock retry deadline in milliseconds; use noDeadline for an explicit unlimited deadline",
+                    "type": "integer",
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  "noDeadline": {
+                    "description": "Disable the wall-clock retry deadline explicitly",
+                    "type": "boolean"
+                  },
+                  "initialDelayMs": {
+                    "type": "integer",
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  "maxDelayMs": {
+                    "type": "integer",
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  "jitterRatio": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 1
+                  }
+                },
+                "not": {
+                  "required": ["deadlineMs", "noDeadline"]
+                }
+              },
+              "maxCandidate": {
+                "type": "object",
+                "properties": {
+                  "mode": {
+                    "description": "bounded stops after maxRetries; persistent ignores the retry count and waits until cancellation or deadline",
+                    "type": "string",
+                    "enum": ["bounded", "persistent"]
+                  },
+                  "maxRetries": {
+                    "description": "Retries after the initial attempt; 0 disables retries and the maximum is 100",
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 100
+                  },
+                  "deadlineMs": {
+                    "description": "Wall-clock retry deadline in milliseconds; use noDeadline for an explicit unlimited deadline",
+                    "type": "integer",
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  "noDeadline": {
+                    "description": "Disable the wall-clock retry deadline explicitly",
+                    "type": "boolean"
+                  },
+                  "initialDelayMs": {
+                    "type": "integer",
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  "maxDelayMs": {
+                    "type": "integer",
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  "jitterRatio": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 1
+                  }
+                },
+                "not": {
+                  "required": ["deadlineMs", "noDeadline"]
+                }
+              },
+              "maxJudge": {
+                "type": "object",
+                "properties": {
+                  "mode": {
+                    "description": "bounded stops after maxRetries; persistent ignores the retry count and waits until cancellation or deadline",
+                    "type": "string",
+                    "enum": ["bounded", "persistent"]
+                  },
+                  "maxRetries": {
+                    "description": "Retries after the initial attempt; 0 disables retries and the maximum is 100",
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 100
+                  },
+                  "deadlineMs": {
+                    "description": "Wall-clock retry deadline in milliseconds; use noDeadline for an explicit unlimited deadline",
+                    "type": "integer",
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  "noDeadline": {
+                    "description": "Disable the wall-clock retry deadline explicitly",
+                    "type": "boolean"
+                  },
+                  "initialDelayMs": {
+                    "type": "integer",
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  "maxDelayMs": {
+                    "type": "integer",
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  "jitterRatio": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 1
+                  }
+                },
+                "not": {
+                  "required": ["deadlineMs", "noDeadline"]
+                }
+              },
+              "network": {
+                "type": "object",
+                "properties": {
+                  "mode": {
+                    "description": "bounded stops after maxRetries; persistent ignores the retry count and waits until cancellation or deadline",
+                    "type": "string",
+                    "enum": ["bounded", "persistent"]
+                  },
+                  "maxRetries": {
+                    "description": "Retries after the initial attempt; 0 disables retries and the maximum is 100",
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 100
+                  },
+                  "deadlineMs": {
+                    "description": "Wall-clock retry deadline in milliseconds; use noDeadline for an explicit unlimited deadline",
+                    "type": "integer",
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  "noDeadline": {
+                    "description": "Disable the wall-clock retry deadline explicitly",
+                    "type": "boolean"
+                  },
+                  "initialDelayMs": {
+                    "type": "integer",
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  "maxDelayMs": {
+                    "type": "integer",
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  "jitterRatio": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 1
+                  }
+                },
+                "not": {
+                  "required": ["deadlineMs", "noDeadline"]
+                }
+              },
+              "server": {
+                "type": "object",
+                "properties": {
+                  "mode": {
+                    "description": "bounded stops after maxRetries; persistent ignores the retry count and waits until cancellation or deadline",
+                    "type": "string",
+                    "enum": ["bounded", "persistent"]
+                  },
+                  "maxRetries": {
+                    "description": "Retries after the initial attempt; 0 disables retries and the maximum is 100",
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 100
+                  },
+                  "deadlineMs": {
+                    "description": "Wall-clock retry deadline in milliseconds; use noDeadline for an explicit unlimited deadline",
+                    "type": "integer",
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  "noDeadline": {
+                    "description": "Disable the wall-clock retry deadline explicitly",
+                    "type": "boolean"
+                  },
+                  "initialDelayMs": {
+                    "type": "integer",
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  "maxDelayMs": {
+                    "type": "integer",
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  "jitterRatio": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 1
+                  }
+                },
+                "not": {
+                  "required": ["deadlineMs", "noDeadline"]
+                }
+              },
+              "rateLimit": {
+                "type": "object",
+                "properties": {
+                  "mode": {
+                    "description": "bounded stops after maxRetries; persistent ignores the retry count and waits until cancellation or deadline",
+                    "type": "string",
+                    "enum": ["bounded", "persistent"]
+                  },
+                  "maxRetries": {
+                    "description": "Retries after the initial attempt; 0 disables retries and the maximum is 100",
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 100
+                  },
+                  "deadlineMs": {
+                    "description": "Wall-clock retry deadline in milliseconds; use noDeadline for an explicit unlimited deadline",
+                    "type": "integer",
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  "noDeadline": {
+                    "description": "Disable the wall-clock retry deadline explicitly",
+                    "type": "boolean"
+                  },
+                  "initialDelayMs": {
+                    "type": "integer",
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  "maxDelayMs": {
+                    "type": "integer",
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  "jitterRatio": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 1
+                  }
+                },
+                "not": {
+                  "required": ["deadlineMs", "noDeadline"]
+                }
+              },
+              "unknown": {
+                "type": "object",
+                "properties": {
+                  "mode": {
+                    "description": "bounded stops after maxRetries; persistent ignores the retry count and waits until cancellation or deadline",
+                    "type": "string",
+                    "enum": ["bounded", "persistent"]
+                  },
+                  "maxRetries": {
+                    "description": "Retries after the initial attempt; 0 disables retries and the maximum is 100",
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 100
+                  },
+                  "deadlineMs": {
+                    "description": "Wall-clock retry deadline in milliseconds; use noDeadline for an explicit unlimited deadline",
+                    "type": "integer",
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  "noDeadline": {
+                    "description": "Disable the wall-clock retry deadline explicitly",
+                    "type": "boolean"
+                  },
+                  "initialDelayMs": {
+                    "type": "integer",
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  "maxDelayMs": {
+                    "type": "integer",
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  "jitterRatio": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 1
+                  }
+                },
+                "not": {
+                  "required": ["deadlineMs", "noDeadline"]
+                }
+              },
+              "jitterRatio": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 1
+              }
+            }
+          },
           "models": {
             "type": "object",
             "propertyNames": {
@@ -14767,6 +15518,369 @@
               "$ref": "#/components/schemas/ProviderConfig"
             }
           },
+          "retry": {
+            "description": "Retry budgets for provider requests, streams, and long-running network recovery",
+            "type": "object",
+            "properties": {
+              "request": {
+                "type": "object",
+                "properties": {
+                  "mode": {
+                    "description": "bounded stops after maxRetries; persistent ignores the retry count and waits until cancellation or deadline",
+                    "type": "string",
+                    "enum": ["bounded", "persistent"]
+                  },
+                  "maxRetries": {
+                    "description": "Retries after the initial attempt; 0 disables retries and the maximum is 100",
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 100
+                  },
+                  "deadlineMs": {
+                    "description": "Wall-clock retry deadline in milliseconds; use noDeadline for an explicit unlimited deadline",
+                    "type": "integer",
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  "noDeadline": {
+                    "description": "Disable the wall-clock retry deadline explicitly",
+                    "type": "boolean"
+                  },
+                  "initialDelayMs": {
+                    "type": "integer",
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  "maxDelayMs": {
+                    "type": "integer",
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  "jitterRatio": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 1
+                  }
+                },
+                "not": {
+                  "required": ["deadlineMs", "noDeadline"]
+                }
+              },
+              "stream": {
+                "type": "object",
+                "properties": {
+                  "mode": {
+                    "description": "bounded stops after maxRetries; persistent ignores the retry count and waits until cancellation or deadline",
+                    "type": "string",
+                    "enum": ["bounded", "persistent"]
+                  },
+                  "maxRetries": {
+                    "description": "Retries after the initial attempt; 0 disables retries and the maximum is 100",
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 100
+                  },
+                  "deadlineMs": {
+                    "description": "Wall-clock retry deadline in milliseconds; use noDeadline for an explicit unlimited deadline",
+                    "type": "integer",
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  "noDeadline": {
+                    "description": "Disable the wall-clock retry deadline explicitly",
+                    "type": "boolean"
+                  },
+                  "initialDelayMs": {
+                    "type": "integer",
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  "maxDelayMs": {
+                    "type": "integer",
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  "jitterRatio": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 1
+                  }
+                },
+                "not": {
+                  "required": ["deadlineMs", "noDeadline"]
+                }
+              },
+              "maxCandidate": {
+                "type": "object",
+                "properties": {
+                  "mode": {
+                    "description": "bounded stops after maxRetries; persistent ignores the retry count and waits until cancellation or deadline",
+                    "type": "string",
+                    "enum": ["bounded", "persistent"]
+                  },
+                  "maxRetries": {
+                    "description": "Retries after the initial attempt; 0 disables retries and the maximum is 100",
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 100
+                  },
+                  "deadlineMs": {
+                    "description": "Wall-clock retry deadline in milliseconds; use noDeadline for an explicit unlimited deadline",
+                    "type": "integer",
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  "noDeadline": {
+                    "description": "Disable the wall-clock retry deadline explicitly",
+                    "type": "boolean"
+                  },
+                  "initialDelayMs": {
+                    "type": "integer",
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  "maxDelayMs": {
+                    "type": "integer",
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  "jitterRatio": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 1
+                  }
+                },
+                "not": {
+                  "required": ["deadlineMs", "noDeadline"]
+                }
+              },
+              "maxJudge": {
+                "type": "object",
+                "properties": {
+                  "mode": {
+                    "description": "bounded stops after maxRetries; persistent ignores the retry count and waits until cancellation or deadline",
+                    "type": "string",
+                    "enum": ["bounded", "persistent"]
+                  },
+                  "maxRetries": {
+                    "description": "Retries after the initial attempt; 0 disables retries and the maximum is 100",
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 100
+                  },
+                  "deadlineMs": {
+                    "description": "Wall-clock retry deadline in milliseconds; use noDeadline for an explicit unlimited deadline",
+                    "type": "integer",
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  "noDeadline": {
+                    "description": "Disable the wall-clock retry deadline explicitly",
+                    "type": "boolean"
+                  },
+                  "initialDelayMs": {
+                    "type": "integer",
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  "maxDelayMs": {
+                    "type": "integer",
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  "jitterRatio": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 1
+                  }
+                },
+                "not": {
+                  "required": ["deadlineMs", "noDeadline"]
+                }
+              },
+              "network": {
+                "type": "object",
+                "properties": {
+                  "mode": {
+                    "description": "bounded stops after maxRetries; persistent ignores the retry count and waits until cancellation or deadline",
+                    "type": "string",
+                    "enum": ["bounded", "persistent"]
+                  },
+                  "maxRetries": {
+                    "description": "Retries after the initial attempt; 0 disables retries and the maximum is 100",
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 100
+                  },
+                  "deadlineMs": {
+                    "description": "Wall-clock retry deadline in milliseconds; use noDeadline for an explicit unlimited deadline",
+                    "type": "integer",
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  "noDeadline": {
+                    "description": "Disable the wall-clock retry deadline explicitly",
+                    "type": "boolean"
+                  },
+                  "initialDelayMs": {
+                    "type": "integer",
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  "maxDelayMs": {
+                    "type": "integer",
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  "jitterRatio": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 1
+                  }
+                },
+                "not": {
+                  "required": ["deadlineMs", "noDeadline"]
+                }
+              },
+              "server": {
+                "type": "object",
+                "properties": {
+                  "mode": {
+                    "description": "bounded stops after maxRetries; persistent ignores the retry count and waits until cancellation or deadline",
+                    "type": "string",
+                    "enum": ["bounded", "persistent"]
+                  },
+                  "maxRetries": {
+                    "description": "Retries after the initial attempt; 0 disables retries and the maximum is 100",
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 100
+                  },
+                  "deadlineMs": {
+                    "description": "Wall-clock retry deadline in milliseconds; use noDeadline for an explicit unlimited deadline",
+                    "type": "integer",
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  "noDeadline": {
+                    "description": "Disable the wall-clock retry deadline explicitly",
+                    "type": "boolean"
+                  },
+                  "initialDelayMs": {
+                    "type": "integer",
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  "maxDelayMs": {
+                    "type": "integer",
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  "jitterRatio": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 1
+                  }
+                },
+                "not": {
+                  "required": ["deadlineMs", "noDeadline"]
+                }
+              },
+              "rateLimit": {
+                "type": "object",
+                "properties": {
+                  "mode": {
+                    "description": "bounded stops after maxRetries; persistent ignores the retry count and waits until cancellation or deadline",
+                    "type": "string",
+                    "enum": ["bounded", "persistent"]
+                  },
+                  "maxRetries": {
+                    "description": "Retries after the initial attempt; 0 disables retries and the maximum is 100",
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 100
+                  },
+                  "deadlineMs": {
+                    "description": "Wall-clock retry deadline in milliseconds; use noDeadline for an explicit unlimited deadline",
+                    "type": "integer",
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  "noDeadline": {
+                    "description": "Disable the wall-clock retry deadline explicitly",
+                    "type": "boolean"
+                  },
+                  "initialDelayMs": {
+                    "type": "integer",
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  "maxDelayMs": {
+                    "type": "integer",
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  "jitterRatio": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 1
+                  }
+                },
+                "not": {
+                  "required": ["deadlineMs", "noDeadline"]
+                }
+              },
+              "unknown": {
+                "type": "object",
+                "properties": {
+                  "mode": {
+                    "description": "bounded stops after maxRetries; persistent ignores the retry count and waits until cancellation or deadline",
+                    "type": "string",
+                    "enum": ["bounded", "persistent"]
+                  },
+                  "maxRetries": {
+                    "description": "Retries after the initial attempt; 0 disables retries and the maximum is 100",
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 100
+                  },
+                  "deadlineMs": {
+                    "description": "Wall-clock retry deadline in milliseconds; use noDeadline for an explicit unlimited deadline",
+                    "type": "integer",
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  "noDeadline": {
+                    "description": "Disable the wall-clock retry deadline explicitly",
+                    "type": "boolean"
+                  },
+                  "initialDelayMs": {
+                    "type": "integer",
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  "maxDelayMs": {
+                    "type": "integer",
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  "jitterRatio": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 1
+                  }
+                },
+                "not": {
+                  "required": ["deadlineMs", "noDeadline"]
+                }
+              },
+              "jitterRatio": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 1
+              }
+            }
+          },
           "mcp": {
             "description": "MCP (Model Context Protocol) server configurations",
             "type": "object",
@@ -14981,7 +16095,7 @@
                 "maximum": 9007199254740991
               },
               "reserved": {
-                "description": "Token buffer for compaction. Leaves enough window to avoid overflow during compaction.",
+                "description": "Token buffer for compaction. Leaves enough window to avoid overflow during compaction (default: up to 33000, capped by the model's maximum output).",
                 "type": "integer",
                 "minimum": 0,
                 "maximum": 9007199254740991
@@ -15945,6 +17059,24 @@
           },
           "permission": {
             "$ref": "#/components/schemas/PermissionRuleset"
+          },
+          "prompt": {
+            "type": "object",
+            "properties": {
+              "system": {
+                "type": "string"
+              },
+              "systemMode": {
+                "default": "append",
+                "type": "string",
+                "enum": ["append", "replace-agent"]
+              },
+              "harness": {
+                "type": "string",
+                "enum": ["auto", "codex", "default"]
+              }
+            },
+            "required": ["harness"]
           },
           "revert": {
             "type": "object",

@@ -16,6 +16,8 @@ export const toolScriptRegistry: {
     | ((input?: {
         providerID: ProviderID
         modelID: ModelID
+        apiModelID?: string
+        family?: string
         agent: Agent.Info
         harness?: HarnessMode
       }) => Effect.Effect<Tool.Def[]>)

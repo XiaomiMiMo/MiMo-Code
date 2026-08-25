@@ -70,6 +70,7 @@ const stubPrompt = Layer.succeed(
       }),
     recovery: () => Effect.succeed([]),
     resume: () => Effect.die("resume not expected in keepalive test"),
+    resumeBackground: () => Effect.die("resumeBackground not expected in keepalive test"),
     loop: () => Effect.die("loop not expected in keepalive test"),
     shell: () => Effect.die("shell not expected in keepalive test"),
     command: () => Effect.die("command not expected in keepalive test"),
