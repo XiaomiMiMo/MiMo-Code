@@ -4,6 +4,7 @@ import z from "zod"
 import { ProviderID, ModelID } from "@/provider/schema"
 import { ToolRegistry } from "@/tool"
 import { Worktree } from "@/worktree"
+import { checkConflict, type ConflictResult } from "@/tool/conflict-detection"
 import { Instance } from "@/project/instance"
 import { Project } from "@/project"
 import { MCP } from "@/mcp"
@@ -321,6 +322,26 @@ export const ExperimentalRoutes = lazy(() =>
           const svc = yield* Worktree.Service
           yield* svc.reset(body)
           return true
+        }),
+    )
+    .post(
+      "/worktree/auto",
+      describeRoute({
+        summary: "Auto-create worktree on conflict",
+        description: "Check for conflicts and auto-create a worktree if needed.",
+        operationId: "worktree.auto",
+        responses: {
+          200: { description: "Worktree info or null", content: { "application/json": { schema: resolver(z.union([Worktree.Info, z.null()])) } } },
+          ...errors(400),
+        },
+      }),
+      async (c) =>
+        jsonRequest("ExperimentalRoutes.worktree.auto", c, function* () {
+          const body = yield* Effect.promise(() => c.req.json().catch(() => ({})))
+          const sessionID = typeof body?.sessionID === "string" ? body.sessionID : undefined
+          const conflict = (yield* Effect.promise(() => checkConflict(Instance.directory, sessionID))) as ConflictResult
+          if (!conflict.hasConflict) return null
+          return yield* (yield* Worktree.Service).create()
         }),
     )
     .get(

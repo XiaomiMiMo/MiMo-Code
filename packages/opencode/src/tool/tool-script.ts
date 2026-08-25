@@ -55,11 +55,12 @@ const ExecCommandParameters = z.object({
   workdir: z
     .string()
     .optional()
-    .describe("Working directory for the command. Defaults to the current session directory."),
+    .describe("Absolute working directory when provided."),
+  description: z.string().optional().describe("Short description of what the command does when provided."),
 })
 
 const EXEC_COMMAND_DESCRIPTION =
-  "Runs a shell command through the permission-gated bash executor. `yield_time_ms` and `max_output_tokens` default to 10000. Output exceeding the token budget is saved to tool storage."
+  "Runs a shell command through the permission-gated bash executor. Use an absolute `workdir` and concise `description` when provided. `yield_time_ms` and `max_output_tokens` default to 10000. Output exceeding the token budget is saved to tool storage."
 
 function levenshtein(a: string, b: string): number {
   const distances = Array.from({ length: a.length + 1 }, (_, index) =>
@@ -78,7 +79,7 @@ function levenshtein(a: string, b: string): number {
 }
 
 function execCommandArgs(args: unknown) {
-  const keys = ["cmd", "yield_time_ms", "max_output_tokens", "workdir"]
+  const keys = ["cmd", "yield_time_ms", "max_output_tokens", "workdir", "description"]
   const repaired =
     args && typeof args === "object" && !Array.isArray(args)
       ? Object.fromEntries(
@@ -103,7 +104,10 @@ function execCommandArgs(args: unknown) {
     timeout: input.yield_time_ms ?? EXEC_COMMAND_DEFAULT_YIELD_TIME_MS,
     max_output_tokens: input.max_output_tokens ?? EXEC_COMMAND_DEFAULT_MAX_OUTPUT_TOKENS,
     workdir: input.workdir,
-    description: input.cmd.length > 80 ? `${input.cmd.slice(0, 77)}...` : input.cmd,
+    description: (() => {
+      const description = input.description ?? input.cmd
+      return description.length > 80 ? `${description.slice(0, 77)}...` : description
+    })(),
   }
 }
 

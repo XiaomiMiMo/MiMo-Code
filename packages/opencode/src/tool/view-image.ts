@@ -11,7 +11,7 @@ import * as Tool from "./tool"
 import DESCRIPTION from "./view-image.txt"
 
 const parameters = z.object({
-  path: z.string().describe("Local filesystem path to an image file."),
+  path: z.string().describe("Path to a local image file. Prefer an absolute path."),
   detail: z
     .enum(["high", "original"])
     .optional()

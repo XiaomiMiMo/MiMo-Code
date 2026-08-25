@@ -106,10 +106,10 @@ Update only affected sections, bump `updated:`, preserve anchors, and keep only 
 
 Never begin implementation on `main` or `master` without explicit user consent.
 
-1. Compare `git rev-parse --git-dir` with `git rev-parse --git-common-dir`. If they differ, use the current linked worktree; do not nest another. A non-empty `git rev-parse --show-superproject-working-tree` indicates a submodule, not a linked worktree.
-2. Create a linked worktree at `.worktrees/<slug>` by default. Run `git check-ignore -q "$path"`; if it is not ignored, write `*` to `.worktrees/.gitignore`. Then run `git worktree add "$path" -b "$branch"`.
-3. Once the worktree path is resolved, use MiMoCode's `change_directory` tool to switch into it and continue the workflow there.
-4. Install dependencies per repository instructions. Prefer lockfile-frozen, hardlink-friendly modes (`bun ci`, `uv sync --frozen`) over commands that mutate the lockfile. Confirm the toolchain is usable before continuing.
+- Compare `git rev-parse --git-dir` with `git rev-parse --git-common-dir`. If they differ, use the current linked worktree; do not nest another. A non-empty `git rev-parse --show-superproject-working-tree` indicates a submodule, not a linked worktree.
+- Create a linked worktree at `.worktrees/<slug>` by default. Run `git check-ignore -q "$path"`; if it is not ignored, write `*` to `.worktrees/.gitignore`. Then run `git worktree add "$path" -b "$branch"`.
+- After creating the worktree, pass its absolute path as `workdir` for every subsequent dependency, implementation, verification, and review command.
+- Install dependencies per repository instructions. Prefer lockfile-frozen, hardlink-friendly modes (`bun ci`, `uv sync --frozen`) over commands that mutate the lockfile. Confirm the toolchain is usable before continuing.
 
 ## Implement
 
@@ -149,9 +149,9 @@ Use a reviewer model at least as capable as the strongest implementer it reviews
 
 Require separate conclusions for:
 
-1. **Spec compliance** — every acceptance criterion is met and points to evidence in the diff or reviewer-observed command output.
-2. **Correctness** — logic, boundaries, error handling, regressions, and tests are sound, including issues outside the written spec.
-3. **Codebase consistency** — naming, structure, and local conventions match surrounding code.
+- **Spec compliance** — every acceptance criterion is met and points to evidence in the diff or reviewer-observed command output.
+- **Correctness** — logic, boundaries, error handling, regressions, and tests are sound, including issues outside the written spec.
+- **Codebase consistency** — naming, structure, and local conventions match surrounding code.
 
 Classify unmet or unverifiable acceptance criteria and correctness bugs as critical. Fix critical findings, re-verify, and re-review affected areas. Reject incorrect findings with technical evidence. If the fix-and-re-review loop stops converging — repeated findings on the same area, or fixes that introduce new criticals — stop looping and report the impasse with the remaining findings instead of forcing a pass.
 

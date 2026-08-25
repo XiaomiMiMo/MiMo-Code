@@ -2,7 +2,7 @@ Runs a shell command and returns its output, with an optional timeout measured i
 
 Environment: OS: ${os}, Shell: ${shell}
 
-Commands run in the current working directory by default. Set the `workdir` parameter when a command belongs in another directory; do not use `cd <directory> && <command>` unless `workdir` cannot express the operation.
+When passing `workdir`, use an absolute path instead of `cd <directory> && <command>`.
 
 IMPORTANT: In this GPT tool set, the dedicated `read`, `write`, and `edit` tools are unavailable. Use this tool to inspect, search, and navigate files. Use `apply_patch` to create, update, move, or delete project text files. Do not attempt to call unavailable tools.
 
