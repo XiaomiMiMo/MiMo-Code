@@ -971,7 +971,29 @@ export const layer = Layer.effect(
         }
 
         if (Flag.MIMOCODE_PERMISSION) {
-          result.permission = mergeDeep(result.permission ?? {}, JSON.parse(Flag.MIMOCODE_PERMISSION))
+          const raw = Flag.MIMOCODE_PERMISSION
+          let parsed: Record<string, unknown>
+          try {
+            parsed = JSON.parse(raw)
+          } catch {
+            // Tolerate bare action words like "allow" / "ask" / "deny" which
+            // are the only documented permission actions.  A bare word is not
+            // valid JSON, but it is a common mistake (e.g. `setx MIMOCODE_PERMISSION allow`).
+            const bare = raw.trim().toLowerCase()
+            if (bare === "allow" || bare === "ask" || bare === "deny") {
+              parsed = { "*": bare } as ConfigPermission.Info
+              console.warn(
+                `[config] MIMOCODE_PERMISSION="${raw}" is not valid JSON — treating as { "*": "${bare}" }. ` +
+                `Use JSON syntax for future: MIMOCODE_PERMISSION='"${bare}"'`,
+              )
+            } else {
+              throw new Error(
+                `MIMOCODE_PERMISSION must be valid JSON (e.g. '"allow"') — got bare word '${raw}'. ` +
+                `Hint: wrap the value in quotes: MIMOCODE_PERMISSION='"${raw}"'`,
+              )
+            }
+          }
+          result.permission = mergeDeep(result.permission ?? {}, parsed)
         }
 
         if (result.tools) {
