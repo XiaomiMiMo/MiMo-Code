@@ -35,6 +35,7 @@ describe("title helpers", () => {
 
   test("rejects tool-call shaped generated titles", () => {
     expect(sanitizeGeneratedTitle("<tool_call>\n{\"name\":\"read\",\"arguments\":{}}\n</tool_call>")).toBeUndefined()
+    expect(sanitizeGeneratedTitle("好的，我来先理解这个问题：点击项目会改变顺序。<tool_call>")).toBeUndefined()
     expect(sanitizeGeneratedTitle("tool_call: read {path: /tmp/a}")).toBeUndefined()
     expect(sanitizeGeneratedTitle("<function_call>read({path: '/tmp/a'})</function_call>")).toBeUndefined()
     expect(sanitizeGeneratedTitle("Analyze title generation")).toBe("Analyze title generation")
