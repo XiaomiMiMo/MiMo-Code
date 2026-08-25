@@ -39,6 +39,11 @@ describe("title helpers", () => {
     expect(sanitizeGeneratedTitle("<function_call>read({path: '/tmp/a'})</function_call>")).toBeUndefined()
     expect(sanitizeGeneratedTitle("Analyze title generation")).toBe("Analyze title generation")
   })
+
+  test("removes thinking blocks before accepting a title", () => {
+    expect(sanitizeGeneratedTitle("<think>内部推理，不应成为标题</think>\n修复会话标题生成")).toBe("修复会话标题生成")
+    expect(sanitizeGeneratedTitle("<think>只有推理，没有最终标题</think>")).toBeUndefined()
+  })
 })
 
 function run<A, E>(fx: Effect.Effect<A, E, SessionPrompt.Service | Session.Service>) {
