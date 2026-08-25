@@ -17,6 +17,7 @@ import { createStore, produce, unwrap } from "solid-js/store"
 import { useKeybind } from "@tui/context/keybind"
 import { usePromptHistory, type PromptInfo } from "./history"
 import { assign, expandPlaceholders } from "./part"
+import { PasteBurstGuard } from "./paste-burst"
 import { usePromptStash } from "./stash"
 import { clampStatusMessage } from "./footer"
 import { DialogStash } from "../dialog-stash"
@@ -1027,8 +1028,19 @@ export function Prompt(props: PromptProps) {
   // deferred onSubmit). This lock prevents the deferred call from re-entering
   // while a dialog or async session-creation is in progress.
   let submitLock = false
+  // Terminals without bracketed paste deliver a paste as a rapid key stream,
+  // so every newline in the pasted text fires submit — one message per line
+  // (#2186). The guard tells a paste burst from human typing by timing.
+  const pasteBurst = new PasteBurstGuard()
   async function submit() {
     if (submitLock) return false
+    if (!pasteBurst.canSubmit()) {
+      // Part of a pasted multi-line text: keep the line in the editor as a
+      // literal newline instead of sending it. The whole paste accumulates in
+      // the input and the user submits it themselves.
+      if (input && !input.isDestroyed) input.insertText("\n")
+      return false
+    }
     setGhost("")
     // IME: double-defer may fire before onContentChange flushes the last
     // composed character (e.g. Korean hangul) to the store, so read
@@ -1650,6 +1662,7 @@ export function Prompt(props: PromptProps) {
                   e.preventDefault()
                   return
                 }
+                pasteBurst.key(e.name)
                 // Handle Ctrl+V for terminals that forward it to the app as a raw
                 // keypress (common on macOS/Linux). The textarea has no built-in
                 // paste action, so without this nothing gets inserted. Terminals
