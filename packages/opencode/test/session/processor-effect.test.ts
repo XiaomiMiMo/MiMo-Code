@@ -570,7 +570,7 @@ it.live("session.processor effect tests publish retry status updates", () =>
         const msg = yield* assistant(chat.id, parent.id, path.resolve(dir))
         const mdl = yield* provider.getModel(ref.providerID, ref.modelID)
         const states: number[] = []
-        const retryEvents: Array<{ attempt: number; maxAttempts: number; phase: string; kind: string; scope: string }> = []
+        const retryEvents: Array<{ attempt: number; phaseAttempt: number; maxAttempts: number; phase: string; kind: string; scope: string }> = []
         const off = yield* bus.subscribeCallback(SessionStatus.Event.Status, (evt) => {
           if (evt.properties.sessionID !== chat.id) return
           if (evt.properties.status.type === "retry") states.push(evt.properties.status.attempt)
@@ -579,6 +579,7 @@ it.live("session.processor effect tests publish retry status updates", () =>
           if (evt.properties.sessionID !== chat.id) return
           retryEvents.push({
             attempt: evt.properties.attempt,
+            phaseAttempt: evt.properties.phaseAttempt,
             maxAttempts: evt.properties.maxAttempts,
             phase: evt.properties.phase,
             kind: evt.properties.kind,
@@ -613,8 +614,15 @@ it.live("session.processor effect tests publish retry status updates", () =>
 
         expect(value).toBe("continue")
         expect(yield* llm.calls).toBe(3)
-        expect(states).toStrictEqual([1])
-        expect(retryEvents).toStrictEqual([{ attempt: 1, maxAttempts: 8, phase: "stream", kind: "server", scope: "live-step" }])
+        expect(states).toStrictEqual([1, 2])
+        expect(retryEvents).toContainEqual({
+          attempt: 2,
+          phaseAttempt: 1,
+          maxAttempts: 8,
+          phase: "stream",
+          kind: "server",
+          scope: "live-step",
+        })
       }),
     {
       git: true,

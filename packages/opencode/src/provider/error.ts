@@ -148,8 +148,8 @@ const MODEL_NOT_FOUND_RETRY_ADAPTERS = new Set([
   "@llmgateway/ai-sdk-provider",
 ])
 
-export function allowsModelNotFoundRetry(model: { api: { npm: string } }): boolean {
-  return MODEL_NOT_FOUND_RETRY_ADAPTERS.has(model.api.npm)
+export function allowsModelNotFoundRetry(model: { api?: { npm?: string } }): boolean {
+  return typeof model.api?.npm === "string" && MODEL_NOT_FOUND_RETRY_ADAPTERS.has(model.api.npm)
 }
 
 // Providers not reliably handled in this function:

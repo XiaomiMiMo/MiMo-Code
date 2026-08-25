@@ -245,6 +245,7 @@ describe("session.retry.retryable", () => {
     expect(decide(compatible)).toMatchObject({ retryable: true, kind: "unknown" })
     expect(allowsModelNotFoundRetry({ api: { npm: "@ai-sdk/openai-compatible" } })).toBe(true)
     expect(allowsModelNotFoundRetry({ api: { npm: "custom-provider" } })).toBe(false)
+    expect(allowsModelNotFoundRetry({})).toBe(false)
   })
 
   test("jitter never exceeds the configured delay ceiling", () => {
