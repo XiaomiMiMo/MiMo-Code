@@ -2,6 +2,7 @@ import { Context, Effect, Layer } from "effect"
 import { Scheduler, defaultLayer as SchedulerDefaultLayer, type LoopEndedEvent } from "@/cron/scheduler"
 import type { CronTask } from "@/cron/cron-task"
 import { resolveAtFireTime, isSentinel, resetOnCompaction as resetCronSentinelOnCompaction } from "@/cron/sentinel"
+import { fireTargetSessionId } from "@/cron/cron-task"
 import { listLoopStates, deleteLoopState, resetStrikes, incrementStrikes, getStrikes } from "@/cron/loop-state"
 import { injectScheduledPrompt } from "./prompt"
 import { SessionStatus } from "./status"
@@ -211,6 +212,11 @@ export const layer = Layer.effect(
         if (!handle.gotFirstEvent) handle.loading = initial.type === "busy"
 
         const onFire = (task: CronTask) => {
+          // The scheduler singleton's onFire closes over the FIRST mounter's
+          // sessionID, but the task records who created it. Route the fire to
+          // the creator so a job made by session B never lands in session A's
+          // conversation just because A mounted the scheduler first (#2198).
+          const targetSessionId = fireTargetSessionId(task, sessionID) as typeof sessionID
           // Detached fire-and-forget on the host runtime. We cannot yield* here
           // because the setInterval tick escapes the Effect scope; the host's
           // global runtime materializes the prompt fan-out (same pattern as
@@ -224,7 +230,7 @@ export const layer = Layer.effect(
               AppRuntime.runPromise(
                 Effect.gen(function* () {
                   const resolved = yield* Effect.tryPromise(() =>
-                    resolveAtFireTime(task.prompt, workspaceRoot, sessionID),
+                    resolveAtFireTime(task.prompt, workspaceRoot, targetSessionId),
                   ).pipe(Effect.orElseSucceed(() => task.prompt))
                   // Prepend an ISO fire timestamp so both the user (TUI) and the
                   // model see when each fire happened. Recurring fires especially
@@ -234,7 +240,7 @@ export const layer = Layer.effect(
                   const firedAtISO = new Date().toISOString().replace(/\.\d{3}Z$/, "Z")
                   const value = `[cron fire @ ${firedAtISO}] ${resolved}`
                   yield* injectScheduledPrompt({
-                    sessionID,
+                    sessionID: targetSessionId,
                     value,
                     origin: {
                       kind: "cron",
