@@ -2,7 +2,7 @@ Executes a given bash command in a persistent shell session with an optional tim
 
 Be aware: OS: ${os}, Shell: ${shell}
 
-When passing `workdir`, use an absolute path instead of `cd <directory> && <command>`.
+`workdir` defaults to the current session directory. If provided, prefer an absolute path. Avoid using `cd <directory> && <command>` to select the initial directory.
 
 IMPORTANT: This tool is for terminal operations like git, npm, docker, etc. DO NOT use it for file operations (reading, writing, editing, searching, finding files) - use the specialized tools for this instead.
 

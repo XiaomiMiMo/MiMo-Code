@@ -108,7 +108,7 @@ Never begin implementation on `main` or `master` without explicit user consent.
 
 - Compare `git rev-parse --git-dir` with `git rev-parse --git-common-dir`. If they differ, use the current linked worktree; do not nest another. A non-empty `git rev-parse --show-superproject-working-tree` indicates a submodule, not a linked worktree.
 - Create a linked worktree at `.worktrees/<slug>` by default. Run `git check-ignore -q "$path"`; if it is not ignored, write `*` to `.worktrees/.gitignore`. Then run `git worktree add "$path" -b "$branch"`.
-- After creating the worktree, pass its absolute path as `workdir` for every subsequent dependency, implementation, verification, and review command.
+- When targeting the worktree with a command, pass its absolute path as `workdir`; omitted `workdir` uses the current session directory.
 - Install dependencies per repository instructions. Prefer lockfile-frozen, hardlink-friendly modes (`bun ci`, `uv sync --frozen`) over commands that mutate the lockfile. Confirm the toolchain is usable before continuing.
 
 ## Implement

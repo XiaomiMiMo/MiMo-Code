@@ -55,12 +55,12 @@ const ExecCommandParameters = z.object({
   workdir: z
     .string()
     .optional()
-    .describe("Absolute working directory when provided."),
+    .describe("Working directory for the command."),
   description: z.string().optional().describe("Short description of what the command does when provided."),
 })
 
 const EXEC_COMMAND_DESCRIPTION =
-  "Runs a shell command through the permission-gated bash executor. Use an absolute `workdir` and concise `description` when provided. `yield_time_ms` and `max_output_tokens` default to 10000. Output exceeding the token budget is saved to tool storage."
+  "Runs a shell command through the permission-gated bash executor."
 
 function levenshtein(a: string, b: string): number {
   const distances = Array.from({ length: a.length + 1 }, (_, index) =>

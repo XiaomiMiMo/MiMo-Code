@@ -13,7 +13,7 @@ const EditEntry = z.object({
 })
 
 const Parameters = z.object({
-  file_path: z.string().describe("The absolute path to the file to modify"),
+  file_path: z.string().describe("Path to the file to modify"),
   edits: z.array(EditEntry).describe("Array of edit operations to perform sequentially on the file"),
 })
 
