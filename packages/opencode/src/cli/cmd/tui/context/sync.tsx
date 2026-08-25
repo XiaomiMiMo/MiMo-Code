@@ -243,9 +243,6 @@ export const { use: useSync, provider: SyncProvider } = createSimpleContext({
       session_diff: {
         [sessionID: string]: Snapshot.FileDiff[]
       }
-      session_cwd: {
-        [sessionID: string]: string
-      }
       todo: {
         [sessionID: string]: Todo[]
       }
@@ -305,7 +302,6 @@ export const { use: useSync, provider: SyncProvider } = createSimpleContext({
       session_recovery_active: {},
       session_goal: {},
       session_diff: {},
-      session_cwd: {},
       todo: {},
       task: {},
       message: {},
@@ -486,10 +482,6 @@ export const { use: useSync, provider: SyncProvider } = createSimpleContext({
           setStore("session_diff", event.properties.sessionID, event.properties.diff)
           break
 
-        case "session.cwd":
-          setStore("session_cwd", event.properties.sessionID, event.properties.cwd)
-          break
-
         case "session.deleted": {
           const sid = event.properties.info.id
           const result = Binary.search(store.session, sid, (s) => s.id)
@@ -512,7 +504,6 @@ export const { use: useSync, provider: SyncProvider } = createSimpleContext({
               delete s.session_recovery_active[sid]
               delete s.session_goal[sid]
               delete s.session_diff[sid]
-              delete s.session_cwd[sid]
               delete s.todo[sid]
               delete s.task[sid]
               delete s.actor[sid]

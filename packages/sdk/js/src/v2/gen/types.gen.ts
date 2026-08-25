@@ -730,14 +730,6 @@ export type EventQuestionRejected = {
   properties: QuestionRejected
 }
 
-export type EventSessionCwd = {
-  type: "session.cwd"
-  properties: {
-    sessionID: string
-    cwd: string
-  }
-}
-
 export type EventBashInteractiveAsked = {
   type: "bash.interactive.asked"
   properties: {
@@ -1618,7 +1610,6 @@ export type GlobalEvent = {
     | EventQuestionAsked
     | EventQuestionReplied
     | EventQuestionRejected
-    | EventSessionCwd
     | EventBashInteractiveAsked
     | EventBashInteractiveReplied
     | EventSessionStatus
@@ -2879,7 +2870,6 @@ export type Event =
   | EventQuestionAsked
   | EventQuestionReplied
   | EventQuestionRejected
-  | EventSessionCwd
   | EventBashInteractiveAsked
   | EventBashInteractiveReplied
   | EventSessionStatus

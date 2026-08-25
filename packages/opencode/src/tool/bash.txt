@@ -97,17 +97,16 @@ Important notes:
 
 Use `gh` for GitHub issues, pull requests, checks, and releases. Before creating a PR, inspect the complete branch diff from the base branch, then push the branch if needed. Keep the PR body in a temporary file; backticks and `$()` in a double-quoted shell argument would be interpreted as command substitution:
 
-Review all commits and changes included in the pull request, then draft its summary.
-Create or push the branch if needed, then create the PR:
+Review the complete diff from the base branch, including all commits. Push the branch with `-u` if needed, then create the PR:
 ```bash
 body_file="$(mktemp)"
+trap 'rm -f "$body_file"' EXIT
 cat >"$body_file" <<'EOF'
 ## Summary
 - Describe the main change.
 - Describe the verification performed.
 EOF
 gh pr create --title "Short PR title" --body-file "$body_file"
-rm -f "$body_file"
 ```
 
-Return the PR URL after creation. Do not push or create a PR unless the user explicitly asks.
+Use `gh api` to inspect PR comments when needed. Return the PR URL after creation. Do not push or create a PR unless the user explicitly asks.

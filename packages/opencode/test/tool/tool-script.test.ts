@@ -998,7 +998,7 @@ describe("renderToolScriptDeclarations", () => {
     expect(text).not.toContain("timeout?: number")
     expect(text).not.toContain("interactive?: boolean")
     const declaration = text.split("\n").find((line) => line.includes("exec_command(input:"))
-    expect(declaration).not.toContain("description:")
+    expect(declaration).toContain("description?: string")
     expect(text).not.toContain("\n  bash(input:")
   })
 
