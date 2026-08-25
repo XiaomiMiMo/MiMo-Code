@@ -7,7 +7,7 @@ import { Instance } from "../../src/project/instance"
 import { ModelID, ProviderID } from "../../src/provider/schema"
 import { Session } from "../../src/session"
 import { MessageV2 } from "../../src/session/message-v2"
-import { SessionPrompt, titleContext, titleInputText, truncateTitle } from "../../src/session/prompt"
+import { SessionPrompt, sanitizeGeneratedTitle, titleContext, titleInputText, truncateTitle } from "../../src/session/prompt"
 import { Log } from "../../src/util"
 import { tmpdir } from "../fixture/fixture"
 
@@ -31,6 +31,13 @@ describe("title helpers", () => {
   test("builds fallback context for image-only and mixed multimodal requests", () => {
     expect(titleInputText(undefined, [{ type: "image", data: "AA==", mime: "image/png", filename: "screen.png" }])).toBe("Attachment: screen.png")
     expect(titleInputText("What is wrong?", [{ type: "image", data: "AA==", mime: "image/png" }])).toBe("What is wrong?\nAttachment: image/png")
+  })
+
+  test("rejects tool-call shaped generated titles", () => {
+    expect(sanitizeGeneratedTitle("<tool_call>\n{\"name\":\"read\",\"arguments\":{}}\n</tool_call>")).toBeUndefined()
+    expect(sanitizeGeneratedTitle("tool_call: read {path: /tmp/a}")).toBeUndefined()
+    expect(sanitizeGeneratedTitle("<function_call>read({path: '/tmp/a'})</function_call>")).toBeUndefined()
+    expect(sanitizeGeneratedTitle("Analyze title generation")).toBe("Analyze title generation")
   })
 })
 

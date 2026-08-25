@@ -269,6 +269,30 @@ export function titleContext(input: MessageV2.WithParts) {
   return chunks.join("\n").trim()
 }
 
+function looksLikeToolCall(value: string) {
+  return (
+    /<\s*\/?\s*(?:tool[_ -]?call|tool[_ -]?use|function[_ -]?call|function_calls?)\b/i.test(value) ||
+    /^\s*(?:tool[_ -]?call|tool[_ -]?use|function[_ -]?call)\s*[:=]/i.test(value) ||
+    /(?:assistant\s+to=|recipient=|to=functions\.)/i.test(value) ||
+    /^\s*\{[\s\S]*"(?:name|arguments|tool|function)"\s*:/i.test(value)
+  )
+}
+
+export function sanitizeGeneratedTitle(value: string) {
+  if (looksLikeToolCall(value)) return undefined
+  const line = value
+    .replace(/<think>[\s\S]*?<\/think>\s*/gi, "")
+    .split(/\r?\n/)
+    .map((item) => item.trim())
+    .find(Boolean)
+    ?.replace(/^["'“”‘’『「]+/, "")
+    .replace(/["'“”‘’』」]+$/, "")
+    .replace(/^(?:title|标题)\s*[:：]\s*/i, "")
+    .trim()
+  if (!line || line.startsWith("{") || line.startsWith("[") || /<\/?system-reminder>/i.test(line) || looksLikeToolCall(line) || !/\p{L}/u.test(line)) return undefined
+  return line
+}
+
 const PREDICT_SYSTEM = `You predict the single most likely next message a user will send to a coding assistant, based on the conversation so far. Output only that next message as one short, natural first-person request (what the user would type). No preamble, no quotes, no explanation, no markdown. Keep it under 100 characters.`
 
 const PREDICT_NUDGE = `Based on the conversation above, write the user's most likely next message:`
@@ -869,7 +893,7 @@ export const layer = Layer.effect(
       yield* llm.stream({ agent: ag, user, system: [STRUCTURED_OUTPUT_SYSTEM_PROMPT], small: true, tools: { StructuredOutput: outputTool }, activeTools: ["StructuredOutput"], toolChoice: "required", model, sessionID, requestID, ephemeral: true, retries: 2, messages }).pipe(Stream.runDrain, Effect.catchCause((cause) => elog.warn("title generation failed", { error: Cause.squash(cause) }).pipe(Effect.as(undefined))))
       const raw = candidate && typeof candidate === "object" ? (candidate as Record<string, unknown>).title : undefined
       if (typeof raw !== "string") return fallback()
-      const title = raw.replace(/<think>[\s\S]*?<\/think>\s*/gi, "").split(/\r?\n/).map((line) => line.trim()).find(Boolean)?.replace(/^["'“”‘’『「]+/, "").replace(/["'“”‘’』」]+$/, "").replace(/^(?:title|标题)\s*[:：]\s*/i, "").trim()
+      const title = sanitizeGeneratedTitle(raw)
       if (!title || title.startsWith("{") || title.startsWith("[") || /<\/?system-reminder>/i.test(title) || !/\p{L}/u.test(title)) return fallback()
       return { title: truncateTitle(title), status: "generated" as const }
     })
@@ -913,7 +937,7 @@ export const layer = Layer.effect(
       )
       if (!result) return
       yield* sessions
-        .setTitleIfDefault({ sessionID: input.session.id, title: result.title })
+        .setTitleIfDefault({ sessionID: input.session.id, title: result.title, accept: looksLikeToolCall })
         .pipe(Effect.catchCause((cause) => elog.error("failed to generate title", { error: Cause.squash(cause) })))
     })
 
