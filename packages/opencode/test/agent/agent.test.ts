@@ -117,7 +117,7 @@ test("plan keeps the edit tool in the schema — not stripped", async () => {
   })
 })
 
-test("plan does not restrict bash/change_directory/workflow", async () => {
+test("plan does not restrict bash/workflow", async () => {
   await using tmp = await tmpdir()
   await Instance.provide({
     directory: tmp.path,
@@ -127,7 +127,6 @@ test("plan does not restrict bash/change_directory/workflow", async () => {
       // These are left to the model's discipline; the permission layer is a
       // backstop for writes only.
       expect(Permission.evaluate("bash", "ls", rt).action).not.toBe("deny")
-      expect(Permission.evaluate("change_directory", "/tmp", rt).action).not.toBe("deny")
       expect(Permission.evaluate("workflow", "*", rt).action).not.toBe("deny")
     },
   })
@@ -250,7 +249,6 @@ test("general and explore agents use dedicated prompts", async () => {
       expect(Permission.evaluate("edit", "src/index.ts", general!.permission).action).toBe("allow")
       expect(Permission.evaluate("write", "src/index.ts", general!.permission).action).toBe("allow")
       expect(Permission.evaluate("bash", "bun test", general!.permission).action).toBe("allow")
-      expect(Permission.evaluate("change_directory", "/tmp/project", general!.permission).action).toBe("allow")
       expect(explore?.prompt).toContain("file search specialist working for a parent agent")
       expect(explore?.prompt).not.toBe(general?.prompt)
     },

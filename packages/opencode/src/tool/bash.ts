@@ -155,7 +155,7 @@ const Parameters = z.object({
   workdir: z
     .string()
     .describe(
-      `The working directory to run the command in. Defaults to the current directory. Use this instead of 'cd' commands.`,
+      `Absolute working directory for the command. Always provide this.`,
     )
     .optional(),
   interactive: z

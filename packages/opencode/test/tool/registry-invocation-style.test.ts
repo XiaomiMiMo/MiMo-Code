@@ -41,7 +41,6 @@ describe("ToolRegistry.tools: invocation style resolution", () => {
           "webfetch",
           "skill_search",
           "skill",
-          "change_directory",
           "plan_exit",
           "memory",
           "history",

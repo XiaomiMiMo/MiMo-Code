@@ -192,7 +192,7 @@ export const layer = Layer.effect(
             // wins. (Every write tool — write/edit/multiedit/apply_patch/
             // notebook_edit — funnels through ctx.ask({ permission: "edit" }),
             // so this single rule governs all file writes.) Deliberately scoped
-            // to edit only: bash/change_directory/workflow are left to the
+            // to edit only: bash/workflow are left to the
             // model's own read-only discipline + plan prompt, matching the
             // project's "trust the model, permission layer is a backstop"
             // stance. The "*":"deny" carries a non-"*" allow exception, so the
