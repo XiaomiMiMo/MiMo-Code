@@ -14,6 +14,9 @@ export type GenTitleInput =
   | { text?: string; parts: GenTitlePart[]; locale?: string }
 
 export function genTitle(client: OpencodeClient, input: GenTitleInput) {
+  const hasText = typeof input.text === "string" && input.text.trim().length > 0
+  const hasPart = input.parts?.some((part) => part.type === "image" || part.text.trim().length > 0) === true
+  if (!hasText && !hasPart) throw new TypeError("genTitle requires non-empty text or parts")
   return client.experimental.title.generate(input)
 }
 

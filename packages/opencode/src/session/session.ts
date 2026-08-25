@@ -585,7 +585,7 @@ export const layer: Layer.Layer<Service, never, Bus.Service | Storage.Service | 
       return rows.filter((r) => peers.has(r.id)).map(fromRow)
     })
 
-    const remove: Interface["remove"] = Effect.fnUntraced(function* (sessionID: SessionID) {
+    const removeUnlocked: Interface["remove"] = Effect.fnUntraced(function* (sessionID: SessionID) {
       try {
         const session = yield* get(sessionID)
         const kids = yield* children(sessionID)
@@ -616,6 +616,10 @@ export const layer: Layer.Layer<Service, never, Bus.Service | Storage.Service | 
       } catch (e) {
         log.error(e)
       }
+    })
+
+    const remove: Interface["remove"] = Effect.fnUntraced(function* (sessionID: SessionID) {
+      yield* promptLock(sessionID).withPermits(1)(removeUnlocked(sessionID))
     })
 
     const updateMessage = <T extends MessageV2.Info>(msg: T): Effect.Effect<T> =>

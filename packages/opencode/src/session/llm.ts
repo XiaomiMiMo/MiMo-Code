@@ -251,6 +251,7 @@ export type StreamInput = {
   agentID?: string
   mergeTurnContextIntoLastUser?: boolean
   ephemeral?: boolean
+  requestID?: string
 }
 
 export type StreamRequest = StreamInput & {
@@ -439,11 +440,12 @@ const live: Layer.Layer<
     })
 
     const run = Effect.fn("LLM.run")(function* (input: StreamRequest) {
+      const correlationID = input.requestID ?? input.sessionID
       const l = log
         .clone()
         .tag("providerID", input.model.providerID)
         .tag("modelID", input.model.id)
-        .tag(input.ephemeral ? "request.id" : "session.id", input.sessionID)
+        .tag(input.ephemeral ? "request.id" : "session.id", correlationID)
         .tag("small", (input.small ?? false).toString())
         .tag("agent", input.agent.name)
         .tag("mode", input.agent.mode)
@@ -699,7 +701,7 @@ const live: Layer.Layer<
               if (prop !== "startSpan") return Reflect.get(target, prop, receiver)
               return (...args: Parameters<typeof target.startSpan>) => {
                 const span = target.startSpan(...args)
-                span.setAttribute(input.ephemeral ? "request.id" : "session.id", input.sessionID)
+                span.setAttribute(input.ephemeral ? "request.id" : "session.id", correlationID)
                 return span
               }
             },
@@ -814,7 +816,7 @@ const live: Layer.Layer<
           tracer: telemetryTracer,
           metadata: {
             userId: cfg.username ?? "unknown",
-            sessionId: input.sessionID,
+            ...(input.ephemeral ? { requestId: correlationID } : { sessionId: input.sessionID }),
           },
         },
       })

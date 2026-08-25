@@ -1101,7 +1101,7 @@ export interface Interface {
     query: string[],
   ) => Effect.Effect<{ providerID: ProviderID; modelID: string } | undefined>
   readonly getSmallModel: (providerID: ProviderID) => Effect.Effect<Model | undefined>
-  readonly getVisionModel: () => Effect.Effect<Model | undefined>
+  readonly getVisionModel: (providerID?: ProviderID) => Effect.Effect<Model | undefined>
   readonly resolveModelRef: (ref: string, contextProviderID?: ProviderID) => Effect.Effect<Model>
   readonly defaultModel: () => Effect.Effect<{ providerID: ProviderID; modelID: ModelID }>
 }
@@ -1960,7 +1960,7 @@ const layer: Layer.Layer<
       return yield* resolveModelRef("lite", providerID)
     })
 
-    const getVisionModel = Effect.fn("Provider.getVisionModel")(function* () {
+    const getVisionModel = Effect.fn("Provider.getVisionModel")(function* (providerID?: ProviderID) {
       const cfg = yield* config.get()
       // Explicit vision_model literal wins. getModel raises ModelNotFoundError as
       // a defect, so a misconfigured vision_model must not propagate — catch it and
@@ -1970,11 +1970,12 @@ const layer: Layer.Layer<
         const explicit = yield* getModel(parsed.providerID, parsed.modelID).pipe(
           Effect.catchDefect(() => Effect.succeed(undefined)),
         )
-        if (explicit) return explicit
+        if (explicit && (!providerID || explicit.providerID === providerID)) return explicit
       }
       // Smart default: in-house preferred, then cheapest vision-capable model.
       const providers = yield* list()
       const vision = Object.values(providers)
+        .filter((info) => !providerID || info.id === providerID)
         .flatMap((info) => Object.values(info.models))
         .filter((m) => m.capabilities.input.image === true)
       return sortVisionModels(vision)[0]

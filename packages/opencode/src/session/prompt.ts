@@ -256,7 +256,10 @@ export function titleContext(input: MessageV2.WithParts) {
   const chunks: string[] = []
   for (const part of input.parts) {
     if (part.type === "text" && !part.synthetic && !part.ignored && part.text.trim()) chunks.push(part.text.trim())
-    if (part.type === "subtask" && (part.prompt.trim() || part.description.trim())) chunks.push((part.prompt || part.description).trim())
+    if (part.type === "subtask") {
+      const value = (part.prompt || part.description).trim()
+      if (value) chunks.push(value)
+    }
     if (part.type === "file") chunks.push(part.filename ? `Attachment: ${part.filename}` : `Attachment: ${part.mime}`)
   }
   return chunks.join("\n").trim()
@@ -814,7 +817,7 @@ export const layer = Layer.effect(
         if (!line) return { title: input.locale?.toLowerCase().startsWith("zh") ? "未命名对话" : "Untitled conversation", status: "untitled" as const }
         return { title: truncateTitle(line), status: "fallback" as const }
       }
-      if (!text || !/\p{L}/u.test(text)) return fallback()
+      if ((!text || !/\p{L}/u.test(text)) && !hasImage) return fallback()
       const ag = yield* agents.get("title")
       if (!ag) return fallback()
       if ((input.providerID && !input.modelID) || (!input.providerID && input.modelID)) {
@@ -827,26 +830,34 @@ export const layer = Layer.effect(
       if (!requested) return fallback()
       const small = yield* provider.getSmallModel(requested.providerID).pipe(Effect.catchCause((cause) => elog.warn("title lite model resolution failed", { error: Cause.squash(cause) }).pipe(Effect.as(undefined))))
       const model = hasImage && (!small || !small.capabilities.input.image)
-        ? yield* provider.getVisionModel().pipe(Effect.catchCause((cause) => elog.warn("title vision model resolution failed", { error: Cause.squash(cause) }).pipe(Effect.as(undefined))))
+        ? yield* provider.getVisionModel(requested.providerID).pipe(Effect.catchCause((cause) => elog.warn("title vision model resolution failed", { error: Cause.squash(cause) }).pipe(Effect.as(undefined))))
         : small
       if (!model || !model.capabilities.input.text || !model.capabilities.toolcall) return fallback()
       let candidate: unknown
-      const sessionID = input.sessionID ? String(input.sessionID) : "title-" + String(MessageID.ascending())
+      const sessionID = input.sessionID ? String(input.sessionID) : String(SessionID.descending())
+      const requestID = input.sessionID ? undefined : "title-" + String(MessageID.ascending())
       const user: MessageV2.User = { id: MessageID.ascending(), sessionID: SessionID.make(sessionID), role: "user", time: { created: Date.now() }, agent: ag.name, model: { providerID: model.providerID, modelID: model.id } }
-      const outputTool = createStructuredOutputTool({ schema: TITLE_SCHEMA, onSuccess: (value) => { if (candidate === undefined) candidate = value } })
+      const outputTool = createStructuredOutputTool({
+        schema: TITLE_SCHEMA,
+        onSuccess: (value) => {
+          if (candidate !== undefined) return false
+          candidate = value
+          return true
+        },
+      })
       const publicMessages = input.parts?.some((part) => part.type === "image")
         ? [{
             role: "user" as const,
             content: [
               { type: "text" as const, text: "Generate a title for this conversation:\n" + text },
-              ...input.parts.map((part) => part.type === "text" ? { type: "text" as const, text: part.text } : { type: "image" as const, image: `data:${part.mime};base64,${part.data}`, mediaType: part.mime }),
+              ...input.parts.filter((part) => part.type === "image").map((part) => ({ type: "image" as const, image: `data:${part.mime};base64,${part.data}`, mediaType: part.mime })),
             ],
           }]
         : [{ role: "user" as const, content: "Generate a title for this conversation:\n" + text }]
       const messages = input.context
-        ? [{ role: "user" as const, content: "Generate a title for this conversation:\n" + text }, ...(yield* MessageV2.toModelMessagesEffect(input.context, model))]
+        ? [{ role: "user" as const, content: "Generate a title for this conversation." }, ...(yield* MessageV2.toModelMessagesEffect(input.context, model))]
         : publicMessages
-      yield* llm.stream({ agent: ag, user, system: [STRUCTURED_OUTPUT_SYSTEM_PROMPT], small: true, tools: { StructuredOutput: outputTool }, activeTools: ["StructuredOutput"], toolChoice: "required", model, sessionID, ephemeral: true, retries: 2, messages }).pipe(Stream.runDrain, Effect.catchCause((cause) => elog.warn("title generation failed", { error: Cause.squash(cause) }).pipe(Effect.as(undefined))))
+      yield* llm.stream({ agent: ag, user, system: [STRUCTURED_OUTPUT_SYSTEM_PROMPT], small: true, tools: { StructuredOutput: outputTool }, activeTools: ["StructuredOutput"], toolChoice: "required", model, sessionID, requestID, ephemeral: true, retries: 2, messages }).pipe(Stream.runDrain, Effect.catchCause((cause) => elog.warn("title generation failed", { error: Cause.squash(cause) }).pipe(Effect.as(undefined))))
       const raw = candidate && typeof candidate === "object" ? (candidate as Record<string, unknown>).title : undefined
       if (typeof raw !== "string") return fallback()
       const title = raw.replace(/<think>[\s\S]*?<\/think>\s*/gi, "").split(/\r?\n/).map((line) => line.trim()).find(Boolean)?.replace(/^["'“”‘’『「]+/, "").replace(/["'“”‘’』」]+$/, "").replace(/^(?:title|标题)\s*[:：]\s*/i, "").trim()
@@ -5258,7 +5269,7 @@ export type CommandInput = z.infer<typeof CommandInput>
 /** @internal Exported for testing */
 export function createStructuredOutputTool(input: {
   schema: Record<string, any>
-  onSuccess: (output: unknown) => void
+  onSuccess: (output: unknown) => boolean | void
 }): AITool {
   // Remove $schema property if present (not needed for tool input)
   const { $schema: _, ...toolSchema } = input.schema
@@ -5268,7 +5279,8 @@ export function createStructuredOutputTool(input: {
     inputSchema: jsonSchema(toolSchema as JSONSchema7),
     async execute(args) {
       // AI SDK validates args against inputSchema before calling execute()
-      input.onSuccess(args)
+      const accepted = input.onSuccess(args)
+      if (accepted === false) throw new Error("structured output was already captured")
       return {
         output: "Structured output captured successfully.",
         title: "Structured Output",

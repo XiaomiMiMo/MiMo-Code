@@ -940,7 +940,7 @@ export class Title extends HeyApiClient {
    * Generate a short conversation title with the configured lite model and deterministic fallback.
    */
   public generate<ThrowOnError extends boolean = false>(
-    parameters: {
+    parameters?: {
       directory?: string
       workspace?: string
       text?: string
