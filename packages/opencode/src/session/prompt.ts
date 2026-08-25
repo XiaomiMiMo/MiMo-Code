@@ -919,7 +919,7 @@ export const layer = Layer.effect(
         return
       }
 
-      if (!Session.isDefaultTitle(input.session.title)) return
+      if (!Session.isDefaultTitle(input.session.title) && !looksLikeToolCall(input.session.title)) return
 
       const real = (m: MessageV2.WithParts) =>
         m.info.role === "user" && !m.parts.every((p) => "synthetic" in p && p.synthetic)
