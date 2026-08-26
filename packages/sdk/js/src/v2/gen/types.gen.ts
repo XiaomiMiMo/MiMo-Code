@@ -5215,6 +5215,10 @@ export type SessionPromptData = {
     }
     format?: OutputFormat
     /**
+     * BCP 47 locale used for automatic title generation.
+    */
+    titleLocale?: string
+    /**
      * Additional system prompt selected by the session's first user query. Later values are ignored.
      */
     system?: string
@@ -5519,6 +5523,10 @@ export type SessionPromptAsyncData = {
     }
     format?: OutputFormat
     /**
+     * BCP 47 locale used for automatic title generation.
+    */
+    titleLocale?: string
+    /**
      * Additional system prompt selected by the session's first user query. Later values are ignored.
      */
     system?: string
@@ -5572,6 +5580,10 @@ export type SessionCommandData = {
     model?: string
     arguments: string
     command: string
+    /**
+     * BCP 47 locale used for automatic title generation.
+    */
+    titleLocale?: string
     variant?: string
     /**
      * Additional system prompt selected by the session's first user command. Later values are ignored.

@@ -4194,6 +4194,10 @@
                   "format": {
                     "$ref": "#/components/schemas/OutputFormat"
                   },
+                  "titleLocale": {
+                    "description": "BCP 47 locale used for automatic title generation.",
+                    "type": "string"
+                  },
                   "system": {
                     "description": "Additional system prompt selected by the session's first user query. Later values are ignored.",
                     "type": "string"
@@ -5088,6 +5092,10 @@
                   "format": {
                     "$ref": "#/components/schemas/OutputFormat"
                   },
+                  "titleLocale": {
+                    "description": "BCP 47 locale used for automatic title generation.",
+                    "type": "string"
+                  },
                   "system": {
                     "description": "Additional system prompt selected by the session's first user query. Later values are ignored.",
                     "type": "string"
@@ -5233,6 +5241,10 @@
                     "type": "string"
                   },
                   "command": {
+                    "type": "string"
+                  },
+                  "titleLocale": {
+                    "description": "BCP 47 locale used for automatic title generation.",
                     "type": "string"
                   },
                   "variant": {

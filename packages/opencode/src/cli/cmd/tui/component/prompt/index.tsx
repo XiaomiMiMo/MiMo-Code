@@ -132,7 +132,8 @@ export function Prompt(props: PromptProps) {
   const history = usePromptHistory()
   const stash = usePromptStash()
   const command = useCommandDialog()
-  const t = useLanguage().t
+  const language = useLanguage()
+  const t = language.t
   const renderer = useRenderer()
   const { theme, syntax } = useTheme()
   const kv = useKV()
@@ -1255,6 +1256,7 @@ export function Prompt(props: PromptProps) {
         arguments: args,
         agent: agent.name,
         model: `${selectedModel.providerID}/${selectedModel.modelID}`,
+        titleLocale: language.intl(),
         messageID,
         variant,
         parts: nonTextParts
@@ -1272,6 +1274,7 @@ export function Prompt(props: PromptProps) {
           messageID,
           agent: agent.name,
           model: selectedModel,
+          titleLocale: language.intl(),
           variant,
           parts: [
             {

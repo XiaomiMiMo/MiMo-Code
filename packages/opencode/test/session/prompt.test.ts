@@ -185,6 +185,38 @@ describe("SessionPrompt.genTitle fallback locale", () => {
   })
 })
 
+describe("SessionPrompt prompt locale persistence", () => {
+  test("keeps titleLocale out of the persisted user message", async () => {
+    await using tmp = await tmpdir({ git: true })
+    await Instance.provide({
+      directory: tmp.path,
+      fn: () =>
+        run(
+          Effect.gen(function* () {
+            const prompt = yield* SessionPrompt.Service
+            const sessions = yield* Session.Service
+            const session = yield* sessions.create({})
+            const message = yield* prompt.prompt({
+              sessionID: session.id,
+              agent: "build",
+              titleLocale: "pt-br",
+              noReply: true,
+              parts: [{ type: "text", text: "Configure o upload da loja" }],
+            })
+
+            expect(message.info.role).toBe("user")
+            if (message.info.role === "user") expect(Object.hasOwn(message.info, "titleLocale")).toBe(false)
+
+            const stored = yield* sessions.messages({ sessionID: session.id })
+            const user = stored.find((item) => item.info.role === "user")
+            expect(user?.info.role).toBe("user")
+            if (user?.info.role === "user") expect(Object.hasOwn(user.info, "titleLocale")).toBe(false)
+          }),
+        ),
+    })
+  })
+})
+
 function run<A, E>(fx: Effect.Effect<A, E, SessionPrompt.Service | Session.Service>) {
   return Effect.runPromise(
     fx.pipe(Effect.scoped, Effect.provide(Layer.mergeAll(SessionPrompt.defaultLayer, Session.defaultLayer))),

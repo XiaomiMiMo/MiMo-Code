@@ -935,6 +935,7 @@ export const layer = Layer.effect(
       history: MessageV2.WithParts[]
       providerID: ProviderID
       modelID: ModelID
+      titleLocale?: string
     }) {
       if (input.session.parentID) return
 
@@ -963,7 +964,7 @@ export const layer = Layer.effect(
       if (!firstUser || firstUser.info.role !== "user") return
       const inputText = titleContext(firstUser)
       if (!inputText) return
-      const result = yield* genTitle({ text: inputText, context, sessionID: input.session.id, providerID: input.providerID, modelID: input.modelID }).pipe(
+      const result = yield* genTitle({ text: inputText, context, locale: input.titleLocale, sessionID: input.session.id, providerID: input.providerID, modelID: input.modelID }).pipe(
         Effect.catchCause((cause) => elog.warn("auto title generation failed", { error: Cause.squash(cause) }).pipe(Effect.as(undefined))),
       )
       if (!result?.title.trim()) return
@@ -2886,7 +2887,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
         // turn entirely. Running loop() here would produce a spurious assistant
         // response with no user turn.
         if (message.parts.length === 0) return message
-        return yield* loop({ sessionID: input.sessionID, agentID: input.agentID ?? "main", task_id: input.task_id })
+        return yield* loop({ sessionID: input.sessionID, agentID: input.agentID ?? "main", task_id: input.task_id, titleLocale: input.titleLocale })
       },
     )
 
@@ -2948,8 +2949,9 @@ NOTE: At any point in time through this workflow you should feel free to ask the
       agentID?: string,
       task_id?: string,
       notifyParentOnComplete?: boolean,
+      titleLocale?: string,
     ) => Effect.Effect<MessageV2.WithParts> = Effect.fn("SessionPrompt.run")(
-      function* (sessionID: SessionID, agentID?: string, task_id?: string, notifyParentOnComplete?: boolean) {
+      function* (sessionID: SessionID, agentID?: string, task_id?: string, notifyParentOnComplete?: boolean, titleLocale?: string) {
         const ctx = yield* InstanceState.context
         const slog = elog.with({ sessionID })
         let structured: unknown | undefined
@@ -3678,6 +3680,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
               agent: lastUser.agent,
               modelID: lastUser.model.modelID,
               providerID: lastUser.model.providerID,
+              titleLocale,
               history: msgs,
             }).pipe(Effect.ignore, Effect.forkDetach({ startImmediately: true }))
 
@@ -4710,7 +4713,7 @@ If this task is a simple fix, Q&A, or read-only operation, you can skip this not
         input.sessionID,
         agentID,
         lastAssistant(input.sessionID, agentID),
-        runLoop(input.sessionID, agentID, input.task_id, input.notifyParentOnComplete),
+        runLoop(input.sessionID, agentID, input.task_id, input.notifyParentOnComplete, input.titleLocale),
       )
     })
 
@@ -5011,6 +5014,7 @@ If this task is a simple fix, Q&A, or read-only operation, you can skip this not
         model: userModel,
         agent: userAgent,
         parts,
+        titleLocale: input.titleLocale,
         variant: input.variant,
         system: input.system,
         systemMode: input.systemMode,
@@ -5203,6 +5207,7 @@ export const PromptInput = z.object({
     .optional()
     .describe("@deprecated tools and permissions have been merged, you can set permissions on the session itself now"),
   format: MessageV2.Format.optional(),
+  titleLocale: z.string().optional().describe("BCP 47 locale used for automatic title generation."),
   system: z
     .string()
     .optional()
@@ -5269,6 +5274,7 @@ export const LoopInput = z.object({
   sessionID: SessionID.zod,
   agentID: z.string().optional(),
   task_id: z.string().optional(),
+  titleLocale: z.string().optional(),
   // Set by the inbox wake path so a persistent background peer that finishes a
   // woken turn notifies its parent (mirroring forkWork.notify, which only wraps
   // the FIRST/spawn turn). Left false on spawn/user-driven loops to avoid
@@ -5303,6 +5309,7 @@ export const CommandInput = z.object({
   model: z.string().optional(),
   arguments: z.string(),
   command: z.string(),
+  titleLocale: z.string().optional().describe("BCP 47 locale used for automatic title generation."),
   variant: z.string().optional(),
   system: z
     .string()
