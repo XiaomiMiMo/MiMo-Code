@@ -10,6 +10,7 @@ import { MessageV2 } from "../../src/session/message-v2"
 import { SessionPrompt, sanitizeGeneratedTitle, titleContext, titleInputText, titlePromptText, truncateTitle } from "../../src/session/prompt"
 import { Log } from "../../src/util"
 import { tmpdir } from "../fixture/fixture"
+import { startScriptedLLMServer, toolCallResponse } from "../lib/scripted-llm-server"
 
 void Log.init({ print: false })
 
@@ -55,6 +56,104 @@ describe("title helpers", () => {
     expect(sanitizeGeneratedTitle("<think>内部推理，不应成为标题</think>\n修复会话标题生成")).toBe("修复会话标题生成")
     expect(sanitizeGeneratedTitle("<think>我可以调用 <tool_call>read</tool_call>，但最终直接生成标题</think>\n重构认证流程")).toBe("重构认证流程")
     expect(sanitizeGeneratedTitle("<think>只有推理，没有最终标题</think>")).toBeUndefined()
+  })
+})
+
+describe("SessionPrompt.genTitle multimodal request", () => {
+  test("uses one user message and forwards direct and context images", async () => {
+    const stub = startScriptedLLMServer([
+      {
+        lines: toolCallResponse({
+          id: "call-title",
+          name: "StructuredOutput",
+          args: JSON.stringify({ title: "分析 Chrome 商店截图" }),
+        }),
+      },
+    ])
+
+    try {
+      await using tmp = await tmpdir({
+        git: true,
+        init: async (dir) => {
+          await Bun.write(
+            path.join(dir, "mimocode.json"),
+            JSON.stringify({
+              $schema: "https://opencode.ai/config.json",
+              enabled_providers: ["title-test"],
+              provider: {
+                "title-test": {
+                  name: "Title Test",
+                  npm: "@ai-sdk/openai-compatible",
+                  env: [],
+                  options: { apiKey: "test-key", baseURL: `${stub.origin}/v1` },
+                  models: {
+                    "text-lite": {
+                      name: "Text Lite",
+                      tool_call: true,
+                      limit: { context: 8000, output: 2000 },
+                      modalities: { input: ["text"], output: ["text"] },
+                    },
+                    vision: {
+                      name: "Vision",
+                      tool_call: true,
+                      limit: { context: 8000, output: 2000 },
+                      modalities: { input: ["text", "image"], output: ["text"] },
+                    },
+                  },
+                },
+              },
+              model_groups: { lite: "title-test/text-lite" },
+              vision_model: "title-test/vision",
+              agent: { build: { model: "title-test/text-lite" } },
+            }),
+          )
+        },
+      })
+
+      await Instance.provide({
+        directory: tmp.path,
+        fn: () =>
+          run(
+            Effect.gen(function* () {
+              const prompt = yield* SessionPrompt.Service
+              const result = yield* prompt.genTitle({
+                text: "请分析 Chrome 商店截图",
+                parts: [{ type: "image", data: "AA==", mime: "image/png", filename: "direct.png" }],
+                context: [
+                  {
+                    info: { role: "user", id: "context-user" },
+                    parts: [{ type: "file", mime: "image/jpeg", url: "data:image/jpeg;base64,AQ==", filename: "context.jpg" }],
+                  },
+                ] as unknown as MessageV2.WithParts[],
+                providerID: ProviderID.make("title-test"),
+                modelID: ModelID.make("text-lite"),
+              })
+
+             expect(result).toEqual({ title: "分析 Chrome 商店截图", status: "generated" })
+             expect(stub.captures).toHaveLength(1)
+             const messages = stub.captures[0]?.messages ?? []
+              expect(stub.captures[0]?.model).toBe("vision")
+              const userMessages = messages.filter((message) => message.role === "user")
+              expect(userMessages).toHaveLength(1)
+              expect(Array.isArray(userMessages[0]?.content)).toBe(true)
+
+              const content = userMessages[0]?.content as Array<Record<string, unknown>>
+              const textPart = content.find((part) => part.type === "text")
+              expect(textPart?.text).toContain("Generate a title for this conversation.")
+              expect(textPart?.text).toContain("<conversation>")
+              expect(textPart?.text).toContain("请分析 Chrome 商店截图")
+
+              const imageUrls = content
+                .filter((part) => part.type === "image_url")
+                .map((part) => (part.image_url as { url?: string })?.url)
+              expect(imageUrls).toContain("data:image/png;base64,AA==")
+              expect(imageUrls).toContain("data:image/jpeg;base64,AQ==")
+            }),
+          ),
+      })
+    } finally {
+      await stub.stop()
+    }
   })
 })
 
