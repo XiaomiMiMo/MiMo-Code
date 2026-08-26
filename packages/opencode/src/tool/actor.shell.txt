@@ -21,13 +21,13 @@ appends them at request time per-agent).
 #   - $vars are preserved as literal text (no expansion)
 
 # DEFAULT — return actor_id immediately, run in the background, stay responsive:
-    actor spawn <subagent_type> "<description>" "<prompt>" [--model <ref>] [--actor <id>] [--command <cmd>] [--context none|state|full] [--output-schema '<json>']
+    actor spawn <subagent_type> "<description>" "<prompt>" [--model <ref>] [--command <cmd>] [--context none|state|full] [--output-schema '<json>']
     # bind it to one of your `task` tool tasks (TID from the `task` tool, e.g. T4):
     actor spawn <subagent_type> "<description>" "<prompt>" --task <TID>
 
 # EXCEPTION — block the whole conversation until done, return the final message inline.
 # Only for a tiny, fast lookup whose answer gates your very next decision this turn:
-    actor run <subagent_type> "<description>" "<prompt>" [--model <ref>] [--actor <id>] [--timeout <ms>] [--command <cmd>] [--context none|state|full] [--output-schema '<json>']
+    actor run <subagent_type> "<description>" "<prompt>" [--model <ref>] [--timeout <ms>] [--command <cmd>] [--context none|state|full] [--output-schema '<json>']
     # bind it to one of your `task` tool tasks (TID from the `task` tool, e.g. T4):
     actor run <subagent_type> "<description>" "<prompt>" --task <TID>
 
@@ -38,7 +38,9 @@ appends them at request time per-agent).
     actor status <actor_id>     # current state without blocking
     actor cancel <actor_id>     # graceful stop
 
-# deliver a message to another actor's inbox (fire-and-forget):
+# deliver a message to another actor's inbox, waking it for another turn. This is how you
+# give follow-up work to a subagent you already have. Returns once queued, not when the
+# woken turn ends; that turn's result arrives as a completion notification:
     actor send <to_actor_id> "<content>" [--session <id>] [--type <t>]
     # to_actor_id: 'main' for a session's main agent, or a subagent id like 'explore-1'
     # --session: target session id (defaults to current); --type: 'text' (default) or 'actor_notification'
@@ -78,8 +80,8 @@ Examples:
 # THE EXCEPTION: a tiny blocking lookup you cannot proceed without in this turn:
     actor run explore "Is the field public API" "Is `retryLimit` re-exported from src/index.ts? yes/no + file:line."
 
-# spawn/run flags: --actor resume a prior subagent (by actor_id); --timeout ms before
-#   giving up (run only); --command the command that triggered this; --context none|state|full
+# spawn/run flags: --timeout ms before giving up (run only); --command the command that
+#   triggered this; --context none|state|full
 #   (default none); --output-schema a JSON Schema STRING (single-quote it) — forces the
 #   subagent to return a matching object instead of free text.
 
