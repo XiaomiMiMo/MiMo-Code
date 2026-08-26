@@ -5,6 +5,21 @@ import { type Config } from "./gen/client/types.gen.js"
 import { OpencodeClient } from "./gen/sdk.gen.js"
 export { type Config as OpencodeClientConfig, OpencodeClient }
 
+export type GenTitlePart =
+  | { type: "text"; text: string }
+  | { type: "image"; data: string; mime: "image/jpeg" | "image/png" | "image/webp" | "image/gif"; filename?: string }
+
+export type GenTitleInput =
+  | { text: string; parts?: GenTitlePart[]; locale?: string }
+  | { text?: string; parts: GenTitlePart[]; locale?: string }
+
+export function genTitle(client: OpencodeClient, input: GenTitleInput) {
+  const hasText = typeof input.text === "string" && input.text.trim().length > 0
+  const hasPart = input.parts?.some((part) => part.type === "image" || part.text.trim().length > 0) === true
+  if (!hasText && !hasPart) throw new TypeError("genTitle requires non-empty text or parts")
+  return client.experimental.title.generate(input)
+}
+
 function pick(value: string | null, fallback?: string, encode?: (value: string) => string) {
   if (!value) return
   if (!fallback) return value

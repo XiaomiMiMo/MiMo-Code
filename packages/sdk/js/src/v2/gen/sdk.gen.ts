@@ -33,6 +33,8 @@ import type {
   ExperimentalConsoleSwitchOrgResponses,
   ExperimentalResourceListResponses,
   ExperimentalSessionListResponses,
+  ExperimentalTitleGenerateErrors,
+  ExperimentalTitleGenerateResponses,
   ExperimentalWorkspaceAdaptorListResponses,
   ExperimentalWorkspaceCreateErrors,
   ExperimentalWorkspaceCreateResponses,
@@ -931,6 +933,64 @@ export class Console extends HeyApiClient {
   }
 }
 
+export class Title extends HeyApiClient {
+  /**
+   * Generate conversation title
+   *
+   * Generate a short conversation title with the configured lite model and deterministic fallback.
+   */
+  public generate<ThrowOnError extends boolean = false>(
+    parameters?: {
+      directory?: string
+      workspace?: string
+      text?: string
+      parts?: Array<
+        | {
+            type: "text"
+            text: string
+          }
+        | {
+            type: "image"
+            data: string
+            mime: "image/jpeg" | "image/png" | "image/webp" | "image/gif"
+            filename?: string
+          }
+      >
+      locale?: string
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "query", key: "directory" },
+            { in: "query", key: "workspace" },
+            { in: "body", key: "text" },
+            { in: "body", key: "parts" },
+            { in: "body", key: "locale" },
+          ],
+        },
+      ],
+    )
+    return (options?.client ?? this.client).post<
+      ExperimentalTitleGenerateResponses,
+      ExperimentalTitleGenerateErrors,
+      ThrowOnError
+    >({
+      url: "/experimental/title",
+      ...options,
+      ...params,
+      headers: {
+        "Content-Type": "application/json",
+        ...options?.headers,
+        ...params.headers,
+      },
+    })
+  }
+}
+
 export class Session extends HeyApiClient {
   /**
    * List sessions
@@ -1016,6 +1076,11 @@ export class Experimental extends HeyApiClient {
   private _console?: Console
   get console(): Console {
     return (this._console ??= new Console({ client: this.client }))
+  }
+
+  private _title?: Title
+  get title(): Title {
+    return (this._title ??= new Title({ client: this.client }))
   }
 
   private _session?: Session
@@ -2447,6 +2512,7 @@ export class Session2 extends HeyApiClient {
         [key: string]: boolean
       }
       format?: OutputFormat
+      titleLocale?: string
       system?: string
       systemMode?: "append" | "replace-agent"
       harness?: "auto" | "codex" | "default"
@@ -2474,6 +2540,7 @@ export class Session2 extends HeyApiClient {
             { in: "body", key: "noReply" },
             { in: "body", key: "tools" },
             { in: "body", key: "format" },
+            { in: "body", key: "titleLocale" },
             { in: "body", key: "system" },
             { in: "body", key: "systemMode" },
             { in: "body", key: "harness" },
@@ -2614,6 +2681,7 @@ export class Session2 extends HeyApiClient {
       workspace?: string
       agentID?: string
       task_id?: string
+      titleLocale?: string
     },
     options?: Options<never, ThrowOnError>,
   ) {
@@ -2628,6 +2696,7 @@ export class Session2 extends HeyApiClient {
             { in: "query", key: "workspace" },
             { in: "query", key: "agentID" },
             { in: "query", key: "task_id" },
+            { in: "query", key: "titleLocale" },
           ],
         },
       ],
@@ -2665,6 +2734,7 @@ export class Session2 extends HeyApiClient {
         [key: string]: boolean
       }
       format?: OutputFormat
+      titleLocale?: string
       system?: string
       systemMode?: "append" | "replace-agent"
       harness?: "auto" | "codex" | "default"
@@ -2692,6 +2762,7 @@ export class Session2 extends HeyApiClient {
             { in: "body", key: "noReply" },
             { in: "body", key: "tools" },
             { in: "body", key: "format" },
+            { in: "body", key: "titleLocale" },
             { in: "body", key: "system" },
             { in: "body", key: "systemMode" },
             { in: "body", key: "harness" },
@@ -2728,6 +2799,7 @@ export class Session2 extends HeyApiClient {
       model?: string
       arguments?: string
       command?: string
+      titleLocale?: string
       variant?: string
       system?: string
       systemMode?: "append" | "replace-agent"
@@ -2756,6 +2828,7 @@ export class Session2 extends HeyApiClient {
             { in: "body", key: "model" },
             { in: "body", key: "arguments" },
             { in: "body", key: "command" },
+            { in: "body", key: "titleLocale" },
             { in: "body", key: "variant" },
             { in: "body", key: "system" },
             { in: "body", key: "systemMode" },

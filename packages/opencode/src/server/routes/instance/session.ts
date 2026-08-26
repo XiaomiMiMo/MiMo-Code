@@ -1050,6 +1050,7 @@ export const SessionRoutes = lazy(() =>
         workspace: z.string().optional(),
         agentID: z.string().optional(),
         task_id: z.string().optional(),
+        titleLocale: z.string().optional(),
       })),
       async (c) => {
         const params = c.req.valid("param")
@@ -1084,6 +1085,7 @@ export const SessionRoutes = lazy(() =>
             assistantMessageID: params.assistantMessageID,
             agentID: query.agentID,
             task_id: query.task_id,
+            titleLocale: query.titleLocale,
           })),
         ).catch((error) => {
           log.error("session resume failed", { sessionID: params.sessionID, error })

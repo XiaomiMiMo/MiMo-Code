@@ -72,6 +72,7 @@ const makeCaptureLayer = (captured: { value: CapturedPrompt[] }) =>
       sweepOrphanAssistants: () => Effect.void,
       sweepOrphanToolParts: () => Effect.void,
       predict: () => Effect.succeed(""),
+      genTitle: () => Effect.succeed({ title: "", status: "fallback" as const }),
     }),
   )
 

@@ -33,6 +33,7 @@ export type FollowupDraft = {
   context: (ContextItem & { key: string })[]
   agent: string
   model: { providerID: string; modelID: string }
+  titleLocale?: string
   variant?: string
 }
 
@@ -87,6 +88,7 @@ export async function sendFollowupDraft(input: FollowupSendInput) {
         arguments: tail.join(" "),
         agent: input.draft.agent,
         model: `${input.draft.model.providerID}/${input.draft.model.modelID}`,
+        titleLocale: input.draft.titleLocale,
         variant: input.draft.variant,
         parts: images.map((attachment) => ({
           id: Identifier.ascending("part"),
@@ -156,6 +158,7 @@ export async function sendFollowupDraft(input: FollowupSendInput) {
       sessionID: input.draft.sessionID,
       agent: input.draft.agent,
       model: input.draft.model,
+      titleLocale: input.draft.titleLocale,
       messageID,
       parts: requestParts,
       variant: input.draft.variant,
@@ -402,6 +405,7 @@ export function createPromptSubmit(input: PromptSubmitInput) {
       context,
       agent,
       model,
+      titleLocale: language.intl(),
       variant,
     }
 

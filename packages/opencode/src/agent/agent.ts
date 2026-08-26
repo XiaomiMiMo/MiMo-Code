@@ -298,11 +298,13 @@ export const layer = Layer.effect(
             options: {},
             native: true,
             hidden: true,
+            modelRef: "lite",
             temperature: 0.5,
             permission: Permission.merge(
               defaults,
               Permission.fromConfig({
                 "*": "deny",
+                StructuredOutput: "allow",
               }),
               user,
             ),

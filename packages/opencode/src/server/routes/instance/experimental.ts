@@ -9,6 +9,7 @@ import { Instance } from "@/project/instance"
 import { Project } from "@/project"
 import { MCP } from "@/mcp"
 import { Session } from "@/session"
+import { SessionPrompt } from "@/session/prompt"
 import { Config } from "@/config"
 import { ConsoleState } from "@/config/console-state"
 import { Account } from "@/account/account"
@@ -37,6 +38,36 @@ const ConsoleSwitchBody = z.object({
   orgID: z.string(),
 })
 
+const GenTitlePart = z.discriminatedUnion("type", [
+  z.object({ type: z.literal("text"), text: z.string().max(20_000) }),
+  z.object({
+    type: z.literal("image"),
+    data: z.string().min(4).regex(/^[A-Za-z0-9+/]+={0,2}$/).max(5_600_000),
+    mime: z.enum(["image/jpeg", "image/png", "image/webp", "image/gif"]),
+    filename: z.string().max(512).optional(),
+  }),
+])
+const GenTitleBody = z
+  .object({
+    text: z.string().max(20_000).optional(),
+    parts: z.array(GenTitlePart).min(1).max(8).optional(),
+    locale: z.string().optional(),
+  })
+  .superRefine((value, ctx) => {
+    const meaningful = Boolean(value.text?.trim()) || value.parts?.some((part) => part.type === "image" || part.text.trim())
+    if (!meaningful) ctx.addIssue({ code: "custom", message: "text or a non-empty part is required" })
+    const imageBytes = (value.parts ?? []).reduce((total, part) => {
+      if (part.type !== "image") return total
+      const padding = part.data.endsWith("==") ? 2 : part.data.endsWith("=") ? 1 : 0
+      return total + Math.floor((part.data.length * 3) / 4) - padding
+    }, 0)
+    if (imageBytes > 8 * 1024 * 1024) ctx.addIssue({ code: "custom", message: "images exceed the 8 MiB total limit" })
+  })
+const GenTitleResult = z.object({ title: z.string(), status: z.enum(["generated", "fallback", "untitled"]) })
+const GenTitleRequestBody = {
+  required: true,
+  content: { "application/json": { schema: z.toJSONSchema(GenTitleBody) } },
+} as unknown as NonNullable<Parameters<typeof describeRoute>[0]["requestBody"]>
 export const ExperimentalRoutes = lazy(() =>
   new Hono()
     .get(
@@ -343,6 +374,19 @@ export const ExperimentalRoutes = lazy(() =>
           if (!conflict.hasConflict) return null
           return yield* (yield* Worktree.Service).create()
         }),
+    )
+    .post("/title", describeRoute({
+      summary: "Generate conversation title",
+      description: "Generate a short conversation title with the configured lite model and deterministic fallback.",
+      operationId: "experimental.title.generate",
+      requestBody: GenTitleRequestBody,
+      responses: { 200: { description: "Generated conversation title", content: { "application/json": { schema: resolver(GenTitleResult) } } }, ...errors(400) },
+    }), validator("json", GenTitleBody), async (c) =>
+      jsonRequest("ExperimentalRoutes.title.generate", c, function* () {
+        const body = c.req.valid("json")
+        const prompt = yield* SessionPrompt.Service
+        return yield* prompt.genTitle(body)
+      }),
     )
     .get(
       "/session",
