@@ -79,6 +79,27 @@ describe("session.listGlobal", () => {
     expect(allIds).toContain(archived.id)
   })
 
+  test("matches a directory that only differs in casing on Windows", async () => {
+    await using tmp = await tmpdir({ git: true })
+
+    const created = await Instance.provide({
+      directory: tmp.path,
+      fn: async () => svc.create({ title: "global-case-probe" }),
+    })
+
+    const variant =
+      tmp.path === tmp.path.toUpperCase() ? tmp.path.toLowerCase() : tmp.path.toUpperCase()
+
+    const flipped = [...svc.listGlobal({ directory: variant, limit: 200 })].map(
+      (session) => session.id,
+    )
+    if (process.platform === "win32") {
+      expect(flipped).toContain(created.id)
+    } else {
+      expect(flipped).not.toContain(created.id)
+    }
+  })
+
   test("supports cursor pagination", async () => {
     await using tmp = await tmpdir({ git: true })
 
