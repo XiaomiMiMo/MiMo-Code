@@ -47,6 +47,7 @@ export const Info = z.object({
   name: z.string(),
   description: z.string(),
   aliases: z.array(z.string()).optional(),
+  namespace: z.string().optional(),
   location: z.string(),
   content: z.string(),
   // Model reachability, distinct from authorization. When true the model never
@@ -153,6 +154,7 @@ const add = Effect.fnUntraced(function* (state: State, match: string, bundledRoo
     name: parsed.data.name,
     description: parsed.data.description,
     aliases: parsed.data.aliases,
+    namespace: deriveNamespace(match, parsed.data.name),
     location: match,
     content: md.content,
     disable_model_invocation: parsed.data["disable-model-invocation"],
