@@ -174,23 +174,26 @@ export const layer: Layer.Layer<Service, never, Bus.Service> = Layer.effect(
       return fromRow(row)
     })
 
-    // Re-read after a status write so the event payload reflects committed row
-    // values rather than the sparse patch, then publish. A row that vanished
-    // between UPDATE and SELECT publishes nothing — a dropped event beats a
-    // misleading one.
+    // Publish a status event from COMMITTED row values rather than a sparse patch.
+    // Callers that already hold the updated row (RETURNING) pass it and save the
+    // read; the rest re-select. A row that vanished publishes nothing — a dropped
+    // event beats a misleading one.
     const publishStatus = Effect.fn("ActorRegistry.publishStatus")(function* (
       sessionID: SessionID,
       actorID: string,
+      committed?: ActorRow,
     ) {
-      const row = yield* Effect.sync(() =>
-        Database.use((db) =>
-          db
-            .select()
-            .from(ActorRegistryTable)
-            .where(and(eq(ActorRegistryTable.session_id, sessionID), eq(ActorRegistryTable.actor_id, actorID)))
-            .get(),
-        ),
-      )
+      const row =
+        committed ??
+        (yield* Effect.sync(() =>
+          Database.use((db) =>
+            db
+              .select()
+              .from(ActorRegistryTable)
+              .where(and(eq(ActorRegistryTable.session_id, sessionID), eq(ActorRegistryTable.actor_id, actorID)))
+              .get(),
+          ),
+        ))
       if (!row) return
       yield* bus.publish(Events.ActorStatusChanged, {
         sessionID,
@@ -252,7 +255,19 @@ export const layer: Layer.Layer<Service, never, Bus.Service> = Layer.effect(
         Database.use((db) =>
           db
             .update(ActorRegistryTable)
-            .set({ status: "pending", last_activity_time: now, time_updated: now })
+            .set({
+              status: "pending",
+              last_activity_time: now,
+              time_updated: now,
+              // The previous turn's terminal fields describe a turn that is over.
+              // Left behind they travel with the pending row through fromRow into
+              // every consumer — `session` renders "pending (last outcome:
+              // failure)" and `actor status` reports a stale lastError for an actor
+              // that is about to run again.
+              last_outcome: null,
+              last_error: null,
+              time_completed: null,
+            })
             .where(
               and(
                 eq(ActorRegistryTable.session_id, sessionID),
@@ -269,7 +284,7 @@ export const layer: Layer.Layer<Service, never, Bus.Service> = Layer.effect(
       // running, or already pending — `main` rows are registered pending and never
       // leave it, and they receive every subagent notification.
       if (!moved) return
-      yield* publishStatus(sessionID, actorID)
+      yield* publishStatus(sessionID, actorID, moved)
     })
 
     const updateTurn = Effect.fn("ActorRegistry.updateTurn")(function* (sessionID: SessionID, actorID: string) {

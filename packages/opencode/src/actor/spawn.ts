@@ -13,7 +13,7 @@ import { Permission } from "@/permission"
 import type { Actor, SpawnMode, ContextMode, ToolWhitelist, Lifecycle } from "@/actor/schema"
 import { deriveLiveness, DEFAULT_LIVENESS_STALL_MS } from "@/actor/schema"
 import * as ActorEvents from "@/actor/events"
-import { runTurn } from "@/actor/turn"
+import { runTurn, assistantSettledMessage } from "@/actor/turn"
 import { spawnRef } from "@/actor/spawn-ref"
 import { SYSTEM_SPAWNED_AGENT_TYPES } from "@/agent/config"
 import { Bus } from "@/bus"
@@ -360,7 +360,7 @@ export const layer = Layer.effect(
         // so re-deriving the class there would mean re-parsing prose.
         return yield* Effect.fail(
           new AssistantSettledError(
-            `Actor assistant failed: ${info.error.name}`,
+            assistantSettledMessage(info.error.name),
             classifyAssistantError(info.error),
           ),
         )

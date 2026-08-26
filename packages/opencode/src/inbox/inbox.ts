@@ -17,6 +17,13 @@ const log = Log.create({ service: "inbox" })
 
 const GC_TTL_MS = 7 * 24 * 60 * 60 * 1000
 export const MAX_DRAIN_PER_TURN = 100
+/**
+ * How many times Inbox.send's wake fiber will drive a turn while its row is still
+ * undrained. More than one because the first attempt can be swallowed (see the
+ * wake loop); bounded because a receiver that genuinely cannot drain — drain
+ * finding no model source, for instance — must not spin.
+ */
+export const WAKE_ATTEMPTS = 3
 
 /** Delete inbox rows whose created_at is at or before cutoffMs. Unit-testable without layer reset. */
 export function gcInboxRows(cutoffMs: number) {
@@ -177,23 +184,63 @@ export const layer: Layer.Layer<
       // not affect delivery.
       const promptRef = sessionPromptRef.current
       if (promptRef) {
-        // Take the receiver out of `idle` BEFORE forking. The fork means send
-        // returns while the woken turn has not started yet, and a sender that
-        // immediately `wait`s on this receiver would otherwise hit ActorWaiter's
-        // fast path on a row still showing the PREVIOUS turn's idle+success and
-        // be handed that turn's result. Guarded to idle rows, so a receiver that
-        // is already running (its own turn will drain this row) is untouched.
-        yield* reg.markPending(input.receiverSessionID, input.receiverActorID)
-        yield* promptRef
-          .loop({
-            sessionID: input.receiverSessionID,
-            agentID: input.receiverActorID,
-            // Woken turns notify their parent on completion. The spawn turn goes
-            // through SessionPrompt.prompt (no flag) so forkWork.notify remains
-            // the sole notifier for turn 1 — no double-notify.
-            notifyParentOnComplete: true,
+        const undrained = Effect.sync(() =>
+          Database.use((db) =>
+            db
+              .select({ id: InboxTable.id })
+              .from(InboxTable)
+              .where(
+                and(
+                  eq(InboxTable.receiver_session_id, input.receiverSessionID),
+                  eq(InboxTable.receiver_actor_id, input.receiverActorID),
+                ),
+              )
+              .limit(1)
+              .all(),
+          ),
+        )
+        // Drive turns until this row is gone. One attempt is not enough: the
+        // registry can read `idle` while the receiver's Runner has not yet flipped
+        // to Idle — the previous turn commits its status inside runTurn's
+        // uninterruptible block, which finishes before Runner.finishRun runs — and
+        // in that window ensureRunning hands back the in-flight Deferred WITHOUT
+        // executing the turn we asked for. The row would then sit `pending` with
+        // this message undrained until something unrelated happened to run, and a
+        // `wait` on it would block to its timeout. Awaiting the reused Deferred
+        // means the previous turn IS over once loop returns, so the next attempt
+        // starts a real turn. markPending repeats because that finished turn wrote
+        // the row back to idle.
+        const wake = Effect.gen(function* () {
+          for (let attempt = 0; attempt < WAKE_ATTEMPTS; attempt++) {
+            yield* reg.markPending(input.receiverSessionID, input.receiverActorID)
+            yield* promptRef
+              .loop({
+                sessionID: input.receiverSessionID,
+                agentID: input.receiverActorID,
+                // Woken turns notify their parent on completion. The spawn turn goes
+                // through SessionPrompt.prompt (no flag) so forkWork.notify remains
+                // the sole notifier for turn 1 — no double-notify.
+                notifyParentOnComplete: true,
+              })
+              .pipe(Effect.ignore)
+            if ((yield* undrained).length === 0) return
+          }
+          log.warn("inbox.send: row still undrained after wake attempts", {
+            receiverActorID: input.receiverActorID,
+            attempts: WAKE_ATTEMPTS,
           })
-          .pipe(Effect.ignore, Effect.forkIn(scope))
+        })
+        // markPending must land before send returns, so a caller that immediately
+        // `wait`s cannot catch the row still showing the PREVIOUS turn's
+        // idle+success and be handed that turn's result. Uninterruptible so the
+        // pair is atomic: interrupting between the mark and the fork would leave a
+        // row claiming queued work with nothing scheduled to consume it.
+        yield* Effect.uninterruptible(
+          Effect.gen(function* () {
+            yield* reg.markPending(input.receiverSessionID, input.receiverActorID)
+            yield* wake.pipe(Effect.forkIn(scope))
+          }),
+        )
       } else {
         // Test fixtures / renderer-only paths can run without SessionPrompt.
         // Row is durable; will be drained on next runLoop iteration.

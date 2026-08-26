@@ -281,13 +281,21 @@ describe("ActorWaiter — woken turn (send then wait)", () => {
           lifecycle: "ephemeral",
         })
 
-        // Turn 1 settled.
+        // Turn 1 settled — as a FAILURE, so the revived row's fields are visibly
+        // the new turn's rather than the finished one's.
         yield* seedAssistantText(parent.id, "explore-1", "FIRST ANSWER")
-        yield* registry.updateStatus(parent.id, "explore-1", { status: "idle", lastOutcome: "success" })
+        yield* registry.updateStatus(parent.id, "explore-1", {
+          status: "idle",
+          lastOutcome: "failure",
+          lastError: "previous turn blew up",
+        })
 
         // Inbox.send's pre-wake step.
         yield* registry.markPending(parent.id, "explore-1")
-        expect((yield* registry.get(parent.id, "explore-1"))?.status).toBe("pending")
+        const queued = yield* registry.get(parent.id, "explore-1")
+        expect(queued?.status).toBe("pending")
+        expect(queued?.lastOutcome).toBeUndefined()
+        expect(queued?.lastError).toBeUndefined()
 
         // `wait` subscribes first, then the woken turn runs on the main fiber —
         // wrapped the way SessionPrompt.loop now wraps it.
@@ -389,6 +397,9 @@ describe("ActorWaiter — woken turn (send then wait)", () => {
         const live = yield* registry.liveness(parent.id, "explore-1")
         expect(live?.actor.status).toBe("pending")
         expect(live?.liveness).toBe("progressing")
+        // The finished turn's terminal fields must not travel with the revived row.
+        expect(live?.actor.lastOutcome).toBeUndefined()
+        expect(live?.actor.time.completed).toBeUndefined()
       }),
     ),
   )

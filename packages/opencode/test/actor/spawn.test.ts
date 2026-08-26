@@ -59,6 +59,7 @@ import { TestLLMServer } from "../lib/llm-server"
 import { reply } from "../lib/llm-server"
 import { Inbox } from "../../src/inbox"
 import { inboxServiceRef } from "../../src/inbox/inbox-ref"
+import { InboxTable } from "../../src/inbox/inbox.sql"
 import { Flag } from "../../src/flag/flag"
 
 afterEach(async () => {
@@ -1686,6 +1687,96 @@ describe("send then wait on a subagent", () => {
           const last = msgs.findLast((m) => m.info.role === "assistant")
           const text = last?.parts.findLast((p): p is Extract<typeof p, { type: "text" }> => p.type === "text")?.text
           expect(text).toContain("SECOND ANSWER")
+        }),
+        { git: true, config: providerCfg },
+      ),
+    30_000,
+  )
+
+  // End-to-end cover for a send that lands while the receiver is mid-turn: the
+  // wake's ensureRunning finds the runner busy and returns the in-flight Deferred
+  // instead of starting a turn, so delivery rests on the running turn draining the
+  // row itself. Whatever path consumes it, the message must not be left queued and
+  // the actor must settle. (The narrow variant where the registry reads idle before
+  // the Runner flips lives in test/inbox/wake-matrix.test.ts, which can stub the
+  // loop; it is unreachable from out here, inside one fiber's uninterruptible tail.)
+  it.live(
+    "a send that lands mid-turn is still drained and settles",
+    () =>
+      provideTmpdirServer(
+        Effect.fnUntraced(function* ({ llm }) {
+          const actor = yield* Actor.Service
+          const sessions = yield* Session.Service
+          const reg = yield* ActorRegistry.Service
+          const inbox = inboxServiceRef.current!
+
+          const parent = yield* sessions.create({
+            title: "busy runner parent",
+            permission: [{ permission: "*", pattern: "*", action: "allow" }],
+          })
+
+          // Hold the spawn turn open, send into it, then release: the send is
+          // processed while the receiver's runner is provably occupied.
+          const release = yield* Deferred.make<void>()
+          yield* llm.hold("FIRST ANSWER", Effect.runPromise(Deferred.await(release)))
+          // Replies for the woken turn (and any postStop follow-up).
+          yield* llm.text("SECOND ANSWER")
+          yield* llm.text("THIRD ANSWER")
+
+          const spawned = yield* actor.spawn({
+            mode: "subagent",
+            sessionID: parent.id,
+            agentType: "build",
+            task: "initial task",
+            context: "none",
+            tools: ["read"],
+            background: true,
+            model: ref,
+          })
+
+          yield* Effect.gen(function* () {
+            const row = yield* reg.get(parent.id, spawned.actorID)
+            if (row?.status !== "running") return yield* Effect.fail("not running yet" as const)
+          }).pipe(Effect.retry({ schedule: Schedule.spaced("100 millis"), times: 60 }), Effect.orDie)
+
+          yield* inbox.send({
+            receiverSessionID: parent.id,
+            receiverActorID: spawned.actorID,
+            senderSessionID: parent.id,
+            senderActorID: "main",
+            content: "follow-up while busy",
+          })
+          yield* Deferred.succeed(release, undefined)
+
+          // The message must be consumed and the actor must settle — not sit
+          // `pending` with an undrained row.
+          yield* Effect.gen(function* () {
+            const rows = yield* Effect.sync(() =>
+              Database.use((db) =>
+                db
+                  .select({ id: InboxTable.id })
+                  .from(InboxTable)
+                  .where(
+                    and(
+                      eq(InboxTable.receiver_session_id, parent.id),
+                      eq(InboxTable.receiver_actor_id, spawned.actorID),
+                    ),
+                  )
+                  .all(),
+              ),
+            )
+            if (rows.length > 0) return yield* Effect.fail("still queued" as const)
+            const row = yield* reg.get(parent.id, spawned.actorID)
+            if (row?.status !== "idle") return yield* Effect.fail("not settled" as const)
+            return row
+          }).pipe(Effect.retry({ schedule: Schedule.spaced("100 millis"), times: 150 }), Effect.orDie)
+
+          // And the follow-up really reached the model as a turn of its own.
+          const msgs = yield* sessions.messages({ sessionID: parent.id, agentID: spawned.actorID })
+          const texts = msgs.flatMap((m) =>
+            m.parts.flatMap((p) => (p.type === "text" ? [p.text] : [])),
+          )
+          expect(texts.some((t) => t.includes("follow-up while busy"))).toBe(true)
         }),
         { git: true, config: providerCfg },
       ),

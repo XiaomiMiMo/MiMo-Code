@@ -108,7 +108,7 @@ import { TaskRegistry } from "@/task/registry"
 import { EffectBridge } from "@/effect"
 import { Team } from "@/team"
 import { ActorRegistry } from "@/actor/registry"
-import { runTurn } from "@/actor/turn"
+import { runTurn, assistantSettledMessage } from "@/actor/turn"
 import { Metrics } from "@/metrics"
 import { resolveInvocationStyle, type ToolStyleConfig } from "../tool/invocation-style"
 import { ToolResultError } from "../tool/result-error"
@@ -375,18 +375,18 @@ export interface ResumeTurnInput {
 export class Service extends Context.Service<Service, Interface>()("@opencode/SessionPrompt") {}
 
 /**
- * Carries an errored final message across runTurn's failure channel so a woken
- * actor turn is recorded with the outcome it actually had. Exists only because
- * runLoop surfaces a settled assistant error as a success value; see the raise
- * site in `loop`. Deliberately a plain Error subclass, matching the equivalent
+ * Carries an errored final message across runTurn's failure channel so an actor
+ * turn is recorded with the outcome it actually had. Exists only because runLoop
+ * surfaces a settled assistant error as a success value; see the raise site in
+ * `actorTurn`. Deliberately a plain Error subclass, matching the equivalent
  * carrier in actor/spawn.ts, so Cause.pretty renders the same human string.
  */
-class WokenTurnSettledError extends Error {
+class ActorTurnSettledError extends Error {
   constructor(
     readonly final: MessageV2.WithParts,
     errorName: string,
   ) {
-    super(`Actor assistant failed: ${errorName}`)
+    super(assistantSettledMessage(errorName))
   }
 }
 
@@ -4743,51 +4743,63 @@ If this task is a simple fix, Q&A, or read-only operation, you can skip this not
       },
     )
 
+    // Move an actor turn through the actor status machine (running → idle+outcome,
+    // publishing ActorStatusChanged). Every actor turn needs this; forkWork already
+    // provides it for the turns it drives (spawn, preStop, the completion gate,
+    // postStop), so this covers the ones reached any other way — the inbox wake and
+    // the two resume entry points. Without it the row keeps the PREVIOUS turn's
+    // terminal state for the whole turn, which is exactly what ActorWaiter's fast
+    // path reads as finished before answering from the slice's last assistant
+    // message.
+    //
+    // `main` is returned unchanged: it owns no actor row.
+    //
+    // The result must be handed to whatever starts the turn (ensureRunning /
+    // start) rather than wrapped around that call, because Runner returns a busy
+    // runner's Deferred WITHOUT executing work — a turn already in flight must not
+    // be re-stamped by a second caller.
+    const actorTurn = (sessionID: SessionID, agentID: string, work: Effect.Effect<MessageV2.WithParts>) =>
+      agentID === "main"
+        ? work
+        : runTurn(
+            sessionID,
+            agentID,
+            // runTurn derives the outcome from its work's exit, but a settled
+            // assistant error arrives as a SUCCESS value: runLoop returns the
+            // errored message and only branches on it to report "failed" to the
+            // parent. spawn's runAgentLoop raises it for the same reason; without
+            // this the failed turn is recorded, and answered to a waiting sender,
+            // as idle+success.
+            work.pipe(
+              Effect.flatMap((final) =>
+                final.info.role === "assistant" && final.info.error
+                  ? Effect.fail(new ActorTurnSettledError(final, final.info.error.name))
+                  : Effect.succeed(final),
+              ),
+            ),
+          ).pipe(
+            Effect.provideService(ActorRegistry.Service, actorRegistry),
+            // Status is written; hand the message back so an errored turn still
+            // returns it, exactly as an unwrapped turn does.
+            Effect.catch((failed) => Effect.succeed(failed.final)),
+          )
+
     const loop: (input: z.infer<typeof LoopInput>) => Effect.Effect<MessageV2.WithParts> = Effect.fn(
       "SessionPrompt.loop",
     )(function* (input: z.infer<typeof LoopInput>) {
       const agentID = input.agentID ?? "main"
       const work = runLoop(input.sessionID, agentID, input.task_id, input.notifyParentOnComplete, input.titleLocale)
-      // An inbox-woken actor turn has to move through the actor status machine
-      // like a spawn turn does, because forkWork's runTurn wraps the spawn call,
-      // not this loop. Left unwrapped, the row keeps the PREVIOUS turn's
-      // idle+success for the whole woken turn and ActorWaiter's fast path answers
-      // with that turn's assistant text.
-      //
-      // Two constraints on where the wrapper goes. It is gated on the wake flag
-      // rather than on a non-main agentID because SessionPrompt.prompt also ends
-      // in loop(), which forkWork ALREADY wraps: nesting them lets the inner one
-      // publish idle+success before runAgentLoop reads the assistant error and
-      // fails the outer. And it sits INSIDE the work handed to ensureRunning
-      // because Runner returns a busy runner's Deferred without executing work,
-      // so a turn already in flight is never re-stamped by a second caller.
-      const woken = runTurn(
-        input.sessionID,
-        agentID,
-        // runTurn reads the actor's outcome off its work Effect's exit, but a
-        // settled assistant error reaches us as a SUCCESS value — runLoop returns
-        // the errored message and only branches on it to report "failed" to the
-        // parent. Raising it here is what spawn's runAgentLoop does for the same
-        // reason (AssistantSettledError), and without it the failed turn would be
-        // recorded, and answered to a waiting sender, as idle+success.
-        work.pipe(
-          Effect.flatMap((final) =>
-            final.info.role === "assistant" && final.info.error
-              ? Effect.fail(new WokenTurnSettledError(final, final.info.error.name))
-              : Effect.succeed(final),
-          ),
-        ),
-      ).pipe(
-        Effect.provideService(ActorRegistry.Service, actorRegistry),
-        // Status is written; hand the message back so an errored woken turn still
-        // returns it, exactly as an unwrapped loop does.
-        Effect.catch((failed) => Effect.succeed(failed.final)),
-      )
       return yield* state.ensureRunning(
         input.sessionID,
         agentID,
         lastAssistant(input.sessionID, agentID),
-        input.notifyParentOnComplete && agentID !== "main" ? woken : work,
+        // Only the inbox-woken turn is wrapped, even though every actor turn needs
+        // the status machine: SessionPrompt.prompt also ends in loop(), and
+        // forkWork ALREADY wraps that whole call in runTurn. Nesting them lets the
+        // inner one publish idle+success before runAgentLoop reads the assistant
+        // error and fails the outer, so the wake flag — set only by Inbox.send — is
+        // what distinguishes "this turn is not already inside a runTurn".
+        input.notifyParentOnComplete ? actorTurn(input.sessionID, agentID, work) : work,
       )
     })
 
@@ -5119,15 +5131,19 @@ If this task is a simple fix, Q&A, or read-only operation, you can skip this not
         input.sessionID,
         agentID,
         lastAssistant(input.sessionID, agentID),
-        runLoop(input.sessionID, agentID, input.task_id, undefined, input.titleLocale).pipe(
-          Effect.ensuring(
-            abandonRecoveredAssistant({ sessionID: input.sessionID, assistantMessageID: input.assistantMessageID, agentID }).pipe(
-              Effect.catchCause((cause) =>
-                elog.warn("recovered-assistant-abandon-failed", {
-                  sessionID: input.sessionID,
-                  messageID: input.assistantMessageID,
-                  cause,
-                }),
+        actorTurn(
+          input.sessionID,
+          agentID,
+          runLoop(input.sessionID, agentID, input.task_id, undefined, input.titleLocale).pipe(
+            Effect.ensuring(
+              abandonRecoveredAssistant({ sessionID: input.sessionID, assistantMessageID: input.assistantMessageID, agentID }).pipe(
+                Effect.catchCause((cause) =>
+                  elog.warn("recovered-assistant-abandon-failed", {
+                    sessionID: input.sessionID,
+                    messageID: input.assistantMessageID,
+                    cause,
+                  }),
+                ),
               ),
             ),
           ),
@@ -5150,15 +5166,19 @@ If this task is a simple fix, Q&A, or read-only operation, you can skip this not
         input.sessionID,
         agentID,
         lastAssistant(input.sessionID, agentID),
-        runLoop(input.sessionID, agentID, input.task_id, undefined, input.titleLocale).pipe(
-          Effect.ensuring(
-            abandonRecoveredAssistant({ sessionID: input.sessionID, assistantMessageID: input.assistantMessageID, agentID }).pipe(
-              Effect.catchCause((cause) =>
-                elog.warn("recovered-assistant-abandon-failed", {
-                  sessionID: input.sessionID,
-                  messageID: input.assistantMessageID,
-                  cause,
-                }),
+        actorTurn(
+          input.sessionID,
+          agentID,
+          runLoop(input.sessionID, agentID, input.task_id, undefined, input.titleLocale).pipe(
+            Effect.ensuring(
+              abandonRecoveredAssistant({ sessionID: input.sessionID, assistantMessageID: input.assistantMessageID, agentID }).pipe(
+                Effect.catchCause((cause) =>
+                  elog.warn("recovered-assistant-abandon-failed", {
+                    sessionID: input.sessionID,
+                    messageID: input.assistantMessageID,
+                    cause,
+                  }),
+                ),
               ),
             ),
           ),

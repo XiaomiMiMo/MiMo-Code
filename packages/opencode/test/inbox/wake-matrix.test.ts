@@ -6,6 +6,11 @@ import { Session } from "../../src/session"
 import { Bus } from "../../src/bus"
 import { Instance } from "../../src/project/instance"
 import { tmpdir } from "../fixture/fixture"
+import { sessionPromptRef } from "../../src/inbox/inbox-ref"
+import { WAKE_ATTEMPTS } from "../../src/inbox/inbox"
+import { InboxTable } from "../../src/inbox/inbox.sql"
+import { Database, eq, and } from "../../src/storage"
+import { MessageV2 } from "../../src/session/message-v2"
 
 const base = Layer.mergeAll(Session.defaultLayer, ActorRegistry.defaultLayer, Bus.defaultLayer)
 const testLayer = Inbox.layer.pipe(Layer.provide(base), Layer.provideMerge(base))
@@ -136,6 +141,83 @@ describe("Inbox.send wake matrix (Plan 2 / Task 7)", () => {
 
       expect(result.actorID).toBe("ghost")
       expect(result.sessionID).toBe(session.id)
+    })
+  })
+
+  // The wake is allowed to be a no-op: SessionRunState.ensureRunning hands back a
+  // busy runner's Deferred WITHOUT executing the turn we asked for, which happens
+  // when the registry already reads `idle` but the receiver's Runner has not yet
+  // flipped to Idle. A single-shot wake would leave the row queued forever and any
+  // `wait` on it blocking to its timeout, so send drives further turns while the
+  // row survives. Stubbing the loop ref is what makes "the turn did not run"
+  // reproducible — the real window is inside one fiber's uninterruptible tail.
+  test("wake retries while the row survives a turn that did not consume it", async () => {
+    await using tmp = await tmpdir({ git: true })
+    await withInbox(tmp.path, async (rt) => {
+      const session = await rt.runPromise(Session.Service.use((s) => s.create()))
+      await rt.runPromise(
+        ActorRegistry.Service.use((reg) =>
+          reg.register({
+            sessionID: session.id,
+            actorID: "explore-1",
+            mode: "subagent",
+            parentActorID: undefined,
+            agent: "explore",
+            description: "test",
+            contextMode: "none",
+            contextWatermark: undefined,
+            background: true,
+            lifecycle: "ephemeral",
+          }),
+        ),
+      )
+      await rt.runPromise(
+        ActorRegistry.Service.use((reg) =>
+          reg.updateStatus(session.id, "explore-1", { status: "idle", lastOutcome: "success" }),
+        ),
+      )
+
+      let calls = 0
+      const previous = sessionPromptRef.current
+      // First call models the swallowed turn (nothing drains); the second behaves
+      // like a real turn and consumes the row.
+      sessionPromptRef.current = {
+        loop: () =>
+          Effect.sync(() => {
+            calls += 1
+            if (calls >= 2) {
+              Database.use((db) =>
+                db
+                  .delete(InboxTable)
+                  .where(
+                    and(
+                      eq(InboxTable.receiver_session_id, session.id),
+                      eq(InboxTable.receiver_actor_id, "explore-1"),
+                    ),
+                  )
+                  .run(),
+              )
+            }
+            return undefined as unknown as MessageV2.WithParts
+          }),
+      }
+      try {
+        await rt.runPromise(
+          Inbox.Service.use((inbox) =>
+            inbox.send({
+              receiverSessionID: session.id,
+              receiverActorID: "explore-1",
+              content: "follow-up",
+            }),
+          ),
+        )
+        // The wake fiber is detached; give it room to run both attempts.
+        await new Promise((r) => setTimeout(r, 300))
+        expect(calls).toBe(2)
+        expect(calls).toBeLessThanOrEqual(WAKE_ATTEMPTS)
+      } finally {
+        sessionPromptRef.current = previous
+      }
     })
   })
 })

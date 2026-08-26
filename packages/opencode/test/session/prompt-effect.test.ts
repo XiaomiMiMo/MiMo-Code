@@ -1007,6 +1007,87 @@ it.live("serializes concurrent first-query pinning", () =>
   ),
 )
 
+// A resumed turn belongs to the actor status machine just like a spawned or an
+// inbox-woken one: resume/resumeBackground reach runLoop without passing through
+// forkWork's runTurn, so an unwrapped resume left the row carrying the outcome of
+// the turn that had been interrupted. ActorWaiter's fast path reads exactly that
+// as "finished" and answers from the slice's last assistant message.
+it.live("resume moves a subagent's actor status off the interrupted turn's outcome", () =>
+  provideTmpdirServer(
+    Effect.fnUntraced(function* ({ llm }) {
+      const prompt = yield* SessionPrompt.Service
+      const sessions = yield* Session.Service
+      const reg = yield* ActorRegistry.Service
+      const chat = yield* sessions.create({
+        permission: [{ permission: "*", pattern: "*", action: "allow" }],
+      })
+
+      yield* reg.register({
+        sessionID: chat.id,
+        actorID: "explore-1",
+        mode: "subagent",
+        parentActorID: undefined,
+        agent: "explore",
+        description: "interrupted probe",
+        contextMode: "none",
+        contextWatermark: undefined,
+        background: true,
+        lifecycle: "ephemeral",
+      })
+      // How an interrupted turn leaves the row.
+      yield* reg.updateStatus(chat.id, "explore-1", {
+        status: "idle",
+        lastOutcome: "failure",
+        lastError: "interrupted",
+      })
+
+      // A resumable turn in the subagent's own slice: a user message plus an
+      // assistant with no `finish`.
+      const userMsg = yield* sessions.updateMessage({
+        id: MessageID.ascending(),
+        role: "user" as const,
+        sessionID: chat.id,
+        agentID: "explore-1",
+        agent: "explore",
+        model: ref,
+        time: { created: Date.now() },
+      })
+      yield* sessions.updatePart({
+        id: PartID.ascending(),
+        messageID: userMsg.id,
+        sessionID: chat.id,
+        type: "text" as const,
+        text: "look into it",
+      })
+      const assistantID = MessageID.ascending()
+      yield* sessions.updateMessage({
+        id: assistantID,
+        role: "assistant" as const,
+        parentID: userMsg.id,
+        sessionID: chat.id,
+        agentID: "explore-1",
+        mode: "build",
+        agent: "explore",
+        cost: 0,
+        path: { cwd: "/tmp", root: "/tmp" },
+        tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+        modelID: ref.modelID,
+        providerID: ref.providerID,
+        time: { created: Date.now() },
+      })
+
+      yield* llm.text("RESUMED ANSWER")
+      yield* prompt.resume({ sessionID: chat.id, assistantMessageID: assistantID, agentID: "explore-1" })
+
+      const row = yield* reg.get(chat.id, "explore-1")
+      expect(row?.status).toBe("idle")
+      expect(row?.lastOutcome).toBe("success")
+      expect(row?.lastError).toBeUndefined()
+    }),
+    { git: true, config: providerCfg },
+  ),
+)
+
 it.live("resume continues an incomplete assistant without creating or rewriting a user message", () =>
   provideTmpdirServer(
     Effect.fnUntraced(function* ({ llm }) {

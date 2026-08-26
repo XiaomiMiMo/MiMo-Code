@@ -2,6 +2,15 @@ import { Cause, Effect, Exit } from "effect"
 import { ActorRegistry } from "@/actor/registry"
 import type { SessionID } from "@/session/schema"
 
+/**
+ * Message an actor turn carries when it settled with an assistant-level error.
+ * Shared because two carriers raise it — actor/spawn.ts for the turns forkWork
+ * drives, session/prompt.ts for the ones it does not — and both are read back
+ * through Cause.pretty into the same registry column and the same AgentOutcome
+ * string, so the two must not drift.
+ */
+export const assistantSettledMessage = (errorName: string) => `Actor assistant failed: ${errorName}`
+
 export const runTurn = <A, E>(
   sessionID: SessionID,
   actorID: string,

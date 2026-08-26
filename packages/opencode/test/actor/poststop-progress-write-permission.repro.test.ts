@@ -372,6 +372,10 @@ describe("postStop progress.md is gated by the subagent's write permission", () 
       }),
       { git: true, config: providerCfg },
     ),
+    // A spawn turn, a completion-gate re-entry and a postStop re-entry, each a
+    // full round trip, plus the journal write. The default 5s budget is not enough
+    // and this sat right on it.
+    30_000,
   )
 
   // CONTRAST (scripted LLM): the SAME path with `explore` (read-only). explore's "*":deny
