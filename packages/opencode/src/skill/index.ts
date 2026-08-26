@@ -20,6 +20,23 @@ import { extractComposeBundle } from "./compose/extract"
 import { extractBuiltinBundle, OFFICIAL_SKILL_NAMES } from "./builtin/extract"
 
 const log = Log.create({ service: "skill" })
+
+// Parent-folder namespace for nested skills (e.g. skills/ECC/agent-eval -> "ECC").
+// The namespace is the first path segment after the skills/ (or skill/) marker,
+// only when the skill folder is nested at least one level deeper.
+export function deriveNamespace(location: string, name: string): string | undefined {
+  if (name.includes(":")) return undefined
+  const dir = path.dirname(location)
+  const parts = dir.split(path.sep)
+  for (let i = 0; i < parts.length - 1; i++) {
+    if (parts[i] !== "skills" && parts[i] !== "skill") continue
+    const parent = parts[i + 1]
+    // parent must be a real intermediate dir (not the skill folder itself) and a parseable token
+    if (!parent || parent === parts[parts.length - 1] || /\s/.test(parent)) return undefined
+    return parent
+  }
+  return undefined
+}
 const EXTERNAL_DIRS = [".claude", ".agents", ".codex", ".opencode"]
 const EXTERNAL_SKILL_PATTERN = "skills/**/SKILL.md"
 const MIMOCODE_SKILL_PATTERN = "{skill,skills}/**/SKILL.md"
