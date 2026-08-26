@@ -15,6 +15,8 @@
 export interface LLMCapture {
   /** Raw messages array from the OpenAI-compatible request body */
   messages: Array<{ role: string; content: unknown }>
+  /** Wire-level tool_choice: "required" | "auto" | "none" | object | undefined */
+  tool_choice?: string | { type: string; function?: { name: string } } | undefined
 }
 
 type ScriptedResponse = {
@@ -223,8 +225,11 @@ export function startScriptedLLMServer(responses: ScriptedResponse[]): ScriptedL
         return new Response("not found", { status: 404 })
       }
 
-      const body = (await req.json()) as { messages: Array<{ role: string; content: unknown }> }
-      captures.push({ messages: body.messages })
+      const body = (await req.json()) as {
+        messages: Array<{ role: string; content: unknown }>
+        tool_choice?: string | { type: string; function?: { name: string } } | undefined
+      }
+      captures.push({ messages: body.messages, tool_choice: body.tool_choice })
 
       const response = responses[Math.min(callIdx, responses.length - 1)]
       callIdx++
