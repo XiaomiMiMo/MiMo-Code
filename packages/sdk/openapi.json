@@ -4741,6 +4741,13 @@
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "in": "query",
+            "name": "titleLocale",
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "summary": "Resume an interrupted turn",
@@ -4928,6 +4935,13 @@
           {
             "in": "query",
             "name": "task_id",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "titleLocale",
             "schema": {
               "type": "string"
             }

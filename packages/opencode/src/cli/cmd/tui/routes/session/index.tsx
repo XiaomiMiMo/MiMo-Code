@@ -504,7 +504,8 @@ export function Session() {
   }
 
   const command = useCommandDialog()
-  const t = useLanguage().t
+  const language = useLanguage()
+  const t = language.t
   const recoveryErrorMessage = (error: unknown) => {
     const message = error instanceof Error ? error.message : String(error)
     return /busy|409/i.test(message) ? t("tui.toast.session.recover.busy") : message
@@ -523,7 +524,7 @@ export function Session() {
       return
     }
     await sdk.client.session.resume(
-      { sessionID: route.sessionID, assistantMessageID: candidate.assistantMessageID },
+      { sessionID: route.sessionID, assistantMessageID: candidate.assistantMessageID, titleLocale: language.intl() },
       { throwOnError: true },
     )
     sync.set("session_recovery_active", route.sessionID, candidate.assistantMessageID)

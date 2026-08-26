@@ -1013,7 +1013,6 @@ it.live("resume continues an incomplete assistant without creating or rewriting 
       const prompt = yield* SessionPrompt.Service
       const sessions = yield* Session.Service
       const chat = yield* sessions.create({
-        title: "Pinned",
         permission: [{ permission: "*", pattern: "*", action: "allow" }],
       })
       const seeded = yield* seed(chat.id)
@@ -1025,7 +1024,13 @@ it.live("resume continues an incomplete assistant without creating or rewriting 
       const result = yield* prompt.resume({
         sessionID: chat.id,
         assistantMessageID: seeded.assistant.id,
+        titleLocale: "fr-FR",
       })
+      yield* llm.wait(2)
+      const titleRequest = (yield* llm.inputs).find((input) => JSON.stringify(input).includes("Generate a title for this conversation"))
+      expect(titleRequest).toBeDefined()
+      expect(JSON.stringify(titleRequest)).toContain("Write the title using locale")
+      expect(JSON.stringify(titleRequest)).toContain("fr-FR")
 
       const after = yield* sessions.messages({ sessionID: chat.id })
       expect(after.filter((message) => message.info.role === "user")).toHaveLength(1)
@@ -1035,7 +1040,10 @@ it.live("resume continues an incomplete assistant without creating or rewriting 
       expect(result.info.id).not.toBe(seeded.assistant.id)
       expect(result.parts.some((part) => part.type === "text" && part.text === "world")).toBe(true)
     }),
-    { git: true, config: providerCfg },
+    {
+      git: true,
+      config: (url) => ({ ...providerCfg(url), model_groups: { lite: "test/test-model" } }),
+    },
   ),
 )
 

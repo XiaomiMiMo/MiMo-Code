@@ -363,6 +363,7 @@ export interface ResumeTurnInput {
   assistantMessageID: MessageID
   agentID?: string
   task_id?: string
+  titleLocale?: string
 }
 
 export class Service extends Context.Service<Service, Interface>()("@opencode/SessionPrompt") {}
@@ -5050,7 +5051,7 @@ If this task is a simple fix, Q&A, or read-only operation, you can skip this not
         input.sessionID,
         agentID,
         lastAssistant(input.sessionID, agentID),
-        runLoop(input.sessionID, agentID, input.task_id).pipe(
+        runLoop(input.sessionID, agentID, input.task_id, undefined, input.titleLocale).pipe(
           Effect.ensuring(
             abandonRecoveredAssistant({ sessionID: input.sessionID, assistantMessageID: input.assistantMessageID, agentID }).pipe(
               Effect.catchCause((cause) =>
@@ -5081,7 +5082,7 @@ If this task is a simple fix, Q&A, or read-only operation, you can skip this not
         input.sessionID,
         agentID,
         lastAssistant(input.sessionID, agentID),
-        runLoop(input.sessionID, agentID, input.task_id).pipe(
+        runLoop(input.sessionID, agentID, input.task_id, undefined, input.titleLocale).pipe(
           Effect.ensuring(
             abandonRecoveredAssistant({ sessionID: input.sessionID, assistantMessageID: input.assistantMessageID, agentID }).pipe(
               Effect.catchCause((cause) =>

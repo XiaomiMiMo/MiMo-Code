@@ -2681,6 +2681,7 @@ export class Session2 extends HeyApiClient {
       workspace?: string
       agentID?: string
       task_id?: string
+      titleLocale?: string
     },
     options?: Options<never, ThrowOnError>,
   ) {
@@ -2695,6 +2696,7 @@ export class Session2 extends HeyApiClient {
             { in: "query", key: "workspace" },
             { in: "query", key: "agentID" },
             { in: "query", key: "task_id" },
+            { in: "query", key: "titleLocale" },
           ],
         },
       ],
