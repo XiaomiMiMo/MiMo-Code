@@ -893,7 +893,7 @@ describe("Actor forkContext lifecycle", () => {
         })
 
         // Before cancel: forkContext must be present.
-        const before = yield* actor.getForkContext(result.actorID)
+        const before = yield* actor.getForkContext(result.sessionID, result.actorID)
         expect(before).toBeDefined()
         expect(before?.system).toEqual(["test-system"])
 
@@ -901,8 +901,66 @@ describe("Actor forkContext lifecycle", () => {
         yield* actor.cancel(result.sessionID, result.actorID, "forced")
 
         // After cancel: forkContext must be gone.
-        const after = yield* actor.getForkContext(result.actorID)
+        const after = yield* actor.getForkContext(result.sessionID, result.actorID)
         expect(after).toBeUndefined()
+      }),
+      { git: true, config: providerCfg },
+    ),
+  )
+
+  it.live("keeps forkContexts isolated when actor ids repeat across sessions", () =>
+    provideTmpdirServer(
+      Effect.fnUntraced(function* ({ llm }) {
+        const actor = yield* Actor.Service
+        const session = yield* Session.Service
+        const first = yield* session.create({ title: "first fork context" })
+        const second = yield* session.create({ title: "second fork context" })
+        yield* llm.hang
+
+        const firstResult = yield* actor.spawn({
+          mode: "subagent",
+          sessionID: first.id,
+          agentType: "explore",
+          task: "first",
+          context: "full",
+          tools: [],
+          background: true,
+          model: ref,
+          forkContext: {
+            system: ["first-system"],
+            tools: {},
+            inheritedMessages: [],
+            parentPermission: [],
+            watermarkMsgID: MessageID.ascending(),
+            model: ref,
+          },
+        })
+        const secondResult = yield* actor.spawn({
+          mode: "subagent",
+          sessionID: second.id,
+          agentType: "explore",
+          task: "second",
+          context: "full",
+          tools: [],
+          background: true,
+          model: ref,
+          forkContext: {
+            system: ["second-system"],
+            tools: {},
+            inheritedMessages: [],
+            parentPermission: [],
+            watermarkMsgID: MessageID.ascending(),
+            model: ref,
+          },
+        })
+
+        expect(firstResult.actorID).toBe(secondResult.actorID)
+        expect((yield* actor.getForkContext(firstResult.sessionID, firstResult.actorID))?.system).toEqual(["first-system"])
+        expect((yield* actor.getForkContext(secondResult.sessionID, secondResult.actorID))?.system).toEqual(["second-system"])
+
+        yield* actor.cancel(firstResult.sessionID, firstResult.actorID, "forced")
+        expect((yield* actor.getForkContext(secondResult.sessionID, secondResult.actorID))?.system).toEqual(["second-system"])
+        yield* actor.cancel(secondResult.sessionID, secondResult.actorID, "forced")
       }),
       { git: true, config: providerCfg },
     ),
@@ -944,7 +1002,7 @@ describe("mode × contextMode matrix", () => {
           forkContext: fakeForkCtx,
         })
 
-        const ctx = yield* actor.getForkContext(result.actorID)
+        const ctx = yield* actor.getForkContext(result.sessionID, result.actorID)
         expect(ctx).toBeDefined()
         expect(ctx?.system).toEqual(["test-system"])
 
@@ -979,7 +1037,7 @@ describe("mode × contextMode matrix", () => {
           // no forkContext
         })
 
-        const ctx = yield* actor.getForkContext(result.actorID)
+        const ctx = yield* actor.getForkContext(result.sessionID, result.actorID)
         expect(ctx).toBeUndefined()
 
         yield* actor.cancel(result.sessionID, result.actorID, "forced")
@@ -1015,7 +1073,7 @@ describe("mode × contextMode matrix", () => {
 
         // For peer, result.actorID === child.id (the new session id)
         expect(result.actorID).not.toBe(parent.id)
-        const ctx = yield* actor.getForkContext(result.actorID)
+        const ctx = yield* actor.getForkContext(result.sessionID, result.actorID)
         expect(ctx).toBeDefined()
         expect(ctx?.system).toEqual(["test-system"])
 
@@ -1050,7 +1108,7 @@ describe("mode × contextMode matrix", () => {
           // no forkContext
         })
 
-        const ctx = yield* actor.getForkContext(result.actorID)
+        const ctx = yield* actor.getForkContext(result.sessionID, result.actorID)
         expect(ctx).toBeUndefined()
 
         yield* actor.cancel(result.sessionID, result.actorID, "forced")
