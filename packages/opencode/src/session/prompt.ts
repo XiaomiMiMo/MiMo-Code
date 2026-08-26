@@ -2887,7 +2887,12 @@ NOTE: At any point in time through this workflow you should feel free to ask the
         // turn entirely. Running loop() here would produce a spurious assistant
         // response with no user turn.
         if (message.parts.length === 0) return message
-        return yield* loop({ sessionID: input.sessionID, agentID: input.agentID ?? "main", task_id: input.task_id, titleLocale: input.titleLocale })
+        return yield* loop({
+          sessionID: input.sessionID,
+          agentID: input.agentID ?? "main",
+          task_id: input.task_id,
+          titleLocale: input.titleLocale,
+        })
       },
     )
 
