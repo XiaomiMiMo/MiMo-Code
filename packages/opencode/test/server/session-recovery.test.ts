@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test"
 import { Effect } from "effect"
+import { createOpencodeClient } from "@mimo-ai/sdk/v2"
 import { AppRuntime } from "../../src/effect/app-runtime"
 import { Instance } from "../../src/project/instance"
 import { Server } from "../../src/server/server"
@@ -59,12 +60,13 @@ describe("session turn recovery routes", () => {
           }
         })
         const query = `?directory=${encodeURIComponent(tmp.path)}`
+        const resumeQuery = `${query}&titleLocale=fr-FR`
         const listed = yield* Effect.promise(() => Promise.resolve(app.request(`/session/${session.id}/recovery${query}`)))
         const candidates = yield* Effect.promise(() => listed.json() as Promise<Array<{ assistantMessageID: string; parentMessageID: string; created: number }>>)
         const missing = yield* Effect.promise(() =>
-          Promise.resolve(app.request(`/session/${session.id}/turn/${MessageID.ascending()}/resume${query}`, { method: "POST" })),
+          Promise.resolve(app.request(`/session/${session.id}/turn/${MessageID.ascending()}/resume${resumeQuery}`, { method: "POST" })),
         )
-        const resumed = yield* Effect.promise(() => Promise.resolve(app.request(`/session/${session.id}/turn/${assistant.id}/resume${query}`, { method: "POST" })))
+        const resumed = yield* Effect.promise(() => Promise.resolve(app.request(`/session/${session.id}/turn/${assistant.id}/resume${resumeQuery}`, { method: "POST" })))
         yield* Effect.promise(() =>
           Promise.race([errorSeen, new Promise((resolve) => setTimeout(resolve, 10_000))]),
         )
@@ -84,4 +86,31 @@ describe("session turn recovery routes", () => {
     expect(result.abandoned?.time.completed).toEqual(expect.any(Number))
     expect(result.abandoned?.error?.data.message).toContain("Abandoned")
   })
+})
+
+test("SDK serializes resume titleLocale in the query string", async () => {
+  let captured: Request | undefined
+  const fetchMock = Object.assign(
+    async (request: RequestInfo | URL) => {
+      captured = request instanceof Request ? request : new Request(request)
+      return new Response(null, { status: 202 })
+    },
+    { preconnect: () => {} },
+  )
+  const client = createOpencodeClient({
+    baseUrl: "http://example.test",
+    fetch: fetchMock,
+  })
+
+  await client.session.resume({
+    sessionID: "ses_test",
+    assistantMessageID: "msg_test",
+    titleLocale: "fr-FR",
+  })
+
+  expect(captured).toBeDefined()
+  const url = new URL(captured!.url)
+  expect(url.pathname).toBe("/session/ses_test/turn/msg_test/resume")
+  expect(url.searchParams.get("titleLocale")).toBe("fr-FR")
+  expect(captured!.body).toBeNull()
 })
