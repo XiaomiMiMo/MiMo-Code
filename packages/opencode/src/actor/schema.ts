@@ -36,9 +36,12 @@ export const Actor = z
     tools: ToolWhitelist.optional(),
     lastTurnTime: z.number(),
     turnCount: z.number(),
-    // Last part write for this actor's slice. Optional because the column is
-    // nullable — see actor.sql.ts. This is the liveness evidence; lastTurnTime
-    // and turnCount are step bookkeeping and are NOT read by deriveLiveness.
+    // Newest evidence that something is happening on this actor's slice: a part
+    // write (session/projectors.ts), or a message queued for it
+    // (ActorRegistry.markPending), so a woken actor is not judged against the
+    // silence that preceded it. Optional because the column is nullable — see
+    // actor.sql.ts. This is the liveness evidence; lastTurnTime and turnCount are
+    // step bookkeeping and are NOT read by deriveLiveness.
     lastActivityTime: z.number().optional(),
     lastError: z.string().optional(),
     time: z.object({

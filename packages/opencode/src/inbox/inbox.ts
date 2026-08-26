@@ -177,6 +177,13 @@ export const layer: Layer.Layer<
       // not affect delivery.
       const promptRef = sessionPromptRef.current
       if (promptRef) {
+        // Take the receiver out of `idle` BEFORE forking. The fork means send
+        // returns while the woken turn has not started yet, and a sender that
+        // immediately `wait`s on this receiver would otherwise hit ActorWaiter's
+        // fast path on a row still showing the PREVIOUS turn's idle+success and
+        // be handed that turn's result. Guarded to idle rows, so a receiver that
+        // is already running (its own turn will drain this row) is untouched.
+        yield* reg.markPending(input.receiverSessionID, input.receiverActorID)
         yield* promptRef
           .loop({
             sessionID: input.receiverSessionID,

@@ -75,6 +75,11 @@ export interface Interface {
       lastError?: string | undefined
     },
   ) => Effect.Effect<void>
+  // Flip an IDLE actor back to `pending` for the inbox wake path: a queued message
+  // means it has work again, and a row left `idle` lets ActorWaiter resolve on the
+  // PREVIOUS turn's outcome before the woken turn marks itself running. A row that
+  // is not idle is left alone.
+  readonly markPending: (sessionID: SessionID, actorID: string) => Effect.Effect<void>
   readonly updateTurn: (sessionID: SessionID, actorID: string) => Effect.Effect<void>
   readonly updateAgent: (sessionID: SessionID, actorID: string, agent: string) => Effect.Effect<void>
   readonly get: (sessionID: SessionID, actorID: string) => Effect.Effect<Actor | undefined>
@@ -169,6 +174,35 @@ export const layer: Layer.Layer<Service, never, Bus.Service> = Layer.effect(
       return fromRow(row)
     })
 
+    // Re-read after a status write so the event payload reflects committed row
+    // values rather than the sparse patch, then publish. A row that vanished
+    // between UPDATE and SELECT publishes nothing — a dropped event beats a
+    // misleading one.
+    const publishStatus = Effect.fn("ActorRegistry.publishStatus")(function* (
+      sessionID: SessionID,
+      actorID: string,
+    ) {
+      const row = yield* Effect.sync(() =>
+        Database.use((db) =>
+          db
+            .select()
+            .from(ActorRegistryTable)
+            .where(and(eq(ActorRegistryTable.session_id, sessionID), eq(ActorRegistryTable.actor_id, actorID)))
+            .get(),
+        ),
+      )
+      if (!row) return
+      yield* bus.publish(Events.ActorStatusChanged, {
+        sessionID,
+        actorID,
+        status: row.status,
+        ...(row.last_outcome ? { lastOutcome: row.last_outcome } : {}),
+        turnCount: row.turn_count,
+        lastTurnTime: row.last_turn_time,
+        ...(row.last_error ? { error: row.last_error } : {}),
+      })
+    })
+
     const updateStatus = Effect.fn("ActorRegistry.updateStatus")(function* (
       sessionID: SessionID,
       actorID: string,
@@ -199,30 +233,43 @@ export const layer: Layer.Layer<Service, never, Bus.Service> = Layer.effect(
             .run(),
         ),
       )
-      // Re-read so the event payload reflects committed row values (not the
-      // sparse patch). Skip publish if the row vanished between UPDATE and
-      // SELECT — a dropped event beats a misleading one.
-      const row = yield* Effect.sync(() =>
+      yield* publishStatus(sessionID, actorID)
+    })
+
+    const markPending = Effect.fn("ActorRegistry.markPending")(function* (sessionID: SessionID, actorID: string) {
+      const now = Date.now()
+      // Guarded in the WHERE clause, not read-then-write: a turn that starts
+      // between a read and an update would otherwise have its `running` status
+      // clobbered back to `pending`.
+      //
+      // last_activity_time moves too, and it has to: deriveLiveness measures a
+      // pending row against that timestamp, so a long-idle actor woken by a
+      // message would otherwise read as `stalled` (or past the abandon bound,
+      // `idle`) the instant it is queued, and the watchdog would announce it as
+      // quiet for however long it sat idle. A queued message IS activity on this
+      // actor's slice — drain turns it into a real user message part.
+      const moved = yield* Effect.sync(() =>
         Database.use((db) =>
           db
-            .select()
-            .from(ActorRegistryTable)
+            .update(ActorRegistryTable)
+            .set({ status: "pending", last_activity_time: now, time_updated: now })
             .where(
-              and(eq(ActorRegistryTable.session_id, sessionID), eq(ActorRegistryTable.actor_id, actorID)),
+              and(
+                eq(ActorRegistryTable.session_id, sessionID),
+                eq(ActorRegistryTable.actor_id, actorID),
+                eq(ActorRegistryTable.status, "idle"),
+              ),
             )
+            .returning()
             .get(),
         ),
       )
-      if (!row) return
-      yield* bus.publish(Events.ActorStatusChanged, {
-        sessionID,
-        actorID,
-        status: row.status,
-        ...(row.last_outcome ? { lastOutcome: row.last_outcome } : {}),
-        turnCount: row.turn_count,
-        lastTurnTime: row.last_turn_time,
-        ...(row.last_error ? { error: row.last_error } : {}),
-      })
+      // Announce a transition only when one happened. RETURNING is what makes that
+      // knowable: the guarded update is also a no-op for a row that was already
+      // running, or already pending — `main` rows are registered pending and never
+      // leave it, and they receive every subagent notification.
+      if (!moved) return
+      yield* publishStatus(sessionID, actorID)
     })
 
     const updateTurn = Effect.fn("ActorRegistry.updateTurn")(function* (sessionID: SessionID, actorID: string) {
@@ -512,6 +559,7 @@ export const layer: Layer.Layer<Service, never, Bus.Service> = Layer.effect(
     return Service.of({
       register,
       updateStatus,
+      markPending,
       updateTurn,
       updateAgent,
       get,

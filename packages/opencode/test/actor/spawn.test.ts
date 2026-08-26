@@ -1,7 +1,7 @@
 import { NodeFileSystem } from "@effect/platform-node"
 import { FetchHttpClient } from "effect/unstable/http"
 import { afterEach, describe, expect } from "bun:test"
-import { Deferred, Effect, Layer } from "effect"
+import { Deferred, Effect, Layer, Schedule } from "effect"
 import { and, eq } from "drizzle-orm"
 import { Agent as AgentSvc } from "../../src/agent/agent"
 import { Bus } from "../../src/bus"
@@ -1600,5 +1600,231 @@ describe("AgentOutcome failure classification", () => {
       }),
       { git: true, config: providerCfg },
     ),
+  )
+})
+
+describe("send then wait on a subagent", () => {
+  // The follow-up flow the actor tool now points models at: `send` a message to a
+  // subagent that already went idle, then `wait` on the same actor_id.
+  //
+  // forkWork wraps only the SPAWN turn in runTurn, so an inbox-woken turn used to
+  // leave the registry row exactly as the previous turn left it — idle+success.
+  // That is precisely the state ActorWaiter's fast path reads as "done", and it
+  // then answers from the slice's last assistant message, i.e. the PREVIOUS
+  // turn's text. This pins the row's honesty across a woken turn instead: queued
+  // ⇒ pending, running ⇒ running, finished ⇒ idle with a fresh turn recorded.
+  // Holding the woken turn's LLM response open makes the in-flight window
+  // deterministic rather than timing-dependent.
+  it.live(
+    "a woken turn moves the registry row off the previous turn's idle",
+    () =>
+      provideTmpdirServer(
+        Effect.fnUntraced(function* ({ llm }) {
+          const actor = yield* Actor.Service
+          const sessions = yield* Session.Service
+          const reg = yield* ActorRegistry.Service
+          const inbox = inboxServiceRef.current!
+
+          const parent = yield* sessions.create({
+            title: "send-then-wait parent",
+            permission: [{ permission: "*", pattern: "*", action: "allow" }],
+          })
+
+          const settled = Effect.gen(function* () {
+            const row = yield* reg.get(parent.id, "build-1")
+            if (row?.status !== "idle") return yield* Effect.fail("not idle yet" as const)
+            return row
+          }).pipe(Effect.retry({ schedule: Schedule.spaced("100 millis"), times: 60 }), Effect.orDie)
+
+          // Turn 1 — spawn, then settle. `outcome` resolves BEFORE the
+          // fire-and-forget postStop loop, which runs turns of its own, so wait
+          // for the row to read idle rather than racing postStop for the next
+          // queued LLM reply.
+          yield* llm.text("FIRST ANSWER")
+          const spawned = yield* actor.spawn({
+            mode: "subagent",
+            sessionID: parent.id,
+            agentType: "build",
+            task: "initial task",
+            context: "none",
+            tools: ["read"],
+            background: false,
+            model: ref,
+          })
+          expect((yield* Deferred.await(spawned.outcome)).status).toBe("success")
+          const before = yield* settled
+
+          // Turn 2 — hold the woken turn's reply so it is provably mid-flight.
+          const release = yield* Deferred.make<void>()
+          yield* llm.hold("SECOND ANSWER", Effect.runPromise(Deferred.await(release)))
+
+          yield* inbox.send({
+            receiverSessionID: parent.id,
+            receiverActorID: spawned.actorID,
+            senderSessionID: parent.id,
+            senderActorID: "main",
+            content: "follow-up question",
+          })
+
+          // Immediately after send — the window where `wait` used to hand back
+          // the previous turn's answer. Anything but idle keeps wait honest.
+          expect((yield* reg.get(parent.id, spawned.actorID))?.status).not.toBe("idle")
+
+          // Mid-flight, once the woken turn has actually started.
+          yield* Effect.gen(function* () {
+            const row = yield* reg.get(parent.id, spawned.actorID)
+            if (row?.status !== "running") return yield* Effect.fail("not running yet" as const)
+          }).pipe(Effect.retry({ schedule: Schedule.spaced("100 millis"), times: 60 }), Effect.orDie)
+
+          yield* Deferred.succeed(release, undefined)
+
+          const after = yield* settled
+          expect(after.lastOutcome).toBe("success")
+          expect(after.turnCount).toBeGreaterThan(before.turnCount)
+
+          const msgs = yield* sessions.messages({ sessionID: parent.id, agentID: spawned.actorID })
+          const last = msgs.findLast((m) => m.info.role === "assistant")
+          const text = last?.parts.findLast((p): p is Extract<typeof p, { type: "text" }> => p.type === "text")?.text
+          expect(text).toContain("SECOND ANSWER")
+        }),
+        { git: true, config: providerCfg },
+      ),
+    30_000,
+  )
+
+  // runLoop surfaces a settled assistant error as a SUCCESS value — it returns the
+  // errored message and only branches on it to notify the parent — so the woken
+  // turn's wrapper has to raise it, or runTurn records idle+success and a waiting
+  // sender is told a failed turn succeeded.
+  it.live(
+    "an errored woken turn is recorded as a failure",
+    () =>
+      provideTmpdirServer(
+        Effect.fnUntraced(function* ({ llm }) {
+          const actor = yield* Actor.Service
+          const sessions = yield* Session.Service
+          const reg = yield* ActorRegistry.Service
+          const inbox = inboxServiceRef.current!
+
+          const parent = yield* sessions.create({
+            title: "errored wake parent",
+            permission: [{ permission: "*", pattern: "*", action: "allow" }],
+          })
+
+          const settledIdle = Effect.gen(function* () {
+            const row = yield* reg.get(parent.id, "build-1")
+            if (row?.status !== "idle") return yield* Effect.fail("not idle yet" as const)
+            return row
+          }).pipe(Effect.retry({ schedule: Schedule.spaced("100 millis"), times: 60 }), Effect.orDie)
+
+          yield* llm.text("FIRST ANSWER")
+          const spawned = yield* actor.spawn({
+            mode: "subagent",
+            sessionID: parent.id,
+            agentType: "build",
+            task: "initial task",
+            context: "none",
+            tools: ["read"],
+            background: false,
+            model: ref,
+          })
+          expect((yield* Deferred.await(spawned.outcome)).status).toBe("success")
+          expect((yield* settledIdle).lastOutcome).toBe("success")
+
+          // A 400 is the deterministic case: SessionRetry refuses it, so the turn
+          // settles with a persisted assistant error instead of retrying forever.
+          yield* llm.error(400, { error: { message: "woken turn boom" } })
+          yield* inbox.send({
+            receiverSessionID: parent.id,
+            receiverActorID: spawned.actorID,
+            senderSessionID: parent.id,
+            senderActorID: "main",
+            content: "follow-up that will fail",
+          })
+
+          const after = yield* Effect.gen(function* () {
+            const row = yield* reg.get(parent.id, spawned.actorID)
+            if (row?.status !== "idle" || row.lastOutcome === undefined) {
+              return yield* Effect.fail("not settled yet" as const)
+            }
+            return row
+          }).pipe(
+            Effect.retry({ schedule: Schedule.spaced("100 millis"), times: 100 }),
+            Effect.orDie,
+          )
+          expect(after.lastOutcome).toBe("failure")
+          expect(after.lastError).toContain("Actor assistant failed")
+        }),
+        { git: true, config: providerCfg },
+      ),
+    30_000,
+  )
+})
+
+describe("SessionPrompt.loop actor status wrapping", () => {
+  // SessionPrompt.prompt itself ends in loop(), and forkWork already wraps that
+  // whole call in runTurn. So the actor-status wrapper inside loop is gated on the
+  // inbox wake flag: applying it to every non-main agentID would nest two runTurns
+  // around a spawn turn, and the inner one would publish idle+success before
+  // runAgentLoop inspects the assistant error and fails the outer.
+  //
+  // Seeding idle+failure makes the gate observable: a loop that must NOT touch
+  // actor status leaves that outcome alone, whereas a wrapped one overwrites it
+  // with the success its own turn produced.
+  it.live(
+    "a loop without the wake flag leaves actor status untouched",
+    () =>
+      provideTmpdirServer(
+        Effect.fnUntraced(function* ({ llm }) {
+          const prompt = yield* SessionPrompt.Service
+          const sessions = yield* Session.Service
+          const reg = yield* ActorRegistry.Service
+
+          const parent = yield* sessions.create({
+            title: "loop gate parent",
+            permission: [{ permission: "*", pattern: "*", action: "allow" }],
+          })
+          yield* reg.register({
+            sessionID: parent.id,
+            actorID: "build-9",
+            mode: "subagent",
+            parentActorID: undefined,
+            agent: "build",
+            description: "gate probe",
+            contextMode: "none",
+            contextWatermark: undefined,
+            background: true,
+            lifecycle: "ephemeral",
+          })
+          yield* reg.updateStatus(parent.id, "build-9", { status: "idle", lastOutcome: "failure", lastError: "boom" })
+
+          // A pending user message for the loop to answer, in this actor's slice.
+          yield* sessions.updateMessage({
+            id: MessageID.ascending(),
+            role: "user" as const,
+            sessionID: parent.id,
+            agentID: "build-9",
+            time: { created: Date.now() },
+            agent: "build",
+            model: ref,
+          })
+          yield* sessions.updatePart({
+            id: PartID.ascending(),
+            messageID: (yield* sessions.messages({ sessionID: parent.id, agentID: "build-9" })).at(-1)!.info.id,
+            sessionID: parent.id,
+            type: "text" as const,
+            text: "answer me",
+          })
+
+          yield* llm.text("LOOP ANSWER")
+          yield* prompt.loop({ sessionID: parent.id, agentID: "build-9" })
+
+          const row = yield* reg.get(parent.id, "build-9")
+          expect(row?.status).toBe("idle")
+          expect(row?.lastOutcome).toBe("failure")
+        }),
+        { git: true, config: providerCfg },
+      ),
+    30_000,
   )
 })

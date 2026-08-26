@@ -101,6 +101,71 @@ describe("actor.status event payload", () => {
     })
   })
 
+  test("markPending publishes only on a real idle -> pending transition", async () => {
+    await using tmp = await tmpdir({ git: true })
+    await withRegistry(tmp.path, async (rt) => {
+      const parent = await rt.runPromise(Session.Service.use((s) => s.create()))
+      const sid = parent.id
+
+      await rt.runPromise(
+        ActorRegistry.Service.use((reg) =>
+          reg.register({
+            sessionID: sid,
+            actorID: "explore-1",
+            mode: "subagent",
+            parentActorID: undefined,
+            agent: "explore",
+            description: "explore",
+            contextMode: "none",
+            contextWatermark: undefined,
+            background: false,
+            lifecycle: "ephemeral",
+          }),
+        ),
+      )
+
+      const events: Array<z.infer<typeof ActorStatusChanged.properties>> = []
+      const unsubscribe = await rt.runPromise(
+        Bus.Service.use((bus) =>
+          bus.subscribeCallback(ActorStatusChanged, (evt) => {
+            events.push(evt.properties)
+          }),
+        ),
+      )
+      try {
+        const markPending = () =>
+          rt.runPromise(ActorRegistry.Service.use((reg) => reg.markPending(sid, "explore-1")))
+
+        // Registered rows start `pending`, which is also the steady state of a
+        // `main` row — the receiver of every subagent notification. No transition,
+        // so nothing to announce.
+        await markPending()
+        await new Promise((r) => setTimeout(r, 50))
+        expect(events.length).toBe(0)
+
+        await rt.runPromise(
+          ActorRegistry.Service.use((reg) =>
+            reg.updateStatus(sid, "explore-1", { status: "idle", lastOutcome: "success" }),
+          ),
+        )
+        await new Promise((r) => setTimeout(r, 50))
+        expect(events.length).toBe(1)
+
+        await markPending()
+        await new Promise((r) => setTimeout(r, 50))
+        expect(events.length).toBe(2)
+        expect(events[1].status).toBe("pending")
+
+        // Already pending — no second announcement.
+        await markPending()
+        await new Promise((r) => setTimeout(r, 50))
+        expect(events.length).toBe(2)
+      } finally {
+        unsubscribe()
+      }
+    })
+  })
+
   test("updateStatus against non-existent actor publishes no event", async () => {
     await using tmp = await tmpdir({ git: true })
     await withRegistry(tmp.path, async (rt) => {

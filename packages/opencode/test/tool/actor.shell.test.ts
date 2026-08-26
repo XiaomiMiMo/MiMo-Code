@@ -231,12 +231,25 @@ describe("actor.shell.parse: send", () => {
 })
 
 describe("actor.shell.parse: full parity flags", () => {
-  test("run with --actor (resume) maps to actor_id", async () => {
-    const out = await parse('actor run explore "d" "p" --actor explore-1')
-    expect(out).toEqual([
-      { operation: { action: "run", subagent_type: "explore", description: "d", prompt: "p", actor_id: "explore-1" } },
-    ])
-  })
+  // spawn/run always create a fresh subagent — there is no resume flag, and the
+  // rejection names the replacement rather than reporting a bare arity mismatch.
+  for (const script of [
+    'actor run explore "d" "p" --actor explore-1',
+    'actor spawn general "d" "p" --actor general-2 --command "/bg"',
+    'actor spawn general "d" "p" --actor=general-2',
+  ]) {
+    test(`rejects --actor: ${script}`, async () => {
+      const exit = await Effect.runPromise(Effect.exit(parseActorScript(script)))
+      expect(exit._tag).toBe("Failure")
+      const cause: any = (exit as any).cause
+      const fail = cause.reasons?.find?.((r: any) => r._tag === "Fail") ?? cause
+      const err = fail.error ?? fail
+      expect(err.kind).toBe("flag")
+      expect(err.detail).toContain("--actor is not supported")
+      expect(err.detail).toContain("actor send")
+      expect(err.detail).toContain("actor wait")
+    })
+  }
 
   test("run with --timeout maps to timeout_ms (number)", async () => {
     const out = await parse('actor run explore "d" "p" --timeout 30000')
@@ -266,10 +279,10 @@ describe("actor.shell.parse: full parity flags", () => {
     ])
   })
 
-  test("spawn with --actor and --command (no timeout on spawn)", async () => {
-    const out = await parse('actor spawn general "d" "p" --actor general-2 --command "/bg"')
+  test("spawn with --command (no timeout on spawn)", async () => {
+    const out = await parse('actor spawn general "d" "p" --command "/bg"')
     expect(out).toEqual([
-      { operation: { action: "spawn", subagent_type: "general", description: "d", prompt: "p", actor_id: "general-2", command: "/bg" } },
+      { operation: { action: "spawn", subagent_type: "general", description: "d", prompt: "p", command: "/bg" } },
     ])
   })
 

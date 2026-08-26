@@ -339,7 +339,22 @@ describe("postStop progress.md is gated by the subagent's write permission", () 
         })
         expect(result.actorID).toBe("general-1")
 
-        yield* Deferred.await(result.outcome).pipe(Effect.timeout("30 seconds"))
+        const outcome = yield* Deferred.await(result.outcome).pipe(Effect.timeout("30 seconds"))
+
+        // Which turn the caller is answered WITH, across a spawn that ran extra
+        // rounds. The outcome is resolved after the completion gate and before the
+        // fire-and-forget postStop loop, so:
+        //   - the body is the gate re-entry's text plus the gate's own
+        //     reconciliation suffix, NOT the postStop turn's text;
+        //   - reportedStatus is the gate's downgrade (T1 left actionable), NOT the
+        //     "success" the model self-reported.
+        // postStop still ran — progress.md below proves it — it just does not get
+        // to redefine what the spawn returned.
+        expect(outcome.status).toBe("success")
+        if (outcome.status !== "success") throw new Error("expected success")
+        expect(outcome.finalText).toContain("**Incomplete tasks**: T1")
+        expect(outcome.finalText).not.toContain("wrote progress.md")
+        expect(outcome.reportedStatus).toBe("partial")
 
         const fs = yield* AppFileSystem.Service
         const exists = yield* fs.existsSafe(target)
