@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import path from "path"
 import { Effect, Layer } from "effect"
+import { Command } from "../../src/command"
 import * as CrossSpawnSpawner from "../../src/effect/cross-spawn-spawner"
 import { Skill } from "../../src/skill"
 import { deriveNamespace } from "../../src/skill/index"
@@ -15,6 +16,7 @@ withEnv({
 })
 
 const it = testEffect(Layer.mergeAll(Skill.defaultLayer, CrossSpawnSpawner.defaultLayer))
+const commandIt = testEffect(Layer.mergeAll(Command.defaultLayer, CrossSpawnSpawner.defaultLayer))
 
 const loc = (...parts: string[]) => path.join("/home/user/.config/mimocode", ...parts)
 
@@ -65,6 +67,31 @@ describe("namespaced skill discovery", () => {
           const skill = yield* Skill.Service
           const item = (yield* skill.all()).find((s) => s.name === "ns-test-skill")
           expect(item?.namespace).toBe("ECC")
+        }),
+      { git: true },
+    ),
+  )
+})
+
+describe("namespaced skill commands", () => {
+  commandIt.live("registers parent:name slash command for nested skills", () =>
+    provideTmpdirInstance(
+      (dir) =>
+        Effect.gen(function* () {
+          const skillDir = path.join(dir, ".mimocode", "skills", "ECC", "ns-test-skill")
+          yield* Effect.promise(() =>
+            Bun.write(
+              path.join(skillDir, "SKILL.md"),
+              "---\nname: ns-test-skill\ndescription: Test nested skill\n---\n# ns-test-skill\n",
+            ),
+          )
+          const cmd = yield* Command.Service
+          const all = yield* cmd.list()
+          const names = new Set(all.map((c) => c.name))
+          expect(names.has("ns-test-skill")).toBe(true)
+          expect(names.has("ECC:ns-test-skill")).toBe(true)
+          const namespaced = all.find((c) => c.name === "ECC:ns-test-skill")
+          expect(namespaced?.source).toBe("skill")
         }),
       { git: true },
     ),
