@@ -80,9 +80,8 @@ import {
   buildAutoWorktreeNotice,
   hasAutoWorktreeNotice,
   isAutoWorktreeHintSent,
-  isMainWorktree,
   markAutoWorktreeHintSent,
-  sessionWroteFiles,
+  sessionMutatedMainWorktree,
 } from "@/tool/auto-worktree-hint"
 import {
   serializeTrajectoryMessages,
@@ -1168,30 +1167,34 @@ export const layer = Layer.effect(
         })
       }
 
-      // Auto-worktree notice: once per root session, primary agent only, on a
-      // turn that has already mutated project files. Injected as a user-side
-      // system-reminder (same channel as skill/plan reminders) and persisted via
-      // auto_worktree_hint_sent so compaction/rebuild cannot re-inject. Never
-      // touches the system prompt, and never depends on conflict detection —
-      // the signal is simply "this session started writing in the main worktree".
-      // Mid-turn is intentional: write tools run after step 1, so a fresh-turn-only
-      // gate would miss the first write. alreadySent + existingNotice dedupe.
+      // Auto-worktree notice: once per root session, primary agent only, after
+      // a completed write or git mutation that landed in SOME git main worktree.
+      // Path-based on purpose — a session bound to a non-git scratch dir that
+      // `cd`s into another project's main checkout still hits. Isolated
+      // worktrees and non-git paths do not. Injected as a user-side
+      // system-reminder and persisted via auto_worktree_hint_sent so
+      // compaction/rebuild cannot re-inject. Never touches the system prompt.
+      // Mid-turn is intentional: write tools run after step 1. alreadySent +
+      // existingNotice dedupe.
       if (input.agent.mode === "primary" && !input.session.parentID) {
         const alreadySent = yield* Effect.sync(() => isAutoWorktreeHintSent(input.session.id))
         if (!alreadySent) {
           if (hasAutoWorktreeNotice(userMessage)) {
             yield* Effect.sync(() => markAutoWorktreeHintSent(input.session.id))
-          } else if (isMainWorktree() && sessionWroteFiles(input.messages)) {
-            const part = yield* sessions.updatePart({
-              id: PartID.ascending(),
-              messageID: userMessage.info.id,
-              sessionID: userMessage.info.sessionID,
-              type: "text",
-              text: buildAutoWorktreeNotice(),
-              synthetic: true,
-            })
-            userMessage.parts.push(part)
-            yield* Effect.sync(() => markAutoWorktreeHintSent(input.session.id))
+          } else {
+            const hit = sessionMutatedMainWorktree(input.messages)
+            if (hit) {
+              const part = yield* sessions.updatePart({
+                id: PartID.ascending(),
+                messageID: userMessage.info.id,
+                sessionID: userMessage.info.sessionID,
+                type: "text",
+                text: buildAutoWorktreeNotice(hit),
+                synthetic: true,
+              })
+              userMessage.parts.push(part)
+              yield* Effect.sync(() => markAutoWorktreeHintSent(input.session.id))
+            }
           }
         }
       }

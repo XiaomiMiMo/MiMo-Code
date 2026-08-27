@@ -29,6 +29,7 @@ import { ChildProcessSpawner } from "effect/unstable/process/ChildProcessSpawner
 import * as BashInteractive from "./bash-interactive"
 import * as BashTokenEfficient from "./bash_token_efficient_pipeline"
 import * as BashTokenEfficientHeuristic from "./bash_token_efficient_heuristic"
+import { findGitMainWorktree } from "./auto-worktree-hint"
 
 const MAX_METADATA_LENGTH = 30_000
 const DEFAULT_TIMEOUT = Flag.MIMOCODE_EXPERIMENTAL_BASH_DEFAULT_TIMEOUT_MS || 2 * 60 * 1000
@@ -306,6 +307,150 @@ export async function commandWritesFiles(command: string, ps = false): Promise<b
     return isFileWrite(tree.rootNode, ps)
   } catch {
     return false
+  }
+}
+
+// git subcommands that mutate the working tree / index / local refs.
+// `status` / `log` / `diff` / `fetch` / `show` are deliberately absent.
+const GIT_MUTATE_SUBS = new Set([
+  "add",
+  "apply",
+  "branch",
+  "checkout",
+  "cherry-pick",
+  "clean",
+  "commit",
+  "merge",
+  "mv",
+  "rebase",
+  "reset",
+  "restore",
+  "revert",
+  "rm",
+  "stash",
+  "switch",
+  "tag",
+  "worktree",
+])
+
+function isGitMutate(tokens: string[], ps: boolean): boolean {
+  if (tokens.length < 2) return false
+  const head = ps ? tokens[0].toLowerCase() : tokens[0]
+  if (head !== "git") return false
+  const sub = ps ? tokens[1].toLowerCase() : tokens[1]
+  if (!GIT_MUTATE_SUBS.has(sub)) return false
+  // `git worktree list|prune` only inspects; add/remove/repair mutate.
+  if (sub === "worktree") {
+    const verb = tokens[2]
+    return verb === "add" || verb === "remove" || verb === "repair" || verb === "move"
+  }
+  return true
+}
+
+function enclosingRedirectedStatement(node: Node): Node | undefined {
+  let cur: Node | null = node.parent
+  while (cur) {
+    if (cur.type === "redirected_statement") return cur
+    cur = cur.parent
+  }
+  return undefined
+}
+
+function redirectFileTargets(node: Node): string[] {
+  // `cd dir && echo x > f` wraps the whole list in redirected_statement, so the
+  // redirect is NOT a child of the echo command. Walk up to find it.
+  const stmt = enclosingRedirectedStatement(node) ?? node
+  const out: string[] = []
+  for (const redirect of stmt.descendantsOfType("file_redirect")) {
+    if (!redirect || !isFileWriteRedirect(redirect)) continue
+    for (let i = redirect.childCount - 1; i >= 0; i--) {
+      const child = redirect.child(i)
+      if (!child) continue
+      if (child.type === "word" || child.type === "string" || child.type === "raw_string") {
+        const text = unquote(child.text)
+        if (text && !text.includes("*") && !text.includes("$") && !text.includes("(")) out.push(text)
+        break
+      }
+    }
+  }
+  return out
+}
+
+function plausiblePathArg(token: string): string | undefined {
+  if (!token || token.startsWith("-")) return
+  const text = unquote(token)
+  if (!text || text.includes("*") || text.includes("$") || text.includes("(") || text.includes(" ")) return
+  return text
+}
+
+/**
+ * Resolve where this command line actually mutates: tracks `cd`, collects
+ * redirect / write-command targets, and flags git subcommands that change a
+ * working tree. Relative paths resolve against the effective cwd after cds.
+ */
+export function collectMutationTargets(root: Node, cwd: string, ps: boolean): { paths: string[]; gitMutate: boolean } {
+  let effectiveCwd = path.resolve(cwd)
+  const paths: string[] = []
+  let gitMutate = false
+
+  const add = (raw: string, base: string) => {
+    const resolved = path.isAbsolute(raw) ? path.resolve(raw) : path.resolve(base, raw)
+    paths.push(resolved)
+  }
+
+  for (const node of commands(root)) {
+    const tokens = parts(node).map((item) => item.text)
+    if (tokens.length === 0) continue
+    const head = ps ? tokens[0].toLowerCase() : tokens[0]
+
+    if (head === "cd" || head === "pushd" || head === "set-location" || head === "push-location") {
+      const arg = plausiblePathArg(tokens[1] ?? "")
+      if (arg) effectiveCwd = path.isAbsolute(arg) ? path.resolve(arg) : path.resolve(effectiveCwd, arg)
+      continue
+    }
+
+    if (isGitMutate(tokens, ps)) gitMutate = true
+
+    for (const raw of redirectFileTargets(node)) add(raw, effectiveCwd)
+
+    if (WRITE_COMMANDS.has(head) || isSedInPlace(tokens, ps)) {
+      for (const tok of tokens.slice(1)) {
+        const arg = plausiblePathArg(tok)
+        if (arg) add(arg, effectiveCwd)
+      }
+    }
+  }
+
+  if (paths.length > 0 || gitMutate) {
+    paths.push(effectiveCwd)
+    paths.push(path.resolve(cwd))
+  }
+
+  return { paths: [...new Set(paths)], gitMutate }
+}
+
+/** Main-worktree roots this command mutates. Empty when it only reads or only touches scratch. */
+export function mainWorktreeHits(root: Node, cwd: string, ps: boolean): string[] {
+  const { paths, gitMutate } = collectMutationTargets(root, cwd, ps)
+  if (paths.length === 0 && !gitMutate) return []
+  const hits = new Set<string>()
+  // findGitMainWorktree walks up, so both file paths and directories work.
+  for (const p of paths) {
+    const hit = findGitMainWorktree(p)
+    if (hit) hits.add(hit)
+  }
+  return [...hits]
+}
+
+/** Parse a command and report which git main worktrees it mutates. Fail-closed to []. */
+export async function commandMainWorktreeHits(command: string, cwd: string, ps = false): Promise<string[]> {
+  try {
+    const p = await parser()
+    const tree = (ps ? p.ps : p.bash).parse(command)
+    if (!tree) return []
+    return mainWorktreeHits(tree.rootNode, cwd, ps)
+  } catch {
+    return []
   }
 }
 
@@ -782,6 +927,7 @@ export const BashTool = Tool.define(
         maxOutputTokens?: number
         description: string
         fileWrite?: boolean
+        mainWorktreeHits?: string[]
       },
       ctx: Tool.Context,
     ) {
@@ -1010,6 +1156,7 @@ export const BashTool = Tool.define(
           truncated: cut,
           ...(cut && file ? { outputPath: file } : {}),
           ...(input.fileWrite ? { fileWrite: true } : {}),
+          ...(input.mainWorktreeHits?.length ? { mainWorktreeHits: input.mainWorktreeHits } : {}),
         },
         output,
       }
@@ -1037,6 +1184,7 @@ export const BashTool = Tool.define(
               const ps = PS.has(name)
               const root = yield* parse(params.command, ps)
               const fileWrite = isFileWrite(root, ps)
+              const hits = mainWorktreeHits(root, cwd, ps)
               // Cross-branch git guard for isolated children. Sits on the SAME
               // parsed AST the permission scan uses, so every command node in a
               // pipeline / `&&` chain / subshell is checked, and it runs BEFORE
@@ -1104,6 +1252,7 @@ export const BashTool = Tool.define(
                     description: params.description,
                     truncated: false,
                     ...(fileWrite ? { fileWrite: true } : {}),
+                    ...(hits.length ? { mainWorktreeHits: hits } : {}),
                   },
                   output:
                     interactiveResult.output ||
@@ -1122,6 +1271,7 @@ export const BashTool = Tool.define(
                   maxOutputTokens: params.max_output_tokens,
                   description: params.description,
                   fileWrite,
+                  mainWorktreeHits: hits,
                 },
                 ctx,
               )

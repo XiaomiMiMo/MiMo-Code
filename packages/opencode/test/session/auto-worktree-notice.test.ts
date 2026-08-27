@@ -96,6 +96,7 @@ describe("session.prompt auto-worktree first-write notice", () => {
               const text = notices[0].type === "text" ? notices[0].text : ""
               expect(text).toContain("Do NOT create a worktree on your own")
               expect(text).toContain("ask the user")
+              expect(text).toContain(path.resolve(tmp.path))
               expect(text).not.toContain("Conflict detected")
               expect(isAutoWorktreeHintSent(session.id)).toBe(true)
 
@@ -283,6 +284,147 @@ describe("session.prompt auto-worktree first-write notice", () => {
               const userMsgs = msgs.filter((m) => m.info.role === "user")
               expect(noticeParts(userMsgs[0])).toHaveLength(0)
               expect(isAutoWorktreeHintSent(session.id)).toBe(false)
+
+              yield* sessions.remove(session.id)
+            }),
+          ),
+      })
+    } finally {
+      void stub.stop()
+    }
+  })
+
+  test("cd-escape from a non-git session dir into another repo's main worktree still injects", async () => {
+    // Target repo is the real main worktree the command will write into.
+    await using target = await tmpdir({
+      git: true,
+      init: async (dir) => {
+        await Bun.write(path.join(dir, "keep.txt"), "k\n")
+      },
+    })
+    const targetRepo = target.path
+
+    const stub = startScriptedLLMServer([
+      {
+        lines: toolCallResponse({
+          id: "call_bash_cd",
+          name: "bash",
+          args: JSON.stringify({
+            command: `cd ${JSON.stringify(targetRepo)} && echo escaped > escaped.txt`,
+            description: "cd into repo and write",
+          }),
+        }),
+      },
+      { lines: textStopResponse("done-escape") },
+    ])
+
+    try {
+      // Scratch session dir is NOT a git repo.
+      await using scratch = await tmpdir({
+        outsideGit: true,
+        init: async (dir) => {
+          await Bun.write(path.join(dir, "mimocode.json"), JSON.stringify(providerConfig(stub.origin)))
+        },
+      })
+
+      await Instance.provide({
+        directory: scratch.path,
+        fn: () =>
+          run(
+            Effect.gen(function* () {
+              const prompt = yield* SessionPrompt.Service
+              const sessions = yield* Session.Service
+              const session = yield* sessions.create({
+                title: "aw cd escape",
+                permission: [{ permission: "*", pattern: "*", action: "allow" }],
+              })
+
+              yield* prompt.prompt({
+                sessionID: session.id,
+                agent: "build",
+                parts: [
+                  {
+                    type: "text",
+                    text: `cd into ${targetRepo} and write escaped.txt`,
+                  },
+                ],
+              })
+
+              const msgs = yield* sessions.messages({ sessionID: session.id })
+              const bashTool = msgs.flatMap((m) => m.parts).find((p) => p.type === "tool" && p.tool === "bash")
+              expect(bashTool).toBeDefined()
+              if (bashTool?.type === "tool" && bashTool.state.status === "completed") {
+                expect(bashTool.state.metadata.mainWorktreeHits?.[0]).toBe(path.resolve(targetRepo))
+              }
+
+              const userMsgs = msgs.filter((m) => m.info.role === "user")
+              const notices = noticeParts(userMsgs[0])
+              expect(notices).toHaveLength(1)
+              const text = notices[0].type === "text" ? notices[0].text : ""
+              expect(text).toContain(path.resolve(targetRepo))
+              expect(isAutoWorktreeHintSent(session.id)).toBe(true)
+
+              yield* sessions.remove(session.id)
+            }),
+          ),
+      })
+    } finally {
+      void stub.stop()
+    }
+  })
+
+  test("git checkout on a main worktree injects even without a file write", async () => {
+    const stub = startScriptedLLMServer([
+      {
+        lines: toolCallResponse({
+          id: "call_bash_git",
+          name: "bash",
+          args: JSON.stringify({
+            command: "git checkout -b wt/feature",
+            description: "Create branch on main",
+          }),
+        }),
+      },
+      { lines: textStopResponse("done-git") },
+    ])
+
+    try {
+      await using tmp = await tmpdir({
+        git: true,
+        init: async (dir) => {
+          await Bun.write(path.join(dir, "mimocode.json"), JSON.stringify(providerConfig(stub.origin)))
+        },
+      })
+
+      await Instance.provide({
+        directory: tmp.path,
+        fn: () =>
+          run(
+            Effect.gen(function* () {
+              const prompt = yield* SessionPrompt.Service
+              const sessions = yield* Session.Service
+              const session = yield* sessions.create({
+                title: "aw git checkout",
+                permission: [{ permission: "*", pattern: "*", action: "allow" }],
+              })
+
+              yield* prompt.prompt({
+                sessionID: session.id,
+                agent: "build",
+                parts: [{ type: "text", text: "Create wt/feature on main worktree" }],
+              })
+
+              const msgs = yield* sessions.messages({ sessionID: session.id })
+              const bashTool = msgs.flatMap((m) => m.parts).find((p) => p.type === "tool" && p.tool === "bash")
+              expect(bashTool).toBeDefined()
+              if (bashTool?.type === "tool" && bashTool.state.status === "completed") {
+                expect(bashTool.state.metadata.fileWrite).not.toBe(true)
+                expect(bashTool.state.metadata.mainWorktreeHits?.[0]).toBe(path.resolve(tmp.path))
+              }
+
+              const userMsgs = msgs.filter((m) => m.info.role === "user")
+              expect(noticeParts(userMsgs[0])).toHaveLength(1)
+              expect(isAutoWorktreeHintSent(session.id)).toBe(true)
 
               yield* sessions.remove(session.id)
             }),
