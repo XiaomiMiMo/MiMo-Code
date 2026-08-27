@@ -78,6 +78,8 @@ function getOrCreateClientState(name?: string): MockClientState {
 class MockStdioTransport {
   stderr: null = null
   pid = 12345
+  onerror?: unknown
+  onStderr?: unknown
   // oxlint-disable-next-line no-useless-constructor
   constructor(_opts: any) {}
   async start() {
@@ -86,6 +88,12 @@ class MockStdioTransport {
   }
   async close() {
     transportCloseCount++
+  }
+  exitSnapshot() {
+    return { pid: 12345, exitCode: null, signalCode: null, hostShutdown: false }
+  }
+  stderrSnapshot() {
+    return ""
   }
 }
 
@@ -114,8 +122,9 @@ class MockSSE {
   }
 }
 
-void mock.module("@modelcontextprotocol/sdk/client/stdio.js", () => ({
-  StdioClientTransport: MockStdioTransport,
+// connectLocal uses the host-owned stdio transport, not the SDK client transport.
+void mock.module("../../src/mcp/stdio-transport", () => ({
+  ObservingStdioTransport: MockStdioTransport,
 }))
 
 void mock.module("@modelcontextprotocol/sdk/client/streamableHttp.js", () => ({

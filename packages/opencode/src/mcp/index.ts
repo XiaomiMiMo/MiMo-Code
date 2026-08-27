@@ -3,7 +3,6 @@ import { childProcessEnv } from "@/util/child-process-env"
 import { Client } from "@modelcontextprotocol/sdk/client/index.js"
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js"
 import { SSEClientTransport } from "@modelcontextprotocol/sdk/client/sse.js"
-import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js"
 import { UnauthorizedError } from "@modelcontextprotocol/sdk/client/auth.js"
 import {
   CallToolResultSchema,
@@ -18,6 +17,7 @@ import z from "zod/v4"
 import { Installation } from "../installation"
 import { InstallationVersion } from "../installation/version"
 import { withTimeout } from "@/util/timeout"
+import { ObservingStdioTransport } from "./stdio-transport"
 import { AppFileSystem } from "@mimo-ai/shared/filesystem"
 import { McpOAuthProvider } from "./oauth-provider"
 import { McpOAuthCallback } from "./oauth-callback"
@@ -443,7 +443,7 @@ export const layer = Layer.effect(
     const createClient = () =>
       new Client({ name: "mimocode", version: InstallationVersion }, CLIENT_OPTIONS)
 
-    type Transport = StdioClientTransport | StreamableHTTPClientTransport | SSEClientTransport
+    type Transport = ObservingStdioTransport | StreamableHTTPClientTransport | SSEClientTransport
 
     /**
      * Connect a client via the given transport with resource safety:
@@ -580,8 +580,10 @@ export const layer = Layer.effect(
     ) {
       const [cmd, ...args] = mcp.command
       const cwd = yield* InstanceState.directory
-      const transport = new StdioClientTransport({
-        stderr: "pipe",
+      // Own the child through the public child_process API. SDK StdioClientTransport
+      // clears its private `_process` in close() before callers can read exitCode, and
+      // onclose does not receive the code — so the failure snapshot must be captured here.
+      const transport = new ObservingStdioTransport({
         command: cmd,
         args,
         cwd,
@@ -595,9 +597,12 @@ export const layer = Layer.effect(
           ...mcp.environment,
         },
       })
-      transport.stderr?.on("data", (chunk: Buffer) => {
-        log.info(`mcp stderr: ${chunk.toString()}`, { key })
-      })
+      transport.onerror = (error) => {
+        log.info(`mcp transport error: ${error.message}`, { key })
+      }
+      transport.onStderr = (text) => {
+        log.info(`mcp stderr: ${text}`, { key })
+      }
 
       const connectTimeout = mcp.timeout ?? DEFAULT_TIMEOUT
       return yield* connectTransport(transport, connectTimeout).pipe(
@@ -607,8 +612,28 @@ export const layer = Layer.effect(
         })),
         Effect.catch((error): Effect.Effect<{ client: MCPClient | undefined; status: Status }> => {
           const msg = error instanceof Error ? error.message : String(error)
-          log.error("local mcp startup failed", { key, command: ConfigMCP.redactCommand(mcp.command), cwd, error: msg })
-          return Effect.succeed({ client: undefined, status: { status: "failed", error: msg } })
+          const exit = transport.exitSnapshot()
+          const stderrTail = transport.stderrSnapshot().trim()
+          // hostShutdown means close() tore the child down; that signal is our cleanup,
+          // not the child's startup-failure cause.
+          const natural = exit && !exit.hostShutdown ? exit : undefined
+          log.error("local mcp startup failed", {
+            key,
+            command: ConfigMCP.redactCommand(mcp.command),
+            cwd,
+            error: msg,
+            pid: exit?.pid ?? null,
+            exitCode: natural?.exitCode ?? null,
+            signalCode: natural?.signalCode ?? null,
+            stderr: stderrTail || undefined,
+          })
+          const detail = [
+            msg,
+            natural?.exitCode != null ? `exit=${natural.exitCode}` : undefined,
+            natural?.signalCode ? `signal=${natural.signalCode}` : undefined,
+            stderrTail || undefined,
+          ].filter(Boolean).join("; ")
+          return Effect.succeed({ client: undefined, status: { status: "failed", error: detail } })
         }),
       )
     })
@@ -724,7 +749,7 @@ export const layer = Layer.effect(
               Object.values(s.clients),
               (client) =>
                 Effect.gen(function* () {
-                  const pid = client.transport instanceof StdioClientTransport ? client.transport.pid : null
+                  const pid = client.transport instanceof ObservingStdioTransport ? client.transport.pid : null
                   if (typeof pid === "number") {
                     const pids = yield* descendants(pid)
                     for (const dpid of pids) {
