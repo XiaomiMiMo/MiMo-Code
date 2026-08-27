@@ -238,7 +238,10 @@ work. Keep these in mind:
    argument; bodies carry the evidence.
 3. **Every slide earns its visuals.** A slide without a chart, image, icon,
    or shape is usually a bullet dump. Turn it into a comparison, a stat
-   callout, a diagram, or delete it.
+   callout, a diagram, or delete it. **A "visual" is not necessarily a
+   picture** — a stat callout, a comparison shape, or a well-typeset quote
+   is already a visual. When you do need a picture, see *Image sourcing*
+   below.
 4. **Layouts, not per-slide geometry.** For anything reused (section
    dividers, content pages, quote slides), define a `slide_layout` once and
    apply it. This makes swapping the theme a one-line change instead of a
@@ -253,6 +256,74 @@ work. Keep these in mind:
 7. **Bullets are not the default.** Bullet lists are the failure mode of
    most decks — comparisons, tables, icons-with-labels, and stat callouts
    almost always land better.
+
+## Image sourcing (choose the right channel)
+
+"Every slide earns its visuals" does **not** mean "generate an image for
+every slide." Choose the source based on what the image does. Four channels,
+ordered by preference (lower cost + higher stability first):
+
+**L1 · Draw in code.** Icons via react-icons / iconify. Charts via
+matplotlib / plotly / echarts. Flowcharts, comparisons, org charts via
+shapes + lines. Anything that is a data or concept visualization —
+never fetch or generate an image for this.
+
+**L2 · Cite a real-image URL from memory.** You have URLs to public image
+libraries (Unsplash, Pexels, official CDNs) baked into your training data.
+When a slide needs a **generic real photo** (city skyline, office desk, team
+collaboration, nature, generic stock imagery), reference such a URL directly
+and use `slide.add_picture(url, ...)` (python-pptx supports HTTP URL). Zero
+tool calls. If the URL fails, fall back to L3 or L4.
+
+**L3 · Search the web.** For **specific real things** you cannot reasonably
+know the URL of (a particular company's logo, a specific product's official
+screenshot, a named person's photo) — use `websearch` to find the URL, then
+embed via URL or `webfetch`. Never call `image_gen` for these — a generated
+logo will not look like the real logo.
+
+**L4 · Generate with `image_gen`.** Only for **stylized visuals** — cover
+art, hero backgrounds, illustration-style concept images, brand-mood
+imagery. Budget: **at most 1–2 `image_gen` calls per deck**, typically for
+cover or section dividers. Not for every content slide.
+
+### Decision (run per slide)
+
+1. Does this slide actually need a picture? Often the answer is no — a
+   large stat callout, a comparison shape, a well-typeset quote, or a
+   diagram *is* a visual. Skip pictures when layout + typography carries
+   the message.
+2. If yes, pick the cheapest channel that works:
+   - Data / concept / flow / icon → **L1** (draw in code)
+   - Generic real photo → **L2** (memory URL)
+   - Specific brand / logo / product / person → **L3** (web search)
+   - Stylized cover / hero / illustration → **L4** (`image_gen`)
+3. If a URL fails: L2 → L3 → L4 → shape + text fallback. Never leave a
+   slide blank because an image failed to load.
+
+### Anti-patterns
+
+- **Calling `image_gen` on every content slide.** Slow, expensive,
+  style-inconsistent, visually noisy. A 20-slide deck with 20 generated
+  images is a red flag, not a success.
+- **Generating a logo, celebrity, or product screenshot with `image_gen`.**
+  The output will not resemble the real thing. Use web search (L3).
+- **Executive / status / weekly decks in illustration style.** Work
+  reporting is data + icons + hierarchy, not concept art. Reserve L4 for
+  launch, brand, or hero visuals.
+- **Leaving a slide blank because an image fetch failed.** Always have a
+  shape + text fallback; a well-formatted stat callout is a better slide
+  than an empty one anyway.
+
+### Scene defaults (rough mix per deck type)
+
+| Deck type              | Dominant | Notes                                           |
+|------------------------|----------|-------------------------------------------------|
+| Status / OKR / weekly  | L1 (~90%) | Icons + data charts. Almost no L3 / L4.        |
+| Strategy / proposal    | L1 + L2  | ~60% L1, ~30% L2, ~10% L4 cover.                |
+| Sales / pitch / BP     | L2 + L3  | Customer logos and product shots (L3) matter. 1 L4 cover. |
+| Training / education   | L1 (~80%) | Diagrams and flowcharts win.                   |
+| Launch / brand         | L4-heavy | Visuals are the point. Still limit style drift. |
+| Competitive analysis   | L3-heavy | Logos and screenshots are irreplaceable.        |
 
 ## Typography defaults (safe starting point)
 
