@@ -34,7 +34,8 @@ import { contextPressureLevel, usable, isOverflow as overflowCheck } from "./ove
 import { Config } from "@/config"
 import { isMemoryWriteEnabled } from "@/memory/write-gate"
 import { Global } from "@/global"
-import { NotFoundError } from "@/storage"
+import { NotFoundError, Database, eq } from "@/storage"
+import { SessionTable } from "./session.sql"
 import { Bus } from "../bus"
 import { ProviderTransform } from "../provider"
 import { SystemPrompt } from "./system"
@@ -75,7 +76,7 @@ import { SessionSummary } from "./summary"
 import { NamedError } from "@mimo-ai/shared/util/error"
 import { SessionProcessor } from "./processor"
 import { buildLLMRequestPrefix } from "./llm-request-prefix"
-import { checkConflict, type ConflictResult } from "@/tool/conflict-detection"
+import { checkConflict } from "@/tool/conflict-detection"
 import {
   serializeTrajectoryMessages,
   withAssistantParts,
@@ -1085,6 +1086,19 @@ export const layer = Layer.effect(
       return stripped.length > 120 ? stripped.substring(0, 117) + "..." : stripped
     })
 
+    const AUTO_WORKTREE_NOTICE_MARKER = "Auto-Worktree Notice"
+
+    const markAutoWorktreeHintSent = (sessionID: SessionID) =>
+      Effect.sync(() =>
+        Database.use((db) =>
+          db
+            .update(SessionTable)
+            .set({ auto_worktree_hint_sent: true })
+            .where(eq(SessionTable.id, sessionID))
+            .run(),
+        ),
+      )
+
     const insertReminders = Effect.fn("SessionPrompt.insertReminders")(function* (input: {
       messages: MessageV2.WithParts[]
       agent: Agent.Info
@@ -1158,6 +1172,54 @@ export const layer = Layer.effect(
           text,
           synthetic: true,
         })
+      }
+
+      // Auto-worktree notice: once per root session, primary agent only, on a
+      // fresh user turn. Appended as a user-side system-reminder (same channel
+      // as skill/plan reminders) and persisted via auto_worktree_hint_sent so
+      // compaction/rebuild cannot re-inject. Never touches the system prompt.
+      if (input.agent.mode === "primary" && !input.session.parentID && input.messages.at(-1) === userMessage) {
+        const alreadySent = yield* Effect.sync(() =>
+          Database.use((db) =>
+            db
+              .select({ sent: SessionTable.auto_worktree_hint_sent })
+              .from(SessionTable)
+              .where(eq(SessionTable.id, input.session.id))
+              .get()?.sent,
+          ),
+        )
+        const existingNotice = userMessage.parts.some(
+          (part) => part.type === "text" && part.synthetic && !part.ignored && part.text.includes(AUTO_WORKTREE_NOTICE_MARKER),
+        )
+        if (alreadySent || existingNotice) {
+          if (!alreadySent && existingNotice) yield* markAutoWorktreeHintSent(input.session.id)
+        } else if (Instance.project.vcs === "git" && Instance.worktree === Instance.project.worktree) {
+          const directory = yield* InstanceState.directory
+          const conflict = yield* Effect.promise(() => checkConflict(directory, input.session.id))
+          if (conflict.hasConflict) {
+            const part = yield* sessions.updatePart({
+              id: PartID.ascending(),
+              messageID: userMessage.info.id,
+              sessionID: userMessage.info.sessionID,
+              type: "text",
+              text: [
+                "<system-reminder>",
+                AUTO_WORKTREE_NOTICE_MARKER,
+                "",
+                "This session is running in the main worktree. Before writing or editing any files, create an isolated worktree first:",
+                "",
+                "- Create an isolated worktree: `git worktree add <path> -b <branch>` with a path outside the project directory",
+                "- Switch into that worktree before continuing write/edit work",
+                "",
+                `Conflict detected: ${conflict.reason}${conflict.activeSessionId ? ` (session: ${conflict.activeSessionId})` : ""}`,
+                "</system-reminder>",
+              ].join("\n"),
+              synthetic: true,
+            })
+            userMessage.parts.push(part)
+            yield* markAutoWorktreeHintSent(input.session.id)
+          }
+        }
       }
 
       const assistantMessage = input.messages.findLast((msg) => msg.info.role === "assistant")
@@ -4297,29 +4359,6 @@ NOTE: At any point in time through this workflow you should feel free to ask the
               ...(Flag.MIMOCODE_ENABLE_DYNAMIC_SYSTEM_PROMPT ? [...env, ...instructions.content] : []),
               ...(format.type === "json_schema" ? [STRUCTURED_OUTPUT_SYSTEM_PROMPT] : []),
             ]
-            // Auto-worktree: inject hint on first assistant-less turn if conflict detected.
-            // Checks for no assistant messages (survives compaction/rebuild) + in main worktree.
-            const isGitProject = Instance.project.vcs === "git"
-            const isMainWorktree = Instance.worktree === Instance.project.worktree
-            if (isGitProject && isMainWorktree) {
-              const isFirstAssistantTurn = !msgs.some((m) => m.info.role === "assistant")
-              if (isFirstAssistantTurn) {
-                const directory = yield* InstanceState.directory
-                const conflict = (yield* Effect.promise(() => checkConflict(directory, sessionID))) as ConflictResult
-                if (conflict.hasConflict) {
-                  additions.push(`
-⚠️ Auto-Worktree Notice
-
-This session is running in the main worktree. If you need to write or edit files, consider creating an isolated worktree first:
-
-- Create an isolated worktree: \`git worktree add <path> -b <branch>\` with a path outside the project directory
-
-Conflict detected: ${conflict.reason}${conflict.activeSessionId ? ` (session: ${conflict.activeSessionId})` : ""}
-
-If this task is a simple fix, Q&A, or read-only operation, you can skip this notice and continue.`)
-                }
-              }
-            }
             // Note: `buildLLMRequestPrefix` also returns a `tools` field, but we
             // intentionally don't use it here — the `tools` variable from `resolveTools`
             // (set earlier via `handle.process({tools: ...})`) carries `execute` closures
