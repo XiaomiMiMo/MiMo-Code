@@ -76,7 +76,14 @@ import { SessionSummary } from "./summary"
 import { NamedError } from "@mimo-ai/shared/util/error"
 import { SessionProcessor } from "./processor"
 import { buildLLMRequestPrefix } from "./llm-request-prefix"
-import { checkConflict } from "@/tool/conflict-detection"
+import {
+  buildAutoWorktreeNotice,
+  hasAutoWorktreeNotice,
+  isAutoWorktreeHintSent,
+  isMainWorktree,
+  markAutoWorktreeHintSent,
+  sessionWroteFiles,
+} from "@/tool/auto-worktree-hint"
 import {
   serializeTrajectoryMessages,
   withAssistantParts,
@@ -1086,19 +1093,6 @@ export const layer = Layer.effect(
       return stripped.length > 120 ? stripped.substring(0, 117) + "..." : stripped
     })
 
-    const AUTO_WORKTREE_NOTICE_MARKER = "Auto-Worktree Notice"
-
-    const markAutoWorktreeHintSent = (sessionID: SessionID) =>
-      Effect.sync(() =>
-        Database.use((db) =>
-          db
-            .update(SessionTable)
-            .set({ auto_worktree_hint_sent: true })
-            .where(eq(SessionTable.id, sessionID))
-            .run(),
-        ),
-      )
-
     const insertReminders = Effect.fn("SessionPrompt.insertReminders")(function* (input: {
       messages: MessageV2.WithParts[]
       agent: Agent.Info
@@ -1175,50 +1169,29 @@ export const layer = Layer.effect(
       }
 
       // Auto-worktree notice: once per root session, primary agent only, on a
-      // fresh user turn. Appended as a user-side system-reminder (same channel
-      // as skill/plan reminders) and persisted via auto_worktree_hint_sent so
-      // compaction/rebuild cannot re-inject. Never touches the system prompt.
-      if (input.agent.mode === "primary" && !input.session.parentID && input.messages.at(-1) === userMessage) {
-        const alreadySent = yield* Effect.sync(() =>
-          Database.use((db) =>
-            db
-              .select({ sent: SessionTable.auto_worktree_hint_sent })
-              .from(SessionTable)
-              .where(eq(SessionTable.id, input.session.id))
-              .get()?.sent,
-          ),
-        )
-        const existingNotice = userMessage.parts.some(
-          (part) => part.type === "text" && part.synthetic && !part.ignored && part.text.includes(AUTO_WORKTREE_NOTICE_MARKER),
-        )
-        if (alreadySent || existingNotice) {
-          if (!alreadySent && existingNotice) yield* markAutoWorktreeHintSent(input.session.id)
-        } else if (Instance.project.vcs === "git" && Instance.worktree === Instance.project.worktree) {
-          const directory = yield* InstanceState.directory
-          const conflict = yield* Effect.promise(() => checkConflict(directory, input.session.id))
-          if (conflict.hasConflict) {
+      // turn that has already mutated project files. Injected as a user-side
+      // system-reminder (same channel as skill/plan reminders) and persisted via
+      // auto_worktree_hint_sent so compaction/rebuild cannot re-inject. Never
+      // touches the system prompt, and never depends on conflict detection —
+      // the signal is simply "this session started writing in the main worktree".
+      // Mid-turn is intentional: write tools run after step 1, so a fresh-turn-only
+      // gate would miss the first write. alreadySent + existingNotice dedupe.
+      if (input.agent.mode === "primary" && !input.session.parentID) {
+        const alreadySent = yield* Effect.sync(() => isAutoWorktreeHintSent(input.session.id))
+        if (!alreadySent) {
+          if (hasAutoWorktreeNotice(userMessage)) {
+            yield* Effect.sync(() => markAutoWorktreeHintSent(input.session.id))
+          } else if (isMainWorktree() && sessionWroteFiles(input.messages)) {
             const part = yield* sessions.updatePart({
               id: PartID.ascending(),
               messageID: userMessage.info.id,
               sessionID: userMessage.info.sessionID,
               type: "text",
-              text: [
-                "<system-reminder>",
-                AUTO_WORKTREE_NOTICE_MARKER,
-                "",
-                "This session is running in the main worktree while another active session is using the same directory. Concurrent write/edit work in the main worktree can interfere with each other.",
-                "",
-                "Do NOT create a worktree on your own. Before any write or edit, ask the user whether they want an isolated worktree.",
-                "",
-                "If the user agrees, create one with `git worktree add <path> -b <branch>` using a path outside the project directory, then switch into it before continuing. If the user declines, proceed only on the paths they authorized.",
-                "",
-                `Conflict detected: ${conflict.reason}${conflict.activeSessionId ? ` (session: ${conflict.activeSessionId})` : ""}`,
-                "</system-reminder>",
-              ].join("\n"),
+              text: buildAutoWorktreeNotice(),
               synthetic: true,
             })
             userMessage.parts.push(part)
-            yield* markAutoWorktreeHintSent(input.session.id)
+            yield* Effect.sync(() => markAutoWorktreeHintSent(input.session.id))
           }
         }
       }

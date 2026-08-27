@@ -233,6 +233,82 @@ function commands(node: Node) {
   return node.descendantsOfType("command").filter((child): child is Node => Boolean(child))
 }
 
+// Commands whose primary purpose is creating/mutating files. Matched against
+// the command head (case-folded for PowerShell). `sed` is special-cased below:
+// it only writes with -i/--in-place.
+const WRITE_COMMANDS = new Set([
+  "tee",
+  "install",
+  "touch",
+  "mkdir",
+  "cp",
+  "mv",
+  "ln",
+  "truncate",
+  "dd",
+  "patch",
+  "set-content",
+  "add-content",
+  "new-item",
+  "copy-item",
+  "move-item",
+  "rename-item",
+  "out-file",
+  "tee-object",
+  "set-item",
+  "add-item",
+  "new-volume",
+  "clear-content",
+])
+
+// Operators that open a real file for writing. FD dups (`>&`, `<&`) are excluded:
+// `2>&1` rearranges descriptors and creates nothing.
+const FILE_WRITE_REDIRECT_OPS = new Set([">", ">>", ">|", "<>", "&>", "&>>"])
+
+function isFileWriteRedirect(node: Node): boolean {
+  for (let i = 0; i < node.childCount; i++) {
+    const child = node.child(i)
+    if (child && FILE_WRITE_REDIRECT_OPS.has(child.type)) return true
+  }
+  return false
+}
+
+function isSedInPlace(tokens: string[], ps: boolean): boolean {
+  const head = ps ? tokens[0]?.toLowerCase() : tokens[0]
+  if (head !== "sed") return false
+  return tokens.slice(1).some((tok) => tok === "-i" || tok === "--in-place" || /^-[^-]*i/.test(tok))
+}
+
+// True when this parsed command line mutates files (create/overwrite/append),
+// as opposed to pure reads (`ls`, `cat file`, `git status`, `sed` without -i).
+// Used to flag bash tool results so the auto-worktree notice can fire on the
+// first real write even when the agent never called write/edit/apply_patch.
+export function isFileWrite(root: Node, ps: boolean): boolean {
+  for (const redirect of root.descendantsOfType("file_redirect")) {
+    if (redirect && isFileWriteRedirect(redirect)) return true
+  }
+  for (const node of commands(root)) {
+    const tokens = parts(node).map((item) => item.text)
+    if (tokens.length === 0) continue
+    const head = ps ? tokens[0].toLowerCase() : tokens[0]
+    if (WRITE_COMMANDS.has(head)) return true
+    if (isSedInPlace(tokens, ps)) return true
+  }
+  return false
+}
+
+/** Parse a command line and report whether it mutates files. Fail-closed to false. */
+export async function commandWritesFiles(command: string, ps = false): Promise<boolean> {
+  try {
+    const p = await parser()
+    const tree = (ps ? p.ps : p.bash).parse(command)
+    if (!tree) return false
+    return isFileWrite(tree.rootNode, ps)
+  } catch {
+    return false
+  }
+}
+
 // Returns true when `tokens` (the flat argv of a single command node) invokes
 // an irreversible deletion — either a direct removal command (rm, remove-item,
 // …) or a destructive git subcommand (git reset --hard, git clean -f, …).
@@ -705,6 +781,7 @@ export const BashTool = Tool.define(
         timeout: number
         maxOutputTokens?: number
         description: string
+        fileWrite?: boolean
       },
       ctx: Tool.Context,
     ) {
@@ -932,6 +1009,7 @@ export const BashTool = Tool.define(
           description: input.description,
           truncated: cut,
           ...(cut && file ? { outputPath: file } : {}),
+          ...(input.fileWrite ? { fileWrite: true } : {}),
         },
         output,
       }
@@ -958,6 +1036,7 @@ export const BashTool = Tool.define(
               const timeout = params.timeout ?? DEFAULT_TIMEOUT
               const ps = PS.has(name)
               const root = yield* parse(params.command, ps)
+              const fileWrite = isFileWrite(root, ps)
               // Cross-branch git guard for isolated children. Sits on the SAME
               // parsed AST the permission scan uses, so every command node in a
               // pipeline / `&&` chain / subshell is checked, and it runs BEFORE
@@ -1024,6 +1103,7 @@ export const BashTool = Tool.define(
                     exit: interactiveResult.exitCode,
                     description: params.description,
                     truncated: false,
+                    ...(fileWrite ? { fileWrite: true } : {}),
                   },
                   output:
                     interactiveResult.output ||
@@ -1041,6 +1121,7 @@ export const BashTool = Tool.define(
                   timeout,
                   maxOutputTokens: params.max_output_tokens,
                   description: params.description,
+                  fileWrite,
                 },
                 ctx,
               )
