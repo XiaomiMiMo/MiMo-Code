@@ -268,23 +268,67 @@ matplotlib / plotly / echarts. Flowcharts, comparisons, org charts via
 shapes + lines. Anything that is a data or concept visualization —
 never fetch or generate an image for this.
 
-**L2 · Cite a real-image URL from memory.** You have URLs to public image
-libraries (Unsplash, Pexels, official CDNs) baked into your training data.
-When a slide needs a **generic real photo** (city skyline, office desk, team
-collaboration, nature, generic stock imagery), reference such a URL directly
-and use `slide.add_picture(url, ...)` (python-pptx supports HTTP URL). Zero
-tool calls. If the URL fails, fall back to L3 or L4.
+**L2 · Search a stock library, then download the bytes.** When a slide
+needs a **generic real photo** (city skyline, office desk, team
+collaboration, nature, stock imagery), use `websearch` with a
+`site:unsplash.com` / `site:pexels.com` / `site:pixabay.com` query to find
+a real URL, then **download the image to a local file** and pass that path
+to `add_picture` (see *Downloading* below). Do NOT try to pass an HTTP URL
+directly to `add_picture` — python-pptx's `add_picture` only accepts a
+local path or a file-like object; it will NOT fetch a URL for you.
 
-**L3 · Search the web.** For **specific real things** you cannot reasonably
-know the URL of (a particular company's logo, a specific product's official
-screenshot, a named person's photo) — use `websearch` to find the URL, then
-embed via URL or `webfetch`. Never call `image_gen` for these — a generated
-logo will not look like the real logo.
+**L3 · Search a specific source.** For **specific real things** (a
+particular company's logo, a specific product's official screenshot, a
+named person's photo), use `websearch` with a targeted query (e.g.
+`"Acme Inc" logo site:acme.com`, or `<product name> screenshot`) instead of
+a stock-library query, then download the bytes the same way as L2. Never
+call `image_gen` here — a generated logo will not look like the real logo.
+Note: `webfetch` returns text/markdown/html only and cannot deliver binary
+image bytes — use `bash` + `curl` or python `urllib` to download.
 
 **L4 · Generate with `image_gen`.** Only for **stylized visuals** — cover
 art, hero backgrounds, illustration-style concept images, brand-mood
 imagery. Budget: **at most 1–2 `image_gen` calls per deck**, typically for
 cover or section dividers. Not for every content slide.
+
+### Downloading a URL for `add_picture`
+
+Two working patterns. Both keep the file local so `add_picture` can read
+the bytes:
+
+```python
+# Pattern A: download to a temp file, then pass the path
+from urllib.request import Request, urlopen
+from pathlib import Path
+
+def download_image(url: str, dest: Path) -> Path:
+    req = Request(url, headers={"User-Agent": "Mozilla/5.0"})  # some CDNs 403 an empty UA
+    with urlopen(req, timeout=15) as r:
+        dest.write_bytes(r.read())
+    return dest
+
+path = download_image(hit_url, Path("assets/hero.jpg"))
+slide.shapes.add_picture(str(path), Inches(1), Inches(1.5), width=Inches(11))
+```
+
+```python
+# Pattern B: in-memory via BytesIO — no temp file, but same request headers
+from io import BytesIO
+from urllib.request import Request, urlopen
+
+req = Request(hit_url, headers={"User-Agent": "Mozilla/5.0"})
+with urlopen(req, timeout=15) as r:
+    slide.shapes.add_picture(BytesIO(r.read()), Inches(1), Inches(1.5), width=Inches(11))
+```
+
+Or from a bash step:
+
+```bash
+curl -sSL -A "Mozilla/5.0" -o assets/hero.jpg "$URL"
+```
+
+Wrap any download in a try/except: on failure fall through to the next
+channel (L3 → L4) or a shape+text fallback — never leave a slide blank.
 
 ### Decision (run per slide)
 
@@ -294,10 +338,10 @@ cover or section dividers. Not for every content slide.
    the message.
 2. If yes, pick the cheapest channel that works:
    - Data / concept / flow / icon → **L1** (draw in code)
-   - Generic real photo → **L2** (memory URL)
-   - Specific brand / logo / product / person → **L3** (web search)
+   - Generic real photo → **L2** (stock library search + download)
+   - Specific brand / logo / product / person → **L3** (targeted web search + download)
    - Stylized cover / hero / illustration → **L4** (`image_gen`)
-3. If a URL fails: L2 → L3 → L4 → shape + text fallback. Never leave a
+3. If a fetch fails: L2 → L3 → L4 → shape + text fallback. Never leave a
    slide blank because an image failed to load.
 
 ### Anti-patterns
@@ -305,8 +349,16 @@ cover or section dividers. Not for every content slide.
 - **Calling `image_gen` on every content slide.** Slow, expensive,
   style-inconsistent, visually noisy. A 20-slide deck with 20 generated
   images is a red flag, not a success.
+- **Passing an HTTP URL to `add_picture`.** python-pptx will raise
+  `FileNotFoundError` — always download the bytes first (see *Downloading*).
+- **Using `webfetch` to grab image bytes.** `webfetch` returns text only.
+  Use `bash` + `curl` or python `urllib` for binaries.
+- **Making up a stock-library URL from memory.** Unsplash / Pexels CDN
+  paths are opaque hashes — you cannot reliably recall a URL that both
+  exists AND matches the described content. Always search first, then
+  download.
 - **Generating a logo, celebrity, or product screenshot with `image_gen`.**
-  The output will not resemble the real thing. Use web search (L3).
+  The output will not resemble the real thing. Use targeted web search (L3).
 - **Executive / status / weekly decks in illustration style.** Work
   reporting is data + icons + hierarchy, not concept art. Reserve L4 for
   launch, brand, or hero visuals.
@@ -316,13 +368,16 @@ cover or section dividers. Not for every content slide.
 
 ### Scene defaults (rough mix per deck type)
 
+L2/L3 both cost about one `websearch` + one download per image — cheap
+compared to L4, still not free. L1 remains the default.
+
 | Deck type              | Dominant | Notes                                           |
 |------------------------|----------|-------------------------------------------------|
-| Status / OKR / weekly  | L1 (~90%) | Icons + data charts. Almost no L3 / L4.        |
-| Strategy / proposal    | L1 + L2  | ~60% L1, ~30% L2, ~10% L4 cover.                |
-| Sales / pitch / BP     | L2 + L3  | Customer logos and product shots (L3) matter. 1 L4 cover. |
+| Status / OKR / weekly  | L1 (~90%) | Icons + data charts. Almost no L2 / L3 / L4.   |
+| Strategy / proposal    | L1 + L2  | ~60% L1, ~30% L2 (searched stock), ~10% L4 cover. |
+| Sales / pitch / BP     | L2 + L3  | Customer logos and product shots (L3) matter. 1 L4 cover max. |
 | Training / education   | L1 (~80%) | Diagrams and flowcharts win.                   |
-| Launch / brand         | L4-heavy | Visuals are the point. Still limit style drift. |
+| Launch / brand         | L4-heavy | Visuals are the point. Still limit style drift and reuse assets. |
 | Competitive analysis   | L3-heavy | Logos and screenshots are irreplaceable.        |
 
 ## Typography defaults (safe starting point)
