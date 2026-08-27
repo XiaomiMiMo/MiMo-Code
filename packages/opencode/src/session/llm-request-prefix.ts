@@ -1,13 +1,16 @@
 import { Effect } from "effect"
-import { tool, jsonSchema, type Tool as AITool } from "ai"
+import { tool, jsonSchema, asSchema, type Tool as AITool } from "ai"
 import z from "zod"
 import { MessageV2 } from "./message-v2"
 import type { SessionID } from "./schema"
-import type { Agent } from "../agent/agent"
+import { Agent } from "../agent/agent"
 import type { Provider } from "../provider"
 import { LLM } from "./llm"
 import { ToolRegistry } from "../tool"
 import { ProviderTransform } from "../provider"
+import { MCP } from "../mcp"
+import { Permission } from "@/permission"
+import { usesGPTToolset } from "@/tool/gpt"
 import type { PromptConfig } from "./session"
 
 /**
@@ -39,9 +42,18 @@ export const buildLLMRequestPrefix = Effect.fn("Session.buildLLMRequestPrefix")(
    */
   additions: string[]
   prompt?: PromptConfig
+  /**
+   * Session permission ruleset, merged with the agent's own to decide which
+   * MCP tools the wire request drops — the same input `LLM.resolveTools` feeds
+   * to `Agent.runtimePermission` when it prunes the provider tool list. Omitted
+   * (checkpoint capture has no session in scope) means "agent permission only",
+   * which matches the parent whenever the session adds no MCP-scoped deny rule.
+   */
+  sessionPermission?: Permission.Ruleset
 }) {
   const llm = yield* LLM.Service
   const toolRegistry = yield* ToolRegistry.Service
+  const mcp = yield* MCP.Service
 
   // Always use full msgs — slicing is a fork-capture concern that lives at the
   // caller (ForkContext.watermarkMsgID is a boundary marker, not a slice arg).
@@ -85,6 +97,51 @@ export const buildLLMRequestPrefix = Effect.fn("Session.buildLLMRequestPrefix")(
       description: item.description,
       inputSchema: jsonSchema(schema),
     })
+  }
+
+  // Append MCP tool schemas so the captured prefix carries the same tool set the
+  // parent's real request emits. Before this, MCP was merged ONLY in resolveTools
+  // (the parent path); the prefix here saw built-ins alone, so any MCP server made
+  // ForkContext.tools diverge from the parent on the first turn — breaking the
+  // tool-list prefix cache and stripping MCP from fork:false checkpoint-writer
+  // requests (which send this schema directly).
+  //
+  // The parent's provider-visible MCP set is what the AI SDK actually wires up:
+  // SessionPrompt.resolveTools admits every connected MCP tool into its `tools`
+  // map (prompt.ts:1847) but the SDK's prepareToolsAndToolChoice filters the wire
+  // tools by `activeTools`. So the parity target is exactly "the connected MCP
+  // tools that end up in activeTools":
+  //   - Under the GPT/Codex toolset, MCP tools NEVER enter activeTools — they are
+  //     reached through mcp-tool-search instead (prompt.ts:1705 `&& !useGPTTools`,
+  //     :1918). The parent emits ZERO MCP tool definitions, so the prefix must too:
+  //     skip the whole MCP append.
+  //   - Otherwise MCP tools enter activeTools unless permission-denied or toggled
+  //     off for the turn (user.tools); the agent toolAllowlist does not prune the
+  //     wire set, so it is intentionally not applied here.
+  // MCP.tools() output is TurnContext-independent (context only rides along to the
+  // execute closure for lifecycle notifications), so a minimal session-scoped
+  // context reproduces the parent's schema byte-for-byte.
+  const useGPTTools = usesGPTToolset(input.model.id, lastUser.harness, input.model.api.id, input.model.family)
+  if (!useGPTTools) {
+    const mcpTools = Object.entries(
+      yield* mcp.tools({ sessionId: input.sessionID as string, turnId: lastUser.id, actorId: lastUser.agentID }),
+    ).toSorted(([a], [b]) => a.localeCompare(b))
+    const disabledMcpTools = Permission.disabled(
+      mcpTools.map(([key]) => key),
+      Agent.runtimePermission(input.agent, input.sessionPermission),
+    )
+    for (const [key, item] of mcpTools) {
+      if (!item.execute) continue
+      if (key in tools) continue
+      if (lastUser.tools?.[key] === false) continue
+      if (disabledMcpTools.has(key)) continue
+      const rawSchema = yield* Effect.promise(() => Promise.resolve(asSchema(item.inputSchema).jsonSchema))
+      const schema = ProviderTransform.schema(input.model, rawSchema)
+      tools[key] = tool({
+        description: item.description,
+        inputSchema: jsonSchema(schema),
+      })
+    }
   }
 
   return { system, tools, inheritedMessages }

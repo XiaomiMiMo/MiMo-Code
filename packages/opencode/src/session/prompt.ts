@@ -449,9 +449,11 @@ export const layer = Layer.effect(
           msgs: captureMessages,
           additions,
           prompt: capturePrompt,
+          sessionPermission: captureSession.permission,
         }).pipe(
           Effect.provideService(LLM.Service, llm),
           Effect.provideService(ToolRegistry.Service, registry),
+          Effect.provideService(MCP.Service, mcp),
           Effect.catch(() => Effect.succeed(empty)),
         )
         return { ...prefix, parentPermission: ag.permission }
@@ -4324,8 +4326,11 @@ If this task is a simple fix, Q&A, or read-only operation, you can skip this not
             // intentionally don't use it here — the `tools` variable from `resolveTools`
             // (set earlier via `handle.process({tools: ...})`) carries `execute` closures
             // the AI SDK needs for runtime tool dispatch, while `buildLLMRequestPrefix`
-            // produces schema-only tools. Schema bytes match between both paths (both call
-            // registry.tools with identical args), so prefix cache parity holds.
+            // produces schema-only tools. The two schema sets match because the prefix
+            // builder reproduces the wire tool set exactly: registry built-ins plus every
+            // connected MCP tool, minus the ones permission-denied or toggled off for the
+            // turn (it reads the same session.permission + lastUser.tools the parent uses).
+            // So prefix cache parity holds even when MCP servers are connected.
             // Main runLoop: no watermark — LLM must see the full msgs list,
             // including this turn's intermediate assistant turns (tool reads,
             // task creates, etc.) so each step doesn't replay from the bare
@@ -4339,9 +4344,11 @@ If this task is a simple fix, Q&A, or read-only operation, you can skip this not
                 msgs,
                 additions,
                 prompt: sessionPrompt,
+                sessionPermission: session.permission,
               }).pipe(
                 Effect.provideService(LLM.Service, llm),
                 Effect.provideService(ToolRegistry.Service, registry),
+                Effect.provideService(MCP.Service, mcp),
               )
             lastSystemPrompt = prebuiltSystem
             const cfg = yield* config.get()

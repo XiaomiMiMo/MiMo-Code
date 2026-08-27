@@ -73,13 +73,24 @@ export interface ForkContext {
    * Tool schema as parent would emit at watermark, captured for invariant
    * verification only. NOT consumed by fork's runLoop for the actual LLM
    * request — that uses `resolveTools(forkAgent)` for executable tools with
-   * dispatch closures. Schema parity is currently enforced because
-   * checkpoint-writer has no `toolAllowlist` (Task 2.6); both paths call
-   * `registry.tools` with equivalent agent inputs and produce identical
-   * schemas. If `toolAllowlist` is ever re-added, this field would still
-   * snapshot parent's schema while the runtime tools would diverge, silently
-   * breaking cache parity. Test guard: `test/agent/agent.test.ts` asserts
-   * `cp.toolAllowlist === undefined` for checkpoint-writer.
+   * dispatch closures. `buildLLMRequestPrefix` reproduces the parent's WIRE tool
+   * set: registry built-ins plus the connected MCP tools that actually reach the
+   * provider. The AI SDK filters wire tools by `activeTools`, so the MCP parity
+   * target is "connected MCP tools that end up in activeTools":
+   *   - Non-GPT toolset: every executable, non-name-clashing MCP tool minus those
+   *     the merged session/agent permission denies or the turn toggles off
+   *     (user.tools). The agent toolAllowlist does NOT prune the wire set, so it
+   *     is not applied.
+   *   - GPT/Codex toolset: MCP tools never enter activeTools (they are reached via
+   *     mcp-tool-search), so the parent emits ZERO MCP definitions and the prefix
+   *     omits them too.
+   * Before MCP was folded in here, this field carried built-ins alone, so the
+   * mere presence of an MCP server diverged the fork prefix from the parent on
+   * the first turn and broke tool-list cache parity (and stripped MCP from
+   * fork:false checkpoint-writer requests, which send this schema directly).
+   * Test guard: `test/session/llm-request-prefix.test.ts` covers MCP inclusion,
+   * deny/toggle pruning, and GPT-toolset omission; `test/agent/agent.test.ts`
+   * asserts `cp.toolAllowlist === undefined` for checkpoint-writer.
    */
   readonly tools: Record<string, AITool>
   /**
