@@ -26,6 +26,14 @@ Memory files live under `~/.local/share/mimocode/memory/`:
 - `sessions/<id>/checkpoint.md`, `notes.md`, `tasks/<id>/progress.md`
 - `global/MEMORY.md` — cross-project user preferences
 
+## Logs & diagnosing failed requests
+
+Logs live under the data dir at `<data>/log/` (default `~/.local/share/mimocode/log/`), one file per process named `<stamp>-<role>-<pid>-<rand>.active.log`. A file rotates to `<name>.log.<stamp>` once it passes ~50MB (disable with `MIMOCODE_DISABLE_LOG_ROTATION`).
+
+Default level is `INFO` (set `logLevel` in config, or `--log-level DEBUG` at launch). `--print-logs` sends logs to stderr **instead of** a file — no log file is written in that mode.
+
+A failed LLM request is logged by the streaming layer as an `ERROR` line with `service=llm` and tags for `providerID`, `modelID`, `session.id`, `agent`, and `mode`. The serialized error carries the full retry chain: for each attempt the request `url`, `statusCode`, `responseHeaders` (including upstream request IDs like `x-oneapi-request-id`), `responseBody`, and `isRetryable`. That's enough to see which model/route failed, the HTTP status, and an ID to hand upstream. To find it, grep the current log file for `service=llm` plus your `session.id`. A DEBUG-level companion line adds `elapsedMs`.
+
 ## Environment variables & flags
 
 - `MIMOCODE_HOME` — override all base dirs (absolute path).
