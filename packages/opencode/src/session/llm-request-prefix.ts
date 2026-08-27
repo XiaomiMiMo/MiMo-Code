@@ -83,7 +83,8 @@ export const buildLLMRequestPrefix = Effect.fn("Session.buildLLMRequestPrefix")(
     agentID: lastUser.agentID,
   })
 
-  // Resolve tools using parent agent's permission and toolAllowlist
+  // Built-in tool schemas via the parent agent's registry view (its toolAllowlist
+  // and harness gate which built-ins appear here); MCP tools are appended below.
   const toolDefs = yield* toolRegistry.tools({
     modelID: input.model.id,
     providerID: input.model.providerID,
