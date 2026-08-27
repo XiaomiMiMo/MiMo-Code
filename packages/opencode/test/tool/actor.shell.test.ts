@@ -250,6 +250,15 @@ describe("actor.shell.parse: full parity flags", () => {
     })
   }
 
+  // A literal "--actor" sitting in a positional (prompt / description) is not the
+  // flag — the guard only fires once the three positionals are filled.
+  test("literal --actor in the prompt positional is not treated as the flag", async () => {
+    const out = await parse('actor run explore "d" "--actor"')
+    expect(out).toEqual([
+      { operation: { action: "run", subagent_type: "explore", description: "d", prompt: "--actor" } },
+    ])
+  })
+
   test("run with --timeout maps to timeout_ms (number)", async () => {
     const out = await parse('actor run explore "d" "p" --timeout 30000')
     expect(out).toEqual([

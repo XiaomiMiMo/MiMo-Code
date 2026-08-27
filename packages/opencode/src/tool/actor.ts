@@ -112,18 +112,25 @@ function extractNamedFlags(
   return Effect.succeed({ flags, rest })
 }
 
+// `--actor` is no longer a flag on spawn/run. Reject it only when it appears
+// AFTER the three positionals are accounted for, i.e. where a flag would go —
+// scanning every token would misfire on a prompt/description that is literally
+// "--actor". Returns the teachable failure, or undefined to fall through.
+function rejectActorFlag(verb: string, args: string[], line: number) {
+  const flagIdx = args.findIndex((a) => a === "--actor" || a.startsWith("--actor="))
+  if (flagIdx < 3) return undefined
+  return Effect.fail({
+    kind: "flag" as const,
+    line,
+    detail: `actor: ${verb}: unknown flag --actor. To give more work to a subagent you already have: actor send <actor_id> "<message>".`,
+  })
+}
+
 const mapActorVerb = Effect.fn("mapActorVerb")(function* (verb: string | undefined, args: string[], line: number) {
-  // Named rather than left to fall through: an unknown flag lands in the
-  // positionals, so the model would be told its argument COUNT is wrong.
-  if ((verb === "run" || verb === "spawn") && args.some((a) => a === "--actor" || a.startsWith("--actor="))) {
-    return yield* Effect.fail({
-      kind: "flag" as const,
-      line,
-      detail: `actor: ${verb}: unknown flag --actor. To give more work to a subagent you already have: actor send <actor_id> "<message>".`,
-    })
-  }
   switch (verb) {
     case "run": {
+      const rejected = rejectActorFlag(verb, args, line)
+      if (rejected) return yield* rejected
       const { flags, rest } = yield* extractNamedFlags(
         args,
         ["model", "task", "timeout", "command", "context", "output-schema"],
@@ -148,6 +155,8 @@ const mapActorVerb = Effect.fn("mapActorVerb")(function* (verb: string | undefin
       } as ActorShellArgs
     }
     case "spawn": {
+      const rejected = rejectActorFlag(verb, args, line)
+      if (rejected) return yield* rejected
       const { flags, rest } = yield* extractNamedFlags(
         args,
         ["model", "task", "command", "context", "output-schema"],
@@ -298,12 +307,13 @@ export function recoverActorArgs(rawArgs: unknown): ActorShellArgs | undefined {
     // are dropped here, falling back to their schema defaults. Low risk in practice:
     // the bare shape mimo emits is the 3 required fields, rarely with extras. When
     // adding an actor schema field, decide whether bare-shape recover should carry
-    // it here, or this whitelist silently drifts from the schema.
+    // it here, or this whitelist silently drifts from the schema. (The actor_id
+    // carry just below is the one deliberate exception — a field NOT in the schema.)
     if (typeof obj.model === "string") op.model = obj.model
     if (typeof obj.task_id === "string") op.task_id = obj.task_id
-    // actor_id is carried deliberately even though no action accepts it: the
-    // strict schema then rejects the call and the model is told the argument does
-    // not exist. Dropping it here would recover the call into a valid spawn and
+    // Carried on purpose even though no action accepts it, so the strict schema
+    // rejects the call and the model is told the argument does not exist. This is
+    // NOT dead code: dropping it would recover the call into a valid spawn and
     // hand back a fresh, empty subagent — the exact silent failure that removing
     // the argument is meant to end, reached through the path a model confused
     // enough to still pass actor_id is most likely to take.
