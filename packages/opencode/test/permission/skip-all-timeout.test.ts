@@ -1,9 +1,6 @@
-import { afterEach, describe, expect, test } from "bun:test"
+import { afterEach, beforeEach, describe, expect, test } from "bun:test"
 import { Effect, Fiber, Layer } from "effect"
 import type { Permission as PermissionType } from "../../src/permission"
-
-// Short timeout so the real-clock test resolves quickly.
-process.env.MIMOCODE_SKIP_ALL_FORCED_ASK_TIMEOUT_MS = "300"
 
 const { Bus } = await import("../../src/bus")
 const CrossSpawnSpawner = await import("../../src/effect/cross-spawn-spawner")
@@ -11,7 +8,21 @@ const { Permission } = await import("../../src/permission")
 const { Instance } = await import("../../src/project/instance")
 const { tmpdir } = await import("../fixture/fixture")
 
+// Scoped per test, not at module load: a top-level assignment leaks into every
+// later file in the same process (CI runs this file before sampling-e2e), and
+// Permission state initializes permissionAskTimeoutMs from this env var.
+const ASK_TIMEOUT_ENV = "MIMOCODE_SKIP_ALL_FORCED_ASK_TIMEOUT_MS"
+let previousAskTimeoutEnv: string | undefined
+
+beforeEach(() => {
+  previousAskTimeoutEnv = process.env[ASK_TIMEOUT_ENV]
+  // Short timeout so the real-clock test resolves quickly.
+  process.env[ASK_TIMEOUT_ENV] = "300"
+})
+
 afterEach(async () => {
+  if (previousAskTimeoutEnv === undefined) delete process.env[ASK_TIMEOUT_ENV]
+  else process.env[ASK_TIMEOUT_ENV] = previousAskTimeoutEnv
   await Instance.disposeAll()
 })
 
