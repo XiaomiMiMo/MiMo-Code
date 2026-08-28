@@ -4068,6 +4068,11 @@ NOTE: At any point in time through this workflow you should feel free to ask the
                 return [{ id: message.info.id, key }]
               })
               const span = detectStreak(entries, triggerCount, maxSpan)
+              // Not dead: detectStreak.toId is the last *keyed* finished
+              // assistant, while lastFinished is the last finished assistant
+              // even when its streakKey is "". Empty-key tail (text-only
+              // recovery) means the streak already broke — skip a new crop
+              // and leave the historical span to re-apply.
               if (span && span.toId === lastFinished.id) {
                 const crop = cropMessagesForStreak(msgs, span)
                 if (crop.omitted.length > 0) {
