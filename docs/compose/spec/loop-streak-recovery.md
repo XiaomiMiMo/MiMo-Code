@@ -1,14 +1,20 @@
 ---
 feature: loop-streak-recovery
-status: designed
+status: delivered
 updated: 2026-08-28
 branch: feat/loop-streak-recovery
-commits: 
+commits: f02ee661a6..5a597d938e
 ---
 
 # Loop Streak Recovery
 
 ## Report
+
+**What was built** — Request-layer loop-streak recovery behind `experimental.loop_streak_recovery`. Consecutive finished assistants whose normalized thinking hash matches (tools may drift) are cropped from the next LLM request only; the DB trajectory is left intact for audit/replay. One short synthetic recovery user is appended in-memory so the wire still ends on a user message. Crop runs after `insertReminders`, only when continuing from a model step (`lastUser.id < lastFinished.id`), and never removes the pre-streak anchor. A `max_span` ceiling (default 64) keeps a detector bug from nuking a multi-hour run; text-loop recovery is suppressed on turns that already cropped.
+
+**Verification** — `bun typecheck` PASS; `bun test test/session/loop-streak.test.ts test/session/text-loop-detection.test.ts` PASS (36 then 19 after the key-semantics fix). Independent review of `9bab2c2a12` found 3 criticals (thinking+drifting tools could not crop; text-loop double recovery after full crop; missing MR-3931 tests) and 3 mediums; all fixed in `5a597d938e` and re-review PASS.
+
+**Journey log** — Deleting a long suffix does not break Anthropic 20-block lookback by itself: lookback walks remaining blocks, and a suffix crop keeps the pre-loop write anchor within 1–2 blocks. Real cache risks are deleting the anchor, a long recovery body, or middle-of-prefix edits. Streak key must be thinking-primary; concatenating exact toolSig made MR-3931 uncatchable. Re-deriving `detectStreak` on already-cropped msgs is a false negative — gate on the crop flag. Request-only synthetic users must not become `insertReminders` targets.
 
 ## [S1] Problem
 
@@ -90,7 +96,7 @@ Invariants (assert in tests, log in prod):
 
 | Knob | Default | Behavior |
 |------|---------|----------|
-| `max_span_messages` | 64 | If streak length > ceiling, crop only the **trailing** ceiling messages of the streak (most recent poison). Older same-key messages stay; recovery note states `omitted_trailing=N, remaining_similar=M`. |
+| `max_span` | 64 | If streak length > ceiling, crop only the **trailing** ceiling messages of the streak (most recent poison). Older same-key messages stay; recovery note states remaining similar count. |
 | `trigger_count` | 3 | Same as current text-loop trigger. |
 | `enabled` | false (experimental) | Behind `experimental.loop_streak_recovery`. |
 
@@ -143,8 +149,8 @@ Short, synthetic, one user message. Must include: loop detected, N steps omitted
 
 ## Tasks
 
-- [ ] T1: Streak signature module — acceptance: pure functions compute `reasonHash`/`toolSig`/`key` from parts; unit tests cover empty reasoning, empty tools, order stability, normalize. (covers: S2)
-- [ ] T2: Streak detector — acceptance: given a sequence of assistant keys, reports trigger, span `[from,to]`, anchor predecessor; respects trigger_count and ceiling trailing-crop. (covers: S2; depends: T1)
-- [ ] T3: Request cropper — acceptance: filters a message list by span without reorder/rewrite; appends exactly one recovery user; invariants hold on fixture with parallel tools. (covers: S2; depends: T2)
-- [ ] T4: prompt.ts integration — acceptance: after a finished step, experimental flag on, a 3× identical-thinking streak crops the next request and logs audit fields; flag off path unchanged. (covers: S2; depends: T3)
-- [ ] T5: Regression tests — acceptance: MR-3931-shaped fixture (identical thinking, drifting tools) is cropped; pure tool-loop and pure text-loop still behave as before when keys differ; no crop when span would include the anchor. (covers: S2; depends: T4)
+- [x] T1: Streak signature module — acceptance: pure functions compute `reasonHash`/`toolSig`/`key` from parts; unit tests cover empty reasoning, empty tools, order stability, normalize. (covers: S2)
+- [x] T2: Streak detector — acceptance: given a sequence of assistant keys, reports trigger, span `[from,to]`, anchor predecessor; respects trigger_count and ceiling trailing-crop. (covers: S2; depends: T1)
+- [x] T3: Request cropper — acceptance: filters a message list by span without reorder/rewrite; appends exactly one recovery user; invariants hold on fixture with parallel tools. (covers: S2; depends: T2)
+- [x] T4: prompt.ts integration — acceptance: after a finished step, experimental flag on, a 3× identical-thinking streak crops the next request and logs audit fields; flag off path unchanged. (covers: S2; depends: T3)
+- [x] T5: Regression tests — acceptance: MR-3931-shaped fixture (identical thinking, drifting tools) is cropped; pure tool-loop and pure text-loop still behave as before when keys differ; no crop when span would include the anchor. (covers: S2; depends: T4)
