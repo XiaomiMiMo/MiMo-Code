@@ -28,7 +28,7 @@ import {
   toolAttachmentFilename,
   toolAttachmentPlaceholder,
 } from "./tool-attachment"
-import { isSkillCatalogReminder } from "./skill-catalog"
+import { isLegacySkillCatalogReminder, isSkillCatalogSnapshot } from "./skill-catalog"
 
 /** Error shape thrown by Bun's fetch() when gzip/br decompression fails mid-stream */
 interface FetchDecompressionError extends Error {
@@ -684,7 +684,7 @@ export const toModelMessagesEffect = Effect.fnUntraced(function* (
 ) {
   const result: UIMessage[] = []
   const toolNames = new Set<string>()
-  let skillCatalogSeen = false
+  let legacySkillCatalogSeen = false
 
   const toModelOutput = (options: { toolCallId: string; input: unknown; output: unknown }) => {
     const output = options.output
@@ -745,20 +745,25 @@ export const toModelMessagesEffect = Effect.fnUntraced(function* (
       }
       result.push(userMessage)
       const parts = msg.parts.toSorted((a, b) => {
-        const aCatalog = a.type === "text" && isSkillCatalogReminder(a.text)
-        const bCatalog = b.type === "text" && isSkillCatalogReminder(b.text)
-        return Number(aCatalog) - Number(bCatalog)
+        const aSnapshot = a.type === "text" && a.synthetic === true && isSkillCatalogSnapshot(a.text)
+        const bSnapshot = b.type === "text" && b.synthetic === true && isSkillCatalogSnapshot(b.text)
+        if (aSnapshot !== bSnapshot) return Number(bSnapshot) - Number(aSnapshot)
+        const aLegacy = a.type === "text" && a.synthetic === true && isLegacySkillCatalogReminder(a.text)
+        const bLegacy = b.type === "text" && b.synthetic === true && isLegacySkillCatalogReminder(b.text)
+        return Number(aLegacy) - Number(bLegacy)
       })
       for (const part of parts) {
-        if (part.type === "text" && isSkillCatalogReminder(part.text)) {
-          if (skillCatalogSeen || part.ignored) continue
-          skillCatalogSeen = true
+        if (part.type === "text") {
+          if (part.synthetic && isLegacySkillCatalogReminder(part.text)) {
+            if (legacySkillCatalogSeen || part.ignored) continue
+            legacySkillCatalogSeen = true
+          }
+          if (!part.ignored)
+            userMessage.parts.push({
+              type: "text",
+              text: part.text,
+            })
         }
-        if (part.type === "text" && !part.ignored)
-          userMessage.parts.push({
-            type: "text",
-            text: part.text,
-          })
         // text/plain and directory files are converted into text parts, ignore them
         if (part.type === "file" && part.mime !== "text/plain" && part.mime !== "application/x-directory") {
           if (options?.stripMedia && isMedia(part.mime)) {

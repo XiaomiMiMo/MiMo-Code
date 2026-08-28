@@ -1,10 +1,12 @@
 import { afterEach, describe, expect } from "bun:test"
 import { Effect } from "effect"
 import path from "path"
+import { ActorRegistry } from "../../src/actor/registry"
 import { Instance } from "../../src/project/instance"
 import { Session } from "../../src/session"
 import { MessageV2 } from "../../src/session/message-v2"
 import { SessionPrompt } from "../../src/session/prompt"
+import { ToolRegistry } from "../../src/tool"
 import { Log } from "../../src/util"
 import { provideTmpdirServer } from "../fixture/fixture"
 import { testEffect } from "../lib/effect"
@@ -183,8 +185,10 @@ describe("skill command with additional mentions", () => {
     30_000,
   )
 
-  it.live.skip(
-    "keeps one catalog across user turns and ignores skill mentions in synthetic catalog text",
+  // [TP-R14-01][TP-R14-03] An unchanged catalog is injected once, stays before
+  // the first query after DB rehydration, and never triggers slash mentions from its own descriptions.
+  it.live(
+    "keeps one versioned catalog before user content across turns",
     () =>
       provideTmpdirServer(
         Effect.fnUntraced(function* ({ dir, llm }) {
@@ -214,6 +218,9 @@ describe("skill command with additional mentions", () => {
           const requests = yield* llm.inputs
           const second = JSON.stringify(requests[1].messages ?? [])
           expect(second.match(/Skills available in this session:/g)).toHaveLength(1)
+          expect(second.indexOf("Authoritative skills catalog snapshot v2:")).toBeLessThan(
+            second.indexOf("/skill-alpha"),
+          )
           expect(second).toContain("ALPHA_BODY_MARKER")
           expect(second).not.toContain("BETA_BODY_MARKER")
 
@@ -225,7 +232,134 @@ describe("skill command with additional mentions", () => {
             ),
           )
           expect(catalogs).toHaveLength(1)
+          const catalog = catalogs[0]?.type === "text" ? catalogs[0] : undefined
+          expect(catalog?.text ?? "").not.toContain("Catalog-Version")
+          expect(catalog?.metadata?.skillCatalog).toMatchObject({ schema: 2 })
+          expect((catalog?.metadata?.skillCatalog as { version?: string } | undefined)?.version).toMatch(
+            /^[a-f0-9]{64}$/,
+          )
+          expect(second).not.toContain("Catalog-Version")
 
+          yield* sessions.remove(session.id)
+        }),
+        { git: true, config: providerCfg },
+      ),
+    30_000,
+  )
+
+  // [TP-R14-02][TP-R14-04][TP-R14-05] A changed catalog appends a full snapshot
+  // to the new turn. The prior snapshot remains byte-for-byte untouched and both reach the model.
+  it.live(
+    "appends a changed catalog snapshot without rewriting history",
+    () =>
+      provideTmpdirServer(
+        Effect.fnUntraced(function* ({ dir, llm }) {
+          yield* writeSkill(dir, "skill-alpha", "ALPHA_BODY_MARKER")
+
+          const prompt = yield* SessionPrompt.Service
+          const sessions = yield* Session.Service
+          const registry = yield* ToolRegistry.Service
+          const session = yield* sessions.create({ title: "skill catalog append" })
+
+          yield* llm.text("first")
+          yield* prompt.prompt({
+            sessionID: session.id,
+            agent: "build",
+            model: ref,
+            parts: [{ type: "text", text: "first request" }],
+          })
+
+          const before = (yield* sessions.messages({ sessionID: session.id })).flatMap((message) =>
+            message.parts.filter(
+              (part) => part.type === "text" && part.text.includes("Authoritative skills catalog snapshot v2:"),
+            ),
+          )[0]
+          expect(before).toBeDefined()
+
+          yield* writeSkill(dir, "skill-beta", "BETA_BODY_MARKER")
+          yield* registry.reload()
+          yield* llm.text("second")
+          yield* prompt.prompt({
+            sessionID: session.id,
+            agent: "build",
+            model: ref,
+            parts: [{ type: "text", text: "second request" }],
+          })
+
+          const after = (yield* sessions.messages({ sessionID: session.id })).flatMap((message) =>
+            message.parts.filter(
+              (part) => part.type === "text" && part.text.includes("Authoritative skills catalog snapshot v2:"),
+            ),
+          )
+          expect(after).toHaveLength(2)
+          expect(after[0]).toEqual(before)
+          expect(after.every((part) => part.type !== "text" || !part.ignored)).toBe(true)
+          expect(after[0]?.type === "text" ? after[0].text : "").not.toContain("<name>skill-beta</name>")
+          expect(after[1]?.type === "text" ? after[1].text : "").toContain("<name>skill-beta</name>")
+
+          const request = JSON.stringify((yield* llm.inputs)[1].messages ?? [])
+          expect(request.match(/Authoritative skills catalog snapshot v2:/g)).toHaveLength(2)
+          expect(request).not.toContain("Catalog-Version")
+          expect(request.indexOf("Authoritative skills catalog snapshot v2:")).toBeLessThan(
+            request.indexOf("first request"),
+          )
+          expect(request.lastIndexOf("Authoritative skills catalog snapshot v2:")).toBeLessThan(
+            request.indexOf("second request"),
+          )
+
+          yield* sessions.remove(session.id)
+        }),
+        { git: true, config: providerCfg },
+      ),
+    30_000,
+  )
+
+  // [TP-R14-07] A full-context checkpoint writer reuses the frozen parent prefix.
+  // Its own task reminder is a child-only suffix and must not trigger a second catalog.
+  it.live(
+    "does not duplicate the inherited catalog in a full-context checkpoint writer",
+    () =>
+      provideTmpdirServer(
+        Effect.fnUntraced(function* ({ dir }) {
+          yield* writeSkill(dir, "skill-alpha", "ALPHA_BODY_MARKER")
+
+          const actors = yield* ActorRegistry.Service
+          const prompt = yield* SessionPrompt.Service
+          const sessions = yield* Session.Service
+          const session = yield* sessions.create({ title: "checkpoint catalog reuse" })
+          const actorID = "checkpoint-writer-test"
+          yield* actors.register({
+            sessionID: session.id,
+            actorID,
+            mode: "subagent",
+            parentActorID: "main",
+            agent: "checkpoint-writer",
+            description: "checkpoint writer",
+            contextMode: "full",
+            contextWatermark: undefined,
+            background: true,
+            lifecycle: "ephemeral",
+            tools: ["read", "write", "edit"],
+          })
+
+          yield* prompt
+            .prompt({
+              sessionID: session.id,
+              agent: "checkpoint-writer",
+              agentID: actorID,
+              model: ref,
+              parts: [{ type: "text", text: "<system-reminder>checkpoint-writer mode</system-reminder>" }],
+            })
+            .pipe(Effect.exit)
+
+          const writerSlice = JSON.stringify(yield* sessions.messages({ sessionID: session.id, agentID: actorID }))
+          expect(writerSlice).toContain("checkpoint-writer mode")
+          expect(writerSlice).not.toContain("Skills available in this session:")
+          expect(JSON.stringify(yield* sessions.messages({ sessionID: session.id }))).not.toContain(
+            "checkpoint-writer mode",
+          )
+
+          yield* actors.updateStatus(session.id, actorID, { status: "idle", lastOutcome: "failure" })
           yield* sessions.remove(session.id)
         }),
         { git: true, config: providerCfg },

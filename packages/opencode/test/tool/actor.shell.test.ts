@@ -231,10 +231,31 @@ describe("actor.shell.parse: send", () => {
 })
 
 describe("actor.shell.parse: full parity flags", () => {
-  test("run with --actor (resume) maps to actor_id", async () => {
-    const out = await parse('actor run explore "d" "p" --actor explore-1')
+  // `--actor` is not a flag either verb takes; the failure names it and points at
+  // `send`, rather than reporting a bare arity mismatch from the positionals.
+  for (const script of [
+    'actor run explore "d" "p" --actor explore-1',
+    'actor spawn general "d" "p" --actor general-2 --command "/bg"',
+    'actor spawn general "d" "p" --actor=general-2',
+  ]) {
+    test(`rejects --actor: ${script}`, async () => {
+      const exit = await Effect.runPromise(Effect.exit(parseActorScript(script)))
+      expect(exit._tag).toBe("Failure")
+      const cause: any = (exit as any).cause
+      const fail = cause.reasons?.find?.((r: any) => r._tag === "Fail") ?? cause
+      const err = fail.error ?? fail
+      expect(err.kind).toBe("flag")
+      expect(err.detail).toContain("unknown flag --actor")
+      expect(err.detail).toContain("actor send")
+    })
+  }
+
+  // A literal "--actor" sitting in a positional (prompt / description) is not the
+  // flag — the guard only fires once the three positionals are filled.
+  test("literal --actor in the prompt positional is not treated as the flag", async () => {
+    const out = await parse('actor run explore "d" "--actor"')
     expect(out).toEqual([
-      { operation: { action: "run", subagent_type: "explore", description: "d", prompt: "p", actor_id: "explore-1" } },
+      { operation: { action: "run", subagent_type: "explore", description: "d", prompt: "--actor" } },
     ])
   })
 
@@ -266,10 +287,10 @@ describe("actor.shell.parse: full parity flags", () => {
     ])
   })
 
-  test("spawn with --actor and --command (no timeout on spawn)", async () => {
-    const out = await parse('actor spawn general "d" "p" --actor general-2 --command "/bg"')
+  test("spawn with --command (no timeout on spawn)", async () => {
+    const out = await parse('actor spawn general "d" "p" --command "/bg"')
     expect(out).toEqual([
-      { operation: { action: "spawn", subagent_type: "general", description: "d", prompt: "p", actor_id: "general-2", command: "/bg" } },
+      { operation: { action: "spawn", subagent_type: "general", description: "d", prompt: "p", command: "/bg" } },
     ])
   })
 

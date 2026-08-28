@@ -1,5 +1,6 @@
 import path from "path"
 import os from "os"
+import { createHash } from "node:crypto"
 import z from "zod"
 import { SessionID, MessageID, PartID } from "./schema"
 import { MessageV2 } from "./message-v2"
@@ -123,7 +124,11 @@ import {
 } from "@/tool/mcp-tool-search"
 import { isMcpToolSearchEnabled, usesGPTToolset } from "@/tool/gpt"
 import { GPT_TOP_LEVEL_TOOLS } from "@/tool/tool-script-ref"
-import { isSkillCatalogReminder, SKILL_CATALOG_REMINDER_MARKER } from "./skill-catalog"
+import {
+  canonicalSkillCatalog,
+  isSkillCatalogSnapshot,
+  skillCatalogSnapshotVersion,
+} from "./skill-catalog"
 
 // @ts-ignore
 globalThis.AI_SDK_LOG_WARNINGS = false
@@ -1093,37 +1098,47 @@ export const layer = Layer.effect(
         ...input.agent,
         permission: Agent.runtimePermission(input.agent, input.session.permission),
       }
-      const skills = yield* sys.skills(runtimeAgent)
-      const catalogText = skills
-        ? ["<system-reminder>", SKILL_CATALOG_REMINDER_MARKER, skills, "</system-reminder>"].join("\n")
+      const actor = userMessage.info.agentID
+        ? yield* actorRegistry
+            .get(input.session.id, userMessage.info.agentID)
+            .pipe(Effect.orElseSucceed(() => undefined))
         : undefined
-      const existingCatalogs = input.messages.flatMap((message) =>
-        message.parts.flatMap((part) =>
-          part.type === "text" && part.synthetic && !part.ignored && isSkillCatalogReminder(part.text)
-            ? [{ message, part }]
-            : [],
-        ),
-      )
-      const retainedCatalog = catalogText
-        ? existingCatalogs.findLast(({ part }) => part.text === catalogText)
-        : undefined
-      for (const existing of existingCatalogs) {
-        if (existing !== retainedCatalog) {
-          const updated = yield* sessions.updatePart({ ...existing.part, ignored: true })
-          const index = existing.message.parts.findIndex((part) => part.id === existing.part.id)
-          if (index >= 0) existing.message.parts[index] = updated
+      const inheritsSkillCatalog =
+        actor?.contextMode === "full" && (actor.mode === "subagent" || actor.mode === "peer")
+      // A full-context fork already receives the parent's frozen model-message prefix,
+      // including its authoritative skills snapshot. Injecting again into the fork's
+      // own task message duplicates the catalog and moves static content past the query.
+      const skills = inheritsSkillCatalog ? undefined : yield* sys.skills(runtimeAgent)
+      if (skills) {
+        const canonicalCatalog = canonicalSkillCatalog(skills)
+        const catalogVersion = createHash("sha256").update(canonicalCatalog).digest("hex")
+        const latestVersion = input.messages
+          .flatMap((message) =>
+            message.parts.flatMap((part) => {
+              if (part.type !== "text" || !part.synthetic || part.ignored || !isSkillCatalogSnapshot(part.text)) return []
+              return skillCatalogSnapshotVersion(part.metadata) ?? []
+            }),
+          )
+          .at(-1)
+        if (latestVersion !== catalogVersion) {
+          const catalogText = [
+            "<system-reminder>",
+            "Authoritative skills catalog snapshot v2:",
+            "When multiple snapshots exist, the last one is authoritative.",
+            canonicalCatalog,
+            "</system-reminder>",
+          ].join("\n")
+          const part = yield* sessions.updatePart({
+            id: PartID.ascending(),
+            messageID: userMessage.info.id,
+            sessionID: userMessage.info.sessionID,
+            type: "text",
+            text: catalogText,
+            synthetic: true,
+            metadata: { skillCatalog: { schema: 2, version: catalogVersion } },
+          })
+          userMessage.parts.unshift(part)
         }
-      }
-      if (catalogText && !retainedCatalog) {
-        const part = yield* sessions.updatePart({
-          id: PartID.ascending(),
-          messageID: userMessage.info.id,
-          sessionID: userMessage.info.sessionID,
-          type: "text",
-          text: catalogText,
-          synthetic: true,
-        })
-        userMessage.parts.push(part)
       }
 
       const composeModeMsg = input.messages.find(
@@ -4064,7 +4079,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
             // If forkCtx is missing (race / cleanup bug / spawn skipped), fail the
             // actor so the next prune turn can spawn a fresh fork.
             if (isForkAgent) {
-              const forkCtxEffect = spawnRef.current?.getForkContext(lastUser.agentID!)
+              const forkCtxEffect = spawnRef.current?.getForkContext(sessionID, lastUser.agentID!)
               const forkCtx = forkCtxEffect ? yield* forkCtxEffect : undefined
               if (!forkCtx) {
                 yield* slog.warn("fork agent runLoop: missing forkContext, failing actor", {

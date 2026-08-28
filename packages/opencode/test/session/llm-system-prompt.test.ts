@@ -415,7 +415,7 @@ describe("session.llm system prompt — memory-instructions guard", () => {
     })
   })
 
-  test("main agent memory instructions use absolute memory paths", async () => {
+  test("main agent memory instructions keep session paths stable across sessions", async () => {
     const server = queueState.server!
     const providerID = "alibaba"
     const modelID = "qwen-plus"
@@ -469,7 +469,11 @@ describe("session.llm system prompt — memory-instructions guard", () => {
           .map((m) => m.content)
           .join("\n")
         expect(allSys).toContain(path.join(Global.Path.data, "memory", "projects", Instance.current.project.id, "MEMORY.md"))
-        expect(allSys).toContain(path.join(Global.Path.data, "memory", "sessions", sessionID, "checkpoint.md"))
+        const sessionTemplate = path.join(Global.Path.data, "memory", "sessions", "current_session_id")
+        expect(allSys).toContain(path.join(sessionTemplate, "checkpoint.md"))
+        expect(allSys).toContain(path.join(sessionTemplate, "notes.md"))
+        expect(allSys).toContain(path.join(sessionTemplate, "tasks", "<id>", "progress.md"))
+        expect(allSys).not.toContain(path.join(Global.Path.data, "memory", "sessions", sessionID))
         // Global memory is taught (read-side) and points at the canonical path.
         expect(allSys).toContain("## Global memory")
         expect(allSys).toContain(path.join(Global.Path.data, "memory", "global", "MEMORY.md"))

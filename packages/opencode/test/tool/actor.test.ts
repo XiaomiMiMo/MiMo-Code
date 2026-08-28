@@ -363,43 +363,6 @@ describe("tool.actor", () => {
     ),
   )
 
-  it.live("execute resumes an existing task session from actor_id", () =>
-    provideTmpdirInstance(() =>
-      Effect.gen(function* () {
-        yield* installMockSpawn()
-        const { chat, assistant } = yield* seed()
-        const tool = yield* ActorTool
-        const def = yield* tool.init()
-
-        const result = yield* def.execute(
-          {
-            operation: {
-              action: "run",
-              description: "inspect bug",
-              prompt: "look into the cache key path",
-              subagent_type: "general",
-              actor_id: "ses_missing", // v9: actor_id in run action is ignored — always creates new
-            },
-          },
-          {
-            sessionID: chat.id,
-            messageID: assistant.id,
-            agent: "build",
-            abort: new AbortController().signal,
-            extra: {},
-            messages: [],
-            metadata: () => Effect.void,
-            ask: () => Effect.void,
-          },
-        )
-
-        // v9: run always creates a new actor under the parent session
-        expect(result.metadata.sessionId).toBe(chat.id)
-        expect(result.output).toContain("actor_id:")
-      }),
-    ),
-  )
-
   it.live("execute asks by default and skips checks when bypassed", () =>
     provideTmpdirInstance(() =>
       Effect.gen(function* () {
@@ -451,7 +414,7 @@ describe("tool.actor", () => {
     ),
   )
 
-  it.live("execute creates a child when actor_id does not exist", () =>
+  it.live("execute creates a fresh actor under the parent session and reports its id", () =>
     provideTmpdirInstance(() =>
       Effect.gen(function* () {
         yield* installMockSpawn()
@@ -466,7 +429,6 @@ describe("tool.actor", () => {
               description: "inspect bug",
               prompt: "look into the cache key path",
               subagent_type: "general",
-              actor_id: "ses_missing",
             },
           },
           {
@@ -481,10 +443,11 @@ describe("tool.actor", () => {
           },
         )
 
-        // v9: run creates a new actor under the parent session (subagent mode)
         expect(result.metadata.sessionId).toBe(chat.id)
         expect(result.metadata.actorId).toBeDefined()
         expect(result.output).toContain(`actor_id: ${result.metadata.actorId}`)
+        // The id is offered for follow-up via send/wait, never for a resume arg.
+        expect(result.output).toContain("send")
       }),
     ),
   )
@@ -620,8 +583,8 @@ describe("Actor tool subagent_type enum (F36)", () => {
 
   // Mirror of the task tool's schema regression test (commit 334cf6708).
   // The pre-discriminated-union schema let the model fill every "optional" string
-  // with "" — including actor_id — which slipped past the runtime guards in some
-  // paths and produced confusing tool errors elsewhere.
+  // with "", which slipped past the runtime guards in some paths and produced
+  // confusing tool errors elsewhere.
   it.live("schema rejects empty strings, unknown fields, and per-action missing required fields", () =>
     provideTmpdirInstance(() =>
       Effect.gen(function* () {
@@ -636,8 +599,11 @@ describe("Actor tool subagent_type enum (F36)", () => {
 
         expect(wrap({ operation: { action: "run", description: "", prompt: "y", subagent_type: "general" } }).success).toBe(false)
         expect(wrap({ operation: { action: "run", description: "x", prompt: "", subagent_type: "general" } }).success).toBe(false)
-        expect(wrap({ operation: { action: "run", description: "x", prompt: "y", subagent_type: "general", actor_id: "" } }).success).toBe(false)
         expect(wrap({ operation: { action: "run", description: "x", prompt: "y", subagent_type: "general", junk: "z" } }).success).toBe(false)
+        // spawn/run never resume — actor_id is not part of their schema, so a model
+        // reaching for it gets a validation error instead of a silently fresh actor.
+        expect(wrap({ operation: { action: "run", description: "x", prompt: "y", subagent_type: "general", actor_id: "general-1" } }).success).toBe(false)
+        expect(wrap({ operation: { action: "spawn", description: "x", prompt: "y", subagent_type: "general", actor_id: "general-1" } }).success).toBe(false)
         expect(wrap({ operation: { action: "run", description: "x", prompt: "y" } }).success).toBe(false) // missing subagent_type
         expect(wrap({ operation: { action: "run", prompt: "y", subagent_type: "general" } }).success).toBe(false) // missing description
         expect(wrap({ description: "x", prompt: "y", subagent_type: "general" }).success).toBe(false) // missing operation envelope

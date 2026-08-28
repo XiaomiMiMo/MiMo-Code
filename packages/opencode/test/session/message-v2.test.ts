@@ -131,7 +131,7 @@ function basePart(messageID: string, id: string) {
 }
 
 describe("session.message-v2.toModelMessage", () => {
-  test("keeps one skills catalog and orders it after the other user content", async () => {
+  test("keeps one legacy skills catalog in its historical model position", async () => {
     const input: MessageV2.WithParts[] = [
       {
         info: userInfo("m-skills-first"),
@@ -178,6 +178,51 @@ describe("session.message-v2.toModelMessage", () => {
         ],
       },
       { role: "user", content: [{ type: "text", text: "continue" }] },
+    ])
+  })
+
+  test("keeps every authoritative skills snapshot before its user query", async () => {
+    const firstSnapshot = [
+      "<system-reminder>",
+      "Authoritative skills catalog snapshot v2:",
+      "When multiple snapshots exist, the last one is authoritative.",
+      "Skills available in this session:",
+      "FIRST",
+      "</system-reminder>",
+    ].join("\n")
+    const secondSnapshot = firstSnapshot.replace("FIRST", "SECOND")
+    const input: MessageV2.WithParts[] = [
+      {
+        info: userInfo("m-skills-first"),
+        parts: [
+          { ...basePart("m-skills-first", "p-user"), type: "text", text: "hello" },
+          { ...basePart("m-skills-first", "p-snapshot-first"), type: "text", text: firstSnapshot, synthetic: true },
+        ],
+      },
+      {
+        info: userInfo("m-skills-second"),
+        parts: [
+          { ...basePart("m-skills-second", "p-next-user"), type: "text", text: "continue" },
+          { ...basePart("m-skills-second", "p-snapshot-second"), type: "text", text: secondSnapshot, synthetic: true },
+        ],
+      },
+    ]
+
+    expect(await MessageV2.toModelMessages(input, model)).toStrictEqual([
+      {
+        role: "user",
+        content: [
+          { type: "text", text: firstSnapshot },
+          { type: "text", text: "hello" },
+        ],
+      },
+      {
+        role: "user",
+        content: [
+          { type: "text", text: secondSnapshot },
+          { type: "text", text: "continue" },
+        ],
+      },
     ])
   })
 

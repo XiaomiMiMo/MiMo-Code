@@ -275,7 +275,7 @@ export interface SpawnResult {
 export interface Interface {
   readonly spawn: (input: SpawnInput) => Effect.Effect<SpawnResult>
   readonly cancel: (sessionID: SessionID, actorID: string, mode: "graceful" | "forced") => Effect.Effect<void>
-  readonly getForkContext: (actorID: string) => Effect.Effect<ForkContext | undefined>
+  readonly getForkContext: (sessionID: SessionID, actorID: string) => Effect.Effect<ForkContext | undefined>
   /**
    * Run ONE stall-watchdog scan pass synchronously (the same body the background
    * fiber repeats every WATCHDOG_SCAN_INTERVAL_MS). Exposed for deterministic
@@ -307,6 +307,7 @@ export const layer = Layer.effect(
     // (contextMode = "full"). Read by fork's runLoop (see prompt.ts) and
     // cleared on terminal status. Fiber tracking moved to SessionRunState.
     const forkContexts = new Map<string, ForkContext>()
+    const forkContextKey = (sessionID: SessionID, actorID: string) => sessionID + ":" + actorID
 
     // Actors whose cancel() has begun, keyed "sessionID:actorID". Populated
     // BEFORE the fiber is interrupted so forkWork's onSuccess/onFailure notify
@@ -724,7 +725,7 @@ export const layer = Layer.effect(
                   lastFinalText = newTurn.finalText
                 }
 
-                yield* Effect.sync(() => forkContexts.delete(input.actorID))
+                yield* Effect.sync(() => forkContexts.delete(forkContextKey(input.sessionID, input.actorID)))
               }),
             onFailure: (cause) =>
               Effect.gen(function* () {
@@ -743,7 +744,7 @@ export const layer = Layer.effect(
                     ? { status: "cancelled" as const }
                     : { status: "failure" as const, error, ...(failure ? { failure } : {}) },
                 )
-                yield* Effect.sync(() => forkContexts.delete(input.actorID))
+                yield* Effect.sync(() => forkContexts.delete(forkContextKey(input.sessionID, input.actorID)))
               }),
           }),
         )
@@ -797,7 +798,7 @@ export const layer = Layer.effect(
         tools: input.tools,
       })
       if (input.forkContext) {
-        forkContexts.set(child.id, input.forkContext) // peer's actorID === child.id
+        forkContexts.set(forkContextKey(child.id, child.id), input.forkContext) // peer's actorID === child.id
       }
       const { fiber, outcome } = yield* forkWork({
         sessionID: child.id,
@@ -843,7 +844,7 @@ export const layer = Layer.effect(
       if (input.onActorID) yield* Effect.sync(() => input.onActorID!(actorID)).pipe(Effect.ignore)
 
       if (input.forkContext) {
-        forkContexts.set(actorID, input.forkContext)
+        forkContexts.set(forkContextKey(input.sessionID, actorID), input.forkContext)
       }
 
       // Auto-inject return-format instruction for lifecycle-managed subagents.
@@ -949,11 +950,11 @@ export const layer = Layer.effect(
           .updateStatus(sessionID, actorID, { status: "idle", lastOutcome: "cancelled" })
           .pipe(Effect.ignore)
         yield* notifyTerminal(sessionID, actorID, actor, "cancelled")
-        yield* Effect.sync(() => forkContexts.delete(actorID))
+        yield* Effect.sync(() => forkContexts.delete(forkContextKey(sessionID, actorID)))
       })
 
-    const getForkContext = Effect.fn("Actor.getForkContext")(function* (actorID: string) {
-      return forkContexts.get(actorID)
+    const getForkContext = Effect.fn("Actor.getForkContext")(function* (sessionID: SessionID, actorID: string) {
+      return forkContexts.get(forkContextKey(sessionID, actorID))
     })
 
     // === T40 stall watchdog ===

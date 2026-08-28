@@ -29,7 +29,7 @@ THE EXCEPTION — `run` blocks the conversation; only for a tiny lookup that gat
           Use it for essentially all delegation: investigation, analysis, review,
           implementation, long searches — anything that takes real time.
           required: subagent_type, description, prompt
-          optional: actor_id, command, context
+          optional: command, context
 - run:    **RARE EXCEPTION.** Same launch, but BLOCKS the whole conversation until
           the subagent finishes; result returned inline. Allowed ONLY when you
           cannot make your very next decision without the result in THIS turn, and
@@ -37,17 +37,18 @@ THE EXCEPTION — `run` blocks the conversation; only for a tiny lookup that gat
           ordinary analysis, review, or implementation work — those go to `spawn`.
           If you are unsure, use `spawn`.
           required: subagent_type, description, prompt
-          optional: actor_id, timeout_ms, command, context
+          optional: timeout_ms, command, context
 - status: poll actor state without blocking. required: actor_id.
           Returns: { status: "pending"|"running"|"idle"|"unknown", actor_id, turnCount, ... }
 - wait:   block until actor completes (success/failure/cancelled) or timeout (default 10 min).
           required: actor_id. optional: timeout_ms.
           Returns: { status, actor_id, result?, error? }
 - cancel: stop a running actor (graceful). required: actor_id. Idempotent.
-- send:   deliver message to another actor's inbox.
+- send:   deliver message to another actor's inbox, waking it for another turn.
           required: to_actor_id, content.
           optional: to_session_id, type (default "text").
           Receiver sees wrapped in <inbox from="..." sent_at="...">...</inbox> at next iteration.
+          Returns once queued, not when the woken turn finishes — that turn's result arrives as a completion notification.
 
 ## When to use actor
 
@@ -90,7 +91,19 @@ You are the subagent's only briefing — it hasn't seen this conversation.
 
 ## Actor ID vs Task ID
 
-`actor_id` identifies a subagent session (resumable across turns). Task IDs (T1, T2, ...) come from the `task` tool — only pass a `task_id` you got from a `task` tool call this session. If the `task_id` is malformed or unknown, the binding is dropped: the subagent's findings won't be captured to any task, and the tool result tells you so.
+`actor_id` identifies a live subagent. It is returned by `spawn`/`run` and accepted by
+`status`, `wait`, `cancel`, and `send`. Task IDs (T1, T2, ...) come from the `task` tool — only pass a `task_id` you got from a `task` tool call this session. If the `task_id` is malformed or unknown, the binding is dropped: the subagent's findings won't be captured to any task, and the tool result tells you so.
+
+## Following up with an existing subagent
+
+To give more work to a subagent you already have, `send` it a message:
+
+  `{"operation":{"action":"send","to_actor_id":"explore-1","content":"<follow-up>"}}`
+
+`send` appends your message to that subagent's own history and wakes it for another
+turn, so it keeps every prior message and tool output — including a subagent that has
+already gone idle. It returns as soon as the message is queued; the woken turn's
+result reaches you as a completion notification.
 
 ## Binding a subagent to a task
 
@@ -108,10 +121,9 @@ postStop check then becomes a no-op.
 
 ## Usage notes
 
-- **Resume the same subagent**: pass `actor_id` to `spawn`/`run` and the call resumes that subagent's session (continues with its prior messages and tool outputs). Without `actor_id`, a fresh subagent is created.
 - **`spawn` vs `run` result delivery**: `spawn` returns the actor_id immediately; when the background actor finishes, its result appears as a notification in this conversation — your turn does NOT auto-wake to process it; you'll see it the next time you respond to the user. Use `wait` to block on the actor_id explicitly. `run` instead blocks the conversation and returns the result inline — that stall is exactly why it's the exception.
 - **`wait` on persistent peers caveat**: `wait` is designed for ephemeral subagents you spawned via `spawn`/`run`. Persistent peers idle between turns and never produce a "done" outcome on success — `wait` on a peer will block until that peer fails or is cancelled. Use `send` + `status` to coordinate with peers instead.
-- **`send` semantics**: fire-and-forget; returns within ~5 ms regardless of receiver load. The receiver picks the message up at the head of its next runLoop iteration. On unknown `to_actor_id`, `send` returns `{inboxID: null, error: "receiver not found"}` rather than throwing — handle the error path.
+- **`send` semantics**: fire-and-forget; returns within ~5 ms regardless of receiver load. It also WAKES the receiver — an idle subagent runs another turn on its own history, so `send` is how you give one follow-up work. The woken turn's result reaches you as a completion notification, not from the `send` call. On unknown `to_actor_id`, `send` returns `{inboxID: null, error: "receiver not found"}` rather than throwing — handle the error path.
 - Trust the subagent's outputs generally, but the subagent doesn't see your full context (unless you pass `context="full"`); brief it accordingly.
 
 

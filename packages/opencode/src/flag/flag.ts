@@ -24,6 +24,16 @@ function nonNegativeNumber(key: string) {
   return Number.isInteger(parsed) && parsed >= 0 ? parsed : undefined
 }
 
+// A fraction in (0, 1], written either as a decimal ("0.85") or a percentage
+// ("85%"). Values outside the range — and anything unparseable — yield undefined
+// so the caller keeps its own default.
+function ratio(key: string) {
+  const value = process.env[key]?.trim()
+  if (!value) return undefined
+  const parsed = value.endsWith("%") ? Number(value.slice(0, -1)) / 100 : Number(value)
+  return Number.isFinite(parsed) && parsed > 0 && parsed <= 1 ? parsed : undefined
+}
+
 const MIMOCODE_EXPERIMENTAL = truthy("MIMOCODE_EXPERIMENTAL")
 
 // Defaults to false. When enabled, mimocode runs in pure-mimo mode:
@@ -133,6 +143,27 @@ export const Flag = {
     return truthy("MIMOCODE_DISABLE_CHECKPOINT")
   },
   MIMOCODE_DISABLE_AUTOCOMPACT: truthy("MIMOCODE_DISABLE_AUTOCOMPACT"),
+  // Default compaction trigger, used when `compaction.max_context` is not set in
+  // config. Same grammar as that config field: an absolute token count
+  // ("300000"), a shorthand ("300K", "1M"), or a percentage of the model window
+  // ("50%"). Clamped to the model window — it can only lower the trigger, never
+  // raise it. An explicit `compaction.max_context` in config overrides this.
+  // Pairs with MIMOCODE_DISABLE_CHECKPOINT: on the checkpoint-off fallback path
+  // this is how the compaction threshold is tuned via env alone. Read lazily so
+  // tests and in-process embedders can toggle it at runtime.
+  get MIMOCODE_COMPACTION_MAX_CONTEXT() {
+    return process.env["MIMOCODE_COMPACTION_MAX_CONTEXT"]
+  },
+  // Fraction of the working window at which compaction fires; the remaining
+  // headroom is what the summary generation gets to write into. Accepts a decimal
+  // ("0.85") or a percentage ("85%"); anything unparseable or outside (0, 1] is
+  // ignored and the 0.9 default stands. Applies on top of whatever window
+  // `compaction.max_context` / MIMOCODE_COMPACTION_MAX_CONTEXT resolved to, so
+  // the two compose rather than override each other. Read lazily so tests and
+  // in-process embedders can toggle it at runtime.
+  get MIMOCODE_COMPACTION_TRIGGER_RATIO() {
+    return ratio("MIMOCODE_COMPACTION_TRIGGER_RATIO") ?? 0.9
+  },
   MIMOCODE_DISABLE_MODELS_FETCH: truthy("MIMOCODE_DISABLE_MODELS_FETCH"),
   // Defaults to false. When enabled, every model uses the GPT system prompt
   // and Codex toolset regardless of its model ID.

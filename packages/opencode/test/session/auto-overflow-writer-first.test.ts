@@ -200,13 +200,24 @@ function writerThatFails(): SpawnImpl {
 }
 
 // Shrink the usable window so a seeded token count trips
-// SessionOverflow.isOverflow deterministically. reserves() = compaction.reserved
-// (100) + a 20_000 output reservation (this model publishes no limit.input), so
-// max_context must exceed ~20_100 to be honoured at all. It must ALSO leave
-// usable > 13_000, or SessionPrune.resolveThresholds refuses the window
-// ("too small for checkpoints"). 40_000 satisfies both: usable = 40_000 -
-// 20_100 = 19_900, against the seeded 50_000 tokens.
-function mimocodeConfig(baseURL: string, maxContext = 40_000, checkpoint?: { thresholds: string[]; reserved: number }) {
+// SessionOverflow.isOverflow deterministically. The trigger is a flat fraction
+// of the working window — `usable = floor(max_context * ratio)`, ratio being
+// MIMOCODE_COMPACTION_TRIGGER_RATIO (default 0.9) — so max_context alone decides
+// it, as long as it exceeds reserves() = compaction.reserved (100) + a 20_000
+// output reservation (this model publishes no limit.input); below that, budget()
+// ignores it and the model's own million-token window applies. 40_000 puts the
+// trigger at 36_000, well under the 50_000 tokens every turn below reports.
+//
+// The empty checkpoint ladder is declared rather than inferred: SessionPrune
+// only consults defaultThresholdsFor when `thresholds` is absent, so passing []
+// keeps fireCheckpoints out of the way regardless of the window. That is what
+// makes the writer counts asserted below attributable to the overflow path
+// alone.
+function mimocodeConfig(
+  baseURL: string,
+  maxContext = 40_000,
+  checkpoint: { thresholds: string[]; reserved: number } = { thresholds: [], reserved: 100 },
+) {
   return JSON.stringify({
     $schema: "https://opencode.ai/config.json",
     enabled_providers: ["alibaba"],
@@ -358,7 +369,7 @@ describe("Auto context overflow: write a checkpoint before degrading to compacti
     async () => {
       const llm = startUsageLLM([
         { text: "initialized", promptTokens: 1_000 },
-        { text: "high-usage reply", promptTokens: 25_000 },
+        { text: "high-usage reply", promptTokens: 50_000 },
         { text: "reply after rebuild", promptTokens: 1_000 },
       ])
       let writerCalls = 0
@@ -461,9 +472,9 @@ describe("Auto context overflow: write a checkpoint before degrading to compacti
                   agent: "build",
                 })
 
-                // usable = 50K - 20.1K reserves = 29.9K. The single 24K
-                // checkpoint threshold is below it, so 25K must write a
-                // checkpoint without rebuilding before the 29.9K trigger.
+                // usable = floor(50K * 0.9) = 45K. The single 24K checkpoint
+                // threshold is below it, so 25K must write a checkpoint
+                // without rebuilding before the 45K trigger.
                 const first = yield* Effect.promise(() => seedUserMessage(info.id, "earlier question"))
                 yield* Effect.promise(() => seedFinishedAssistant(info.id, first.id, 25_000))
 
