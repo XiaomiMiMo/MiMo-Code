@@ -292,6 +292,62 @@ Next: implement renderRebuildContext 9-section render in src/session/checkpoint.
     ),
   )
 
+  it.live("renderRebuildContext uses idle framing when lastMessageInfo is assistant/stop", () =>
+    provideTmpdirInstance(() =>
+      Effect.gen(function* () {
+        const cp = yield* SessionCheckpoint.Service
+        const session = yield* Session.Service
+        const memory = yield* Memory.Service
+
+        const sess = yield* session.create({ title: "idle framing stop" })
+
+        const root = yield* memory.root()
+        const sessDir = path.join(root, "sessions", sess.id)
+
+        yield* Effect.promise(async () => {
+          await fs.mkdir(sessDir, { recursive: true })
+          await fs.writeFile(
+            path.join(sessDir, "checkpoint.md"),
+            `Topic: Idle framing fixture\n\n### Execution context\n- minimal seed\n`,
+          )
+        })
+
+        const out = yield* cp.renderRebuildContext(sess.id, { lastMessageInfo: { role: "assistant", finish: "stop" } })
+
+        expect(out).not.toContain("Pick up the last task as if the break never happened")
+        expect(out).toContain("wait for the user")
+      }),
+    ),
+  )
+
+  it.live("renderRebuildContext keeps resume framing for assistant/tool-calls", () =>
+    provideTmpdirInstance(() =>
+      Effect.gen(function* () {
+        const cp = yield* SessionCheckpoint.Service
+        const session = yield* Session.Service
+        const memory = yield* Memory.Service
+
+        const sess = yield* session.create({ title: "resume framing tool-calls" })
+
+        const root = yield* memory.root()
+        const sessDir = path.join(root, "sessions", sess.id)
+
+        yield* Effect.promise(async () => {
+          await fs.mkdir(sessDir, { recursive: true })
+          await fs.writeFile(
+            path.join(sessDir, "checkpoint.md"),
+            `Topic: Resume framing fixture\n\n### Execution context\n- minimal seed\n`,
+          )
+        })
+
+        const out = yield* cp.renderRebuildContext(sess.id, { lastMessageInfo: { role: "assistant", finish: "tool-calls" } })
+
+        expect(out).toContain("Pick up the last task as if the break never happened")
+        expect(out).toContain("autonomous task")
+      }),
+    ),
+  )
+
   it.live("renderRebuildContext omits autonomous addendum when opts undefined", () =>
     provideTmpdirInstance(() =>
       Effect.gen(function* () {
