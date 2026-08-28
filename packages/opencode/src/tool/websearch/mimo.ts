@@ -1,7 +1,7 @@
 import { Duration, Effect, Schema, Stream } from "effect"
 import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/unstable/http"
 
-const DEFAULT_BASE_URL = "https://api.xiaomimimo.com/v1"
+export const DEFAULT_BASE_URL = "https://api.xiaomimimo.com/v1"
 
 export const QUOTA_EXCEEDED =
   "Web search quota exhausted (free tier limit reached). Top up or manage your plan at https://platform.xiaomimimo.com/console/plugin, or use `webfetch` with a relevant URL instead."
@@ -83,6 +83,7 @@ export const call = (
   Effect.gen(function* () {
     const request = HttpClientRequest.post(buildUrl(baseUrl)).pipe(
       HttpClientRequest.setHeader("api-key", apiKey),
+      HttpClientRequest.setHeader("Authorization", `Bearer ${apiKey}`),
       HttpClientRequest.accept("text/event-stream"),
       HttpClientRequest.bodyJsonUnsafe({
         model: modelId,
