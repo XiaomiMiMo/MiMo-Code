@@ -208,48 +208,49 @@ function cropOrigin(part: MessageV2.Part): (PersistedStreakCrop & { kind: string
 }
 
 export function extractCropMetadata(messages: readonly StreakMessage[]): PersistedStreakCrop | undefined {
-  for (let i = messages.length - 1; i >= 0; i--) {
-    const message = messages[i]
+  return extractAllCrops(messages).at(-1)
+}
+
+/**
+ * All persisted spans, oldest first. A crop stays active for the life of the
+ * session (or until the feature is turned off) — including after the user
+ * sends a new message — so poison thinking cannot re-enter the request view.
+ */
+export function extractAllCrops(messages: readonly StreakMessage[]): PersistedStreakCrop[] {
+  const crops: PersistedStreakCrop[] = []
+  for (const message of messages) {
     if (message.info.role !== "user") continue
     for (const part of message.parts) {
       const origin = cropOrigin(part)
       if (!origin?.fromId || !origin?.toId || !origin?.key) continue
-      return {
+      crops.push({
         fromId: origin.fromId,
         toId: origin.toId,
         key: origin.key,
         truncated: origin.truncated === true,
-      }
+      })
     }
   }
-  return undefined
+  return crops
 }
 
-/** Crop stays active while the latest user is still the recovery note. */
-export function isCropActive(
-  lastUserId: string | undefined,
-  messages: readonly StreakMessage[],
-): PersistedStreakCrop | undefined {
-  if (!lastUserId) return undefined
-  const crop = extractCropMetadata(messages)
-  if (!crop) return undefined
-  const lastUser = messages.findLast((message) => message.info.id === lastUserId)
-  if (!lastUser || lastUser.info.role !== "user") return undefined
-  const isRecovery = lastUser.parts.some((part) => cropOrigin(part) !== undefined)
-  return isRecovery ? crop : undefined
-}
-
-/** Re-apply a persisted span. Same filter every request → stable prefix. */
+/** Re-apply persisted spans. Same filter every request → stable prefix. */
 export function applyPersistedCrop(
   messages: readonly StreakMessage[],
   crop: PersistedStreakCrop,
 ): { kept: StreakMessage[]; omitted: string[] } {
+  return applyPersistedCrops(messages, [crop])
+}
+
+export function applyPersistedCrops(
+  messages: readonly StreakMessage[],
+  crops: readonly PersistedStreakCrop[],
+): { kept: StreakMessage[]; omitted: string[] } {
+  if (crops.length === 0) return { kept: [...messages], omitted: [] }
   const omitted = messages
-    .filter(
-      (message) =>
-        message.info.role === "assistant" &&
-        message.info.id >= crop.fromId &&
-        message.info.id <= crop.toId,
+    .filter((message) =>
+      message.info.role === "assistant" &&
+      crops.some((crop) => message.info.id >= crop.fromId && message.info.id <= crop.toId),
     )
     .map((message) => message.info.id)
   if (omitted.length === 0) return { kept: [...messages], omitted }

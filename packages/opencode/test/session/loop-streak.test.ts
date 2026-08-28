@@ -1,11 +1,12 @@
 import { describe, expect, test } from "bun:test"
 import {
   applyPersistedCrop,
+  applyPersistedCrops,
   cropMessagesForStreak,
   cropMetadata,
   detectStreak,
+  extractAllCrops,
   extractCropMetadata,
-  isCropActive,
   reasonHash,
   recoveryNote,
   streakKey,
@@ -358,16 +359,36 @@ describe("persisted crop span", () => {
     })
   })
 
-  test("isCropActive only when last user is the recovery note", () => {
+  test("isCropActive removed: crop stays active after a new user message", () => {
     const loop = [
       msg("u0", "user", [text("go")]),
       msg("a1", "assistant", [reasoning("same")]),
       msg("a2", "assistant", [reasoning("same")]),
       recoveryUser("r1", "a1", "a2"),
+      msg("a3", "assistant", [reasoning("fresh")]),
+      msg("u2", "user", [text("继续追问")]),
     ]
-    expect(isCropActive("r1", loop)?.fromId).toBe("a1")
-    expect(isCropActive("u0", loop)).toBeUndefined()
-    expect(isCropActive("u2", [...loop, msg("u2", "user", [text("new")])])).toBeUndefined()
+    const crops = extractAllCrops(loop)
+    expect(crops).toHaveLength(1)
+    const applied = applyPersistedCrops(loop, crops)
+    expect(applied.omitted).toEqual(["a1", "a2"])
+    expect(applied.kept.map((m) => m.info.id)).toEqual(["u0", "r1", "a3", "u2"])
+  })
+
+  test("extractAllCrops returns every span; applyPersistedCrops unions them", () => {
+    const messages = [
+      msg("u0", "user", [text("go")]),
+      msg("a1", "assistant", [reasoning("same")]),
+      recoveryUser("r1", "a1", "a1"),
+      msg("a2", "assistant", [reasoning("fresh")]),
+      recoveryUser("r2", "a2", "a2"),
+      msg("u2", "user", [text("next")]),
+    ]
+    const crops = extractAllCrops(messages)
+    expect(crops.map((c) => c.fromId)).toEqual(["a1", "a2"])
+    const applied = applyPersistedCrops(messages, crops)
+    expect(applied.omitted).toEqual(["a1", "a2"])
+    expect(applied.kept.map((m) => m.info.id)).toEqual(["u0", "r1", "r2", "u2"])
   })
 
   test("applyPersistedCrop removes the same span every time", () => {

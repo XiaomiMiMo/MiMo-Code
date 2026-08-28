@@ -10,7 +10,7 @@ commits: f02ee661a6..5a597d938e
 
 ## Report
 
-**What was built** — Request-layer loop-streak recovery behind `experimental.loop_streak_recovery`. Detection runs once per streak (thinking-primary key; tools may drift). On hit, the span is cropped from the LLM request only and a recovery user is **persisted** with the span in part metadata. Later requests re-apply that same filter so the cache prefix stays stable and poison thinking cannot return. Cropped assistants stay in the DB for audit/replay; the recovery note is visible in TUI. `max_span` ceiling (default 64); text-loop recovery suppressed on crop turns.
+**What was built** — Request-layer loop-streak recovery behind `experimental.loop_streak_recovery`. Detection runs once per streak (thinking-primary key; tools may drift). On hit, the span is cropped from the LLM request only and a recovery user is **persisted** with the span in part metadata. Later requests re-apply that same filter so the cache prefix stays stable and poison thinking cannot return. Cropped assistants stay in the DB for audit/replay; the recovery user is request/model-visible (synthetic text, currently no dedicated TUI marker row). `max_span` ceiling (default 64); text-loop recovery suppressed on crop turns.
 
 **Verification** — `bun typecheck` PASS; `bun test test/session/loop-streak.test.ts` PASS (22). Independent review of `9bab2c2a12` found 3 criticals + 3 mediums → fixed `5a597d938e` → re-review PASS. Persisted-span follow-up after design critique that per-request re-detection breaks prefix stability.
 
@@ -73,14 +73,14 @@ successful crop.
 
 At the start of each loop iteration:
 
-1. If an active persisted crop exists (`isCropActive`: latest user is the recovery note whose part metadata carries the span), **re-apply that same filter** and skip detection.
-2. Otherwise, only when `lastUser.id < lastFinished.id` (continuing from a model step, not a fresh user intervention):
+1. Re-apply **every** persisted span (`extractAllCrops` / `applyPersistedCrops`) from recovery-user part metadata. Spans stay active for the life of the feature — including after the user sends a new message — so poison thinking cannot re-enter the request view.
+2. Then, only when `lastUser.id < lastFinished.id` (continuing from a model step), detect a **new** streak on the already-cropped view:
    - Build keys for finished assistants.
    - Trigger when the last `triggerCount` (default 3) finished assistants share one `key`.
    - Walk backward while `key` matches; predecessor is the **anchor** (always kept).
    - Require `span.toId === lastFinished.id`.
    - On hit: crop the request view, **persist** a synthetic recovery user whose text-part `metadata.origin` is `{ kind: "loop_streak_crop", fromId, toId, key, truncated }`. That user becomes `lastUser` for this iteration.
-3. Crop clears automatically when the latest user is no longer the recovery note (user sent a new message).
+3. Clearing is explicit only: turn the feature off (next request returns to the full view). There is no auto-clear on user speech.
 
 Persisting the span on the recovery user gives: stable prefix across later
 requests in the same turn, restart survival, and TUI visibility of the recovery

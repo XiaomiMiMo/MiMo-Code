@@ -57,11 +57,11 @@ import {
 import {
   LOOP_STREAK_MAX_SPAN,
   LOOP_STREAK_TRIGGER_COUNT,
-  applyPersistedCrop,
+  applyPersistedCrops,
   cropMetadata,
   cropMessagesForStreak,
   detectStreak,
-  isCropActive,
+  extractAllCrops,
   recoveryNote,
   streakKey,
 } from "../session/prompt/loop-streak"
@@ -4031,26 +4031,31 @@ NOTE: At any point in time through this workflow you should feel free to ask the
           const maxSteps = agent.steps ?? Infinity
           const isLastStep = step >= maxSteps
 
-          // Request-layer loop-streak recovery with a PERSISTED span.
-          // Detect once, write a recovery user that carries the span in part
-          // metadata, then re-apply that same filter on every later request.
-          // Re-detecting each turn would flip the view and break the cache
-          // prefix (and re-introduce poison thinking after a successful crop).
+          // Request-layer loop-streak recovery with PERSISTED spans.
+          // A crop is written once (recovery user + span metadata) and then
+          // re-applied on EVERY later request until the feature is disabled —
+          // including after the user sends a new message. Clearing on user
+          // speech would reintroduce poison thinking and break the prefix.
           const streakCfg = (yield* config.get()).experimental?.loop_streak_recovery
           if (streakCfg?.enabled) {
-            const activeCrop = isCropActive(lastUser.id, msgs)
-            if (activeCrop) {
-              const reapplied = applyPersistedCrop(msgs, activeCrop)
+            const existingCrops = extractAllCrops(msgs)
+            if (existingCrops.length > 0) {
+              const reapplied = applyPersistedCrops(msgs, existingCrops)
               if (reapplied.omitted.length > 0) {
                 msgs = reapplied.kept as typeof msgs
                 loopStreakCropped = true
                 yield* slog.info("loop streak: reapplied persisted crop", {
-                  spanFrom: activeCrop.fromId,
-                  spanTo: activeCrop.toId,
+                  spans: existingCrops.length,
                   omitted: reapplied.omitted.length,
+                  spanFrom: existingCrops[existingCrops.length - 1].fromId,
+                  spanTo: existingCrops[existingCrops.length - 1].toId,
                 })
               }
-            } else if (lastFinished && lastUser.id < lastFinished.id) {
+            }
+            // New streaks are still detectable on the cropped view (e.g. the
+            // model loops again after recovery). User-speech guard only skips
+            // *new* detection, not re-application of existing spans.
+            if (lastFinished && lastUser.id < lastFinished.id) {
               const triggerCount = streakCfg.trigger_count ?? LOOP_STREAK_TRIGGER_COUNT
               const maxSpan = streakCfg.max_span ?? LOOP_STREAK_MAX_SPAN
               const entries = msgs.flatMap((message) => {
