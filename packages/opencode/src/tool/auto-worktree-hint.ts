@@ -202,7 +202,7 @@ export function buildAutoWorktreeNotice(mainWorktreePath: string): string {
         "",
         "Do NOT create a worktree on your own. Before any further write or edit, ask the user whether they want an isolated worktree.",
         "",
-        "If the user agrees, isolate this task in a new worktree and switch into it before continuing. If the user declines, proceed only on the paths they authorized.",
+        "If the user agrees, isolate this task in a new worktree and switch into it before continuing. If the user declines, continue with the original plan without creating a worktree.",
         "",
         "This rule is not limited to the path above. If you later start writing to another git repository, or run git mutations against another repo's main worktree, apply the same check there: ask the user before continuing in that main worktree.",
       ]
