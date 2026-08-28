@@ -83,7 +83,6 @@ export const call = (
   Effect.gen(function* () {
     const request = HttpClientRequest.post(buildUrl(baseUrl)).pipe(
       HttpClientRequest.setHeader("api-key", apiKey),
-      HttpClientRequest.setHeader("Authorization", `Bearer ${apiKey}`),
       HttpClientRequest.accept("text/event-stream"),
       HttpClientRequest.bodyJsonUnsafe({
         model: modelId,
