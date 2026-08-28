@@ -2835,9 +2835,14 @@ NOTE: At any point in time through this workflow you should feel free to ask the
       for (const m of msgs) {
         if (m.info.role !== "assistant") continue
         if (m.info.time?.completed) continue
-        // 有 error 的 assistant 是故意不写 completed 的(留给 /recovery 做 resume 候选),
-        // 不是孤儿,不该被清扫。
-        if (m.info.error) continue
+        // Errored assistants are intentionally left without time.completed so
+        // /recovery can find them. Keep them recoverable on the background
+        // path (age-guarded). But when immediate=true the user is actively
+        // sending a new message — that act abandons the old turn, so finalize
+        // it like any other orphan. This prevents the TUI pending memo from
+        // locking onto a stale errored assistant and rendering every later
+        // message as stuck QUEUED.
+        if (m.info.error && !immediate) continue
         const created = m.info.time?.created ?? 0
         if (!immediate && now - created < ORPHAN_AGE_MS) continue
         m.info.time = { ...m.info.time, completed: now }
