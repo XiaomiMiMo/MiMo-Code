@@ -101,4 +101,34 @@ describe("bash commandMainWorktreeHits", () => {
   test("ls does not hit", async () => {
     expect(await commandMainWorktreeHits("ls -la", mainRepo)).toEqual([])
   })
+
+  test("git -C into a main worktree still hits", async () => {
+    const hits = await commandMainWorktreeHits(`git -C ${mainRepo} commit -m x`, scratchDir)
+    expect(hits).toEqual([path.resolve(mainRepo)])
+  })
+
+  test("git -c key=val checkout in a main worktree hits", async () => {
+    const hits = await commandMainWorktreeHits("git -c user.name=t checkout -b x", mainRepo)
+    expect(hits).toEqual([path.resolve(mainRepo)])
+  })
+
+  test("sed --in-place=<suffix> counts as a write", async () => {
+    expect(await commandWritesFiles("sed --in-place=.bak s/a/b/ f.txt")).toBe(true)
+    const hits = await commandMainWorktreeHits("sed --in-place=.bak s/a/b/ a.txt", mainRepo)
+    expect(hits).toEqual([path.resolve(mainRepo)])
+  })
+
+  test("cp source from main to scratch does not hit main", async () => {
+    const src = path.join(mainRepo, "a.txt")
+    const dst = path.join(scratchDir, "copied.txt")
+    const hits = await commandMainWorktreeHits(`cp ${src} ${dst}`, scratchDir)
+    expect(hits).toEqual([])
+  })
+
+  test("cp dest in main hits main", async () => {
+    const src = path.join(scratchDir, "note.txt")
+    const dst = path.join(mainRepo, "copied.txt")
+    const hits = await commandMainWorktreeHits(`cp ${src} ${dst}`, scratchDir)
+    expect(hits).toEqual([path.resolve(mainRepo)])
+  })
 })

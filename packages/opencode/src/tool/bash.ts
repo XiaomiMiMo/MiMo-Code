@@ -277,7 +277,13 @@ function isFileWriteRedirect(node: Node): boolean {
 function isSedInPlace(tokens: string[], ps: boolean): boolean {
   const head = ps ? tokens[0]?.toLowerCase() : tokens[0]
   if (head !== "sed") return false
-  return tokens.slice(1).some((tok) => tok === "-i" || tok === "--in-place" || /^-[^-]*i/.test(tok))
+  return tokens.slice(1).some(
+    (tok) =>
+      tok === "-i" ||
+      tok === "--in-place" ||
+      tok.startsWith("--in-place=") ||
+      /^-[^-]*i/.test(tok),
+  )
 }
 
 // True when this parsed command line mutates files (create/overwrite/append),
@@ -333,18 +339,82 @@ const GIT_MUTATE_SUBS = new Set([
   "worktree",
 ])
 
+// Global options that may appear before the subcommand:
+//   git -C /main commit …  |  git -c k=v checkout …  |  git --git-dir=… commit
+const GIT_PRE_FLAGS = new Set(["-C", "-c", "--git-dir", "--work-tree", "--namespace", "--super-prefix"])
+
+function isGitFlag(token: string): boolean {
+  if (GIT_PRE_FLAGS.has(token)) return true
+  // --git-dir=… / --work-tree=… / --exec-path=…
+  return token.startsWith("--git-dir=") || token.startsWith("--work-tree=") || token.startsWith("--namespace=")
+}
+
 function isGitMutate(tokens: string[], ps: boolean): boolean {
-  if (tokens.length < 2) return false
-  const head = ps ? tokens[0].toLowerCase() : tokens[0]
-  if (head !== "git") return false
-  const sub = ps ? tokens[1].toLowerCase() : tokens[1]
-  if (!GIT_MUTATE_SUBS.has(sub)) return false
-  // `git worktree list|prune` only inspects; add/remove/repair mutate.
+  const sub = gitSubcommand(tokens, ps)
+  if (!sub || !GIT_MUTATE_SUBS.has(sub)) return false
+  // `git worktree list|prune` only inspects; add/remove/repair/move mutate.
   if (sub === "worktree") {
-    const verb = tokens[2]
+    const idx = tokens.findIndex((t, i) => i > 0 && (ps ? t.toLowerCase() : t) === "worktree")
+    const verb = idx >= 0 ? tokens[idx + 1] : undefined
     return verb === "add" || verb === "remove" || verb === "repair" || verb === "move"
   }
   return true
+}
+
+/** Subcommand token after skipping git pre-flags, or undefined. */
+function gitSubcommand(tokens: string[], ps: boolean): string | undefined {
+  if (tokens.length < 2) return undefined
+  const head = ps ? tokens[0].toLowerCase() : tokens[0]
+  if (head !== "git") return undefined
+  let i = 1
+  while (i < tokens.length) {
+    const tok = tokens[i]
+    if (!isGitFlag(tok)) break
+    if (tok === "-C" || tok === "-c") i += 2
+    else i += 1
+  }
+  if (i >= tokens.length) return undefined
+  return ps ? tokens[i].toLowerCase() : tokens[i]
+}
+
+/** Directories this git invocation is aimed at (`-C dir`, `--git-dir=…`). */
+function gitTargetDirs(tokens: string[], ps: boolean): string[] {
+  const head = ps ? tokens[0].toLowerCase() : tokens[0]
+  if (head !== "git") return []
+  const out: string[] = []
+  for (let i = 1; i < tokens.length; i++) {
+    const tok = tokens[i]
+    if (tok === "-C" || tok === "--work-tree") {
+      const arg = plausiblePathArg(tokens[i + 1] ?? "")
+      if (arg) out.push(arg)
+      i += 1
+      continue
+    }
+    if (tok.startsWith("--git-dir=") || tok.startsWith("--work-tree=")) {
+      const arg = plausiblePathArg(tok.slice(tok.indexOf("=") + 1))
+      if (arg) out.push(arg)
+    }
+    // Stop at the subcommand — later path args are operands, not repo roots.
+    if (GIT_MUTATE_SUBS.has(ps ? tok.toLowerCase() : tok) || tok === "status" || tok === "log") break
+  }
+  return out
+}
+
+// Commands whose LAST non-flag argument is the mutation destination.
+// Earlier path-like args are sources and must not count as write targets
+// (`cp /main/f /scratch/f` from scratch must not claim /main).
+const DEST_LAST_COMMANDS = new Set(["cp", "mv", "ln", "install", "copy-item", "move-item", "rename-item"])
+
+function destinationArgs(tokens: string[], head: string): string[] {
+  const args = tokens.slice(1)
+  if (!DEST_LAST_COMMANDS.has(head)) {
+    return args.map((tok) => plausiblePathArg(tok)).filter((v): v is string => Boolean(v))
+  }
+  for (let i = args.length - 1; i >= 0; i--) {
+    const arg = plausiblePathArg(args[i] ?? "")
+    if (arg) return [arg]
+  }
+  return []
 }
 
 function enclosingRedirectedStatement(node: Node): Node | undefined {
@@ -409,15 +479,15 @@ export function collectMutationTargets(root: Node, cwd: string, ps: boolean): { 
       continue
     }
 
-    if (isGitMutate(tokens, ps)) gitMutate = true
+    if (isGitMutate(tokens, ps)) {
+      gitMutate = true
+      for (const dir of gitTargetDirs(tokens, ps)) add(dir, effectiveCwd)
+    }
 
     for (const raw of redirectFileTargets(node)) add(raw, effectiveCwd)
 
     if (WRITE_COMMANDS.has(head) || isSedInPlace(tokens, ps)) {
-      for (const tok of tokens.slice(1)) {
-        const arg = plausiblePathArg(tok)
-        if (arg) add(arg, effectiveCwd)
-      }
+      for (const arg of destinationArgs(tokens, head)) add(arg, effectiveCwd)
     }
   }
 

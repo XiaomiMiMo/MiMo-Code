@@ -434,4 +434,95 @@ describe("session.prompt auto-worktree first-write notice", () => {
       void stub.stop()
     }
   })
+
+  test("second repo mutated later gets its own notice", async () => {
+    await using repoB = await tmpdir({
+      git: true,
+      init: async (dir) => {
+        await Bun.write(path.join(dir, "b.txt"), "b\n")
+      },
+    })
+    const pathB = repoB.path
+
+    const stub = startScriptedLLMServer([
+      {
+        lines: toolCallResponse({
+          id: "call_write_a",
+          name: "write",
+          args: JSON.stringify({ file_path: "a.txt", content: "a\n" }),
+        }),
+      },
+      { lines: textStopResponse("done-a") },
+      {
+        lines: toolCallResponse({
+          id: "call_write_b",
+          name: "write",
+          args: JSON.stringify({ file_path: path.join(pathB, "b2.txt"), content: "b2\n" }),
+        }),
+      },
+      { lines: textStopResponse("done-b") },
+    ])
+
+    try {
+      await using tmp = await tmpdir({
+        git: true,
+        init: async (dir) => {
+          await Bun.write(path.join(dir, "mimocode.json"), JSON.stringify(providerConfig(stub.origin)))
+        },
+      })
+      const pathA = tmp.path
+
+      await Instance.provide({
+        directory: pathA,
+        fn: () =>
+          run(
+            Effect.gen(function* () {
+              const prompt = yield* SessionPrompt.Service
+              const sessions = yield* Session.Service
+              const session = yield* sessions.create({
+                title: "aw multi repo",
+                permission: [{ permission: "*", pattern: "*", action: "allow" }],
+              })
+
+              yield* prompt.prompt({
+                sessionID: session.id,
+                agent: "build",
+                parts: [{ type: "text", text: "Write a.txt here" }],
+              })
+
+              const after1 = yield* sessions.messages({ sessionID: session.id })
+              const user1 = after1.filter((m) => m.info.role === "user")
+              expect(noticeParts(user1[0])).toHaveLength(1)
+              expect(noticeParts(user1[0])[0].type === "text" && noticeParts(user1[0])[0].text).toContain(
+                path.resolve(pathA),
+              )
+              expect(
+                noticeParts(user1[0])[0].type === "text" && noticeParts(user1[0])[0].text,
+              ).not.toContain(path.resolve(pathB))
+
+              yield* prompt.prompt({
+                sessionID: session.id,
+                agent: "build",
+                parts: [{ type: "text", text: `Write ${pathB}/b2.txt` }],
+              })
+
+              const after2 = yield* sessions.messages({ sessionID: session.id })
+              const user2 = after2.filter((m) => m.info.role === "user")
+              expect(user2).toHaveLength(2)
+              // First user message keeps only the repo-A notice.
+              expect(noticeParts(user2[0])).toHaveLength(1)
+              // Second user message carries a NEW notice naming only repo B.
+              expect(noticeParts(user2[1])).toHaveLength(1)
+              const text2 = noticeParts(user2[1])[0].type === "text" ? noticeParts(user2[1])[0].text : ""
+              expect(text2).toContain(path.resolve(pathB))
+              expect(text2).not.toContain(path.resolve(pathA))
+
+              yield* sessions.remove(session.id)
+            }),
+          ),
+      })
+    } finally {
+      void stub.stop()
+    }
+  })
 })

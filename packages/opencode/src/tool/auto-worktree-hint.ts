@@ -11,27 +11,38 @@ export const AUTO_WORKTREE_NOTICE_MARKER = "Auto-Worktree Notice"
 /** Tools whose successful completion mutates project files. */
 const FILE_WRITE_TOOLS = new Set(["write", "edit", "apply_patch", "multiedit", "notebook_edit"])
 
+// Process-lifetime cache: the same file/dir is re-resolved on every insertReminders
+// step until the notice fires, and again after that for newly-mutated paths.
+const mainWorktreeCache = new Map<string, string | null>()
+
 /**
  * Walk up from `startDir` and return the git MAIN worktree root, or null.
  * `.git` as a directory means a main worktree; `.git` as a `gitdir:` file means
  * a linked worktree (already isolated — not a hint target).
  */
 export function findGitMainWorktree(startDir: string): string | null {
+  const key = path.resolve(startDir)
+  const cached = mainWorktreeCache.get(key)
+  if (cached !== undefined) return cached
+  let result: string | null = null
   try {
-    let dir = path.resolve(startDir)
+    let dir = key
     for (;;) {
       const dotGit = path.join(dir, ".git")
       if (fs.existsSync(dotGit)) {
         const stat = fs.statSync(dotGit)
-        return stat.isDirectory() ? dir : null
+        result = stat.isDirectory() ? dir : null
+        break
       }
       const parent = path.dirname(dir)
-      if (parent === dir) return null
+      if (parent === dir) break
       dir = parent
     }
   } catch {
-    return null
+    result = null
   }
+  mainWorktreeCache.set(key, result)
+  return result
 }
 
 export function isGitMainWorktree(startDir: string): boolean {
@@ -49,14 +60,15 @@ function toolInputString(part: MessageV2.Part, key: string): string | undefined 
 }
 
 /**
- * Scan the transcript for a completed write / bash mutate that landed in some
- * git MAIN worktree. Returns that worktree root (for the notice), or null.
+ * All git MAIN worktrees this transcript has mutated so far.
  *
- * Deliberately path-based, not session-directory-based: a session bound to a
- * non-git scratch dir that `cd`s into another project's main checkout still
- * hits here. Isolated worktrees and non-git paths do not.
+ * Path-based, not session-directory-based: a session bound to a non-git
+ * scratch dir that `cd`s into another project's main checkout still hits.
+ * Isolated worktrees and non-git paths do not. Multiple repos are returned
+ * together — first write usually names one; later writes add more.
  */
-export function sessionMutatedMainWorktree(messages: MessageV2.WithParts[]): string | null {
+export function sessionMutatedMainWorktrees(messages: MessageV2.WithParts[]): string[] {
+  const hits = new Set<string>()
   for (const message of messages) {
     for (const part of message.parts) {
       if (part.type !== "tool" || part.state.status !== "completed") continue
@@ -69,17 +81,44 @@ export function sessionMutatedMainWorktree(messages: MessageV2.WithParts[]): str
           (part.tool === "apply_patch" ? Instance.directory : undefined)
         if (!raw) continue
         const hit = findGitMainWorktree(resolveCandidate(raw))
-        if (hit) return hit
+        if (hit) hits.add(hit)
         continue
       }
 
       if (part.tool === "bash") {
-        const hits = part.state.metadata?.mainWorktreeHits
-        if (Array.isArray(hits) && hits.length > 0 && typeof hits[0] === "string") return hits[0]
+        const list = part.state.metadata?.mainWorktreeHits
+        if (!Array.isArray(list)) continue
+        for (const item of list) {
+          if (typeof item === "string" && item.length > 0) hits.add(item)
+        }
       }
     }
   }
-  return null
+  return [...hits]
+}
+
+/** Main worktree paths already named in a previous Auto-Worktree notice. */
+export function noticedMainWorktrees(messages: MessageV2.WithParts[]): Set<string> {
+  const seen = new Set<string>()
+  for (const message of messages) {
+    for (const part of message.parts) {
+      if (part.type !== "text" || !part.synthetic || part.ignored) continue
+      if (!part.text.includes(AUTO_WORKTREE_NOTICE_MARKER)) continue
+      const paths = part.metadata?.mainWorktreePaths
+      if (Array.isArray(paths)) {
+        for (const p of paths) {
+          if (typeof p === "string" && p.length > 0) seen.add(p)
+        }
+      }
+    }
+  }
+  return seen
+}
+
+/** Hits that have not yet been named in any notice. Empty ⇒ nothing to inject. */
+export function pendingMainWorktreeNotices(messages: MessageV2.WithParts[]): string[] {
+  const noticed = noticedMainWorktrees(messages)
+  return sessionMutatedMainWorktrees(messages).filter((hit) => !noticed.has(hit))
 }
 
 export function isAutoWorktreeHintSent(sessionID: string): boolean {
@@ -111,12 +150,15 @@ export function hasAutoWorktreeNotice(message: MessageV2.WithParts): boolean {
   )
 }
 
-export function buildAutoWorktreeNotice(mainWorktreePath: string): string {
+export function buildAutoWorktreeNotice(mainWorktreePaths: string[]): string {
+  const listed = mainWorktreePaths.map((p) => `- \`${p}\``).join("\n")
+  const noun = mainWorktreePaths.length === 1 ? "main worktree" : "main worktrees"
   return [
     "<system-reminder>",
     AUTO_WORKTREE_NOTICE_MARKER,
     "",
-    `This session is mutating the git main worktree at \`${mainWorktreePath}\`. Concurrent write/edit or git operations there can interfere with other agents or local changes.`,
+    `This session is mutating git ${noun} that other agents or local changes may also touch:`,
+    listed,
     "",
     "Do NOT create a worktree on your own. Before any further write or edit, ask the user whether they want an isolated worktree.",
     "",
