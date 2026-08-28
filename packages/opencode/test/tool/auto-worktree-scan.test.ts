@@ -52,14 +52,11 @@ describe("sessionMutatedMainWorktrees bash exit gate", () => {
     expect(sessionMutatedMainWorktrees(msgs)).toEqual([])
   })
 
-  test("successful bash (exit 0) counts when habit gate would pass", () => {
-    // Without a real /repo with linked worktrees this still returns [] because of
-    // the habit gate — here we only assert the exit filter is not the reason.
+  test("successful bash (exit 0) is eligible", () => {
     const failed = [withParts([toolPart("bash", { mainWorktreeHits: ["/repo"], exit: 1 })])]
     const ok = [withParts([toolPart("bash", { mainWorktreeHits: ["/repo"], exit: 0 })])]
     expect(sessionMutatedMainWorktrees(failed)).toEqual([])
-    // exit 0 is eligible; habit gate decides. /repo has no worktrees so still [].
-    expect(sessionMutatedMainWorktrees(ok)).toEqual([])
+    expect(sessionMutatedMainWorktrees(ok)).toEqual(["/repo"])
   })
 })
 

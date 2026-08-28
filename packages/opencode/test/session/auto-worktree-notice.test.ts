@@ -103,8 +103,10 @@ describe("session.prompt auto-worktree first-write notice", () => {
               const notices = noticeParts(userMsgs[0])
               expect(notices).toHaveLength(1)
               const text = notices[0].type === "text" ? notices[0].text : ""
-              expect(text).toContain("Do NOT create a worktree on your own")
-              expect(text).toContain("ask the user")
+              // Habit repo: may isolate without asking first.
+              expect(text).toContain("already uses worktrees")
+              expect(text).toContain("do not need to ask the user first")
+              expect(text).not.toContain("Do NOT create a worktree on your own")
               expect(text).toContain(path.resolve(tmp.path))
               expect(text).not.toContain("Conflict detected")
               expect(isAutoWorktreeHintSent(session.id)).toBe(true)
@@ -142,7 +144,7 @@ describe("session.prompt auto-worktree first-write notice", () => {
     }
   })
 
-  test("does not inject when the repo has no linked worktrees", async () => {
+  test("injects ask-first notice when the repo has no linked worktrees yet", async () => {
     const stub = startScriptedLLMServer([
       {
         lines: toolCallResponse({
@@ -155,7 +157,7 @@ describe("session.prompt auto-worktree first-write notice", () => {
     ])
 
     try {
-      // git: true but NO seedLinkedWorktree — habit signal is false.
+      // git: true but NO seedLinkedWorktree — habit signal is unknown, still notice.
       await using tmp = await tmpdir({
         git: true,
         init: async (dir) => {
@@ -184,8 +186,12 @@ describe("session.prompt auto-worktree first-write notice", () => {
 
               const msgs = yield* sessions.messages({ sessionID: session.id })
               const userMsgs = msgs.filter((m) => m.info.role === "user")
-              expect(noticeParts(userMsgs[0])).toHaveLength(0)
-              expect(isAutoWorktreeHintSent(session.id)).toBe(false)
+              const notices = noticeParts(userMsgs[0])
+              expect(notices).toHaveLength(1)
+              const text = notices[0].type === "text" ? notices[0].text : ""
+              expect(text).toContain("Do NOT create a worktree on your own")
+              expect(text).toContain("ask the user")
+              expect(isAutoWorktreeHintSent(session.id)).toBe(true)
 
               yield* sessions.remove(session.id)
             }),

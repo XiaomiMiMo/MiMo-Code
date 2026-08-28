@@ -77,9 +77,9 @@ export function isGitMainWorktree(startDir: string): boolean {
 
 /**
  * True when this main checkout already has at least one linked worktree.
- * `.git/worktrees/` is where git records them; its presence (with entries)
- * is the cheap "this project actually uses worktrees" signal. Repos that
- * never create worktrees stay silent so the notice does not nag them.
+ * Positive signal only: "this repo already uses worktrees". Absence means
+ * unknown, not "this repo never will" — unknown still gets a notice, with
+ * the ask-first copy.
  */
 export function repoHasLinkedWorktrees(mainWorktreeRoot: string): boolean {
   const dir = path.join(mainWorktreeRoot, ".git", "worktrees")
@@ -107,19 +107,18 @@ function bashSucceeded(part: MessageV2.Part): boolean {
 }
 
 /**
- * All git MAIN worktrees this transcript has mutated so far, limited to
- * repos that already have linked worktrees (the "this project uses
- * worktrees" habit signal).
+ * All git MAIN worktrees this transcript has mutated so far.
  *
  * Path-based, not session-directory-based: a session bound to a non-git
  * scratch dir that `cd`s into another project's main checkout still hits.
- * Isolated worktrees, non-git paths, and main checkouts with no linked
- * worktrees do not. Failed bash commands (non-zero exit) are ignored.
+ * Isolated worktrees and non-git paths do not. Failed bash commands
+ * (non-zero exit) are ignored. Habit (linked worktrees present) is not a
+ * gate here — it only changes the notice copy.
  */
 export function sessionMutatedMainWorktrees(messages: MessageV2.WithParts[]): string[] {
   const hits = new Set<string>()
   const consider = (mainRoot: string | null | undefined) => {
-    if (mainRoot && repoHasLinkedWorktrees(mainRoot)) hits.add(mainRoot)
+    if (mainRoot) hits.add(mainRoot)
   }
   for (const message of messages) {
     for (const part of message.parts) {
@@ -189,17 +188,27 @@ export function sessionHasAutoWorktreeNotice(messages: MessageV2.WithParts[]): b
 }
 
 export function buildAutoWorktreeNotice(mainWorktreePath: string): string {
+  const hasHabit = repoHasLinkedWorktrees(mainWorktreePath)
+  const isolationRule = hasHabit
+    ? [
+        "This repo already uses worktrees. Create an isolated worktree with `git worktree add <path> -b <branch>` using a path outside the project directory, then switch into it before any further write or edit. You do not need to ask the user first.",
+      ]
+    : [
+        "Do NOT create a worktree on your own. Before any further write or edit, ask the user whether they want an isolated worktree.",
+        "",
+        "If the user agrees, create one with `git worktree add <path> -b <branch>` using a path outside the project directory, then switch into it before continuing. If the user declines, proceed only on the paths they authorized.",
+      ]
   return [
     "<system-reminder>",
     AUTO_WORKTREE_NOTICE_MARKER,
     "",
     `This session is mutating the git main worktree at \`${mainWorktreePath}\`. Concurrent write/edit or git operations there can interfere with other agents or local changes.`,
     "",
-    "Do NOT create a worktree on your own. Before any further write or edit, ask the user whether they want an isolated worktree.",
+    ...isolationRule,
     "",
-    "If the user agrees, create one with `git worktree add <path> -b <branch>` using a path outside the project directory, then switch into it before continuing. If the user declines, proceed only on the paths they authorized.",
-    "",
-    "This rule is not limited to the path above. If you later start writing to another git repository, or run git mutations against another repo's main worktree, apply the same check there: ask the user before continuing in that main worktree.",
+    hasHabit
+      ? "This rule is not limited to the path above. If you later start writing to another git repository that already uses worktrees, or run git mutations against its main worktree, isolate there the same way without asking."
+      : "This rule is not limited to the path above. If you later start writing to another git repository, or run git mutations against another repo's main worktree, apply the same check there: ask the user before continuing in that main worktree.",
     "</system-reminder>",
   ].join("\n")
 }
