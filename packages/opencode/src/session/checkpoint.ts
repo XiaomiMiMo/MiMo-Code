@@ -549,7 +549,7 @@ export interface Interface {
        */
       boundary?: MessageID
     },
-  ) => Effect.Effect<string>
+  ) => Effect.Effect<{ text: string; hasActivity: boolean }>
 
   readonly lastBoundary: (sessionID: SessionID) => Effect.Effect<MessageID | undefined>
 
@@ -1267,7 +1267,7 @@ export const layer: Layer.Layer<
       // message-v2.ts populates info.agentID from agent_id column), and the
       // runLoop calls this with that value. Treating "main" as subagent here
       // would skip rebuild → fall through to F39 compaction → context loss.
-      if (opts?.agentID && opts.agentID !== "main") return ""
+      if (opts?.agentID && opts.agentID !== "main") return { text: "", hasActivity: false }
 
       // Decide whether a usable checkpoint exists using the WATERMARK
       // (last_checkpoint_message_id), not the on-disk file's text. The writer's
@@ -1406,7 +1406,7 @@ export const layer: Layer.Layer<
         actors.length === 0 &&
         recentUserEntries.length === 0
       ) {
-        return ""
+        return { text: "", hasActivity: false }
       }
 
       const lines: string[] = []
@@ -1593,7 +1593,7 @@ export const layer: Layer.Layer<
         }
       }
 
-      return lines.join("\n")
+      return { text: lines.join("\n"), hasActivity }
     })
 
     const lastBoundary = Effect.fn("SessionCheckpoint.lastBoundary")(function* (sessionID: SessionID) {
@@ -1656,19 +1656,19 @@ export const layer: Layer.Layer<
       model: { providerID: string; modelID: string }
       boundaryCreatedAt?: number
     }) {
-      const rebuildContext = yield* renderRebuildContext(input.sessionID, {
+      const rendered = yield* renderRebuildContext(input.sessionID, {
         lastMessageInfo: input.lastMessageInfo,
         agentID: input.agentID,
         digestUpTo: input.digestUpTo,
         boundary: input.boundary,
-      }).pipe(Effect.catch(() => Effect.succeed("")))
-      if (!rebuildContext) return false
+      }).pipe(Effect.catch(() => Effect.succeed({ text: "", hasActivity: false })))
+      if (!rendered.text) return false
 
       const indexText = yield* renderIndex(input.sessionID).pipe(Effect.catch(() => Effect.succeed("")))
       // Persist digestUpTo only when the activity section was actually
       // rendered. Sending-time collapse would otherwise drop the tail while
       // nothing recorded what those messages were.
-      const hasActivity = rebuildContext.includes("# Recent activity")
+      const hasActivity = rendered.hasActivity
 
       const syntheticTime = (input.boundaryCreatedAt ?? Date.now()) + 1
       const msg = yield* session.updateMessage({
@@ -1708,7 +1708,7 @@ export const layer: Layer.Layer<
         sessionID: input.sessionID,
         type: "text",
         synthetic: true,
-        text: rebuildContext,
+        text: rendered.text,
       })
 
       const actorsText = yield* actorRegistry
@@ -1841,9 +1841,10 @@ export async function renderRebuildContext(input: {
   lastMessageInfo?: LastMessageInfo
   agentID?: string
 }) {
-  return runPromise((svc) =>
+  const rendered = await runPromise((svc) =>
     svc.renderRebuildContext(input.sessionID, { lastMessageInfo: input.lastMessageInfo, agentID: input.agentID }),
   )
+  return rendered.text
 }
 
 export async function lastBoundary(input: { sessionID: SessionID }) {

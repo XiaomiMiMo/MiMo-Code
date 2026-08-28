@@ -107,8 +107,17 @@ function pendingTool(messageID: string, id: string, tool: string, input: Record<
   })
 }
 
-/** Boundary as insertRebuildBoundary writes it: checkpoint part + rebuild context (incl. Recent activity). */
-function boundaryUser(id: string, digestUpTo?: string, activityLines?: string[]): MessageV2.WithParts {
+/**
+ * Boundary as insertRebuildBoundary writes it: checkpoint part + rebuild
+ * context (incl. Recent activity). IDs must be lexically ordered like real
+ * MessageIDs: covered < digestUpTo < boundary id.
+ */
+function boundaryUser(
+  id: string,
+  digestUpTo?: string,
+  activityLines?: string[],
+  coveredUpTo = "msg_01",
+): MessageV2.WithParts {
   const activity = activityLines?.length
     ? `\n# Recent activity\n\n${activityLines.join("\n")}\n`
     : ""
@@ -120,7 +129,7 @@ function boundaryUser(id: string, digestUpTo?: string, activityLines?: string[])
         type: "checkpoint",
         checkpointDir: "",
         checkpointNumber: 0,
-        coveredUpTo: MessageID.make("m-old"),
+        coveredUpTo: MessageID.make(coveredUpTo),
         ...(digestUpTo ? { digestUpTo: MessageID.make(digestUpTo) } : {}),
       } as MessageV2.Part,
       textPart(
@@ -185,15 +194,15 @@ describe("renderTailDigest", () => {
 describe("collapseCheckpointTail", () => {
   test("drops the pre-insert tail; boundary already carries the activity section", () => {
     const collapsed = collapseCheckpointTail([
-      boundaryUser("m-cp", "a1", ['- read(path="x.ts")']),
       {
-        info: assistantInfo("a1", "u-old", 10),
-        parts: [completedTool("a1", "p1", "grep", { pattern: "rebuild" }, "MATCHES")],
+        info: assistantInfo("msg_02", "msg_u1", 10),
+        parts: [completedTool("msg_02", "p1", "grep", { pattern: "rebuild" }, "MATCHES")],
       },
+      boundaryUser("msg_cp", "msg_02", ['- read(path="x.ts")']),
     ])
 
     expect(collapsed).toHaveLength(1)
-    expect(String(collapsed[0]!.info.id)).toBe("m-cp")
+    expect(String(collapsed[0]!.info.id)).toBe("msg_cp")
     const text = digestTextOf(collapsed[0]!)
     expect(text).toContain("# Recent activity")
     expect(text).not.toContain("MATCHES")
@@ -201,21 +210,36 @@ describe("collapseCheckpointTail", () => {
 
   test("keeps post-insert messages live", () => {
     const collapsed = collapseCheckpointTail([
-      boundaryUser("m-cp", "a1", ['- read(path="a.ts")']),
       {
-        info: assistantInfo("a1", "u-old", 10),
-        parts: [completedTool("a1", "p1", "read", { path: "a.ts" }, "PRE_REBUILD_BODY")],
+        info: assistantInfo("msg_02", "msg_u1", 10),
+        parts: [completedTool("msg_02", "p1", "read", { path: "a.ts" }, "PRE_REBUILD_BODY")],
       },
+      boundaryUser("msg_cp", "msg_02", ['- read(path="a.ts")']),
       {
-        info: assistantInfo("a2", "u-old", 20),
-        parts: [completedTool("a2", "p2", "read", { path: "b.ts" }, "POST_REBUILD_BODY")],
+        info: assistantInfo("msg_03", "msg_u1", 20),
+        parts: [completedTool("msg_03", "p2", "read", { path: "b.ts" }, "POST_REBUILD_BODY")],
       },
     ])
 
     expect(collapsed).toHaveLength(2)
-    expect(String(collapsed[0]!.info.id)).toBe("m-cp")
-    expect(String(collapsed[1]!.info.id)).toBe("a2")
+    expect(String(collapsed[0]!.info.id)).toBe("msg_cp")
+    expect(String(collapsed[1]!.info.id)).toBe("msg_03")
     expect(collapsed[1]!.parts.some((p) => p.type === "tool" && p.state.status === "completed")).toBe(true)
+  })
+
+  test("collapses a same-ms tail message that sorts before the boundary's synthetic time", () => {
+    // Production stamps the boundary at watermark+1ms, so a tail message
+    // sharing the watermark's millisecond sorts BEFORE the boundary. ID-range
+    // collapse must still drop it.
+    const collapsed = collapseCheckpointTail([
+      {
+        info: assistantInfo("msg_02", "msg_u1", 10),
+        parts: [completedTool("msg_02", "p1", "read", { path: "same-ms.ts" }, "SAME_MS_BODY")],
+      },
+      boundaryUser("msg_cp", "msg_02", ['- read(path="same-ms.ts")']),
+    ])
+    expect(collapsed).toHaveLength(1)
+    expect(digestTextOf(collapsed[0]!)).not.toContain("SAME_MS_BODY")
   })
 
   test("never drops a user-role message, even without real prose", () => {
@@ -223,18 +247,18 @@ describe("collapseCheckpointTail", () => {
     // last user message. A file-only or synthetic-only user turn must stay
     // live or the gate says "already sent" while the provider never sees it.
     const collapsed = collapseCheckpointTail([
-      boundaryUser("m-cp", "u-file", ['- read(path="a.ts")']),
+      boundaryUser("msg_cp", "msg_03", ['- read(path="a.ts")']),
       {
-        info: userInfo("u-file", 10),
+        info: userInfo("msg_03", 10),
         parts: [
           {
-            ...basePart("u-file", "u-file-f"),
+            ...basePart("msg_03", "u-file-f"),
             type: "file" as const,
             mime: "image/png",
             filename: "shot.png",
             url: "data:image/png;base64,x",
           } as MessageV2.Part,
-          textPart("u-file", "u-file-gate", "Authoritative skills catalog snapshot v2:", {
+          textPart("msg_03", "u-file-gate", "Authoritative skills catalog snapshot v2:", {
             synthetic: true,
           }),
         ],
@@ -242,7 +266,7 @@ describe("collapseCheckpointTail", () => {
     ])
 
     expect(collapsed).toHaveLength(2)
-    expect(String(collapsed[1]!.info.id)).toBe("u-file")
+    expect(String(collapsed[1]!.info.id)).toBe("msg_03")
     expect(collapsed[1]!.parts.some((p) => p.type === "text" && p.synthetic)).toBe(true)
   })
 
@@ -272,11 +296,11 @@ describe("toModelMessages with collapseCheckpointTail", () => {
   test("one user turn holds checkpoint + activity; no hollow tool pairs from the tail", async () => {
     const messages = await MessageV2.toModelMessages(
       [
-        boundaryUser("m-cp", "a1", ['- read(path="src/session/prompt.ts")']),
         {
-          info: assistantInfo("a1", "u0", 10),
-          parts: [completedTool("a1", "p1", "read", { path: "src/session/prompt.ts" }, "HUGE_FILE_BODY")],
+          info: assistantInfo("msg_02", "msg_u0", 10),
+          parts: [completedTool("msg_02", "p1", "read", { path: "src/session/prompt.ts" }, "HUGE_FILE_BODY")],
         },
+        boundaryUser("msg_cp", "msg_02", ['- read(path="src/session/prompt.ts")']),
       ],
       model,
       { collapseCheckpointTail: true },
@@ -294,14 +318,14 @@ describe("toModelMessages with collapseCheckpointTail", () => {
   test("post-insert tools stay live next to the collapsed boundary", async () => {
     const messages = await MessageV2.toModelMessages(
       [
-        boundaryUser("m-cp", "a1", ['- read(path="pre.ts")']),
         {
-          info: assistantInfo("a1", "u0", 10),
-          parts: [completedTool("a1", "p1", "read", { path: "pre.ts" }, "PRE_BODY")],
+          info: assistantInfo("msg_02", "msg_u0", 10),
+          parts: [completedTool("msg_02", "p1", "read", { path: "pre.ts" }, "PRE_BODY")],
         },
+        boundaryUser("msg_cp", "msg_02", ['- read(path="pre.ts")']),
         {
-          info: assistantInfo("a2", "u0", 20),
-          parts: [completedTool("a2", "p2", "read", { path: "post.ts" }, "POST_BODY")],
+          info: assistantInfo("msg_03", "msg_u0", 20),
+          parts: [completedTool("msg_03", "p2", "read", { path: "post.ts" }, "POST_BODY")],
         },
       ],
       model,
@@ -317,11 +341,11 @@ describe("toModelMessages with collapseCheckpointTail", () => {
 
   test("leaves the tail verbatim when the option is off (writers / compaction)", async () => {
     const input: MessageV2.WithParts[] = [
-      boundaryUser("m-cp", "a1"),
       {
-        info: assistantInfo("a1", "u0", 10),
-        parts: [completedTool("a1", "p1", "read", { path: "src/session/prompt.ts" }, "HUGE_FILE_BODY")],
+        info: assistantInfo("msg_02", "msg_u0", 10),
+        parts: [completedTool("msg_02", "p1", "read", { path: "src/session/prompt.ts" }, "HUGE_FILE_BODY")],
       },
+      boundaryUser("msg_cp", "msg_02"),
     ]
     const messages = await MessageV2.toModelMessages(input, model)
     const rendered = JSON.stringify(messages)

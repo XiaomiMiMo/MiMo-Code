@@ -50,7 +50,6 @@ function isBoundaryUser(msg: WithParts): boolean {
 
 function digestLines(tail: readonly WithParts[]): { lines: string[]; interrupted: boolean } {
   const lines: string[] = []
-  let interrupted = false
   for (const msg of tail) {
     // Never re-digest a prior rebuild/compaction boundary — that folds the
     // previous dump into itself on a second rebuild.
@@ -71,11 +70,13 @@ function digestLines(tail: readonly WithParts[]): { lines: string[]; interrupted
       }
       if (part.type === "tool") {
         lines.push(toolLine(part))
-        if (part.state.status === "pending" || part.state.status === "running") interrupted = true
       }
     }
   }
-  return { lines: lines.slice(0, MAX_LINES), interrupted }
+  const kept = lines.slice(0, MAX_LINES)
+  // Only flag interruption for lines that actually appear — otherwise the
+  // banner can fire for a tool that was dropped by the MAX_LINES cap.
+  return { lines: kept, interrupted: kept.some((line) => line.includes("→ interrupted")) }
 }
 
 /** Section body only (header + lines). Empty string when there is nothing to list. */
@@ -90,17 +91,20 @@ export function renderTailDigest(tail: readonly WithParts[]): string {
   ].join("\n")
 }
 
-function checkpointDigestUpTo(msg: WithParts): string | undefined {
+function checkpointPart(msg: WithParts): CheckpointPart | undefined {
   if (msg.info.role !== "user") return undefined
-  const part = msg.parts.find((p): p is CheckpointPart => p.type === "checkpoint")
-  return part?.digestUpTo
+  return msg.parts.find((p): p is CheckpointPart => p.type === "checkpoint")
 }
 
 /**
- * Drop assistant messages in [checkpoint+1, digestUpTo] after the latest
+ * Drop assistant messages in (coveredUpTo, digestUpTo] after the latest
  * rebuild boundary. The activity list itself is already in the boundary's
  * rebuild context (written at insert time), so this only removes the
  * now-redundant verbatim tool/assistant tail. Post-insert messages stay live.
+ *
+ * Filtering by message-id range — not by the boundary's position in the
+ * array — so a same-millisecond tail message cannot escape collapse by
+ * sorting before the boundary's synthetic time (watermark+1).
  *
  * User-role messages are never dropped: the last user is where insertReminders
  * persists skill-catalog / auto-worktree gates, and a file-only or
@@ -109,19 +113,17 @@ function checkpointDigestUpTo(msg: WithParts): string | undefined {
  * never receives it.
  */
 export function collapseCheckpointTail(msgs: readonly WithParts[]): WithParts[] {
-  const boundaryIdx = msgs.findLastIndex((m) => m.info.role === "user" && m.parts.some((p) => p.type === "checkpoint"))
-  if (boundaryIdx < 0) return msgs as WithParts[]
+  const boundary = msgs.findLast((m) => m.info.role === "user" && m.parts.some((p) => p.type === "checkpoint"))
+  if (!boundary) return msgs as WithParts[]
 
-  const digestUpTo = checkpointDigestUpTo(msgs[boundaryIdx]!)
-  if (!digestUpTo) return msgs as WithParts[]
+  const part = checkpointPart(boundary)
+  if (!part?.digestUpTo) return msgs as WithParts[]
 
-  const head = msgs.slice(0, boundaryIdx + 1)
-  // Never drop a user-role message: the last user is where insertReminders
-  // persists skill-catalog / auto-worktree gates, and a file-only or
-  // synthetic-only user turn is still an instruction the provider must see.
-  const live = msgs
-    .slice(boundaryIdx + 1)
-    .filter((m) => m.info.id > digestUpTo || m.info.role === "user")
-  if (live.length === msgs.length - boundaryIdx - 1) return msgs as WithParts[]
-  return [...head, ...live]
+  const digestUpTo = part.digestUpTo
+  const coveredUpTo = part.coveredUpTo
+  const live = msgs.filter(
+    (m) => m.info.id <= coveredUpTo || m.info.id > digestUpTo || m.info.role === "user",
+  )
+  if (live.length === msgs.length) return msgs as WithParts[]
+  return live as WithParts[]
 }

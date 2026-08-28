@@ -159,7 +159,7 @@ Next: implement renderRebuildContext 9-section render in src/session/checkpoint.
         })
 
         // Render rebuild context.
-        const out = yield* cp.renderRebuildContext(sess.id)
+        const { text: out } = yield* cp.renderRebuildContext(sess.id)
 
         // Visual dump.
         console.log("\n=========== ON-DISK LAYOUT ===========")
@@ -228,7 +228,7 @@ Next: implement renderRebuildContext 9-section render in src/session/checkpoint.
           )
         })
 
-        const out = yield* cp.renderRebuildContext(sess.id)
+        const { text: out } = yield* cp.renderRebuildContext(sess.id)
 
         expect(out).toContain("This session is continued from a checkpoint")
         expect(out).toContain("Do not recap this dump")
@@ -256,7 +256,7 @@ Next: implement renderRebuildContext 9-section render in src/session/checkpoint.
           )
         })
 
-        const out = yield* cp.renderRebuildContext(sess.id, { lastMessageInfo: { role: "assistant", finish: "tool-calls" } })
+        const { text: out } = yield* cp.renderRebuildContext(sess.id, { lastMessageInfo: { role: "assistant", finish: "tool-calls" } })
 
         expect(out).toContain("autonomous task")
         expect(out).toContain("Continue your work loop")
@@ -284,7 +284,7 @@ Next: implement renderRebuildContext 9-section render in src/session/checkpoint.
           )
         })
 
-        const out = yield* cp.renderRebuildContext(sess.id, { lastMessageInfo: { role: "assistant", finish: "stop" } })
+        const { text: out } = yield* cp.renderRebuildContext(sess.id, { lastMessageInfo: { role: "assistant", finish: "stop" } })
 
         expect(out).not.toContain("autonomous task")
       }),
@@ -311,7 +311,7 @@ Next: implement renderRebuildContext 9-section render in src/session/checkpoint.
           )
         })
 
-        const out = yield* cp.renderRebuildContext(sess.id)
+        const { text: out } = yield* cp.renderRebuildContext(sess.id)
 
         expect(out).not.toContain("autonomous task")
       }),
@@ -341,7 +341,7 @@ Next: implement renderRebuildContext 9-section render in src/session/checkpoint.
           )
         })
 
-        const out = yield* cp.renderRebuildContext(sess.id)
+        const { text: out } = yield* cp.renderRebuildContext(sess.id)
 
         expect(out.length).toBeGreaterThan(0)
         expect(out).not.toContain("Active recall protocol")
@@ -370,7 +370,7 @@ Next: implement renderRebuildContext 9-section render in src/session/checkpoint.
           )
         })
 
-        const out = yield* cp.renderRebuildContext(sess.id)
+        const { text: out } = yield* cp.renderRebuildContext(sess.id)
 
         expect(out).toContain("sections below are auto-loaded session context already in this message")
         expect(out).toContain("File:")
@@ -413,7 +413,7 @@ Next: implement renderRebuildContext 9-section render in src/session/checkpoint.
           )
         })
 
-        const out = yield* cp.renderRebuildContext(sess.id)
+        const { text: out } = yield* cp.renderRebuildContext(sess.id)
         const section = out.slice(out.indexOf("# Session checkpoint"))
         expect(section).toContain("# Session checkpoint")
         expect(section).not.toContain("# Another root the writer may emit")
@@ -444,7 +444,7 @@ Next: implement renderRebuildContext 9-section render in src/session/checkpoint.
           )
         })
 
-        const out = yield* cp.renderRebuildContext(sess.id)
+        const { text: out } = yield* cp.renderRebuildContext(sess.id)
         expect(out).toContain("# Session notes")
         expect(out).toContain("Decided to use approach X")
       }),
@@ -468,7 +468,7 @@ Next: implement renderRebuildContext 9-section render in src/session/checkpoint.
           // No notes.md
         })
 
-        const out = yield* cp.renderRebuildContext(sess.id)
+        const { text: out } = yield* cp.renderRebuildContext(sess.id)
         expect(out).not.toContain("# Session notes")
       }),
     ),

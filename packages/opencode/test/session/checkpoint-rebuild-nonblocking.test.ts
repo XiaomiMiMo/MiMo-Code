@@ -133,7 +133,7 @@ describe("renderRebuildContext: waits (bounded) for an in-flight writer, then de
         // observation window the call must STILL be waiting (None), proving it
         // blocks on the writer rather than returning the stale on-disk body fast.
         const result = yield* svc
-          .renderRebuildContext(info.id, { agentID: "main" })
+          .renderRebuildContext(info.id, { agentID: "main" }).pipe(Effect.map((r) => r.text))
           .pipe(Effect.timeout("2 seconds"), Effect.option)
         expect(result._tag).toBe("None")
       }),
@@ -155,7 +155,7 @@ describe("renderRebuildContext: waits (bounded) for an in-flight writer, then de
         expect(onDisk).toBe(true)
 
         const result = yield* svc
-          .renderRebuildContext(info.id, { agentID: "main" })
+          .renderRebuildContext(info.id, { agentID: "main" }).pipe(Effect.map((r) => r.text))
           .pipe(Effect.timeout("2 seconds"), Effect.option)
         expect(result._tag).toBe("None")
       }),

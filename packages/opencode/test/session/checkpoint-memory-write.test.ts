@@ -234,7 +234,7 @@ describe("the memory write switch leaves the READ path intact", () => {
             fs.writeFile(cpPath, "# Session checkpoint\n\n## §1 Active intent\nOld intent survives.\n"),
           )
 
-          const rendered = yield* cp.renderRebuildContext(info.id, { agentID: "main" })
+          const { text: rendered } = yield* cp.renderRebuildContext(info.id, { agentID: "main" })
           expect(rendered.length).toBeGreaterThan(0)
           expect(rendered).toContain("Old intent survives.")
         }),
