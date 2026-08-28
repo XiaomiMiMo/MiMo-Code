@@ -190,13 +190,11 @@ export function sessionHasAutoWorktreeNotice(messages: MessageV2.WithParts[]): b
 export function buildAutoWorktreeNotice(mainWorktreePath: string): string {
   const hasHabit = repoHasLinkedWorktrees(mainWorktreePath)
   const isolationRule = hasHabit
-    ? [
-        "This repo already uses worktrees. Create an isolated worktree with `git worktree add <path> -b <branch>` using a path outside the project directory, then switch into it before any further write or edit. You do not need to ask the user first.",
-      ]
+    ? ["This repo already uses worktrees. Isolate this task in a new worktree and switch into it before any further write or edit. You do not need to ask the user first."]
     : [
         "Do NOT create a worktree on your own. Before any further write or edit, ask the user whether they want an isolated worktree.",
         "",
-        "If the user agrees, create one with `git worktree add <path> -b <branch>` using a path outside the project directory, then switch into it before continuing. If the user declines, proceed only on the paths they authorized.",
+        "If the user agrees, isolate this task in a new worktree and switch into it before continuing. If the user declines, proceed only on the paths they authorized.",
       ]
   return [
     "<system-reminder>",
