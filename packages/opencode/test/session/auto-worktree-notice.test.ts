@@ -1,5 +1,6 @@
 import path from "path"
 import { describe, expect, test } from "bun:test"
+import { $ } from "bun"
 import { Effect, Layer } from "effect"
 import { Instance } from "../../src/project/instance"
 import { Session } from "../../src/session"
@@ -7,9 +8,16 @@ import { SessionPrompt } from "../../src/session/prompt"
 import { Log } from "../../src/util"
 import { tmpdir } from "../fixture/fixture"
 import { startScriptedLLMServer, textStopResponse, toolCallResponse } from "../lib/scripted-llm-server"
-import { isAutoWorktreeHintSent } from "../../src/tool/auto-worktree-hint"
+import { isAutoWorktreeHintSent, repoHasLinkedWorktrees } from "../../src/tool/auto-worktree-hint"
 
 void Log.init({ print: false })
+
+/** Seed a linked worktree so the repo looks like it has a worktree habit. */
+async function seedLinkedWorktree(repo: string) {
+  const wt = `${repo}-wt-${Math.random().toString(36).slice(2)}`
+  await $`git -C ${repo} worktree add ${wt} -b aw-habit`.quiet()
+  return wt
+}
 
 function run<A, E>(fx: Effect.Effect<A, E, SessionPrompt.Service | Session.Service>) {
   return Effect.runPromise(
@@ -66,6 +74,7 @@ describe("session.prompt auto-worktree first-write notice", () => {
         git: true,
         init: async (dir) => {
           await Bun.write(path.join(dir, "mimocode.json"), JSON.stringify(providerConfig(stub.origin)))
+          await seedLinkedWorktree(dir)
         },
       })
 
@@ -123,6 +132,60 @@ describe("session.prompt auto-worktree first-write notice", () => {
               expect(userMsgs2).toHaveLength(2)
               expect(noticeParts(userMsgs2[0])).toHaveLength(1)
               expect(noticeParts(userMsgs2[1])).toHaveLength(0)
+
+              yield* sessions.remove(session.id)
+            }),
+          ),
+      })
+    } finally {
+      void stub.stop()
+    }
+  })
+
+  test("does not inject when the repo has no linked worktrees", async () => {
+    const stub = startScriptedLLMServer([
+      {
+        lines: toolCallResponse({
+          id: "call_write_nohabit",
+          name: "write",
+          args: JSON.stringify({ file_path: "plain.txt", content: "x\n" }),
+        }),
+      },
+      { lines: textStopResponse("done-plain") },
+    ])
+
+    try {
+      // git: true but NO seedLinkedWorktree — habit signal is false.
+      await using tmp = await tmpdir({
+        git: true,
+        init: async (dir) => {
+          await Bun.write(path.join(dir, "mimocode.json"), JSON.stringify(providerConfig(stub.origin)))
+        },
+      })
+      expect(repoHasLinkedWorktrees(tmp.path)).toBe(false)
+
+      await Instance.provide({
+        directory: tmp.path,
+        fn: () =>
+          run(
+            Effect.gen(function* () {
+              const prompt = yield* SessionPrompt.Service
+              const sessions = yield* Session.Service
+              const session = yield* sessions.create({
+                title: "aw no habit",
+                permission: [{ permission: "*", pattern: "*", action: "allow" }],
+              })
+
+              yield* prompt.prompt({
+                sessionID: session.id,
+                agent: "build",
+                parts: [{ type: "text", text: "Write plain.txt" }],
+              })
+
+              const msgs = yield* sessions.messages({ sessionID: session.id })
+              const userMsgs = msgs.filter((m) => m.info.role === "user")
+              expect(noticeParts(userMsgs[0])).toHaveLength(0)
+              expect(isAutoWorktreeHintSent(session.id)).toBe(false)
 
               yield* sessions.remove(session.id)
             }),
@@ -193,6 +256,7 @@ describe("session.prompt auto-worktree first-write notice", () => {
         git: true,
         init: async (dir) => {
           await Bun.write(path.join(dir, "mimocode.json"), JSON.stringify(providerConfig(stub.origin)))
+          await seedLinkedWorktree(dir)
         },
       })
 
@@ -300,6 +364,7 @@ describe("session.prompt auto-worktree first-write notice", () => {
       git: true,
       init: async (dir) => {
         await Bun.write(path.join(dir, "keep.txt"), "k\n")
+        await seedLinkedWorktree(dir)
       },
     })
     const targetRepo = target.path
@@ -393,6 +458,7 @@ describe("session.prompt auto-worktree first-write notice", () => {
         git: true,
         init: async (dir) => {
           await Bun.write(path.join(dir, "mimocode.json"), JSON.stringify(providerConfig(stub.origin)))
+          await seedLinkedWorktree(dir)
         },
       })
 
@@ -468,6 +534,7 @@ describe("session.prompt auto-worktree first-write notice", () => {
         git: true,
         init: async (dir) => {
           await Bun.write(path.join(dir, "mimocode.json"), JSON.stringify(providerConfig(stub.origin)))
+          await seedLinkedWorktree(dir)
         },
       })
       const pathA = tmp.path

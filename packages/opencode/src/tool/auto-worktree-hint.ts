@@ -49,6 +49,22 @@ export function isGitMainWorktree(startDir: string): boolean {
   return findGitMainWorktree(startDir) !== null
 }
 
+/**
+ * True when this main checkout already has at least one linked worktree.
+ * `.git/worktrees/` is where git records them; its presence (with entries)
+ * is the cheap "this project actually uses worktrees" signal. Repos that
+ * never create worktrees stay silent so the notice does not nag them.
+ */
+export function repoHasLinkedWorktrees(mainWorktreeRoot: string): boolean {
+  const dir = path.join(mainWorktreeRoot, ".git", "worktrees")
+  try {
+    if (!fs.existsSync(dir)) return false
+    return fs.readdirSync(dir).some((name) => name.length > 0 && !name.startsWith("."))
+  } catch {
+    return false
+  }
+}
+
 function resolveCandidate(target: string): string {
   return path.isAbsolute(target) ? target : path.resolve(Instance.directory, target)
 }
@@ -60,14 +76,20 @@ function toolInputString(part: MessageV2.Part, key: string): string | undefined 
 }
 
 /**
- * All git MAIN worktrees this transcript has mutated so far.
+ * All git MAIN worktrees this transcript has mutated so far, limited to
+ * repos that already have linked worktrees (the "this project uses
+ * worktrees" habit signal).
  *
  * Path-based, not session-directory-based: a session bound to a non-git
  * scratch dir that `cd`s into another project's main checkout still hits.
- * Isolated worktrees and non-git paths do not.
+ * Isolated worktrees, non-git paths, and main checkouts with no linked
+ * worktrees do not.
  */
 export function sessionMutatedMainWorktrees(messages: MessageV2.WithParts[]): string[] {
   const hits = new Set<string>()
+  const consider = (mainRoot: string | null | undefined) => {
+    if (mainRoot && repoHasLinkedWorktrees(mainRoot)) hits.add(mainRoot)
+  }
   for (const message of messages) {
     for (const part of message.parts) {
       if (part.type !== "tool" || part.state.status !== "completed") continue
@@ -79,8 +101,7 @@ export function sessionMutatedMainWorktrees(messages: MessageV2.WithParts[]): st
           // apply_patch has no single path; fall back to the session cwd
           (part.tool === "apply_patch" ? Instance.directory : undefined)
         if (!raw) continue
-        const hit = findGitMainWorktree(resolveCandidate(raw))
-        if (hit) hits.add(hit)
+        consider(findGitMainWorktree(resolveCandidate(raw)))
         continue
       }
 
@@ -88,7 +109,7 @@ export function sessionMutatedMainWorktrees(messages: MessageV2.WithParts[]): st
         const list = part.state.metadata?.mainWorktreeHits
         if (!Array.isArray(list)) continue
         for (const item of list) {
-          if (typeof item === "string" && item.length > 0) hits.add(item)
+          if (typeof item === "string" && item.length > 0) consider(item)
         }
       }
     }
