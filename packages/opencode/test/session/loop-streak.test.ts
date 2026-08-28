@@ -395,12 +395,15 @@ describe("persisted crop span", () => {
     ])
   })
 
+  // Id must land inside [fromId, toId] lexicographically. "x_between" sorts
+  // after "a3" and is already dropped by the id-range check, so it never
+  // reaches the streakKey clause this test is meant to lock down.
   test("text-only assistant inside the id range is not cropped", () => {
     const shared = [reasoning("same plan")]
     const messages = [
       msg("u0", "user", [text("go")]),
       msg("a1", "assistant", shared),
-      msg("x_between", "assistant", [text("final narration, no tools")]),
+      msg("a1narr", "assistant", [text("final narration, no tools")]),
       msg("a2", "assistant", shared),
       msg("a3", "assistant", shared),
     ]
@@ -414,6 +417,24 @@ describe("persisted crop span", () => {
       truncated: false,
     })
     expect(crop.omitted).toEqual(["a1", "a2", "a3"])
-    expect(crop.kept.map((m) => m.info.id)).toEqual(["u0", "x_between"])
+    expect(crop.kept.map((m) => m.info.id)).toEqual(["u0", "a1narr"])
+  })
+
+  test("applyPersistedCrops keeps empty-key assistant inside the span id range", () => {
+    const shared = [reasoning("same plan")]
+    const key = streakKey(shared)
+    const messages = [
+      msg("u0", "user", [text("go")]),
+      msg("a1", "assistant", shared),
+      msg("a1narr", "assistant", [text("final narration, no tools")]),
+      msg("a2", "assistant", shared),
+      msg("a3", "assistant", shared),
+      userWithSpan("u1", "a1", "a3", key),
+    ]
+    const applied = applyPersistedCrops(messages, [
+      { fromId: "a1", toId: "a3", key, truncated: false },
+    ])
+    expect(applied.omitted).toEqual(["a1", "a2", "a3"])
+    expect(applied.kept.map((m) => m.info.id)).toEqual(["u0", "a1narr", "u1"])
   })
 })
