@@ -1,9 +1,9 @@
 ---
 feature: loop-streak-recovery
-status: in-progress
+status: delivered
 updated: 2026-08-28
 branch: feat/loop-streak-recovery
-commits: f02ee661a6..5a597d938e
+commits: f02ee661a6..79e6c58e04
 ---
 
 # Loop Streak Recovery
@@ -14,7 +14,7 @@ commits: f02ee661a6..5a597d938e
 
 **Verification** — `bun typecheck` PASS; `bun test test/session/loop-streak.test.ts` PASS (22). Independent review of `9bab2c2a12` found 3 criticals + 3 mediums → fixed `5a597d938e` → re-review PASS. Persisted-span follow-up after design critique that per-request re-detection breaks prefix stability.
 
-**Journey log** — Suffix delete does not break Anthropic 20-block lookback by itself; real risks are deleting the anchor, a long recovery body, or middle-of-prefix edits. Streak key must be thinking-primary. Per-request re-detection is wrong: if the tail changes, the view flips, LCP truncates, and poison returns — detect once, persist the span on the recovery user, re-apply until the user speaks again. Request-only synthetic users must not become `insertReminders` targets. Align with turn recovery: never invent a Continue. user — span hangs as ignored part on the parent user.
+**Journey log** — Suffix delete does not break Anthropic 20-block lookback by itself; real risks are deleting the anchor, a long recovery body, or middle-of-prefix edits. Streak key must be thinking-primary. Per-request re-detection is wrong: if the tail changes, the view flips, LCP truncates, and poison returns — detect once, persist the span as an ignored part on the parent user, re-apply every request. Never invent a Continue. user; `transform.ts` owns trailing-assistant Continue.
 
 ## [S1] Problem
 
@@ -82,9 +82,9 @@ At the start of each loop iteration:
    - On hit: crop the request view, **persist** an `ignored` + `synthetic` text part on the **existing** `lastUser` whose `metadata.origin` is `{ kind: "loop_streak_crop", fromId, toId, key, truncated }`. Do not create a new user; do not reassign `lastUser`.
 3. Clearing is explicit only: turn the feature off (next request returns to the full view). There is no auto-clear on user speech.
 
-Persisting the span on the recovery user gives: stable prefix across later
-requests in the same turn, restart survival, and TUI visibility of the recovery
-note (cropped assistants stay in the DB).
+Persisting the span as an ignored part on the parent user gives: stable
+prefix across later requests, restart survival, no new user/parentID, and no
+model-facing loop wording. Cropped assistants stay in the DB.
 
 ### Request crop
 
@@ -138,7 +138,7 @@ Rough is fine; purpose is observability of "we routinely crop >20 blocks".
 | Anthropic | Suffix delete keeps pre-loop write; lookback hits anchor. Immediate next request maximizes hit. Thinking signatures disappear with the deleted assistants (desired). |
 | OpenAI | LCP ends at anchor; usually hit, best-effort. |
 | DeepSeek `interleaved.field` | Whole-assistant delete is the only safe mode; join cannot align thinking to tools. v1 already whole-assistant only. |
-| Bedrock | Recovery user keeps trailing-user invariant. |
+| Bedrock | No new user is inserted; if the cropped view ends on an assistant, `transform.ts` trailing-assistant repair supplies `Continue.` on the wire. |
 | MiMo self-hosted | Behavior win only; no cache contract. |
 
 ### Interaction with existing detectors
@@ -167,7 +167,7 @@ Counts/audit stay in slog. Wire-level trailing assistant uses `transform.ts`
 
 - [x] T1: Streak signature module — acceptance: pure functions compute `reasonHash`/`toolSig`/`key` from parts; unit tests cover empty reasoning, empty tools, order stability, normalize. (covers: S2)
 - [x] T2: Streak detector — acceptance: given a sequence of assistant keys, reports trigger, span `[from,to]`, anchor predecessor; respects trigger_count and ceiling trailing-crop. (covers: S2; depends: T1)
-- [x] T3: Request cropper — acceptance: filters a message list by span without reorder/rewrite; appends exactly one recovery user; invariants hold on fixture with parallel tools. (covers: S2; depends: T2)
+- [x] T3: Request cropper — acceptance: filters a message list by span without reorder/rewrite; creates no new user; invariants hold on fixture with parallel tools. (covers: S2; depends: T2)
 - [x] T4: prompt.ts integration — acceptance: after a finished step, experimental flag on, a 3× identical-thinking streak crops the next request and logs audit fields; flag off path unchanged. (covers: S2; depends: T3)
 - [x] T5: Regression tests — acceptance: MR-3931-shaped fixture (identical thinking, drifting tools) is cropped; pure tool-loop and pure text-loop still behave as before when keys differ; no crop when span would include the anchor. (covers: S2; depends: T4)
 - [x] T6: Align with turn recovery — acceptance: crop creates no new user; span persists as ignored synthetic part on the existing lastUser; lastUser/parentID unchanged; tests cover ignored-part extract + no-new-user. (covers: S2)
