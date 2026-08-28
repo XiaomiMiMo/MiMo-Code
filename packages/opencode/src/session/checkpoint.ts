@@ -1522,7 +1522,9 @@ export const layer: Layer.Layer<
         const digestUpTo = opts.digestUpTo
         const boundaryID = yield* lastBoundary(sessionID).pipe(Effect.catch(() => Effect.succeed(undefined)))
         if (boundaryID) {
-          const all = yield* session.messages({ sessionID, agentID: "*" })
+          // Main slice only — the runLoop collapse is main-scoped; subagent
+          // activity must not appear as if the main agent performed it.
+          const all = yield* session.messages({ sessionID })
           const tail = all.filter((m) => m.info.id > boundaryID && m.info.id <= digestUpTo)
           const activity = renderTailDigest(tail)
           if (activity) {

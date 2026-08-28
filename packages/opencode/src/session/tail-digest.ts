@@ -3,10 +3,11 @@ import type { CheckpointPart, ToolPart, WithParts } from "./message-v2"
 /**
  * Post-rebuild tail → compact activity list.
  *
- * The log is rendered as a "## Recent activity" section inside the rebuild
+ * The log is rendered as a "# Recent activity" section inside the rebuild
  * context (same user message as the checkpoint body), not as a trailing
  * block. Tool results are dropped by construction — only tool name + args
- * are listed.
+ * are listed. Synthetic text parts are skipped so harness reminders never
+ * look like real user/assistant turns.
  */
 
 const MAX_LINE_CHARS = 240
@@ -24,8 +25,13 @@ function formatToolArgs(input: Record<string, unknown> | undefined): string {
   return Object.entries(input)
     .map(([key, value]) => {
       if (typeof value === "string") return `${key}=${JSON.stringify(truncate(value, MAX_ARG_CHARS))}`
-      const raw = JSON.stringify(value)
-      return `${key}=${truncate(raw ?? "undefined", MAX_ARG_CHARS)}`
+      let raw: string | undefined
+      try {
+        raw = JSON.stringify(value)
+      } catch {
+        raw = undefined
+      }
+      return `${key}=${truncate(raw ?? "[unserializable]", MAX_ARG_CHARS)}`
     })
     .join(", ")
 }
@@ -38,12 +44,19 @@ function toolLine(part: ToolPart): string {
   return `- ${call}`
 }
 
+function isBoundaryUser(msg: WithParts): boolean {
+  return msg.info.role === "user" && msg.parts.some((p) => p.type === "checkpoint" || p.type === "compaction")
+}
+
 function digestLines(tail: readonly WithParts[]): { lines: string[]; interrupted: boolean } {
   const lines: string[] = []
   let interrupted = false
   for (const msg of tail) {
+    // Never re-digest a prior rebuild/compaction boundary — that folds the
+    // previous dump into itself on a second rebuild.
+    if (isBoundaryUser(msg)) continue
     for (const part of msg.parts) {
-      if (part.type === "text" && !part.ignored) {
+      if (part.type === "text" && !part.ignored && !part.synthetic) {
         const text = part.text.trim()
         if (!text) continue
         lines.push(`- ${msg.info.role}: ${truncate(text, MAX_LINE_CHARS)}`)

@@ -210,7 +210,8 @@ describe("renderRebuildContext — recent user input section", () => {
         const section = out.slice(out.indexOf("# Recent user input (verbatim)"))
         expect(section).toContain("REAL-HUMAN-PROMPT-ZZZ")
         expect(section).not.toContain("UNIQUE-CHECKPOINT-SENTINEL")
-        expect(section).not.toContain("## Session checkpoint")
+        // Heading is H1 after the rebuild-context section rename.
+        expect(section).not.toContain("# Session checkpoint")
         // The human prompt appears once, not duplicated via the boundary echo.
         expect(out.split("REAL-HUMAN-PROMPT-ZZZ").length - 1).toBe(1)
       }),

@@ -145,6 +145,7 @@ describe("renderTailDigest", () => {
         parts: [
           completedTool("a1", "p1", "read", { path: "src/session/prompt.ts" }, "HUGE_FILE_BODY"),
           textPart("a1", "p2", "looks fine"),
+          textPart("a1", "p3", "Skills available in this session", { synthetic: true }),
         ],
       },
     ])
@@ -152,6 +153,7 @@ describe("renderTailDigest", () => {
     expect(text).toContain('- read(path="src/session/prompt.ts")')
     expect(text).not.toContain("result omitted")
     expect(text).not.toContain("HUGE_FILE_BODY")
+    expect(text).not.toContain("Skills available")
     expect(text).toContain("- assistant: looks fine")
   })
 
@@ -164,6 +166,19 @@ describe("renderTailDigest", () => {
     ])
     expect(text).toContain("interrupted")
     expect(text).not.toContain("Do not invent")
+  })
+
+  test("skips prior checkpoint/compaction boundaries so a second rebuild cannot echo itself", () => {
+    const text = renderTailDigest([
+      boundaryUser("m-cp", "a1", ['- read(path="old.ts")']),
+      {
+        info: assistantInfo("a1", "u1"),
+        parts: [completedTool("a1", "p1", "read", { path: "new.ts" }, "BODY")],
+      },
+    ])
+    expect(text).toContain('read(path="new.ts")')
+    expect(text).not.toContain("prior summary")
+    expect(text).not.toContain("read(path=\"old.ts\")")
   })
 })
 
