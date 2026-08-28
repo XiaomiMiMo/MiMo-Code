@@ -37,15 +37,49 @@ jobs:
       # runtime-worktree.test.ts excluded from shards: its deadline-fired test
       # deadlocks when run after other tests (QuickJS WASM state leak).
       # It runs separately below in an isolated process.
+      #
+      # stdio-exit-observe.test.ts excluded from shards: it needs the real
+      # ObservingStdioTransport. lifecycle.test.ts mock.module's that path
+      # process-wide, so sharing a bun test process with it always breaks
+      # these tests. Same isolation pattern as runtime-worktree.
+      #
+      # Sharding is path-hash, NOT list position: `NR % n` on the sorted file
+      # list reassigns every later file when one is added/removed, which
+      # reshuffles process-wide mocks and breaks order-sensitive tests
+      # (e.g. mcp/sampling-e2e). hash(path) % n keeps each file's shard
+      # independent of its neighbors.
+      #
+      # Scope: this stabilizes shard membership and isolates the one pair that
+      # actually broke. It is NOT a general mock.module isolation scheme —
+      # other files that mock.module still share a bun test process with their
+      # shard neighbors. If a new mock lands on the same hash bucket as a test
+      # that needs the real implementation, isolate that file the same way as
+      # runtime-worktree / stdio-exit-observe rather than assuming hash-sharding
+      # alone is enough.
       - name: Run unit tests (shard ${{ matrix.shard }})
         timeout-minutes: 8
         working-directory: packages/opencode
         run: |
-          find test -name '*.test.ts' ! -name 'runtime-worktree.test.ts' | sort > /tmp/test-files.txt
           shard=${{ matrix.shard }}
           idx=${shard%/*}
           n=${shard#*/}
-          files=$(awk -v i="$idx" -v n="$n" 'NR % n == i - 1' /tmp/test-files.txt)
+          files=$(while IFS= read -r f; do
+            h=$(printf '%s' "$f" | cksum | awk '{print $1}')
+            if [ $((h % n)) -eq $((idx - 1)) ]; then
+              printf '%s\n' "$f"
+            fi
+          done < <(find test -name '*.test.ts' \
+            ! -name 'runtime-worktree.test.ts' \
+            ! -name 'stdio-exit-observe.test.ts' | sort))
+          # Empty shard: `bun test` with no file args discovers everything,
+          # including the excluded isolation files. Skip instead of running
+          # the whole suite in this leg.
+          if [ -z "${files//[[:space:]]/}" ]; then
+            echo "shard $shard is empty, skipping"
+            mkdir -p .artifacts/unit
+            printf '<?xml version="1.0" encoding="UTF-8"?><testsuites/>\n' > .artifacts/unit/junit.xml
+            exit 0
+          fi
           mkdir -p .artifacts/unit
           bun test $files --timeout 120000 --reporter=junit --reporter-outfile=.artifacts/unit/junit.xml
 
@@ -62,3 +96,11 @@ jobs:
         timeout-minutes: 3
         working-directory: packages/opencode
         run: bun test test/workflow/runtime-worktree.test.ts -t 'deadline-fired' --timeout 120000
+
+      # Run stdio-exit-observe in isolation (shard 4/4 only): needs the real
+      # ObservingStdioTransport, which lifecycle.test.ts mock.module's away.
+      - name: Run stdio-exit-observe test (isolated)
+        if: matrix.shard == '4/4'
+        timeout-minutes: 2
+        working-directory: packages/opencode
+        run: bun test test/mcp/stdio-exit-observe.test.ts --timeout 120000
