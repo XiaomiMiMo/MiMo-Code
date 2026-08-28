@@ -426,6 +426,19 @@ const InfoSchema = Schema.Struct({
           }),
         }),
       ).annotate({ description: "Try-best loop detector thresholds." }),
+      loop_streak_recovery: Schema.optional(
+        Schema.Struct({
+          enabled: Schema.optional(Schema.Boolean).annotate({
+            description: "Crop repeated thinking/tool streaks from the next request and inject a recovery note.",
+          }),
+          trigger_count: Schema.optional(PositiveInt).annotate({
+            description: "Consecutive identical streak keys required to trigger (default 3).",
+          }),
+          max_span: Schema.optional(PositiveInt).annotate({
+            description: "Max assistant messages cropped from the trailing streak (default 64).",
+          }),
+        }),
+      ).annotate({ description: "Loop-streak request-layer recovery (experimental)." }),
       mcp_timeout: Schema.optional(PositiveInt).annotate({
         description: "Timeout in milliseconds for model context protocol (MCP) requests",
       }),

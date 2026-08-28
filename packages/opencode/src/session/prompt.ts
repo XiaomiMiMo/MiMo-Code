@@ -55,6 +55,14 @@ import {
   detectTextLoop,
 } from "../session/prompt/text-loop-recovery"
 import {
+  LOOP_STREAK_MAX_SPAN,
+  LOOP_STREAK_TRIGGER_COUNT,
+  cropMessagesForStreak,
+  detectStreak,
+  recoveryNote,
+  streakKey,
+} from "../session/prompt/loop-streak"
+import {
   TEXT_NGRAM_MAX_RECOVERY,
   TEXT_NGRAM_RECOVERY_REMIND,
   TEXT_NGRAM_RECOVERY_REPLAN,
@@ -3154,6 +3162,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
         const textLoopBuffer: string[] = []
         let textLoopRecoveryAttempts = 0
         let textNgramRecoveryAttempts = 0
+        let loopStreakCropped = false
 
         // Contract (T05): on finish="length", inject a continuation nudge ONLY for
         // plain text. If any non-providerExecuted client tool part exists we bail
@@ -3588,6 +3597,10 @@ NOTE: At any point in time through this workflow you should feel free to ask the
         })
 
         while (true) {
+          // Per-iteration: a streak crop on this turn must suppress a duplicate
+          // text-loop recovery user, but must not block a later re-crop if the
+          // model loops again after recovery.
+          loopStreakCropped = false
           // F55: only main agent sets session status to busy; subagent runners
           // must not touch session-level status (Runner.onBusy is Effect.void
           // for non-main actors per F47).
@@ -4014,6 +4027,61 @@ NOTE: At any point in time through this workflow you should feel free to ask the
           }
           const maxSteps = agent.steps ?? Infinity
           const isLastStep = step >= maxSteps
+
+          // Request-layer loop-streak recovery: crop a trailing identical
+          // thinking/tool streak from the wire payload only. Physical messages
+          // stay in the DB for audit/replay. Cache lookback still hits the
+          // pre-loop anchor because we only drop a suffix and keep the
+          // predecessor message.
+          const streakCfg = (yield* config.get()).experimental?.loop_streak_recovery
+          if (streakCfg?.enabled && !loopStreakCropped) {
+            const triggerCount = streakCfg.trigger_count ?? LOOP_STREAK_TRIGGER_COUNT
+            const maxSpan = streakCfg.max_span ?? LOOP_STREAK_MAX_SPAN
+            const entries = msgs.flatMap((message) => {
+              if (message.info.role !== "assistant" || !message.info.finish) return []
+              const key = streakKey(message.parts)
+              if (!key) return []
+              return [{ id: message.info.id, key }]
+            })
+            const span = detectStreak(entries, triggerCount, maxSpan)
+            if (span && span.toId === lastFinished?.id) {
+              const crop = cropMessagesForStreak(msgs, span)
+              if (crop.omitted.length > 0) {
+                msgs = crop.kept as typeof msgs
+                const recoveryId = MessageID.ascending()
+                const recoveryUser: MessageV2.WithParts = {
+                  info: {
+                    ...lastUser,
+                    id: recoveryId,
+                    time: { created: Date.now() },
+                  },
+                  parts: [
+                    {
+                      id: PartID.ascending(),
+                      messageID: recoveryId,
+                      sessionID,
+                      type: "text",
+                      synthetic: true,
+                      text: recoveryNote(span, crop),
+                    } satisfies MessageV2.TextPart,
+                  ],
+                }
+                msgs = [...msgs, recoveryUser]
+                loopStreakCropped = true
+                yield* slog.info("loop streak: cropped from request", {
+                  fromId: span.fromId,
+                  toId: span.toId,
+                  anchorId: span.anchorId,
+                  omitted: crop.omitted.length,
+                  remainingSimilar: crop.remainingSimilar,
+                  estBlocks: crop.estBlocks,
+                  cacheRisk: crop.cacheRisk,
+                  truncated: span.truncated,
+                })
+              }
+            }
+          }
+
           msgs = yield* insertReminders({ messages: msgs, agent, model, session })
 
           const msg: MessageV2.Assistant = {
@@ -4621,8 +4689,23 @@ NOTE: At any point in time through this workflow you should feel free to ask the
 
             if (textLoopBuffer.length >= TEXT_LOOP_TRIGGER_COUNT) {
               const isTextLoop = detectTextLoop(textLoopBuffer, TEXT_LOOP_TRIGGER_COUNT)
+              // Prefer streak crop (request-layer) over a second recovery user
+              // when the same turn already matches a thinking/tool streak.
+              const streakCfgNow = (yield* config.get()).experimental?.loop_streak_recovery
+              const pendingStreak =
+                streakCfgNow?.enabled &&
+                detectStreak(
+                  msgs.flatMap((message) => {
+                    if (message.info.role !== "assistant" || !message.info.finish) return []
+                    const key = streakKey(message.parts)
+                    if (!key) return []
+                    return [{ id: message.info.id, key }]
+                  }),
+                  streakCfgNow.trigger_count ?? LOOP_STREAK_TRIGGER_COUNT,
+                  streakCfgNow.max_span ?? LOOP_STREAK_MAX_SPAN,
+                )
 
-              if (isTextLoop) {
+              if (isTextLoop && !pendingStreak) {
                 if (textLoopRecoveryAttempts >= TEXT_LOOP_MAX_RECOVERY) {
                   yield* slog.info("text loop: max recovery exceeded, terminating")
                   yield* bus.publish(Session.Event.Error, {
