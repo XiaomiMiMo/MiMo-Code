@@ -1173,11 +1173,8 @@ export const layer = Layer.effect(
       // to a non-git scratch dir that `cd`s into another project's main checkout
       // still hits. Injected as a user-side system-reminder and persisted via
       // auto_worktree_hint_sent so compaction/rebuild cannot re-inject. Never
-      // touches the system prompt.
-      //
-      // Early-outs instead of else: skip when not the root primary agent, when
-      // the flag is already set, or when any user message still carries the
-      // notice (covers a crash between updatePart and markSent).
+      // touches the system prompt. Nested branch: insertReminders cannot
+      // early-return without skipping the skill/plan reminders that follow.
       if (input.agent.mode === "primary" && !input.session.parentID) {
         const alreadySent = yield* Effect.sync(() => isAutoWorktreeHintSent(input.session.id))
         if (!alreadySent) {

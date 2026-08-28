@@ -161,4 +161,19 @@ describe("bash commandMainWorktreeHits", () => {
     )
     expect(hitsAfterPop).toEqual([])
   })
+
+  test("git worktree add is the remediation and does not hit main", async () => {
+    const wt = path.join(scratchDir, "new-wt")
+    const hits = await commandMainWorktreeHits(`git worktree add ${wt} -b feat`, mainRepo)
+    expect(hits).toEqual([])
+  })
+
+  test("multi-source mv still counts every source path", async () => {
+    const a = path.join(mainRepo, "a.txt")
+    const b = path.join(mainRepo, "b.txt")
+    const c = path.join(scratchDir, "c.txt")
+    const dst = path.join(scratchDir, "out")
+    const hits = await commandMainWorktreeHits(`mv ${a} ${b} ${c} ${dst}`, scratchDir)
+    expect(hits).toEqual([path.resolve(mainRepo)])
+  })
 })

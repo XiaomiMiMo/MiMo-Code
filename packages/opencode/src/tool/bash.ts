@@ -352,11 +352,14 @@ function isGitFlag(token: string): boolean {
 function isGitMutate(tokens: string[], ps: boolean): boolean {
   const sub = gitSubcommand(tokens, ps)
   if (!sub || !GIT_MUTATE_SUBS.has(sub)) return false
-  // `git worktree list|prune` only inspects; add/remove/repair/move mutate.
+  // `git worktree list|prune` only inspects. `add` is the remediation this
+  // notice recommends and does not change main working-tree files, so it must
+  // not count as a main-worktree mutation. remove/repair/move do change
+  // repo-level worktree state.
   if (sub === "worktree") {
     const idx = tokens.findIndex((t, i) => i > 0 && (ps ? t.toLowerCase() : t) === "worktree")
     const verb = idx >= 0 ? tokens[idx + 1] : undefined
-    return verb === "add" || verb === "remove" || verb === "repair" || verb === "move"
+    return verb === "remove" || verb === "repair" || verb === "move"
   }
   return true
 }
@@ -403,9 +406,6 @@ function gitTargetDirs(tokens: string[], ps: boolean): string[] {
 // cp/ln/install only create at the destination; the source stays read-only
 // (`cp /main/f /scratch/f` from scratch must not claim /main).
 const COPY_DEST_ONLY = new Set(["cp", "ln", "install", "copy-item"])
-// mv/rename delete or rename the source, so BOTH ends mutate
-// (`mv /main/f /scratch/` from scratch does claim /main).
-const MOVE_BOTH = new Set(["mv", "move-item", "rename-item"])
 
 function mutationPathArgs(tokens: string[], head: string): string[] {
   const paths = tokens
@@ -415,10 +415,8 @@ function mutationPathArgs(tokens: string[], head: string): string[] {
   if (COPY_DEST_ONLY.has(head)) {
     return paths.length > 0 ? [paths[paths.length - 1]!] : []
   }
-  if (MOVE_BOTH.has(head)) {
-    if (paths.length >= 2) return [paths[paths.length - 2]!, paths[paths.length - 1]!]
-    return paths
-  }
+  // mv/move/rename and everything else: every path-like arg mutates.
+  // Multi-source `mv A B C D` has A B C as sources and D as dest.
   return paths
 }
 
