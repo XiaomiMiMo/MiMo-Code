@@ -189,24 +189,22 @@ export function sessionHasAutoWorktreeNotice(messages: MessageV2.WithParts[]): b
 
 export function buildAutoWorktreeNotice(mainWorktreePath: string): string {
   const hasHabit = repoHasLinkedWorktrees(mainWorktreePath)
-  const isolationRule = hasHabit
-    ? ["This repo already uses worktrees. Isolate this task in a new worktree and switch into it before any further write or edit. You do not need to ask the user first."]
+  const body = hasHabit
+    ? [
+        `This session is mutating the git main worktree at \`${mainWorktreePath}\`. Concurrent write/edit or git operations there can interfere with other agents or local changes.`,
+        "",
+        "This repo already uses worktrees. Isolate this task in a new worktree and switch into it before any further write or edit. You do not need to ask the user first.",
+        "",
+        "This rule is not limited to the path above. If you later start writing to another git repository that already uses worktrees, or run git mutations against its main worktree, isolate there the same way without asking.",
+      ]
     : [
+        `This session is mutating the git main worktree at \`${mainWorktreePath}\`. Concurrent write/edit or git operations there can interfere with other agents or local changes.`,
+        "",
         "Do NOT create a worktree on your own. Before any further write or edit, ask the user whether they want an isolated worktree.",
         "",
         "If the user agrees, isolate this task in a new worktree and switch into it before continuing. If the user declines, proceed only on the paths they authorized.",
+        "",
+        "This rule is not limited to the path above. If you later start writing to another git repository, or run git mutations against another repo's main worktree, apply the same check there: ask the user before continuing in that main worktree.",
       ]
-  return [
-    "<system-reminder>",
-    AUTO_WORKTREE_NOTICE_MARKER,
-    "",
-    `This session is mutating the git main worktree at \`${mainWorktreePath}\`. Concurrent write/edit or git operations there can interfere with other agents or local changes.`,
-    "",
-    ...isolationRule,
-    "",
-    hasHabit
-      ? "This rule is not limited to the path above. If you later start writing to another git repository that already uses worktrees, or run git mutations against its main worktree, isolate there the same way without asking."
-      : "This rule is not limited to the path above. If you later start writing to another git repository, or run git mutations against another repo's main worktree, apply the same check there: ask the user before continuing in that main worktree.",
-    "</system-reminder>",
-  ].join("\n")
+  return ["<system-reminder>", AUTO_WORKTREE_NOTICE_MARKER, "", ...body, "</system-reminder>"].join("\n")
 }
