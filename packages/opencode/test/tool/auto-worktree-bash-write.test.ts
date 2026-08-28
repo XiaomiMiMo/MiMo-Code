@@ -131,4 +131,18 @@ describe("bash commandMainWorktreeHits", () => {
     const hits = await commandMainWorktreeHits(`cp ${src} ${dst}`, scratchDir)
     expect(hits).toEqual([path.resolve(mainRepo)])
   })
+
+  test("mv source out of main hits main", async () => {
+    const src = path.join(mainRepo, "a.txt")
+    const dst = path.join(scratchDir, "moved.txt")
+    const hits = await commandMainWorktreeHits(`mv ${src} ${dst}`, scratchDir)
+    expect(hits).toEqual([path.resolve(mainRepo)])
+  })
+
+  test("mv dest into main hits main", async () => {
+    const src = path.join(scratchDir, "note.txt")
+    const dst = path.join(mainRepo, "moved.txt")
+    const hits = await commandMainWorktreeHits(`mv ${src} ${dst}`, scratchDir)
+    expect(hits).toEqual([path.resolve(mainRepo)])
+  })
 })

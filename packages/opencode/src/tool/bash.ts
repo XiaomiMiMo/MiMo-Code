@@ -400,21 +400,26 @@ function gitTargetDirs(tokens: string[], ps: boolean): string[] {
   return out
 }
 
-// Commands whose LAST non-flag argument is the mutation destination.
-// Earlier path-like args are sources and must not count as write targets
+// cp/ln/install only create at the destination; the source stays read-only
 // (`cp /main/f /scratch/f` from scratch must not claim /main).
-const DEST_LAST_COMMANDS = new Set(["cp", "mv", "ln", "install", "copy-item", "move-item", "rename-item"])
+const COPY_DEST_ONLY = new Set(["cp", "ln", "install", "copy-item"])
+// mv/rename delete or rename the source, so BOTH ends mutate
+// (`mv /main/f /scratch/` from scratch does claim /main).
+const MOVE_BOTH = new Set(["mv", "move-item", "rename-item"])
 
-function destinationArgs(tokens: string[], head: string): string[] {
-  const args = tokens.slice(1)
-  if (!DEST_LAST_COMMANDS.has(head)) {
-    return args.map((tok) => plausiblePathArg(tok)).filter((v): v is string => Boolean(v))
+function mutationPathArgs(tokens: string[], head: string): string[] {
+  const paths = tokens
+    .slice(1)
+    .map((tok) => plausiblePathArg(tok))
+    .filter((v): v is string => Boolean(v))
+  if (COPY_DEST_ONLY.has(head)) {
+    return paths.length > 0 ? [paths[paths.length - 1]!] : []
   }
-  for (let i = args.length - 1; i >= 0; i--) {
-    const arg = plausiblePathArg(args[i] ?? "")
-    if (arg) return [arg]
+  if (MOVE_BOTH.has(head)) {
+    if (paths.length >= 2) return [paths[paths.length - 2]!, paths[paths.length - 1]!]
+    return paths
   }
-  return []
+  return paths
 }
 
 function enclosingRedirectedStatement(node: Node): Node | undefined {
@@ -487,7 +492,7 @@ export function collectMutationTargets(root: Node, cwd: string, ps: boolean): { 
     for (const raw of redirectFileTargets(node)) add(raw, effectiveCwd)
 
     if (WRITE_COMMANDS.has(head) || isSedInPlace(tokens, ps)) {
-      for (const arg of destinationArgs(tokens, head)) add(arg, effectiveCwd)
+      for (const arg of mutationPathArgs(tokens, head)) add(arg, effectiveCwd)
     }
   }
 

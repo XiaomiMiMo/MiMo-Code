@@ -12,7 +12,9 @@ export const AUTO_WORKTREE_NOTICE_MARKER = "Auto-Worktree Notice"
 const FILE_WRITE_TOOLS = new Set(["write", "edit", "apply_patch", "multiedit", "notebook_edit"])
 
 // Process-lifetime cache: the same file/dir is re-resolved on every insertReminders
-// step until the notice fires.
+// step until the notice fires. Bounded so a long-lived daemon cannot accumulate
+// unbounded path keys across sessions.
+const MAIN_WORKTREE_CACHE_MAX = 512
 const mainWorktreeCache = new Map<string, string | null>()
 
 /**
@@ -41,6 +43,7 @@ export function findGitMainWorktree(startDir: string): string | null {
   } catch {
     result = null
   }
+  if (mainWorktreeCache.size >= MAIN_WORKTREE_CACHE_MAX) mainWorktreeCache.clear()
   mainWorktreeCache.set(key, result)
   return result
 }
