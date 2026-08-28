@@ -43,11 +43,44 @@ import { alignToNonToolResultUser } from "./checkpoint-align"
 import { loadPriorDiscoveredTitles } from "./checkpoint-retry"
 import * as CheckpointContext from "./checkpoint-context"
 import { buildProgressDiff } from "./checkpoint-progress-reconcile"
+import { renderTailDigest } from "./tail-digest"
 
 const log = Log.create({ service: "session.checkpoint" })
 
 function truncate(s: string, max: number): string {
   return s.length <= max ? s : s.slice(0, max - 60) + "\n... (truncated, full body at file)"
+}
+
+/** Drop the first top-level `# ` heading so the section H1 is the only file root. */
+function stripFirstH1(text: string): string {
+  let dropped = false
+  return text
+    .split("\n")
+    .filter((line) => {
+      if (!dropped && /^# [^#]/.test(line)) {
+        dropped = true
+        return false
+      }
+      return true
+    })
+    .join("\n")
+    .trim()
+}
+
+/**
+ * Push a top-level section. File-backed sections carry a single full `File:`
+ * path under the H1 — do not also put the basename in the H1; that repeats
+ * the last path segment. The file body's own first H1 is stripped so this
+ * section heading is the only root and every following ## belongs to it.
+ */
+function pushSection(lines: string[], heading: string, body?: string, filePath?: string) {
+  lines.push(`# ${heading}`)
+  if (filePath) lines.push(`File: ${filePath}`)
+  if (body !== undefined) {
+    const text = filePath ? stripFirstH1(body) : body.trim()
+    if (text) lines.push(text)
+  }
+  lines.push("")
 }
 
 /**
@@ -499,7 +532,7 @@ export interface Interface {
    */
   readonly renderRebuildContext: (
     sessionID: SessionID,
-    opts?: { lastMessageInfo?: LastMessageInfo; agentID?: string },
+    opts?: { lastMessageInfo?: LastMessageInfo; agentID?: string; digestUpTo?: MessageID },
   ) => Effect.Effect<string>
 
   readonly lastBoundary: (sessionID: SessionID) => Effect.Effect<MessageID | undefined>
@@ -516,6 +549,7 @@ export interface Interface {
     sessionID: SessionID
     boundary: MessageID
     lastMessageInfo?: LastMessageInfo
+    digestUpTo?: MessageID
     agentID?: string
     agent: string
     model: { providerID: string; modelID: string }
@@ -1192,16 +1226,16 @@ export const layer: Layer.Layer<
       lines.push("")
       lines.push(`Directory: ${dir}/`)
       lines.push("")
-      lines.push(`Current checkpoint (${topic}): checkpoint.md [shown below]`)
-      lines.push("")
-      lines.push(`Use read("${snapFile}") to access the full checkpoint.`)
+      // Point at the exact section that holds the body. "shown below" / "use
+      // Read" both conflict with the F17 "already loaded" header that follows.
+      lines.push(`Current checkpoint (${topic}) — body is in the "# Session checkpoint" section.`)
 
       return lines.join("\n")
     })
 
     const renderRebuildContext = Effect.fn("SessionCheckpoint.renderRebuildContext")(function* (
       sessionID: SessionID,
-      opts?: { lastMessageInfo?: LastMessageInfo; agentID?: string },
+      opts?: { lastMessageInfo?: LastMessageInfo; agentID?: string; digestUpTo?: MessageID },
     ) {
       // renderRebuildContext is for the user-facing main agent's context rebuild.
       // Subagent-mode actors (system-spawned writers, model-spawned subagents)
@@ -1358,15 +1392,18 @@ export const layer: Layer.Layer<
 
       // F17: Explicit "already loaded" header. Anchors the active recall
       // protocol's "look for this header" instruction in buildMemoryInstructions.
+      // File-backed sections are H1 + `File:` path; their ## children belong
+      // to that file. Non-file sections are also H1 so nothing nests under
+      // the previous file by accident.
       lines.push(
-        "The following blocks are auto-loaded from your session memory. They are already in your context — do not Read them as whole files. Use Grep for specific facts instead.",
+        "The sections below are auto-loaded session context already in this message. File-backed sections list their path on a `File:` line — Grep that path for specific facts; do not Read the whole file again.",
       )
       lines.push("")
 
-      // Section 3: tasks ledger (hierarchical with subtasks).
-      lines.push("## Tasks ledger")
+      // Section: tasks ledger (hierarchical with subtasks).
+      const taskLines: string[] = []
       if (tasks.length === 0) {
-        lines.push("(none)")
+        taskLines.push("(none)")
       } else {
         const topLevel = tasks.filter((t) => !t.parent_task_id)
         const byParent = new Map<string, typeof tasks>()
@@ -1388,62 +1425,46 @@ export const layer: Layer.Layer<
             .join(" / ")
           ledgerLines.push(`  Subtasks: ${sublist}`)
         }
-        lines.push(truncate(ledgerLines.join("\n"), caps.tasks_ledger ?? 2000))
+        taskLines.push(truncate(ledgerLines.join("\n"), caps.tasks_ledger ?? 2000))
       }
-      lines.push("")
+      pushSection(lines, "Tasks ledger", taskLines.join("\n"))
 
-      // Section 5: session checkpoint (full body, capped).
+      // File-backed: session checkpoint body.
       if (checkpointText.trim()) {
-        lines.push("## Session checkpoint")
-        lines.push(checkpointText.trim())
-        lines.push("")
+        pushSection(lines, "Session checkpoint", checkpointText, checkpointPath(sessionID))
       }
 
-      // Section 6: active actors ledger (one line per running actor).
+      // Active actors (DB/registry, not a file).
       if (actors.length > 0) {
-        lines.push("## Active actors")
+        const actorLines: string[] = []
         let actorBudget = caps.actor_ledger ?? 500
         for (const a of actors) {
           const line = `- ${a.actorID} — ${a.status}, "${a.description}" (agent=${a.agent})`
           const cost = Token.estimate(line)
           if (actorBudget - cost < 0) break
-          lines.push(line)
+          actorLines.push(line)
           actorBudget -= cost
         }
-        lines.push("")
+        pushSection(lines, "Active actors", actorLines.join("\n"))
       }
 
-      // Section 6.5: recent user input (verbatim, FIFO, budget-bounded).
-      // Preserves original user prose from the live DB — writer summaries
-      // paraphrase user commands, losing anchors like exact flags or pasted
-      // content. (entries computed earlier so the early-bail guard sees them.)
+      // Recent user input (verbatim, FIFO, budget-bounded).
       if (recentUserEntries.length > 0) {
-        lines.push("## Recent user input (verbatim)")
-        lines.push(...recentUserEntries)
-        lines.push("")
+        pushSection(lines, "Recent user input (verbatim)", recentUserEntries.join("\n"))
       }
 
-      // Section 7: project memory (full body, capped).
+      // File-backed: project / global memory and session notes.
       if (memoryText.trim()) {
-        lines.push("## Project memory")
-        lines.push(memoryText.trim())
-        lines.push("")
+        // Not "Project memory": that reads like session memory's sibling and
+        // collides with "this session has memory at …". This section is the
+        // cross-session durable knowledge file (MEMORY.md) only.
+        pushSection(lines, "Project durable knowledge", memoryText, memoryPath(projectID))
       }
-
-      // Section 7.4: global memory (full body, capped). User-level cross-project
-      // preferences. Placed after project memory (more actionable) and before
-      // session notes (more volatile).
       if (globalText.trim()) {
-        lines.push("## Global memory")
-        lines.push(globalText.trim())
-        lines.push("")
+        pushSection(lines, "Global memory", globalText, globalMemoryPath())
       }
-
-      // F14 Section 7.5: session notes (full body, capped). Skip if empty.
       if (notesText.trim()) {
-        lines.push("## Session notes")
-        lines.push(notesText.trim())
-        lines.push("")
+        pushSection(lines, "Session notes", notesText, notesPath(sessionID))
       }
 
       // Section 8: memory keys index (paths only, omit already-pushed).
@@ -1482,7 +1503,7 @@ export const layer: Layer.Layer<
         .filter((p) => !pushedPaths.has(p) && !p.includes(`${path.sep}checkpoint${path.sep}learning-`))
         .map((p) => p.replace(memoryRoot + path.sep, ""))
       if (keyEntries.length > 0) {
-        lines.push("## Memory keys index")
+        lines.push("# Memory keys index")
         let kBudget = caps.memory_titles ?? 500
         for (const entry of keyEntries) {
           const cost = Token.estimate(entry)
@@ -1493,22 +1514,29 @@ export const layer: Layer.Layer<
         lines.push("")
       }
 
-      // Section 10: explicit seam framing for LLM continuity post-rebuild.
-      // Compaction-summary pattern: tells the model
-      // that preserved messages below are real history, not pseudo-content,
-      // so it resumes mid-loop instead of asking "what would you like me
-      // to do".
+      // Section: Recent activity — messages that already exist after the
+      // watermark at insert time, as a compact name+args list. Written into
+      // the same rebuild-context block as the checkpoint body so send-time
+      // collapse only has to drop those messages (no second digest block).
+      if (opts?.digestUpTo) {
+        const digestUpTo = opts.digestUpTo
+        const boundaryID = yield* lastBoundary(sessionID).pipe(Effect.catch(() => Effect.succeed(undefined)))
+        if (boundaryID) {
+          const all = yield* session.messages({ sessionID, agentID: "*" })
+          const tail = all.filter((m) => m.info.id > boundaryID && m.info.id <= digestUpTo)
+          const activity = renderTailDigest(tail)
+          if (activity) {
+            lines.push("")
+            lines.push(activity)
+          }
+        }
+      }
+
+      // Section 10: seam framing. Short: early history is the checkpoint
+      // above; the tail is the Recent activity list; resume without recap.
       lines.push("")
       lines.push(
-        "This session is being continued from a previous conversation that hit a checkpoint. The session checkpoint and project memory above cover the earlier portion of the conversation.",
-      )
-      lines.push("")
-      lines.push(
-        "Recent messages are preserved verbatim below — the assistant turn (and any tool results) you'll see is real history, not pseudo-content. Continue your task by responding to the most recent state.",
-      )
-      lines.push("")
-      lines.push(
-        "Resume directly. Do not acknowledge this memory dump, do not recap, do not preface with \"I'll continue\" or similar. Pick up the last task as if the break never happened.",
+        "This session is continued from a checkpoint. The blocks above cover earlier history and the recent activity list. Resume the last task from that list and any live messages after it. Do not recap this dump.",
       )
 
       // Section 11: tail-aware system reminder. Picks the appropriate nudge
@@ -1586,6 +1614,12 @@ export const layer: Layer.Layer<
       sessionID: SessionID
       boundary: MessageID
       lastMessageInfo?: LastMessageInfo
+      /**
+       * Newest message that already exists at insert time. Stored as
+       * CheckpointPart.digestUpTo so send-time collapse digests only the
+       * pre-insert tail and leaves post-insert messages live.
+       */
+      digestUpTo?: MessageID
       agentID?: string
       agent: string
       model: { providerID: string; modelID: string }
@@ -1594,6 +1628,7 @@ export const layer: Layer.Layer<
       const rebuildContext = yield* renderRebuildContext(input.sessionID, {
         lastMessageInfo: input.lastMessageInfo,
         agentID: input.agentID,
+        digestUpTo: input.digestUpTo,
       }).pipe(Effect.catch(() => Effect.succeed("")))
       if (!rebuildContext) return false
 
@@ -1617,6 +1652,7 @@ export const layer: Layer.Layer<
         checkpointDir: "",
         checkpointNumber: 0,
         coveredUpTo: input.boundary,
+        ...(input.digestUpTo ? { digestUpTo: input.digestUpTo } : {}),
       })
 
       if (indexText) {

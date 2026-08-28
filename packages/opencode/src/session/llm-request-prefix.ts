@@ -22,6 +22,11 @@ import type { PromptConfig } from "./session"
  *
  * Both call sites must use this same function — the byte-equal invariant
  * across parent and fork is a structural consequence, not a separate assertion.
+ * Exception: the parent runLoop sets `collapseCheckpointTail: true` so the model
+ * sees a rebuild-tail activity log instead of hollow tool pairs; the checkpoint
+ * writer leaves it off so it still writes from full-fidelity history. When a
+ * prior checkpoint exists, parent/writer inheritedMessages therefore diverge by
+ * design (checkpoint quality beats prefix-cache parity on the rebuild path).
  *
  * Slicing (e.g. for fork capture at a watermark) is a caller concern; callers
  * pass the already-sliced msgs. ForkContext.watermarkMsgID is a boundary marker
@@ -39,6 +44,12 @@ export const buildLLMRequestPrefix = Effect.fn("Session.buildLLMRequestPrefix")(
    */
   additions: string[]
   prompt?: PromptConfig
+  /**
+   * Collapse post-checkpoint rebuild tails into an activity log. Enable for the
+   * main-agent runLoop; leave off for checkpoint-writer fork capture so the
+   * writer still sees full-fidelity recent history.
+   */
+  collapseCheckpointTail?: boolean
 }) {
   const llm = yield* LLM.Service
   const toolRegistry = yield* ToolRegistry.Service
@@ -46,7 +57,9 @@ export const buildLLMRequestPrefix = Effect.fn("Session.buildLLMRequestPrefix")(
   // Always use full msgs — slicing is a fork-capture concern that lives at the
   // caller (ForkContext.watermarkMsgID is a boundary marker, not a slice arg).
   // See spec changelog at docs/superpowers/specs/2026-05-26-fork-agent-prefix-cache-design.md
-  const inheritedMessages = yield* MessageV2.toModelMessagesEffect(input.msgs, input.model)
+  const inheritedMessages = yield* MessageV2.toModelMessagesEffect(input.msgs, input.model, {
+    collapseCheckpointTail: input.collapseCheckpointTail,
+  })
 
   // Find the last user message; required for system "user.system" pass-through
   const lastUserMsg = input.msgs.findLast((m) => m.info.role === "user")

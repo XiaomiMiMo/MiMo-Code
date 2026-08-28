@@ -520,6 +520,10 @@ export const layer = Layer.effect(
           sessionID: input.sessionID,
           boundary,
           lastMessageInfo: computeLastMessageInfo(input.msgs.map((m) => m.info)),
+          // Freeze the digest range at insert time: only this tail is eligible
+          // for activity-log collapse. Auto rebuild mid-tool-loop keeps later
+          // tool rounds live; manual rebuild digests the whole idle tail.
+          digestUpTo: input.msgs.at(-1)?.info.id,
           agentID: input.agentID,
           agent: input.agent,
           model: { providerID: input.model.providerID, modelID: input.model.id },
@@ -4354,6 +4358,9 @@ NOTE: At any point in time through this workflow you should feel free to ask the
                 msgs,
                 additions,
                 prompt: sessionPrompt,
+                // Rebuild tails collapse into an activity log so hollow
+                // tool_results never look like a live transcript (anti-hallucination).
+                collapseCheckpointTail: true,
               }).pipe(
                 Effect.provideService(LLM.Service, llm),
                 Effect.provideService(ToolRegistry.Service, registry),

@@ -97,10 +97,10 @@ describe("renderRebuildContext v3", () => {
         )
 
         const out = yield* cp.renderRebuildContext(sess.id)
-        expect(out).toContain("## Project memory")
+        expect(out).toContain("# Project durable knowledge")
         expect(out).toContain("用 Bun 不用 npm")
         // No global/MEMORY.md written → no spurious Global memory header.
-        expect(out).not.toContain("## Global memory")
+        expect(out).not.toContain("# Global memory")
       }),
     ),
   )
@@ -120,7 +120,7 @@ describe("renderRebuildContext v3", () => {
         )
 
         const out = yield* cp.renderRebuildContext(sess.id)
-        expect(out).toContain("## Global memory")
+        expect(out).toContain("# Global memory")
         expect(out).toContain("prefer terse responses")
       }),
     ),

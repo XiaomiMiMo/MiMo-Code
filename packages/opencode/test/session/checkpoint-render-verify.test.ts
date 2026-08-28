@@ -192,13 +192,13 @@ Next: implement renderRebuildContext 9-section render in src/session/checkpoint.
 
         // Sanity assertions on render.
         expect(out).not.toContain("<system-reminder>")
-        expect(out).toContain("## Project memory")
+        expect(out).toContain("# Project durable knowledge")
         expect(out).toContain("Always use Bun")
         expect(out).toContain("Tasks ledger")
         expect(out).toContain(t1.id)
         expect(out).toContain(t2.id)
         expect(out).toContain(t4.id)
-        expect(out).toContain("## Session checkpoint")
+        expect(out).toContain("# Session checkpoint")
         expect(out).toContain("Active actors")
         expect(out).toContain("agent=explorer")
         expect(out).toContain("Drizzle's sqliteTable")
@@ -230,9 +230,8 @@ Next: implement renderRebuildContext 9-section render in src/session/checkpoint.
 
         const out = yield* cp.renderRebuildContext(sess.id)
 
-        expect(out).toContain("preserved verbatim below")
-        expect(out).toContain("Pick up the last task as if the break never happened")
-        expect(out).toContain("Resume directly")
+        expect(out).toContain("This session is continued from a checkpoint")
+        expect(out).toContain("Do not recap this dump")
       }),
     ),
   )
@@ -373,8 +372,10 @@ Next: implement renderRebuildContext 9-section render in src/session/checkpoint.
 
         const out = yield* cp.renderRebuildContext(sess.id)
 
-        expect(out).toContain("auto-loaded from your session memory")
-        expect(out).toContain("Use Grep for specific facts")
+        expect(out).toContain("sections below are auto-loaded session context already in this message")
+        expect(out).toContain("File:")
+        expect(out).toContain("checkpoint.md")
+        expect(out).toContain("Grep that path")
       }),
     ),
   )
@@ -400,7 +401,7 @@ Next: implement renderRebuildContext 9-section render in src/session/checkpoint.
         })
 
         const out = yield* cp.renderRebuildContext(sess.id)
-        expect(out).toContain("## Session notes")
+        expect(out).toContain("# Session notes")
         expect(out).toContain("Decided to use approach X")
       }),
     ),
@@ -424,7 +425,7 @@ Next: implement renderRebuildContext 9-section render in src/session/checkpoint.
         })
 
         const out = yield* cp.renderRebuildContext(sess.id)
-        expect(out).not.toContain("## Session notes")
+        expect(out).not.toContain("# Session notes")
       }),
     ),
   )

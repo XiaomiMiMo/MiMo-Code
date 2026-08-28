@@ -81,7 +81,7 @@ describe("renderRebuildContext — recent user input section", () => {
         yield* Effect.promise(() => seedUserMessage(sess.id, "third prompt — please commit"))
 
         const out = yield* cp.renderRebuildContext(sess.id)
-        expect(out).toContain("## Recent user input (verbatim)")
+        expect(out).toContain("# Recent user input (verbatim)")
         expect(out).toContain("first prompt about authentication")
         expect(out).toContain("second prompt asking for tests")
         expect(out).toContain("third prompt — please commit")
@@ -103,7 +103,7 @@ describe("renderRebuildContext — recent user input section", () => {
         const m = yield* Effect.promise(() => seedUserMessage(sess.id, head + "\n" + middle + "\n" + tail))
 
         const out = yield* cp.renderRebuildContext(sess.id)
-        expect(out).toContain("## Recent user input (verbatim)")
+        expect(out).toContain("# Recent user input (verbatim)")
         expect(out).toContain("HEAD-MARKER-XYZZY")
         expect(out).toContain("TAIL-MARKER-PLUGH")
         expect(out).not.toContain("middle-noise middle-noise middle-noise")
@@ -151,7 +151,7 @@ describe("renderRebuildContext — recent user input section", () => {
         }
 
         const out = yield* cp.renderRebuildContext(sess.id)
-        expect(out).toContain("## Recent user input (verbatim)")
+        expect(out).toContain("# Recent user input (verbatim)")
         expect(out).toContain("MARKER-MSG-19")
         expect(out).not.toContain("MARKER-MSG-00")
       }),
@@ -207,7 +207,7 @@ describe("renderRebuildContext — recent user input section", () => {
         // prior rebuild context back in (fractal bloat). The genuine human
         // prompt must still appear exactly once.
         const out = yield* cp.renderRebuildContext(sess.id)
-        const section = out.slice(out.indexOf("## Recent user input (verbatim)"))
+        const section = out.slice(out.indexOf("# Recent user input (verbatim)"))
         expect(section).toContain("REAL-HUMAN-PROMPT-ZZZ")
         expect(section).not.toContain("UNIQUE-CHECKPOINT-SENTINEL")
         expect(section).not.toContain("## Session checkpoint")
