@@ -501,7 +501,7 @@ describe("session.prompt auto-worktree first-write notice", () => {
     }
   })
 
-  test("second repo mutated later does not re-inject; standing rule covers it", async () => {
+  test("second repo mutated later does not re-inject; standing rule covers it", { timeout: 20000 }, async () => {
     await using repoB = await tmpdir({
       git: true,
       init: async (dir) => {

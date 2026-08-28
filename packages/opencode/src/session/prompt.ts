@@ -79,9 +79,9 @@ import { buildLLMRequestPrefix } from "./llm-request-prefix"
 import {
   buildAutoWorktreeNotice,
   firstMutatedMainWorktree,
-  hasAutoWorktreeNotice,
   isAutoWorktreeHintSent,
   markAutoWorktreeHintSent,
+  sessionHasAutoWorktreeNotice,
 } from "@/tool/auto-worktree-hint"
 import {
   serializeTrajectoryMessages,
@@ -1174,10 +1174,14 @@ export const layer = Layer.effect(
       // still hits. Injected as a user-side system-reminder and persisted via
       // auto_worktree_hint_sent so compaction/rebuild cannot re-inject. Never
       // touches the system prompt.
+      //
+      // Early-outs instead of else: skip when not the root primary agent, when
+      // the flag is already set, or when any user message still carries the
+      // notice (covers a crash between updatePart and markSent).
       if (input.agent.mode === "primary" && !input.session.parentID) {
         const alreadySent = yield* Effect.sync(() => isAutoWorktreeHintSent(input.session.id))
         if (!alreadySent) {
-          if (hasAutoWorktreeNotice(userMessage)) {
+          if (sessionHasAutoWorktreeNotice(input.messages)) {
             yield* Effect.sync(() => markAutoWorktreeHintSent(input.session.id))
           } else {
             const hit = firstMutatedMainWorktree(input.messages)

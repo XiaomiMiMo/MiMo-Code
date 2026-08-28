@@ -465,6 +465,7 @@ function plausiblePathArg(token: string): string | undefined {
  */
 export function collectMutationTargets(root: Node, cwd: string, ps: boolean): { paths: string[]; gitMutate: boolean } {
   let effectiveCwd = path.resolve(cwd)
+  const cwdStack: string[] = []
   const paths: string[] = []
   let gitMutate = false
 
@@ -478,9 +479,21 @@ export function collectMutationTargets(root: Node, cwd: string, ps: boolean): { 
     if (tokens.length === 0) continue
     const head = ps ? tokens[0].toLowerCase() : tokens[0]
 
-    if (head === "cd" || head === "pushd" || head === "set-location" || head === "push-location") {
+    if (head === "cd" || head === "set-location") {
       const arg = plausiblePathArg(tokens[1] ?? "")
       if (arg) effectiveCwd = path.isAbsolute(arg) ? path.resolve(arg) : path.resolve(effectiveCwd, arg)
+      continue
+    }
+
+    if (head === "pushd" || head === "push-location") {
+      cwdStack.push(effectiveCwd)
+      const arg = plausiblePathArg(tokens[1] ?? "")
+      if (arg) effectiveCwd = path.isAbsolute(arg) ? path.resolve(arg) : path.resolve(effectiveCwd, arg)
+      continue
+    }
+
+    if (head === "popd" || head === "pop-location") {
+      effectiveCwd = cwdStack.pop() ?? path.resolve(cwd)
       continue
     }
 

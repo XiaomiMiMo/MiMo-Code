@@ -145,4 +145,20 @@ describe("bash commandMainWorktreeHits", () => {
     const hits = await commandMainWorktreeHits(`mv ${src} ${dst}`, scratchDir)
     expect(hits).toEqual([path.resolve(mainRepo)])
   })
+
+  test("pushd/popd restores cwd so a write lands back in the original dir", async () => {
+    // push into main, write there, pop back to scratch, write again.
+    // First write hits main; after pop the relative write must not claim main.
+    const hitsInMain = await commandMainWorktreeHits(
+      `pushd ${mainRepo} && echo x > in-main.txt`,
+      scratchDir,
+    )
+    expect(hitsInMain).toEqual([path.resolve(mainRepo)])
+
+    const hitsAfterPop = await commandMainWorktreeHits(
+      `pushd ${mainRepo} && popd && echo x > in-scratch.txt`,
+      scratchDir,
+    )
+    expect(hitsAfterPop).toEqual([])
+  })
 })

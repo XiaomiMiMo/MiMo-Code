@@ -17,6 +17,44 @@ const FILE_WRITE_TOOLS = new Set(["write", "edit", "apply_patch", "multiedit", "
 const MAIN_WORKTREE_CACHE_MAX = 512
 const mainWorktreeCache = new Map<string, string | null>()
 
+export type GitLayout = {
+  /** Directory that contains `.git` (main worktree root, or linked worktree root). */
+  worktreeRoot: string
+  /** Resolved git dir: `.git` itself for main, `gitdir:` target for linked. */
+  gitDir: string
+  isMain: boolean
+}
+
+/**
+ * Walk up from `startDir` to the nearest `.git`. Shared by the main-worktree
+ * habit gate and conflict-detection so both keep one notion of git layout.
+ */
+export function walkGitLayout(startDir: string): GitLayout | null {
+  try {
+    let dir = path.resolve(startDir)
+    for (;;) {
+      const dotGit = path.join(dir, ".git")
+      if (fs.existsSync(dotGit)) {
+        const stat = fs.statSync(dotGit)
+        if (stat.isDirectory()) {
+          return { worktreeRoot: dir, gitDir: dotGit, isMain: true }
+        }
+        const content = fs.readFileSync(dotGit, "utf-8").trim()
+        const match = content.match(/^gitdir:\s*(.+)$/)
+        if (!match) return null
+        const gitDir = path.resolve(path.dirname(dotGit), match[1].trim())
+        if (!fs.existsSync(gitDir)) return null
+        return { worktreeRoot: dir, gitDir, isMain: false }
+      }
+      const parent = path.dirname(dir)
+      if (parent === dir) return null
+      dir = parent
+    }
+  } catch {
+    return null
+  }
+}
+
 /**
  * Walk up from `startDir` and return the git MAIN worktree root, or null.
  * `.git` as a directory means a main worktree; `.git` as a `gitdir:` file means
@@ -26,23 +64,8 @@ export function findGitMainWorktree(startDir: string): string | null {
   const key = path.resolve(startDir)
   const cached = mainWorktreeCache.get(key)
   if (cached !== undefined) return cached
-  let result: string | null = null
-  try {
-    let dir = key
-    for (;;) {
-      const dotGit = path.join(dir, ".git")
-      if (fs.existsSync(dotGit)) {
-        const stat = fs.statSync(dotGit)
-        result = stat.isDirectory() ? dir : null
-        break
-      }
-      const parent = path.dirname(dir)
-      if (parent === dir) break
-      dir = parent
-    }
-  } catch {
-    result = null
-  }
+  const layout = walkGitLayout(key)
+  const result = layout?.isMain ? layout.worktreeRoot : null
   if (mainWorktreeCache.size >= MAIN_WORKTREE_CACHE_MAX) mainWorktreeCache.clear()
   mainWorktreeCache.set(key, result)
   return result
@@ -78,6 +101,11 @@ function toolInputString(part: MessageV2.Part, key: string): string | undefined 
   return typeof value === "string" && value.length > 0 ? value : undefined
 }
 
+function bashSucceeded(part: MessageV2.Part): boolean {
+  if (part.type !== "tool" || part.state.status !== "completed") return false
+  return part.state.metadata?.exit === 0
+}
+
 /**
  * All git MAIN worktrees this transcript has mutated so far, limited to
  * repos that already have linked worktrees (the "this project uses
@@ -86,7 +114,7 @@ function toolInputString(part: MessageV2.Part, key: string): string | undefined 
  * Path-based, not session-directory-based: a session bound to a non-git
  * scratch dir that `cd`s into another project's main checkout still hits.
  * Isolated worktrees, non-git paths, and main checkouts with no linked
- * worktrees do not.
+ * worktrees do not. Failed bash commands (non-zero exit) are ignored.
  */
 export function sessionMutatedMainWorktrees(messages: MessageV2.WithParts[]): string[] {
   const hits = new Set<string>()
@@ -109,6 +137,7 @@ export function sessionMutatedMainWorktrees(messages: MessageV2.WithParts[]): st
       }
 
       if (part.tool === "bash") {
+        if (!bashSucceeded(part)) continue
         const list = part.state.metadata?.mainWorktreeHits
         if (!Array.isArray(list)) continue
         for (const item of list) {
@@ -125,24 +154,24 @@ export function firstMutatedMainWorktree(messages: MessageV2.WithParts[]): strin
   return sessionMutatedMainWorktrees(messages)[0]
 }
 
-export function isAutoWorktreeHintSent(sessionID: string): boolean {
+export function isAutoWorktreeHintSent(sessionID: SessionID): boolean {
   return Boolean(
     Database.use((db) =>
       db
         .select({ sent: SessionTable.auto_worktree_hint_sent })
         .from(SessionTable)
-        .where(eq(SessionTable.id, sessionID as SessionID))
+        .where(eq(SessionTable.id, sessionID))
         .get()?.sent,
     ),
   )
 }
 
-export function markAutoWorktreeHintSent(sessionID: string): void {
+export function markAutoWorktreeHintSent(sessionID: SessionID): void {
   Database.use((db) =>
     db
       .update(SessionTable)
       .set({ auto_worktree_hint_sent: true })
-      .where(eq(SessionTable.id, sessionID as SessionID))
+      .where(eq(SessionTable.id, sessionID))
       .run(),
   )
 }
@@ -152,6 +181,11 @@ export function hasAutoWorktreeNotice(message: MessageV2.WithParts): boolean {
     (part) =>
       part.type === "text" && part.synthetic && !part.ignored && part.text.includes(AUTO_WORKTREE_NOTICE_MARKER),
   )
+}
+
+/** True if any user message in the session still carries the notice. */
+export function sessionHasAutoWorktreeNotice(messages: MessageV2.WithParts[]): boolean {
+  return messages.some((m) => m.info.role === "user" && hasAutoWorktreeNotice(m))
 }
 
 export function buildAutoWorktreeNotice(mainWorktreePath: string): string {
