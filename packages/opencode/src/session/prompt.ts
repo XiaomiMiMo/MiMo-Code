@@ -57,8 +57,11 @@ import {
 import {
   LOOP_STREAK_MAX_SPAN,
   LOOP_STREAK_TRIGGER_COUNT,
+  applyPersistedCrop,
+  cropMetadata,
   cropMessagesForStreak,
   detectStreak,
+  isCropActive,
   recoveryNote,
   streakKey,
 } from "../session/prompt/loop-streak"
@@ -4027,69 +4030,93 @@ NOTE: At any point in time through this workflow you should feel free to ask the
           }
           const maxSteps = agent.steps ?? Infinity
           const isLastStep = step >= maxSteps
-          msgs = yield* insertReminders({ messages: msgs, agent, model, session })
 
-          // Request-layer loop-streak recovery: crop a trailing identical
-          // thinking streak from the wire payload only. Physical messages
-          // stay in the DB for audit/replay. Runs AFTER insertReminders so
-          // persisted reminders still target the real last user message, not
-          // the request-only recovery note. Cache lookback still hits the
-          // pre-loop anchor because we only drop a suffix.
+          // Request-layer loop-streak recovery with a PERSISTED span.
+          // Detect once, write a recovery user that carries the span in part
+          // metadata, then re-apply that same filter on every later request.
+          // Re-detecting each turn would flip the view and break the cache
+          // prefix (and re-introduce poison thinking after a successful crop).
           const streakCfg = (yield* config.get()).experimental?.loop_streak_recovery
-          if (
-            streakCfg?.enabled &&
-            lastFinished &&
-            lastUser.id < lastFinished.id &&
-            !loopStreakCropped
-          ) {
-            const triggerCount = streakCfg.trigger_count ?? LOOP_STREAK_TRIGGER_COUNT
-            const maxSpan = streakCfg.max_span ?? LOOP_STREAK_MAX_SPAN
-            const entries = msgs.flatMap((message) => {
-              if (message.info.role !== "assistant" || !message.info.finish) return []
-              const key = streakKey(message.parts)
-              if (!key) return []
-              return [{ id: message.info.id, key }]
-            })
-            const span = detectStreak(entries, triggerCount, maxSpan)
-            if (span && span.toId === lastFinished.id) {
-              const crop = cropMessagesForStreak(msgs, span)
-              if (crop.omitted.length > 0) {
-                msgs = msgs.filter((message) => !crop.omitted.includes(message.info.id))
-                const recoveryId = MessageID.ascending()
-                const recoveryUser: MessageV2.WithParts = {
-                  info: {
+          if (streakCfg?.enabled) {
+            const activeCrop = isCropActive(lastUser.id, msgs)
+            if (activeCrop) {
+              const reapplied = applyPersistedCrop(msgs, activeCrop)
+              if (reapplied.omitted.length > 0) {
+                msgs = reapplied.kept as typeof msgs
+                loopStreakCropped = true
+                yield* slog.info("loop streak: reapplied persisted crop", {
+                  spanFrom: activeCrop.fromId,
+                  spanTo: activeCrop.toId,
+                  omitted: reapplied.omitted.length,
+                })
+              }
+            } else if (lastFinished && lastUser.id < lastFinished.id) {
+              const triggerCount = streakCfg.trigger_count ?? LOOP_STREAK_TRIGGER_COUNT
+              const maxSpan = streakCfg.max_span ?? LOOP_STREAK_MAX_SPAN
+              const entries = msgs.flatMap((message) => {
+                if (message.info.role !== "assistant" || !message.info.finish) return []
+                const key = streakKey(message.parts)
+                if (!key) return []
+                return [{ id: message.info.id, key }]
+              })
+              const span = detectStreak(entries, triggerCount, maxSpan)
+              if (span && span.toId === lastFinished.id) {
+                const crop = cropMessagesForStreak(msgs, span)
+                if (crop.omitted.length > 0) {
+                  msgs = msgs.filter((message) => !crop.omitted.includes(message.info.id)) as typeof msgs
+                  const recoveryId = MessageID.ascending()
+                  yield* sessions.updateMessage({
+                    id: recoveryId,
+                    role: "user" as const,
+                    sessionID,
+                    agentID: lastUser.agentID,
+                    agent: lastUser.agent,
+                    model: lastUser.model,
+                    tools: lastUser.tools,
+                    format: lastUser.format,
+                    time: { created: Date.now() },
+                  })
+                  const recoveryPart: MessageV2.TextPart = {
+                    id: PartID.ascending(),
+                    messageID: recoveryId,
+                    sessionID,
+                    type: "text",
+                    synthetic: true,
+                    text: recoveryNote(span, crop),
+                    metadata: cropMetadata(span),
+                  }
+                  yield* sessions.updatePart(recoveryPart)
+                  lastUser = {
                     ...lastUser,
                     id: recoveryId,
                     time: { created: Date.now() },
-                  },
-                  parts: [
+                  }
+                  msgs = [
+                    ...msgs,
                     {
-                      id: PartID.ascending(),
-                      messageID: recoveryId,
-                      sessionID,
-                      type: "text",
-                      synthetic: true,
-                      text: recoveryNote(span, crop),
-                    } satisfies MessageV2.TextPart,
-                  ],
+                      info: lastUser,
+                      parts: [recoveryPart],
+                    } satisfies MessageV2.WithParts,
+                  ]
+                  loopStreakCropped = true
+                  yield* slog.info("loop streak: cropped from request", {
+                    spanFrom: span.fromId,
+                    spanTo: span.toId,
+                    anchorId: span.anchorId,
+                    nMessages: crop.omittedMessages,
+                    nParts: crop.omittedParts,
+                    omittedBlocks: crop.omittedBlocks,
+                    keptBlocks: crop.keptBlocks,
+                    remainingSimilar: crop.remainingSimilar,
+                    cacheRisk: crop.cacheRisk,
+                    truncatedByCeiling: span.truncated,
+                  })
                 }
-                msgs = [...msgs, recoveryUser]
-                loopStreakCropped = true
-                yield* slog.info("loop streak: cropped from request", {
-                  spanFrom: span.fromId,
-                  spanTo: span.toId,
-                  anchorId: span.anchorId,
-                  nMessages: crop.omittedMessages,
-                  nParts: crop.omittedParts,
-                  omittedBlocks: crop.omittedBlocks,
-                  keptBlocks: crop.keptBlocks,
-                  remainingSimilar: crop.remainingSimilar,
-                  cacheRisk: crop.cacheRisk,
-                  truncatedByCeiling: span.truncated,
-                })
               }
             }
           }
+
+          msgs = yield* insertReminders({ messages: msgs, agent, model, session })
 
           const msg: MessageV2.Assistant = {
             id: MessageID.ascending(),

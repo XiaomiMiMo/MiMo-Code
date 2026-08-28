@@ -10,11 +10,11 @@ commits: f02ee661a6..5a597d938e
 
 ## Report
 
-**What was built** — Request-layer loop-streak recovery behind `experimental.loop_streak_recovery`. Consecutive finished assistants whose normalized thinking hash matches (tools may drift) are cropped from the next LLM request only; the DB trajectory is left intact for audit/replay. One short synthetic recovery user is appended in-memory so the wire still ends on a user message. Crop runs after `insertReminders`, only when continuing from a model step (`lastUser.id < lastFinished.id`), and never removes the pre-streak anchor. A `max_span` ceiling (default 64) keeps a detector bug from nuking a multi-hour run; text-loop recovery is suppressed on turns that already cropped.
+**What was built** — Request-layer loop-streak recovery behind `experimental.loop_streak_recovery`. Detection runs once per streak (thinking-primary key; tools may drift). On hit, the span is cropped from the LLM request only and a recovery user is **persisted** with the span in part metadata. Later requests re-apply that same filter so the cache prefix stays stable and poison thinking cannot return. Cropped assistants stay in the DB for audit/replay; the recovery note is visible in TUI. `max_span` ceiling (default 64); text-loop recovery suppressed on crop turns.
 
-**Verification** — `bun typecheck` PASS; `bun test test/session/loop-streak.test.ts test/session/text-loop-detection.test.ts` PASS (36 then 19 after the key-semantics fix). Independent review of `9bab2c2a12` found 3 criticals (thinking+drifting tools could not crop; text-loop double recovery after full crop; missing MR-3931 tests) and 3 mediums; all fixed in `5a597d938e` and re-review PASS.
+**Verification** — `bun typecheck` PASS; `bun test test/session/loop-streak.test.ts` PASS (22). Independent review of `9bab2c2a12` found 3 criticals + 3 mediums → fixed `5a597d938e` → re-review PASS. Persisted-span follow-up after design critique that per-request re-detection breaks prefix stability.
 
-**Journey log** — Deleting a long suffix does not break Anthropic 20-block lookback by itself: lookback walks remaining blocks, and a suffix crop keeps the pre-loop write anchor within 1–2 blocks. Real cache risks are deleting the anchor, a long recovery body, or middle-of-prefix edits. Streak key must be thinking-primary; concatenating exact toolSig made MR-3931 uncatchable. Re-deriving `detectStreak` on already-cropped msgs is a false negative — gate on the crop flag. Request-only synthetic users must not become `insertReminders` targets.
+**Journey log** — Suffix delete does not break Anthropic 20-block lookback by itself; real risks are deleting the anchor, a long recovery body, or middle-of-prefix edits. Streak key must be thinking-primary. Per-request re-detection is wrong: if the tail changes, the view flips, LCP truncates, and poison returns — detect once, persist the span on the recovery user, re-apply until the user speaks again. Request-only synthetic users must not become `insertReminders` targets.
 
 ## [S1] Problem
 
@@ -67,23 +67,35 @@ hash is offline-only.
 
 ### Detection
 
-At the start of each loop iteration, after `insertReminders` and only when
-`lastUser.id < lastFinished.id` (continuing from a model step, not a fresh
-user intervention):
+Detect **once** per streak, not on every request. Re-detecting would flip the
+request view, break the cache prefix, and re-introduce poison thinking after a
+successful crop.
 
-1. Build keys for finished assistants in the current request list.
-2. Trigger when the last `triggerCount` (default 3) finished assistants share one `key`.
-3. Walk backward from the current message while `key` matches; stop at the first non-match. That predecessor is the **anchor** (always kept).
-4. Span = `[firstMatching, current]` inclusive.
-5. Require `span.toId === lastFinished.id` so a stale streak does not crop after newer non-matching work.
+At the start of each loop iteration:
+
+1. If an active persisted crop exists (`isCropActive`: latest user is the recovery note whose part metadata carries the span), **re-apply that same filter** and skip detection.
+2. Otherwise, only when `lastUser.id < lastFinished.id` (continuing from a model step, not a fresh user intervention):
+   - Build keys for finished assistants.
+   - Trigger when the last `triggerCount` (default 3) finished assistants share one `key`.
+   - Walk backward while `key` matches; predecessor is the **anchor** (always kept).
+   - Require `span.toId === lastFinished.id`.
+   - On hit: crop the request view, **persist** a synthetic recovery user whose text-part `metadata.origin` is `{ kind: "loop_streak_crop", fromId, toId, key, truncated }`. That user becomes `lastUser` for this iteration.
+3. Crop clears automatically when the latest user is no longer the recovery note (user sent a new message).
+
+Persisting the span on the recovery user gives: stable prefix across later
+requests in the same turn, restart survival, and TUI visibility of the recovery
+note (cropped assistants stay in the DB).
 
 ### Request crop
 
 ```text
 kept     = messages with id < span.from OR id > span.to
          + force-include anchor (id < span.from, already kept)
-recovery = one synthetic user text part, appended as a new user message
+recovery = one persisted synthetic user (carries span metadata)
 ```
+
+Later requests re-apply the same `fromId..toId` filter so new steps append
+after the recovery note without reintroducing the span.
 
 Invariants (assert in tests, log in prod):
 

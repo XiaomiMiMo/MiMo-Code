@@ -176,3 +176,83 @@ export function recoveryNote(span: StreakSpan, crop: StreakCrop): string {
     .filter((line) => line.length > 0)
     .join("\n")
 }
+
+export const LOOP_STREAK_CROP_KIND = "loop_streak_crop"
+
+export type PersistedStreakCrop = {
+  fromId: string
+  toId: string
+  key: string
+  truncated: boolean
+}
+
+export function cropMetadata(span: StreakSpan): {
+  origin: { kind: typeof LOOP_STREAK_CROP_KIND } & PersistedStreakCrop
+} {
+  return {
+    origin: {
+      kind: LOOP_STREAK_CROP_KIND,
+      fromId: span.fromId,
+      toId: span.toId,
+      key: span.key,
+      truncated: span.truncated,
+    },
+  }
+}
+
+function cropOrigin(part: MessageV2.Part): (PersistedStreakCrop & { kind: string }) | undefined {
+  if (part.type !== "text") return undefined
+  const origin = part.metadata?.origin as { kind?: string } | undefined
+  if (origin?.kind !== LOOP_STREAK_CROP_KIND) return undefined
+  return origin as PersistedStreakCrop & { kind: string }
+}
+
+export function extractCropMetadata(messages: readonly StreakMessage[]): PersistedStreakCrop | undefined {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const message = messages[i]
+    if (message.info.role !== "user") continue
+    for (const part of message.parts) {
+      const origin = cropOrigin(part)
+      if (!origin?.fromId || !origin?.toId || !origin?.key) continue
+      return {
+        fromId: origin.fromId,
+        toId: origin.toId,
+        key: origin.key,
+        truncated: origin.truncated === true,
+      }
+    }
+  }
+  return undefined
+}
+
+/** Crop stays active while the latest user is still the recovery note. */
+export function isCropActive(
+  lastUserId: string | undefined,
+  messages: readonly StreakMessage[],
+): PersistedStreakCrop | undefined {
+  if (!lastUserId) return undefined
+  const crop = extractCropMetadata(messages)
+  if (!crop) return undefined
+  const lastUser = messages.findLast((message) => message.info.id === lastUserId)
+  if (!lastUser || lastUser.info.role !== "user") return undefined
+  const isRecovery = lastUser.parts.some((part) => cropOrigin(part) !== undefined)
+  return isRecovery ? crop : undefined
+}
+
+/** Re-apply a persisted span. Same filter every request → stable prefix. */
+export function applyPersistedCrop(
+  messages: readonly StreakMessage[],
+  crop: PersistedStreakCrop,
+): { kept: StreakMessage[]; omitted: string[] } {
+  const omitted = messages
+    .filter(
+      (message) =>
+        message.info.role === "assistant" &&
+        message.info.id >= crop.fromId &&
+        message.info.id <= crop.toId,
+    )
+    .map((message) => message.info.id)
+  if (omitted.length === 0) return { kept: [...messages], omitted }
+  const omittedSet = new Set(omitted)
+  return { kept: messages.filter((message) => !omittedSet.has(message.info.id)), omitted }
+}

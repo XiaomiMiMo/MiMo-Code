@@ -1,7 +1,11 @@
 import { describe, expect, test } from "bun:test"
 import {
+  applyPersistedCrop,
   cropMessagesForStreak,
+  cropMetadata,
   detectStreak,
+  extractCropMetadata,
+  isCropActive,
   reasonHash,
   recoveryNote,
   streakKey,
@@ -313,5 +317,78 @@ describe("cropMessagesForStreak", () => {
     expect(note).toContain("3 step(s) were omitted")
     expect(note).toContain("2 earlier similar step(s)")
     expect(note).toContain("Abandon that plan")
+  })
+})
+
+describe("persisted crop span", () => {
+  const recoveryUser = (id: string, fromId: string, toId: string): StreakMessage => ({
+    info: { id, role: "user" },
+    parts: [
+      {
+        id: nextId(),
+        sessionID: sid,
+        messageID: MessageID.make(id.padEnd(26, "0")),
+        type: "text",
+        text: "LOOP RECOVERY",
+        synthetic: true,
+        metadata: cropMetadata({
+          fromId,
+          toId,
+          anchorId: "a0",
+          key: "reason:abc",
+          length: 3,
+          truncated: false,
+        }),
+      } as MessageV2.TextPart,
+    ],
+  })
+
+  test("extractCropMetadata reads span from recovery user part", () => {
+    const messages = [
+      msg("u0", "user", [text("go")]),
+      msg("a1", "assistant", [reasoning("same")]),
+      msg("a2", "assistant", [reasoning("same")]),
+      recoveryUser("r1", "a1", "a2"),
+    ]
+    expect(extractCropMetadata(messages)).toEqual({
+      fromId: "a1",
+      toId: "a2",
+      key: "reason:abc",
+      truncated: false,
+    })
+  })
+
+  test("isCropActive only when last user is the recovery note", () => {
+    const loop = [
+      msg("u0", "user", [text("go")]),
+      msg("a1", "assistant", [reasoning("same")]),
+      msg("a2", "assistant", [reasoning("same")]),
+      recoveryUser("r1", "a1", "a2"),
+    ]
+    expect(isCropActive("r1", loop)?.fromId).toBe("a1")
+    expect(isCropActive("u0", loop)).toBeUndefined()
+    expect(isCropActive("u2", [...loop, msg("u2", "user", [text("new")])])).toBeUndefined()
+  })
+
+  test("applyPersistedCrop removes the same span every time", () => {
+    const base = [
+      msg("u0", "user", [text("go")]),
+      msg("a0", "assistant", [reasoning("plan")]),
+      msg("a1", "assistant", [reasoning("same")]),
+      msg("a2", "assistant", [reasoning("same")]),
+      recoveryUser("r1", "a1", "a2"),
+    ]
+    const withNewStep = [
+      ...base,
+      msg("a3", "assistant", [reasoning("fresh plan")]),
+    ]
+    const crop = { fromId: "a1", toId: "a2", key: "reason:abc", truncated: false }
+    expect(applyPersistedCrop(base, crop).kept.map((m) => m.info.id)).toEqual(["u0", "a0", "r1"])
+    expect(applyPersistedCrop(withNewStep, crop).kept.map((m) => m.info.id)).toEqual([
+      "u0",
+      "a0",
+      "r1",
+      "a3",
+    ])
   })
 })
