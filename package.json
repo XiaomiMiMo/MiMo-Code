@@ -130,6 +130,7 @@
     "@standard-community/standard-openapi@0.2.9": "patches/@standard-community%2Fstandard-openapi@0.2.9.patch",
     "solid-js@1.9.10": "patches/solid-js@1.9.10.patch",
     "@opentui/core@0.1.101": "patches/@opentui%2Fcore@0.1.101.patch",
-    "@ai-sdk/openai-compatible@2.0.41": "patches/@ai-sdk%2Fopenai-compatible@2.0.41.patch"
+    "@ai-sdk/openai-compatible@2.0.41": "patches/@ai-sdk%2Fopenai-compatible@2.0.41.patch",
+    "@ai-sdk/openai@3.0.53": "patches/@ai-sdk%2Fopenai@3.0.53.patch"
   }
 }

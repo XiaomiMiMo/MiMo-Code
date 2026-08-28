@@ -1,0 +1,44 @@
+diff --git a/dist/index.js b/dist/index.js
+index 1c78d6f13caed5cbfa034d86f5e51729d540a1ba..deb31a6e18bd9e6a7e9c1dc5de87d0b3d04d35f3 100644
+--- a/dist/index.js
++++ b/dist/index.js
+@@ -3361,7 +3361,7 @@
+             id: import_v421.z.string(),
+             call_id: import_v421.z.string(),
+             name: import_v421.z.string(),
+-            arguments: import_v421.z.string()
++            arguments: import_v421.z.string().nullish()
+           }),
+           import_v421.z.object({
+             type: import_v421.z.literal("web_search_call"),
+@@ -3878,7 +3878,7 @@
+                       index: import_v421.z.number()
+                     })
+                   ])
+-                )
++                ).default([])
+               })
+             )
+           }),
+diff --git a/dist/index.mjs b/dist/index.mjs
+index 3dee8855a0cff4c2d5bef4ff1cb2a92a48bd8c4f..9567777d9568510362b8546444ee6a638f6ac893 100644
+--- a/dist/index.mjs
++++ b/dist/index.mjs
+@@ -3438,7 +3438,7 @@
+             id: z21.string(),
+             call_id: z21.string(),
+             name: z21.string(),
+-            arguments: z21.string()
++            arguments: z21.string().nullish()
+           }),
+           z21.object({
+             type: z21.literal("web_search_call"),
+@@ -3955,7 +3955,7 @@
+                       index: z21.number()
+                     })
+                   ])
+-                )
++                ).default([])
+               })
+             )
+           }),
