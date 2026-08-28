@@ -45,16 +45,22 @@ export function resolveInvalidOutputPolicy(input: {
  *  - system agent -> non-interactive (auto-deny, no human to answer)
  *  - orchestrator peer (background + mode:peer + has a parent) -> forward the ask
  *    for approval (interactive, with the parent session as approval route)
- *  - other background WITH a parent (e.g. actor run/spawn subagents) ->
- *    non-interactive but INHERIT: reuse the parent session's already-held grants
- *    (auto-allow granted paths, fail-closed on ungranted ones — never hang)
- *  - background without a parent -> non-interactive (auto-deny)
+ *  - other background WITH a parent session id (child-session peers, or
+ *    same-session actor subagents via sessionID) -> non-interactive but INHERIT:
+ *    reuse the parent session's already-held grants (auto-allow granted paths,
+ *    fail-closed on ungranted ones — never hang)
+ *  - background with neither sessionParentID nor (for mode:subagent) sessionID
+ *    -> non-interactive (auto-deny)
  *  - normal foreground -> interactive
  *  Pure function so the gate is unit-testable without a full prompt turn.
  */
 export function decideAskRouting(input: {
   askActor?: { agent: string; background: boolean; mode: string; parentActorID?: string }
   sessionParentID?: string
+  /** Current session id. Same-session actor subagents share the parent session
+   *  (sessionParentID is empty on a root session); their grants are published
+   *  under this id, so it is the inherit parent for that case. */
+  sessionID?: string
   agentName: string
   // When false, orchestrator-peer forwarding is disabled (feature flag off) and
   // a peer falls back to the background auto-deny path.
@@ -72,12 +78,29 @@ export function decideAskRouting(input: {
   if (isOrchestratorPeer && input.sessionParentID) {
     return { interactive: true, forward: { parentSessionID: input.sessionParentID } }
   }
-  // Ordinary background subagent that has a parent session: don't fail closed
-  // outright — let it inherit the permissions the parent already holds a grant
-  // for. Still non-interactive (no human attached); the ask consults the parent
-  // snapshot and auto-allows only genuinely-granted paths, else fails closed.
-  if (input.askActor?.background && input.sessionParentID) {
-    return { interactive: false, inherit: { parentSessionID: input.sessionParentID } }
+  // Ordinary background subagent: don't fail closed outright — let it inherit
+  // the permissions the parent already holds a grant for. Still non-interactive
+  // (no human attached); the ask consults the parent snapshot and auto-allows
+  // only genuinely-granted paths, else fails closed.
+  //
+  // Inherit parent resolution:
+  // - child-session peer (orchestrator worker): session.parentID points at the
+  //   orchestrator session that published the grants.
+  // - same-session actor spawn/run subagent: they share the parent session, so
+  //   session.parentID is empty on a root session. Grants were published under
+  //   the current session id — use that. Without this, same-session actor
+  //   subagents silently skipped inherit and only skip-all could save them.
+  //
+  // sessionID fallback is subagent-only on purpose: a peer without
+  // sessionParentID is a broken registration (its parent is the orchestrator
+  // session). Looking up the peer's own session as "parent" would silently
+  // broaden that edge; keep it fail-closed.
+  if (input.askActor?.background) {
+    const inheritParent = input.sessionParentID
+      ?? (input.askActor.mode === "subagent" ? input.sessionID : undefined)
+    if (inheritParent) {
+      return { interactive: false, inherit: { parentSessionID: inheritParent } }
+    }
   }
   return { interactive: !input.askActor?.background }
 }

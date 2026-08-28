@@ -1520,6 +1520,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
             }
           : undefined,
         sessionParentID: input.session.parentID,
+        sessionID: input.session.id,
         agentName: input.agent.name,
         orchestratorEnabled: Flag.MIMOCODE_EXPERIMENTAL_ORCHESTRATOR,
       })
