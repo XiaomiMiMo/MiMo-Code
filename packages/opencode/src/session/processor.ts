@@ -782,7 +782,12 @@ export const layer: Layer.Layer<
             state: MessageV2.abortedToolState(part.state),
           })
         }
-        ctx.assistantMessage.time.completed = Date.now()
+        // 有 error = 没完成 = 留在 /recovery 候选集里。不管错误类型(瞬态/终态/用户中止),
+        // 只要消息带 error,就不写 completed,让 resume 端点能找到它。
+        // 正常完成(无 error)才标记 completed。
+        if (!ctx.assistantMessage.error) {
+          ctx.assistantMessage.time.completed = Date.now()
+        }
         yield* session.updateMessage(ctx.assistantMessage)
       })
 
