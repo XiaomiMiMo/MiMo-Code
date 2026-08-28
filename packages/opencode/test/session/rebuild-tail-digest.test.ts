@@ -218,6 +218,34 @@ describe("collapseCheckpointTail", () => {
     expect(collapsed[1]!.parts.some((p) => p.type === "tool" && p.state.status === "completed")).toBe(true)
   })
 
+  test("never drops a user-role message, even without real prose", () => {
+    // insertReminders persists skill-catalog / auto-worktree gates on the
+    // last user message. A file-only or synthetic-only user turn must stay
+    // live or the gate says "already sent" while the provider never sees it.
+    const collapsed = collapseCheckpointTail([
+      boundaryUser("m-cp", "u-file", ['- read(path="a.ts")']),
+      {
+        info: userInfo("u-file", 10),
+        parts: [
+          {
+            ...basePart("u-file", "u-file-f"),
+            type: "file" as const,
+            mime: "image/png",
+            filename: "shot.png",
+            url: "data:image/png;base64,x",
+          } as MessageV2.Part,
+          textPart("u-file", "u-file-gate", "Authoritative skills catalog snapshot v2:", {
+            synthetic: true,
+          }),
+        ],
+      },
+    ])
+
+    expect(collapsed).toHaveLength(2)
+    expect(String(collapsed[1]!.info.id)).toBe("u-file")
+    expect(collapsed[1]!.parts.some((p) => p.type === "text" && p.synthetic)).toBe(true)
+  })
+
   test("legacy boundary without digestUpTo is left verbatim", () => {
     const msgs: MessageV2.WithParts[] = [
       boundaryUser("m-cp"),

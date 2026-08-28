@@ -51,16 +51,22 @@ function truncate(s: string, max: number): string {
   return s.length <= max ? s : s.slice(0, max - 60) + "\n... (truncated, full body at file)"
 }
 
-/** Drop the first top-level `# ` heading so the section H1 is the only file root. */
-function stripFirstH1(text: string): string {
-  let dropped = false
+/**
+ * Drop every top-level `# ` heading (outside fenced code blocks) so the
+ * section H1 is the only file root. Stripping only the first leaves a
+ * surviving root that reparents every following section, and a `# ` line
+ * inside a fence would otherwise be stripped as if it were a heading.
+ */
+function stripTopLevelH1s(text: string): string {
+  let inFence = false
   return text
     .split("\n")
     .filter((line) => {
-      if (!dropped && /^# [^#]/.test(line)) {
-        dropped = true
-        return false
+      if (/^(```|~~~)/.test(line)) {
+        inFence = !inFence
+        return true
       }
+      if (!inFence && /^# [^#]/.test(line)) return false
       return true
     })
     .join("\n")
@@ -70,14 +76,14 @@ function stripFirstH1(text: string): string {
 /**
  * Push a top-level section. File-backed sections carry a single full `File:`
  * path under the H1 — do not also put the basename in the H1; that repeats
- * the last path segment. The file body's own first H1 is stripped so this
- * section heading is the only root and every following ## belongs to it.
+ * the last path segment. The file body's own top-level H1s are stripped so
+ * this section heading is the only root and every following ## belongs to it.
  */
 function pushSection(lines: string[], heading: string, body?: string, filePath?: string) {
   lines.push(`# ${heading}`)
   if (filePath) lines.push(`File: ${filePath}`)
   if (body !== undefined) {
-    const text = filePath ? stripFirstH1(body) : body.trim()
+    const text = filePath ? stripTopLevelH1s(body) : body.trim()
     if (text) lines.push(text)
   }
   lines.push("")
@@ -532,7 +538,17 @@ export interface Interface {
    */
   readonly renderRebuildContext: (
     sessionID: SessionID,
-    opts?: { lastMessageInfo?: LastMessageInfo; agentID?: string; digestUpTo?: MessageID },
+    opts?: {
+      lastMessageInfo?: LastMessageInfo
+      agentID?: string
+      digestUpTo?: MessageID
+      /**
+       * Watermark this rebuild is inserting against. When present, Recent
+       * activity is sliced from this boundary instead of re-reading
+       * last_checkpoint_message_id (which can race an in-flight writer).
+       */
+      boundary?: MessageID
+    },
   ) => Effect.Effect<string>
 
   readonly lastBoundary: (sessionID: SessionID) => Effect.Effect<MessageID | undefined>
@@ -1235,7 +1251,12 @@ export const layer: Layer.Layer<
 
     const renderRebuildContext = Effect.fn("SessionCheckpoint.renderRebuildContext")(function* (
       sessionID: SessionID,
-      opts?: { lastMessageInfo?: LastMessageInfo; agentID?: string; digestUpTo?: MessageID },
+      opts?: {
+        lastMessageInfo?: LastMessageInfo
+        agentID?: string
+        digestUpTo?: MessageID
+        boundary?: MessageID
+      },
     ) {
       // renderRebuildContext is for the user-facing main agent's context rebuild.
       // Subagent-mode actors (system-spawned writers, model-spawned subagents)
@@ -1518,9 +1539,13 @@ export const layer: Layer.Layer<
       // watermark at insert time, as a compact name+args list. Written into
       // the same rebuild-context block as the checkpoint body so send-time
       // collapse only has to drop those messages (no second digest block).
+      // Slice from opts.boundary (the watermark this insert is using) —
+      // re-reading lastBoundary here can disagree with the insert if a
+      // concurrent writer advances the watermark between the two reads.
+      let hasActivity = false
       if (opts?.digestUpTo) {
         const digestUpTo = opts.digestUpTo
-        const boundaryID = yield* lastBoundary(sessionID).pipe(Effect.catch(() => Effect.succeed(undefined)))
+        const boundaryID = opts.boundary
         if (boundaryID) {
           // Main slice only — the runLoop collapse is main-scoped; subagent
           // activity must not appear as if the main agent performed it.
@@ -1528,17 +1553,21 @@ export const layer: Layer.Layer<
           const tail = all.filter((m) => m.info.id > boundaryID && m.info.id <= digestUpTo)
           const activity = renderTailDigest(tail)
           if (activity) {
+            hasActivity = true
             lines.push("")
             lines.push(activity)
           }
         }
       }
 
-      // Section 10: seam framing. Short: early history is the checkpoint
-      // above; the tail is the Recent activity list; resume without recap.
+      // Section 10: seam framing. Only claim a Recent activity list when one
+      // was actually rendered — a silent render bail would otherwise leave
+      // prose pointing at a section that does not exist.
       lines.push("")
       lines.push(
-        "This session is continued from a checkpoint. The blocks above cover earlier history and the recent activity list. Resume the last task from that list and any live messages after it. Do not recap this dump.",
+        hasActivity
+          ? "This session is continued from a checkpoint. The blocks above cover earlier history and the recent activity list. Resume the last task from that list and any live messages after it. Do not recap this dump."
+          : "This session is continued from a checkpoint. The blocks above cover earlier history. Resume the last task from the most recent live messages. Do not recap this dump.",
       )
 
       // Section 11: tail-aware system reminder. Picks the appropriate nudge
@@ -1631,10 +1660,15 @@ export const layer: Layer.Layer<
         lastMessageInfo: input.lastMessageInfo,
         agentID: input.agentID,
         digestUpTo: input.digestUpTo,
+        boundary: input.boundary,
       }).pipe(Effect.catch(() => Effect.succeed("")))
       if (!rebuildContext) return false
 
       const indexText = yield* renderIndex(input.sessionID).pipe(Effect.catch(() => Effect.succeed("")))
+      // Persist digestUpTo only when the activity section was actually
+      // rendered. Sending-time collapse would otherwise drop the tail while
+      // nothing recorded what those messages were.
+      const hasActivity = rebuildContext.includes("# Recent activity")
 
       const syntheticTime = (input.boundaryCreatedAt ?? Date.now()) + 1
       const msg = yield* session.updateMessage({
@@ -1654,7 +1688,7 @@ export const layer: Layer.Layer<
         checkpointDir: "",
         checkpointNumber: 0,
         coveredUpTo: input.boundary,
-        ...(input.digestUpTo ? { digestUpTo: input.digestUpTo } : {}),
+        ...(input.digestUpTo && hasActivity ? { digestUpTo: input.digestUpTo } : {}),
       })
 
       if (indexText) {

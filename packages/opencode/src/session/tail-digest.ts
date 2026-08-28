@@ -55,15 +55,14 @@ function digestLines(tail: readonly WithParts[]): { lines: string[]; interrupted
     // Never re-digest a prior rebuild/compaction boundary — that folds the
     // previous dump into itself on a second rebuild.
     if (isBoundaryUser(msg)) continue
+    // User-role messages always stay live after collapse (see
+    // collapseCheckpointTail); do not also log them.
+    if (msg.info.role === "user") continue
     for (const part of msg.parts) {
       if (part.type === "text" && !part.ignored && !part.synthetic) {
         const text = part.text.trim()
         if (!text) continue
         lines.push(`- ${msg.info.role}: ${truncate(text, MAX_LINE_CHARS)}`)
-        continue
-      }
-      if (part.type === "file" && msg.info.role === "user") {
-        lines.push(`- user: [file ${part.filename ?? part.mime}]`)
         continue
       }
       if (part.type === "subtask") {
@@ -98,10 +97,16 @@ function checkpointDigestUpTo(msg: WithParts): string | undefined {
 }
 
 /**
- * Drop messages in [checkpoint+1, digestUpTo] after the latest rebuild
- * boundary. The activity list itself is already in the boundary's rebuild
- * context (written at insert time), so this only removes the now-redundant
- * verbatim tail. Post-insert messages stay live.
+ * Drop assistant messages in [checkpoint+1, digestUpTo] after the latest
+ * rebuild boundary. The activity list itself is already in the boundary's
+ * rebuild context (written at insert time), so this only removes the
+ * now-redundant verbatim tool/assistant tail. Post-insert messages stay live.
+ *
+ * User-role messages are never dropped: the last user is where insertReminders
+ * persists skill-catalog / auto-worktree gates, and a file-only or
+ * synthetic-only user turn is still an instruction the provider must see.
+ * Collapsing it would mark the reminder "already sent" while the provider
+ * never receives it.
  */
 export function collapseCheckpointTail(msgs: readonly WithParts[]): WithParts[] {
   const boundaryIdx = msgs.findLastIndex((m) => m.info.role === "user" && m.parts.some((p) => p.type === "checkpoint"))
@@ -111,7 +116,12 @@ export function collapseCheckpointTail(msgs: readonly WithParts[]): WithParts[] 
   if (!digestUpTo) return msgs as WithParts[]
 
   const head = msgs.slice(0, boundaryIdx + 1)
-  const live = msgs.slice(boundaryIdx + 1).filter((m) => m.info.id > digestUpTo)
+  // Never drop a user-role message: the last user is where insertReminders
+  // persists skill-catalog / auto-worktree gates, and a file-only or
+  // synthetic-only user turn is still an instruction the provider must see.
+  const live = msgs
+    .slice(boundaryIdx + 1)
+    .filter((m) => m.info.id > digestUpTo || m.info.role === "user")
   if (live.length === msgs.length - boundaryIdx - 1) return msgs as WithParts[]
   return [...head, ...live]
 }

@@ -380,6 +380,50 @@ Next: implement renderRebuildContext 9-section render in src/session/checkpoint.
     ),
   )
 
+  it.live("file-backed section keeps one root: all top-level H1s stripped, fences untouched", () =>
+    provideTmpdirInstance(() =>
+      Effect.gen(function* () {
+        const cp = yield* SessionCheckpoint.Service
+        const session = yield* Session.Service
+        const memory = yield* Memory.Service
+
+        const sess = yield* session.create({ title: "h1 sess" })
+        const root = yield* memory.root()
+        const sessDir = path.join(root, "sessions", sess.id)
+        yield* Effect.promise(async () => {
+          await fs.mkdir(sessDir, { recursive: true })
+          await Bun.write(
+            path.join(sessDir, "checkpoint.md"),
+            [
+              "# Session checkpoint",
+              "",
+              "## §1 Active intent",
+              "",
+              "body",
+              "",
+              "# Another root the writer may emit",
+              "",
+              "## nested under another root",
+              "",
+              "```",
+              "# not a heading",
+              "```",
+              "",
+            ].join("\n"),
+          )
+        })
+
+        const out = yield* cp.renderRebuildContext(sess.id)
+        const section = out.slice(out.indexOf("# Session checkpoint"))
+        expect(section).toContain("# Session checkpoint")
+        expect(section).not.toContain("# Another root the writer may emit")
+        expect(section).toContain("# not a heading")
+        expect(section).toContain("## nested under another root")
+        expect(section.match(/^# Session checkpoint$/m)?.length).toBe(1)
+      }),
+    ),
+  )
+
   it.live("rebuild context loads notes.md when non-empty (F14)", () =>
     provideTmpdirInstance(() =>
       Effect.gen(function* () {
