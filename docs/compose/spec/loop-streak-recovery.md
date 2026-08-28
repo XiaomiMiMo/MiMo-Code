@@ -148,7 +148,11 @@ Rough is fine; purpose is observability of "we routinely crop >20 blocks".
 
 ### Recovery note content
 
-Short, synthetic, one user message. Must include: loop detected, N steps omitted from context, abandon current approach, do not replay the same thinking. No long essays (long recovery is a real 20-block risk).
+Neutral only: `Continue.` (same string as `transform.ts` trailing-assistant
+continuation). Do **not** mention loop/recovery/omitted counts — that primes
+the model back into the failed narrative. Framing is "resume as if the
+connection dropped before those steps". Span lives in part metadata, not the
+text. Counts/audit stay in slog.
 
 ## [S3] Out of Scope
 

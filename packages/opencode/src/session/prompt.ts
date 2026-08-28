@@ -4031,11 +4031,12 @@ NOTE: At any point in time through this workflow you should feel free to ask the
           const maxSteps = agent.steps ?? Infinity
           const isLastStep = step >= maxSteps
 
-          // Request-layer loop-streak recovery with PERSISTED spans.
-          // A crop is written once (recovery user + span metadata) and then
-          // re-applied on EVERY later request until the feature is disabled —
-          // including after the user sends a new message. Clearing on user
-          // speech would reintroduce poison thinking and break the prefix.
+          // Request-layer loop-streak crop, framed as a resume from before the
+          // failed steps ("connection dropped"): persist span metadata on a
+          // neutral "Continue." user, re-apply that filter on EVERY later
+          // request until the feature is off. Never mention "loop" in the note
+          // — that primes the model back into the same narrative. User speech
+          // does not clear an existing span.
           const streakCfg = (yield* config.get()).experimental?.loop_streak_recovery
           if (streakCfg?.enabled) {
             const existingCrops = extractAllCrops(msgs)

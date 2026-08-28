@@ -157,24 +157,15 @@ export function cropMessagesForStreak(
   }
 }
 
-export function recoveryNote(span: StreakSpan, crop: StreakCrop): string {
-  const omitted = crop.omitted.length
-  const remaining = crop.remainingSimilar
-  const remainingNote = remaining > 0 ? ` ${remaining} earlier similar step(s) were left in context.` : ""
-  const ceilingNote = span.truncated
-    ? ` Span was capped at ${span.length} messages; older identical steps may still be present.`
-    : ""
-  return [
-    "<system-reminder>",
-    "LOOP RECOVERY: The previous steps repeated the same thinking and actions without progress.",
-    `${omitted} step(s) were omitted from this request so you can take a different approach.`,
-    remainingNote.trim(),
-    ceilingNote.trim(),
-    "Abandon that plan. Inspect the current workspace state, explain why it stalled, and continue with a materially different strategy. Do not replay the same thinking or the same tool calls.",
-    "</system-reminder>",
-  ]
-    .filter((line) => line.length > 0)
-    .join("\n")
+/**
+ * Neutral continuation only. Do NOT mention "loop"/"recovery"/omitted counts —
+ * priming the model with those words can re-enter the same narrative. The
+ * crop is framed as "connection dropped before the failed steps": the model
+ * resumes from the pre-loop prefix and re-reads workspace side effects.
+ * Span persistence lives in part metadata, not in this text.
+ */
+export function recoveryNote(_span?: StreakSpan, _crop?: StreakCrop): string {
+  return "Continue."
 }
 
 export const LOOP_STREAK_CROP_KIND = "loop_streak_crop"

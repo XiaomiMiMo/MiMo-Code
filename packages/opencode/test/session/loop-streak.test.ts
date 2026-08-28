@@ -294,7 +294,7 @@ describe("cropMessagesForStreak", () => {
     expect(crop.kept[1].parts.map((p) => p.id)).toEqual(messages[1].parts.map((p) => p.id))
   })
 
-  test("recovery note mentions omitted count and abandon plan", () => {
+  test("recovery note is neutral Continue. only (no loop priming)", () => {
     const note = recoveryNote(
       {
         fromId: "a1",
@@ -315,9 +315,10 @@ describe("cropMessagesForStreak", () => {
         cacheRisk: true,
       },
     )
-    expect(note).toContain("3 step(s) were omitted")
-    expect(note).toContain("2 earlier similar step(s)")
-    expect(note).toContain("Abandon that plan")
+    expect(note).toBe("Continue.")
+    expect(note.toLowerCase()).not.toContain("loop")
+    expect(note.toLowerCase()).not.toContain("recovery")
+    expect(note.toLowerCase()).not.toContain("omit")
   })
 })
 
