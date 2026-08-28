@@ -78,9 +78,10 @@ import { SessionProcessor } from "./processor"
 import { buildLLMRequestPrefix } from "./llm-request-prefix"
 import {
   buildAutoWorktreeNotice,
+  firstMutatedMainWorktree,
   hasAutoWorktreeNotice,
+  isAutoWorktreeHintSent,
   markAutoWorktreeHintSent,
-  pendingMainWorktreeNotices,
 } from "@/tool/auto-worktree-hint"
 import {
   serializeTrajectoryMessages,
@@ -1166,31 +1167,32 @@ export const layer = Layer.effect(
         })
       }
 
-      // Auto-worktree notice: once per main worktree (not once per session), after
-      // a completed write or git mutation landed in that repo's MAIN worktree.
-      // First write usually names one repo; a later write into a second repo
-      // injects again for the new path only. Path-based on purpose — a session
-      // bound to a non-git scratch dir that `cd`s into another project's main
-      // checkout still hits. Injected as a user-side system-reminder; each
-      // notice records the paths it named in part metadata so the next scan
-      // only injects for paths not yet mentioned. Never touches the system prompt.
+      // Auto-worktree notice: once per session, after a completed write or git
+      // mutation landed in some git MAIN worktree. Names that path and carries a
+      // standing rule for any later repo. Path-based on purpose — a session bound
+      // to a non-git scratch dir that `cd`s into another project's main checkout
+      // still hits. Injected as a user-side system-reminder and persisted via
+      // auto_worktree_hint_sent so compaction/rebuild cannot re-inject. Never
+      // touches the system prompt.
       if (input.agent.mode === "primary" && !input.session.parentID) {
-        if (hasAutoWorktreeNotice(userMessage)) {
-          yield* Effect.sync(() => markAutoWorktreeHintSent(input.session.id))
-        } else {
-          const pending = pendingMainWorktreeNotices(input.messages)
-          if (pending.length > 0) {
-            const part = yield* sessions.updatePart({
-              id: PartID.ascending(),
-              messageID: userMessage.info.id,
-              sessionID: userMessage.info.sessionID,
-              type: "text",
-              text: buildAutoWorktreeNotice(pending),
-              synthetic: true,
-              metadata: { mainWorktreePaths: pending },
-            })
-            userMessage.parts.push(part)
+        const alreadySent = yield* Effect.sync(() => isAutoWorktreeHintSent(input.session.id))
+        if (!alreadySent) {
+          if (hasAutoWorktreeNotice(userMessage)) {
             yield* Effect.sync(() => markAutoWorktreeHintSent(input.session.id))
+          } else {
+            const hit = firstMutatedMainWorktree(input.messages)
+            if (hit) {
+              const part = yield* sessions.updatePart({
+                id: PartID.ascending(),
+                messageID: userMessage.info.id,
+                sessionID: userMessage.info.sessionID,
+                type: "text",
+                text: buildAutoWorktreeNotice(hit),
+                synthetic: true,
+              })
+              userMessage.parts.push(part)
+              yield* Effect.sync(() => markAutoWorktreeHintSent(input.session.id))
+            }
           }
         }
       }

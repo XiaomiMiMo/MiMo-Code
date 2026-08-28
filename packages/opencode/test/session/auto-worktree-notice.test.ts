@@ -435,7 +435,7 @@ describe("session.prompt auto-worktree first-write notice", () => {
     }
   })
 
-  test("second repo mutated later gets its own notice", async () => {
+  test("second repo mutated later does not re-inject; standing rule covers it", async () => {
     await using repoB = await tmpdir({
       git: true,
       init: async (dir) => {
@@ -480,7 +480,7 @@ describe("session.prompt auto-worktree first-write notice", () => {
               const prompt = yield* SessionPrompt.Service
               const sessions = yield* Session.Service
               const session = yield* sessions.create({
-                title: "aw multi repo",
+                title: "aw multi repo once",
                 permission: [{ permission: "*", pattern: "*", action: "allow" }],
               })
 
@@ -493,12 +493,10 @@ describe("session.prompt auto-worktree first-write notice", () => {
               const after1 = yield* sessions.messages({ sessionID: session.id })
               const user1 = after1.filter((m) => m.info.role === "user")
               expect(noticeParts(user1[0])).toHaveLength(1)
-              expect(noticeParts(user1[0])[0].type === "text" && noticeParts(user1[0])[0].text).toContain(
-                path.resolve(pathA),
-              )
-              expect(
-                noticeParts(user1[0])[0].type === "text" && noticeParts(user1[0])[0].text,
-              ).not.toContain(path.resolve(pathB))
+              const text1 = noticeParts(user1[0])[0].type === "text" ? noticeParts(user1[0])[0].text : ""
+              expect(text1).toContain(path.resolve(pathA))
+              expect(text1).toContain("not limited to the path above")
+              expect(text1).toContain("another git repository")
 
               yield* prompt.prompt({
                 sessionID: session.id,
@@ -509,13 +507,10 @@ describe("session.prompt auto-worktree first-write notice", () => {
               const after2 = yield* sessions.messages({ sessionID: session.id })
               const user2 = after2.filter((m) => m.info.role === "user")
               expect(user2).toHaveLength(2)
-              // First user message keeps only the repo-A notice.
+              // Once per session: no second notice for repo B.
               expect(noticeParts(user2[0])).toHaveLength(1)
-              // Second user message carries a NEW notice naming only repo B.
-              expect(noticeParts(user2[1])).toHaveLength(1)
-              const text2 = noticeParts(user2[1])[0].type === "text" ? noticeParts(user2[1])[0].text : ""
-              expect(text2).toContain(path.resolve(pathB))
-              expect(text2).not.toContain(path.resolve(pathA))
+              expect(noticeParts(user2[1])).toHaveLength(0)
+              expect(isAutoWorktreeHintSent(session.id)).toBe(true)
 
               yield* sessions.remove(session.id)
             }),

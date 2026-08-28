@@ -12,7 +12,7 @@ export const AUTO_WORKTREE_NOTICE_MARKER = "Auto-Worktree Notice"
 const FILE_WRITE_TOOLS = new Set(["write", "edit", "apply_patch", "multiedit", "notebook_edit"])
 
 // Process-lifetime cache: the same file/dir is re-resolved on every insertReminders
-// step until the notice fires, and again after that for newly-mutated paths.
+// step until the notice fires.
 const mainWorktreeCache = new Map<string, string | null>()
 
 /**
@@ -64,8 +64,7 @@ function toolInputString(part: MessageV2.Part, key: string): string | undefined 
  *
  * Path-based, not session-directory-based: a session bound to a non-git
  * scratch dir that `cd`s into another project's main checkout still hits.
- * Isolated worktrees and non-git paths do not. Multiple repos are returned
- * together — first write usually names one; later writes add more.
+ * Isolated worktrees and non-git paths do not.
  */
 export function sessionMutatedMainWorktrees(messages: MessageV2.WithParts[]): string[] {
   const hits = new Set<string>()
@@ -97,28 +96,9 @@ export function sessionMutatedMainWorktrees(messages: MessageV2.WithParts[]): st
   return [...hits]
 }
 
-/** Main worktree paths already named in a previous Auto-Worktree notice. */
-export function noticedMainWorktrees(messages: MessageV2.WithParts[]): Set<string> {
-  const seen = new Set<string>()
-  for (const message of messages) {
-    for (const part of message.parts) {
-      if (part.type !== "text" || !part.synthetic || part.ignored) continue
-      if (!part.text.includes(AUTO_WORKTREE_NOTICE_MARKER)) continue
-      const paths = part.metadata?.mainWorktreePaths
-      if (Array.isArray(paths)) {
-        for (const p of paths) {
-          if (typeof p === "string" && p.length > 0) seen.add(p)
-        }
-      }
-    }
-  }
-  return seen
-}
-
-/** Hits that have not yet been named in any notice. Empty ⇒ nothing to inject. */
-export function pendingMainWorktreeNotices(messages: MessageV2.WithParts[]): string[] {
-  const noticed = noticedMainWorktrees(messages)
-  return sessionMutatedMainWorktrees(messages).filter((hit) => !noticed.has(hit))
+/** First git main worktree this transcript mutated, or undefined. */
+export function firstMutatedMainWorktree(messages: MessageV2.WithParts[]): string | undefined {
+  return sessionMutatedMainWorktrees(messages)[0]
 }
 
 export function isAutoWorktreeHintSent(sessionID: string): boolean {
@@ -150,19 +130,18 @@ export function hasAutoWorktreeNotice(message: MessageV2.WithParts): boolean {
   )
 }
 
-export function buildAutoWorktreeNotice(mainWorktreePaths: string[]): string {
-  const listed = mainWorktreePaths.map((p) => `- \`${p}\``).join("\n")
-  const noun = mainWorktreePaths.length === 1 ? "main worktree" : "main worktrees"
+export function buildAutoWorktreeNotice(mainWorktreePath: string): string {
   return [
     "<system-reminder>",
     AUTO_WORKTREE_NOTICE_MARKER,
     "",
-    `This session is mutating git ${noun} that other agents or local changes may also touch:`,
-    listed,
+    `This session is mutating the git main worktree at \`${mainWorktreePath}\`. Concurrent write/edit or git operations there can interfere with other agents or local changes.`,
     "",
     "Do NOT create a worktree on your own. Before any further write or edit, ask the user whether they want an isolated worktree.",
     "",
     "If the user agrees, create one with `git worktree add <path> -b <branch>` using a path outside the project directory, then switch into it before continuing. If the user declines, proceed only on the paths they authorized.",
+    "",
+    "This rule is not limited to the path above. If you later start writing to another git repository, or run git mutations against another repo's main worktree, apply the same check there: ask the user before continuing in that main worktree.",
     "</system-reminder>",
   ].join("\n")
 }
