@@ -1,12 +1,10 @@
 import { describe, expect, test } from "bun:test"
 import {
-  applyPersistedCrop,
   applyPersistedCrops,
   cropMessagesForStreak,
   cropMetadata,
   detectStreak,
   extractAllCrops,
-  extractCropMetadata,
   reasonHash,
   streakKey,
   toolSignature,
@@ -225,18 +223,19 @@ describe("cropMessagesForStreak", () => {
   })
 
   test("does not omit non-assistant messages inside id range", () => {
+    const shared = [reasoning("same")]
     const messages = [
       msg("u0", "user", [text("start")]),
-      msg("a1", "assistant", [reasoning("same")]),
+      msg("a1", "assistant", shared),
       msg("u_injected", "user", [text("reminder")]),
-      msg("a2", "assistant", [reasoning("same")]),
-      msg("a3", "assistant", [reasoning("same")]),
+      msg("a2", "assistant", shared),
+      msg("a3", "assistant", shared),
     ]
     const crop = cropMessagesForStreak(messages, {
       fromId: "a1",
       toId: "a3",
       anchorId: "u0",
-      key: "k",
+      key: streakKey(shared),
       length: 3,
       truncated: false,
     })
@@ -259,7 +258,7 @@ describe("cropMessagesForStreak", () => {
       fromId: "a0",
       toId: "a4",
       anchorId: "u0",
-      key: "k",
+      key: streakKey(fat),
       length: 5,
       truncated: false,
     }
@@ -295,8 +294,10 @@ describe("cropMessagesForStreak", () => {
 })
 
 describe("persisted crop span", () => {
+  const SAME_KEY = streakKey([reasoning("same")])
+
   /** Turn-recovery shape: span hangs on an existing user as ignored+synthetic. */
-  const userWithSpan = (id: string, fromId: string, toId: string): StreakMessage => ({
+  const userWithSpan = (id: string, fromId: string, toId: string, key = SAME_KEY): StreakMessage => ({
     info: { id, role: "user" },
     parts: [
       {
@@ -319,7 +320,7 @@ describe("persisted crop span", () => {
           fromId,
           toId,
           anchorId: "a0",
-          key: "reason:abc",
+          key,
           length: 3,
           truncated: false,
         }),
@@ -327,18 +328,20 @@ describe("persisted crop span", () => {
     ],
   })
 
-  test("extractCropMetadata reads span from ignored user part", () => {
+  test("extractAllCrops reads span from ignored user part", () => {
     const messages = [
       userWithSpan("u0", "a1", "a2"),
       msg("a1", "assistant", [reasoning("same")]),
       msg("a2", "assistant", [reasoning("same")]),
     ]
-    expect(extractCropMetadata(messages)).toEqual({
-      fromId: "a1",
-      toId: "a2",
-      key: "reason:abc",
-      truncated: false,
-    })
+    expect(extractAllCrops(messages)).toEqual([
+      {
+        fromId: "a1",
+        toId: "a2",
+        key: SAME_KEY,
+        truncated: false,
+      },
+    ])
   })
 
   test("crop stays active after a new user message (no new recovery user)", () => {
@@ -358,12 +361,13 @@ describe("persisted crop span", () => {
   })
 
   test("extractAllCrops returns every span; applyPersistedCrops unions them", () => {
+    const FRESH_KEY = streakKey([reasoning("fresh")])
     const messages = [
       msg("u0", "user", [text("go")]),
       msg("a1", "assistant", [reasoning("same")]),
-      userWithSpan("u1", "a1", "a1"),
+      userWithSpan("u1", "a1", "a1", SAME_KEY),
       msg("a2", "assistant", [reasoning("fresh")]),
-      userWithSpan("u2", "a2", "a2"),
+      userWithSpan("u2", "a2", "a2", FRESH_KEY),
     ]
     const crops = extractAllCrops(messages)
     expect(crops.map((c) => c.fromId)).toEqual(["a1", "a2"])
@@ -372,7 +376,7 @@ describe("persisted crop span", () => {
     expect(applied.kept.map((m) => m.info.id)).toEqual(["u0", "u1", "u2"])
   })
 
-  test("applyPersistedCrop removes the same span every time", () => {
+  test("applyPersistedCrops removes the same span every time", () => {
     const base = [
       msg("u0", "user", [text("go")]),
       msg("a0", "assistant", [reasoning("plan")]),
@@ -381,13 +385,35 @@ describe("persisted crop span", () => {
       userWithSpan("u1", "a1", "a2"),
     ]
     const withNewStep = [...base, msg("a3", "assistant", [reasoning("fresh plan")])]
-    const crop = { fromId: "a1", toId: "a2", key: "reason:abc", truncated: false }
-    expect(applyPersistedCrop(base, crop).kept.map((m) => m.info.id)).toEqual(["u0", "a0", "u1"])
-    expect(applyPersistedCrop(withNewStep, crop).kept.map((m) => m.info.id)).toEqual([
+    const crop = { fromId: "a1", toId: "a2", key: SAME_KEY, truncated: false }
+    expect(applyPersistedCrops(base, [crop]).kept.map((m) => m.info.id)).toEqual(["u0", "a0", "u1"])
+    expect(applyPersistedCrops(withNewStep, [crop]).kept.map((m) => m.info.id)).toEqual([
       "u0",
       "a0",
       "u1",
       "a3",
     ])
+  })
+
+  test("text-only assistant inside the id range is not cropped", () => {
+    const shared = [reasoning("same plan")]
+    const messages = [
+      msg("u0", "user", [text("go")]),
+      msg("a1", "assistant", shared),
+      msg("x_between", "assistant", [text("final narration, no tools")]),
+      msg("a2", "assistant", shared),
+      msg("a3", "assistant", shared),
+    ]
+    const key = streakKey(shared)
+    const crop = cropMessagesForStreak(messages, {
+      fromId: "a1",
+      toId: "a3",
+      anchorId: "u0",
+      key,
+      length: 3,
+      truncated: false,
+    })
+    expect(crop.omitted).toEqual(["a1", "a2", "a3"])
+    expect(crop.kept.map((m) => m.info.id)).toEqual(["u0", "x_between"])
   })
 })

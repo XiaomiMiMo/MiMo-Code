@@ -124,13 +124,17 @@ export function cropMessagesForStreak(
   messages: readonly StreakMessage[],
   span: StreakSpan,
 ): StreakCrop {
+  // Only omit assistants that are actually in the streak (matching key) inside
+  // the id range. A text-only assistant with an empty key that happens to sit
+  // between two streak steps is not part of the loop and must stay.
   const omittedIds = new Set(
     messages
       .filter(
         (message) =>
           message.info.role === "assistant" &&
           message.info.id >= span.fromId &&
-          message.info.id <= span.toId,
+          message.info.id <= span.toId &&
+          streakKey(message.parts) === span.key,
       )
       .map((message) => message.info.id),
   )
@@ -187,10 +191,6 @@ function cropOrigin(part: MessageV2.Part): (PersistedStreakCrop & { kind: string
   return origin as PersistedStreakCrop & { kind: string }
 }
 
-export function extractCropMetadata(messages: readonly StreakMessage[]): PersistedStreakCrop | undefined {
-  return extractAllCrops(messages).at(-1)
-}
-
 /**
  * All persisted spans, oldest first. A crop stays active for the life of the
  * session (or until the feature is turned off) — including after the user
@@ -215,22 +215,21 @@ export function extractAllCrops(messages: readonly StreakMessage[]): PersistedSt
 }
 
 /** Re-apply persisted spans. Same filter every request → stable prefix. */
-export function applyPersistedCrop(
-  messages: readonly StreakMessage[],
-  crop: PersistedStreakCrop,
-): { kept: StreakMessage[]; omitted: string[] } {
-  return applyPersistedCrops(messages, [crop])
-}
-
 export function applyPersistedCrops(
   messages: readonly StreakMessage[],
   crops: readonly PersistedStreakCrop[],
 ): { kept: StreakMessage[]; omitted: string[] } {
   if (crops.length === 0) return { kept: [...messages], omitted: [] }
   const omitted = messages
-    .filter((message) =>
-      message.info.role === "assistant" &&
-      crops.some((crop) => message.info.id >= crop.fromId && message.info.id <= crop.toId),
+    .filter(
+      (message) =>
+        message.info.role === "assistant" &&
+        crops.some(
+          (crop) =>
+            message.info.id >= crop.fromId &&
+            message.info.id <= crop.toId &&
+            streakKey(message.parts) === crop.key,
+        ),
     )
     .map((message) => message.info.id)
   if (omitted.length === 0) return { kept: [...messages], omitted }

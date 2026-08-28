@@ -4042,8 +4042,11 @@ NOTE: At any point in time through this workflow you should feel free to ask the
             if (existingCrops.length > 0) {
               const reapplied = applyPersistedCrops(msgs, existingCrops)
               if (reapplied.omitted.length > 0) {
+                // Do NOT set loopStreakCropped here. That flag means "a NEW
+                // crop just fired this iteration" and suppresses the text-loop
+                // fallback. Re-applying an old span must leave text-loop free
+                // to catch a different kind of loop later in the turn.
                 msgs = reapplied.kept as typeof msgs
-                loopStreakCropped = true
                 yield* slog.info("loop streak: reapplied persisted crop", {
                   spans: existingCrops.length,
                   omitted: reapplied.omitted.length,
@@ -4068,7 +4071,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
               if (span && span.toId === lastFinished.id) {
                 const crop = cropMessagesForStreak(msgs, span)
                 if (crop.omitted.length > 0) {
-                  msgs = msgs.filter((message) => !crop.omitted.includes(message.info.id)) as typeof msgs
+                  msgs = crop.kept as typeof msgs
                   // Persist span on the EXISTING parent user (turn-recovery
                   // shape). ignored+synthetic: not sent to the model, not a
                   // user-visible bubble, but extractAllCrops still reads it.
