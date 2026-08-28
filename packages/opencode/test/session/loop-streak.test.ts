@@ -2,7 +2,6 @@ import { describe, expect, test } from "bun:test"
 import {
   cropMessagesForStreak,
   detectStreak,
-  estimateBlocks,
   reasonHash,
   recoveryNote,
   streakKey,
@@ -65,12 +64,17 @@ describe("streakKey", () => {
     expect(streakKey([text("hello")])).toBe("")
   })
 
-  test("identical thinking with different narration still matches", () => {
+  test("identical thinking with different narration and drifted tools still matches", () => {
     const thinking = "The user wants the SAME path as resume. That means classifyHarnessTurn first."
     const a = streakKey([reasoning(thinking), text("继续 A"), tool("edit", { file_path: "a.ts", new_string: "x" })])
-    const b = streakKey([reasoning(thinking), text("继续 B"), tool("edit", { file_path: "a.ts", new_string: "x" })])
+    const b = streakKey([
+      reasoning(thinking),
+      text("继续 B"),
+      tool("edit", { file_path: "b.ts", new_string: "y" }),
+      tool("read", { file_path: "a.ts" }),
+    ])
     expect(a).toBe(b)
-    expect(a.length).toBeGreaterThan(0)
+    expect(a.startsWith("reason:")).toBe(true)
   })
 
   test("different thinking yields different keys", () => {
@@ -95,7 +99,16 @@ describe("streakKey", () => {
     const a = streakKey([reasoning("same thought")])
     const b = streakKey([reasoning("same thought"), text("narration changes")])
     expect(a).toBe(b)
-    expect(a.endsWith("\0")).toBe(true)
+    expect(a.startsWith("reason:")).toBe(true)
+  })
+
+  test("tool-only loop keys on exact tool signature", () => {
+    const a = streakKey([tool("edit", { file_path: "a.ts" })])
+    const b = streakKey([tool("edit", { file_path: "a.ts" })])
+    const c = streakKey([tool("edit", { file_path: "b.ts" })])
+    expect(a).toBe(b)
+    expect(a).not.toBe(c)
+    expect(a.startsWith("tool:")).toBe(true)
   })
 })
 
@@ -170,6 +183,43 @@ describe("cropMessagesForStreak", () => {
     expect(crop.remainingSimilar).toBe(0)
   })
 
+  test("MR-3931 shape: identical thinking with drifted tools is cropped", () => {
+    const thinking = "The user wants the SAME path as resume."
+    const steps = [
+      msg("u0", "user", [text("我让你用同一个路径！")]),
+      msg("a0", "assistant", [reasoning("look at code"), tool("read", { file_path: "harnessTurn.ts" })]),
+      msg("a1", "assistant", [
+        reasoning(thinking),
+        text("改 classify"),
+        tool("edit", { file_path: "harnessTurn.ts", new_string: "A" }),
+      ]),
+      msg("a2", "assistant", [
+        reasoning(thinking),
+        text("改 AssistantRow"),
+        tool("edit", { file_path: "AssistantRow.tsx", new_string: "B" }),
+      ]),
+      msg("a3", "assistant", [
+        reasoning(thinking),
+        text("跑测试"),
+        tool("bash", { command: "bun test" }),
+      ]),
+    ]
+    const span = detectStreak(
+      [
+        { id: "a0", key: streakKey(steps[1].parts) },
+        { id: "a1", key: streakKey(steps[2].parts) },
+        { id: "a2", key: streakKey(steps[3].parts) },
+        { id: "a3", key: streakKey(steps[4].parts) },
+      ],
+      3,
+    )
+    expect(span?.fromId).toBe("a1")
+    expect(span?.anchorId).toBe("a0")
+    const crop = cropMessagesForStreak(steps, span!)
+    expect(crop.omitted).toEqual(["a1", "a2", "a3"])
+    expect(crop.kept.map((m) => m.info.id)).toEqual(["u0", "a0"])
+  })
+
   test("does not omit non-assistant messages inside id range", () => {
     const messages = [
       msg("u0", "user", [text("start")]),
@@ -189,7 +239,7 @@ describe("cropMessagesForStreak", () => {
     expect(crop.kept.map((m) => m.info.id)).toEqual(["u0", "u_injected"])
   })
 
-  test("estimates blocks and flags cache risk above 20 removed blocks", () => {
+  test("estimates cropped blocks and flags cache risk above 20", () => {
     const fat = [
       reasoning("think"),
       text("say"),
@@ -211,8 +261,32 @@ describe("cropMessagesForStreak", () => {
     }
     const crop = cropMessagesForStreak(messages, span)
     expect(crop.omitted).toHaveLength(5)
+    expect(crop.omittedMessages).toBe(5)
+    expect(crop.omittedParts).toBe(5 * fat.length)
     expect(crop.cacheRisk).toBe(true)
-    expect(estimateBlocks(messages)).toBeGreaterThan(estimateBlocks(crop.kept) + 20)
+    expect(crop.omittedBlocks).toBeGreaterThan(20)
+    expect(crop.keptBlocks).toBeLessThan(crop.omittedBlocks)
+  })
+
+  test("keeps prefix order and part ids after crop", () => {
+    const shared = [reasoning("same"), tool("edit", { file_path: "a.ts" })]
+    const messages = [
+      msg("u0", "user", [text("go")]),
+      msg("a0", "assistant", [reasoning("plan")]),
+      msg("a1", "assistant", shared),
+      msg("a2", "assistant", shared),
+      msg("a3", "assistant", shared),
+    ]
+    const crop = cropMessagesForStreak(messages, {
+      fromId: "a1",
+      toId: "a3",
+      anchorId: "a0",
+      key: streakKey(shared),
+      length: 3,
+      truncated: false,
+    })
+    expect(crop.kept.map((m) => m.info.id)).toEqual(["u0", "a0"])
+    expect(crop.kept[1].parts.map((p) => p.id)).toEqual(messages[1].parts.map((p) => p.id))
   })
 
   test("recovery note mentions omitted count and abandon plan", () => {
@@ -229,7 +303,10 @@ describe("cropMessagesForStreak", () => {
         kept: [],
         omitted: ["a1", "a2", "a3"],
         remainingSimilar: 2,
-        estBlocks: 0,
+        omittedMessages: 3,
+        omittedParts: 6,
+        omittedBlocks: 12,
+        keptBlocks: 2,
         cacheRisk: true,
       },
     )

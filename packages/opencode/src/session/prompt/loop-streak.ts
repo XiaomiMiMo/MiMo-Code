@@ -42,10 +42,14 @@ export function toolSignature(parts: MessageV2.Part[]): string {
 }
 
 export function streakKey(parts: MessageV2.Part[]): string {
+  // Thinking is the loop source. When present, key on thinking alone so
+  // slightly drifted tools still count as the same streak (MR-3931 shape).
+  // Fall back to exact tool signature only for thinking-less steps.
   const reason = reasonHash(parts)
+  if (reason) return `reason:${reason}`
   const tools = toolSignature(parts)
-  if (!reason && !tools) return ""
-  return `${reason}\0${tools}`
+  if (!tools) return ""
+  return `tool:${tools}`
 }
 
 export type StreakEntry = {
@@ -99,7 +103,10 @@ export type StreakCrop = {
   kept: StreakMessage[]
   omitted: string[]
   remainingSimilar: number
-  estBlocks: number
+  omittedMessages: number
+  omittedParts: number
+  omittedBlocks: number
+  keptBlocks: number
   cacheRisk: boolean
 }
 
@@ -128,7 +135,8 @@ export function cropMessagesForStreak(
       .map((message) => message.info.id),
   )
   const kept = messages.filter((message) => !omittedIds.has(message.info.id))
-  const omitted = messages.filter((message) => omittedIds.has(message.info.id)).map((m) => m.info.id)
+  const omittedMessages = messages.filter((message) => omittedIds.has(message.info.id))
+  const omitted = omittedMessages.map((m) => m.info.id)
   const remainingSimilar = messages.filter(
     (message) =>
       message.info.role === "assistant" &&
@@ -136,13 +144,16 @@ export function cropMessagesForStreak(
       omittedIds.size > 0 &&
       streakKey(message.parts) === span.key,
   ).length
-  const estBlocks = estimateBlocks(kept)
+  const omittedParts = omittedMessages.reduce((sum, message) => sum + message.parts.length, 0)
   return {
     kept,
     omitted,
     remainingSimilar,
-    estBlocks,
-    cacheRisk: estimateBlocks(messages) - estBlocks > 20,
+    omittedMessages: omittedMessages.length,
+    omittedParts,
+    omittedBlocks: estimateBlocks(omittedMessages),
+    keptBlocks: estimateBlocks(kept),
+    cacheRisk: estimateBlocks(omittedMessages) > 20,
   }
 }
 

@@ -46,22 +46,30 @@ Per finished assistant message, build:
 
 ```text
 reasonHash = sha256(normalize(join(all reasoning part texts)))
-toolSig    = stableStringify(tools in part-id order)   // name + input, existing stepSignature style
-key        = reasonHash + "\0" + toolSig
+toolSig    = stableStringify(tools in part-id order)
+
+key = "reason:" + reasonHash     when reasoning is present
+key = "tool:"   + toolSig        when only tools are present
+key = ""                         when neither is present
 ```
 
-- Empty `toolSig` → key is `reasonHash` only (thinking-only loop).
-- Empty `reasonHash` → key is `toolSig` only (legacy shape).
-- Normalize reasoning like `normalizeForLoopDetection` (trim, lowercase, collapse whitespace) before hash. Do **not** rewrite stored parts; hash is offline-only.
+Thinking is the loop source: crop eligibility keys on thinking alone so
+slightly drifted tools still form one streak (MR-3931 shape). Tool-signature
+keys are the fallback for thinking-less steps. Normalize reasoning like
+`normalizeForLoopDetection` before hash. Do **not** rewrite stored parts;
+hash is offline-only.
 
 ### Detection
 
-After a step finishes (same site as today's text-loop check in `prompt.ts`):
+At the start of each loop iteration, after `insertReminders` and only when
+`lastUser.id < lastFinished.id` (continuing from a model step, not a fresh
+user intervention):
 
-1. Push `key` onto a streak buffer (reuse `TEXT_LOOP_BUFFER_SIZE` semantics).
+1. Build keys for finished assistants in the current request list.
 2. Trigger when the last `triggerCount` (default 3) finished assistants share one `key`.
 3. Walk backward from the current message while `key` matches; stop at the first non-match. That predecessor is the **anchor** (always kept).
 4. Span = `[firstMatching, current]` inclusive.
+5. Require `span.toId === lastFinished.id` so a stale streak does not crop after newer non-matching work.
 
 ### Request crop
 
@@ -90,18 +98,19 @@ Ceiling exists only to stop a detector bug from nuking a multi-hour 600-message 
 
 ### Cache audit (not a gate)
 
-On every crop, emit slog + optional bus/metrics event:
+On every crop, emit slog:
 
 ```text
-session_id, span_from, span_to,
-n_messages, n_parts, est_blocks,
-anchor_id, truncated_by_ceiling,
-cache_risk: est_blocks > 20
+session_id, spanFrom, spanTo, anchorId,
+nMessages, nParts, omittedBlocks, keptBlocks,
+remainingSimilar, truncatedByCeiling,
+cacheRisk: omittedBlocks > 20
 ```
 
-`est_blocks` ≈ per message: `#reasoning + #text + #tool` (assistant side) plus `#tool` (wire tool_result side). Rough is fine; purpose is observability of "we routinely crop >20 blocks".
+`omittedBlocks` ≈ per cropped message: `#reasoning + #text + 2×#tool`.
+Rough is fine; purpose is observability of "we routinely crop >20 blocks".
 
-**Do not skip crop when `cache_risk` is true.** Log only.
+**Do not skip crop when `cacheRisk` is true.** Log only.
 
 ### Provider notes
 
@@ -115,8 +124,8 @@ cache_risk: est_blocks > 20
 
 ### Interaction with existing detectors
 
-- **text-loop / text-ngram**: keep as fallback when streak key does not fire (e.g. pure text loops with no tools/reasoning). If streak crop already ran for this turn, skip injecting another recovery user.
-- **repeated-step nudge**: keep; it fires on identical tools even when thinking differs slightly. Streak key is stricter (thinking must match too) for crop eligibility.
+- **text-loop / text-ngram**: keep as fallback when streak key does not fire (e.g. pure text loops with no tools/reasoning). If streak crop already ran for this turn, skip injecting another recovery user (`loopStreakCropped`).
+- **repeated-step nudge**: keep; it fires on identical tools even when thinking differs. Streak crop keys on thinking when present, so both can independently surface related loops.
 - **try-best / doom_loop**: unchanged (pause / permission). Independent of crop.
 
 ### Recovery note content

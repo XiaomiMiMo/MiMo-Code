@@ -4027,14 +4027,21 @@ NOTE: At any point in time through this workflow you should feel free to ask the
           }
           const maxSteps = agent.steps ?? Infinity
           const isLastStep = step >= maxSteps
+          msgs = yield* insertReminders({ messages: msgs, agent, model, session })
 
           // Request-layer loop-streak recovery: crop a trailing identical
-          // thinking/tool streak from the wire payload only. Physical messages
-          // stay in the DB for audit/replay. Cache lookback still hits the
-          // pre-loop anchor because we only drop a suffix and keep the
-          // predecessor message.
+          // thinking streak from the wire payload only. Physical messages
+          // stay in the DB for audit/replay. Runs AFTER insertReminders so
+          // persisted reminders still target the real last user message, not
+          // the request-only recovery note. Cache lookback still hits the
+          // pre-loop anchor because we only drop a suffix.
           const streakCfg = (yield* config.get()).experimental?.loop_streak_recovery
-          if (streakCfg?.enabled && !loopStreakCropped) {
+          if (
+            streakCfg?.enabled &&
+            lastFinished &&
+            lastUser.id < lastFinished.id &&
+            !loopStreakCropped
+          ) {
             const triggerCount = streakCfg.trigger_count ?? LOOP_STREAK_TRIGGER_COUNT
             const maxSpan = streakCfg.max_span ?? LOOP_STREAK_MAX_SPAN
             const entries = msgs.flatMap((message) => {
@@ -4044,10 +4051,10 @@ NOTE: At any point in time through this workflow you should feel free to ask the
               return [{ id: message.info.id, key }]
             })
             const span = detectStreak(entries, triggerCount, maxSpan)
-            if (span && span.toId === lastFinished?.id) {
+            if (span && span.toId === lastFinished.id) {
               const crop = cropMessagesForStreak(msgs, span)
               if (crop.omitted.length > 0) {
-                msgs = crop.kept as typeof msgs
+                msgs = msgs.filter((message) => !crop.omitted.includes(message.info.id))
                 const recoveryId = MessageID.ascending()
                 const recoveryUser: MessageV2.WithParts = {
                   info: {
@@ -4069,20 +4076,20 @@ NOTE: At any point in time through this workflow you should feel free to ask the
                 msgs = [...msgs, recoveryUser]
                 loopStreakCropped = true
                 yield* slog.info("loop streak: cropped from request", {
-                  fromId: span.fromId,
-                  toId: span.toId,
+                  spanFrom: span.fromId,
+                  spanTo: span.toId,
                   anchorId: span.anchorId,
-                  omitted: crop.omitted.length,
+                  nMessages: crop.omittedMessages,
+                  nParts: crop.omittedParts,
+                  omittedBlocks: crop.omittedBlocks,
+                  keptBlocks: crop.keptBlocks,
                   remainingSimilar: crop.remainingSimilar,
-                  estBlocks: crop.estBlocks,
                   cacheRisk: crop.cacheRisk,
-                  truncated: span.truncated,
+                  truncatedByCeiling: span.truncated,
                 })
               }
             }
           }
-
-          msgs = yield* insertReminders({ messages: msgs, agent, model, session })
 
           const msg: MessageV2.Assistant = {
             id: MessageID.ascending(),
@@ -4690,22 +4697,10 @@ NOTE: At any point in time through this workflow you should feel free to ask the
             if (textLoopBuffer.length >= TEXT_LOOP_TRIGGER_COUNT) {
               const isTextLoop = detectTextLoop(textLoopBuffer, TEXT_LOOP_TRIGGER_COUNT)
               // Prefer streak crop (request-layer) over a second recovery user
-              // when the same turn already matches a thinking/tool streak.
-              const streakCfgNow = (yield* config.get()).experimental?.loop_streak_recovery
-              const pendingStreak =
-                streakCfgNow?.enabled &&
-                detectStreak(
-                  msgs.flatMap((message) => {
-                    if (message.info.role !== "assistant" || !message.info.finish) return []
-                    const key = streakKey(message.parts)
-                    if (!key) return []
-                    return [{ id: message.info.id, key }]
-                  }),
-                  streakCfgNow.trigger_count ?? LOOP_STREAK_TRIGGER_COUNT,
-                  streakCfgNow.max_span ?? LOOP_STREAK_MAX_SPAN,
-                )
-
-              if (isTextLoop && !pendingStreak) {
+              // when this turn already cropped a thinking streak. Re-deriving
+              // detectStreak on the cropped msgs is a false negative — the
+              // streak assistants are gone — so gate on the crop flag.
+              if (isTextLoop && !loopStreakCropped) {
                 if (textLoopRecoveryAttempts >= TEXT_LOOP_MAX_RECOVERY) {
                   yield* slog.info("text loop: max recovery exceeded, terminating")
                   yield* bus.publish(Session.Event.Error, {
