@@ -1,6 +1,6 @@
 ---
 feature: loop-streak-recovery
-status: delivered
+status: in-progress
 updated: 2026-08-28
 branch: feat/loop-streak-recovery
 commits: f02ee661a6..5a597d938e
@@ -10,11 +10,11 @@ commits: f02ee661a6..5a597d938e
 
 ## Report
 
-**What was built** — Request-layer loop-streak recovery behind `experimental.loop_streak_recovery`. Detection runs once per streak (thinking-primary key; tools may drift). On hit, the span is cropped from the LLM request only and a recovery user is **persisted** with the span in part metadata. Later requests re-apply that same filter so the cache prefix stays stable and poison thinking cannot return. Cropped assistants stay in the DB for audit/replay; the recovery user is request/model-visible (synthetic text, currently no dedicated TUI marker row). `max_span` ceiling (default 64); text-loop recovery suppressed on crop turns.
+**What was built** — Request-layer loop-streak crop behind `experimental.loop_streak_recovery`, aligned with turn recovery: no new user, `lastUser`/`parentID` unchanged, span persisted as an `ignored`+`synthetic` part on the existing parent user. Detection is thinking-primary (tools may drift). Spans re-apply on every later request until the feature is off. Cropped assistants stay in the DB; model-facing stream has no loop/recovery wording. `max_span` ceiling (default 64).
 
 **Verification** — `bun typecheck` PASS; `bun test test/session/loop-streak.test.ts` PASS (22). Independent review of `9bab2c2a12` found 3 criticals + 3 mediums → fixed `5a597d938e` → re-review PASS. Persisted-span follow-up after design critique that per-request re-detection breaks prefix stability.
 
-**Journey log** — Suffix delete does not break Anthropic 20-block lookback by itself; real risks are deleting the anchor, a long recovery body, or middle-of-prefix edits. Streak key must be thinking-primary. Per-request re-detection is wrong: if the tail changes, the view flips, LCP truncates, and poison returns — detect once, persist the span on the recovery user, re-apply until the user speaks again. Request-only synthetic users must not become `insertReminders` targets.
+**Journey log** — Suffix delete does not break Anthropic 20-block lookback by itself; real risks are deleting the anchor, a long recovery body, or middle-of-prefix edits. Streak key must be thinking-primary. Per-request re-detection is wrong: if the tail changes, the view flips, LCP truncates, and poison returns — detect once, persist the span on the recovery user, re-apply until the user speaks again. Request-only synthetic users must not become `insertReminders` targets. Align with turn recovery: never invent a Continue. user — span hangs as ignored part on the parent user.
 
 ## [S1] Problem
 
@@ -40,7 +40,7 @@ So "delete more than 20 Anthropic content blocks" is a normal case, not an edge 
 ### Contracts
 
 1. **Physical layer is audit-only.** Loop recovery never `removeMessage`s. DB keeps the full trajectory for replay, undo, and forensics.
-2. **Request-layer crop.** When a streak is detected, the next request omits the streak's assistant messages and ends with one short synthetic user recovery note.
+2. **Request-layer crop, no new user.** Align with turn recovery (`resume`): do **not** create a Continue./recovery user. Reuse the existing parent user (`lastUser` unchanged → `parentID` matches resume). Persist the span as an `ignored` + `synthetic` text part on that user. Trailing-assistant repair stays in `transform.ts`.
 3. **Thinking is always in scope.** Deletion unit is a whole assistant message (reasoning + text + tools + embedded results). No part-level surgery in v1.
 4. **Anchor is mandatory.** The message immediately before the streak start is never removed (user or non-matching assistant).
 5. **No snapshot rollback.** Dirty workspace after an edit streak is treated like an external file change; the model re-reads and re-plans.
@@ -73,13 +73,13 @@ successful crop.
 
 At the start of each loop iteration:
 
-1. Re-apply **every** persisted span (`extractAllCrops` / `applyPersistedCrops`) from recovery-user part metadata. Spans stay active for the life of the feature — including after the user sends a new message — so poison thinking cannot re-enter the request view.
+1. Re-apply **every** persisted span (`extractAllCrops` / `applyPersistedCrops`) from user-part metadata (`kind: "loop_streak_crop"`). Spans stay active for the life of the feature — including after the user sends a new message — so poison thinking cannot re-enter the request view.
 2. Then, only when `lastUser.id < lastFinished.id` (continuing from a model step), detect a **new** streak on the already-cropped view:
    - Build keys for finished assistants.
    - Trigger when the last `triggerCount` (default 3) finished assistants share one `key`.
    - Walk backward while `key` matches; predecessor is the **anchor** (always kept).
    - Require `span.toId === lastFinished.id`.
-   - On hit: crop the request view, **persist** a synthetic recovery user whose text-part `metadata.origin` is `{ kind: "loop_streak_crop", fromId, toId, key, truncated }`. That user becomes `lastUser` for this iteration.
+   - On hit: crop the request view, **persist** an `ignored` + `synthetic` text part on the **existing** `lastUser` whose `metadata.origin` is `{ kind: "loop_streak_crop", fromId, toId, key, truncated }`. Do not create a new user; do not reassign `lastUser`.
 3. Clearing is explicit only: turn the feature off (next request returns to the full view). There is no auto-clear on user speech.
 
 Persisting the span on the recovery user gives: stable prefix across later
@@ -91,11 +91,12 @@ note (cropped assistants stay in the DB).
 ```text
 kept     = messages with id < span.from OR id > span.to
          + force-include anchor (id < span.from, already kept)
-recovery = one persisted synthetic user (carries span metadata)
+span     = ignored synthetic part on the existing parent user
 ```
 
-Later requests re-apply the same `fromId..toId` filter so new steps append
-after the recovery note without reintroducing the span.
+Later requests re-apply the same `fromId..toId` filter. No extra user is
+inserted. If the cropped view ends on an assistant, `transform.ts` trailing-
+assistant repair supplies `Continue.` on the wire only.
 
 Invariants (assert in tests, log in prod):
 
@@ -148,11 +149,10 @@ Rough is fine; purpose is observability of "we routinely crop >20 blocks".
 
 ### Recovery note content
 
-Neutral only: `Continue.` (same string as `transform.ts` trailing-assistant
-continuation). Do **not** mention loop/recovery/omitted counts — that primes
-the model back into the failed narrative. Framing is "resume as if the
-connection dropped before those steps". Span lives in part metadata, not the
-text. Counts/audit stay in slog.
+None in the model-facing stream. Span persistence uses an `ignored` +
+`synthetic` part (text body irrelevant; not sent). No loop/recovery wording.
+Counts/audit stay in slog. Wire-level trailing assistant uses `transform.ts`
+`Continue.` only.
 
 ## [S3] Out of Scope
 
@@ -170,3 +170,4 @@ text. Counts/audit stay in slog.
 - [x] T3: Request cropper — acceptance: filters a message list by span without reorder/rewrite; appends exactly one recovery user; invariants hold on fixture with parallel tools. (covers: S2; depends: T2)
 - [x] T4: prompt.ts integration — acceptance: after a finished step, experimental flag on, a 3× identical-thinking streak crops the next request and logs audit fields; flag off path unchanged. (covers: S2; depends: T3)
 - [x] T5: Regression tests — acceptance: MR-3931-shaped fixture (identical thinking, drifting tools) is cropped; pure tool-loop and pure text-loop still behave as before when keys differ; no crop when span would include the anchor. (covers: S2; depends: T4)
+- [x] T6: Align with turn recovery — acceptance: crop creates no new user; span persists as ignored synthetic part on the existing lastUser; lastUser/parentID unchanged; tests cover ignored-part extract + no-new-user. (covers: S2)

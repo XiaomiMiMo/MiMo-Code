@@ -157,17 +157,6 @@ export function cropMessagesForStreak(
   }
 }
 
-/**
- * Neutral continuation only. Do NOT mention "loop"/"recovery"/omitted counts —
- * priming the model with those words can re-enter the same narrative. The
- * crop is framed as "connection dropped before the failed steps": the model
- * resumes from the pre-loop prefix and re-reads workspace side effects.
- * Span persistence lives in part metadata, not in this text.
- */
-export function recoveryNote(_span?: StreakSpan, _crop?: StreakCrop): string {
-  return "Continue."
-}
-
 export const LOOP_STREAK_CROP_KIND = "loop_streak_crop"
 
 export type PersistedStreakCrop = {

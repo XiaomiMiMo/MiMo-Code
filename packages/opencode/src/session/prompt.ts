@@ -62,7 +62,6 @@ import {
   cropMessagesForStreak,
   detectStreak,
   extractAllCrops,
-  recoveryNote,
   streakKey,
 } from "../session/prompt/loop-streak"
 import {
@@ -4031,12 +4030,12 @@ NOTE: At any point in time through this workflow you should feel free to ask the
           const maxSteps = agent.steps ?? Infinity
           const isLastStep = step >= maxSteps
 
-          // Request-layer loop-streak crop, framed as a resume from before the
-          // failed steps ("connection dropped"): persist span metadata on a
-          // neutral "Continue." user, re-apply that filter on EVERY later
-          // request until the feature is off. Never mention "loop" in the note
-          // — that primes the model back into the same narrative. User speech
-          // does not clear an existing span.
+          // Request-layer loop-streak crop, aligned with turn recovery
+          // (resume()): no new user, lastUser/parentID unchanged, span stored
+          // as an ignored synthetic part on the existing parent user. Wire
+          // trailing-assistant repair stays in transform.ts. Spans re-apply
+          // on every later request until the feature is off; user speech does
+          // not clear them.
           const streakCfg = (yield* config.get()).experimental?.loop_streak_recovery
           if (streakCfg?.enabled) {
             const existingCrops = extractAllCrops(msgs)
@@ -4070,45 +4069,28 @@ NOTE: At any point in time through this workflow you should feel free to ask the
                 const crop = cropMessagesForStreak(msgs, span)
                 if (crop.omitted.length > 0) {
                   msgs = msgs.filter((message) => !crop.omitted.includes(message.info.id)) as typeof msgs
-                  const recoveryId = MessageID.ascending()
-                  yield* sessions.updateMessage({
-                    id: recoveryId,
-                    role: "user" as const,
-                    sessionID,
-                    agentID: lastUser.agentID,
-                    agent: lastUser.agent,
-                    model: lastUser.model,
-                    tools: lastUser.tools,
-                    format: lastUser.format,
-                    time: { created: Date.now() },
-                  })
-                  const recoveryPart: MessageV2.TextPart = {
+                  // Persist span on the EXISTING parent user (turn-recovery
+                  // shape). ignored+synthetic: not sent to the model, not a
+                  // user-visible bubble, but extractAllCrops still reads it.
+                  const spanPart: MessageV2.TextPart = {
                     id: PartID.ascending(),
-                    messageID: recoveryId,
+                    messageID: lastUser.id,
                     sessionID,
                     type: "text",
                     synthetic: true,
-                    text: recoveryNote(span, crop),
+                    ignored: true,
+                    text: "",
                     metadata: cropMetadata(span),
                   }
-                  yield* sessions.updatePart(recoveryPart)
-                  lastUser = {
-                    ...lastUser,
-                    id: recoveryId,
-                    time: { created: Date.now() },
-                  }
-                  msgs = [
-                    ...msgs,
-                    {
-                      info: lastUser,
-                      parts: [recoveryPart],
-                    } satisfies MessageV2.WithParts,
-                  ]
+                  yield* sessions.updatePart(spanPart)
+                  const parentMsg = msgs.findLast((message) => message.info.id === lastUser.id)
+                  if (parentMsg) parentMsg.parts.push(spanPart)
                   loopStreakCropped = true
                   yield* slog.info("loop streak: cropped from request", {
                     spanFrom: span.fromId,
                     spanTo: span.toId,
                     anchorId: span.anchorId,
+                    parentUserId: lastUser.id,
                     nMessages: crop.omittedMessages,
                     nParts: crop.omittedParts,
                     omittedBlocks: crop.omittedBlocks,

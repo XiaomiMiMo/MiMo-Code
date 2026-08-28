@@ -8,7 +8,6 @@ import {
   extractAllCrops,
   extractCropMetadata,
   reasonHash,
-  recoveryNote,
   streakKey,
   toolSignature,
   type StreakEntry,
@@ -293,46 +292,29 @@ describe("cropMessagesForStreak", () => {
     expect(crop.kept.map((m) => m.info.id)).toEqual(["u0", "a0"])
     expect(crop.kept[1].parts.map((p) => p.id)).toEqual(messages[1].parts.map((p) => p.id))
   })
-
-  test("recovery note is neutral Continue. only (no loop priming)", () => {
-    const note = recoveryNote(
-      {
-        fromId: "a1",
-        toId: "a3",
-        anchorId: "a0",
-        key: "k",
-        length: 3,
-        truncated: false,
-      },
-      {
-        kept: [],
-        omitted: ["a1", "a2", "a3"],
-        remainingSimilar: 2,
-        omittedMessages: 3,
-        omittedParts: 6,
-        omittedBlocks: 12,
-        keptBlocks: 2,
-        cacheRisk: true,
-      },
-    )
-    expect(note).toBe("Continue.")
-    expect(note.toLowerCase()).not.toContain("loop")
-    expect(note.toLowerCase()).not.toContain("recovery")
-    expect(note.toLowerCase()).not.toContain("omit")
-  })
 })
 
 describe("persisted crop span", () => {
-  const recoveryUser = (id: string, fromId: string, toId: string): StreakMessage => ({
+  /** Turn-recovery shape: span hangs on an existing user as ignored+synthetic. */
+  const userWithSpan = (id: string, fromId: string, toId: string): StreakMessage => ({
     info: { id, role: "user" },
     parts: [
       {
         id: nextId(),
         sessionID: sid,
-        messageID: MessageID.make(id.padEnd(26, "0")),
+        messageID: MessageID.make(id.padEnd(26, "0").slice(0, 26)),
         type: "text",
-        text: "LOOP RECOVERY",
+        text: "user said something",
+        synthetic: false,
+      } as MessageV2.TextPart,
+      {
+        id: nextId(),
+        sessionID: sid,
+        messageID: MessageID.make(id.padEnd(26, "0").slice(0, 26)),
+        type: "text",
+        text: "",
         synthetic: true,
+        ignored: true,
         metadata: cropMetadata({
           fromId,
           toId,
@@ -345,12 +327,11 @@ describe("persisted crop span", () => {
     ],
   })
 
-  test("extractCropMetadata reads span from recovery user part", () => {
+  test("extractCropMetadata reads span from ignored user part", () => {
     const messages = [
-      msg("u0", "user", [text("go")]),
+      userWithSpan("u0", "a1", "a2"),
       msg("a1", "assistant", [reasoning("same")]),
       msg("a2", "assistant", [reasoning("same")]),
-      recoveryUser("r1", "a1", "a2"),
     ]
     expect(extractCropMetadata(messages)).toEqual({
       fromId: "a1",
@@ -360,12 +341,11 @@ describe("persisted crop span", () => {
     })
   })
 
-  test("isCropActive removed: crop stays active after a new user message", () => {
+  test("crop stays active after a new user message (no new recovery user)", () => {
     const loop = [
-      msg("u0", "user", [text("go")]),
+      userWithSpan("u0", "a1", "a2"),
       msg("a1", "assistant", [reasoning("same")]),
       msg("a2", "assistant", [reasoning("same")]),
-      recoveryUser("r1", "a1", "a2"),
       msg("a3", "assistant", [reasoning("fresh")]),
       msg("u2", "user", [text("继续追问")]),
     ]
@@ -373,23 +353,23 @@ describe("persisted crop span", () => {
     expect(crops).toHaveLength(1)
     const applied = applyPersistedCrops(loop, crops)
     expect(applied.omitted).toEqual(["a1", "a2"])
-    expect(applied.kept.map((m) => m.info.id)).toEqual(["u0", "r1", "a3", "u2"])
+    // No extra user: only the original u0 (with span part) and later messages.
+    expect(applied.kept.map((m) => m.info.id)).toEqual(["u0", "a3", "u2"])
   })
 
   test("extractAllCrops returns every span; applyPersistedCrops unions them", () => {
     const messages = [
       msg("u0", "user", [text("go")]),
       msg("a1", "assistant", [reasoning("same")]),
-      recoveryUser("r1", "a1", "a1"),
+      userWithSpan("u1", "a1", "a1"),
       msg("a2", "assistant", [reasoning("fresh")]),
-      recoveryUser("r2", "a2", "a2"),
-      msg("u2", "user", [text("next")]),
+      userWithSpan("u2", "a2", "a2"),
     ]
     const crops = extractAllCrops(messages)
     expect(crops.map((c) => c.fromId)).toEqual(["a1", "a2"])
     const applied = applyPersistedCrops(messages, crops)
     expect(applied.omitted).toEqual(["a1", "a2"])
-    expect(applied.kept.map((m) => m.info.id)).toEqual(["u0", "r1", "r2", "u2"])
+    expect(applied.kept.map((m) => m.info.id)).toEqual(["u0", "u1", "u2"])
   })
 
   test("applyPersistedCrop removes the same span every time", () => {
@@ -398,18 +378,15 @@ describe("persisted crop span", () => {
       msg("a0", "assistant", [reasoning("plan")]),
       msg("a1", "assistant", [reasoning("same")]),
       msg("a2", "assistant", [reasoning("same")]),
-      recoveryUser("r1", "a1", "a2"),
+      userWithSpan("u1", "a1", "a2"),
     ]
-    const withNewStep = [
-      ...base,
-      msg("a3", "assistant", [reasoning("fresh plan")]),
-    ]
+    const withNewStep = [...base, msg("a3", "assistant", [reasoning("fresh plan")])]
     const crop = { fromId: "a1", toId: "a2", key: "reason:abc", truncated: false }
-    expect(applyPersistedCrop(base, crop).kept.map((m) => m.info.id)).toEqual(["u0", "a0", "r1"])
+    expect(applyPersistedCrop(base, crop).kept.map((m) => m.info.id)).toEqual(["u0", "a0", "u1"])
     expect(applyPersistedCrop(withNewStep, crop).kept.map((m) => m.info.id)).toEqual([
       "u0",
       "a0",
-      "r1",
+      "u1",
       "a3",
     ])
   })
