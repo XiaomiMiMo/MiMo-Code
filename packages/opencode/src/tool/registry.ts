@@ -555,6 +555,12 @@ export const defaultLayer = Layer.suspend(() =>
     Layer.provide(CrossSpawnSpawner.defaultLayer),
     Layer.provide(Ripgrep.defaultLayer),
     Layer.provide(Truncate.defaultLayer),
+  ).pipe(
+    // Split from the .pipe() above: a single .pipe() call is capped at 20
+    // overloaded Layer.provide arguments (TS2554 "Expected 0-20 arguments").
+    // Goal.defaultLayer (PI-62) pushed the original single chain to 21 — order
+    // among Layer.provide calls is independent (each provides an isolated
+    // service), so splitting the chain here changes nothing but the arg count.
     Layer.provide(Layer.mergeAll(ActorRegistry.defaultLayer, ActorWaiter.defaultLayer, Worktree.defaultLayer)),
     Layer.provide(Team.defaultLayer),
     Layer.provide(
