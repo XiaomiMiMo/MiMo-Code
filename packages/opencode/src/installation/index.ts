@@ -257,16 +257,25 @@ export const layer: Layer.Layer<Service, never, HttpClient.HttpClient | ChildPro
         // }
 
         if (detectedMethod === "curl") {
-          // Resolve the latest version from FDS, matching the source the install
-          // script downloads from (fast in mainland China). Override base via
-          // MIMO_FDS_BASE to mirror the install script.
-          const base = (process.env.MIMO_FDS_BASE || "https://mimocode.cnbj1.mi-fds.com/mimocode/mimocode").replace(
-            /\/+$/,
-            "",
-          )
-          const version = (yield* text(["curl", "-fsSL", `${base}/releases/latest`])).trim().replace(/^v/, "")
+          // Resolve the latest version from Scaffold's own kernel-fork GitHub
+          // releases (pyramidheadshark/scaffold-kernel), matching what install.sh
+          // downloads via `gh release download kernel-v<version>`. Override base
+          // via SCAFFOLD_RELEASES_BASE for a self-hosted mirror; must return the
+          // same GitHub-releases-API JSON shape ({ tag_name }).
+          const base = (
+            process.env.SCAFFOLD_RELEASES_BASE || "https://api.github.com/repos/pyramidheadshark/scaffold-kernel"
+          ).replace(/\/+$/, "")
+          const body = yield* text(["curl", "-fsSL", `${base}/releases/latest`])
+          const tagName = (() => {
+            try {
+              return (JSON.parse(body) as { tag_name?: string }).tag_name
+            } catch {
+              return undefined
+            }
+          })()
+          const version = (tagName ?? "").replace(/^kernel-v/, "").replace(/^v/, "")
           if (/^\d+\.\d+\.\d+/.test(version)) return version
-          return yield* Effect.die(new Error("failed to resolve latest version from FDS"))
+          return yield* Effect.die(new Error("failed to resolve latest version from GitHub releases"))
         }
 
         if (detectedMethod === "npm" || detectedMethod === "bun" || detectedMethod === "pnpm") {
