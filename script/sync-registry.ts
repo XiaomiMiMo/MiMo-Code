@@ -2,7 +2,7 @@
 import { Script } from "@mimo-ai/script"
 
 const PACKAGES = [
-  "@mimo-ai/cli",
+  "scaffold-kernel",
   "@mimo-ai/mimocode-darwin-arm64",
   "@mimo-ai/mimocode-darwin-x64",
   "@mimo-ai/mimocode-darwin-x64-baseline",

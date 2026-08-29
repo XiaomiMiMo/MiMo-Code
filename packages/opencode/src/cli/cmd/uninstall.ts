@@ -134,9 +134,9 @@ async function showRemovalSummary(targets: RemovalTargets, method: Installation.
 
   if (method !== "curl" && method !== "unknown") {
     const cmds: Record<string, string> = {
-      npm: "npm uninstall -g @mimo-ai/cli",
-      pnpm: "pnpm uninstall -g @mimo-ai/cli",
-      bun: "bun remove -g @mimo-ai/cli",
+      npm: "npm uninstall -g scaffold-kernel",
+      pnpm: "pnpm uninstall -g scaffold-kernel",
+      bun: "bun remove -g scaffold-kernel",
       // TODO(mimocode): uncomment when published to these channels
       // brew: "brew uninstall mimocode",
       // choco: "choco uninstall mimocode",
@@ -196,9 +196,9 @@ async function executeUninstall(method: Installation.Method, targets: RemovalTar
 
   if (method !== "curl" && method !== "unknown") {
     const cmds: Record<string, string[]> = {
-      npm: ["npm", "uninstall", "-g", "@mimo-ai/cli"],
-      pnpm: ["pnpm", "uninstall", "-g", "@mimo-ai/cli"],
-      bun: ["bun", "remove", "-g", "@mimo-ai/cli"],
+      npm: ["npm", "uninstall", "-g", "scaffold-kernel"],
+      pnpm: ["pnpm", "uninstall", "-g", "scaffold-kernel"],
+      bun: ["bun", "remove", "-g", "scaffold-kernel"],
       // TODO(mimocode): uncomment when published to these channels
       // brew: ["brew", "uninstall", "mimocode"],
       // choco: ["choco", "uninstall", "mimocode"],

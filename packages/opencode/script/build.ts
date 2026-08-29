@@ -292,14 +292,14 @@ for (const item of targets) {
 
   await $`rm -rf ./dist/${name}/bin/tui`
   await Bun.file(`dist/${name}/README.md`).write(
-    `This is the ${item.os}-${item.arch} binary for [@mimo-ai/cli](https://www.npmjs.com/package/@mimo-ai/cli). Install that package directly.\n`,
+    `This is the ${item.os}-${item.arch} binary for [scaffold-kernel](https://www.npmjs.com/package/scaffold-kernel). Install that package directly.\n`,
   )
   await Bun.file(`dist/${name}/package.json`).write(
     JSON.stringify(
       {
         name: `@mimo-ai/${name}`,
         version: Script.version,
-        description: "Platform-specific binary for @mimo-ai/cli.",
+        description: "Platform-specific binary for scaffold-kernel.",
         license: "MIT",
         author: "Xiaomi MiMo Team",
         homepage: "https://mimo.xiaomi.com/coder",
