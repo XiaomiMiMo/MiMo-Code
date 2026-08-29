@@ -2,15 +2,14 @@ import { describe, expect, test } from "bun:test"
 import type { LanguageModelV3Prompt } from "@ai-sdk/provider"
 import { createOpenAI } from "@ai-sdk/openai"
 
-// Regression test for the Ark coding-plan Responses API incompatibility:
-// its `output_text` content blocks omit the `annotations` field, which
-// @ai-sdk/openai's response schema requires non-optional. Without the
-// bun patch (`patches/@ai-sdk%2Fopenai@3.0.53.patch`, `.default([])`), a
-// request fails with:
-//   AI_TypeValidationError: Type validation failed
-//   path: ["output", 1, "content", 0, "annotations"]
-//   expected array, received undefined
-// mirrored from `~/.local/share/mimocode/log/dev-worker-1215-58a0351e.log`.
+// Records @ai-sdk/openai's Responses behavior on the Ark coding-plan wire
+// shape: `output_item.added` function_call carries no `arguments` field
+// (arguments stream via `function_call_arguments.delta`), and streamed
+// `output_text` blocks may omit `annotations`. With the pristine 3.0.84 SDK
+// (no bun patch) the added chunk fails zod validation (required `arguments`)
+// and is dropped — `tool-input-start` never fires, but `tool-input-end` +
+// `tool-call` still stream. The session processor compensates via
+// ensureToolCall (see test/session/tool-call-fallback.test.ts).
 
 const prompt: LanguageModelV3Prompt = [{ role: "user", content: [{ type: "text", text: "继续" }] }]
 
@@ -71,13 +70,7 @@ function sseProvider(events: unknown[]) {
 }
 
 describe("openai responses missing annotations", () => {
-  test("accepts an output_text block without annotations (Ark responses shape)", async () => {
-    const model = provider(arkResponse({ withAnnotations: false })).responses("deepseek-v4-flash")
-    const result = await model.doGenerate({ prompt })
-    expect(result.content).toContainEqual(expect.objectContaining({ type: "text", text: "好的，开始吧" }))
-  })
-
-  test("still accepts an output_text block with annotations", async () => {
+  test("accepts an output_text block with annotations", async () => {
     const model = provider(arkResponse({ withAnnotations: true })).responses("deepseek-v4-flash")
     const result = await model.doGenerate({ prompt })
     expect(result.content).toContainEqual(expect.objectContaining({ type: "text", text: "好的，开始吧" }))
@@ -134,12 +127,13 @@ describe("openai responses missing annotations", () => {
     expect(parts.filter((part) => part.type === "text-delta").map((part) => part.delta)).toContain("好的，开始吧")
   })
 
-  test("emits tool-input-start for a function_call without arguments (Ark streamed shape)", async () => {
+  test("function_call without arguments does not crash; tool-call still streams (SDK drops the added chunk)", async () => {
     // Ark streams function_call arguments via `function_call_arguments.delta`,
     // so its `output_item.added` function_call item carries no `arguments`
-    // field. The SDK chunk schema requires it non-nullish, which previously
-    // dropped the whole chunk and with it the `tool-input-start` event — the
-    // tool-call part was never created and the session looped forever.
+    // field. With the pristine SDK the added chunk fails zod validation and is
+    // dropped (no `tool-input-start`), but the stream still emits
+    // `tool-input-end` + `tool-call`. This pins the SDK behavior so a future
+    // SDK upgrade that changes it is noticed.
     const events: unknown[] = [
       { type: "response.created", response: { id: "resp_t", created_at: 1, model: "m" } },
       {
@@ -199,9 +193,7 @@ describe("openai responses missing annotations", () => {
       if (next.done) break
       parts.push(next.value)
     }
-    expect(parts.filter((part) => part.type === "tool-input-start")).toEqual([
-      { type: "tool-input-start", id: "call_t0k", toolName: "echo_tool" },
-    ])
+    expect(parts.filter((part) => part.type === "tool-input-start")).toEqual([])
     expect(parts.filter((part) => part.type === "tool-call")).toEqual([
       {
         type: "tool-call",
