@@ -23,14 +23,15 @@ export const dict = {
   "language.tr": "Türkçe",
 
   // Prompt placeholders
-  "tui.prompt.placeholder.normal": 'Спросите что угодно... "{{example}}"',
-  "tui.prompt.placeholder.shell": 'Выполните команду... "{{example}}"',
+  "tui.prompt.placeholder.normal": "'Спросите что угодно... \"{{example}}\"'",
+  "tui.prompt.placeholder.shell": "'Выполните команду... \"{{example}}\"'",
   "tui.prompt.ghost": "{{prediction}}  (Tab — принять)",
-  "tui.paste.image.fallback_path": "Модель не поддерживает изображения — вместо этого вставлен путь к изображению. Используйте /modalities для включения",
+  "tui.paste.image.fallback_path":
+    "Модель не поддерживает изображения — вместо этого вставлен путь к изображению. Используйте /modalities для включения",
   "tui.home.placeholder.example.todo": "Исправь TODO в кодовой базе",
   "tui.home.placeholder.example.stack": "Какой технологический стек у этого проекта?",
   "tui.home.placeholder.example.tests": "Почини сломанные тесты",
-  "tui.home.agreement.prefix": "Используя MiMoCode, вы соглашаетесь с нашими ",
+  "tui.home.agreement.prefix": "Используя Scaffold, вы соглашаетесь с нашими ",
   "tui.home.agreement.terms": "Условиями использования",
   "tui.home.agreement.separator": " и ",
   "tui.home.agreement.privacy": "Политикой конфиденциальности",
@@ -45,7 +46,8 @@ export const dict = {
 
   // Tips
   "tui.tips.label": "Подсказка",
-  "tui.tips.plain_terminal": "Стандартный терминал Mac имеет ограничения рендеринга. Используйте iTerm2 или терминал VS Code",
+  "tui.tips.plain_terminal":
+    "Стандартный терминал Mac имеет ограничения рендеринга. Используйте iTerm2 или терминал VS Code",
   "tui.tips.attach_file":
     "Введите {highlight}@{/highlight}, а затем имя файла, чтобы выполнить нечёткий поиск и прикрепить файлы",
   "tui.tips.shell_prefix":
@@ -57,9 +59,9 @@ export const dict = {
   "tui.tips.theme_mode":
     "Выполните {highlight}/dark{/highlight} для тёмного режима или {highlight}/light{/highlight} для светлого",
   "tui.tips.doc": "Выполните {highlight}/doc{/highlight}, чтобы открыть пользовательскую документацию",
-  "tui.tips.free_models": "Бесплатные модели доступны ограниченное время — попробуйте их сейчас!",
+  "tui.tips.free_models": "Поддерживается OpenRouter, Codex и другие провайдеры — настройте ключ в Настройках",
   "tui.tips.free_api_sunset":
-    "Сервис бесплатного API завершён. Выполните {highlight}/login{/highlight}, чтобы войти. Оформите подписку на MiMo Token Plan или настройте сторонний API для использования MiMo Code.",
+    "Сервис бесплатного API завершён. Выполните {highlight}/login{/highlight}, чтобы войти. Оформите подписку на Scaffold Token Plan или настройте сторонний API для использования Scaffold.",
   "tui.tips.multi_skills":
     "Комбинируйте несколько {highlight}/skill-name{/highlight} в одном сообщении, чтобы использовать несколько Skills одновременно",
   "tui.tips.ask_slash_commands":
@@ -70,10 +72,8 @@ export const dict = {
     "Выполните {highlight}/vivid{/highlight}, чтобы при необходимости переключаться между расширенным и минимальным оформлением",
   "tui.tips.compose_next":
     "Попробуйте {highlight}/compose-next{/highlight} вместо агента Compose для передовых моделей",
-  "tui.tips.undo":
-    "Используйте {highlight}/undo{/highlight}, чтобы отменить последнее сообщение и изменения файлов",
-  "tui.tips.redo":
-    "Используйте {highlight}/redo{/highlight}, чтобы вернуть ранее отменённые сообщения и изменения",
+  "tui.tips.undo": "Используйте {highlight}/undo{/highlight}, чтобы отменить последнее сообщение и изменения файлов",
+  "tui.tips.redo": "Используйте {highlight}/redo{/highlight}, чтобы вернуть ранее отменённые сообщения и изменения",
   "tui.tips.drag_drop": "Перетащите изображения или PDF в терминал, чтобы добавить их в контекст",
   "tui.tips.paste_image":
     "Нажмите {highlight}Ctrl+V{/highlight}, чтобы вставить изображение из буфера обмена (в macOS используйте Ctrl+V, а не Cmd+V — терминал перехватывает Cmd+V)",
@@ -89,18 +89,15 @@ export const dict = {
     "Нажмите {highlight}Ctrl+X N{/highlight} или {highlight}/new{/highlight}, чтобы начать новую сессию",
   "tui.tips.sessions":
     "Используйте {highlight}/sessions{/highlight} или {highlight}Ctrl+X L{/highlight}, чтобы просмотреть и продолжить предыдущие сессии",
-  "tui.tips.compact":
-    "Выполните {highlight}/compact{/highlight}, чтобы сжимать длинные сессии у границы контекста",
+  "tui.tips.compact": "Выполните {highlight}/compact{/highlight}, чтобы сжимать длинные сессии у границы контекста",
   "tui.tips.export":
     "Нажмите {highlight}Ctrl+X X{/highlight} или {highlight}/export{/highlight}, чтобы сохранить диалог в Markdown",
-  "tui.tips.copy_last":
-    "Нажмите {highlight}Ctrl+X Y{/highlight}, чтобы скопировать последнее сообщение ассистента",
+  "tui.tips.copy_last": "Нажмите {highlight}Ctrl+X Y{/highlight}, чтобы скопировать последнее сообщение ассистента",
   "tui.tips.command_palette":
     "Нажмите {highlight}Ctrl+P{/highlight}, чтобы посмотреть все доступные действия и команды",
   "tui.tips.login":
     "Выполните {highlight}/login{/highlight}, чтобы войти и использовать Token Plan или настроить собственный API-ключ",
-  "tui.tips.connect":
-    "Выполните {highlight}/connect{/highlight}, чтобы выбрать LLM-провайдера и добавить API-ключи",
+  "tui.tips.connect": "Выполните {highlight}/connect{/highlight}, чтобы выбрать LLM-провайдера и добавить API-ключи",
   "tui.tips.leader":
     "Лидер-клавиша — {highlight}Ctrl+X{/highlight}; сочетайте её с другими клавишами для быстрых действий",
   "tui.tips.f2": "Нажмите {highlight}F2{/highlight}, чтобы быстро переключаться между недавно используемыми моделями",
@@ -113,10 +110,8 @@ export const dict = {
     "Нажмите {highlight}Ctrl+Alt+G{/highlight} или {highlight}End{/highlight}, чтобы перейти к последнему сообщению",
   "tui.tips.newline":
     "Нажмите {highlight}Shift+Enter{/highlight} или {highlight}Ctrl+J{/highlight}, чтобы добавить перенос строки во ввод",
-  "tui.tips.clear_input":
-    "Нажмите {highlight}Ctrl+C{/highlight} во время ввода, чтобы очистить поле ввода",
-  "tui.tips.escape":
-    "Нажмите {highlight}Escape{/highlight}, чтобы прервать ИИ во время ответа",
+  "tui.tips.clear_input": "Нажмите {highlight}Ctrl+C{/highlight} во время ввода, чтобы очистить поле ввода",
+  "tui.tips.escape": "Нажмите {highlight}Escape{/highlight}, чтобы прервать ИИ во время ответа",
   "tui.tips.plan_agent":
     "Переключитесь на агента {highlight}Plan{/highlight}, чтобы получать предложения без реальных изменений",
   "tui.tips.subagent":
@@ -124,82 +119,65 @@ export const dict = {
   "tui.tips.cycle_sessions":
     "Нажимайте {highlight}Ctrl+X Right/Left{/highlight}, чтобы переключаться между родительской и дочерними сессиями",
   "tui.tips.config_files":
-    "Создайте {highlight}mimocode.json{/highlight} для серверных настроек и {highlight}tui.json{/highlight} для настроек TUI",
+    "Создайте {highlight}scaffold.json{/highlight} для серверных настроек и {highlight}tui.json{/highlight} для настроек TUI",
   "tui.tips.global_config":
-    "Поместите настройки TUI в {highlight}~/.config/mimocode/tui.json{/highlight} как глобальные",
-  "tui.tips.schema":
-    "Добавьте {highlight}$schema{/highlight} в конфиг для автодополнения в редакторе",
-  "tui.tips.default_model":
-    "Задайте {highlight}model{/highlight} в конфиге, чтобы установить модель по умолчанию",
+    "Поместите настройки TUI в {highlight}~/.config/scaffold/tui.json{/highlight} как глобальные",
+  "tui.tips.schema": "Добавьте {highlight}$schema{/highlight} в конфиг для автодополнения в редакторе",
+  "tui.tips.default_model": "Задайте {highlight}model{/highlight} в конфиге, чтобы установить модель по умолчанию",
   "tui.tips.keybinds":
     "Переопределяйте любые сочетания клавиш в {highlight}tui.json{/highlight} в разделе {highlight}keybinds{/highlight}",
-  "tui.tips.disable_keybind":
-    "Установите сочетание в {highlight}none{/highlight}, чтобы полностью его отключить",
-  "tui.tips.mcp_config":
-    "Настройте локальные или удалённые MCP-серверы в разделе {highlight}mcp{/highlight} конфига",
-  "tui.tips.mcp_oauth":
-    "MiMoCode автоматически обрабатывает OAuth для удалённых MCP-серверов с авторизацией",
+  "tui.tips.disable_keybind": "Установите сочетание в {highlight}none{/highlight}, чтобы полностью его отключить",
+  "tui.tips.mcp_config": "Настройте локальные или удалённые MCP-серверы в разделе {highlight}mcp{/highlight} конфига",
+  "tui.tips.mcp_oauth": "Scaffold автоматически обрабатывает OAuth для удалённых MCP-серверов с авторизацией",
   "tui.tips.custom_command":
-    "Добавляйте файлы {highlight}.md{/highlight} в {highlight}.mimocode/command/{/highlight} для повторно используемых пользовательских команд",
+    "Добавляйте файлы {highlight}.md{/highlight} в {highlight}.scaffold/command/{/highlight} для повторно используемых пользовательских команд",
   "tui.tips.command_args":
     "Используйте {highlight}$ARGUMENTS{/highlight}, {highlight}$1{/highlight}, {highlight}$2{/highlight} в командах для динамического ввода",
   "tui.tips.command_backticks":
     "Используйте обратные кавычки в командах, чтобы вставить вывод shell (например, {highlight}`git status`{/highlight})",
   "tui.tips.custom_agent":
-    "Добавляйте файлы {highlight}.md{/highlight} в {highlight}.mimocode/agent/{/highlight} для специализированных AI-персон",
+    "Добавляйте файлы {highlight}.md{/highlight} в {highlight}.scaffold/agent/{/highlight} для специализированных AI-персон",
   "tui.tips.agent_perms":
     "Настройте для каждого агента отдельные права на инструменты {highlight}edit{/highlight}, {highlight}bash{/highlight} и {highlight}webfetch{/highlight}",
   "tui.tips.bash_allow":
-    'Используйте шаблоны вроде {highlight}"git *": "allow"{/highlight} для тонких bash-разрешений',
+    '\'Используйте шаблоны вроде {highlight}"git *": "allow"{/highlight} для тонких bash-разрешений\'',
   "tui.tips.bash_deny":
-    'Установите {highlight}"rm -rf *": "deny"{/highlight}, чтобы блокировать разрушительные команды',
+    '\'Установите {highlight}"rm -rf *": "deny"{/highlight}, чтобы блокировать разрушительные команды\'',
   "tui.tips.bash_ask":
-    'Настройте {highlight}"git push": "ask"{/highlight}, чтобы запрашивать подтверждение перед push',
+    '\'Настройте {highlight}"git push": "ask"{/highlight}, чтобы запрашивать подтверждение перед push\'',
   "tui.tips.formatter":
-    "MiMoCode автоматически форматирует файлы с помощью prettier, gofmt, ruff и других инструментов",
+    "Scaffold автоматически форматирует файлы с помощью prettier, gofmt, ruff и других инструментов",
   "tui.tips.disable_formatter":
-    'Установите {highlight}"formatter": false{/highlight}, чтобы отключить всё авто-форматирование',
-  "tui.tips.custom_formatter":
-    "Определяйте собственные команды форматирования по расширениям файлов в конфиге",
-  "tui.tips.lsp": "MiMoCode использует LSP-серверы для интеллектуального анализа кода",
+    "'Установите {highlight}\"formatter\": false{/highlight}, чтобы отключить всё авто-форматирование'",
+  "tui.tips.custom_formatter": "Определяйте собственные команды форматирования по расширениям файлов в конфиге",
+  "tui.tips.lsp": "Scaffold использует LSP-серверы для интеллектуального анализа кода",
   "tui.tips.custom_tool":
-    "Создавайте файлы {highlight}.ts{/highlight} в {highlight}.mimocode/tools/{/highlight}, чтобы определить новые LLM-инструменты",
-  "tui.tips.tool_scripts":
-    "Определения инструментов могут вызывать скрипты на Python, Go и других языках",
+    "Создавайте файлы {highlight}.ts{/highlight} в {highlight}.scaffold/tools/{/highlight}, чтобы определить новые LLM-инструменты",
+  "tui.tips.tool_scripts": "Определения инструментов могут вызывать скрипты на Python, Go и других языках",
   "tui.tips.plugins":
-    "Добавляйте файлы {highlight}.ts{/highlight} в {highlight}.mimocode/plugin/{/highlight} для подключения хуков событий",
-  "tui.tips.plugin_notify":
-    "Используйте плагины, чтобы отправлять системные уведомления при завершении сессий",
-  "tui.tips.plugin_protect":
-    "Создайте плагин, который запретит MiMoCode читать чувствительные файлы",
-  "tui.tips.run":
-    "Используйте {highlight}mimo run{/highlight} для неинтерактивных скриптов",
-  "tui.tips.continue":
-    "Используйте {highlight}mimo --continue{/highlight}, чтобы продолжить последнюю сессию",
+    "Добавляйте файлы {highlight}.ts{/highlight} в {highlight}.scaffold/plugin/{/highlight} для подключения хуков событий",
+  "tui.tips.plugin_notify": "Используйте плагины, чтобы отправлять системные уведомления при завершении сессий",
+  "tui.tips.plugin_protect": "Создайте плагин, который запретит Scaffold читать чувствительные файлы",
+  "tui.tips.run": "Используйте {highlight}scaffold run{/highlight} для неинтерактивных скриптов",
+  "tui.tips.continue": "Используйте {highlight}scaffold --continue{/highlight}, чтобы продолжить последнюю сессию",
   "tui.tips.attach_cli":
-    "Используйте {highlight}mimo run -f file.ts{/highlight}, чтобы прикрепить файлы из командной строки",
-  "tui.tips.format_json":
-    "Используйте {highlight}--format json{/highlight} для машинно-читаемого вывода в скриптах",
-  "tui.tips.serve":
-    "Запустите {highlight}mimo serve{/highlight} для headless-доступа к API MiMoCode",
+    "Используйте {highlight}scaffold run -f file.ts{/highlight}, чтобы прикрепить файлы из командной строки",
+  "tui.tips.format_json": "Используйте {highlight}--format json{/highlight} для машинно-читаемого вывода в скриптах",
+  "tui.tips.serve": "Запустите {highlight}scaffold serve{/highlight} для headless-доступа к API Scaffold",
   "tui.tips.attach_server":
-    "Используйте {highlight}mimo run --attach{/highlight}, чтобы подключиться к запущенному серверу",
-  "tui.tips.upgrade":
-    "Выполните {highlight}mimo upgrade{/highlight}, чтобы обновиться до последней версии",
+    "Используйте {highlight}scaffold run --attach{/highlight}, чтобы подключиться к запущенному серверу",
+  "tui.tips.upgrade": "Выполните {highlight}scaffold upgrade{/highlight}, чтобы обновиться до последней версии",
   "tui.tips.auth_list":
-    "Выполните {highlight}mimo auth list{/highlight}, чтобы увидеть всех настроенных провайдеров",
+    "Выполните {highlight}scaffold auth list{/highlight}, чтобы увидеть всех настроенных провайдеров",
   "tui.tips.agent_create":
-    "Выполните {highlight}mimo agent create{/highlight}, чтобы создать агента в пошаговом режиме",
+    "Выполните {highlight}scaffold agent create{/highlight}, чтобы создать агента в пошаговом режиме",
   "tui.tips.github_install":
-    "Выполните {highlight}mimo github install{/highlight}, чтобы настроить GitHub-workflow",
-  "tui.tips.github_oc":
-    "Оставьте {highlight}/oc{/highlight} в комментарии к строке PR для точечного код-ревью",
+    "Выполните {highlight}scaffold github install{/highlight}, чтобы настроить GitHub-workflow",
+  "tui.tips.github_oc": "Оставьте {highlight}/oc{/highlight} в комментарии к строке PR для точечного код-ревью",
   "tui.tips.theme_system":
-    'Используйте {highlight}"theme": "system"{/highlight}, чтобы соответствовать цветам терминала',
-  "tui.tips.theme_files":
-    "Создавайте JSON-файлы тем в каталоге {highlight}.mimocode/themes/{/highlight}",
-  "tui.tips.theme_variants":
-    "Темы поддерживают тёмные и светлые варианты для обоих режимов",
+    '\'Используйте {highlight}"theme": "system"{/highlight}, чтобы соответствовать цветам терминала\'',
+  "tui.tips.theme_files": "Создавайте JSON-файлы тем в каталоге {highlight}.scaffold/themes/{/highlight}",
+  "tui.tips.theme_variants": "Темы поддерживают тёмные и светлые варианты для обоих режимов",
   "tui.tips.theme_ansi": "Ссылайтесь на ANSI-цвета 0-255 в собственных темах",
   "tui.tips.env_var":
     "Используйте синтаксис {highlight}{env:VAR_NAME}{/highlight} для ссылки на переменные окружения в конфиге",
@@ -209,28 +187,23 @@ export const dict = {
     "Используйте {highlight}instructions{/highlight} в конфиге, чтобы подключать дополнительные файлы правил",
   "tui.tips.temperature":
     "Устанавливайте {highlight}temperature{/highlight} агента от 0.0 (сосредоточенно) до 1.0 (творчески)",
-  "tui.tips.steps":
-    "Настройте {highlight}steps{/highlight}, чтобы ограничить число агентских итераций на запрос",
+  "tui.tips.steps": "Настройте {highlight}steps{/highlight}, чтобы ограничить число агентских итераций на запрос",
   "tui.tips.disable_tool":
-    'Установите {highlight}"tools": {"bash": false}{/highlight}, чтобы отключить отдельные инструменты',
+    '\'Установите {highlight}"tools": {"bash": false}{/highlight}, чтобы отключить отдельные инструменты\'',
   "tui.tips.disable_mcp_tools":
-    'Установите {highlight}"mcp_*": false{/highlight}, чтобы отключить все инструменты конкретного MCP-сервера',
-  "tui.tips.tool_override":
-    "Переопределяйте глобальные настройки инструментов в конфигурации каждого агента",
+    "'Установите {highlight}\"mcp_*\": false{/highlight}, чтобы отключить все инструменты конкретного MCP-сервера'",
+  "tui.tips.tool_override": "Переопределяйте глобальные настройки инструментов в конфигурации каждого агента",
   "tui.tips.share_auto":
-    'Установите {highlight}"share": "auto"{/highlight}, чтобы автоматически делиться всеми сессиями',
+    '\'Установите {highlight}"share": "auto"{/highlight}, чтобы автоматически делиться всеми сессиями\'',
   "tui.tips.share_disabled":
-    'Установите {highlight}"share": "disabled"{/highlight}, чтобы запретить любой шаринг сессий',
-  "tui.tips.unshare":
-    "Выполните {highlight}/unshare{/highlight}, чтобы убрать сессию из публичного доступа",
+    '\'Установите {highlight}"share": "disabled"{/highlight}, чтобы запретить любой шаринг сессий\'',
+  "tui.tips.unshare": "Выполните {highlight}/unshare{/highlight}, чтобы убрать сессию из публичного доступа",
   "tui.tips.doom_loop":
     "Разрешение {highlight}doom_loop{/highlight} предотвращает бесконечные циклы вызова инструментов",
-  "tui.tips.external_dir":
-    "Разрешение {highlight}external_directory{/highlight} защищает файлы вне проекта",
+  "tui.tips.external_dir": "Разрешение {highlight}external_directory{/highlight} защищает файлы вне проекта",
   "tui.tips.debug_config":
-    "Выполните {highlight}mimo debug config{/highlight}, чтобы диагностировать проблемы конфигурации",
-  "tui.tips.print_logs":
-    "Используйте флаг {highlight}--print-logs{/highlight}, чтобы видеть подробные логи в stderr",
+    "Выполните {highlight}scaffold debug config{/highlight}, чтобы диагностировать проблемы конфигурации",
+  "tui.tips.print_logs": "Используйте флаг {highlight}--print-logs{/highlight}, чтобы видеть подробные логи в stderr",
   "tui.tips.timeline":
     "Нажмите {highlight}Ctrl+X G{/highlight} или {highlight}/timeline{/highlight}, чтобы перейти к нужному сообщению",
   "tui.tips.toggle_code":
@@ -241,20 +214,14 @@ export const dict = {
     "Включите {highlight}scroll_acceleration{/highlight} в {highlight}tui.json{/highlight} для плавной прокрутки",
   "tui.tips.username_toggle":
     "Переключайте отображение имени пользователя через палитру команд ({highlight}Ctrl+P{/highlight})",
-  "tui.tips.zen":
-    "Используйте {highlight}/connect{/highlight} с MiMo Code для подобранных и протестированных моделей",
+  "tui.tips.zen": "Используйте {highlight}/connect{/highlight} с Scaffold для подобранных и протестированных моделей",
   "tui.tips.agents_md":
     "Закоммитьте {highlight}AGENTS.md{/highlight} вашего проекта в Git для общего доступа в команде",
-  "tui.tips.review":
-    "Используйте {highlight}/review{/highlight} для ревью незакоммиченных изменений, веток или PR",
-  "tui.tips.help":
-    "Выполните {highlight}/help{/highlight} или {highlight}Ctrl+X H{/highlight}, чтобы открыть справку",
-  "tui.tips.rename":
-    "Используйте {highlight}/rename{/highlight}, чтобы переименовать текущую сессию",
-  "tui.tips.suspend.unix":
-    "Нажмите {highlight}Ctrl+Z{/highlight}, чтобы приостановить терминал и вернуться в shell",
-  "tui.tips.suspend.win":
-    "Нажмите {highlight}Ctrl+Z{/highlight}, чтобы отменить изменения в строке ввода",
+  "tui.tips.review": "Используйте {highlight}/review{/highlight} для ревью незакоммиченных изменений, веток или PR",
+  "tui.tips.help": "Выполните {highlight}/help{/highlight} или {highlight}Ctrl+X H{/highlight}, чтобы открыть справку",
+  "tui.tips.rename": "Используйте {highlight}/rename{/highlight}, чтобы переименовать текущую сессию",
+  "tui.tips.suspend.unix": "Нажмите {highlight}Ctrl+Z{/highlight}, чтобы приостановить терминал и вернуться в shell",
+  "tui.tips.suspend.win": "Нажмите {highlight}Ctrl+Z{/highlight}, чтобы отменить изменения в строке ввода",
 
   // Command palette UI
   "tui.command.palette.title": "Команды",
@@ -272,8 +239,7 @@ export const dict = {
   // Built-in slash command descriptions
   "tui.slash.init.description": "пошаговая настройка AGENTS.md",
   "tui.slash.review.description": "просмотр изменений [commit|branch|pr], по умолчанию незакоммиченные",
-  "tui.slash.dream.description":
-    "вручную консолидировать память проекта из memory-файлов и сырой траектории",
+  "tui.slash.dream.description": "вручную консолидировать память проекта из memory-файлов и сырой траектории",
   "tui.slash.distill.description":
     "найти повторяющиеся workflow в недавней работе и упаковать их в skills, субагентов или команды",
   "tui.slash.goal.description":
@@ -286,11 +252,12 @@ export const dict = {
   "tui.skill.xlsx-official.description": "Создание, редактирование и чтение книг Microsoft Excel (.xlsx)",
   "tui.skill.pdf-official.description": "Создание, редактирование, преобразование и чтение PDF-файлов",
   "tui.skill.pptx-official.description": "Создание, редактирование и чтение презентаций Microsoft PowerPoint (.pptx)",
-  "tui.skill.mimocode.description": "Самодокументация функций, конфигурации и команд MiMoCode",
+  "tui.skill.mimocode.description": "Самодокументация функций, конфигурации и команд Scaffold",
   "tui.skill.evolve.description": "Перепишите любой свой слой — инструменты, hooks, знания, workflows и даже UI",
   "tui.skill.frontend-design.description": "Руководство по выразительному, осмысленному визуальному дизайну UI",
   "tui.skill.loop.description": "Запланировать запуск промпта с периодичностью",
-  "tui.skill.html-to-video-pipeline.description": "Магический инструмент для коротких видео — создавайте короткие видео с помощью HTML",
+  "tui.skill.html-to-video-pipeline.description":
+    "Магический инструмент для коротких видео — создавайте короткие видео с помощью HTML",
   "tui.skill.arxiv.description": "Поиск, цитирование, загрузка и отслеживание статей arXiv",
   "tui.skill.skill-creator.description": "Создание, проверка и улучшение skills агента",
   "tui.skill.research-paper-writing.description": "Написание, полировка и рецензирование научных статей",
@@ -298,18 +265,15 @@ export const dict = {
   "tui.skill.codex.description": "Автономный запуск Codex CLI в скриптах, CI, Docker и Kubernetes",
   "tui.skill.claude-code.description": "Делегирование задач программирования Claude Code CLI",
   "tui.skill.grok-build.description": "Работа с Grok Build из командной строки",
-  "tui.skill.design-blueprint.description":
-    "Создать проектную спецификацию (DESIGN.md + Decision Trace) до макетов",
+  "tui.skill.design-blueprint.description": "Создать проектную спецификацию (DESIGN.md + Decision Trace) до макетов",
   "tui.skill.super-research.description":
     "Автономные исследования — эксперименты, обзоры, количественный анализ, бенчмарки, RCA, абляция, воспроизведение и написание статей",
   "tui.skill.deep-research.description":
     "Глубокое многоисточниковое исследование с перекрёстной проверкой и цитированием",
-  "tui.skill.modern-python-toolchain.description":
-    "Настройка Python-проекта с uv, ruff и pyright",
+  "tui.skill.modern-python-toolchain.description": "Настройка Python-проекта с uv, ruff и pyright",
   "tui.skill.data-analytics.description":
     "Анализ данных о продукте и бизнесе, проектирование KPI, создание дашбордов и отчётов",
-  "tui.skill.product-design.description":
-    "Исследование, аудит, прототипирование и проверка дизайна продукта и UX",
+  "tui.skill.product-design.description": "Исследование, аудит, прототипирование и проверка дизайна продукта и UX",
   "tui.skill.sales.description":
     "Подготовка встреч, исследование клиентов, планирование сделок и работа с системами продаж",
   "tui.skill.compose:ask.description": "Запросить у пользователя решение или уточнение",
@@ -355,13 +319,16 @@ export const dict = {
   "tui.modalities.hint.toggle": "переключить",
   "tui.modalities.hint.save": "сохранить",
   "tui.command.mcp.list.title": "Переключить MCP",
-  "tui.command.never_ask.title_on": "Без вопросов: ВКЛ (авто-решение, кроме запросов разрешений) — нажмите для выключения",
-  "tui.command.never_ask.title_off": "Без вопросов: ВЫКЛ — нажмите для включения (авто-решение, кроме запросов разрешений)",
+  "tui.command.never_ask.title_on":
+    "Без вопросов: ВКЛ (авто-решение, кроме запросов разрешений) — нажмите для выключения",
+  "tui.command.never_ask.title_off":
+    "Без вопросов: ВЫКЛ — нажмите для включения (авто-решение, кроме запросов разрешений)",
   "tui.command.never_ask.toast_on":
     "Без вопросов ВКЛ — я не буду спрашивать; сам выберу лучший вариант, пока вы не выключите (/never-ask). Запросы разрешений по-прежнему требуют вашего подтверждения.",
   "tui.command.never_ask.toast_off": "Без вопросов ВЫКЛ — я снова буду спрашивать вас в точках принятия решений.",
   "tui.command.skip_permissions.title_on": "Пропуск разрешений: ВКЛ (авто-одобрение запросов) — нажмите для выключения",
-  "tui.command.skip_permissions.title_off": "Пропуск разрешений: ВЫКЛ — нажмите для включения (авто-одобрение запросов)",
+  "tui.command.skip_permissions.title_off":
+    "Пропуск разрешений: ВЫКЛ — нажмите для включения (авто-одобрение запросов)",
   "tui.command.skip_permissions.toast_on":
     "Пропуск разрешений ВКЛ — запросы авто-одобряются (включая субагентов). Деструктивные команды всё ещё запрашивают подтверждение.",
   "tui.command.skip_permissions.toast_off": "Пропуск разрешений ВЫКЛ — запросы снова требуют вашего подтверждения.",
@@ -388,8 +355,10 @@ export const dict = {
   "tui.command.logo.switch.title": "Сменить дизайн логотипа",
   "tui.command.visual_mode.title_on": "Расширенное оформление - перейти к минимальному",
   "tui.command.visual_mode.title_off": "Минимальное оформление - перейти к расширенному",
-  "tui.visual_mode.enabled": "Расширенное оформление включено: звёздный фон и эффекты логотипа восстановлены; метеоры и анимация индикаторов зависят от настройки анимации",
-  "tui.visual_mode.disabled": "Расширенное оформление выключено: звёзды, метеоры и эффекты логотипа скрыты; индикаторы остаются неподвижными",
+  "tui.visual_mode.enabled":
+    "Расширенное оформление включено: звёздный фон и эффекты логотипа восстановлены; метеоры и анимация индикаторов зависят от настройки анимации",
+  "tui.visual_mode.disabled":
+    "Расширенное оформление выключено: звёзды, метеоры и эффекты логотипа скрыты; индикаторы остаются неподвижными",
   "tui.dialog.logo.title": "Дизайн логотипа",
   "tui.dialog.logo.option.classic": "Классический (жирный)",
   "tui.dialog.logo.option.thin": "Тонкий (полублок)",
@@ -411,18 +380,18 @@ export const dict = {
   "tui.dialog.agreement.confirm": "Принять и продолжить",
   "tui.dialog.free_api_sunset.title": "Сервис бесплатного API завершён",
   "tui.dialog.free_api_sunset.message":
-    "Выполните /login, чтобы войти. Оформите подписку на MiMo Token Plan или настройте сторонний API для использования MiMo Code.",
+    "Выполните /login, чтобы войти. Оформите подписку на Scaffold Token Plan или настройте сторонний API для использования Scaffold.",
   "tui.command.consent.revoke.title": "Отозвать согласие на бесплатную модель",
   "tui.consent.revoked": "Согласие на бесплатную модель отозвано — потребуется принять снова",
   "tui.dialog.select.placeholder": "Поиск",
   "tui.dialog.model.login_hint": "Подсказка: выполните /login для входа перед сменой модели",
-  "tui.model.mimo_auto.name": "MiMo Auto (MiMo-V2.5 бесплатно до 26 июля, 18:00 · UTC+8)",
-  "tui.model.mimo_auto.sunset_name": "MiMo Auto (MiMo-V2.5)",
+  "tui.model.mimo_auto.name": "Scaffold Auto (Scaffold-V2.5 бесплатно до 26 июля, 18:00 · UTC+8)",
+  "tui.model.mimo_auto.sunset_name": "Scaffold Auto (Scaffold-V2.5)",
   "tui.dialog.token_plan.title": "Оформите Token Plan или подождите в очереди",
   "tui.dialog.token_plan.line1":
     "В бесплатном режиме запросы сейчас в очереди. Для стабильного и качественного сервиса",
   "tui.dialog.token_plan.subscribe": "оформите ",
-  "tui.dialog.token_plan.link": "MiMo Token Plan",
+  "tui.dialog.token_plan.link": "Scaffold Token Plan",
   "tui.dialog.token_plan.link_suffix": ".",
   "tui.dialog.token_plan.line3": "Вы также можете выполнить /login, чтобы настроить собственный API-ключ.",
   "tui.dialog.token_plan.confirm": "Понятно",
@@ -462,18 +431,21 @@ export const dict = {
   "tui.dialog.try_best.action.verify": "проверка",
   "tui.dialog.try_best.action.same_kind": "один тип",
   "tui.dialog.try_best.handoff.title": "Передать работу {{target}}",
-  "tui.dialog.try_best.handoff.description": "Попросить MiMo поручить незавершённую работу этому исполнителю",
+  "tui.dialog.try_best.handoff.description": "Попросить Scaffold поручить незавершённую работу этому исполнителю",
   "tui.dialog.try_best.continue.title": "Продолжить с {{model}}",
-  "tui.dialog.try_best.continue.description": "Попросить текущую модель отказаться от этого подхода и составить новый план",
+  "tui.dialog.try_best.continue.description":
+    "Попросить текущую модель отказаться от этого подхода и составить новый план",
   "tui.toast.instructions_loaded": "Загружено {{files}}",
   "tui.toast.update_available.title": "Доступно обновление",
   "tui.toast.update_available.confirm": "Доступна новая версия v{{version}}. Обновить сейчас?",
   "tui.toast.update_available.updating": "Обновление до v{{version}}...",
   "tui.toast.update_available.failed": "Не удалось обновить",
-  "tui.toast.update_available.success": "Обновлено до MiMoCode v{{version}}. Пожалуйста, перезапустите приложение.",
+  "tui.toast.update_available.success": "Обновлено до Scaffold v{{version}}. Пожалуйста, перезапустите приложение.",
   "tui.toast.updated.title": "Автообновление выполнено",
-  "tui.toast.updated.message": "Патч применён автоматически: v{{version}}. Перезапустите для использования новой версии. Отключите через autoupdate: false в конфигурации.",
-  "tui.toast.native_installer_tip": "Совет: рекомендуется нативный установщик (curl/PowerShell) для лучшего опыта установки и обновления.",
+  "tui.toast.updated.message":
+    "Патч применён автоматически: v{{version}}. Перезапустите для использования новой версии. Отключите через autoupdate: false в конфигурации.",
+  "tui.toast.native_installer_tip":
+    "Совет: рекомендуется нативный установщик (curl/PowerShell) для лучшего опыта установки и обновления.",
   "tui.sidebar.instructions": "Инструкции",
   "tui.sidebar.cwd": "Рабочий каталог",
   "tui.toast.unknown_error": "Произошла неизвестная ошибка",
@@ -549,17 +521,19 @@ export const dict = {
   "tui.command.voice.toggle.title_off": "Голосовой ввод: отключён — нажмите для включения",
   "tui.voice.enabled": "Голосовой ввод включён (китайский/английский) — нажмите [Voice] для записи",
   "tui.voice.disabled": "Голосовой ввод отключён",
-  "tui.voice.send.enabled": "Голосовая отправка включена — скажите「发送」или \"send it\"",
+  "tui.voice.send.enabled": 'Голосовая отправка включена — скажите「发送」или "send it"',
   "tui.voice.send.disabled": "Голосовая отправка отключена",
-  "tui.voice.control.enabled": "Голосовое управление включено — интеллектуальное редактирование с мультимодальной моделью (медленнее)",
+  "tui.voice.control.enabled":
+    "Голосовое управление включено — интеллектуальное редактирование с мультимодальной моделью (медленнее)",
   "tui.voice.control.disabled": "Голосовое управление отключено — используется быстрая ASR транскрипция",
   "tui.command.voice.control.title": "Переключить голосовое управление (мультимодальное)",
   "tui.command.voice.control.title_on": "Голосовое управление: включено (мультимодальное) — нажмите для отключения",
   "tui.command.voice.control.title_off": "Голосовое управление: отключено (быстрый ASR) — нажмите для включения",
-  "tui.voice.error.no_auth": "Используйте /connect для подключения к MiMo или настройте voice.asr_model для другого провайдера",
-  "tui.voice.error.no_auth_provider": "Голосовой провайдер \"{{provider}}\" не авторизован, проверьте его apiKey",
-  "tui.voice.error.provider_not_found": "Провайдер \"{{provider}}\" недоступен — /connect для аутентификации, или объявите models в конфигурации для пользовательских эндпоинтов",
-  "tui.voice.error.no_url": "У провайдера \"{{provider}}\" не настроен baseURL — укажите options.baseURL в конфигурации",
+  "tui.voice.error.no_auth": "Сначала настройте провайдера в Scaffold",
+  "tui.voice.error.no_auth_provider": 'Голосовой провайдер "{{provider}}" не авторизован, проверьте его apiKey',
+  "tui.voice.error.provider_not_found":
+    'Провайдер "{{provider}}" недоступен — /connect для аутентификации, или объявите models в конфигурации для пользовательских эндпоинтов',
+  "tui.voice.error.no_url": 'У провайдера "{{provider}}" не настроен baseURL — укажите options.baseURL в конфигурации',
   "tui.voice.error.no_device": "Микрофон/аудиоустройство не найдено — проверьте настройки звука системы",
   "tui.voice.error.recorder_failed": "Ошибка записи",
   "tui.voice.error.no_recorder": "Инструмент записи не найден, установите sox",
@@ -576,11 +550,7 @@ export const dict = {
   "tui.command.plugins.install.title": "Установить плагин",
 
   // MiMo Auto (free) — TUI login dialog
-  "tui.dialog.login.mimo_free": "MiMo Auto (free)",
-  "tui.dialog.login.mimo_free.desc": "Анонимный бесплатный канал — вход не требуется",
-  "tui.dialog.login.mimo_free.success": "MiMo Auto (free) готов — модель по умолчанию: mimo/mimo-auto",
-  "tui.dialog.login.mimo_free.unavailable": "Провайдер MiMo Auto (free) не загружен",
-  "tui.dialog.login.flow.title": "Вход в MiMo",
+  "tui.dialog.login.flow.title": "Вход в Scaffold",
   "tui.dialog.login.flow.placeholder": "Вставьте код (или дождитесь обратного вызова браузера)",
   "tui.dialog.login.flow.busy": "Вход...",
   "tui.dialog.login.flow.manual_hint": "Браузер не открылся? Нажмите на ссылку ниже, чтобы скопировать:",
@@ -591,16 +561,6 @@ export const dict = {
   // CLI: providers command (auth login)
   "cli.providers.select": "Выберите провайдера",
   "cli.providers.other": "Другой провайдер",
-  "cli.providers.mimo.recommended_hint": "рекомендуется",
-  "cli.providers.mimo_free.hint": "Анонимный бесплатный канал / mimo-auto",
-  "cli.providers.mimo_free.verifying": "Проверка канала MiMo Auto (free)...",
-  "cli.providers.mimo_free.ready": "Канал MiMo Auto (free) готов",
-  "cli.providers.mimo_free.failed": "Не удалось проверить MiMo Auto (free)",
-  "cli.providers.mimo_free.default_set": "Модель по умолчанию: mimo/mimo-auto (контекст 1M, бесплатно)",
-  "cli.providers.mimo_free.usage_hint":
-    "Вход не требуется — просто запустите mimo. Для платных/премиум-моделей выберите вход через браузер MiMo.",
-  "cli.providers.mimo_login.decrypt_retry": "Ошибка расшифровки, повторите попытку (осталось попыток: {remaining})",
-  "cli.providers.mimo_login.decrypt_exhausted": "Ошибка расшифровки, превышено максимальное число попыток",
 
   // Question i18n — plan_exit
   "tui.question.plan_exit.question": "План {{plan}} завершён. Переключиться на агента build и начать реализацию?",
@@ -615,22 +575,26 @@ export const dict = {
 
   // Workspace trust
   "trust.title": "Доступ к рабочему пространству:",
-  "trust.safety_check": "Проверка безопасности: это проект, который вы создали или которому доверяете? (Ваш собственный код, известный open source проект или работа вашей команды). Если нет, сначала проверьте содержимое этой папки.",
-  "trust.capabilities": "MiMo Code сможет читать, редактировать и выполнять файлы здесь.",
-  "trust.plugin_warn": "Если в этом каталоге есть вредоносные плагины, они могут выполнять произвольный код, читать, изменять или похищать ваши файлы.",
+  "trust.safety_check":
+    "Проверка безопасности: это проект, который вы создали или которому доверяете? (Ваш собственный код, известный open source проект или работа вашей команды). Если нет, сначала проверьте содержимое этой папки.",
+  "trust.capabilities": "Scaffold сможет читать, редактировать и выполнять файлы здесь.",
+  "trust.plugin_warn":
+    "Если в этом каталоге есть вредоносные плагины, они могут выполнять произвольный код, читать, изменять или похищать ваши файлы.",
   "trust.option.yes": "Да, я доверяю этой папке",
   "trust.option.no": "Нет, выйти",
   "trust.dangerous.title_home": "ВНИМАНИЕ: Вы собираетесь открыть ДОМАШНИЙ КАТАЛОГ.",
   "trust.dangerous.title_root": "ВНИМАНИЕ: Вы собираетесь открыть КОРЕНЬ ФАЙЛОВОЙ СИСТЕМЫ.",
-  "trust.dangerous.body_home": "Модель получит доступ ко ВСЕМ вашим личным файлам — SSH-ключам, учётным данным, профилям браузера и всему содержимому домашней папки.",
-  "trust.dangerous.body_root": "Модель получит доступ ко ВСЕЙ файловой системе — системным файлам, данным всех пользователей, учётным данным и всему на этой машине.",
+  "trust.dangerous.body_home":
+    "Модель получит доступ ко ВСЕМ вашим личным файлам — SSH-ключам, учётным данным, профилям браузера и всему содержимому домашней папки.",
+  "trust.dangerous.body_root":
+    "Модель получит доступ ко ВСЕЙ файловой системе — системным файлам, данным всех пользователей, учётным данным и всему на этой машине.",
   "trust.dangerous.advice_home": "Если нет весомой причины, НЕ доверяйте всему домашнему каталогу.",
   "trust.dangerous.advice_root": "Если нет весомой причины, НЕ доверяйте корню файловой системы.",
   "trust.dangerous.option.yes": "Я понимаю риски, доверять только в этой сессии",
   "trust.dangerous.option.no": "Выйти (рекомендуется)",
   "skip_permissions.title": "ПРЕДУПРЕЖДЕНИЕ: режим обхода разрешений",
   "skip_permissions.body":
-    "Вы запустили с --dangerously-skip-permissions. MiMo Code будет читать, редактировать и выполнять файлы, а также запускать команды оболочки БЕЗ запроса подтверждения. Действуют только правила, которые вы явно запретили (deny) в конфигурации. Вы несёте полную ответственность за все его действия.",
+    "Вы запустили с --dangerously-skip-permissions. Scaffold будет читать, редактировать и выполнять файлы, а также запускать команды оболочки БЕЗ запроса подтверждения. Действуют только правила, которые вы явно запретили (deny) в конфигурации. Вы несёте полную ответственность за все его действия.",
   "skip_permissions.plugin_warn":
     "В этом режиме вредоносный запрос, файл или плагин может выполнить произвольные команды и изменить или похитить ваши данные без какого-либо подтверждения.",
   "skip_permissions.root_warn":

@@ -23,14 +23,15 @@ export const dict = {
   "language.tr": "Türkçe",
 
   // Prompt placeholders
-  "tui.prompt.placeholder.normal": '何でも聞いてください... "{{example}}"',
-  "tui.prompt.placeholder.shell": 'コマンドを実行... "{{example}}"',
+  "tui.prompt.placeholder.normal": "'何でも聞いてください... \"{{example}}\"'",
+  "tui.prompt.placeholder.shell": "'コマンドを実行... \"{{example}}\"'",
   "tui.prompt.ghost": "{{prediction}}  (Tab で確定)",
-  "tui.paste.image.fallback_path": "モデルは画像に対応していないため、代わりに画像パスを挿入しました。/modalities で画像を有効にできます",
+  "tui.paste.image.fallback_path":
+    "モデルは画像に対応していないため、代わりに画像パスを挿入しました。/modalities で画像を有効にできます",
   "tui.home.placeholder.example.todo": "コードベース内の TODO を修正",
   "tui.home.placeholder.example.stack": "このプロジェクトの技術スタックは？",
   "tui.home.placeholder.example.tests": "壊れたテストを修正",
-  "tui.home.agreement.prefix": "MiMoCode をご利用いただくことで、",
+  "tui.home.agreement.prefix": "Scaffold をご利用いただくことで、",
   "tui.home.agreement.terms": "利用規約",
   "tui.home.agreement.separator": "および",
   "tui.home.agreement.privacy": "プライバシーポリシー",
@@ -45,7 +46,8 @@ export const dict = {
 
   // Tips
   "tui.tips.label": "ヒント",
-  "tui.tips.plain_terminal": "Mac 標準ターミナルは描画に制限があります。iTerm2 または VS Code ターミナルをご利用ください",
+  "tui.tips.plain_terminal":
+    "Mac 標準ターミナルは描画に制限があります。iTerm2 または VS Code ターミナルをご利用ください",
   "tui.tips.attach_file": "{highlight}@{/highlight} の後にファイル名を入力するとファジー検索でファイルを添付できます",
   "tui.tips.shell_prefix":
     "メッセージを {highlight}!{/highlight} で始めるとシェルコマンドを直接実行できます（例：{highlight}!ls -la{/highlight}）",
@@ -58,19 +60,19 @@ export const dict = {
   "tui.tips.doc": "{highlight}/doc{/highlight} を実行してユーザードキュメントを開きます",
   "tui.tips.free_models": "期間限定で無料モデルを提供中。今すぐお試しください！",
   "tui.tips.free_api_sunset":
-    "無料 API サービスは終了しました。{highlight}/login{/highlight} でログインしてください。MiMo Token Plan を購読するか、サードパーティ API を設定して MiMo Code をご利用ください。",
+    "無料 API サービスは終了しました。{highlight}/login{/highlight} でログインしてください。Scaffold Token Plan を購読するか、サードパーティ API を設定して Scaffold をご利用ください。",
   "tui.tips.multi_skills":
     "1 つのメッセージ内で複数の {highlight}/skill-name{/highlight} を組み合わせて、複数の Skill を同時に使えます",
   "tui.tips.ask_slash_commands":
     "ショートカットを探すには、チャットで {highlight}使えるスラッシュコマンドは？{/highlight} と直接質問できます",
   "tui.tips.background": "{highlight}/background{/highlight} を実行してホーム背景にお好みの画像を設定できます",
   "tui.tips.vivid": "{highlight}/vivid{/highlight} で必要に応じてリッチ表示とミニマル表示を切り替えます",
-  "tui.tips.compose_next":
-    "{highlight}/compose-next{/highlight} を推奨（強力なモデル向け・Compose 代替）",
+  "tui.tips.compose_next": "{highlight}/compose-next{/highlight} を推奨（強力なモデル向け・Compose 代替）",
   "tui.tips.undo": "{highlight}/undo{/highlight} で直前のメッセージとファイル変更を取り消します",
   "tui.tips.redo": "{highlight}/redo{/highlight} で取り消したメッセージとファイル変更を復元します",
   "tui.tips.drag_drop": "画像や PDF をターミナルにドラッグ＆ドロップしてコンテキストに追加できます",
-  "tui.tips.paste_image": "{highlight}Ctrl+V{/highlight} でクリップボードの画像を貼り付けます（macOS では Cmd+V ではなく Ctrl+V を使用してください。Cmd+V は端末が横取りします）",
+  "tui.tips.paste_image":
+    "{highlight}Ctrl+V{/highlight} でクリップボードの画像を貼り付けます（macOS では Cmd+V ではなく Ctrl+V を使用してください。Cmd+V は端末が横取りします）",
   "tui.tips.editor":
     "{highlight}Ctrl+X E{/highlight} または {highlight}/editor{/highlight} で外部エディタからメッセージを書けます",
   "tui.tips.init": "{highlight}/init{/highlight} を実行するとコードベースを基にプロジェクトのルールを自動生成します",
@@ -88,13 +90,13 @@ export const dict = {
   "tui.tips.copy_last":
     "{highlight}Ctrl+X Y{/highlight} でアシスタントの最後のメッセージをクリップボードにコピーします",
   "tui.tips.command_palette": "{highlight}Ctrl+P{/highlight} で利用可能なすべてのコマンドを表示します",
-  "tui.tips.login": "{highlight}/login{/highlight} でサインインして Token Plan を利用するか、独自の API キーを設定します",
+  "tui.tips.login":
+    "{highlight}/login{/highlight} でサインインして Token Plan を利用するか、独自の API キーを設定します",
   "tui.tips.connect": "{highlight}/connect{/highlight} で LLM プロバイダを選択して API キーを追加します",
   "tui.tips.leader": "リーダーキーは {highlight}Ctrl+X{/highlight}。他のキーと組み合わせてクイック操作ができます",
   "tui.tips.f2": "{highlight}F2{/highlight} で最近使ったモデルを素早く切り替えます",
   "tui.tips.sidebar": "{highlight}Ctrl+X B{/highlight} でサイドバーパネルの表示/非表示を切り替えます",
-  "tui.tips.history":
-    "{highlight}PageUp{/highlight}/{highlight}PageDown{/highlight} で会話履歴を移動します",
+  "tui.tips.history": "{highlight}PageUp{/highlight}/{highlight}PageDown{/highlight} で会話履歴を移動します",
   "tui.tips.jump_first":
     "{highlight}Ctrl+G{/highlight} または {highlight}Home{/highlight} で会話の先頭にジャンプします",
   "tui.tips.jump_last":
@@ -107,87 +109,82 @@ export const dict = {
   "tui.tips.subagent": "プロンプト内で {highlight}@agent-name{/highlight} を使うと専用サブエージェントを呼び出します",
   "tui.tips.cycle_sessions": "{highlight}Ctrl+X Right/Left{/highlight} で親子セッション間を移動します",
   "tui.tips.config_files":
-    "サーバ設定は {highlight}mimocode.json{/highlight}、TUI 設定は {highlight}tui.json{/highlight} を作成します",
+    "サーバ設定は {highlight}scaffold.json{/highlight}、TUI 設定は {highlight}tui.json{/highlight} を作成します",
   "tui.tips.global_config":
-    "TUI 設定をグローバルに置くなら {highlight}~/.config/mimocode/tui.json{/highlight} を使います",
+    "TUI 設定をグローバルに置くなら {highlight}~/.config/scaffold/tui.json{/highlight} を使います",
   "tui.tips.schema": "設定に {highlight}$schema{/highlight} を加えるとエディタで自動補完されます",
   "tui.tips.default_model": "設定の {highlight}model{/highlight} でデフォルトモデルを指定します",
   "tui.tips.keybinds":
     "{highlight}tui.json{/highlight} の {highlight}keybinds{/highlight} セクションで任意のキーバインドを上書きできます",
   "tui.tips.disable_keybind": "任意のキーバインドを {highlight}none{/highlight} にすると完全に無効化できます",
   "tui.tips.mcp_config": "{highlight}mcp{/highlight} 設定セクションでローカル/リモート MCP サーバを設定します",
-  "tui.tips.mcp_oauth": "MiMoCode は認証が必要なリモート MCP サーバの OAuth を自動処理します",
+  "tui.tips.mcp_oauth": "Scaffold は認証が必要なリモート MCP サーバの OAuth を自動処理します",
   "tui.tips.custom_command":
-    "{highlight}.mimocode/command/{/highlight} に {highlight}.md{/highlight} ファイルを追加すると再利用可能なカスタムプロンプトを定義できます",
+    "{highlight}.scaffold/command/{/highlight} に {highlight}.md{/highlight} ファイルを追加すると再利用可能なカスタムプロンプトを定義できます",
   "tui.tips.command_args":
     "カスタムコマンドで {highlight}$ARGUMENTS{/highlight}、{highlight}$1{/highlight}、{highlight}$2{/highlight} を使うと動的な入力を受け取れます",
   "tui.tips.command_backticks":
     "コマンド内でバッククォートを使うとシェル出力を埋め込めます（例：{highlight}`git status`{/highlight}）",
   "tui.tips.custom_agent":
-    "{highlight}.mimocode/agent/{/highlight} に {highlight}.md{/highlight} ファイルを追加して専用 AI ペルソナを作れます",
+    "{highlight}.scaffold/agent/{/highlight} に {highlight}.md{/highlight} ファイルを追加して専用 AI ペルソナを作れます",
   "tui.tips.agent_perms":
     "エージェントごとに {highlight}edit{/highlight}、{highlight}bash{/highlight}、{highlight}webfetch{/highlight} ツールの権限を設定できます",
-  "tui.tips.bash_allow":
-    '{highlight}"git *": "allow"{/highlight} のようなパターンで bash 権限を細かく制御できます',
-  "tui.tips.bash_deny": '{highlight}"rm -rf *": "deny"{/highlight} を設定して破壊的なコマンドをブロックします',
-  "tui.tips.bash_ask": '{highlight}"git push": "ask"{/highlight} を設定すると push 前に承認を求めます',
-  "tui.tips.formatter": "MiMoCode は prettier、gofmt、ruff などでファイルを自動整形します",
+  "tui.tips.bash_allow": '\'{highlight}"git *": "allow"{/highlight} のようなパターンで bash 権限を細かく制御できます\'',
+  "tui.tips.bash_deny": '\'{highlight}"rm -rf *": "deny"{/highlight} を設定して破壊的なコマンドをブロックします\'',
+  "tui.tips.bash_ask": '\'{highlight}"git push": "ask"{/highlight} を設定すると push 前に承認を求めます\'',
+  "tui.tips.formatter": "Scaffold は prettier、gofmt、ruff などでファイルを自動整形します",
   "tui.tips.disable_formatter":
-    '設定で {highlight}"formatter": false{/highlight} にするとすべての自動整形を無効化できます',
+    "'設定で {highlight}\"formatter\": false{/highlight} にするとすべての自動整形を無効化できます'",
   "tui.tips.custom_formatter": "拡張子ごとのカスタム整形コマンドを設定で定義できます",
-  "tui.tips.lsp": "MiMoCode はインテリジェントなコード解析に LSP サーバを使います",
+  "tui.tips.lsp": "Scaffold はインテリジェントなコード解析に LSP サーバを使います",
   "tui.tips.custom_tool":
-    "{highlight}.mimocode/tools/{/highlight} に {highlight}.ts{/highlight} ファイルを作って新しい LLM ツールを定義します",
+    "{highlight}.scaffold/tools/{/highlight} に {highlight}.ts{/highlight} ファイルを作って新しい LLM ツールを定義します",
   "tui.tips.tool_scripts": "ツール定義から Python、Go などのスクリプトを呼び出せます",
   "tui.tips.plugins":
-    "{highlight}.mimocode/plugin/{/highlight} に {highlight}.ts{/highlight} ファイルを追加してイベントフックを実装できます",
+    "{highlight}.scaffold/plugin/{/highlight} に {highlight}.ts{/highlight} ファイルを追加してイベントフックを実装できます",
   "tui.tips.plugin_notify": "プラグインでセッション完了時に OS 通知を送れます",
-  "tui.tips.plugin_protect": "プラグインを書いて MiMoCode が機密ファイルを読まないようにできます",
-  "tui.tips.run": "{highlight}mimo run{/highlight} で非対話的なスクリプト実行ができます",
-  "tui.tips.continue": "{highlight}mimo --continue{/highlight} で前回のセッションを再開します",
-  "tui.tips.attach_cli": "{highlight}mimo run -f file.ts{/highlight} で CLI からファイルを添付できます",
+  "tui.tips.plugin_protect": "プラグインを書いて Scaffold が機密ファイルを読まないようにできます",
+  "tui.tips.run": "{highlight}scaffold run{/highlight} で非対話的なスクリプト実行ができます",
+  "tui.tips.continue": "{highlight}scaffold --continue{/highlight} で前回のセッションを再開します",
+  "tui.tips.attach_cli": "{highlight}scaffold run -f file.ts{/highlight} で CLI からファイルを添付できます",
   "tui.tips.format_json": "{highlight}--format json{/highlight} を使うとスクリプトで機械可読な出力を得られます",
-  "tui.tips.serve": "{highlight}mimo serve{/highlight} を実行するとヘッドレスで MiMoCode API にアクセスできます",
-  "tui.tips.attach_server": "{highlight}mimo run --attach{/highlight} で起動中のサーバに接続します",
-  "tui.tips.upgrade": "{highlight}mimo upgrade{/highlight} で最新バージョンに更新します",
-  "tui.tips.auth_list": "{highlight}mimo auth list{/highlight} で設定済みプロバイダを確認します",
-  "tui.tips.agent_create": "{highlight}mimo agent create{/highlight} でガイド付きエージェント作成を行います",
-  "tui.tips.github_install": "{highlight}mimo github install{/highlight} で GitHub workflow を設定します",
+  "tui.tips.serve": "scaffold serve を実行するとヘッドレスで Scaffold API にアクセスできます",
+  "tui.tips.attach_server": "{highlight}scaffold run --attach{/highlight} で起動中のサーバに接続します",
+  "tui.tips.upgrade": "{highlight}scaffold upgrade{/highlight} で最新バージョンに更新します",
+  "tui.tips.auth_list": "{highlight}scaffold auth list{/highlight} で設定済みプロバイダを確認します",
+  "tui.tips.agent_create": "{highlight}scaffold agent create{/highlight} でガイド付きエージェント作成を行います",
+  "tui.tips.github_install": "{highlight}scaffold github install{/highlight} で GitHub workflow を設定します",
   "tui.tips.github_oc": "PR のコード行に {highlight}/oc{/highlight} とコメントすると的を絞ったレビューが行われます",
-  "tui.tips.theme_system": '{highlight}"theme": "system"{/highlight} でターミナルの配色に合わせます',
-  "tui.tips.theme_files": "{highlight}.mimocode/themes/{/highlight} ディレクトリに JSON テーマファイルを作成します",
+  "tui.tips.theme_system": '\'{highlight}"theme": "system"{/highlight} でターミナルの配色に合わせます\'',
+  "tui.tips.theme_files": "{highlight}.scaffold/themes/{/highlight} ディレクトリに JSON テーマファイルを作成します",
   "tui.tips.theme_variants": "テーマはダーク/ライトのバリアントをサポートします",
   "tui.tips.theme_ansi": "カスタムテーマで ANSI カラー 0-255 を参照できます",
-  "tui.tips.env_var":
-    "設定で {highlight}{env:VAR_NAME}{/highlight} 構文を使うと環境変数を参照できます",
+  "tui.tips.env_var": "設定で {highlight}{env:VAR_NAME}{/highlight} 構文を使うと環境変数を参照できます",
   "tui.tips.file_var": "{highlight}{file:path}{/highlight} で設定値にファイル内容を埋め込めます",
-  "tui.tips.instructions":
-    "設定の {highlight}instructions{/highlight} で追加のルールファイルを読み込めます",
+  "tui.tips.instructions": "設定の {highlight}instructions{/highlight} で追加のルールファイルを読み込めます",
   "tui.tips.temperature":
     "エージェントの {highlight}temperature{/highlight} を 0.0（厳密）から 1.0（創造的）まで調整します",
   "tui.tips.steps": "{highlight}steps{/highlight} を設定するとリクエストごとのエージェント反復回数を制限します",
-  "tui.tips.disable_tool": '{highlight}"tools": {"bash": false}{/highlight} で特定のツールを無効化できます',
+  "tui.tips.disable_tool": '\'{highlight}"tools": {"bash": false}{/highlight} で特定のツールを無効化できます\'',
   "tui.tips.disable_mcp_tools":
-    '{highlight}"mcp_*": false{/highlight} で MCP サーバ由来のツールをすべて無効化できます',
+    "'{highlight}\"mcp_*\": false{/highlight} で MCP サーバ由来のツールをすべて無効化できます'",
   "tui.tips.tool_override": "エージェントごとの設定でグローバルなツール設定を上書きできます",
-  "tui.tips.share_auto": '{highlight}"share": "auto"{/highlight} で全セッションを自動共有します',
-  "tui.tips.share_disabled": '{highlight}"share": "disabled"{/highlight} でセッション共有を完全に禁止します',
+  "tui.tips.share_auto": '\'{highlight}"share": "auto"{/highlight} で全セッションを自動共有します\'',
+  "tui.tips.share_disabled": '\'{highlight}"share": "disabled"{/highlight} でセッション共有を完全に禁止します\'',
   "tui.tips.unshare": "{highlight}/unshare{/highlight} で公開アクセスからセッションを解除します",
   "tui.tips.doom_loop": "権限 {highlight}doom_loop{/highlight} がツール呼び出しの無限ループを防ぎます",
-  "tui.tips.external_dir":
-    "権限 {highlight}external_directory{/highlight} がプロジェクト外のファイルを保護します",
-  "tui.tips.debug_config": "{highlight}mimo debug config{/highlight} で設定の問題を調査します",
+  "tui.tips.external_dir": "権限 {highlight}external_directory{/highlight} がプロジェクト外のファイルを保護します",
+  "tui.tips.debug_config": "{highlight}scaffold debug config{/highlight} で設定の問題を調査します",
   "tui.tips.print_logs": "{highlight}--print-logs{/highlight} フラグで stderr に詳細ログを出力します",
   "tui.tips.timeline":
     "{highlight}Ctrl+X G{/highlight} または {highlight}/timeline{/highlight} で特定のメッセージにジャンプします",
   "tui.tips.toggle_code": "{highlight}Ctrl+X H{/highlight} でメッセージ内コードブロックの表示を切り替えます",
-  "tui.tips.status":
-    "{highlight}Ctrl+X S{/highlight} または {highlight}/status{/highlight} でシステム状態を表示します",
+  "tui.tips.status": "{highlight}Ctrl+X S{/highlight} または {highlight}/status{/highlight} でシステム状態を表示します",
   "tui.tips.scroll_accel":
     "{highlight}tui.json{/highlight} の {highlight}scroll_acceleration{/highlight} を有効にすると macOS 風のなめらかなスクロールになります",
   "tui.tips.username_toggle":
     "コマンドパレット（{highlight}Ctrl+P{/highlight}）でチャット内のユーザー名表示を切り替えます",
-  "tui.tips.zen": "MiMo Code と組み合わせて {highlight}/connect{/highlight} で厳選されたモデルを使えます",
+  "tui.tips.zen": "Scaffold と組み合わせて {highlight}/connect{/highlight} で厳選されたモデルを使えます",
   "tui.tips.agents_md": "プロジェクトの {highlight}AGENTS.md{/highlight} を Git にコミットしてチームで共有します",
   "tui.tips.review": "{highlight}/review{/highlight} で未コミット変更、ブランチ、PR をレビューします",
   "tui.tips.help": "{highlight}/help{/highlight} または {highlight}Ctrl+X H{/highlight} でヘルプを表示します",
@@ -212,16 +209,18 @@ export const dict = {
   "tui.slash.init.description": "AGENTS.md をガイド付きでセットアップ",
   "tui.slash.review.description": "変更をレビュー [commit|branch|pr]、デフォルトは未コミット",
   "tui.slash.dream.description": "memory ファイルと生の軌跡からプロジェクトメモリを手動で統合",
-  "tui.slash.distill.description": "最近の作業から繰り返しワークフローを見つけ、skill・サブエージェント・コマンドにパッケージ化",
+  "tui.slash.distill.description":
+    "最近の作業から繰り返しワークフローを見つけ、skill・サブエージェント・コマンドにパッケージ化",
   "tui.slash.goal.description": "停止条件付きゴールを設定；判定が達成と言うまで実行。/goal clear で中止",
-  "tui.slash.deep-research.description": "深い多ソース・ファクトチェック済み調査レポート（deep-research ワークフローを実行）",
+  "tui.slash.deep-research.description":
+    "深い多ソース・ファクトチェック済み調査レポート（deep-research ワークフローを実行）",
 
   // Built-in bundled skill descriptions (user-facing, decoupled from SKILL.md description which targets the LLM)
   "tui.skill.docx-official.description": "Microsoft Word (.docx) ファイルの作成・編集・読み取り",
   "tui.skill.xlsx-official.description": "Microsoft Excel (.xlsx) ブックの作成・編集・読み取り",
   "tui.skill.pdf-official.description": "PDF ファイルの作成・編集・変換・読み取り",
   "tui.skill.pptx-official.description": "Microsoft PowerPoint (.pptx) スライドの作成・編集・読み取り",
-  "tui.skill.mimocode.description": "MiMoCode の機能・設定・コマンドに関するセルフドキュメント",
+  "tui.skill.mimocode.description": "Scaffold の機能・設定・コマンドに関するセルフドキュメント",
   "tui.skill.evolve.description": "自身のあらゆる層を書き換える——ツール、フック、知識、ワークフロー、UIまで",
   "tui.skill.frontend-design.description": "個性的で意図的な UI ビジュアルデザインのガイド",
   "tui.skill.loop.description": "プロンプトを一定間隔で繰り返し実行するようスケジュール",
@@ -234,7 +233,8 @@ export const dict = {
   "tui.skill.claude-code.description": "コーディングタスクを Claude Code CLI に委任",
   "tui.skill.grok-build.description": "コマンドラインから Grok Build を操作",
   "tui.skill.design-blueprint.description": "モックアップ着手前に設計仕様（DESIGN.md + Decision Trace）を作成",
-  "tui.skill.super-research.description": "自律型研究——実験ループ、調査、量的分析、ベンチマーク、根本原因調査、アブレーション、論文再現、論文執筆",
+  "tui.skill.super-research.description":
+    "自律型研究——実験ループ、調査、量的分析、ベンチマーク、根本原因調査、アブレーション、論文再現、論文執筆",
   "tui.skill.deep-research.description": "深層マルチソース調査、クロスチェック付き引用レポート",
   "tui.skill.modern-python-toolchain.description": "モダン Python プロジェクト構成：uv, ruff, pyright",
   "tui.skill.data-analytics.description": "製品・事業データの分析、KPI 設計、ダッシュボードとレポートの作成",
@@ -292,7 +292,8 @@ export const dict = {
   "tui.command.skip_permissions.title_off": "権限確認スキップ：オフ — クリックでオンに（権限リクエストを自動許可）",
   "tui.command.skip_permissions.toast_on":
     "権限確認スキップをオンにしました — 権限リクエストは自動許可（サブエージェント含む）。破壊的コマンドはまだ確認を求めます。",
-  "tui.command.skip_permissions.toast_off": "権限確認スキップをオフにしました — 権限リクエストは再びあなたの承認が必要です。",
+  "tui.command.skip_permissions.toast_off":
+    "権限確認スキップをオフにしました — 権限リクエストは再びあなたの承認が必要です。",
   "tui.command.permission_timeout.title": "権限リクエストのタイムアウト設定",
   "tui.permission_timeout.title": "権限リクエストのタイムアウト",
   "tui.permission_timeout.hint": "自動拒否するまでに人間の承認を待つ時間。",
@@ -316,7 +317,8 @@ export const dict = {
   "tui.command.logo.switch.title": "ロゴデザインを切り替え",
   "tui.command.visual_mode.title_on": "リッチ表示中 - ミニマル表示に切り替え",
   "tui.command.visual_mode.title_off": "ミニマル表示中 - リッチ表示に切り替え",
-  "tui.visual_mode.enabled": "リッチ表示を有効化：星空とロゴ効果を復元しました。流星と進行状況のアニメーションはアニメーション設定に従います",
+  "tui.visual_mode.enabled":
+    "リッチ表示を有効化：星空とロゴ効果を復元しました。流星と進行状況のアニメーションはアニメーション設定に従います",
   "tui.visual_mode.disabled": "リッチ表示を無効化：星空、流星、ロゴ効果を非表示にし、進行状況表示を固定しました",
   "tui.dialog.logo.title": "ロゴデザイン",
   "tui.dialog.logo.option.classic": "クラシック（太字）",
@@ -327,7 +329,8 @@ export const dict = {
   "tui.command.theme.mode.lock": "テーマモードをロック",
   "tui.command.help.show.title": "ヘルプ",
   "tui.dialog.help.close_hint": "esc/enter",
-  "tui.dialog.help.command_list": "{{keybind}} を押すと、任意のコンテキストで利用できるすべての操作とコマンドを表示できます。",
+  "tui.dialog.help.command_list":
+    "{{keybind}} を押すと、任意のコンテキストで利用できるすべての操作とコマンドを表示できます。",
   "tui.dialog.help.ok": "OK",
   "tui.dialog.close_hint": "esc",
   "tui.dialog.ok": "OK",
@@ -338,18 +341,17 @@ export const dict = {
   "tui.dialog.agreement.confirm": "同意して続行",
   "tui.dialog.free_api_sunset.title": "無料 API サービスは終了しました",
   "tui.dialog.free_api_sunset.message":
-    "/login でログインしてください。MiMo Token Plan を購読するか、サードパーティ API を設定して MiMo Code をご利用ください。",
+    "/login でログインしてください。Scaffold Token Plan を購読するか、サードパーティ API を設定して Scaffold をご利用ください。",
   "tui.command.consent.revoke.title": "無料モデルの同意を取り消す",
   "tui.consent.revoked": "無料モデルの同意を取り消しました — 次回利用時に再度同意を求めます",
   "tui.dialog.select.placeholder": "検索",
   "tui.dialog.model.login_hint": "ヒント：モデルを切り替える前に /login でログインしてください",
-  "tui.model.mimo_auto.name": "MiMo Auto（MiMo-V2.5 7月26日 18:00 まで無料 · UTC+8）",
-  "tui.model.mimo_auto.sunset_name": "MiMo Auto（MiMo-V2.5）",
+  "tui.model.mimo_auto.name": "Scaffold Auto（Scaffold-V2.5 7月26日 18:00 まで無料 · UTC+8）",
+  "tui.model.mimo_auto.sunset_name": "Scaffold Auto（Scaffold-V2.5）",
   "tui.dialog.token_plan.title": "Token Plan を購読するか順番待ち",
-  "tui.dialog.token_plan.line1":
-    "無料モードでは現在順番待ちが必要です。安定した高品質なサービスをご利用いただくには、",
+  "tui.dialog.token_plan.line1": "無料モードでは現在順番待ちが必要です。安定した高品質なサービスをご利用いただくには、",
   "tui.dialog.token_plan.subscribe": "",
-  "tui.dialog.token_plan.link": "MiMo Token Plan",
+  "tui.dialog.token_plan.link": "Scaffold Token Plan",
   "tui.dialog.token_plan.link_suffix": " のご購読をおすすめします。",
   "tui.dialog.token_plan.line3": "/login で独自の API キーを設定することもできます。",
   "tui.dialog.token_plan.confirm": "了解",
@@ -382,12 +384,13 @@ export const dict = {
   "tui.dialog.try_best.reason.edit_repeat": "ほぼ同じ編集が {{count}} 回繰り返されました。",
   "tui.dialog.try_best.reason.edit_repeat_path": "{{path}} でほぼ同じ編集が {{count}} 回繰り返されました。",
   "tui.dialog.try_best.reason.bash_retry": "同じ失敗コマンドが、編集の成功なしに {{count}} 回再試行されました。",
-  "tui.dialog.try_best.reason.action_streak": "{{action}}操作が {{count}} 回連続しましたが、確認できる進展はありませんでした。",
+  "tui.dialog.try_best.reason.action_streak":
+    "{{action}}操作が {{count}} 回連続しましたが、確認できる進展はありませんでした。",
   "tui.dialog.try_best.action.edit": "編集",
   "tui.dialog.try_best.action.verify": "検証",
   "tui.dialog.try_best.action.same_kind": "同種の",
   "tui.dialog.try_best.handoff.title": "{{target}} に引き継ぐ",
-  "tui.dialog.try_best.handoff.description": "未完了の作業をこのハーネスへ委任するよう MiMo に依頼",
+  "tui.dialog.try_best.handoff.description": "未完了の作業をこのハーネスへ委任するよう Scaffold に依頼",
   "tui.dialog.try_best.continue.title": "{{model}} で続行",
   "tui.dialog.try_best.continue.description": "現在のモデルにこのアプローチを破棄して再計画するよう依頼",
   "tui.toast.instructions_loaded": "{{files}} を読み込みました",
@@ -395,10 +398,12 @@ export const dict = {
   "tui.toast.update_available.confirm": "新しいバージョン v{{version}} が利用可能です。今すぐ更新しますか？",
   "tui.toast.update_available.updating": "v{{version}} に更新中...",
   "tui.toast.update_available.failed": "更新に失敗しました",
-  "tui.toast.update_available.success": "MiMoCode v{{version}} に更新しました。アプリケーションを再起動してください。",
+  "tui.toast.update_available.success": "Scaffold v{{version}} に更新しました。アプリケーションを再起動してください。",
   "tui.toast.updated.title": "自動更新済み",
-  "tui.toast.updated.message": "パッチ更新を自動適用しました：v{{version}}。再起動後に有効になります。設定で autoupdate: false を指定すると無効にできます。",
-  "tui.toast.native_installer_tip": "ヒント：より良いインストール・更新体験のため、ネイティブインストーラー（curl/PowerShell）を推奨します。",
+  "tui.toast.updated.message":
+    "パッチ更新を自動適用しました：v{{version}}。再起動後に有効になります。設定で autoupdate: false を指定すると無効にできます。",
+  "tui.toast.native_installer_tip":
+    "ヒント：より良いインストール・更新体験のため、ネイティブインストーラー（curl/PowerShell）を推奨します。",
   "tui.sidebar.instructions": "インストラクション",
   "tui.sidebar.cwd": "作業ディレクトリ",
   "tui.toast.unknown_error": "不明なエラーが発生しました",
@@ -474,7 +479,7 @@ export const dict = {
   "tui.command.voice.toggle.title_off": "音声入力：無効 — クリックで有効化",
   "tui.voice.enabled": "音声入力が有効になりました（中国語/英語）— [Voice] をクリックして録音",
   "tui.voice.disabled": "音声入力が無効になりました",
-  "tui.voice.send.enabled": "音声送信が有効 — 「发送」または \"send it\" で送信",
+  "tui.voice.send.enabled": '音声送信が有効 — 「发送」または "send it" で送信',
   "tui.voice.send.disabled": "音声送信が無効になりました",
   "tui.command.voice.send.title": "音声送信を切り替え",
   "tui.command.voice.send.title_on": "音声送信：有効 — クリックで無効化",
@@ -484,10 +489,13 @@ export const dict = {
   "tui.command.voice.control.title": "音声制御を切り替え（マルチモーダル）",
   "tui.command.voice.control.title_on": "音声制御：有効（マルチモーダル） — クリックで無効化",
   "tui.command.voice.control.title_off": "音声制御：無効（高速ASR） — クリックで有効化",
-  "tui.voice.error.no_auth": "/connect で MiMo アカウントに接続するか、voice.asr_model で別のプロバイダーを設定してください",
+  "tui.voice.error.no_auth":
+    "/connect で Scaffold アカウントに接続するか、voice.asr_model で別のプロバイダーを設定してください",
   "tui.voice.error.no_auth_provider": "音声プロバイダー「{{provider}}」が認証されていません。apiKey を確認してください",
-  "tui.voice.error.provider_not_found": "プロバイダー「{{provider}}」が利用できません — /connect で接続するか、カスタムエンドポイントの場合は設定で models を宣言してください",
-  "tui.voice.error.no_url": "プロバイダー「{{provider}}」に baseURL が設定されていません — options.baseURL を指定してください",
+  "tui.voice.error.provider_not_found":
+    "プロバイダー「{{provider}}」が利用できません — /connect で接続するか、カスタムエンドポイントの場合は設定で models を宣言してください",
+  "tui.voice.error.no_url":
+    "プロバイダー「{{provider}}」に baseURL が設定されていません — options.baseURL を指定してください",
   "tui.voice.error.no_device": "マイク/オーディオデバイスが見つかりません — システムのオーディオ設定を確認してください",
   "tui.voice.error.recorder_failed": "録音に失敗しました",
   "tui.voice.error.no_recorder": "録音ツールが見つかりません。sox をインストールしてください",
@@ -504,11 +512,7 @@ export const dict = {
   "tui.command.plugins.install.title": "プラグインをインストール",
 
   // MiMo Auto (free) — TUI login dialog
-  "tui.dialog.login.mimo_free": "MiMo Auto (free)",
-  "tui.dialog.login.mimo_free.desc": "ログイン不要の匿名無料チャネル",
-  "tui.dialog.login.mimo_free.success": "MiMo Auto (free) の準備完了 — デフォルトモデルを mimo/mimo-auto に設定しました",
-  "tui.dialog.login.mimo_free.unavailable": "MiMo Auto (free) プロバイダーが読み込まれていません",
-  "tui.dialog.login.flow.title": "MiMo ログイン",
+  "tui.dialog.login.flow.title": "Scaffold ログイン",
   "tui.dialog.login.flow.placeholder": "コードを貼り付け（またはブラウザコールバックを待機）",
   "tui.dialog.login.flow.busy": "ログイン中...",
   "tui.dialog.login.flow.manual_hint": "ブラウザが開きませんか？下のリンクをクリックしてコピー：",
@@ -519,19 +523,10 @@ export const dict = {
   // CLI: providers command (auth login)
   "cli.providers.select": "プロバイダーを選択",
   "cli.providers.other": "その他のプロバイダー",
-  "cli.providers.mimo.recommended_hint": "推奨",
-  "cli.providers.mimo_free.hint": "匿名無料チャネル / mimo-auto",
-  "cli.providers.mimo_free.verifying": "MiMo Auto (free) チャネルを検証中...",
-  "cli.providers.mimo_free.ready": "MiMo Auto (free) チャネル準備完了",
-  "cli.providers.mimo_free.failed": "MiMo Auto (free) の自己診断に失敗",
-  "cli.providers.mimo_free.default_set": "デフォルトモデルを mimo/mimo-auto に設定（1M コンテキスト、無料）",
-  "cli.providers.mimo_free.usage_hint":
-    "ログイン不要 — そのまま mimo を実行できます。有料/上位モデルを利用する場合は MiMo ブラウザログインを選択してください。",
-  "cli.providers.mimo_login.decrypt_retry": "復号に失敗しました、再試行してください（残り {remaining} 回）",
-  "cli.providers.mimo_login.decrypt_exhausted": "復号に失敗しました、最大再試行回数に達しました",
 
   // Question i18n — plan_exit
-  "tui.question.plan_exit.question": "{{plan}} の計画が完了しました。build エージェントに切り替えて実装を開始しますか？",
+  "tui.question.plan_exit.question":
+    "{{plan}} の計画が完了しました。build エージェントに切り替えて実装を開始しますか？",
   "tui.question.plan_exit.header": "計画終了",
   "tui.question.plan_exit.option.0.label": "はい",
   "tui.question.plan_exit.option.0.description": "build エージェントに切り替えて計画の実装を開始",
@@ -543,22 +538,26 @@ export const dict = {
 
   // Workspace trust
   "trust.title": "ワークスペースにアクセス中：",
-  "trust.safety_check": "安全確認：これはあなたが作成した、または信頼しているプロジェクトですか？（自分のコード、有名なオープンソースプロジェクト、チームの作業など）。そうでない場合は、まずこのフォルダの内容を確認してください。",
-  "trust.capabilities": "MiMo Code はここでファイルの読み取り、編集、実行が可能になります。",
-  "trust.plugin_warn": "このディレクトリに悪意あるプラグインが存在する場合、任意のコードを実行し、ファイルを読み取り、変更、または流出させる可能性があります。",
+  "trust.safety_check":
+    "安全確認：これはあなたが作成した、または信頼しているプロジェクトですか？（自分のコード、有名なオープンソースプロジェクト、チームの作業など）。そうでない場合は、まずこのフォルダの内容を確認してください。",
+  "trust.capabilities": "Scaffold はここでファイルの読み取り、編集、実行が可能になります。",
+  "trust.plugin_warn":
+    "このディレクトリに悪意あるプラグインが存在する場合、任意のコードを実行し、ファイルを読み取り、変更、または流出させる可能性があります。",
   "trust.option.yes": "はい、このフォルダを信頼します",
   "trust.option.no": "いいえ、終了",
   "trust.dangerous.title_home": "警告：ホームディレクトリを開こうとしています。",
   "trust.dangerous.title_root": "警告：ファイルシステムのルートを開こうとしています。",
-  "trust.dangerous.body_home": "モデルがホームフォルダ配下のすべての個人ファイル（SSH鍵、認証情報、ブラウザプロファイルなど）にアクセスできるようになります。",
-  "trust.dangerous.body_root": "モデルがファイルシステム全体（システムファイル、全ユーザーデータ、認証情報、このマシン上のすべて）にアクセスできるようになります。",
+  "trust.dangerous.body_home":
+    "モデルがホームフォルダ配下のすべての個人ファイル（SSH鍵、認証情報、ブラウザプロファイルなど）にアクセスできるようになります。",
+  "trust.dangerous.body_root":
+    "モデルがファイルシステム全体（システムファイル、全ユーザーデータ、認証情報、このマシン上のすべて）にアクセスできるようになります。",
   "trust.dangerous.advice_home": "明確な理由がない限り、ホームディレクトリ全体を信頼しないでください。",
   "trust.dangerous.advice_root": "明確な理由がない限り、ファイルシステムのルートを信頼しないでください。",
   "trust.dangerous.option.yes": "リスクを理解した上で、今回のみ信頼する",
   "trust.dangerous.option.no": "終了（推奨）",
   "skip_permissions.title": "警告: パーミッションスキップモード",
   "skip_permissions.body":
-    "--dangerously-skip-permissions を指定して起動しました。MiMo Code は承認を求めずにファイルの読み取り・編集・実行やシェルコマンドの実行を行います。設定で明示的に拒否（deny）したルールのみが引き続き適用されます。発生したいかなる結果についてもあなた自身が全責任を負います。",
+    "--dangerously-skip-permissions を指定して起動しました。Scaffold は承認を求めずにファイルの読み取り・編集・実行やシェルコマンドの実行を行います。設定で明示的に拒否（deny）したルールのみが引き続き適用されます。発生したいかなる結果についてもあなた自身が全責任を負います。",
   "skip_permissions.plugin_warn":
     "このモードでは、悪意のあるプロンプト・ファイル・プラグインが一切の確認なしに任意のコマンドを実行し、データを改ざんまたは持ち出す可能性があります。",
   "skip_permissions.root_warn":

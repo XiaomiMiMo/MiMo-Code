@@ -23,14 +23,15 @@ export const dict = {
   "language.tr": "Türkçe",
 
   // Prompt placeholders
-  "tui.prompt.placeholder.normal": 'Posez votre question... "{{example}}"',
-  "tui.prompt.placeholder.shell": 'Exécuter une commande... "{{example}}"',
+  "tui.prompt.placeholder.normal": "'Posez votre question... \"{{example}}\"'",
+  "tui.prompt.placeholder.shell": "'Exécuter une commande... \"{{example}}\"'",
   "tui.prompt.ghost": "{{prediction}}  (Tab pour accepter)",
-  "tui.paste.image.fallback_path": "Le modèle ne prend pas en charge la vision — chemin de l'image inséré. Utilisez /modalities pour l'activer",
+  "tui.paste.image.fallback_path":
+    "Le modèle ne prend pas en charge la vision — chemin de l'image inséré. Utilisez /modalities pour l'activer",
   "tui.home.placeholder.example.todo": "Corriger un TODO dans le code",
   "tui.home.placeholder.example.stack": "Quelle est la stack technique de ce projet ?",
   "tui.home.placeholder.example.tests": "Réparer les tests cassés",
-  "tui.home.agreement.prefix": "En utilisant MiMoCode, vous acceptez nos ",
+  "tui.home.agreement.prefix": "En utilisant Scaffold, vous acceptez nos ",
   "tui.home.agreement.terms": "Conditions d'utilisation",
   "tui.home.agreement.separator": " et notre ",
   "tui.home.agreement.privacy": "Politique de confidentialité",
@@ -60,7 +61,7 @@ export const dict = {
   "tui.tips.doc": "Exécutez {highlight}/doc{/highlight} pour ouvrir la documentation utilisateur",
   "tui.tips.free_models": "Modèles gratuits disponibles pour une durée limitée — essayez-les !",
   "tui.tips.free_api_sunset":
-    "Le service API gratuit est terminé. Exécutez {highlight}/login{/highlight} pour vous connecter. Abonnez-vous au MiMo Token Plan ou configurez une API tierce pour utiliser MiMo Code.",
+    "Le service API gratuit est terminé. Exécutez {highlight}/login{/highlight} pour vous connecter. Abonnez-vous au Scaffold Token Plan ou configurez une API tierce pour utiliser Scaffold.",
   "tui.tips.multi_skills":
     "Combinez plusieurs déclencheurs {highlight}/skill-name{/highlight} dans un même message pour utiliser plusieurs Skills ensemble",
   "tui.tips.ask_slash_commands":
@@ -72,7 +73,8 @@ export const dict = {
   "tui.tips.compose_next":
     "Essayez {highlight}/compose-next{/highlight} au lieu de l'agent Compose pour les modèles avancés",
   "tui.tips.undo": "Utilisez {highlight}/undo{/highlight} pour annuler le dernier message et ses modifications",
-  "tui.tips.redo": "Utilisez {highlight}/redo{/highlight} pour rétablir des messages et modifications précédemment annulés",
+  "tui.tips.redo":
+    "Utilisez {highlight}/redo{/highlight} pour rétablir des messages et modifications précédemment annulés",
   "tui.tips.drag_drop": "Glissez-déposez des images ou PDF dans le terminal pour les ajouter au contexte",
   "tui.tips.paste_image":
     "Appuyez sur {highlight}Ctrl+V{/highlight} pour coller des images du presse-papiers (sur macOS, utilisez Ctrl+V et non Cmd+V — le terminal intercepte Cmd+V)",
@@ -92,8 +94,7 @@ export const dict = {
     "Exécutez {highlight}/compact{/highlight} pour résumer les longues sessions à l'approche de la limite de contexte",
   "tui.tips.export":
     "Appuyez sur {highlight}Ctrl+X X{/highlight} ou {highlight}/export{/highlight} pour enregistrer la conversation en Markdown",
-  "tui.tips.copy_last":
-    "Appuyez sur {highlight}Ctrl+X Y{/highlight} pour copier le dernier message de l'assistant",
+  "tui.tips.copy_last": "Appuyez sur {highlight}Ctrl+X Y{/highlight} pour copier le dernier message de l'assistant",
   "tui.tips.command_palette":
     "Appuyez sur {highlight}Ctrl+P{/highlight} pour voir toutes les actions et commandes disponibles",
   "tui.tips.login":
@@ -121,72 +122,62 @@ export const dict = {
   "tui.tips.cycle_sessions":
     "Appuyez sur {highlight}Ctrl+X Right/Left{/highlight} pour parcourir les sessions parent et enfant",
   "tui.tips.config_files":
-    "Créez {highlight}mimocode.json{/highlight} pour la configuration serveur et {highlight}tui.json{/highlight} pour le TUI",
+    "Créez {highlight}scaffold.json{/highlight} pour la configuration serveur et {highlight}tui.json{/highlight} pour le TUI",
   "tui.tips.global_config":
-    "Placez les paramètres TUI dans {highlight}~/.config/mimocode/tui.json{/highlight} comme configuration globale",
+    "Placez les paramètres TUI dans {highlight}~/.config/scaffold/tui.json{/highlight} comme configuration globale",
   "tui.tips.schema": "Ajoutez {highlight}$schema{/highlight} à votre config pour l'auto-complétion dans l'éditeur",
   "tui.tips.default_model": "Configurez {highlight}model{/highlight} dans la config pour définir le modèle par défaut",
   "tui.tips.keybinds":
     "Remplacez n'importe quel raccourci dans {highlight}tui.json{/highlight} via la section {highlight}keybinds{/highlight}",
-  "tui.tips.disable_keybind":
-    "Définissez un raccourci sur {highlight}none{/highlight} pour le désactiver complètement",
-  "tui.tips.mcp_config":
-    "Configurez les serveurs MCP locaux ou distants dans la section {highlight}mcp{/highlight}",
+  "tui.tips.disable_keybind": "Définissez un raccourci sur {highlight}none{/highlight} pour le désactiver complètement",
+  "tui.tips.mcp_config": "Configurez les serveurs MCP locaux ou distants dans la section {highlight}mcp{/highlight}",
   "tui.tips.mcp_oauth":
-    "MiMoCode gère automatiquement OAuth pour les serveurs MCP distants nécessitant une authentification",
+    "Scaffold gère automatiquement OAuth pour les serveurs MCP distants nécessitant une authentification",
   "tui.tips.custom_command":
-    "Ajoutez des fichiers {highlight}.md{/highlight} dans {highlight}.mimocode/command/{/highlight} pour définir des invites personnalisées réutilisables",
+    "Ajoutez des fichiers {highlight}.md{/highlight} dans {highlight}.scaffold/command/{/highlight} pour définir des invites personnalisées réutilisables",
   "tui.tips.command_args":
     "Utilisez {highlight}$ARGUMENTS{/highlight}, {highlight}$1{/highlight}, {highlight}$2{/highlight} dans les commandes pour des entrées dynamiques",
   "tui.tips.command_backticks":
     "Utilisez des backticks dans les commandes pour injecter la sortie shell (ex. {highlight}`git status`{/highlight})",
   "tui.tips.custom_agent":
-    "Ajoutez des fichiers {highlight}.md{/highlight} dans {highlight}.mimocode/agent/{/highlight} pour des personas IA spécialisés",
+    "Ajoutez des fichiers {highlight}.md{/highlight} dans {highlight}.scaffold/agent/{/highlight} pour des personas IA spécialisés",
   "tui.tips.agent_perms":
     "Configurez par agent les permissions des outils {highlight}edit{/highlight}, {highlight}bash{/highlight} et {highlight}webfetch{/highlight}",
   "tui.tips.bash_allow":
-    'Utilisez des motifs comme {highlight}"git *": "allow"{/highlight} pour des permissions bash fines',
+    '\'Utilisez des motifs comme {highlight}"git *": "allow"{/highlight} pour des permissions bash fines\'',
   "tui.tips.bash_deny":
-    'Définissez {highlight}"rm -rf *": "deny"{/highlight} pour bloquer les commandes destructrices',
+    '\'Définissez {highlight}"rm -rf *": "deny"{/highlight} pour bloquer les commandes destructrices\'',
   "tui.tips.bash_ask":
-    'Configurez {highlight}"git push": "ask"{/highlight} pour exiger une confirmation avant le push',
-  "tui.tips.formatter": "MiMoCode formate automatiquement les fichiers avec prettier, gofmt, ruff, etc.",
+    '\'Configurez {highlight}"git push": "ask"{/highlight} pour exiger une confirmation avant le push\'',
+  "tui.tips.formatter": "Scaffold formate automatiquement les fichiers avec prettier, gofmt, ruff, etc.",
   "tui.tips.disable_formatter":
-    'Définissez {highlight}"formatter": false{/highlight} dans la config pour désactiver le formatage automatique',
+    "'Définissez {highlight}\"formatter\": false{/highlight} dans la config pour désactiver le formatage automatique'",
   "tui.tips.custom_formatter":
     "Définissez des commandes de formatage personnalisées par extension de fichier dans la config",
-  "tui.tips.lsp": "MiMoCode utilise des serveurs LSP pour une analyse de code intelligente",
+  "tui.tips.lsp": "Scaffold utilise des serveurs LSP pour une analyse de code intelligente",
   "tui.tips.custom_tool":
-    "Créez des fichiers {highlight}.ts{/highlight} dans {highlight}.mimocode/tools/{/highlight} pour définir de nouveaux outils LLM",
+    "Créez des fichiers {highlight}.ts{/highlight} dans {highlight}.scaffold/tools/{/highlight} pour définir de nouveaux outils LLM",
   "tui.tips.tool_scripts": "Les définitions d'outils peuvent invoquer des scripts en Python, Go, etc.",
   "tui.tips.plugins":
-    "Ajoutez des fichiers {highlight}.ts{/highlight} dans {highlight}.mimocode/plugin/{/highlight} pour des hooks d'événements",
-  "tui.tips.plugin_notify":
-    "Utilisez des plugins pour envoyer des notifications système à la fin des sessions",
-  "tui.tips.plugin_protect":
-    "Créez un plugin pour empêcher MiMoCode de lire des fichiers sensibles",
-  "tui.tips.run": "Utilisez {highlight}mimo run{/highlight} pour des scripts non interactifs",
-  "tui.tips.continue": "Utilisez {highlight}mimo --continue{/highlight} pour reprendre la dernière session",
-  "tui.tips.attach_cli":
-    "Utilisez {highlight}mimo run -f file.ts{/highlight} pour joindre des fichiers via la CLI",
+    "Ajoutez des fichiers {highlight}.ts{/highlight} dans {highlight}.scaffold/plugin/{/highlight} pour des hooks d'événements",
+  "tui.tips.plugin_notify": "Utilisez des plugins pour envoyer des notifications système à la fin des sessions",
+  "tui.tips.plugin_protect": "Créez un plugin pour empêcher Scaffold de lire des fichiers sensibles",
+  "tui.tips.run": "Utilisez {highlight}scaffold run{/highlight} pour des scripts non interactifs",
+  "tui.tips.continue": "Utilisez {highlight}scaffold --continue{/highlight} pour reprendre la dernière session",
+  "tui.tips.attach_cli": "Utilisez {highlight}scaffold run -f file.ts{/highlight} pour joindre des fichiers via la CLI",
   "tui.tips.format_json":
     "Utilisez {highlight}--format json{/highlight} pour une sortie lisible par machine dans les scripts",
-  "tui.tips.serve": "Exécutez {highlight}mimo serve{/highlight} pour exposer l'API MiMoCode en mode headless",
+  "tui.tips.serve": "Exécutez scaffold serve pour exposer l'API Scaffold en mode headless",
   "tui.tips.attach_server":
-    "Utilisez {highlight}mimo run --attach{/highlight} pour vous connecter à un serveur en cours",
-  "tui.tips.upgrade": "Exécutez {highlight}mimo upgrade{/highlight} pour passer à la dernière version",
-  "tui.tips.auth_list":
-    "Exécutez {highlight}mimo auth list{/highlight} pour voir tous les fournisseurs configurés",
-  "tui.tips.agent_create":
-    "Exécutez {highlight}mimo agent create{/highlight} pour créer un agent en mode guidé",
+    "Utilisez {highlight}scaffold run --attach{/highlight} pour vous connecter à un serveur en cours",
+  "tui.tips.upgrade": "Exécutez {highlight}scaffold upgrade{/highlight} pour passer à la dernière version",
+  "tui.tips.auth_list": "Exécutez {highlight}scaffold auth list{/highlight} pour voir tous les fournisseurs configurés",
+  "tui.tips.agent_create": "Exécutez {highlight}scaffold agent create{/highlight} pour créer un agent en mode guidé",
   "tui.tips.github_install":
-    "Exécutez {highlight}mimo github install{/highlight} pour configurer le workflow GitHub",
-  "tui.tips.github_oc":
-    "Commentez {highlight}/oc{/highlight} sur une ligne de PR pour une revue ciblée",
-  "tui.tips.theme_system":
-    'Utilisez {highlight}"theme": "system"{/highlight} pour suivre les couleurs du terminal',
-  "tui.tips.theme_files":
-    "Créez des fichiers de thème JSON dans le dossier {highlight}.mimocode/themes/{/highlight}",
+    "Exécutez {highlight}scaffold github install{/highlight} pour configurer le workflow GitHub",
+  "tui.tips.github_oc": "Commentez {highlight}/oc{/highlight} sur une ligne de PR pour une revue ciblée",
+  "tui.tips.theme_system": '\'Utilisez {highlight}"theme": "system"{/highlight} pour suivre les couleurs du terminal\'',
+  "tui.tips.theme_files": "Créez des fichiers de thème JSON dans le dossier {highlight}.scaffold/themes/{/highlight}",
   "tui.tips.theme_variants": "Les thèmes prennent en charge des variantes claires/sombres pour les deux modes",
   "tui.tips.theme_ansi": "Référencez les couleurs ANSI 0-255 dans des thèmes personnalisés",
   "tui.tips.env_var":
@@ -195,28 +186,23 @@ export const dict = {
     "Utilisez {highlight}{file:path}{/highlight} pour inclure le contenu d'un fichier dans la config",
   "tui.tips.instructions":
     "Utilisez {highlight}instructions{/highlight} dans la config pour charger des fichiers de règles supplémentaires",
-  "tui.tips.temperature":
-    "Réglez la {highlight}temperature{/highlight} de l'agent de 0.0 (focalisé) à 1.0 (créatif)",
-  "tui.tips.steps":
-    "Configurez {highlight}steps{/highlight} pour limiter les itérations agentiques par requête",
+  "tui.tips.temperature": "Réglez la {highlight}temperature{/highlight} de l'agent de 0.0 (focalisé) à 1.0 (créatif)",
+  "tui.tips.steps": "Configurez {highlight}steps{/highlight} pour limiter les itérations agentiques par requête",
   "tui.tips.disable_tool":
-    'Définissez {highlight}"tools": {"bash": false}{/highlight} pour désactiver des outils spécifiques',
+    '\'Définissez {highlight}"tools": {"bash": false}{/highlight} pour désactiver des outils spécifiques\'',
   "tui.tips.disable_mcp_tools":
-    'Définissez {highlight}"mcp_*": false{/highlight} pour désactiver tous les outils d\'un serveur MCP',
-  "tui.tips.tool_override":
-    "Remplacez les paramètres globaux des outils dans la configuration de chaque agent",
+    "'Définissez {highlight}\"mcp_*\": false{/highlight} pour désactiver tous les outils d\\'un serveur MCP'",
+  "tui.tips.tool_override": "Remplacez les paramètres globaux des outils dans la configuration de chaque agent",
   "tui.tips.share_auto":
-    'Définissez {highlight}"share": "auto"{/highlight} pour partager automatiquement toutes les sessions',
+    '\'Définissez {highlight}"share": "auto"{/highlight} pour partager automatiquement toutes les sessions\'',
   "tui.tips.share_disabled":
-    'Définissez {highlight}"share": "disabled"{/highlight} pour empêcher tout partage de session',
-  "tui.tips.unshare":
-    "Exécutez {highlight}/unshare{/highlight} pour retirer une session de l'accès public",
+    '\'Définissez {highlight}"share": "disabled"{/highlight} pour empêcher tout partage de session\'',
+  "tui.tips.unshare": "Exécutez {highlight}/unshare{/highlight} pour retirer une session de l'accès public",
   "tui.tips.doom_loop":
     "La permission {highlight}doom_loop{/highlight} prévient les boucles infinies d'appels d'outils",
   "tui.tips.external_dir":
     "La permission {highlight}external_directory{/highlight} protège les fichiers en dehors du projet",
-  "tui.tips.debug_config":
-    "Exécutez {highlight}mimo debug config{/highlight} pour diagnostiquer la configuration",
+  "tui.tips.debug_config": "Exécutez {highlight}scaffold debug config{/highlight} pour diagnostiquer la configuration",
   "tui.tips.print_logs":
     "Utilisez l'option {highlight}--print-logs{/highlight} pour afficher des journaux détaillés sur stderr",
   "tui.tips.timeline":
@@ -229,17 +215,14 @@ export const dict = {
     "Activez {highlight}scroll_acceleration{/highlight} dans {highlight}tui.json{/highlight} pour un défilement fluide",
   "tui.tips.username_toggle":
     "Activez/désactivez l'affichage du nom d'utilisateur via la palette de commandes ({highlight}Ctrl+P{/highlight})",
-  "tui.tips.zen":
-    "Utilisez {highlight}/connect{/highlight} avec MiMo Code pour des modèles testés et sélectionnés",
+  "tui.tips.zen": "Utilisez {highlight}/connect{/highlight} avec Scaffold pour des modèles testés et sélectionnés",
   "tui.tips.agents_md":
     "Versionnez le fichier {highlight}AGENTS.md{/highlight} de votre projet sur Git pour le partager avec l'équipe",
   "tui.tips.review":
     "Utilisez {highlight}/review{/highlight} pour réviser les modifications non commit, branches ou PR",
-  "tui.tips.help":
-    "Exécutez {highlight}/help{/highlight} ou {highlight}Ctrl+X H{/highlight} pour ouvrir l'aide",
+  "tui.tips.help": "Exécutez {highlight}/help{/highlight} ou {highlight}Ctrl+X H{/highlight} pour ouvrir l'aide",
   "tui.tips.rename": "Utilisez {highlight}/rename{/highlight} pour renommer la session courante",
-  "tui.tips.suspend.unix":
-    "Appuyez sur {highlight}Ctrl+Z{/highlight} pour suspendre le terminal et revenir au shell",
+  "tui.tips.suspend.unix": "Appuyez sur {highlight}Ctrl+Z{/highlight} pour suspendre le terminal et revenir au shell",
   "tui.tips.suspend.win": "Appuyez sur {highlight}Ctrl+Z{/highlight} pour annuler les modifications dans l'invite",
 
   // Command palette UI
@@ -272,26 +255,26 @@ export const dict = {
   "tui.skill.xlsx-official.description": "Créer, modifier et lire des classeurs Microsoft Excel (.xlsx)",
   "tui.skill.pdf-official.description": "Créer, modifier, transformer et lire des fichiers PDF",
   "tui.skill.pptx-official.description": "Créer, modifier et lire des présentations Microsoft PowerPoint (.pptx)",
-  "tui.skill.mimocode.description": "Documentation intégrée des fonctionnalités, config et commandes MiMoCode",
-  "tui.skill.evolve.description": "Réécrivez chaque couche de vous-même — outils, hooks, connaissances, workflows, même l'UI",
+  "tui.skill.mimocode.description": "Documentation intégrée des fonctionnalités, config et commandes Scaffold",
+  "tui.skill.evolve.description":
+    "Réécrivez chaque couche de vous-même — outils, hooks, connaissances, workflows, même l'UI",
   "tui.skill.frontend-design.description": "Conseils pour un design d'interface visuel distinctif et intentionnel",
   "tui.skill.loop.description": "Planifier l'exécution récurrente d'un prompt",
-  "tui.skill.html-to-video-pipeline.description": "L'arme ultime pour vidéos courtes — créez des vidéos courtes avec du HTML",
+  "tui.skill.html-to-video-pipeline.description":
+    "L'arme ultime pour vidéos courtes — créez des vidéos courtes avec du HTML",
   "tui.skill.arxiv.description": "Rechercher, citer, télécharger et suivre des articles arXiv",
   "tui.skill.skill-creator.description": "Créer, réviser et améliorer des skills d'agent",
-  "tui.skill.research-paper-writing.description": "Rédiger, polir et critiquer des articles académiques avec l'œil d'un relecteur",
+  "tui.skill.research-paper-writing.description":
+    "Rédiger, polir et critiquer des articles académiques avec l'œil d'un relecteur",
   "tui.skill.playwright.description": "Automatiser de vrais parcours navigateur depuis le terminal",
   "tui.skill.codex.description": "Exécuter Codex CLI de façon autonome dans les scripts, la CI, Docker et Kubernetes",
   "tui.skill.claude-code.description": "Déléguer des tâches de programmation à Claude Code CLI",
   "tui.skill.grok-build.description": "Utiliser Grok Build depuis la ligne de commande",
-  "tui.skill.design-blueprint.description":
-    "Produire un plan de design (DESIGN.md + Decision Trace) avant tout mockup",
+  "tui.skill.design-blueprint.description": "Produire un plan de design (DESIGN.md + Decision Trace) avant tout mockup",
   "tui.skill.super-research.description":
     "Recherche autonome — expériences, revues, analyse quantitative, benchmarks, RCA, ablation, reproduction & rédaction d'articles",
-  "tui.skill.deep-research.description":
-    "Investigation multi-sources approfondie avec rapport cité et vérifié",
-  "tui.skill.modern-python-toolchain.description":
-    "Configuration de projet Python moderne avec uv, ruff et pyright",
+  "tui.skill.deep-research.description": "Investigation multi-sources approfondie avec rapport cité et vérifié",
+  "tui.skill.modern-python-toolchain.description": "Configuration de projet Python moderne avec uv, ruff et pyright",
   "tui.skill.data-analytics.description":
     "Analyser les données produit et métier, définir des KPI et créer des tableaux de bord et rapports",
   "tui.skill.product-design.description": "Rechercher, auditer, prototyper et valider des designs produit et UX",
@@ -340,16 +323,21 @@ export const dict = {
   "tui.modalities.hint.toggle": "basculer",
   "tui.modalities.hint.save": "enregistrer",
   "tui.command.mcp.list.title": "Activer/désactiver MCP",
-  "tui.command.never_ask.title_on": "Sans questions : ACTIVÉ (auto-décider, autorisations exclues) — cliquer pour désactiver",
-  "tui.command.never_ask.title_off": "Sans questions : DÉSACTIVÉ — cliquer pour activer (auto-décider, autorisations exclues)",
+  "tui.command.never_ask.title_on":
+    "Sans questions : ACTIVÉ (auto-décider, autorisations exclues) — cliquer pour désactiver",
+  "tui.command.never_ask.title_off":
+    "Sans questions : DÉSACTIVÉ — cliquer pour activer (auto-décider, autorisations exclues)",
   "tui.command.never_ask.toast_on":
     "Sans questions ACTIVÉ — je ne te demanderai rien ; je choisirai moi-même la meilleure option jusqu'à ce que tu le désactives (/never-ask). Les demandes d'autorisation nécessitent toujours ton approbation.",
   "tui.command.never_ask.toast_off": "Sans questions DÉSACTIVÉ — je te redemanderai aux points de décision.",
-  "tui.command.skip_permissions.title_on": "Ignorer les autorisations : ACTIVÉ (auto-approuver les demandes) — cliquer pour désactiver",
-  "tui.command.skip_permissions.title_off": "Ignorer les autorisations : DÉSACTIVÉ — cliquer pour activer (auto-approuver les demandes)",
+  "tui.command.skip_permissions.title_on":
+    "Ignorer les autorisations : ACTIVÉ (auto-approuver les demandes) — cliquer pour désactiver",
+  "tui.command.skip_permissions.title_off":
+    "Ignorer les autorisations : DÉSACTIVÉ — cliquer pour activer (auto-approuver les demandes)",
   "tui.command.skip_permissions.toast_on":
     "Ignorer les autorisations ACTIVÉ — demandes auto-approuvées (sous-agents inclus). Les commandes destructrices demandent encore confirmation.",
-  "tui.command.skip_permissions.toast_off": "Ignorer les autorisations DÉSACTIVÉ — les demandes nécessitent à nouveau ton approbation.",
+  "tui.command.skip_permissions.toast_off":
+    "Ignorer les autorisations DÉSACTIVÉ — les demandes nécessitent à nouveau ton approbation.",
   "tui.command.permission_timeout.title": "Délai d'attente des autorisations",
   "tui.permission_timeout.title": "Délai d'attente des autorisations",
   "tui.permission_timeout.hint": "Combien de temps attendre l'approbation humaine avant rejet automatique.",
@@ -373,8 +361,10 @@ export const dict = {
   "tui.command.logo.switch.title": "Changer le design du logo",
   "tui.command.visual_mode.title_on": "Affichage enrichi - passer en mode minimal",
   "tui.command.visual_mode.title_off": "Affichage minimal - passer en mode enrichi",
-  "tui.visual_mode.enabled": "Affichage enrichi activé : ciel étoilé et effets du logo restaurés ; météores et indicateurs animés suivent le réglage des animations",
-  "tui.visual_mode.disabled": "Affichage enrichi désactivé : étoiles, météores et effets du logo masqués ; indicateurs stabilisés",
+  "tui.visual_mode.enabled":
+    "Affichage enrichi activé : ciel étoilé et effets du logo restaurés ; météores et indicateurs animés suivent le réglage des animations",
+  "tui.visual_mode.disabled":
+    "Affichage enrichi désactivé : étoiles, météores et effets du logo masqués ; indicateurs stabilisés",
   "tui.dialog.logo.title": "Design du logo",
   "tui.dialog.logo.option.classic": "Classique (gras)",
   "tui.dialog.logo.option.thin": "Fin (demi-bloc)",
@@ -396,18 +386,18 @@ export const dict = {
   "tui.dialog.agreement.confirm": "Accepter et continuer",
   "tui.dialog.free_api_sunset.title": "Le service API gratuit est terminé",
   "tui.dialog.free_api_sunset.message":
-    "Exécutez /login pour vous connecter. Abonnez-vous au MiMo Token Plan ou configurez une API tierce pour utiliser MiMo Code.",
+    "Exécutez /login pour vous connecter. Abonnez-vous au Scaffold Token Plan ou configurez une API tierce pour utiliser Scaffold.",
   "tui.command.consent.revoke.title": "Révoquer l'accord du modèle gratuit",
   "tui.consent.revoked": "Accord du modèle gratuit révoqué — vous devrez l'accepter à nouveau",
   "tui.dialog.select.placeholder": "Rechercher",
   "tui.dialog.model.login_hint": "Astuce : exécutez /login pour vous connecter avant de changer de modèle",
-  "tui.model.mimo_auto.name": "MiMo Auto (MiMo-V2.5 gratuit jusqu’au 26 juillet à 18:00 · UTC+8)",
-  "tui.model.mimo_auto.sunset_name": "MiMo Auto (MiMo-V2.5)",
+  "tui.model.mimo_auto.name": "Scaffold Auto (Scaffold-V2.5 gratuit jusqu’au 26 juillet à 18:00 · UTC+8)",
+  "tui.model.mimo_auto.sunset_name": "Scaffold Auto (Scaffold-V2.5)",
   "tui.dialog.token_plan.title": "Abonnez-vous à un Token Plan ou patientez dans la file",
   "tui.dialog.token_plan.line1":
     "En mode gratuit, les requêtes sont mises en file d'attente. Pour un service stable et de qualité,",
   "tui.dialog.token_plan.subscribe": "abonnez-vous à ",
-  "tui.dialog.token_plan.link": "MiMo Token Plan",
+  "tui.dialog.token_plan.link": "Scaffold Token Plan",
   "tui.dialog.token_plan.link_suffix": ".",
   "tui.dialog.token_plan.line3": "Vous pouvez aussi exécuter /login pour configurer votre propre clé API.",
   "tui.dialog.token_plan.confirm": "Compris",
@@ -448,18 +438,21 @@ export const dict = {
   "tui.dialog.try_best.action.verify": "vérification",
   "tui.dialog.try_best.action.same_kind": "même type",
   "tui.dialog.try_best.handoff.title": "Transférer à {{target}}",
-  "tui.dialog.try_best.handoff.description": "Demander à MiMo de déléguer le travail restant à ce harnais",
+  "tui.dialog.try_best.handoff.description": "Demander à Scaffold de déléguer le travail restant à ce harnais",
   "tui.dialog.try_best.continue.title": "Continuer avec {{model}}",
   "tui.dialog.try_best.continue.description": "Demander au modèle actuel d'abandonner cette approche et de replanifier",
   "tui.toast.instructions_loaded": "Chargé {{files}}",
   "tui.toast.update_available.title": "Mise à jour disponible",
-  "tui.toast.update_available.confirm": "La nouvelle version v{{version}} est disponible. Voulez-vous mettre à jour maintenant ?",
+  "tui.toast.update_available.confirm":
+    "La nouvelle version v{{version}} est disponible. Voulez-vous mettre à jour maintenant ?",
   "tui.toast.update_available.updating": "Mise à jour vers v{{version}}...",
   "tui.toast.update_available.failed": "La mise à jour a échoué",
-  "tui.toast.update_available.success": "Mis à jour vers MiMoCode v{{version}}. Veuillez redémarrer l'application.",
+  "tui.toast.update_available.success": "Mis à jour vers Scaffold v{{version}}. Veuillez redémarrer l'application.",
   "tui.toast.updated.title": "Mis à jour automatiquement",
-  "tui.toast.updated.message": "Correctif appliqué automatiquement : v{{version}}. Redémarrez pour utiliser la nouvelle version. Désactivez avec autoupdate: false dans la configuration.",
-  "tui.toast.native_installer_tip": "Conseil : l'installateur natif (curl/PowerShell) est recommandé pour une meilleure expérience.",
+  "tui.toast.updated.message":
+    "Correctif appliqué automatiquement : v{{version}}. Redémarrez pour utiliser la nouvelle version. Désactivez avec autoupdate: false dans la configuration.",
+  "tui.toast.native_installer_tip":
+    "Conseil : l'installateur natif (curl/PowerShell) est recommandé pour une meilleure expérience.",
   "tui.sidebar.instructions": "Instructions",
   "tui.sidebar.cwd": "Répertoire de travail",
   "tui.toast.unknown_error": "Une erreur inconnue s'est produite",
@@ -535,20 +528,24 @@ export const dict = {
   "tui.command.voice.toggle.title_off": "Saisie vocale : désactivée — cliquer pour activer",
   "tui.voice.enabled": "Saisie vocale activée (chinois/anglais) — cliquez sur [Voice] pour enregistrer",
   "tui.voice.disabled": "Saisie vocale désactivée",
-  "tui.voice.send.enabled": "Envoi vocal activé — dites「发送」ou \"send it\" pour envoyer",
+  "tui.voice.send.enabled": 'Envoi vocal activé — dites「发送」ou "send it" pour envoyer',
   "tui.voice.send.disabled": "Envoi vocal désactivé",
   "tui.command.voice.send.title": "Basculer l'envoi vocal",
   "tui.command.voice.send.title_on": "Envoi vocal : activé — cliquer pour désactiver",
   "tui.command.voice.send.title_off": "Envoi vocal : désactivé — cliquer pour activer",
-  "tui.voice.control.enabled": "Contrôle vocal activé — utilise le modèle multimodal pour l'édition intelligente (plus lent)",
+  "tui.voice.control.enabled":
+    "Contrôle vocal activé — utilise le modèle multimodal pour l'édition intelligente (plus lent)",
   "tui.voice.control.disabled": "Contrôle vocal désactivé — utilise la transcription ASR rapide",
   "tui.command.voice.control.title": "Basculer le contrôle vocal (multimodal)",
   "tui.command.voice.control.title_on": "Contrôle vocal : activé (multimodal) — cliquer pour désactiver",
   "tui.command.voice.control.title_off": "Contrôle vocal : désactivé (ASR rapide) — cliquer pour activer",
-  "tui.voice.error.no_auth": "Utilisez /connect pour vous connecter à MiMo, ou configurez voice.asr_model pour un autre fournisseur",
-  "tui.voice.error.no_auth_provider": "Le fournisseur vocal \"{{provider}}\" n'est pas authentifié, vérifiez son apiKey",
-  "tui.voice.error.provider_not_found": "Fournisseur \"{{provider}}\" indisponible — /connect pour s'authentifier, ou déclarez models dans la config pour les endpoints personnalisés",
-  "tui.voice.error.no_url": "Le fournisseur \"{{provider}}\" n'a pas de baseURL configuré — définissez options.baseURL dans la configuration",
+  "tui.voice.error.no_auth":
+    "Utilisez /connect pour vous connecter à Scaffold, ou configurez voice.asr_model pour un autre fournisseur",
+  "tui.voice.error.no_auth_provider": 'Le fournisseur vocal "{{provider}}" n\'est pas authentifié, vérifiez son apiKey',
+  "tui.voice.error.provider_not_found":
+    'Fournisseur "{{provider}}" indisponible — /connect pour s\'authentifier, ou déclarez models dans la config pour les endpoints personnalisés',
+  "tui.voice.error.no_url":
+    'Le fournisseur "{{provider}}" n\'a pas de baseURL configuré — définissez options.baseURL dans la configuration',
   "tui.voice.error.no_device": "Aucun microphone/appareil audio trouvé — vérifiez les paramètres audio du système",
   "tui.voice.error.recorder_failed": "L'enregistrement a échoué",
   "tui.voice.error.no_recorder": "Aucun outil d'enregistrement trouvé, installez sox",
@@ -565,14 +562,11 @@ export const dict = {
   "tui.command.plugins.install.title": "Installer un plugin",
 
   // MiMo Auto (free) — TUI login dialog
-  "tui.dialog.login.mimo_free": "MiMo Auto (free)",
-  "tui.dialog.login.mimo_free.desc": "Canal anonyme gratuit — aucune connexion requise",
-  "tui.dialog.login.mimo_free.success": "MiMo Auto (free) est prêt — modèle par défaut défini sur mimo/mimo-auto",
-  "tui.dialog.login.mimo_free.unavailable": "Fournisseur MiMo Auto (free) non chargé",
-  "tui.dialog.login.flow.title": "Connexion MiMo",
+  "tui.dialog.login.flow.title": "Connexion Scaffold",
   "tui.dialog.login.flow.placeholder": "Collez le code (ou attendez le rappel du navigateur)",
   "tui.dialog.login.flow.busy": "Connexion en cours...",
-  "tui.dialog.login.flow.manual_hint": "Le navigateur ne s'est pas ouvert ? Cliquez sur le lien ci-dessous pour copier :",
+  "tui.dialog.login.flow.manual_hint":
+    "Le navigateur ne s'est pas ouvert ? Cliquez sur le lien ci-dessous pour copier :",
   "tui.dialog.login.flow.waiting": "En attente de l'autorisation du navigateur...",
   "tui.dialog.login.flow.invalid_code": "Code invalide, veuillez réessayer",
   "tui.dialog.login.flow.copied": "Copié",
@@ -580,19 +574,10 @@ export const dict = {
   // CLI: providers command (auth login)
   "cli.providers.select": "Sélectionner un fournisseur",
   "cli.providers.other": "Autre fournisseur",
-  "cli.providers.mimo.recommended_hint": "recommandé",
-  "cli.providers.mimo_free.hint": "Canal anonyme gratuit / mimo-auto",
-  "cli.providers.mimo_free.verifying": "Vérification du canal MiMo Auto (free)...",
-  "cli.providers.mimo_free.ready": "Canal MiMo Auto (free) prêt",
-  "cli.providers.mimo_free.failed": "Échec de la vérification de MiMo Auto (free)",
-  "cli.providers.mimo_free.default_set": "Modèle par défaut défini sur mimo/mimo-auto (contexte 1M, gratuit)",
-  "cli.providers.mimo_free.usage_hint":
-    "Aucune connexion requise — exécutez simplement mimo. Pour les modèles payants/premium, choisissez plutôt la connexion navigateur MiMo.",
-  "cli.providers.mimo_login.decrypt_retry": "Échec du déchiffrement, veuillez réessayer ({remaining} tentatives restantes)",
-  "cli.providers.mimo_login.decrypt_exhausted": "Échec du déchiffrement, nombre maximal de tentatives atteint",
 
   // Question i18n — plan_exit
-  "tui.question.plan_exit.question": "Le plan {{plan}} est terminé. Voulez-vous basculer vers l'agent build pour commencer l'implémentation ?",
+  "tui.question.plan_exit.question":
+    "Le plan {{plan}} est terminé. Voulez-vous basculer vers l'agent build pour commencer l'implémentation ?",
   "tui.question.plan_exit.header": "Quitter le plan",
   "tui.question.plan_exit.option.0.label": "Oui",
   "tui.question.plan_exit.option.0.description": "Basculer vers l'agent build et commencer l'implémentation",
@@ -604,22 +589,28 @@ export const dict = {
 
   // Workspace trust
   "trust.title": "Accès à l'espace de travail :",
-  "trust.safety_check": "Vérification rapide : est-ce un projet que vous avez créé ou auquel vous faites confiance ? (Votre propre code, un projet open source reconnu ou un travail de votre équipe). Sinon, prenez un moment pour examiner le contenu de ce dossier.",
-  "trust.capabilities": "MiMo Code pourra lire, modifier et exécuter des fichiers ici.",
-  "trust.plugin_warn": "Si des plugins malveillants existent dans ce répertoire, ils peuvent exécuter du code arbitraire, lire, modifier ou exfiltrer vos fichiers.",
+  "trust.safety_check":
+    "Vérification rapide : est-ce un projet que vous avez créé ou auquel vous faites confiance ? (Votre propre code, un projet open source reconnu ou un travail de votre équipe). Sinon, prenez un moment pour examiner le contenu de ce dossier.",
+  "trust.capabilities": "Scaffold pourra lire, modifier et exécuter des fichiers ici.",
+  "trust.plugin_warn":
+    "Si des plugins malveillants existent dans ce répertoire, ils peuvent exécuter du code arbitraire, lire, modifier ou exfiltrer vos fichiers.",
   "trust.option.yes": "Oui, je fais confiance à ce dossier",
   "trust.option.no": "Non, quitter",
   "trust.dangerous.title_home": "ATTENTION : Vous êtes sur le point d'ouvrir votre RÉPERTOIRE PERSONNEL.",
   "trust.dangerous.title_root": "ATTENTION : Vous êtes sur le point d'ouvrir la RACINE DU SYSTÈME DE FICHIERS.",
-  "trust.dangerous.body_home": "Le modèle aura accès à TOUS vos fichiers personnels — clés SSH, identifiants, profils de navigateur et tout le contenu de votre dossier personnel.",
-  "trust.dangerous.body_root": "Le modèle aura accès à l'ENSEMBLE du système de fichiers — fichiers système, données de tous les utilisateurs, identifiants et tout sur cette machine.",
-  "trust.dangerous.advice_home": "Sauf raison très spécifique, NE faites PAS confiance à l'intégralité de votre répertoire personnel.",
-  "trust.dangerous.advice_root": "Sauf raison très spécifique, NE faites PAS confiance à la racine du système de fichiers.",
+  "trust.dangerous.body_home":
+    "Le modèle aura accès à TOUS vos fichiers personnels — clés SSH, identifiants, profils de navigateur et tout le contenu de votre dossier personnel.",
+  "trust.dangerous.body_root":
+    "Le modèle aura accès à l'ENSEMBLE du système de fichiers — fichiers système, données de tous les utilisateurs, identifiants et tout sur cette machine.",
+  "trust.dangerous.advice_home":
+    "Sauf raison très spécifique, NE faites PAS confiance à l'intégralité de votre répertoire personnel.",
+  "trust.dangerous.advice_root":
+    "Sauf raison très spécifique, NE faites PAS confiance à la racine du système de fichiers.",
   "trust.dangerous.option.yes": "Je comprends les risques, faire confiance pour cette session",
   "trust.dangerous.option.no": "Quitter (recommandé)",
   "skip_permissions.title": "AVERTISSEMENT : mode contournement des permissions",
   "skip_permissions.body":
-    "Vous avez démarré avec --dangerously-skip-permissions. MiMo Code va lire, modifier et exécuter des fichiers et lancer des commandes shell SANS demander d'approbation. Seules les règles que vous avez explicitement refusées (deny) dans la configuration restent appliquées. Vous êtes seul responsable de tout ce qu'il fait.",
+    "Vous avez démarré avec --dangerously-skip-permissions. Scaffold va lire, modifier et exécuter des fichiers et lancer des commandes shell SANS demander d'approbation. Seules les règles que vous avez explicitement refusées (deny) dans la configuration restent appliquées. Vous êtes seul responsable de tout ce qu'il fait.",
   "skip_permissions.plugin_warn":
     "Dans ce mode, une invite, un fichier ou un plugin malveillant peut exécuter des commandes arbitraires et modifier ou exfiltrer vos données sans aucune confirmation.",
   "skip_permissions.root_warn":
