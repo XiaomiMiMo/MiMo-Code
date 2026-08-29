@@ -30,20 +30,24 @@ export const GoalTool = Tool.define(
         Effect.gen(function* () {
           if (params.action === "clear") {
             yield* goal.clear(ctx.sessionID)
-            return { title: "Goal cleared", output: "Session goal cleared.", metadata: { action: "clear" } }
+            return {
+              title: "Goal cleared",
+              output: "Session goal cleared.",
+              metadata: { action: "clear" as const, ok: undefined, condition: undefined },
+            }
           }
           const condition = params.condition?.trim()
           if (!condition)
             return {
               title: "Goal not set",
               output: "action=set requires a non-empty `condition`.",
-              metadata: { action: "set", ok: false },
+              metadata: { action: "set" as const, ok: false, condition: undefined },
             }
           yield* goal.set(ctx.sessionID, condition)
           return {
             title: "Goal set",
             output: `Session goal armed. The loop will not stop until satisfied:\n${condition}`,
-            metadata: { action: "set", ok: true, condition },
+            metadata: { action: "set" as const, ok: true, condition },
           }
         }).pipe(Effect.orDie),
     }
