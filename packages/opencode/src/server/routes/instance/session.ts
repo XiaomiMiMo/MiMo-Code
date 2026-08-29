@@ -1131,18 +1131,6 @@ export const SessionRoutes = lazy(() =>
       async (c) => {
         const sessionID = c.req.valid("param").sessionID
 
-        // Pre-check: bail with 409 Conflict if the session's main runner is busy
-        // with another request. Without this guard, ensureRunning silently queues
-        // the new work behind the existing runner (which may be a zombie from a
-        // SIGKILL'd previous client), causing the new client to hang for the
-        // duration of the old runner's retry envelope. Caller's recovery path:
-        // POST /:sessionID/abort to free the runner, then retry this POST.
-        await runRequest(
-          "SessionRoutes.prompt.assertNotBusy",
-          c,
-          SessionRunState.Service.use((svc) => svc.assertNotBusy(sessionID)),
-        )
-
         c.status(200)
         c.header("Content-Type", "application/json")
         return stream(c, async (stream) => {
