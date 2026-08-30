@@ -1,0 +1,64 @@
+.DS_Store
+node_modules
+.worktrees
+.sst
+.env
+.idea
+.vscode
+.codex
+*~
+playground
+tmp
+dist
+ts-dist
+*.tgz
+.turbo
+**/.serena
+.serena/
+/result
+refs
+Session.vim
+/opencode.json
+a.out
+target
+.scripts
+.direnv/
+
+# Local dev files
+opencode-dev
+UPCOMING_CHANGELOG.md
+logs/
+*.bun-build
+tsconfig.tsbuildinfo
+.dev-home/
+
+# Local agent harness state
+.claude/
+*.pid
+.mimo-worktrees
+.mimocde
+
+# experiment run artifacts (regenerated per run, not source)
+experiment/*.log
+experiment/last-outcome.json
+/experiment
+
+/mimoapi/
+/packages/opencode/src/ext
+
+# temp
+temp/
+__pycache__
+Thumbs.db
+.playwright-cli/
+.mimocode/wiki
+.mimocode/wikis
+.mimocode/cache
+
+# SDK codegen scratch: script/build.ts writes it, consumes it, then removes it.
+# A failed generation leaves it behind, where it is easy to commit by accident.
+/packages/sdk/js/openapi.json
+/packages/sdk/js/openapi-ts-error-*.log
+
+# others
+codex/

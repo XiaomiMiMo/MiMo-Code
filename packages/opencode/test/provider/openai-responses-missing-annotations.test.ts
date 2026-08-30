@@ -70,6 +70,12 @@ function sseProvider(events: unknown[]) {
 }
 
 describe("openai responses missing annotations", () => {
+  test("accepts an output_text block without annotations (Ark responses shape)", async () => {
+    const model = provider(arkResponse({ withAnnotations: false })).responses("deepseek-v4-flash")
+    const result = await model.doGenerate({ prompt })
+    expect(result.content).toContainEqual(expect.objectContaining({ type: "text", text: "好的，开始吧" }))
+  })
+
   test("accepts an output_text block with annotations", async () => {
     const model = provider(arkResponse({ withAnnotations: true })).responses("deepseek-v4-flash")
     const result = await model.doGenerate({ prompt })
