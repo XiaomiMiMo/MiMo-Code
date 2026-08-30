@@ -56,9 +56,10 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
         const list = agents()
         const currentAgent = list.find((x) => x.name === current)
         const targetAgent = list.find((x) => x.name === target)
-        // Custom (non-native) primary agents are free-switch hubs: enterable from any
-        // mode and leaveable to any mode mid-session (e.g. compose/plan -> custom).
-        const customPrimary = (a?: (typeof list)[number]) => a?.mode === "primary" && !a.native
+        // Custom (non-native) primary-capable agents are free-switch hubs: enterable from any
+        // mode and leaveable to any mode mid-session (e.g. compose/plan -> custom). Custom
+        // agents default to mode "all" (primary-capable), not "primary", so match either.
+        const customPrimary = (a?: (typeof list)[number]) => !!a && a.mode !== "subagent" && !a.native
         if (customPrimary(currentAgent) || customPrimary(targetAgent)) return true
         const currentInGroup = FREE_SWITCH_GROUP.includes(current)
         const targetInGroup = FREE_SWITCH_GROUP.includes(target)
