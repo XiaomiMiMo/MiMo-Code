@@ -164,6 +164,24 @@ export const Flag = {
   get MIMOCODE_COMPACTION_TRIGGER_RATIO() {
     return ratio("MIMOCODE_COMPACTION_TRIGGER_RATIO") ?? 0.9
   },
+  // PI-102: how long SessionProcessor.cleanup waits for an in-flight tool call to
+  // genuinely finish before force-marking it aborted, when cleanup is running
+  // because overflow was just detected (ctx.needsOverflowHandling). Overflow is
+  // detected at finish-step — i.e. after the model's turn, but a slow local tool
+  // (shell, MCP, file I/O) can still be executing past that point. The default
+  // 250ms grace (unconditional, all other cleanup reasons) is enough for a
+  // clean interrupt/error/blocked exit where the user wants an immediate stop,
+  // but is far too short for a genuinely still-running tool — cleanup previously
+  // force-aborted it after 250ms regardless, then proceeded straight into
+  // compaction on a transcript with a tool call marked aborted while its real
+  // side effect kept running in the background, producing an inconsistent
+  // history that a later request could reject as a server_error. This flag ONLY
+  // widens the grace window for the overflow exit path; every other exit reason
+  // (interrupt/error/blocked/normal) keeps the original 250ms untouched. Read
+  // lazily so tests can toggle it at runtime.
+  get MIMOCODE_OVERFLOW_TOOLCALL_GRACE_MS() {
+    return number("MIMOCODE_OVERFLOW_TOOLCALL_GRACE_MS") ?? 120_000
+  },
   MIMOCODE_DISABLE_MODELS_FETCH: truthy("MIMOCODE_DISABLE_MODELS_FETCH"),
   // Defaults to false. When enabled, every model uses the GPT system prompt
   // and Codex toolset regardless of its model ID.

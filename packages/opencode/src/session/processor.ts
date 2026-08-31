@@ -763,9 +763,17 @@ export const layer: Layer.Layer<
         }
         ctx.reasoningMap = {}
 
+        // PI-102: overflow is detected at finish-step, but a slow local tool call
+        // can still be genuinely running past that point. Give it real time to
+        // finish before force-aborting it and proceeding into compaction on a
+        // torn transcript — every other cleanup reason (interrupt/error/blocked/
+        // normal) keeps the original unconditional 250ms.
+        const toolCleanupTimeout = ctx.needsOverflowHandling
+          ? `${Flag.MIMOCODE_OVERFLOW_TOOLCALL_GRACE_MS} millis`
+          : "250 millis"
         yield* Effect.forEach(
           Object.values(ctx.toolcalls),
-          (call) => Deferred.await(call.done).pipe(Effect.timeout("250 millis"), Effect.ignore),
+          (call) => Deferred.await(call.done).pipe(Effect.timeout(toolCleanupTimeout), Effect.ignore),
           { concurrency: "unbounded" },
         )
 
