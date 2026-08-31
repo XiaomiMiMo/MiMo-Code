@@ -37,8 +37,38 @@ export const Event = {
 
 export const PRUNE_MINIMUM = 20_000
 export const PRUNE_PROTECT = 40_000
-const PRUNE_PROTECTED_TOOLS = ["skill"]
+export const PRUNE_PROTECTED_TOOLS = ["skill"]
 const DEFAULT_TAIL_TURNS = 2
+
+// Strip the OUTPUT of old completed tool parts on an in-memory message array
+// (used before building the compaction modelMessages). Mirrors the DB `prune()`
+// thresholds (PRUNE_PROTECT / PRUNE_PROTECTED_TOOLS) but operates on the
+// in-memory copy and never touches the DB. Unlike the DB version it never gates
+// on PRUNE_MINIMUM — that threshold only decides whether to persist the pruned
+// state, whereas here the compaction summary doesn't need full old tool bodies,
+// so it always strips past PRUNE_PROTECT to bound the request size so it can't
+// exceed the model window (#1661).
+export function pruneToolOutputs(messages: MessageV2.WithParts[]): void {
+  let total = 0
+  let turns = 0
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const msg = messages[i]
+    if (msg.info.role === "user") turns++
+    if (turns < 2) continue
+    if (msg.info.role === "assistant" && msg.info.summary) break
+    for (const part of msg.parts) {
+      if (part.type !== "tool" || part.state.status !== "completed") continue
+      if (PRUNE_PROTECTED_TOOLS.includes(part.tool)) continue
+      const est = Token.estimate(part.state.output)
+      total += est
+      if (total > PRUNE_PROTECT) {
+        part.state.output = ""
+        part.state.providerOutput = undefined
+      }
+    }
+  }
+}
+
 const MIN_PRESERVE_RECENT_TOKENS = 2_000
 const MAX_PRESERVE_RECENT_TOKENS = 8_000
 type Turn = {
@@ -340,6 +370,7 @@ export const layer: Layer.Layer<
 
       const prompt = compacting.prompt ?? [defaultPrompt, ...compacting.context].join("\n\n")
       const msgs = structuredClone(selected.head)
+      pruneToolOutputs(msgs)
       yield* plugin.trigger("experimental.chat.messages.transform", {}, { messages: msgs })
       const modelMessages = yield* MessageV2.toModelMessagesEffect(msgs, model, { stripMedia: true })
       const ctx = yield* InstanceState.context
