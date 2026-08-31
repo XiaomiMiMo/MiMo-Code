@@ -8,7 +8,6 @@ import { upgrade } from "@/cli/upgrade"
 import { Config } from "@/config"
 import { GlobalBus } from "@/bus/global"
 import { Flag, clearGeneratedServerPassword, generateServerPassword } from "@/flag/flag"
-import { LLMServerTokens } from "@/llm-server/tokens"
 import { writeHeapSnapshot } from "node:v8"
 import { Heap } from "@/cli/heap"
 import { AppRuntime } from "@/effect/app-runtime"
@@ -88,18 +87,9 @@ export const rpc = {
       if (!input) generateServerPassword()
       serverPromise = Server.listen(input ?? { port: 0, hostname: "127.0.0.1" })
     }
+    // Server.listen publishes cwd into the llm-server address registry and
+    // unpublishes on stop, so `mimo llm-server issue` can resolve base_url.
     server = await serverPromise
-
-    // Advertised for a human at a shell (`mimo llm-server issue` prints it). A child
-    // process is told its endpoint directly and does not read this.
-    await LLMServerTokens.publish(process.cwd(), {
-      pid: process.pid,
-      hostname: server.hostname,
-      port: server.port,
-      url: server.url.toString(),
-      started: Date.now(),
-    }).catch((error) => Log.Default.warn("failed to advertise server address", { error: String(error) }))
-
     return { url: server.url.toString() }
   },
   async checkUpgrade(input: { directory: string }) {
@@ -136,10 +126,8 @@ export const rpc = {
 
     await Instance.disposeAll()
     if (server) {
-      // Withdraw the advertisement before the socket goes away, so a reader sees
-      // "nothing is serving" rather than a port that refuses connections. A crash skips
-      // this, which is what the pid liveness check in `addresses` is for.
-      await LLMServerTokens.unpublish(process.cwd()).catch(() => {})
+      // Server.stop withdraws the llm-server advertisement before the socket goes
+      // away. A crash skips this; the pid liveness check in `addresses` is the backstop.
       await server.stop(true)
       server = undefined
       serverPromise = undefined

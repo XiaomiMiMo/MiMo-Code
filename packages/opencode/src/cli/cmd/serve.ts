@@ -3,32 +3,6 @@ import { cmd } from "./cmd"
 import { withNetworkOptions, resolveNetworkOptions } from "../network"
 import { Flag } from "../../flag/flag"
 import { Log } from "../../util"
-import { LLMServerTokens } from "../../llm-server/tokens"
-
-/**
- * Advertise a just-started listener so `mimo llm-server issue` can print a real base_url.
- *
- * Same contract as the TUI worker (`cli/cmd/tui/worker.ts`): keyed by the project
- * directory this process serves, one file per pid, withdrawn before the socket goes
- * away. Without this, `issue` still mints a valid token but reports `base_url: null`
- * and `llm-server list` says nothing is serving the directory.
- */
-export async function advertiseListeningServer(
-  directory: string,
-  server: { hostname: string; port: number; url: URL },
-) {
-  await LLMServerTokens.publish(directory, {
-    pid: process.pid,
-    hostname: server.hostname,
-    port: server.port,
-    url: server.url.toString(),
-    started: Date.now(),
-  })
-}
-
-export async function unadvertiseListeningServer(directory: string) {
-  await LLMServerTokens.unpublish(directory)
-}
 
 export const ServeCommand = cmd({
   command: "serve",
@@ -48,23 +22,12 @@ export const ServeCommand = cmd({
       console.log("Warning: MIMOCODE_SERVER_PASSWORD is not set; server is unsecured.")
     }
 
+    // Server.listen publishes this process into the llm-server address registry
+    // (cwd) and unpublishes on stop, so `mimo llm-server issue` can resolve base_url.
     const server = await Server.listen(opts)
     console.log(`mimocode server listening on http://${server.hostname}:${server.port}`)
 
-    // `mimo serve` has no --directory flag, so the project this process serves is cwd —
-    // the same key `llm-server issue` looks up.
-    const directory = process.cwd()
-    await advertiseListeningServer(directory, server).catch((error) =>
-      Log.Default.warn("failed to advertise server address", { error: String(error) }),
-    )
-
-    // Withdraw the advertisement before the socket goes away, so a reader sees
-    // "nothing is serving" rather than a port that refuses connections. A crash skips
-    // this, which is what the pid liveness check in `addresses` is for.
-    const shutdown = async () => {
-      await unadvertiseListeningServer(directory).catch(() => {})
-      await server.stop()
-    }
+    const shutdown = () => server.stop()
     process.once("SIGINT", () => {
       void shutdown().then(() => process.exit(0))
     })

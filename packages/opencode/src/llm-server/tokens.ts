@@ -127,13 +127,13 @@ function fields(value: unknown): value is Record<string, unknown> {
  * nothing and turns it into an honest "nothing is running"; the dead file is removed
  * on the way past, so the directory does not accumulate one entry per crash.
  */
-export async function addresses(directory: string): Promise<Address[]> {
-  const names = await fs.readdir(dir(directory)).catch(() => [] as string[])
+async function addressesInBucket(bucket: string): Promise<Address[]> {
+  const names = await fs.readdir(bucket).catch(() => [] as string[])
   const found = await Promise.all(
     names
       .filter((name) => name.startsWith("server-") && name.endsWith(".json"))
       .map(async (name) => {
-        const target = path.join(dir(directory), name)
+        const target = path.join(bucket, name)
         const raw = await readJson(target)
         if (!fields(raw)) return undefined
         if (typeof raw["pid"] !== "number" || typeof raw["port"] !== "number") return undefined
@@ -155,7 +155,28 @@ export async function addresses(directory: string): Promise<Address[]> {
         }
       }),
   )
-  return found.filter((item): item is Address => item !== undefined).sort((a, b) => b.started - a.started)
+  return found.filter((item): item is Address => item !== undefined)
+}
+
+export async function addresses(directory: string): Promise<Address[]> {
+  return addressesInBucket(dir(directory)).then((list) => list.sort((a, b) => b.started - a.started))
+}
+
+/**
+ * Every live listener on this machine, newest first, across all directory buckets.
+ *
+ * A multi-project host (Desktop's embedded sidecar) publishes once for its own cwd
+ * and serves `?directory=` for every project. Project-scoped lookups miss that
+ * listener; `discoverAddress` falls back here so a shell in a project directory
+ * still finds it.
+ */
+export async function hostAddresses(): Promise<Address[]> {
+  const root = path.join(Global.Path.state, "llm-server")
+  const buckets = await fs.readdir(root).catch(() => [] as string[])
+  const all = await Promise.all(
+    buckets.map(async (name) => addressesInBucket(path.join(root, name))),
+  )
+  return all.flat().sort((a, b) => b.started - a.started)
 }
 
 /**
@@ -168,6 +189,16 @@ export async function addresses(directory: string): Promise<Address[]> {
  */
 export async function address(directory: string): Promise<Address | undefined> {
   return (await addresses(directory))[0]
+}
+
+/**
+ * Prefer a listener pinned to this directory; otherwise any live host.
+ *
+ * Tokens stay scoped to the issue directory either way — this only answers "where
+ * is the `/v1` socket", which a multi-project sidecar can serve for any directory.
+ */
+export async function discoverAddress(directory: string): Promise<Address | undefined> {
+  return (await address(directory)) ?? (await hostAddresses())[0]
 }
 
 async function read(directory: string): Promise<Store> {

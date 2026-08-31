@@ -17,6 +17,7 @@ import { WorkspaceRouterMiddleware } from "./workspace"
 import { InstanceMiddleware } from "./routes/instance/middleware"
 import { WorkspaceRoutes } from "./routes/control/workspace"
 import { setChildProcessEnv } from "@/util/child-process-env"
+import { LLMServerTokens } from "@/llm-server/tokens"
 
 // @ts-ignore This global is needed to prevent ai-sdk from logging warnings to stdout https://github.com/vercel/ai/blob/2dc67e0ef538307f21368db32d5a12345d98831b/packages/ai/src/logger/log-warnings.ts#L85
 globalThis.AI_SDK_LOG_WARNINGS = false
@@ -100,6 +101,12 @@ export async function listen(opts: {
   cors?: string[]
   noAuth?: boolean
   childEnv?: NodeJS.ProcessEnv
+  /**
+   * Advertise this listener in the llm-server address registry so
+   * `mimo llm-server issue` can resolve `base_url`. Defaults to true.
+   * Embedders that only need an in-process app can pass false.
+   */
+  advertise?: boolean
 }): Promise<Listener> {
   if (opts.childEnv) setChildProcessEnv(opts.childEnv)
   const isLoopback =
@@ -131,6 +138,21 @@ export async function listen(opts: {
     log.warn("mDNS enabled but hostname is loopback; skipping mDNS publish")
   }
 
+  // Who owns the `/v1` capability surface must also say where it is. Keyed by cwd —
+  // TUI/serve chdir to the project; Desktop hosts many projects from one listener and
+  // `discoverAddress` falls back to any live host when the project bucket is empty.
+  const advertise = opts.advertise !== false
+  const directory = process.cwd()
+  if (advertise) {
+    await LLMServerTokens.publish(directory, {
+      pid: process.pid,
+      hostname: opts.hostname,
+      port: server.port,
+      url: next.toString(),
+      started: Date.now(),
+    }).catch((error) => log.warn("failed to advertise llm-server address", { error: String(error) }))
+  }
+
   let closing: Promise<void> | undefined
   return {
     hostname: opts.hostname,
@@ -138,6 +160,10 @@ export async function listen(opts: {
     url: next,
     stop(close?: boolean) {
       closing ??= (async () => {
+        // Withdraw the advertisement before the socket goes away, so a reader sees
+        // "nothing is serving" rather than a port that refuses connections. A crash
+        // skips this; the pid liveness check in `addresses` is the backstop.
+        if (advertise) await LLMServerTokens.unpublish(directory).catch(() => {})
         if (mdns) MDNS.unpublish()
         await server.stop(close)
       })()

@@ -1,78 +1,90 @@
 import { describe, expect, test } from "bun:test"
-import { advertiseListeningServer, unadvertiseListeningServer } from "../../../src/cli/cmd/serve"
+import { Server } from "../../../src/server/server"
 import { LLMServerTokens } from "../../../src/llm-server/tokens"
 import { tmpdir } from "../../fixture/fixture"
 
 /**
- * `mimo serve` must publish the same address contract the TUI worker publishes.
+ * `Server.listen` must register itself in the llm-server address registry.
  *
  * `llm-server issue` only mints credentials; it reads the live endpoint from
- * `LLMServerTokens.address(process.cwd())`. A serve process that listens but never
+ * `LLMServerTokens.discoverAddress(process.cwd())`. A host that listens but never
  * publishes yields `base_url: null` even though `/v1` would accept the token.
+ * Desktop's embedded sidecar and `mimo serve` both go through this path.
  */
 
-describe("mimo serve address advertisement", () => {
-  test("publishes pid/hostname/port/url/started so issue can resolve base_url", async () => {
-    await using tmp = await tmpdir()
-    const url = new URL("http://127.0.0.1:4242")
+describe("Server.listen llm-server advertisement", () => {
+  test("publishes cwd so issue can resolve base_url, and unpublishes on stop", async () => {
+    const cwd = process.cwd()
+    const before = await LLMServerTokens.address(cwd)
 
-    expect(await LLMServerTokens.address(tmp.path)).toBeUndefined()
+    const server = await Server.listen({ port: 0, hostname: "127.0.0.1" })
+    try {
+      const address = await LLMServerTokens.address(cwd)
+      expect(address).toMatchObject({
+        pid: process.pid,
+        hostname: "127.0.0.1",
+        port: server.port,
+        url: server.url.toString(),
+      })
+      expect(address!.started).toBeGreaterThan(0)
 
-    await advertiseListeningServer(tmp.path, {
-      hostname: "127.0.0.1",
-      port: 4242,
-      url,
-    })
+      // The same join `llm-server issue` uses for `base_url`.
+      expect(`${address!.url.replace(/\/$/, "")}/v1`).toBe(`${server.url.toString().replace(/\/$/, "")}/v1`)
+    } finally {
+      await server.stop()
+    }
 
-    const address = await LLMServerTokens.address(tmp.path)
-    expect(address).toMatchObject({
+    // Withdrawn. Another pre-existing listener for this pid would remain if it was
+    // published separately; normally nothing is left.
+    const after = await LLMServerTokens.address(cwd)
+    if (before) expect(after).toMatchObject({ port: before.port })
+    else expect(after).toBeUndefined()
+  })
+
+  test("advertise:false leaves the registry alone", async () => {
+    const cwd = process.cwd()
+    const server = await Server.listen({ port: 0, hostname: "127.0.0.1", advertise: false })
+    try {
+      const address = await LLMServerTokens.address(cwd)
+      expect(address?.port).not.toBe(server.port)
+    } finally {
+      await server.stop()
+    }
+  })
+
+  test("discoverAddress prefers a project listener, then falls back to any live host", async () => {
+    await using project = await tmpdir()
+    await using host = await tmpdir()
+
+    // Multi-project sidecar shape: published under the host's own cwd.
+    await LLMServerTokens.publish(host.path, {
       pid: process.pid,
       hostname: "127.0.0.1",
-      port: 4242,
-      url: url.toString(),
+      port: 9001,
+      url: "http://127.0.0.1:9001/",
+      started: Date.now() - 1000,
     })
-    expect(address!.started).toBeGreaterThan(0)
 
-    // The same join `llm-server issue` uses for `base_url`.
-    const baseUrl = `${address!.url.replace(/\/$/, "")}/v1`
-    expect(baseUrl).toBe("http://127.0.0.1:4242/v1")
-  })
+    // Project has no dedicated listener yet → fallback finds the host sidecar.
+    expect(await LLMServerTokens.discoverAddress(project.path)).toMatchObject({ port: 9001 })
 
-  test("unpublishes on shutdown so list no longer shows this process", async () => {
-    await using tmp = await tmpdir()
-    await advertiseListeningServer(tmp.path, {
+    // A TUI/serve pinned to the project wins over the multi-project host.
+    await LLMServerTokens.publish(project.path, {
+      pid: process.pid,
       hostname: "127.0.0.1",
-      port: 4243,
-      url: new URL("http://127.0.0.1:4243"),
+      port: 9002,
+      url: "http://127.0.0.1:9002/",
+      started: Date.now(),
     })
-    expect(await LLMServerTokens.address(tmp.path)).toMatchObject({ port: 4243 })
+    expect(await LLMServerTokens.discoverAddress(project.path)).toMatchObject({ port: 9002 })
 
-    await unadvertiseListeningServer(tmp.path)
-    expect(await LLMServerTokens.address(tmp.path)).toBeUndefined()
-    expect(await LLMServerTokens.addresses(tmp.path)).toEqual([])
-  })
-
-  test("does not clobber another live listener's advertisement", async () => {
-    await using tmp = await tmpdir()
-    const now = Date.now()
-    await LLMServerTokens.publish(tmp.path, {
-      pid: process.ppid,
-      hostname: "127.0.0.1",
-      port: 1111,
-      url: "http://127.0.0.1:1111/",
-      started: now - 1000,
-    })
-
-    await advertiseListeningServer(tmp.path, {
-      hostname: "127.0.0.1",
-      port: 2222,
-      url: new URL("http://127.0.0.1:2222"),
-    })
-
-    // Newest first: the serve process is what a human just started.
-    expect(await LLMServerTokens.addresses(tmp.path)).toMatchObject([{ port: 2222 }, { port: 1111 }])
-
-    await unadvertiseListeningServer(tmp.path)
-    expect(await LLMServerTokens.addresses(tmp.path)).toMatchObject([{ port: 1111 }])
+    await LLMServerTokens.unpublish(project.path)
+    expect(await LLMServerTokens.discoverAddress(project.path)).toMatchObject({ port: 9001 })
+    await LLMServerTokens.unpublish(host.path)
+    // The host bucket is gone. Other live listeners from the shared state root may
+    // remain (this suite does not isolate Global.Path.state); just assert ours is not.
+    const gone = await LLMServerTokens.discoverAddress(project.path)
+    expect(gone?.port).not.toBe(9001)
+    expect(gone?.port).not.toBe(9002)
   })
 })

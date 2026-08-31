@@ -153,8 +153,9 @@ const issue = cmd({
 
       // Resolved rather than guessed: a mimocode process serving this project advertises
       // its loopback address, so the two halves of "where" and "with what" can finally be
-      // printed together. Absent when nothing is serving this directory right now.
-      const address = await LLMServerTokens.address(process.cwd())
+      // printed together. Falls back to any live host (Desktop multi-project sidecar).
+      // Absent when nothing is serving this directory right now.
+      const address = await LLMServerTokens.discoverAddress(process.cwd())
 
       if (args.json) {
         // Machine-first: a wrapper reads one line and exports the two env vars the
@@ -225,7 +226,10 @@ const list = cmd({
       const tokens = await LLMServerTokens.list(process.cwd())
       // All of them, not just one: several sessions can be open on the same project, and
       // "which port do I use" is exactly the question this command is asked.
-      const servers = await LLMServerTokens.addresses(process.cwd())
+      // Fall back to any live host when this directory has no dedicated listener
+      // (Desktop serves many projects from one sidecar).
+      const local = await LLMServerTokens.addresses(process.cwd())
+      const servers = local.length > 0 ? local : await LLMServerTokens.hostAddresses()
       if (args.json) {
         process.stdout.write(JSON.stringify({ servers, server: servers[0] ?? null, tokens }) + "\n")
         return
