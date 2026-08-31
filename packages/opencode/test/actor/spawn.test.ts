@@ -145,6 +145,7 @@ function makeLayer(opts?: { settledError: () => NonNullable<MessageV2.Assistant[
   const taskWaiter = ActorWaiter.defaultLayer
   const team = Team.defaultLayer
   const registry = ToolRegistry.layer.pipe(
+    Layer.provide(Goal.defaultLayer),
     Layer.provide(Skill.defaultLayer),
     Layer.provide(FetchHttpClient.layer),
     Layer.provide(CrossSpawnSpawner.defaultLayer),

@@ -152,6 +152,7 @@ function makeHttp() {
   const taskWaiter = ActorWaiter.layer.pipe(Layer.provide(Bus.layer), Layer.provide(taskRegistry))
   const team = Team.defaultLayer
   const registry = ToolRegistry.layer.pipe(
+    Layer.provide(Goal.defaultLayer),
     Layer.provide(Worktree.defaultLayer),
     Layer.provide(Skill.defaultLayer),
     Layer.provide(FetchHttpClient.layer),
