@@ -1603,6 +1603,9 @@ const responseOutputItemDoneSchema = z.object({
     z.object({
       type: z.literal("message"),
       id: z.string(),
+      // PI-108 слой C (см. чтение ниже): gpt-5.5/codex иногда доставляет финальный
+      // текст в content[] message-item вместо потоковых response.output_text.delta.
+      content: z.array(z.object({ type: z.string(), text: z.string().optional() }).loose()).optional(),
     }),
     z.object({
       type: z.literal("reasoning"),
