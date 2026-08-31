@@ -139,16 +139,23 @@ export async function listen(opts: {
   }
 
   // Who owns the `/v1` capability surface must also say where it is. Keyed by cwd —
-  // TUI/serve chdir to the project; Desktop hosts many projects from one listener and
-  // `discoverAddress` falls back to any live host when the project bucket is empty.
+  // TUI/serve chdir to the project. A multi-project host is NOT auto-discoverable
+  // from a project bucket: tokens verify against the request-resolved directory, so
+  // a cross-project base_url 401s under OpenAI-standard clients.
   const advertise = opts.advertise !== false
   const directory = process.cwd()
+  // `0.0.0.0`/`::` are bind addresses, not client URLs. Advertise loopback so the
+  // printed base_url is usable on this machine.
+  const advertisedHostname = opts.hostname === "0.0.0.0" || opts.hostname === "::" ? "127.0.0.1" : opts.hostname
+  const advertised = new URL("http://localhost")
+  advertised.hostname = advertisedHostname
+  advertised.port = String(server.port)
   if (advertise) {
     await LLMServerTokens.publish(directory, {
       pid: process.pid,
-      hostname: opts.hostname,
+      hostname: advertisedHostname,
       port: server.port,
-      url: next.toString(),
+      url: advertised.toString(),
       started: Date.now(),
     }).catch((error) => log.warn("failed to advertise llm-server address", { error: String(error) }))
   }
@@ -163,7 +170,7 @@ export async function listen(opts: {
         // Withdraw the advertisement before the socket goes away, so a reader sees
         // "nothing is serving" rather than a port that refuses connections. A crash
         // skips this; the pid liveness check in `addresses` is the backstop.
-        if (advertise) await LLMServerTokens.unpublish(directory).catch(() => {})
+        if (advertise) await LLMServerTokens.unpublish(directory, process.pid, server.port).catch(() => {})
         if (mdns) MDNS.unpublish()
         await server.stop(close)
       })()
