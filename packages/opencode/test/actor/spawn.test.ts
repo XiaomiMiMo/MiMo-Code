@@ -121,7 +121,10 @@ const status = SessionStatus.layer.pipe(Layer.provideMerge(Bus.layer))
 const run = SessionRunState.layer.pipe(Layer.provide(status))
 const infra = Layer.mergeAll(NodeFileSystem.layer, CrossSpawnSpawner.defaultLayer)
 
-function makeLayer(opts?: { settledError: () => NonNullable<MessageV2.Assistant["error"]> | undefined }) {
+function makeLayer(opts?: {
+  settledError: () => NonNullable<MessageV2.Assistant["error"]> | undefined
+  resumeAfterSettled?: () => boolean
+}) {
   const deps = Layer.mergeAll(
     Session.defaultLayer,
     Snapshot.defaultLayer,
@@ -187,7 +190,7 @@ function makeLayer(opts?: { settledError: () => NonNullable<MessageV2.Assistant[
   return Layer.mergeAll(
     TestLLMServer.layer,
     Actor.layer.pipe(
-      Layer.provideMerge(opts?.settledError ? settledPromptLayer(opts.settledError, prompt) : prompt),
+      Layer.provideMerge(opts?.settledError ? settledPromptLayer(opts.settledError, prompt, opts.resumeAfterSettled) : prompt),
       Layer.provide(Worktree.defaultLayer),
       Layer.provideMerge(taskRegistry),
       Layer.provide(TaskRegistry.defaultLayer),
@@ -209,6 +212,7 @@ function makeLayer(opts?: { settledError: () => NonNullable<MessageV2.Assistant[
 function settledPromptLayer<A, E, R>(
   settledError: () => NonNullable<MessageV2.Assistant["error"]> | undefined,
   real: Layer.Layer<A, E, R>,
+  resumeAfterSettled?: () => boolean,
 ) {
   return Layer.effect(
     SessionPrompt.Service,
@@ -225,7 +229,9 @@ function settledPromptLayer<A, E, R>(
             sessionID: input.sessionID,
             agentID: input.agentID,
             role: "assistant",
-            time: { created: Date.now(), completed: Date.now() },
+            // No time.completed: this is a recovery candidate, matching the engine
+            // pin that keeps errored assistants resumable (PR #2279).
+            time: { created: Date.now() },
             error: settled,
             parentID: MessageID.ascending(),
             modelID: ModelID.make("test-model"),
@@ -237,6 +243,41 @@ function settledPromptLayer<A, E, R>(
             tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
           }
           return Effect.succeed({ info, parts: [] } satisfies MessageV2.WithParts)
+        },
+        // Classification tests leave this unset: resume hits the real service (NotFound)
+        // and runAgentLoop falls back to AssistantSettledError. The parity test sets it
+        // so the auto-Resume path succeeds once.
+        resume: (input) => {
+          if (resumeAfterSettled?.() === true) {
+            const info: MessageV2.Assistant = {
+              id: MessageID.ascending(),
+              sessionID: input.sessionID,
+              agentID: input.agentID ?? "main",
+              role: "assistant",
+              time: { created: Date.now(), completed: Date.now() },
+              parentID: MessageID.ascending(),
+              modelID: ModelID.make("test-model"),
+              providerID: ProviderID.make("test"),
+              mode: "build",
+              agent: "build",
+              path: { cwd: process.cwd(), root: process.cwd() },
+              cost: 0,
+              tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+            }
+            return Effect.succeed({
+              info,
+              parts: [
+                {
+                  id: PartID.ascending(),
+                  sessionID: input.sessionID,
+                  messageID: info.id,
+                  type: "text",
+                  text: "resumed ok",
+                },
+              ],
+            } satisfies MessageV2.WithParts)
+          }
+          return inner.resume(input)
         },
       })
     }),
@@ -1461,7 +1502,10 @@ describe("Actor.spawn return-format injection (F21)", () => {
 // AgentOutcome. Nothing here hand-builds an outcome object.
 // ---------------------------------------------------------------------------
 let settled: NonNullable<MessageV2.Assistant["error"]> | undefined
-const itSettled = testEffect(makeLayer({ settledError: () => settled }))
+let allowResumeAfterSettled = false
+const itSettled = testEffect(
+  makeLayer({ settledError: () => settled, resumeAfterSettled: () => allowResumeAfterSettled }),
+)
 
 describe("AgentOutcome failure classification", () => {
   itSettled.live("a transient provider failure is classified retryable/transient", () =>
@@ -1597,6 +1641,41 @@ describe("AgentOutcome failure classification", () => {
         // present on a settled-assistant-error failure.
         if (outcome.status === "failure") expect(outcome.failure == null).toBe(true)
         else expect(outcome.status).toBe("success")
+      }),
+      { git: true, config: providerCfg },
+    ),
+  )
+
+  itSettled.live("a transient settle auto-Resumes once (main-agent parity) and succeeds", () =>
+    provideTmpdirServer(
+      Effect.fnUntraced(function* () {
+        allowResumeAfterSettled = true
+        try {
+          const actor = yield* Actor.Service
+          const session = yield* Session.Service
+          const parent = yield* session.create({
+            title: "x",
+            permission: [{ permission: "*", pattern: "*", action: "allow" }],
+          })
+          settled = new MessageV2.APIError(
+            { message: "Too Many Requests", statusCode: 429, isRetryable: true },
+          ).toObject()
+          const result = yield* actor.spawn({
+            mode: "subagent",
+            sessionID: parent.id,
+            agentType: "build",
+            task: "t",
+            context: "none",
+            tools: ["read"],
+            background: false,
+            model: ref,
+          })
+          const outcome = yield* Deferred.await(result.outcome)
+          expect(outcome.status).toBe("success")
+        } finally {
+          allowResumeAfterSettled = false
+          settled = undefined
+        }
       }),
       { git: true, config: providerCfg },
     ),

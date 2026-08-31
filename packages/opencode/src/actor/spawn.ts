@@ -338,38 +338,79 @@ export const layer = Layer.effect(
       provenance?: MessageV2.Provenance
       format?: MessageV2.OutputFormat
     }) {
-      const result = yield* sessionPrompt.prompt({
-        sessionID: input.sessionID,
-        agent: input.agentType,
-        agentID: input.actorID,
-        source: input.source,
-        provenance: input.provenance,
-        model: input.model,
-        task_id: input.task_id,
-        parts: [{ type: "text", text: input.task }],
-        ...(input.format ? { format: input.format } : {}),
-      })
+      // Main-agent parity: after the shared session-level retry budget exhausts, a
+      // retryable settled assistant is left without time.completed and becomes a
+      // /recovery candidate — the desktop Resume path calls POST resume on it.
+      // Background actors previously hard-failed at that point, so the work died
+      // even though the same recovery turn was sitting there. Auto-Resume once
+      // (same SessionPrompt.resume the user would trigger) before settling as failed.
+      let result: MessageV2.WithParts | undefined
+      let resumedOnce = false
+      while (true) {
+        if (resumedOnce && result?.info.role === "assistant") {
+          // Resume failure (Busy/NotFound/…) must not replace the original settle:
+          // fall through to AssistantSettledError with the first classification.
+          const next = yield* sessionPrompt
+            .resume({
+              sessionID: input.sessionID,
+              assistantMessageID: result.info.id,
+              agentID: input.actorID,
+              task_id: input.task_id,
+            })
+            .pipe(Effect.catch(() => Effect.succeed(undefined)))
+          if (!next) {
+            return yield* Effect.fail(
+              new AssistantSettledError(
+                `Actor assistant failed: ${result.info.error?.name ?? "APIError"}`,
+                classifyAssistantError(
+                  result.info.error ??
+                    new MessageV2.APIError({
+                      message: "Actor resume unavailable",
+                      statusCode: 500,
+                      isRetryable: false,
+                    }).toObject(),
+                ),
+              ),
+            )
+          }
+          result = next
+        } else {
+          result = yield* sessionPrompt.prompt({
+            sessionID: input.sessionID,
+            agent: input.agentType,
+            agentID: input.actorID,
+            source: input.source,
+            provenance: input.provenance,
+            model: input.model,
+            task_id: input.task_id,
+            parts: [{ type: "text", text: input.task }],
+            ...(input.format ? { format: input.format } : {}),
+          })
+        }
+        const info = result?.info
+        if (info?.role !== "assistant" || !info.error) break
+        const failure = classifyAssistantError(info.error)
+        if (!failure.retryable || resumedOnce) {
+          // Classify HERE: `info.error` is the persisted, already-normalized named
+          // error. Downstream (forkWork's onFailure) only has Cause.pretty's string,
+          // so re-deriving the class there would mean re-parsing prose.
+          return yield* Effect.fail(
+            new AssistantSettledError(`Actor assistant failed: ${info.error.name}`, failure),
+          )
+        }
+        resumedOnce = true
+        // loop: SessionPrompt.resume continues the interrupted recovery candidate
+      }
       // structured output (json_schema) takes precedence over finalText: when the
       // child produced a validated object it IS the authoritative result and the
       // last text part (often a pre-tool-call preamble) is dropped to avoid
       // duplicating the result downstream. See spec §5.2.
-      const info = (result as MessageV2.WithParts | undefined)?.info
-      if (info?.role === "assistant" && info.error) {
-        // Classify HERE: `info.error` is the persisted, already-normalized named
-        // error. Downstream (forkWork's onFailure) only has Cause.pretty's string,
-        // so re-deriving the class there would mean re-parsing prose.
-        return yield* Effect.fail(
-          new AssistantSettledError(
-            `Actor assistant failed: ${info.error.name}`,
-            classifyAssistantError(info.error),
-          ),
-        )
-      }
+      const info = result?.info
       const structured = info?.role === "assistant" ? info.structured : undefined
       const finalText =
         structured !== undefined
           ? undefined
-          : (result as MessageV2.WithParts | undefined)?.parts.findLast(
+          : result?.parts.findLast(
               (p): p is Extract<MessageV2.Part, { type: "text" }> => p.type === "text",
             )?.text
       return { finalText, structured }
