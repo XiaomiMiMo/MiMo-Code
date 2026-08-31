@@ -2289,6 +2289,64 @@
         ]
       }
     },
+    "/experimental/worktree/auto": {
+      "post": {
+        "operationId": "worktree.auto",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "directory",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "workspace",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "summary": "Auto-create worktree on conflict",
+        "description": "Check for conflicts and auto-create a worktree if needed.",
+        "responses": {
+          "200": {
+            "description": "Worktree info or null",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/Worktree"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BadRequestError"
+                }
+              }
+            }
+          }
+        },
+        "x-codeSamples": [
+          {
+            "lang": "js",
+            "source": "import { createOpencodeClient } from \"@mimo-ai/sdk\"\n\nconst client = createOpencodeClient()\nawait client.worktree.auto({\n  ...\n})"
+          }
+        ]
+      }
+    },
     "/experimental/title": {
       "post": {
         "operationId": "experimental.title.generate",
@@ -2412,64 +2470,6 @@
           {
             "lang": "js",
             "source": "import { createOpencodeClient } from \"@mimo-ai/sdk\"\n\nconst client = createOpencodeClient()\nawait client.experimental.title.generate({\n  ...\n})"
-          }
-        ]
-      }
-    },
-    "/experimental/worktree/auto": {
-      "post": {
-        "operationId": "worktree.auto",
-        "parameters": [
-          {
-            "in": "query",
-            "name": "directory",
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "in": "query",
-            "name": "workspace",
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "summary": "Auto-create worktree on conflict",
-        "description": "Check for conflicts and auto-create a worktree if needed.",
-        "responses": {
-          "200": {
-            "description": "Worktree info or null",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "anyOf": [
-                    {
-                      "$ref": "#/components/schemas/Worktree"
-                    },
-                    {
-                      "type": "null"
-                    }
-                  ]
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "Bad request",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/BadRequestError"
-                }
-              }
-            }
-          }
-        },
-        "x-codeSamples": [
-          {
-            "lang": "js",
-            "source": "import { createOpencodeClient } from \"@mimo-ai/sdk\n\nconst client = createOpencodeClient()\nawait client.worktree.auto({\n  ...\n})"
           }
         ]
       }
@@ -4791,203 +4791,6 @@
           {
             "lang": "js",
             "source": "import { createOpencodeClient } from \"@mimo-ai/sdk\"\n\nconst client = createOpencodeClient()\nawait client.session.resume({\n  ...\n})"
-          }
-        ]
-      }
-    },
-    "/session/{sessionID}/recovery": {
-      "get": {
-        "operationId": "session.recovery",
-        "parameters": [
-          {
-            "in": "query",
-            "name": "directory",
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "in": "query",
-            "name": "workspace",
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "in": "path",
-            "name": "sessionID",
-            "schema": {
-              "type": "string",
-              "pattern": "^ses.*"
-            },
-            "required": true
-          },
-          {
-            "in": "query",
-            "name": "agentID",
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "summary": "List interrupted turn recovery candidates",
-        "description": "Return the latest incomplete assistant turn that can be resumed without creating a user message.",
-        "responses": {
-          "200": {
-            "description": "Recovery candidates",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "array",
-                  "items": {
-                    "type": "object",
-                    "properties": {
-                      "assistantMessageID": {
-                        "type": "string",
-                        "pattern": "^msg.*"
-                      },
-                      "parentMessageID": {
-                        "type": "string",
-                        "pattern": "^msg.*"
-                      },
-                      "created": {
-                        "type": "number"
-                      }
-                    },
-                    "required": ["assistantMessageID", "parentMessageID", "created"]
-                  }
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "Bad request",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/BadRequestError"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "Not found",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/NotFoundError"
-                }
-              }
-            }
-          }
-        },
-        "x-codeSamples": [
-          {
-            "lang": "js",
-            "source": "import { createOpencodeClient } from \"@mimo-ai/sdk\n\nconst client = createOpencodeClient()\nawait client.session.recovery({\n  ...\n})"
-          }
-        ]
-      }
-    },
-    "/session/{sessionID}/turn/{assistantMessageID}/resume": {
-      "post": {
-        "operationId": "session.resume",
-        "parameters": [
-          {
-            "in": "query",
-            "name": "directory",
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "in": "query",
-            "name": "workspace",
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "in": "path",
-            "name": "sessionID",
-            "schema": {
-              "type": "string",
-              "pattern": "^ses.*"
-            },
-            "required": true
-          },
-          {
-            "in": "path",
-            "name": "assistantMessageID",
-            "schema": {
-              "type": "string",
-              "pattern": "^msg.*"
-            },
-            "required": true
-          },
-          {
-            "in": "query",
-            "name": "agentID",
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "in": "query",
-            "name": "task_id",
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "in": "query",
-            "name": "titleLocale",
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "summary": "Resume an interrupted turn",
-        "description": "Resume an incomplete assistant turn without creating another user message.",
-        "responses": {
-          "202": {
-            "description": "Resume accepted"
-          },
-          "400": {
-            "description": "Bad request",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/BadRequestError"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "Not found",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/NotFoundError"
-                }
-              }
-            }
-          },
-          "409": {
-            "description": "Conflict — session resource is busy",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ConflictError"
-                }
-              }
-            }
-          }
-        },
-        "x-codeSamples": [
-          {
-            "lang": "js",
-            "source": "import { createOpencodeClient } from \"@mimo-ai/sdk\n\nconst client = createOpencodeClient()\nawait client.session.resume({\n  ...\n})"
           }
         ]
       }
@@ -13441,6 +13244,10 @@
           "coveredUpTo": {
             "type": "string",
             "pattern": "^msg.*"
+          },
+          "digestUpTo": {
+            "type": "string",
+            "pattern": "^msg.*"
           }
         },
         "required": ["id", "sessionID", "messageID", "type", "checkpointDir", "checkpointNumber", "coveredUpTo"]
@@ -14956,7 +14763,7 @@
                     "maximum": 9007199254740991
                   },
                   "noDeadline": {
-                    "description": "Disable the wall-clock retry deadline explicitly",
+                    "description": "Disable the wall-clock retry deadline explicitly; maxRetries still applies to bounded budgets",
                     "type": "boolean"
                   },
                   "initialDelayMs": {
@@ -14974,9 +14781,6 @@
                     "minimum": 0,
                     "maximum": 1
                   }
-                },
-                "not": {
-                  "required": ["deadlineMs", "noDeadline"]
                 }
               },
               "stream": {
@@ -15000,7 +14804,7 @@
                     "maximum": 9007199254740991
                   },
                   "noDeadline": {
-                    "description": "Disable the wall-clock retry deadline explicitly",
+                    "description": "Disable the wall-clock retry deadline explicitly; maxRetries still applies to bounded budgets",
                     "type": "boolean"
                   },
                   "initialDelayMs": {
@@ -15018,9 +14822,6 @@
                     "minimum": 0,
                     "maximum": 1
                   }
-                },
-                "not": {
-                  "required": ["deadlineMs", "noDeadline"]
                 }
               },
               "maxCandidate": {
@@ -15044,7 +14845,7 @@
                     "maximum": 9007199254740991
                   },
                   "noDeadline": {
-                    "description": "Disable the wall-clock retry deadline explicitly",
+                    "description": "Disable the wall-clock retry deadline explicitly; maxRetries still applies to bounded budgets",
                     "type": "boolean"
                   },
                   "initialDelayMs": {
@@ -15062,9 +14863,6 @@
                     "minimum": 0,
                     "maximum": 1
                   }
-                },
-                "not": {
-                  "required": ["deadlineMs", "noDeadline"]
                 }
               },
               "maxJudge": {
@@ -15088,7 +14886,7 @@
                     "maximum": 9007199254740991
                   },
                   "noDeadline": {
-                    "description": "Disable the wall-clock retry deadline explicitly",
+                    "description": "Disable the wall-clock retry deadline explicitly; maxRetries still applies to bounded budgets",
                     "type": "boolean"
                   },
                   "initialDelayMs": {
@@ -15106,9 +14904,6 @@
                     "minimum": 0,
                     "maximum": 1
                   }
-                },
-                "not": {
-                  "required": ["deadlineMs", "noDeadline"]
                 }
               },
               "network": {
@@ -15132,7 +14927,7 @@
                     "maximum": 9007199254740991
                   },
                   "noDeadline": {
-                    "description": "Disable the wall-clock retry deadline explicitly",
+                    "description": "Disable the wall-clock retry deadline explicitly; maxRetries still applies to bounded budgets",
                     "type": "boolean"
                   },
                   "initialDelayMs": {
@@ -15150,9 +14945,6 @@
                     "minimum": 0,
                     "maximum": 1
                   }
-                },
-                "not": {
-                  "required": ["deadlineMs", "noDeadline"]
                 }
               },
               "server": {
@@ -15176,7 +14968,7 @@
                     "maximum": 9007199254740991
                   },
                   "noDeadline": {
-                    "description": "Disable the wall-clock retry deadline explicitly",
+                    "description": "Disable the wall-clock retry deadline explicitly; maxRetries still applies to bounded budgets",
                     "type": "boolean"
                   },
                   "initialDelayMs": {
@@ -15194,9 +14986,6 @@
                     "minimum": 0,
                     "maximum": 1
                   }
-                },
-                "not": {
-                  "required": ["deadlineMs", "noDeadline"]
                 }
               },
               "rateLimit": {
@@ -15220,7 +15009,7 @@
                     "maximum": 9007199254740991
                   },
                   "noDeadline": {
-                    "description": "Disable the wall-clock retry deadline explicitly",
+                    "description": "Disable the wall-clock retry deadline explicitly; maxRetries still applies to bounded budgets",
                     "type": "boolean"
                   },
                   "initialDelayMs": {
@@ -15238,9 +15027,6 @@
                     "minimum": 0,
                     "maximum": 1
                   }
-                },
-                "not": {
-                  "required": ["deadlineMs", "noDeadline"]
                 }
               },
               "unknown": {
@@ -15264,7 +15050,7 @@
                     "maximum": 9007199254740991
                   },
                   "noDeadline": {
-                    "description": "Disable the wall-clock retry deadline explicitly",
+                    "description": "Disable the wall-clock retry deadline explicitly; maxRetries still applies to bounded budgets",
                     "type": "boolean"
                   },
                   "initialDelayMs": {
@@ -15282,9 +15068,6 @@
                     "minimum": 0,
                     "maximum": 1
                   }
-                },
-                "not": {
-                  "required": ["deadlineMs", "noDeadline"]
                 }
               },
               "jitterRatio": {
@@ -15697,6 +15480,10 @@
             "description": "Enable or disable snapshot tracking. When false, filesystem snapshots are not recorded and undoing or reverting will not undo/redo file changes. Defaults to true.",
             "type": "boolean"
           },
+          "auto_worktree": {
+            "description": "Enable the once-per-session Auto-Worktree Notice when a primary root session mutates a git main worktree. Defaults to false (notice is off). When true, inject the existing soft-hint system-reminder; when false or omitted, inject nothing. Scope is the notice only — conflict detection and experimental worktree auto-create are not gated by this flag.",
+            "type": "boolean"
+          },
           "plugin": {
             "type": "array",
             "items": {
@@ -15886,7 +15673,7 @@
                     "maximum": 9007199254740991
                   },
                   "noDeadline": {
-                    "description": "Disable the wall-clock retry deadline explicitly",
+                    "description": "Disable the wall-clock retry deadline explicitly; maxRetries still applies to bounded budgets",
                     "type": "boolean"
                   },
                   "initialDelayMs": {
@@ -15904,9 +15691,6 @@
                     "minimum": 0,
                     "maximum": 1
                   }
-                },
-                "not": {
-                  "required": ["deadlineMs", "noDeadline"]
                 }
               },
               "stream": {
@@ -15930,7 +15714,7 @@
                     "maximum": 9007199254740991
                   },
                   "noDeadline": {
-                    "description": "Disable the wall-clock retry deadline explicitly",
+                    "description": "Disable the wall-clock retry deadline explicitly; maxRetries still applies to bounded budgets",
                     "type": "boolean"
                   },
                   "initialDelayMs": {
@@ -15948,9 +15732,6 @@
                     "minimum": 0,
                     "maximum": 1
                   }
-                },
-                "not": {
-                  "required": ["deadlineMs", "noDeadline"]
                 }
               },
               "maxCandidate": {
@@ -15974,7 +15755,7 @@
                     "maximum": 9007199254740991
                   },
                   "noDeadline": {
-                    "description": "Disable the wall-clock retry deadline explicitly",
+                    "description": "Disable the wall-clock retry deadline explicitly; maxRetries still applies to bounded budgets",
                     "type": "boolean"
                   },
                   "initialDelayMs": {
@@ -15992,9 +15773,6 @@
                     "minimum": 0,
                     "maximum": 1
                   }
-                },
-                "not": {
-                  "required": ["deadlineMs", "noDeadline"]
                 }
               },
               "maxJudge": {
@@ -16018,7 +15796,7 @@
                     "maximum": 9007199254740991
                   },
                   "noDeadline": {
-                    "description": "Disable the wall-clock retry deadline explicitly",
+                    "description": "Disable the wall-clock retry deadline explicitly; maxRetries still applies to bounded budgets",
                     "type": "boolean"
                   },
                   "initialDelayMs": {
@@ -16036,9 +15814,6 @@
                     "minimum": 0,
                     "maximum": 1
                   }
-                },
-                "not": {
-                  "required": ["deadlineMs", "noDeadline"]
                 }
               },
               "network": {
@@ -16062,7 +15837,7 @@
                     "maximum": 9007199254740991
                   },
                   "noDeadline": {
-                    "description": "Disable the wall-clock retry deadline explicitly",
+                    "description": "Disable the wall-clock retry deadline explicitly; maxRetries still applies to bounded budgets",
                     "type": "boolean"
                   },
                   "initialDelayMs": {
@@ -16080,9 +15855,6 @@
                     "minimum": 0,
                     "maximum": 1
                   }
-                },
-                "not": {
-                  "required": ["deadlineMs", "noDeadline"]
                 }
               },
               "server": {
@@ -16106,7 +15878,7 @@
                     "maximum": 9007199254740991
                   },
                   "noDeadline": {
-                    "description": "Disable the wall-clock retry deadline explicitly",
+                    "description": "Disable the wall-clock retry deadline explicitly; maxRetries still applies to bounded budgets",
                     "type": "boolean"
                   },
                   "initialDelayMs": {
@@ -16124,9 +15896,6 @@
                     "minimum": 0,
                     "maximum": 1
                   }
-                },
-                "not": {
-                  "required": ["deadlineMs", "noDeadline"]
                 }
               },
               "rateLimit": {
@@ -16150,7 +15919,7 @@
                     "maximum": 9007199254740991
                   },
                   "noDeadline": {
-                    "description": "Disable the wall-clock retry deadline explicitly",
+                    "description": "Disable the wall-clock retry deadline explicitly; maxRetries still applies to bounded budgets",
                     "type": "boolean"
                   },
                   "initialDelayMs": {
@@ -16168,9 +15937,6 @@
                     "minimum": 0,
                     "maximum": 1
                   }
-                },
-                "not": {
-                  "required": ["deadlineMs", "noDeadline"]
                 }
               },
               "unknown": {
@@ -16194,7 +15960,7 @@
                     "maximum": 9007199254740991
                   },
                   "noDeadline": {
-                    "description": "Disable the wall-clock retry deadline explicitly",
+                    "description": "Disable the wall-clock retry deadline explicitly; maxRetries still applies to bounded budgets",
                     "type": "boolean"
                   },
                   "initialDelayMs": {
@@ -16212,9 +15978,6 @@
                     "minimum": 0,
                     "maximum": 1
                   }
-                },
-                "not": {
-                  "required": ["deadlineMs", "noDeadline"]
                 }
               },
               "jitterRatio": {
@@ -16497,7 +16260,7 @@
                 "maximum": 9007199254740991
               },
               "fork": {
-                "description": "Whether to fork the parent agent's message prefix into the writer session for prefix-cache reuse. Requires provider cache-breakpoint support. Default: false.",
+                "description": "Whether to fork the parent agent's message prefix into the writer session for prefix-cache reuse. Requires provider cache-breakpoint support. Default: true.",
                 "type": "boolean"
               },
               "push_caps": {
@@ -16718,6 +16481,28 @@
                   },
                   "action_streak": {
                     "description": "Consecutive edit or verify actions without progress before pausing (default 4).",
+                    "type": "integer",
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991
+                  }
+                }
+              },
+              "loop_streak_recovery": {
+                "description": "Loop-streak request-layer recovery (experimental).",
+                "type": "object",
+                "properties": {
+                  "enabled": {
+                    "description": "Crop repeated thinking/tool streaks from the next request and inject a recovery note.",
+                    "type": "boolean"
+                  },
+                  "trigger_count": {
+                    "description": "Consecutive identical streak keys required to trigger (default 3).",
+                    "type": "integer",
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  "max_span": {
+                    "description": "Max assistant messages cropped from the trailing streak (default 64).",
                     "type": "integer",
                     "exclusiveMinimum": 0,
                     "maximum": 9007199254740991

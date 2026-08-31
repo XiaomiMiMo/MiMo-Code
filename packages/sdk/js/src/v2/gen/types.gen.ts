@@ -1333,6 +1333,7 @@ export type CheckpointPart = {
   checkpointDir: string
   checkpointNumber: number
   coveredUpTo: string
+  digestUpTo?: string
 }
 
 export type CompactionPart = {
@@ -1866,9 +1867,12 @@ export type ProviderConfig = {
        */
       maxRetries?: number
       /**
-      * Wall-clock retry deadline in milliseconds; use noDeadline for an explicit unlimited deadline
-      */
+       * Wall-clock retry deadline in milliseconds; use noDeadline for an explicit unlimited deadline
+       */
       deadlineMs?: number
+      /**
+       * Disable the wall-clock retry deadline explicitly; maxRetries still applies to bounded budgets
+       */
       noDeadline?: boolean
       initialDelayMs?: number
       maxDelayMs?: number
@@ -1884,9 +1888,12 @@ export type ProviderConfig = {
        */
       maxRetries?: number
       /**
-      * Wall-clock retry deadline in milliseconds; use noDeadline for an explicit unlimited deadline
-      */
+       * Wall-clock retry deadline in milliseconds; use noDeadline for an explicit unlimited deadline
+       */
       deadlineMs?: number
+      /**
+       * Disable the wall-clock retry deadline explicitly; maxRetries still applies to bounded budgets
+       */
       noDeadline?: boolean
       initialDelayMs?: number
       maxDelayMs?: number
@@ -1902,9 +1909,12 @@ export type ProviderConfig = {
        */
       maxRetries?: number
       /**
-      * Wall-clock retry deadline in milliseconds; use noDeadline for an explicit unlimited deadline
-      */
+       * Wall-clock retry deadline in milliseconds; use noDeadline for an explicit unlimited deadline
+       */
       deadlineMs?: number
+      /**
+       * Disable the wall-clock retry deadline explicitly; maxRetries still applies to bounded budgets
+       */
       noDeadline?: boolean
       initialDelayMs?: number
       maxDelayMs?: number
@@ -1920,9 +1930,12 @@ export type ProviderConfig = {
        */
       maxRetries?: number
       /**
-      * Wall-clock retry deadline in milliseconds; use noDeadline for an explicit unlimited deadline
-      */
+       * Wall-clock retry deadline in milliseconds; use noDeadline for an explicit unlimited deadline
+       */
       deadlineMs?: number
+      /**
+       * Disable the wall-clock retry deadline explicitly; maxRetries still applies to bounded budgets
+       */
       noDeadline?: boolean
       initialDelayMs?: number
       maxDelayMs?: number
@@ -1938,9 +1951,12 @@ export type ProviderConfig = {
        */
       maxRetries?: number
       /**
-      * Wall-clock retry deadline in milliseconds; use noDeadline for an explicit unlimited deadline
-      */
+       * Wall-clock retry deadline in milliseconds; use noDeadline for an explicit unlimited deadline
+       */
       deadlineMs?: number
+      /**
+       * Disable the wall-clock retry deadline explicitly; maxRetries still applies to bounded budgets
+       */
       noDeadline?: boolean
       initialDelayMs?: number
       maxDelayMs?: number
@@ -1956,9 +1972,12 @@ export type ProviderConfig = {
        */
       maxRetries?: number
       /**
-      * Wall-clock retry deadline in milliseconds; use noDeadline for an explicit unlimited deadline
-      */
+       * Wall-clock retry deadline in milliseconds; use noDeadline for an explicit unlimited deadline
+       */
       deadlineMs?: number
+      /**
+       * Disable the wall-clock retry deadline explicitly; maxRetries still applies to bounded budgets
+       */
       noDeadline?: boolean
       initialDelayMs?: number
       maxDelayMs?: number
@@ -1974,9 +1993,12 @@ export type ProviderConfig = {
        */
       maxRetries?: number
       /**
-      * Wall-clock retry deadline in milliseconds; use noDeadline for an explicit unlimited deadline
-      */
+       * Wall-clock retry deadline in milliseconds; use noDeadline for an explicit unlimited deadline
+       */
       deadlineMs?: number
+      /**
+       * Disable the wall-clock retry deadline explicitly; maxRetries still applies to bounded budgets
+       */
       noDeadline?: boolean
       initialDelayMs?: number
       maxDelayMs?: number
@@ -1992,9 +2014,12 @@ export type ProviderConfig = {
        */
       maxRetries?: number
       /**
-      * Wall-clock retry deadline in milliseconds; use noDeadline for an explicit unlimited deadline
-      */
+       * Wall-clock retry deadline in milliseconds; use noDeadline for an explicit unlimited deadline
+       */
       deadlineMs?: number
+      /**
+       * Disable the wall-clock retry deadline explicitly; maxRetries still applies to bounded budgets
+       */
       noDeadline?: boolean
       initialDelayMs?: number
       maxDelayMs?: number
@@ -2214,6 +2239,10 @@ export type Config = {
    * Enable or disable snapshot tracking. When false, filesystem snapshots are not recorded and undoing or reverting will not undo/redo file changes. Defaults to true.
    */
   snapshot?: boolean
+  /**
+   * Enable the once-per-session Auto-Worktree Notice when a primary root session mutates a git main worktree. Defaults to false (notice is off). When true, inject the existing soft-hint system-reminder; when false or omitted, inject nothing. Scope is the notice only — conflict detection and experimental worktree auto-create are not gated by this flag.
+   */
+  auto_worktree?: boolean
   plugin?: Array<
     | string
     | [
@@ -2315,9 +2344,12 @@ export type Config = {
        */
       maxRetries?: number
       /**
-      * Wall-clock retry deadline in milliseconds; use noDeadline for an explicit unlimited deadline
-      */
+       * Wall-clock retry deadline in milliseconds; use noDeadline for an explicit unlimited deadline
+       */
       deadlineMs?: number
+      /**
+       * Disable the wall-clock retry deadline explicitly; maxRetries still applies to bounded budgets
+       */
       noDeadline?: boolean
       initialDelayMs?: number
       maxDelayMs?: number
@@ -2333,9 +2365,12 @@ export type Config = {
        */
       maxRetries?: number
       /**
-      * Wall-clock retry deadline in milliseconds; use noDeadline for an explicit unlimited deadline
-      */
+       * Wall-clock retry deadline in milliseconds; use noDeadline for an explicit unlimited deadline
+       */
       deadlineMs?: number
+      /**
+       * Disable the wall-clock retry deadline explicitly; maxRetries still applies to bounded budgets
+       */
       noDeadline?: boolean
       initialDelayMs?: number
       maxDelayMs?: number
@@ -2351,9 +2386,12 @@ export type Config = {
        */
       maxRetries?: number
       /**
-      * Wall-clock retry deadline in milliseconds; use noDeadline for an explicit unlimited deadline
-      */
+       * Wall-clock retry deadline in milliseconds; use noDeadline for an explicit unlimited deadline
+       */
       deadlineMs?: number
+      /**
+       * Disable the wall-clock retry deadline explicitly; maxRetries still applies to bounded budgets
+       */
       noDeadline?: boolean
       initialDelayMs?: number
       maxDelayMs?: number
@@ -2369,9 +2407,12 @@ export type Config = {
        */
       maxRetries?: number
       /**
-      * Wall-clock retry deadline in milliseconds; use noDeadline for an explicit unlimited deadline
-      */
+       * Wall-clock retry deadline in milliseconds; use noDeadline for an explicit unlimited deadline
+       */
       deadlineMs?: number
+      /**
+       * Disable the wall-clock retry deadline explicitly; maxRetries still applies to bounded budgets
+       */
       noDeadline?: boolean
       initialDelayMs?: number
       maxDelayMs?: number
@@ -2387,9 +2428,12 @@ export type Config = {
        */
       maxRetries?: number
       /**
-      * Wall-clock retry deadline in milliseconds; use noDeadline for an explicit unlimited deadline
-      */
+       * Wall-clock retry deadline in milliseconds; use noDeadline for an explicit unlimited deadline
+       */
       deadlineMs?: number
+      /**
+       * Disable the wall-clock retry deadline explicitly; maxRetries still applies to bounded budgets
+       */
       noDeadline?: boolean
       initialDelayMs?: number
       maxDelayMs?: number
@@ -2405,9 +2449,12 @@ export type Config = {
        */
       maxRetries?: number
       /**
-      * Wall-clock retry deadline in milliseconds; use noDeadline for an explicit unlimited deadline
-      */
+       * Wall-clock retry deadline in milliseconds; use noDeadline for an explicit unlimited deadline
+       */
       deadlineMs?: number
+      /**
+       * Disable the wall-clock retry deadline explicitly; maxRetries still applies to bounded budgets
+       */
       noDeadline?: boolean
       initialDelayMs?: number
       maxDelayMs?: number
@@ -2423,9 +2470,12 @@ export type Config = {
        */
       maxRetries?: number
       /**
-      * Wall-clock retry deadline in milliseconds; use noDeadline for an explicit unlimited deadline
-      */
+       * Wall-clock retry deadline in milliseconds; use noDeadline for an explicit unlimited deadline
+       */
       deadlineMs?: number
+      /**
+       * Disable the wall-clock retry deadline explicitly; maxRetries still applies to bounded budgets
+       */
       noDeadline?: boolean
       initialDelayMs?: number
       maxDelayMs?: number
@@ -2441,9 +2491,12 @@ export type Config = {
        */
       maxRetries?: number
       /**
-      * Wall-clock retry deadline in milliseconds; use noDeadline for an explicit unlimited deadline
-      */
+       * Wall-clock retry deadline in milliseconds; use noDeadline for an explicit unlimited deadline
+       */
       deadlineMs?: number
+      /**
+       * Disable the wall-clock retry deadline explicitly; maxRetries still applies to bounded budgets
+       */
       noDeadline?: boolean
       initialDelayMs?: number
       maxDelayMs?: number
@@ -2564,7 +2617,7 @@ export type Config = {
      */
     reserved?: number
     /**
-     * Whether to fork the parent agent's message prefix into the writer session for prefix-cache reuse. Requires provider cache-breakpoint support. Default: false.
+     * Whether to fork the parent agent's message prefix into the writer session for prefix-cache reuse. Requires provider cache-breakpoint support. Default: true.
      */
     fork?: boolean
     /**
@@ -2727,6 +2780,23 @@ export type Config = {
        * Consecutive edit or verify actions without progress before pausing (default 4).
        */
       action_streak?: number
+    }
+    /**
+     * Loop-streak request-layer recovery (experimental).
+     */
+    loop_streak_recovery?: {
+      /**
+       * Crop repeated thinking/tool streaks from the next request and inject a recovery note.
+       */
+      enabled?: boolean
+      /**
+       * Consecutive identical streak keys required to trigger (default 3).
+       */
+      trigger_count?: number
+      /**
+       * Max assistant messages cropped from the trailing streak (default 64).
+       */
+      max_span?: number
     }
     /**
      * Timeout in milliseconds for model context protocol (MCP) requests
@@ -5216,7 +5286,7 @@ export type SessionPromptData = {
     format?: OutputFormat
     /**
      * BCP 47 locale used for automatic title generation.
-    */
+     */
     titleLocale?: string
     /**
      * Additional system prompt selected by the session's first user query. Later values are ignored.
@@ -5525,7 +5595,7 @@ export type SessionPromptAsyncData = {
     format?: OutputFormat
     /**
      * BCP 47 locale used for automatic title generation.
-    */
+     */
     titleLocale?: string
     /**
      * Additional system prompt selected by the session's first user query. Later values are ignored.
@@ -5583,7 +5653,7 @@ export type SessionCommandData = {
     command: string
     /**
      * BCP 47 locale used for automatic title generation.
-    */
+     */
     titleLocale?: string
     variant?: string
     /**

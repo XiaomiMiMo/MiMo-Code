@@ -25,10 +25,12 @@ function run<A, E>(fx: Effect.Effect<A, E, SessionPrompt.Service | Session.Servi
   )
 }
 
-function providerConfig(origin: string) {
+function providerConfig(origin: string, opts?: { auto_worktree?: boolean }) {
   return {
     $schema: "https://opencode.ai/config.json",
     enabled_providers: ["aw-test"],
+    // Product default is off; on-path tests pass auto_worktree: true explicitly.
+    ...(opts?.auto_worktree !== undefined ? { auto_worktree: opts.auto_worktree } : {}),
     provider: {
       "aw-test": {
         name: "AW Test",
@@ -73,7 +75,10 @@ describe("session.prompt auto-worktree first-write notice", () => {
       await using tmp = await tmpdir({
         git: true,
         init: async (dir) => {
-          await Bun.write(path.join(dir, "mimocode.json"), JSON.stringify(providerConfig(stub.origin)))
+          await Bun.write(
+            path.join(dir, "mimocode.json"),
+            JSON.stringify(providerConfig(stub.origin, { auto_worktree: true })),
+          )
           await seedLinkedWorktree(dir)
         },
       })
@@ -161,7 +166,10 @@ describe("session.prompt auto-worktree first-write notice", () => {
       await using tmp = await tmpdir({
         git: true,
         init: async (dir) => {
-          await Bun.write(path.join(dir, "mimocode.json"), JSON.stringify(providerConfig(stub.origin)))
+          await Bun.write(
+            path.join(dir, "mimocode.json"),
+            JSON.stringify(providerConfig(stub.origin, { auto_worktree: true })),
+          )
         },
       })
       expect(repoHasLinkedWorktrees(tmp.path)).toBe(false)
@@ -261,7 +269,10 @@ describe("session.prompt auto-worktree first-write notice", () => {
       await using tmp = await tmpdir({
         git: true,
         init: async (dir) => {
-          await Bun.write(path.join(dir, "mimocode.json"), JSON.stringify(providerConfig(stub.origin)))
+          await Bun.write(
+            path.join(dir, "mimocode.json"),
+            JSON.stringify(providerConfig(stub.origin, { auto_worktree: true })),
+          )
           await seedLinkedWorktree(dir)
         },
       })
@@ -394,7 +405,10 @@ describe("session.prompt auto-worktree first-write notice", () => {
       await using scratch = await tmpdir({
         outsideGit: true,
         init: async (dir) => {
-          await Bun.write(path.join(dir, "mimocode.json"), JSON.stringify(providerConfig(stub.origin)))
+          await Bun.write(
+            path.join(dir, "mimocode.json"),
+            JSON.stringify(providerConfig(stub.origin, { auto_worktree: true })),
+          )
         },
       })
 
@@ -463,7 +477,10 @@ describe("session.prompt auto-worktree first-write notice", () => {
       await using tmp = await tmpdir({
         git: true,
         init: async (dir) => {
-          await Bun.write(path.join(dir, "mimocode.json"), JSON.stringify(providerConfig(stub.origin)))
+          await Bun.write(
+            path.join(dir, "mimocode.json"),
+            JSON.stringify(providerConfig(stub.origin, { auto_worktree: true })),
+          )
           await seedLinkedWorktree(dir)
         },
       })
@@ -541,7 +558,10 @@ describe("session.prompt auto-worktree first-write notice", () => {
       await using tmp = await tmpdir({
         git: true,
         init: async (dir) => {
-          await Bun.write(path.join(dir, "mimocode.json"), JSON.stringify(providerConfig(stub.origin)))
+          await Bun.write(
+            path.join(dir, "mimocode.json"),
+            JSON.stringify(providerConfig(stub.origin, { auto_worktree: true })),
+          )
           await seedLinkedWorktree(dir)
         },
       })
@@ -597,4 +617,65 @@ describe("session.prompt auto-worktree first-write notice", () => {
     },
     20_000,
   )
+})
+
+describe("session.prompt auto_worktree config gate", () => {
+  test.each([
+    ["omitted", undefined],
+    ["false", false],
+  ] as const)("auto_worktree %s is off — no notice after a main-worktree write", async (_label, value) => {
+    const stub = startScriptedLLMServer([
+      {
+        lines: toolCallResponse({
+          id: "call_write_off",
+          name: "write",
+          args: JSON.stringify({ file_path: "off.txt", content: "off\n" }),
+        }),
+      },
+      { lines: textStopResponse("done-off") },
+    ])
+
+    try {
+      await using tmp = await tmpdir({
+        git: true,
+        init: async (dir) => {
+          await Bun.write(
+            path.join(dir, "mimocode.json"),
+            JSON.stringify(providerConfig(stub.origin, value === false ? { auto_worktree: false } : undefined)),
+          )
+          await seedLinkedWorktree(dir)
+        },
+      })
+
+      await Instance.provide({
+        directory: tmp.path,
+        fn: () =>
+          run(
+            Effect.gen(function* () {
+              const prompt = yield* SessionPrompt.Service
+              const sessions = yield* Session.Service
+              const session = yield* sessions.create({
+                title: `aw off ${_label}`,
+                permission: [{ permission: "*", pattern: "*", action: "allow" }],
+              })
+
+              yield* prompt.prompt({
+                sessionID: session.id,
+                agent: "build",
+                parts: [{ type: "text", text: "Create off.txt" }],
+              })
+
+              const msgs = yield* sessions.messages({ sessionID: session.id })
+              const userMsgs = msgs.filter((m) => m.info.role === "user")
+              expect(noticeParts(userMsgs[0])).toHaveLength(0)
+              expect(isAutoWorktreeHintSent(session.id)).toBe(false)
+
+              yield* sessions.remove(session.id)
+            }),
+          ),
+      })
+    } finally {
+      void stub.stop()
+    }
+  })
 })

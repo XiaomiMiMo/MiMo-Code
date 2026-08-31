@@ -157,6 +157,7 @@ The trigger is the model's prompt capacity (`limit.input` when the provider publ
 | `autoupdate` | `true` / `false` / `"notify"` |
 | `share` | `"manual"` / `"auto"` / `"disabled"` |
 | `snapshot` | Filesystem snapshot tracking for undo/redo (default true) |
+| `auto_worktree` | Auto-Worktree Notice on main-worktree writes (default false) |
 | `logLevel` | Log verbosity |
 | `server` | Config for `mimo serve` |
 | `enterprise.url` | Enterprise endpoint |

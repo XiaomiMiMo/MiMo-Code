@@ -1160,9 +1160,10 @@ export const layer = Layer.effect(
       const composeModeMsg = input.messages.find(
         (msg) => msg.info.role === "user" && msg.info.agent === "compose",
       )
+      const cfg = yield* config.get()
       if (composeModeMsg) {
         const ctx = yield* InstanceState.context
-        const composeCfg = (yield* config.get()).compose
+        const composeCfg = cfg.compose
         const docsDir = ConfigCompose.resolveDocsDir(ctx.worktree, composeCfg)
         const text = PROMPT_COMPOSE
           .replace("{{compose_docs_dir}}", `Save compose skill outputs: specs in \`${path.join(docsDir, "specs")}\`, plans in \`${path.join(docsDir, "plans")}\`, reports in \`${path.join(docsDir, "reports")}\`.`)
@@ -1182,9 +1183,14 @@ export const layer = Layer.effect(
       // to a non-git scratch dir that `cd`s into another project's main checkout
       // still hits. Injected as a user-side system-reminder and persisted via
       // auto_worktree_hint_sent so compaction/rebuild cannot re-inject. Never
-      // touches the system prompt. Nested branch: insertReminders cannot
-      // early-return without skipping the skill/plan reminders that follow.
-      if (input.agent.mode === "primary" && !input.session.parentID) {
+      // touches the system prompt. Gated by config.auto_worktree (default false).
+      // Nested branch: insertReminders cannot early-return without skipping the
+      // skill/plan reminders that follow.
+      if (
+        input.agent.mode === "primary" &&
+        !input.session.parentID &&
+        cfg.auto_worktree === true
+      ) {
         const alreadySent = yield* Effect.sync(() => isAutoWorktreeHintSent(input.session.id))
         if (!alreadySent) {
           if (sessionHasAutoWorktreeNotice(input.messages)) {
