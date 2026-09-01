@@ -141,6 +141,7 @@ import {
 import { isMcpToolSearchEnabled, usesGPTToolset } from "@/tool/gpt"
 import { GPT_TOP_LEVEL_TOOLS } from "@/tool/tool-script-ref"
 import { SessionPrefixSnapshot } from "./prefix-snapshot"
+import { buildSteerHint, pendingUserMessages, shouldInjectSteerHint } from "./steer-hint"
 
 // @ts-ignore
 globalThis.AI_SDK_LOG_WARNINGS = false
@@ -3701,6 +3702,21 @@ NOTE: At any point in time through this workflow you should feel free to ask the
                 ].join("\n"),
               })
             }
+          }
+
+          // Follow-up intent: real user prose after same-session assistant work.
+          // In-memory only — msgs reload each iteration. Multi-message case only
+          // names the unanswered set; bodies stay in the transcript (no re-embed).
+          const lastUserMsgForSteer = msgs.findLast((m) => m.info.id === lastUser.id)
+          if (lastUserMsgForSteer && shouldInjectSteerHint(msgs, lastUserMsgForSteer)) {
+            lastUserMsgForSteer.parts.push({
+              id: PartID.ascending(),
+              messageID: lastUserMsgForSteer.info.id,
+              sessionID,
+              type: "text" as const,
+              synthetic: true,
+              text: buildSteerHint(pendingUserMessages(msgs).length),
+            })
           }
 
           const lastAssistantMsg = msgs.findLast(
