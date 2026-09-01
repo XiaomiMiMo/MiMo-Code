@@ -39,6 +39,8 @@ const DEFAULT_CONTEXT_WINDOW = 1_000_000
 const BUILTIN_TIERS = new Set(["ultra", "standard", "lite"])
 // F41: warn once per (providerID, modelID) when limit.context falls back to default
 const warnedContextDefaults = new Set<string>()
+// defaultModel() runs per cheap task; warn once per stale cfg.model, not every call
+const warnedStaleDefaultModels = new Set<string>()
 
 export const DEFAULT_OPENAI_HEADER_TIMEOUT = 300_000
 export const DEFAULT_CHUNK_TIMEOUT = 480_000 // 8 minutes — bounds single-attempt SSE stall.
@@ -1995,7 +1997,10 @@ const layer: Layer.Layer<
         const parsed = parseModel(cfg.model)
         const provider = s.providers[parsed.providerID]
         if (provider?.models[parsed.modelID]) return parsed
-        log.warn("configured default model missing from registry, falling through", { model: cfg.model })
+        if (!warnedStaleDefaultModels.has(cfg.model)) {
+          warnedStaleDefaultModels.add(cfg.model)
+          log.warn("configured default model missing from registry, falling through", { model: cfg.model })
+        }
       }
 
       const recent = yield* fs.readJson(path.join(Global.Path.state, "model.json")).pipe(
