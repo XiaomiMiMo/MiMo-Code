@@ -3,16 +3,16 @@ feature: default-model-stable-fallback
 status: delivered
 updated: 2026-09-01
 branch: default-model-stable-fallback
-commits: 91b2eb204a..5623bbca76
+commits: fa69916897..50e4e6f83b
 ---
 
 # Default Model Stable Fallback
 
 ## Report
 
-**What was built** — `Provider.defaultModel()` no longer ranks models with the TUI menu `sort()` priority list (`gpt-5` / `claude-sonnet-4` / `gemini-3-pro`, then `latest`). The chain is now: validated `cfg.model` → existing `recent` → first allowed provider, first model by id ascending. Stale `cfg.model` values that are no longer in the live registry fall through instead of being returned blindly. The retired `mimo/mimo-auto` free-channel special case was removed.
+**What was built** — `Provider.defaultModel()` no longer ranks models with the TUI menu `sort()` priority list (`gpt-5` / `claude-sonnet-4` / `gemini-3-pro`, then `latest`). The chain is now: validated `cfg.model` (warn + fall through if missing) → existing `recent` → first allowed provider with a usable chat model (`toolcall` + text input + non-zero context), first by id ascending. Stale `cfg.model` values that are no longer in the live registry fall through instead of being returned blindly. The retired `mimo/mimo-auto` free-channel special case was removed. Capability filter prevents last-resort from selecting models like live `openai/chatgpt-image-latest` (`tool_call: false`, `context: 0`).
 
-**Verification** — `bun test test/provider` → pass / 0 fail (includes new cases: invalid cfg fallthrough, recent hit over id-asc first, no retired mimo-auto preference, no priority-substring preference). `bun run typecheck` → clean.
+**Verification** — `bun test test/provider` → pass / 0 fail (includes new cases: invalid cfg fallthrough, recent hit over id-asc first, valid cfg beats recent, invalid cfg + recent, non-chat last-resort skip, no retired mimo-auto preference, no priority-substring preference). `bun run typecheck` → clean.
 
 **Journey log** — Desktop does not write TUI `state/model.json` `recent`, so empty recent is the common Desktop case, not a rare one; a “first provider model” fallback without a product-default path would re-open the same bug. First review flagged a missing recent-hit test and a vacuous mimo-auto test (sibling sorted after `mimo-auto`); both were fixed before finalize.
 
@@ -43,14 +43,15 @@ Result: title generation and other cheap tasks can resolve to an unavailable or 
 1. cfg.model
    - parse provider/model
    - MUST exist in the live provider registry
-   - missing → fall through (do not throw)
+   - missing → warn + fall through (do not throw)
 2. state/model.json recent[]
    - first entry whose provider+model still exist
-3. first allowed provider (same cfg.provider whitelist as today)
-   - first model in that provider by id ascending (deterministic)
+3. first allowed provider that has a usable chat model
+   - usable = toolcall && text input && limit.context > 0
+   - first such model by id ascending (deterministic)
    - no priority list, no "latest" preference
    - no retired mimo/mimo-auto special case
-4. no provider / no model → throw the existing clear errors
+4. no provider / no usable model → throw the existing clear errors
    ("no providers found" / "no models found")
 ```
 

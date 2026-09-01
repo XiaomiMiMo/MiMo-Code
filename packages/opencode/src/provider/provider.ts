@@ -1984,6 +1984,9 @@ const layer: Layer.Layer<
     // Stable default chain. Product-priority substring ranking (`sort`) is for
     // menus/listings, not for choosing a working default — Desktop's empty
     // recent + router leftovers made that path pick unavailable models.
+    // Last-resort picks require a usable chat model (toolcall + text input +
+    // non-zero context): live openai id-asc starts at chatgpt-image-latest
+    // (tool_call false, context 0), which titles/agents cannot call.
     const defaultModel = Effect.fn("Provider.defaultModel")(function* () {
       const cfg = yield* config.get()
       const s = yield* InstanceState.get(state)
@@ -1992,6 +1995,7 @@ const layer: Layer.Layer<
         const parsed = parseModel(cfg.model)
         const provider = s.providers[parsed.providerID]
         if (provider?.models[parsed.modelID]) return parsed
+        log.warn("configured default model missing from registry, falling through", { model: cfg.model })
       }
 
       const recent = yield* fs.readJson(path.join(Global.Path.state, "model.json")).pipe(
@@ -2015,14 +2019,18 @@ const layer: Layer.Layer<
 
       // No mimo/mimo-auto special case: that free-channel alias is retired and
       // resolving it as a default produced unusable titles/completions.
-      const provider = Object.values(s.providers).find((p) => !cfg.provider || Object.keys(cfg.provider).includes(p.id))
-      if (!provider) throw new Error("no providers found")
-      const model = sortBy(Object.values(provider.models), [(m) => m.id, "asc"])[0]
-      if (!model) throw new Error("no models found")
-      return {
-        providerID: provider.id,
-        modelID: model.id,
+      const allowed = Object.values(s.providers).filter((p) => !cfg.provider || Object.keys(cfg.provider).includes(p.id))
+      if (!allowed.length) throw new Error("no providers found")
+      for (const provider of allowed) {
+        const model = sortBy(
+          Object.values(provider.models).filter(
+            (m) => m.capabilities.toolcall && m.capabilities.input.text && (m.limit?.context ?? 1) > 0,
+          ),
+          [(m) => m.id, "asc"],
+        )[0]
+        if (model) return { providerID: provider.id, modelID: model.id }
       }
+      throw new Error("no models found")
     })
 
     return Service.of({ list, getProvider, getModel, getLanguage, getSpeech, closest, getSmallModel, getVisionModel, defaultModel, resolveModelRef })

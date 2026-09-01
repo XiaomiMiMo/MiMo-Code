@@ -671,7 +671,6 @@ test("defaultModel falls through when config model is missing from the registry"
     },
     fn: async () => {
       const model = await defaultModel()
-      expect(String(model.modelID)).not.toBe("does-not-exist")
       expect(String(model.modelID)).toBe("aaa-plain")
       expect(String(model.providerID)).toBe("custom")
     },
@@ -783,6 +782,163 @@ test("defaultModel prefers recent state model over first stable pick", async () 
     if (previous === undefined) await Bun.write(recentPath, JSON.stringify({ recent: [] }))
     else await Bun.write(recentPath, previous)
   }
+})
+
+test("defaultModel prefers valid config model over recent", async () => {
+  const recentPath = path.join(Global.Path.state, "model.json")
+  const previous = await Bun.file(recentPath).text().catch(() => undefined)
+  await Bun.write(recentPath, JSON.stringify({ recent: [{ providerID: "custom", modelID: "zzz-chosen" }] }))
+  try {
+    await using tmp = await tmpdir({
+      init: async (dir) => {
+        await Bun.write(
+          path.join(dir, "mimocode.json"),
+          JSON.stringify({
+            $schema: "https://opencode.ai/config.json",
+            model: "custom/aaa-plain",
+            provider: {
+              custom: {
+                name: "Custom",
+                npm: "@ai-sdk/openai-compatible",
+                env: [],
+                models: {
+                  "aaa-plain": {
+                    name: "AAA",
+                    tool_call: true,
+                    limit: { context: 128000, output: 4096 },
+                  },
+                  "zzz-chosen": {
+                    name: "ZZZ",
+                    tool_call: true,
+                    limit: { context: 128000, output: 4096 },
+                  },
+                },
+                options: {
+                  apiKey: "test-key",
+                  baseURL: "https://custom.example/v1",
+                },
+              },
+            },
+          }),
+        )
+      },
+    })
+    await Instance.provide({
+      directory: tmp.path,
+      init: async () => {},
+      fn: async () => {
+        const model = await defaultModel()
+        expect(String(model.modelID)).toBe("aaa-plain")
+      },
+    })
+  } finally {
+    if (previous === undefined) await Bun.write(recentPath, JSON.stringify({ recent: [] }))
+    else await Bun.write(recentPath, previous)
+  }
+})
+
+test("defaultModel uses recent when config model is missing from the registry", async () => {
+  const recentPath = path.join(Global.Path.state, "model.json")
+  const previous = await Bun.file(recentPath).text().catch(() => undefined)
+  await Bun.write(recentPath, JSON.stringify({ recent: [{ providerID: "custom", modelID: "zzz-chosen" }] }))
+  try {
+    await using tmp = await tmpdir({
+      init: async (dir) => {
+        await Bun.write(
+          path.join(dir, "mimocode.json"),
+          JSON.stringify({
+            $schema: "https://opencode.ai/config.json",
+            model: "custom/gone-model",
+            provider: {
+              custom: {
+                name: "Custom",
+                npm: "@ai-sdk/openai-compatible",
+                env: [],
+                models: {
+                  "aaa-plain": {
+                    name: "AAA",
+                    tool_call: true,
+                    limit: { context: 128000, output: 4096 },
+                  },
+                  "zzz-chosen": {
+                    name: "ZZZ",
+                    tool_call: true,
+                    limit: { context: 128000, output: 4096 },
+                  },
+                },
+                options: {
+                  apiKey: "test-key",
+                  baseURL: "https://custom.example/v1",
+                },
+              },
+            },
+          }),
+        )
+      },
+    })
+    await Instance.provide({
+      directory: tmp.path,
+      init: async () => {},
+      fn: async () => {
+        const model = await defaultModel()
+        expect(String(model.modelID)).toBe("zzz-chosen")
+      },
+    })
+  } finally {
+    if (previous === undefined) await Bun.write(recentPath, JSON.stringify({ recent: [] }))
+    else await Bun.write(recentPath, previous)
+  }
+})
+
+test("defaultModel last-resort skips non-chat models (no toolcall / zero context)", async () => {
+  await using tmp = await tmpdir({
+    init: async (dir) => {
+      await Bun.write(
+        path.join(dir, "mimocode.json"),
+        JSON.stringify({
+          $schema: "https://opencode.ai/config.json",
+          provider: {
+            custom: {
+              name: "Custom",
+              npm: "@ai-sdk/openai-compatible",
+              env: [],
+              models: {
+                // Mirrors live openai id-asc head: image model with tool_call false and context 0.
+                "chatgpt-image-latest": {
+                  name: "Image",
+                  tool_call: false,
+                  limit: { context: 0, output: 4096 },
+                  modalities: { input: ["text", "image"], output: ["text", "image"] },
+                },
+                "gpt-3.5-turbo": {
+                  name: "Turbo",
+                  tool_call: false,
+                  limit: { context: 16385, output: 4096 },
+                },
+                "gpt-4": {
+                  name: "GPT4",
+                  tool_call: true,
+                  limit: { context: 8192, output: 4096 },
+                },
+              },
+              options: {
+                apiKey: "test-key",
+                baseURL: "https://custom.example/v1",
+              },
+            },
+          },
+        }),
+      )
+    },
+  })
+  await Instance.provide({
+    directory: tmp.path,
+    init: async () => {},
+    fn: async () => {
+      const model = await defaultModel()
+      expect(String(model.modelID)).toBe("gpt-4")
+    },
+  })
 })
 
 test("defaultModel does not special-case retired mimo-auto", async () => {
