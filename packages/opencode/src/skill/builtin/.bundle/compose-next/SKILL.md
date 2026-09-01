@@ -123,7 +123,7 @@ For failures, reproduce before editing and identify the root cause from errors, 
 
 ### Parallel work
 
-Dispatch independent tasks in parallel when isolation prevents collisions; keep tightly coupled work together. Prefer giving parallel subagents disjoint file sets and keeping commits with the orchestrator. Give each subagent the worktree path, task, acceptance criteria, relevant spec sections, and required verification. Do not pass session history. Treat its report as a claim and inspect the resulting diff.
+Dispatch independent tasks in parallel when isolation prevents collisions; keep tightly coupled work together. Prefer giving parallel subagents disjoint file sets and keeping commits with the orchestrator. Give each subagent the workspace path, task, acceptance criteria, relevant spec sections, and required verification. Do not pass session history. Treat its report as a claim and inspect the resulting diff.
 
 Continue through tasks without routine approval pauses. Stop only for an unresolved product decision, a blocker that cannot be worked around, a destructive action requiring consent, or completion.
 
@@ -140,7 +140,7 @@ After implementation is verified and before finalizing the feature document, dis
 Provide the reviewer:
 
 - the applicable spec sections and acceptance criteria;
-- the worktree path, base branch, base SHA, head SHA, and exact diff command or precomputed diff;
+- the workspace path, base branch, base SHA, head SHA, and exact diff command or precomputed diff;
 - a compact verification summary: one line per command with `PASS`, `FAIL`, or `PRE-EXISTING`, plus test counts when available. Do not paste full command output unless a specific failure requires it.
 
 If there is no feature document, take acceptance criteria from the conversation. If none are explicit, ask the user for them before dispatching the reviewer.
@@ -183,7 +183,7 @@ Update a design section only when it contradicts the delivered behavior. Commit 
 
 ## Finish
 
-Do not auto-finish. After Finalize, report branch, base, head SHA, worktree, feature-doc path, and suggest a closing action.
+Do not auto-finish. After Finalize, report branch, base, head SHA, workspace, feature-doc path when available, and suggest a closing action.
 
 If the user asks to finish but the path is unclear, use the `question` tool to settle:
 
