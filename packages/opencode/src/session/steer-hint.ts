@@ -20,19 +20,40 @@ export function pendingUserMessages(messages: MessageV2.WithParts[]): MessageV2.
 }
 
 /**
- * True when the current last user message is real prose after same-session
- * assistant work. First turn never fires. Synthetic-only last users never
- * fire. Parent assistants inherited via contextFrom (different sessionID)
- * do not count.
+ * True when the current last user message is a mid-turn steer:
+ * - several real user messages are stacked after the last same-session assistant, or
+ * - this user message was created while that assistant was still open
+ *   (created before assistant.time.completed).
+ *
+ * Ordinary sequential turns after a finished reply do NOT fire — they are a
+ * normal new task and must not rewrite the frozen model-request prefix.
+ * First turn never fires. Synthetic-only last users never fire. Parent
+ * assistants inherited via contextFrom (different sessionID) do not count.
  */
 export function shouldInjectSteerHint(messages: MessageV2.WithParts[], lastUser: MessageV2.WithParts): boolean {
   if (lastUser.info.role !== "user") return false
   if (!hasRealUserText(lastUser)) return false
   const lastUserIdx = messages.findLastIndex((m) => m.info.id === lastUser.info.id)
   if (lastUserIdx < 0) return false
-  return messages
-    .slice(0, lastUserIdx)
-    .some((m) => m.info.role === "assistant" && m.info.sessionID === lastUser.info.sessionID)
+
+  const pending = pendingUserMessages(messages)
+  if (pending.length > 1) return true
+
+  const priorAssistants = messages.slice(0, lastUserIdx).filter(
+    (m): m is MessageV2.WithParts & { info: MessageV2.Assistant } =>
+      m.info.role === "assistant" && m.info.sessionID === lastUser.info.sessionID,
+  )
+  const lastAsst = priorAssistants.at(-1)
+  if (!lastAsst) return false
+
+  const userCreated = lastUser.info.time?.created
+  const asstCreated = lastAsst.info.time.created
+  const asstCompleted = lastAsst.info.time.completed
+  if (userCreated == null) return false
+  if (userCreated < asstCreated) return false
+  // Sequential new turn after a finished reply.
+  if (asstCompleted != null && userCreated > asstCompleted) return false
+  return true
 }
 
 /**
