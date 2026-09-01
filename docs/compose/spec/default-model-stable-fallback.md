@@ -3,7 +3,7 @@ feature: default-model-stable-fallback
 status: delivered
 updated: 2026-09-01
 branch: default-model-stable-fallback
-commits: 91b2eb204a..b1b3c9ef79
+commits: 91b2eb204a..5623bbca76
 ---
 
 # Default Model Stable Fallback
