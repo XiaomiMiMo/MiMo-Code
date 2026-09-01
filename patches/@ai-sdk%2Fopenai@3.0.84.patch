@@ -1,0 +1,26 @@
+diff --git a/dist/index.js b/dist/index.js
+index d3ff1b8..d168e4d 100644
+--- a/dist/index.js
++++ b/dist/index.js
+@@ -4335,7 +4335,7 @@ var openaiResponsesResponseSchema = (0, import_provider_utils27.lazySchema)(
+                       index: import_v422.z.number()
+                     })
+                   ])
+-                )
++                ).default([])
+               })
+             )
+           }),
+diff --git a/dist/index.mjs b/dist/index.mjs
+index 2644043..940f4b5 100644
+--- a/dist/index.mjs
++++ b/dist/index.mjs
+@@ -4433,7 +4433,7 @@ var openaiResponsesResponseSchema = lazySchema20(
+                       index: z22.number()
+                     })
+                   ])
+-                )
++                ).default([])
+               })
+             )
+           }),

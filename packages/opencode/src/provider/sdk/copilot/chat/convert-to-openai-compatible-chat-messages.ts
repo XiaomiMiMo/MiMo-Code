@@ -10,6 +10,12 @@ function getOpenAIMetadata(message: { providerOptions?: SharedV3ProviderOptions 
   return message?.providerOptions?.copilot ?? {}
 }
 
+// Tool call arguments must serialize to a JSON object; some providers reject a
+// bare value (e.g. an int) with a 400, so normalize non-object inputs to {}.
+function toolCallArguments(input: unknown): string {
+  return typeof input === "object" && input !== null && !Array.isArray(input) ? JSON.stringify(input) : "{}"
+}
+
 export function convertToOpenAICompatibleChatMessages(prompt: LanguageModelV3Prompt): OpenAICompatibleChatPrompt {
   const messages: OpenAICompatibleChatPrompt = []
   for (const { role, content, ...message } of prompt) {
@@ -104,7 +110,7 @@ export function convertToOpenAICompatibleChatMessages(prompt: LanguageModelV3Pro
                 type: "function",
                 function: {
                   name: part.toolName,
-                  arguments: JSON.stringify(part.input),
+                  arguments: toolCallArguments(part.input),
                 },
                 ...partMetadata,
               })

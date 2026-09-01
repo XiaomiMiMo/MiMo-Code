@@ -2640,3 +2640,191 @@ describe("tool config inline struct", () => {
     ).toThrow()
   })
 })
+
+test("loads MCP servers from mcpServers in Claude Code format", async () => {
+  await using tmp = await tmpdir({
+    init: async (dir) => {
+      await Filesystem.write(
+        path.join(dir, "mimocode.json"),
+        JSON.stringify({
+          $schema: "https://opencode.ai/config.json",
+          mcpServers: {
+            firecrawl: {
+              command: "npx",
+              args: ["-y", "firecrawl-mcp"],
+              env: { FIRECRAWL_API_KEY: "key" },
+            },
+          },
+        }),
+      )
+    },
+  })
+
+  await Instance.provide({
+    directory: tmp.path,
+    fn: async () => {
+      const config = await load()
+      expect(config.mcp).toEqual({
+        firecrawl: {
+          type: "local",
+          command: ["npx", "-y", "firecrawl-mcp"],
+          environment: { FIRECRAWL_API_KEY: "key" },
+          enabled: true,
+        },
+      })
+    },
+  })
+})
+
+test("loads mixed-format MCP servers from the mcp key", async () => {
+  await using tmp = await tmpdir({
+    init: async (dir) => {
+      await Filesystem.write(
+        path.join(dir, "mimocode.json"),
+        JSON.stringify({
+          $schema: "https://opencode.ai/config.json",
+          mcp: {
+            codegraph: { type: "local", command: ["codegraph", "serve", "--mcp"] },
+            "firecrawl-mcp": {
+              command: "npx",
+              args: ["-y", "firecrawl-mcp"],
+              env: { FIRECRAWL_API_KEY: "key" },
+            },
+          },
+        }),
+      )
+    },
+  })
+
+  await Instance.provide({
+    directory: tmp.path,
+    fn: async () => {
+      const config = await load()
+      expect(config.mcp?.["codegraph"]).toEqual({
+        type: "local",
+        command: ["codegraph", "serve", "--mcp"],
+      })
+      expect(config.mcp?.["firecrawl-mcp"]).toEqual({
+        type: "local",
+        command: ["npx", "-y", "firecrawl-mcp"],
+        environment: { FIRECRAWL_API_KEY: "key" },
+        enabled: true,
+      })
+    },
+  })
+})
+
+test("substitutes {env:VAR} inside MCP server environment", async () => {
+  const previous = process.env.MCP_TEST_TOKEN
+  process.env.MCP_TEST_TOKEN = "secret-value"
+  try {
+    await using tmp = await tmpdir({
+      init: async (dir) => {
+        await Filesystem.write(
+          path.join(dir, "mimocode.json"),
+          JSON.stringify({
+            $schema: "https://opencode.ai/config.json",
+            mcpServers: {
+              s: { command: "npx", args: ["-y", "srv"], env: { TOKEN: "{env:MCP_TEST_TOKEN}" } },
+            },
+          }),
+        )
+      },
+    })
+
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () => {
+        const config = await load()
+        expect(config.mcp?.s?.environment).toEqual({ TOKEN: "secret-value" })
+      },
+    })
+  } finally {
+    if (previous === undefined) delete process.env.MCP_TEST_TOKEN
+    else process.env.MCP_TEST_TOKEN = previous
+  }
+})
+
+test("loads mixed-format MCP servers from mcpServers", async () => {
+  await using tmp = await tmpdir({
+    init: async (dir) => {
+      await Filesystem.write(
+        path.join(dir, "mimocode.json"),
+        JSON.stringify({
+          $schema: "https://opencode.ai/config.json",
+          mcpServers: {
+            codegraph: { type: "local", command: ["codegraph", "serve", "--mcp"] },
+            firecrawl: { command: "npx", args: ["-y", "firecrawl-mcp"] },
+          },
+        }),
+      )
+    },
+  })
+
+  await Instance.provide({
+    directory: tmp.path,
+    fn: async () => {
+      const config = await load()
+      expect(config.mcp?.["codegraph"]).toEqual({
+        type: "local",
+        command: ["codegraph", "serve", "--mcp"],
+      })
+      expect(config.mcp?.firecrawl).toEqual({
+        type: "local",
+        command: ["npx", "-y", "firecrawl-mcp"],
+        enabled: true,
+      })
+    },
+  })
+})
+
+test("loads sampling from mcpServers in Claude Code format", async () => {
+  await using tmp = await tmpdir({
+    init: async (dir) => {
+      await Filesystem.write(
+        path.join(dir, "mimocode.json"),
+        JSON.stringify({
+          $schema: "https://opencode.ai/config.json",
+          mcpServers: {
+            s: { command: "echo", sampling: "allow" },
+          },
+        }),
+      )
+    },
+  })
+
+  await Instance.provide({
+    directory: tmp.path,
+    fn: async () => {
+      const config = await load()
+      expect(config.mcp?.s).toEqual({
+        type: "local",
+        command: ["echo"],
+        enabled: true,
+        sampling: "allow",
+      })
+    },
+  })
+})
+
+test("rejects a config that sets both mcp and mcpServers", async () => {
+  await using tmp = await tmpdir({
+    init: async (dir) => {
+      await Filesystem.write(
+        path.join(dir, "mimocode.json"),
+        JSON.stringify({
+          $schema: "https://opencode.ai/config.json",
+          mcp: { a: { type: "local", command: ["x"] } },
+          mcpServers: { b: { command: "npx" } },
+        }),
+      )
+    },
+  })
+
+  await Instance.provide({
+    directory: tmp.path,
+    fn: async () => {
+      await expect(load()).rejects.toThrow()
+    },
+  })
+})

@@ -171,6 +171,7 @@ type ToolCall = {
 
 interface ProcessorContext extends Input {
   toolcalls: Record<string, ToolCall>
+  toolNames: Record<string, string>
   shouldBreak: boolean
   snapshot: string | undefined
   blocked: boolean
@@ -229,6 +230,7 @@ export const layer: Layer.Layer<
         model: input.model,
         agentMetrics: input.agentMetrics,
         toolcalls: {},
+        toolNames: {},
         shouldBreak: false,
         snapshot: initialSnapshot,
         blocked: false,
@@ -343,6 +345,53 @@ export const layer: Layer.Layer<
           sessionID: part.sessionID,
         }
         return part
+      })
+
+      // Upsert a tool part for a tool call id. Some Responses providers (Ark)
+      // emit `output_item.added` function_call without `arguments`, so the SDK
+      // drops that chunk and `tool-input-start` never fires; the stream still
+      // emits `tool-input-end` + `tool-call`. Without this fallback the tool
+      // part is never created, the tool result has nowhere to land, and the
+      // session loops forever re-sending the same call. Mirrors opencode's
+      // SessionProcessor.ensureToolCall.
+      const ensureToolCall = Effect.fn("SessionProcessor.ensureToolCall")(function* (input: {
+        id: string
+        name: string
+        providerExecuted?: boolean
+      }) {
+        const existing = yield* readToolCall(input.id)
+        if (existing) {
+          if (!input.providerExecuted || existing.part.metadata?.providerExecuted) return existing
+          const part = yield* session.updatePart({
+            ...existing.part,
+            metadata: { ...existing.part.metadata, providerExecuted: true },
+          })
+          ctx.toolcalls[input.id] = {
+            ...existing.call,
+            partID: part.id,
+            messageID: part.messageID,
+            sessionID: part.sessionID,
+          }
+          return { call: ctx.toolcalls[input.id], part }
+        }
+        const part = yield* session.updatePart({
+          id: ctx.toolcalls[input.id]?.partID ?? PartID.ascending(),
+          messageID: ctx.assistantMessage.id,
+          sessionID: ctx.assistantMessage.sessionID,
+          type: "tool",
+          tool: input.name,
+          callID: input.id,
+          state: { status: "pending", input: {}, raw: "" },
+          metadata: input.providerExecuted ? { providerExecuted: true } : undefined,
+        } satisfies MessageV2.ToolPart)
+        ctx.stepPartIds.push(part.id)
+        ctx.toolcalls[input.id] = {
+          done: yield* Deferred.make<void>(),
+          partID: part.id,
+          messageID: part.messageID,
+          sessionID: part.sessionID,
+        }
+        return { call: ctx.toolcalls[input.id], part }
       })
 
       const completeToolCall = Effect.fn("SessionProcessor.completeToolCall")(function* (
@@ -461,34 +510,24 @@ export const layer: Layer.Layer<
             delete ctx.reasoningMap[value.id]
             return
 
-          case "tool-input-start":
+          case "tool-input-start": {
             if (ctx.assistantMessage.summary) {
               throw new Error(`Tool call not allowed while generating summary: ${value.toolName}`)
             }
-            const part = yield* session.updatePart({
-              id: ctx.toolcalls[value.id]?.partID ?? PartID.ascending(),
-              messageID: ctx.assistantMessage.id,
-              sessionID: ctx.assistantMessage.sessionID,
-              type: "tool",
-              tool: value.toolName,
-              callID: value.id,
-              state: { status: "pending", input: {}, raw: "" },
-              metadata: value.providerExecuted ? { providerExecuted: true } : undefined,
-            } satisfies MessageV2.ToolPart)
-            ctx.stepPartIds.push(part.id)
-            ctx.toolcalls[value.id] = {
-              done: yield* Deferred.make<void>(),
-              partID: part.id,
-              messageID: part.messageID,
-              sessionID: part.sessionID,
-            }
+            ctx.toolNames[value.id] = value.toolName
+            yield* ensureToolCall({ id: value.id, name: value.toolName, providerExecuted: value.providerExecuted })
             return
+          }
 
-          case "tool-input-delta":
+          case "tool-input-delta": {
+            yield* ensureToolCall({ id: value.id, name: ctx.toolNames[value.id] ?? "unknown" })
             return
+          }
 
-          case "tool-input-end":
+          case "tool-input-end": {
+            yield* ensureToolCall({ id: value.id, name: ctx.toolNames[value.id] ?? "unknown" })
             return
+          }
 
           case "tool-call": {
             if (ctx.assistantMessage.summary) {
@@ -497,13 +536,21 @@ export const layer: Layer.Layer<
             // A tool call may already have caused an external side effect before
             // the provider stream fails. Replaying the whole model step is unsafe.
             ctx.retrySafe = false
+            ctx.toolNames[value.toolCallId] = value.toolName
+            yield* ensureToolCall({ id: value.toolCallId, name: value.toolName })
+            // The AI SDK marks tool calls whose arguments fail schema validation
+            // as invalid and may emit the parsed non-object input (e.g. a bare
+            // number like `600`). Normalize to a plain object so the stored
+            // history re-serializes to valid JSON arguments for every provider
+            // and the tool is never executed with malformed input.
+            const input = isRecord(value.input) ? value.input : {}
             yield* updateToolCall(value.toolCallId, (match) => ({
               ...match,
               tool: value.toolName,
               state: {
                 ...match.state,
                 status: "running",
-                input: value.input,
+                input,
                 time: { start: Date.now() },
               },
               metadata: match.metadata?.providerExecuted
@@ -521,7 +568,7 @@ export const layer: Layer.Layer<
                   part.type === "tool" &&
                   part.tool === value.toolName &&
                   part.state.status !== "pending" &&
-                  JSON.stringify(part.state.input) === JSON.stringify(value.input),
+                  JSON.stringify(part.state.input) === JSON.stringify(input),
               )
             ) {
               return
@@ -532,7 +579,7 @@ export const layer: Layer.Layer<
               permission: "doom_loop",
               patterns: [value.toolName],
               sessionID: ctx.assistantMessage.sessionID,
-              metadata: { tool: value.toolName, input: value.input },
+              metadata: { tool: value.toolName, input },
               always: [value.toolName],
               ruleset: agent.permission,
               // System-spawned background agents have no human to answer — fail clean.
@@ -766,6 +813,7 @@ export const layer: Layer.Layer<
           })
         }
         ctx.toolcalls = {}
+        ctx.toolNames = {}
         // Second pass, DB-driven. The loop above can only see calls this process
         // still holds in `ctx.toolcalls`, so a call whose registration lost the race
         // with teardown, or that arrived after the map was cleared, or whose
