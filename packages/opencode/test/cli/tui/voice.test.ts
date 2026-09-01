@@ -428,6 +428,12 @@ describe("voice", () => {
     test("tool schema is derived from zod with field descriptions", async () => {
       const { VOICE_INPUT_TOOL_SCHEMA } = await import("../../../src/cli/cmd/tui/util/voice")
       expect(VOICE_INPUT_TOOL_SCHEMA).toMatchObject({ type: "object" })
+      // .meta({ type: "object" }) on the union — without this, models may
+      // stringify the whole envelope (see tool/actor.ts).
+      const operation = (VOICE_INPUT_TOOL_SCHEMA as { properties?: { operation?: { type?: string; anyOf?: unknown[] } } })
+        .properties?.operation
+      expect(operation?.type).toBe("object")
+      expect(Array.isArray(operation?.anyOf)).toBe(true)
       const json = JSON.stringify(VOICE_INPUT_TOOL_SCHEMA)
       expect(json).toContain("set_with_cursor")
       expect(json).not.toContain("$schema")
