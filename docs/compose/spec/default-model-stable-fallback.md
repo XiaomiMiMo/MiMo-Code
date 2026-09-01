@@ -3,7 +3,7 @@ feature: default-model-stable-fallback
 status: delivered
 updated: 2026-09-01
 branch: default-model-stable-fallback
-commits: fa69916897..50e4e6f83b
+commits: fa69916897..7ffae65525
 ---
 
 # Default Model Stable Fallback
@@ -77,5 +77,5 @@ Not changing in this feature:
 
 ## Tasks
 
-- [x] T1: Rewrite `defaultModel()` chain (validate cfg.model, keep recent, drop sort and retired mimo-auto) — acceptance: unit tests cover invalid cfg fallthrough, recent hit, no retired mimo-auto special case, first-provider stable pick, and no priority substring preference (covers: S2)
+- [x] T1: Rewrite `defaultModel()` chain (validate cfg.model, keep recent, drop sort and retired mimo-auto; last-resort requires usable chat model) — acceptance: unit tests cover invalid cfg fallthrough, recent hit, cfg-beats-recent, non-chat skip, no retired mimo-auto special case, first-provider stable pick, and no priority substring preference (covers: S2)
 - [x] T2: Adjust/extend provider tests — acceptance: `bun test packages/opencode/test/provider` passes; new cases assert the chain order and that `gpt-5`-like ids are not auto-preferred when earlier steps miss (covers: S2; depends: T1)
