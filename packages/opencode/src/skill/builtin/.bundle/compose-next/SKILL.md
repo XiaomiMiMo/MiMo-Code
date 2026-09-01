@@ -5,7 +5,7 @@ description: Use for multi-step feature work, bug fixes, or refactors where requ
 
 # Compose Next
 
-Compact end-to-end contract for grill → spec → workspace → implement → verify → review → finalize → finish. One skill load, no internal skill hand-offs.
+Compact end-to-end contract for grill → workspace → spec → implement → verify → review → finalize → finish. One skill load, no internal skill hand-offs.
 
 When writing a checkpoint or compacting context, preserve this recovery instruction in the checkpoint or compacted summary: on resumption, if the Compose Next instructions are absent, reload the `compose-next` skill before continuing.
 
@@ -19,7 +19,7 @@ Decide the shape of the work:
 
 - **Fully constrained mechanical change with no durable design surface** → skip Grill and Spec, go to Workspace then Implement.
 - **Requirements or design ambiguous** → Grill first.
-- **Requirements clear, feature deserves a durable document** → Spec first.
+- **Requirements clear, feature deserves a durable document** → Workspace then Spec.
 
 User gates and project overrides:
 
@@ -27,7 +27,7 @@ User gates and project overrides:
 - If the user explicitly says `without spec`, "no spec needed", "this is a small fix", or gives an equivalent instruction, skip the durable feature document and its spec gate. Keep verification and review when the task still warrants them.
 - An explicit project instruction, `AGENTS.md`, or user-provided agent/worktree configuration may define a project-specific worktree path, branch convention, spec path, or spec format. Use that configuration instead of the defaults in this skill. Record the override in the feature document or final report when it changes the normal artifact location.
 
-Every path passes through Workspace before Implement; no branch skips it.
+Every path passes through Workspace before Spec or Implement; no branch skips it.
 
 ## Grill — resolve decisions
 
@@ -55,7 +55,7 @@ Never-Ask applies to the current decision only. At every later decision point, c
 
 ## Spec — one document per feature
 
-Maintain one document per feature at `docs/compose/spec/<feature-name>.md` from the repository root. Do not add a date to the filename. A user-specified location overrides this path. Edit an existing document in place; never create a separate plan or report.
+Maintain one document per feature at `docs/compose/spec/<feature-name>.md` from the worktree root, not the session/main repository. Do not add a date to the filename. A user-specified location overrides this path. Edit an existing document in place; never create a separate plan or report. Do not write the feature document before Workspace owns a worktree.
 
 ### Template
 
@@ -104,7 +104,7 @@ Update only affected sections, bump `updated:`, preserve anchors, and keep only 
 
 ## Workspace — worktree ownership
 
-Never begin implementation on `main` or `master` without explicit user consent.
+Never begin implementation on `main` or `master` without explicit user consent. Spec and docs-only turns share this gate: do not write a feature document under the session/main repository path; create or reuse a worktree first.
 
 - Compare `git rev-parse --git-dir` with `git rev-parse --git-common-dir`. If they differ, use the current linked worktree; do not nest another. A non-empty `git rev-parse --show-superproject-working-tree` indicates a submodule, not a linked worktree.
 - Create a linked worktree at `.worktrees/<slug>` by default. Run `git check-ignore -q "$path"`; if it is not ignored, write `*` to `.worktrees/.gitignore`. Then run `git worktree add "$path" -b "$branch"`.
