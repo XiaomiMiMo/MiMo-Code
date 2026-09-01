@@ -326,6 +326,9 @@ const VoiceInputArgsSchema = z.object({
         })
         .strict(),
     ])
+    // Same as actor/task/cron `operation`: without this the emitted schema has
+    // only anyOf and some models stringify the whole envelope.
+    .meta({ type: "object" })
     .optional()
     .describe("Text edit, if any. Choose exactly one arm: insert, set, or set_with_cursor."),
   send: z.boolean().optional().describe("true to submit. Only when send_enabled is true."),
@@ -334,7 +337,6 @@ const VoiceInputArgsSchema = z.object({
 export type VoiceInputArgs = z.infer<typeof VoiceInputArgsSchema>
 
 // Single source of truth: zod is the runtime validator; JSON Schema is derived for the API.
-// Field descriptions live on the zod schema via .describe() and are emitted by toJSONSchema.
 // Drop $schema — some OpenAI-compatible gateways reject unknown top-level keys in tool parameters.
 function stripSchemaKeyword(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(stripSchemaKeyword)
@@ -348,17 +350,7 @@ function stripSchemaKeyword(value: unknown): unknown {
   return value
 }
 
-export const VOICE_INPUT_TOOL_SCHEMA = (() => {
-  const schema = stripSchemaKeyword(z.toJSONSchema(VoiceInputArgsSchema)) as Record<string, unknown>
-  // zod emits anyOf without a parent type on the optional union property.
-  // Desktop / Xiaomi tool schema keeps type:"object" beside anyOf — match that shape.
-  const props = schema.properties as Record<string, unknown> | undefined
-  const operation = props?.operation as Record<string, unknown> | undefined
-  if (operation && Array.isArray(operation.anyOf) && operation.type === undefined) {
-    operation.type = "object"
-  }
-  return schema
-})()
+export const VOICE_INPUT_TOOL_SCHEMA = stripSchemaKeyword(z.toJSONSchema(VoiceInputArgsSchema)) as Record<string, unknown>
 
 export type VoiceControlAction =
   | { action: "insert"; text: string }
