@@ -425,10 +425,16 @@ describe("voice", () => {
       expect(result.actions).toEqual([{ action: "insert", text: "hi" }])
     })
 
-    test("tool schema is derived from zod", async () => {
+    test("tool schema is derived from zod with field descriptions", async () => {
       const { VOICE_INPUT_TOOL_SCHEMA } = await import("../../../src/cli/cmd/tui/util/voice")
       expect(VOICE_INPUT_TOOL_SCHEMA).toMatchObject({ type: "object" })
-      expect(JSON.stringify(VOICE_INPUT_TOOL_SCHEMA)).toContain("set_with_cursor")
+      const json = JSON.stringify(VOICE_INPUT_TOOL_SCHEMA)
+      expect(json).toContain("set_with_cursor")
+      expect(json).not.toContain("$schema")
+      expect(json).toContain("Choose exactly one arm")
+      expect(json).toContain("Exact fragment to insert")
+      expect(json).toContain("Complete final prompt text")
+      expect(json).toContain("Only when send_enabled is true")
     })
 
     test("prompt mentions voice_input and does not teach agent switching", async () => {

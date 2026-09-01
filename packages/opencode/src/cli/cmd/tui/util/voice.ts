@@ -303,29 +303,52 @@ Call this tool once with an empty object only when the audio has no usable speec
 const VoiceInputArgsSchema = z.object({
   operation: z
     .discriminatedUnion("action", [
-      z.object({ action: z.literal("insert"), text: z.string() }).strict(),
-      z.object({ action: z.literal("set"), text: z.string() }).strict(),
+      z
+        .object({
+          action: z.literal("insert"),
+          text: z
+            .string()
+            .describe("Exact fragment to insert at the cursor or replace the selection with."),
+        })
+        .strict(),
+      z
+        .object({
+          action: z.literal("set"),
+          text: z.string().describe("Complete final prompt text; cursor ends at the end."),
+        })
+        .strict(),
       z
         .object({
           action: z.literal("set_with_cursor"),
-          before_cursor: z.string(),
-          selection: z.string(),
-          after_cursor: z.string(),
+          before_cursor: z.string().describe("Text before the final cursor/selection."),
+          selection: z.string().describe("Selected text; empty means a collapsed cursor."),
+          after_cursor: z.string().describe("Text after the final cursor/selection."),
         })
         .strict(),
     ])
-    .optional(),
-  send: z.boolean().optional(),
+    .optional()
+    .describe("Text edit, if any. Choose exactly one arm: insert, set, or set_with_cursor."),
+  send: z.boolean().optional().describe("true to submit. Only when send_enabled is true."),
 }).strict()
 
 export type VoiceInputArgs = z.infer<typeof VoiceInputArgsSchema>
 
 // Single source of truth: zod is the runtime validator; JSON Schema is derived for the API.
+// Field descriptions live on the zod schema via .describe() and are emitted by toJSONSchema.
 // Drop $schema — some OpenAI-compatible gateways reject unknown top-level keys in tool parameters.
-const derivedSchema = z.toJSONSchema(VoiceInputArgsSchema) as Record<string, unknown>
-export const VOICE_INPUT_TOOL_SCHEMA = Object.fromEntries(
-  Object.entries(derivedSchema).filter(([key]) => key !== "$schema"),
-)
+function stripSchemaKeyword(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(stripSchemaKeyword)
+  if (value && typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value as Record<string, unknown>)
+        .filter(([key]) => key !== "$schema")
+        .map(([key, child]) => [key, stripSchemaKeyword(child)]),
+    )
+  }
+  return value
+}
+
+export const VOICE_INPUT_TOOL_SCHEMA = stripSchemaKeyword(z.toJSONSchema(VoiceInputArgsSchema)) as Record<string, unknown>
 
 export type VoiceControlAction =
   | { action: "insert"; text: string }
