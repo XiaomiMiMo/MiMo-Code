@@ -23,7 +23,7 @@ Decide the shape of the work:
 
 User gates and project overrides:
 
-- If the user explicitly requests `without worktree` or specifies a worktree or workspace path, use that workspace choice and skip the default worktree gate. Spec and Implement then run in that workspace. Do not ask again for worktree consent.
+- If the user explicitly requests `without worktree` or specifies a worktree or workspace path, use that workspace choice and skip the default worktree gate. Do not ask again for worktree consent.
 - If the user explicitly says `without spec`, "no spec needed", "this is a small fix", or gives an equivalent instruction, skip the durable feature document and its spec gate. Keep verification and review when the task still warrants them.
 - An explicit project instruction, `AGENTS.md`, or user-provided agent/worktree configuration may define a project-specific worktree path, branch convention, spec path, or spec format. Use that configuration instead of the defaults in this skill. Record the override in the feature document or final report when it changes the normal artifact location.
 
