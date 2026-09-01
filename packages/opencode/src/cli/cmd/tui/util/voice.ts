@@ -320,7 +320,12 @@ const VoiceInputArgsSchema = z.object({
 
 export type VoiceInputArgs = z.infer<typeof VoiceInputArgsSchema>
 
-export const VOICE_INPUT_TOOL_SCHEMA = z.toJSONSchema(VoiceInputArgsSchema) as Record<string, unknown>
+// Single source of truth: zod is the runtime validator; JSON Schema is derived for the API.
+// Drop $schema — some OpenAI-compatible gateways reject unknown top-level keys in tool parameters.
+const derivedSchema = z.toJSONSchema(VoiceInputArgsSchema) as Record<string, unknown>
+export const VOICE_INPUT_TOOL_SCHEMA = Object.fromEntries(
+  Object.entries(derivedSchema).filter(([key]) => key !== "$schema"),
+)
 
 export type VoiceControlAction =
   | { action: "insert"; text: string }
