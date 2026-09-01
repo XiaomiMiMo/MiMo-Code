@@ -829,7 +829,7 @@ export function Prompt(props: PromptProps) {
           toast.show({
             message: next ? t("tui.voice.control.enabled") : t("tui.voice.control.disabled"),
             variant: "info",
-            duration: 3000,
+            duration: 4500,
           })
         },
       },
