@@ -106,7 +106,6 @@ let stashed: { prompt: PromptInfo; cursor: number } | undefined
 let activeVoice: {
   handle: Voice.StreamingHandle
   pending: number
-  appendText: (text: string) => void
   applyFromBase: (base: { value: string; range: VoiceEdit.EditorRange | null }, target: VoiceEdit.VoiceTextTarget) => void
   getSnapshot: () => { value: string; range: VoiceEdit.EditorRange | null }
   submit: () => Promise<unknown>
@@ -198,23 +197,36 @@ export function Prompt(props: PromptProps) {
 
   /**
    * Apply a voice target against a frozen base snapshot (value + range from
-   * request time), then overwrite the buffer. Never splices at a live caret —
-   * even insert is computed from the snapshot and written as a full rewrite.
+   * request time). Insert on an unchanged buffer uses a surgical splice so
+   * paste/file extmarks survive; set/set_with_cursor (or a changed buffer)
+   * do a full rewrite.
    */
   function voiceApplyFromBase(
     base: { value: string; range: VoiceEdit.EditorRange | null },
     target: VoiceEdit.VoiceTextTarget,
   ) {
     if (!input || input.isDestroyed) return
+    if (target.kind === "insert" && input.plainText === base.value) {
+      const range = base.range ?? { start: base.value.length, end: base.value.length }
+      const w = VoiceEdit.widthSelectionFor(base.value, range)
+      if (range.start === range.end) {
+        input.clearSelection()
+        input.cursorOffset = w.start
+      } else {
+        input.setSelection(w.start, w.end)
+      }
+      input.insertText(target.text)
+      setStore("prompt", "input", input.plainText)
+      setTimeout(() => {
+        if (!input || input.isDestroyed) return
+        input.getLayoutNode().markDirty()
+        renderer.requestRender()
+      }, 0)
+      return
+    }
     const range = base.range ?? { start: base.value.length, end: base.value.length }
     const result = VoiceEdit.applyVoiceTarget(base.value, range, target)
     voiceRewriteBuffer(result.text, result.caret, result.selection)
-  }
-
-  function voiceAppendAsr(text: string) {
-    const snap = voiceGetSnapshot()
-    const range = snap.range ?? { start: snap.value.length, end: snap.value.length }
-    voiceApplyFromBase(snap, VoiceEdit.asrInsertTarget(snap.value, range, text))
   }
 
   function voiceGetSnapshot(): { value: string; range: VoiceEdit.EditorRange | null } {
@@ -233,7 +245,6 @@ export function Prompt(props: PromptProps) {
 
   // Wire module-level callbacks to current component instance
   if (activeVoice) {
-    activeVoice.appendText = voiceAppendAsr
     activeVoice.applyFromBase = voiceApplyFromBase
     activeVoice.getSnapshot = voiceGetSnapshot
     activeVoice.submit = () => submit()
@@ -282,7 +293,6 @@ export function Prompt(props: PromptProps) {
     const av: NonNullable<typeof activeVoice> = {
       handle: undefined!,
       pending: 0,
-      appendText: voiceAppendAsr,
       applyFromBase: voiceApplyFromBase,
       getSnapshot: voiceGetSnapshot,
       submit: () => submit(),
@@ -352,12 +362,16 @@ export function Prompt(props: PromptProps) {
           }).then((text) => {
             if (text) {
               // ASR has no send command — always dictate, including「发送」/"send it".
-              // Apply from the request-time snapshot when the buffer is unchanged;
-              // if the user typed mid-transcription, dictate at the end of current text.
+              // Unchanged buffer → apply from request snapshot (caret/selection).
+              // Buffer changed mid-transcription → dictate at the end, never a live caret.
               const now = av.getSnapshot()
-              const base = now.value === asrSnap.value ? asrSnap : now
-              const range = base.range ?? { start: base.value.length, end: base.value.length }
-              av.applyFromBase(base, VoiceEdit.asrInsertTarget(base.value, range, text))
+              if (now.value === asrSnap.value) {
+                const range = asrSnap.range ?? { start: asrSnap.value.length, end: asrSnap.value.length }
+                av.applyFromBase(asrSnap, VoiceEdit.asrInsertTarget(asrSnap.value, range, text))
+              } else {
+                const endRange = { start: now.value.length, end: now.value.length }
+                av.applyFromBase({ value: now.value, range: endRange }, VoiceEdit.asrInsertTarget(now.value, endRange, text))
+              }
             } else {
               av.showError(t("tui.voice.error.network"))
             }

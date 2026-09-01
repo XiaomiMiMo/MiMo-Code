@@ -496,6 +496,31 @@ describe("voice", () => {
       expect(ta.cursorOffset).toBe(4)
     })
 
+    test("width helpers handle emoji, newline, and tab", async () => {
+      const { widthCaretFor, getEditorRange, toTextPlacement } = await import(
+        "../../../src/cli/cmd/tui/util/voice-edit"
+      )
+      // emoji: UTF-16 length 2, display width 2
+      const emoji = "a😀b"
+      expect(widthCaretFor(emoji, 3)).toBe(3)
+      // \\n width 1, \\t width 2 (editor special-case in offset.ts)
+      const multiline = "a\nb\tc"
+      expect(widthCaretFor(multiline, 3)).toBe(3) // "a\\nb"
+      expect(widthCaretFor(multiline, 4)).toBe(5) // + tab
+      const editor = {
+        plainText: multiline,
+        cursorOffset: 3,
+        hasSelection: () => false,
+        getSelection: () => null,
+      }
+      expect(getEditorRange(editor)).toEqual({ start: 3, end: 3 })
+      expect(toTextPlacement(multiline, { start: 1, end: 2 })).toEqual({
+        before_cursor: "a",
+        selection: "\n",
+        after_cursor: "b\tc",
+      })
+    })
+
     test("getEditorRange falls back to cursor when no selection", async () => {
       const { getEditorRange } = await import("../../../src/cli/cmd/tui/util/voice-edit")
       const editor = {

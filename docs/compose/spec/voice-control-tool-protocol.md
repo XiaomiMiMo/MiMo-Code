@@ -10,14 +10,14 @@ commits: d17e176b..HEAD
 
 ## Report
 
-**What was built** — TUI voice control now speaks the desktop `voice_input` tool-call protocol: unique function tool, three-part `{before_cursor, selection, after_cursor}` snapshot (unfocused falls back to full string), insert/set/set_with_cursor + send, protocol retry ≤2, no agent/model arms. System prompt lives in `util/voice-input.txt` (English instructions, Chinese utterance examples). ASR inserts at caret/selection with end-of-buffer space rule; control VAD uses `minSilenceS=1.2`. Surgical `insertText` keeps mention extmarks; full rewrite clears them. Models stay `xiaomi/mimo-v2.5` / `xiaomi/mimo-v2.5-asr`.
+**What was built** — TUI voice control now speaks the desktop `voice_input` tool-call protocol: unique function tool, three-part `{before_cursor, selection, after_cursor}` snapshot (unfocused falls back to full string), insert/set/set_with_cursor + send, protocol retry ≤2, no agent/model arms. System prompt lives in `util/voice-input.txt` (English instructions, Chinese utterance examples). ASR inserts at caret/selection with end-of-buffer space rule; control VAD uses `minSilenceS=1.2`. Insert on an unchanged buffer uses a surgical splice (keeps paste/file extmarks); set/set_with_cursor full rewrite clears parts. Models stay `xiaomi/mimo-v2.5` / `xiaomi/mimo-v2.5-asr`.
 
 **Verification** — `bun typecheck` (packages/opencode) PASS; `bun test test/cli/tui/voice.test.ts` 38 pass, 0 fail. `bun run build:local` + smoke PASS. Independent review: protocol/doc cleanup good; selection restore (caret before setSelection) and snapshot-based apply (insert also full rewrite) fixed after review.
 
 **Journey log**
 1. Desktop control is tool-call + three-part snapshot; old TUI JSON `edit/send/agent` is the drift to remove.
 2. `@opentui` caret/selection are display-width; convert via `offset.ts` before slicing UTF-16.
-3. `input.clear()` does not clear extmarks — insert must stay surgical; full rewrite must clear parts.
+3. `input.clear()` does not clear extmarks — insert on unchanged buffer stays surgical; full rewrite must clear parts.
 4. Unfocused textarea can report caret 0; voice snapshot must fall back to append-at-end.
 5. Prompt as `.txt` import matches the rest of the package (system/tool descriptions).
 
