@@ -464,6 +464,38 @@ describe("voice", () => {
       })
     })
 
+    test("placeNaturalSelection keeps highlight and caret at end (live opentui)", async () => {
+      const { createTestRenderer } = await import("@opentui/core/testing")
+      const { TextareaRenderable } = await import("@opentui/core")
+      const { placeNaturalSelection } = await import("../../../src/cli/cmd/tui/util/voice-edit")
+      const { renderer, renderOnce } = await createTestRenderer({ width: 80, height: 24 })
+      const ta = new TextareaRenderable(renderer as never, {
+        backgroundColor: "#000000",
+        textColor: "#ffffff",
+        focusedBackgroundColor: "#000000",
+        focusedTextColor: "#ffffff",
+        width: 40,
+        height: 3,
+      } as never)
+      ;(renderer as { root?: { add?: (r: unknown) => void } }).root?.add?.(ta)
+      await renderOnce()
+      ta.insertText("中文ab")
+      await renderOnce()
+      // "中文ab": 中=2 文=2 a=1 b=1. Select "文a" → string [1,3) → width [2,5)
+      placeNaturalSelection(ta, ta.plainText, { start: 1, end: 3 })
+      await renderOnce()
+      expect(ta.hasSelection()).toBe(true)
+      expect(ta.getSelection()).toEqual({ start: 2, end: 5 })
+      expect(ta.getSelectedText()).toBe("文a")
+      expect(ta.cursorOffset).toBe(5)
+
+      placeNaturalSelection(ta, ta.plainText, { start: 2, end: 2 })
+      await renderOnce()
+      expect(ta.hasSelection()).toBe(false)
+      // string index 2 is before "a" → display-width 4 ("中文")
+      expect(ta.cursorOffset).toBe(4)
+    })
+
     test("getEditorRange falls back to cursor when no selection", async () => {
       const { getEditorRange } = await import("../../../src/cli/cmd/tui/util/voice-edit")
       const editor = {

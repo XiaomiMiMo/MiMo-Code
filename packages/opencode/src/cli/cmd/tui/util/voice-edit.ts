@@ -98,3 +98,25 @@ export function widthSelectionFor(text: string, range: EditorRange): { start: nu
     end: stringIndexToWidth(text, range.end),
   }
 }
+
+type PlacementEditor = {
+  cursorOffset: number
+  setSelection: (start: number, end: number) => void
+  clearSelection: () => boolean
+}
+
+/**
+ * Natural selection: highlight [start,end) and park caret at end.
+ * Order matters in opentui — assigning cursorOffset clears an existing selection,
+ * so the caret must be set before setSelection.
+ */
+export function placeNaturalSelection(editor: PlacementEditor, value: string, range: EditorRange): void {
+  const w = widthSelectionFor(value, range)
+  if (range.start === range.end) {
+    editor.clearSelection()
+    editor.cursorOffset = w.start
+    return
+  }
+  editor.cursorOffset = w.end
+  editor.setSelection(w.start, w.end)
+}

@@ -107,7 +107,7 @@ let activeVoice: {
   handle: Voice.StreamingHandle
   pending: number
   appendText: (text: string) => void
-  applyTarget: (target: VoiceEdit.VoiceTextTarget) => void
+  applyFromBase: (base: { value: string; range: VoiceEdit.EditorRange | null }, target: VoiceEdit.VoiceTextTarget) => void
   getSnapshot: () => { value: string; range: VoiceEdit.EditorRange | null }
   submit: () => Promise<unknown>
   setState: (type: "listening" | "speaking" | "processing" | "finishing" | "idle") => void
@@ -169,15 +169,7 @@ export function Prompt(props: PromptProps) {
   /** Natural selection: highlight [start,end) and park the caret at end. */
   function voicePlaceRange(value: string, range: VoiceEdit.EditorRange) {
     if (!input || input.isDestroyed) return
-    const w = VoiceEdit.widthSelectionFor(value, range)
-    if (range.start === range.end) {
-      input.clearSelection()
-      input.cursorOffset = w.start
-      return
-    }
-    // cursorOffset setter clears an existing selection — set caret first.
-    input.cursorOffset = w.end
-    input.setSelection(w.start, w.end)
+    VoiceEdit.placeNaturalSelection(input, value, range)
   }
 
   function voiceRewriteBuffer(text: string, caretIndex: number, selection?: VoiceEdit.EditorRange) {
@@ -204,44 +196,25 @@ export function Prompt(props: PromptProps) {
     }, 0)
   }
 
-  function voiceApplyTarget(target: VoiceEdit.VoiceTextTarget) {
+  /**
+   * Apply a voice target against a frozen base snapshot (value + range from
+   * request time), then overwrite the buffer. Never splices at a live caret —
+   * even insert is computed from the snapshot and written as a full rewrite.
+   */
+  function voiceApplyFromBase(
+    base: { value: string; range: VoiceEdit.EditorRange | null },
+    target: VoiceEdit.VoiceTextTarget,
+  ) {
     if (!input || input.isDestroyed) return
-    if (target.kind === "insert") {
-      // Position the live range before insertText so unfocused/stale caret cannot
-      // land the fragment at the wrong place. insertText replaces an active selection.
-      const value = input.plainText
-      const range = input.focused
-        ? VoiceEdit.getEditorRange(input)
-        : { start: value.length, end: value.length }
-      if (range.start === range.end) {
-        input.clearSelection()
-        input.cursorOffset = VoiceEdit.widthSelectionFor(value, range).start
-      } else {
-        const w = VoiceEdit.widthSelectionFor(value, range)
-        input.setSelection(w.start, w.end)
-      }
-      input.insertText(target.text)
-      setStore("prompt", "input", input.plainText)
-      setTimeout(() => {
-        if (!input || input.isDestroyed) return
-        input.getLayoutNode().markDirty()
-        renderer.requestRender()
-      }, 0)
-      return
-    }
-    const value = input.plainText
-    const range = VoiceEdit.getEditorRange(input)
-    const result = VoiceEdit.applyVoiceTarget(value, range, target)
+    const range = base.range ?? { start: base.value.length, end: base.value.length }
+    const result = VoiceEdit.applyVoiceTarget(base.value, range, target)
     voiceRewriteBuffer(result.text, result.caret, result.selection)
   }
 
   function voiceAppendAsr(text: string) {
-    const value = input && !input.isDestroyed ? input.plainText : store.prompt.input
-    // Unfocused / no reliable caret → append at end (desktop D12 fallback).
-    const range = input && !input.isDestroyed && input.focused
-      ? VoiceEdit.getEditorRange(input)
-      : { start: value.length, end: value.length }
-    voiceApplyTarget(VoiceEdit.asrInsertTarget(value, range, text))
+    const snap = voiceGetSnapshot()
+    const range = snap.range ?? { start: snap.value.length, end: snap.value.length }
+    voiceApplyFromBase(snap, VoiceEdit.asrInsertTarget(snap.value, range, text))
   }
 
   function voiceGetSnapshot(): { value: string; range: VoiceEdit.EditorRange | null } {
@@ -261,7 +234,7 @@ export function Prompt(props: PromptProps) {
   // Wire module-level callbacks to current component instance
   if (activeVoice) {
     activeVoice.appendText = voiceAppendAsr
-    activeVoice.applyTarget = voiceApplyTarget
+    activeVoice.applyFromBase = voiceApplyFromBase
     activeVoice.getSnapshot = voiceGetSnapshot
     activeVoice.submit = () => submit()
     activeVoice.setState = voiceSetState
@@ -310,7 +283,7 @@ export function Prompt(props: PromptProps) {
       handle: undefined!,
       pending: 0,
       appendText: voiceAppendAsr,
-      applyTarget: voiceApplyTarget,
+      applyFromBase: voiceApplyFromBase,
       getSnapshot: voiceGetSnapshot,
       submit: () => submit(),
       setState: voiceSetState,
@@ -345,12 +318,13 @@ export function Prompt(props: PromptProps) {
 
               if (ctrl) {
                 // Drop stale mutations: user edited the prompt while the model was thinking.
+                // Apply against the request-time snapshot — never a live caret.
                 const now = av.getSnapshot()
                 if (now.value === snap.value) {
                   for (const action of ctrl.actions) {
-                    if (action.action === "insert") av.applyTarget({ kind: "insert", text: action.text })
-                    else if (action.action === "set") av.applyTarget({ kind: "set", text: action.text })
-                    else if (action.action === "set_with_cursor") av.applyTarget({ kind: "set_with_cursor", placement: action.placement })
+                    if (action.action === "insert") av.applyFromBase(snap, { kind: "insert", text: action.text })
+                    else if (action.action === "set") av.applyFromBase(snap, { kind: "set", text: action.text })
+                    else if (action.action === "set_with_cursor") av.applyFromBase(snap, { kind: "set_with_cursor", placement: action.placement })
                     else if (action.action === "send") {
                       const after = av.getSnapshot().value
                       if (voiceSendEnabled() && after.trim()) await av.submit()
@@ -369,6 +343,7 @@ export function Prompt(props: PromptProps) {
             }
           }).catch(() => {})
         } else {
+          const asrSnap = av.getSnapshot()
           Voice.transcribeAudio({
             audio: segment.audio,
             apiKey: creds.apiKey,
@@ -377,7 +352,12 @@ export function Prompt(props: PromptProps) {
           }).then((text) => {
             if (text) {
               // ASR has no send command — always dictate, including「发送」/"send it".
-              av.appendText(text)
+              // Apply from the request-time snapshot when the buffer is unchanged;
+              // if the user typed mid-transcription, dictate at the end of current text.
+              const now = av.getSnapshot()
+              const base = now.value === asrSnap.value ? asrSnap : now
+              const range = base.range ?? { start: base.value.length, end: base.value.length }
+              av.applyFromBase(base, VoiceEdit.asrInsertTarget(base.value, range, text))
             } else {
               av.showError(t("tui.voice.error.network"))
             }

@@ -12,7 +12,7 @@ commits: d17e176b..HEAD
 
 **What was built** — TUI voice control now speaks the desktop `voice_input` tool-call protocol: unique function tool, three-part `{before_cursor, selection, after_cursor}` snapshot (unfocused falls back to full string), insert/set/set_with_cursor + send, protocol retry ≤2, no agent/model arms. System prompt lives in `util/voice-input.txt` (English instructions, Chinese utterance examples). ASR inserts at caret/selection with end-of-buffer space rule; control VAD uses `minSilenceS=1.2`. Surgical `insertText` keeps mention extmarks; full rewrite clears them. Models stay `xiaomi/mimo-v2.5` / `xiaomi/mimo-v2.5-asr`.
 
-**Verification** — `bun typecheck` (packages/opencode) PASS; `bun test test/cli/tui/voice.test.ts` 37 pass, 0 fail. Independent review: protocol/spec/doc cleanup good; M1 extmark rewrite, M2 focus fallback, M3 CJK width tests fixed in a follow-up pass.
+**Verification** — `bun typecheck` (packages/opencode) PASS; `bun test test/cli/tui/voice.test.ts` 38 pass, 0 fail. `bun run build:local` + smoke PASS. Independent review: protocol/doc cleanup good; selection restore (caret before setSelection) and snapshot-based apply (insert also full rewrite) fixed after review.
 
 **Journey log**
 1. Desktop control is tool-call + three-part snapshot; old TUI JSON `edit/send/agent` is the drift to remove.
@@ -89,15 +89,12 @@ Control mode starts streaming with `minSilenceS: 1.2`. ASR keeps VAD default `0.
 
 ### Action application (prompt/index.tsx)
 
-Replace `voiceAppendText` / `voiceSetText` / `switchAgent` surface with:
+- `voiceApplyFromBase(base, target)` — pure apply against a frozen `{value, range}` snapshot, then full buffer rewrite. Insert is included: never splices at a live caret.
+- `placeNaturalSelection` — caret first (`cursorOffset = end`), then `setSelection(start, end)` (opentui clears selection when `cursorOffset` is assigned).
+- `submit()` — gated by `voice_send_command`.
+- No agent switch.
 
-- `applyInsert(text)` — exact splice at current caret/selection.
-- `applySet(text)` — full replace, caret end.
-- `applySetWithCursor(before, selection, after)` — full replace, restore selection.
-- `submit()` — unchanged, gated by `voice_send_command`.
-- Drop `voiceSwitchAgent` from the voice callback surface.
-
-After edit: markDirty + requestRender (existing pattern). Snapshot staleness: if `plainText` differs from the snapshot used for the request, drop the text mutation and send.
+Staleness: if `plainText` differs from the request snapshot, drop the text mutation and send. ASR also snapshots before transcription; if the user typed mid-flight, dictate at the end of the current buffer.
 
 ### Config / flags
 
