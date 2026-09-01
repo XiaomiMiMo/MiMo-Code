@@ -89,12 +89,12 @@ Control mode starts streaming with `minSilenceS: 1.2`. ASR keeps VAD default `0.
 
 ### Action application (prompt/index.tsx)
 
-- `voiceApplyFromBase(base, target)` — pure apply against a frozen `{value, range}` snapshot, then full buffer rewrite. Insert is included: never splices at a live caret.
+- `voiceApplyFromBase(base, target)` — compute the next buffer from a frozen `{value, range}` snapshot (never a live caret). **Insert on an unchanged buffer** uses a surgical `insertText` splice so paste/file extmarks survive. **set / set_with_cursor** (or any full rewrite) clear extmarks and parts.
 - `placeNaturalSelection` — caret first (`cursorOffset = end`), then `setSelection(start, end)` (opentui clears selection when `cursorOffset` is assigned).
 - `submit()` — gated by `voice_send_command`.
 - No agent switch.
 
-Staleness: if `plainText` differs from the request snapshot, drop the text mutation and send. ASR also snapshots before transcription; if the user typed mid-flight, dictate at the end of the current buffer.
+Staleness: if `plainText` differs from the request snapshot, drop the text mutation and send, and toast `tui.voice.error.stale`. ASR also snapshots before transcription; if the user typed mid-flight, dictate at the end of the current buffer.
 
 ### Config / flags
 
