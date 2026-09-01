@@ -146,7 +146,6 @@ describe("session.prompt mid-turn multi-steer drain", () => {
                   parts: [{ type: "text", text: "STEER_A alpha" }],
                 })
                 .pipe(Effect.forkChild)
-              yield* Effect.sleep("80 millis")
               yield* prompt
                 .prompt({
                   sessionID: session.id,
@@ -154,8 +153,15 @@ describe("session.prompt mid-turn multi-steer drain", () => {
                 })
                 .pipe(Effect.forkChild)
 
-              // Give createUserMessage a beat, then release call 1.
-              yield* Effect.sleep("200 millis")
+              // Wait until both steers are durable before releasing call 1.
+              for (let i = 0; i < 100; i++) {
+                const msgs = yield* sessions.messages({ sessionID: session.id })
+                const texts = msgs.flatMap((m) =>
+                  m.parts.flatMap((p) => (p.type === "text" && !p.synthetic ? [p.text] : [])),
+                )
+                if (texts.some((t) => t.includes("STEER_A")) && texts.some((t) => t.includes("STEER_B"))) break
+                yield* Effect.sleep("50 millis")
+              }
               steersReady()
 
               yield* Fiber.join(slow).pipe(Effect.timeout("20 seconds"), Effect.catch(() => Effect.void))

@@ -141,7 +141,12 @@ import {
 import { isMcpToolSearchEnabled, usesGPTToolset } from "@/tool/gpt"
 import { GPT_TOP_LEVEL_TOOLS } from "@/tool/tool-script-ref"
 import { SessionPrefixSnapshot } from "./prefix-snapshot"
-import { buildSteerHint, pendingUserMessages, shouldInjectSteerHint } from "./steer-hint"
+import {
+  buildSteerHint,
+  lastRealUserMessage,
+  pendingUserMessages,
+  shouldInjectSteerHint,
+} from "./steer-hint"
 
 // @ts-ignore
 globalThis.AI_SDK_LOG_WARNINGS = false
@@ -3704,14 +3709,15 @@ NOTE: At any point in time through this workflow you should feel free to ask the
             }
           }
 
-          // Follow-up intent: real user prose after same-session assistant work.
-          // In-memory only — msgs reload each iteration. Multi-message case only
-          // names the unanswered set; bodies stay in the transcript (no re-embed).
-          const lastUserMsgForSteer = msgs.findLast((m) => m.info.id === lastUser.id)
-          if (lastUserMsgForSteer && shouldInjectSteerHint(msgs, lastUserMsgForSteer)) {
-            lastUserMsgForSteer.parts.push({
+          // Follow-up intent: only unanswered mid-turn steers (real user prose
+          // written while the prior assistant was still open). Anchor to the
+          // last real user — a newer synthetic inbox.drain user must not hide it.
+          // In-memory only — msgs reload each iteration.
+          const lastRealUserForSteer = lastRealUserMessage(msgs)
+          if (lastRealUserForSteer && shouldInjectSteerHint(msgs, lastRealUserForSteer)) {
+            lastRealUserForSteer.parts.push({
               id: PartID.ascending(),
-              messageID: lastUserMsgForSteer.info.id,
+              messageID: lastRealUserForSteer.info.id,
               sessionID,
               type: "text" as const,
               synthetic: true,

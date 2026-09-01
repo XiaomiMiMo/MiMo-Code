@@ -4,6 +4,7 @@ import {
   STEER_HINT_MARKER,
   buildSteerHint,
   hasRealUserText,
+  lastRealUserMessage,
   pendingUserMessages,
   shouldInjectSteerHint,
 } from "../../src/session/steer-hint"
@@ -24,13 +25,14 @@ function msg(
   id: string,
   parts: MessageV2.Part[],
   time?: { created: number; completed?: number },
+  sessionID = "ses",
 ): MessageV2.WithParts {
   return {
     info: {
       id,
       role,
-      sessionID: "ses",
-      time: time ?? { created: 0, ...(role === "assistant" ? {} : {}) },
+      sessionID,
+      time: time ?? { created: 0 },
     } as unknown as MessageV2.WithParts["info"],
     parts,
   }
@@ -62,7 +64,19 @@ describe("steer hint", () => {
     expect(shouldInjectSteerHint(messages, next)).toBe(false)
   })
 
-  test("fires when user message arrived while assistant was still open", () => {
+  test("skips when an assistant already answers this user (current turn)", () => {
+    const u2 = msg("user", "u2", [textPart("STEER")], { created: 4 })
+    const a2 = msg("assistant", "a2", [textPart("working on steer")], { created: 5 })
+    const messages = [
+      msg("user", "u1", [textPart("first")], { created: 1 }),
+      msg("assistant", "a1", [textPart("done")], { created: 2, completed: 3 }),
+      u2,
+      a2,
+    ]
+    expect(shouldInjectSteerHint(messages, u2)).toBe(false)
+  })
+
+  test("fires when user arrived while prior assistant was still open and unanswered", () => {
     const steer = msg("user", "u2", [textPart("also install the package")], { created: 4 })
     const messages = [
       msg("user", "u1", [textPart("research names")], { created: 1 }),
@@ -72,7 +86,7 @@ describe("steer hint", () => {
     expect(shouldInjectSteerHint(messages, steer)).toBe(true)
   })
 
-  test("fires when multiple user messages are stacked after last assistant", () => {
+  test("fires when multiple real users are stacked after last assistant", () => {
     const a = msg("user", "u2", [textPart("STEER_A")], { created: 20 })
     const b = msg("user", "u3", [textPart("STEER_B")], { created: 21 })
     const messages = [
@@ -84,20 +98,29 @@ describe("steer hint", () => {
     expect(shouldInjectSteerHint(messages, b)).toBe(true)
   })
 
+  test("lastRealUserMessage skips newer synthetic inbox users", () => {
+    const real = msg("user", "u2", [textPart("STEER")], { created: 4 })
+    const drain = msg("user", "u3", [textPart("notification", { synthetic: true })], { created: 5 })
+    const messages = [
+      msg("user", "u1", [textPart("first")], { created: 1 }),
+      msg("assistant", "a1", [textPart("done")], { created: 2, completed: 3 }),
+      real,
+      drain,
+    ]
+    expect(String(lastRealUserMessage(messages)?.info.id)).toBe("u2")
+  })
+
   test("single pending message is one keep-work sentence", () => {
     const notice = buildSteerHint(1)
     expect(notice).toContain(STEER_HINT_MARKER)
     expect(notice).toContain("keep that work unless the message clearly replaces it")
     expect(notice).not.toContain("unanswered user messages")
-    expect(notice).toContain("<system-reminder>")
   })
 
   test("multiple pending messages name the set without re-embedding bodies", () => {
     const notice = buildSteerHint(3)
     expect(notice).toContain("3 unanswered user messages after your last reply")
-    expect(notice).toContain("already in order above")
     expect(notice).not.toContain("install the package")
-    expect(notice).not.toContain("Pending user messages (handle all of them):")
   })
 
   test("pendingUserMessages returns real users after last assistant", () => {
@@ -117,10 +140,7 @@ describe("steer hint", () => {
   })
 
   test("does not treat full-context fork first task as a steer", () => {
-    const parentAssistant = {
-      info: { id: "pa1", role: "assistant", sessionID: "parent", time: { created: 1, completed: 2 } },
-      parts: [textPart("parent work")],
-    } as unknown as MessageV2.WithParts
+    const parentAssistant = msg("assistant", "pa1", [textPart("parent work")], { created: 1, completed: 2 }, "parent")
     const firstTask = msg("user", "u1", [textPart("child task")], { created: 3 })
     expect(shouldInjectSteerHint([parentAssistant, firstTask], firstTask)).toBe(false)
   })

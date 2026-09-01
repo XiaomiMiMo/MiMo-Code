@@ -8,6 +8,11 @@ export function hasRealUserText(message: MessageV2.WithParts): boolean {
   )
 }
 
+/** Last user message that still has real (non-synthetic) prose. */
+export function lastRealUserMessage(messages: MessageV2.WithParts[]): MessageV2.WithParts | undefined {
+  return messages.findLast((m) => m.info.role === "user" && hasRealUserText(m))
+}
+
 /**
  * Real user messages after the newest same-session assistant — unanswered
  * follow-ups. Already present in the conversation; the hint only names the set.
@@ -19,31 +24,44 @@ export function pendingUserMessages(messages: MessageV2.WithParts[]): MessageV2.
   return messages.slice(lastAssistantIdx + 1).filter((m) => m.info.role === "user" && hasRealUserText(m))
 }
 
+function sameSessionAssistantsAfter(
+  messages: MessageV2.WithParts[],
+  fromIdx: number,
+  sessionID: string,
+): boolean {
+  return messages
+    .slice(fromIdx + 1)
+    .some((m) => m.info.role === "assistant" && m.info.sessionID === sessionID)
+}
+
 /**
- * True when the current last user message is a mid-turn steer:
- * - several real user messages are stacked after the last same-session assistant, or
- * - this user message was created while that assistant was still open
- *   (created before assistant.time.completed).
+ * Steer = a real user message written while the previous same-session assistant
+ * was still open, and still unanswered (no later same-session assistant).
  *
- * Ordinary sequential turns after a finished reply do NOT fire — they are a
- * normal new task and must not rewrite the frozen model-request prefix.
- * First turn never fires. Synthetic-only last users never fire. Parent
- * assistants inherited via contextFrom (different sessionID) do not count.
+ * - Ordinary sequential turns after a finished reply do NOT fire.
+ * - Once an assistant exists after this user, it is the current turn (like the
+ *   first user of that turn) — not a pending steer.
+ * - Several stacked real users after the last assistant all count as pending.
+ * - Synthetic-only users (inbox.drain, goal re-entry, …) never count.
+ * - Parent assistants from contextFrom (different sessionID) do not count.
  */
 export function shouldInjectSteerHint(messages: MessageV2.WithParts[], lastUser: MessageV2.WithParts): boolean {
   if (lastUser.info.role !== "user") return false
   if (!hasRealUserText(lastUser)) return false
   const lastUserIdx = messages.findLastIndex((m) => m.info.id === lastUser.info.id)
   if (lastUserIdx < 0) return false
+  if (sameSessionAssistantsAfter(messages, lastUserIdx, lastUser.info.sessionID)) return false
 
   const pending = pendingUserMessages(messages)
   if (pending.length > 1) return true
 
-  const priorAssistants = messages.slice(0, lastUserIdx).filter(
-    (m): m is MessageV2.WithParts & { info: MessageV2.Assistant } =>
-      m.info.role === "assistant" && m.info.sessionID === lastUser.info.sessionID,
-  )
-  const lastAsst = priorAssistants.at(-1)
+  const lastAsst = messages
+    .slice(0, lastUserIdx)
+    .filter(
+      (m): m is MessageV2.WithParts & { info: MessageV2.Assistant } =>
+        m.info.role === "assistant" && m.info.sessionID === lastUser.info.sessionID,
+    )
+    .at(-1)
   if (!lastAsst) return false
 
   const userCreated = lastUser.info.time?.created
@@ -51,15 +69,13 @@ export function shouldInjectSteerHint(messages: MessageV2.WithParts[], lastUser:
   const asstCompleted = lastAsst.info.time.completed
   if (userCreated == null) return false
   if (userCreated < asstCreated) return false
-  // Sequential new turn after a finished reply.
   if (asstCompleted != null && userCreated > asstCompleted) return false
   return true
 }
 
 /**
- * Attached to lastUser. Does not re-embed message bodies (they are already in
- * the transcript after the last assistant reply) — only names how many
- * unanswered user messages that set has.
+ * Attached to the last real user message. Does not re-embed message bodies —
+ * only names how many unanswered user messages that set has.
  */
 export function buildSteerHint(pendingCount: number): string {
   const body =
