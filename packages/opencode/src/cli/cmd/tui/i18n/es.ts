@@ -565,6 +565,8 @@ export const dict = {
   "tui.voice.error.no_recorder": "No se encontró herramienta de grabación, instala sox",
   "tui.voice.error.too_short": "Grabación demasiado corta",
   "tui.voice.error.network": "La transcripción falló, verifica tu red",
+  "tui.voice.error.protocol": "La respuesta de control de voz no es una llamada voice_input válida",
+  "tui.voice.error.stale": "El texto cambió mientras se escuchaba — edición de voz omitida",
   "tui.voice.error.empty_send": "No hay contenido para enviar",
   "tui.command.prompt.stash.title": "Guardar prompt",
   "tui.command.prompt.stash.pop.title": "Recuperar prompt",

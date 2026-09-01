@@ -382,6 +382,55 @@ describe("voice", () => {
       })
     })
 
+    test("builds retry body with tool role after tool_calls", async () => {
+      const { buildVoiceControlBody, buildVoiceControlRetryBody } = await import("../../../src/cli/cmd/tui/util/voice")
+      const base = buildVoiceControlBody({
+        model: "mimo-v2.5",
+        audioBase64: "AAAA",
+        context: { text: "", sendEnabled: false },
+      })
+      const retry = buildVoiceControlRetryBody(
+        base,
+        {
+          role: "assistant",
+          content: null,
+          tool_calls: [{ id: "call_1", type: "function", function: { name: "voice_input", arguments: "{" } }],
+        },
+        "arguments must be valid JSON.",
+      )
+      expect(retry.messages[base.messages.length + 1]).toMatchObject({
+        role: "tool",
+        tool_call_id: "call_1",
+        content: "arguments must be valid JSON.",
+      })
+    })
+
+    test("accepts tool arguments already parsed as an object", async () => {
+      const { parseVoiceControlResponse } = await import("../../../src/cli/cmd/tui/util/voice")
+      const result = parseVoiceControlResponse(
+        {
+          tool_calls: [
+            {
+              id: "c1",
+              function: {
+                name: "voice_input",
+                arguments: { operation: { action: "insert", text: "hi" } },
+              },
+            },
+          ],
+        },
+        {},
+      )
+      expect(result.ok).toBe(true)
+      expect(result.actions).toEqual([{ action: "insert", text: "hi" }])
+    })
+
+    test("tool schema is derived from zod", async () => {
+      const { VOICE_INPUT_TOOL_SCHEMA } = await import("../../../src/cli/cmd/tui/util/voice")
+      expect(VOICE_INPUT_TOOL_SCHEMA).toMatchObject({ type: "object" })
+      expect(JSON.stringify(VOICE_INPUT_TOOL_SCHEMA)).toContain("set_with_cursor")
+    })
+
     test("prompt mentions voice_input and does not teach agent switching", async () => {
       const { default: VOICE_CONTROL_SYSTEM_PROMPT } = await import("../../../src/cli/cmd/tui/util/voice-input.txt")
       expect(VOICE_CONTROL_SYSTEM_PROMPT).toContain("voice_input")
@@ -390,7 +439,7 @@ describe("voice", () => {
   })
 
   describe("processVoiceControl", () => {
-    test("returns null on network error", async () => {
+    test("returns network failure on unreachable endpoint", async () => {
       const { processVoiceControl } = await import("../../../src/cli/cmd/tui/util/voice")
       const result = await processVoiceControl({
         audio: new Int16Array(100),
@@ -398,7 +447,7 @@ describe("voice", () => {
         baseUrl: "http://127.0.0.1:1",
         contextText: "",
       })
-      expect(result).toBeNull()
+      expect(result).toEqual({ ok: false, reason: "network" })
     })
   })
 

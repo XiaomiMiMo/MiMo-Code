@@ -565,6 +565,8 @@ export const dict = {
   "tui.voice.error.no_recorder": "Инструмент записи не найден, установите sox",
   "tui.voice.error.too_short": "Запись слишком короткая",
   "tui.voice.error.network": "Ошибка транскрипции, проверьте сеть",
+  "tui.voice.error.protocol": "Ответ голосового управления не является корректным вызовом voice_input",
+  "tui.voice.error.stale": "Текст изменился во время прослушивания — голосовое редактирование пропущено",
   "tui.command.prompt.stash.title": "Сохранить ввод во временное хранилище",
   "tui.command.prompt.stash.pop.title": "Восстановить из хранилища",
   "tui.command.prompt.stash.list.title": "Список временных запросов",

@@ -519,6 +519,8 @@ export const dict: Record<string, string> = {
   "tui.voice.error.no_recorder": "No recording tool found, please install sox",
   "tui.voice.error.too_short": "Recording too short",
   "tui.voice.error.network": "Transcription failed, please check your network",
+  "tui.voice.error.protocol": "Voice control reply was not a valid voice_input call",
+  "tui.voice.error.stale": "Prompt changed while listening — voice edit skipped",
   "tui.voice.error.empty_send": "Nothing to send",
   "tui.command.prompt.stash.title": "Stash prompt",
   "tui.command.prompt.stash.pop.title": "Stash pop",

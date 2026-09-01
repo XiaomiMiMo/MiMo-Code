@@ -493,6 +493,8 @@ export const dict = {
   "tui.voice.error.no_recorder": "録音ツールが見つかりません。sox をインストールしてください",
   "tui.voice.error.too_short": "録音時間が短すぎます",
   "tui.voice.error.network": "文字起こしに失敗しました。ネットワークを確認してください",
+  "tui.voice.error.protocol": "音声制御の応答が有効な voice_input 呼び出しがありません",
+  "tui.voice.error.stale": "入力中にテキストが変わったため、音声編集をスキップしました",
   "tui.command.prompt.stash.title": "プロンプトを退避",
   "tui.command.prompt.stash.pop.title": "退避から復元",
   "tui.command.prompt.stash.list.title": "退避一覧",

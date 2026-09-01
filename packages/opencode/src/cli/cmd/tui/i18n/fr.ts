@@ -554,6 +554,8 @@ export const dict = {
   "tui.voice.error.no_recorder": "Aucun outil d'enregistrement trouvé, installez sox",
   "tui.voice.error.too_short": "Enregistrement trop court",
   "tui.voice.error.network": "La transcription a échoué, vérifiez votre réseau",
+  "tui.voice.error.protocol": "La réponse du contrôle vocal n'est pas un appel voice_input valide",
+  "tui.voice.error.stale": "Le texte a changé pendant l'écoute — édition vocale ignorée",
   "tui.command.prompt.stash.title": "Mettre l'invite de côté",
   "tui.command.prompt.stash.pop.title": "Récupérer l'invite",
   "tui.command.prompt.stash.list.title": "Liste des invites mises de côté",

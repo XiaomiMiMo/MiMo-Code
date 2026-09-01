@@ -300,49 +300,6 @@ Use \`send: true\` only for an explicit submit at the end of the utterance when 
 
 Call this tool once with an empty object only when the audio has no usable speech (noise, silence, breathing, or unintelligible). Omit \`operation\` and \`send\` in that case.`
 
-export const VOICE_INPUT_TOOL_SCHEMA = {
-  type: "object",
-  additionalProperties: false,
-  properties: {
-    operation: {
-      type: "object",
-      description: "Text edit, if any. Choose exactly one arm: insert, set, or set_with_cursor.",
-      anyOf: [
-        {
-          type: "object",
-          additionalProperties: false,
-          required: ["action", "text"],
-          properties: {
-            action: { const: "insert" },
-            text: { type: "string", description: "Exact fragment to insert at the cursor or replace the selection with." },
-          },
-        },
-        {
-          type: "object",
-          additionalProperties: false,
-          required: ["action", "text"],
-          properties: {
-            action: { const: "set" },
-            text: { type: "string", description: "Complete final prompt text; cursor ends at the end." },
-          },
-        },
-        {
-          type: "object",
-          additionalProperties: false,
-          required: ["action", "before_cursor", "selection", "after_cursor"],
-          properties: {
-            action: { const: "set_with_cursor" },
-            before_cursor: { type: "string" },
-            selection: { type: "string" },
-            after_cursor: { type: "string" },
-          },
-        },
-      ],
-    },
-    send: { type: "boolean", description: "true to submit. Only when send_enabled is true." },
-  },
-} as const
-
 const VoiceInputArgsSchema = z.object({
   operation: z
     .discriminatedUnion("action", [
@@ -362,6 +319,8 @@ const VoiceInputArgsSchema = z.object({
 }).strict()
 
 export type VoiceInputArgs = z.infer<typeof VoiceInputArgsSchema>
+
+export const VOICE_INPUT_TOOL_SCHEMA = z.toJSONSchema(VoiceInputArgsSchema) as Record<string, unknown>
 
 export type VoiceControlAction =
   | { action: "insert"; text: string }
@@ -417,9 +376,18 @@ export function buildVoiceControlRetryBody(
   const assistant: Record<string, unknown> = { role: "assistant", content: previous.content ?? null }
   if (previous.tool_calls?.length) assistant.tool_calls = previous.tool_calls
   if (previous.reasoning_content) assistant.reasoning_content = previous.reasoning_content
+  const follow: Record<string, unknown>[] = []
+  // OpenAI-compatible servers expect a tool role reply per tool_call_id after assistant.tool_calls.
+  if (previous.tool_calls?.length) {
+    for (const call of previous.tool_calls) {
+      const id = (call as { id?: string }).id
+      if (id) follow.push({ role: "tool", tool_call_id: id, content: protocolError })
+    }
+  }
+  if (!follow.length) follow.push({ role: "user", content: protocolError })
   return {
     ...base,
-    messages: [...base.messages, assistant, { role: "user", content: protocolError }],
+    messages: [...base.messages, assistant, ...follow],
   }
 }
 
@@ -463,10 +431,15 @@ export function parseVoiceControlResponse(message: unknown, opts: { sendEnabled?
     if (fn.name !== VOICE_INPUT_TOOL_NAME) {
       return { ok: false, actions: [], protocolError: `Call the ${VOICE_INPUT_TOOL_NAME} tool.`, previous }
     }
-    let raw: unknown
-    try {
-      raw = JSON.parse(typeof fn.arguments === "string" ? fn.arguments : "")
-    } catch {
+    const rawArg = fn.arguments
+    const raw: unknown = typeof rawArg === "string" ? (() => {
+      try {
+        return JSON.parse(rawArg)
+      } catch {
+        return undefined
+      }
+    })() : rawArg
+    if (raw === undefined) {
       return { ok: false, actions: [], protocolError: `${VOICE_INPUT_TOOL_NAME} arguments must be valid JSON.`, previous }
     }
     const parsed = VoiceInputArgsSchema.safeParse(raw)
@@ -485,9 +458,9 @@ export function parseVoiceControlResponse(message: unknown, opts: { sendEnabled?
 
 const VOICE_CONTROL_MAX_PROTOCOL_RETRIES = 2
 
-export type VoiceControlResult = {
-  actions: VoiceControlAction[]
-}
+export type VoiceControlResult =
+  | { ok: true; actions: VoiceControlAction[] }
+  | { ok: false; reason: "network" | "protocol" }
 
 export async function processVoiceControl(opts: {
   audio: Int16Array
@@ -496,7 +469,7 @@ export async function processVoiceControl(opts: {
   model?: string
   contextText: string | TextPlacement
   sendEnabled?: boolean
-}): Promise<VoiceControlResult | null> {
+}): Promise<VoiceControlResult> {
   const model = opts.model || "mimo-v2.5"
   log.debug("voice control request", { model, samples: opts.audio.length })
   const wavBuffer = encodeWav(opts.audio)
@@ -528,23 +501,23 @@ export async function processVoiceControl(opts: {
     if (!res || !res.ok) {
       const errBody = await res?.text().catch(() => "")
       log.warn("voice control failed", { model, status: res?.status, body: errBody })
-      return null
+      return { ok: false, reason: "network" }
     }
 
     const data = (await res.json().catch(() => null)) as {
       choices?: Array<{ message?: Record<string, unknown> }>
     } | null
     const message = data?.choices?.[0]?.message
-    if (!message) return null
+    if (!message) return { ok: false, reason: "network" }
 
     const parsed = parseVoiceControlResponse(message, { sendEnabled: opts.sendEnabled })
     if (parsed.ok) {
       log.debug("voice control result", { model, actions: parsed.actions.length, attempt })
-      return { actions: parsed.actions }
+      return { ok: true, actions: parsed.actions }
     }
     log.warn("voice control protocol error", { model, attempt, protocolError: parsed.protocolError })
-    if (attempt >= VOICE_CONTROL_MAX_PROTOCOL_RETRIES) return null
+    if (attempt >= VOICE_CONTROL_MAX_PROTOCOL_RETRIES) return { ok: false, reason: "protocol" }
     body = buildVoiceControlRetryBody(body, parsed.previous, parsed.protocolError ?? "protocol error")
   }
-  return null
+  return { ok: false, reason: "protocol" }
 }

@@ -270,17 +270,17 @@ export function Prompt(props: PromptProps) {
       return
     }
     if (state === "finishing") return
-    // Start streaming — only validate the active mode's provider
+    // Start streaming — resolve both providers so /voice-control can switch mid-recording.
     const voiceConfig = sync.data.config.voice
     const resolved = Voice.resolveVoiceConfig(voiceConfig)
-    const isControl = voiceControlEnabled()
-    const activeConfig = isControl ? resolved.control : resolved.asr
-    const creds = Voice.resolveCredentials(sync.data.provider, activeConfig)
-    if ("error" in creds) {
-      const vars = { provider: creds.providerID, model: creds.model }
+    const asrCreds = Voice.resolveCredentials(sync.data.provider, resolved.asr)
+    const controlCreds = Voice.resolveCredentials(sync.data.provider, resolved.control)
+    const initialCreds = voiceControlEnabled() ? controlCreds : asrCreds
+    if ("error" in initialCreds) {
+      const vars = { provider: initialCreds.providerID, model: initialCreds.model }
       const msg = !voiceConfig ? t("tui.voice.error.no_auth")
-        : creds.error === "not_found" ? t("tui.voice.error.provider_not_found", vars)
-        : creds.error === "no_url" ? t("tui.voice.error.no_url", vars)
+        : initialCreds.error === "not_found" ? t("tui.voice.error.provider_not_found", vars)
+        : initialCreds.error === "no_url" ? t("tui.voice.error.no_url", vars)
         : t("tui.voice.error.no_auth_provider", vars)
       toast.show({ message: msg, variant: "error" })
       return
@@ -303,13 +303,24 @@ export function Prompt(props: PromptProps) {
     let voiceControlChain: Promise<void> = Promise.resolve()
 
     const handle = Voice.startStreaming({
-      // Control needs a longer breath window so one edit intent is not split (desktop D18).
-      minSilenceS: isControl ? 1.2 : undefined,
+      // VAD breath window is fixed for this recording (1.2s control / 0.8s ASR).
+      // Mode switches mid-recording still apply to processing/model choice below.
+      minSilenceS: voiceControlEnabled() ? 1.2 : undefined,
       onSegment: (segment) => {
         av.pending++
         av.setState("processing")
+        const useControl = voiceControlEnabled()
+        const creds = useControl ? controlCreds : asrCreds
+        if ("error" in creds) {
+          av.showError(t("tui.voice.error.no_auth_provider", { provider: creds.providerID, model: creds.model }))
+          av.pending--
+          if (activeVoice === av && voiceState() !== "speaking")
+            av.setState(av.pending > 0 ? "processing" : "listening")
+          if (!activeVoice && av.pending <= 0) av.setState("idle")
+          return
+        }
 
-        if (isControl) {
+        if (useControl) {
           voiceControlChain = voiceControlChain.then(async () => {
             try {
               if (!activeVoice) return
@@ -326,9 +337,8 @@ export function Prompt(props: PromptProps) {
                 sendEnabled: voiceSendEnabled(),
               })
 
-              if (ctrl) {
+              if (ctrl.ok) {
                 // Drop stale mutations: user edited the prompt while the model was thinking.
-                // Apply against the request-time snapshot — never a live caret.
                 const now = av.getSnapshot()
                 if (now.value === snap.value) {
                   for (const action of ctrl.actions) {
@@ -341,9 +351,11 @@ export function Prompt(props: PromptProps) {
                       else if (!after.trim()) av.showError(t("tui.voice.error.empty_send"))
                     }
                   }
+                } else {
+                  av.showError(t("tui.voice.error.stale"))
                 }
               } else {
-                av.showError(t("tui.voice.error.network"))
+                av.showError(ctrl.reason === "protocol" ? t("tui.voice.error.protocol") : t("tui.voice.error.network"))
               }
             } finally {
               av.pending--

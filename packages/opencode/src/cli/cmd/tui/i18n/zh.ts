@@ -539,6 +539,8 @@ export const dict = {
   "tui.voice.error.no_recorder": "未检测到录音工具，请安装 sox",
   "tui.voice.error.too_short": "录音时间过短",
   "tui.voice.error.network": "转写失败，请检查网络",
+  "tui.voice.error.protocol": "语音控制回复不是有效的 voice_input 调用",
+  "tui.voice.error.stale": "输入内容已变化，语音编辑已跳过",
   "tui.voice.error.empty_send": "无内容可发送",
   "tui.command.prompt.stash.title": "暂存提示词",
   "tui.command.prompt.stash.pop.title": "弹出暂存",
