@@ -10,9 +10,9 @@ commits: 91b2eb204a..b1b3c9ef79
 
 ## Report
 
-**What was built** — `Provider.defaultModel()` no longer ranks models with the TUI menu `sort()` priority list (`gpt-5` / `claude-sonnet-4` / `gemini-3-pro`, then `latest`). The chain is now: validated `cfg.model` → existing `recent` → existing `mimo/mimo-auto` free-channel hit → first allowed provider, first model by id ascending. Stale `cfg.model` values that are no longer in the live registry fall through instead of being returned blindly.
+**What was built** — `Provider.defaultModel()` no longer ranks models with the TUI menu `sort()` priority list (`gpt-5` / `claude-sonnet-4` / `gemini-3-pro`, then `latest`). The chain is now: validated `cfg.model` → existing `recent` → first allowed provider, first model by id ascending. Stale `cfg.model` values that are no longer in the live registry fall through instead of being returned blindly. The retired `mimo/mimo-auto` free-channel special case was removed.
 
-**Verification** — `bun test test/provider` → 517 pass / 0 fail (includes new cases: invalid cfg fallthrough, recent hit over id-asc first, non-vacuous mimo-auto preference, no priority-substring preference). `bun run typecheck` → clean.
+**Verification** — `bun test test/provider` → pass / 0 fail (includes new cases: invalid cfg fallthrough, recent hit over id-asc first, no retired mimo-auto preference, no priority-substring preference). `bun run typecheck` → clean.
 
 **Journey log** — Desktop does not write TUI `state/model.json` `recent`, so empty recent is the common Desktop case, not a rare one; a “first provider model” fallback without a product-default path would re-open the same bug. First review flagged a missing recent-hit test and a vacuous mimo-auto test (sibling sorted after `mimo-auto`); both were fixed before finalize.
 
@@ -46,11 +46,11 @@ Result: title generation and other cheap tasks can resolve to an unavailable or 
    - missing → fall through (do not throw)
 2. state/model.json recent[]
    - first entry whose provider+model still exist
-3. mimo/mimo-auto if present (existing TUI free-channel special case)
-4. first allowed provider (same cfg.provider whitelist as today)
+3. first allowed provider (same cfg.provider whitelist as today)
    - first model in that provider by id ascending (deterministic)
    - no priority list, no "latest" preference
-5. no provider / no model → throw the existing clear errors
+   - no retired mimo/mimo-auto special case
+4. no provider / no model → throw the existing clear errors
    ("no providers found" / "no models found")
 ```
 
@@ -76,5 +76,5 @@ Not changing in this feature:
 
 ## Tasks
 
-- [x] T1: Rewrite `defaultModel()` chain (validate cfg.model, keep recent + mimo-auto, drop sort) — acceptance: unit tests cover invalid cfg fallthrough, recent hit, mimo-auto hit, first-provider stable pick, and no priority substring preference (covers: S2)
+- [x] T1: Rewrite `defaultModel()` chain (validate cfg.model, keep recent, drop sort and retired mimo-auto) — acceptance: unit tests cover invalid cfg fallthrough, recent hit, no retired mimo-auto special case, first-provider stable pick, and no priority substring preference (covers: S2)
 - [x] T2: Adjust/extend provider tests — acceptance: `bun test packages/opencode/test/provider` passes; new cases assert the chain order and that `gpt-5`-like ids are not auto-preferred when earlier steps miss (covers: S2; depends: T1)

@@ -785,7 +785,7 @@ test("defaultModel prefers recent state model over first stable pick", async () 
   }
 })
 
-test("defaultModel prefers mimo-auto when the free channel model exists", async () => {
+test("defaultModel does not special-case retired mimo-auto", async () => {
   await using tmp = await tmpdir({
     init: async (dir) => {
       await Bun.write(
@@ -803,8 +803,6 @@ test("defaultModel prefers mimo-auto when the free channel model exists", async 
                   tool_call: true,
                   limit: { context: 1000000, output: 32768 },
                 },
-                // Alphabetically before mimo-auto so id-asc alone would pick this;
-                // only the free-channel special case can select mimo-auto.
                 "aaa-model": {
                   name: "AAA",
                   tool_call: true,
@@ -826,8 +824,9 @@ test("defaultModel prefers mimo-auto when the free channel model exists", async 
     init: async () => {},
     fn: async () => {
       const model = await defaultModel()
+      // mimo-auto is retired; stable first pick is id-asc aaa-model.
       expect(String(model.providerID)).toBe("mimo")
-      expect(String(model.modelID)).toBe("mimo-auto")
+      expect(String(model.modelID)).toBe("aaa-model")
     },
   })
 })

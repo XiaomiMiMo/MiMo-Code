@@ -2013,11 +2013,8 @@ const layer: Layer.Layer<
         return { providerID: entry.providerID, modelID: entry.modelID }
       }
 
-      const mimo = s.providers[ProviderID.make("mimo")]
-      if (mimo?.models[ModelID.make("mimo-auto")]) {
-        return { providerID: mimo.id, modelID: ModelID.make("mimo-auto") }
-      }
-
+      // No mimo/mimo-auto special case: that free-channel alias is retired and
+      // resolving it as a default produced unusable titles/completions.
       const provider = Object.values(s.providers).find((p) => !cfg.provider || Object.keys(cfg.provider).includes(p.id))
       if (!provider) throw new Error("no providers found")
       const model = sortBy(Object.values(provider.models), [(m) => m.id, "asc"])[0]
