@@ -3709,13 +3709,12 @@ NOTE: At any point in time through this workflow you should feel free to ask the
             }
           }
 
-          // Follow-up intent: only on the loop's new-user branch (steer pickup).
+          // Follow-up intent: loop-local steer pickup (step ≥ 1 + new lastUser).
           // Anchor to the last real user so inbox.drain synthetics cannot hide it.
-          // In-memory only — msgs reload each iteration.
           const lastRealUserForSteer = lastRealUserMessage(msgs)
           if (
             lastRealUserForSteer &&
-            shouldInjectSteerHint({ messages: msgs, lastUser: lastRealUserForSteer, lastAssistant })
+            shouldInjectSteerHint({ messages: msgs, lastUser: lastRealUserForSteer, lastAssistant, step })
           ) {
             lastRealUserForSteer.parts.push({
               id: PartID.ascending(),

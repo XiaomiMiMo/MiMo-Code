@@ -24,57 +24,32 @@ export function pendingUserMessages(messages: MessageV2.WithParts[]): MessageV2.
   return messages.slice(lastAssistantIdx + 1).filter((m) => m.info.role === "user" && hasRealUserText(m))
 }
 
-function isSameSessionAssistant(
-  m: MessageV2.WithParts,
-  sessionID: string,
-): m is MessageV2.WithParts & { info: MessageV2.Assistant } {
-  return m.info.role === "assistant" && m.info.sessionID === sessionID
-}
-
 /**
- * Steer pickup = the agent loop's "new user" branch: lastUser.id >
- * lastAssistant.id. At that moment lastUser cannot already be answered —
- * if it were, the loop would be in the continue-assistant branch.
+ * Steer pickup is a loop-local fact, not a timestamp guess:
  *
- * Fire only when that new user is real prose and was written while the
- * previous same-session assistant was still open (true mid-turn steer),
- * or when several real users are stacked after the last assistant.
+ * - step 0: this runLoop just started (first message of a turn).
+ * - step ≥ 1 and lastUser.id > lastAssistant.id: the loop was already running
+ *   and a newer user appeared — a mid-turn steer (picked up at a tool-call gap).
+ * - step ≥ 1 and lastUser.id < lastAssistant.id: continuing the current
+ *   assistant; the user is that turn's user, not a new steer.
  *
- * Ordinary sequential turns after a finished reply do NOT fire.
  * Synthetic-only users never count. Parent assistants from contextFrom
- * (different sessionID) do not count.
+ * (different sessionID) do not count. Caller passes the last REAL user so
+ * inbox.drain synthetics cannot hide a steer.
  */
 export function shouldInjectSteerHint(input: {
   messages: MessageV2.WithParts[]
   lastUser: MessageV2.WithParts
   lastAssistant: MessageV2.Assistant | undefined
+  step: number
 }): boolean {
-  const { messages, lastUser, lastAssistant } = input
+  const { messages, lastUser, lastAssistant, step } = input
+  if (step < 1) return false
   if (lastUser.info.role !== "user") return false
   if (!hasRealUserText(lastUser)) return false
-
-  // State machine: only the new-user branch is a steer pickup.
   if (lastAssistant && lastAssistant.sessionID === lastUser.info.sessionID && lastUser.info.id < lastAssistant.id) {
     return false
   }
-
-  const lastUserIdx = messages.findLastIndex((m) => m.info.id === lastUser.info.id)
-  if (lastUserIdx < 0) return false
-
-  if (pendingUserMessages(messages).length > 1) return true
-
-  const lastAsst = messages
-    .slice(0, lastUserIdx)
-    .filter((m) => isSameSessionAssistant(m, lastUser.info.sessionID))
-    .at(-1)
-  if (!lastAsst) return false
-
-  const userCreated = lastUser.info.time?.created
-  const asstCreated = lastAsst.info.time.created
-  const asstCompleted = lastAsst.info.time.completed
-  if (userCreated == null) return false
-  if (userCreated < asstCreated) return false
-  if (asstCompleted != null && userCreated > asstCompleted) return false
   return true
 }
 
