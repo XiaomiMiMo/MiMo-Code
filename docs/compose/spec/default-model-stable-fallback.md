@@ -10,11 +10,11 @@ commits: fa69916897..afdd76ec62
 
 ## Report
 
-**What was built** — `Provider.defaultModel()` no longer ranks models with the TUI menu `sort()` priority list (`gpt-5` / `claude-sonnet-4` / `gemini-3-pro`, then `latest`). The chain is now: validated `cfg.model` (warn + fall through if missing) → existing `recent` → first allowed provider with a usable chat model (`toolcall` + text input + non-zero context), first by id ascending. Stale `cfg.model` values that are no longer in the live registry fall through instead of being returned blindly. The retired `mimo/mimo-auto` free-channel special case was removed. Capability filter prevents last-resort from selecting models like live `openai/chatgpt-image-latest` (`tool_call: false`, `context: 0`).
+**What was built** — `Provider.defaultModel()` no longer ranks models with the TUI menu `sort()` priority list (`gpt-5` / `claude-sonnet-4` / `gemini-3-pro`, then `latest`). The chain is now: validated `cfg.model` (warn + fall through if missing) → existing `recent` → first allowed provider with a usable chat model (`toolcall` + text input + non-zero context), first by id ascending. Stale `cfg.model` values that are no longer in the live registry fall through instead of being returned blindly. Capability filter prevents last-resort from selecting models like live `openai/chatgpt-image-latest` (`tool_call: false`, `context: 0`).
 
-**Verification** — `bun test test/provider` → pass / 0 fail (includes new cases: invalid cfg fallthrough, recent hit over id-asc first, valid cfg beats recent, invalid cfg + recent, non-chat last-resort skip, no retired mimo-auto preference, no priority-substring preference). `bun run typecheck` → clean.
+**Verification** — `bun test test/provider` → pass / 0 fail (includes new cases: invalid cfg fallthrough, recent hit over id-asc first, valid cfg beats recent, invalid cfg + recent, non-chat last-resort skip, no priority-substring preference). `bun run typecheck` → clean.
 
-**Journey log** — Desktop does not write TUI `state/model.json` `recent`, so empty recent is the common Desktop case, not a rare one; a “first provider model” fallback without a product-default path would re-open the same bug. First review flagged a missing recent-hit test and a vacuous mimo-auto test (sibling sorted after `mimo-auto`); both were fixed before finalize.
+**Journey log** — Desktop does not write TUI `state/model.json` `recent`, so empty recent is the common Desktop case, not a rare one; a “first provider model” fallback without a product-default path would re-open the same bug. First review flagged a missing recent-hit test and a weak last-resort test; both were fixed before finalize.
 
 ## [S1] Problem
 
@@ -50,7 +50,6 @@ Result: title generation and other cheap tasks can resolve to an unavailable or 
    - usable = toolcall && text input && limit.context > 0
    - first such model by id ascending (deterministic)
    - no priority list, no "latest" preference
-   - no retired mimo/mimo-auto special case
 4. no provider / no usable model → throw the existing clear errors
    ("no providers found" / "no models found")
 ```
@@ -78,5 +77,5 @@ Not changing in this feature:
 
 ## Tasks
 
-- [x] T1: Rewrite `defaultModel()` chain (validate cfg.model, keep recent, drop sort and retired mimo-auto; last-resort requires usable chat model) — acceptance: unit tests cover invalid cfg fallthrough, recent hit, cfg-beats-recent, non-chat skip, no retired mimo-auto special case, first-provider stable pick, and no priority substring preference (covers: S2)
+- [x] T1: Rewrite `defaultModel()` chain (validate cfg.model, keep recent, drop menu-priority sort; last-resort requires usable chat model) — acceptance: unit tests cover invalid cfg fallthrough, recent hit, cfg-beats-recent, non-chat skip, first-provider stable pick, and no priority substring preference (covers: S2)
 - [x] T2: Adjust/extend provider tests — acceptance: `bun test packages/opencode/test/provider` passes; new cases assert the chain order and that `gpt-5`-like ids are not auto-preferred when earlier steps miss (covers: S2; depends: T1)

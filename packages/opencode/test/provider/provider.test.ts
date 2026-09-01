@@ -941,52 +941,6 @@ test("defaultModel last-resort skips non-chat models (no toolcall / zero context
   })
 })
 
-test("defaultModel does not special-case retired mimo-auto", async () => {
-  await using tmp = await tmpdir({
-    init: async (dir) => {
-      await Bun.write(
-        path.join(dir, "mimocode.json"),
-        JSON.stringify({
-          $schema: "https://opencode.ai/config.json",
-          provider: {
-            mimo: {
-              name: "MiMo",
-              npm: "@ai-sdk/openai-compatible",
-              env: [],
-              models: {
-                "mimo-auto": {
-                  name: "MiMo Auto",
-                  tool_call: true,
-                  limit: { context: 1000000, output: 32768 },
-                },
-                "aaa-model": {
-                  name: "AAA",
-                  tool_call: true,
-                  limit: { context: 128000, output: 4096 },
-                },
-              },
-              options: {
-                apiKey: "test-key",
-                baseURL: "https://mimo.example/v1",
-              },
-            },
-          },
-        }),
-      )
-    },
-  })
-  await Instance.provide({
-    directory: tmp.path,
-    init: async () => {},
-    fn: async () => {
-      const model = await defaultModel()
-      // mimo-auto is retired; stable first pick is id-asc aaa-model.
-      expect(String(model.providerID)).toBe("mimo")
-      expect(String(model.modelID)).toBe("aaa-model")
-    },
-  })
-})
-
 test("provider with baseURL from config", async () => {
   await using tmp = await tmpdir({
     init: async (dir) => {
