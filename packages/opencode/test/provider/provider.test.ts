@@ -633,6 +633,145 @@ test("defaultModel respects config model setting", async () => {
   })
 })
 
+test("defaultModel falls through when config model is missing from the registry", async () => {
+  await using tmp = await tmpdir({
+    init: async (dir) => {
+      await Bun.write(
+        path.join(dir, "mimocode.json"),
+        JSON.stringify({
+          $schema: "https://opencode.ai/config.json",
+          model: "custom/does-not-exist",
+          provider: {
+            custom: {
+              name: "Custom",
+              npm: "@ai-sdk/openai-compatible",
+              env: [],
+              models: {
+                "aaa-plain": {
+                  name: "AAA",
+                  tool_call: true,
+                  limit: { context: 128000, output: 4096 },
+                },
+              },
+              options: {
+                apiKey: "test-key",
+                baseURL: "https://custom.example/v1",
+              },
+            },
+          },
+        }),
+      )
+    },
+  })
+  await Instance.provide({
+    directory: tmp.path,
+    init: async () => {
+      // No env providers — only the configured custom provider exists.
+    },
+    fn: async () => {
+      const model = await defaultModel()
+      expect(String(model.modelID)).not.toBe("does-not-exist")
+      expect(String(model.modelID)).toBe("aaa-plain")
+      expect(String(model.providerID)).toBe("custom")
+    },
+  })
+})
+
+test("defaultModel does not prefer priority substring ids over stable first model", async () => {
+  await using tmp = await tmpdir({
+    init: async (dir) => {
+      await Bun.write(
+        path.join(dir, "mimocode.json"),
+        JSON.stringify({
+          $schema: "https://opencode.ai/config.json",
+          provider: {
+            custom: {
+              name: "Custom",
+              npm: "@ai-sdk/openai-compatible",
+              env: [],
+              models: {
+                "aaa-plain": {
+                  name: "AAA",
+                  tool_call: true,
+                  limit: { context: 128000, output: 4096 },
+                },
+                "gpt-5-xxx": {
+                  name: "GPT5",
+                  tool_call: true,
+                  limit: { context: 128000, output: 4096 },
+                },
+                "claude-sonnet-4-yyy": {
+                  name: "Sonnet",
+                  tool_call: true,
+                  limit: { context: 128000, output: 4096 },
+                },
+              },
+              options: {
+                apiKey: "test-key",
+                baseURL: "https://custom.example/v1",
+              },
+            },
+          },
+        }),
+      )
+    },
+  })
+  await Instance.provide({
+    directory: tmp.path,
+    init: async () => {},
+    fn: async () => {
+      const model = await defaultModel()
+      // sort() would rank gpt-5-xxx / claude-sonnet-4-yyy first; stable chain picks id-ascending first.
+      expect(String(model.modelID)).toBe("aaa-plain")
+    },
+  })
+})
+
+test("defaultModel prefers mimo-auto when the free channel model exists", async () => {
+  await using tmp = await tmpdir({
+    init: async (dir) => {
+      await Bun.write(
+        path.join(dir, "mimocode.json"),
+        JSON.stringify({
+          $schema: "https://opencode.ai/config.json",
+          provider: {
+            mimo: {
+              name: "MiMo",
+              npm: "@ai-sdk/openai-compatible",
+              env: [],
+              models: {
+                "mimo-auto": {
+                  name: "MiMo Auto",
+                  tool_call: true,
+                  limit: { context: 1000000, output: 32768 },
+                },
+                "zzz-other": {
+                  name: "Other",
+                  tool_call: true,
+                  limit: { context: 128000, output: 4096 },
+                },
+              },
+              options: {
+                apiKey: "test-key",
+                baseURL: "https://mimo.example/v1",
+              },
+            },
+          },
+        }),
+      )
+    },
+  })
+  await Instance.provide({
+    directory: tmp.path,
+    init: async () => {},
+    fn: async () => {
+      const model = await defaultModel()
+      expect(String(model.providerID)).toBe("mimo")
+      expect(String(model.modelID)).toBe("mimo-auto")
+    },
+  })
+})
+
 test("provider with baseURL from config", async () => {
   await using tmp = await tmpdir({
     init: async (dir) => {

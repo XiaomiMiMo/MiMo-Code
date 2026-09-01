@@ -1981,11 +1981,19 @@ const layer: Layer.Layer<
       return sortVisionModels(vision)[0]
     })
 
+    // Stable default chain. Product-priority substring ranking (`sort`) is for
+    // menus/listings, not for choosing a working default — Desktop's empty
+    // recent + router leftovers made that path pick unavailable models.
     const defaultModel = Effect.fn("Provider.defaultModel")(function* () {
       const cfg = yield* config.get()
-      if (cfg.model) return parseModel(cfg.model)
-
       const s = yield* InstanceState.get(state)
+
+      if (cfg.model) {
+        const parsed = parseModel(cfg.model)
+        const provider = s.providers[parsed.providerID]
+        if (provider?.models[parsed.modelID]) return parsed
+      }
+
       const recent = yield* fs.readJson(path.join(Global.Path.state, "model.json")).pipe(
         Effect.map((x): { providerID: ProviderID; modelID: ModelID }[] => {
           if (!isRecord(x) || !Array.isArray(x.recent)) return []
@@ -2012,7 +2020,7 @@ const layer: Layer.Layer<
 
       const provider = Object.values(s.providers).find((p) => !cfg.provider || Object.keys(cfg.provider).includes(p.id))
       if (!provider) throw new Error("no providers found")
-      const [model] = sort(Object.values(provider.models))
+      const model = sortBy(Object.values(provider.models), [(m) => m.id, "asc"])[0]
       if (!model) throw new Error("no models found")
       return {
         providerID: provider.id,
