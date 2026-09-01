@@ -10,7 +10,7 @@ commits: d17e176ba1..fa396138c7ae863acd8e201dc8f119ea79730974
 
 ## Report
 
-**What was built** — At the `runLoop` message-load checkpoint, inject a short in-memory `<system-reminder>` only for **unanswered mid-turn steers**: real user prose written while the prior same-session assistant was still open, with no later assistant yet answering it. Anchor to the last real user so `inbox.drain` synthetics cannot hide a steer. Once an assistant exists after that user it is the current turn and is not re-injected. Multi-steer pile-up is named by count only (bodies stay in the transcript). Ordinary sequential turns after a finished reply never fire (keeps the frozen model-request prefix). No desktop UI, Runner, or compose-next skill changes.
+**What was built** — At the `runLoop` message-load checkpoint, on the **new-user branch** only (`lastUser.id > lastAssistant.id`), inject a short in-memory `<system-reminder>` when that user is a mid-turn steer: real prose written while the prior same-session assistant was still open. Anchor to the last real user so `inbox.drain` synthetics cannot hide a steer. Multi-steer pile-up is named by count only. Ordinary sequential turns after a finished reply never fire. No desktop UI, Runner, or compose-next skill changes.
 
 **Verification** — From `packages/opencode` in the worktree: `bun typecheck` PASS. `bun test test/session/steer-hint.test.ts` — 13 pass. `bun test test/session/steer-multi.integration.test.ts` — PASS. `bun test test/session/prompt-effect.test.ts -t "uses the frozen system and appends the compaction prompt"` — PASS.
 
@@ -33,20 +33,22 @@ True mid-turn steer is picked up in the **gap between tool-call steps** (the loo
 
 ### Steer definition
 
-A **steer** is a real user message that:
+From the `runLoop` state machine:
+
+- `lastUser.id > lastAssistant.id` → **new-user branch** (loop will create an assistant for this user). This is the only steer-pickup moment.
+- `lastUser.id < lastAssistant.id` → continue-assistant branch. The user is already the current turn's user — not a pending steer.
+
+A **steer** is a real user on the new-user branch that:
 
 1. Has non-synthetic, non-ignored text prose.
 2. Was created while the previous **same-session** assistant was still open:  
    `assistant.time.created ≤ user.time.created` and (`assistant.time.completed` unset or `user.time.created ≤ assistant.time.completed`).
-3. Is still **unanswered**: no same-session assistant exists **after** it in the transcript.
 
-Once an assistant exists after that user, it is the current turn (same status as the first user of that turn) — not a pending steer.
+Or several real users stacked after the last same-session assistant.
 
 Parent assistants inherited via `contextFrom` (different `sessionID`) do not count.
 
 Synthetic-only users (inbox.drain, goal re-entry, auto-continue) never count as steers. The hint anchors to `lastRealUserMessage` so a newer synthetic user cannot hide a real steer.
-
-Several real users stacked after the last same-session assistant all count as pending.
 
 ### Injection point
 

@@ -3709,12 +3709,14 @@ NOTE: At any point in time through this workflow you should feel free to ask the
             }
           }
 
-          // Follow-up intent: only unanswered mid-turn steers (real user prose
-          // written while the prior assistant was still open). Anchor to the
-          // last real user — a newer synthetic inbox.drain user must not hide it.
+          // Follow-up intent: only on the loop's new-user branch (steer pickup).
+          // Anchor to the last real user so inbox.drain synthetics cannot hide it.
           // In-memory only — msgs reload each iteration.
           const lastRealUserForSteer = lastRealUserMessage(msgs)
-          if (lastRealUserForSteer && shouldInjectSteerHint(msgs, lastRealUserForSteer)) {
+          if (
+            lastRealUserForSteer &&
+            shouldInjectSteerHint({ messages: msgs, lastUser: lastRealUserForSteer, lastAssistant })
+          ) {
             lastRealUserForSteer.parts.push({
               id: PartID.ascending(),
               messageID: lastRealUserForSteer.info.id,

@@ -28,30 +28,39 @@ function msg(
   sessionID = "ses",
 ): MessageV2.WithParts {
   return {
-    info: {
-      id,
-      role,
-      sessionID,
-      time: time ?? { created: 0 },
-    } as unknown as MessageV2.WithParts["info"],
+    info: { id, role, sessionID, time: time ?? { created: 0 } } as unknown as MessageV2.WithParts["info"],
     parts,
   }
+}
+
+function asstInfo(id: string, time: { created: number; completed?: number }): MessageV2.Assistant {
+  return { id, role: "assistant", sessionID: "ses", time } as unknown as MessageV2.Assistant
 }
 
 describe("steer hint", () => {
   test("skips first user message (no prior assistant)", () => {
     const first = msg("user", "u1", [textPart("do the thing")], { created: 1 })
-    expect(shouldInjectSteerHint([first], first)).toBe(false)
+    expect(
+      shouldInjectSteerHint({ messages: [first], lastUser: first, lastAssistant: undefined }),
+    ).toBe(false)
   })
 
-  test("skips synthetic-only user messages", () => {
-    const synthetic = msg("user", "u2", [textPart("auto continue", { synthetic: true })], { created: 3 })
+  test("skips when loop is continuing an assistant (lastUser.id < lastAssistant.id)", () => {
+    const u2 = msg("user", "u2", [textPart("STEER")], { created: 4 })
+    const a2 = msg("assistant", "a2", [textPart("answering")], { created: 5 })
     const messages = [
-      msg("user", "u1", [textPart("start")], { created: 1 }),
-      msg("assistant", "a1", [textPart("ok")], { created: 2, completed: 2 }),
-      synthetic,
+      msg("user", "u1", [textPart("first")], { created: 1 }),
+      msg("assistant", "a1", [textPart("done")], { created: 2, completed: 3 }),
+      u2,
+      a2,
     ]
-    expect(shouldInjectSteerHint(messages, synthetic)).toBe(false)
+    expect(
+      shouldInjectSteerHint({
+        messages,
+        lastUser: u2,
+        lastAssistant: asstInfo("a2", { created: 5 }),
+      }),
+    ).toBe(false)
   })
 
   test("skips ordinary sequential turn after a finished reply", () => {
@@ -61,29 +70,29 @@ describe("steer hint", () => {
       msg("assistant", "a1", [textPart("done")], { created: 2, completed: 5 }),
       next,
     ]
-    expect(shouldInjectSteerHint(messages, next)).toBe(false)
+    expect(
+      shouldInjectSteerHint({
+        messages,
+        lastUser: next,
+        lastAssistant: asstInfo("a1", { created: 2, completed: 5 }),
+      }),
+    ).toBe(false)
   })
 
-  test("skips when an assistant already answers this user (current turn)", () => {
-    const u2 = msg("user", "u2", [textPart("STEER")], { created: 4 })
-    const a2 = msg("assistant", "a2", [textPart("working on steer")], { created: 5 })
-    const messages = [
-      msg("user", "u1", [textPart("first")], { created: 1 }),
-      msg("assistant", "a1", [textPart("done")], { created: 2, completed: 3 }),
-      u2,
-      a2,
-    ]
-    expect(shouldInjectSteerHint(messages, u2)).toBe(false)
-  })
-
-  test("fires when user arrived while prior assistant was still open and unanswered", () => {
+  test("fires on new-user branch when user arrived while prior assistant was open", () => {
     const steer = msg("user", "u2", [textPart("also install the package")], { created: 4 })
     const messages = [
       msg("user", "u1", [textPart("research names")], { created: 1 }),
       msg("assistant", "a1", [textPart("working")], { created: 2, completed: 10 }),
       steer,
     ]
-    expect(shouldInjectSteerHint(messages, steer)).toBe(true)
+    expect(
+      shouldInjectSteerHint({
+        messages,
+        lastUser: steer,
+        lastAssistant: asstInfo("a1", { created: 2, completed: 10 }),
+      }),
+    ).toBe(true)
   })
 
   test("fires when multiple real users are stacked after last assistant", () => {
@@ -95,7 +104,29 @@ describe("steer hint", () => {
       a,
       b,
     ]
-    expect(shouldInjectSteerHint(messages, b)).toBe(true)
+    expect(
+      shouldInjectSteerHint({
+        messages,
+        lastUser: b,
+        lastAssistant: asstInfo("a1", { created: 2, completed: 5 }),
+      }),
+    ).toBe(true)
+  })
+
+  test("skips synthetic-only user messages", () => {
+    const synthetic = msg("user", "u2", [textPart("auto continue", { synthetic: true })], { created: 3 })
+    const messages = [
+      msg("user", "u1", [textPart("start")], { created: 1 }),
+      msg("assistant", "a1", [textPart("ok")], { created: 2, completed: 2 }),
+      synthetic,
+    ]
+    expect(
+      shouldInjectSteerHint({
+        messages,
+        lastUser: synthetic,
+        lastAssistant: asstInfo("a1", { created: 2, completed: 2 }),
+      }),
+    ).toBe(false)
   })
 
   test("lastRealUserMessage skips newer synthetic inbox users", () => {
@@ -142,6 +173,12 @@ describe("steer hint", () => {
   test("does not treat full-context fork first task as a steer", () => {
     const parentAssistant = msg("assistant", "pa1", [textPart("parent work")], { created: 1, completed: 2 }, "parent")
     const firstTask = msg("user", "u1", [textPart("child task")], { created: 3 })
-    expect(shouldInjectSteerHint([parentAssistant, firstTask], firstTask)).toBe(false)
+    expect(
+      shouldInjectSteerHint({
+        messages: [parentAssistant, firstTask],
+        lastUser: firstTask,
+        lastAssistant: undefined,
+      }),
+    ).toBe(false)
   })
 })

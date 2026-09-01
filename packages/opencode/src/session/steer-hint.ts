@@ -14,8 +14,8 @@ export function lastRealUserMessage(messages: MessageV2.WithParts[]): MessageV2.
 }
 
 /**
- * Real user messages after the newest same-session assistant — unanswered
- * follow-ups. Already present in the conversation; the hint only names the set.
+ * Real user messages after the newest same-session assistant — the pending
+ * set the loop is about to pick up.
  */
 export function pendingUserMessages(messages: MessageV2.WithParts[]): MessageV2.WithParts[] {
   const lastAssistantIdx = messages.findLastIndex(
@@ -24,43 +24,48 @@ export function pendingUserMessages(messages: MessageV2.WithParts[]): MessageV2.
   return messages.slice(lastAssistantIdx + 1).filter((m) => m.info.role === "user" && hasRealUserText(m))
 }
 
-function sameSessionAssistantsAfter(
-  messages: MessageV2.WithParts[],
-  fromIdx: number,
+function isSameSessionAssistant(
+  m: MessageV2.WithParts,
   sessionID: string,
-): boolean {
-  return messages
-    .slice(fromIdx + 1)
-    .some((m) => m.info.role === "assistant" && m.info.sessionID === sessionID)
+): m is MessageV2.WithParts & { info: MessageV2.Assistant } {
+  return m.info.role === "assistant" && m.info.sessionID === sessionID
 }
 
 /**
- * Steer = a real user message written while the previous same-session assistant
- * was still open, and still unanswered (no later same-session assistant).
+ * Steer pickup = the agent loop's "new user" branch: lastUser.id >
+ * lastAssistant.id. At that moment lastUser cannot already be answered —
+ * if it were, the loop would be in the continue-assistant branch.
  *
- * - Ordinary sequential turns after a finished reply do NOT fire.
- * - Once an assistant exists after this user, it is the current turn (like the
- *   first user of that turn) — not a pending steer.
- * - Several stacked real users after the last assistant all count as pending.
- * - Synthetic-only users (inbox.drain, goal re-entry, …) never count.
- * - Parent assistants from contextFrom (different sessionID) do not count.
+ * Fire only when that new user is real prose and was written while the
+ * previous same-session assistant was still open (true mid-turn steer),
+ * or when several real users are stacked after the last assistant.
+ *
+ * Ordinary sequential turns after a finished reply do NOT fire.
+ * Synthetic-only users never count. Parent assistants from contextFrom
+ * (different sessionID) do not count.
  */
-export function shouldInjectSteerHint(messages: MessageV2.WithParts[], lastUser: MessageV2.WithParts): boolean {
+export function shouldInjectSteerHint(input: {
+  messages: MessageV2.WithParts[]
+  lastUser: MessageV2.WithParts
+  lastAssistant: MessageV2.Assistant | undefined
+}): boolean {
+  const { messages, lastUser, lastAssistant } = input
   if (lastUser.info.role !== "user") return false
   if (!hasRealUserText(lastUser)) return false
+
+  // State machine: only the new-user branch is a steer pickup.
+  if (lastAssistant && lastAssistant.sessionID === lastUser.info.sessionID && lastUser.info.id < lastAssistant.id) {
+    return false
+  }
+
   const lastUserIdx = messages.findLastIndex((m) => m.info.id === lastUser.info.id)
   if (lastUserIdx < 0) return false
-  if (sameSessionAssistantsAfter(messages, lastUserIdx, lastUser.info.sessionID)) return false
 
-  const pending = pendingUserMessages(messages)
-  if (pending.length > 1) return true
+  if (pendingUserMessages(messages).length > 1) return true
 
   const lastAsst = messages
     .slice(0, lastUserIdx)
-    .filter(
-      (m): m is MessageV2.WithParts & { info: MessageV2.Assistant } =>
-        m.info.role === "assistant" && m.info.sessionID === lastUser.info.sessionID,
-    )
+    .filter((m) => isSameSessionAssistant(m, lastUser.info.sessionID))
     .at(-1)
   if (!lastAsst) return false
 
