@@ -2022,8 +2022,6 @@ const layer: Layer.Layer<
         return { providerID: entry.providerID, modelID: entry.modelID }
       }
 
-      // No mimo/mimo-auto special case: that free-channel alias is retired and
-      // resolving it as a default produced unusable titles/completions.
       const allowed = Object.values(s.providers).filter((p) => !cfg.provider || Object.keys(cfg.provider).includes(p.id))
       if (!allowed.length) throw new Error("no providers found")
       for (const provider of allowed) {
