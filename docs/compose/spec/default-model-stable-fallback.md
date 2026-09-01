@@ -1,20 +1,26 @@
 ---
 feature: default-model-stable-fallback
-status: in-progress
+status: delivered
 updated: 2026-09-01
 branch: default-model-stable-fallback
-commits: 
+commits: 91b2eb204a..b1b3c9ef79
 ---
 
 # Default Model Stable Fallback
 
 ## Report
 
+**What was built** — `Provider.defaultModel()` no longer ranks models with the TUI menu `sort()` priority list (`gpt-5` / `claude-sonnet-4` / `gemini-3-pro`, then `latest`). The chain is now: validated `cfg.model` → existing `recent` → existing `mimo/mimo-auto` free-channel hit → first allowed provider, first model by id ascending. Stale `cfg.model` values that are no longer in the live registry fall through instead of being returned blindly.
+
+**Verification** — `bun test test/provider` → 517 pass / 0 fail (includes new cases: invalid cfg fallthrough, recent hit over id-asc first, non-vacuous mimo-auto preference, no priority-substring preference). `bun run typecheck` → clean.
+
+**Journey log** — Desktop does not write TUI `state/model.json` `recent`, so empty recent is the common Desktop case, not a rare one; a “first provider model” fallback without a product-default path would re-open the same bug. First review flagged a missing recent-hit test and a vacuous mimo-auto test (sibling sorted after `mimo-auto`); both were fixed before finalize.
+
 ## [S1] Problem
 
 `Provider.defaultModel()` is the engine's last-resort model resolver for internal tasks (title generation, predict, agents, MCP sampling) when no session context is available.
 
-Its final fallback currently does:
+Its final fallback previously did:
 
 1. pick the first allowed provider
 2. run `sort()` over that provider's models (`priority` substrings `gpt-5` / `claude-sonnet-4` / `gemini-3-pro`, then `latest`, then id desc)
@@ -27,11 +33,11 @@ That sort was written for TUI menu ranking, not as a product default. On MiMo De
 
 Result: title generation and other cheap tasks can resolve to an unavailable or unsupported model while the user's conversation model works fine. Log evidence already exists in Desktop (`title generation` → 400 Unsupported model / `ProviderModelNotFoundError`).
 
-`cfg.model` also returns without existence validation, so a stale configured default is forwarded until the request fails.
+`cfg.model` also returned without existence validation, so a stale configured default was forwarded until the request failed.
 
 ## [S2] Design
 
-`Provider.defaultModel()` becomes a **stable, validated chain**. No product-priority substring ranking.
+`Provider.defaultModel()` is a **stable, validated chain**. No product-priority substring ranking.
 
 ```text
 1. cfg.model
@@ -70,5 +76,5 @@ Not changing in this feature:
 
 ## Tasks
 
-- [ ] T1: Rewrite `defaultModel()` chain (validate cfg.model, keep recent + mimo-auto, drop sort) — acceptance: unit tests cover invalid cfg fallthrough, recent hit, mimo-auto hit, first-provider stable pick, and no priority substring preference (covers: S2)
-- [ ] T2: Adjust/extend provider tests — acceptance: `bun test packages/opencode/test/provider` passes; new cases assert the chain order and that `gpt-5`-like ids are not auto-preferred when earlier steps miss (covers: S2; depends: T1)
+- [x] T1: Rewrite `defaultModel()` chain (validate cfg.model, keep recent + mimo-auto, drop sort) — acceptance: unit tests cover invalid cfg fallthrough, recent hit, mimo-auto hit, first-provider stable pick, and no priority substring preference (covers: S2)
+- [x] T2: Adjust/extend provider tests — acceptance: `bun test packages/opencode/test/provider` passes; new cases assert the chain order and that `gpt-5`-like ids are not auto-preferred when earlier steps miss (covers: S2; depends: T1)
