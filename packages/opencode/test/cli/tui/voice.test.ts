@@ -306,22 +306,22 @@ describe("voice", () => {
       expect(result.protocolError).toContain("Call the voice_input tool.")
     })
 
-    test("rejects empty tool name", async () => {
+    test("accepts missing tool name when a single call is present", async () => {
       const { parseVoiceControlResponse } = await import("../../../src/cli/cmd/tui/util/voice")
       const result = parseVoiceControlResponse(
         {
           tool_calls: [
             {
               function: {
-                arguments: "{}",
+                arguments: JSON.stringify({ operation: { action: "insert", text: "hi" } }),
               },
             },
           ],
         },
         {},
       )
-      expect(result.ok).toBe(false)
-      expect(result.protocolError).toContain("Call the voice_input tool.")
+      expect(result.ok).toBe(true)
+      expect(result.actions).toEqual([{ action: "insert", text: "hi" }])
     })
 
     test("rejects multiple tool calls", async () => {
