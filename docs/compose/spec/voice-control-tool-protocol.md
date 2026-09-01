@@ -12,7 +12,7 @@ commits: d17e176b..HEAD
 
 **What was built** — TUI voice control now speaks the desktop `voice_input` tool-call protocol: unique function tool, three-part `{before_cursor, selection, after_cursor}` snapshot (unfocused falls back to full string), insert/set/set_with_cursor + send, protocol retry ≤2, no agent/model arms. System prompt lives in `util/voice-input.txt` (English instructions, Chinese utterance examples). ASR inserts at caret/selection with end-of-buffer space rule; control VAD uses `minSilenceS=1.2`. Surgical `insertText` keeps mention extmarks; full rewrite clears them. Models stay `xiaomi/mimo-v2.5` / `xiaomi/mimo-v2.5-asr`.
 
-**Verification** — `bun typecheck` (packages/opencode) PASS; `bun test test/cli/tui/voice.test.ts` 39 pass, 0 fail. Independent review: protocol/spec/doc cleanup good; M1 extmark rewrite, M2 focus fallback, M3 CJK width tests fixed in a follow-up pass.
+**Verification** — `bun typecheck` (packages/opencode) PASS; `bun test test/cli/tui/voice.test.ts` 37 pass, 0 fail. Independent review: protocol/spec/doc cleanup good; M1 extmark rewrite, M2 focus fallback, M3 CJK width tests fixed in a follow-up pass.
 
 **Journey log**
 1. Desktop control is tool-call + three-part snapshot; old TUI JSON `edit/send/agent` is the drift to remove.

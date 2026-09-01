@@ -175,14 +175,15 @@ export function Prompt(props: PromptProps) {
       input.cursorOffset = w.start
       return
     }
-    input.setSelection(w.start, w.end)
+    // cursorOffset setter clears an existing selection — set caret first.
     input.cursorOffset = w.end
+    input.setSelection(w.start, w.end)
   }
 
   function voiceRewriteBuffer(text: string, caretIndex: number, selection?: VoiceEdit.EditorRange) {
     if (!input || input.isDestroyed) return
     // Full rewrite drops mention/paste extmarks — clear them with the buffer.
-    input.extmarks?.clear?.()
+    input.extmarks.clear()
     setStore("extmarkToPartIndex", new Map())
     setStore("prompt", {
       input: text,
