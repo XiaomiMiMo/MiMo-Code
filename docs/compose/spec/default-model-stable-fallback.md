@@ -3,7 +3,7 @@ feature: default-model-stable-fallback
 status: delivered
 updated: 2026-09-01
 branch: default-model-stable-fallback
-commits: fa69916897..7ffae65525
+commits: fa69916897..afdd76ec62
 ---
 
 # Default Model Stable Fallback
@@ -74,6 +74,7 @@ Not changing in this feature:
 - Injecting Desktop `model_groups.lite`
 - Rewriting TUI's own UI fallback in `packages/app` or `cli/cmd/tui/context/local.tsx`
 - Deleting `Provider.sort` or `defaultModelIDs`
+- Cost-aware last-resort pick (google-only setups can still land on an expensive usable model such as deep-research-*; filter only guarantees "usable", not "cheap")
 
 ## Tasks
 
