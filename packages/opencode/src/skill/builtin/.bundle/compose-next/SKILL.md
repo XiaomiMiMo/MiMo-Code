@@ -55,7 +55,7 @@ Never-Ask applies to the current decision only. At every later decision point, c
 
 ## Workspace — worktree ownership
 
-Never begin implementation on `main` or `master` without explicit user consent.
+Never begin implementation on `main` or `master` without explicit user consent. If the active workspace is already chosen, skip creation below and continue with toolchain setup.
 
 - Compare `git rev-parse --git-dir` with `git rev-parse --git-common-dir`. If they differ, use the current linked worktree; do not nest another. A non-empty `git rev-parse --show-superproject-working-tree` indicates a submodule, not a linked worktree.
 - Create a linked worktree at `.worktrees/<slug>` by default. Run `git check-ignore -q "$path"`; if it is not ignored, write `*` to `.worktrees/.gitignore`. Then run `git worktree add "$path" -b "$branch"`.
@@ -143,6 +143,8 @@ Provide the reviewer:
 - the worktree path, base branch, base SHA, head SHA, and exact diff command or precomputed diff;
 - a compact verification summary: one line per command with `PASS`, `FAIL`, or `PRE-EXISTING`, plus test counts when available. Do not paste full command output unless a specific failure requires it.
 
+If there is no feature document, take acceptance criteria from the conversation. If none are explicit, ask the user for them before dispatching the reviewer.
+
 Do not provide an implementer-authored narrative. The reviewer may inspect the diff and run additional commands needed to validate its conclusions. It must not repeat a command already reported as passing, especially a heavy E2E suite, unless the result is stale, the code changed afterward, or concrete evidence makes the result suspect. Before any justified rerun, confirm no equivalent command is still running. Missing evidence should be reported or gathered with the cheapest non-duplicative command.
 
 Use a reviewer model at least as capable as the strongest implementer it reviews.
@@ -161,7 +163,7 @@ For parallel task work, review integrated task diffs at useful boundaries only w
 
 ## Finalize — commit the feature document
 
-After review passes, before finishing the branch, finalize the feature document:
+If a feature document exists, after review passes and before finishing the branch:
 
 1. Set `status: delivered`, bump `updated:`, and record the reviewed range as `<base-sha>..<head-sha>`.
 2. Check off completed tasks; leave incomplete tasks unchecked and do not claim delivery if they block acceptance.
