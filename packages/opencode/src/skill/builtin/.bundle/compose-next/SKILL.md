@@ -23,7 +23,7 @@ Decide the shape of the work:
 
 User gates and project overrides:
 
-- If the user explicitly requests `without worktree` or specifies a worktree or workspace path, use that workspace choice and skip the default worktree gate. Do not ask again for worktree consent.
+- If the user explicitly requests `without worktree` or specifies a worktree or workspace path, use that workspace choice and skip the default worktree gate. Spec and Implement then run in that workspace. Do not ask again for worktree consent.
 - If the user explicitly says `without spec`, "no spec needed", "this is a small fix", or gives an equivalent instruction, skip the durable feature document and its spec gate. Keep verification and review when the task still warrants them.
 - An explicit project instruction, `AGENTS.md`, or user-provided agent/worktree configuration may define a project-specific worktree path, branch convention, spec path, or spec format. Use that configuration instead of the defaults in this skill. Record the override in the feature document or final report when it changes the normal artifact location.
 
@@ -53,9 +53,18 @@ If the `question` tool is unavailable or returns `[Never-Ask]`, resolve **this o
 
 Never-Ask applies to the current decision only. At every later decision point, call the `question` tool again — Never-Ask does not disable future questions or pause the workflow.
 
+## Workspace — worktree ownership
+
+Never begin implementation on `main` or `master` without explicit user consent.
+
+- Compare `git rev-parse --git-dir` with `git rev-parse --git-common-dir`. If they differ, use the current linked worktree; do not nest another. A non-empty `git rev-parse --show-superproject-working-tree` indicates a submodule, not a linked worktree.
+- Create a linked worktree at `.worktrees/<slug>` by default. Run `git check-ignore -q "$path"`; if it is not ignored, write `*` to `.worktrees/.gitignore`. Then run `git worktree add "$path" -b "$branch"`.
+- When targeting the worktree with a command, pass its absolute path as `workdir`; omitted `workdir` uses the current session directory.
+- Install dependencies per repository instructions. Prefer lockfile-frozen, hardlink-friendly modes (`bun ci`, `uv sync --frozen`) over commands that mutate the lockfile. Confirm the toolchain is usable before continuing.
+
 ## Spec — one document per feature
 
-Maintain one document per feature at `docs/compose/spec/<feature-name>.md` from the worktree root. Do not add a date to the filename. A user-specified location overrides this path. Edit an existing document in place; never create a separate plan or report. Do not write the feature document before Workspace owns a worktree.
+Maintain one document per feature at `docs/compose/spec/<feature-name>.md` from the workspace root. Do not add a date to the filename. A user-specified location overrides this path. Edit an existing document in place; never create a separate plan or report. Do not write the feature document before Workspace owns the active workspace.
 
 ### Template
 
@@ -101,15 +110,6 @@ Before implementation, fix ambiguous requirements, contradictions, unresolved re
 ### Amendments
 
 Update only affected sections, bump `updated:`, preserve anchors, and keep only the tasks required by the amendment and their dependents. Do not regenerate the document or create duplicate tasks.
-
-## Workspace — worktree ownership
-
-Never begin implementation on `main` or `master` without explicit user consent.
-
-- Compare `git rev-parse --git-dir` with `git rev-parse --git-common-dir`. If they differ, use the current linked worktree; do not nest another. A non-empty `git rev-parse --show-superproject-working-tree` indicates a submodule, not a linked worktree.
-- Create a linked worktree at `.worktrees/<slug>` by default. Run `git check-ignore -q "$path"`; if it is not ignored, write `*` to `.worktrees/.gitignore`. Then run `git worktree add "$path" -b "$branch"`.
-- When targeting the worktree with a command, pass its absolute path as `workdir`; omitted `workdir` uses the current session directory.
-- Install dependencies per repository instructions. Prefer lockfile-frozen, hardlink-friendly modes (`bun ci`, `uv sync --frozen`) over commands that mutate the lockfile. Confirm the toolchain is usable before continuing.
 
 ## Implement
 
