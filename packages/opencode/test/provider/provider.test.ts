@@ -9,6 +9,7 @@ import { ModelsDev } from "../../src/provider"
 import { Provider } from "../../src/provider"
 import { ProviderID, ModelID } from "../../src/provider/schema"
 import { Env } from "../../src/env"
+import { Global } from "../../src/global"
 import { Effect } from "effect"
 import { AppRuntime } from "../../src/effect/app-runtime"
 import { makeRuntime } from "../../src/effect/run-service"
@@ -727,6 +728,63 @@ test("defaultModel does not prefer priority substring ids over stable first mode
   })
 })
 
+test("defaultModel prefers recent state model over first stable pick", async () => {
+  const recentPath = path.join(Global.Path.state, "model.json")
+  const previous = await Bun.file(recentPath).text().catch(() => undefined)
+  await Bun.write(
+    recentPath,
+    JSON.stringify({ recent: [{ providerID: "custom", modelID: "zzz-chosen" }] }),
+  )
+  try {
+    await using tmp = await tmpdir({
+      init: async (dir) => {
+        await Bun.write(
+          path.join(dir, "mimocode.json"),
+          JSON.stringify({
+            $schema: "https://opencode.ai/config.json",
+            provider: {
+              custom: {
+                name: "Custom",
+                npm: "@ai-sdk/openai-compatible",
+                env: [],
+                models: {
+                  "aaa-plain": {
+                    name: "AAA",
+                    tool_call: true,
+                    limit: { context: 128000, output: 4096 },
+                  },
+                  "zzz-chosen": {
+                    name: "ZZZ",
+                    tool_call: true,
+                    limit: { context: 128000, output: 4096 },
+                  },
+                },
+                options: {
+                  apiKey: "test-key",
+                  baseURL: "https://custom.example/v1",
+                },
+              },
+            },
+          }),
+        )
+      },
+    })
+    await Instance.provide({
+      directory: tmp.path,
+      init: async () => {},
+      fn: async () => {
+        const model = await defaultModel()
+        // id-asc first pick would be aaa-plain; recent must win.
+        expect(String(model.providerID)).toBe("custom")
+        expect(String(model.modelID)).toBe("zzz-chosen")
+      },
+    })
+  } finally {
+    if (previous === undefined) await Bun.write(recentPath, JSON.stringify({ recent: [] }))
+    else await Bun.write(recentPath, previous)
+  }
+})
+
 test("defaultModel prefers mimo-auto when the free channel model exists", async () => {
   await using tmp = await tmpdir({
     init: async (dir) => {
@@ -745,8 +803,10 @@ test("defaultModel prefers mimo-auto when the free channel model exists", async 
                   tool_call: true,
                   limit: { context: 1000000, output: 32768 },
                 },
-                "zzz-other": {
-                  name: "Other",
+                // Alphabetically before mimo-auto so id-asc alone would pick this;
+                // only the free-channel special case can select mimo-auto.
+                "aaa-model": {
+                  name: "AAA",
                   tool_call: true,
                   limit: { context: 128000, output: 4096 },
                 },
