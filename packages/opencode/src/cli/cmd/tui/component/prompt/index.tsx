@@ -27,6 +27,7 @@ import { useRenderer, type JSX } from "@opentui/solid"
 import * as Editor from "@tui/util/editor"
 import * as Model from "@tui/util/model"
 import * as Voice from "@tui/util/voice"
+import * as VoiceEdit from "@tui/util/voice-edit"
 import { useExit } from "../../context/exit"
 import * as Clipboard from "../../util/clipboard"
 import type { AssistantMessage, FilePart, UserMessage } from "@mimo-ai/sdk/v2"
@@ -106,9 +107,8 @@ let activeVoice: {
   handle: Voice.StreamingHandle
   pending: number
   appendText: (text: string) => void
-  setText: (text: string) => void
-  getPlainText: () => string
-  switchAgent: (name: string) => void
+  applyTarget: (target: VoiceEdit.VoiceTextTarget) => void
+  getSnapshot: () => { value: string; range: VoiceEdit.EditorRange | null }
   submit: () => Promise<unknown>
   setState: (type: "listening" | "speaking" | "processing" | "finishing" | "idle") => void
   showError: (msg: string) => void
@@ -166,45 +166,72 @@ export function Prompt(props: PromptProps) {
     setVoiceElapsed(0)
   }
 
-  function voiceAppendText(text: string) {
+  function voiceRewriteBuffer(text: string, caretIndex: number, selection?: VoiceEdit.EditorRange) {
     if (!input || input.isDestroyed) return
-    const current = store.prompt.input
-    if (current.length > 0 && /[.?!]$/.test(current) && text.length > 0 && text[0] !== " ") {
-      input.insertText(" " + text)
-      setStore("prompt", "input", current + " " + text)
+    // Full rewrite drops mention/paste extmarks — clear them with the buffer.
+    input.extmarks?.clear?.()
+    setStore("extmarkToPartIndex", new Map())
+    setStore("prompt", {
+      input: text,
+      parts: [],
+    })
+    input.clear()
+    input.insertText(text)
+    if (selection) {
+      const sel = VoiceEdit.widthSelectionFor(text, selection)
+      input.setSelection(sel.start, sel.end)
     } else {
-      input.insertText(text)
-      setStore("prompt", "input", current + text)
+      input.clearSelection()
+      input.cursorOffset = VoiceEdit.widthCaretFor(text, caretIndex)
     }
     setTimeout(() => {
       if (!input || input.isDestroyed) return
       input.getLayoutNode().markDirty()
-      input.gotoBufferEnd()
       renderer.requestRender()
     }, 0)
   }
 
-  function voiceSetText(text: string) {
+  function voiceApplyTarget(target: VoiceEdit.VoiceTextTarget) {
     if (!input || input.isDestroyed) return
-    input.clear()
-    input.insertText(text)
-    setStore("prompt", "input", text)
-    setTimeout(() => {
-      if (!input || input.isDestroyed) return
-      input.getLayoutNode().markDirty()
-      input.gotoBufferEnd()
-      renderer.requestRender()
-    }, 0)
+    if (target.kind === "insert") {
+      // Position the live range before insertText so unfocused/stale caret cannot
+      // land the fragment at the wrong place. insertText replaces an active selection.
+      const value = input.plainText
+      const range = input.focused
+        ? VoiceEdit.getEditorRange(input)
+        : { start: value.length, end: value.length }
+      const w = VoiceEdit.widthSelectionFor(value, range)
+      input.setSelection(w.start, w.end)
+      input.insertText(target.text)
+      setStore("prompt", "input", input.plainText)
+      setTimeout(() => {
+        if (!input || input.isDestroyed) return
+        input.getLayoutNode().markDirty()
+        renderer.requestRender()
+      }, 0)
+      return
+    }
+    const value = input.plainText
+    const range = VoiceEdit.getEditorRange(input)
+    const result = VoiceEdit.applyVoiceTarget(value, range, target)
+    voiceRewriteBuffer(result.text, result.caret, result.selection)
   }
 
-  function voiceGetPlainText() {
-    return store.prompt.input
+  function voiceAppendAsr(text: string) {
+    const value = input && !input.isDestroyed ? input.plainText : store.prompt.input
+    // Unfocused / no reliable caret → append at end (desktop D12 fallback).
+    const range = input && !input.isDestroyed && input.focused
+      ? VoiceEdit.getEditorRange(input)
+      : { start: value.length, end: value.length }
+    voiceApplyTarget(VoiceEdit.asrInsertTarget(value, range, text))
   }
 
-  function voiceSwitchAgent(name: string) {
-    const match = local.agent.list().find((x) => x.name.toLowerCase() === name.toLowerCase())
-    if (match) local.agent.userSwitch(match.name)
-    else toast.show({ message: t("tui.voice.error.unknown_agent", { name: name }), variant: "error", duration: 3000 })
+  function voiceGetSnapshot(): { value: string; range: VoiceEdit.EditorRange | null } {
+    if (!input || input.isDestroyed) return { value: store.prompt.input, range: null }
+    const value = input.plainText
+    // Unfocused caret may be a stale 0 — treat as no caret and fall back to full string.
+    if (!input.focused) return { value, range: null }
+    return { value, range: VoiceEdit.getEditorRange(input) }
   }
 
   function voiceSetState(type: "idle" | "listening" | "speaking" | "processing" | "finishing") {
@@ -215,10 +242,9 @@ export function Prompt(props: PromptProps) {
 
   // Wire module-level callbacks to current component instance
   if (activeVoice) {
-    activeVoice.appendText = voiceAppendText
-    activeVoice.setText = voiceSetText
-    activeVoice.getPlainText = voiceGetPlainText
-    activeVoice.switchAgent = voiceSwitchAgent
+    activeVoice.appendText = voiceAppendAsr
+    activeVoice.applyTarget = voiceApplyTarget
+    activeVoice.getSnapshot = voiceGetSnapshot
     activeVoice.submit = () => submit()
     activeVoice.setState = voiceSetState
     activeVoice.showError = (msg) => toast.show({ message: msg, variant: "error", duration: 3000 })
@@ -245,7 +271,8 @@ export function Prompt(props: PromptProps) {
     // Start streaming — only validate the active mode's provider
     const voiceConfig = sync.data.config.voice
     const resolved = Voice.resolveVoiceConfig(voiceConfig)
-    const activeConfig = voiceControlEnabled() ? resolved.control : resolved.asr
+    const isControl = voiceControlEnabled()
+    const activeConfig = isControl ? resolved.control : resolved.asr
     const creds = Voice.resolveCredentials(sync.data.provider, activeConfig)
     if ("error" in creds) {
       const vars = { provider: creds.providerID, model: creds.model }
@@ -264,10 +291,9 @@ export function Prompt(props: PromptProps) {
     const av: NonNullable<typeof activeVoice> = {
       handle: undefined!,
       pending: 0,
-      appendText: voiceAppendText,
-      setText: voiceSetText,
-      getPlainText: voiceGetPlainText,
-      switchAgent: voiceSwitchAgent,
+      appendText: voiceAppendAsr,
+      applyTarget: voiceApplyTarget,
+      getSnapshot: voiceGetSnapshot,
       submit: () => submit(),
       setState: voiceSetState,
       showError: (msg) => toast.show({ message: msg, variant: "error", duration: 3000 }),
@@ -276,38 +302,42 @@ export function Prompt(props: PromptProps) {
     let voiceControlChain: Promise<void> = Promise.resolve()
 
     const handle = Voice.startStreaming({
+      // Control needs a longer breath window so one edit intent is not split (desktop D18).
+      minSilenceS: isControl ? 1.2 : undefined,
       onSegment: (segment) => {
         av.pending++
         av.setState("processing")
 
-        if (voiceControlEnabled()) {
+        if (isControl) {
           voiceControlChain = voiceControlChain.then(async () => {
             try {
               if (!activeVoice) return
               av.setState("processing")
-              const currentText = av.getPlainText()
-              const currentAgent = local.agent.current()?.name ?? ""
-              const availableAgents = local.agent.list().map((x) => x.name)
+              const snap = av.getSnapshot()
+              const contextText = VoiceEdit.controlContextText(snap.value, snap.range)
 
               const ctrl = await Voice.processVoiceControl({
                 audio: segment.audio,
                 apiKey: creds.apiKey,
                 baseUrl: creds.baseUrl,
                 model: resolved.control.model,
-                currentText,
-                currentAgent,
-                availableAgents,
+                contextText,
                 sendEnabled: voiceSendEnabled(),
               })
 
               if (ctrl) {
-                for (const action of ctrl.actions) {
-                  if (action.action === "edit") av.setText(action.text)
-                  else if (action.action === "send") {
-                    if (voiceSendEnabled() && av.getPlainText().trim()) await av.submit()
-                    else if (!av.getPlainText().trim()) av.showError(t("tui.voice.error.empty_send"))
-                  } else if (action.action === "agent") {
-                    av.switchAgent(action.agent)
+                // Drop stale mutations: user edited the prompt while the model was thinking.
+                const now = av.getSnapshot()
+                if (now.value === snap.value) {
+                  for (const action of ctrl.actions) {
+                    if (action.action === "insert") av.applyTarget({ kind: "insert", text: action.text })
+                    else if (action.action === "set") av.applyTarget({ kind: "set", text: action.text })
+                    else if (action.action === "set_with_cursor") av.applyTarget({ kind: "set_with_cursor", placement: action.placement })
+                    else if (action.action === "send") {
+                      const after = av.getSnapshot().value
+                      if (voiceSendEnabled() && after.trim()) await av.submit()
+                      else if (!after.trim()) av.showError(t("tui.voice.error.empty_send"))
+                    }
                   }
                 }
               } else {
@@ -328,11 +358,8 @@ export function Prompt(props: PromptProps) {
             model: resolved.asr.model,
           }).then((text) => {
             if (text) {
-              if (voiceSendEnabled() && Voice.SEND_RE.test(text.replace(/[\s。.!！？?，,]+$/g, "").trim())) {
-                av.submit()
-              } else {
-                av.appendText(text.trim())
-              }
+              // ASR has no send command — always dictate, including「发送」/"send it".
+              av.appendText(text)
             } else {
               av.showError(t("tui.voice.error.network"))
             }

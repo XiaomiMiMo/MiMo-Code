@@ -78,7 +78,7 @@ Single reactive effect — no manual lock/unlock. Naturally handles `/new` (empt
 
 ### Design Decisions
 
-**`set()` vs `userSwitch()` separation:** The guard only applies to user-initiated actions (Tab, dialog, voice). System paths (session restore, plan_enter/plan_exit, CLI --agent) use `set()` directly and are never blocked. This avoids a fragile whitelist of "force" call sites.
+**`set()` vs `userSwitch()` separation:** The guard only applies to user-initiated actions (Tab, dialog). System paths (session restore, plan_enter/plan_exit, CLI --agent) use `set()` directly and are never blocked. This avoids a fragile whitelist of "force" call sites. Voice no longer switches agents (see voice-control-tool-protocol).
 
 **Reactive `sessionHasMessages` from `lastUserMessage()`:** No manual lock/unlock state. The signal is derived from actual session content, so `/new`, `/session`, and submits all work correctly without explicit handling.
 

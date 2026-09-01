@@ -474,7 +474,7 @@ export const dict = {
   "tui.command.voice.toggle.title_off": "音声入力：無効 — クリックで有効化",
   "tui.voice.enabled": "音声入力が有効になりました（中国語/英語）— [Voice] をクリックして録音",
   "tui.voice.disabled": "音声入力が無効になりました",
-  "tui.voice.send.enabled": "音声送信が有効 — 「发送」または \"send it\" で送信",
+  "tui.voice.send.enabled": "音声送信が有効 — 音声制御で「发送」または \"send it\" と話すと送信",
   "tui.voice.send.disabled": "音声送信が無効になりました",
   "tui.command.voice.send.title": "音声送信を切り替え",
   "tui.command.voice.send.title_on": "音声送信：有効 — クリックで無効化",

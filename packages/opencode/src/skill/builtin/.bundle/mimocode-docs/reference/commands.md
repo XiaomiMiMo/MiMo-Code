@@ -79,7 +79,7 @@ Most client commands run only when the whole input is the command. `/btw <questi
 | `/skills` | Browse and select available skills |
 | `/revoke-consent` | Revoke consent for the free service |
 | `/voice` | Toggle streaming voice input (requires `sox` and a MiMo login) |
-| `/voice-send` | Toggle sending transcribed voice input automatically |
+| `/voice-send` | Allow voice control to submit when you say「发送」/ "send it" (ASR always dictates) |
 | `/voice-control` | Toggle voice control |
 
 ### Session commands

@@ -173,144 +173,219 @@ describe("voice", () => {
     })
   })
 
-  describe("SEND_RE", () => {
-    test("matches send commands", async () => {
-      const { SEND_RE } = await import("../../../src/cli/cmd/tui/util/voice")
-      expect(SEND_RE.test("send it")).toBe(true)
-      expect(SEND_RE.test("Send It")).toBe(true)
-      expect(SEND_RE.test("SEND IT")).toBe(true)
-      expect(SEND_RE.test("send  it")).toBe(true)
-      expect(SEND_RE.test("发送")).toBe(true)
-    })
-
-    test("does not match content text", async () => {
-      const { SEND_RE } = await import("../../../src/cli/cmd/tui/util/voice")
-      expect(SEND_RE.test("send it now")).toBe(false)
-      expect(SEND_RE.test("please send")).toBe(false)
-      expect(SEND_RE.test("帮我发送一个请求")).toBe(false)
-      expect(SEND_RE.test("提交代码")).toBe(false)
-      expect(SEND_RE.test("")).toBe(false)
-      expect(SEND_RE.test("发送吧")).toBe(false)
-      expect(SEND_RE.test("就这样发送")).toBe(false)
-      expect(SEND_RE.test("提交")).toBe(false)
-    })
-  })
-
-  describe("parseVoiceControl", () => {
-    test("parses valid edit action", async () => {
-      const { parseVoiceControl } = await import("../../../src/cli/cmd/tui/util/voice")
-      const result = parseVoiceControl('{"actions": [{"action": "edit", "text": "hello world"}]}')
-      expect(result).not.toBeNull()
-      expect(result!.actions).toHaveLength(1)
-      expect(result!.actions[0]).toEqual({ action: "edit", text: "hello world" })
-    })
-
-    test("parses valid send action", async () => {
-      const { parseVoiceControl } = await import("../../../src/cli/cmd/tui/util/voice")
-      const result = parseVoiceControl('{"actions": [{"action": "send"}]}')
-      expect(result).not.toBeNull()
-      expect(result!.actions).toHaveLength(1)
-      expect(result!.actions[0]).toEqual({ action: "send" })
-    })
-
-    test("parses valid agent action", async () => {
-      const { parseVoiceControl } = await import("../../../src/cli/cmd/tui/util/voice")
-      const result = parseVoiceControl('{"actions": [{"action": "agent", "agent": "Compose"}]}')
-      expect(result).not.toBeNull()
-      expect(result!.actions).toHaveLength(1)
-      expect(result!.actions[0]).toEqual({ action: "agent", agent: "Compose" })
-    })
-
-    test("parses combined edit + send actions", async () => {
-      const { parseVoiceControl } = await import("../../../src/cli/cmd/tui/util/voice")
-      const result = parseVoiceControl(
-        '{"actions": [{"action": "edit", "text": "写个快排"}, {"action": "send"}]}',
+  describe("parseVoiceControlResponse", () => {
+    test("parses insert tool call", async () => {
+      const { parseVoiceControlResponse } = await import("../../../src/cli/cmd/tui/util/voice")
+      const result = parseVoiceControlResponse(
+        {
+          tool_calls: [
+            {
+              id: "c1",
+              type: "function",
+              function: {
+                name: "voice_input",
+                arguments: JSON.stringify({ operation: { action: "insert", text: "hello" } }),
+              },
+            },
+          ],
+        },
+        { sendEnabled: true },
       )
-      expect(result).not.toBeNull()
-      expect(result!.actions).toHaveLength(2)
-      expect(result!.actions[0]).toEqual({ action: "edit", text: "写个快排" })
-      expect(result!.actions[1]).toEqual({ action: "send" })
+      expect(result.ok).toBe(true)
+      expect(result.actions).toEqual([{ action: "insert", text: "hello" }])
     })
 
-    test("parses agent + edit actions", async () => {
-      const { parseVoiceControl } = await import("../../../src/cli/cmd/tui/util/voice")
-      const result = parseVoiceControl(
-        '{"actions": [{"action": "agent", "agent": "Plan"}, {"action": "edit", "text": "review code"}]}',
+    test("parses set and set_with_cursor", async () => {
+      const { parseVoiceControlResponse } = await import("../../../src/cli/cmd/tui/util/voice")
+      const setResult = parseVoiceControlResponse(
+        {
+          tool_calls: [
+            {
+              function: {
+                name: "voice_input",
+                arguments: JSON.stringify({ operation: { action: "set", text: "" } }),
+              },
+            },
+          ],
+        },
+        {},
       )
-      expect(result).not.toBeNull()
-      expect(result!.actions).toHaveLength(2)
-      expect(result!.actions[0]).toEqual({ action: "agent", agent: "Plan" })
-      expect(result!.actions[1]).toEqual({ action: "edit", text: "review code" })
+      expect(setResult.ok).toBe(true)
+      expect(setResult.actions).toEqual([{ action: "set", text: "" }])
+
+      const cursorResult = parseVoiceControlResponse(
+        {
+          tool_calls: [
+            {
+              function: {
+                name: "voice_input",
+                arguments: JSON.stringify({
+                  operation: {
+                    action: "set_with_cursor",
+                    before_cursor: "a",
+                    selection: "b",
+                    after_cursor: "c",
+                  },
+                }),
+              },
+            },
+          ],
+        },
+        {},
+      )
+      expect(cursorResult.ok).toBe(true)
+      expect(cursorResult.actions).toEqual([
+        {
+          action: "set_with_cursor",
+          placement: { before_cursor: "a", selection: "b", after_cursor: "c" },
+        },
+      ])
     })
 
-    test("parses empty edit (clear)", async () => {
-      const { parseVoiceControl } = await import("../../../src/cli/cmd/tui/util/voice")
-      const result = parseVoiceControl('{"actions": [{"action": "edit", "text": ""}]}')
-      expect(result).not.toBeNull()
-      expect(result!.actions).toHaveLength(1)
-      expect(result!.actions[0]).toEqual({ action: "edit", text: "" })
+    test("honors send only when sendEnabled", async () => {
+      const { parseVoiceControlResponse } = await import("../../../src/cli/cmd/tui/util/voice")
+      const message = {
+        tool_calls: [
+          {
+            function: {
+              name: "voice_input",
+              arguments: JSON.stringify({ send: true }),
+            },
+          },
+        ],
+      }
+      const on = parseVoiceControlResponse(message, { sendEnabled: true })
+      expect(on.actions).toEqual([{ action: "send" }])
+      const off = parseVoiceControlResponse(message, { sendEnabled: false })
+      expect(off.actions).toEqual([])
     })
 
-    test("parses empty actions array", async () => {
-      const { parseVoiceControl } = await import("../../../src/cli/cmd/tui/util/voice")
-      const result = parseVoiceControl('{"actions": []}')
-      expect(result).not.toBeNull()
-      expect(result!.actions).toHaveLength(0)
+    test("rejects missing tool call", async () => {
+      const { parseVoiceControlResponse } = await import("../../../src/cli/cmd/tui/util/voice")
+      const result = parseVoiceControlResponse({ content: "plain" }, {})
+      expect(result.ok).toBe(false)
+      expect(result.protocolError).toContain("MUST call the voice_input")
     })
 
-    test("returns null for invalid JSON", async () => {
-      const { parseVoiceControl } = await import("../../../src/cli/cmd/tui/util/voice")
-      expect(parseVoiceControl("not json")).toBeNull()
+    test("rejects invalid zod args with path", async () => {
+      const { parseVoiceControlResponse } = await import("../../../src/cli/cmd/tui/util/voice")
+      const result = parseVoiceControlResponse(
+        {
+          tool_calls: [
+            {
+              function: {
+                name: "voice_input",
+                arguments: JSON.stringify({ operation: { action: "insert" } }),
+              },
+            },
+          ],
+        },
+        {},
+      )
+      expect(result.ok).toBe(false)
+      expect(result.protocolError).toContain("invalid")
+      expect(result.protocolError).toContain("text")
     })
 
-    test("returns null for missing actions field", async () => {
-      const { parseVoiceControl } = await import("../../../src/cli/cmd/tui/util/voice")
-      expect(parseVoiceControl('{"results": []}')).toBeNull()
+    test("rejects wrong tool name", async () => {
+      const { parseVoiceControlResponse } = await import("../../../src/cli/cmd/tui/util/voice")
+      const result = parseVoiceControlResponse(
+        {
+          tool_calls: [
+            {
+              function: {
+                name: "other_tool",
+                arguments: "{}",
+              },
+            },
+          ],
+        },
+        {},
+      )
+      expect(result.ok).toBe(false)
+      expect(result.protocolError).toContain("Call the voice_input tool.")
     })
 
-    test("returns null for invalid action type", async () => {
-      const { parseVoiceControl } = await import("../../../src/cli/cmd/tui/util/voice")
-      expect(parseVoiceControl('{"actions": [{"action": "delete"}]}')).toBeNull()
+    test("rejects empty tool name", async () => {
+      const { parseVoiceControlResponse } = await import("../../../src/cli/cmd/tui/util/voice")
+      const result = parseVoiceControlResponse(
+        {
+          tool_calls: [
+            {
+              function: {
+                arguments: "{}",
+              },
+            },
+          ],
+        },
+        {},
+      )
+      expect(result.ok).toBe(false)
+      expect(result.protocolError).toContain("Call the voice_input tool.")
     })
 
-    test("returns null when edit action missing text", async () => {
-      const { parseVoiceControl } = await import("../../../src/cli/cmd/tui/util/voice")
-      expect(parseVoiceControl('{"actions": [{"action": "edit"}]}')).toBeNull()
+    test("rejects multiple tool calls", async () => {
+      const { parseVoiceControlResponse } = await import("../../../src/cli/cmd/tui/util/voice")
+      const result = parseVoiceControlResponse(
+        {
+          tool_calls: [
+            { function: { name: "voice_input", arguments: "{}" } },
+            { function: { name: "voice_input", arguments: "{}" } },
+          ],
+        },
+        {},
+      )
+      expect(result.ok).toBe(false)
+      expect(result.protocolError).toContain("exactly once")
     })
 
-    test("returns null when agent action missing agent field", async () => {
-      const { parseVoiceControl } = await import("../../../src/cli/cmd/tui/util/voice")
-      expect(parseVoiceControl('{"actions": [{"action": "agent"}]}')).toBeNull()
-    })
-  })
-
-  describe("isAvailable", () => {
-    test("returns a boolean", async () => {
-      const { isAvailable } = await import("../../../src/cli/cmd/tui/util/voice")
-      expect(typeof isAvailable()).toBe("boolean")
-    })
-  })
-
-  describe("transcribeAudio", () => {
-    test("returns null on network error", async () => {
-      const { transcribeAudio } = await import("../../../src/cli/cmd/tui/util/voice")
-      const result = await transcribeAudio({
-        audio: new Int16Array(100),
-        apiKey: "test-key",
-        baseUrl: "http://127.0.0.1:1", // unreachable port
+    test("builds control body with unique tool and no response_format", async () => {
+      const { buildVoiceControlBody } = await import("../../../src/cli/cmd/tui/util/voice")
+      const body = buildVoiceControlBody({
+        model: "mimo-v2.5",
+        audioBase64: "AAAA",
+        context: {
+          text: { before_cursor: "a", selection: "", after_cursor: "b" },
+          sendEnabled: true,
+        },
       })
-      expect(result).toBeNull()
+      expect(body.model).toBe("mimo-v2.5")
+      expect(body.tools).toHaveLength(1)
+      const fn = (body.tools[0] as { function: { name: string } }).function
+      expect(fn.name).toBe("voice_input")
+      expect(JSON.stringify(body)).not.toContain("response_format")
+      const user = body.messages[1] as { content: Array<{ type: string; text?: string }> }
+      expect(user.content[0]!.type).toBe("text")
+      expect(JSON.parse(user.content[0]!.text!)).toEqual({
+        text: { before_cursor: "a", selection: "", after_cursor: "b" },
+        send_enabled: true,
+      })
     })
 
-    test("returns null on network error with custom model", async () => {
-      const { transcribeAudio } = await import("../../../src/cli/cmd/tui/util/voice")
-      const result = await transcribeAudio({
-        audio: new Int16Array(100),
-        apiKey: "test-key",
-        baseUrl: "http://127.0.0.1:1",
-        model: "custom-provider/custom-asr",
+    test("builds retry body appending assistant and protocol error", async () => {
+      const { buildVoiceControlBody, buildVoiceControlRetryBody } = await import("../../../src/cli/cmd/tui/util/voice")
+      const base = buildVoiceControlBody({
+        model: "mimo-v2.5",
+        audioBase64: "AAAA",
+        context: { text: "", sendEnabled: false },
       })
-      expect(result).toBeNull()
+      const retry = buildVoiceControlRetryBody(
+        base,
+        { role: "assistant", content: "plain text", tool_calls: null },
+        "You MUST call the voice_input tool exactly once.",
+      )
+      expect(retry.messages.length).toBe(base.messages.length + 2)
+      expect(retry.messages[base.messages.length]).toMatchObject({ role: "assistant", content: "plain text" })
+      expect(retry.messages[base.messages.length + 1]).toMatchObject({
+        role: "user",
+        content: "You MUST call the voice_input tool exactly once.",
+      })
+    })
+
+    test("prompt mentions voice_input and does not teach agent switching", async () => {
+      const { default: VOICE_CONTROL_SYSTEM_PROMPT } = await import("../../../src/cli/cmd/tui/util/voice-input.txt")
+      expect(VOICE_CONTROL_SYSTEM_PROMPT).toContain("voice_input")
+      expect(VOICE_CONTROL_SYSTEM_PROMPT).not.toMatch(/switch.*(agent|mode)|切换\s*agent|切到\s*plan/i)
     })
   })
 
@@ -321,26 +396,99 @@ describe("voice", () => {
         audio: new Int16Array(100),
         apiKey: "test-key",
         baseUrl: "http://127.0.0.1:1",
-        currentText: "",
-        currentAgent: "build",
-        availableAgents: ["build", "plan"],
+        contextText: "",
       })
       expect(result).toBeNull()
     })
+  })
 
-    test("returns null on network error with custom model", async () => {
-      const { processVoiceControl } = await import("../../../src/cli/cmd/tui/util/voice")
-      const result = await processVoiceControl({
-        audio: new Int16Array(100),
-        apiKey: "test-key",
-        baseUrl: "http://127.0.0.1:1",
-        model: "custom-provider/mimo-v2.5",
-        currentText: "hello",
-        currentAgent: "build",
-        availableAgents: ["build", "plan"],
-        sendEnabled: false,
+  describe("voice-edit placement", () => {
+    test("toTextPlacement slices three parts", async () => {
+      const { toTextPlacement } = await import("../../../src/cli/cmd/tui/util/voice-edit")
+      expect(toTextPlacement("abc", { start: 1, end: 1 })).toEqual({
+        before_cursor: "a",
+        selection: "",
+        after_cursor: "bc",
       })
-      expect(result).toBeNull()
+      expect(toTextPlacement("abcd", { start: 1, end: 3 })).toEqual({
+        before_cursor: "a",
+        selection: "bc",
+        after_cursor: "d",
+      })
+    })
+
+    test("applyVoiceTarget insert exact splice", async () => {
+      const { applyVoiceTarget } = await import("../../../src/cli/cmd/tui/util/voice-edit")
+      const r = applyVoiceTarget("hello world", { start: 5, end: 5 }, { kind: "insert", text: "," })
+      expect(r.text).toBe("hello, world")
+      expect(r.caret).toBe(6)
+    })
+
+    test("applyVoiceTarget insert replaces selection", async () => {
+      const { applyVoiceTarget } = await import("../../../src/cli/cmd/tui/util/voice-edit")
+      const r = applyVoiceTarget("hello world", { start: 6, end: 11 }, { kind: "insert", text: "there" })
+      expect(r.text).toBe("hello there")
+      expect(r.caret).toBe(11)
+    })
+
+    test("applyVoiceTarget set_with_cursor restores selection", async () => {
+      const { applyVoiceTarget } = await import("../../../src/cli/cmd/tui/util/voice-edit")
+      const r = applyVoiceTarget("old", { start: 3, end: 3 }, {
+        kind: "set_with_cursor",
+        placement: { before_cursor: "ab", selection: "cd", after_cursor: "ef" },
+      })
+      expect(r.text).toBe("abcdef")
+      expect(r.selection).toEqual({ start: 2, end: 4 })
+    })
+
+    test("width helpers bridge CJK display-width and UTF-16", async () => {
+      const { widthCaretFor, widthSelectionFor, getEditorRange, toTextPlacement } = await import(
+        "../../../src/cli/cmd/tui/util/voice-edit"
+      )
+      // "中文ab": CJK width 2 each, latin 1 each → caret after "中文" is width 4, string index 2
+      const text = "中文ab"
+      expect(widthCaretFor(text, 2)).toBe(4)
+      expect(widthSelectionFor(text, { start: 2, end: 4 })).toEqual({ start: 4, end: 6 })
+
+      const editor = {
+        plainText: text,
+        cursorOffset: 4,
+        hasSelection: () => true,
+        getSelection: () => ({ start: 4, end: 6 }),
+      }
+      expect(getEditorRange(editor)).toEqual({ start: 2, end: 4 })
+      expect(toTextPlacement(text, getEditorRange(editor))).toEqual({
+        before_cursor: "中文",
+        selection: "ab",
+        after_cursor: "",
+      })
+    })
+
+    test("getEditorRange falls back to cursor when no selection", async () => {
+      const { getEditorRange } = await import("../../../src/cli/cmd/tui/util/voice-edit")
+      const editor = {
+        plainText: "中文ab",
+        cursorOffset: 4,
+        hasSelection: () => false,
+        getSelection: () => null,
+      }
+      expect(getEditorRange(editor)).toEqual({ start: 2, end: 2 })
+    })
+
+    test("asrInsertTarget exact mid-buffer and end space rule", async () => {
+      const { asrInsertTarget } = await import("../../../src/cli/cmd/tui/util/voice-edit")
+      expect(asrInsertTarget("hello world", { start: 5, end: 5 }, "there")).toEqual({
+        kind: "insert",
+        text: "there",
+      })
+      expect(asrInsertTarget("Done.", { start: 5, end: 5 }, "next")).toEqual({
+        kind: "insert",
+        text: " next",
+      })
+      expect(asrInsertTarget("hello world", { start: 6, end: 11 }, "there")).toEqual({
+        kind: "insert",
+        text: "there",
+      })
     })
   })
 

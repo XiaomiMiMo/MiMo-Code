@@ -535,7 +535,7 @@ export const dict = {
   "tui.command.voice.toggle.title_off": "Saisie vocale : désactivée — cliquer pour activer",
   "tui.voice.enabled": "Saisie vocale activée (chinois/anglais) — cliquez sur [Voice] pour enregistrer",
   "tui.voice.disabled": "Saisie vocale désactivée",
-  "tui.voice.send.enabled": "Envoi vocal activé — dites「发送」ou \"send it\" pour envoyer",
+  "tui.voice.send.enabled": "Envoi vocal activé — en contrôle vocal, dites「发送」ou \"send it\" pour envoyer",
   "tui.voice.send.disabled": "Envoi vocal désactivé",
   "tui.command.voice.send.title": "Basculer l'envoi vocal",
   "tui.command.voice.send.title_on": "Envoi vocal : activé — cliquer pour désactiver",
