@@ -166,6 +166,19 @@ export function Prompt(props: PromptProps) {
     setVoiceElapsed(0)
   }
 
+  /** Natural selection: highlight [start,end) and park the caret at end. */
+  function voicePlaceRange(value: string, range: VoiceEdit.EditorRange) {
+    if (!input || input.isDestroyed) return
+    const w = VoiceEdit.widthSelectionFor(value, range)
+    if (range.start === range.end) {
+      input.clearSelection()
+      input.cursorOffset = w.start
+      return
+    }
+    input.setSelection(w.start, w.end)
+    input.cursorOffset = w.end
+  }
+
   function voiceRewriteBuffer(text: string, caretIndex: number, selection?: VoiceEdit.EditorRange) {
     if (!input || input.isDestroyed) return
     // Full rewrite drops mention/paste extmarks — clear them with the buffer.
@@ -177,9 +190,8 @@ export function Prompt(props: PromptProps) {
     })
     input.clear()
     input.insertText(text)
-    if (selection) {
-      const sel = VoiceEdit.widthSelectionFor(text, selection)
-      input.setSelection(sel.start, sel.end)
+    if (selection && selection.start !== selection.end) {
+      voicePlaceRange(text, selection)
     } else {
       input.clearSelection()
       input.cursorOffset = VoiceEdit.widthCaretFor(text, caretIndex)
@@ -200,8 +212,13 @@ export function Prompt(props: PromptProps) {
       const range = input.focused
         ? VoiceEdit.getEditorRange(input)
         : { start: value.length, end: value.length }
-      const w = VoiceEdit.widthSelectionFor(value, range)
-      input.setSelection(w.start, w.end)
+      if (range.start === range.end) {
+        input.clearSelection()
+        input.cursorOffset = VoiceEdit.widthSelectionFor(value, range).start
+      } else {
+        const w = VoiceEdit.widthSelectionFor(value, range)
+        input.setSelection(w.start, w.end)
+      }
       input.insertText(target.text)
       setStore("prompt", "input", input.plainText)
       setTimeout(() => {
