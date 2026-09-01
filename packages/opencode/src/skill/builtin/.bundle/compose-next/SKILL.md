@@ -55,7 +55,7 @@ Never-Ask applies to the current decision only. At every later decision point, c
 
 ## Spec — one document per feature
 
-Maintain one document per feature at `docs/compose/spec/<feature-name>.md` from the worktree root, not the session/main repository. Do not add a date to the filename. A user-specified location overrides this path. Edit an existing document in place; never create a separate plan or report. Do not write the feature document before Workspace owns a worktree.
+Maintain one document per feature at `docs/compose/spec/<feature-name>.md` from the worktree root. Do not add a date to the filename. A user-specified location overrides this path. Edit an existing document in place; never create a separate plan or report. Do not write the feature document before Workspace owns a worktree.
 
 ### Template
 
@@ -104,7 +104,7 @@ Update only affected sections, bump `updated:`, preserve anchors, and keep only 
 
 ## Workspace — worktree ownership
 
-Never begin implementation on `main` or `master` without explicit user consent. Spec and docs-only turns share this gate: do not write a feature document under the session/main repository path; create or reuse a worktree first.
+Never begin implementation on `main` or `master` without explicit user consent.
 
 - Compare `git rev-parse --git-dir` with `git rev-parse --git-common-dir`. If they differ, use the current linked worktree; do not nest another. A non-empty `git rev-parse --show-superproject-working-tree` indicates a submodule, not a linked worktree.
 - Create a linked worktree at `.worktrees/<slug>` by default. Run `git check-ignore -q "$path"`; if it is not ignored, write `*` to `.worktrees/.gitignore`. Then run `git worktree add "$path" -b "$branch"`.
