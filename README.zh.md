@@ -435,7 +435,20 @@ MiMoCode 在首次加载配置时会自动注入 `$schema` 字段，使编辑器
 - MCP 服务器连接
 - 快捷键和主题
 
-Max Mode（并行 best-of-N 推理 + 裁判选优）可通过配置中的 `experimental.maxMode` 开启。
+#### Max Mode
+
+在配置中添加 `experimental.maxMode` 开启：
+
+```jsonc
+{
+  "experimental": {
+    "maxMode": {}            // 默认：每步 5 个并行候选
+    // "maxMode": { "candidates": 3 }  // 自定义候选数量
+  }
+}
+```
+
+开启后智能体列表出现 **max**，按 `Tab` 切换。权限与 **build** 相同，每步消耗约为 `candidates ×` 倍。
 
 <details>
 <summary><strong>允许访问系统临时目录（<code>/tmp</code>）</strong></summary>

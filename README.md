@@ -444,7 +444,20 @@ To declare which input modalities a custom model supports (image, audio, video, 
 - MCP server connections
 - Keybindings and theme
 
-Max Mode (parallel best-of-N reasoning with judge selection) can be enabled via `experimental.maxMode` in the config.
+#### Max Mode
+
+Enable by adding `experimental.maxMode` to your config:
+
+```jsonc
+{
+  "experimental": {
+    "maxMode": {}            // default: 5 parallel candidates per step
+    // "maxMode": { "candidates": 3 }  // custom candidate count
+  }
+}
+```
+
+A new **max** agent appears — press `Tab` to switch to it. Same permissions as **build**. Each step costs roughly `candidates ×` normal tokens.
 
 <details>
 <summary><strong>Allowing the system temp directory (<code>/tmp</code>)</strong></summary>
