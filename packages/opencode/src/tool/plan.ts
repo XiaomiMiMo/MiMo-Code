@@ -6,6 +6,7 @@ import { Question } from "../question"
 import { Session } from "../session"
 import { MessageV2 } from "../session/message-v2"
 import { Provider } from "../provider"
+import { Agent } from "../agent/agent"
 import { Instance } from "../project/instance"
 import { type SessionID, MessageID, PartID } from "../session/schema"
 import EXIT_DESCRIPTION from "./plan-exit.txt"
@@ -23,6 +24,7 @@ export const PlanExitTool = Tool.define(
     const session = yield* Session.Service
     const question = yield* Question.Service
     const provider = yield* Provider.Service
+    const agents = yield* Agent.Service
 
     return {
       description: EXIT_DESCRIPTION,
@@ -74,7 +76,15 @@ export const PlanExitTool = Tool.define(
             }
           }
 
-          const model = getLastModel(ctx.sessionID) ?? (yield* provider.defaultModel())
+          // Resolve model from build agent config first, then fall back to last session model
+          const buildAgent = yield* agents.get("build").pipe(Effect.catch(() => Effect.succeed(undefined)))
+          const agentModel = buildAgent?.modelRef
+            ? yield* provider.resolveModelRef(buildAgent.modelRef).pipe(
+                Effect.map((m) => ({ providerID: m.providerID, modelID: m.id })),
+                Effect.catch(() => Effect.succeed(undefined)),
+              )
+            : buildAgent?.model ?? undefined
+          const model = agentModel ?? getLastModel(ctx.sessionID) ?? (yield* provider.defaultModel())
 
           const msg: MessageV2.User = {
             id: MessageID.ascending(),
