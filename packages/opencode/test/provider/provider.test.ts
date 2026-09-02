@@ -3106,6 +3106,48 @@ test("custom model with variants enabled and disabled", async () => {
   })
 })
 
+test("reasoning capability is auto-detected from reasoningEffort option", async () => {
+  await using tmp = await tmpdir({
+    init: async (dir) => {
+      await Bun.write(
+        path.join(dir, "mimocode.json"),
+        JSON.stringify({
+          $schema: "https://opencode.ai/config.json",
+          provider: {
+            "zen-free": {
+              name: "Zen Free",
+              npm: "@ai-sdk/openai-compatible",
+              env: [],
+              models: {
+                "mimo-v2.5-free": {
+                  name: "MiMo V2.5 Free",
+                  limit: { context: 128000, output: 16000 },
+                  options: {
+                    reasoningEffort: "high",
+                  },
+                },
+              },
+              options: { apiKey: "test-key" },
+            },
+          },
+        }),
+      )
+    },
+  })
+  await Instance.provide({
+    directory: tmp.path,
+    fn: async () => {
+      const providers = await list()
+      const model = providers[ProviderID.make("zen-free")].models["mimo-v2.5-free"]
+      expect(model.capabilities.reasoning).toBe(true)
+      expect(model.variants).toBeDefined()
+      expect(model.variants!["low"]).toBeDefined()
+      expect(model.variants!["medium"]).toBeDefined()
+      expect(model.variants!["high"]).toBeDefined()
+    },
+  })
+})
+
 test("Google Vertex: retains baseURL for custom proxy", async () => {
   await using tmp = await tmpdir({
     init: async (dir) => {
