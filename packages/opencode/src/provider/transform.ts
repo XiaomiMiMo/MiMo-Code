@@ -1222,6 +1222,7 @@ export function variants(model: Provider.Model): Record<string, Record<string, a
   if (!model.capabilities.reasoning) return {}
 
   const id = model.id.toLowerCase()
+  const pid = model.providerID.toLowerCase()
   const adaptiveEfforts = anthropicAdaptiveEfforts(model.api.id)
   if (
     id.includes("minimax") ||
@@ -1231,8 +1232,20 @@ export function variants(model: Provider.Model): Record<string, Record<string, a
     id.includes("k2p5") ||
     id.includes("qwen") ||
     id.includes("big-pickle")
-  )
-    return {}
+  ) {
+    // Custom providers may proxy these models — only exclude built-in providers
+    // where the providerID matches the model family.
+    const isBuiltIn =
+      (id.includes("deepseek") && pid.includes("deepseek")) ||
+      (id.includes("minimax") && pid.includes("minimax")) ||
+      (id.includes("glm") && pid.includes("glm")) ||
+      (id.includes("mistral") && pid.includes("mistral")) ||
+      (id.includes("kimi") && pid.includes("kimi")) ||
+      (id.includes("k2p5") && pid.includes("k2p5")) ||
+      (id.includes("qwen") && pid.includes("qwen")) ||
+      (id.includes("big-pickle") && pid.includes("big-pickle"))
+    if (isBuiltIn) return {}
+  }
 
   if (id.includes("deepseek")) {
     if (model.providerID !== "deepseek" || model.api.npm !== "@ai-sdk/openai-compatible") return {}

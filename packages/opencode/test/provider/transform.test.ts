@@ -3850,6 +3850,77 @@ describe("ProviderTransform.variants", () => {
       expect(result.low).toEqual({ reasoningEffort: "low" })
       expect(result.high).toEqual({ reasoningEffort: "high" })
     })
+
+    test("custom provider with deepseek model ID returns variants", () => {
+      const model = createMockModel({
+        id: "my-provider/deepseek-v4-pro",
+        providerID: "my-provider",
+        api: {
+          id: "deepseek-v4-pro",
+          url: "https://my-api.example.com",
+          npm: "@ai-sdk/openai-compatible",
+        },
+      })
+      const result = ProviderTransform.variants(model)
+      expect(Object.keys(result)).toEqual(["low", "medium", "high"])
+      expect(result.low).toEqual({ reasoningEffort: "low" })
+    })
+
+    test("custom provider with minimax model ID returns variants", () => {
+      const model = createMockModel({
+        id: "my-provider/minimax-text-01",
+        providerID: "my-provider",
+        api: {
+          id: "minimax-text-01",
+          url: "https://my-api.example.com",
+          npm: "@ai-sdk/openai-compatible",
+        },
+      })
+      const result = ProviderTransform.variants(model)
+      expect(Object.keys(result)).toEqual(["low", "medium", "high"])
+    })
+
+    test("custom provider with glm model ID returns variants", () => {
+      const model = createMockModel({
+        id: "my-provider/glm-4",
+        providerID: "my-provider",
+        api: {
+          id: "glm-4",
+          url: "https://my-api.example.com",
+          npm: "@ai-sdk/openai-compatible",
+        },
+      })
+      const result = ProviderTransform.variants(model)
+      expect(Object.keys(result)).toEqual(["low", "medium", "high"])
+    })
+
+    test("custom provider with qwen model ID returns variants", () => {
+      const model = createMockModel({
+        id: "my-provider/qwen-max",
+        providerID: "my-provider",
+        api: {
+          id: "qwen-max",
+          url: "https://my-api.example.com",
+          npm: "@ai-sdk/openai-compatible",
+        },
+      })
+      const result = ProviderTransform.variants(model)
+      expect(Object.keys(result)).toEqual(["low", "medium", "high"])
+    })
+
+    test("custom provider with kimi model ID returns variants", () => {
+      const model = createMockModel({
+        id: "my-provider/kimi-latest",
+        providerID: "my-provider",
+        api: {
+          id: "kimi-latest",
+          url: "https://my-api.example.com",
+          npm: "@ai-sdk/openai-compatible",
+        },
+      })
+      const result = ProviderTransform.variants(model)
+      expect(Object.keys(result)).toEqual(["low", "medium", "high"])
+    })
   })
 
   describe("@ai-sdk/azure", () => {
