@@ -30,9 +30,6 @@ function globalFiles() {
     files.push(path.join(Flag.MIMOCODE_CONFIG_DIR, "AGENTS.md"))
   }
   files.push(path.join(Global.Path.config, "AGENTS.md"))
-  if (!Flag.MIMOCODE_DISABLE_CLAUDE_CODE_PROMPT) {
-    files.push(path.join(os.homedir(), ".claude", "CLAUDE.md"))
-  }
   return files
 }
 
