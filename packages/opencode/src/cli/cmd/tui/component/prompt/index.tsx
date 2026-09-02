@@ -1343,10 +1343,16 @@ export function Prompt(props: PromptProps) {
           })
         })
     }
-    history.append({
-      ...store.prompt,
-      mode: currentMode,
-    })
+    history.append(
+      {
+        sessionID,
+        workspaceID: workspaceID ?? props.workspaceID,
+      },
+      {
+        ...store.prompt,
+        mode: currentMode,
+      },
+    )
     input.extmarks.clear()
     setStore("prompt", {
       input: "",
@@ -1773,7 +1779,14 @@ export function Prompt(props: PromptProps) {
                     (keybind.match("history_next", e) && input.cursorOffset === input.plainText.length)
                   ) {
                     const direction = keybind.match("history_previous", e) ? -1 : 1
-                    const item = history.move(direction, input.plainText)
+                    const item = history.move(
+                      {
+                        sessionID: props.sessionID,
+                        workspaceID: props.workspaceID,
+                      },
+                      direction,
+                      input.plainText,
+                    )
 
                     if (item) {
                       input.setText(item.input)

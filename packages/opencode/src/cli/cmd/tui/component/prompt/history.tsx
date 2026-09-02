@@ -10,6 +10,8 @@ import type { AgentPart, FilePart, TextPart } from "@mimo-ai/sdk/v2"
 export type PromptInfo = {
   input: string
   mode?: "normal" | "shell"
+  sessionID?: string
+  workspaceID?: string
   parts: (
     | Omit<FilePart, "id" | "messageID" | "sessionID">
     | Omit<AgentPart, "id" | "messageID" | "sessionID">
@@ -25,7 +27,28 @@ export type PromptInfo = {
   )[]
 }
 
+export type PromptHistoryScope = {
+  sessionID?: string
+  workspaceID?: string
+}
+
 const MAX_HISTORY_ENTRIES = 50
+
+export function promptHistoryScopeKey(scope: PromptHistoryScope) {
+  if (scope.sessionID) return `session:${scope.sessionID}`
+  if (scope.workspaceID) return `workspace:${scope.workspaceID}`
+  return "global"
+}
+
+export function promptHistoryMatchesScope(entry: PromptInfo, scope: PromptHistoryScope) {
+  if (scope.sessionID) return entry.sessionID === scope.sessionID
+  if (scope.workspaceID) return entry.workspaceID === scope.workspaceID
+  return !entry.sessionID && !entry.workspaceID
+}
+
+export function promptHistoryForScope(history: PromptInfo[], scope: PromptHistoryScope) {
+  return history.filter((entry) => promptHistoryMatchesScope(entry, scope))
+}
 
 export const { use: usePromptHistory, provider: PromptHistoryProvider } = createSimpleContext({
   name: "PromptHistory",
@@ -56,33 +79,45 @@ export const { use: usePromptHistory, provider: PromptHistoryProvider } = create
     })
 
     const [store, setStore] = createStore({
-      index: 0,
+      indices: {} as Record<string, number>,
       history: [] as PromptInfo[],
     })
 
     return {
-      move(direction: 1 | -1, input: string) {
-        if (!store.history.length) return undefined
-        const current = store.history.at(store.index)
+      move(scope: PromptHistoryScope, direction: 1 | -1, input: string) {
+        const scopedHistory = promptHistoryForScope(store.history, scope)
+        const key = promptHistoryScopeKey(scope)
+        const index = store.indices[key] ?? 0
+        if (!scopedHistory.length) return undefined
+        const current = scopedHistory.at(index)
         if (!current) return undefined
         if (current.input !== input && input.length) return
         setStore(
           produce((draft) => {
-            const next = store.index + direction
-            if (Math.abs(next) > store.history.length) return
+            const next = index + direction
+            if (Math.abs(next) > scopedHistory.length) return
             if (next > 0) return
-            draft.index = next
+            draft.indices[key] = next
           }),
         )
-        if (store.index === 0)
+        if ((store.indices[key] ?? 0) === 0)
           return {
             input: "",
             parts: [],
           }
-        return store.history.at(store.index)
+        return scopedHistory.at(store.indices[key])
       },
-      append(item: PromptInfo) {
-        const entry = structuredClone(unwrap(item))
+      append(scope: PromptHistoryScope, item: PromptInfo) {
+        const entry = structuredClone(
+          unwrap({
+            input: item.input,
+            mode: item.mode,
+            parts: item.parts,
+            sessionID: scope.sessionID,
+            workspaceID: scope.workspaceID,
+          }),
+        )
+        const key = promptHistoryScopeKey(scope)
         let trimmed = false
         setStore(
           produce((draft) => {
@@ -91,7 +126,7 @@ export const { use: usePromptHistory, provider: PromptHistoryProvider } = create
               draft.history = draft.history.slice(-MAX_HISTORY_ENTRIES)
               trimmed = true
             }
-            draft.index = 0
+            draft.indices[key] = 0
           }),
         )
 
