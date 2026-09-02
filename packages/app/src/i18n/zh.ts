@@ -28,6 +28,8 @@ export const dict = {
   "command.sidebar.toggle": "切换侧边栏",
 
   "command.project.open": "打开项目",
+  "command.project.previous": "上一个项目",
+  "command.project.next": "下一个项目",
 
   "command.provider.connect": "连接提供商",
 
@@ -257,6 +259,8 @@ export const dict = {
   "prompt.mode.shell": "Shell",
   "prompt.mode.normal": "Prompt",
   "prompt.mode.shell.exit": "按 esc 退出",
+  "session.child.promptDisabled": "子智能体会话无法接收提示。",
+  "session.child.backToParent": "返回主会话。",
   "prompt.example.1": "修复代码库中的一个 TODO",
   "prompt.example.2": "这个项目的技术栈是什么？",
   "prompt.example.3": "修复失败的测试",
@@ -508,6 +512,8 @@ export const dict = {
   "session.review.noVcs": "未检测到 Git 版本控制系统，无法显示更改",
   "session.review.noSnapshot": "配置中已禁用快照跟踪，因此会话更改不可用",
   "session.review.noChanges": "无更改",
+  "session.review.noUncommittedChanges": "暂无未提交的更改",
+  "session.review.noBranchChanges": "暂无分支更改",
   "session.files.selectToOpen": "选择要打开的文件",
   "session.files.all": "所有文件",
   "session.files.empty": "无文件",
@@ -603,6 +609,8 @@ export const dict = {
   "sidebar.project.recentSessions": "最近会话",
   "sidebar.project.viewAllSessions": "查看全部会话",
   "sidebar.project.clearNotifications": "清除通知",
+  "sidebar.empty.title": "没有打开的项目",
+  "sidebar.empty.description": "打开项目以开始使用",
 
   "app.name.desktop": "OpenCode Desktop",
 
@@ -617,6 +625,7 @@ export const dict = {
   "settings.desktop.wsl.description": "在 Windows 的 WSL 环境中运行 OpenCode 服务器。",
 
   "settings.general.section.appearance": "外观",
+  "settings.general.section.advanced": "高级",
   "settings.general.section.notifications": "系统通知",
   "settings.general.section.updates": "更新",
   "settings.general.section.sounds": "音效",
@@ -640,6 +649,16 @@ export const dict = {
   "settings.general.row.followup.description": "选择跟进提示是立即引导还是在队列中等待",
   "settings.general.row.followup.option.queue": "排队",
   "settings.general.row.followup.option.steer": "引导",
+  "settings.general.row.showFileTree.title": "文件树",
+  "settings.general.row.showFileTree.description": "在侧边栏显示文件树切换按钮",
+  "settings.general.row.showNavigation.title": "导航控制",
+  "settings.general.row.showNavigation.description": "显示后退和前进导航按钮",
+  "settings.general.row.showSearch.title": "命令面板",
+  "settings.general.row.showSearch.description": "显示搜索和命令面板按钮",
+  "settings.general.row.showStatus.title": "服务器状态",
+  "settings.general.row.showStatus.description": "显示服务器状态按钮",
+  "settings.general.row.showTerminal.title": "终端",
+  "settings.general.row.showTerminal.description": "显示终端按钮",
   "settings.general.row.reasoningSummaries.title": "显示推理摘要",
   "settings.general.row.reasoningSummaries.description": "在时间线中显示模型推理摘要",
   "settings.general.row.shellToolPartsExpanded.title": "展开 shell 工具部分",
