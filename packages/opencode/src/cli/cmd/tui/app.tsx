@@ -85,7 +85,7 @@ import { DialogModalities } from "./component/dialog-modalities"
 import { DialogContextLimit } from "./component/dialog-context-limit"
 import { DialogPermissionTimeout } from "./component/dialog-permission-timeout"
 
-function rendererConfig(_config: TuiConfig.Info, plainTerminal: boolean): CliRendererConfig {
+export function rendererConfig(_config: TuiConfig.Info, plainTerminal: boolean): CliRendererConfig {
   const mouseEnabled = !plainTerminal && !Flag.MIMOCODE_DISABLE_MOUSE && (_config.mouse ?? true)
 
   return {
@@ -107,6 +107,7 @@ function rendererConfig(_config: TuiConfig.Info, plainTerminal: boolean): CliRen
         }
       : {
           maxFps: 60,
+          ...(_config.screen_mode ? { screenMode: _config.screen_mode } : {}),
         }),
     consoleOptions: {
       keyBindings: [{ name: "y", ctrl: true, action: "copy-selection" }],

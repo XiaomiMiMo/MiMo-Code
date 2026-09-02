@@ -134,7 +134,7 @@ test("migrates tui-specific keys from mimocode.json when tui.json does not exist
         JSON.stringify(
           {
             theme: "migrated-theme",
-            tui: { scroll_speed: 5 },
+            tui: { scroll_speed: 5, screen_mode: "main-screen" },
             keybinds: { app_exit: "ctrl+q" },
           },
           null,
@@ -147,11 +147,13 @@ test("migrates tui-specific keys from mimocode.json when tui.json does not exist
   const config = await getTuiConfig(tmp.path)
   expect(config.theme).toBe("migrated-theme")
   expect(config.scroll_speed).toBe(5)
+  expect(config.screen_mode).toBe("main-screen")
   expect(config.keybinds?.app_exit).toBe("ctrl+q")
   const text = await Filesystem.readText(path.join(tmp.path, "tui.json"))
   expect(JSON.parse(text)).toMatchObject({
     theme: "migrated-theme",
     scroll_speed: 5,
+    screen_mode: "main-screen",
   })
   const server = JSON.parse(await Filesystem.readText(path.join(tmp.path, "mimocode.json")))
   expect(server.theme).toBeUndefined()
