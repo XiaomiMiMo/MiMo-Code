@@ -192,6 +192,59 @@ export type RepairedToolCall = {
   input: string
 }
 
+/** Escape literal control chars and lone backslashes inside JSON string values so the payload can be re-parsed. */
+export function rescueMalformedJson(raw: string): string | undefined {
+  if (!raw || raw.trim() === "") return undefined
+  try {
+    JSON.parse(raw)
+    return undefined
+  } catch {
+    // fall through to rescue
+  }
+
+  const VALID_ESCAPE = '"\\/bfnrtu'
+  let out = ""
+  let inStr = false
+  for (let i = 0; i < raw.length; i++) {
+    const ch = raw[i]
+    if (inStr) {
+      if (ch === "\\") {
+        const next = i + 1 < raw.length ? raw[i + 1] : ""
+        if (VALID_ESCAPE.includes(next)) {
+          out += ch + next
+          i++
+        } else {
+          out += "\\\\"
+        }
+        continue
+      }
+      if (ch === '"') {
+        inStr = false
+        out += ch
+        continue
+      }
+      const code = ch.charCodeAt(0)
+      if (code < 0x20) {
+        if (ch === "\n") out += "\\n"
+        else if (ch === "\r") out += "\\r"
+        else if (ch === "\t") out += "\\t"
+        else out += "\\u" + code.toString(16).padStart(4, "0")
+        continue
+      }
+    } else if (ch === '"') {
+      inStr = true
+    }
+    out += ch
+  }
+
+  try {
+    JSON.parse(out)
+    return out
+  } catch {
+    return undefined
+  }
+}
+
 /** Repair tool name and/or argument keys so AI SDK validation can succeed. */
 export async function repairToolCall(input: RepairToolCallInput): Promise<RepairedToolCall | undefined> {
   const resolvedName = resolveName(input.toolName, input.toolNames)
