@@ -67,6 +67,7 @@ export type NewCronTask = {
 
 export type ListFilter = {
   session_id?: string
+  all?: boolean
   kind?: "cron" | "loop"
   durable_only?: boolean
 }
@@ -383,7 +384,7 @@ const makeImpl = (): Interface => {
         ...session.map((t) => ({ ...t, durable: false as const })),
       ]
       return all.filter((t) => {
-        if (filter.session_id && t.createdBySessionId !== filter.session_id) return false
+        if (!filter.all && filter.session_id && t.createdBySessionId !== filter.session_id) return false
         if (filter.kind === "loop" && t.kind !== "loop") return false
         if (filter.kind === "cron" && t.kind === "loop") return false
         if (filter.durable_only && t.durable !== true) return false

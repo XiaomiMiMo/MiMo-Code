@@ -242,10 +242,10 @@ function mapVerb(rawVerb: string | undefined, args: string[], line: number): Eff
       })
     }
     case "list": {
-      const { flags, bools, rest, error } = extractCronFlags(args, ["kind", "session"], ["durable-only"])
+      const { flags, bools, rest, error } = extractCronFlags(args, ["kind", "session"], ["durable-only", "all"])
       if (error) return flagError("list", error, line)
       if (rest.length > 0)
-        return arityError("list", "[--kind cron|loop] [--durable-only] [--session <id>]", rest, line)
+        return arityError("list", "[--kind cron|loop] [--durable-only] [--all] [--session <id>]", rest, line)
       if (flags.kind && flags.kind !== "cron" && flags.kind !== "loop")
         return flagError("list", `--kind must be cron|loop (got '${flags.kind}')`, line)
       return Effect.succeed({
