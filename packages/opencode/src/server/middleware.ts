@@ -99,7 +99,7 @@ export function CorsMiddleware(opts?: { cors?: string[] }): MiddlewareHandler {
       if (input === "tauri://localhost" || input === "http://tauri.localhost" || input === "https://tauri.localhost")
         return input
 
-      if (/^https:\/\/([a-z0-9-]+\.)*opencode\.ai$/.test(input)) return input
+      if (/^https:\/\/([a-z0-9-]+\.)*mimo\.xiaomi\.com$/.test(input)) return input
       if (opts?.cors?.includes(input)) return input
     },
   })
