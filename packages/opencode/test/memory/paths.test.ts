@@ -11,6 +11,25 @@ describe("parsePath", () => {
     })
   })
 
+  test("Windows-native paths are parsed with normalized keys", () => {
+    expect(
+      parsePath(String.raw`C:\Users\me\AppData\Local\mimocode\memory\global\tooling-prefs.md`),
+    ).toEqual({
+      scope: "global",
+      scope_id: "",
+      type: "free",
+      key: "tooling-prefs",
+    })
+    expect(
+      parsePath(String.raw`C:\Users\me\AppData\Local\mimocode\memory\sessions\ses_abc\tasks\T1\progress.md`),
+    ).toEqual({
+      scope: "sessions",
+      scope_id: "ses_abc",
+      type: "progress",
+      key: "tasks/T1/progress",
+    })
+  })
+
   test("project memory: <pid>/memory.md", () => {
     expect(parsePath("/data/memory/projects/uuid-1/memory.md")).toEqual({
       scope: "projects",
