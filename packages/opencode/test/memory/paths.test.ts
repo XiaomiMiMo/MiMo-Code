@@ -47,6 +47,15 @@ describe("parsePath", () => {
     })
   })
 
+  test("Windows project memory path with non-ASCII username parses", () => {
+    expect(parsePath(String.raw`C:\Users\测试用户\.local\share\mimocode\memory\projects\global\MEMORY.md`)).toEqual({
+      scope: "projects",
+      scope_id: "global",
+      type: "memory",
+      key: "MEMORY",
+    })
+  })
+
   test("session checkpoint: <sid>/checkpoint.md", () => {
     expect(parsePath("/data/memory/sessions/ses_abc/checkpoint.md")).toEqual({
       scope: "sessions",
@@ -62,6 +71,15 @@ describe("parsePath", () => {
       scope_id: "ses_abc",
       type: "checkpoint",
       key: "checkpoint-lexer",
+    })
+  })
+
+  test("Windows session memory path parses", () => {
+    expect(parsePath(String.raw`C:\Users\测试用户\.local\share\mimocode\memory\sessions\ses_abc\checkpoint.md`)).toEqual({
+      scope: "sessions",
+      scope_id: "ses_abc",
+      type: "checkpoint",
+      key: "checkpoint",
     })
   })
 
