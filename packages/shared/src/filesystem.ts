@@ -160,6 +160,37 @@ export namespace AppFileSystem {
         return result
       })
 
+      // BOM-aware file string operations
+      const UTF8_BOM = "\uFEFF"
+
+      const readFileString = Effect.fn("FileSystem.readFileString")(function* (path: string, encoding?: string) {
+        const content = yield* fs.readFileString(path, encoding)
+        // Check if the original file has BOM by reading raw bytes
+        const hasBOM = yield* fs.readFile(path).pipe(
+          Effect.map((bytes) => bytes.length >= 3 && bytes[0] === 0xEF && bytes[1] === 0xBB && bytes[2] === 0xBF),
+          Effect.orElseSucceed(() => false),
+        )
+        // Restore BOM if original file had it
+        return hasBOM && !content.startsWith(UTF8_BOM) ? UTF8_BOM + content : content
+      })
+
+      const writeFileString = Effect.fn("FileSystem.writeFileString")(function* (
+        path: string,
+        data: string,
+        options?: { readonly flag?: string; readonly mode?: number },
+      ) {
+        // Check if content starts with BOM
+        const hasBOM = data.startsWith(UTF8_BOM)
+        // Check if original file had BOM (for existing files)
+        const originalHadBOM = yield* fs.readFile(path).pipe(
+          Effect.map((bytes) => bytes.length >= 3 && bytes[0] === 0xEF && bytes[1] === 0xBB && bytes[2] === 0xBF),
+          Effect.orElseSucceed(() => false),
+        )
+        // Preserve BOM if original file had it or new content has it
+        const content = (hasBOM || originalHadBOM) && !data.startsWith(UTF8_BOM) ? UTF8_BOM + data : data
+        yield* fs.writeFileString(path, content, options)
+      })
+
       return Service.of({
         ...fs,
         existsSafe,
@@ -175,6 +206,8 @@ export namespace AppFileSystem {
         globUp,
         glob,
         globMatch: Glob.match,
+        readFileString,
+        writeFileString,
       })
     }),
   )
