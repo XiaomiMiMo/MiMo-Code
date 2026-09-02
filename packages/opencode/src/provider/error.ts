@@ -177,7 +177,7 @@ const FRIENDLY_GATEWAY_CODES: Record<string, string> = {
 }
 
 function message(providerID: ProviderID, e: APICallError) {
-  return iife(() => {
+  const base = iife(() => {
     // MiMo gateway: relabel known block codes and surface error.param (the real
     // reason often lives there while error.message stays generic). json() returns
     // undefined for non-JSON, so HTML/proxy error pages fall through to the
@@ -225,6 +225,24 @@ function message(providerID: ProviderID, e: APICallError) {
 
     return `${msg}: ${e.responseBody}`
   }).trim()
+  const hint = opensslIa32capHint(e)
+  return hint ? `${base}\n\n${hint}` : base
+}
+
+function errorField(input: unknown, field: string) {
+  if (!input || typeof input !== "object") return ""
+  const value = (input as Record<string, unknown>)[field]
+  return typeof value === "string" ? value : ""
+}
+
+function opensslIa32capHint(e: APICallError) {
+  if (!process.env.OPENSSL_ia32cap) return
+  if (!/connectionrefused|econnrefused/i.test([e.message, errorField(e.cause, "code")].join(" "))) return
+  return [
+    `Detected OPENSSL_ia32cap=${process.env.OPENSSL_ia32cap} in your environment.`,
+    "On Windows, this can trigger a Bun/OpenSSL AES-GCM bug that makes HTTPS requests fail with ConnectionRefused.",
+    "To fix it, delete it and restart your terminal or computer.",
+  ].join(" ")
 }
 
 function json(input: unknown) {
