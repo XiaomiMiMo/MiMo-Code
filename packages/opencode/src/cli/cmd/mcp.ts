@@ -1,5 +1,5 @@
 import { cmd } from "./cmd"
-import { Client } from "@modelcontextprotocol/sdk/client/index.js"
+import { createClient } from "../../mcp/client"
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js"
 import { UnauthorizedError } from "@modelcontextprotocol/sdk/client/auth.js"
 import * as prompts from "@clack/prompts"
@@ -760,10 +760,7 @@ export const McpDebugCommand = cmd({
             })
 
             try {
-              const client = new Client({
-                name: "mimocode-debug",
-                version: InstallationVersion,
-              })
+              const client = createClient("mimocode-debug")
               await client.connect(transport)
               prompts.log.success("Connection successful (already authenticated)")
               await client.close()
