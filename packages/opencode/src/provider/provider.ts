@@ -566,8 +566,8 @@ function custom(dep: CustomDep): Record<string, CustomLoader> {
           },
         },
       }),
-    nvidia: () =>
-      Effect.succeed({
+    nvidia: Effect.fnUntraced(function* (input: Info) {
+      return {
         autoload: false,
         options: {
           headers: {
@@ -575,7 +575,74 @@ function custom(dep: CustomDep): Record<string, CustomLoader> {
             "X-Title": "mimocode",
           },
         },
-      }),
+        async discoverModels(): Promise<Record<string, Model>> {
+          try {
+            log.info("nvidia model discovery starting")
+            const response = await fetch("https://integrate.api.nvidia.com/v1/models", {
+              signal: AbortSignal.timeout(10000),
+            })
+
+            if (!response.ok) {
+              log.warn("nvidia model discovery failed: non-OK response", { status: response.status })
+              return {}
+            }
+
+            const json: { data?: Array<{ id: string }> } = await response.json()
+            if (!json.data?.length) {
+              log.info("nvidia model discovery skipped: no models found")
+              return {}
+            }
+
+            const models: Record<string, Model> = {}
+            for (const m of json.data) {
+              if (!m.id || input.models[m.id]) continue
+
+              const name = m.id
+                .replace(/^nvidia\//, "")
+                .replace(/[-_]/g, " ")
+                .replace(/\b\w/g, (c) => c.toUpperCase())
+
+              models[m.id] = {
+                id: ModelID.make(m.id),
+                providerID: ProviderID.make("nvidia"),
+                name,
+                family: "",
+                api: {
+                  id: m.id,
+                  url: "https://integrate.api.nvidia.com/v1",
+                  npm: "@ai-sdk/openai-compatible",
+                },
+                status: "active",
+                headers: {},
+                options: {},
+                cost: { input: 0, output: 0, cache: { read: 0, write: 0 } },
+                limit: { context: DEFAULT_CONTEXT_WINDOW, output: 0 },
+                capabilities: {
+                  temperature: true,
+                  reasoning: false,
+                  attachment: false,
+                  toolcall: true,
+                  input: { text: true, audio: false, image: false, video: false, pdf: false },
+                  output: { text: true, audio: false, image: false, video: false, pdf: false },
+                  interleaved: false,
+                },
+                release_date: "",
+                variants: {},
+              }
+            }
+
+            log.info("nvidia model discovery complete", {
+              count: Object.keys(models).length,
+              models: Object.keys(models),
+            })
+            return models
+          } catch (e) {
+            log.warn("nvidia model discovery failed", { error: e })
+            return {}
+          }
+        },
+      }
+    }),
     vercel: () =>
       Effect.succeed({
         autoload: false,
@@ -1526,6 +1593,22 @@ const layer: Layer.Layer<
               }
             } catch (e) {
               log.warn("state discovery error", { id: "gitlab", error: e })
+            }
+          })
+        }
+
+        const nvidia = ProviderID.make("nvidia")
+        if (discoveryLoaders[nvidia] && providers[nvidia] && isProviderAllowed(nvidia)) {
+          yield* Effect.promise(async () => {
+            try {
+              const discovered = await discoveryLoaders[nvidia]()
+              for (const [modelID, model] of Object.entries(discovered)) {
+                if (!providers[nvidia].models[modelID]) {
+                  providers[nvidia].models[modelID] = model
+                }
+              }
+            } catch (e) {
+              log.warn("state discovery error", { id: "nvidia", error: e })
             }
           })
         }
