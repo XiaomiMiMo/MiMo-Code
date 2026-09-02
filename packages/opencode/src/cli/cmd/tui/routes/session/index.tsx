@@ -187,6 +187,17 @@ export function Session() {
       permissions().length === 0 &&
       questions().length === 0,
   )
+  const subagentInputVisible = createMemo(() => {
+    if (currentAgentID() === "main") return false
+    if (permissions().length > 0 || questions().length > 0) return false
+    const actorID = currentAgentID()
+    const actor = actors().find((a) => a.actor_id === actorID)
+    if (!actor) return false
+    // Allow input for running/pending subagents. "unknown" status maps to
+    // idle-without-outcome (persistent peers that finished a turn but remain
+    // alive), which should also accept input.
+    return actor.status === "running" || actor.status === "pending" || actor.status === "unknown"
+  })
   const disabled = createMemo(() => permissions().length > 0 || questions().length > 0)
 
   const pending = createMemo(() => {
@@ -1539,6 +1550,44 @@ export function Session() {
                     right={<TuiPluginRuntime.Slot name="session_prompt_right" session_id={route.sessionID} />}
                   />
                 </TuiPluginRuntime.Slot>
+              </Show>
+              <Show when={subagentInputVisible()}>
+                <Prompt
+                  visible={true}
+                  disabled={disabled()}
+                  onSubmit={() => {
+                    toBottom()
+                  }}
+                  sessionID={route.sessionID}
+                  onCustomSubmit={async (text) => {
+                    try {
+                      const res = await sdk.fetch(
+                        `${sdk.url}/session/${route.sessionID}/inbox/send`,
+                        {
+                          method: "POST",
+                          headers: { "Content-Type": "application/json" },
+                          body: JSON.stringify({
+                            actorID: currentAgentID(),
+                            content: text,
+                            type: "text",
+                          }),
+                        },
+                      )
+                      if (!res.ok) {
+                        const err = await res.text()
+                        toast.show({ message: `Send failed: ${err}`, variant: "error" })
+                        return false
+                      }
+                      return true
+                    } catch (err) {
+                      toast.show({
+                        message: err instanceof Error ? err.message : "Failed to send message",
+                        variant: "error",
+                      })
+                      return false
+                    }
+                  }}
+                />
               </Show>
             </box>
           </Show>

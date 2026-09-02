@@ -27,6 +27,9 @@ import { ModelID, ProviderID } from "@/provider/schema"
 import { Provider } from "@/provider"
 import { forkQuery } from "@/tool/session"
 import { spawnRef } from "@/actor/spawn-ref"
+import { inboxServiceRef } from "@/inbox/inbox-ref"
+import { InboxReceiverNotFound } from "@/inbox/inbox"
+import { NotFoundError } from "@/storage"
 import { errors } from "../../error"
 import { lazy } from "@/util/lazy"
 import { Bus } from "@/bus"
@@ -1489,6 +1492,68 @@ export const SessionRoutes = lazy(() =>
           }),
         )
         return c.json(actors)
+      },
+    )
+    .post(
+      "/:sessionID/inbox/send",
+      describeRoute({
+        summary: "Send message to actor inbox",
+        description: "Send a direct message to a subagent's inbox, bypassing the main agent relay.",
+        operationId: "session.inboxSend",
+        responses: {
+          200: {
+            description: "Inbox message sent",
+            content: {
+              "application/json": {
+                schema: resolver(z.object({ inboxID: z.string() })),
+              },
+            },
+          },
+          ...errors(400, 404),
+        },
+      }),
+      validator(
+        "param",
+        z.object({
+          sessionID: SessionID.zod,
+        }),
+      ),
+      validator(
+        "json",
+        z.object({
+          actorID: z.string(),
+          content: z.string().min(1),
+          type: z.string().optional(),
+        }),
+      ),
+      async (c) => {
+        const sessionID = c.req.valid("param").sessionID
+        const body = c.req.valid("json")
+        const result = await runRequest(
+          "SessionRoutes.inboxSend",
+          c,
+          Effect.gen(function* () {
+            const inbox = inboxServiceRef.current
+            if (!inbox) {
+              return yield* Effect.fail(
+                new NamedError.Unknown({ message: "Inbox service is not running" }),
+              )
+            }
+            return yield* inbox.send({
+              receiverSessionID: sessionID,
+              receiverActorID: body.actorID,
+              senderSessionID: sessionID,
+              senderActorID: "main",
+              content: body.content,
+              type: body.type ?? "text",
+            }).pipe(
+              Effect.catchTag("InboxReceiverNotFound", (err) =>
+                Effect.fail(new NotFoundError({ message: `Actor not found: ${err.receiverActorID}` })),
+              ),
+            )
+          }),
+        )
+        return c.json(result)
       },
     ),
 )

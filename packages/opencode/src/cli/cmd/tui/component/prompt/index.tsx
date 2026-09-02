@@ -73,6 +73,9 @@ export type PromptProps = {
     normal?: string[]
     shell?: string[]
   }
+  /** When set, overrides the default session.prompt submit flow. The function
+   *  receives the trimmed input text and should return true on success. */
+  onCustomSubmit?: (text: string) => Promise<boolean>
 }
 
 export type PromptRef = {
@@ -1092,6 +1095,27 @@ export function Prompt(props: PromptProps) {
     if (props.disabled) return false
     if (autocomplete?.visible) return false
     if (!store.prompt.input) return false
+
+    // Custom submit path (e.g. subagent inbox send). Skip model/workspace checks.
+    if (props.onCustomSubmit) {
+      const trimmed = store.prompt.input.trim()
+      if (!trimmed) return false
+      submitLock = true
+      try {
+        const ok = await props.onCustomSubmit(trimmed)
+        if (ok) {
+          input.extmarks.clear()
+          setStore("prompt", { input: "", parts: [] })
+          setStore("extmarkToPartIndex", new Map())
+          props.onSubmit?.()
+          input.clear()
+        }
+        return ok
+      } finally {
+        submitLock = false
+      }
+    }
+
     const agent = local.agent.current()
     if (!agent) return false
     const trimmed = store.prompt.input.trim()
