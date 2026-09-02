@@ -437,6 +437,127 @@ description: A skill in the .codex/skills directory.
     ),
   )
 
+  it.live("skips external compatibility skills when disabled in config", () =>
+    provideTmpdirInstance(
+      (dir) =>
+        Effect.gen(function* () {
+          yield* Effect.promise(() =>
+            Promise.all([
+              Bun.write(path.join(dir, "mimocode.json"), JSON.stringify({ skills: { external: false } })),
+              Bun.write(
+                path.join(dir, ".mimocode", "skill", "mimo-skill", "SKILL.md"),
+                `---
+name: mimo-skill
+description: A native MiMoCode skill.
+---
+
+# MiMo Skill
+`,
+              ),
+              Bun.write(
+                path.join(dir, ".claude", "skills", "claude-skill", "SKILL.md"),
+                `---
+name: claude-skill
+description: A Claude Code compatibility skill.
+---
+
+# Claude Skill
+`,
+              ),
+              Bun.write(
+                path.join(dir, ".agents", "skills", "agent-skill", "SKILL.md"),
+                `---
+name: agent-skill
+description: An agent compatibility skill.
+---
+
+# Agent Skill
+`,
+              ),
+              Bun.write(
+                path.join(dir, ".codex", "skills", "codex-skill", "SKILL.md"),
+                `---
+name: codex-skill
+description: A Codex compatibility skill.
+---
+
+# Codex Skill
+`,
+              ),
+              Bun.write(
+                path.join(dir, ".opencode", "skills", "opencode-skill", "SKILL.md"),
+                `---
+name: opencode-skill
+description: An OpenCode compatibility skill.
+---
+
+# OpenCode Skill
+`,
+              ),
+            ]),
+          )
+
+          const skill = yield* Skill.Service
+          const list = yield* skill.all()
+          expect(list.map((x) => x.name).sort()).toEqual(["mimo-skill"])
+          expect(list[0].location).toContain(path.join(".mimocode", "skill", "mimo-skill", "SKILL.md"))
+        }),
+      { git: true },
+    ),
+  )
+
+  it.live("skips external compatibility skills in pure mode", () =>
+    Effect.acquireUseRelease(
+      Effect.sync(() => {
+        const previous = process.env.MIMOCODE_PURE
+        process.env.MIMOCODE_PURE = "1"
+        return previous
+      }),
+      () =>
+        provideTmpdirInstance(
+          (dir) =>
+            Effect.gen(function* () {
+              yield* Effect.promise(() =>
+                Promise.all([
+                  Bun.write(
+                    path.join(dir, ".mimocode", "skill", "mimo-skill", "SKILL.md"),
+                    `---
+name: mimo-skill
+description: A native MiMoCode skill.
+---
+
+# MiMo Skill
+`,
+                  ),
+                  Bun.write(
+                    path.join(dir, ".codex", "skills", "codex-skill", "SKILL.md"),
+                    `---
+name: codex-skill
+description: A Codex compatibility skill.
+---
+
+# Codex Skill
+`,
+                  ),
+                ]),
+              )
+
+              const skill = yield* Skill.Service
+              expect((yield* skill.all()).map((x) => x.name).sort()).toEqual(["mimo-skill"])
+            }),
+          { git: true },
+        ),
+      (previous) =>
+        Effect.sync(() => {
+          if (previous === undefined) {
+            delete process.env.MIMOCODE_PURE
+            return
+          }
+          process.env.MIMOCODE_PURE = previous
+        }),
+    ),
+  )
+
   it.live("discovers global skills from ~/.codex/skills/ directory", () =>
     Effect.gen(function* () {
       const tmp = yield* Effect.acquireRelease(

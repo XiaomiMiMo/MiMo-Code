@@ -3,6 +3,10 @@ import { zod } from "@/util/effect-zod"
 import { withStatics } from "@/util/schema"
 
 export const Info = Schema.Struct({
+  external: Schema.optional(Schema.Boolean).annotate({
+    description:
+      "Load compatibility skills from .claude, .agents, .codex, and .opencode directories. Defaults to true.",
+  }),
   paths: Schema.optional(Schema.Array(Schema.String)).annotate({
     description: "Additional paths to skill folders",
   }),

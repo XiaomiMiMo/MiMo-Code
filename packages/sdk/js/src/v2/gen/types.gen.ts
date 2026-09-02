@@ -2224,6 +2224,10 @@ export type Config = {
    */
   skills?: {
     /**
+     * Load compatibility skills from .claude, .agents, .codex, and .opencode directories. Defaults to true.
+     */
+    external?: boolean
+    /**
      * Additional paths to skill folders
      */
     paths?: Array<string>
