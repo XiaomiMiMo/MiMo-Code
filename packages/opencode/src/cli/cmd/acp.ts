@@ -45,13 +45,26 @@ export const AcpCommand = cmd({
           })
         },
       })
+      let stdinListeners: (() => void)[] = []
       const output = new ReadableStream<Uint8Array>({
         start(controller) {
-          process.stdin.on("data", (chunk: Buffer) => {
+          const onData = (chunk: Buffer) => {
             controller.enqueue(new Uint8Array(chunk))
-          })
-          process.stdin.on("end", () => controller.close())
-          process.stdin.on("error", (err) => controller.error(err))
+          }
+          const onEnd = () => controller.close()
+          const onError = (err: Error) => controller.error(err)
+          process.stdin.on("data", onData)
+          process.stdin.on("end", onEnd)
+          process.stdin.on("error", onError)
+          stdinListeners = [
+            () => process.stdin.off("data", onData),
+            () => process.stdin.off("end", onEnd),
+            () => process.stdin.off("error", onError),
+          ]
+        },
+        cancel() {
+          for (const off of stdinListeners) off()
+          stdinListeners = []
         },
       })
 
@@ -64,9 +77,17 @@ export const AcpCommand = cmd({
 
       log.info("setup connection")
       process.stdin.resume()
-      await new Promise((resolve, reject) => {
-        process.stdin.on("end", resolve)
-        process.stdin.on("error", reject)
+      await new Promise<void>((resolve, reject) => {
+        const onEnd = () => {
+          process.stdin.off("error", onError)
+          resolve()
+        }
+        const onError = (err: Error) => {
+          process.stdin.off("end", onEnd)
+          reject(err)
+        }
+        process.stdin.on("end", onEnd)
+        process.stdin.on("error", onError)
       })
     })
   },
