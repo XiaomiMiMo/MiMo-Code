@@ -30,6 +30,12 @@ export type Goal = {
   react: number
 }
 
+function normalizeCondition(condition: string) {
+  const trimmed = condition.trim()
+  if (!/[?？]\s*$/.test(trimmed)) return trimmed
+  return `The assistant has directly answered this question: "${trimmed}"`
+}
+
 export const Verdict = z.object({
   ok: z.boolean(),
   impossible: z.boolean().optional(),
@@ -116,9 +122,10 @@ export const layer = Layer.effect(
 
     const set = Effect.fn("SessionGoal.set")(function* (sessionID: SessionID, condition: string) {
       const data = yield* InstanceState.get(state)
-      data.goals.set(sessionID, { condition, react: 0 })
-      yield* elog.info("goal set", { sessionID, condition })
-      yield* bus.publish(Event.Updated, { sessionID, goal: { condition } })
+      const normalized = normalizeCondition(condition)
+      data.goals.set(sessionID, { condition: normalized, react: 0 })
+      yield* elog.info("goal set", { sessionID, condition: normalized })
+      yield* bus.publish(Event.Updated, { sessionID, goal: { condition: normalized } })
     })
 
     const get = Effect.fn("SessionGoal.get")(function* (sessionID: SessionID) {
