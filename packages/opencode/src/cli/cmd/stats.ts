@@ -2,7 +2,7 @@ import type { Argv } from "yargs"
 import { cmd } from "./cmd"
 import { Session } from "../../session"
 import { bootstrap } from "../bootstrap"
-import { Database } from "../../storage"
+import { Database, ne, sql } from "../../storage"
 import { SessionTable } from "../../session/session.sql"
 import { Project } from "../../project"
 import { Instance } from "../../project/instance"
@@ -67,10 +67,15 @@ export const StatsCommand = cmd({
         describe: "filter by project (default: all projects, empty string: current project)",
         type: "string",
       })
+      .option("all", {
+        describe: "include imported Claude Code sessions",
+        type: "boolean",
+        default: false,
+      })
   },
   handler: async (args) => {
     await bootstrap(process.cwd(), async () => {
-      const stats = await aggregateSessionStats(args.days, args.project)
+      const stats = await aggregateSessionStats(args.days, args.project, args.all)
 
       let modelLimit: number | undefined
       if (args.models === true) {
@@ -88,13 +93,21 @@ async function getCurrentProject(): Promise<Project.Info> {
   return Instance.project
 }
 
-async function getAllSessions(): Promise<Session.Info[]> {
-  const rows = Database.use((db) => db.select().from(SessionTable).all())
+async function getAllSessions(includeImported = false): Promise<Session.Info[]> {
+  const rows = Database.use((db) =>
+    includeImported
+      ? db.select().from(SessionTable).all()
+      : db
+          .select()
+          .from(SessionTable)
+          .where(sql`${SessionTable.id} NOT IN (SELECT session_id FROM claude_import)`)
+          .all(),
+  )
   return rows.map((row) => Session.fromRow(row))
 }
 
-export async function aggregateSessionStats(days?: number, projectFilter?: string): Promise<SessionStats> {
-  const sessions = await getAllSessions()
+export async function aggregateSessionStats(days?: number, projectFilter?: string, includeImported = false): Promise<SessionStats> {
+  const sessions = await getAllSessions(includeImported)
   const MS_IN_DAY = 24 * 60 * 60 * 1000
 
   const cutoffTime = (() => {
