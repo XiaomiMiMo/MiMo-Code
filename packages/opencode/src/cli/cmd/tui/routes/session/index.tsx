@@ -570,7 +570,7 @@ export function Session() {
         const copy = (url: string) =>
           Clipboard.copy(url)
             .then(() => toast.show({ message: "Share URL copied to clipboard!", variant: "success" }))
-            .catch(() => toast.show({ message: "Failed to copy URL to clipboard", variant: "error" }))
+            .catch(toast.error)
         const url = session()?.share?.url
         if (url) {
           await copy(url)
@@ -1116,7 +1116,7 @@ export function Session() {
 
         Clipboard.copy(text)
           .then(() => toast.show({ message: "Message copied to clipboard!", variant: "success" }))
-          .catch(() => toast.show({ message: "Failed to copy to clipboard", variant: "error" }))
+          .catch(toast.error)
         dialog.clear()
       },
     },
@@ -1144,8 +1144,8 @@ export function Session() {
           )
           await Clipboard.copy(transcript)
           toast.show({ message: "Session transcript copied to clipboard!", variant: "success" })
-        } catch {
-          toast.show({ message: "Failed to copy session transcript", variant: "error" })
+        } catch (error) {
+          toast.error(error)
         }
         dialog.clear()
       },
@@ -1859,7 +1859,7 @@ function AssistantMessage(props: {
     if (!text) return
     Clipboard.copy(text)
       .then(() => toast.show({ message: t("tui.toast.copied_to_clipboard"), variant: "success" }))
-      .catch(() => toast.show({ message: "Failed to copy to clipboard", variant: "error" }))
+      .catch(toast.error)
   }
 
   // Goal judge verdict for this specific turn, if the stop-condition judge
