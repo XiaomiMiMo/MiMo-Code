@@ -4208,7 +4208,7 @@
                     "enum": ["append", "replace-agent"]
                   },
                   "harness": {
-                    "description": "Harness mode selected by the session's first user query. Later values are ignored. GPT models always use the Codex harness. For other models, auto preserves model/process inference and explicit default forces the native tool schema.",
+                    "description": "Harness mode selected by the session's first user query. Later values are ignored. Auto preserves model/process inference and explicit default forces the native tool schema for non-GPT models. MIMOCODE_CODEX_MODE=false forces the default harness for every model, including GPT.",
                     "type": "string",
                     "enum": ["auto", "codex", "default"]
                   },
@@ -4923,7 +4923,7 @@
                     "enum": ["append", "replace-agent"]
                   },
                   "harness": {
-                    "description": "Harness mode selected by the session's first user query. Later values are ignored. GPT models always use the Codex harness. For other models, auto preserves model/process inference and explicit default forces the native tool schema.",
+                    "description": "Harness mode selected by the session's first user query. Later values are ignored. Auto preserves model/process inference and explicit default forces the native tool schema for non-GPT models. MIMOCODE_CODEX_MODE=false forces the default harness for every model, including GPT.",
                     "type": "string",
                     "enum": ["auto", "codex", "default"]
                   },
@@ -5077,7 +5077,7 @@
                     "enum": ["append", "replace-agent"]
                   },
                   "harness": {
-                    "description": "Harness mode selected by the session's first user command. Later values are ignored. GPT models always use the Codex harness. For other models, auto preserves model/process inference and explicit default forces the native tool schema.",
+                    "description": "Harness mode selected by the session's first user command. Later values are ignored. Auto preserves model/process inference and explicit default forces the native tool schema for non-GPT models. MIMOCODE_CODEX_MODE=false forces the default harness for every model, including GPT.",
                     "type": "string",
                     "enum": ["auto", "codex", "default"]
                   },
@@ -13280,6 +13280,55 @@
           "tail_start_id": {
             "type": "string",
             "pattern": "^msg.*"
+          },
+          "projection": {
+            "type": "object",
+            "properties": {
+              "version": {
+                "type": "number",
+                "const": 1
+              },
+              "summary_message_id": {
+                "type": "string",
+                "pattern": "^msg.*"
+              },
+              "summary": {
+                "type": "string"
+              },
+              "manifest": {
+                "type": "string"
+              },
+              "trigger": {
+                "type": "string",
+                "enum": ["manual", "automatic", "provider-overflow"]
+              },
+              "tail_start_id": {
+                "type": "string",
+                "pattern": "^msg.*"
+              },
+              "tail_end_id": {
+                "type": "string",
+                "pattern": "^msg.*"
+              },
+              "compacted_tool_calls": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "call_id": {
+                      "type": "string"
+                    },
+                    "tokens": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 9007199254740991
+                    }
+                  },
+                  "required": ["call_id", "tokens"]
+                }
+              }
+            },
+            "required": ["version", "summary_message_id", "summary", "trigger"]
           }
         },
         "required": ["id", "sessionID", "messageID", "type", "auto"]
@@ -16189,13 +16238,13 @@
                 "type": "boolean"
               },
               "tail_turns": {
-                "description": "Number of recent user turns, including their following assistant/tool responses, to keep verbatim during compaction (default: 2)",
+                "description": "Deprecated compatibility setting. Projected compaction now keeps only whole API rounds that arrive while compaction is running.",
                 "type": "integer",
                 "minimum": 0,
                 "maximum": 9007199254740991
               },
               "preserve_recent_tokens": {
-                "description": "Maximum number of tokens from recent turns to preserve verbatim after compaction",
+                "description": "Deprecated compatibility setting. Compression-time API rounds now use a fixed 40000-token hard budget.",
                 "type": "integer",
                 "minimum": 0,
                 "maximum": 9007199254740991
