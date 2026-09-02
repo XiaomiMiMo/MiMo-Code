@@ -506,6 +506,51 @@ describe("tool.actor", () => {
       },
     ),
   )
+
+  it.live("plan agent spawns subagents with a read-only tool whitelist", () =>
+    provideTmpdirInstance(() =>
+      Effect.gen(function* () {
+        const spawns: SpawnInput[] = []
+        yield* installMockSpawn((input) => spawns.push(input))
+        const { chat, assistant } = yield* seed()
+        const tool = yield* ActorTool
+        const def = yield* tool.init()
+
+        yield* def.execute(
+          {
+            operation: {
+              action: "run",
+              description: "design fix",
+              prompt: "review the design without changing files",
+              subagent_type: "general",
+            },
+          },
+          {
+            sessionID: chat.id,
+            messageID: assistant.id,
+            agent: "plan",
+            abort: new AbortController().signal,
+            extra: {},
+            messages: [],
+            metadata: () => Effect.void,
+            ask: () => Effect.void,
+          },
+        )
+
+        expect(spawns[0]?.tools).toEqual([
+          "read",
+          "glob",
+          "grep",
+          "webfetch",
+          "websearch",
+          "codesearch",
+          "memory",
+          "history",
+          "lsp",
+        ])
+      }),
+    ),
+  )
 })
 
 describe("Actor tool subagent_type enum (F36)", () => {

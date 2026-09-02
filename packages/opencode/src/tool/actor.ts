@@ -36,6 +36,18 @@ const id = "actor"
 const MODEL_PARAM_DESCRIPTION =
   "(optional) Model for this subagent: a model group name (e.g. ultra/standard/lite) or a literal provider/model (e.g. mimo-v2.5-pro). Overrides the agent's configured model; defaults to the agent's model, else the parent's. If no model_groups are configured, the tier names resolve to the default model. To discover valid provider/model values (e.g. a vision-capable model for image tasks), run `actor models` (or `actor models --vision`)."
 
+const PLAN_SUBAGENT_TOOL_ALLOWLIST = [
+  "read",
+  "glob",
+  "grep",
+  "webfetch",
+  "websearch",
+  "codesearch",
+  "memory",
+  "history",
+  "lsp",
+]
+
 const KNOWN_ACTOR_VERBS = ["run", "spawn", "status", "wait", "cancel", "send", "models"]
 
 function levenshteinActor(a: string, b: string): number {
@@ -823,7 +835,12 @@ export const ActorTool = Tool.define(
           description: op.description,
           task: prompt,
           context: op.context ?? "none",
-          tools: next.toolAllowlist ? [...next.toolAllowlist] : "INHERIT",
+          tools:
+            ctx.agent === "plan"
+              ? [...PLAN_SUBAGENT_TOOL_ALLOWLIST]
+              : next.toolAllowlist
+                ? [...next.toolAllowlist]
+                : "INHERIT",
           model,
           background,
           task_id: effectiveTaskId,
