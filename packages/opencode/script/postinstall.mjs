@@ -3,6 +3,7 @@
 import fs from "fs"
 import path from "path"
 import os from "os"
+import { spawnSync } from "child_process"
 import { fileURLToPath } from "url"
 import { createRequire } from "module"
 
@@ -47,25 +48,105 @@ function detectPlatformAndArch() {
   return { platform, arch }
 }
 
-function findBinary() {
-  const { platform, arch } = detectPlatformAndArch()
-  const packageName = `@mimo-ai/mimocode-${platform}-${arch}`
-  const binaryName = platform === "windows" ? "mimo.exe" : "mimo"
+function supportsAvx2(platform, arch) {
+  if (arch !== "x64") return false
+
+  if (platform === "linux") {
+    try {
+      return /(^|\s)avx2(\s|$)/i.test(fs.readFileSync("/proc/cpuinfo", "utf8"))
+    } catch {
+      return false
+    }
+  }
+
+  if (platform === "darwin") {
+    try {
+      const result = spawnSync("sysctl", ["-n", "hw.optional.avx2_0"], {
+        encoding: "utf8",
+        timeout: 1500,
+      })
+      if (result.status !== 0) return false
+      return (result.stdout || "").trim() === "1"
+    } catch {
+      return false
+    }
+  }
+
+  return false
+}
+
+function detectMusl() {
+  try {
+    if (fs.existsSync("/etc/alpine-release")) return true
+  } catch {
+    // ignore
+  }
 
   try {
-    // Use require.resolve to find the package
-    const packageJsonPath = require.resolve(`${packageName}/package.json`)
-    const packageDir = path.dirname(packageJsonPath)
-    const binaryPath = path.join(packageDir, "bin", binaryName)
-
-    if (!fs.existsSync(binaryPath)) {
-      throw new Error(`Binary not found at ${binaryPath}`)
-    }
-
-    return { binaryPath, binaryName }
-  } catch (error) {
-    throw new Error(`Could not find package ${packageName}: ${error.message}`, { cause: error })
+    const result = spawnSync("ldd", ["--version"], { encoding: "utf8" })
+    const text = ((result.stdout || "") + (result.stderr || "")).toLowerCase()
+    if (text.includes("musl")) return true
+  } catch {
+    // ignore
   }
+
+  return false
+}
+
+function findBinary() {
+  const { platform, arch } = detectPlatformAndArch()
+  const binaryName = platform === "windows" ? "mimo.exe" : "mimo"
+
+  // Build candidate package names matching the launcher's priority order
+  const avx2 = supportsAvx2(platform, arch)
+  const baseline = arch === "x64" && !avx2
+
+  let candidates
+  if (platform === "linux") {
+    const musl = detectMusl()
+    const base = `@mimo-ai/mimocode-${platform}-${arch}`
+
+    if (musl) {
+      if (arch === "x64") {
+        candidates = baseline
+          ? [`${base}-baseline-musl`, `${base}-musl`, `${base}-baseline`, base]
+          : [`${base}-musl`, `${base}-baseline-musl`, base, `${base}-baseline`]
+      } else {
+        candidates = [`${base}-musl`, base]
+      }
+    } else {
+      if (arch === "x64") {
+        candidates = baseline
+          ? [`${base}-baseline`, base, `${base}-baseline-musl`, `${base}-musl`]
+          : [base, `${base}-baseline`, `${base}-musl`, `${base}-baseline-musl`]
+      } else {
+        candidates = [base, `${base}-musl`]
+      }
+    }
+  } else if (arch === "x64") {
+    const base = `@mimo-ai/mimocode-${platform}-${arch}`
+    candidates = baseline ? [`${base}-baseline`, base] : [base, `${base}-baseline`]
+  } else {
+    candidates = [`@mimo-ai/mimocode-${platform}-${arch}`]
+  }
+
+  for (const packageName of candidates) {
+    try {
+      const packageJsonPath = require.resolve(`${packageName}/package.json`)
+      const packageDir = path.dirname(packageJsonPath)
+      const binaryPath = path.join(packageDir, "bin", binaryName)
+
+      if (fs.existsSync(binaryPath)) {
+        return { binaryPath, binaryName }
+      }
+    } catch {
+      // try next candidate
+    }
+  }
+
+  throw new Error(
+    `Could not find any matching binary package. Tried: ${candidates.join(", ")}`,
+  )
 }
 
 function printMigrationNotice() {
