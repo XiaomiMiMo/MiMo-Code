@@ -1045,17 +1045,28 @@ export const layer = Layer.effect(
       yield* Effect.tryPromise(() => open(result.authorizationUrl)).pipe(
         Effect.flatMap((subprocess) =>
           Effect.callback<void, Error>((resume) => {
-            const timer = setTimeout(() => resume(Effect.void), 500)
-            subprocess.on("error", (err) => {
+            let timer: ReturnType<typeof setTimeout>
+            const cleanup = () => {
               clearTimeout(timer)
+              subprocess.off("error", onError)
+              subprocess.off("exit", onExit)
+            }
+            const onError = (err: Error) => {
+              cleanup()
               resume(Effect.fail(err))
-            })
-            subprocess.on("exit", (code) => {
+            }
+            const onExit = (code: number | null) => {
               if (code !== null && code !== 0) {
-                clearTimeout(timer)
+                cleanup()
                 resume(Effect.fail(new Error(`Browser open failed with exit code ${code}`)))
               }
-            })
+            }
+            timer = setTimeout(() => {
+              cleanup()
+              resume(Effect.void)
+            }, 500)
+            subprocess.on("error", onError)
+            subprocess.on("exit", onExit)
           }),
         ),
         Effect.catch(() => {
