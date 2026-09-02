@@ -135,6 +135,49 @@ describe("voice", () => {
     })
   })
 
+  describe("soxPipeArgs", () => {
+    test("uses waveaudio default input on Windows instead of sox default device", async () => {
+      const { soxPipeArgs } = await import("../../../src/cli/cmd/tui/util/voice")
+      expect(soxPipeArgs("win32")).toEqual([
+        "-t",
+        "waveaudio",
+        "default",
+        "-r",
+        "16000",
+        "-c",
+        "1",
+        "-b",
+        "16",
+        "-t",
+        "raw",
+        "-",
+      ])
+    })
+
+    test("uses explicit SOX_AUDIO_DEVICE on Windows", async () => {
+      const { soxPipeArgs } = await import("../../../src/cli/cmd/tui/util/voice")
+      expect(soxPipeArgs("win32", "0")).toEqual([
+        "-t",
+        "waveaudio",
+        "0",
+        "-r",
+        "16000",
+        "-c",
+        "1",
+        "-b",
+        "16",
+        "-t",
+        "raw",
+        "-",
+      ])
+    })
+
+    test("keeps sox default input outside Windows", async () => {
+      const { soxPipeArgs } = await import("../../../src/cli/cmd/tui/util/voice")
+      expect(soxPipeArgs("linux")).toEqual(["-d", "-r", "16000", "-c", "1", "-b", "16", "-t", "raw", "-"])
+    })
+  })
+
   describe("encodeWav", () => {
     // Import the function dynamically since it's not exported directly
     // We test via transcribeAudio's internal usage — or we can test the WAV header format

@@ -56,11 +56,16 @@ type Recorder = {
   pipeArgs: () => string[]
 }
 
+export function soxPipeArgs(platform: NodeJS.Platform, device = process.env.SOX_AUDIO_DEVICE) {
+  const input = platform === "win32" ? ["-t", "waveaudio", device || "default"] : ["-d"]
+  return [...input, "-r", "16000", "-c", "1", "-b", "16", "-t", "raw", "-"]
+}
+
 const RECORDERS: Record<string, Array<() => Recorder | null>> = {
   darwin: [
     () =>
       which("sox")
-        ? { cmd: "sox", pipeArgs: () => ["-d", "-r", "16000", "-c", "1", "-b", "16", "-t", "raw", "-"] }
+        ? { cmd: "sox", pipeArgs: () => soxPipeArgs("darwin") }
         : null,
     () =>
       which("rec")
@@ -74,13 +79,13 @@ const RECORDERS: Record<string, Array<() => Recorder | null>> = {
         : null,
     () =>
       which("sox")
-        ? { cmd: "sox", pipeArgs: () => ["-d", "-r", "16000", "-c", "1", "-b", "16", "-t", "raw", "-"] }
+        ? { cmd: "sox", pipeArgs: () => soxPipeArgs("linux") }
         : null,
   ],
   win32: [
     () =>
       which("sox")
-        ? { cmd: "sox", pipeArgs: () => ["-d", "-r", "16000", "-c", "1", "-b", "16", "-t", "raw", "-"] }
+        ? { cmd: "sox", pipeArgs: () => soxPipeArgs("win32") }
         : null,
   ],
 }
