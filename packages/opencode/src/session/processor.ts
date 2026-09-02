@@ -796,7 +796,6 @@ export const layer: Layer.Layer<
         const error = parse(e)
         if (MessageV2.ContextOverflowError.isInstance(error)) {
           ctx.needsOverflowHandling = true
-          yield* bus.publish(Session.Event.Error, { sessionID: ctx.sessionID, error })
           return
         }
         ctx.assistantMessage.error = error
