@@ -4948,6 +4948,32 @@ NOTE: At any point in time through this workflow you should feel free to ask the
         yield* bus.publish(Session.Event.Error, { sessionID: input.sessionID, error: error.toObject() })
         throw error
       }
+      if (input.command === Command.Default.UNDO) {
+        const session = yield* sessions.get(input.sessionID)
+        const target = (yield* sessions.messages({ sessionID: input.sessionID, agentID: "*" }))
+          .filter((msg) => {
+            if (msg.info.role !== "user") return false
+            return !session.revert?.messageID || msg.info.id < session.revert.messageID
+          })
+          .at(-1)
+        if (!target) {
+          const error = new NamedError.Unknown({ message: "Nothing to undo." })
+          yield* bus.publish(Session.Event.Error, { sessionID: input.sessionID, error: error.toObject() })
+          throw error
+        }
+        yield* revert.revert({
+          sessionID: input.sessionID,
+          messageID: target.info.id,
+        })
+        const result = yield* lastAssistant(input.sessionID)
+        yield* bus.publish(Command.Event.Executed, {
+          name: input.command,
+          sessionID: input.sessionID,
+          arguments: input.arguments,
+          messageID: result.info.id,
+        })
+        return result
+      }
       const agentName = cmd.agent ?? input.agent ?? (yield* agents.defaultAgent())
 
       // /goal — set or clear a session-level stop-condition goal. The condition
