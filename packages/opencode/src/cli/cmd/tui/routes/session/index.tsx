@@ -250,7 +250,14 @@ export function Session() {
   const sidebarDocked = createMemo(() => sidebarVisible() && wide())
   const toggleSidebar = () => setSidebar(() => sidebarToggle(sidebar(), wide()))
   const showTimestamps = createMemo(() => timestamps() === "show")
-  const contentWidth = createMemo(() => dimensions().width - (sidebarDocked() ? SIDEBAR_WIDTH : 0) - 4)
+  const contentWidth = createMemo(
+    () =>
+      dimensions().width -
+      (sidebarDocked() ? SIDEBAR_WIDTH : 0) -
+      // Only the in-flow button (docked layout, main agent) reserves columns; on
+      // narrow terminals no button renders in flow and the content reclaims the width.
+      (sidebarAllowed() && wide() ? 4 : 0),
+  )
   const providers = createMemo(() => Model.index(sync.data.provider))
 
   const scrollAcceleration = createMemo(() => getScrollAcceleration(tuiConfig))
