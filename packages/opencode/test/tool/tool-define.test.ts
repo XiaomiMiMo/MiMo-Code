@@ -4,6 +4,7 @@ import z from "zod"
 import { Agent } from "../../src/agent/agent"
 import { Tool } from "../../src/tool"
 import { Truncate } from "../../src/tool"
+import { MessageID, SessionID } from "../../src/session/schema"
 
 const runtime = ManagedRuntime.make(Layer.mergeAll(Truncate.defaultLayer, Agent.defaultLayer))
 
@@ -55,5 +56,52 @@ describe("Tool.define", () => {
     const second = await Effect.runPromise(info.init())
 
     expect(first).not.toBe(second)
+  })
+
+  test("execute validates recovered args when direct JSON tool args use a stringified envelope", async () => {
+    const parameters = z.object({
+      operation: z.object({
+        action: z.literal("list"),
+      }),
+    })
+    let received: z.infer<typeof parameters> | undefined
+    const info = await runtime.runPromise(
+      Tool.define(
+        "recovering-tool",
+        Effect.succeed({
+          description: "test tool",
+          parameters,
+          recover(rawArgs: unknown) {
+            if (rawArgs == null || typeof rawArgs !== "object") return undefined
+            const args = rawArgs as Record<string, unknown>
+            if (typeof args.operation !== "string") return undefined
+            return { operation: JSON.parse(args.operation) as { action: "list" } }
+          },
+          execute(args: z.infer<typeof parameters>) {
+            received = args
+            return Effect.succeed({ title: "test", output: "ok", metadata: { truncated: false } })
+          },
+        }),
+      ),
+    )
+    const def = await Effect.runPromise(info.init())
+
+    const result = await Effect.runPromise(
+      def.execute(
+        { operation: '{"action":"list"}' } as unknown as z.infer<typeof parameters>,
+        {
+          sessionID: SessionID.descending(),
+          messageID: MessageID.ascending(),
+          agent: "build",
+          abort: new AbortController().signal,
+          messages: [],
+          metadata: () => Effect.void,
+          ask: () => Effect.void,
+        },
+      ),
+    )
+
+    expect(result.output).toBe("ok")
+    expect(received).toEqual({ operation: { action: "list" } })
   })
 })

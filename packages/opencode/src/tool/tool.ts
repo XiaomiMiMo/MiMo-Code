@@ -50,6 +50,10 @@ export interface Def<Parameters extends z.ZodType = z.ZodType, M extends Metadat
   parameters: Parameters
   execute(args: z.infer<Parameters>, ctx: Context): Effect.Effect<ExecuteResult<M>>
   formatValidationError?(error: z.ZodError): string
+  // Optional recovery for direct JSON tool calls that arrive in a known
+  // malformed shape. If the recovered value validates, execute receives the
+  // validated recovered args; otherwise the original validation error is shown.
+  recover?(rawArgs: unknown): z.infer<Parameters> | undefined
   shell?: {
     description: string
     parse(script: string): Effect.Effect<z.infer<Parameters>[], unknown>
@@ -116,19 +120,25 @@ function wrap<Parameters extends z.ZodType, Result extends Metadata>(
           ...(ctx.callID ? { "tool.call_id": ctx.callID } : {}),
         }
         return Effect.gen(function* () {
-          yield* Effect.try({
-            try: () => toolInfo.parameters.parse(args),
-            catch: (error) => {
-              // Bad arguments are always agent-recoverable: the model sees the
-              // message and rewrites the call next turn. Mark it so the TUI
-              // renders it muted instead of alarming the user with a red block.
-              if (error instanceof z.ZodError && toolInfo.formatValidationError) {
-                return new RecoverableError(toolInfo.formatValidationError(error), { cause: error })
-              }
-              return new RecoverableError(validationErrorMessage(id, error), { cause: error })
-            },
-          })
-          const result = yield* execute(args, ctx)
+          const parsed = toolInfo.parameters.safeParse(args)
+          const recovered = parsed.success ? undefined : toolInfo.recover?.(args)
+          const recoveredParsed =
+            recovered === undefined ? undefined : toolInfo.parameters.safeParse(recovered)
+          if (!parsed.success && !recoveredParsed?.success) {
+            // Bad arguments are always agent-recoverable: the model sees the
+            // message and rewrites the call next turn. Mark it so the TUI
+            // renders it muted instead of alarming the user with a red block.
+            if (toolInfo.formatValidationError) {
+              return yield* Effect.fail(
+                new RecoverableError(toolInfo.formatValidationError(parsed.error), { cause: parsed.error }),
+              )
+            }
+            return yield* Effect.fail(
+              new RecoverableError(validationErrorMessage(id, parsed.error), { cause: parsed.error }),
+            )
+          }
+          const parsedArgs = (parsed.success ? parsed.data : recoveredParsed!.data) as z.infer<Parameters>
+          const result = yield* execute(parsedArgs, ctx)
           if (result.metadata.truncated !== undefined) {
             return result
           }

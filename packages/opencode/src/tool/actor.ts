@@ -323,6 +323,12 @@ export function recoverActorArgs(rawArgs: unknown): ActorShellArgs | undefined {
   return undefined
 }
 
+function recoverActorToolArgs(rawArgs: unknown): ActorShellArgs | undefined {
+  if (rawArgs == null || typeof rawArgs !== "object") return undefined
+  if (typeof (rawArgs as Record<string, unknown>).operation !== "string") return undefined
+  return recoverActorArgs(rawArgs)
+}
+
 export const ActorTool = Tool.define(
   id,
   Effect.gen(function* () {
@@ -909,6 +915,7 @@ export const ActorTool = Tool.define(
       return {
         description: withCheckpointDescription(DESCRIPTION, DESCRIPTION_CHECKPOINT),
         parameters,
+        recover: recoverActorToolArgs,
         execute: (input: z.infer<typeof parameters>, ctx: Tool.Context) => run(input, ctx).pipe(Effect.orDie),
         shell: {
           description: SHELL_DESCRIPTION,
