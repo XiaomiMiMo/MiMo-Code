@@ -150,6 +150,75 @@ describe("tool.registry", () => {
     ),
   )
 
+  it.live("loads plugin tools that use array items schema builder syntax", () =>
+    provideTmpdirInstance((dir) =>
+      Effect.gen(function* () {
+        const opencode = path.join(dir, ".mimocode")
+        const tools = path.join(opencode, "tools")
+        yield* Effect.promise(() => fs.mkdir(tools, { recursive: true }))
+        yield* Effect.promise(() =>
+          Bun.write(
+            path.join(opencode, "package.json"),
+            JSON.stringify({
+              name: "custom-tools",
+              dependencies: {
+                "@mimo-ai/plugin": "0.0.0",
+              },
+            }),
+          ),
+        )
+        yield* Effect.promise(() =>
+          Bun.write(
+            path.join(opencode, "package-lock.json"),
+            JSON.stringify({
+              name: "custom-tools",
+              lockfileVersion: 3,
+              packages: {
+                "": {
+                  dependencies: {
+                    "@mimo-ai/plugin": "0.0.0",
+                  },
+                },
+              },
+            }),
+          ),
+        )
+        yield* Effect.promise(async () => {
+          const scope = path.join(opencode, "node_modules", "@mimo-ai")
+          await fs.mkdir(scope, { recursive: true })
+          await fs.symlink(
+            path.resolve(import.meta.dir, "../../../plugin"),
+            path.join(scope, "plugin"),
+            process.platform === "win32" ? "junction" : "dir",
+          )
+        })
+        yield* Effect.promise(() =>
+          Bun.write(
+            path.join(tools, "facts.ts"),
+            [
+              "import { tool } from '@mimo-ai/plugin/tool'",
+              "export default tool({",
+              "  description: 'fact checker',",
+              "  args: {",
+              "    facts: tool.schema.array().items(tool.schema.object({",
+              "      statement: tool.schema.string().describe('Concrete, checkable fact statement'),",
+              "      excerpt: tool.schema.string().describe('Verbatim quote from source'),",
+              "      weight: tool.schema.enum(['key', 'support', 'aside']).describe('Weight relative to question'),",
+              "    })),",
+              "  },",
+              "  execute: async ({ facts }) => `checked ${facts.length}`",
+              "})",
+              "",
+            ].join("\n"),
+          ),
+        )
+        const registry = yield* ToolRegistry.Service
+        const ids = yield* registry.ids()
+        expect(ids).toContain("facts")
+      }),
+    ),
+  )
+
   it.live("todowrite tool is not registered; task is", () =>
     provideTmpdirInstance(() =>
       Effect.gen(function* () {

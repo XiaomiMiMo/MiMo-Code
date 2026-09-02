@@ -27,6 +27,17 @@ type AskInput = {
   metadata: { [key: string]: any }
 }
 
+function array<Item extends z.ZodTypeAny>(item: Item): z.ZodArray<Item>
+function array(): z.ZodArray<z.ZodUnknown> & { items<Item extends z.ZodTypeAny>(item: Item): z.ZodArray<Item> }
+function array(item?: z.ZodTypeAny) {
+  if (item) return z.array(item)
+  return Object.assign(z.array(z.unknown()), {
+    items: <Item extends z.ZodTypeAny>(next: Item) => z.array(next),
+  })
+}
+
+const schema: Omit<typeof z, "array"> & { array: typeof array } = { ...z, array }
+
 export type ToolResult = string | { output: string; metadata?: { [key: string]: any } }
 
 export function tool<Args extends z.ZodRawShape>(input: {
@@ -36,6 +47,6 @@ export function tool<Args extends z.ZodRawShape>(input: {
 }) {
   return input
 }
-tool.schema = z
+tool.schema = schema
 
 export type ToolDefinition = ReturnType<typeof tool>
