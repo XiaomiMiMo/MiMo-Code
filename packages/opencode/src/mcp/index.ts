@@ -730,6 +730,11 @@ export const layer = Layer.effect(
                 return
               }
 
+              if (cfg.mcp_origins?.[key]?.type === "claude") {
+                s.status[key] = { status: "pending" }
+                return
+              }
+
               const result = yield* create(key, mcp).pipe(Effect.catch(() => Effect.void))
               if (!result) return
 
