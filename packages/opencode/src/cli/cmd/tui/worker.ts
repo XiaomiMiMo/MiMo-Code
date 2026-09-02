@@ -27,17 +27,20 @@ await Log.init({
 
 Heap.start()
 
-process.on("unhandledRejection", (e) => {
+const onUnhandledRejection = (e: unknown) => {
   Log.Default.error("rejection", {
     e: e instanceof Error ? e.message : e,
   })
-})
+}
 
-process.on("uncaughtException", (e) => {
+const onUncaughtException = (e: Error) => {
   Log.Default.error("exception", {
     e: e instanceof Error ? e.message : e,
   })
-})
+}
+
+process.on("unhandledRejection", onUnhandledRejection)
+process.on("uncaughtException", onUncaughtException)
 
 // Subscribe to global events and forward them via RPC
 GlobalBus.on("event", (event) => {
@@ -124,6 +127,8 @@ export const rpc = {
       (error) => Log.Default.warn("checkpoint drain failed during shutdown", { error: String(error) }),
     )
 
+    process.off("unhandledRejection", onUnhandledRejection)
+    process.off("uncaughtException", onUncaughtException)
     await Instance.disposeAll()
     if (server) {
       // Server.stop withdraws the llm-server advertisement before the socket goes
