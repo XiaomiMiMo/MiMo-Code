@@ -286,5 +286,26 @@ export default {
         ],
       },
     },
+    // 1C:Enterprise (BSL) - source modules (.bsl, .os)
+    {
+      filetype: "bsl",
+      aliases: ["os"],
+      wasm: "https://github.com/zheltov86/tree-sitter-bsl/releases/download/v0.1.7-wasm/tree-sitter-bsl.wasm",
+      queries: {
+        highlights: [
+          "https://raw.githubusercontent.com/alkoleft/tree-sitter-bsl/develop/grammars/bsl/queries/highlights.scm",
+        ],
+      },
+    },
+    // 1C:Enterprise query language (SDBL) - query modules (.sdbl)
+    {
+      filetype: "sdbl",
+      wasm: "https://github.com/zheltov86/tree-sitter-bsl/releases/download/v0.1.7-wasm/tree-sitter-sdbl.wasm",
+      queries: {
+        highlights: [
+          "https://raw.githubusercontent.com/alkoleft/tree-sitter-bsl/develop/grammars/sdbl/queries/highlights.scm",
+        ],
+      },
+    },
   ],
 }
