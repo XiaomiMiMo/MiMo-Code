@@ -291,6 +291,12 @@ function App(props: { onSnapshot?: () => Promise<string[]> }) {
       setReady(true)
     })
 
+  createEffect(() => {
+    if (!ready()) return
+    if (dialog.stack.length > 0) return
+    queueMicrotask(() => promptRef.current?.focus())
+  })
+
   useKeyboard((evt) => {
     if (!Flag.MIMOCODE_EXPERIMENTAL_DISABLE_COPY_ON_SELECT) return
     const sel = renderer.getSelection()
