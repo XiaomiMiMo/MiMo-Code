@@ -3,6 +3,7 @@ import { bootstrap } from "../bootstrap"
 import { cmd } from "./cmd"
 import { AgentSideConnection, ndJsonStream } from "@agentclientprotocol/sdk"
 import { ACP } from "@/acp/agent"
+import { normalizeAcpProtocolVersionStream } from "@/acp/protocol-version"
 import { Server } from "@/server/server"
 import { createOpencodeClient } from "@mimo-ai/sdk/v2"
 import { withNetworkOptions, resolveNetworkOptions } from "../network"
@@ -55,7 +56,7 @@ export const AcpCommand = cmd({
         },
       })
 
-      const stream = ndJsonStream(input, output)
+      const stream = normalizeAcpProtocolVersionStream(ndJsonStream(input, output))
       const agent = await ACP.init({ sdk })
 
       new AgentSideConnection((conn) => {
