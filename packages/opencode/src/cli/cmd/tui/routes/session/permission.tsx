@@ -682,6 +682,7 @@ function Prompt<const T extends Record<string, string>>(props: {
 
     if (evt.name === "left" || evt.name == "h") {
       evt.preventDefault()
+      evt.stopPropagation()
       const idx = keys.indexOf(store.selected)
       const next = keys[(idx - 1 + keys.length) % keys.length]
       setStore("selected", next)
@@ -689,6 +690,7 @@ function Prompt<const T extends Record<string, string>>(props: {
 
     if (evt.name === "right" || evt.name == "l") {
       evt.preventDefault()
+      evt.stopPropagation()
       const idx = keys.indexOf(store.selected)
       const next = keys[(idx + 1) % keys.length]
       setStore("selected", next)
