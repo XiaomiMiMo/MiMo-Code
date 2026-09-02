@@ -72,7 +72,7 @@ export const useSessionCommands = (actions: SessionCommandContext) => {
   const closableTab = tabState.closableTab
   const shown = () =>
     platform.platform !== "desktop" ||
-    import.meta.env.VITE_OPENCODE_CHANNEL !== "beta" ||
+    import.meta.env.VITE_MIMOCODE_CHANNEL !== "beta" ||
     settings.general.showFileTree()
 
   const idle = { type: "idle" as const }
