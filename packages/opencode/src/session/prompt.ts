@@ -1475,6 +1475,12 @@ NOTE: At any point in time through this workflow you should feel free to ask the
       const tools: Record<string, AITool> = {}
       const activeTools = new Set<string>()
       const loadedMcpTools = new Set<string>()
+      // MCP tools this request authorizes (permission + per-request mask + agent
+      // allowlist + actor whitelist), and the full set that was CONNECTED this turn.
+      // The freeze needs both: "absent from authorized" alone cannot distinguish a
+      // revoked tool from a disconnected one, and only the former may be un-advertised.
+      const authorizedMcpTools = new Set<string>()
+      const connectedMcpTools = new Set<string>()
       const execMcpTools: Record<string, AITool> = {}
       const mcpSearchEntries: McpToolSearchEntry[] = []
       const mcpCatalog = { current: createMcpToolSearchCatalog([]) }
@@ -1733,6 +1739,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
       for (const [key, item] of mcpTools) {
         const execute = item.execute
         if (!execute) continue
+        connectedMcpTools.add(key)
 
         if (localToolNames.has(key)) {
           log.warn("MCP tool conflicts with a local tool and was ignored", { tool: key })
@@ -1747,6 +1754,11 @@ NOTE: At any point in time through this workflow you should feel free to ask the
           !disabledMcpTools.has(key) &&
           (!agentToolAllowlist || agentToolAllowlist.has(key))
         const searchable = available && (!whitelist || whitelist.has(key))
+        // Authorization is decided HERE, per request, and the prefix freeze must respect
+        // it: a pinned tool that this turn's permission / mask / allowlist revoked has to
+        // leave the advertised set, or the persisted snapshot would claim a tool block
+        // that llm.ts then filters off the wire.
+        if (searchable) authorizedMcpTools.add(key)
         if (searchable && useMcpToolSearch) {
           mcpSearchEntries.push({
             name: key,
@@ -1967,6 +1979,11 @@ NOTE: At any point in time through this workflow you should feel free to ask the
       ) {
         activeTools.add(MCP_TOOL_SEARCH_ID)
       }
+      // Search hits must be advertised to be callable — `activeTools` is the provider's
+      // allowlist, and a model without an exec gateway has no other way to reach them.
+      // Under the freeze this expansion is appended after the pinned block by
+      // overlayFrozenMcpTools, so the cached head still matches and the snapshot rotates
+      // exactly once instead of on every connect / disconnect.
       if (!useGPTTools) loadedMcpTools.forEach((name) => activeTools.add(name))
 
       // MCP Tool Search keeps full schemas out of the outer model tool list;
@@ -1980,6 +1997,10 @@ NOTE: At any point in time through this workflow you should feel free to ask the
       return {
         tools,
         activeTools: [...activeTools].filter((name) => tools[name]),
+        localToolNames: [...localToolNames],
+        searchLoadedToolNames: [...loadedMcpTools],
+        authorizedMcpToolNames: [...authorizedMcpTools],
+        connectedMcpToolNames: [...connectedMcpTools],
       }
     })
 
@@ -4169,17 +4190,61 @@ NOTE: At any point in time through this workflow you should feel free to ask the
               mcpContext,
               harness: lastUser.harness,
             })
-            const tools = resolvedTools.tools
-            const activeTools = resolvedTools.activeTools
+            let tools = resolvedTools.tools
+            let activeTools = resolvedTools.activeTools
+            const runtimePermission = Agent.runtimePermission(agent, session.permission)
+            const prefixProfileKey = SessionPrefixSnapshot.profileKey({
+              providerID: model.providerID,
+              modelID: model.id,
+              agent: agent.name,
+              agentID: lastUser.agentID ?? "main",
+              harness: sessionPrompt.harness,
+              systemMode: sessionPrompt.systemMode,
+              system: sessionPrompt.system ?? "",
+              permission: runtimePermission,
+            })
+            const frozen = yield* SessionPrefixSnapshot.get(sessionID, prefixProfileKey)
+            if (Flag.MIMOCODE_MCP_TOOL_FROZEN && frozen?.tools) {
+              const overlaid = SessionPrefixSnapshot.overlayFrozenMcpTools({
+                tools,
+                activeTools,
+                frozen: frozen.tools,
+                localToolNames: resolvedTools.localToolNames,
+                searchLoadedToolNames: resolvedTools.searchLoadedToolNames,
+                authorizedMcpToolNames: resolvedTools.authorizedMcpToolNames,
+                connectedMcpToolNames: resolvedTools.connectedMcpToolNames,
+              })
+              // The advertised set IS the provider cache prefix, so make every freeze
+              // decision auditable: `restored` are pinned tools whose server is gone
+              // this turn, `expanded` are deliberate search loads that will rotate the
+              // snapshot. A silent overlay is indistinguishable from a cache miss.
+              log.debug("mcp tool freeze applied", {
+                sessionID,
+                revision: frozen.revision,
+                pinned: frozen.tools.length,
+                advertised: overlaid.activeTools.length,
+                restored: frozen.tools.flatMap((item) => (tools[item.name] ? [] : [item.name])),
+                expanded: overlaid.activeTools.filter(
+                  (name) => !frozen.tools?.some((item) => item.name === name),
+                ),
+                dropped: activeTools.filter((name) => !overlaid.activeTools.includes(name)),
+              })
+              tools = overlaid.tools
+              activeTools = overlaid.activeTools
+            }
 
             if (lastUser.format?.type === "json_schema") {
-              tools["StructuredOutput"] = createStructuredOutputTool({
+              tools[SessionPrefixSnapshot.STRUCTURED_OUTPUT_TOOL_ID] = createStructuredOutputTool({
                 schema: lastUser.format.schema,
                 onSuccess(output) {
                   structured = output
                 },
               })
-              activeTools.push("StructuredOutput")
+              // Guard against a duplicate: on a later structured turn the frozen overlay
+              // may already carry this name, and advertising it twice would double the
+              // wire schema and rotate the snapshot every turn.
+              if (!activeTools.includes(SessionPrefixSnapshot.STRUCTURED_OUTPUT_TOOL_ID))
+                activeTools.push(SessionPrefixSnapshot.STRUCTURED_OUTPUT_TOOL_ID)
             }
 
             if (step === 1)
@@ -4427,18 +4492,6 @@ NOTE: At any point in time through this workflow you should feel free to ask the
               return "continue" as const
             }
 
-            const runtimePermission = Agent.runtimePermission(agent, session.permission)
-            const prefixProfileKey = SessionPrefixSnapshot.profileKey({
-              providerID: model.providerID,
-              modelID: model.id,
-              agent: agent.name,
-              agentID: lastUser.agentID ?? "main",
-              harness: sessionPrompt.harness,
-              systemMode: sessionPrompt.systemMode,
-              system: sessionPrompt.system ?? "",
-              permission: runtimePermission,
-            })
-            const frozen = yield* SessionPrefixSnapshot.get(sessionID, prefixProfileKey)
             const currentAdditions = Effect.fnUntraced(function* () {
               const [env, skills, instructions] = yield* Effect.all([
                 Flag.MIMOCODE_ENABLE_DYNAMIC_SYSTEM_PROMPT
@@ -4488,8 +4541,15 @@ NOTE: At any point in time through this workflow you should feel free to ask the
               Effect.provideService(LLM.Service, llm),
               Effect.provideService(ToolRegistry.Service, registry),
             )
-            const currentToolsHash = SessionPrefixSnapshot.toolsHash(tools, activeTools)
-            const currentTools = yield* Effect.promise(() => SessionPrefixSnapshot.snapshotTools(tools, activeTools))
+            // Snapshot the POST-overlay set: `tools`/`activeTools` above are already the
+            // frozen order, so what gets persisted is exactly what went on the wire.
+            const currentTools = yield* Effect.promise(() =>
+              SessionPrefixSnapshot.snapshotTools(tools, activeTools, resolvedTools.localToolNames),
+            )
+            // Compared against the pinned row on the persisted bytes, so the schema
+            // normalization both sides went through cancels out. `tools_hash` keeps
+            // holding this value for compatibility with rows written before the switch.
+            const currentToolsHash = SessionPrefixSnapshot.advertisedHash(currentTools)
             const resolvedPrefix = yield* Effect.gen(function* () {
               if (!frozen) {
                 const snapshot = yield* SessionPrefixSnapshot.pin({
@@ -4500,9 +4560,32 @@ NOTE: At any point in time through this workflow you should feel free to ask the
                   tools: currentTools,
                   watermarkMessageID: lastUser.id,
                 })
+                log.debug("prefix snapshot pinned", {
+                  sessionID,
+                  profileKey: prefixProfileKey,
+                  tools: currentTools.length,
+                })
                 return { prefix: initialPrefix, snapshot }
               }
-              if (frozen.tools && frozen.tools_hash === currentToolsHash) return { prefix: initialPrefix, snapshot: frozen }
+              if (
+                frozen.tools &&
+                (frozen.tools_hash === currentToolsHash ||
+                  SessionPrefixSnapshot.advertisedHash(frozen.tools) === currentToolsHash)
+              ) {
+                return { prefix: initialPrefix, snapshot: frozen }
+              }
+              // A rotation invalidates the provider's cached prefix, so record WHY.
+              log.info("prefix snapshot rotating", {
+                sessionID,
+                profileKey: prefixProfileKey,
+                revision: frozen.revision,
+                added: currentTools.flatMap((item) =>
+                  frozen.tools?.some((prev) => prev.name === item.name) ? [] : [item.name],
+                ),
+                removed: (frozen.tools ?? []).flatMap((prev) =>
+                  currentTools.some((item) => item.name === prev.name) ? [] : [prev.name],
+                ),
+              })
               const prefix = yield* buildLLMRequestPrefix({
                 sessionID,
                 agent,

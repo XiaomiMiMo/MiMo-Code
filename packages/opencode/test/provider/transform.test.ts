@@ -3264,6 +3264,35 @@ describe("ProviderTransform.tools", () => {
     expect(result.bash.providerOptions).toBeUndefined()
   })
 
+  test("marks the last ADVERTISED tool, not the last registered one", () => {
+    const model = createModel({
+      providerID: "anthropic",
+      api: { id: "claude-sonnet-4", url: "https://api.anthropic.com", npm: "@ai-sdk/anthropic" },
+    })
+    // `mcp_direct` stays registered for direct dispatch but the SDK filters it out of
+    // the wire array, so a marker on it would never reach the provider.
+    const tools = { read: {}, bash: {}, mcp_direct: {} } as Record<string, any>
+
+    const result = ProviderTransform.tools(tools, model, ["read", "bash"])
+
+    expect(result.read.providerOptions).toBeUndefined()
+    expect(result.mcp_direct.providerOptions).toBeUndefined()
+    expect(result.bash.providerOptions).toEqual({ anthropic: { cacheControl: { type: "ephemeral" } } })
+  })
+
+  test("no marker when nothing is advertised", () => {
+    const model = createModel({
+      providerID: "anthropic",
+      api: { id: "claude-sonnet-4", url: "https://api.anthropic.com", npm: "@ai-sdk/anthropic" },
+    })
+    const tools = { read: {}, bash: {} } as Record<string, any>
+
+    const result = ProviderTransform.tools(tools, model, [])
+
+    expect(result.read.providerOptions).toBeUndefined()
+    expect(result.bash.providerOptions).toBeUndefined()
+  })
+
   test("no-op on empty tools", () => {
     const model = createModel({
       providerID: "anthropic",

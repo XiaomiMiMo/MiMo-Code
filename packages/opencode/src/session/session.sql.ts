@@ -58,6 +58,13 @@ export type SessionPrefixToolSnapshot = {
   name: string
   description?: string
   input_schema: JSONSchema7
+  // Where the tool came from at pin time. Persisted so a later turn never has to
+  // re-derive it from the CURRENT local tool names: a plugin registering a local
+  // tool that shadows a pinned MCP name would otherwise silently reclassify the
+  // frozen entry and drop it from the advertised set. Optional because rows
+  // written before this column existed carry no source; `toolSource` falls back
+  // to name-based inference for those.
+  source?: "local" | "mcp"
 }
 
 export const SessionPrefixSnapshotTable = sqliteTable(
