@@ -812,7 +812,9 @@ const live: Layer.Layer<
         maxOutputTokens: params.maxOutputTokens,
         abortSignal: input.abort,
         headers: {
-          ...(!input.ephemeral ? { "x-session-affinity": input.sessionID } : {}),
+          // Stable per-conversation ID for upstream routing/optimization —
+          // OpenCode Go requires this from 09/05 (github.com/XiaomiMiMo/MiMo-Code/issues/2317).
+          ...(!input.ephemeral ? { "x-session-affinity": input.sessionID, "x-opencode-session": input.sessionID } : {}),
           ...(!input.ephemeral && input.parentSessionID ? { "x-parent-session-id": input.parentSessionID } : {}),
           ...input.model.headers,
           ...headers,
