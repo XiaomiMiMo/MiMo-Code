@@ -33,9 +33,52 @@ import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process"
 import * as CrossSpawnSpawner from "@/effect/cross-spawn-spawner"
 import { McpSampling } from "./sampling"
 import { SessionID } from "@/session/schema"
+import { spawnSync } from "node:child_process"
 
 const log = Log.create({ service: "mcp" })
 const DEFAULT_TIMEOUT = 30_000
+
+// Global registry so MCP children can be reaped on process exit even when the
+// Effect teardown path doesn't run (crash, SIGTERM, abrupt quit).
+const mcpChildPids = new Set<number>()
+
+/** Synchronous recursive kill (pgrep -P) — usable from process.on("exit"). */
+export function reapMcpChildren() {
+  for (const pid of mcpChildPids) {
+    const stack = [pid]
+    const seen = new Set<number>()
+    while (stack.length > 0) {
+      const current = stack.pop()!
+      if (seen.has(current)) continue
+      seen.add(current)
+      try { process.kill(current, "SIGTERM") } catch {}
+      try {
+        const r = spawnSync("pgrep", ["-P", String(current)], { encoding: "utf-8" })
+        for (const tok of (r.stdout ?? "").split("\n")) {
+          const c = parseInt(tok, 10)
+          if (!isNaN(c)) stack.push(c)
+        }
+      } catch {}
+    }
+  }
+}
+
+let exitCleanupRegistered = false
+function registerExitCleanup() {
+  if (exitCleanupRegistered) return
+  exitCleanupRegistered = true
+  process.on("exit", reapMcpChildren)
+  // Deliberate tradeoff: reap synchronously before exiting so a child spawned on
+  // the crash path can never survive the parent, and exit(0) masks the signal's
+  // non-zero code for supervisors. SIGINT is intentionally NOT hooked so the TUI
+  // Ctrl+C path still uses graceful Effect teardown (which also runs the finalizer).
+  process.on("SIGTERM", () => { reapMcpChildren(); process.exit(0) })
+}
+
+/** Test hook: register a pid for reap (used by tests; production uses connectLocal). */
+export function registerMcpChildForTest(pid: number) {
+  mcpChildPids.add(pid)
+}
 
 export const Resource = z
   .object({
@@ -606,6 +649,13 @@ export const layer = Layer.effect(
 
       const connectTimeout = mcp.timeout ?? DEFAULT_TIMEOUT
       return yield* connectTransport(transport, connectTimeout).pipe(
+        Effect.tap(
+          Effect.sync(() => {
+            const pid = transport.pid
+            if (typeof pid === "number") mcpChildPids.add(pid)
+            registerExitCleanup()
+          }),
+        ),
         Effect.map((client): { client: MCPClient | undefined; status: Status } => ({
           client,
           status: { status: "connected" },
@@ -757,6 +807,7 @@ export const layer = Layer.effect(
                         process.kill(dpid, "SIGTERM")
                       } catch {}
                     }
+                    mcpChildPids.delete(pid)
                   }
                   yield* McpSampling.cancelAll(client)
                   yield* Effect.tryPromise(() => client.close()).pipe(Effect.ignore)
@@ -775,11 +826,26 @@ export const layer = Layer.effect(
       const client = s.clients[name]
       delete s.defs[name]
       if (!client) return Effect.void
+      // Capture the pid before close: StdioClientTransport.close() clears its
+      // process handle, so transport.pid would be undefined afterwards.
+      const pid = client.transport instanceof StdioClientTransport ? client.transport.pid : null
       // Interrupt sampling still running for this client first: once the
       // transport is gone its response can never be delivered, so the fiber
       // would otherwise keep a model call alive with nowhere to send the result.
       return McpSampling.cancelAll(client).pipe(
-        Effect.andThen(Effect.tryPromise(() => client.close()).pipe(Effect.ignore)),
+        Effect.andThen(
+          Effect.tryPromise(() => client.close()).pipe(
+            // StdioClientTransport.close() terminates the child, so it's safe to
+            // drop the pid here — this prunes stale pids on disconnect/reconnect
+            // so the exit handler can never SIGTERM a recycled pid.
+            Effect.tap(
+              Effect.sync(() => {
+                if (typeof pid === "number") mcpChildPids.delete(pid)
+              }),
+            ),
+            Effect.ignore,
+          ),
+        ),
       )
     }
 
