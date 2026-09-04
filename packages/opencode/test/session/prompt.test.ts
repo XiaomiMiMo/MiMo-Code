@@ -40,10 +40,18 @@ describe("title helpers", () => {
       "make a deck",
     )
 
+    // Punctuation immediately after the skill name (mention scan treats "," / "." as token end).
+    expect(titleContext({ parts: [{ type: "text", text: "/compose-next, implement the login page" }] } as MessageV2.WithParts)).toBe(
+      "implement the login page",
+    )
+    expect(titleContext({ parts: [{ type: "text", text: "/compose-next. implement the login page" }] } as MessageV2.WithParts)).toBe(
+      "implement the login page",
+    )
+
     // Pure scaffolding part alone collapses to empty (skipped).
     expect(titleContext({ parts: [{ type: "text", text: "/compose-next" }] } as MessageV2.WithParts)).toBe("")
 
-    // Path-like "/api/v1" must not be stripped (next char after first segment is "/").
+    // Multi-segment path "/api/v1" must not be stripped (next char after first segment is "/").
     expect(titleContext({ parts: [{ type: "text", text: "/api/v1/docs is this path right" }] } as MessageV2.WithParts)).toBe(
       "/api/v1/docs is this path right",
     )

@@ -289,17 +289,14 @@ export function titlePromptText(text: string, locale?: string) {
 // Strip leading slash-mention tokens ("/skill1 /skill2 body") so title generation focuses
 // on task text, not skill scaffolding. Skill chips / compose-next UI mode / typed mentions
 // all write `/name` into the body; without this the title starts with the skill name.
-// Only strips kebab-form tokens at line start (`/name` followed by whitespace or EOL);
-// path-like "/api/v1" (next char is "/") is left intact.
+// Heuristic (no skill allowlist): any kebab-form `/name` at line start is treated as a
+// mention. Multi-segment paths ("/api/v1") are safe (next char after first segment is "/"),
+// but a single leading segment ("/api endpoint…") will be stripped — acceptable for titles.
 export function stripLeadingSlashMentions(text: string) {
-  let rest = (text || "").trimStart()
-  const re = /^\/[A-Za-z][A-Za-z0-9_:-]*(?=\s|$)/
-  for (;;) {
-    const m = rest.match(re)
-    if (!m) break
-    rest = rest.slice(m[0].length).trimStart()
-  }
-  return rest.trim()
+  return (text || "")
+    .trimStart()
+    .replace(/^(?:\/[A-Za-z][A-Za-z0-9_:-]*(?![A-Za-z0-9_:-]|\/)[\s,.;:!?]*)+/, "")
+    .trim()
 }
 
 export function truncateTitle(value: string) {
