@@ -1,9 +1,4 @@
-import {
-  type LanguageModelV3Prompt,
-  type LanguageModelV3ToolCallPart,
-  type SharedV3Warning,
-  UnsupportedFunctionalityError,
-} from "@ai-sdk/provider"
+import { type LanguageModelV3Prompt, type SharedV3Warning, UnsupportedFunctionalityError } from "@ai-sdk/provider"
 import { convertToBase64, parseProviderOptions } from "@ai-sdk/provider-utils"
 import { z } from "zod/v4"
 import type { OpenAIResponsesInput, OpenAIResponsesReasoning } from "./openai-responses-api-types"
@@ -18,18 +13,37 @@ function isFileId(data: string, prefixes?: readonly string[]): boolean {
   return prefixes.some((prefix) => data.startsWith(prefix))
 }
 
+function customExecSource(input: unknown): string {
+  if (typeof input !== "string") {
+    if (input && typeof input === "object" && "code" in input && typeof input.code === "string") return input.code
+    throw new Error("Custom exec calls require a string code field")
+  }
+  try {
+    const parsed = JSON.parse(input) as unknown
+    if (typeof parsed === "string") return parsed
+    if (parsed && typeof parsed === "object" && "code" in parsed && typeof parsed.code === "string") {
+      return parsed.code
+    }
+  } catch {
+    // A raw JavaScript body is the native custom-tool representation.
+  }
+  return input
+}
+
 export async function convertToOpenAIResponsesInput({
   prompt,
   systemMessageMode,
   fileIdPrefixes,
   store,
   hasLocalShellTool = false,
+  providerOptionsKey = "copilot",
 }: {
   prompt: LanguageModelV3Prompt
   systemMessageMode: "system" | "developer" | "remove"
   fileIdPrefixes?: readonly string[]
   store: boolean
   hasLocalShellTool?: boolean
+  providerOptionsKey?: string
 }): Promise<{
   input: OpenAIResponsesInput
   warnings: Array<SharedV3Warning>
@@ -37,6 +51,7 @@ export async function convertToOpenAIResponsesInput({
   const input: OpenAIResponsesInput = []
   const warnings: Array<SharedV3Warning> = []
   const processedApprovalIds = new Set<string>()
+  const customToolCallIds = new Set<string>()
 
   for (const { role, content } of prompt) {
     switch (role) {
@@ -119,7 +134,6 @@ export async function convertToOpenAIResponsesInput({
 
       case "assistant": {
         const reasoningMessages: Record<string, OpenAIResponsesReasoning> = {}
-        const toolCallParts: Record<string, LanguageModelV3ToolCallPart> = {}
 
         for (const part of content) {
           switch (part.type) {
@@ -132,8 +146,6 @@ export async function convertToOpenAIResponsesInput({
               break
             }
             case "tool-call": {
-              toolCallParts[part.toolCallId] = part
-
               if (part.providerExecuted) {
                 break
               }
@@ -154,6 +166,18 @@ export async function convertToOpenAIResponsesInput({
                   },
                 })
 
+                break
+              }
+
+              if (part.providerOptions?.openai?.toolCallType === "custom") {
+                customToolCallIds.add(part.toolCallId)
+                input.push({
+                  type: "custom_tool_call",
+                  call_id: part.toolCallId,
+                  name: part.toolName,
+                  input: customExecSource(part.input),
+                  id: (part.providerOptions?.openai?.itemId as string) ?? undefined,
+                })
                 break
               }
 
@@ -184,7 +208,7 @@ export async function convertToOpenAIResponsesInput({
 
             case "reasoning": {
               const providerOptions = await parseProviderOptions({
-                provider: "copilot",
+                provider: providerOptionsKey,
                 providerOptions: part.providerOptions,
                 schema: openaiResponsesReasoningProviderOptionsSchema,
               })
@@ -307,11 +331,19 @@ export async function convertToOpenAIResponsesInput({
               break
           }
 
-          input.push({
-            type: "function_call_output",
-            call_id: part.toolCallId,
-            output: contentValue,
-          })
+          input.push(
+            customToolCallIds.has(part.toolCallId)
+              ? {
+                  type: "custom_tool_call_output",
+                  call_id: part.toolCallId,
+                  output: contentValue,
+                }
+              : {
+                  type: "function_call_output",
+                  call_id: part.toolCallId,
+                  output: contentValue,
+                },
+          )
         }
 
         break

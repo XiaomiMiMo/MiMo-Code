@@ -16,6 +16,7 @@ Invoked from the shell. `mimo` with no command opens the TUI.
 | `mimo upgrade` | Update to the latest version |
 | `mimo uninstall` | Uninstall MiMoCode |
 | `mimo serve` | Run the server |
+| `mimo llm-server issue`/`list`/`revoke` | Mint and manage tokens that let a task reach this instance's models over `/v1`; it starts nothing — see @capability-api.md |
 | `mimo stats` | Usage statistics |
 | `mimo export` / `mimo import` | Export / import sessions |
 | `mimo session` | Manage sessions |
@@ -29,7 +30,7 @@ Invoked from the shell. `mimo` with no command opens the TUI.
 
 Run `mimo <command> --help` for flags on any command.
 
-Notable TUI flags: `--continue`/`-c` (resume last session), `--session`/`-s`, `--model`/`-m`, `--agent`, `--never-ask`, `--trust`, and `--dangerously-skip-permissions` (auto-approve everything not explicitly denied; prompts once for confirmation — see permissions.md).
+Notable TUI flags: `--continue`/`-c` (resume last session), `--session`/`-s`, `--model`/`-m`, `--agent`, `--never-ask`, `--trust`, and `--dangerously-skip-permissions`/`--yolo` (auto-approve everything not explicitly denied; prompts once for confirmation — see permissions.md).
 
 For terminal compatibility, TUI rendering or lag, and local rendering over SSH with `mimo serve` + `mimo attach`, see @guide.md.
 
@@ -78,7 +79,7 @@ Most client commands run only when the whole input is the command. `/btw <questi
 | `/skills` | Browse and select available skills |
 | `/revoke-consent` | Revoke consent for the free service |
 | `/voice` | Toggle streaming voice input (requires `sox` and a MiMo login) |
-| `/voice-send` | Toggle sending transcribed voice input automatically |
+| `/voice-send` | Allow voice control to submit when you say「发送」/ "send it" (ASR always dictates) |
 | `/voice-control` | Toggle voice control |
 
 ### Session commands

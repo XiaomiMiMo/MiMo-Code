@@ -1,0 +1,150 @@
+diff --git a/dist/index.js b/dist/index.js
+index dca128d3a790378c51a24a16d92585178343b278..84f21b064e487c62377241fb0737321cd0968e76 100644
+--- a/dist/index.js
++++ b/dist/index.js
+@@ -791,6 +791,7 @@
+                       arguments: (_e = toolCallDelta.function.arguments) != null ? _e : ""
+                     },
+                     hasFinished: false,
++                    lastValidDelta: undefined,
+                     thoughtSignature: (_h = (_g = (_f = toolCallDelta.extra_content) == null ? void 0 : _f.google) == null ? void 0 : _g.thought_signature) != null ? _h : void 0
+                   };
+                   const toolCall2 = toolCalls[index];
+@@ -803,24 +804,7 @@
+                       });
+                     }
+                     if ((0, import_provider_utils2.isParsableJson)(toolCall2.function.arguments)) {
+-                      controller.enqueue({
+-                        type: "tool-input-end",
+-                        id: toolCall2.id
+-                      });
+-                      controller.enqueue({
+-                        type: "tool-call",
+-                        toolCallId: (_k = toolCall2.id) != null ? _k : (0, import_provider_utils2.generateId)(),
+-                        toolName: toolCall2.function.name,
+-                        input: toolCall2.function.arguments,
+-                        ...toolCall2.thoughtSignature ? {
+-                          providerMetadata: {
+-                            [providerOptionsName]: {
+-                              thoughtSignature: toolCall2.thoughtSignature
+-                            }
+-                          }
+-                        } : {}
+-                      });
+-                      toolCall2.hasFinished = true;
++                      toolCall2.lastValidDelta = toolCall2.function.arguments;
+                     }
+                   }
+                   continue;
+@@ -837,25 +821,8 @@
+                   id: toolCall.id,
+                   delta: (_o = toolCallDelta.function.arguments) != null ? _o : ""
+                 });
+-                if (((_p = toolCall.function) == null ? void 0 : _p.name) != null && ((_q = toolCall.function) == null ? void 0 : _q.arguments) != null && (0, import_provider_utils2.isParsableJson)(toolCall.function.arguments)) {
+-                  controller.enqueue({
+-                    type: "tool-input-end",
+-                    id: toolCall.id
+-                  });
+-                  controller.enqueue({
+-                    type: "tool-call",
+-                    toolCallId: (_r = toolCall.id) != null ? _r : (0, import_provider_utils2.generateId)(),
+-                    toolName: toolCall.function.name,
+-                    input: toolCall.function.arguments,
+-                    ...toolCall.thoughtSignature ? {
+-                      providerMetadata: {
+-                        [providerOptionsName]: {
+-                          thoughtSignature: toolCall.thoughtSignature
+-                        }
+-                      }
+-                    } : {}
+-                  });
+-                  toolCall.hasFinished = true;
++                if (((_p = toolCallDelta.function) == null ? void 0 : _p.arguments) != null && (0, import_provider_utils2.isParsableJson)(toolCallDelta.function.arguments)) {
++                  toolCall.lastValidDelta = toolCallDelta.function.arguments;
+                 }
+               }
+             }
+@@ -879,7 +846,7 @@
+                 type: "tool-call",
+                 toolCallId: (_a2 = toolCall.id) != null ? _a2 : (0, import_provider_utils2.generateId)(),
+                 toolName: toolCall.function.name,
+-                input: toolCall.function.arguments,
++                input: (0, import_provider_utils2.isParsableJson)(toolCall.function.arguments) ? toolCall.function.arguments : (toolCall.lastValidDelta != null ? toolCall.lastValidDelta : toolCall.function.arguments),
+                 ...toolCall.thoughtSignature ? {
+                   providerMetadata: {
+                     [providerOptionsName]: {
+diff --git a/dist/index.mjs b/dist/index.mjs
+index 3b1e1b6bdec5032e3b4fa5ffbcc8cdf3dfe1cc40..6a926f818251fd1f046e3aa816842d9517332ca9 100644
+--- a/dist/index.mjs
++++ b/dist/index.mjs
+@@ -778,6 +778,7 @@
+                       arguments: (_e = toolCallDelta.function.arguments) != null ? _e : ""
+                     },
+                     hasFinished: false,
++                    lastValidDelta: undefined,
+                     thoughtSignature: (_h = (_g = (_f = toolCallDelta.extra_content) == null ? void 0 : _f.google) == null ? void 0 : _g.thought_signature) != null ? _h : void 0
+                   };
+                   const toolCall2 = toolCalls[index];
+@@ -790,24 +791,7 @@
+                       });
+                     }
+                     if (isParsableJson(toolCall2.function.arguments)) {
+-                      controller.enqueue({
+-                        type: "tool-input-end",
+-                        id: toolCall2.id
+-                      });
+-                      controller.enqueue({
+-                        type: "tool-call",
+-                        toolCallId: (_k = toolCall2.id) != null ? _k : generateId(),
+-                        toolName: toolCall2.function.name,
+-                        input: toolCall2.function.arguments,
+-                        ...toolCall2.thoughtSignature ? {
+-                          providerMetadata: {
+-                            [providerOptionsName]: {
+-                              thoughtSignature: toolCall2.thoughtSignature
+-                            }
+-                          }
+-                        } : {}
+-                      });
+-                      toolCall2.hasFinished = true;
++                      toolCall2.lastValidDelta = toolCall2.function.arguments;
+                     }
+                   }
+                   continue;
+@@ -824,25 +808,8 @@
+                   id: toolCall.id,
+                   delta: (_o = toolCallDelta.function.arguments) != null ? _o : ""
+                 });
+-                if (((_p = toolCall.function) == null ? void 0 : _p.name) != null && ((_q = toolCall.function) == null ? void 0 : _q.arguments) != null && isParsableJson(toolCall.function.arguments)) {
+-                  controller.enqueue({
+-                    type: "tool-input-end",
+-                    id: toolCall.id
+-                  });
+-                  controller.enqueue({
+-                    type: "tool-call",
+-                    toolCallId: (_r = toolCall.id) != null ? _r : generateId(),
+-                    toolName: toolCall.function.name,
+-                    input: toolCall.function.arguments,
+-                    ...toolCall.thoughtSignature ? {
+-                      providerMetadata: {
+-                        [providerOptionsName]: {
+-                          thoughtSignature: toolCall.thoughtSignature
+-                        }
+-                      }
+-                    } : {}
+-                  });
+-                  toolCall.hasFinished = true;
++                if (((_p = toolCallDelta.function) == null ? void 0 : _p.arguments) != null && isParsableJson(toolCallDelta.function.arguments)) {
++                  toolCall.lastValidDelta = toolCallDelta.function.arguments;
+                 }
+               }
+             }
+@@ -866,7 +833,7 @@
+                 type: "tool-call",
+                 toolCallId: (_a2 = toolCall.id) != null ? _a2 : generateId(),
+                 toolName: toolCall.function.name,
+-                input: toolCall.function.arguments,
++                input: isParsableJson(toolCall.function.arguments) ? toolCall.function.arguments : (toolCall.lastValidDelta != null ? toolCall.lastValidDelta : toolCall.function.arguments),
+                 ...toolCall.thoughtSignature ? {
+                   providerMetadata: {
+                     [providerOptionsName]: {

@@ -39,7 +39,12 @@ esac
 
 (
   cd "$package_dir"
-  bun run build:local
+  # Run the build script directly instead of through the `build:local` package
+  # script: `bun run <package-script>` re-resolves the nested `bun` through a
+  # PATH that has every ancestor node_modules/.bin prepended, so a stray bun
+  # installed above this checkout would hijack the build and embed its own
+  # (possibly broken) runtime into the compiled binary.
+  MIMOCODE_CHANNEL=local MIMOCODE_VERSION=local bun run script/build.ts --single
 )
 
 binary="$package_dir/dist/mimocode-$platform-$arch/bin/mimo"

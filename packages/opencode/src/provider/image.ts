@@ -5,18 +5,137 @@ import jpeg from "jpeg-js"
 // decoded base64 exceeds 5242880 bytes with a non-retryable 400). We compress
 // below a slightly smaller ceiling so re-encode jitter can't push us back over.
 export const DEFAULT_MAX_IMAGE_BYTES = 4_500_000
+export const DEFAULT_MAX_IMAGE_DIMENSION = 2_000
+export const MAX_DECODE_IMAGE_PIXELS = 64_000_000
+export const MAX_JPEG_DECODE_MEMORY_MB = 512
 
 type Pixels = { data: Uint8Array | Buffer; width: number; height: number }
+export type ImageDimensions = { width: number; height: number }
+
+const jpegFrameMarkers = new Set([0xc0, 0xc1, 0xc2, 0xc3, 0xc5, 0xc6, 0xc7, 0xc9, 0xca, 0xcb, 0xcd, 0xce, 0xcf])
+
+function pngDimensions(bytes: Buffer): ImageDimensions | undefined {
+  if (bytes.length < 24) return undefined
+  if (!bytes.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))) return undefined
+  if (bytes.readUInt32BE(8) !== 13) return undefined
+  if (bytes.toString("ascii", 12, 16) !== "IHDR") return undefined
+  const width = bytes.readUInt32BE(16)
+  const height = bytes.readUInt32BE(20)
+  if (!width || !height) return undefined
+  return { width, height }
+}
+
+function jpegDimensions(bytes: Buffer): ImageDimensions | undefined {
+  if (bytes.length < 4 || bytes[0] !== 0xff || bytes[1] !== 0xd8) return undefined
+
+  let offset = 2
+  while (offset < bytes.length) {
+    if (bytes[offset] !== 0xff) return undefined
+    while (bytes[offset] === 0xff) offset++
+    if (offset >= bytes.length) return undefined
+    const marker = bytes[offset++]
+    if (marker === 0xd9 || marker === 0xda) return undefined
+    if (marker === 0x01 || (marker >= 0xd0 && marker <= 0xd8)) continue
+    if (offset + 2 > bytes.length) return undefined
+    const length = bytes.readUInt16BE(offset)
+    if (length < 2 || offset + length > bytes.length) return undefined
+    if (jpegFrameMarkers.has(marker)) {
+      if (length < 8) return undefined
+      const height = bytes.readUInt16BE(offset + 3)
+      const width = bytes.readUInt16BE(offset + 5)
+      if (!width || !height) return undefined
+      return { width, height }
+    }
+    offset += length
+  }
+  return undefined
+}
+
+function gifDimensions(bytes: Buffer): ImageDimensions | undefined {
+  if (bytes.length < 10) return undefined
+  const signature = bytes.toString("ascii", 0, 6)
+  if (signature !== "GIF87a" && signature !== "GIF89a") return undefined
+  const width = bytes.readUInt16LE(6)
+  const height = bytes.readUInt16LE(8)
+  if (!width || !height) return undefined
+  return { width, height }
+}
+
+function webpDimensions(bytes: Buffer): ImageDimensions | undefined {
+  if (bytes.length < 30 || bytes.toString("ascii", 0, 4) !== "RIFF" || bytes.toString("ascii", 8, 12) !== "WEBP")
+    return undefined
+  const chunk = bytes.toString("ascii", 12, 16)
+  if (chunk === "VP8X") {
+    const width = bytes.readUIntLE(24, 3) + 1
+    const height = bytes.readUIntLE(27, 3) + 1
+    return { width, height }
+  }
+  if (chunk === "VP8 ") {
+    if (bytes[23] !== 0x9d || bytes[24] !== 0x01 || bytes[25] !== 0x2a) return undefined
+    const width = bytes.readUInt16LE(26) & 0x3fff
+    const height = bytes.readUInt16LE(28) & 0x3fff
+    if (!width || !height) return undefined
+    return { width, height }
+  }
+  if (chunk === "VP8L") {
+    if (bytes[20] !== 0x2f) return undefined
+    const width = 1 + (bytes[21] | ((bytes[22] & 0x3f) << 8))
+    const height = 1 + ((bytes[22] >> 6) | (bytes[23] << 2) | ((bytes[24] & 0x0f) << 10))
+    return { width, height }
+  }
+  return undefined
+}
+
+const dimensionMimes = new Set(["image/png", "image/jpeg", "image/jpg", "image/webp", "image/gif"])
+
+export function supportsImageDimensions(mime: string) {
+  return dimensionMimes.has(mime.split(";", 1)[0]?.toLowerCase() ?? "")
+}
+
+// Reads dimensions from container headers only. This deliberately avoids image
+// pixel decoding so normal, in-limit images stay on a cheap allocation-free path.
+export function imageDimensions(mime: string, bytes: Buffer): ImageDimensions | undefined {
+  const normalized = mime.split(";", 1)[0]?.toLowerCase()
+  if (normalized === "image/png") return pngDimensions(bytes)
+  if (normalized === "image/jpeg" || normalized === "image/jpg") return jpegDimensions(bytes)
+  if (normalized === "image/webp") return webpDimensions(bytes)
+  if (normalized === "image/gif") return gifDimensions(bytes)
+  return undefined
+}
+
+function safeDimensions(mime: string, bytes: Buffer): ImageDimensions | undefined {
+  const dimensions = imageDimensions(mime, bytes)
+  if (!dimensions || dimensions.width * dimensions.height > MAX_DECODE_IMAGE_PIXELS) return undefined
+  return dimensions
+}
+
+export function jpegMemoryBudget(dimensions: ImageDimensions) {
+  // jpeg-js accounts DCT blocks, component planes, color conversion buffers and
+  // the RGBA result against this value. Scale the guard with the actual image
+  // while retaining the former 512 MiB hard ceiling against compressed bombs.
+  return Math.min(
+    MAX_JPEG_DECODE_MEMORY_MB,
+    Math.max(32, Math.ceil((dimensions.width * dimensions.height * 24) / 1024 / 1024)),
+  )
+}
 
 // jpeg-js only understands JPEG; pngjs only PNG. Anything else (webp, gif, ...)
 // has no pure-JS decoder available here, so it can't be recompressed and the
 // caller must fall back to a text placeholder.
 function decode(mime: string, bytes: Buffer): Pixels | undefined {
-  if (mime === "image/jpeg" || mime === "image/jpg") {
-    const out = jpeg.decode(bytes, { useTArray: true, maxMemoryUsageInMB: 512 })
+  const normalized = mime.split(";", 1)[0]?.toLowerCase()
+  if (normalized === "image/jpeg" || normalized === "image/jpg") {
+    const dimensions = safeDimensions(normalized, bytes)
+    if (!dimensions) return undefined
+    const out = jpeg.decode(bytes, {
+      useTArray: true,
+      maxResolutionInMP: MAX_DECODE_IMAGE_PIXELS / 1_000_000,
+      maxMemoryUsageInMB: jpegMemoryBudget(dimensions),
+    })
     return { data: out.data, width: out.width, height: out.height }
   }
-  if (mime === "image/png") {
+  if (normalized === "image/png") {
+    if (!safeDimensions(normalized, bytes)) return undefined
     const png = PNG.sync.read(bytes)
     return { data: png.data, width: png.width, height: png.height }
   }
@@ -122,6 +241,7 @@ export function compressImage(
   mime: string,
   bytes: Buffer,
   maxBytes: number,
+  maxDimension = Infinity,
 ): { data: string; mediaType: string } | undefined {
   let pixels: Pixels | undefined
   try {
@@ -134,7 +254,8 @@ export function compressImage(
   // Try progressively lower quality, then progressively smaller dimensions.
   // Each dimension halving cuts pixel count ~4x, so a handful of steps covers
   // even very large source images.
-  const scales = [1, 0.75, 0.5, 0.35, 0.25, 0.15, 0.1]
+  const initialScale = Math.min(1, maxDimension / Math.max(pixels.width, pixels.height))
+  const scales = [1, 0.75, 0.5, 0.35, 0.25, 0.15, 0.1].map((scale) => scale * initialScale)
   const qualities = [80, 60, 45, 30]
   for (const scale of scales) {
     const scaled = scale === 1 ? pixels : downscale(pixels, scale)

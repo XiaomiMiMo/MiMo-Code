@@ -108,7 +108,7 @@ none of which this change touches:
 | Tab / shift+tab agent cycle | `config/keybinds.ts:64-65` → `cli/cmd/tui/context/local.tsx:113` | no |
 | Agent dialog | `cli/cmd/tui/component/dialog-agent.tsx:30` | no |
 | Startup `--agent plan` | `cli/cmd/tui/thread.ts` | no |
-| Input-bar / voice switch | `cli/cmd/tui/component/prompt/index.tsx:202` | no |
+| Input-bar agent cycle | `cli/cmd/tui/component/prompt/index.tsx` | no |
 | Model calls `plan_enter` | `tool/plan.ts:21` | **removed** |
 
 `plan_enter` has no slash command and no keybinding — a user cannot invoke it

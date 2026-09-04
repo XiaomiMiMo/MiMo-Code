@@ -83,4 +83,33 @@ describe("Auth", () => {
       }),
     ),
   )
+
+  // Auth.inject is the in-process channel for an embedding host (the desktop runs the engine
+  // in-process). It exists so credentials never have to sit in MIMOCODE_AUTH_CONTENT, which every
+  // child the engine spawns would inherit.
+  it.live("inject supplies credentials without touching the environment", () =>
+    provideTmpdirInstance(() =>
+      Effect.gen(function* () {
+        Auth.inject(JSON.stringify({ xiaomi: { type: "api", key: "sk-injected" } }))
+        const data = yield* (yield* Auth.Service).all()
+        expect(data["xiaomi"]).toEqual({ type: "api", key: "sk-injected" })
+        expect(process.env.MIMOCODE_AUTH_CONTENT).toBeUndefined()
+        Auth.inject(undefined)
+      }),
+    ),
+  )
+
+  it.live("inject wins over the env channel, and clearing it falls back", () =>
+    provideTmpdirInstance(() =>
+      Effect.gen(function* () {
+        process.env.MIMOCODE_AUTH_CONTENT = JSON.stringify({ xiaomi: { type: "api", key: "sk-env" } })
+        Auth.inject(JSON.stringify({ xiaomi: { type: "api", key: "sk-injected" } }))
+        const auth = yield* Auth.Service
+        expect((yield* auth.all())["xiaomi"]).toEqual({ type: "api", key: "sk-injected" })
+        Auth.inject(undefined)
+        expect((yield* auth.all())["xiaomi"]).toEqual({ type: "api", key: "sk-env" })
+        delete process.env.MIMOCODE_AUTH_CONTENT
+      }),
+    ),
+  )
 })

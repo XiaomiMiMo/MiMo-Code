@@ -5,6 +5,7 @@ import { MessageV2 } from "./message-v2"
 import { Token } from "../util"
 import { Log } from "../util"
 import { Config } from "@/config"
+import { Flag } from "@/flag/flag"
 import { NotFoundError } from "@/storage"
 import { Effect, Layer, Context } from "effect"
 import { pressureLevel, usable } from "./overflow"
@@ -258,6 +259,11 @@ export const layer: Layer.Layer<
       // (no agentID / unregistered / race) → servesCheckpoint fails open and fires:
       // main and peer must never silently lose checkpoints.
       if (!(yield* actorReg.servesCheckpoint(input.sessionID, input.agentID))) return
+
+      // Do not consume crossed thresholds while checkpointing is disabled.
+      // If an in-process embedder re-enables the flag, the next invocation must
+      // still be able to fire every threshold already crossed by the session.
+      if (Flag.MIMOCODE_DISABLE_CHECKPOINT) return
 
       // Lock: skip if a writer is already running for this session.
       // crossed Set is NOT incremented here — when the in-flight writer

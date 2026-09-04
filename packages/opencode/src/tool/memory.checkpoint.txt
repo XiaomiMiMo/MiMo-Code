@@ -1,0 +1,2 @@
+Session checkpoints (`sessions/<sid>/checkpoint.md`) written by the
+checkpoint-writer subagent are also indexed.

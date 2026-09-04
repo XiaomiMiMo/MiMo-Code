@@ -24,6 +24,16 @@ function nonNegativeNumber(key: string) {
   return Number.isInteger(parsed) && parsed >= 0 ? parsed : undefined
 }
 
+// A fraction in (0, 1], written either as a decimal ("0.85") or a percentage
+// ("85%"). Values outside the range — and anything unparseable — yield undefined
+// so the caller keeps its own default.
+function ratio(key: string) {
+  const value = process.env[key]?.trim()
+  if (!value) return undefined
+  const parsed = value.endsWith("%") ? Number(value.slice(0, -1)) / 100 : Number(value)
+  return Number.isFinite(parsed) && parsed > 0 && parsed <= 1 ? parsed : undefined
+}
+
 const MIMOCODE_EXPERIMENTAL = truthy("MIMOCODE_EXPERIMENTAL")
 
 // Defaults to false. When enabled, mimocode runs in pure-mimo mode:
@@ -40,6 +50,41 @@ const MIMOCODE_DISABLE_EXTERNAL_SKILLS = truthy("MIMOCODE_DISABLE_EXTERNAL_SKILL
 const MIMOCODE_DISABLE_CLAUDE_CODE_SKILLS =
   MIMOCODE_DISABLE_EXTERNAL_SKILLS || MIMOCODE_DISABLE_CLAUDE_CODE || truthy("MIMOCODE_DISABLE_CLAUDE_CODE_SKILLS")
 const copy = process.env["MIMOCODE_EXPERIMENTAL_DISABLE_COPY_ON_SELECT"]
+
+/**
+ * Password for a listener nobody asked for, held in memory only.
+ *
+ * Opening a socket makes every instance route reachable by any process running as
+ * this user — `/file` reads and writes the project, `/pty` and `/bash-interactive`
+ * run commands. The token-authenticated `/v1` routes are carved out of basic auth on
+ * purpose (see `server/middleware.ts`), so generating this closes everything else
+ * without closing the surface the listener exists for.
+ */
+let generatedServerPassword: string | undefined
+
+/**
+ * Generate the password for an implicit listener, once.
+ *
+ * Idempotent: a second listener in the same process must not invalidate the
+ * credential the first one is already authenticating against. A user-supplied
+ * password always wins, and in that case nothing is generated at all — the operator
+ * has already said what auth should be.
+ */
+export function generateServerPassword() {
+  if (process.env["MIMOCODE_SERVER_PASSWORD"]) return
+  generatedServerPassword ??= Buffer.from(crypto.getRandomValues(new Uint8Array(32))).toString("base64url")
+}
+
+/**
+ * Disarm the generated password once its listener is gone.
+ *
+ * A credential outliving the socket it was minted for is state with no owner: nothing can
+ * present it any more, but every in-process request still has to satisfy it. Clearing it
+ * belongs with `stop()` for the same reason unpublishing the address does.
+ */
+export function clearGeneratedServerPassword() {
+  generatedServerPassword = undefined
+}
 
 export const Flag = {
   OTEL_EXPORTER_OTLP_ENDPOINT: process.env["OTEL_EXPORTER_OTLP_ENDPOINT"],
@@ -75,7 +120,14 @@ export const Flag = {
   // normal bash-permission ask so it can't be silently pre-approved by a broad
   // `bash: allow` rule. Set MIMOCODE_AUTO_APPROVE_DELETE=true to trust the
   // model with deletes and skip the second confirmation.
-  MIMOCODE_AUTO_APPROVE_DELETE: truthy("MIMOCODE_AUTO_APPROVE_DELETE"),
+  // Read lazily (getter, not an eagerly-evaluated literal) so an embedder can
+  // flip it at runtime: the desktop app runs the server in-process, so its
+  // approval mode — switchable mid-session, like the TUI's /skip-permissions —
+  // has no process boundary at which to re-read env. A literal would freeze
+  // this at module-evaluation time and make every later write a no-op.
+  get MIMOCODE_AUTO_APPROVE_DELETE() {
+    return truthy("MIMOCODE_AUTO_APPROVE_DELETE")
+  },
   // Set by the TUI's --dangerously-skip-permissions flag. When truthy, an
   // allow-all base ruleset is injected UNDER the user's config permission so
   // every tool auto-approves unless the user explicitly denied it.
@@ -83,8 +135,44 @@ export const Flag = {
   MIMOCODE_DISABLE_DEFAULT_PLUGINS: truthy("MIMOCODE_DISABLE_DEFAULT_PLUGINS"),
   MIMOCODE_DISABLE_LSP_DOWNLOAD: truthy("MIMOCODE_DISABLE_LSP_DOWNLOAD"),
   MIMOCODE_ENABLE_EXPERIMENTAL_MODELS: truthy("MIMOCODE_ENABLE_EXPERIMENTAL_MODELS"),
+  // Defaults to false. When enabled, checkpoint writers, checkpoint-based
+  // context rebuilds, and checkpoint copy in the system prompt and tool
+  // schemas are disabled; context overflow falls back to compaction.
+  // Read lazily so tests and in-process embedders can toggle it at runtime.
+  get MIMOCODE_DISABLE_CHECKPOINT() {
+    return truthy("MIMOCODE_DISABLE_CHECKPOINT")
+  },
   MIMOCODE_DISABLE_AUTOCOMPACT: truthy("MIMOCODE_DISABLE_AUTOCOMPACT"),
+  // Default compaction trigger, used when `compaction.max_context` is not set in
+  // config. Same grammar as that config field: an absolute token count
+  // ("300000"), a shorthand ("300K", "1M"), or a percentage of the model window
+  // ("50%"). Clamped to the model window — it can only lower the trigger, never
+  // raise it. An explicit `compaction.max_context` in config overrides this.
+  // Pairs with MIMOCODE_DISABLE_CHECKPOINT: on the checkpoint-off fallback path
+  // this is how the compaction threshold is tuned via env alone. Read lazily so
+  // tests and in-process embedders can toggle it at runtime.
+  get MIMOCODE_COMPACTION_MAX_CONTEXT() {
+    return process.env["MIMOCODE_COMPACTION_MAX_CONTEXT"]
+  },
+  // Fraction of the working window at which compaction fires; the remaining
+  // headroom is what the summary generation gets to write into. Accepts a decimal
+  // ("0.85") or a percentage ("85%"); anything unparseable or outside (0, 1] is
+  // ignored and the 0.9 default stands. Applies on top of whatever window
+  // `compaction.max_context` / MIMOCODE_COMPACTION_MAX_CONTEXT resolved to, so
+  // the two compose rather than override each other. Read lazily so tests and
+  // in-process embedders can toggle it at runtime.
+  get MIMOCODE_COMPACTION_TRIGGER_RATIO() {
+    return ratio("MIMOCODE_COMPACTION_TRIGGER_RATIO") ?? 0.9
+  },
   MIMOCODE_DISABLE_MODELS_FETCH: truthy("MIMOCODE_DISABLE_MODELS_FETCH"),
+  // Defaults to automatic model inference. Explicit true forces every model to
+  // use the GPT system prompt and Codex toolset; explicit false forces even GPT
+  // models to use the default prompt and toolset.
+  get MIMOCODE_CODEX_MODE() {
+    if (truthy("MIMOCODE_CODEX_MODE")) return true
+    if (falsy("MIMOCODE_CODEX_MODE")) return false
+    return undefined
+  },
   MIMOCODE_DISABLE_MOUSE: truthy("MIMOCODE_DISABLE_MOUSE"),
   MIMOCODE_OUTPUT_LENGTH_CONTINUATION_LIMIT: number("MIMOCODE_OUTPUT_LENGTH_CONTINUATION_LIMIT") ?? 3,
   MIMOCODE_INVALID_OUTPUT_CONTINUATION_LIMIT: number("MIMOCODE_INVALID_OUTPUT_CONTINUATION_LIMIT") ?? 2,
@@ -127,6 +215,7 @@ export const Flag = {
   MIMOCODE_DISABLE_CLAUDE_CODE_COMMANDS: truthy("MIMOCODE_DISABLE_CLAUDE_CODE_COMMANDS"),
   MIMOCODE_DISABLE_CLAUDE_CODE_SKILLS,
   MIMOCODE_DISABLE_EXTERNAL_SKILLS,
+  MIMOCODE_DISABLE_AGENTS_SKILLS: MIMOCODE_DISABLE_EXTERNAL_SKILLS || truthy("MIMOCODE_DISABLE_AGENTS_SKILLS"),
   MIMOCODE_DISABLE_CODEX_SKILLS: MIMOCODE_DISABLE_EXTERNAL_SKILLS || truthy("MIMOCODE_DISABLE_CODEX_SKILLS"),
   MIMOCODE_DISABLE_OPENCODE_SKILLS: MIMOCODE_DISABLE_EXTERNAL_SKILLS || truthy("MIMOCODE_DISABLE_OPENCODE_SKILLS"),
 
@@ -143,10 +232,6 @@ export const Flag = {
   MIMOCODE_SKILL_SEARCH_MAX_RESULTS: 3,
   MIMOCODE_SKILL_SEARCH_STEM_MIN_LENGTH: 3,
   MIMOCODE_SKILL_SEARCH_FILE_SAMPLE_LIMIT: 10,
-  MIMOCODE_SKILL_SEARCH_REFRESH_INTERVAL_MS: 12 * 60 * 60 * 1000,
-  // Defaults to true. Set MIMOCODE_ENABLE_SKILL_SEARCH_REMINDER=false (or 0)
-  // to stop injecting skill-search reminders into user queries.
-  MIMOCODE_ENABLE_SKILL_SEARCH_REMINDER: !falsy("MIMOCODE_ENABLE_SKILL_SEARCH_REMINDER"),
 
   // Defaults to false. When enabled, skill-source commands appear in the `/`
   // autocomplete dropdown alongside user commands and MCP prompts. Skills are
@@ -162,13 +247,54 @@ export const Flag = {
   // the working directory. Use to avoid touching git in restricted/sandboxed
   // environments or where git startup probing is undesirable.
   MIMOCODE_DISABLE_GIT: truthy("MIMOCODE_DISABLE_GIT"),
-  MIMOCODE_SERVER_PASSWORD: process.env["MIMOCODE_SERVER_PASSWORD"],
+
+  /**
+   * The password every non-`/v1` route is authenticated against.
+   *
+   * A getter rather than a snapshot, because a listener the user did not ask for
+   * generates one at bind time (see `generateServerPassword`). The generated value
+   * is deliberately NOT written to `process.env`: every child we spawn inherits the
+   * environment, and a subprocess is supposed to hold a scoped task token, never the
+   * credential that opens the whole instance API.
+   */
+  get MIMOCODE_SERVER_PASSWORD() {
+    return process.env["MIMOCODE_SERVER_PASSWORD"] || generatedServerPassword
+  },
+  /**
+   * Did the OPERATOR configure auth, as opposed to us generating a password for a
+   * listener we opened on our own initiative?
+   *
+   * The difference is load-bearing for `InstanceMiddleware`: a user-secured server is
+   * allowed to serve directories outside its cwd (the desktop engine does exactly
+   * that), while an implicit listener must stay pinned to one project no matter what
+   * credential guards it.
+   */
+  get MIMOCODE_SERVER_PASSWORD_SUPPLIED() {
+    return Boolean(process.env["MIMOCODE_SERVER_PASSWORD"])
+  },
   MIMOCODE_SERVER_USERNAME: process.env["MIMOCODE_SERVER_USERNAME"],
   MIMOCODE_ENABLE_QUESTION_TOOL: truthy("MIMOCODE_ENABLE_QUESTION_TOOL"),
 
   // Defaults to false. Set MIMOCODE_ENABLE_TRY_BEST_HANDOFF=true (or 1) to
   // enable try-best loop detection, automatic turn pausing, and handoff UI.
   MIMOCODE_ENABLE_TRY_BEST_HANDOFF: truthy("MIMOCODE_ENABLE_TRY_BEST_HANDOFF"),
+
+  // Defaults to false. Opt in to append the runtime-derived environment block
+  // (working directory, platform, shell, git status/branch/commits) to the model's
+  // system prompt. Instruction files (AGENTS.md / CLAUDE.md) are appended
+  // regardless — suppress the whole block with MIMOCODE_DISABLE_INSTRUCTIONS, or
+  // individual sources with MIMOCODE_DISABLE_PROJECT_CONFIG /
+  // MIMOCODE_DISABLE_CLAUDE_CODE_PROMPT.
+  get MIMOCODE_ENABLE_DYNAMIC_SYSTEM_PROMPT() {
+    return truthy("MIMOCODE_ENABLE_DYNAMIC_SYSTEM_PROMPT")
+  },
+
+  // Defaults to false (enabled): instruction-file content (AGENTS.md / CLAUDE.md)
+  // is appended to the model's system prompt. Set MIMOCODE_DISABLE_INSTRUCTIONS=true
+  // to drop the whole instruction block regardless of which files resolve.
+  get MIMOCODE_DISABLE_INSTRUCTIONS() {
+    return truthy("MIMOCODE_DISABLE_INSTRUCTIONS")
+  },
 
   // Defaults to false. The edit tool does pure exact-string matching with
   // explicit error signals. Set MIMOCODE_ENABLE_FUZZY_EDIT=true to opt into the

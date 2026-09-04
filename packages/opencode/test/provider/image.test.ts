@@ -1,7 +1,16 @@
 import { describe, expect, test } from "bun:test"
 import { PNG } from "pngjs"
 import jpeg from "jpeg-js"
-import { compressImage, downscale, DEFAULT_MAX_IMAGE_BYTES } from "../../src/provider/image"
+import {
+  compressImage,
+  downscale,
+  DEFAULT_MAX_IMAGE_BYTES,
+  DEFAULT_MAX_IMAGE_DIMENSION,
+  imageDimensions,
+  jpegMemoryBudget,
+  MAX_DECODE_IMAGE_PIXELS,
+  MAX_JPEG_DECODE_MEMORY_MB,
+} from "../../src/provider/image"
 
 // --- helpers -------------------------------------------------------------
 
@@ -42,6 +51,75 @@ function base64Bytes(b64: string) {
   return Buffer.from(b64, "base64").length
 }
 
+function jpegHeader(width: number, height: number) {
+  const bytes = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x02, 0xff, 0xc0, 0x00, 0x08, 0x08, 0, 0, 0, 0, 0x01])
+  bytes.writeUInt16BE(height, 11)
+  bytes.writeUInt16BE(width, 13)
+  return bytes
+}
+
+function webpHeader(width: number, height: number, chunk: "VP8X" | "VP8 " | "VP8L") {
+  const bytes = Buffer.alloc(30)
+  bytes.write("RIFF", 0, "ascii")
+  bytes.writeUInt32LE(22, 4)
+  bytes.write("WEBP", 8, "ascii")
+  bytes.write(chunk, 12, "ascii")
+  if (chunk === "VP8X") {
+    bytes.writeUIntLE(width - 1, 24, 3)
+    bytes.writeUIntLE(height - 1, 27, 3)
+    return bytes
+  }
+  if (chunk === "VP8 ") {
+    bytes.set([0x9d, 0x01, 0x2a], 23)
+    bytes.writeUInt16LE(width, 26)
+    bytes.writeUInt16LE(height, 28)
+    return bytes
+  }
+  bytes[20] = 0x2f
+  bytes[21] = (width - 1) & 0xff
+  bytes[22] = (((height - 1) & 0x03) << 6) | (((width - 1) >> 8) & 0x3f)
+  bytes[23] = ((height - 1) >> 2) & 0xff
+  bytes[24] = ((height - 1) >> 10) & 0x0f
+  return bytes
+}
+
+function gifHeader(width: number, height: number) {
+  const bytes = Buffer.alloc(10)
+  bytes.write("GIF89a", 0, "ascii")
+  bytes.writeUInt16LE(width, 6)
+  bytes.writeUInt16LE(height, 8)
+  return bytes
+}
+
+describe("imageDimensions - header-only inspection", () => {
+  test("reads PNG dimensions from IHDR without image data", () => {
+    const bytes = Buffer.alloc(24)
+    Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]).copy(bytes)
+    bytes.writeUInt32BE(13, 8)
+    bytes.write("IHDR", 12, "ascii")
+    bytes.writeUInt32BE(4096, 16)
+    bytes.writeUInt32BE(1024, 20)
+    expect(imageDimensions("image/png", bytes)).toEqual({ width: 4096, height: 1024 })
+  })
+
+  test("reads JPEG dimensions after metadata segments without scan decoding", () => {
+    expect(imageDimensions("image/jpeg", jpegHeader(3210, 987))).toEqual({ width: 3210, height: 987 })
+  })
+
+  test.each(["VP8X", "VP8 ", "VP8L"] as const)("reads WebP %s dimensions", (chunk) => {
+    expect(imageDimensions("image/webp", webpHeader(3210, 987, chunk))).toEqual({ width: 3210, height: 987 })
+  })
+
+  test("reads GIF logical screen dimensions", () => {
+    expect(imageDimensions("image/gif", gifHeader(3210, 987))).toEqual({ width: 3210, height: 987 })
+  })
+
+  test("rejects malformed headers", () => {
+    expect(imageDimensions("image/png", Buffer.from("not a png"))).toBeUndefined()
+    expect(imageDimensions("image/jpeg", Buffer.from([0xff, 0xd8, 0xff]))).toBeUndefined()
+  })
+})
+
 // --- downscale: dimensions ----------------------------------------------
 
 describe("downscale - output dimensions", () => {
@@ -60,7 +138,10 @@ describe("downscale - output dimensions", () => {
   })
 
   test("never produces a zero dimension (clamped to >= 1)", () => {
-    const out = downscale(makePixels(3, 3, () => [0, 0, 0, 255]), 0.01)
+    const out = downscale(
+      makePixels(3, 3, () => [0, 0, 0, 255]),
+      0.01,
+    )
     expect(out.width).toBeGreaterThanOrEqual(1)
     expect(out.height).toBeGreaterThanOrEqual(1)
   })
@@ -183,6 +264,26 @@ describe("compressImage - brings oversized images under the cap", () => {
     expect(base64Bytes(tight!.data)).toBeLessThanOrEqual(base64Bytes(loose!.data))
     expect(base64Bytes(tight!.data)).toBeLessThanOrEqual(60_000)
   })
+
+  test("limits the longest edge while preserving aspect ratio", () => {
+    const bytes = encodePng(2400, 120, () => [80, 120, 160, 255])
+    const out = compressImage("image/png", bytes, DEFAULT_MAX_IMAGE_BYTES, DEFAULT_MAX_IMAGE_DIMENSION)
+    expect(out).toBeDefined()
+    const dimensions = imageDimensions(out!.mediaType, Buffer.from(out!.data, "base64"))
+    expect(dimensions).toEqual({ width: DEFAULT_MAX_IMAGE_DIMENSION, height: 100 })
+  })
+
+  test("refuses a JPEG above the decode pixel ceiling from its header", () => {
+    const width = 20_000
+    const height = 6_001
+    expect(width * height).toBeGreaterThan(MAX_DECODE_IMAGE_PIXELS)
+    expect(compressImage("image/jpeg", jpegHeader(width, height), DEFAULT_MAX_IMAGE_BYTES, 2_000)).toBeUndefined()
+  })
+
+  test("caps the dynamic JPEG memory budget at 512 MiB", () => {
+    expect(jpegMemoryBudget({ width: 8_000, height: 8_000 })).toBe(MAX_JPEG_DECODE_MEMORY_MB)
+    expect(MAX_JPEG_DECODE_MEMORY_MB).toBe(512)
+  })
 })
 
 // --- compressImage: already-small round-trips ---------------------------
@@ -215,9 +316,7 @@ describe("compressImage - image already under the cap", () => {
 describe("compressImage - undecodable formats return undefined", () => {
   test("webp mime (no pure-JS decoder) returns undefined", () => {
     // RIFF....WEBP header bytes; we have no webp decoder so this can't be shrunk.
-    const fakeWebp = Buffer.from([
-      0x52, 0x49, 0x46, 0x46, 0x00, 0x00, 0x00, 0x00, 0x57, 0x45, 0x42, 0x50,
-    ])
+    const fakeWebp = Buffer.from([0x52, 0x49, 0x46, 0x46, 0x00, 0x00, 0x00, 0x00, 0x57, 0x45, 0x42, 0x50])
     expect(compressImage("image/webp", fakeWebp, DEFAULT_MAX_IMAGE_BYTES)).toBeUndefined()
   })
 

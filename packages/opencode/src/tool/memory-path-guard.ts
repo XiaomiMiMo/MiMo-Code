@@ -149,6 +149,11 @@ function isReservedForCheckpointWriter(parts: string[]): boolean {
  *   - For all other agents: cannot write <sid>/tasks/* — that's
  *     checkpoint-writer-only.
  *
+ * Both policies sit behind the memory write switch: when the caller passes
+ * `writeEnabled: false`, every write inside the memory tree is refused
+ * regardless of agent or path. Purity is preserved by taking the flag as a
+ * parameter — this module never reads config itself.
+ *
  * Non-memory paths and free keys under valid scopes pass through unmodified.
  */
 export function assertMemoryWriteAllowed(input: {
@@ -158,6 +163,8 @@ export function assertMemoryWriteAllowed(input: {
   projectID: ProjectID
   sessionID: SessionID
   taskId?: string
+  /** Whether memory writing is enabled. Omitted → enabled (the default). */
+  writeEnabled?: boolean
 }): void {
   const { target, agentName, memoryRoot, projectID, sessionID } = input
   const memoryFile = path.join(memoryRoot, "projects", projectID, "MEMORY.md")
@@ -166,6 +173,26 @@ export function assertMemoryWriteAllowed(input: {
   const taskMemDir = path.join(memoryRoot, "sessions", sessionID, "tasks")
   const normalizedRoot = memoryRoot.endsWith(path.sep) ? memoryRoot : memoryRoot + path.sep
   if (!target.startsWith(normalizedRoot)) return
+
+  // Memory write switch. Deliberately worded so the refusal cannot be mistaken
+  // for a path/permission problem — a model that reads "not allowed here" tends to
+  // retry a different memory path, which would just loop. Says WRITING is off, not
+  // that memory is off: existing memory is still readable. But it must not promise
+  // AUTOMATIC availability — while writing is off, checkpoint rebuild short-circuits
+  // to compaction, and the memory dumps only a rebuild produces never appear. So the
+  // reader is told to go get it, not that it will arrive. English only, like every
+  // other message this module throws: it has no locale to consult, and the consuming
+  // client that surfaces it carries its own translations.
+  if (input.writeEnabled === false) {
+    throw new Error(
+      `Memory WRITING is disabled: config \`memory.disable_write\` is true, so no new memory may be written.\n` +
+        `Refused: ${target}.\n` +
+        `Do NOT retry with another memory path — every path under ${memoryRoot} is refused while writing is off.\n` +
+        `Existing memory is still READABLE: the \`memory\` search tool works and you can read files under ${memoryRoot} directly.\n` +
+        `It is NOT loaded for you automatically while writing is off — checkpoint rebuild falls back to compaction, so search or read it explicitly when you need it.\n` +
+        `To re-enable, set \`memory.disable_write: false\` in config.`,
+    )
+  }
 
   const rel = path.relative(memoryRoot, target)
   const parts = rel.split(path.sep)

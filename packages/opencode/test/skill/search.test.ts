@@ -99,10 +99,8 @@ describe("skill.search", () => {
   })
 
   test("does not special-case compose-next: its name is not a compose: namespace", () => {
-    // compose-next is kept out of search by disable-model-invocation at the
-    // caller (skill-search.ts reads Skill.modelInvocable), not by a name check
-    // in here. Given a caller that does pass it in, the pure function ranks it
-    // like any other skill.
+    // Compose Next is a normal model-invocable skill. Legacy compose:* skills
+    // remain excluded by the namespace filter.
     const results = searchSkills("compose-next", [
       skill("compose-next", "End-to-end feature orchestration for frontier models."),
     ])
@@ -110,10 +108,8 @@ describe("skill.search", () => {
   })
 
   test("caller-side filtering: a skill absent from the input list cannot appear in results", () => {
-    // Mirrors the production path: skill-search.ts feeds searchSkills the
-    // result of Skill.modelInvocable(currentAgent), which drops every
-    // disable-model-invocation skill, so no such skill can be returned or
-    // auto-loaded.
+    // A skill absent from the model-invocable input cannot be returned. This
+    // remains the contract for skills that opt out of model invocation.
     const modelInvocableForDefaultAgent = [
       skill("deep-research", "Multi-source research report."),
       skill("data-analytics", "Analyze datasets and produce findings."),

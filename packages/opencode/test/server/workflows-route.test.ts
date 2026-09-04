@@ -4,6 +4,7 @@ import { Log } from "../../src/util"
 import { Instance } from "../../src/project/instance"
 import { Server } from "../../src/server/server"
 import { Session } from "../../src/session"
+import { Identifier } from "../../src/id/id"
 import { WorkflowPersistence } from "../../src/workflow/persistence"
 import { WorkflowRuntime } from "../../src/workflow/runtime"
 import { workflowRef } from "../../src/workflow/runtime-ref"
@@ -46,13 +47,27 @@ describe("workflows routes", () => {
         // #given the workflow runtime layer is not running
         workflowRef.current = undefined
 
-        // #when — a real minted-shape runID (wf_ + 26 base62) with no persisted run
+        // #when — a real minted-shape runID (wf_ + 26-char payload) with no persisted run
         const app = Server.Default().app
         const response = await app.request("/workflows/wf_16ec185f2ffexEGkbWeMqWSucv/resume", { method: "POST" })
 
         // #then
         expect(response.status).toBe(200)
         expect(await response.json()).toEqual({ runID: "wf_16ec185f2ffexEGkbWeMqWSucv", resumed: false })
+      },
+    })
+  })
+
+  test("POST /workflows/:runID/resume accepts a minted v2 descending runID", async () => {
+    await using tmp = await tmpdir({ git: true })
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () => {
+        workflowRef.current = undefined
+        const runID = Identifier.descending("workflow")
+        const response = await Server.Default().app.request(`/workflows/${runID}/resume`, { method: "POST" })
+        expect(response.status).toBe(200)
+        expect(await response.json()).toEqual({ runID, resumed: false })
       },
     })
   })
@@ -191,6 +206,19 @@ describe("workflows routes", () => {
         const runID = "wf_16ec185f2ffexEGkbWeMqWSucv"
         await Effect.runPromise(WorkflowPersistence.writeScript(runID, "export const meta = {}\n"))
         // #then — the guard does NOT break the legit path
+        const body = await Effect.runPromise(WorkflowPersistence.readScript(runID))
+        expect(body).toContain("export const meta")
+      },
+    })
+  })
+
+  test("WorkflowPersistence.readScript reads a minted v2 descending runID", async () => {
+    await using tmp = await tmpdir({ git: true })
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () => {
+        const runID = Identifier.descending("workflow")
+        await Effect.runPromise(WorkflowPersistence.writeScript(runID, "export const meta = {}\n"))
         const body = await Effect.runPromise(WorkflowPersistence.readScript(runID))
         expect(body).toContain("export const meta")
       },

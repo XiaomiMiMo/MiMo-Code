@@ -1,7 +1,7 @@
 Writes a file to the local filesystem.
 
 Usage:
-- The file_path parameter should be an absolute path.
+- The `file_path` parameter identifies the file to write.
 - This tool will overwrite the existing file if there is one at the provided path.
 - If this is an existing file, you MUST use the `read` tool first to read the file's contents. This tool will fail if you did not read the file first.
 - ALWAYS prefer editing existing files in the codebase. NEVER write new files unless explicitly required.

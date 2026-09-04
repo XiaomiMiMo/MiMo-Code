@@ -8,11 +8,13 @@ import { SessionID, MessageID, PartID } from "../../src/session/schema"
 // future "let's make rebuild look like compaction" refactor cannot silently
 // change what the model receives:
 //
-//   compaction — boundary user message carries only a `compaction` part, which
-//     becomes the bare label "Summary of previous conversation:"
-//     (message-v2.ts). The actual summary text lives in a SEPARATE
-//     `summary: true` assistant message written by processCompaction
-//     (compaction.ts), and that assistant turn is NOT filtered out.
+//   legacy compaction — boundary user message becomes the bare label "Summary
+//     of previous conversation:" and the following assistant carries the text.
+//
+//   projected compaction — boundary is API-invisible metadata. The persisted
+//     summary assistant stays available for UI/control flow, but its API-facing
+//     projection is a user summary followed by a file manifest and whole rounds
+//     that arrived while compaction was running.
 //
 //   rebuild — boundary user message carries a `checkpoint` part (label
 //     "Summary of previous conversation from checkpoint files:") PLUS the
@@ -172,5 +174,73 @@ describe("context boundaries: what reaches the model", () => {
     ])
 
     expect(window.map((m) => String(m.info.id))).toEqual([boundaryID, summaryID])
+  })
+
+  test("projected compaction sends summary manifest and only the retained compression-time rounds", async () => {
+    const boundaryID = "m-compaction-boundary"
+    const summaryID = "m-compaction-summary"
+    const droppedID = "m-tail-dropped"
+    const keptID = "m-tail-kept"
+    const keptAssistantID = "m-tail-kept-assistant"
+    const futureID = "m-future"
+    const chronological: MessageV2.WithParts[] = [
+      {
+        info: userInfo(boundaryID),
+        parts: [
+          {
+            ...basePart(boundaryID, "p1"),
+            type: "compaction",
+            auto: true,
+            projection: {
+              version: 1,
+              summary_message_id: MessageID.make(summaryID),
+              summary: "<conversation-summary>WRAPPED SUMMARY</conversation-summary>",
+              manifest: "<files-touched>src/auth.ts (edited)</files-touched>",
+              trigger: "automatic",
+              tail_start_id: MessageID.make(keptID),
+              tail_end_id: MessageID.make(keptAssistantID),
+            },
+          },
+        ] as MessageV2.Part[],
+      },
+      {
+        info: summaryAssistantInfo(summaryID, boundaryID),
+        parts: [{ ...basePart(summaryID, "p2"), type: "text", text: "RAW SUMMARY" }] as MessageV2.Part[],
+      },
+      {
+        info: userInfo(droppedID),
+        parts: [{ ...basePart(droppedID, "p3"), type: "text", text: "DROP THIS ROUND" }] as MessageV2.Part[],
+      },
+      {
+        info: userInfo(keptID),
+        parts: [{ ...basePart(keptID, "p4"), type: "text", text: "KEEP THIS USER" }] as MessageV2.Part[],
+      },
+      {
+        info: { ...summaryAssistantInfo(keptAssistantID, keptID), summary: undefined, agent: "build", mode: "build" },
+        parts: [{ ...basePart(keptAssistantID, "p5"), type: "text", text: "KEEP THIS ASSISTANT" }] as MessageV2.Part[],
+      },
+      {
+        info: userInfo(futureID),
+        parts: [{ ...basePart(futureID, "p6"), type: "text", text: "KEEP FUTURE" }] as MessageV2.Part[],
+      },
+    ]
+
+    expect(MessageV2.filterCompacted([...chronological].reverse()).map((message) => String(message.info.id))).toEqual([
+      boundaryID,
+      summaryID,
+      keptID,
+      keptAssistantID,
+      futureID,
+    ])
+
+    const rendered = JSON.stringify(await MessageV2.toModelMessages(chronological, model))
+    expect(rendered).toContain("WRAPPED SUMMARY")
+    expect(rendered).toContain("files-touched")
+    expect(rendered).toContain("KEEP THIS USER")
+    expect(rendered).toContain("KEEP THIS ASSISTANT")
+    expect(rendered).toContain("KEEP FUTURE")
+    expect(rendered).not.toContain("RAW SUMMARY")
+    expect(rendered).not.toContain("DROP THIS ROUND")
+    expect(rendered).not.toContain("Summary of previous conversation:")
   })
 })

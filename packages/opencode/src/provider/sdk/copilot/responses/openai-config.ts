@@ -2,6 +2,8 @@ import type { FetchFunction } from "@ai-sdk/provider-utils"
 
 export type OpenAIConfig = {
   provider: string
+  providerOptionsKey?: string
+  customToolNames?: readonly string[]
   url: (options: { modelId: string; path: string }) => string
   headers: () => Record<string, string | undefined>
   fetch?: FetchFunction

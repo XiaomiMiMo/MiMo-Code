@@ -2,7 +2,7 @@ import os from "os"
 import path from "path"
 import { pathToFileURL } from "url"
 import z from "zod"
-import { Effect, Layer, Context } from "effect"
+import { Duration, Effect, Layer, Context } from "effect"
 import { NamedError } from "@mimo-ai/shared/util/error"
 import type { Agent } from "@/agent/agent"
 import { Bus } from "@/bus"
@@ -167,18 +167,14 @@ const scan = Effect.fnUntraced(function* (
     }),
   )
 
-  for (const match of matches) {
+  for (const match of matches.toSorted()) {
     state.matches.add(match)
     state.dirs.add(path.dirname(match))
   }
 })
 
-const discoverSkills = Effect.fnUntraced(function* (
-  config: Config.Interface,
-  discovery: Discovery.Interface,
+const discoverStableSkills = Effect.fnUntraced(function* (
   fsys: AppFileSystem.Interface,
-  directory: string,
-  worktree: string,
 ) {
   const state: ScanState = { matches: new Set(), dirs: new Set() }
   const bundledRoots: string[] = []
@@ -220,6 +216,7 @@ const discoverSkills = Effect.fnUntraced(function* (
   if (!Flag.MIMOCODE_DISABLE_EXTERNAL_SKILLS) {
     const externalDirs = EXTERNAL_DIRS.filter((dir) => {
       if (dir === ".claude" && Flag.MIMOCODE_DISABLE_CLAUDE_CODE_SKILLS) return false
+      if (dir === ".agents" && Flag.MIMOCODE_DISABLE_AGENTS_SKILLS) return false
       if (dir === ".codex" && Flag.MIMOCODE_DISABLE_CODEX_SKILLS) return false
       if (dir === ".opencode" && Flag.MIMOCODE_DISABLE_OPENCODE_SKILLS) return false
       return true
@@ -230,6 +227,34 @@ const discoverSkills = Effect.fnUntraced(function* (
       if (!(yield* fsys.isDir(root))) continue
       yield* scan(state, root, EXTERNAL_SKILL_PATTERN, { dot: true, scope: "global" })
     }
+  }
+
+  return {
+    matches: Array.from(state.matches),
+    dirs: Array.from(state.dirs),
+    bundledRoots,
+  }
+})
+
+const discoverSkills = Effect.fnUntraced(function* (
+  config: Config.Interface,
+  discovery: Discovery.Interface,
+  fsys: AppFileSystem.Interface,
+  stable: DiscoveryState,
+  directory: string,
+  worktree: string,
+) {
+  const state: ScanState = { matches: new Set(stable.matches), dirs: new Set(stable.dirs) }
+  const bundledRoots = [...stable.bundledRoots]
+
+  if (!Flag.MIMOCODE_DISABLE_EXTERNAL_SKILLS) {
+    const externalDirs = EXTERNAL_DIRS.filter((dir) => {
+      if (dir === ".claude" && Flag.MIMOCODE_DISABLE_CLAUDE_CODE_SKILLS) return false
+      if (dir === ".agents" && Flag.MIMOCODE_DISABLE_AGENTS_SKILLS) return false
+      if (dir === ".codex" && Flag.MIMOCODE_DISABLE_CODEX_SKILLS) return false
+      if (dir === ".opencode" && Flag.MIMOCODE_DISABLE_OPENCODE_SKILLS) return false
+      return true
+    })
 
     const upDirs = yield* fsys
       .up({ targets: externalDirs, start: directory, stop: worktree })
@@ -273,7 +298,7 @@ const discoverSkills = Effect.fnUntraced(function* (
 
 const loadSkills = Effect.fnUntraced(function* (state: State, discovered: DiscoveryState, bus: Bus.Interface) {
   yield* Effect.forEach(discovered.matches, (match) => add(state, match, discovered.bundledRoots, bus), {
-    concurrency: "unbounded",
+    concurrency: 1,
     discard: true,
   })
 
@@ -289,9 +314,13 @@ export const layer = Layer.effect(
     const config = yield* Config.Service
     const bus = yield* Bus.Service
     const fsys = yield* AppFileSystem.Service
+    const [stable, invalidateStable] = yield* Effect.cachedInvalidateWithTTL(
+      discoverStableSkills(fsys),
+      Duration.infinity,
+    )
     const discovered = yield* InstanceState.make(
       Effect.fn("Skill.discovery")(function* (ctx) {
-        return yield* discoverSkills(config, discovery, fsys, ctx.directory, ctx.worktree)
+        return yield* discoverSkills(config, discovery, fsys, yield* stable, ctx.directory, ctx.worktree)
       }),
     )
     const state = yield* InstanceState.make(
@@ -334,6 +363,7 @@ export const layer = Layer.effect(
     })
 
     const reload = Effect.fn("Skill.reload")(function* () {
+      yield* invalidateStable
       yield* InstanceState.invalidate(discovered)
       yield* InstanceState.invalidate(state)
     })
@@ -355,7 +385,7 @@ export function fmt(list: Info[], opts: { verbose: boolean }) {
     return [
       "<available_skills>",
       ...list
-        .sort((a, b) => a.name.localeCompare(b.name))
+        .toSorted((a, b) => a.name.localeCompare(b.name))
         .flatMap((skill) => [
           "  <skill>",
           `    <name>${skill.name}</name>`,

@@ -2,7 +2,14 @@ import { BusEvent } from "@/bus/bus-event"
 import { SessionID, MessageID, PartID } from "./schema"
 import z from "zod"
 import { NamedError } from "@mimo-ai/shared/util/error"
-import { APICallError, convertToModelMessages, LoadAPIKeyError, RetryError, type ModelMessage, type UIMessage } from "ai"
+import {
+  APICallError,
+  convertToModelMessages,
+  LoadAPIKeyError,
+  RetryError,
+  type ModelMessage,
+  type UIMessage,
+} from "ai"
 import { LSP } from "../lsp"
 import { Snapshot } from "@/snapshot"
 import { SyncEvent } from "../sync"
@@ -11,7 +18,6 @@ import { MessageTable, PartTable, SessionTable } from "./session.sql"
 import { ProviderError } from "@/provider"
 import { errorMessage } from "@/util/error"
 import { isMedia } from "@/util/media"
-import type { SystemError } from "bun"
 import type { Provider } from "@/provider"
 import { ModelID, ProviderID } from "@/provider/schema"
 import { Effect } from "effect"
@@ -22,12 +28,19 @@ import {
   toolAttachmentFilename,
   toolAttachmentPlaceholder,
 } from "./tool-attachment"
+import { isSkillCatalogReminder } from "./skill-catalog"
+import { collapseCheckpointTail } from "./tail-digest"
 
 /** Error shape thrown by Bun's fetch() when gzip/br decompression fails mid-stream */
 interface FetchDecompressionError extends Error {
   code: "ZlibError"
   errno: number
   path: string
+}
+
+function causeMetadata(error: unknown): Record<string, string> | undefined {
+  const causeChain = ProviderError.summarizeCause(error)
+  return causeChain.length > 1 ? { causeChain: JSON.stringify(causeChain) } : undefined
 }
 
 export const SYNTHETIC_ATTACHMENT_PROMPT = "Attached file(s) from tool result:"
@@ -61,6 +74,19 @@ export const APIError = NamedError.create(
   }),
 )
 export type APIError = z.infer<typeof APIError.Schema>
+
+function isAuthenticationFailure(error: APIError): boolean {
+  if (error.data.statusCode === 401) return true
+  if (error.data.statusCode !== 403) return false
+  const body = error.data.responseBody?.toLowerCase() ?? ""
+  const message = error.data.message.toLowerCase()
+  const text = `${message} ${body}`
+  return /(?:invalid|expired|missing|malformed)\s*(?:api[ _-]?key|token|credential)|(?:api[ _-]?key|token|credential)\s*(?:invalid|expired|missing|malformed)|\b(?:authentication|authorization)\s+(?:failed|required|invalid|missing)|\binvalid credentials?\b|\baccess denied\b/.test(text) || message.trim() === "unauthorized" || body.trim() === "unauthorized"
+}
+
+export function isAuthError(error: unknown): boolean {
+  return AuthError.isInstance(error) || (APIError.isInstance(error) && isAuthenticationFailure(error))
+}
 export const ContextOverflowError = NamedError.create(
   "ContextOverflowError",
   z.object({ message: z.string(), responseBody: z.string().optional() }),
@@ -218,6 +244,14 @@ export const CheckpointPart = PartBase.extend({
   checkpointDir: z.string(),
   checkpointNumber: z.number(),
   coveredUpTo: MessageID.zod,
+  /**
+   * Last message that already existed when this rebuild boundary was inserted.
+   * Post-rebuild activity-log collapse digests only messages after the
+   * checkpoint up to (and including) this id; anything newer stays live so a
+   * mid-turn tool loop is not folded into the log on the next request.
+   * Optional: older boundaries predate the field and skip collapse.
+   */
+  digestUpTo: MessageID.zod.optional(),
 }).meta({
   ref: "CheckpointPart",
 })
@@ -244,10 +278,32 @@ export const CompactionPart = PartBase.extend({
   type: z.literal("compaction"),
   auto: z.boolean(),
   overflow: z.boolean().optional(),
-  // ID of the user message marking the start of the preserved-tail (verbatim
-  // recent-turns kept after summarization). Optional: when undefined, no tail
-  // was preserved (entire history was summarized).
+  // Legacy pre-compaction tail marker. New projections keep only messages that
+  // arrive while the summary is being generated; see `projection` below.
   tail_start_id: MessageID.zod.optional(),
+  projection: z
+    .object({
+      version: z.literal(1),
+      summary_message_id: MessageID.zod,
+      summary: z.string(),
+      manifest: z.string().optional(),
+      trigger: z.enum(["manual", "automatic", "provider-overflow"]),
+      // The observed compression-time range. `tail_start_id` is the first
+      // whole API round retained inside that range; when omitted, the range was
+      // over budget and is dropped. Messages newer than `tail_end_id` are normal
+      // post-compaction traffic and always stay live.
+      tail_start_id: MessageID.zod.optional(),
+      tail_end_id: MessageID.zod.optional(),
+      compacted_tool_calls: z
+        .array(
+          z.object({
+            call_id: z.string(),
+            tokens: z.number().int().nonnegative(),
+          }),
+        )
+        .optional(),
+    })
+    .optional(),
 }).meta({
   ref: "CompactionPart",
 })
@@ -430,6 +486,8 @@ export const User = Base.extend({
     variant: z.string().optional(),
   }),
   system: z.string().optional(),
+  systemMode: z.enum(["append", "replace-agent"]).optional(),
+  harness: z.enum(["auto", "codex", "default"]).optional(),
   tools: z.record(z.string(), z.boolean()).optional(),
   provenance: Provenance.optional(),
 }).meta({
@@ -573,6 +631,67 @@ export const WithParts = z.object({
 })
 export type WithParts = z.infer<typeof WithParts>
 
+// Apply the newest v1 compaction boundary as a context projection while keeping
+// its persisted assistant summary in the internal message stream. API
+// conversion below re-roles that summary as user context; runLoop still sees
+// the real assistant row for terminal-step control flow.
+function compactionProjection(messages: WithParts[]) {
+  const boundaryIdx = messages.findLastIndex(
+    (message) =>
+      message.info.role === "user" &&
+      message.parts.some((part) => part.type === "compaction" && part.projection?.version === 1),
+  )
+  if (boundaryIdx < 0) return messages
+
+  const boundary = messages[boundaryIdx]
+  const projection = boundary.parts.find(
+    (part): part is CompactionPart => part.type === "compaction" && part.projection?.version === 1,
+  )?.projection
+  if (!projection) return messages
+
+  const after = messages.slice(boundaryIdx + 1)
+  if (!projection.tail_end_id) return messages.slice(boundaryIdx)
+
+  const tailEndIdx = after.findIndex((message) => message.info.id === projection.tail_end_id)
+  if (tailEndIdx < 0) return messages.slice(boundaryIdx)
+
+  const observed = after.slice(0, tailEndIdx + 1)
+  const summary = after.find((message) => message.info.id === projection.summary_message_id)
+  const tailStartIdx = projection.tail_start_id
+    ? observed.findIndex((message) => message.info.id === projection.tail_start_id)
+    : -1
+  const compacted = new Map((projection.compacted_tool_calls ?? []).map((item) => [item.call_id, item.tokens]))
+  const shrink = (message: WithParts): WithParts => ({
+    info: message.info,
+    parts: message.parts.map((part) => {
+      if (part.type !== "tool" || part.state.status !== "completed") return part
+      const tokens = compacted.get(part.callID)
+      if (tokens === undefined) return part
+      return {
+        ...part,
+        state: {
+          ...part.state,
+          output: `[Tool result omitted during compaction: ${tokens} tokens. Re-run "${part.tool}" if this result is needed.]`,
+          providerOutput: undefined,
+          attachments: undefined,
+        },
+      }
+    }),
+  })
+
+  return [
+    boundary,
+    ...(summary ? [summary] : []),
+    ...(tailStartIdx < 0
+      ? []
+      : observed
+          .slice(tailStartIdx)
+          .filter((message) => message.info.id !== projection.summary_message_id)
+          .map(shrink)),
+    ...after.slice(tailEndIdx + 1).filter((message) => message.info.id !== projection.summary_message_id),
+  ]
+}
+
 const Cursor = z.object({
   id: MessageID.zod,
   time: z.number(),
@@ -642,10 +761,25 @@ function providerMeta(metadata: Record<string, any> | undefined) {
 export const toModelMessagesEffect = Effect.fnUntraced(function* (
   input: WithParts[],
   model: Provider.Model,
-  options?: { stripMedia?: boolean },
+  /**
+   * When true, messages after the latest rebuild checkpoint are collapsed into
+   * a single activity-log user message (see tail-digest.ts). Off by default so
+   * checkpoint writers / compaction / title generation keep full fidelity.
+   */
+  options?: { stripMedia?: boolean; collapseCheckpointTail?: boolean },
 ) {
   const result: UIMessage[] = []
   const toolNames = new Set<string>()
+  const source = compactionProjection(options?.collapseCheckpointTail ? collapseCheckpointTail(input) : input)
+  const projection = source
+    .flatMap((message) =>
+      message.info.role === "user"
+        ? message.parts.flatMap((part) =>
+            part.type === "compaction" && part.projection?.version === 1 ? [part.projection] : [],
+          )
+        : [],
+    )
+    .at(-1)
 
   const toModelOutput = (options: { toolCallId: string; input: unknown; output: unknown }) => {
     const output = options.output
@@ -695,8 +829,20 @@ export const toModelMessagesEffect = Effect.fnUntraced(function* (
     return { type: "json", value: output as never }
   }
 
-  for (const msg of input) {
+  for (const msg of source) {
     if (msg.parts.length === 0) continue
+
+    if (projection && msg.info.id === projection.summary_message_id) {
+      result.push({
+        id: msg.info.id,
+        role: "user",
+        parts: [
+          { type: "text", text: projection.summary },
+          ...(projection.manifest ? [{ type: "text" as const, text: projection.manifest }] : []),
+        ],
+      })
+      continue
+    }
 
     if (msg.info.role === "user") {
       const userMessage: UIMessage = {
@@ -706,11 +852,16 @@ export const toModelMessagesEffect = Effect.fnUntraced(function* (
       }
       result.push(userMessage)
       for (const part of msg.parts) {
-        if (part.type === "text" && !part.ignored)
-          userMessage.parts.push({
-            type: "text",
-            text: part.text,
-          })
+        if (part.type === "text") {
+          // Skill catalogs moved to the system tail. Suppress snapshots persisted
+          // by older versions so resumed sessions do not receive a duplicate user-side catalog.
+          if (part.synthetic && isSkillCatalogReminder(part.text)) continue
+          if (!part.ignored)
+            userMessage.parts.push({
+              type: "text",
+              text: part.text,
+            })
+        }
         // text/plain and directory files are converted into text parts, ignore them
         if (part.type === "file" && part.mime !== "text/plain" && part.mime !== "application/x-directory") {
           if (options?.stripMedia && isMedia(part.mime)) {
@@ -734,7 +885,7 @@ export const toModelMessagesEffect = Effect.fnUntraced(function* (
             text: "Summary of previous conversation from checkpoint files:",
           })
         }
-        if (part.type === "compaction") {
+        if (part.type === "compaction" && !part.projection) {
           userMessage.parts.push({
             type: "text" as const,
             text: "Summary of previous conversation:",
@@ -950,7 +1101,7 @@ export const toModelMessagesEffect = Effect.fnUntraced(function* (
 export function toModelMessages(
   input: WithParts[],
   model: Provider.Model,
-  options?: { stripMedia?: boolean },
+  options?: { stripMedia?: boolean; collapseCheckpointTail?: boolean },
 ): Promise<ModelMessage[]> {
   return Effect.runPromise(toModelMessagesEffect(input, model, options).pipe(Effect.provide(EffectLogger.layer)))
 }
@@ -960,10 +1111,7 @@ export function page(input: { sessionID: SessionID; limit: number; before?: stri
   // Slice contract: agentID `undefined` (default) ⇒ main slice only;
   // `"*"` ⇒ every slice (full-stream opt-out for export/stats/share/etc.);
   // any other string ⇒ that subagent's actorID slice.
-  const agentClause =
-    input.agentID === "*"
-      ? undefined
-      : eq(MessageTable.agent_id, input.agentID ?? "main")
+  const agentClause = input.agentID === "*" ? undefined : eq(MessageTable.agent_id, input.agentID ?? "main")
   const where = and(
     eq(MessageTable.session_id, input.sessionID),
     ...(before ? [older(before)] : []),
@@ -1060,7 +1208,7 @@ export function filterCompacted(msgs: Iterable<WithParts>) {
     if (msg.info.role === "user" && msg.parts.some((p) => p.type === "checkpoint" || p.type === "compaction")) break
   }
   result.reverse()
-  return result
+  return compactionProjection(result)
 }
 
 export const filterCompactedEffect = Effect.fnUntraced(function* (
@@ -1089,13 +1237,37 @@ export const filterCompactedEffect = Effect.fnUntraced(function* (
   return [...parentFiltered, ...ownMessages]
 })
 
+function fromParsedStreamError(
+  parsed: ProviderError.ParsedStreamError,
+  cause: unknown,
+): NonNullable<Assistant["error"]> {
+  const metadata = causeMetadata(cause)
+  if (parsed.type === "context_overflow") {
+    return new ContextOverflowError(
+      { message: parsed.message, responseBody: parsed.responseBody },
+      { cause },
+    ).toObject()
+  }
+  return new APIError(
+    {
+      message: parsed.message,
+      isRetryable: parsed.isRetryable,
+      responseBody: parsed.responseBody,
+      ...(metadata ? { metadata } : {}),
+    },
+    { cause },
+  ).toObject()
+}
+
 export function fromError(
-  e: unknown,
-  ctx: { providerID: ProviderID; aborted?: boolean },
+ e: unknown,
+  ctx: { providerID: ProviderID; aborted?: boolean; allow404Retry?: boolean },
 ): NonNullable<Assistant["error"]> {
   switch (true) {
     case e instanceof DOMException && e.name === "AbortError":
       return new AbortedError({ message: e.message }, { cause: e }).toObject()
+    case ProviderError.isAbortError(e):
+      return new AbortedError({ message: errorMessage(e) }, { cause: e }).toObject()
     // The AI SDK wraps the real failure in AI_RetryError after exhausting its
     // own maxRetries. Unwrap to the underlying error (.lastError) so the
     // APICallError branch below can extract statusCode/isRetryable/responseBody.
@@ -1104,12 +1276,10 @@ export function fromError(
     // can't classify, so the visible retry status never fires and the turn
     // hangs with a dead spinner.
     case RetryError.isInstance(e): {
-      const inner = e.lastError ?? e.errors[e.errors.length - 1]
+      const errors = Array.isArray(e.errors) ? e.errors : []
+      const inner = e.lastError ?? errors[errors.length - 1]
       if (inner !== undefined && inner !== e) return fromError(inner, ctx)
-      return new APIError(
-        { message: e.message, isRetryable: true },
-        { cause: e },
-      ).toObject()
+      return new NamedError.Unknown({ message: e.message }, { cause: e }).toObject()
     }
     case OutputLengthError.isInstance(e):
       return e
@@ -1121,31 +1291,27 @@ export function fromError(
         },
         { cause: e },
       ).toObject()
-    case (e as SystemError)?.code === "ECONNRESET":
+    case e instanceof Error && ProviderError.isRetryableNetworkError(e): {
+      const code = ProviderError.networkErrorCode(e)
+      const message =
+        code === "ECONNRESET"
+          ? "Connection reset by server"
+          : code === "ETIMEDOUT"
+            ? "Request timed out"
+            : errorMessage(e) || "Transient network error"
       return new APIError(
         {
-          message: "Connection reset by server",
+          message,
           isRetryable: true,
           metadata: {
-            code: (e as SystemError).code ?? "",
-            syscall: (e as SystemError).syscall ?? "",
-            message: (e as SystemError).message ?? "",
+            ...(code ? { code } : {}),
+            message: e.message,
+            ...causeMetadata(e),
           },
         },
         { cause: e },
       ).toObject()
-    case (e as SystemError)?.code === "ETIMEDOUT":
-      return new APIError(
-        {
-          message: (e as SystemError).message || "Request timed out",
-          isRetryable: true,
-          metadata: {
-            code: "ETIMEDOUT",
-            message: (e as SystemError).message ?? "",
-          },
-        },
-        { cause: e },
-      ).toObject()
+    }
     case e instanceof Error && (e as FetchDecompressionError).code === "ZlibError":
       if (ctx.aborted) {
         return new AbortedError({ message: e.message }, { cause: e }).toObject()
@@ -1157,6 +1323,7 @@ export function fromError(
           metadata: {
             code: (e as FetchDecompressionError).code,
             message: e.message,
+            ...causeMetadata(e),
           },
         },
         { cause: e },
@@ -1165,6 +1332,7 @@ export function fromError(
       const parsed = ProviderError.parseAPICallError({
         providerID: ctx.providerID,
         error: e,
+        allow404Retry: ctx.allow404Retry,
       })
       if (parsed.type === "context_overflow") {
         return new ContextOverflowError(
@@ -1183,7 +1351,10 @@ export function fromError(
           isRetryable: parsed.isRetryable,
           responseHeaders: parsed.responseHeaders,
           responseBody: parsed.responseBody,
-          metadata: parsed.metadata,
+          metadata: (() => {
+            const metadata = { ...parsed.metadata, ...causeMetadata(e) }
+            return Object.keys(metadata).length > 0 ? metadata : undefined
+          })(),
         },
         { cause: e },
       ).toObject()
@@ -1191,38 +1362,17 @@ export function fromError(
     // is a programming defect, not a transient API failure. Surface it as a
     // named error so it is diagnosable instead of collapsing to UnknownError.
     case e instanceof TypeError:
-      return new NamedError.Unknown(
-        { message: `TypeError: ${errorMessage(e)}` },
-        { cause: e },
-      ).toObject()
-    case e instanceof Error:
-      return new NamedError.Unknown({ message: errorMessage(e) }, { cause: e }).toObject()
-    default:
-      try {
-        const parsed = ProviderError.parseStreamError(e)
-        if (parsed) {
-          if (parsed.type === "context_overflow") {
-            return new ContextOverflowError(
-              {
-                message: parsed.message,
-                responseBody: parsed.responseBody,
-              },
-              { cause: e },
-            ).toObject()
-          }
-          return new APIError(
-            {
-              message: parsed.message,
-              isRetryable: parsed.isRetryable,
-              responseBody: parsed.responseBody,
-            },
-            {
-              cause: e,
-            },
-          ).toObject()
-        }
-      } catch {}
-      return new NamedError.Unknown({ message: JSON.stringify(e) }, { cause: e }).toObject()
+    case e instanceof Error: {
+      const parsed = ProviderError.parseStreamError(e)
+      if (parsed) return fromParsedStreamError(parsed, e)
+      const message = e instanceof TypeError ? `TypeError: ${errorMessage(e)}` : errorMessage(e)
+      return new NamedError.Unknown({ message }, { cause: e }).toObject()
+    }
+    default: {
+      const parsed = ProviderError.parseStreamError(e)
+      if (parsed) return fromParsedStreamError(parsed, e)
+      return new NamedError.Unknown({ message: JSON.stringify(e) ?? String(e) }, { cause: e }).toObject()
+    }
   }
 }
 

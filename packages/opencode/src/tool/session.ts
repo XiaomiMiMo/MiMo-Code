@@ -641,7 +641,7 @@ export const SessionTool = Tool.define<typeof parameters, Metadata, Deps>(
       if (!a) {
         return Effect.fail(
           new Error(
-            "Actor service unavailable — Actor.defaultLayer must be running for the session tool to spawn or cancel sessions",
+            "Actor service unavailable — Actor.appLayer must be running for the session tool to spawn or cancel sessions",
           ),
         )
       }

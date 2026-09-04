@@ -112,3 +112,36 @@ describe("the trailing continuation turn reaches the wire with non-empty content
     expect(empty).toEqual([])
   })
 })
+
+describe("signed empty Anthropic reasoning reaches the wire", () => {
+  test("preserves the thinking block and signature", async () => {
+    const signature = "signed-empty-thinking"
+    const body = await outbound(
+      ProviderTransform.message(
+        [
+          { role: "user", content: [{ type: "text", text: "hi" }] },
+          {
+            role: "assistant",
+            content: [
+              {
+                type: "reasoning",
+                text: "",
+                providerOptions: { anthropic: { signature } },
+              },
+              { type: "text", text: "done" },
+            ],
+          },
+          { role: "user", content: [{ type: "text", text: "next" }] },
+        ] as any,
+        model,
+        {},
+      ),
+    )
+
+    expect(body.messages[1].content[0]).toEqual({
+      type: "thinking",
+      thinking: "",
+      signature,
+    })
+  })
+})

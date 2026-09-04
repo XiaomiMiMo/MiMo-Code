@@ -76,6 +76,7 @@ await Bun.build({
   external: ["jsonc-parser", "@lydell/node-pty"],
   define: {
     OPENCODE_MIGRATIONS: JSON.stringify(migrations),
+    MIMOCODE_VERSION: `'${Script.version}'`,
     MIMOCODE_CHANNEL: `'${Script.channel}'`,
   },
   files: {

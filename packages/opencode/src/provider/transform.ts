@@ -6,7 +6,13 @@ import type * as Provider from "./provider"
 import type * as ModelsDev from "./models"
 import { iife } from "@/util/iife"
 import { Flag } from "@/flag/flag"
-import { compressImage, DEFAULT_MAX_IMAGE_BYTES } from "./image"
+import {
+  compressImage,
+  DEFAULT_MAX_IMAGE_BYTES,
+  DEFAULT_MAX_IMAGE_DIMENSION,
+  imageDimensions,
+  supportsImageDimensions,
+} from "./image"
 
 type Modality = NonNullable<ModelsDev.Model["modalities"]>["input"][number]
 
@@ -19,7 +25,14 @@ function mimeToModality(mime: string): Modality | undefined {
 }
 
 export const OUTPUT_TOKEN_MAX = Flag.MIMOCODE_EXPERIMENTAL_OUTPUT_TOKEN_MAX || 32_000
-const MIMO_OUTPUT_TOKEN_MAX = 128_000
+export const LARGE_MODEL_OUTPUT_TOKEN_MAX = 128_000
+
+export function usesLargeModelDefaults(model: { id: string; providerID: string; api: { id: string } }) {
+  if (["mimo", "xiaomi"].includes(model.providerID.toLowerCase())) return true
+  return [model.id, model.api.id].some((id) =>
+    ["claude", "gpt", "mimo"].some((name) => id.toLowerCase().includes(name)),
+  )
+}
 
 // Maps npm package to the key the AI SDK expects for providerOptions
 function sdkKey(npm: string): string | undefined {
@@ -69,13 +82,18 @@ function stripsEmptyParts(model: Provider.Model): boolean {
   ].includes(model.api.npm)
 }
 
+function record(value: unknown): Record<string, unknown> | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined
+  return value as Record<string, unknown>
+}
+
 function normalizeMessages(
   msgs: ModelMessage[],
   model: Provider.Model,
   _options: Record<string, unknown>,
 ): ModelMessage[] {
-  // Anthropic rejects messages with empty content - filter out empty string messages
-  // and remove empty text/reasoning parts from array content
+  // Anthropic rejects messages with empty content. Signed thinking is the exception:
+  // its text may be empty, but its signature/redacted data must survive for replay.
   if (stripsEmptyParts(model)) {
     msgs = msgs
       .map((msg) => {
@@ -85,8 +103,14 @@ function normalizeMessages(
         }
         if (!Array.isArray(msg.content)) return msg
         const filtered = msg.content.filter((part) => {
-          if (part.type === "text" || part.type === "reasoning") {
-            return part.text !== ""
+          if (part.type === "text") return part.text !== ""
+          if (part.type === "reasoning") {
+            if (part.text !== "") return true
+            const metadata = record(part.providerOptions?.anthropic ?? part.providerOptions?.[model.providerID])
+            return (
+              (typeof metadata?.signature === "string" && metadata.signature !== "") ||
+              (typeof metadata?.redactedData === "string" && metadata.redactedData !== "")
+            )
           }
           return true
         })
@@ -624,11 +648,6 @@ function normalizeContentArray(msgs: ModelMessage[]): ModelMessage[] {
   })
 }
 
-function record(value: unknown): Record<string, unknown> | undefined {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined
-  return value as Record<string, unknown>
-}
-
 // Anthropic's SDK discards historical reasoning without a signature or redacted
 // data. The opt-in compatibility mode supplies an empty placeholder signature,
 // making unsigned reasoning follow the same native thinking-block serializer
@@ -759,23 +778,8 @@ function imagePayload(value: unknown, mediaType?: string): ImagePayload | undefi
   return { kind: "bytes", mime: mediaType, bytes, size: bytes.byteLength }
 }
 
-// Bring one oversized image under maxSize: recompress if we can decode it,
-// otherwise return undefined so the caller strips it to a text placeholder.
-// Never returns something still over the limit.
-function shrinkBase64(
-  mime: string,
-  base64: string,
-  maxSize: number,
-): { mime: string; base64: string } | undefined {
-  const compressed = compressImage(mime, Buffer.from(base64, "base64"), maxSize)
-  if (compressed && base64ByteSize(compressed.data) <= maxSize) {
-    return { mime: compressed.mediaType, base64: compressed.data }
-  }
-  return undefined
-}
-
-const OVERSIZE_PLACEHOLDER = (size: number, maxSize: number) =>
-  `[Image omitted: ${size} bytes exceeds the ${maxSize}-byte limit and could not be compressed.]`
+const OVERSIZE_PLACEHOLDER = (size: number) =>
+  `[Image omitted: ${size}-byte image exceeds provider limits or could not be safely processed.]`
 
 // Per-provider inline-image byte cap. Only Anthropic and Bedrock reject a single
 // image whose decoded base64 exceeds ~5 MB with a non-retryable 400 — that is the
@@ -806,28 +810,33 @@ function providerImageCap(model: Provider.Model): number {
     npm === "@openrouter/ai-sdk-provider" ||
     npm === "@ai-sdk/github-copilot"
   ) {
+    const apiID = model.api.id.toLowerCase()
+    const modelID = model.id.toLowerCase()
     const routesToAnthropic =
-      model.api.id.includes("claude") ||
-      model.api.id.includes("anthropic") ||
-      model.id.includes("claude") ||
-      model.id.includes("anthropic")
+      apiID.includes("claude") ||
+      apiID.includes("anthropic") ||
+      modelID.includes("claude") ||
+      modelID.includes("anthropic")
     if (routesToAnthropic) return DEFAULT_MAX_IMAGE_BYTES
   }
   return Infinity
 }
 
+function providerImageDimensionCap(model: Provider.Model): number {
+  return providerImageCap(model) === Infinity ? Infinity : DEFAULT_MAX_IMAGE_DIMENSION
+}
+
 // Two responsibilities:
 // 1. Count cap (maxImages): drop the oldest excess *user* prompt images,
 //    including image-typed `file` parts produced by synthetic tool attachments.
-// 2. Size cap (maxSize): for EVERY image the provider would measure — user
+// 2. Byte/dimension caps: for EVERY image the provider would measure — user
 //    `image`/image-`file` parts AND tool-result `media`/`image-data`/`file-data`
-//    parts on tool/assistant messages — recompress oversized ones under the
-//    limit, or strip them to a text placeholder.
+//    parts on tool/assistant messages — recompress oversized ones under both
+//    limits, or strip them to a text placeholder.
 //
-// The size cap is PROVIDER-AWARE (providerImageCap): only Anthropic/Bedrock have
-// the ~5 MB hard limit, so only they get DEFAULT_MAX_IMAGE_BYTES; other providers
-// get Infinity (untouched). An explicit Flag.MIMOCODE_MAX_PROMPT_IMAGE_SIZE always
-// wins when set.
+// The caps are provider-aware: Anthropic/Claude routes get the ~5 MB byte limit
+// and 2000 px longest-edge limit; other providers remain untouched unless the
+// explicit Flag.MIMOCODE_MAX_PROMPT_IMAGE_SIZE byte override is set.
 //
 // For the capped providers the size cap runs by default (no flag needed) because a
 // single >5 MB image in history otherwise 400s on every subsequent request and
@@ -837,11 +846,12 @@ function providerImageCap(model: Provider.Model): number {
 function limitImages(msgs: ModelMessage[], model: Provider.Model): ModelMessage[] {
   const maxImages = Flag.MIMOCODE_MAX_PROMPT_IMAGES
   const maxSize = Flag.MIMOCODE_MAX_PROMPT_IMAGE_SIZE ?? providerImageCap(model)
+  const maxDimension = providerImageDimensionCap(model)
 
   // Zero-allocation fast path: with no image-count cap and no size cap there is
   // nothing to drop or shrink, so return the messages untouched instead of
   // rebuilding every tool-result content object on each send.
-  if (maxImages === undefined && maxSize === Infinity) return msgs
+  if (maxImages === undefined && maxSize === Infinity && maxDimension === Infinity) return msgs
 
   const total = msgs.reduce(
     (sum, msg) =>
@@ -871,16 +881,21 @@ function limitImages(msgs: ModelMessage[], model: Provider.Model): ModelMessage[
     )
   }
 
-  // Enforce the byte-size cap on one tool-result content entry. Rewrites the
-  // media bytes in place when we can recompress, otherwise swaps it for a text
-  // entry so the oversized payload never reaches the provider.
+  // Enforce byte and dimension caps on one tool-result content entry.
   const capToolMedia = (entry: unknown) => {
     if (!isImageMediaEntry(entry)) return entry
     const size = base64ByteSize(entry.data)
-    if (size <= maxSize) return entry
-    const shrunk = shrinkBase64(entry.mediaType, entry.data, maxSize)
-    if (shrunk) return { ...entry, data: shrunk.base64, mediaType: shrunk.mime }
-    return { type: "text" as const, text: OVERSIZE_PLACEHOLDER(size, maxSize) }
+    const bytes = Buffer.from(entry.data, "base64")
+    const dimensions = imageDimensions(entry.mediaType, bytes)
+    if (
+      size <= maxSize &&
+      (!supportsImageDimensions(entry.mediaType) ||
+        (dimensions && Math.max(dimensions.width, dimensions.height) <= maxDimension))
+    )
+      return entry
+    const shrunk = compressImage(entry.mediaType, bytes, maxSize, maxDimension)
+    if (shrunk) return { ...entry, data: shrunk.data, mediaType: shrunk.mediaType }
+    return { type: "text" as const, text: OVERSIZE_PLACEHOLDER(size) }
   }
 
   return msgs.map((msg) => {
@@ -915,26 +930,33 @@ function limitImages(msgs: ModelMessage[], model: Provider.Model): ModelMessage[
         part.type === "image" ? part.image : part.data,
         part.mediaType,
       )
-      if (!payload || payload.size <= maxSize) return part
+      if (!payload) return part
       if (payload.mime?.startsWith("image/")) {
-        const base64 =
+        const bytes =
           payload.kind === "bytes"
-            ? Buffer.from(payload.bytes.buffer, payload.bytes.byteOffset, payload.bytes.byteLength).toString("base64")
-            : payload.base64
-        const shrunk = shrinkBase64(payload.mime, base64, maxSize)
+            ? Buffer.from(payload.bytes.buffer, payload.bytes.byteOffset, payload.bytes.byteLength)
+            : Buffer.from(payload.base64, "base64")
+        const dimensions = imageDimensions(payload.mime, bytes)
+        if (
+          payload.size <= maxSize &&
+          (!supportsImageDimensions(payload.mime) ||
+            (dimensions && Math.max(dimensions.width, dimensions.height) <= maxDimension))
+        )
+          return part
+        const shrunk = compressImage(payload.mime, bytes, maxSize, maxDimension)
         if (shrunk) {
           const data =
             payload.kind === "data-url"
-              ? `data:${shrunk.mime};base64,${shrunk.base64}`
+              ? `data:${shrunk.mediaType};base64,${shrunk.data}`
               : payload.kind === "bytes"
-                ? new Uint8Array(Buffer.from(shrunk.base64, "base64"))
-                : shrunk.base64
+                ? new Uint8Array(Buffer.from(shrunk.data, "base64"))
+                : shrunk.data
           return part.type === "image"
-            ? { ...part, image: data, mediaType: shrunk.mime }
-            : { ...part, data, mediaType: shrunk.mime }
+            ? { ...part, image: data, mediaType: shrunk.mediaType }
+            : { ...part, data, mediaType: shrunk.mediaType }
         }
       }
-      return { type: "text" as const, text: OVERSIZE_PLACEHOLDER(payload.size, maxSize) }
+      return { type: "text" as const, text: OVERSIZE_PLACEHOLDER(payload.size) }
     })
     return { ...msg, content }
   })
@@ -1826,9 +1848,7 @@ export function providerOptions(model: Provider.Model, options: { [x: string]: a
 }
 
 export function maxOutputTokens(model: Provider.Model): number {
-  if (model.providerID === "mimo" || model.providerID === "xiaomi" || model.id.toLowerCase().includes("mimo")) {
-    return MIMO_OUTPUT_TOKEN_MAX
-  }
+  if (usesLargeModelDefaults(model)) return LARGE_MODEL_OUTPUT_TOKEN_MAX
   return Math.min(model.limit.output, OUTPUT_TOKEN_MAX) || OUTPUT_TOKEN_MAX
 }
 

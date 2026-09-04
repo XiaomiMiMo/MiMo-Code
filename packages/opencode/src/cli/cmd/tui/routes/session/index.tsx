@@ -51,7 +51,7 @@ import type { TaskTool } from "@/tool/task"
 import type { QuestionTool } from "@/tool/question"
 import type { SkillTool } from "@/tool/skill"
 import type { WorkflowTool } from "@/tool/workflow"
-import type { ToolScriptTool } from "@/tool/tool-script"
+import { viewExecSubtools, type ExecSubPartSnapshot, type ToolScriptTool } from "@/tool/tool-script"
 import { useKeyboard, useRenderer, useTerminalDimensions, type JSX } from "@opentui/solid"
 import { useSDK } from "@tui/context/sdk"
 import { useCommandDialog } from "@tui/component/dialog-command"
@@ -102,6 +102,7 @@ import { DialogTokenPlan } from "../../component/dialog-token-plan"
 import { SessionRetry } from "@/session/retry"
 import { getRevertDiffFiles } from "../../util/revert-diff"
 import * as Collapse from "../../util/collapse"
+import { shouldHideTool } from "../../util/tool-visibility"
 import { planSwitchTarget } from "./plan-switch"
 import {
   createFreeApiSunsetSignal,
@@ -194,6 +195,19 @@ export function Session() {
 
   const lastAssistant = createMemo(() => {
     return messages().findLast((x) => x.role === "assistant")
+  })
+
+  const recoveryCandidate = createMemo(() => {
+    const message = lastAssistant()
+    if (!message || currentAgentID() !== "main") return undefined
+    return sync.data.session_recovery[route.sessionID]?.find(
+      (candidate) => candidate.assistantMessageID === message.id,
+    )
+  })
+
+  const canRecover = createMemo(() => {
+    const status = sync.data.session_status[route.sessionID]
+    return Boolean(recoveryCandidate()) && status?.type !== "busy" && status?.type !== "retry"
   })
 
   const dimensions = useTerminalDimensions()
@@ -331,8 +345,9 @@ export function Session() {
 
   event.on("session.status", (evt) => {
     if (evt.properties.sessionID !== route.sessionID) return
-    if (evt.properties.status.type !== "retry") return
-    if (evt.properties.status.message !== SessionRetry.GO_UPSELL_MESSAGE) return
+    const status = evt.properties.status
+    if (status.type === "idle" || status.type === "busy") return
+    if (status.message !== SessionRetry.GO_UPSELL_MESSAGE) return
     if (dialog.stack.length > 0) return
 
     const seen = kv.get(GO_UPSELL_LAST_SEEN_AT)
@@ -489,8 +504,58 @@ export function Session() {
   }
 
   const command = useCommandDialog()
-  const t = useLanguage().t
+  const language = useLanguage()
+  const t = language.t
+  const recoveryErrorMessage = (error: unknown) => {
+    const message = error instanceof Error ? error.message : String(error)
+    return /busy|409/i.test(message) ? t("tui.toast.session.recover.busy") : message
+  }
+
+  const recover = async (assistantMessageID?: string) => {
+    const candidates = await sdk.client.session.recovery(
+      { sessionID: route.sessionID },
+      { throwOnError: true },
+    )
+    const candidate = assistantMessageID
+      ? candidates.data?.find((item) => item.assistantMessageID === assistantMessageID)
+      : candidates.data?.at(-1)
+    if (!candidate) {
+      toast.show({ message: t("tui.toast.session.recover.none"), variant: "info" })
+      return
+    }
+    await sdk.client.session.resume(
+      { sessionID: route.sessionID, assistantMessageID: candidate.assistantMessageID, titleLocale: language.intl() },
+      { throwOnError: true },
+    )
+    sync.set("session_recovery_active", route.sessionID, candidate.assistantMessageID)
+    toast.show({ message: t("tui.toast.session.recover.started"), variant: "info" })
+  }
+
   command.register(() => [
+    {
+      title: t("tui.command.session.recover.title"),
+      value: "session.recover",
+      suggested: canRecover(),
+      category: "session",
+      slash: {
+        name: "recover",
+      },
+      onSelect: async (dialog) => {
+        try {
+          const candidate = recoveryCandidate()
+          const status = sync.data.session_status[route.sessionID]
+          if (status?.type === "busy" || status?.type === "retry") {
+            toast.show({ message: t("tui.toast.session.recover.busy"), variant: "info" })
+          } else await recover(candidate?.assistantMessageID)
+        } catch (error) {
+          toast.show({
+            message: recoveryErrorMessage(error),
+            variant: "error",
+          })
+        }
+        dialog.clear()
+      },
+    },
     {
       title: t(session()?.share?.url ? "tui.command.session.share.copy_link" : "tui.command.session.share.title"),
       value: "session.share",
@@ -1431,6 +1496,12 @@ export function Session() {
                         last={lastAssistant()?.id === message.id}
                         message={message as AssistantMessage}
                         parts={sync.data.part[message.id] ?? []}
+                        recoverable={
+                          recoveryCandidate()?.assistantMessageID === message.id &&
+                          sync.session.status(route.sessionID) === "idle"
+                        }
+                        recovering={sync.data.session_recovery_active[route.sessionID] === message.id}
+                        onRecover={recover}
                       />
                     </Match>
                   </Switch>
@@ -1551,6 +1622,16 @@ function UserMessage(props: {
       return parsed ? [parsed] : []
     })[0]
   })
+  // Checkpoint-off notices stay synthetic + ignored so undo, title prediction,
+  // and model context never treat them as user input. Render the engine's
+  // stable notice text explicitly instead of exposing it through text().
+  const checkpointOffNotice = createMemo(() => {
+    return props.parts.flatMap((x) => {
+      if (x.type !== "text" || !x.synthetic || !x.ignored) return []
+      const origin = (x.metadata as { origin?: { kind?: string } } | undefined)?.origin
+      return origin?.kind === "checkpoint-off" ? [x.text] : []
+    })[0]
+  })
   // A context rebuild (`/rebuild`) inserts a single user message carrying a
   // `checkpoint` part plus `synthetic: true` text parts (the rendered context
   // and index). Neither renders — `checkpoint` has no PART_MAPPING entry and
@@ -1626,6 +1707,16 @@ function UserMessage(props: {
             </box>
           )
         }}
+      </Show>
+      <Show when={checkpointOffNotice()}>
+        {(notice) => (
+          <box id={props.message.id} marginTop={props.index === 0 ? 0 : 1} paddingLeft={2} flexDirection="row" gap={1}>
+            <text fg={theme.textMuted}>
+              <span style={{ bg: theme.backgroundElement, fg: theme.warning, bold: true }}> checkpoint off </span>
+              <span style={{ fg: theme.text }}> {notice()}</span>
+            </text>
+          </box>
+        )}
       </Show>
       <Show when={rebuildBoundary()}>
         <box id={props.message.id} marginTop={props.index === 0 ? 0 : 1} paddingLeft={2} flexDirection="row" gap={1}>
@@ -1703,7 +1794,14 @@ function UserMessage(props: {
   )
 }
 
-function AssistantMessage(props: { message: AssistantMessage; parts: Part[]; last: boolean }) {
+function AssistantMessage(props: {
+  message: AssistantMessage
+  parts: Part[]
+  last: boolean
+  recoverable: boolean
+  recovering: boolean
+  onRecover: (assistantMessageID: string) => Promise<void>
+}) {
   const ctx = use()
   const local = useLocal()
   const { theme } = useTheme()
@@ -1712,6 +1810,7 @@ function AssistantMessage(props: { message: AssistantMessage; parts: Part[]; las
   const renderer = useRenderer()
   const t = useLanguage().t
   const [copyHover, setCopyHover] = createSignal(false)
+  const [recoverHover, setRecoverHover] = createSignal(false)
   const messages = createMemo(() => sync.data.message[props.message.sessionID]?.[props.message.agentID ?? "main"] ?? [])
   const model = createMemo(() =>
     isFreeApiModel({ providerID: props.message.providerID, modelID: props.message.modelID })
@@ -1734,6 +1833,7 @@ function AssistantMessage(props: { message: AssistantMessage; parts: Part[]; las
   // while a last message is streaming (finish undefined) or for the final/aborted
   // message, which preserves non-orchestrator behavior.
   const showFooter = createMemo(() => {
+    if (props.recovering) return true
     if (props.message.error?.name === "MessageAbortedError") return true
     if (final()) return true
     return props.last && props.message.finish !== "tool-calls"
@@ -1841,7 +1941,31 @@ function AssistantMessage(props: { message: AssistantMessage; parts: Part[]; las
               <Show when={props.message.error?.name === "MessageAbortedError"}>
                 <span style={{ fg: theme.textMuted }}> · interrupted</span>
               </Show>
+              <Show when={props.recovering}>
+                <span style={{ fg: theme.warning }}> · {t("tui.session.recovering")}</span>
+              </Show>
             </text>
+            <Show when={props.recoverable}>
+              <box
+                onMouseOver={() => setRecoverHover(true)}
+                onMouseOut={() => setRecoverHover(false)}
+                onMouseUp={() => {
+                  void props.onRecover(props.message.id).catch((error) => {
+                    toast.show({
+                      message:
+                        error instanceof Error && /busy|409/i.test(error.message)
+                          ? t("tui.toast.session.recover.busy")
+                          : error instanceof Error
+                            ? error.message
+                            : t("tui.toast.session.recover.failed"),
+                      variant: "error",
+                    })
+                  })
+                }}
+              >
+                <text fg={recoverHover() ? theme.warning : theme.textMuted}>↻ /recover</text>
+              </box>
+            </Show>
             <Show when={props.message.time.completed}>
               <box
                 onMouseOver={() => setCopyHover(true)}
@@ -2137,12 +2261,16 @@ function ToolPart(props: { last: boolean; part: ToolPart; message: AssistantMess
   const ctx = use()
   const sync = useSync()
 
-  // Hide tool if showDetails is false and tool completed successfully
-  const shouldHide = createMemo(() => {
-    if (ctx.showDetails()) return false
-    if (props.part.state.status !== "completed") return false
-    return true
-  })
+  // A completed exec may be the assistant's entire visible turn. Keep its
+  // clickable summary even when generic tool details are hidden, otherwise a
+  // successful side effect (for example creating a PR) renders as a blank turn.
+  const shouldHide = createMemo(() =>
+    shouldHideTool({
+      showDetails: ctx.showDetails(),
+      tool: props.part.tool,
+      status: props.part.state.status,
+    }),
+  )
 
   const toolprops = {
     get metadata() {
@@ -2165,12 +2293,16 @@ function ToolPart(props: { last: boolean; part: ToolPart; message: AssistantMess
     get part() {
       return props.part
     },
+    message: props.message,
   }
 
   return (
     <Show when={!shouldHide()}>
       <Switch>
         <Match when={props.part.tool === "bash"}>
+          <Bash {...toolprops} />
+        </Match>
+        <Match when={props.part.tool === "exec_command"}>
           <Bash {...toolprops} />
         </Match>
         <Match when={props.part.tool === "glob"}>
@@ -2239,6 +2371,7 @@ type ToolProps<T> = {
   tool: string
   output?: string
   part: ToolPart
+  message: AssistantMessage
 }
 function PlanExit(props: ToolProps<any>) {
   const { theme } = useTheme()
@@ -2320,14 +2453,88 @@ function WorkItemTask(props: ToolProps<typeof TaskTool>) {
   )
 }
 
+function ExecSubtoolRow(props: {
+  part: ExecSubPartSnapshot
+  parent: ToolPart
+  message: AssistantMessage
+}) {
+  const synthetic = createMemo(() => {
+    const state = props.part.state
+    const input = state.input && typeof state.input === "object" && !Array.isArray(state.input)
+      ? state.input
+      : state.input === undefined ? {} : { value: state.input }
+    return {
+      id: props.part.callID as ToolPart["id"],
+      sessionID: props.parent.sessionID,
+      messageID: props.parent.messageID,
+      type: "tool" as const,
+      callID: props.part.callID,
+      tool: props.part.tool,
+      state: {
+        status: state.status,
+        input,
+        ...(state.status === "running" ? {
+          title: state.title,
+          ...(state.metadata ? { metadata: state.metadata } : {}),
+          time: state.time,
+        } : state.status === "completed" ? {
+          title: state.title ?? props.part.tool,
+          output: state.output ?? "",
+          metadata: state.metadata ?? {},
+          time: { start: state.time.start, end: state.time.end ?? state.time.start },
+          ...(state.attachments ? { attachments: state.attachments } : {}),
+          ...(state.providerOutput !== undefined ? { providerOutput: state.providerOutput } : {}),
+          ...(state.providerMetadata ? { providerMetadata: state.providerMetadata } : {}),
+        } : {
+          error: state.error ?? "Tool failed",
+          ...(state.metadata ? { metadata: state.metadata } : {}),
+          time: { start: state.time.start, end: state.time.end ?? state.time.start },
+          ...(state.attachments ? { attachments: state.attachments } : {}),
+        }),
+      },
+    } as ToolPart
+  })
+
+  return <ToolPart last={false} part={synthetic()} message={props.message} />
+}
+
+function ExecSubtoolGroup(props: {
+  parts: ExecSubPartSnapshot[]
+  parent: ToolPart
+  message: AssistantMessage
+  clearParentHover: () => void
+}) {
+  const { theme } = useTheme()
+  return (
+    <box
+      border={["left"]}
+      paddingLeft={2}
+      borderColor={theme.borderSubtle}
+      customBorderChars={SplitBorder.customBorderChars}
+      onMouseUp={(event: MouseEvent) => event.stopPropagation()}
+      onMouseOver={(event: MouseEvent) => {
+        event.stopPropagation()
+        props.clearParentHover()
+      }}
+      onMouseOut={(event: MouseEvent) => {
+        event.stopPropagation()
+        props.clearParentHover()
+      }}
+    >
+      <For each={props.parts}>
+        {(part) => <ExecSubtoolRow part={part} parent={props.parent} message={props.message} />}
+      </For>
+    </box>
+  )
+}
+
 // Renderer for the `exec` batch-orchestration tool. Collapsed view is a compact
-// BlockTool: summary title (spinner + live aggregated call counts published
-// through ctx.metadata) plus the last few sub-calls — one bordered clickable
-// unit, visible while running and kept after completion. Clicking swaps to the
-// full BlockTool with code, result, logs and trace. Before any sub-call lands
-// it stays a one-line InlineTool.
+// BlockTool with aggregate counts. Expanded view uses the pure nested-part view
+// so every admitted sub-call can be rendered as its own row; actor rows reuse
+// the direct actor navigation path whenever a target reference is available.
 function ToolScript(props: ToolProps<typeof ToolScriptTool>) {
   const { theme } = useTheme()
+  const hoverControl = { clear: () => {} }
   const [expanded, setExpanded] = createSignal(false)
   const isRunning = createMemo(() => props.part.state.status === "running")
   const meta = createMemo(() =>
@@ -2367,10 +2574,7 @@ function ToolScript(props: ToolProps<typeof ToolScriptTool>) {
           `  ${t.status === "error" ? "✗" : "✓"} ${t.name} [${t.durationMs}ms]${t.error ? ` ${t.error.slice(0, 80)}` : ""}`,
       ),
   )
-  // exec embeds nested tool output (a `bash` call's stdout) into <return_value>
-  // and <logs>, so escape sequences reach this renderer raw.
-  const output = createMemo(() => stripAnsi(props.output?.trim() ?? ""))
-
+  const subParts = createMemo(() => viewExecSubtools(meta()))
   return (
     <Show
       when={expanded()}
@@ -2380,7 +2584,7 @@ function ToolScript(props: ToolProps<typeof ToolScriptTool>) {
         // unit. An InlineTool with a loose text underneath read as two
         // elements and the click target was easy to miss.
         <Show
-          when={recentLines().length > 0}
+          when={recentLines().length > 0 || subParts().length > 0}
           fallback={
             <InlineTool
               icon="»"
@@ -2406,14 +2610,16 @@ function ToolScript(props: ToolProps<typeof ToolScriptTool>) {
         </Show>
       }
     >
-      <BlockTool title={`# exec · ${summary()}`} part={props.part} onClick={() => setExpanded(false)}>
+      <BlockTool
+        title={`# exec · ${summary()}`}
+        part={props.part}
+        onClick={() => setExpanded(false)}
+        hoverControl={hoverControl}
+      >
         <box gap={1}>
           <text fg={theme.textMuted}>{((props.input.code as string | undefined) ?? "").trim()}</text>
-          <Show when={recentLines().length > 0}>
-            <text fg={theme.textMuted}>{recentLines().join("\n")}</text>
-          </Show>
-          <Show when={output()}>
-            <text fg={failed() ? theme.error : theme.text}>{output()}</text>
+          <Show when={subParts().length > 0}>
+            <ExecSubtoolGroup parts={subParts()} parent={props.part} message={props.message} clearParentHover={hoverControl.clear} />
           </Show>
           <text fg={theme.textMuted}>Click to collapse</text>
         </box>
@@ -2943,10 +3149,12 @@ function BlockTool(props: {
   onClick?: () => void
   part?: ToolPart
   spinner?: boolean
+  hoverControl?: { clear: () => void }
 }) {
   const { theme } = useTheme()
   const renderer = useRenderer()
   const [hover, setHover] = createSignal(false)
+  if (props.hoverControl) props.hoverControl.clear = () => setHover(false)
   const error = createMemo(() => (props.part?.state.status === "error" ? props.part.state.error : undefined))
   return (
     <box
@@ -3029,9 +3237,9 @@ function Bash(props: ToolProps<typeof BashTool>) {
   const title = createMemo(() => {
     const desc = props.input.description ?? "Shell"
     const wd = workdirDisplay()
-    if (!wd) return `# ${desc}`
-    if (desc.includes(wd)) return `# ${desc}`
-    return `# ${desc} in ${wd}`
+    const prefix = props.tool === "exec_command" ? "# exec_command" : `# ${desc}`
+    if (!wd || (props.tool !== "exec_command" && desc.includes(wd))) return prefix
+    return `${prefix} in ${wd}`
   })
 
   return (

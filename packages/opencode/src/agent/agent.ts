@@ -6,10 +6,13 @@ import { ModelID, ProviderID } from "../provider/schema"
 import { generateObject, streamObject, type ModelMessage } from "ai"
 import { Instance } from "../project/instance"
 import { Truncate } from "../tool"
+import { usesGPTToolset } from "../tool/gpt"
 import { Auth } from "../auth"
 import { ProviderTransform } from "../provider"
 
 import PROMPT_GENERATE from "./generate.txt"
+import PROMPT_GENERATE_GPT from "./prompt/generate-gpt.txt"
+import PROMPT_GENERAL from "./prompt/general.txt"
 import PROMPT_EXPLORE from "./prompt/explore.txt"
 import PROMPT_DREAM from "./prompt/dream.txt"
 import PROMPT_DISTILL from "./prompt/distill.txt"
@@ -52,6 +55,7 @@ export const Info = z
     modelRef: z.string().optional(),
     variant: z.string().optional(),
     prompt: z.string().optional(),
+    completionGate: z.boolean().optional(),
     options: z.record(z.string(), z.any()),
     steps: z.number().int().positive().optional(),
     toolAllowlist: z.array(z.string()).optional(),
@@ -188,7 +192,7 @@ export const layer = Layer.effect(
             // wins. (Every write tool — write/edit/multiedit/apply_patch/
             // notebook_edit — funnels through ctx.ask({ permission: "edit" }),
             // so this single rule governs all file writes.) Deliberately scoped
-            // to edit only: bash/change_directory/workflow are left to the
+            // to edit only: bash/workflow are left to the
             // model's own read-only discipline + plan prompt, matching the
             // project's "trust the model, permission layer is a backstop"
             // stance. The "*":"deny" carries a non-"*" allow exception, so the
@@ -250,16 +254,13 @@ export const layer = Layer.effect(
           general: {
             name: "general",
             color: "#aac4e1",
-            description: `General-purpose agent for researching complex questions and executing multi-step tasks. Use this agent to execute multiple units of work in parallel.`,
-            permission: Permission.merge(
-              defaults,
-              Permission.fromConfig({
-                change_directory: "deny",
-              }),
-              user,
-            ),
+            description:
+              "Full-capability general-purpose subagent for autonomous read/write work, including investigation, implementation, debugging, testing, and multi-step delivery. It inherits the parent's available tool surface and can complete a delegated task end to end.",
+            permission: Permission.merge(defaults, user),
             options: {},
             mode: "subagent",
+            prompt: PROMPT_GENERAL,
+            completionGate: true,
             native: true,
           },
           explore: {
@@ -297,11 +298,13 @@ export const layer = Layer.effect(
             options: {},
             native: true,
             hidden: true,
+            modelRef: "lite",
             temperature: 0.5,
             permission: Permission.merge(
               defaults,
               Permission.fromConfig({
                 "*": "deny",
+                StructuredOutput: "allow",
               }),
               user,
             ),
@@ -488,7 +491,9 @@ export const layer = Layer.effect(
           const agent = agents[name]
           const globs = whitelistedDirs.filter(
             (glob) =>
-              !agent.permission.some((r) => r.permission === "external_directory" && r.action === "deny" && r.pattern === glob),
+              !agent.permission.some(
+                (r) => r.permission === "external_directory" && r.action === "deny" && r.pattern === glob,
+              ),
           )
           if (globs.length === 0) continue
 
@@ -563,7 +568,10 @@ export const layer = Layer.effect(
           ? Option.getOrUndefined(yield* Effect.serviceOption(OtelTracer.OtelTracer))
           : undefined
 
-        const system = [PROMPT_GENERATE]
+        const system = [
+          PROMPT_GENERATE,
+          ...(usesGPTToolset(resolved.id, undefined, resolved.api.id, resolved.family) ? [PROMPT_GENERATE_GPT] : []),
+        ]
         yield* plugin.trigger("experimental.chat.system.transform", { model: resolved }, { system })
         const existing = yield* InstanceState.useEffect(state, (s) => s.list())
 

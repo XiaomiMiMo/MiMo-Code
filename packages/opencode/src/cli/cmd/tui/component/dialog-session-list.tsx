@@ -11,6 +11,7 @@ import { useSDK } from "../context/sdk"
 import { useLanguage } from "../context/language"
 import { Flag } from "@/flag/flag"
 import { isSystemSession } from "@/session/auto-dream"
+import { classifySession } from "@/session/visibility"
 import { DialogSessionRename } from "./dialog-session-rename"
 import { Keybind } from "@/util"
 import { createDebouncedSignal } from "../util/signal"
@@ -112,15 +113,40 @@ export function DialogSessionList() {
     ))
   }
 
+  // A child session is listed only if the render prohibition would allow it to be
+  // opened. The actor rows come from the sync store rather than a fetch on
+  // purpose: a host is only ever IN that store because it was created during this
+  // TUI's lifetime (bootstrap loads roots only, and sync.sync() loads children
+  // with `visible: true`), and the same lifetime delivers its `actor.registered`
+  // event — so the rows this reads are present for exactly the population that
+  // can leak. `undefined` means "no rows", which classifySession renders.
+  const listable = (x: { id: string; parentID?: string }) =>
+    classifySession(x, sync.data.actor?.[x.id]).renderable
+
   const options = createMemo(() => {
     const today = new Date().toDateString()
     const current = currentSessionID()
     // Top-level sessions, plus the CURRENT session's children (e.g. Orchestrator
     // child sessions) so the user can discover and switch into them. Other
     // sessions' children stay hidden to keep the list focused.
+    //
+    // The child arm needs the visibility predicate on top of the parent test.
+    // `sync.data.session` is NOT already filtered: sync.sync() merges children
+    // fetched with `visible: true` (sync.tsx), but `session.updated` inserts
+    // EVERY session it sees (sync.tsx, "session.updated" arm) — and a
+    // checkpoint-writer host is created with its title already set
+    // (`title: "checkpoint-writer: …"`, session/checkpoint.ts), so it arrives on
+    // that path and lands in the store. Filtering only on `parentID === current`
+    // therefore listed one `↳ checkpoint-writer: …` row per checkpoint.
+    //
+    // classifySession is the same predicate the route's render gate uses, so the
+    // list cannot disagree with what opening the entry would do. It fails OPEN
+    // (no actor rows ⇒ listed), which is what keeps orchestrator `session create`
+    // children — including the `[topic:…]` ones — listed: they own a mode "peer"
+    // row and are returned renderable outright.
     const isChildOfCurrent = (x: { parentID?: string }) => current !== undefined && x.parentID === current
     return sessions()
-      .filter((x) => x.parentID === undefined || isChildOfCurrent(x))
+      .filter((x) => x.parentID === undefined || (isChildOfCurrent(x) && listable(x)))
       .toSorted((a, b) => {
         const updatedDay = new Date(b.time.updated).setHours(0, 0, 0, 0) - new Date(a.time.updated).setHours(0, 0, 0, 0)
         if (updatedDay !== 0) return updatedDay

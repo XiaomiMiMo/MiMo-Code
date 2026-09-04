@@ -26,7 +26,7 @@ describe("isTransientCapacityError", () => {
   })
 
   test("returns false for non-retryable HTTP statuses", () => {
-    for (const status of [400, 401, 403, 404, 422]) {
+    for (const status of [400, 401, 403, 404, 422, 501, 505]) {
       const err = Object.assign(new Error("client"), { status })
       expect(isTransientCapacityError(err)).toBe(false)
     }

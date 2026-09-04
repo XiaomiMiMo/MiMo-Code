@@ -31,6 +31,19 @@ This skill is loaded from the global home directory.
   )
 }
 
+async function createSkill(root: string, source: ".claude" | ".agents", name: string, description: string) {
+  await Bun.write(
+    path.join(root, source, "skills", name, "SKILL.md"),
+    `---
+name: ${name}
+description: ${description}
+---
+
+# ${name}
+`,
+  )
+}
+
 const withHome = <A, E, R>(home: string, self: Effect.Effect<A, E, R>) =>
   Effect.acquireUseRelease(
     Effect.sync(() => {
@@ -75,6 +88,33 @@ Instructions here.
           expect(item).toBeDefined()
           expect(item!.description).toBe("A test skill for verification.")
           expect(item!.location).toContain(path.join("skill", "test-skill", "SKILL.md"))
+        }),
+      { git: true },
+    ),
+  )
+
+  it.live("discovers repository skills without marking them as bundled", () =>
+    provideTmpdirInstance(
+      (dir) =>
+        Effect.gen(function* () {
+          yield* Effect.promise(() =>
+            Bun.write(
+              path.join(dir, ".mimocode", "skills", "repository-skill", "SKILL.md"),
+              `---
+name: repository-skill
+description: A repository-level skill for verification.
+---
+
+# Repository Skill
+`,
+            ),
+          )
+
+          const skill = yield* Skill.Service
+          const item = (yield* skill.all())[0]
+          expect(item?.name).toBe("repository-skill")
+          expect(item?.bundled).toBeUndefined()
+          expect(item?.location).toContain(path.join(".mimocode", "skills", "repository-skill", "SKILL.md"))
         }),
       { git: true },
     ),
@@ -219,6 +259,74 @@ description: A skill in the .claude/skills directory.
         }),
       )
     }),
+  )
+
+  it.live("keeps one global snapshot across project instances until reload", () =>
+    Effect.gen(function* () {
+      const home = yield* Effect.acquireRelease(
+        Effect.promise(() => tmpdir({ git: true })),
+        (tmp) => Effect.promise(() => tmp[Symbol.asyncDispose]()),
+      )
+      const firstProject = yield* Effect.acquireRelease(
+        Effect.promise(() => tmpdir({ git: true })),
+        (tmp) => Effect.promise(() => tmp[Symbol.asyncDispose]()),
+      )
+      const secondProject = yield* Effect.acquireRelease(
+        Effect.promise(() => tmpdir({ git: true })),
+        (tmp) => Effect.promise(() => tmp[Symbol.asyncDispose]()),
+      )
+
+      yield* withHome(
+        home.path,
+        Effect.gen(function* () {
+          yield* Effect.promise(() => createSkill(home.path, ".claude", "first-global", "First snapshot"))
+          const skill = yield* Skill.Service
+          expect((yield* skill.all().pipe(provideInstance(firstProject.path))).map((item) => item.name)).toEqual([
+            "first-global",
+          ])
+
+          yield* Effect.promise(() => createSkill(home.path, ".agents", "second-global", "Added later"))
+          expect((yield* skill.all().pipe(provideInstance(secondProject.path))).map((item) => item.name)).toEqual([
+            "first-global",
+          ])
+
+          yield* skill.reload().pipe(provideInstance(secondProject.path))
+          expect((yield* skill.all().pipe(provideInstance(secondProject.path))).map((item) => item.name).toSorted()).toEqual([
+            "first-global",
+            "second-global",
+          ])
+        }),
+      )
+    }),
+    30_000,
+  )
+
+  it.live("uses deterministic source order when global skills share a name", () =>
+    Effect.gen(function* () {
+      const tmp = yield* Effect.acquireRelease(
+        Effect.promise(() => tmpdir({ git: true })),
+        (tmp) => Effect.promise(() => tmp[Symbol.asyncDispose]()),
+      )
+
+      yield* withHome(
+        tmp.path,
+        Effect.gen(function* () {
+          yield* Effect.promise(() =>
+            Promise.all([
+              createSkill(tmp.path, ".claude", "duplicate-global", "Claude copy"),
+              createSkill(tmp.path, ".agents", "duplicate-global", "Agents copy"),
+            ]),
+          )
+          const skill = yield* Skill.Service
+          const item = (yield* skill.all().pipe(provideInstance(tmp.path))).find(
+            (item) => item.name === "duplicate-global",
+          )
+          expect(item?.description).toBe("Agents copy")
+          expect(item?.location).toContain(path.join(".agents", "skills", "duplicate-global", "SKILL.md"))
+        }),
+      )
+    }),
+    30_000,
   )
 
   it.live("returns empty array when no skills exist", () =>

@@ -3,6 +3,7 @@ import fs from "fs/promises"
 import path from "path"
 import { Log } from "../util"
 import { progressPath } from "../session/checkpoint-paths"
+import { isMemoryWriteEnabled, type MemoryWriteConfig } from "../memory/write-gate"
 import type { SessionID } from "../session/schema"
 
 const log = Log.create({ service: "plugin.subagent-progress-checker" })
@@ -78,7 +79,27 @@ async function injectFrontmatter(filePath: string, body: string): Promise<void> 
   await Bun.write(filePath, newBody)
 }
 
-export async function SubagentProgressCheckerPlugin(_pluginInput: PluginInput): Promise<Hooks> {
+/**
+ * Whether new memory may be written. Delegates the field read to the shared
+ * accessor (memory/write-gate.ts) so this hook can't drift from the write gate.
+ *
+ * Config comes over the plugin client, not Config.Service: this hook body is a
+ * plain async function with no Effect context, and importing AppRuntime here
+ * would close an import cycle (app-runtime → Plugin.defaultLayer →
+ * plugin/index → this file). The client carries the instance directory, so it
+ * resolves the same config the write gate sees.
+ *
+ * Fails OPEN: a config read that errors must never silently disable the journal
+ * check.
+ */
+async function memoryWriteEnabled(client: PluginInput["client"]): Promise<boolean> {
+  const res = await client.config.get().catch(() => undefined)
+  // Cast is structural: the generated SDK config type lags the engine schema
+  // until the next SDK regen, so the field isn't on it yet.
+  return isMemoryWriteEnabled(res?.data as MemoryWriteConfig | undefined)
+}
+
+export async function SubagentProgressCheckerPlugin(pluginInput: PluginInput): Promise<Hooks> {
   return {
     "actor.postStop": {
       // Use excludeOnly so the matcher fires for ALL actor types EXCEPT those
@@ -109,6 +130,13 @@ export async function SubagentProgressCheckerPlugin(_pluginInput: PluginInput): 
         // skip the check entirely so we don't burn postStop re-entries on an impossible ask.
         // `=== false` (not falsy): an absent canWrite must NOT suppress (fail-open).
         if ((input as { canWrite?: boolean }).canWrite === false) return
+
+        // Memory writing off — the write gate (memory-path-guard) hard-rejects
+        // progress.md, so asking the subagent to write it would spin the postStop
+        // ReAct loop forever: nudge → write rejected → nudge again, burning a model
+        // turn per iteration. Bail before the first nudge. Checked after the two
+        // sync fast-outs above so non-task-bound subagents don't pay a config read.
+        if (!(await memoryWriteEnabled(pluginInput.client))) return
 
         const sessionID = input.sessionID as SessionID
         const filePath = progressPath(sessionID, taskId)

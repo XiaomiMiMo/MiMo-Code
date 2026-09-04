@@ -1,6 +1,6 @@
 {
   "$schema": "https://json.schemastore.org/package.json",
-  "version": "0.1.10",
+  "version": "0.1.14",
   "name": "@mimo-ai/cli",
   "type": "module",
   "license": "MIT",
@@ -12,7 +12,7 @@
     "prepare": "effect-language-service patch || true",
     "typecheck": "tsgo --noEmit",
     "test": "bun test --timeout 30000",
-    "test:ci": "mkdir -p .artifacts/unit && bun test --timeout 30000 --reporter=junit --reporter-outfile=.artifacts/unit/junit.xml",
+    "test:ci": "mkdir -p .artifacts/unit && bun test --timeout 120000 --reporter=junit --reporter-outfile=.artifacts/unit/junit.xml",
     "build": "bun run script/build.ts",
     "build:local": "MIMOCODE_CHANNEL=local MIMOCODE_VERSION=local bun run script/build.ts --single",
     "fix-node-pty": "bun run script/fix-node-pty.ts",

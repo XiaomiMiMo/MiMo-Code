@@ -314,7 +314,7 @@ export const layer = Layer.effect(
             ([exportName, v]) => typeof v === "function" && exportName.endsWith("Plugin"),
           )?.[1] as PluginInstance | undefined
           if (!overlay) continue
-          log.info("loading extension", { name })
+          // log.info("loading extension", { name })
           const init = yield* Effect.tryPromise({
             try: () => overlay(input),
             catch: (err) => log.error("failed to load extension", { name, error: err }),

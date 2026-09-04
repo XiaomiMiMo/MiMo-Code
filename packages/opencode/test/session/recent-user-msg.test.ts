@@ -80,8 +80,8 @@ describe("renderRebuildContext — recent user input section", () => {
         yield* Effect.promise(() => seedUserMessage(sess.id, "second prompt asking for tests"))
         yield* Effect.promise(() => seedUserMessage(sess.id, "third prompt — please commit"))
 
-        const out = yield* cp.renderRebuildContext(sess.id)
-        expect(out).toContain("## Recent user input (verbatim)")
+        const { text: out } = yield* cp.renderRebuildContext(sess.id)
+        expect(out).toContain("# Recent user input (verbatim)")
         expect(out).toContain("first prompt about authentication")
         expect(out).toContain("second prompt asking for tests")
         expect(out).toContain("third prompt — please commit")
@@ -102,8 +102,8 @@ describe("renderRebuildContext — recent user input section", () => {
         const middle = "middle-noise ".repeat(2000)
         const m = yield* Effect.promise(() => seedUserMessage(sess.id, head + "\n" + middle + "\n" + tail))
 
-        const out = yield* cp.renderRebuildContext(sess.id)
-        expect(out).toContain("## Recent user input (verbatim)")
+        const { text: out } = yield* cp.renderRebuildContext(sess.id)
+        expect(out).toContain("# Recent user input (verbatim)")
         expect(out).toContain("HEAD-MARKER-XYZZY")
         expect(out).toContain("TAIL-MARKER-PLUGH")
         expect(out).not.toContain("middle-noise middle-noise middle-noise")
@@ -128,7 +128,7 @@ describe("renderRebuildContext — recent user input section", () => {
           seedUserMessage(sess.id, "👍".repeat(6000) + " TAIL-AFTER-EMOJI"),
         )
 
-        const out = yield* cp.renderRebuildContext(sess.id)
+        const { text: out } = yield* cp.renderRebuildContext(sess.id)
         expect(out).toContain("…elided")
         expect(out).toContain(m.id)
         // A split pair would surface the replacement char; it must not.
@@ -150,8 +150,8 @@ describe("renderRebuildContext — recent user input section", () => {
           yield* Effect.promise(() => seedUserMessage(sess.id, `${tag(i)} ${body}`))
         }
 
-        const out = yield* cp.renderRebuildContext(sess.id)
-        expect(out).toContain("## Recent user input (verbatim)")
+        const { text: out } = yield* cp.renderRebuildContext(sess.id)
+        expect(out).toContain("# Recent user input (verbatim)")
         expect(out).toContain("MARKER-MSG-19")
         expect(out).not.toContain("MARKER-MSG-00")
       }),
@@ -168,7 +168,7 @@ describe("renderRebuildContext — recent user input section", () => {
           const sess = yield* ssn.create({})
           yield* Effect.promise(() => seedUserMessage(sess.id, "this should not appear"))
 
-          const out = yield* cp.renderRebuildContext(sess.id)
+          const { text: out } = yield* cp.renderRebuildContext(sess.id)
           expect(out).not.toContain("Recent user input")
           expect(out).not.toContain("this should not appear")
         }),
@@ -206,11 +206,12 @@ describe("renderRebuildContext — recent user input section", () => {
         // verbatim user input — otherwise each compaction recursively folds the
         // prior rebuild context back in (fractal bloat). The genuine human
         // prompt must still appear exactly once.
-        const out = yield* cp.renderRebuildContext(sess.id)
-        const section = out.slice(out.indexOf("## Recent user input (verbatim)"))
+        const { text: out } = yield* cp.renderRebuildContext(sess.id)
+        const section = out.slice(out.indexOf("# Recent user input (verbatim)"))
         expect(section).toContain("REAL-HUMAN-PROMPT-ZZZ")
         expect(section).not.toContain("UNIQUE-CHECKPOINT-SENTINEL")
-        expect(section).not.toContain("## Session checkpoint")
+        // Heading is H1 after the rebuild-context section rename.
+        expect(section).not.toContain("# Session checkpoint")
         // The human prompt appears once, not duplicated via the boundary echo.
         expect(out.split("REAL-HUMAN-PROMPT-ZZZ").length - 1).toBe(1)
       }),

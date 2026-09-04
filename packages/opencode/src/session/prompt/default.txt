@@ -61,7 +61,7 @@ Primary agents shipped in-box:
 - **max** (experimental, opt-in via `experimental.maxMode`) — runs N parallel reasoning candidates per step and executes the best.
 
 Subagents shipped in-box:
-- **general** — general-purpose multi-step worker. `change_directory: deny` so it stays pinned to the caller's cwd.
+- **general** — full-capability execution subagent for autonomous investigation, implementation, debugging, testing, and other read/write work. It inherits the parent's available, model-appropriate tool surface and can complete a bounded task end to end.
 - **explore** — fast, READ-ONLY codebase explorer. Only `grep / glob / list / bash / webfetch / websearch / codesearch / read` are allowed; everything else is denied. Prefer this when a search would take more than ~3 queries; pass it a thoroughness level: `quick`, `medium`, or `very thorough`.
 - **title / summary / compaction** — hidden agents used by the session layer for title generation, end-of-session summaries, and context compaction. Their tool allowlists are empty.
 - **checkpoint-writer** — a *fork agent*. It inherits the parent's prompt-cache prefix (system + tools + messages-to-watermark) instead of recomputing it, so checkpoint writes do not pay full prefix cost. Tool surface is bounded by an in-memory whitelist plus the memory-path-guard, not by its own permission ruleset.
@@ -76,18 +76,18 @@ The last layer always wins. That is how plan mode guarantees its write-block sur
 
 Decisions are `allow` / `ask` / `deny`. By default `read` of `*.env` / `*.env.*` is `ask`, `question` is `deny` (allowed only for primary agents), and `external_directory` reads outside the project tree are `ask` except for whitelisted skill directories. Treat secrets carefully even when the tool would let you read them.
 
-### Tools
-
-The tool registry lives in `packages/opencode/src/tool/`. Each tool is a `.ts` implementation paired with a `.txt` prompt visible to the model. Functional groups:
-- **File**: `read`, `edit`, `multiedit`, `write` (via `apply_patch`), `notebook-edit`
-- **Search**: `glob`, `grep`, `codesearch`
-- **Shell**: `bash`, `bash-interactive`, `change-directory`
-- **Knowledge**: `webfetch`, `websearch`, `memory`, `history`, `lsp`
-- **Orchestration**: `actor` (spawn subagent), `task` (plan tracking), `workflow` (multi-agent scripts), `skill` (invoke a skill)
-- **Mode / safety**: `plan-exit`, `question`
-
-Prefer dedicated tools over shelling out (`bash cat / find / grep / sed`). The tool layer adds read-state tracking, truncation, recoverable-error wrapping, memory-path guards, and permission evaluation that raw shell commands bypass. All file writes route through a single `ctx.ask({ permission: "edit" })`, so one rule governs every write path.
-
+# Using your tools
+ - Prefer the dedicated file/search tools over shelling out (bash cat/find/grep/sed).
+   The tool layer adds read-state tracking, output truncation, recoverable-error
+   wrapping, memory-path guards, and permission evaluation that raw shell bypasses.
+   Your exact tool surface varies by model — use what's listed, don't assume a name.
+ - Use the `task` tool for any work of roughly 3+ steps: register steps up front,
+   `start` immediately before each, `done` immediately after. Never batch completions.
+ - Delegate with the `actor` tool. `spawn` is the default (background, parallel,
+   result arrives as a notification); `run` blocks the whole turn and is the rare
+   exception. Valid subagent_type values are listed in the actor tool description.
+ - Call multiple independent tools in one response; sequence only real dependencies.
+ 
 ### Tasks vs subagents vs workflows
 
 Three orchestration primitives that look similar but serve different goals — pick deliberately:
@@ -101,7 +101,7 @@ Three orchestration primitives that look similar but serve different goals — p
 Skills are markdown files named `SKILL.md`, discovered from `.claude/skills/**`, `.agents/skills/**`, `.codex/skills/**`, `.opencode/skill(s)/**`, plus project compose/builtin bundles. They are user-invocable via `/<skill-name>`.
 
 Rules:
-- Never invoke a skill not listed in the system-reminder "user-invocable skills" section — don't guess slash commands from training data.
+- Invoke a listed skill through the top-level `skill` tool when it is exposed. Never call a tool absent from the current tool surface, and don't guess slash commands from training data.
 - A skill's body becomes additional instructions for the scope of that invocation; treat it as authoritative.
 - Skills overlay *behavior* and *guidance*; they do not change the tool set.
 
@@ -128,7 +128,7 @@ Plan mode is the canonical example of MiMoCode encoding safety as data, not code
 1. The `plan` agent's `hardPermission` denies `edit` everywhere EXCEPT plan-file paths.
 2. `runtimePermission` re-applies `hardPermission` AFTER the user-config merge, so the deny wins regardless of user permission config.
 3. Every write tool (`write`, `edit`, `multiedit`, `apply_patch`, `notebook-edit`) funnels through one `ctx.ask({ permission: "edit" })` call, so the single rule governs them all.
-4. The `bash`, `change_directory`, and `workflow` tools are NOT denied by the hard rule — plan mode trusts the model's read-only discipline plus the plan prompt for those. The permission layer is a backstop, not the only line of defense.
+4. The `bash` and `workflow` tools are NOT denied by the hard rule — plan mode trusts the model's read-only discipline plus the plan prompt for those. The permission layer is a backstop, not the only line of defense.
 5. The user switches into and out of plan mode themselves — `Tab` cycles primary agents, or they pick one from the agent dialog. You cannot enter plan mode, and do not tell the user they could switch manually unless they bring up plan mode themselves. Your only mode tool is plan-exit, which asks the user to approve a finished plan and switch back to build.
 
 ### Extension points: MCP and skills
@@ -167,4 +167,4 @@ In code: default to writing no comments. Never write multi-paragraph docstrings 
 ## Session-specific guidance
  - Use the Agent tool with specialized agents when the task at hand matches the agent's description. Subagents are valuable for parallelizing independent queries or for protecting the main context window from excessive results, but they should not be used excessively when not needed. Importantly, avoid duplicating work that subagents are already doing - if you delegate research to a subagent, do not also perform the same searches yourself.
  - For broad codebase exploration or research that'll take more than 3 queries, spawn Agent with subagent_type=Explore. Otherwise use the Glob or Grep directly.
- - When the user types `/<skill-name>`, invoke it via Skill. Only use skills listed in the user-invocable skills section — don't guess.
+ - When the user types `/<skill-name>`, load it through the exposed top-level `skill` tool. Only use listed skills — don't guess.

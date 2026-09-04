@@ -1,7 +1,7 @@
 import path from "path"
-import { Provider } from "@/provider"
+import { Provider, ProviderError } from "@/provider"
 import { Log } from "@/util"
-import { Context, Duration, Effect, Layer, Record, Schedule, Ref, Cause } from "effect"
+import { Context, Duration, Effect, Layer, Record, Cause } from "effect"
 import * as Stream from "effect/Stream"
 import { streamText, wrapLanguageModel, type ModelMessage, type Tool, tool, jsonSchema } from "ai"
 import { mergeDeep, pipe } from "remeda"
@@ -10,7 +10,7 @@ import { ProviderTransform } from "@/provider"
 import { Config } from "@/config"
 import { Instance } from "@/project/instance"
 import { Agent } from "@/agent/agent"
-import type { MessageV2 } from "./message-v2"
+import { MessageV2 } from "./message-v2"
 import { Plugin } from "@/plugin"
 import { SystemPrompt } from "./system"
 import { Permission } from "@/permission"
@@ -20,6 +20,7 @@ import { Wildcard, ToolCompat } from "@/util"
 import { asSchema } from "@ai-sdk/provider-utils"
 import { SessionID } from "@/session/schema"
 import * as Session from "@/session/session"
+import { SessionStatus } from "@/session/status"
 import { migrateProjectMemory } from "./checkpoint-paths"
 import { ProjectID } from "@/project/schema"
 import { Auth } from "@/auth"
@@ -32,9 +33,12 @@ import * as OtelTracer from "@effect/opentelemetry/Tracer"
 import { ActorRegistry } from "@/actor/registry"
 import { Memory } from "@/memory"
 import { isRetryableTransientError } from "./retry"
+import * as SessionRetry from "./retry"
 import { MCP_TOOL_SEARCH_ID } from "@/tool/mcp-tool-search"
+import { TOOL_SCRIPT_EXCLUDED } from "@/tool/tool-script-ref"
 import { deriveLiveness } from "@/actor/schema"
 import { SYSTEM_SPAWNED_AGENT_TYPES } from "@/agent/config"
+import { Flag } from "@/flag/flag"
 
 const log = Log.create({ service: "llm" })
 export const OUTPUT_TOKEN_MAX = ProviderTransform.OUTPUT_TOKEN_MAX
@@ -73,7 +77,7 @@ export const OUTPUT_TOKEN_MAX = ProviderTransform.OUTPUT_TOKEN_MAX
 export const ROSTER_HEADER =
   "Your fleet — your routable child sessions right now. This list is internal working context, " +
   "not output: never repeat it, or these session ids and titles, back to the user — report the " +
-  "routing DECISION instead (\"routing this to the docs child\"). Format is id | title | agent | status:"
+  'routing DECISION instead ("routing this to the docs child"). Format is id | title | agent | status:'
 
 // How many FINISHED-but-resumable child sessions the fleet roster carries,
 // most-recently-active first. The roster is re-injected on EVERY request,
@@ -85,7 +89,7 @@ export const ROSTER_IDLE_LIMIT = 5
 type Result = Awaited<ReturnType<typeof streamText>>
 
 /**
- * Match transient errors that the PERSISTENT_RETRY layer should retry.
+ * Match transient errors that max-mode local retries should retry.
  *
  * - HTTP 429 / 5xx / 529 — capacity / overload responses
  * - ECONNRESET / EPIPE / ETIMEDOUT — network errors typically caused by
@@ -95,7 +99,7 @@ type Result = Awaited<ReturnType<typeof streamText>>
  *   is HTTP-byte-level: keep-alive comments still count as activity, so
  *   the error only fires when the underlying TCP stream is genuinely dead.
  *
- * Auth errors (401/403), client errors (400, 404, 422), and user-
+ * Authentication failures, client errors (400, 404, 422), and user-
  * initiated aborts are NOT retryable.
  *
  * @deprecated Use `isRetryableTransientError` from `./retry` directly.
@@ -104,26 +108,6 @@ type Result = Awaited<ReturnType<typeof streamText>>
 export function isTransientCapacityError(error: unknown): boolean {
   return isRetryableTransientError(error)
 }
-
-/**
- * Persistent-retry schedule with exponential backoff.
- *
- * Exponential backoff 500ms × 2 (i.e. 0.5, 1, 2, 4, 8, 16, 32, 64, 128, 256s),
- * each individual delay capped at 5 minutes, total attempts capped at 10.
- *
- * Worst-case total = 11 attempts × chunkTimeout + cumulative backoff
- *                  ≈ 11 × 8min + 9min ≈ 97 min (with DEFAULT_CHUNK_TIMEOUT = 8min).
- *
- * Intentionally NOT capped via Schedule.upTo() — retry persistence under
- * brief upstream outages is the design goal. Bounding per-attempt latency
- * via chunkTimeout is the primary lever for hang-time control.
- */
-export const persistentRetrySchedule = Schedule.exponential("500 millis", 2).pipe(
-  Schedule.modifyDelay((_, delay) =>
-    Effect.succeed(Duration.isLessThanOrEqualTo(delay, Duration.minutes(5)) ? delay : Duration.minutes(5)),
-  ),
-  Schedule.both(Schedule.recurs(10)),
-)
 
 /**
  * Memory-system instructions appended to the main agent's system prompt.
@@ -140,37 +124,55 @@ export const persistentRetrySchedule = Schedule.exponential("500 millis", 2).pip
  * files already present in the rebuild dump, and the Subagent return
  * format contract.
  *
+ * This block is not appended when `MIMOCODE_DISABLE_CHECKPOINT` is on.
+ *
  * `memoryRoot` is the same absolute root returned by Memory.root(), so these
  * paths match the files used by checkpoint restore and memory/task detection.
  */
-function buildMemoryInstructions(sessionID: SessionID, projectID: ProjectID, memoryRoot: string): string {
+function buildMemoryInstructions(projectID: ProjectID, memoryRoot: string): string {
   const memoryFile = path.join(memoryRoot, "projects", projectID, "MEMORY.md")
-  const checkpointFile = path.join(memoryRoot, "sessions", sessionID, "checkpoint.md")
-  const sessionMemoryDir = path.join(memoryRoot, "sessions", sessionID)
+  const sessionMemoryDir = path.join(memoryRoot, "sessions", "current_session_id")
   const globalMemoryFile = path.join(memoryRoot, "global", "MEMORY.md")
-  return `# Memory system
+  const notesFile = path.join(sessionMemoryDir, "notes.md")
+  const checkpointEnabled = !Flag.MIMOCODE_DISABLE_CHECKPOINT
 
-You have a persistent file-based memory system. Four file types:
+  const files = [
+    `- Project memory at \`${memoryFile}\` — persistent across all sessions in this project. Contains: project context, rules, architecture decisions, durable cross-task knowledge.`,
+    ...(checkpointEnabled
+      ? [
+          `- Session checkpoint at \`${path.join(sessionMemoryDir, "checkpoint.md")}\` — current session's structured state, written ONLY by the checkpoint-writer subagent. 11 sections covering active intent, next action, directives, task tree, current work, files, learnings, errors, live resources, design decisions, and open notes. Task content lives inside §4 Task tree and §5 Current work.`,
+          `- Per-task progress at \`${path.join(sessionMemoryDir, "tasks", "<id>", "progress.md")}\` — writer-derived splitover from session-level progress.md (not LLM-written). When you spawn a subagent on a task, the subagent may be handed this path for reading; you do not maintain it.`,
+        ]
+      : []),
+    `- Global memory at \`${globalMemoryFile}\` — user-level preferences and cross-project feedback that persist across all projects.${checkpointEnabled ? ` Auto-injected into rebuild context under the "# Global memory" header when present.` : ""}`,
+  ]
 
-- Project memory at \`${memoryFile}\` — persistent across all sessions in this project. Contains: project context, rules, architecture decisions, durable cross-task knowledge.
-- Session checkpoint at \`${checkpointFile}\` — current session's structured state, written ONLY by the checkpoint-writer subagent. 11 sections covering active intent, next action, directives, task tree, current work, files, learnings, errors, live resources, design decisions, and open notes. Task content lives inside §4 Task tree and §5 Current work.
-- Per-task progress at \`${path.join(sessionMemoryDir, "tasks", "<id>", "progress.md")}\` — writer-derived splitover from session-level progress.md (not LLM-written). When you spawn a subagent on a task, the subagent may be handed this path for reading; you do not maintain it.
-- Global memory at \`${globalMemoryFile}\` — user-level preferences and cross-project feedback that persist across all projects. Auto-injected into rebuild context under the "## Global memory" header when present.
+  const sections = [
+    `# Memory system
 
-The checkpoint writer is the sole curator of the structured files. You don't maintain them mid-task — the writer extracts everything from the conversation at checkpoint events.
+You have a persistent file-based memory system. ${checkpointEnabled ? "Four" : "Two"} file types:
 
-## When to Edit MEMORY.md directly
+${files.join("\n")}`,
+    ...(checkpointEnabled
+      ? [
+          "The checkpoint writer is the sole curator of the structured files. You don't maintain them mid-task — the writer extracts everything from the conversation at checkpoint events.",
+        ]
+      : []),
+    `## When to Edit MEMORY.md directly
 
 You may Edit MEMORY.md when:
 - User states a project-level rule that should hold across sessions → ## Rules
 - User states a project-level architectural decision → ## Architecture decisions
-- A clearly durable cross-session fact emerges that you want available immediately, before the next checkpoint → ## Discovered durable knowledge
+- A clearly durable cross-session fact emerges that you want available immediately${checkpointEnabled ? ", before the next checkpoint" : ""} → ## Discovered durable knowledge${
+      checkpointEnabled
+        ? `
 
-These are exceptions, not the norm. The writer covers most extraction at checkpoint time.
+These are exceptions, not the norm. The writer covers most extraction at checkpoint time.`
+        : ""
+    }`,
+    `## Notes scratchpad
 
-## Notes scratchpad
-
-You have a single legal scratchpad at \`${path.join(sessionMemoryDir, "notes.md")}\`. Append entries to it when you want to record:
+You have a single legal scratchpad at \`${notesFile}\`. Append entries to it when you want to record:
 
 - A quote (from the user, an article, a known engineer) that has lasting value but isn't a task-specific decision
 - An unresolved question — something you noticed but won't answer this turn
@@ -179,11 +181,10 @@ You have a single legal scratchpad at \`${path.join(sessionMemoryDir, "notes.md"
 
 Format each entry as:
   ## [turn N · YYYY-MM-DDTHH:MM:SSZ]
-  Free-form body. The writer reorganizes structured content at checkpoint time.
+  Free-form body.${checkpointEnabled ? " The writer reorganizes structured content at checkpoint time." : ""}
 
-This is your ONLY legal scratchpad — don't create \`learning.md\`, \`scratch.md\`, or any other ad-hoc memory file.
-
-## Subagent return format
+This is your ONLY legal scratchpad — don't create \`learning.md\`, \`scratch.md\`, or any other ad-hoc memory file.`,
+    `## Subagent return format
 
 When you (as a subagent) finish your task, your final assistant message will be delivered to the spawning agent. If the spawn machinery added a "Return format (required)" section to your prompt, follow it exactly:
 
@@ -195,15 +196,17 @@ When you (as a subagent) finish your task, your final assistant message will be 
   **Files touched**: <comma-separated paths or "(none)">
   **Findings worth promoting**: <bullet list, or "(none)">
 
-If your spawn prompt didn't include this format (e.g., explore/title/summary agents have their own contracts), follow whatever your prompt specifies.
+If your spawn prompt didn't include this format (e.g., explore/title/summary agents have their own contracts), follow whatever your prompt specifies.`,
+    `## What NOT to do
 
-## What NOT to do
-
-- Don't Edit checkpoint.md — that's the writer's domain.
-- Don't create memory files other than notes.md (no learning.md, no scratch.md). Use notes.md for any free-form entry.
-- Don't ask the user about something memory may already record — search first via Grep / Read.
-
-## Active recall protocol
+${[
+  ...(checkpointEnabled ? ["- Don't Edit checkpoint.md — that's the writer's domain."] : []),
+  "- Don't create memory files other than notes.md (no learning.md, no scratch.md). Use notes.md for any free-form entry.",
+  "- Don't ask the user about something memory may already record — search first via Grep / Read.",
+].join("\n")}`,
+    ...(checkpointEnabled
+      ? [
+          `## Active recall protocol
 
 After a checkpoint rebuild, the following dumps may be already in your context (look for the "Summary of previous conversation from checkpoint files:" header followed by these dumps):
 
@@ -222,8 +225,12 @@ If a dump shows "⚠️ Truncated at ~N tokens. Read(<path>, offset=L) for the r
 
 Memory entries name functions, files, flags, paths — those are CLAIMS about a point in time when they were written. Verify before acting on a specific name.
 
-Don't ask the user about something memory may already record.
-`
+Don't ask the user about something memory may already record.`,
+        ]
+      : []),
+  ]
+
+  return sections.join("\n\n")
 }
 
 export type StreamInput = {
@@ -234,7 +241,7 @@ export type StreamInput = {
   agent: Agent.Info
   permission?: Permission.Ruleset
   system: string[]
-  prebuiltSystem?: string[]      // when set, skip buildSystemArray and use this verbatim
+  prebuiltSystem?: string[] // when set, skip buildSystemArray and use this verbatim
   messages: ModelMessage[]
   small?: boolean
   tools: Record<string, Tool>
@@ -242,6 +249,11 @@ export type StreamInput = {
   retries?: number
   toolChoice?: "auto" | "required" | "none"
   agentID?: string
+  mergeTurnContextIntoLastUser?: boolean
+  /** Keep an appended control prompt last while applying provider-specific turn context to the conversation before it. */
+  mergeTurnContextBeforeLastMessage?: boolean
+  ephemeral?: boolean
+  requestID?: string
 }
 
 export type StreamRequest = StreamInput & {
@@ -256,6 +268,40 @@ export type StreamRequest = StreamInput & {
 
 export type Event = Result["fullStream"] extends AsyncIterable<infer T> ? T : never
 
+/** Convert per-turn context into the final model-visible user segment. */
+export function turnContextMessages(user: MessageV2.User): ModelMessage[] {
+  if (user.systemMode === "replace-agent") return []
+  const context = user.system?.trim()
+  if (!context) return []
+  return [{
+      role: "user",
+      content: `<system-reminder>\n${context}\n</system-reminder>`,
+  }]
+}
+
+export function appendTurnContext(messages: ModelMessage[], user: MessageV2.User, mergeWithLastUser = false) {
+  const context = turnContextMessages(user)
+  if (!context.length) return messages
+  const last = messages.at(-1)
+  if (!mergeWithLastUser || !last || last.role !== "user" || typeof last.content !== "string") {
+    return [...messages, ...context]
+  }
+  return [...messages.slice(0, -1), { ...last, content: last.content + "\n\n" + context[0].content }]
+}
+
+function appendTurnContextBeforeLastMessage(messages: ModelMessage[], user: MessageV2.User) {
+  const tail = messages.at(-1)
+  if (!tail) return appendTurnContext(messages, user, true)
+  const head = messages.slice(0, -1)
+  const userIndex = head.findLastIndex((message) => message.role === "user")
+  if (userIndex < 0) return appendTurnContext(messages, user, true)
+  return [
+    ...appendTurnContext(head.slice(0, userIndex + 1), user, true),
+    ...head.slice(userIndex + 1),
+    tail,
+  ]
+}
+
 export interface Interface {
   readonly stream: (input: StreamInput) => Stream.Stream<Event, unknown>
   readonly buildSystemArray: (input: {
@@ -265,6 +311,7 @@ export interface Interface {
     user: MessageV2.User
     sessionID: string
     agentID?: string
+    ephemeral?: boolean
   }) => Effect.Effect<string[]>
 }
 
@@ -273,7 +320,14 @@ export class Service extends Context.Service<Service, Interface>()("@opencode/LL
 const live: Layer.Layer<
   Service,
   never,
-  Auth.Service | Config.Service | Provider.Service | Plugin.Service | Permission.Service | ActorRegistry.Service | Memory.Service
+  | Auth.Service
+  | Config.Service
+  | Provider.Service
+  | Plugin.Service
+  | Permission.Service
+  | ActorRegistry.Service
+  | Memory.Service
+  | SessionStatus.Service
 > = Layer.effect(
   Service,
   Effect.gen(function* () {
@@ -284,6 +338,7 @@ const live: Layer.Layer<
     const perm = yield* Permission.Service
     const actorReg = yield* ActorRegistry.Service
     const memory = yield* Memory.Service
+    const status = yield* SessionStatus.Service
 
     const buildSystemArray = Effect.fn("LLM.buildSystemArray")(function* (input: {
       agent: Agent.Info
@@ -292,33 +347,50 @@ const live: Layer.Layer<
       user: MessageV2.User
       sessionID: string
       agentID?: string
+      ephemeral?: boolean
     }) {
+      // "Is this a main/peer actor" — the single judgement two sections below key
+      // on (replace-agent base override + memory instructions). Injected only for
+      // actors whose context the checkpoint flow serves — main + peer. Subagents
+      // (explore/general/…) run in the SHARED sessionID (F37 slices) but are NOT
+      // main/peer; system-spawned actors (checkpoint-writer et al.) and ephemeral
+      // one-shots (title gen) likewise are not. Shares the exact `servesCheckpoint`
+      // judgement with SessionPrune.fireCheckpoints so the "who owns a checkpoint"
+      // and "who is taught about it" (and now "who applies the session base") sets
+      // can never drift apart.
+      const servesCheckpoint =
+        !input.ephemeral && (yield* actorReg.servesCheckpoint(SessionID.make(input.sessionID), input.agentID))
+
+      // replace-agent replaces the PRIMARY line's base prompt with a session-level
+      // system (desktop execution-profile base). It is a main/peer concern: a
+      // subagent shares the sessionID and therefore inherits `systemMode` on the
+      // resolved session prompt, but must keep its OWN `agent.prompt` — else
+      // explore/general/title/… get their identity clobbered by the parent base.
+      // So the base override only fires when this actor `servesCheckpoint`; every
+      // other actor falls back to SystemPrompt.agent(self).
+      const replaceAgent = input.user.systemMode === "replace-agent" && servesCheckpoint
+
       const system: string[] = []
       system.push(
         [
-          ...SystemPrompt.agent(input.agent, input.model),
-          // any custom prompt passed into this call
-          ...input.system,
-          // any custom prompt from last user message
-          ...(input.user.system ? [input.user.system] : []),
+          // replace-agent is the session's base system prompt, so it must occupy
+          // the same leading position as the agent prompt it replaces.
+          ...(replaceAgent && input.user.system
+            ? [input.user.system]
+            : SystemPrompt.agent(input.agent, input.model, input.user.harness)),
         ]
           .filter((x) => x)
           .join("\n"),
       )
 
       // v5: memory-instructions section. Teaches the agent how/where/when to
-      // maintain `MEMORY.md` and `checkpoint.md` directly via Edit. Project ID is
-      // resolved from the ALS-bound Instance with a safe fallback to
-      // `ProjectID.global` (mirrors the pattern in session/checkpoint.ts so the
+      // maintain `MEMORY.md` and (when checkpointing is on) `checkpoint.md`.
+      // Project ID is resolved from the ALS-bound Instance with a safe fallback
+      // to `ProjectID.global` (mirrors the pattern in session/checkpoint.ts so the
       // path the prompt advertises matches the path the writer actually writes).
-      // Injected only for actors whose context the checkpoint flow serves —
-      // main + peer. Subagents (explore/general/compose) use per-actor compaction
-      // and have no checkpoint duty; system-spawned actors (checkpoint-writer et al.)
-      // are the writers themselves. Shares the exact `servesCheckpoint` judgement
-      // with SessionPrune.fireCheckpoints so the "who owns a checkpoint" and "who is
-      // taught about it" sets can never drift apart.
-      const servesCheckpoint = yield* actorReg.servesCheckpoint(SessionID.make(input.sessionID), input.agentID)
-      if (servesCheckpoint) {
+      // Gated on the shared `servesCheckpoint` judgement above; disabling
+      // checkpoints also disables this memory-system prompt block.
+      if (servesCheckpoint && !Flag.MIMOCODE_DISABLE_CHECKPOINT) {
         const projectID =
           (yield* Effect.try({
             try: () => Instance.current?.project?.id as ProjectID | undefined,
@@ -331,7 +403,7 @@ const live: Layer.Layer<
         // checkpoint-flow call sites cover the writer/rebuild paths; this covers
         // the "agent edits MEMORY.md before any checkpoint" path. Idempotent.
         yield* Effect.promise(() => migrateProjectMemory(projectID)).pipe(Effect.ignore)
-        system.push(buildMemoryInstructions(SessionID.make(input.sessionID), projectID, yield* memory.root()))
+        system.push(buildMemoryInstructions(projectID, yield* memory.root()))
       }
 
       // Orchestrator fleet roster: inject a compact one-line-per-session
@@ -341,14 +413,11 @@ const live: Layer.Layer<
       // AGENT (build/plan/compose) — the routing signal the model needs — not its
       // actor mode, which is always "peer" here and therefore carries no signal.
       // AI needs details on demand → session status/ask.
-      if (input.agent.name === "orchestrator") {
+      if (!input.ephemeral && input.agent.name === "orchestrator") {
         // listPeerChildren joins through the Session row's parent_id, because a
         // peer child registers its actor row under its OWN session id — a
         // session_id-keyed lookup (listByParent) never matches a peer.
-        const children = yield* actorReg.listPeerChildren(
-          SessionID.make(input.sessionID),
-          input.agentID ?? "main",
-        )
+        const children = yield* actorReg.listPeerChildren(SessionID.make(input.sessionID), input.agentID ?? "main")
         const now = Date.now()
         const routable = children
           .filter(({ actor }) => !SYSTEM_SPAWNED_AGENT_TYPES.has(actor.agent))
@@ -379,13 +448,15 @@ const live: Layer.Layer<
         if (lines.length > 0) system.push(`${ROSTER_HEADER}\n${lines.join("\n")}`)
       }
 
-      // Plugins still see the multi-part array (base prompt as [0], memory as a
-      // trailing element) so hooks that index or append parts keep working.
+      // Plugins transform the stable base before the caller-controlled tail.
       yield* plugin.trigger(
         "experimental.chat.system.transform",
         { sessionID: input.sessionID, model: input.model },
         { system },
       )
+
+      // Keep skill reminders at the tail and instruction files after them.
+      system.push(...input.system)
 
       // Collapse to a single system message. The historical 2-part split existed
       // only to keep a byte-stable cache prefix separate from the memory block's
@@ -399,11 +470,12 @@ const live: Layer.Layer<
     })
 
     const run = Effect.fn("LLM.run")(function* (input: StreamRequest) {
+      const correlationID = input.requestID ?? input.sessionID
       const l = log
         .clone()
         .tag("providerID", input.model.providerID)
         .tag("modelID", input.model.id)
-        .tag("session.id", input.sessionID)
+        .tag(input.requestID ? "request.id" : "session.id", correlationID)
         .tag("small", (input.small ?? false).toString())
         .tag("agent", input.agent.name)
         .tag("mode", input.agent.mode)
@@ -434,6 +506,7 @@ const live: Layer.Layer<
           user: input.user,
           sessionID: input.sessionID,
           agentID: input.agentID,
+          ephemeral: input.ephemeral,
         }))
 
       const variant =
@@ -453,11 +526,12 @@ const live: Layer.Layer<
         mergeDeep(input.agent.options),
         mergeDeep(variant),
       )
-      if (isOpenaiOauth) {
-        options.instructions = system.join("\n")
-      }
-
       const isWorkflow = language instanceof GitLabWorkflowLanguageModel
+      const providerSystem =
+        input.user.systemMode !== "replace-agent" && (isOpenaiOauth || isWorkflow) && input.user.system?.trim()
+          ? [...system, input.user.system]
+          : system
+      if (isOpenaiOauth) options.instructions = providerSystem.join("\n")
       // Reactive prefill-rejection backstop. The PRIMARY mechanism is the
       // proactive guard in ProviderTransform.message()
       // (ensureTrailingUserMessage): we never send a request ending in an
@@ -471,18 +545,21 @@ const live: Layer.Layer<
       const requestMessages = input.dropAssistantPrefill
         ? ProviderTransform.dropTrailingAssistantPrefill(input.messages)
         : input.messages
+      const requestMessagesWithContext = input.mergeTurnContextBeforeLastMessage
+        ? appendTurnContextBeforeLastMessage(requestMessages, input.user)
+        : appendTurnContext(requestMessages, input.user, input.mergeTurnContextIntoLastUser)
       const messages = isOpenaiOauth
         ? requestMessages
         : isWorkflow
           ? requestMessages
           : [
-              ...system.map(
+              ...providerSystem.map(
                 (x): ModelMessage => ({
                   role: "system",
                   content: x,
                 }),
               ),
-              ...requestMessages,
+              ...requestMessagesWithContext,
             ]
 
       const params = yield* plugin.trigger(
@@ -656,7 +733,7 @@ const live: Layer.Layer<
               if (prop !== "startSpan") return Reflect.get(target, prop, receiver)
               return (...args: Parameters<typeof target.startSpan>) => {
                 const span = target.startSpan(...args)
-                span.setAttribute("session.id", input.sessionID)
+                span.setAttribute(input.requestID ? "request.id" : "session.id", correlationID)
                 return span
               }
             },
@@ -670,7 +747,7 @@ const live: Layer.Layer<
         registeredToolCount: Object.keys(tools).length,
         activeToolCount: activeTools.length,
       })
-      yield* plugin
+      if (!input.ephemeral) yield* plugin
         .trigger(
           "session.llm.request",
           {
@@ -678,8 +755,8 @@ const live: Layer.Layer<
             providerID: input.model.providerID,
             modelID: input.model.id,
             trajectory: [
-              ...system.map((content) => ({ role: "system", content })),
-              ...requestMessages,
+              ...providerSystem.map((content) => ({ role: "system", content })),
+              ...(isOpenaiOauth || isWorkflow ? requestMessages : requestMessagesWithContext),
             ],
             systemPrompt: system,
           },
@@ -735,22 +812,15 @@ const live: Layer.Layer<
         maxOutputTokens: params.maxOutputTokens,
         abortSignal: input.abort,
         headers: {
-          "x-session-affinity": input.sessionID,
-          ...(input.parentSessionID ? { "x-parent-session-id": input.parentSessionID } : {}),
+          ...(!input.ephemeral ? { "x-session-affinity": input.sessionID } : {}),
+          ...(!input.ephemeral && input.parentSessionID ? { "x-parent-session-id": input.parentSessionID } : {}),
           ...input.model.headers,
           ...headers,
           "User-Agent": `mimocode/${InstallationVersion}`,
         },
-        // AI SDK's internal retry loop is SILENT — it emits no events and does
-        // not update session status, so the TUI shows only a dead spinner while
-        // it runs. Its backoff is also UNCAPPED (delay *= 2 each attempt, capped
-        // only by a retry-after header), so the prior default of 10 meant up to
-        // ~34 min (2+4+…+1024s) of invisible retrying before the error surfaced.
-        // We keep this layer short (absorb a couple of quick blips) and let the
-        // VISIBLE processor-level SessionRetry.policy own long-haul resilience —
-        // it publishes `type: "retry"` so the `[retrying attempt #N]` banner
-        // shows, and its per-attempt delay is capped at 30s.
-        maxRetries: input.retries ?? 2,
+        // Keep one SDK-level retry for a failure before response headers. The
+        // processor owns the persistent stream retry budget below this layer.
+        maxRetries: input.retries ?? 0,
         messages,
         model: wrapLanguageModel({
           model: language,
@@ -774,11 +844,11 @@ const live: Layer.Layer<
         }),
         experimental_telemetry: {
           isEnabled: cfg.experimental?.openTelemetry,
-          functionId: "session.llm",
+          functionId: input.ephemeral ? "title.llm" : "session.llm",
           tracer: telemetryTracer,
           metadata: {
             userId: cfg.username ?? "unknown",
-            sessionId: input.sessionID,
+            ...(input.requestID ? { requestId: correlationID } : { sessionId: input.sessionID }),
           },
         },
       })
@@ -788,7 +858,7 @@ const live: Layer.Layer<
       // Build the scoped stream for one attempt. `dropAssistantPrefill` forces
       // run() to hard-prune the trailing assistant prefill before send — used only
       // by the reactive one-shot retry below.
-      const attempt = (dropAssistantPrefill: boolean) =>
+      const attempt = (dropAssistantPrefill: boolean, allowRequestRetry: boolean) =>
         Stream.scoped(
           Stream.unwrap(
             Effect.gen(function* () {
@@ -796,45 +866,7 @@ const live: Layer.Layer<
                 Effect.sync(() => new AbortController()),
                 (ctrl) => Effect.sync(() => ctrl.abort()),
               )
-              const attemptRef = yield* Ref.make(0)
-
-              const publishRetryEvent = (error: unknown, nextAttempt: number) =>
-                Effect.gen(function* () {
-                  log.debug("retry attempt", {
-                    sessionID: input.sessionID,
-                    messageID: input.user.id,
-                    attempt: nextAttempt,
-                    reason: error instanceof Error ? error.message : String(error),
-                  })
-                  if (nextAttempt > 10) return
-                  const delayMs = Math.min(500 * 2 ** (nextAttempt - 1), 300_000)
-                  yield* Effect.promise(() =>
-                    Bus.publish(Session.Event.RetryAttempt, {
-                      sessionID: SessionID.make(input.sessionID),
-                      messageID: input.user.id,
-                      attempt: nextAttempt,
-                      maxAttempts: 10,
-                      reason: error instanceof Error ? error.message : String(error),
-                      nextDelayMs: delayMs,
-                    })
-                  )
-                })
-
-              const streamWithTelemetry = run({ ...input, abort: ctrl.signal, dropAssistantPrefill }).pipe(
-                Effect.tapError((error) => {
-                  if (!isTransientCapacityError(error)) return Effect.void
-                  return Ref.updateAndGet(attemptRef, (n) => n + 1).pipe(
-                    Effect.flatMap((nextAttempt) => publishRetryEvent(error, nextAttempt))
-                  )
-                })
-              )
-
-              const result = yield* streamWithTelemetry.pipe(
-                Effect.retry({
-                  while: isTransientCapacityError,
-                  schedule: persistentRetrySchedule,
-                }),
-              )
+              const result = yield* run({ ...input, abort: ctrl.signal, dropAssistantPrefill })
 
               // Structurally identical to the pre-guard stream: a bare scoped
               // stream over the provider's fullStream. No per-event combinator, no
@@ -842,8 +874,30 @@ const live: Layer.Layer<
               // AbortController scope teardown are exactly as before. The reactive
               // prefill retry is layered lazily below and only pays a cost when an
               // actual error surfaces.
-              return Stream.fromAsyncIterable(result.fullStream, (e) =>
+              const rawStream = Stream.fromAsyncIterable(result.fullStream, (e) =>
                 e instanceof Error ? e : new Error(String(e)),
+              )
+              let hasProviderOutput = false
+              return rawStream.pipe(
+                Stream.mapEffect((event) =>
+                  Effect.gen(function* () {
+                    if (
+                      event.type === "error" &&
+                      !hasProviderOutput &&
+                      allowRequestRetry &&
+                      !ProviderTransform.isAssistantPrefillRejection(event.error)
+                    ) {
+                      const normalized = MessageV2.fromError(event.error, {
+                        providerID: input.model.providerID,
+                        aborted: ctrl.signal.aborted,
+                        allow404Retry: ProviderError.allowsModelNotFoundRetry(input.model),
+                      })
+                      if (SessionRetry.decide(normalized, "request").retryable) return yield* Effect.fail(event.error)
+                    }
+                    if (event.type !== "start" && event.type !== "error") hasProviderOutput = true
+                    return event
+                  }),
+                ),
               )
             }),
           ),
@@ -856,7 +910,7 @@ const live: Layer.Layer<
       // per-event Effect fiber, unlike `Stream.mapEffect`), and the failing branch
       // is only ever constructed for the specific error event. On a clean stream
       // this is a transparent passthrough.
-      const promotePrefillRejection = (stream: Stream.Stream<Event, Error, never>) =>
+      const promotePrefillRejection = (stream: Stream.Stream<Event, unknown, never>) =>
         stream.pipe(
           Stream.flatMap((event) =>
             event.type === "error" && ProviderTransform.isAssistantPrefillRejection(event.error)
@@ -875,19 +929,75 @@ const live: Layer.Layer<
       // hard-pruned. Guarded to a single reprune so a persistent failure surfaces
       // the retry's OWN error, falling back to the original prefill cause only when
       // the resend is again prefill-rejected.
-      return promotePrefillRejection(attempt(false)).pipe(
-        Stream.catchCause((primaryCause) => {
-          if (!ProviderTransform.isAssistantPrefillRejection(Cause.squash(primaryCause)))
-            return Stream.failCause(primaryCause)
-          // Pruned resend passes events through untouched: any residual error flows
-          // to the processor and surfaces normally (no promotion, no loop).
-          return attempt(true).pipe(
-            Stream.catchCause((retryCause) =>
-              ProviderTransform.isAssistantPrefillRejection(Cause.squash(retryCause))
-                ? Stream.failCause(primaryCause)
-                : Stream.failCause(retryCause),
-            ),
-          )
+      return Stream.unwrap(
+        Effect.gen(function* () {
+          const retryConfig = SessionRetry.resolve(yield* config.get(), input.model.providerID)
+          const retryRequest = (
+            source: Stream.Stream<Event, unknown, never>,
+            retryCount: number,
+            startedAt?: number,
+            prefillRepaired = false,
+          ): Stream.Stream<Event, unknown, never> =>
+            source.pipe(
+              Stream.catchCause((primaryCause) => {
+                const primaryError = Cause.squash(primaryCause)
+                if (ProviderTransform.isAssistantPrefillRejection(primaryError)) {
+                  if (prefillRepaired) return Stream.failCause(primaryCause)
+                  return retryRequest(attempt(true, true), retryCount, startedAt, true)
+                }
+                const normalized = MessageV2.fromError(primaryError, { providerID: input.model.providerID, allow404Retry: ProviderError.allowsModelNotFoundRetry(input.model) })
+                const decision = SessionRetry.decide(normalized, "request")
+                if (!decision.retryable) return Stream.failCause(primaryCause)
+                const budget = SessionRetry.budgetFor(retryConfig, decision)
+                const nextAttempt = retryCount + 1
+                if (budget.mode === "bounded" && (budget.maxRetries ?? 0) < nextAttempt)
+                  return Stream.failCause(primaryCause)
+                const deadlineStart = startedAt ?? Date.now()
+                const elapsed = Date.now() - deadlineStart
+                const wait = SessionRetry.retryDelay(
+                  nextAttempt,
+                  decision,
+                  budget.jitterRatio,
+                  budget.initialDelayMs,
+                  budget.maxDelayMs,
+                )
+                if (
+                  budget.maxElapsedMs > 0 &&
+                  (elapsed >= budget.maxElapsedMs || wait >= budget.maxElapsedMs - elapsed)
+                )
+                  return Stream.failCause(primaryCause)
+                return Stream.unwrap(
+                  Effect.gen(function* () {
+                    const globalAttempt = yield* status.setRetry(SessionID.make(input.sessionID), {
+                      type: "retry",
+                      attempt: nextAttempt,
+                      phaseAttempt: nextAttempt,
+                      message: decision.message,
+                      next: Date.now() + wait,
+                      phase: "request",
+                      scope: "request",
+                    })
+                    if (!input.ephemeral) yield* Effect.promise(() =>
+                      Bus.publish(Session.Event.RetryAttempt, {
+                        sessionID: SessionID.make(input.sessionID),
+                        messageID: input.user.id,
+                        attempt: globalAttempt,
+                        phaseAttempt: nextAttempt,
+                        maxAttempts: budget.maxRetries ?? 0,
+                        phase: "request",
+                        kind: decision.kind,
+                        scope: "request",
+                        reason: decision.message,
+                        nextDelayMs: wait,
+                      }),
+                    )
+                    yield* Effect.sleep(Duration.millis(wait))
+                    return retryRequest(attempt(false, true), nextAttempt, deadlineStart)
+                  }),
+                )
+              }),
+            )
+          return retryRequest(promotePrefillRejection(attempt(false, true)), 0)
         }),
       )
     }
@@ -906,19 +1016,24 @@ export const defaultLayer = Layer.suspend(() =>
     Layer.provide(Plugin.defaultLayer),
     Layer.provide(ActorRegistry.defaultLayer),
     Layer.provide(Memory.defaultLayer),
+    Layer.provide(SessionStatus.defaultLayer),
   ),
 )
 
 function resolveTools(input: Pick<StreamInput, "tools" | "activeTools" | "agent" | "permission" | "user">) {
-  const disabled = Permission.disabled(
-    Object.keys(input.tools),
-    Agent.runtimePermission(input.agent, input.permission),
-  )
+  const disabled = Permission.disabled(Object.keys(input.tools), Agent.runtimePermission(input.agent, input.permission))
+  const allowExecGateway =
+    input.activeTools?.includes("exec") === true &&
+    Object.keys(input.tools).some(
+      (key) => !TOOL_SCRIPT_EXCLUDED.has(key) && input.user.tools?.[key] !== false && !disabled.has(key),
+    )
   return Record.filter(
     input.tools,
     (_, key) =>
       input.user.tools?.[key] !== false &&
-      (!disabled.has(key) || (key === MCP_TOOL_SEARCH_ID && input.activeTools?.includes(key) === true)),
+      (!disabled.has(key) ||
+        (key === MCP_TOOL_SEARCH_ID && input.activeTools?.includes(key) === true) ||
+        (key === "exec" && allowExecGateway)),
   )
 }
 

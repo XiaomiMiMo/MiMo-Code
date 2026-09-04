@@ -84,7 +84,7 @@ const scriptDir = () => path.join(Global.Path.data, "workflow")
 // or dot-dot (`../../../etc/passwd`, `wf_../x`, an absolute path) would escape
 // scriptDir. The HTTP route already rejects these, but resume()/journal IO are also
 // reachable from the workflow tool and the TUI, so we re-enforce the minted shape
-// here (`wf_` + base62 — a charset with no `.` or `/`). A throw here surfaces as an
+// here (`wf_` + `[0-9A-Za-z-]` — a charset with no `.` or `/`). A throw here surfaces as an
 // Effect defect: on the async IO paths (readScript/loadJournal) resume() captures it
 // via Effect.exit and treats it as not-resumable; on the synchronous journal appends
 // it fails as a defect BEFORE any appendFileSync (the caller Effect.ignore's it), so
@@ -92,7 +92,7 @@ const scriptDir = () => path.join(Global.Path.data, "workflow")
 // The `+` form (not the route's fixed `{26}`) is deliberate: this in-depth guard only
 // needs the traversal-proof property (no `.`/`/`), so it stays correct even if the
 // minted ID length changes; the strict length check lives at the route trust boundary.
-const RUN_ID = /^wf_[0-9A-Za-z]+$/
+const RUN_ID = /^wf_[0-9A-Za-z-]+$/
 const safeRunID = (runID: string) => {
   if (!RUN_ID.test(runID)) throw new Error(`invalid workflow runID: ${JSON.stringify(runID)}`)
   return runID

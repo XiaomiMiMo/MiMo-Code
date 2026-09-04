@@ -24,6 +24,9 @@ export interface OpenaiCompatibleProviderSettings {
    */
   name?: string
 
+  /** Function tools to expose as Responses free-form custom tools. */
+  customToolNames?: readonly string[]
+
   /**
    * Custom headers to include in the requests.
    */
@@ -77,6 +80,8 @@ export function createOpenaiCompatible(options: OpenaiCompatibleProviderSettings
   const createResponsesModel = (modelId: OpenaiCompatibleModelId) => {
     return new OpenAIResponsesLanguageModel(modelId, {
       provider: `${options.name ?? "openai-compatible"}.responses`,
+      providerOptionsKey: options.name === "github-copilot" ? "copilot" : options.name,
+      customToolNames: options.customToolNames,
       headers: getHeaders,
       url: ({ path }) => `${baseURL}${path}`,
       fetch: options.fetch,

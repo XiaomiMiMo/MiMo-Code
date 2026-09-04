@@ -415,7 +415,7 @@ describe("session.llm system prompt — memory-instructions guard", () => {
     })
   })
 
-  test("main agent memory instructions use absolute memory paths", async () => {
+  test("main agent memory instructions keep session paths stable across sessions", async () => {
     const server = queueState.server!
     const providerID = "alibaba"
     const modelID = "qwen-plus"
@@ -469,13 +469,92 @@ describe("session.llm system prompt — memory-instructions guard", () => {
           .map((m) => m.content)
           .join("\n")
         expect(allSys).toContain(path.join(Global.Path.data, "memory", "projects", Instance.current.project.id, "MEMORY.md"))
-        expect(allSys).toContain(path.join(Global.Path.data, "memory", "sessions", sessionID, "checkpoint.md"))
+        const sessionTemplate = path.join(Global.Path.data, "memory", "sessions", "current_session_id")
+        expect(allSys).toContain(path.join(sessionTemplate, "checkpoint.md"))
+        expect(allSys).toContain(path.join(sessionTemplate, "notes.md"))
+        expect(allSys).toContain(path.join(sessionTemplate, "tasks", "<id>", "progress.md"))
+        expect(allSys).not.toContain(path.join(Global.Path.data, "memory", "sessions", sessionID))
         // Global memory is taught (read-side) and points at the canonical path.
-        expect(allSys).toContain("## Global memory")
+        expect(allSys).toContain("# Global memory")
         expect(allSys).toContain(path.join(Global.Path.data, "memory", "global", "MEMORY.md"))
         expect(allSys).not.toContain("<data>/memory/projects")
         expect(allSys).not.toContain("<data>/memory/sessions")
       },
     })
+  })
+
+  test("MIMOCODE_DISABLE_CHECKPOINT=true — memory instructions are not appended", async () => {
+    const previous = process.env.MIMOCODE_DISABLE_CHECKPOINT
+    process.env.MIMOCODE_DISABLE_CHECKPOINT = "true"
+    const server = queueState.server!
+    const providerID = "alibaba"
+    const modelID = "qwen-plus"
+    const fixture = await loadFixture(providerID, modelID)
+    const request = waitRequest(
+      "/chat/completions",
+      new Response(createChatStream("Hi"), { status: 200, headers: { "Content-Type": "text/event-stream" } }),
+    )
+
+    try {
+      await using tmp = await tmpdir({
+        init: async (dir) => {
+          await Bun.write(path.join(dir, "mimocode.json"), tmpConfig(providerID, `${server.url.origin}/v1`))
+        },
+      })
+
+      await Instance.provide({
+        directory: tmp.path,
+        fn: async () => {
+          const resolved = await getModel(ProviderID.make(providerID), ModelID.make(fixture.model.id))
+          const sessionRt = ManagedRuntime.make(SessionNs.defaultLayer)
+          let sessionID: SessionID
+          try {
+            const info = await sessionRt.runPromise(SessionNs.Service.use((svc) => svc.create({})))
+            sessionID = info.id
+          } finally {
+            await sessionRt.dispose()
+          }
+          const rt = ManagedRuntime.make(Layer.mergeAll(LLM.defaultLayer))
+          try {
+            await rt.runPromise(
+              LLM.Service.use((svc) =>
+                svc
+                  .stream({
+                    user: makeBaseUser(sessionID, providerID, resolved.id),
+                    sessionID,
+                    model: resolved,
+                    agent: makeAgent(),
+                    system: ["You are a helpful assistant."],
+                    messages: [{ role: "user", content: "Hello" }],
+                    tools: {},
+                  })
+                  .pipe(Stream.runDrain),
+              ),
+            )
+          } finally {
+            await rt.dispose()
+          }
+          const capture = await request
+          const allSys = (capture.body.messages as Array<{ role: string; content: string }>)
+            .filter((m) => m.role === "system")
+            .map((m) => m.content)
+            .join("\n")
+
+          expect(allSys).not.toContain("# Memory system")
+          expect(allSys).not.toContain("Notes scratchpad")
+          expect(allSys).not.toContain("Subagent return format")
+          expect(allSys).not.toContain(
+            path.join(Global.Path.data, "memory", "projects", Instance.current.project.id, "MEMORY.md"),
+          )
+          expect(allSys).not.toContain("checkpoint.md")
+          expect(allSys).not.toContain("Active recall protocol")
+          expect(allSys).not.toContain("sole curator")
+          expect(allSys).not.toContain("Session checkpoint")
+        },
+      })
+    } finally {
+      if (previous === undefined) delete process.env.MIMOCODE_DISABLE_CHECKPOINT
+      else process.env.MIMOCODE_DISABLE_CHECKPOINT = previous
+    }
   })
 })

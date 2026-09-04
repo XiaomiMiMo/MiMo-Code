@@ -200,6 +200,7 @@ export const ref = {
 
 const cfg = {
   $schema: "https://mimo.xiaomi.com/mimocode/config.json",
+  model: "test/test-model",
   provider: {
     test: {
       name: "Test",

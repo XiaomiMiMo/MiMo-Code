@@ -39,7 +39,6 @@ import { errorMessage } from "@/util/error"
 import { LspTool } from "./lsp"
 import * as Truncate from "./truncate"
 import { ApplyPatchTool } from "./apply_patch"
-import { ChangeDirectoryTool } from "./change-directory"
 import { Glob } from "@mimo-ai/shared/util/glob"
 import path from "path"
 import { pathToFileURL } from "url"
@@ -57,6 +56,7 @@ import { Instruction } from "../session/instruction"
 import { AppFileSystem } from "@mimo-ai/shared/filesystem"
 import { Bus } from "../bus"
 import { Agent } from "../agent/agent"
+import { hasActorTool } from "@/agent/config"
 import { Skill } from "../skill"
 import { Permission } from "@/permission"
 import { ActorRegistry } from "@/actor/registry"
@@ -73,8 +73,8 @@ import * as BashInteractive from "./bash-interactive"
 import { resolveInvocationStyle } from "./invocation-style"
 import { BuiltinWorkflow } from "@/workflow/builtin"
 import { ToolScriptTool, renderToolScriptDeclarations } from "./tool-script"
-import { toolScriptRegistry } from "./tool-script-ref"
-import { usesGPTToolset } from "./gpt"
+import { GPT_TOP_LEVEL_TOOLS, TOOL_SCRIPT_EXCLUDED, toolScriptRegistry } from "./tool-script-ref"
+import { type HarnessMode, usesGPTToolset } from "./gpt"
 
 const log = Log.create({ service: "tool.registry" })
 
@@ -119,7 +119,22 @@ export interface Interface {
   readonly ids: () => Effect.Effect<string[]>
   readonly all: () => Effect.Effect<Tool.Def[]>
   readonly named: () => Effect.Effect<{ actor: ActorDef; read: ReadDef }>
-  readonly tools: (model: { providerID: ProviderID; modelID: ModelID; agent: Agent.Info }) => Effect.Effect<Tool.Def[]>
+  readonly tools: (model: {
+    providerID: ProviderID
+    modelID: ModelID
+    apiModelID?: string
+    family?: string
+    agent: Agent.Info
+    harness?: HarnessMode
+  }) => Effect.Effect<Tool.Def[]>
+  readonly registered: (model: {
+    providerID: ProviderID
+    modelID: ModelID
+    apiModelID?: string
+    family?: string
+    agent: Agent.Info
+    harness?: HarnessMode
+  }) => Effect.Effect<Tool.Def[]>
   readonly reload: () => Effect.Effect<void>
 }
 
@@ -155,7 +170,6 @@ export const layer = Layer.effect(
     const edit = yield* EditTool
     const greptool = yield* GrepTool
     const patchtool = yield* ApplyPatchTool
-    const changedirtool = yield* ChangeDirectoryTool
     const skilltool = yield* SkillTool
     const skillsearch = yield* SkillSearchTool
     const mcptoolsearch = yield* McpToolSearchTool
@@ -254,7 +268,6 @@ export const layer = Layer.effect(
           skillsearch: Tool.init(skillsearch),
           mcptoolsearch: Tool.init(mcptoolsearch),
           patch: Tool.init(patchtool),
-          changedir: Tool.init(changedirtool),
           question: Tool.init(question),
           lsp: Tool.init(lsptool),
           planexit: Tool.init(planexit),
@@ -288,7 +301,6 @@ export const layer = Layer.effect(
             tool.skillsearch,
             tool.skill,
             tool.patch,
-            tool.changedir,
             ...(Flag.MIMOCODE_EXPERIMENTAL_LSP_TOOL ? [tool.lsp] : []),
             tool.planexit,
             tool.memory,
@@ -324,25 +336,6 @@ export const layer = Layer.effect(
       return (yield* all()).map((tool) => tool.id)
     })
 
-    const describeSkill = Effect.fn("ToolRegistry.describeSkill")(function* (agent: Agent.Info) {
-      const list = yield* skill.modelInvocable(agent)
-      if (list.length === 0) return "No skills are currently available."
-      return [
-        "Load a specialized skill that provides domain-specific instructions and workflows.",
-        "",
-        "When you recognize that a task matches one of the available skills listed below, use this tool to load the full skill instructions.",
-        "",
-        "The skill will inject detailed instructions, workflows, and access to bundled resources (scripts, references, templates) into the conversation context.",
-        "",
-        'Tool output includes a `<skill_content name="...">` block with the loaded content.',
-        "",
-        "The following skills provide specialized sets of instructions for particular tasks",
-        "Invoke this tool to load a skill when a task matches one of the available skills listed below:",
-        "",
-        Skill.fmt(list, { verbose: false }),
-      ].join("\n")
-    })
-
     const describeWorkflow = Effect.fn("ToolRegistry.describeWorkflow")(function* () {
       return renderWorkflowCatalog()
     })
@@ -371,9 +364,12 @@ export const layer = Layer.effect(
     const available = Effect.fn("ToolRegistry.available")(function* (input: {
       providerID: ProviderID
       modelID: ModelID
+      apiModelID?: string
+      family?: string
       agent: Agent.Info
+      harness?: HarnessMode
     }) {
-      const useGPTTools = usesGPTToolset(input.modelID)
+      const useGPTTools = usesGPTToolset(input.modelID, input.harness, input.apiModelID, input.family)
       let filtered = (yield* all()).filter((tool) => {
         if (tool.id === ToolScriptTool.id) return useGPTTools || Flag.MIMOCODE_ENABLE_EXEC_TOOL
         if (tool.id === CodeSearchTool.id || tool.id === WebSearchTool.id) {
@@ -404,8 +400,15 @@ export const layer = Layer.effect(
 
       if (input.agent.toolAllowlist) {
         const allowed = new Set(input.agent.toolAllowlist)
+        const allowExecGateway =
+          useGPTTools &&
+          [...allowed].some((toolID) => !GPT_TOP_LEVEL_TOOLS.has(toolID) && !TOOL_SCRIPT_EXCLUDED.has(toolID))
         filtered = filtered.filter(
-          (tool) => tool.id === "invalid" || tool.id === MCP_TOOL_SEARCH_ID || allowed.has(tool.id),
+          (tool) =>
+            tool.id === "invalid" ||
+            tool.id === MCP_TOOL_SEARCH_ID ||
+            allowed.has(tool.id) ||
+            (tool.id === ToolScriptTool.id && allowExecGateway),
         )
       }
 
@@ -415,23 +418,56 @@ export const layer = Layer.effect(
       // allowlist (build/plan/compose) and subagents — must not see `session`.
       filtered = filtered.filter((tool) => tool.id !== "session" || input.agent.name === "orchestrator")
 
+      // No subagent may spawn further subagents. `actor` is the only tool that
+      // spawns/runs child agents, so mask it out for every `mode: "subagent"`
+      // agent — native (general/explore) AND user-config-defined, which default
+      // to `"*": "allow"` and would otherwise recurse. Gate on mode rather than
+      // agent name so a custom subagent cannot opt itself back in.
+      //
+      // SYSTEM_SPAWNED_AGENT_TYPES are exempt: they are spawned by the runtime,
+      // never by a model, so they pose no recursive-delegation risk. The
+      // exemption is also load-bearing for checkpoint-writer, a fork agent whose
+      // LLM-visible tool schema must stay byte-identical to its (primary) parent's
+      // captured ForkContext.tools or the prefix cache breaks — see ForkContext
+      // JSDoc in actor/spawn.ts. Its real tool authority is the actor.tools
+      // whitelist set in tryStartCheckpointWriter, which already omits `actor`.
+      // The condition lives in hasActorTool so prompt surfaces that name the tool
+      // read the same gate.
+      if (!hasActorTool(input.agent)) {
+        filtered = filtered.filter((tool) => tool.id !== ActorTool.id)
+      }
+
       return { filtered, useGPTTools }
     })
 
-    // Late-bound ref (see tool-script-ref.ts): exec dispatches through the same
-    // model- and agent-filtered definitions advertised by the outer tool set.
+    // Late-bound ref (see tool-script-ref.ts): exec dispatches through the full
+    // model- and agent-filtered set, including definitions hidden from the
+    // compact Codex top-level schema.
     // The optional fallback is only for direct tool tests without model context.
     toolScriptRegistry.current = (input) =>
       input ? available(input).pipe(Effect.map((result) => result.filtered)) : all()
 
-    const tools: Interface["tools"] = Effect.fn("ToolRegistry.tools")(function* (input) {
+    const definitions = Effect.fn("ToolRegistry.definitions")(function* (
+      input: {
+        providerID: ProviderID
+        modelID: ModelID
+        apiModelID?: string
+        family?: string
+        agent: Agent.Info
+        harness?: HarnessMode
+      },
+      includeHidden: boolean,
+    ) {
       const availableTools = yield* available(input)
+      const selected = availableTools.useGPTTools && !includeHidden
+        ? availableTools.filtered.filter((tool) => GPT_TOP_LEVEL_TOOLS.has(tool.id))
+        : availableTools.filtered
 
       const cfg = yield* config.get()
       const resolveStyle = (toolId: string): "json" | "shell" => resolveInvocationStyle(cfg.tool, toolId)
 
       return yield* Effect.forEach(
-        availableTools.filtered,
+        selected,
         Effect.fnUntraced(function* (tool: Tool.Def) {
           using _ = log.time(tool.id)
           const output = {
@@ -451,7 +487,6 @@ export const layer = Layer.effect(
             description: [
               description,
               tool.id === ActorTool.id ? yield* describeTask(input.agent) : undefined,
-              tool.id === SkillTool.id ? yield* describeSkill(input.agent) : undefined,
               tool.id === WorkflowTool.id ? yield* describeWorkflow() : undefined,
               tool.id === ToolScriptTool.id ? yield* describeToolScript(availableTools.filtered) : undefined,
             ]
@@ -466,6 +501,14 @@ export const layer = Layer.effect(
       )
     })
 
+    const tools: Interface["tools"] = Effect.fn("ToolRegistry.tools")(function* (input) {
+      return yield* definitions(input, false)
+    })
+
+    const registered: Interface["registered"] = Effect.fn("ToolRegistry.registered")(function* (input) {
+      return yield* definitions(input, true)
+    })
+
     const named: Interface["named"] = Effect.fn("ToolRegistry.named")(function* () {
       const s = yield* InstanceState.get(state)
       return { actor: s.actor, read: s.read }
@@ -477,7 +520,7 @@ export const layer = Layer.effect(
       yield* InstanceState.invalidate(state)
     })
 
-    return Service.of({ ids, all, named, tools, reload })
+    return Service.of({ ids, all, named, tools, registered, reload })
   }),
 ).pipe(Layer.provide(Git.defaultLayer))
 

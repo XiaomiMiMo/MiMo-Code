@@ -2,6 +2,8 @@ import { Log, Process } from "@/util"
 import { which } from "@/util/which"
 import { RealtimeVAD, type VADSegment } from "./vad"
 import z from "zod"
+import VOICE_CONTROL_SYSTEM_PROMPT from "./voice-input.txt"
+import type { TextPlacement } from "./voice-edit"
 
 const log = Log.create({ service: "tui.voice" })
 
@@ -115,12 +117,17 @@ export function startStreaming(opts: {
   onSegment: (segment: VADSegment) => void
   onActiveChange?: (active: boolean) => void
   onError?: (err: Error) => void
+  minSilenceS?: number
 }): StreamingHandle | null {
   const recorder = detectRecorder()
   if (!recorder) return null
 
   log.info("recording started", { recorder: recorder.cmd })
-  const vad = new RealtimeVAD({ onSegment: opts.onSegment, onActiveChange: opts.onActiveChange })
+  const vad = new RealtimeVAD({
+    onSegment: opts.onSegment,
+    onActiveChange: opts.onActiveChange,
+    minSilenceS: opts.minSilenceS,
+  })
   const proc = Process.spawn([recorder.cmd, ...recorder.pipeArgs()], {
     stdin: "ignore",
     stdout: "pipe",
@@ -239,8 +246,6 @@ export async function transcribeAudio(opts: {
   }
 }
 
-export const SEND_RE = /^(发送|send\s*it)$/i
-
 export function encodeWav(samples: Int16Array): ArrayBuffer {
   const sampleRate = 16000
   const dataSize = samples.length * 2
@@ -269,182 +274,288 @@ function writeString(view: DataView, offset: number, str: string) {
   for (let i = 0; i < str.length; i++) view.setUint8(offset + i, str.charCodeAt(i))
 }
 
-// --- Voice Control (experiment/voice-control) ---
+// --- Voice Control (forced voice_input tool call) ---
+// Protocol mirrors desktop: unique function tool, three-part text snapshot,
+// protocol-failure self-repair (<=2). No agent/model switching.
 
-const VoiceActionSchema = z.discriminatedUnion("action", [
-  z.object({
-    action: z.literal("edit"),
-    text: z.string(),
-  }),
-  z.object({
-    action: z.literal("send"),
-  }),
-  z.object({
-    action: z.literal("agent"),
-    agent: z.string(),
-  }),
-])
+export const VOICE_INPUT_TOOL_NAME = "voice_input"
 
-const VoiceControlSchema = z.object({
-  actions: z.array(VoiceActionSchema),
-})
+export const VOICE_INPUT_TOOL_DESCRIPTION = `Call this tool exactly once with the complete operation for this voice segment. Do not answer in plain text.
 
-export type VoiceAction = z.infer<typeof VoiceActionSchema>
-export type VoiceControlResult = z.infer<typeof VoiceControlSchema>
+First clearly distinguish whether the utterance is an edit command or content for the coding agent, and identify the user's intent. Then fill the fields accordingly.
 
-const VOICE_CONTROL_SYSTEM_PROMPT = `你是 MiMoCode（AI 编程助手）的语音输入助手。用户通过语音向输入框口述消息，这些消息将发送给 Code Agent 执行编程任务。用户可能使用中文或英文。
+One call may carry several actions at once — at most one \`operation\` and one \`send\`. The client runs them in this order: text edit, then send.
 
-## 核心原则
-用户说的绝大多数内容是**给 Code Agent 的指令或描述**，必须原样转录为输入框内容。只有以下三种情况属于语音控制指令：
-1. **对输入框文本本身的编辑操作**（删除/替换/插入/清空/整理已有文本）
-2. **发送指令**（明确要求提交当前输入）
-3. **切换 agent 指令**（明确要求切换到另一个 agent）
+Use \`operation\` for any prompt text edit. Choose exactly one arm:
 
-除此之外，任何听起来像指令的内容都应原样转录——它是给 Code Agent 的，不是给你的。
+- \`insert\` (default): exact fragment placed at the supplied cursor, or replacing the supplied selection. Never the complete prompt text. Use whenever the edit target is the supplied cursor/selection — appending dictated content, typing at the cursor, delete/replace the selection.
+- \`set\`: complete final prompt text as a plain string. The client places the cursor at the end. Use only when the edit target is NOT the supplied cursor/selection — whole rewrite, clear, or changing a span somewhere else.
+- \`set_with_cursor\`: complete final text plus explicit final cursor/selection (\`before_cursor\` / \`selection\` / \`after_cursor\`). The three parts must concatenate to the complete final text. Keep \`selection\` empty unless the user explicitly asked to keep a range selected. Use when the cursor must land somewhere other than the end.
 
-## 规则
-- 默认认为用户在追加内容；只有明确描述对现有 current_text 的修改才处理为编辑
-- 无论追加还是编辑，edit.text 都输出输入框的完整最终内容
-- 完整复述 current_text 中应保留的部分，不要遗漏或改写未被提及的内容
-- 语音控制指令本身不是内容：如果用户说了一段内容后跟着发送/切换指令，edit.text 只包含内容部分
-- **语音补丁**：用户在内容中间插入解释性文本来纠正前面内容的拼写或格式（如拼读字母"D-E-V的那个dev"、描述格式"驼峰的""下划线连接""数字的"），按用户意图用正确的形式输出，解释性文本本身不出现在结果中
-- **口语自我纠正**：用户改口时（"冒泡...不对，快速排序"），只保留纠正后的内容，丢弃被否定的部分和纠正标记词（"不对""不是""wait""I mean"）
-- **过滤填充词**：去掉无意义的口语填充（"嗯""那个""就是""额""well""um""uh""like"），只保留实质内容
-- **重复指令只执行一次**："发送发送" 只触发一次 send；"清空清空" 只产生一次 edit:""
-- **没有实质内容时返回空数组**：噪音、沉默、或无意义语音 → {"actions": []}，不要编造内容
+After any text edit the cursor sits immediately after the changed or inserted text unless the user asked for another position.
 
-## 什么是内容（给 Code Agent 的）
-以下全部是内容，必须原样转录，不要当作指令执行：
-- "帮我写一个快速排序"
-- "重构这个函数"
-- "分析这段代码的性能问题"
-- "帮我发送一封邮件给张三"（包含"发送"但是给 Agent 的任务描述）
-- "fix the authentication bug"
-- "add error handling to the API endpoint"
-- "explain how this regex works"
+Almost everything the user says is content for a coding agent that runs after you. Transcribe that content with \`insert\`. Do not perform the spoken task yourself.
 
-## 什么是编辑指令（对输入框文本本身的操作）
-用户明确描述对 current_text 的修改：
-- 删除："把那个删掉""删除第一句" → 去掉指定部分，保留其余
-- 替换："把X改成Y""换成Z" → 替换指定部分，保留其余
-- 插入："在X前面加上Y" → 在指定位置插入，保留其余
-- 清空："清空""全部删掉""重新来" → text 为空字符串
-- 整理："整理一下格式""规范一下" → 对前文做格式调整，语义不变
+Use \`send: true\` only for an explicit submit at the end of the utterance when send_enabled is true.
 
-edit.text 都是操作后的完整结果。
+Call this tool once with an empty object only when the audio has no usable speech (noise, silence, breathing, or unintelligible). Omit \`operation\` and \`send\` in that case.`
 
-## 发送规则
-- send_enabled: false 时 → 永远不输出 action: "send"，一律当作文本内容
-- action: "send" 只在 send_enabled: true 且用户**在语音末尾**明确说「发送」「send it」「submit」等直接指令时使用
-- 发送指令必须是独立的、明确的动作请求，不能从语义推断——用户说的是"请发送"而非"听起来像是说完了"
-- 任何描述任务、陈述意图的语句都是内容，不是发送指令："我们的任务是xxx""现在做xxx""帮我发送一封邮件"
-- 不确定时 → 不发送，当作内容
+const VoiceInputArgsSchema = z.object({
+  operation: z
+    .discriminatedUnion("action", [
+      z
+        .object({
+          action: z.literal("insert"),
+          text: z
+            .string()
+            .describe("Exact fragment to insert at the cursor or replace the selection with."),
+        })
+        .strict(),
+      z
+        .object({
+          action: z.literal("set"),
+          text: z.string().describe("Complete final prompt text; cursor ends at the end."),
+        })
+        .strict(),
+      z
+        .object({
+          action: z.literal("set_with_cursor"),
+          before_cursor: z.string().describe("Text before the final cursor/selection."),
+          selection: z.string().describe("Selected text; empty means a collapsed cursor."),
+          after_cursor: z.string().describe("Text after the final cursor/selection."),
+        })
+        .strict(),
+    ])
+    // Same as actor/task/cron `operation`: without this the emitted schema has
+    // only anyOf and some models stringify the whole envelope.
+    .meta({ type: "object" })
+    .optional()
+    .describe("Text edit, if any. Choose exactly one arm: insert, set, or set_with_cursor."),
+  send: z.boolean().optional().describe("true to submit. Only when send_enabled is true."),
+}).strict()
 
-## 输出格式
-严格输出 JSON：{"actions": [{"action": "edit|send|agent", ...}]}
+export type VoiceInputArgs = z.infer<typeof VoiceInputArgsSchema>
 
-- edit: {"action": "edit", "text": "输入框完整最终内容"}
-- send: {"action": "send"}
-- agent: {"action": "agent", "agent": "从 available_agents 中匹配的名称"}
-- **必须按顺序**：如果同时有 edit 和 send，edit 在 send 前；agent 放最前
+// Single source of truth: zod is the runtime validator; JSON Schema is derived for the API.
+// Drop $schema — some OpenAI-compatible gateways reject unknown top-level keys in tool parameters.
+function stripSchemaKeyword(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(stripSchemaKeyword)
+  if (value && typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value as Record<string, unknown>)
+        .filter(([key]) => key !== "$schema")
+        .map(([key, child]) => [key, stripSchemaKeyword(child)]),
+    )
+  }
+  return value
+}
 
-## 示例
-追加（current_text: ""）："帮我写一个快速排序" → [edit:"帮我写一个快速排序"]
-追加（current_text: "帮我写一个快速排序"）："用 TypeScript" → [edit:"帮我写一个快速排序，用 TypeScript"]
-追加+发送（current_text: ""）："写个快排，发送" → [edit:"写个快排", send]
-切换+追加（current_text: "review this PR"）："切到compose，再加上 focus on error handling" → [agent:"compose", edit:"review this PR, focus on error handling"]
-仅发送："发送" / "就这样发送吧" → [send]
-仅切换："切换到plan模式" → [agent:"plan"]
-纯内容："help me refactor this function to use async await" → [edit:"help me refactor this function to use async await"]
-语音补丁（current_text: ""）："搜索一下代码里面的dev，是D-E-V的那个dev" → [edit:"搜索一下代码里面的dev"]
-语音补丁（current_text: ""）："check the env，E-N-V，environment variable" → [edit:"check the env variable"]
-语音补丁（current_text: ""）："帮我找一下 get 下划线 value 这个函数" → [edit:"帮我找一下 get_value 这个函数"]
-自我纠正（current_text: ""）："帮我写一个冒泡...不对，快速排序" → [edit:"帮我写一个快速排序"]
-过滤填充词（current_text: ""）："嗯...就是那个...帮我写一个排序算法" → [edit:"帮我写一个排序算法"]
-中英混杂（current_text: ""）："帮我 refactor 一下这个 useEffect，把 dependency array 加上 userId" → [edit:"帮我 refactor 一下这个 useEffect，把 dependency array 加上 userId"]
-重复指令："发送发送" → [send]
+export const VOICE_INPUT_TOOL_SCHEMA = stripSchemaKeyword(z.toJSONSchema(VoiceInputArgsSchema)) as Record<string, unknown>
 
-编辑（current_text: "帮我写一个冒泡排序"）：
-- "改成快速排序" → [edit:"帮我写一个快速排序"]
-- "删掉冒泡两个字" → [edit:"帮我写一个排序"]
-- "清空" → [edit:""]`
+export type VoiceControlAction =
+  | { action: "insert"; text: string }
+  | { action: "set"; text: string }
+  | { action: "set_with_cursor"; placement: TextPlacement }
+  | { action: "send" }
 
-export function parseVoiceControl(raw: string): VoiceControlResult | null {
-  try {
-    const parsed = JSON.parse(raw) as unknown
-    const result = VoiceControlSchema.safeParse(parsed)
-    return result.success ? result.data : null
-  } catch {
-    return null
+export type VoiceControlBody = {
+  model: string
+  messages: Array<Record<string, unknown>>
+  tools: Array<Record<string, unknown>>
+}
+
+export function buildVoiceControlBody(opts: {
+  model: string
+  audioBase64: string
+  context: { text: string | TextPlacement; sendEnabled?: boolean }
+}): VoiceControlBody {
+  const userContext = JSON.stringify({
+    text: opts.context.text,
+    send_enabled: !!opts.context.sendEnabled,
+  })
+  return {
+    model: opts.model,
+    messages: [
+      { role: "system", content: VOICE_CONTROL_SYSTEM_PROMPT },
+      {
+        role: "user",
+        content: [
+          { type: "text", text: userContext },
+          { type: "input_audio", input_audio: { data: opts.audioBase64, format: "wav" } },
+        ],
+      },
+    ],
+    tools: [
+      {
+        type: "function",
+        function: {
+          name: VOICE_INPUT_TOOL_NAME,
+          description: VOICE_INPUT_TOOL_DESCRIPTION,
+          parameters: VOICE_INPUT_TOOL_SCHEMA,
+        },
+      },
+    ],
   }
 }
+
+export function buildVoiceControlRetryBody(
+  base: VoiceControlBody,
+  previous: { role: "assistant"; content?: string | null; tool_calls?: unknown[] | null; reasoning_content?: string | null },
+  protocolError: string,
+): VoiceControlBody {
+  const assistant: Record<string, unknown> = { role: "assistant", content: previous.content ?? null }
+  if (previous.tool_calls?.length) assistant.tool_calls = previous.tool_calls
+  if (previous.reasoning_content) assistant.reasoning_content = previous.reasoning_content
+  const follow: Record<string, unknown>[] = []
+  // OpenAI-compatible servers expect a tool role reply per tool_call_id after assistant.tool_calls.
+  if (previous.tool_calls?.length) {
+    for (const call of previous.tool_calls) {
+      const id = (call as { id?: string }).id
+      if (id) follow.push({ role: "tool", tool_call_id: id, content: protocolError })
+    }
+  }
+  if (!follow.length) follow.push({ role: "user", content: protocolError })
+  return {
+    ...base,
+    messages: [...base.messages, assistant, ...follow],
+  }
+}
+
+export function voiceToolArgsToActions(args: VoiceInputArgs, opts: { sendEnabled?: boolean }): VoiceControlAction[] {
+  const actions: VoiceControlAction[] = []
+  if (args.operation?.action === "insert") actions.push({ action: "insert", text: args.operation.text })
+  else if (args.operation?.action === "set") actions.push({ action: "set", text: args.operation.text })
+  else if (args.operation?.action === "set_with_cursor") {
+    actions.push({
+      action: "set_with_cursor",
+      placement: {
+        before_cursor: args.operation.before_cursor,
+        selection: args.operation.selection,
+        after_cursor: args.operation.after_cursor,
+      },
+    })
+  }
+  if (args.send === true && opts.sendEnabled) actions.push({ action: "send" })
+  return actions
+}
+
+export type VoiceControlParseResult = {
+  ok: boolean
+  actions: VoiceControlAction[]
+  protocolError?: string
+  previous: { role: "assistant"; content?: string | null; tool_calls?: unknown[] | null; reasoning_content?: string | null }
+}
+
+export function parseVoiceControlResponse(message: unknown, opts: { sendEnabled?: boolean }): VoiceControlParseResult {
+  const msg = (message && typeof message === "object" ? message : {}) as Record<string, unknown>
+  const content = typeof msg.content === "string" ? msg.content : null
+  const toolCalls = Array.isArray(msg.tool_calls) ? msg.tool_calls : null
+  const reasoningContent = typeof msg.reasoning_content === "string" ? msg.reasoning_content : null
+  const previous = { role: "assistant" as const, content, tool_calls: toolCalls, reasoning_content: reasoningContent }
+
+  if (toolCalls?.length) {
+    if (toolCalls.length > 1) {
+      return { ok: false, actions: [], protocolError: `Call the ${VOICE_INPUT_TOOL_NAME} tool exactly once.`, previous }
+    }
+    const fn = ((toolCalls[0] as { function?: { name?: string; arguments?: string | Record<string, unknown> } })?.function) ?? {}
+    // Some gateways omit function.name when only one tool is registered.
+    if (fn.name && fn.name !== VOICE_INPUT_TOOL_NAME) {
+      return { ok: false, actions: [], protocolError: `Call the ${VOICE_INPUT_TOOL_NAME} tool.`, previous }
+    }
+    const rawArg = fn.arguments
+    const raw: unknown = typeof rawArg === "string" ? (() => {
+      try {
+        return JSON.parse(rawArg)
+      } catch {
+        return undefined
+      }
+    })() : rawArg
+    if (raw === undefined) {
+      return { ok: false, actions: [], protocolError: `${VOICE_INPUT_TOOL_NAME} arguments must be valid JSON.`, previous }
+    }
+    const parsed = VoiceInputArgsSchema.safeParse(raw)
+    if (!parsed.success) {
+      const detail = parsed.error.issues
+        .map((i) => `${i.path.length ? i.path.join(".") : "(root)"}: ${i.message}`)
+        .slice(0, 5)
+        .join("; ")
+      return { ok: false, actions: [], protocolError: `${VOICE_INPUT_TOOL_NAME} arguments are invalid — ${detail}`, previous }
+    }
+    return { ok: true, actions: voiceToolArgsToActions(parsed.data, opts), previous }
+  }
+
+  return { ok: false, actions: [], protocolError: `You MUST call the ${VOICE_INPUT_TOOL_NAME} tool exactly once.`, previous }
+}
+
+const VOICE_CONTROL_MAX_PROTOCOL_RETRIES = 2
+
+export type VoiceControlResult =
+  | { ok: true; actions: VoiceControlAction[] }
+  | { ok: false; reason: "network" | "protocol" }
 
 export async function processVoiceControl(opts: {
   audio: Int16Array
   apiKey: string
   baseUrl: string
   model?: string
-  currentText: string
-  currentAgent: string
-  availableAgents: string[]
+  contextText: string | TextPlacement
   sendEnabled?: boolean
-}): Promise<VoiceControlResult | null> {
+}): Promise<VoiceControlResult> {
   const model = opts.model || "mimo-v2.5"
-  const samples = opts.audio.length
-  log.debug("voice control request", { model, samples, agent: opts.currentAgent })
+  log.debug("voice control request", { model, samples: opts.audio.length })
   const wavBuffer = encodeWav(opts.audio)
   const base64 = Buffer.from(wavBuffer).toString("base64")
   const url = `${opts.baseUrl.replace(/\/+$/, "")}/chat/completions`
+  const headers = {
+    "Content-Type": "application/json",
+    Authorization: `Bearer ${opts.apiKey}`,
+    "X-Mimo-Source": "mimocode-cli",
+  }
 
-  const userContext = JSON.stringify({
-    current_text: opts.currentText,
-    cursor: "end",
-    agent: opts.currentAgent,
-    available_agents: opts.availableAgents,
-    send_enabled: opts.sendEnabled ?? true,
+  let body = buildVoiceControlBody({
+    model,
+    audioBase64: base64,
+    context: { text: opts.contextText, sendEnabled: opts.sendEnabled },
   })
 
-  const controller = new AbortController()
-  const timeout = setTimeout(() => controller.abort(), 30_000)
+  for (let attempt = 0; attempt <= VOICE_CONTROL_MAX_PROTOCOL_RETRIES; attempt++) {
+    const controller = new AbortController()
+    const timeout = setTimeout(() => controller.abort(), 30_000)
+    const res = await fetch(url, {
+      method: "POST",
+      headers,
+      body: JSON.stringify(body),
+      signal: controller.signal,
+    }).catch(() => null)
+    clearTimeout(timeout)
 
-  const res = await fetch(url, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "Authorization": `Bearer ${opts.apiKey}`,
-      "X-Mimo-Source": "mimocode-cli",
-    },
-    body: JSON.stringify({
+    if (!res || !res.ok) {
+      const errBody = await res?.text().catch(() => "")
+      log.warn("voice control failed", { model, status: res?.status, body: errBody })
+      return { ok: false, reason: "network" }
+    }
+
+    const data = (await res.json().catch(() => null)) as {
+      choices?: Array<{ message?: Record<string, unknown> }>
+    } | null
+    const message = data?.choices?.[0]?.message
+    if (!message) return { ok: false, reason: "network" }
+
+    const parsed = parseVoiceControlResponse(message, { sendEnabled: opts.sendEnabled })
+    if (parsed.ok) {
+      log.debug("voice control result", { model, actions: parsed.actions.length, attempt })
+      return { ok: true, actions: parsed.actions }
+    }
+    log.warn("voice control protocol error", {
       model,
-      messages: [
-        { role: "system", content: VOICE_CONTROL_SYSTEM_PROMPT },
-        {
-          role: "user",
-          content: [
-            { type: "text", text: userContext },
-            { type: "input_audio", input_audio: { data: base64, format: "wav" } },
-          ],
-        },
-      ],
-      response_format: { type: "json_object" },
-    }),
-    signal: controller.signal,
-  }).catch(() => null)
-
-  clearTimeout(timeout)
-  if (!res || !res.ok) {
-    const body = await res?.text().catch(() => "")
-    log.warn("voice control failed", { model, status: res?.status, body })
-    return null
+      attempt,
+      protocolError: parsed.protocolError,
+      hasToolCalls: !!parsed.previous.tool_calls?.length,
+      toolCallNames: parsed.previous.tool_calls?.map((c) => (c as { function?: { name?: string } })?.function?.name),
+      contentPreview: parsed.previous.content?.slice(0, 200),
+    })
+    if (attempt >= VOICE_CONTROL_MAX_PROTOCOL_RETRIES) return { ok: false, reason: "protocol" }
+    body = buildVoiceControlRetryBody(body, parsed.previous, parsed.protocolError ?? "protocol error")
   }
-  try {
-    const data = (await res.json()) as { choices?: Array<{ message?: { content?: string } }> }
-    const content = data.choices?.[0]?.message?.content
-    if (!content) return null
-    const result = parseVoiceControl(content)
-    log.debug("voice control result", { model, actions: result?.actions.length ?? 0 })
-    return result
-  } catch {
-    return null
-  }
+  return { ok: false, reason: "protocol" }
 }

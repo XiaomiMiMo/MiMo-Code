@@ -22,10 +22,21 @@ export const ServeCommand = cmd({
       console.log("Warning: MIMOCODE_SERVER_PASSWORD is not set; server is unsecured.")
     }
 
+    // Server.listen publishes this process into the llm-server address registry
+    // (cwd) and unpublishes on stop, so `mimo llm-server issue` can resolve base_url.
     const server = await Server.listen(opts)
     console.log(`mimocode server listening on http://${server.hostname}:${server.port}`)
 
+    // Force-close: graceful stop waits on live SSE/WS streams, and Ctrl-C would hang.
+    const shutdown = () => server.stop(true)
+    const onSignal = () => {
+      void shutdown()
+        .then(() => process.exit(0))
+        .catch(() => process.exit(1))
+    }
+    process.once("SIGINT", onSignal)
+    process.once("SIGTERM", onSignal)
+
     await new Promise(() => {})
-    await server.stop()
   },
 })

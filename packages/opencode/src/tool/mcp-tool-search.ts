@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto"
 import type { JSONObject } from "@ai-sdk/provider"
 import { Effect } from "effect"
 import z from "zod"
@@ -49,6 +50,7 @@ let cached: SearchIndex | undefined
 const DESCRIPTION = [
   "Search locally available MCP tools and load only the matching capabilities for the current user request.",
   "Use this before attempting an MCP operation. Matching tools become callable on the next step.",
+  "This tool is not available inside exec; exec scripts discover their request-authorized MCP tools through the global ALL_TOOLS catalog and call them through tools.",
 ].join("\n")
 
 function normalizeMetadata(value: string) {
@@ -167,7 +169,7 @@ function index(entries: McpToolSearchEntry[]) {
 
 export function createMcpToolSearchCatalog(entries: McpToolSearchEntry[]): McpToolSearchCatalog {
   return {
-    key: new Bun.CryptoHasher("sha256").update(JSON.stringify(entries)).digest("hex"),
+    key: createHash("sha256").update(JSON.stringify(entries)).digest("hex"),
     entries,
   }
 }

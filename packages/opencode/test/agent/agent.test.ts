@@ -9,10 +9,11 @@ import { ToolRegistry } from "../../src/tool"
 import { ModelID, ProviderID } from "../../src/provider/schema"
 import * as CrossSpawnSpawner from "../../src/effect/cross-spawn-spawner"
 import { testEffect } from "../lib/effect"
+import PROMPT_GENERATE from "../../src/agent/generate.txt"
+import PROMPT_GENERATE_GPT from "../../src/agent/prompt/generate-gpt.txt"
+import PROMPT_EXPLORE from "../../src/agent/prompt/explore.txt"
 
-const itTool = testEffect(
-  Layer.mergeAll(ToolRegistry.defaultLayer, Agent.defaultLayer, CrossSpawnSpawner.defaultLayer),
-)
+const itTool = testEffect(Layer.mergeAll(ToolRegistry.defaultLayer, Agent.defaultLayer, CrossSpawnSpawner.defaultLayer))
 
 // Helper to evaluate permission for a tool with wildcard pattern
 function evalPerm(agent: Agent.Info | undefined, permission: string): Permission.Action | undefined {
@@ -26,6 +27,19 @@ function load<A>(dir: string, fn: (svc: Agent.Interface) => Effect.Effect<A>) {
 
 afterEach(async () => {
   await Instance.disposeAll()
+})
+
+test("agent prompts use runtime tool names and GPT generation guidance", () => {
+  expect(PROMPT_EXPLORE).toContain("Tool names and availability are model-specific")
+  expect(PROMPT_EXPLORE).not.toContain("Use Glob")
+  expect(PROMPT_EXPLORE).not.toContain("Use Grep")
+  expect(PROMPT_EXPLORE).not.toContain("Use Read")
+  expect(PROMPT_GENERATE).toContain("use the actor tool")
+  expect(PROMPT_GENERATE).not.toContain("use the Agent tool")
+  expect(PROMPT_GENERATE_GPT).toContain("`exec`")
+  expect(PROMPT_GENERATE_GPT).toContain("`tools.apply_patch(...)`")
+  expect(PROMPT_GENERATE_GPT).toContain("`tools.view_image(...)`")
+  expect(PROMPT_GENERATE_GPT).toContain("`tools.actor(...)`")
 })
 
 test("returns default native agents when no config", async () => {
@@ -103,7 +117,7 @@ test("plan keeps the edit tool in the schema — not stripped", async () => {
   })
 })
 
-test("plan does not restrict bash/change_directory/workflow", async () => {
+test("plan does not restrict bash/workflow", async () => {
   await using tmp = await tmpdir()
   await Instance.provide({
     directory: tmp.path,
@@ -113,7 +127,6 @@ test("plan does not restrict bash/change_directory/workflow", async () => {
       // These are left to the model's discipline; the permission layer is a
       // backstop for writes only.
       expect(Permission.evaluate("bash", "ls", rt).action).not.toBe("deny")
-      expect(Permission.evaluate("change_directory", "/tmp", rt).action).not.toBe("deny")
       expect(Permission.evaluate("workflow", "*", rt).action).not.toBe("deny")
     },
   })
@@ -151,7 +164,9 @@ test("compose:* skills are denied for build/plan, allowed for compose", async ()
       expect(Permission.evaluate("skill", "compose:tdd", compose!.permission).action).toBe("allow")
       expect(Permission.evaluate("skill", "compose:review", compose!.permission).action).toBe("allow")
       // Non-compose skills remain allowed for all agents
-      expect(Permission.evaluate("skill", "effect", agents.find((a) => a.name === "build")!.permission).action).toBe("allow")
+      expect(Permission.evaluate("skill", "effect", agents.find((a) => a.name === "build")!.permission).action).toBe(
+        "allow",
+      )
       expect(Permission.evaluate("skill", "effect", compose!.permission).action).toBe("allow")
     },
   })
@@ -215,6 +230,30 @@ test("explore agent asks for external directories and allows Truncate.GLOB", asy
   })
 })
 
+test("general and explore agents use dedicated prompts", async () => {
+  await using tmp = await tmpdir()
+  await Instance.provide({
+    directory: tmp.path,
+    fn: async () => {
+      const general = await load(tmp.path, (svc) => svc.get("general"))
+      const explore = await load(tmp.path, (svc) => svc.get("explore"))
+      expect(general?.description).toContain("Full-capability general-purpose subagent")
+      expect(general?.description).toContain("inherits the parent's available tool surface")
+      expect(general?.prompt).toContain("full-capability general-purpose subagent")
+      expect(general?.prompt).toContain("including reading and searching, editing or creating files")
+      expect(general?.prompt).toContain("complete it end to end")
+      expect(general?.prompt).toContain("The parent agent, not you, communicates with the end user")
+      expect(general?.completionGate).toBe(true)
+      expect(general?.toolAllowlist).toBeUndefined()
+      expect(Permission.evaluate("read", "src/index.ts", general!.permission).action).toBe("allow")
+      expect(Permission.evaluate("edit", "src/index.ts", general!.permission).action).toBe("allow")
+      expect(Permission.evaluate("write", "src/index.ts", general!.permission).action).toBe("allow")
+      expect(Permission.evaluate("bash", "bun test", general!.permission).action).toBe("allow")
+      expect(explore?.prompt).toContain("file search specialist working for a parent agent")
+      expect(explore?.prompt).not.toBe(general?.prompt)
+    },
+  })
+})
 
 test("custom agent from config creates new agent", async () => {
   await using tmp = await tmpdir({
@@ -1000,11 +1039,15 @@ itTool.live("compose's tool list swaps GPT-specific file tools", () =>
         agent: compose!,
       })
       const gptIDs = gptTools.map((t) => t.id)
-      expect(gptIDs).toContain("apply_patch")
-      expect(gptIDs).toContain("view_image")
+      expect(gptIDs).toContain("exec")
+      expect(gptIDs).not.toContain("apply_patch")
+      expect(gptIDs).not.toContain("view_image")
       expect(gptIDs).not.toContain("edit")
       expect(gptIDs).not.toContain("write")
       expect(gptIDs).not.toContain("read")
+      const exec = gptTools.find((tool) => tool.id === "exec")
+      expect(exec?.description).toContain("apply_patch(input:")
+      expect(exec?.description).toContain("view_image(input:")
 
       const claudeTools = yield* registry.tools({
         modelID: ModelID.make("claude-opus-4-7"),
@@ -1017,6 +1060,19 @@ itTool.live("compose's tool list swaps GPT-specific file tools", () =>
       expect(claudeIDs).toContain("read")
       expect(claudeIDs).not.toContain("apply_patch")
       expect(claudeIDs).not.toContain("view_image")
+
+      const claudeCodexIDs = (
+        yield* registry.tools({
+          modelID: ModelID.make("claude-opus-4-7"),
+          providerID: ProviderID.make("anthropic"),
+          agent: compose!,
+          harness: "codex",
+        })
+      ).map((tool) => tool.id)
+      expect(claudeCodexIDs).toContain("exec")
+      expect(claudeCodexIDs).not.toContain("edit")
+      expect(claudeCodexIDs).not.toContain("write")
+      expect(claudeCodexIDs).not.toContain("read")
     }),
   ),
 )

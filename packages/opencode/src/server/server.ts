@@ -16,6 +16,8 @@ import { GlobalRoutes } from "./routes/global"
 import { WorkspaceRouterMiddleware } from "./workspace"
 import { InstanceMiddleware } from "./routes/instance/middleware"
 import { WorkspaceRoutes } from "./routes/control/workspace"
+import { setChildProcessEnv } from "@/util/child-process-env"
+import { LLMServerTokens } from "@/llm-server/tokens"
 
 // @ts-ignore This global is needed to prevent ai-sdk from logging warnings to stdout https://github.com/vercel/ai/blob/2dc67e0ef538307f21368db32d5a12345d98831b/packages/ai/src/logger/log-warnings.ts#L85
 globalThis.AI_SDK_LOG_WARNINGS = false
@@ -98,7 +100,15 @@ export async function listen(opts: {
   mdnsDomain?: string
   cors?: string[]
   noAuth?: boolean
+  childEnv?: NodeJS.ProcessEnv
+  /**
+   * Advertise this listener in the llm-server address registry so
+   * `mimo llm-server issue` can resolve `base_url`. Defaults to true.
+   * Embedders that only need an in-process app can pass false.
+   */
+  advertise?: boolean
 }): Promise<Listener> {
+  if (opts.childEnv) setChildProcessEnv(opts.childEnv)
   const isLoopback =
     opts.hostname === "127.0.0.1" || opts.hostname === "localhost" || opts.hostname === "::1"
   if (!isLoopback && !Flag.MIMOCODE_SERVER_PASSWORD && !opts.noAuth) {
@@ -128,6 +138,28 @@ export async function listen(opts: {
     log.warn("mDNS enabled but hostname is loopback; skipping mDNS publish")
   }
 
+  // Who owns the `/v1` capability surface must also say where it is. Keyed by cwd —
+  // TUI/serve chdir to the project. A multi-project host is NOT auto-discoverable
+  // from a project bucket: tokens verify against the request-resolved directory, so
+  // a cross-project base_url 401s under OpenAI-standard clients.
+  const advertise = opts.advertise !== false
+  const directory = process.cwd()
+  // `0.0.0.0`/`::` are bind addresses, not client URLs. Advertise loopback so the
+  // printed base_url is usable on this machine.
+  const advertisedHostname = opts.hostname === "0.0.0.0" || opts.hostname === "::" ? "127.0.0.1" : opts.hostname
+  const advertised = new URL("http://localhost")
+  advertised.hostname = advertisedHostname
+  advertised.port = String(server.port)
+  if (advertise) {
+    await LLMServerTokens.publish(directory, {
+      pid: process.pid,
+      hostname: advertisedHostname,
+      port: server.port,
+      url: advertised.toString(),
+      started: Date.now(),
+    }).catch((error) => log.warn("failed to advertise llm-server address", { error: String(error) }))
+  }
+
   let closing: Promise<void> | undefined
   return {
     hostname: opts.hostname,
@@ -135,6 +167,10 @@ export async function listen(opts: {
     url: next,
     stop(close?: boolean) {
       closing ??= (async () => {
+        // Withdraw the advertisement before the socket goes away, so a reader sees
+        // "nothing is serving" rather than a port that refuses connections. A crash
+        // skips this; the pid liveness check in `addresses` is the backstop.
+        if (advertise) await LLMServerTokens.unpublish(directory, process.pid, server.port).catch(() => {})
         if (mdns) MDNS.unpublish()
         await server.stop(close)
       })()

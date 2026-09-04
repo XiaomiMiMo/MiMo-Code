@@ -1,10 +1,12 @@
 import { afterEach, describe, expect } from "bun:test"
 import { Effect } from "effect"
 import path from "path"
+import { ActorRegistry } from "../../src/actor/registry"
 import { Instance } from "../../src/project/instance"
 import { Session } from "../../src/session"
 import { MessageV2 } from "../../src/session/message-v2"
 import { SessionPrompt } from "../../src/session/prompt"
+import { ToolRegistry } from "../../src/tool"
 import { Log } from "../../src/util"
 import { provideTmpdirServer } from "../fixture/fixture"
 import { testEffect } from "../lib/effect"
@@ -38,6 +40,60 @@ const injected = (parts: MessageV2.WithParts["parts"]) =>
 // mention scan in insertReminders. Both must end up injected: skill bodies have
 // a single owner, so invoking one skill cannot suppress the others.
 describe("skill command with additional mentions", () => {
+  it.live(
+    "pins system prompt and harness when the first user query is a command",
+    () =>
+      provideTmpdirServer(
+        Effect.fnUntraced(function* ({ dir, llm }) {
+          yield* writeSkill(dir, "skill-profile", "PROFILE_SKILL_MARKER")
+          yield* Effect.promise(() => Bun.write(path.join(dir, "AGENTS.md"), "PROFILE_INSTRUCTION_MARKER"))
+          yield* llm.text("ok")
+
+          const prompt = yield* SessionPrompt.Service
+          const sessions = yield* Session.Service
+          const session = yield* sessions.create({ title: "profile command" })
+
+          yield* prompt.command({
+            sessionID: session.id,
+            command: "skill-profile",
+            arguments: "run",
+            model: `${ref.providerID}/${ref.modelID}`,
+            system: "COMMAND_SYSTEM_MARKER",
+            systemMode: "replace-agent",
+            harness: "codex",
+          })
+
+          expect((yield* sessions.get(session.id)).prompt).toEqual({
+            system: "COMMAND_SYSTEM_MARKER",
+            systemMode: "replace-agent",
+            harness: "codex",
+          })
+          const user = (yield* sessions.messages({ sessionID: session.id }))
+            .find((message) => message.info.role === "user")
+          expect(user?.info).toMatchObject({
+            role: "user",
+            system: "COMMAND_SYSTEM_MARKER",
+            systemMode: "replace-agent",
+            harness: "codex",
+          })
+          const request = (yield* llm.inputs)[0]
+          expect(JSON.stringify(request)).toContain("COMMAND_SYSTEM_MARKER")
+          const system = ((request.messages ?? []) as { role: string; content: unknown }[])
+            .flatMap((message) => message.role === "system" && typeof message.content === "string" ? [message.content] : [])
+            .join("\n")
+          expect(system.indexOf("COMMAND_SYSTEM_MARKER")).toBeLessThan(system.indexOf("Skills available in this session:"))
+          expect(system.indexOf("Skills available in this session:")).toBeLessThan(system.indexOf("PROFILE_INSTRUCTION_MARKER"))
+          expect(system.trim().endsWith("PROFILE_INSTRUCTION_MARKER")).toBe(true)
+          expect((request.tools as Array<Record<string, unknown>>).map((tool) =>
+            typeof tool.function === "object" && tool.function && "name" in tool.function
+              ? String(tool.function.name)
+              : "",
+          )).toEqual(["exec"])
+        }),
+        { git: true, config: providerCfg },
+      ),
+  )
+
   it.live(
     "injects every mentioned skill when the message is a skill command",
     () =>
@@ -77,10 +133,10 @@ describe("skill command with additional mentions", () => {
           const messages = (request.messages ?? []) as { role: string; content: unknown }[]
           const system = JSON.stringify(messages.filter((message) => message.role === "system"))
           const users = JSON.stringify(messages.filter((message) => message.role === "user"))
-          expect(system).not.toContain("Skills available in this session:")
+          expect(system).toContain("Skills available in this session:")
           expect(system).not.toContain("ALPHA_BODY_MARKER")
           expect(system).not.toContain("BETA_BODY_MARKER")
-          expect(users).toContain("Skills available in this session:")
+          expect(users).not.toContain("Skills available in this session:")
           expect(users).toContain("ALPHA_BODY_MARKER")
           expect(users).toContain("BETA_BODY_MARKER")
 
@@ -124,10 +180,15 @@ describe("skill command with additional mentions", () => {
           expect(visible.map((p) => (p.type === "text" ? p.text : ""))).toContain("/skill-alpha")
 
           const text = user!.parts.flatMap((p) => (p.type === "text" ? [p.text] : [])).join("\n")
-          expect(text).toContain("Skills available in this session:")
+          expect(text).not.toContain("Skills available in this session:")
           expect(text).toContain('<system-reminder>\n<skill_content name="skill-alpha">')
           expect(text).not.toContain("BETA_BODY_MARKER")
           expect(text).not.toContain("explicitly referenced multiple skills")
+
+          const system = JSON.stringify(
+            (((yield* llm.inputs)[0].messages ?? []) as { role: string }[]).filter((message) => message.role === "system"),
+          )
+          expect(system).toContain("Skills available in this session:")
 
           yield* sessions.remove(session.id)
         }),
@@ -136,8 +197,10 @@ describe("skill command with additional mentions", () => {
     30_000,
   )
 
+  // [TP-R14-01][TP-R14-03] An unchanged catalog stays in the system tail and
+  // never triggers slash mentions from its own descriptions.
   it.live(
-    "keeps one catalog across user turns and ignores skill mentions in synthetic catalog text",
+    "keeps one system catalog across turns without persisting it as user content",
     () =>
       provideTmpdirServer(
         Effect.fnUntraced(function* ({ dir, llm }) {
@@ -167,6 +230,7 @@ describe("skill command with additional mentions", () => {
           const requests = yield* llm.inputs
           const second = JSON.stringify(requests[1].messages ?? [])
           expect(second.match(/Skills available in this session:/g)).toHaveLength(1)
+          expect(second).not.toContain("Authoritative skills catalog snapshot v2:")
           expect(second).toContain("ALPHA_BODY_MARKER")
           expect(second).not.toContain("BETA_BODY_MARKER")
 
@@ -177,8 +241,117 @@ describe("skill command with additional mentions", () => {
                 part.type === "text" && !part.ignored && part.text.includes("Skills available in this session:"),
             ),
           )
-          expect(catalogs).toHaveLength(1)
+          expect(catalogs).toHaveLength(0)
+          expect(second).not.toContain("Catalog-Version")
 
+          yield* sessions.remove(session.id)
+        }),
+        { git: true, config: providerCfg },
+      ),
+    30_000,
+  )
+
+  // [TP-R14-02][TP-R14-04][TP-R14-05] A session keeps its first system-tail
+  // catalog even when the registry changes.
+  it.live(
+    "keeps the session catalog frozen after a registry reload",
+    () =>
+      provideTmpdirServer(
+        Effect.fnUntraced(function* ({ dir, llm }) {
+          yield* writeSkill(dir, "skill-alpha", "ALPHA_BODY_MARKER")
+
+          const prompt = yield* SessionPrompt.Service
+          const sessions = yield* Session.Service
+          const registry = yield* ToolRegistry.Service
+          const session = yield* sessions.create({ title: "skill catalog append" })
+
+          yield* llm.text("first")
+          yield* prompt.prompt({
+            sessionID: session.id,
+            agent: "build",
+            model: ref,
+            parts: [{ type: "text", text: "first request" }],
+          })
+
+          const firstRequest = JSON.stringify((yield* llm.inputs)[0].messages ?? [])
+          expect(firstRequest).toContain("<name>skill-alpha</name>")
+          expect(firstRequest).not.toContain("<name>skill-beta</name>")
+
+          yield* writeSkill(dir, "skill-beta", "BETA_BODY_MARKER")
+          yield* registry.reload()
+          yield* llm.text("second")
+          yield* prompt.prompt({
+            sessionID: session.id,
+            agent: "build",
+            model: ref,
+            parts: [{ type: "text", text: "second request" }],
+          })
+
+          const catalogs = (yield* sessions.messages({ sessionID: session.id })).flatMap((message) =>
+            message.parts.filter(
+              (part) => part.type === "text" && part.text.includes("Skills available in this session:"),
+            ),
+          )
+          expect(catalogs).toHaveLength(0)
+
+          const request = JSON.stringify((yield* llm.inputs)[1].messages ?? [])
+          expect(request.match(/Skills available in this session:/g)).toHaveLength(1)
+          expect(request).toContain("<name>skill-alpha</name>")
+          expect(request).not.toContain("<name>skill-beta</name>")
+
+          yield* sessions.remove(session.id)
+        }),
+        { git: true, config: providerCfg },
+      ),
+    30_000,
+  )
+
+  // [TP-R14-07] A full-context checkpoint writer reuses the frozen parent prefix.
+  // Its own task reminder is a child-only suffix and must not trigger a second catalog.
+  it.live(
+    "does not duplicate the inherited catalog in a full-context checkpoint writer",
+    () =>
+      provideTmpdirServer(
+        Effect.fnUntraced(function* ({ dir }) {
+          yield* writeSkill(dir, "skill-alpha", "ALPHA_BODY_MARKER")
+
+          const actors = yield* ActorRegistry.Service
+          const prompt = yield* SessionPrompt.Service
+          const sessions = yield* Session.Service
+          const session = yield* sessions.create({ title: "checkpoint catalog reuse" })
+          const actorID = "checkpoint-writer-test"
+          yield* actors.register({
+            sessionID: session.id,
+            actorID,
+            mode: "subagent",
+            parentActorID: "main",
+            agent: "checkpoint-writer",
+            description: "checkpoint writer",
+            contextMode: "full",
+            contextWatermark: undefined,
+            background: true,
+            lifecycle: "ephemeral",
+            tools: ["read", "write", "edit"],
+          })
+
+          yield* prompt
+            .prompt({
+              sessionID: session.id,
+              agent: "checkpoint-writer",
+              agentID: actorID,
+              model: ref,
+              parts: [{ type: "text", text: "<system-reminder>checkpoint-writer mode</system-reminder>" }],
+            })
+            .pipe(Effect.exit)
+
+          const writerSlice = JSON.stringify(yield* sessions.messages({ sessionID: session.id, agentID: actorID }))
+          expect(writerSlice).toContain("checkpoint-writer mode")
+          expect(writerSlice).not.toContain("Skills available in this session:")
+          expect(JSON.stringify(yield* sessions.messages({ sessionID: session.id }))).not.toContain(
+            "checkpoint-writer mode",
+          )
+
+          yield* actors.updateStatus(session.id, actorID, { status: "idle", lastOutcome: "failure" })
           yield* sessions.remove(session.id)
         }),
         { git: true, config: providerCfg },
@@ -254,8 +427,8 @@ describe("skill command with additional mentions", () => {
 
           // ...but the catalog the model reads must not list it, so the model
           // cannot pick it up on its own in a later turn.
-          const catalog = user!.parts.flatMap((p) =>
-            p.type === "text" && p.text.includes("Skills available in this session:") ? [p.text] : [],
+          const catalog = (((yield* llm.inputs)[0].messages ?? []) as { role: string; content: unknown }[]).flatMap(
+            (message) => message.role === "system" && typeof message.content === "string" ? [message.content] : [],
           )
           expect(catalog).toHaveLength(1)
           expect(catalog[0]).toContain("<name>skill-alpha</name>")

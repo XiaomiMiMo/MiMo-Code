@@ -167,8 +167,8 @@ function stateApi(sync: ReturnType<typeof useSync>): TuiPluginApi["state"] {
       goal(sessionID) {
         return sync.data.session_goal[sessionID]
       },
-      cwd(sessionID) {
-        return sync.data.session_cwd[sessionID]
+      cwd(_sessionID) {
+        return sync.path.directory
       },
       permission(sessionID) {
         return sync.data.permission[sessionID] ?? []

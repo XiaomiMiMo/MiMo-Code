@@ -1,5 +1,10 @@
 Launch a new actor (subagent) to handle complex, multi-step tasks autonomously.
 
+**Subagent restriction:** When you are running as a subagent, you can ONLY use
+`actor send` to communicate with the parent agent. Other actions (spawn, run,
+cancel, etc.) are restricted to primary agents. Use `actor send` with
+to_actor_id="main" to report progress, findings, or blockers to the parent.
+
 JSON calls wrap the action payload inside an `operation` object; `action` is the discriminator field.
 
 **`spawn` is the DEFAULT.** It launches the subagent in the BACKGROUND and returns
@@ -24,7 +29,7 @@ THE EXCEPTION — `run` blocks the conversation; only for a tiny lookup that gat
           Use it for essentially all delegation: investigation, analysis, review,
           implementation, long searches — anything that takes real time.
           required: subagent_type, description, prompt
-          optional: actor_id, command, context
+          optional: command, context
 - run:    **RARE EXCEPTION.** Same launch, but BLOCKS the whole conversation until
           the subagent finishes; result returned inline. Allowed ONLY when you
           cannot make your very next decision without the result in THIS turn, and
@@ -32,17 +37,18 @@ THE EXCEPTION — `run` blocks the conversation; only for a tiny lookup that gat
           ordinary analysis, review, or implementation work — those go to `spawn`.
           If you are unsure, use `spawn`.
           required: subagent_type, description, prompt
-          optional: actor_id, timeout_ms, command, context
+          optional: timeout_ms, command, context
 - status: poll actor state without blocking. required: actor_id.
           Returns: { status: "pending"|"running"|"idle"|"unknown", actor_id, turnCount, ... }
 - wait:   block until actor completes (success/failure/cancelled) or timeout (default 10 min).
           required: actor_id. optional: timeout_ms.
           Returns: { status, actor_id, result?, error? }
 - cancel: stop a running actor (graceful). required: actor_id. Idempotent.
-- send:   deliver message to another actor's inbox.
+- send:   deliver message to another actor's inbox, waking it for another turn.
           required: to_actor_id, content.
           optional: to_session_id, type (default "text").
           Receiver sees wrapped in <inbox from="..." sent_at="...">...</inbox> at next iteration.
+          Returns once queued, not when the woken turn finishes — that turn's result arrives as a completion notification.
 
 ## When to use actor
 
@@ -52,7 +58,7 @@ THE EXCEPTION — `run` blocks the conversation; only for a tiny lookup that gat
 - **Isolate heavy lifting**: `spawn` a subagent for 10+ file reads; you get only the synthesis.
 - **Specialized search**: use `explore` for read-only code discovery (finding definitions, callers).
 - **Custom review**: `general` subagent verifies implementation against spec without bias.
-- **Working on a tracked task**: when you spawn a subagent to do work for one of your active tasks (T1, T2, …) — investigation, focused review, dedicated implementation — pass `task_id` so the subagent's verbatim findings get captured to `tasks/<TID>/progress.md` and reconciled into the next checkpoint. Pass ONLY a task ID the `task` tool returned this session; never invent one. If you haven't created the task yet, create it with the `task` tool first, or omit `task_id` and spawn ad-hoc.
+- **Working on a tracked task**: when you spawn a subagent to do work for one of your active tasks (T1, T2, …) — investigation, focused review, dedicated implementation — pass `task_id` so the subagent's verbatim findings get captured to `tasks/<TID>/progress.md`. Pass ONLY a task ID the `task` tool returned this session; never invent one. If you haven't created the task yet, create it with the `task` tool first, or omit `task_id` and spawn ad-hoc.
 - **Don't delegate at all for**: trivial single-file lookups, answers already in your context, or decisions on partial outputs.
 
 ## Collecting spawned work
@@ -81,12 +87,23 @@ You are the subagent's only briefing — it hasn't seen this conversation.
 ## Context inheritance
 
 - `context="full"`: subagent sees your full conversation history (for state writers, evaluators).
-- `context="state"`: subagent gets checkpoint summaries injected (background knowledge, no full detail).
 - `context="none"` (default): clean context, only the prompt.
 
 ## Actor ID vs Task ID
 
-`actor_id` identifies a subagent session (resumable across turns). Task IDs (T1, T2, ...) come from the `task` tool — only pass a `task_id` you got from a `task` tool call this session. If the `task_id` is malformed or unknown, the binding is dropped: the subagent's findings won't be captured to any task, and the tool result tells you so.
+`actor_id` identifies a live subagent. It is returned by `spawn`/`run` and accepted by
+`status`, `wait`, `cancel`, and `send`. Task IDs (T1, T2, ...) come from the `task` tool — only pass a `task_id` you got from a `task` tool call this session. If the `task_id` is malformed or unknown, the binding is dropped: the subagent's findings won't be captured to any task, and the tool result tells you so.
+
+## Following up with an existing subagent
+
+To give more work to a subagent you already have, `send` it a message:
+
+  `{"operation":{"action":"send","to_actor_id":"explore-1","content":"<follow-up>"}}`
+
+`send` appends your message to that subagent's own history and wakes it for another
+turn, so it keeps every prior message and tool output — including a subagent that has
+already gone idle. It returns as soon as the message is queued; the woken turn's
+result reaches you as a completion notification.
 
 ## Binding a subagent to a task
 
@@ -95,8 +112,7 @@ specific task, pass the task's TID via `task_id` (e.g. `task_id: "T4"`) — but 
 a TID the `task` tool actually returned this session. After the subagent finishes,
 the system checks that `tasks/<task_id>/progress.md` exists with the required
 structure — if not, the subagent gets one more chance to write it before
-terminating. The next checkpoint writer then reads that file and integrates
-verbatim commands, outcome, and discoveries into the main checkpoint.
+terminating.
 
 If `task_id` is malformed or names no existing task, the binding is dropped —
 the subagent's findings won't be captured to that task, and the tool result
@@ -105,10 +121,9 @@ postStop check then becomes a no-op.
 
 ## Usage notes
 
-- **Resume the same subagent**: pass `actor_id` to `spawn`/`run` and the call resumes that subagent's session (continues with its prior messages and tool outputs). Without `actor_id`, a fresh subagent is created.
 - **`spawn` vs `run` result delivery**: `spawn` returns the actor_id immediately; when the background actor finishes, its result appears as a notification in this conversation — your turn does NOT auto-wake to process it; you'll see it the next time you respond to the user. Use `wait` to block on the actor_id explicitly. `run` instead blocks the conversation and returns the result inline — that stall is exactly why it's the exception.
 - **`wait` on persistent peers caveat**: `wait` is designed for ephemeral subagents you spawned via `spawn`/`run`. Persistent peers idle between turns and never produce a "done" outcome on success — `wait` on a peer will block until that peer fails or is cancelled. Use `send` + `status` to coordinate with peers instead.
-- **`send` semantics**: fire-and-forget; returns within ~5 ms regardless of receiver load. The receiver picks the message up at the head of its next runLoop iteration. On unknown `to_actor_id`, `send` returns `{inboxID: null, error: "receiver not found"}` rather than throwing — handle the error path.
+- **`send` semantics**: fire-and-forget; returns within ~5 ms regardless of receiver load. It also WAKES the receiver — an idle subagent runs another turn on its own history, so `send` is how you give one follow-up work. The woken turn's result reaches you as a completion notification, not from the `send` call. On unknown `to_actor_id`, `send` returns `{inboxID: null, error: "receiver not found"}` rather than throwing — handle the error path.
 - Trust the subagent's outputs generally, but the subagent doesn't see your full context (unless you pass `context="full"`); brief it accordingly.
 
 
@@ -131,7 +146,7 @@ assistant: All three are running. I'll fold their results in as they report; if 
 
 <example>
 user: "investigate T4's failing tests in the type checker"
-assistant: T4 is an active task in my tracker. I'll spawn an explore subagent bound to T4 so its findings end up in tasks/T4/progress.md and the next checkpoint can integrate them.
+assistant: T4 is an active task in my tracker. I'll spawn an explore subagent bound to T4 so its findings end up in tasks/T4/progress.md.
 [actor({"operation":{"action":"spawn","subagent_type":"explore","description":"Investigate T4 type checker failures","prompt":"Run `bun test src/types.test.ts` and report each failing case. For each failure: file:line of the assertion, the expected vs actual values, and the most likely root-cause hypothesis based on reading src/types.ts. Don't fix anything.","task_id":"T4"}})]
 </example>
 

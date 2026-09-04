@@ -1,6 +1,7 @@
 import z from "zod"
+import { childProcessEnv } from "@/util/child-process-env"
 import os from "os"
-import { createWriteStream, existsSync, readFileSync } from "node:fs"
+import { createWriteStream, existsSync, realpathSync } from "node:fs"
 import * as Tool from "./tool"
 import path from "path"
 import DESCRIPTION from "./bash.txt"
@@ -28,10 +29,49 @@ import { ChildProcessSpawner } from "effect/unstable/process/ChildProcessSpawner
 import * as BashInteractive from "./bash-interactive"
 import * as BashTokenEfficient from "./bash_token_efficient_pipeline"
 import * as BashTokenEfficientHeuristic from "./bash_token_efficient_heuristic"
+import { findGitMainWorktree } from "./auto-worktree-hint"
 
 const MAX_METADATA_LENGTH = 30_000
+export const DEFAULT_MAX_OUTPUT_TOKENS = 30_000
 const DEFAULT_TIMEOUT = Flag.MIMOCODE_EXPERIMENTAL_BASH_DEFAULT_TIMEOUT_MS || 2 * 60 * 1000
 const PS = new Set(["powershell", "pwsh"])
+// Delete targets under the OS temp dir are exempt from the forced-ask
+// confirmation: scratch space is where an agent legitimately churns files, and
+// nothing there is the user's durable work. The exemption is deliberately
+// narrow — see `tmpOnlyDelete`, which grants it ONLY when every path argument
+// of every delete command resolves, unambiguously, inside a temp root.
+//
+// macOS reports /tmp and /var as symlinks into /private, so containment must be
+// checked on REALPATHS: a lexical check would reject the literal "/tmp/x" even
+// though it lives inside the canonical os.tmpdir() jail. "/tmp" is listed
+// alongside os.tmpdir() because on macOS they are DIFFERENT directories
+// (/private/tmp vs /private/var/folders/...). Mirrors tool-script.ts's jail.
+function tmpRoots() {
+  return [os.tmpdir(), ...(process.platform === "win32" ? [] : ["/tmp"])]
+}
+
+function realpathBestEffort(p: string) {
+  let cur = p
+  let suffix = ""
+  while (true) {
+    try {
+      return path.join(realpathSync.native(cur), suffix)
+    } catch {
+      suffix = suffix ? path.join(path.basename(cur), suffix) : path.basename(cur)
+      const parent = path.dirname(cur)
+      if (parent === cur) return p
+      cur = parent
+    }
+  }
+}
+
+function insideTmp(resolved: string) {
+  const abs = realpathBestEffort(resolved)
+  return tmpRoots()
+    .map(realpathBestEffort)
+    .some((root) => abs !== root && abs.startsWith(root + path.sep))
+}
+
 const CWD = new Set(["cd", "push-location", "set-location"])
 const FILES = new Set([
   ...CWD,
@@ -69,8 +109,7 @@ export function bashDescription(gpt = false) {
     .replaceAll("${os}", process.platform)
     .replaceAll("${shell}", name)
     .replaceAll("${chaining}", chaining)
-    .replaceAll("${maxLines}", String(Truncate.MAX_LINES))
-    .replaceAll("${maxBytes}", String(Truncate.MAX_BYTES))
+    .replaceAll("${maxTokens}", String(DEFAULT_MAX_OUTPUT_TOKENS))
 }
 
 // Irreversible file/directory removal commands. Names are matched
@@ -106,10 +145,18 @@ const GIT_DESTRUCTIVE = new Map<string, Set<string>>([
 const Parameters = z.object({
   command: z.string().describe("The command to execute"),
   timeout: z.number().describe("Optional timeout in milliseconds").optional(),
+  max_output_tokens: z
+    .number()
+    .int()
+    .positive()
+    .describe(
+      `Maximum approximate tokens returned inline. Defaults to ${DEFAULT_MAX_OUTPUT_TOKENS}. Full output is saved to tool storage when this limit is exceeded.`,
+    )
+    .optional(),
   workdir: z
     .string()
     .describe(
-      `The working directory to run the command in. Defaults to the current directory. Use this instead of 'cd' commands.`,
+      `Working directory for the command.`,
     )
     .optional(),
   interactive: z
@@ -185,6 +232,312 @@ function source(node: Node) {
 
 function commands(node: Node) {
   return node.descendantsOfType("command").filter((child): child is Node => Boolean(child))
+}
+
+// Commands whose primary purpose is creating/mutating files. Matched against
+// the command head (case-folded for PowerShell). `sed` is special-cased below:
+// it only writes with -i/--in-place.
+const WRITE_COMMANDS = new Set([
+  "tee",
+  "install",
+  "touch",
+  "mkdir",
+  "cp",
+  "mv",
+  "ln",
+  "truncate",
+  "dd",
+  "patch",
+  "set-content",
+  "add-content",
+  "new-item",
+  "copy-item",
+  "move-item",
+  "rename-item",
+  "out-file",
+  "tee-object",
+  "set-item",
+  "add-item",
+  "new-volume",
+  "clear-content",
+])
+
+// Operators that open a real file for writing. FD dups (`>&`, `<&`) are excluded:
+// `2>&1` rearranges descriptors and creates nothing.
+const FILE_WRITE_REDIRECT_OPS = new Set([">", ">>", ">|", "<>", "&>", "&>>"])
+
+function isFileWriteRedirect(node: Node): boolean {
+  for (let i = 0; i < node.childCount; i++) {
+    const child = node.child(i)
+    if (child && FILE_WRITE_REDIRECT_OPS.has(child.type)) return true
+  }
+  return false
+}
+
+function isSedInPlace(tokens: string[], ps: boolean): boolean {
+  const head = ps ? tokens[0]?.toLowerCase() : tokens[0]
+  if (head !== "sed") return false
+  return tokens.slice(1).some(
+    (tok) =>
+      tok === "-i" ||
+      tok === "--in-place" ||
+      tok.startsWith("--in-place=") ||
+      /^-[^-]*i/.test(tok),
+  )
+}
+
+// True when this parsed command line mutates files (create/overwrite/append),
+// as opposed to pure reads (`ls`, `cat file`, `git status`, `sed` without -i).
+// Used to flag bash tool results so the auto-worktree notice can fire on the
+// first real write even when the agent never called write/edit/apply_patch.
+export function isFileWrite(root: Node, ps: boolean): boolean {
+  for (const redirect of root.descendantsOfType("file_redirect")) {
+    if (redirect && isFileWriteRedirect(redirect)) return true
+  }
+  for (const node of commands(root)) {
+    const tokens = parts(node).map((item) => item.text)
+    if (tokens.length === 0) continue
+    const head = ps ? tokens[0].toLowerCase() : tokens[0]
+    if (WRITE_COMMANDS.has(head)) return true
+    if (isSedInPlace(tokens, ps)) return true
+  }
+  return false
+}
+
+/** Parse a command line and report whether it mutates files. Fail-closed to false. */
+export async function commandWritesFiles(command: string, ps = false): Promise<boolean> {
+  try {
+    const p = await parser()
+    const tree = (ps ? p.ps : p.bash).parse(command)
+    if (!tree) return false
+    return isFileWrite(tree.rootNode, ps)
+  } catch {
+    return false
+  }
+}
+
+// git subcommands that mutate the working tree / index / local refs.
+// `status` / `log` / `diff` / `fetch` / `show` are deliberately absent.
+const GIT_MUTATE_SUBS = new Set([
+  "add",
+  "apply",
+  "branch",
+  "checkout",
+  "cherry-pick",
+  "clean",
+  "commit",
+  "merge",
+  "mv",
+  "rebase",
+  "reset",
+  "restore",
+  "revert",
+  "rm",
+  "stash",
+  "switch",
+  "tag",
+  "worktree",
+])
+
+// Global options that may appear before the subcommand:
+//   git -C /main commit …  |  git -c k=v checkout …  |  git --git-dir=… commit
+const GIT_PRE_FLAGS = new Set(["-C", "-c", "--git-dir", "--work-tree", "--namespace", "--super-prefix"])
+
+function isGitFlag(token: string): boolean {
+  if (GIT_PRE_FLAGS.has(token)) return true
+  // --git-dir=… / --work-tree=… / --exec-path=…
+  return token.startsWith("--git-dir=") || token.startsWith("--work-tree=") || token.startsWith("--namespace=")
+}
+
+function isGitMutate(tokens: string[], ps: boolean): boolean {
+  const sub = gitSubcommand(tokens, ps)
+  if (!sub || !GIT_MUTATE_SUBS.has(sub)) return false
+  // `git worktree list|prune` only inspects. `add` is the remediation this
+  // notice recommends and does not change main working-tree files, so it must
+  // not count as a main-worktree mutation. remove/repair/move do change
+  // repo-level worktree state.
+  if (sub === "worktree") {
+    const idx = tokens.findIndex((t, i) => i > 0 && (ps ? t.toLowerCase() : t) === "worktree")
+    const verb = idx >= 0 ? tokens[idx + 1] : undefined
+    return verb === "remove" || verb === "repair" || verb === "move"
+  }
+  return true
+}
+
+/** Subcommand token after skipping git pre-flags, or undefined. */
+function gitSubcommand(tokens: string[], ps: boolean): string | undefined {
+  if (tokens.length < 2) return undefined
+  const head = ps ? tokens[0].toLowerCase() : tokens[0]
+  if (head !== "git") return undefined
+  let i = 1
+  while (i < tokens.length) {
+    const tok = tokens[i]
+    if (!isGitFlag(tok)) break
+    if (tok === "-C" || tok === "-c") i += 2
+    else i += 1
+  }
+  if (i >= tokens.length) return undefined
+  return ps ? tokens[i].toLowerCase() : tokens[i]
+}
+
+/** Directories this git invocation is aimed at (`-C dir`, `--git-dir=…`). */
+function gitTargetDirs(tokens: string[], ps: boolean): string[] {
+  const head = ps ? tokens[0].toLowerCase() : tokens[0]
+  if (head !== "git") return []
+  const out: string[] = []
+  for (let i = 1; i < tokens.length; i++) {
+    const tok = tokens[i]
+    if (tok === "-C" || tok === "--work-tree") {
+      const arg = plausiblePathArg(tokens[i + 1] ?? "")
+      if (arg) out.push(arg)
+      i += 1
+      continue
+    }
+    if (tok.startsWith("--git-dir=") || tok.startsWith("--work-tree=")) {
+      const arg = plausiblePathArg(tok.slice(tok.indexOf("=") + 1))
+      if (arg) out.push(arg)
+    }
+    // Stop at the subcommand — later path args are operands, not repo roots.
+    if (GIT_MUTATE_SUBS.has(ps ? tok.toLowerCase() : tok) || tok === "status" || tok === "log") break
+  }
+  return out
+}
+
+// cp/ln/install only create at the destination; the source stays read-only
+// (`cp /main/f /scratch/f` from scratch must not claim /main).
+const COPY_DEST_ONLY = new Set(["cp", "ln", "install", "copy-item"])
+
+function mutationPathArgs(tokens: string[], head: string): string[] {
+  const paths = tokens
+    .slice(1)
+    .map((tok) => plausiblePathArg(tok))
+    .filter((v): v is string => Boolean(v))
+  if (COPY_DEST_ONLY.has(head)) {
+    return paths.length > 0 ? [paths[paths.length - 1]!] : []
+  }
+  // mv/move/rename and everything else: every path-like arg mutates.
+  // Multi-source `mv A B C D` has A B C as sources and D as dest.
+  return paths
+}
+
+function enclosingRedirectedStatement(node: Node): Node | undefined {
+  let cur: Node | null = node.parent
+  while (cur) {
+    if (cur.type === "redirected_statement") return cur
+    cur = cur.parent
+  }
+  return undefined
+}
+
+function redirectFileTargets(node: Node): string[] {
+  // `cd dir && echo x > f` wraps the whole list in redirected_statement, so the
+  // redirect is NOT a child of the echo command. Walk up to find it.
+  const stmt = enclosingRedirectedStatement(node) ?? node
+  const out: string[] = []
+  for (const redirect of stmt.descendantsOfType("file_redirect")) {
+    if (!redirect || !isFileWriteRedirect(redirect)) continue
+    for (let i = redirect.childCount - 1; i >= 0; i--) {
+      const child = redirect.child(i)
+      if (!child) continue
+      if (child.type === "word" || child.type === "string" || child.type === "raw_string") {
+        const text = unquote(child.text)
+        if (text && !text.includes("*") && !text.includes("$") && !text.includes("(")) out.push(text)
+        break
+      }
+    }
+  }
+  return out
+}
+
+function plausiblePathArg(token: string): string | undefined {
+  if (!token || token.startsWith("-")) return
+  const text = unquote(token)
+  if (!text || text.includes("*") || text.includes("$") || text.includes("(") || text.includes(" ")) return
+  return text
+}
+
+/**
+ * Resolve where this command line actually mutates: tracks `cd`, collects
+ * redirect / write-command targets, and flags git subcommands that change a
+ * working tree. Relative paths resolve against the effective cwd after cds.
+ */
+export function collectMutationTargets(root: Node, cwd: string, ps: boolean): { paths: string[]; gitMutate: boolean } {
+  let effectiveCwd = path.resolve(cwd)
+  const cwdStack: string[] = []
+  const paths: string[] = []
+  let gitMutate = false
+
+  const add = (raw: string, base: string) => {
+    const resolved = path.isAbsolute(raw) ? path.resolve(raw) : path.resolve(base, raw)
+    paths.push(resolved)
+  }
+
+  for (const node of commands(root)) {
+    const tokens = parts(node).map((item) => item.text)
+    if (tokens.length === 0) continue
+    const head = ps ? tokens[0].toLowerCase() : tokens[0]
+
+    if (head === "cd" || head === "set-location") {
+      const arg = plausiblePathArg(tokens[1] ?? "")
+      if (arg) effectiveCwd = path.isAbsolute(arg) ? path.resolve(arg) : path.resolve(effectiveCwd, arg)
+      continue
+    }
+
+    if (head === "pushd" || head === "push-location") {
+      cwdStack.push(effectiveCwd)
+      const arg = plausiblePathArg(tokens[1] ?? "")
+      if (arg) effectiveCwd = path.isAbsolute(arg) ? path.resolve(arg) : path.resolve(effectiveCwd, arg)
+      continue
+    }
+
+    if (head === "popd" || head === "pop-location") {
+      effectiveCwd = cwdStack.pop() ?? path.resolve(cwd)
+      continue
+    }
+
+    if (isGitMutate(tokens, ps)) {
+      gitMutate = true
+      for (const dir of gitTargetDirs(tokens, ps)) add(dir, effectiveCwd)
+    }
+
+    for (const raw of redirectFileTargets(node)) add(raw, effectiveCwd)
+
+    if (WRITE_COMMANDS.has(head) || isSedInPlace(tokens, ps)) {
+      for (const arg of mutationPathArgs(tokens, head)) add(arg, effectiveCwd)
+    }
+  }
+
+  if (paths.length > 0 || gitMutate) {
+    paths.push(effectiveCwd)
+    paths.push(path.resolve(cwd))
+  }
+
+  return { paths: [...new Set(paths)], gitMutate }
+}
+
+/** Main-worktree roots this command mutates. Empty when it only reads or only touches scratch. */
+export function mainWorktreeHits(root: Node, cwd: string, ps: boolean): string[] {
+  const { paths, gitMutate } = collectMutationTargets(root, cwd, ps)
+  if (paths.length === 0 && !gitMutate) return []
+  const hits = new Set<string>()
+  // findGitMainWorktree walks up, so both file paths and directories work.
+  for (const p of paths) {
+    const hit = findGitMainWorktree(p)
+    if (hit) hits.add(hit)
+  }
+  return [...hits]
+}
+
+/** Parse a command and report which git main worktrees it mutates. Fail-closed to []. */
+export async function commandMainWorktreeHits(command: string, cwd: string, ps = false): Promise<string[]> {
+  try {
+    const p = await parser()
+    const tree = (ps ? p.ps : p.bash).parse(command)
+    if (!tree) return []
+    return mainWorktreeHits(tree.rootNode, cwd, ps)
+  } catch {
+    return []
+  }
 }
 
 // Returns true when `tokens` (the flat argv of a single command node) invokes
@@ -298,35 +651,26 @@ function preview(text: string) {
   return "...\n\n" + text.slice(-MAX_METADATA_LENGTH)
 }
 
-const ERROR_PATTERN = /error|exception|failed|fatal|traceback|panic|exit code/i
-const HEAD_BYTES = Math.floor(Truncate.MAX_BYTES * 0.7)
-const HEAD_LINES = Math.floor(Truncate.MAX_LINES * 0.7)
-
-function head(text: string, maxLines: number, maxBytes: number): string {
-  const lines = text.split("\n")
-  const out: string[] = []
-  let bytes = 0
-  for (let i = 0; i < lines.length && out.length < maxLines; i++) {
-    const size = Buffer.byteLength(lines[i], "utf-8") + (i > 0 ? 1 : 0)
-    if (bytes + size > maxBytes) break
-    out.push(lines[i])
-    bytes += size
-  }
-  return out.join("\n")
+function headBytes(text: string, maxBytes: number) {
+  const buf = Buffer.from(text, "utf-8")
+  if (buf.length <= maxBytes) return text
+  let end = maxBytes
+  while (end > 0 && (buf[end] & 0xc0) === 0x80) end--
+  return buf.subarray(0, end).toString("utf-8")
 }
 
-function tail(text: string, maxLines: number, maxBytes: number) {
-  const lines = text.split("\n")
-  if (lines.length <= maxLines && Buffer.byteLength(text, "utf-8") <= maxBytes) {
+function tail(text: string, maxBytes: number) {
+  if (Buffer.byteLength(text, "utf-8") <= maxBytes) {
     return {
       text,
       cut: false,
     }
   }
 
+  const lines = text.split("\n")
   const out: string[] = []
   let bytes = 0
-  for (let i = lines.length - 1; i >= 0 && out.length < maxLines; i--) {
+  for (let i = lines.length - 1; i >= 0; i--) {
     const size = Buffer.byteLength(lines[i], "utf-8") + (out.length > 0 ? 1 : 0)
     if (bytes + size > maxBytes) {
       if (out.length === 0) {
@@ -475,7 +819,7 @@ export const BashTool = Tool.define(
     //     lifetime of the process, a `git config user.name ...` performed
     //     mid-session is NOT picked up until the process restarts.
     //   - Operator-set GIT_AUTHOR_*/GIT_COMMITTER_* still win: shellEnv only
-    //     fills the vars that are absent from process.env (see below).
+    //     fills the vars that are absent from the child environment baseline (see below).
     //
     // resolveGitIdentity and gitIdentityCache live in this outer setup block,
     // not inside shellEnv, precisely so the cache persists across every bash
@@ -536,6 +880,45 @@ export const BashTool = Tool.define(
       return yield* resolvePath(next, cwd, shell)
     })
 
+    // Whether EVERY delete in this command line is a plain removal confined to a
+    // temp root — the one case where the forced-ask confirmation is skipped.
+    //
+    // Fails closed on purpose, in four ways. Any single miss means "ask":
+    //   1. Only DELETE_COMMANDS qualify. Destructive git subcommands
+    //      (reset --hard, push --force, stash drop, …) act on repository state,
+    //      not on a path in tmp, so they can never earn the exemption.
+    //   2. A delete with no path arguments cannot be shown to be tmp-scoped.
+    //   3. An argument `argPath` declines to resolve — a glob, a `$VAR`, a `$(…)`
+    //      substitution (see `dynamic`) — is UNKNOWN, and unknown is not tmp.
+    //      This is the load-bearing case: `rm -rf $BUILD_DIR/*` must still ask.
+    //   4. A resolved path outside a temp root, including a root itself
+    //      (`insideTmp` requires a strict descendant, so `rm -rf /tmp` asks).
+    //   5. A path inside the PROJECT, even when the project itself lives under a
+    //      temp root (a real configuration — the test fixtures do exactly this).
+    //      Scratch space earns the exemption because it holds no durable work;
+    //      a checkout's own files are durable wherever they happen to sit.
+    const tmpOnlyDelete = Effect.fn("BashTool.tmpOnlyDelete")(function* (
+      root: Node,
+      cwd: string,
+      ps: boolean,
+      shell: string,
+    ) {
+      for (const node of commands(root)) {
+        const command = parts(node)
+        const tokens = command.map((item) => item.text)
+        if (!isDelete(tokens, ps)) continue
+        const head = ps ? tokens[0]?.toLowerCase() : tokens[0]
+        if (!head || !DELETE_COMMANDS.has(head)) return false
+        const args = pathArgs(command, ps)
+        if (args.length === 0) return false
+        for (const arg of args) {
+          const resolved = yield* argPath(arg, cwd, ps, shell)
+          if (!resolved || !insideTmp(resolved) || Instance.containsPath(resolved)) return false
+        }
+      }
+      return true
+    })
+
     const collect = Effect.fn("BashTool.collect")(function* (root: Node, cwd: string, ps: boolean, shell: string) {
       const scan: Scan = {
         dirs: new Set<string>(),
@@ -577,23 +960,25 @@ export const BashTool = Tool.define(
         { env: {} },
       )
       const identity = yield* resolveGitIdentity()
+      const inherited = childProcessEnv()
       // Only fill vars the operator hasn't already set, so an explicit
       // GIT_AUTHOR_* in the environment still wins over our floor — and only
       // fields the repo itself resolved, so an unresolved field is left for git.
       const gitFloor: Record<string, string> = {}
-      if (identity.name && !process.env["GIT_AUTHOR_NAME"]) gitFloor["GIT_AUTHOR_NAME"] = identity.name
-      if (identity.email && !process.env["GIT_AUTHOR_EMAIL"]) gitFloor["GIT_AUTHOR_EMAIL"] = identity.email
-      if (identity.name && !process.env["GIT_COMMITTER_NAME"]) gitFloor["GIT_COMMITTER_NAME"] = identity.name
-      if (identity.email && !process.env["GIT_COMMITTER_EMAIL"]) gitFloor["GIT_COMMITTER_EMAIL"] = identity.email
+      if (identity.name && !inherited["GIT_AUTHOR_NAME"]) gitFloor["GIT_AUTHOR_NAME"] = identity.name
+      if (identity.email && !inherited["GIT_AUTHOR_EMAIL"]) gitFloor["GIT_AUTHOR_EMAIL"] = identity.email
+      if (identity.name && !inherited["GIT_COMMITTER_NAME"]) gitFloor["GIT_COMMITTER_NAME"] = identity.name
+      if (identity.email && !inherited["GIT_COMMITTER_EMAIL"]) gitFloor["GIT_COMMITTER_EMAIL"] = identity.email
+      // childProcessEnv: this env goes to agent-authored commands.
       return {
-        ...process.env,
+        ...inherited,
         // Python ignores the console code page when stdout is a pipe and falls
         // back to the ANSI code page (GBK on zh-CN), producing mojibake. Force
         // UTF-8 for child Python processes on Windows.
         ...(process.platform === "win32" ? { PYTHONIOENCODING: "utf-8" } : {}),
         // Git authorship floor. Placed after process.env so the spread order
         // reads naturally, but it can never clobber an operator value: gitFloor
-        // only ever holds keys that were absent from process.env. A plugin's
+        // only ever holds keys that were absent from the child baseline. A plugin's
         // extra.env comes last and so can still override the floor.
         ...gitFloor,
         ...extra.env,
@@ -608,17 +993,21 @@ export const BashTool = Tool.define(
         cwd: string
         env: NodeJS.ProcessEnv
         timeout: number
+        maxOutputTokens: number
         description: string
+        fileWrite?: boolean
+        mainWorktreeHits?: string[]
       },
       ctx: Tool.Context,
     ) {
-      const bytes = Truncate.MAX_BYTES
-      const lines = Truncate.MAX_LINES
+      const bytes = input.maxOutputTokens * 4
       const keep = bytes * 2
       let full = ""
+      let first = ""
       let last = ""
       const list: Chunk[] = []
       let used = 0
+      let total = 0
       let file = ""
       let sink: ReturnType<typeof createWriteStream> | undefined
       let cut = false
@@ -639,6 +1028,10 @@ export const BashTool = Tool.define(
           yield* Effect.forkScoped(
             Stream.runForEach(Stream.decodeText(handle.all), (chunk) => {
               const size = Buffer.byteLength(chunk, "utf-8")
+              total += size
+              if (Buffer.byteLength(first, "utf-8") < Math.floor(bytes / 2)) {
+                first = headBytes(first + chunk, Math.floor(bytes / 2))
+              }
               list.push({ text: chunk, size })
               used += size
               while (used > keep && list.length > 1) {
@@ -721,7 +1114,7 @@ export const BashTool = Tool.define(
       }
       if (aborted) meta.push("User aborted the command")
       const raw = list.map((item) => item.text).join("")
-      const end = tail(raw, lines, bytes)
+      const end = tail(raw, bytes)
       if (end.cut) cut = true
       if (!file && end.cut) {
         file = yield* trunc.write(raw)
@@ -766,25 +1159,9 @@ export const BashTool = Tool.define(
       if (!output) output = "(no output)"
 
       if (cut && file) {
-        // Check if tail contains error patterns — if so, prepend head for context
-        const tailScan = end.text.length > 2048 ? end.text.slice(-2048) : end.text
-        const hasErrors = ERROR_PATTERN.test(tailScan)
-        if (hasErrors) {
-          let fileContent: string | undefined
-          try {
-            fileContent = readFileSync(file, "utf-8")
-          } catch {
-            fileContent = undefined
-          }
-          if (fileContent) {
-            const headText = head(fileContent, HEAD_LINES, HEAD_BYTES)
-            output = `...output truncated (head+tail shown due to errors)...\n\nFull output saved to: ${file}\n\n${headText}\n\n...middle omitted...\n\n${end.text}`
-          } else {
-            output = `...output truncated...\n\nFull output saved to: ${file}\n\n` + output
-          }
-        } else {
-          output = `...output truncated...\n\nFull output saved to: ${file}\n\n` + output
-        }
+        const suffix = tail(raw, bytes - Buffer.byteLength(first, "utf-8")).text
+        const shown = Buffer.byteLength(first, "utf-8") + Buffer.byteLength(suffix, "utf-8")
+        output = `Warning: truncated output (original token count: ${Math.ceil(total / 4)})\n\n${first}\n…${Math.ceil((total - shown) / 4)} tokens truncated…\n${suffix}`
       }
 
       if (meta.length > 0) {
@@ -795,14 +1172,16 @@ export const BashTool = Tool.define(
       // unmerged paths, the result itself carries the rule (the conflict belongs
       // to the branch's owner) and the two literal commands that follow it —
       // because the model reads a tool result before its next tool call, and does
-      // not re-read a system prompt assembled requests ago. Appended LAST so it is
-      // the final thing in the result, and never blocking: see the module header.
+      // not re-read a system prompt assembled requests ago. Appended after command
+      // output and never blocking; a tool-storage pointer may follow it so a
+      // truncated result always ends with the address of its complete output.
       output += yield* MergeConflict.annotate({
         git: gitSvc,
         cwd: input.cwd,
         command: input.command,
         output,
       })
+      if (cut && file) output += `\n\nFull output saved to: ${file}`
       if (sink) {
         const stream = sink
         yield* Effect.promise(
@@ -822,6 +1201,8 @@ export const BashTool = Tool.define(
           description: input.description,
           truncated: cut,
           ...(cut && file ? { outputPath: file } : {}),
+          ...(input.fileWrite ? { fileWrite: true } : {}),
+          ...(input.mainWorktreeHits?.length ? { mainWorktreeHits: input.mainWorktreeHits } : {}),
         },
         output,
       }
@@ -848,6 +1229,8 @@ export const BashTool = Tool.define(
               const timeout = params.timeout ?? DEFAULT_TIMEOUT
               const ps = PS.has(name)
               const root = yield* parse(params.command, ps)
+              const fileWrite = isFileWrite(root, ps)
+              const hits = mainWorktreeHits(root, cwd, ps)
               // Cross-branch git guard for isolated children. Sits on the SAME
               // parsed AST the permission scan uses, so every command node in a
               // pipeline / `&&` chain / subshell is checked, and it runs BEFORE
@@ -868,14 +1251,24 @@ export const BashTool = Tool.define(
               }
               const scan = yield* collect(root, cwd, ps, shell)
               if (!Instance.containsPath(cwd)) scan.dirs.add(cwd)
-              // Delete-containing commands are authorized by askDelete alone —
-              // the delete UI shows the full command (including any external
-              // paths it touches), so a separate bash/external_directory
-              // prompt would just be a second confirmation of the same thing.
-              // MIMOCODE_AUTO_APPROVE_DELETE trusts deletes and falls back to
-              // the regular ask (where a `bash: deny` rule still blocks).
-              if (scan.deletes.size > 0 && !Flag.MIMOCODE_AUTO_APPROVE_DELETE) {
+              // Delete-containing commands normally use askDelete alone — the
+              // delete UI shows the full command, so another bash prompt would
+              // duplicate the confirmation. Auto-approved deletes still pass
+              // through askDelete so an explicit `bash_delete: deny` wins, then
+              // fall back to the regular ask so `bash: deny` wins too.
+              // `tmpOnlyDelete` trusts one whose every target is provably inside
+              // a temp root; scratch space holds no durable user work, and that
+              // check fails closed on anything it cannot resolve.
+              // Instance-scoped, NOT a process-global: one server process serves
+              // many directories with independent permission state, so a global
+              // carrier would let a permissive directory silently auto-approve
+              // deletes in a strict one. Absent accessor ⇒ not exempt (ask).
+              const autoApproveDelete =
+                scan.deletes.size > 0 && ctx.autoApproveDelete ? yield* ctx.autoApproveDelete() : false
+              const skipDeleteAsk = scan.deletes.size === 0 || (yield* tmpOnlyDelete(root, cwd, ps, shell))
+              if (!skipDeleteAsk) {
                 yield* askDelete(ctx, scan, params.command)
+                if (autoApproveDelete) yield* ask(ctx, scan)
               } else {
                 yield* ask(ctx, scan)
               }
@@ -904,6 +1297,8 @@ export const BashTool = Tool.define(
                     exit: interactiveResult.exitCode,
                     description: params.description,
                     truncated: false,
+                    ...(fileWrite ? { fileWrite: true } : {}),
+                    ...(hits.length ? { mainWorktreeHits: hits } : {}),
                   },
                   output:
                     interactiveResult.output ||
@@ -919,7 +1314,10 @@ export const BashTool = Tool.define(
                   cwd,
                   env: yield* shellEnv(ctx, cwd),
                   timeout,
+                  maxOutputTokens: params.max_output_tokens ?? DEFAULT_MAX_OUTPUT_TOKENS,
                   description: params.description,
+                  fileWrite,
+                  mainWorktreeHits: hits,
                 },
                 ctx,
               )

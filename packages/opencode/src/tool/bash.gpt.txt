@@ -1,8 +1,8 @@
-Runs a shell command and returns its output, with optional timeout and interactive terminal support.
+Runs a shell command and returns its output, with an optional timeout measured in milliseconds and interactive terminal support.
 
 Environment: OS: ${os}, Shell: ${shell}
 
-Commands run in the current working directory by default. Set the `workdir` parameter when a command belongs in another directory; do not use `cd <directory> && <command>` unless `workdir` cannot express the operation.
+`workdir` defaults to the current session directory. If provided, prefer an absolute path. Avoid using `cd <directory> && <command>` to select the initial directory.
 
 IMPORTANT: In this GPT tool set, the dedicated `read`, `write`, and `edit` tools are unavailable. Use this tool to inspect, search, and navigate files. Use `apply_patch` to create, update, move, or delete project text files. Do not attempt to call unavailable tools.
 
@@ -21,7 +21,7 @@ IMPORTANT: In this GPT tool set, the dedicated `read`, `write`, and `edit` tools
 - The `command` and a concise 5-10 word `description` are required.
 - The optional `timeout` is in milliseconds and defaults to 120000 (2 minutes).
 - Set `interactive: true` only when the command requires direct user interaction, such as a password, confirmation prompt, authentication, or input that cannot be supplied non-interactively. Interactive commands do not time out while waiting for the user.
-- If output exceeds ${maxLines} lines or ${maxBytes} bytes, the response is truncated and the full output is saved to a file. Inspect that file with `rg`, a targeted line-range command, or the equivalent command for the current shell.
+- If output exceeds ${maxTokens} tokens (approximate; adjustable per call via the max_output_tokens parameter), the response is truncated and the full output is saved to a file. Inspect that file with `rg`, a targeted line-range command, or the equivalent command for the current shell.
 - Do not add `head`, `tail`, or other output truncation solely to work around tool limits; prefer a query that selects the relevant information.
 - When commands are independent, issue multiple Bash tool calls in parallel.
 - ${chaining}

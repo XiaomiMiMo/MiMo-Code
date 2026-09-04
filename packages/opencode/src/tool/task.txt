@@ -20,7 +20,7 @@ JSON calls always wrap the action in an `operation` object — see examples belo
 
 Status lifecycle: open ⇄ in_progress, either → blocked → open, either → done | abandoned.
 Mark a task `start` before working it; `done` immediately after finishing.
-Terminal states clean up automatically after `checkpoint.task_archive_days` (default 7 days).
+Terminal states clean up automatically after 7 days.
 
 ## JSON examples
 

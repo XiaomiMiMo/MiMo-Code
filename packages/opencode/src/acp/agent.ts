@@ -45,7 +45,6 @@ import { MessageV2 } from "@/session/message-v2"
 import { Config } from "@/config"
 import { ConfigMCP } from "@/config/mcp"
 import { z } from "zod"
-import { LoadAPIKeyError } from "ai"
 import type { AssistantMessage, Event, OpencodeClient, SessionMessageResponse, ToolPart } from "@mimo-ai/sdk/v2"
 import { applyPatch } from "diff"
 import { InstallationVersion } from "@/installation/version"
@@ -571,7 +570,7 @@ export class Agent implements ACPAgent {
       const error = MessageV2.fromError(e, {
         providerID: ProviderID.make(this.config.defaultModel?.providerID ?? "unknown"),
       })
-      if (LoadAPIKeyError.isInstance(error)) {
+      if (MessageV2.isAuthError(error)) {
         throw RequestError.authRequired()
       }
       throw e
@@ -642,7 +641,7 @@ export class Agent implements ACPAgent {
       const error = MessageV2.fromError(e, {
         providerID: ProviderID.make(this.config.defaultModel?.providerID ?? "unknown"),
       })
-      if (LoadAPIKeyError.isInstance(error)) {
+      if (MessageV2.isAuthError(error)) {
         throw RequestError.authRequired()
       }
       throw e
@@ -687,7 +686,7 @@ export class Agent implements ACPAgent {
       const error = MessageV2.fromError(e, {
         providerID: ProviderID.make(this.config.defaultModel?.providerID ?? "unknown"),
       })
-      if (LoadAPIKeyError.isInstance(error)) {
+      if (MessageV2.isAuthError(error)) {
         throw RequestError.authRequired()
       }
       throw e
@@ -753,7 +752,7 @@ export class Agent implements ACPAgent {
       const error = MessageV2.fromError(e, {
         providerID: ProviderID.make(this.config.defaultModel?.providerID ?? "unknown"),
       })
-      if (LoadAPIKeyError.isInstance(error)) {
+      if (MessageV2.isAuthError(error)) {
         throw RequestError.authRequired()
       }
       throw e
@@ -784,7 +783,7 @@ export class Agent implements ACPAgent {
       const error = MessageV2.fromError(e, {
         providerID: ProviderID.make(this.config.defaultModel?.providerID ?? "unknown"),
       })
-      if (LoadAPIKeyError.isInstance(error)) {
+      if (MessageV2.isAuthError(error)) {
         throw RequestError.authRequired()
       }
       throw e

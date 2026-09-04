@@ -16,7 +16,6 @@ import { Database, asc, eq } from "../../src/storage"
 import { SyncEvent } from "../../src/sync"
 import { EventTable } from "../../src/sync/event.sql"
 import { Log } from "../../src/util"
-import { resetDatabase } from "../fixture/db"
 import { tmpdir } from "../fixture/fixture"
 
 void Log.init({ print: false })
@@ -32,7 +31,6 @@ afterEach(async () => {
   mock.restore()
   await Instance.disposeAll()
   Flag.MIMOCODE_EXPERIMENTAL_WORKSPACES = original
-  await resetDatabase()
 })
 
 function create(input?: SessionNs.CreateInput) {

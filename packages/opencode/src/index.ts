@@ -15,6 +15,7 @@ import { InstallationVersion } from "./installation/version"
 import { NamedError } from "@mimo-ai/shared/util/error"
 import { FormatError } from "./cli/error"
 import { ServeCommand } from "./cli/cmd/serve"
+import { LlmServerCommand } from "./cli/cmd/llm-server"
 import { Filesystem } from "./util"
 import { DebugCommand } from "./cli/cmd/debug"
 import { StatsCommand } from "./cli/cmd/stats"
@@ -64,10 +65,10 @@ function show(out: string) {
   const text = out.trimStart()
   if (!text.startsWith("mimo ")) {
     process.stderr.write(UI.logo() + EOL + EOL)
-    process.stderr.write(text)
+    process.stderr.write(UI.withTrailingEOL(text))
     return
   }
-  process.stderr.write(out)
+  process.stderr.write(UI.withTrailingEOL(out))
 }
 
 const cli = yargs(args)
@@ -195,6 +196,7 @@ const cli = yargs(args)
   .command(UpgradeCommand)
   .command(UninstallCommand)
   .command(ServeCommand)
+  .command(LlmServerCommand)
   // Web command temporarily disabled
   // .command(WebCommand)
   .command(ModelsCommand)

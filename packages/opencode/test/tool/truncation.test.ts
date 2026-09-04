@@ -250,15 +250,25 @@ describe("Truncate", () => {
 
         yield* fs.makeDirectory(Truncate.DIR, { recursive: true })
 
+        const v1Name = (ts: number) => {
+          const hex = ((BigInt(ts) * 0x1000n + 1n) & 0xffffffffffffn).toString(16).padStart(12, "0")
+          return `tool_${hex}${"0".repeat(14)}`
+        }
         const old = path.join(Truncate.DIR, Identifier.create("tool", "ascending", Date.now() - 10 * DAY_MS))
         const recent = path.join(Truncate.DIR, Identifier.create("tool", "ascending", Date.now() - 3 * DAY_MS))
+        const oldV1 = path.join(Truncate.DIR, v1Name(Date.now() - 10 * DAY_MS))
+        const recentV1 = path.join(Truncate.DIR, v1Name(Date.now() - 3 * DAY_MS))
 
         yield* writeFileStringScoped(old, "old content")
         yield* writeFileStringScoped(recent, "recent content")
+        yield* writeFileStringScoped(oldV1, "old v1")
+        yield* writeFileStringScoped(recentV1, "recent v1")
         yield* svc.cleanup()
 
         expect(yield* fs.exists(old)).toBe(false)
         expect(yield* fs.exists(recent)).toBe(true)
+        expect(yield* fs.exists(oldV1)).toBe(false)
+        expect(yield* fs.exists(recentV1)).toBe(true)
       }),
     )
   })

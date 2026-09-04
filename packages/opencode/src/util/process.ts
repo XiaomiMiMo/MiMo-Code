@@ -1,4 +1,5 @@
 import { type ChildProcess } from "child_process"
+import { childProcessEnv } from "@/util/child-process-env"
 import launch from "cross-spawn"
 import { buffer } from "node:stream/consumers"
 import { errorMessage } from "./error"
@@ -62,7 +63,9 @@ export function spawn(cmd: string[], opts: Options = {}): Child {
   const proc = launch(cmd[0], cmd.slice(1), {
     cwd: opts.cwd,
     shell: opts.shell,
-    env: opts.env === null ? {} : opts.env ? { ...process.env, ...opts.env } : undefined,
+    // Explicit env even when the caller passed none: an omitted `env` makes the child inherit
+    // the parent's wholesale, credentials included. Only the inherited half is scrubbed.
+    env: opts.env === null ? {} : childProcessEnv(opts.env),
     stdio: [opts.stdin ?? "ignore", opts.stdout ?? "ignore", opts.stderr ?? "ignore"],
     windowsHide: process.platform === "win32",
   })

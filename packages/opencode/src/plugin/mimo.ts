@@ -6,6 +6,7 @@ import { exec } from "child_process"
 import { Global } from "../global"
 import path from "path"
 import fs from "fs"
+import { childProcessEnv } from "@/util/child-process-env"
 
 const log = Log.create({ service: "plugin.mimo" })
 
@@ -65,7 +66,7 @@ function openBrowser(url: string) {
       : process.platform === "win32"
         ? `start "" "${url}"`
         : `xdg-open "${url}"`
-  exec(command, (error) => {
+  exec(command, { env: childProcessEnv() }, (error) => {
     if (error) {
       log.warn("could not open browser automatically", { error })
     }

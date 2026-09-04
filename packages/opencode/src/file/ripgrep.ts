@@ -1,4 +1,5 @@
 import path from "path"
+import { childProcessEnv } from "@/util/child-process-env"
 import z from "zod"
 import { AppFileSystem } from "@mimo-ai/shared/filesystem"
 import { Cause, Context, Effect, Fiber, Layer, Queue, Stream } from "effect"
@@ -10,7 +11,6 @@ import { ChildProcessSpawner } from "effect/unstable/process/ChildProcessSpawner
 import * as CrossSpawnSpawner from "@/effect/cross-spawn-spawner"
 import { Global } from "@/global"
 import { Log } from "@/util"
-import { sanitizedProcessEnv } from "@/util/mimo-process"
 import { which } from "@/util/which"
 
 const log = Log.create({ service: "ripgrep" })
@@ -143,7 +143,7 @@ export interface Interface {
 export class Service extends Context.Service<Service, Interface>()("@opencode/Ripgrep") {}
 
 function env() {
-  const env = sanitizedProcessEnv()
+  const env = childProcessEnv()
   delete env.RIPGREP_CONFIG_PATH
   return env
 }
@@ -342,7 +342,6 @@ export const layer: Layer.Layer<Service, never, AppFileSystem.Service | ChildPro
         return ChildProcess.make(binary, args, {
           cwd,
           env: env(),
-          extendEnv: true,
           stdin: "ignore",
         })
       })

@@ -368,7 +368,7 @@ describe("classifier routing — integration", () => {
                 model: { providerID: ProviderID.make("alibaba"), modelID: ModelID.make("qwen-plus") },
               }
               spawnRef.current = {
-                getForkContext: (id: string) => Effect.succeed(id === forkActorID ? forkCtx : undefined),
+                getForkContext: (_sessionID: string, id: string) => Effect.succeed(id === forkActorID ? forkCtx : undefined),
                 spawn: () => Effect.die("spawn not used in fork-gate test"),
                 cancel: () => Effect.die("cancel not used in fork-gate test"),
               } as unknown as NonNullable<typeof spawnRef.current>
@@ -443,7 +443,7 @@ describe("classifier routing — integration", () => {
                 model: { providerID: ProviderID.make("alibaba"), modelID: ModelID.make("qwen-plus") },
               }
               spawnRef.current = {
-                getForkContext: (id: string) => Effect.succeed(id === forkActorID ? forkCtx : undefined),
+                getForkContext: (_sessionID: string, id: string) => Effect.succeed(id === forkActorID ? forkCtx : undefined),
                 spawn: () => Effect.die("spawn not used in fork content-filter test"),
                 cancel: () => Effect.die("cancel not used in fork content-filter test"),
               } as unknown as NonNullable<typeof spawnRef.current>

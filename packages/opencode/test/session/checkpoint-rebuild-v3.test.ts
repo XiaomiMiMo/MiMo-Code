@@ -55,7 +55,7 @@ describe("renderRebuildContext v3", () => {
             ]),
           )
           const sess = yield* session.create({ title: "Test" })
-          const out = yield* cp.renderRebuildContext(sess.id)
+          const { text: out } = yield* cp.renderRebuildContext(sess.id)
           expect(out).toBe("")
         }),
       { outsideGit: true, config: { checkpoint: { push_caps: { recent_user: 0 } } } },
@@ -71,7 +71,7 @@ describe("renderRebuildContext v3", () => {
         const sess = yield* session.create({ title: "Test" })
         yield* reg.create({ session_id: sess.id, summary: "Refactor auth" })
 
-        const out = yield* cp.renderRebuildContext(sess.id)
+        const { text: out } = yield* cp.renderRebuildContext(sess.id)
         expect(out).not.toContain("<system-reminder>")
         expect(out).not.toContain('memory({ action: "search"')
         expect(out).toContain("Tasks ledger")
@@ -96,11 +96,11 @@ describe("renderRebuildContext v3", () => {
           fs.writeFile(path.join(projDir, "MEMORY.md"), "用 Bun 不用 npm"),
         )
 
-        const out = yield* cp.renderRebuildContext(sess.id)
-        expect(out).toContain("## Project memory")
+        const { text: out } = yield* cp.renderRebuildContext(sess.id)
+        expect(out).toContain("# Project durable knowledge")
         expect(out).toContain("用 Bun 不用 npm")
         // No global/MEMORY.md written → no spurious Global memory header.
-        expect(out).not.toContain("## Global memory")
+        expect(out).not.toContain("# Global memory")
       }),
     ),
   )
@@ -119,8 +119,8 @@ describe("renderRebuildContext v3", () => {
           fs.writeFile(path.join(globalDir, "MEMORY.md"), "prefer terse responses"),
         )
 
-        const out = yield* cp.renderRebuildContext(sess.id)
-        expect(out).toContain("## Global memory")
+        const { text: out } = yield* cp.renderRebuildContext(sess.id)
+        expect(out).toContain("# Global memory")
         expect(out).toContain("prefer terse responses")
       }),
     ),
@@ -141,7 +141,7 @@ describe("renderRebuildContext v3", () => {
         )
 
         // No tasks, no checkpoint.md, no project memory.md — only global.
-        const out = yield* cp.renderRebuildContext(sess.id)
+        const { text: out } = yield* cp.renderRebuildContext(sess.id)
         expect(out).not.toBe("")
         expect(out).toContain("global only content")
       }),
@@ -166,7 +166,7 @@ describe("renderRebuildContext v3", () => {
           fs.writeFile(path.join(taskDir, "progress.md"), "Step 1 done. Working on step 2."),
         )
 
-        const out = yield* cp.renderRebuildContext(sess.id)
+        const { text: out } = yield* cp.renderRebuildContext(sess.id)
         expect(out).toContain(t1.id)
         expect(out).toContain("Tasks ledger")
         expect(out).toContain("Memory keys index")
@@ -184,7 +184,7 @@ describe("renderRebuildContext v3", () => {
         const sess = yield* session.create({ title: "Test" })
         yield* reg.create({ session_id: sess.id, summary: "Some task" })
 
-        const out = yield* cp.renderRebuildContext(sess.id, { lastMessageInfo: { role: "assistant", finish: "stop" } })
+        const { text: out } = yield* cp.renderRebuildContext(sess.id, { lastMessageInfo: { role: "assistant", finish: "stop" } })
         expect(out).toContain("The previous assistant turn ended with a stop")
         expect(out).toContain("progress.md head section")
       }),
@@ -200,7 +200,7 @@ describe("renderRebuildContext v3", () => {
         const sess = yield* session.create({ title: "Test" })
         yield* reg.create({ session_id: sess.id, summary: "Some task" })
 
-        const out = yield* cp.renderRebuildContext(sess.id, { lastMessageInfo: { role: "assistant", finish: "tool-calls" } })
+        const { text: out } = yield* cp.renderRebuildContext(sess.id, { lastMessageInfo: { role: "assistant", finish: "tool-calls" } })
         expect(out).toContain("mid-loop in an autonomous task")
       }),
     ),
@@ -215,7 +215,7 @@ describe("renderRebuildContext v3", () => {
         const sess = yield* session.create({ title: "Test" })
         yield* reg.create({ session_id: sess.id, summary: "Some task" })
 
-        const out = yield* cp.renderRebuildContext(sess.id, { lastMessageInfo: { role: "tool" } })
+        const { text: out } = yield* cp.renderRebuildContext(sess.id, { lastMessageInfo: { role: "tool" } })
         expect(out).toContain("Tool results above are real history")
       }),
     ),
@@ -230,7 +230,7 @@ describe("renderRebuildContext v3", () => {
         const sess = yield* session.create({ title: "Test" })
         yield* reg.create({ session_id: sess.id, summary: "Some task" })
 
-        const out = yield* cp.renderRebuildContext(sess.id, { lastMessageInfo: { role: "user" } })
+        const { text: out } = yield* cp.renderRebuildContext(sess.id, { lastMessageInfo: { role: "user" } })
         expect(out).not.toContain("mid-loop in an autonomous task")
         expect(out).not.toContain("The previous assistant turn ended with a stop")
         expect(out).not.toContain("Tool results above are real history")
@@ -254,9 +254,9 @@ describe("renderRebuildContext v3", () => {
         const sess = yield* session.create({ title: "Test" })
         yield* reg.create({ session_id: sess.id, summary: "Refactor auth" })
 
-        const noArg = yield* cp.renderRebuildContext(sess.id)
-        const mainArg = yield* cp.renderRebuildContext(sess.id, { agentID: "main" })
-        const subagentArg = yield* cp.renderRebuildContext(sess.id, { agentID: "explore-1" })
+        const { text: noArg } = yield* cp.renderRebuildContext(sess.id)
+        const { text: mainArg } = yield* cp.renderRebuildContext(sess.id, { agentID: "main" })
+        const { text: subagentArg } = yield* cp.renderRebuildContext(sess.id, { agentID: "explore-1" })
 
         expect(noArg).toContain("Tasks ledger")
         expect(mainArg).toBe(noArg)

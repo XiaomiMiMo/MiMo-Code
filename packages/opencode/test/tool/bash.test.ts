@@ -4,7 +4,7 @@ import fs from "fs/promises"
 import os from "os"
 import path from "path"
 import { Shell } from "../../src/shell/shell"
-import { BashTool } from "../../src/tool/bash"
+import { BashTool, DEFAULT_MAX_OUTPUT_TOKENS } from "../../src/tool/bash"
 import { Instance } from "../../src/project/instance"
 import { Filesystem } from "../../src/util"
 import { tmpdir } from "../fixture/fixture"
@@ -484,6 +484,149 @@ describe("tool.bash permissions", () => {
           ),
         )
         expect(requests.find((r) => r.permission === "bash_delete")).toBeUndefined()
+      },
+    })
+  })
+
+  // The temp-scoped delete exemption. The interesting assertions are the
+  // fail-closed ones: an exemption that mis-fires silently authorizes an
+  // irreversible action, so every case it CANNOT prove must still ask.
+  each("skips bash_delete for a delete confined to the OS temp dir", async () => {
+    await using tmp = await tmpdir()
+    const scratch = await fs.mkdtemp(path.join(os.tmpdir(), "mimocode-bash-tmpdel-"))
+    await Bun.write(path.join(scratch, "scratch.txt"), "x")
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () => {
+        const bash = await initBash()
+        const requests: Array<Omit<Permission.Request, "id" | "sessionID" | "tool">> = []
+        await Effect.runPromise(
+          bash.execute(
+            { command: `rm ${path.join(scratch, "scratch.txt")}`, description: "Remove scratch file" },
+            capture(requests),
+          ),
+        )
+        expect(requests.find((r) => r.permission === "bash_delete")).toBeUndefined()
+      },
+    })
+    await fs.rm(scratch, { recursive: true, force: true })
+  })
+
+  each("still asks for bash_delete when a temp path cannot be resolved", async () => {
+    await using tmp = await tmpdir()
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () => {
+        const bash = await initBash()
+        const err = new Error("stop after permission")
+        const requests: Array<Omit<Permission.Request, "id" | "sessionID" | "tool">> = []
+        await expect(
+          Effect.runPromise(
+            bash.execute(
+              // $BUILD_DIR is unresolvable, so the target is UNKNOWN — and
+              // unknown must never be treated as temp-scoped.
+              { command: "rm -rf $BUILD_DIR/*", description: "Remove build dir" },
+              capture(requests, err),
+            ),
+          ),
+        ).rejects.toThrow(err.message)
+        expect(requests.find((r) => r.permission === "bash_delete")).toBeDefined()
+      },
+    })
+  })
+
+  each("still asks for bash_delete when one target of several is outside temp", async () => {
+    await using tmp = await tmpdir({
+      init: async (dir) => {
+        await Bun.write(path.join(dir, "victim.txt"), "x")
+      },
+    })
+    const scratch = await fs.mkdtemp(path.join(os.tmpdir(), "mimocode-bash-tmpdel-"))
+    await Bun.write(path.join(scratch, "scratch.txt"), "x")
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () => {
+        const bash = await initBash()
+        const err = new Error("stop after permission")
+        const requests: Array<Omit<Permission.Request, "id" | "sessionID" | "tool">> = []
+        await expect(
+          Effect.runPromise(
+            bash.execute(
+              {
+                command: `rm ${path.join(scratch, "scratch.txt")} ${path.join(tmp.path, "victim.txt")}`,
+                description: "Remove two files",
+              },
+              capture(requests, err),
+            ),
+          ),
+        ).rejects.toThrow(err.message)
+        expect(requests.find((r) => r.permission === "bash_delete")).toBeDefined()
+      },
+    })
+    await fs.rm(scratch, { recursive: true, force: true })
+  })
+
+  each("still asks for bash_delete for a project file even when the project is under temp", async () => {
+    // A project genuinely living under os.tmpdir() would be exempted by a naive
+    // "is it under temp?" test, taking the checkout's own files with it. The
+    // shared fixture roots tmpdirs under cwd, so this case has to build the
+    // project inside os.tmpdir() explicitly or it proves nothing.
+    const projectRoot = await fs.mkdtemp(path.join(os.tmpdir(), "mimocode-bash-tmpproj-"))
+    const project = await fs.realpath(projectRoot)
+    await Bun.write(path.join(project, "victim.txt"), "x")
+    await Instance.provide({
+      directory: project,
+      fn: async () => {
+        const bash = await initBash()
+        const err = new Error("stop after permission")
+        const requests: Array<Omit<Permission.Request, "id" | "sessionID" | "tool">> = []
+        await expect(
+          Effect.runPromise(
+            bash.execute({ command: "rm victim.txt", description: "Remove victim" }, capture(requests, err)),
+          ),
+        ).rejects.toThrow(err.message)
+        expect(requests.find((r) => r.permission === "bash_delete")).toBeDefined()
+      },
+    })
+    await fs.rm(project, { recursive: true, force: true })
+  })
+
+  each("still asks for bash_delete on a destructive git subcommand run from temp", async () => {
+    await using tmp = await tmpdir()
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () => {
+        const bash = await initBash()
+        const err = new Error("stop after permission")
+        const requests: Array<Omit<Permission.Request, "id" | "sessionID" | "tool">> = []
+        await expect(
+          Effect.runPromise(
+            bash.execute(
+              // Acts on repository state, not on a path in temp — never exempt.
+              { command: "git stash drop", description: "Drop stash" },
+              capture(requests, err),
+            ),
+          ),
+        ).rejects.toThrow(err.message)
+        expect(requests.find((r) => r.permission === "bash_delete")).toBeDefined()
+      },
+    })
+  })
+
+  each("still asks for bash_delete when the target is a temp root itself", async () => {
+    await using tmp = await tmpdir()
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () => {
+        const bash = await initBash()
+        const err = new Error("stop after permission")
+        const requests: Array<Omit<Permission.Request, "id" | "sessionID" | "tool">> = []
+        await expect(
+          Effect.runPromise(
+            bash.execute({ command: `rm -rf ${os.tmpdir()}`, description: "Remove temp root" }, capture(requests, err)),
+          ),
+        ).rejects.toThrow(err.message)
+        expect(requests.find((r) => r.permission === "bash_delete")).toBeDefined()
       },
     })
   })
@@ -1331,34 +1474,33 @@ describe("tool.bash abort", () => {
 })
 
 describe("tool.bash truncation", () => {
-  test("truncates output exceeding line limit", async () => {
+  test("does not truncate many short lines within the token budget", async () => {
     await Instance.provide({
       directory: projectRoot,
       fn: async () => {
         const bash = await initBash()
-        const lineCount = Truncate.MAX_LINES + 500
+        const lineCount = 5000
         const result = await Effect.runPromise(
           bash.execute(
             {
               command: fill("lines", lineCount),
-              description: "Generate lines exceeding limit",
+              description: "Generate many short lines",
             },
             ctx,
           ),
         )
-        mustTruncate(result)
-        expect(result.output).toMatch(/\.\.\.output truncated\.\.\./)
-        expect(result.output).toMatch(/Full output saved to:\s+\S+/)
+        expect((result.metadata as { truncated?: boolean }).truncated).toBe(false)
+        expect(result.output).toContain(String(lineCount))
       },
     })
   })
 
-  test("truncates output exceeding byte limit", async () => {
+  test("truncates output exceeding the default token limit", async () => {
     await Instance.provide({
       directory: projectRoot,
       fn: async () => {
         const bash = await initBash()
-        const byteCount = Truncate.MAX_BYTES + 10000
+        const byteCount = DEFAULT_MAX_OUTPUT_TOKENS * 4 + 10000
         const result = await Effect.runPromise(
           bash.execute(
             {
@@ -1369,8 +1511,38 @@ describe("tool.bash truncation", () => {
           ),
         )
         mustTruncate(result)
-        expect(result.output).toMatch(/\.\.\.output truncated\.\.\./)
+        expect(result.output).toContain(
+          `Warning: truncated output (original token count: ${Math.ceil(byteCount / 4)})`,
+        )
+        expect(result.output).toContain("tokens truncated…")
         expect(result.output).toMatch(/Full output saved to:\s+\S+/)
+      },
+    })
+  })
+
+  test("limits output by approximate tokens and appends the tool storage path", async () => {
+    await Instance.provide({
+      directory: projectRoot,
+      fn: async () => {
+        const bash = await initBash()
+        const result = await Effect.runPromise(
+          bash.execute(
+            {
+              command: fill("bytes", 5000),
+              description: "Generate output exceeding token limit",
+              max_output_tokens: 100,
+            },
+            ctx,
+          ),
+        )
+        mustTruncate(result)
+
+        const filepath = (result.metadata as { outputPath?: string }).outputPath
+        expect(filepath).toBeTruthy()
+        expect(result.output).toContain("Warning: truncated output (original token count: 1250)")
+        expect(result.output).toContain("tokens truncated…")
+        expect(result.output.endsWith(`Full output saved to: ${filepath}`)).toBe(true)
+        expect(await Filesystem.readText(filepath!)).toBe("a".repeat(5000))
       },
     })
   })
@@ -1400,7 +1572,7 @@ describe("tool.bash truncation", () => {
       directory: projectRoot,
       fn: async () => {
         const bash = await initBash()
-        const lineCount = Truncate.MAX_LINES + 100
+        const lineCount = 30_000
         const result = await Effect.runPromise(
           bash.execute(
             {

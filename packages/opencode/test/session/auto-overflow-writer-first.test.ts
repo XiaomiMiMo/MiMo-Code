@@ -6,6 +6,7 @@ import { GlobalBus } from "../../src/bus/global"
 import { Database, desc, eq } from "../../src/storage"
 import { Instance } from "../../src/project/instance"
 import { Session } from "../../src/session"
+import { MessageV2 } from "../../src/session/message-v2"
 import { SessionPrompt } from "../../src/session/prompt"
 import { MessageTable, SessionTable } from "../../src/session/session.sql"
 import { checkpointPath } from "../../src/session/checkpoint-paths"
@@ -199,13 +200,24 @@ function writerThatFails(): SpawnImpl {
 }
 
 // Shrink the usable window so a seeded token count trips
-// SessionOverflow.isOverflow deterministically. reserves() = compaction.reserved
-// (100) + a 20_000 output reservation (this model publishes no limit.input), so
-// max_context must exceed ~20_100 to be honoured at all. It must ALSO leave
-// usable > 13_000, or SessionPrune.resolveThresholds refuses the window
-// ("too small for checkpoints"). 40_000 satisfies both: usable = 40_000 -
-// 20_100 = 19_900, against the seeded 50_000 tokens.
-function mimocodeConfig(baseURL: string, maxContext = 40_000, checkpoint?: { thresholds: string[]; reserved: number }) {
+// SessionOverflow.isOverflow deterministically. The trigger is a flat fraction
+// of the working window — `usable = floor(max_context * ratio)`, ratio being
+// MIMOCODE_COMPACTION_TRIGGER_RATIO (default 0.9) — so max_context alone decides
+// it, as long as it exceeds reserves() = compaction.reserved (100) + a 20_000
+// output reservation (this model publishes no limit.input); below that, budget()
+// ignores it and the model's own million-token window applies. 40_000 puts the
+// trigger at 36_000, well under the 50_000 tokens every turn below reports.
+//
+// The empty checkpoint ladder is declared rather than inferred: SessionPrune
+// only consults defaultThresholdsFor when `thresholds` is absent, so passing []
+// keeps fireCheckpoints out of the way regardless of the window. That is what
+// makes the writer counts asserted below attributable to the overflow path
+// alone.
+function mimocodeConfig(
+  baseURL: string,
+  maxContext = 40_000,
+  checkpoint: { thresholds: string[]; reserved: number } = { thresholds: [], reserved: 100 },
+) {
   return JSON.stringify({
     $schema: "https://opencode.ai/config.json",
     enabled_providers: ["alibaba"],
@@ -302,11 +314,62 @@ async function seedFinishedAssistant(sessionID: SessionID, parentID: MessageID, 
 // summary.
 describe("Auto context overflow: write a checkpoint before degrading to compaction", () => {
   test(
+    "checkpoint disabled + empty compaction summary restores the original context",
+    async () => {
+      const previous = process.env.MIMOCODE_DISABLE_CHECKPOINT
+      process.env.MIMOCODE_DISABLE_CHECKPOINT = "true"
+      const llm = startLLM("")
+      try {
+        await using tmp = await tmpdir({
+          git: true,
+          init: (dir) => Bun.write(path.join(dir, "mimocode.json"), mimocodeConfig(llm.origin)),
+        })
+
+        await Instance.provide({
+          directory: tmp.path,
+          fn: () =>
+            run(
+              Effect.gen(function* () {
+                const prompt = yield* SessionPrompt.Service
+                const sessions = yield* Session.Service
+                const info = yield* sessions.create({ title: "checkpoint-off-empty-compaction" })
+                const first = yield* Effect.promise(() => seedUserMessage(info.id, "context that must survive"))
+                yield* Effect.promise(() => seedFinishedAssistant(info.id, first.id, 50_000))
+
+                yield* prompt.prompt({
+                  sessionID: info.id,
+                  parts: [{ type: "text", text: "next question that triggers compaction" }],
+                  agent: "build",
+                })
+
+                const after = yield* sessions.messages({ sessionID: info.id, agentID: "main" })
+                expect(after.some((message) => message.parts.some((part) => part.type === "compaction"))).toBe(false)
+                expect(
+                  after.some((message) =>
+                    message.parts.some((part) => part.type === "text" && part.text === "context that must survive"),
+                  ),
+                ).toBe(true)
+                expect(
+                  MessageV2.filterCompacted(after).some((message) => message.info.id === first.id),
+                ).toBe(true)
+              }),
+            ),
+        })
+      } finally {
+        if (previous === undefined) delete process.env.MIMOCODE_DISABLE_CHECKPOINT
+        else process.env.MIMOCODE_DISABLE_CHECKPOINT = previous
+        await llm.stop()
+      }
+    },
+    { timeout: 60_000 },
+  )
+
+  test(
     "a completed high-usage turn is rebuilt exactly once",
     async () => {
       const llm = startUsageLLM([
         { text: "initialized", promptTokens: 1_000 },
-        { text: "high-usage reply", promptTokens: 25_000 },
+        { text: "high-usage reply", promptTokens: 50_000 },
         { text: "reply after rebuild", promptTokens: 1_000 },
       ])
       let writerCalls = 0
@@ -409,9 +472,9 @@ describe("Auto context overflow: write a checkpoint before degrading to compacti
                   agent: "build",
                 })
 
-                // usable = 50K - 20.1K reserves = 29.9K. The single 24K
-                // checkpoint threshold is below it, so 25K must write a
-                // checkpoint without rebuilding before the 29.9K trigger.
+                // usable = floor(50K * 0.9) = 45K. The single 24K checkpoint
+                // threshold is below it, so 25K must write a checkpoint
+                // without rebuilding before the 45K trigger.
                 const first = yield* Effect.promise(() => seedUserMessage(info.id, "earlier question"))
                 yield* Effect.promise(() => seedFinishedAssistant(info.id, first.id, 25_000))
 
@@ -570,38 +633,62 @@ describe("Auto context overflow: write a checkpoint before degrading to compacti
           init: (dir) => Bun.write(path.join(dir, "mimocode.json"), mimocodeConfig(llm.origin)),
         })
 
-        await withSpawnRef(writer, () =>
-          Instance.provide({
-            directory: tmp.path,
-            fn: () =>
-              run(
-                Effect.gen(function* () {
-                  const prompt = yield* SessionPrompt.Service
-                  const sessions = yield* Session.Service
-                  const info = yield* sessions.create({ title: "auto-overflow-compaction" })
+        await Instance.provide({
+          directory: tmp.path,
+          fn: () =>
+            run(
+              Effect.gen(function* () {
+                const prompt = yield* SessionPrompt.Service
+                const sessions = yield* Session.Service
+                const info = yield* sessions.create({ title: "auto-overflow-compaction" })
 
-                  const first = yield* Effect.promise(() => seedUserMessage(info.id, "earlier question"))
-                  yield* Effect.promise(() => seedFinishedAssistant(info.id, first.id, 50_000))
+                yield* prompt.prompt({
+                  sessionID: info.id,
+                  parts: [{ type: "text", text: "initialize the actor layer" }],
+                  agent: "build",
+                })
 
-                  yield* prompt.prompt({
+                const first = yield* Effect.promise(() => seedUserMessage(info.id, "earlier question"))
+                yield* Effect.promise(() => seedFinishedAssistant(info.id, first.id, 50_000))
+
+                // SessionPrompt layer initialization installs the real actor
+                // implementation, so bind the failing writer only after the
+                // service has resolved. This keeps the test independent of
+                // earlier tests having initialized the shared spawn ref.
+                const previous = spawnRef.current
+                spawnRef.current = writer
+                yield* prompt
+                  .prompt({
                     sessionID: info.id,
                     parts: [{ type: "text", text: "next question that overflows" }],
                     agent: "build",
                   })
+                  .pipe(
+                    Effect.ensuring(
+                      Effect.sync(() => {
+                        spawnRef.current = previous
+                      }),
+                    ),
+                  )
 
-                  const after = yield* sessions.messages({ sessionID: info.id })
+                const after = yield* sessions.messages({ sessionID: info.id })
 
-                  // Writer failed and no checkpoint existed → degrade.
-                  const compactions = after.filter((m) => m.parts.some((p) => p.type === "compaction"))
-                  expect(compactions.length).toBe(1)
+                // Writer failed and no checkpoint existed → degrade.
+                const compactions = after.filter((m) => m.parts.some((p) => p.type === "compaction"))
+                expect(compactions.length).toBe(1)
+                const boundary = compactions[0].parts.find(
+                  (part): part is MessageV2.CompactionPart => part.type === "compaction",
+                )
+                expect(boundary?.projection?.version).toBe(1)
+                expect(boundary?.projection?.summary).toContain("<conversation-summary")
+                expect(boundary?.projection?.trigger).toBe("automatic")
 
-                  // No checkpoint boundary, because no checkpoint was written.
-                  const checkpoints = after.filter((m) => m.parts.some((p) => p.type === "checkpoint"))
-                  expect(checkpoints.length).toBe(0)
-                }),
-              ),
-          }),
-        )
+                // No checkpoint boundary, because no checkpoint was written.
+                const checkpoints = after.filter((m) => m.parts.some((p) => p.type === "checkpoint"))
+                expect(checkpoints.length).toBe(0)
+              }),
+            ),
+        })
       } finally {
         await llm.stop()
       }

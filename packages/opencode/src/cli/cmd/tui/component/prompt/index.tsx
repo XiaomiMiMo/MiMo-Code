@@ -27,6 +27,7 @@ import { useRenderer, type JSX } from "@opentui/solid"
 import * as Editor from "@tui/util/editor"
 import * as Model from "@tui/util/model"
 import * as Voice from "@tui/util/voice"
+import * as VoiceEdit from "@tui/util/voice-edit"
 import { useExit } from "../../context/exit"
 import * as Clipboard from "../../util/clipboard"
 import type { AssistantMessage, FilePart, UserMessage } from "@mimo-ai/sdk/v2"
@@ -105,10 +106,8 @@ let stashed: { prompt: PromptInfo; cursor: number } | undefined
 let activeVoice: {
   handle: Voice.StreamingHandle
   pending: number
-  appendText: (text: string) => void
-  setText: (text: string) => void
-  getPlainText: () => string
-  switchAgent: (name: string) => void
+  applyFromBase: (base: { value: string; range: VoiceEdit.EditorRange | null }, target: VoiceEdit.VoiceTextTarget) => void
+  getSnapshot: () => { value: string; range: VoiceEdit.EditorRange | null }
   submit: () => Promise<unknown>
   setState: (type: "listening" | "speaking" | "processing" | "finishing" | "idle") => void
   showError: (msg: string) => void
@@ -132,7 +131,8 @@ export function Prompt(props: PromptProps) {
   const history = usePromptHistory()
   const stash = usePromptStash()
   const command = useCommandDialog()
-  const t = useLanguage().t
+  const language = useLanguage()
+  const t = language.t
   const renderer = useRenderer()
   const { theme, syntax } = useTheme()
   const kv = useKV()
@@ -165,45 +165,76 @@ export function Prompt(props: PromptProps) {
     setVoiceElapsed(0)
   }
 
-  function voiceAppendText(text: string) {
+  /** Natural selection: highlight [start,end) and park the caret at end. */
+  function voicePlaceRange(value: string, range: VoiceEdit.EditorRange) {
     if (!input || input.isDestroyed) return
-    const current = store.prompt.input
-    if (current.length > 0 && /[.?!]$/.test(current) && text.length > 0 && text[0] !== " ") {
-      input.insertText(" " + text)
-      setStore("prompt", "input", current + " " + text)
+    VoiceEdit.placeNaturalSelection(input, value, range)
+  }
+
+  function voiceRewriteBuffer(text: string, caretIndex: number, selection?: VoiceEdit.EditorRange) {
+    if (!input || input.isDestroyed) return
+    // Full rewrite drops mention/paste extmarks — clear them with the buffer.
+    input.extmarks.clear()
+    setStore("extmarkToPartIndex", new Map())
+    setStore("prompt", {
+      input: text,
+      parts: [],
+    })
+    input.clear()
+    input.insertText(text)
+    if (selection && selection.start !== selection.end) {
+      voicePlaceRange(text, selection)
     } else {
-      input.insertText(text)
-      setStore("prompt", "input", current + text)
+      input.clearSelection()
+      input.cursorOffset = VoiceEdit.widthCaretFor(text, caretIndex)
     }
     setTimeout(() => {
       if (!input || input.isDestroyed) return
       input.getLayoutNode().markDirty()
-      input.gotoBufferEnd()
       renderer.requestRender()
     }, 0)
   }
 
-  function voiceSetText(text: string) {
+  /**
+   * Apply a voice target against a frozen base snapshot (value + range from
+   * request time). Insert on an unchanged buffer uses a surgical splice so
+   * paste/file extmarks survive; set/set_with_cursor (or a changed buffer)
+   * do a full rewrite.
+   */
+  function voiceApplyFromBase(
+    base: { value: string; range: VoiceEdit.EditorRange | null },
+    target: VoiceEdit.VoiceTextTarget,
+  ) {
     if (!input || input.isDestroyed) return
-    input.clear()
-    input.insertText(text)
-    setStore("prompt", "input", text)
-    setTimeout(() => {
-      if (!input || input.isDestroyed) return
-      input.getLayoutNode().markDirty()
-      input.gotoBufferEnd()
-      renderer.requestRender()
-    }, 0)
+    if (target.kind === "insert" && input.plainText === base.value) {
+      const range = base.range ?? { start: base.value.length, end: base.value.length }
+      const w = VoiceEdit.widthSelectionFor(base.value, range)
+      if (range.start === range.end) {
+        input.clearSelection()
+        input.cursorOffset = w.start
+      } else {
+        input.setSelection(w.start, w.end)
+      }
+      input.insertText(target.text)
+      setStore("prompt", "input", input.plainText)
+      setTimeout(() => {
+        if (!input || input.isDestroyed) return
+        input.getLayoutNode().markDirty()
+        renderer.requestRender()
+      }, 0)
+      return
+    }
+    const range = base.range ?? { start: base.value.length, end: base.value.length }
+    const result = VoiceEdit.applyVoiceTarget(base.value, range, target)
+    voiceRewriteBuffer(result.text, result.caret, result.selection)
   }
 
-  function voiceGetPlainText() {
-    return store.prompt.input
-  }
-
-  function voiceSwitchAgent(name: string) {
-    const match = local.agent.list().find((x) => x.name.toLowerCase() === name.toLowerCase())
-    if (match) local.agent.userSwitch(match.name)
-    else toast.show({ message: t("tui.voice.error.unknown_agent", { name: name }), variant: "error", duration: 3000 })
+  function voiceGetSnapshot(): { value: string; range: VoiceEdit.EditorRange | null } {
+    if (!input || input.isDestroyed) return { value: store.prompt.input, range: null }
+    const value = input.plainText
+    // Unfocused caret may be a stale 0 — treat as no caret and fall back to full string.
+    if (!input.focused) return { value, range: null }
+    return { value, range: VoiceEdit.getEditorRange(input) }
   }
 
   function voiceSetState(type: "idle" | "listening" | "speaking" | "processing" | "finishing") {
@@ -214,10 +245,8 @@ export function Prompt(props: PromptProps) {
 
   // Wire module-level callbacks to current component instance
   if (activeVoice) {
-    activeVoice.appendText = voiceAppendText
-    activeVoice.setText = voiceSetText
-    activeVoice.getPlainText = voiceGetPlainText
-    activeVoice.switchAgent = voiceSwitchAgent
+    activeVoice.applyFromBase = voiceApplyFromBase
+    activeVoice.getSnapshot = voiceGetSnapshot
     activeVoice.submit = () => submit()
     activeVoice.setState = voiceSetState
     activeVoice.showError = (msg) => toast.show({ message: msg, variant: "error", duration: 3000 })
@@ -241,16 +270,17 @@ export function Prompt(props: PromptProps) {
       return
     }
     if (state === "finishing") return
-    // Start streaming — only validate the active mode's provider
+    // Start streaming — resolve both providers so /voice-control can switch mid-recording.
     const voiceConfig = sync.data.config.voice
     const resolved = Voice.resolveVoiceConfig(voiceConfig)
-    const activeConfig = voiceControlEnabled() ? resolved.control : resolved.asr
-    const creds = Voice.resolveCredentials(sync.data.provider, activeConfig)
-    if ("error" in creds) {
-      const vars = { provider: creds.providerID, model: creds.model }
+    const asrCreds = Voice.resolveCredentials(sync.data.provider, resolved.asr)
+    const controlCreds = Voice.resolveCredentials(sync.data.provider, resolved.control)
+    const initialCreds = voiceControlEnabled() ? controlCreds : asrCreds
+    if ("error" in initialCreds) {
+      const vars = { provider: initialCreds.providerID, model: initialCreds.model }
       const msg = !voiceConfig ? t("tui.voice.error.no_auth")
-        : creds.error === "not_found" ? t("tui.voice.error.provider_not_found", vars)
-        : creds.error === "no_url" ? t("tui.voice.error.no_url", vars)
+        : initialCreds.error === "not_found" ? t("tui.voice.error.provider_not_found", vars)
+        : initialCreds.error === "no_url" ? t("tui.voice.error.no_url", vars)
         : t("tui.voice.error.no_auth_provider", vars)
       toast.show({ message: msg, variant: "error" })
       return
@@ -263,10 +293,8 @@ export function Prompt(props: PromptProps) {
     const av: NonNullable<typeof activeVoice> = {
       handle: undefined!,
       pending: 0,
-      appendText: voiceAppendText,
-      setText: voiceSetText,
-      getPlainText: voiceGetPlainText,
-      switchAgent: voiceSwitchAgent,
+      applyFromBase: voiceApplyFromBase,
+      getSnapshot: voiceGetSnapshot,
       submit: () => submit(),
       setState: voiceSetState,
       showError: (msg) => toast.show({ message: msg, variant: "error", duration: 3000 }),
@@ -275,42 +303,59 @@ export function Prompt(props: PromptProps) {
     let voiceControlChain: Promise<void> = Promise.resolve()
 
     const handle = Voice.startStreaming({
+      // VAD breath window is fixed for this recording (1.2s control / 0.8s ASR).
+      // Mode switches mid-recording still apply to processing/model choice below.
+      minSilenceS: voiceControlEnabled() ? 1.2 : undefined,
       onSegment: (segment) => {
         av.pending++
         av.setState("processing")
+        const useControl = voiceControlEnabled()
+        const creds = useControl ? controlCreds : asrCreds
+        if ("error" in creds) {
+          av.showError(t("tui.voice.error.no_auth_provider", { provider: creds.providerID, model: creds.model }))
+          av.pending--
+          if (activeVoice === av && voiceState() !== "speaking")
+            av.setState(av.pending > 0 ? "processing" : "listening")
+          if (!activeVoice && av.pending <= 0) av.setState("idle")
+          return
+        }
 
-        if (voiceControlEnabled()) {
+        if (useControl) {
           voiceControlChain = voiceControlChain.then(async () => {
             try {
               if (!activeVoice) return
               av.setState("processing")
-              const currentText = av.getPlainText()
-              const currentAgent = local.agent.current()?.name ?? ""
-              const availableAgents = local.agent.list().map((x) => x.name)
+              const snap = av.getSnapshot()
+              const contextText = VoiceEdit.controlContextText(snap.value, snap.range)
 
               const ctrl = await Voice.processVoiceControl({
                 audio: segment.audio,
                 apiKey: creds.apiKey,
                 baseUrl: creds.baseUrl,
                 model: resolved.control.model,
-                currentText,
-                currentAgent,
-                availableAgents,
+                contextText,
                 sendEnabled: voiceSendEnabled(),
               })
 
-              if (ctrl) {
-                for (const action of ctrl.actions) {
-                  if (action.action === "edit") av.setText(action.text)
-                  else if (action.action === "send") {
-                    if (voiceSendEnabled() && av.getPlainText().trim()) await av.submit()
-                    else if (!av.getPlainText().trim()) av.showError(t("tui.voice.error.empty_send"))
-                  } else if (action.action === "agent") {
-                    av.switchAgent(action.agent)
+              if (ctrl.ok) {
+                // Drop stale mutations: user edited the prompt while the model was thinking.
+                const now = av.getSnapshot()
+                if (now.value === snap.value) {
+                  for (const action of ctrl.actions) {
+                    if (action.action === "insert") av.applyFromBase(snap, { kind: "insert", text: action.text })
+                    else if (action.action === "set") av.applyFromBase(snap, { kind: "set", text: action.text })
+                    else if (action.action === "set_with_cursor") av.applyFromBase(snap, { kind: "set_with_cursor", placement: action.placement })
+                    else if (action.action === "send") {
+                      const after = av.getSnapshot().value
+                      if (voiceSendEnabled() && after.trim()) await av.submit()
+                      else if (!after.trim()) av.showError(t("tui.voice.error.empty_send"))
+                    }
                   }
+                } else {
+                  av.showError(t("tui.voice.error.stale"))
                 }
               } else {
-                av.showError(t("tui.voice.error.network"))
+                av.showError(ctrl.reason === "protocol" ? t("tui.voice.error.protocol") : t("tui.voice.error.network"))
               }
             } finally {
               av.pending--
@@ -320,6 +365,7 @@ export function Prompt(props: PromptProps) {
             }
           }).catch(() => {})
         } else {
+          const asrSnap = av.getSnapshot()
           Voice.transcribeAudio({
             audio: segment.audio,
             apiKey: creds.apiKey,
@@ -327,10 +373,16 @@ export function Prompt(props: PromptProps) {
             model: resolved.asr.model,
           }).then((text) => {
             if (text) {
-              if (voiceSendEnabled() && Voice.SEND_RE.test(text.replace(/[\s。.!！？?，,]+$/g, "").trim())) {
-                av.submit()
+              // ASR has no send command — always dictate, including「发送」/"send it".
+              // Unchanged buffer → apply from request snapshot (caret/selection).
+              // Buffer changed mid-transcription → dictate at the end, never a live caret.
+              const now = av.getSnapshot()
+              if (now.value === asrSnap.value) {
+                const range = asrSnap.range ?? { start: asrSnap.value.length, end: asrSnap.value.length }
+                av.applyFromBase(asrSnap, VoiceEdit.asrInsertTarget(asrSnap.value, range, text))
               } else {
-                av.appendText(text.trim())
+                const endRange = { start: now.value.length, end: now.value.length }
+                av.applyFromBase({ value: now.value, range: endRange }, VoiceEdit.asrInsertTarget(now.value, endRange, text))
               }
             } else {
               av.showError(t("tui.voice.error.network"))
@@ -801,7 +853,7 @@ export function Prompt(props: PromptProps) {
           toast.show({
             message: next ? t("tui.voice.control.enabled") : t("tui.voice.control.disabled"),
             variant: "info",
-            duration: 3000,
+            duration: 4500,
           })
         },
       },
@@ -1255,6 +1307,7 @@ export function Prompt(props: PromptProps) {
         arguments: args,
         agent: agent.name,
         model: `${selectedModel.providerID}/${selectedModel.modelID}`,
+        titleLocale: language.intl(),
         messageID,
         variant,
         parts: nonTextParts
@@ -1272,6 +1325,7 @@ export function Prompt(props: PromptProps) {
           messageID,
           agent: agent.name,
           model: selectedModel,
+          titleLocale: language.intl(),
           variant,
           parts: [
             {

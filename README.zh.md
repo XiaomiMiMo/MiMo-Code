@@ -18,7 +18,7 @@
 
 MiMoCode 是一个终端原生的 AI 编程助手。它能读写代码、执行命令、管理 Git，通过持久化记忆系统，在多次会话间保持对你项目的深度理解，并自我进化。
 
-内置 MiMo Auto 限时免费通道——零配置即可开始使用。也支持接入各家主流 LLM 厂商 API。
+支持接入各家主流 LLM 厂商 API。
 
 ---
 
@@ -39,7 +39,6 @@ mimo
 ```
 
 首次启动自动引导配置。支持：
-- **MiMo Auto（限时免费）** — 匿名通道，零配置
 - **小米 MiMo 平台** — OAuth 登录
 - **Codex（ChatGPT Pro/Plus）** — OpenAI OAuth 登录
 - **从 Claude Code 导入** — 一键迁移已有认证
@@ -188,7 +187,7 @@ mimo attach http://127.0.0.1:4096
 
 Compose 是 MiMoCode 的 specs-driven 结构化开发流程，编排从 spec 到交付的完整开发生命周期。
 
-推荐用法是在 **build** agent 中使用 **`/compose-next`** 技能：一份独立完整的契约，覆盖 grill → spec → workspace → implement → verify → review → finalize → finish，功能文档落在 `docs/compose/spec/<feature>.md`。它面向前沿模型（Fable/Sol 级）设计——这类模型已内化大部分流程，用一份紧凑契约效果最好。
+推荐用法是在 **build** agent 中使用 **`/compose-next`** 技能：一份独立完整的契约，覆盖 grill → workspace → spec → implement → verify → review → finalize → finish，功能文档落在 workspace root 下的 `docs/compose/spec/<feature>.md`。它面向前沿模型（Fable/Sol 级）设计——这类模型已内化大部分流程，用一份紧凑契约效果最好。
 
 Legacy 路径是专用的 **compose agent**（按 `Tab` 切换），它编排规划、执行、代码审查、TDD、调试、验证、合并等十四个内置技能——这套分步技能课程对较弱模型依然适用。
 
@@ -220,12 +219,11 @@ MiMoCode 打包了以下内置技能：
 | `arxiv` | 搜索、阅读、引用和分析 arXiv 论文 |
 | `claude-code` | 将编码、测试、审查和 Git 任务委派给 Claude Code CLI |
 | `codex` | 在无头自动化、CI、容器和远程环境中运行及排查 Codex CLI |
-| `compose-next` | 推荐的 spec→ship 功能交付工作流（grill → spec → implement → verify → review → finish）；通过 `/compose-next` 显式调用 |
+| `compose-next` | 推荐的 spec→ship 功能交付工作流；仅在用户明确授意时调用 |
 | `data-analytics` | 通过数据质量、KPI、仪表盘、报告、Notebook 和市场规模测算等工作流分析产品与业务数据 |
 | `deep-research` | 使用并行子智能体和内置 Web 工具生成带引用的多源深度调研报告 |
 | `design-blueprint` | 动手做视觉前先出设计蓝图（DESIGN.md + 决策轨迹）|
 | `docx-official` | 生成、读取和转换 Word (.docx) 文件 |
-| `drive-mimo` | 以无头或交互式 TUI 模式编排、测试和自动化另一个 MiMoCode 进程 |
 | `evolve` | 全面自我修改——改写 Agent 的任意层面：工具、行为钩子、知识、工作流，乃至界面本身 |
 | `frontend-design` | UI 开发的视觉设计指导 |
 | `html-to-video-pipeline` | 通过无头浏览器 + ffmpeg 将 HTML 渲染为 MP4 |

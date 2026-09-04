@@ -8,6 +8,8 @@ commits: 6674db7a..6236515e
 
 # Skill Invocation Control
 
+> **Compose Next update (2026-08-12):** The `disable-model-invocation` design in this document remains the current contract for skills that set the field: models cannot discover or invoke them, while users can still invoke them with `/name`. Compose Next has since stopped setting this field, so it is model-visible and model-invocable; its own description and body govern when the model should choose that workflow.
+
 ## Report
 
 **What was built** — Model reachability and authorization are now separate
