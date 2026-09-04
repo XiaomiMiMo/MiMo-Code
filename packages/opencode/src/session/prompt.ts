@@ -288,7 +288,7 @@ export function titlePromptText(text: string, locale?: string) {
 
 // Strip leading slash-mention tokens ("/skill1 /skill2 body") so title generation focuses
 // on task text, not skill scaffolding. Skill chips / compose-next UI mode / typed mentions
-// all write `/name` into the body; without this the title becomes "compose-next增加音频…".
+// all write `/name` into the body; without this the title starts with the skill name.
 // Only strips kebab-form tokens at line start (`/name` followed by whitespace or EOL);
 // path-like "/api/v1" (next char is "/") is left intact.
 export function stripLeadingSlashMentions(text: string) {

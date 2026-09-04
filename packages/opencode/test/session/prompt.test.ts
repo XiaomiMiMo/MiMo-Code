@@ -28,32 +28,32 @@ describe("title helpers", () => {
     // compose-next UI mode sends a pure `/compose-next` part + user body as a separate part.
     const parts = [
       { type: "text", text: "/compose-next" },
-      { type: "text", text: "增加音频预览播放功能" },
+      { type: "text", text: "implement the login page" },
     ] as MessageV2.Part[]
-    expect(titleContext({ parts } as MessageV2.WithParts)).toBe("增加音频预览播放功能")
+    expect(titleContext({ parts } as MessageV2.WithParts)).toBe("implement the login page")
 
     // skill-chip / typed mentions bake the prefix into a single body part.
-    expect(titleContext({ parts: [{ type: "text", text: "/compose-next 增加音频预览播放功能" }] } as MessageV2.WithParts)).toBe(
-      "增加音频预览播放功能",
+    expect(titleContext({ parts: [{ type: "text", text: "/compose-next implement the login page" }] } as MessageV2.WithParts)).toBe(
+      "implement the login page",
     )
-    expect(titleContext({ parts: [{ type: "text", text: "/pdf-official /pptx-official 做个报告" }] } as MessageV2.WithParts)).toBe(
-      "做个报告",
+    expect(titleContext({ parts: [{ type: "text", text: "/pdf-official /pptx-official make a deck" }] } as MessageV2.WithParts)).toBe(
+      "make a deck",
     )
 
     // Pure scaffolding part alone collapses to empty (skipped).
     expect(titleContext({ parts: [{ type: "text", text: "/compose-next" }] } as MessageV2.WithParts)).toBe("")
 
     // Path-like "/api/v1" must not be stripped (next char after first segment is "/").
-    expect(titleContext({ parts: [{ type: "text", text: "/api/v1/docs 路径对吗" }] } as MessageV2.WithParts)).toBe(
-      "/api/v1/docs 路径对吗",
+    expect(titleContext({ parts: [{ type: "text", text: "/api/v1/docs is this path right" }] } as MessageV2.WithParts)).toBe(
+      "/api/v1/docs is this path right",
     )
   })
 
   test("titleInputText strips leading slash-mentions from text and text parts", () => {
-    expect(titleInputText("/compose-next 增加音频预览播放功能", undefined)).toBe("增加音频预览播放功能")
+    expect(titleInputText("/compose-next implement the login page", undefined)).toBe("implement the login page")
     expect(
-      titleInputText("/compose-next", [{ type: "text", text: "增加音频预览播放功能" }]),
-    ).toBe("增加音频预览播放功能")
+      titleInputText("/compose-next", [{ type: "text", text: "implement the login page" }]),
+    ).toBe("implement the login page")
     expect(titleInputText("/compose-next", undefined)).toBe("")
   })
 
