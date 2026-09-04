@@ -117,6 +117,12 @@ function init() {
   })
 
   const result = {
+    find(name: string) {
+      for (const option of entries()) {
+        if (option.value === name) return option
+      }
+      return undefined
+    },
     trigger(name: string) {
       for (const option of entries()) {
         if (option.value === name) {
