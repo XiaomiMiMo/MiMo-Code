@@ -808,6 +808,12 @@ export function Session() {
           .then(() => {
             toBottom()
           })
+          .catch((error) => {
+            toast.show({
+              message: error instanceof Error ? error.message : "Failed to undo changes",
+              variant: "error",
+            })
+          })
         const parts = sync.data.part[message.id]
         prompt?.set(
           parts.reduce(
@@ -845,10 +851,17 @@ export function Session() {
           prompt?.set({ input: "", parts: [] })
           return
         }
-        void sdk.client.session.revert({
-          sessionID: route.sessionID,
-          messageID: message.id,
-        })
+        void sdk.client.session
+          .revert({
+            sessionID: route.sessionID,
+            messageID: message.id,
+          })
+          .catch((error) => {
+            toast.show({
+              message: error instanceof Error ? error.message : "Failed to redo changes",
+              variant: "error",
+            })
+          })
       },
     },
     {
