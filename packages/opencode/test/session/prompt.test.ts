@@ -24,6 +24,39 @@ describe("title helpers", () => {
     expect(titleContext({ parts } as MessageV2.WithParts)).toBe("Inspect the parser\nAttachment: diagram.png")
   })
 
+  test("strips leading slash-mentions so skill scaffolding stays out of titles", () => {
+    // compose-next UI mode sends a pure `/compose-next` part + user body as a separate part.
+    const parts = [
+      { type: "text", text: "/compose-next" },
+      { type: "text", text: "增加音频预览播放功能" },
+    ] as MessageV2.Part[]
+    expect(titleContext({ parts } as MessageV2.WithParts)).toBe("增加音频预览播放功能")
+
+    // skill-chip / typed mentions bake the prefix into a single body part.
+    expect(titleContext({ parts: [{ type: "text", text: "/compose-next 增加音频预览播放功能" }] } as MessageV2.WithParts)).toBe(
+      "增加音频预览播放功能",
+    )
+    expect(titleContext({ parts: [{ type: "text", text: "/pdf-official /pptx-official 做个报告" }] } as MessageV2.WithParts)).toBe(
+      "做个报告",
+    )
+
+    // Pure scaffolding part alone collapses to empty (skipped).
+    expect(titleContext({ parts: [{ type: "text", text: "/compose-next" }] } as MessageV2.WithParts)).toBe("")
+
+    // Path-like "/api/v1" must not be stripped (next char after first segment is "/").
+    expect(titleContext({ parts: [{ type: "text", text: "/api/v1/docs 路径对吗" }] } as MessageV2.WithParts)).toBe(
+      "/api/v1/docs 路径对吗",
+    )
+  })
+
+  test("titleInputText strips leading slash-mentions from text and text parts", () => {
+    expect(titleInputText("/compose-next 增加音频预览播放功能", undefined)).toBe("增加音频预览播放功能")
+    expect(
+      titleInputText("/compose-next", [{ type: "text", text: "增加音频预览播放功能" }]),
+    ).toBe("增加音频预览播放功能")
+    expect(titleInputText("/compose-next", undefined)).toBe("")
+  })
+
   test("truncates long Latin titles at a word boundary", () => {
     expect(truncateTitle("Fix ThreadPoolExecutor concurrency issue in production")).toBe("Fix ThreadPoolExecutor concurrency issue in…")
     expect(truncateTitle("请修复 title 生成协议中的图片输入校验与模型选择逻辑。并补充更多回归测试覆盖多模态场景并保证兼容旧客户端")).toBe("请修复 title 生成协议中的图片输入校验与模型选择逻辑。…")
