@@ -21,6 +21,9 @@ export class Local extends Schema.Class<Local>("McpLocalConfig")({
   environment: Schema.optional(Schema.Record(Schema.String, Schema.String)).annotate({
     description: "Environment variables to set when running the MCP server",
   }),
+  env: Schema.optional(Schema.Record(Schema.String, Schema.String)).annotate({
+    description: "@deprecated Use environment. Alias for environment variables to set when running the MCP server.",
+  }),
   enabled: Schema.optional(Schema.Boolean).annotate({
     description: "Enable or disable the MCP server on startup",
   }),
