@@ -350,6 +350,15 @@ export const Flag = {
   // function-calling model.
   MIMOCODE_EXPERIMENTAL_MCP_TOOL_SEARCH:
     MIMOCODE_EXPERIMENTAL || truthy("MIMOCODE_EXPERIMENTAL_MCP_TOOL_SEARCH"),
+  // Defaults to true: pin the advertised MCP tool set on the session's first
+  // request and keep each tool's slot + schema on later turns, so connect /
+  // disconnect / list_changed churn cannot bust the provider prefix cache. Tools the
+  // model deliberately pulls in via MCP Tool Search are still advertised — appended
+  // after the pinned block, rotating the snapshot once. Set
+  // MIMOCODE_MCP_TOOL_FROZEN=false to advertise the live MCP catalog every turn.
+  get MIMOCODE_MCP_TOOL_FROZEN() {
+    return !falsy("MIMOCODE_MCP_TOOL_FROZEN")
+  },
   // Defaults to OFF (opt-in): the Orchestrator primary mode — a general
   // coordinator that delegates to child sessions via the `session` tool, with a
   // global singleton workspace and child permission-approval routing. Enable with

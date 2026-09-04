@@ -807,7 +807,7 @@ const live: Layer.Layer<
         topK: params.topK,
         providerOptions: ProviderTransform.providerOptions(input.model, params.options),
         activeTools,
-        tools: ProviderTransform.tools(tools, input.model),
+        tools: ProviderTransform.tools(tools, input.model, activeTools),
         toolChoice: input.toolChoice,
         maxOutputTokens: params.maxOutputTokens,
         abortSignal: input.abort,

@@ -1094,9 +1094,12 @@ const EXPLICIT_NON_STRICT_TOOL_SDKS = ["@ai-sdk/openai", "@ai-sdk/azure"]
 //    tool-schema block (often several KB) as a stable prefix that sits in front
 //    of the system + message caches. Tools are passed to the SDK separately from
 //    `message()` and never go through its providerID→SDK-key remap, so we
-//    resolve the SDK-keyed marker via `cacheMarkerFor`. Tool registration order
-//    is stable (insertion order of the tools record), so "last tool" is
-//    deterministic.
+//    resolve the SDK-keyed marker via `cacheMarkerFor`. "Last" means last of the
+//    ADVERTISED tools (`activeTools`) — the record also holds authorized-but-
+//    unadvertised entries the SDK filters out, and a marker on one of those would
+//    never reach the provider. Pass `activeTools` whenever the caller filters.
+//    Advertised order is stable (insertion order of the tools record), so the
+//    marked tool is deterministic.
 //
 // Both mutate in place. That is safe because the record and every tool object in
 // it are rebuilt per request: `resolveTools` allocates a fresh record and calls
@@ -1104,7 +1107,7 @@ const EXPLICIT_NON_STRICT_TOOL_SDKS = ["@ai-sdk/openai", "@ai-sdk/azure"]
 // a new `dynamicTool()` on every `MCP.tools()` call. Nothing here outlives the
 // request, so a model switch between steps cannot carry `strict` over to a
 // provider that would reject or warn on it.
-export function tools<T extends Record<string, any>>(tools: T, model: Provider.Model): T {
+export function tools<T extends Record<string, any>>(tools: T, model: Provider.Model, activeTools?: string[]): T {
   if (EXPLICIT_NON_STRICT_TOOL_SDKS.includes(model.api.npm)) {
     // Guarded because this walks every entry; the single `last` lookup below can
     // assume a well-formed record, but a loop over N values is cheaper to make
@@ -1117,7 +1120,12 @@ export function tools<T extends Record<string, any>>(tools: T, model: Provider.M
   if (!supportsCacheMarkers(model)) return tools
   const marker = cacheMarkerFor(model)
   if (!marker) return tools
-  const names = Object.keys(tools)
+  // Mark the last ADVERTISED tool. The SDK builds the wire array from
+  // `Object.entries(tools)` filtered by `activeTools`, so the record's last key is
+  // frequently an unadvertised entry (every authorized-but-not-advertised tool stays
+  // registered for direct dispatch) whose marker never reaches the provider.
+  const advertised = activeTools ? new Set(activeTools) : undefined
+  const names = Object.keys(tools).filter((name) => !advertised || advertised.has(name))
   if (names.length === 0) return tools
 
   const last = tools[names[names.length - 1]]
