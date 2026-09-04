@@ -71,6 +71,22 @@ function normalizeLoadedConfig(data: unknown, source: string) {
   return copy
 }
 
+export function parsePermissionEnv(value: string): ConfigPermission.Info {
+  const raw = value.trim()
+  const input = ["allow", "ask", "deny"].includes(raw) ? JSON.stringify(raw) : raw
+
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(input)
+  } catch {
+    throw new Error("MIMOCODE_PERMISSION must be valid JSON or one of: allow, ask, deny")
+  }
+
+  const result = ConfigPermission.Info.safeParse(parsed)
+  if (!result.success) throw new Error("MIMOCODE_PERMISSION must be a permission action or permission object")
+  return result.data
+}
+
 async function resolveLoadedPlugins<T extends { plugin?: ConfigPlugin.Spec[] }>(config: T, filepath: string) {
   if (!config.plugin) return config
   for (let i = 0; i < config.plugin.length; i++) {
@@ -989,7 +1005,7 @@ export const layer = Layer.effect(
         }
 
         if (Flag.MIMOCODE_PERMISSION) {
-          result.permission = mergeDeep(result.permission ?? {}, JSON.parse(Flag.MIMOCODE_PERMISSION))
+          result.permission = mergeDeep(result.permission ?? {}, parsePermissionEnv(Flag.MIMOCODE_PERMISSION))
         }
 
         if (result.tools) {

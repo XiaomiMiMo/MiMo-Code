@@ -2,6 +2,7 @@ import { test, expect, describe, mock, afterEach, beforeEach } from "bun:test"
 import { Effect, Layer, Option } from "effect"
 import { NodeFileSystem, NodePath } from "@effect/platform-node"
 import { Config, ConfigManaged } from "../../src/config"
+import { parsePermissionEnv } from "../../src/config/config"
 import { ConfigParse } from "../../src/config/parse"
 import { EffectFlock } from "@mimo-ai/shared/util/effect-flock"
 
@@ -61,6 +62,13 @@ const listDirs = () =>
   Effect.runPromise(Config.Service.use((svc) => svc.directories()).pipe(Effect.scoped, Effect.provide(layer)))
 const ready = () =>
   Effect.runPromise(Config.Service.use((svc) => svc.waitForDependencies()).pipe(Effect.scoped, Effect.provide(layer)))
+
+test("parses bare permission actions from the environment", () => {
+  expect(parsePermissionEnv("allow")).toEqual({ "*": "allow" })
+  expect(parsePermissionEnv('"deny"')).toEqual({ "*": "deny" })
+  expect(parsePermissionEnv('{"bash":"ask"}')).toEqual({ bash: "ask" })
+  expect(() => parsePermissionEnv("not-json")).toThrow("MIMOCODE_PERMISSION must be valid JSON")
+})
 
 // Get managed config directory from environment (set in preload.ts)
 const managedConfigDir = process.env.MIMOCODE_TEST_MANAGED_CONFIG_DIR!
