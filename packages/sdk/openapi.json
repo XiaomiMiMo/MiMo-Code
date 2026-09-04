@@ -15158,12 +15158,6 @@
                 "tool_call": {
                   "type": "boolean"
                 },
-                "voice_design": {
-                  "type": "boolean"
-                },
-                "voice_clone": {
-                  "type": "boolean"
-                },
                 "interleaved": {
                   "anyOf": [
                     {
@@ -16813,12 +16807,6 @@
                 "type": "boolean"
               },
               "toolcall": {
-                "type": "boolean"
-              },
-              "voiceDesign": {
-                "type": "boolean"
-              },
-              "voiceClone": {
                 "type": "boolean"
               },
               "input": {

@@ -7,23 +7,8 @@ import { Log } from "@/util"
 import { lazy } from "@/util/lazy"
 import { Instance } from "@/project/instance"
 import { LLMServerTokens } from "@/llm-server/tokens"
-import {
-  RequestError,
-  collect,
-  start,
-  stream,
-  synthesize,
-  transcribe,
-  type ModelScope,
-} from "@/llm-server/completions"
-import {
-  ChatCompletionRequest,
-  SpeechRequest,
-  TranscriptionRequest,
-  transcriptionMediaType,
-  transcriptionUnsupported,
-  unsupported,
-} from "@/llm-server/protocol"
+import { RequestError, collect, start, stream, type ModelScope } from "@/llm-server/completions"
+import { ChatCompletionRequest, unsupported } from "@/llm-server/protocol"
 
 /**
  * An OpenAI-compatible surface over the models this instance already has.
@@ -212,71 +197,6 @@ export const CapabilityRoutes = lazy(() =>
       })
       return streamSSE(c, write)
     })
-    .post("/audio/speech", async (c) => {
-      const parsed = SpeechRequest.safeParse(await c.req.json().catch(() => undefined))
-      if (!parsed.success) {
-        const issue = parsed.error.issues[0]
-        throw new RequestError(400, `${issue?.path.join(".") || "body"}: ${issue?.message}`, "invalid_request_error")
-      }
-      const out = await synthesize({ req: parsed.data, allowlist: scopeFor(c.req.raw), abort: c.req.raw.signal })
-      return new Response(new Uint8Array(out.audio), {
-        headers: { "content-type": out.contentType, "content-length": String(out.audio.byteLength) },
-      })
-    })
-    .post("/audio/transcriptions", async (c) => {
-      // Multipart, not JSON, because that is what the official clients send:
-      // `openai.audio.transcriptions.create({ file, model })` builds a form.
-      const form = await c.req.parseBody().catch(() => undefined)
-      if (!form) throw new RequestError(400, "expected a multipart/form-data body", "invalid_request_error")
-      const file = form["file"]
-      if (!(file instanceof File)) {
-        throw new RequestError(400, "file: a multipart file field is required", "invalid_request_error")
-      }
-
-      const parsed = TranscriptionRequest.safeParse({
-        model: form["model"],
-        language: form["language"],
-        response_format: form["response_format"],
-        prompt: form["prompt"],
-        // Form values are strings; a numeric field has to be converted before it can be
-        // judged, and a non-numeric one must FAIL validation rather than vanish.
-        temperature: typeof form["temperature"] === "string" ? Number(form["temperature"]) : undefined,
-      })
-      if (!parsed.success) {
-        const issue = parsed.error.issues[0]
-        throw new RequestError(400, `${issue?.path.join(".") || "body"}: ${issue?.message}`, "invalid_request_error")
-      }
-      // Fields that are accepted by the schema but cannot be honoured are REFUSED here
-      // rather than ignored: a caller who sends a biasing prompt and silently gets an
-      // unbiased transcript has no way to notice.
-      const rejection = transcriptionUnsupported(parsed.data)
-      if (rejection) throw new RequestError(400, rejection, "invalid_request_error")
-
-      // `File.type` lies often enough to matter — a wav uploads as `audio/x-wav`, which some
-      // vendors reject outright — so the container is derived from the reported type AND the
-      // filename, and an undeterminable one is a 400 rather than a guess.
-      const mediaType = transcriptionMediaType({ reported: file.type, filename: file.name })
-      if (!mediaType) {
-        throw new RequestError(
-          400,
-          `file: could not determine an audio media type from \`${file.name || "the upload"}\`; ` +
-            `send a recognised extension or an audio/* content type`,
-          "invalid_request_error",
-        )
-      }
-
-      const out = await transcribe({
-        req: parsed.data,
-        audio: new Uint8Array(await file.arrayBuffer()),
-        mediaType,
-        allowlist: scopeFor(c.req.raw),
-        abort: c.req.raw.signal,
-      })
-      // `text` returns the transcript bare; every other format that differs in shape was
-      // already refused by the schema, so JSON is correct for the rest.
-      if (parsed.data.response_format === "text") return c.text(out.text)
-      return c.json({ text: out.text })
-    })
     .onError((err, c) => {
       if (err instanceof RequestError) {
         log.info("request rejected", { status: err.status, code: err.code })
@@ -284,21 +204,6 @@ export const CapabilityRoutes = lazy(() =>
       }
       if (err instanceof Provider.ModelNotFoundError) {
         return c.json(errorBody({ message: err.message, type: "invalid_request_error", code: "model_not_found" }), 404)
-      }
-      // The model is real and the request well formed; the provider package simply cannot do
-      // this. Neither the caller's mistake (4xx) nor an outage (5xx), so it gets the status
-      // that means "not implemented here" and a message naming the package.
-      if (err instanceof Provider.SpeechUnsupportedError) {
-        return c.json(
-          errorBody({
-            message:
-              `Model \`${err.data.providerID}/${err.data.modelID}\` cannot synthesize speech: ` +
-              `provider package \`${err.data.npm}\` exposes no speech model`,
-            type: "invalid_request_error",
-            code: "unsupported_capability",
-          }),
-          501,
-        )
       }
       log.error("request failed", { error: err })
       // 502, not 500: from the caller's point of view an upstream provider failure is this

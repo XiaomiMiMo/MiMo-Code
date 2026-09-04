@@ -93,7 +93,7 @@ const scaffold = Effect.gen(function* () {
   // the actor row — which is how it reaches the TUI store via `session.updated`.
   const writerHost = yield* sessions.create({
     parentID: root.id as SessionID,
-    title: "checkpoint-writer: Previous checkpoint: /Users/mi/.local/share/mimocode/memory/sessions/ses_x/checkpoint.md",
+    title: "checkpoint-writer: Previous checkpoint: /tmp/memory/sessions/ses_x/checkpoint.md",
   })
   yield* actorReg.register({
     sessionID: writerHost.id as SessionID,

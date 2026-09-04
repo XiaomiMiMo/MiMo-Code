@@ -4,9 +4,6 @@ import {
   chunk,
   completion,
   finishReason,
-  SpeechRequest,
-  speechContentType,
-  speechUnsupported,
   toModelMessages,
   toToolChoice,
   unsupported,
@@ -315,63 +312,5 @@ describe("response bodies", () => {
     const frame = usageChunk({ ...shared, usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 } as never })
     expect(frame.choices).toEqual([])
     expect(frame.usage).toMatchObject({ prompt_tokens: 1, completion_tokens: 1 })
-  })
-})
-
-describe("speech requests", () => {
-  const speech = { model: "test/test-tts", input: "hello" }
-
-  test("accepts OpenAI's shape and ignores unknown fields", () => {
-    const req = SpeechRequest.parse({ ...speech, voice: "alloy", response_format: "wav", speed: 1.5, unknown: 1 })
-    expect(req.voice).toBe("alloy")
-    expect(req.response_format).toBe("wav")
-    expect(req).not.toHaveProperty("unknown")
-  })
-
-  test("rejects an empty input and an out-of-range speed", () => {
-    expect(SpeechRequest.safeParse({ ...speech, input: "" }).success).toBe(false)
-    expect(SpeechRequest.safeParse({ ...speech, speed: 9 }).success).toBe(false)
-    expect(SpeechRequest.safeParse({ ...speech, response_format: "ogg" }).success).toBe(false)
-  })
-
-  test("refuses SSE streaming rather than returning one buffer to a client awaiting frames", () => {
-    expect(speechUnsupported(SpeechRequest.parse({ ...speech, stream_format: "sse" }))).toContain("stream_format")
-    expect(speechUnsupported(SpeechRequest.parse({ ...speech, stream_format: "audio" }))).toBeUndefined()
-    expect(speechUnsupported(SpeechRequest.parse(speech))).toBeUndefined()
-  })
-})
-
-describe("speech content type", () => {
-  test("prefers what the provider reported, since that describes the actual bytes", () => {
-    expect(speechContentType({ reported: "audio/flac", requested: "mp3" })).toBe("audio/flac")
-  })
-
-  test("treats `audio/mp3` as no answer, because that is the SDK's sniff-failed fallback", () => {
-    // generateSpeech reports `detectMediaType(bytes) ?? "audio/mp3"`, and a
-    // successfully sniffed mp3 is spelled `audio/mpeg`. So `audio/mp3` means "could
-    // not tell", and honouring it would relabel a flac the caller asked for.
-    expect(speechContentType({ reported: "audio/mp3", requested: "flac" })).toBe("audio/flac")
-    expect(speechContentType({ reported: "audio/mp3", requested: "wav" })).toBe("audio/wav")
-  })
-
-  test("a genuinely sniffed mp3 is honoured, since it arrives as audio/mpeg", () => {
-    expect(speechContentType({ reported: "audio/mpeg", requested: "flac" })).toBe("audio/mpeg")
-  })
-
-  test("never emits the non-standard audio/mp3 alias, even when that is all it got", () => {
-    expect(speechContentType({ reported: "audio/mp3" })).toBe("audio/mpeg")
-  })
-
-  test("falls back to the requested format when the provider reports nothing", () => {
-    expect(speechContentType({ requested: "wav" })).toBe("audio/wav")
-    expect(speechContentType({ requested: "opus" })).toBe("audio/opus")
-  })
-
-  test("declines to name an unrecognized format rather than mislabeling it", () => {
-    expect(speechContentType({ requested: "weird" })).toBe("application/octet-stream")
-  })
-
-  test("defaults to mp3 when neither side said anything", () => {
-    expect(speechContentType({})).toBe("audio/mpeg")
   })
 })

@@ -5,7 +5,6 @@ import { AppRuntime } from "@/effect/app-runtime"
 import { Config } from "@/config"
 import { Instance } from "@/project/instance"
 import { LLMServerTokens } from "../../llm-server/tokens"
-import { LLMServerCapability } from "../../llm-server/capability"
 import { Self } from "@/util"
 import { UI } from "../ui"
 
@@ -72,17 +71,10 @@ function relative(at: number | undefined) {
  * Reproduce the flags that shaped this token, so a renewal is equivalent rather
  * than merely valid. Dropping `--model` would quietly widen the replacement key.
  */
-function renewArgs(args: {
-  ttl?: string
-  "max-age"?: string
-  model: string[]
-  label?: string
-  capability?: string
-}) {
+function renewArgs(args: { ttl?: string; "max-age"?: string; model: string[]; label?: string }) {
   return [
     ...(args.ttl ? ["--ttl", args.ttl] : []),
     ...(args["max-age"] ? ["--max-age", args["max-age"]] : []),
-    ...(args.capability ? ["--capability", args.capability] : []),
     ...args.model.flatMap((ref) => ["--model", ref]),
     ...(args.label ? ["--label", args.label] : []),
     "--json",
@@ -108,13 +100,6 @@ const issue = cmd({
         describe: "restrict this token to the given provider/model (repeatable)",
         default: [] as string[],
       })
-      .option("capability", {
-        type: "string",
-        choices: ["chat", "speech", "transcription"] as const,
-        describe:
-          "resolve a model by what it can DO rather than by name, and scope the token to it. " +
-          "Lets a skill declare `speech` instead of binding to one installation's model id",
-      })
       .option("label", { type: "string", describe: "a note for `llm-server list`, e.g. the skill's name" })
       .option("json", { type: "boolean", describe: "print connection details as JSON", default: false }),
   handler: (args) =>
@@ -124,30 +109,10 @@ const issue = cmd({
         idleMs: duration(args.ttl, cfg.ttl ?? DEFAULT_TTL),
         maxAgeMs: duration(args["max-age"], cfg.maxAge ?? "none"),
       }
-      // `--capability` and `--model` answer the same question two ways, so accepting both
-      // would leave the caller guessing which one won.
-      if (args.capability && args.model.length > 0) {
-        throw new Error("pass either --capability or --model, not both")
-      }
-
-      // Narrowed once, here, so nothing downstream has to assert that a match exists.
-      const chosen = await (async () => {
-        if (!args.capability) return undefined
-        const capability = args.capability as LLMServerCapability.Capability
-        const matches = await LLMServerCapability.resolve(capability)
-        const best = matches[0]
-        if (!best) throw new Error(LLMServerCapability.explain(capability, await LLMServerCapability.all()))
-        return { capability, best, alternatives: matches.slice(1).map((m) => m.ref) }
-      })()
-
-      // Scoped to the ONE model that was resolved, not to every model that could serve the
-      // capability: a task should reach what it asked for and nothing else.
-      const models = chosen ? [chosen.best.ref] : args.model
-
       const issued = await LLMServerTokens.issue({
         directory: process.cwd(),
         expiry,
-        models,
+        models: args.model,
         label: args.label,
       })
 
@@ -167,20 +132,6 @@ const issue = cmd({
             base_url: address ? `${address.url.replace(/\/$/, "")}/v1` : null,
             expires_at: LLMServerTokens.expiresAt(issued.record) ?? null,
             models: issued.record.models.length > 0 ? issued.record.models : "all",
-            // The resolved model, so a skill can set its own env var without knowing which
-            // one this installation happens to have. `fallback` warns that a multimodal
-            // chat model is standing in for a dedicated one.
-            ...(chosen
-              ? {
-                  capability: chosen.capability,
-                  model: chosen.best.ref,
-                  fallback: !chosen.best.dedicated,
-                  // Capped: a real installation offered 130 chat models, and a list that
-                  // long is noise rather than information.
-                  alternatives: chosen.alternatives.slice(0, 5),
-                  alternatives_total: chosen.alternatives.length,
-                }
-              : {}),
             // How to get another key when this one ages out, resolved for THIS
             // installation. A skill that only ever sees this JSON can therefore
             // recover from `expired_api_key` without knowing whether mimocode came
@@ -198,12 +149,6 @@ const issue = cmd({
       UI.println(`  base_url  ${address ? `${address.url.replace(/\/$/, "")}/v1` : "(no instance is serving this directory)"}`)
       UI.println(`  expires   ${relative(LLMServerTokens.expiresAt(issued.record))}`)
       UI.println(`  models    ${issued.record.models.length > 0 ? issued.record.models.join(", ") : "all configured"}`)
-      if (chosen) {
-        UI.println(
-          `  resolved  ${chosen.capability} -> ${chosen.best.ref}` +
-            (chosen.best.dedicated ? "" : " (multimodal fallback, not a dedicated model)"),
-        )
-      }
       UI.println("")
       UI.println("The plaintext token is shown once and is not stored; only its hash is.")
       // The endpoint belongs to whichever mimocode process serves this project, and each

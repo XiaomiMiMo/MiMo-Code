@@ -57,10 +57,12 @@ describe("session.system", () => {
       }),
     )[0]
 
-    expect(prompt).not.toContain("/Users/mi/Desktop/MCracker")
-    expect(prompt).not.toContain("feat/wiki-seal-cot-recovery")
+    // Structural markers rather than sample values: the template must carry no rendered
+    // environment block at all, and a literal path or branch name from whoever wrote the
+    // test is itself machine-specific information.
     expect(prompt).not.toContain("# Environment")
     expect(prompt).not.toContain("gitStatus:")
+    expect(prompt).not.toMatch(/\/Users\/[^/\s]+\//)
   })
 
   test("the explicit harness selects the prompt for MiMo regardless of API transport", () => {
