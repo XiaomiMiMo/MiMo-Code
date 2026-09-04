@@ -245,7 +245,7 @@ export const ExperimentalRoutes = lazy(() =>
           tools.map((t) => ({
             id: t.id,
             description: t.description,
-            parameters: z.toJSONSchema(t.parameters),
+            parameters: t.jsonSchema ?? z.toJSONSchema(t.parameters),
           })),
         )
       },

@@ -48,6 +48,13 @@ export interface Def<Parameters extends z.ZodType = z.ZodType, M extends Metadat
   id: string
   description: string
   parameters: Parameters
+  /**
+   * Optional pre-derived provider-facing JSON Schema. When present, prompt
+   * assembly uses this instead of `z.toJSONSchema(parameters)`. Plugin/file
+   * tools that bundle their own zod set this so registry-local `.meta()`
+   * (e.g. `type: "object"` beside `anyOf`) is not dropped across instances.
+   */
+  jsonSchema?: Record<string, unknown>
   execute(args: z.infer<Parameters>, ctx: Context): Effect.Effect<ExecuteResult<M>>
   formatValidationError?(error: z.ZodError): string
   shell?: {

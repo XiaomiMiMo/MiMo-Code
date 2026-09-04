@@ -150,6 +150,41 @@ describe("tool.registry", () => {
     ),
   )
 
+  it.live("file tool jsonSchema is preferred over z.toJSONSchema(args)", () =>
+    provideTmpdirInstance((dir) =>
+      Effect.gen(function* () {
+        const tools = path.join(dir, ".mimocode", "tools")
+        yield* Effect.promise(() => fs.mkdir(tools, { recursive: true }))
+        yield* Effect.promise(() =>
+          Bun.write(
+            path.join(tools, "wire_schema.ts"),
+            [
+              "export default {",
+              "  description: 'pre-derived wire schema',",
+              "  args: {},",
+              "  jsonSchema: {",
+              "    type: 'object',",
+              "    properties: { voice: { type: 'object', anyOf: [{ type: 'object' }] } },",
+              "    required: ['voice'],",
+              "  },",
+              "  execute: async () => 'ok',",
+              "}",
+              "",
+            ].join("\n"),
+          ),
+        )
+        const registry = yield* ToolRegistry.Service
+        const matches = (yield* registry.all()).filter((tool) => tool.id === "wire_schema")
+        expect(matches).toHaveLength(1)
+        expect(matches[0].jsonSchema).toEqual({
+          type: "object",
+          properties: { voice: { type: "object", anyOf: [{ type: "object" }] } },
+          required: ["voice"],
+        })
+      }),
+    ),
+  )
+
   it.live("todowrite tool is not registered; task is", () =>
     provideTmpdirInstance(() =>
       Effect.gen(function* () {

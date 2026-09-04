@@ -190,6 +190,9 @@ export const layer = Layer.effect(
           return {
             id,
             parameters: z.object(def.args),
+            // Bundled file tools carry their own zod copy; prefer their
+            // pre-derived wire schema so .meta() is not lost across instances.
+            ...(def.jsonSchema ? { jsonSchema: def.jsonSchema } : {}),
             description: def.description,
             execute: (args, toolCtx) =>
               Effect.gen(function* () {
@@ -493,6 +496,9 @@ export const layer = Layer.effect(
               .filter(Boolean)
               .join("\n"),
             parameters: useShell ? effective.parameters : output.parameters,
+            // Shell mode rewrites parameters; only advertise a pre-derived
+            // schema for the JSON invocation style it was authored against.
+            ...(useShell ? {} : tool.jsonSchema ? { jsonSchema: tool.jsonSchema } : {}),
             execute: effective.execute,
             formatValidationError: effective.formatValidationError,
           }

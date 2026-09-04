@@ -1617,7 +1617,10 @@ NOTE: At any point in time through this workflow you should feel free to ask the
         agent: input.agent,
         harness: input.harness,
       })) {
-        const schema = ProviderTransform.schema(input.model, z.toJSONSchema(item.parameters))
+        const schema = ProviderTransform.schema(
+          input.model,
+          item.jsonSchema ?? z.toJSONSchema(item.parameters),
+        )
         tools[item.id] = tool({
           description: item.description,
           inputSchema: jsonSchema(schema),
