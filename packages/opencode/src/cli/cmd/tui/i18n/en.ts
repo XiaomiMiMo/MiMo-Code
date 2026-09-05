@@ -203,6 +203,8 @@ export const dict: Record<string, string> = {
     "set a stop-condition goal; runs until a judge says it's met. /goal clear to abort",
   "tui.slash.deep-research.description":
     "deep multi-source, fact-checked research report (runs the deep-research workflow)",
+  "tui.slash.grill-me.description":
+    "A relentless interview to sharpen a plan or design.",
 
   // Built-in bundled skill descriptions (user-facing, decoupled from SKILL.md description which targets the LLM)
   "tui.skill.docx-official.description": "Create, edit, and read Microsoft Word (.docx) files",

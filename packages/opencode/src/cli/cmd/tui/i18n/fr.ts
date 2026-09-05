@@ -266,6 +266,8 @@ export const dict = {
     "définir un objectif avec condition d'arrêt ; s'exécute jusqu'à ce qu'un juge confirme. /goal clear pour annuler",
   "tui.slash.deep-research.description":
     "rapport de recherche approfondi multi-sources et vérifié (exécute le workflow deep-research)",
+  "tui.slash.grill-me.description":
+    "Un entretien sans relâche pour affiner un plan ou une conception.",
 
   // Built-in bundled skill descriptions (user-facing, decoupled from SKILL.md description which targets the LLM)
   "tui.skill.docx-official.description": "Créer, modifier et lire des fichiers Microsoft Word (.docx)",
