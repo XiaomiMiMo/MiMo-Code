@@ -25,6 +25,7 @@ Jobs fire only while the REPL is idle; fires queue at 'later' priority.
     cron list
     cron list --kind loop
     cron list --durable-only
+    cron list --all
     cron get <id>
 
 # cancel (alias: cron cancel <id>):

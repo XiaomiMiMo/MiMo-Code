@@ -289,3 +289,46 @@ test("same-tick double-fire: only the first due task fires per tick", async () =
   removeSessionCronTasks(["taskA", "taskB"])
   rmSync(dir, { recursive: true, force: true })
 })
+
+// #2198: `cron list` scopes to the caller while get/delete only filter when
+// --session is passed, so jobs created by another session were invisible to
+// list but reachable by id. `all: true` restores visibility across sessions.
+test("list with all:true returns tasks from every session", async () => {
+  const dir = freshDir()
+  await provided(
+    Effect.gen(function* () {
+      const sched = yield* Scheduler
+      yield* sched.start(baseStartOpts(dir))
+
+      // Session A's durable task lives on disk.
+      yield* sched.add({
+        session_id: "ses_a",
+        cron: "0 9 * * *",
+        prompt: "a-job",
+        recurring: true,
+        durable: true,
+      })
+      // Session B's task lives in the session store.
+      const bTask = yield* sched.add({
+        session_id: "ses_b",
+        cron: "*/10 * * * *",
+        prompt: "b-job",
+        recurring: true,
+        durable: false,
+      })
+
+      const scopedToB = yield* sched.list({ session_id: "ses_b" })
+      expect(scopedToB.map((t) => t.id)).toEqual([bTask.id])
+
+      const everything = yield* sched.list({ all: true })
+      expect(everything.map((t) => t.prompt).sort()).toEqual(["a-job", "b-job"])
+
+      // all:true still honors the other filters.
+      const allLoops = yield* sched.list({ all: true, kind: "loop" })
+      expect(allLoops).toEqual([])
+
+      yield* sched.stop()
+    }),
+  )
+  rmSync(dir, { recursive: true, force: true })
+})

@@ -59,6 +59,7 @@ const listOperation = z.strictObject({
   action: z.literal("list"),
   kind: kindSchema.optional().describe("Filter by job kind."),
   durable_only: z.boolean().optional().describe("Only show durable jobs."),
+  all: z.boolean().optional().describe("List jobs from every session, not just this one."),
   session_id: sessionFlag,
 })
 
@@ -242,10 +243,10 @@ function mapVerb(rawVerb: string | undefined, args: string[], line: number): Eff
       })
     }
     case "list": {
-      const { flags, bools, rest, error } = extractCronFlags(args, ["kind", "session"], ["durable-only"])
+      const { flags, bools, rest, error } = extractCronFlags(args, ["kind", "session"], ["durable-only", "all"])
       if (error) return flagError("list", error, line)
       if (rest.length > 0)
-        return arityError("list", "[--kind cron|loop] [--durable-only] [--session <id>]", rest, line)
+        return arityError("list", "[--kind cron|loop] [--durable-only] [--all] [--session <id>]", rest, line)
       if (flags.kind && flags.kind !== "cron" && flags.kind !== "loop")
         return flagError("list", `--kind must be cron|loop (got '${flags.kind}')`, line)
       return Effect.succeed({
@@ -253,6 +254,7 @@ function mapVerb(rawVerb: string | undefined, args: string[], line: number): Eff
           action: "list" as const,
           ...(flags.kind ? { kind: flags.kind as "cron" | "loop" } : {}),
           ...(bools["durable-only"] ? { durable_only: true } : {}),
+          ...(bools.all ? { all: true } : {}),
           ...(flags.session ? { session_id: flags.session } : {}),
         },
       })
@@ -381,11 +383,18 @@ export const CronTool = Tool.define<typeof parameters, Metadata, Scheduler>(
           session_id: sessionID,
           kind: op.kind,
           durable_only: op.durable_only,
+          all: op.all,
         })
         const lines =
           tasks.length === 0
             ? ["No scheduled jobs."]
-            : tasks.map((t) => `${t.id} ${t.cron} ${t.kind ?? "cron"} — ${t.prompt.slice(0, 60)}`)
+            : tasks.map((t) => {
+                // Under --all the jobs come from several sessions; surface the
+                // creator so the caller can tell them apart (and target
+                // get/delete --session correctly).
+                const owner = op.all && t.createdBySessionId ? ` [${t.createdBySessionId}]` : ""
+                return `${t.id} ${t.cron} ${t.kind ?? "cron"}${owner} — ${t.prompt.slice(0, 60)}`
+              })
         return {
           title: `Jobs: ${tasks.length}`,
           output: lines.join("\n"),

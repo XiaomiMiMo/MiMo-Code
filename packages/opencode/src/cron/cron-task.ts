@@ -97,6 +97,17 @@ export const getSessionCronTasks = (): CronTask[] => [...SESSION_STORE.values()]
 export const removeSessionCronTasks = (ids: string[]) =>
   ids.forEach((id) => SESSION_STORE.delete(id))
 
+/**
+ * Which session a fire should be injected into.
+ *
+ * The scheduler is a per-process singleton: the first session to mount it owns
+ * the onFire callback, but tasks record who created them. Routing by the
+ * creator keeps session B's recurring job from leaking into session A's
+ * conversation when A happened to mount the scheduler first (#2198).
+ */
+export const fireTargetSessionId = (task: CronTask, fallback: string): string =>
+  task.createdBySessionId ?? fallback
+
 export const findMissedTasks = (tasks: CronTask[], now: number): CronTask[] =>
   tasks.filter((t) => {
     if (t.recurring) return false

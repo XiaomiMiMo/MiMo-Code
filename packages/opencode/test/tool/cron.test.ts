@@ -329,3 +329,15 @@ describe("cron.execute: schedule sanity warnings", () => {
     expect(out.output).not.toMatch(/rolled|never matches/)
   })
 })
+
+describe("cron.shell.parse: list --all", () => {
+  test("list with --all sets all: true", async () => {
+    const out = await parse(`cron list --all`)
+    expect(out).toEqual([{ operation: { action: "list", all: true } }])
+  })
+
+  test("list --all composes with --kind and --durable-only", async () => {
+    const out = await parse(`cron list --all --kind cron --durable-only`)
+    expect(out).toEqual([{ operation: { action: "list", kind: "cron", durable_only: true, all: true } }])
+  })
+})
