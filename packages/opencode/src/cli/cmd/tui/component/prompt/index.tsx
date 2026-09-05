@@ -35,6 +35,7 @@ import { TuiEvent } from "../../event"
 import { iife } from "@/util/iife"
 import { Locale } from "@/util"
 import { formatDuration } from "@/util/format"
+import { Flag } from "@/flag/flag"
 import { SessionRetry } from "@/session/retry"
 import { createColors, createFrames } from "../../ui/spinner.ts"
 import { useDialog } from "@tui/ui/dialog"
@@ -1183,7 +1184,7 @@ export function Prompt(props: PromptProps) {
     // composer must land the first message INTO that root rather than creating a
     // duplicate root session. Only applies when the composer has no bound
     // sessionID (home view) and the current agent is orchestrator.
-    if (sessionID == null && agent.name === "orchestrator") {
+    if (sessionID == null && agent.name === "orchestrator" && Flag.MIMOCODE_EXPERIMENTAL_ORCHESTRATOR) {
       const stashed = local.orchestrator.sessionID()
       if (stashed) {
         sessionID = stashed
