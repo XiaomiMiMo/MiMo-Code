@@ -67,7 +67,7 @@ const migrations = await Promise.all(
 )
 console.log(`Loaded ${migrations.length} migrations`)
 
-await Bun.build({
+const result = await Bun.build({
   target: "node",
   entrypoints: ["./src/node.ts"],
   outdir: "./dist/node",
@@ -83,5 +83,25 @@ await Bun.build({
     "opencode-web-ui.gen.ts": "",
   },
 })
+
+// Break excessively long lines so esbuild on Windows (which crashes on
+// lines > ~100 KB) can transpile the bundled server module during the
+// desktop build.  esbuild treats newlines as whitespace, so inserting
+// them is semantics-preserving.
+const MAX_LINE_LEN = 100_000
+for (const output of result.outputs) {
+  const file = output.path
+  const text = await Bun.file(file).text()
+  if (!text.includes("
+")) {
+    const broken = text.replace(
+      new RegExp(`(.{${MAX_LINE_LEN}})`, "g"),
+      "$1
+",
+    )
+    await Bun.write(file, broken)
+  }
+}
+}
 
 console.log("Build complete")
