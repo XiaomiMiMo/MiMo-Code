@@ -53,6 +53,7 @@ import {
   normalizeForLoopDetection,
   detectTextLoop,
   detectToolLoop,
+  recentToolSignatures,
   TOOL_RECOVERY_PROMPT_MILD,
   TOOL_RECOVERY_PROMPT_STRONG,
 } from "../session/prompt/text-loop-recovery"
@@ -187,45 +188,6 @@ export function stableRootTitle(input: { agent: string | undefined; parentID: st
  * TODO: lift to mimocode.json config (e.g. session.maxGoalReact).
  */
 const MAX_GOAL_REACT = 12
-
-/**
- * Deterministic JSON serialization with sorted object keys, so that two
- * semantically-identical tool inputs produce the same string regardless of the
- * order the model happened to emit the keys in. `JSON.stringify` preserves
- * insertion order, and models routinely re-emit the same arguments with keys in
- * a different order (e.g. {url,format} vs {format,url}) — without this the
- * signatures would differ and the repeated-step check would miss real loops.
- */
-function stableStringify(value: unknown): string {
-  if (value === null || typeof value !== "object") return JSON.stringify(value) ?? "null"
-  if (Array.isArray(value)) return "[" + value.map(stableStringify).join(",") + "]"
-  const keys = Object.keys(value as Record<string, unknown>).sort()
-  return (
-    "{" +
-    keys.map((k) => JSON.stringify(k) + ":" + stableStringify((value as Record<string, unknown>)[k])).join(",") +
-    "}"
-  )
-}
-
-/**
- * Stable signature for an assistant step's *action* — the tool calls it made
- * (name + key-order-independent input). Text and reasoning are excluded on
- * purpose: in a ReAct loop the model narrates each step in slightly different
- * words while taking the exact same action, and some models emit their
- * reasoning as plain text parts — counting either would mask the repeated
- * action we want to catch. Returns undefined when a step makes no tool calls
- * (e.g. a pure-text turn), since there is no repeated *action* to compare.
- */
-function stepSignature(parts: MessageV2.Part[]): string | undefined {
-  const segments: string[] = []
-  for (const part of parts) {
-    if (part.type === "tool") {
-      segments.push("tool:" + part.tool + ":" + stableStringify(part.state.input ?? {}))
-    }
-  }
-  if (segments.length === 0) return undefined
-  return segments.join("\n")
-}
 
 const STRUCTURED_OUTPUT_DESCRIPTION = `Use this tool to return your final response in the requested structured format.
 
@@ -1332,11 +1294,11 @@ Before starting work, complete an orchestration plan:
 
 Keep planning proportional to task complexity: for simple combinations, two or three sentences suffice.
 </system-reminder>`,
-              synthetic: true,
-            })
-            userMessage.parts.push(part)
+                synthetic: true,
+              })
+              userMessage.parts.push(part)
+            }
           }
-        }
       }
 
       if (input.agent.name !== "plan" && assistantMessage?.info.agent === "plan") {
@@ -3876,58 +3838,51 @@ NOTE: At any point in time through this workflow you should feel free to ask the
           // repetition. A detected loop gets a synthetic user turn with the
           // appropriate recovery prompt; monitor mode only logs the detection.
           if (lastFinished) {
-            const recentSignatures: string[] = []
-            for (let i = msgs.length - 1; i >= 0 && recentSignatures.length < Flag.MIMOCODE_TOOL_LOOP_WINDOW; i--) {
-              const m = msgs[i]
-              if (m.info.role === "user") {
-                if (m.parts.some((p) => p.type === "text" && p.synthetic)) break
-                continue
-              }
-              if (!m.info.finish) continue
-              const sig = stepSignature(m.parts)
-              if (sig === undefined) break
-              recentSignatures.push(sig)
-            }
             const repeating = detectToolLoop(
-              recentSignatures,
+              recentToolSignatures(msgs, Flag.MIMOCODE_TOOL_LOOP_WINDOW),
               Flag.MIMOCODE_TOOL_LOOP_THRESHOLD,
               Flag.MIMOCODE_TOOL_LOOP_PERIOD_MIN,
               Flag.MIMOCODE_TOOL_LOOP_PERIOD_MAX,
             )
-            if (repeating) {
-              if (Flag.MIMOCODE_LOOP_MODE === "monitor") {
-                yield* slog.info("tool loop detected (monitor)", { kind: repeating })
-              } else {
-                if (loopRecoveryAttempts >= TEXT_LOOP_MAX_RECOVERY) {
-                  yield* bus.publish(Session.Event.Error, {
-                    sessionID,
-                    error: new NamedError.Unknown({
-                      message: `Tool loop detected (${repeating}) after ${loopRecoveryAttempts} recovery attempts. Session terminated.`,
-                    }).toObject(),
-                  })
-                  break
-                }
-                const reentry = yield* sessions.updateMessage({
-                  id: MessageID.ascending(),
-                  role: "user" as const,
+            if (repeating && Flag.MIMOCODE_LOOP_MODE === "monitor") {
+              yield* slog.info("tool loop detected (monitor)", { kind: repeating })
+            }
+            if (repeating && Flag.MIMOCODE_LOOP_MODE !== "monitor") {
+              if (loopRecoveryAttempts >= TEXT_LOOP_MAX_RECOVERY) {
+                yield* slog.info("tool loop: max recovery exceeded, terminating", { kind: repeating })
+                yield* bus.publish(Session.Event.Error, {
                   sessionID,
-                  agentID: lastUser.agentID,
-                  agent: lastUser.agent,
-                  model: lastUser.model,
-                  tools: lastUser.tools,
-                  format: lastUser.format,
-                  time: { created: Date.now() },
+                  error: new NamedError.Unknown({
+                    message: `Tool loop detected (${repeating}) after ${loopRecoveryAttempts} recovery attempts. Session terminated.`,
+                  }).toObject(),
                 })
-                yield* sessions.updatePart({
-                  id: PartID.ascending(),
-                  messageID: reentry.id,
-                  sessionID,
-                  type: "text",
-                  synthetic: true,
-                  text: loopRecoveryAttempts === 0 ? TOOL_RECOVERY_PROMPT_MILD : TOOL_RECOVERY_PROMPT_STRONG,
-                })
-                loopRecoveryAttempts++
+                break
               }
+              const reentry = yield* sessions.updateMessage({
+                id: MessageID.ascending(),
+                role: "user" as const,
+                sessionID,
+                agentID: lastUser.agentID,
+                agent: lastUser.agent,
+                model: lastUser.model,
+                tools: lastUser.tools,
+                format: lastUser.format,
+                time: { created: Date.now() },
+              })
+              yield* sessions.updatePart({
+                id: PartID.ascending(),
+                messageID: reentry.id,
+                sessionID,
+                type: "text",
+                synthetic: true,
+                text: loopRecoveryAttempts === 0 ? TOOL_RECOVERY_PROMPT_MILD : TOOL_RECOVERY_PROMPT_STRONG,
+              } satisfies MessageV2.TextPart)
+              loopRecoveryAttempts++
+              yield* slog.info("tool loop: recovery injected", { kind: repeating, attempt: loopRecoveryAttempts })
+              // Re-enter the loop so `msgs` (and thus the LLM request) is rebuilt
+              // with the recovery turn; falling through would send the stale
+              // prefix and the model would never see the prompt this step.
+              continue
             }
           }
 
@@ -4388,10 +4343,6 @@ NOTE: At any point in time through this workflow you should feel free to ask the
               }
 
               if (result === "text-repeat") {
-                if (Flag.MIMOCODE_LOOP_MODE === "monitor") {
-                  yield* slog.info("text n-gram detected (monitor)")
-                  return "continue" as const
-                }
                 if (yield* handleTextRepeat({ lastUser })) return "continue" as const
                 return "break" as const
               }
@@ -4692,10 +4643,6 @@ NOTE: At any point in time through this workflow you should feel free to ask the
             }
 
             if (result === "text-repeat") {
-              if (Flag.MIMOCODE_LOOP_MODE === "monitor") {
-                yield* slog.info("text n-gram detected (monitor)")
-                return "continue" as const
-              }
               if (yield* handleTextRepeat({ lastUser })) return "continue" as const
               return "break" as const
             }
@@ -4838,7 +4785,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
               // when this turn already cropped a thinking streak. Re-deriving
               // detectStreak on the cropped msgs is a false negative — the
               // streak assistants are gone — so gate on the crop flag.
-              if (isTextLoop && !loopStreakCropped && Flag.MIMOCODE_LOOP_MODE !== "monitor") {
+              if (isTextLoop && !loopStreakCropped) {
                 if (loopRecoveryAttempts >= TEXT_LOOP_MAX_RECOVERY) {
                   yield* slog.info("text loop: max recovery exceeded, terminating")
                   yield* bus.publish(Session.Event.Error, {

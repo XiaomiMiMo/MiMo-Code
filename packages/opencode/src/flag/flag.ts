@@ -191,7 +191,12 @@ export const Flag = {
   MIMOCODE_TEXT_REPEAT_THRESHOLD: number("MIMOCODE_TEXT_REPEAT_THRESHOLD") ?? 3,
   MIMOCODE_TEXT_WINDOW_TOKENS: number("MIMOCODE_TEXT_WINDOW_TOKENS") ?? 8192,
   MIMOCODE_TEXT_NGRAM_CHECK_INTERVAL: number("MIMOCODE_TEXT_NGRAM_CHECK_INTERVAL") ?? 256,
-  MIMOCODE_LOOP_MODE: process.env["MIMOCODE_LOOP_MODE"] ?? "enforce",
+  // "monitor" logs n-gram and tool-loop detections without intervening;
+  // "enforce" injects recovery and eventually terminates. Defaults to monitor
+  // so the new thresholds are calibrated on real trajectories before they
+  // can cut a session. Does not gate the older cross-step identical-output
+  // guard (detectTextLoop), which keeps its pre-existing behaviour.
+  MIMOCODE_LOOP_MODE: process.env["MIMOCODE_LOOP_MODE"] ?? "monitor",
   MIMOCODE_TOOL_LOOP_WINDOW: number("MIMOCODE_TOOL_LOOP_WINDOW") ?? 12,
   MIMOCODE_TOOL_LOOP_THRESHOLD: number("MIMOCODE_TOOL_LOOP_THRESHOLD") ?? 3,
   MIMOCODE_TOOL_LOOP_PERIOD_MIN: number("MIMOCODE_TOOL_LOOP_PERIOD_MIN") ?? 2,

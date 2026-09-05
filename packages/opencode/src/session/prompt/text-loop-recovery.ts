@@ -1,3 +1,6 @@
+import type { MessageV2 } from "../message-v2"
+import { toolSignature } from "./loop-streak"
+
 export const TEXT_LOOP_BUFFER_SIZE = 5
 export const TEXT_LOOP_TRIGGER_COUNT = 3
 export const TEXT_LOOP_MAX_RECOVERY = 2
@@ -18,6 +21,28 @@ export function detectTextLoop(buffer: string[], triggerCount: number): boolean 
 }
 
 export type ToolLoopKind = "consecutive" | "periodic"
+
+/**
+ * Newest-first tool signatures of completed assistant steps, at most `window`.
+ * Stops at the most recent synthetic user turn (a prior recovery prompt) so
+ * steps before it never count toward the current loop, and at the first
+ * tool-less finished step, since a pure-text turn breaks any action loop.
+ */
+export function recentToolSignatures(msgs: readonly MessageV2.WithParts[], window: number): string[] {
+  const out: string[] = []
+  for (let i = msgs.length - 1; i >= 0 && out.length < window; i--) {
+    const m = msgs[i]
+    if (m.info.role === "user") {
+      if (m.parts.some((p) => p.type === "text" && p.synthetic)) break
+      continue
+    }
+    if (!m.info.finish) continue
+    const sig = toolSignature(m.parts)
+    if (!sig) break
+    out.push(sig)
+  }
+  return out
+}
 
 /** Detects repeated completed-tool signatures in newest-first order. */
 export function detectToolLoop(

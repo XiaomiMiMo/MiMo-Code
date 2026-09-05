@@ -12,6 +12,7 @@ import * as SessionRetry from "./retry"
 import { createTextNgramMonitor, isTextNgramRepeat, textNgramRepeat } from "./prompt/text-ngram-detection"
 import type { Permission } from "@/permission"
 import { Log } from "@/util"
+import { Flag } from "@/flag/flag"
 
 const log = Log.create({ service: "session.max-mode" })
 
@@ -125,6 +126,15 @@ export const runCandidate = (input: MaxStepInput, index: number): Effect.Effect<
   let aborted = false
   return Effect.gen(function* () {
     const monitor = createTextNgramMonitor()
+    // Latched so monitor mode logs once per candidate instead of per delta.
+    let ngramLogged = false
+    const ngramHit = (text: string) => {
+      if (!monitor.append(text)) return false
+      if (Flag.MIMOCODE_LOOP_MODE !== "monitor") return true
+      if (!ngramLogged) log.info("text n-gram detected (monitor)", { index })
+      ngramLogged = true
+      return false
+    }
     // Fresh accumulator per attempt: the retry below re-runs this whole block,
     // so partial reasoning/text/toolCalls from a failed attempt must not carry
     // over into the retry.
@@ -156,12 +166,12 @@ export const runCandidate = (input: MaxStepInput, index: number): Effect.Effect<
       switch (event.type) {
         case "reasoning-delta":
           candidate.reasoning += event.text
-          if (monitor.append(event.text)) return Effect.fail(textNgramRepeat())
+          if (ngramHit(event.text)) return Effect.fail(textNgramRepeat())
           if (event.providerMetadata) candidate.reasoningMetadata = event.providerMetadata
           break
         case "text-delta":
           candidate.text += event.text
-          if (monitor.append(event.text)) return Effect.fail(textNgramRepeat())
+          if (ngramHit(event.text)) return Effect.fail(textNgramRepeat())
           if (event.providerMetadata) candidate.textMetadata = event.providerMetadata
           break
         case "tool-call":

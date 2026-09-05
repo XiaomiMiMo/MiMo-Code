@@ -19,7 +19,7 @@
 
 ### 実装
 
-`TextNgramMonitor` のストリーム接続点（`processor.ts` の `checkTextNgram`、`max-mode.ts`）を流用し、内部の検出関数を `detectConsecutiveRepeat` から既存の `detectRepeatedNgram(tokens, 64, 3)` に差し替え、ウィンドウを 500 から 8192 に広げる。`slice().join()` はローリングハッシュに置き換え、1 トークンあたり O(1) にする。
+`TextNgramMonitor` のストリーム接続点（`processor.ts` の `checkTextNgram`、`max-mode.ts`）を流用し、内部の検出関数を `detectConsecutiveRepeat` から既存の `detectRepeatedNgram(tokens, 64, 3)` に差し替え、ウィンドウを 500 から 8192 に広げる。ローリングハッシュ（`slice().join()` を置き換えて 1 トークンあたり O(1) にする）は後続の最適化とし、現在の実装は `MIMOCODE_TEXT_NGRAM_CHECK_INTERVAL`（既定 256 トークン）の間隔で検査コストを分散する。
 
 フラグ：`MIMOCODE_TEXT_NGRAM_N=64`、`MIMOCODE_TEXT_REPEAT_THRESHOLD=3`、`MIMOCODE_TEXT_WINDOW_TOKENS=8192`。
 
@@ -39,6 +39,8 @@ MinHash/Jaccard は入れない。カバレッジ率は計算しない。コー�
 発火後はファイルやテストの変化を判定せず、そのまま第 3 章の処理へ進む。
 
 ### ポーリングとリトライの例外（閾値を緩めるが記録はする）
+
+> 未実装。現在の実装ではポーリングやリトライも通常の呼び出しとして数える。本節は後続作業。
 
 - bash コマンドが `sleep`、`wait`、`watch`、`poll`、`status`、`tail -f` に一致する、またはツール自体が待機/監視系：同一シグネチャで 10 回または累計 10 分まで許容し、超えたら「連続同一呼び出し」として扱う。
 - 直前の結果が一時的なネットワークエラー（`ETIMEDOUT`、`ECONNRESET`、HTTP 5xx / 429）：バックオフ付きリトライを 3 回まで許容し、反復回数に数えない。
@@ -60,6 +62,6 @@ MinHash/Jaccard は入れない。カバレッジ率は計算しない。コー�
 - **生成ストリーム中**：n-gram 検出をインクリメンタルに実行。ストリームが取れない場合は生成終了後に全体を検査する。
 - **ステップ完了後、次の判断の前**：ツールシグネチャのウィンドウを更新し、連続/周期判定を行う。既存の「repeated-step nudge」の位置であり、この nudge を 3 段階エスカレーション経由にしてカウントする。
 
-ログには `loop_detected`（種類、シグネチャまたは断片、回数）、`recovery_attempted`（段階）、`loop_terminated` を記録する。まず `MIMOCODE_LOOP_MODE=monitor` で記録のみ行い、発火トラジェクトリを人手で確認してから `enforce` に切り替える。
+ログには `loop_detected`（種類、シグネチャまたは断片、回数）、`recovery_attempted`（段階）、`loop_terminated` を記録する。まず `MIMOCODE_LOOP_MODE=monitor` で記録のみ行い、発火トラジェクトリを人手で確認してから `enforce` に切り替える。`MIMOCODE_LOOP_MODE` の既定値は `monitor` で、本書の 2 つの検出器のみに作用する。既存のステップ間同一出力ガードには影響しない。
 
 > デコード時の `no_repeat_ngram_size` で代替しないこと。コードやパスなど正当に繰り返すべき内容まで遮断し、実行時のループ判定とは別物である。

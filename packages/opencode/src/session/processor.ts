@@ -409,7 +409,10 @@ export const layer: Layer.Layer<
 
       const checkTextNgram = (text: string) => {
         if (ctx.textNgramRepeat || !ctx.textNgramMonitor) return
-        if (ctx.textNgramMonitor.append(text)) ctx.textNgramRepeat = true
+        if (!ctx.textNgramMonitor.append(text)) return
+        ctx.textNgramRepeat = true
+        // In monitor mode the stream is never cut, so this is the only trace.
+        if (Flag.MIMOCODE_LOOP_MODE === "monitor") slog.info("text n-gram detected (monitor)")
       }
 
       const handleEvent = Effect.fnUntraced(function* (value: StreamEvent) {

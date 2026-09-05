@@ -19,7 +19,7 @@
 
 ### 实现
 
-复用 `TextNgramMonitor` 的流式接入位置（`processor.ts` 的 `checkTextNgram`、`max-mode.ts`），把内部检测函数从 `detectConsecutiveRepeat` 换成已有的 `detectRepeatedNgram(tokens, 64, 3)`，窗口从 500 提到 8192。用滚动哈希代替 `slice().join()`，每 token O(1)。
+复用 `TextNgramMonitor` 的流式接入位置（`processor.ts` 的 `checkTextNgram`、`max-mode.ts`），把内部检测函数从 `detectConsecutiveRepeat` 换成已有的 `detectRepeatedNgram(tokens, 64, 3)`，窗口从 500 提到 8192。滚动哈希（代替 `slice().join()`，每 token O(1)）留作后续优化；当前按 `MIMOCODE_TEXT_NGRAM_CHECK_INTERVAL`（默认 256 token）的节拍分摊检测成本。
 
 对应开关：`MIMOCODE_TEXT_NGRAM_N=64`、`MIMOCODE_TEXT_REPEAT_THRESHOLD=3`、`MIMOCODE_TEXT_WINDOW_TOKENS=8192`。
 
@@ -42,6 +42,8 @@
 
 ### 轮询与重试例外（放宽阈值，仍然记录）
 
+> 当前实现尚未包含本节例外，属后续工作；轮询与重试目前按普通调用计数。
+
 - bash 命令匹配 `sleep`、`wait`、`watch`、`poll`、`status`、`tail -f`，或工具本身是等待/监控类：同一签名允许 10 次或累计 10 分钟，超出后按"连续相同调用"处理。
 - 上次结果是临时网络错误（`ETIMEDOUT`、`ECONNRESET`、HTTP 5xx / 429）：允许 3 次退避重试，不计入重复次数。
 
@@ -62,6 +64,6 @@
 - **生成流中**：n-gram 检测增量运行；拿不到流时在生成结束后整段检查。
 - **步完成后、下一次决策前**：更新工具签名窗口，做连续/周期判定。位置即现有"重复步骤 nudge"处，把 nudge 改为走三层降级并计数。
 
-日志记录 `loop_detected`（类型、签名或片段、次数）、`recovery_attempted`（第几层）、`loop_terminated`。先用 `MIMOCODE_LOOP_MODE=monitor` 只记录不干预，人工抽查命中轨迹后再切 `enforce`。
+日志记录 `loop_detected`（类型、签名或片段、次数）、`recovery_attempted`（第几层）、`loop_terminated`。先用 `MIMOCODE_LOOP_MODE=monitor` 只记录不干预，人工抽查命中轨迹后再切 `enforce`。`MIMOCODE_LOOP_MODE` 默认即 `monitor`，只作用于本文的两个检测器；既有的跨步相同输出检测不受该开关影响。
 
 > 不要用解码期的 `no_repeat_ngram_size` 代替上述检测，它会屏蔽代码、路径等必须重复的内容，与运行时循环判定不是一回事。

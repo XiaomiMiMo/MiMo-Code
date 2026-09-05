@@ -19,7 +19,7 @@ N'inspecter que le reasoning et le texte générés à l'étape courante. Ne jam
 
 ### Implémentation
 
-Réutiliser le point d'accroche en flux de `TextNgramMonitor` (`checkTextNgram` dans `processor.ts`, et `max-mode.ts`). Remplacer le détecteur interne `detectConsecutiveRepeat` par `detectRepeatedNgram(tokens, 64, 3)`, déjà écrit, et porter la fenêtre de 500 à 8192. Remplacer `slice().join()` par un hachage glissant pour un coût O(1) par token.
+Réutiliser le point d'accroche en flux de `TextNgramMonitor` (`checkTextNgram` dans `processor.ts`, et `max-mode.ts`). Remplacer le détecteur interne `detectConsecutiveRepeat` par `detectRepeatedNgram(tokens, 64, 3)`, déjà écrit, et porter la fenêtre de 500 à 8192. Le hachage glissant (remplaçant `slice().join()` pour un coût O(1) par token) est reporté ; l'implémentation actuelle amortit la vérification via `MIMOCODE_TEXT_NGRAM_CHECK_INTERVAL` (256 tokens par défaut).
 
 Variables : `MIMOCODE_TEXT_NGRAM_N=64`, `MIMOCODE_TEXT_REPEAT_THRESHOLD=3`, `MIMOCODE_TEXT_WINDOW_TOKENS=8192`.
 
@@ -39,6 +39,8 @@ Conserver les signatures des 12 derniers appels d'outils terminés. Signature = 
 En cas de détection, ne pas vérifier si les fichiers ou les tests ont changé. Passer directement au traitement de la section 3.
 
 ### Exceptions : sondage et nouvelles tentatives (seuils assouplis, toujours journalisés)
+
+> Pas encore implémenté. La version actuelle compte le sondage et les nouvelles tentatives comme tout autre appel ; cette section est un travail ultérieur.
 
 - Commandes bash contenant `sleep`, `wait`, `watch`, `poll`, `status`, `tail -f`, ou outils d'attente/surveillance par nature : autoriser 10 occurrences de la même signature ou 10 minutes cumulées, puis traiter comme des appels consécutifs identiques.
 - Le résultat précédent était une erreur réseau transitoire (`ETIMEDOUT`, `ECONNRESET`, HTTP 5xx / 429) : autoriser 3 nouvelles tentatives avec backoff, non comptabilisées comme répétition.
@@ -60,6 +62,6 @@ Sur une détection de chaîne de raisonnement, marquer l'étape assistant couran
 - **Dans le flux de génération** : la détection n-gramme tourne de façon incrémentale ; sans flux, vérifier toute la sortie après la génération.
 - **Après la fin d'une étape, avant la décision suivante** : mettre à jour la fenêtre de signatures et exécuter les contrôles consécutif/périodique. C'est l'emplacement du « repeated-step nudge » existant ; faire passer ce nudge par l'escalade à trois niveaux et le compter.
 
-Journaliser `loop_detected` (type, signature ou fragment, nombre), `recovery_attempted` (niveau) et `loop_terminated`. Démarrer avec `MIMOCODE_LOOP_MODE=monitor` (journal seul), relire manuellement les trajectoires détectées, puis passer à `enforce`.
+Journaliser `loop_detected` (type, signature ou fragment, nombre), `recovery_attempted` (niveau) et `loop_terminated`. Démarrer avec `MIMOCODE_LOOP_MODE=monitor` (journal seul), relire manuellement les trajectoires détectées, puis passer à `enforce`. `MIMOCODE_LOOP_MODE` vaut `monitor` par défaut et ne concerne que les deux détecteurs de ce document ; la garde existante sur les sorties identiques entre étapes n'est pas affectée.
 
 > Ne pas remplacer ceci par `no_repeat_ngram_size` au décodage : il bloque le code, les chemins et tout contenu qui doit légitimement se répéter, et n'a rien à voir avec la détection de boucle à l'exécution.

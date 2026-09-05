@@ -19,7 +19,7 @@ Only inspect the reasoning and text generated in the current step. Never mix in 
 
 ### Implementation
 
-Reuse the streaming hook of `TextNgramMonitor` (`checkTextNgram` in `processor.ts`, and `max-mode.ts`). Swap the inner detector from `detectConsecutiveRepeat` to the already-written `detectRepeatedNgram(tokens, 64, 3)` and raise the window from 500 to 8192. Replace `slice().join()` with a rolling hash so each token costs O(1).
+Reuse the streaming hook of `TextNgramMonitor` (`checkTextNgram` in `processor.ts`, and `max-mode.ts`). Swap the inner detector from `detectConsecutiveRepeat` to the already-written `detectRepeatedNgram(tokens, 64, 3)` and raise the window from 500 to 8192. A rolling hash (replacing `slice().join()` for O(1) per token) is deferred; the current implementation amortizes the check via `MIMOCODE_TEXT_NGRAM_CHECK_INTERVAL` (default 256 tokens).
 
 Flags: `MIMOCODE_TEXT_NGRAM_N=64`, `MIMOCODE_TEXT_REPEAT_THRESHOLD=3`, `MIMOCODE_TEXT_WINDOW_TOKENS=8192`.
 
@@ -39,6 +39,8 @@ Keep the signatures of the last 12 completed tool calls. Signature = tool name +
 On a hit, do not check whether files or test results changed. Go straight to the handling in section 3.
 
 ### Polling and retry exceptions (relaxed thresholds, still logged)
+
+> Not implemented yet. The current build counts polling and retries like any other call; this section is follow-up work.
 
 - Bash commands matching `sleep`, `wait`, `watch`, `poll`, `status`, `tail -f`, or tools that are inherently wait/monitor tools: allow 10 occurrences of the same signature or 10 minutes total, then treat as consecutive identical calls.
 - Previous result was a transient network error (`ETIMEDOUT`, `ECONNRESET`, HTTP 5xx / 429): allow 3 backoff retries that do not count toward repetition.
@@ -60,6 +62,6 @@ On a chain-of-thought hit, mark the current assistant step as error so `toModelM
 - **In the generation stream**: n-gram detection runs incrementally; without a stream, check the whole output after generation ends.
 - **After a step completes, before the next decision**: update the tool signature window and run the consecutive/periodic checks. This is where the existing "repeated-step nudge" lives; route the nudge through the three-tier escalation and count it.
 
-Log `loop_detected` (type, signature or fragment, count), `recovery_attempted` (tier), and `loop_terminated`. Start with `MIMOCODE_LOOP_MODE=monitor` (log only), review hit trajectories by hand, then switch to `enforce`.
+Log `loop_detected` (type, signature or fragment, count), `recovery_attempted` (tier), and `loop_terminated`. Start with `MIMOCODE_LOOP_MODE=monitor` (log only), review hit trajectories by hand, then switch to `enforce`. `MIMOCODE_LOOP_MODE` defaults to `monitor` and gates only the two detectors in this document; the pre-existing cross-step identical-output guard is unaffected.
 
 > Do not replace this with decode-time `no_repeat_ngram_size`. It blocks code, paths, and other content that must legitimately repeat, and is a different thing from runtime loop detection.
