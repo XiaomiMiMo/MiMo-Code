@@ -175,6 +175,10 @@ describe("isolated-git-guard / isolation signal", () => {
     expect(isIsolatedWorktree("/Users/me/projects/app", root)).toBe(false)
   })
 
+  test("a Windows project on another drive is NOT an isolated child", () => {
+    expect(isIsolatedWorktree("D:/workspace/project", "C:/Users/me/AppData/Local/mimocode/worktree")).toBe(false)
+  })
+
   test("undefined directory is not an isolated child", () => {
     expect(isIsolatedWorktree(undefined, root)).toBe(false)
   })

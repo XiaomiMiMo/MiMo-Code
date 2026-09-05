@@ -35,6 +35,10 @@ describe("Filesystem.contains", () => {
     expect(Filesystem.contains("/project", "/project-other/file")).toBe(false)
     expect(Filesystem.contains("/project", "/projectfile")).toBe(false)
   })
+
+  test("rejects Windows paths on different drives", () => {
+    expect(Filesystem.contains("C:/Users/me/AppData/Local/mimocode/worktree", "D:/workspace/project")).toBe(false)
+  })
 })
 
 /*
