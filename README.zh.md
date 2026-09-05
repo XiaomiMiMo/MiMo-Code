@@ -390,9 +390,13 @@ MiMoCode 在首次加载配置时会自动注入 `$schema` 字段，使编辑器
 
 </details>
 
-### 自定义 OpenAI 兼容端点
+### 自定义 Provider 端点
 
-如果 Provider 不在内置模型目录中，可以直接使用它的 Base URL、API Key 和模型 ID 进行配置：
+对于不在内置目录中的 Provider，使用 `/connect` → `+ Custom provider`。六页向导支持用 `ctrl+←` / `ctrl+→` 切换页面、用 `esc` 返回、选择通信协议、请求 `/models`，再用 `space` 多选模型并按 `enter` 一次保存。
+
+API key 只通过 `auth.set({ type: "api", key })` 保存，不写入 Provider 配置或环境变量。请求由所选适配器完成 API key 认证（OpenAI 兼容和 OpenAI 适配器发送 Bearer；Anthropic 适配器使用该协议要求的请求头）。
+
+如果需要手动维护 Provider 配置，只配置端点和适配器，不要把 key 写进文件。示例：
 
 ```jsonc
 {
@@ -409,21 +413,20 @@ MiMoCode 在首次加载配置时会自动注入 `$schema` 字段，使编辑器
         }
       },
       "options": {
-        "baseURL": "BASE_URL",
-        "apiKey": "API_KEY"
+        "baseURL": "BASE_URL"
       }
     }
   }
 }
 ```
 
-- 必须使用准确的字段名 `baseURL` 和 `apiKey`。
+- 使用准确的字段名 `baseURL`。请通过 `/connect` 保存 API key，使其留在 auth 存储中。
 - 原样保留用户提供的 Base URL 和模型 ID。MiMoCode 不要求 Provider 已存在于内置目录中；除非端点本身要求，否则不要自行增删 `/v1`。
 - `models` 下的键是上游模型 ID。模型 ID 可以包含 `/`，因为 `model` 中只有第一个 `/` 用于分隔 Provider ID 和模型 ID。
 - 如有需要，可将 `custom` 替换为其他未占用的小写 Provider ID，并同步更新顶层 `model` 中的 ID。
-- `@ai-sdk/openai-compatible` 适用于 OpenAI 兼容 API；使用其他通信协议的服务需要对应 Provider 的专用适配器。
+- `/chat/completions` 使用 `@ai-sdk/openai-compatible`；`/responses` 使用 `@ai-sdk/openai` 并设置 `options.wireProtocol: "responses"`；`/messages` 使用 `@ai-sdk/anthropic`。
 
-全局配置请写入 `~/.config/mimocode/mimocode.jsonc`（或同目录的 `mimocode.json`），仅项目生效的配置请写入 `.mimocode/mimocode.jsonc`（或 `.json`），并与已有内容合并。`apiKey` 会以明文保存在配置中，请确保文件仅当前用户可读，且不要提交到版本库。可运行 `mimo models` 或使用 TUI 模型选择器验证配置结果。
+全局配置请写入 `~/.config/mimocode/mimocode.jsonc`（或同目录的 `mimocode.json`），仅项目生效的配置请写入 `.mimocode/mimocode.jsonc`（或 `.json`），并与已有内容合并。可运行 `mimo models` 或使用 TUI 模型选择器验证配置结果。
 
 要声明自定义模型支持哪些输入模态（图片、音频、视频、PDF），在 TUI 中运行 `/modalities`——多选对话框会把设置持久化到配置，无需手动编辑。
 

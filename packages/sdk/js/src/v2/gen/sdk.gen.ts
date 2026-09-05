@@ -54,6 +54,8 @@ import type {
   FindTextResponses,
   FormatterStatusResponses,
   GlobalConfigGetResponses,
+  GlobalConfigProviderRemoveErrors,
+  GlobalConfigProviderRemoveResponses,
   GlobalConfigUpdateErrors,
   GlobalConfigUpdateResponses,
   GlobalDisposeResponses,
@@ -285,6 +287,31 @@ class HeyApiRegistry<T> {
   }
 }
 
+export class Provider extends HeyApiClient {
+  /**
+   * Remove a global provider configuration
+   *
+   * Remove a provider configuration from the global config file.
+   */
+  public remove<ThrowOnError extends boolean = false>(
+    parameters: {
+      providerID: string
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams([parameters], [{ args: [{ in: "path", key: "providerID" }] }])
+    return (options?.client ?? this.client).delete<
+      GlobalConfigProviderRemoveResponses,
+      GlobalConfigProviderRemoveErrors,
+      ThrowOnError
+    >({
+      url: "/global/config/provider/{providerID}",
+      ...options,
+      ...params,
+    })
+  }
+}
+
 export class Config extends HeyApiClient {
   /**
    * Get global configuration
@@ -320,6 +347,11 @@ export class Config extends HeyApiClient {
         ...params.headers,
       },
     })
+  }
+
+  private _provider?: Provider
+  get provider(): Provider {
+    return (this._provider ??= new Provider({ client: this.client }))
   }
 }
 
@@ -3924,7 +3956,7 @@ export class Oauth extends HeyApiClient {
   }
 }
 
-export class Provider extends HeyApiClient {
+export class Provider2 extends HeyApiClient {
   /**
    * List providers
    *
@@ -5390,9 +5422,9 @@ export class OpencodeClient extends HeyApiClient {
     return (this._bash ??= new Bash({ client: this.client }))
   }
 
-  private _provider?: Provider
-  get provider(): Provider {
-    return (this._provider ??= new Provider({ client: this.client }))
+  private _provider?: Provider2
+  get provider(): Provider2 {
+    return (this._provider ??= new Provider2({ client: this.client }))
   }
 
   private _sync?: Sync

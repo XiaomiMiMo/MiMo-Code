@@ -147,6 +147,58 @@ test("loads JSON config file", async () => {
   })
 })
 
+test("removes a provider from global JSON and JSONC config files", async () => {
+  await using globalTmp = await tmpdir()
+  const previous = Global.Path.config
+  ;(Global.Path as { config: string }).config = globalTmp.path
+
+  try {
+    for (const filename of ["mimocode.json", "mimocode.jsonc"]) {
+      await fs.rm(path.join(globalTmp.path, "mimocode.json"), { force: true })
+      await fs.rm(path.join(globalTmp.path, "mimocode.jsonc"), { force: true })
+      const source =
+        filename === "mimocode.jsonc"
+          ? `{
+  // Keep this comment while removing one provider.
+  "provider": {
+    "custom-provider": {
+      "name": "Custom Provider",
+      "options": { "baseURL": "https://custom.example.com/v1" }
+    },
+    "kept-provider": { "name": "Kept Provider" }
+  }
+}`
+          : JSON.stringify({
+              provider: {
+                "custom-provider": {
+                  name: "Custom Provider",
+                  options: { baseURL: "https://custom.example.com/v1" },
+                },
+                "kept-provider": { name: "Kept Provider" },
+              },
+            })
+      await Filesystem.write(path.join(globalTmp.path, filename), source)
+      await clear()
+
+      const next = await Effect.runPromise(
+        Config.Service.use((svc) => svc.removeGlobalProvider("custom-provider")).pipe(
+          Effect.scoped,
+          Effect.provide(layer),
+        ),
+      )
+
+      expect(next.provider?.["custom-provider"]).toBeUndefined()
+      expect(next.provider?.["kept-provider"]?.name).toBe("Kept Provider")
+      const updated = await Filesystem.readText(path.join(globalTmp.path, filename))
+      expect(updated).not.toContain("custom-provider")
+      expect(updated).toContain("kept-provider")
+    }
+  } finally {
+    ;(Global.Path as { config: string }).config = previous
+    await clear(true)
+  }
+})
+
 test("loads Claude Code MCP servers from home and project config", async () => {
   await writeClaudeConfig(path.join(Global.Path.home, ".claude.json"), {
     mcpServers: {
