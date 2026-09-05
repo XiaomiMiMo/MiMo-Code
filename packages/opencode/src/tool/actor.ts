@@ -11,7 +11,7 @@ import { SessionID, MessageID, PartID } from "../session/schema"
 import { MessageV2 } from "../session/message-v2"
 import { Agent } from "../agent/agent"
 import { Provider } from "../provider"
-import { sortVisionModels } from "../provider/provider"
+import { sortVisionModels, hasEvidencedImageInput } from "../provider/provider"
 import type { SessionPrompt } from "../session/prompt"
 import { Config } from "../config"
 import { ActorRegistry } from "@/actor/registry"
@@ -701,13 +701,16 @@ export const ActorTool = Tool.define(
         if (op.action === "models") {
           const providers = yield* provider.list()
           const allModels = Object.values(providers).flatMap((info) => Object.values(info.models))
-          const filtered = op.vision ? allModels.filter((m) => m.capabilities.input.image === true) : allModels
+          // `actor models --vision` is the list the model is told to consult before
+          // passing `--model`, so it has to answer the same way as the engine's own
+          // vision-model selection: evidence, not an assumed verdict.
+          const filtered = op.vision ? allModels.filter(hasEvidencedImageInput) : allModels
           const ordered = op.vision
             ? sortVisionModels(filtered)
             : [...filtered].sort((a, b) => `${a.providerID}/${a.id}`.localeCompare(`${b.providerID}/${b.id}`))
           const limit = op.limit ?? 50
           const shown = ordered.slice(0, limit)
-          const lines = shown.map((m) => `${m.providerID}/${m.id}${m.capabilities.input.image ? " (vision)" : ""}`)
+          const lines = shown.map((m) => `${m.providerID}/${m.id}${hasEvidencedImageInput(m) ? " (vision)" : ""}`)
           const header = op.vision ? `Vision-capable models` : `Available models`
           const more = ordered.length > shown.length ? `\n… and ${ordered.length - shown.length} more (raise --limit)` : ""
           const output = shown.length === 0

@@ -7,6 +7,7 @@ import { Instance } from "../../src/project/instance"
 import { Plugin } from "../../src/plugin/index"
 import { ModelsDev } from "../../src/provider"
 import { Provider } from "../../src/provider"
+import { ModalityInference } from "../../src/provider/modality-inference"
 import { ProviderID, ModelID } from "../../src/provider/schema"
 import { Env } from "../../src/env"
 import { Global } from "../../src/global"
@@ -1400,6 +1401,56 @@ test("model modalities default correctly", async () => {
   })
 })
 
+test("an explicitly empty input modality list stays authoritative", async () => {
+  await using tmp = await tmpdir({
+    init: async (dir) => {
+      await Bun.write(
+        path.join(dir, "mimocode.json"),
+        JSON.stringify({
+          $schema: "https://opencode.ai/config.json",
+          provider: {
+            "test-provider": {
+              name: "Test",
+              npm: "@ai-sdk/openai-compatible",
+              env: [],
+              models: {
+                "test-model": {
+                  name: "Test Model",
+                  limit: { context: 8000, output: 2000 },
+                  modalities: { input: [], output: ["text"] },
+                },
+              },
+              options: { apiKey: "test" },
+            },
+          },
+        }),
+      )
+    },
+  })
+  await Instance.provide({
+    directory: tmp.path,
+    fn: async () => {
+      const providers = await list()
+      const model = providers[ProviderID.make("test-provider")].models["test-model"]
+      expect(model.capabilities.input).toEqual({ text: false, audio: false, image: false, video: false, pdf: false })
+      expect(model.capabilities.inferred).toBeUndefined()
+    },
+  })
+})
+
+test("provider-entry provenance identifies the catalog ref", () => {
+  const directory = ModalityInference.directoryIndex({})
+  const verdict = ModalityInference.resolveInput({
+    inherited: ModalityInference.mapOf(["text"], false),
+    apiID: "gpt-5",
+    directory,
+    providerID: "openai",
+    modelID: "gpt-5",
+  })
+  expect(verdict.provenance).toBe("provider-entry")
+  expect(verdict.source).toBe("openai/gpt-5")
+})
+
 test("model with custom cost values", async () => {
   await using tmp = await tmpdir({
     init: async (dir) => {
@@ -1736,6 +1787,107 @@ test("getVisionModel falls back to smart default when vision_model is misconfigu
       const model = await getVisionModel()
       expect(model).toBeDefined()
       expect(String(model?.id)).toBe("vision-cheap")
+    },
+  })
+})
+
+// Regression: mimo-auto is the only vision channel a free-tier user has, and it is
+// absent from models.dev, so its image support is stated in the BUILTIN tier. It used
+// to be assigned onto the finished model instead, which left the verdict's provenance
+// saying "assumed" and got the alias filtered straight back out of vision selection.
+//
+// The invariant is negative on purpose: the bug was not "mimo-auto is missing from a
+// list", it was "the verdict was recorded as unknown". Pinning the absence of the
+// cause survives a rewrite of how the list is built.
+const freeTierConfig = (autoModel: Record<string, unknown>) => ({
+  $schema: "https://opencode.ai/config.json",
+  provider: {
+    mimo: {
+      name: "MiMo",
+      npm: "@ai-sdk/openai-compatible",
+      env: [],
+      api: "https://example.invalid/v1",
+      models: { "mimo-auto": { name: "MiMo Auto", limit: { context: 32000, output: 8000 }, ...autoModel } },
+      options: { apiKey: "test-key" },
+    },
+    acme: {
+      name: "Acme",
+      npm: "@ai-sdk/openai-compatible",
+      env: [],
+      api: "https://example.invalid/v1",
+      // No modalities and no catalog entry anywhere: the ASSUMED tier.
+      models: { "mystery-1": { name: "Mystery 1", limit: { context: 32000, output: 8000 } } },
+      options: { apiKey: "test-key" },
+    },
+  },
+  enabled_providers: ["mimo", "acme"],
+})
+
+test("mimo-auto's image verdict is never recorded as assumed", async () => {
+  await using tmp = await tmpdir({
+    init: async (dir) => {
+      await Bun.write(path.join(dir, "mimocode.json"), JSON.stringify(freeTierConfig({})))
+    },
+  })
+  await Instance.provide({
+    directory: tmp.path,
+    fn: async () => {
+      const providers = await list()
+      const auto = providers[ProviderID.make("mimo")].models[ModelID.make("mimo-auto")]
+
+      // The cause of the regression, pinned as an absence.
+      expect(auto.capabilities.inferred?.input).not.toBe("assumed")
+      // And therefore the engine may pick it.
+      expect(Provider.hasEvidencedImageInput(auto)).toBe(true)
+
+      const chosen = await getVisionModel()
+      expect(chosen && `${chosen.providerID}/${chosen.id}`).toBe("mimo/mimo-auto")
+    },
+  })
+})
+
+// The two image predicates answer differently on purpose. This pins the difference
+// so that collapsing them back into one shared `capabilities.input.image` read — in
+// either direction — fails here rather than in a user's session.
+test("an assumed image verdict is honoured for the user's own model but not selectable", async () => {
+  await using tmp = await tmpdir({
+    init: async (dir) => {
+      await Bun.write(path.join(dir, "mimocode.json"), JSON.stringify(freeTierConfig({})))
+    },
+  })
+  await Instance.provide({
+    directory: tmp.path,
+    fn: async () => {
+      const providers = await list()
+      const mystery = providers[ProviderID.make("acme")].models[ModelID.make("mystery-1")]
+
+      expect(mystery.capabilities.inferred?.input).toBe("assumed")
+      // An image the user attached is still forwarded...
+      expect(Provider.acceptsImageInput(mystery)).toBe(true)
+      // ...but the engine must not go and choose this model to look at one.
+      expect(Provider.hasEvidencedImageInput(mystery)).toBe(false)
+    },
+  })
+})
+
+test("a user's own modalities declaration still overrides the builtin verdict", async () => {
+  await using tmp = await tmpdir({
+    init: async (dir) => {
+      await Bun.write(
+        path.join(dir, "mimocode.json"),
+        JSON.stringify(freeTierConfig({ modalities: { input: ["text"], output: ["text"] } })),
+      )
+    },
+  })
+  await Instance.provide({
+    directory: tmp.path,
+    fn: async () => {
+      const providers = await list()
+      const auto = providers[ProviderID.make("mimo")].models[ModelID.make("mimo-auto")]
+
+      expect(auto.capabilities.input.image).toBe(false)
+      expect(auto.capabilities.inferred?.input).toBeUndefined()
+      expect(Provider.hasEvidencedImageInput(auto)).toBe(false)
     },
   })
 })

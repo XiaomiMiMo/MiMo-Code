@@ -24,6 +24,22 @@ function mimeToModality(mime: string): Modality | undefined {
   return undefined
 }
 
+/**
+ * The modality `unsupportedParts` would refuse to forward for this mime, or
+ * `undefined` when the content passes through.
+ *
+ * Exported so a caller holding a user-facing channel can announce the decision
+ * BEFORE `unsupportedParts` acts on it. That substitution happens inside an AI
+ * SDK middleware, where the replacement text is addressed to the model and the
+ * user sees nothing; this predicate is the same verdict, computed from the same
+ * two inputs, reachable from somewhere that can write to the transcript.
+ */
+export function withheldModality(mime: string, model: Provider.Model): Modality | undefined {
+  const modality = mimeToModality(mime)
+  if (!modality) return undefined
+  return model.capabilities.input[modality] ? undefined : modality
+}
+
 export const OUTPUT_TOKEN_MAX = Flag.MIMOCODE_EXPERIMENTAL_OUTPUT_TOKEN_MAX || 32_000
 export const LARGE_MODEL_OUTPUT_TOKEN_MAX = 128_000
 
@@ -701,15 +717,13 @@ function unsupportedParts(msgs: ModelMessage[], model: Provider.Model): ModelMes
 
       const mime = part.type === "image" ? String(part.image).split(";")[0].replace("data:", "") : part.mediaType
       const filename = part.type === "file" ? part.filename : undefined
-      const modality = mimeToModality(mime)
+      const modality = withheldModality(mime, model)
       if (!modality) return part
-      const supported = model.capabilities.input[modality]
-      if (supported) return part
 
       const name = filename ? `"${filename}"` : modality
       return {
         type: "text" as const,
-        text: `ERROR: Cannot read ${name} (this model does not support ${modality} input). Inform the user.`,
+        text: `ERROR: Cannot read ${name} (this model does not support ${modality} input; the attachment was omitted).`,
       }
     })
 

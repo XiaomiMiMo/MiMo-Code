@@ -1,4 +1,5 @@
 import type { Provider } from "@/provider"
+import { ModalityInference } from "./modality-inference"
 
 /**
  * Model Capability Registry.
@@ -131,7 +132,7 @@ const ADAPTERS: Record<string, AdapterDeclaration> = {
     text: TEXT_SUPPORTED,
     image: IMAGE_SUPPORTED,
     audio: absent(),
-    evidence: "tool-attachment.ts:49-53,69-71 exclude @ai-sdk/amazon-bedrock from every audio route",  // no direct wire probe; routing logic is the evidence
+    evidence: "tool-attachment.ts:49-53,69-71 exclude @ai-sdk/amazon-bedrock from every audio route", // no direct wire probe; routing logic is the evidence
   },
 }
 
@@ -158,10 +159,10 @@ export function declaredAdapters(): ReadonlyArray<string> {
   return Object.keys(ADAPTERS)
 }
 
-function modelGate(model: Provider.Model, modality: Modality): boolean {
-  if (modality === "text") return model.capabilities.input.text
-  if (modality === "image") return model.capabilities.input.image
-  return model.capabilities.input.audio
+function modelGate(model: Provider.Model, modality: Modality): Support {
+  if (!ModalityInference.acceptsInput(model.capabilities, modality)) return "unsupported"
+  if (!ModalityInference.hasEvidencedInput(model.capabilities, modality)) return "unknown"
+  return "supported"
 }
 
 /**
@@ -171,9 +172,8 @@ function modelGate(model: Provider.Model, modality: Modality): boolean {
  */
 export function modelDeclaration(model: Provider.Model, modality: Modality): ModalityDeclaration {
   const adapter = adapterDeclaration(model.api.npm)[modality]
-  if (!modelGate(model, modality)) {
-    return { support: "unsupported", mimeTypes: [], maxBytes: 0 }
-  }
+  const support = modelGate(model, modality)
+  if (support !== "supported") return { support, mimeTypes: [], maxBytes: 0 }
   return adapter
 }
 

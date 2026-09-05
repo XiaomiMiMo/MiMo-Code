@@ -229,7 +229,9 @@ export const ReadTool = Tool.define(
                 .getModel(messageModelRef.providerID, messageModelRef.modelID)
                 .pipe(Effect.catchDefect(() => Effect.succeed(undefined)))
             : undefined)
-        const supportsImage = model?.capabilities.input.image ?? false
+        // The user already chose this model, so an assumed image verdict counts —
+        // unlike the vision model recommended below, which the engine picks.
+        const supportsImage = model ? Provider.acceptsImageInput(model) : false
         if (!supportsImage) {
         const preferred = yield* provider.getVisionModel().pipe(Effect.orElseSucceed(() => undefined))
         const preferredRef = preferred ? `${preferred.providerID}/${preferred.id}` : undefined

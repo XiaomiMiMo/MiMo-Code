@@ -1,4 +1,4 @@
-import type { Provider } from "@/provider"
+import { Provider } from "@/provider"
 
 export type ToolAttachment = {
   mime: string
@@ -32,11 +32,11 @@ function isRemoteURL(url: string) {
 }
 
 function modelAcceptsMime(model: Provider.Model, mime: string) {
-  if (mime.startsWith("image/")) return SAFE_IMAGE_MIMES.has(mime) && model.capabilities.input.image
-  if (mime === "application/pdf") return model.capabilities.input.pdf
-  if (mime.startsWith("audio/")) return model.capabilities.input.audio
-  if (mime.startsWith("video/")) return model.capabilities.input.video
-  if (mime.startsWith("text/")) return model.capabilities.input.text
+  if (mime.startsWith("image/")) return SAFE_IMAGE_MIMES.has(mime) && Provider.acceptsInput(model, "image")
+  if (mime === "application/pdf") return Provider.acceptsInput(model, "pdf")
+  if (mime.startsWith("audio/")) return Provider.acceptsInput(model, "audio")
+  if (mime.startsWith("video/")) return Provider.acceptsInput(model, "video")
+  if (mime.startsWith("text/")) return Provider.acceptsInput(model, "text")
   return false
 }
 

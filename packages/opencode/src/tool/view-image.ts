@@ -2,7 +2,7 @@ import path from "path"
 import z from "zod"
 import { Effect } from "effect"
 import { AppFileSystem } from "@mimo-ai/shared/filesystem"
-import type { Provider } from "@/provider"
+import { Provider } from "@/provider"
 import { Instance } from "@/project/instance"
 import { isImageAttachment, sniffAttachmentMime } from "@/util/media"
 import { assertExternalDirectoryEffect } from "./external-directory"
@@ -31,7 +31,8 @@ export const ViewImageTool = Tool.define(
       execute: (params: z.infer<typeof parameters>, ctx: Tool.Context) =>
         Effect.gen(function* () {
           const model = (ctx.extra as { model?: Provider.Model } | undefined)?.model
-          if (!model?.capabilities.input.image) {
+          // Honouring the model the user is already on, so an assumed verdict counts.
+          if (!model || !Provider.acceptsImageInput(model)) {
             return yield* Effect.fail(new Error("view_image is not allowed because you do not support image inputs"))
           }
 
