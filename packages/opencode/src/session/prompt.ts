@@ -4458,6 +4458,21 @@ NOTE: At any point in time through this workflow you should feel free to ask the
               permission: runtimePermission,
             })
             const frozen = yield* SessionPrefixSnapshot.get(sessionID, prefixProfileKey)
+            // Surface loaded instruction files to the TUI. This must live on the common
+            // path, NOT inside currentAdditions: the frozen-snapshot fast path skips
+            // currentAdditions entirely, so after a TUI restart (fresh in-memory store,
+            // persisted prefix snapshot) the sidebar list was never repopulated (#2320).
+            if (!session.parentID && !instructionsNotified.has(sessionID)) {
+              instructionsNotified.add(sessionID)
+              const paths = yield* instruction.systemPaths().pipe(
+                Effect.catch(() => Effect.succeed(new Set<string>())),
+              )
+              const worktree = (yield* InstanceState.context).worktree
+              const files = Array.from(paths, (path) => Instruction.display(path, worktree))
+              if (files.length > 0) {
+                yield* bus.publish(TuiEvent.InstructionsLoaded, { files }).pipe(Effect.ignore)
+              }
+            }
             const currentAdditions = Effect.fnUntraced(function* () {
               const [env, skills, instructions] = yield* Effect.all([
                 Flag.MIMOCODE_ENABLE_DYNAMIC_SYSTEM_PROMPT
@@ -4466,14 +4481,6 @@ NOTE: At any point in time through this workflow you should feel free to ask the
                 sys.skills({ ...agent, permission: runtimePermission }),
                 instruction.system().pipe(Effect.orDie),
               ])
-              if (!session.parentID && !instructionsNotified.has(sessionID)) {
-                instructionsNotified.add(sessionID)
-                const worktree = (yield* InstanceState.context).worktree
-                const files = Array.from(instructions.paths, (path) => Instruction.display(path, worktree))
-                if (files.length > 0) {
-                  yield* bus.publish(TuiEvent.InstructionsLoaded, { files }).pipe(Effect.ignore)
-                }
-              }
               return [
                 ...env,
                 ...(format.type === "json_schema" ? [STRUCTURED_OUTPUT_SYSTEM_PROMPT] : []),
