@@ -18,6 +18,7 @@ const matchers: Array<{ test: (s: string) => boolean; locale: Locale }> = [
   { test: (s) => s.startsWith("th"), locale: "th" },
   { test: (s) => s.startsWith("bs"), locale: "bs" },
   { test: (s) => s.startsWith("tr"), locale: "tr" },
+  { test: (s) => /^(fa|fas)/.test(s), locale: "fa" },
 ]
 
 const CN_TIMEZONES = new Set(["Asia/Shanghai", "Asia/Chongqing", "Asia/Harbin", "Asia/Urumqi", "Asia/Kashgar"])
@@ -121,6 +122,16 @@ const ES_TIMEZONES = new Set([
   "America/Argentina/Ushuaia",
 ])
 
+const FA_TIMEZONES = new Set([
+  "Asia/Tehran",
+  "Asia/Kabul",
+  "Asia/Dushanbe",
+  "Asia/Baku",
+  "Asia/Tashkent",
+  "Asia/Ashgabat",
+  "Asia/Karachi",
+])
+
 const EN_TIMEZONES = new Set([
   "America/New_York",
   "America/Detroit",
@@ -182,6 +193,7 @@ function detectTimezoneLocale(): Locale | undefined {
     if (RU_TIMEZONES.has(tz)) return "ru"
     if (FR_TIMEZONES.has(tz)) return "fr"
     if (ES_TIMEZONES.has(tz)) return "es"
+    if (FA_TIMEZONES.has(tz)) return "fa"
     if (EN_TIMEZONES.has(tz)) return "en"
   } catch {}
   return undefined
