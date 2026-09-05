@@ -8,7 +8,7 @@ import { type ProviderMetadata, type LanguageModelUsage } from "ai"
 import { Flag } from "../flag/flag"
 import { InstallationVersion } from "../installation/version"
 
-import { Database, NotFoundError, eq, and, gte, isNull, desc, like, inArray, lt } from "../storage"
+import { Database, NotFoundError, eq, and, gte, isNull, desc, like, inArray, lt, sql } from "../storage"
 import { SyncEvent } from "../sync"
 import type { SQL } from "../storage"
 import { PartTable, SessionTable, MessageTable } from "./session.sql"
@@ -941,6 +941,11 @@ export const defaultLayer = layer.pipe(
   Layer.provide(Storage.defaultLayer),
 )
 
+function directoryEq(directory: string) {
+  if (process.platform !== "win32") return eq(SessionTable.directory, directory)
+  return sql`lower(${SessionTable.directory}) = lower(${directory})`
+}
+
 export function* list(input?: {
   directory?: string
   workspaceID?: WorkspaceID
@@ -957,7 +962,7 @@ export function* list(input?: {
   }
   if (!Flag.MIMOCODE_EXPERIMENTAL_WORKSPACES) {
     if (input?.directory) {
-      conditions.push(eq(SessionTable.directory, input.directory))
+      conditions.push(directoryEq(input.directory))
     }
   }
   if (input?.roots) {
@@ -998,7 +1003,7 @@ export function* listGlobal(input?: {
   const conditions: SQL[] = []
 
   if (input?.directory) {
-    conditions.push(eq(SessionTable.directory, input.directory))
+    conditions.push(directoryEq(input.directory))
   }
   if (input?.roots) {
     conditions.push(isNull(SessionTable.parent_id))
