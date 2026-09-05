@@ -20,7 +20,7 @@ import { Locale } from "@/util"
 import { Flag } from "@/flag/flag"
 import type { PromptInfo } from "./history"
 import { useFrecency } from "./frecency"
-import { detectTrigger, exactSubmitOption } from "./autocomplete-detect"
+import { detectTrigger, enterAction, exactSubmitOption } from "./autocomplete-detect"
 import { charAfterCursor, tokenEndWidth } from "./offset"
 
 function removeLineRange(input: string) {
@@ -615,9 +615,22 @@ export function Autocomplete(props: {
               props.input().getTextRange(store.index + 1, props.input().cursorOffset),
               options(),
             )
-            select(exact)
+            const action = enterAction(Boolean(store.visible), options().length, Boolean(exact))
+            if (action === "select-exact") {
+              select(exact)
+              e.preventDefault()
+              setTimeout(props.onSubmit, 0)
+              return
+            }
+            if (action === "submit") {
+              // Popup open but nothing to pick (a literal "$100" or an unknown
+              // "@path") — close it and let Enter fall through to submit
+              // instead of swallowing the key (#2208).
+              hide()
+              return
+            }
+            select()
             e.preventDefault()
-            if (exact) setTimeout(props.onSubmit, 0)
             return
           }
           if (name === "tab") {

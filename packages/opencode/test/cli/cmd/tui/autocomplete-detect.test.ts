@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { detectTrigger, exactSubmitOption } from "../../../../src/cli/cmd/tui/component/prompt/autocomplete-detect"
+import { detectTrigger, enterAction, exactSubmitOption } from "../../../../src/cli/cmd/tui/component/prompt/autocomplete-detect"
 import { tokenEndWidth } from "../../../../src/cli/cmd/tui/component/prompt/offset"
 
 // cursorWidth is the editor's display-width cursor offset (CJK = 2 columns).
@@ -109,6 +109,32 @@ describe("exactSubmitOption", () => {
 
   test("does not submit from non-slash autocomplete", () => {
     expect(exactSubmitOption("@", "前端设计", options)).toBeUndefined()
+  })
+})
+
+describe("enterAction", () => {
+  test("selects the exact slash option and submits", () => {
+    expect(enterAction(true, 3, true)).toBe("select-exact")
+  })
+
+  test("selects the highlighted option while matching options are open", () => {
+    expect(enterAction(true, 3, false)).toBe("select")
+    expect(enterAction(true, 1, false)).toBe("select")
+  })
+
+  test("submits through a visible popup with zero options (#2208)", () => {
+    // A literal "$100" or unknown "@path" opens the popup but matches nothing;
+    // Enter must fall through and send the message, not be swallowed.
+    expect(enterAction(true, 0, false)).toBe("submit")
+  })
+
+  test("submits when the popup is closed", () => {
+    expect(enterAction(false, 0, false)).toBe("submit")
+    expect(enterAction(false, 5, false)).toBe("submit")
+  })
+
+  test("exact option wins even with zero other matches", () => {
+    expect(enterAction(true, 0, true)).toBe("select-exact")
   })
 })
 
