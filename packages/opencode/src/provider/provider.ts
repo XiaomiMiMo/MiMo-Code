@@ -1730,14 +1730,7 @@ const layer: Layer.Layer<
           return wrapSSE(bounded, chunkTimeout, chunkAbortCtl)
         }
 
-        const bundledLoader =
-          model.providerID === "xiaomi" && model.api.npm === "@ai-sdk/openai-compatible"
-            ? () =>
-                import("./sdk/copilot").then(
-                  (module) => (options: any) =>
-                    module.createOpenaiCompatible({ ...options, customToolNames: ["exec"] }),
-                )
-            : BUNDLED_PROVIDERS[model.api.npm]
+        const bundledLoader = BUNDLED_PROVIDERS[model.api.npm]
         if (bundledLoader) {
           log.info("using bundled provider", {
             providerID: model.providerID,
