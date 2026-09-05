@@ -3477,6 +3477,37 @@ describe("ProviderTransform.variants", () => {
       expect(result.low).toEqual({ reasoning: { effort: "low" } })
       expect(result.high).toEqual({ reasoning: { effort: "high" } })
     })
+
+    test("hy3 returns high, low, and none with reasoning", () => {
+      const model = createMockModel({
+        id: "openrouter/tencent/hy3",
+        providerID: "openrouter",
+        api: {
+          id: "tencent/hy3",
+          url: "https://openrouter.ai",
+          npm: "@openrouter/ai-sdk-provider",
+        },
+      })
+      const result = ProviderTransform.variants(model)
+      expect(Object.keys(result)).toEqual(["high", "low", "none"])
+      expect(result.high).toEqual({ reasoning: { effort: "high" } })
+      expect(result.low).toEqual({ reasoning: { effort: "low" } })
+      expect(result.none).toEqual({ reasoning: { effort: "none" } })
+    })
+  })
+
+  test("hy3 variants remain disabled for non-openrouter providers", () => {
+    const model = createMockModel({
+      id: "custom/tencent/hy3",
+      providerID: "custom",
+      api: {
+        id: "tencent/hy3",
+        url: "https://api.example.com",
+        npm: "@ai-sdk/openai-compatible",
+      },
+    })
+    const result = ProviderTransform.variants(model)
+    expect(result).toEqual({})
   })
 
   describe("@ai-sdk/gateway", () => {
