@@ -184,12 +184,23 @@ export const Flag = {
     return truthy("MIMOCODE_FORCE_ANTHROPIC_REASONING_CONTENT")
   },
 
-  // Consecutive-block repetition detection for streamed reasoning + text.
-  // A block of at least N tokens repeating REPEAT_THRESHOLD times consecutively
-  // within the last WINDOW_TOKENS tokens triggers recovery (remind → replan → terminate).
-  MIMOCODE_TEXT_NGRAM_N: number("MIMOCODE_TEXT_NGRAM_N") ?? 4,
-  MIMOCODE_TEXT_REPEAT_THRESHOLD: number("MIMOCODE_TEXT_REPEAT_THRESHOLD") ?? 20,
-  MIMOCODE_TEXT_WINDOW_TOKENS: number("MIMOCODE_TEXT_WINDOW_TOKENS") ?? 500,
+  // Sliding n-gram repetition detection for streamed reasoning + text.
+  // The same N-token phrase appearing REPEAT_THRESHOLD times in the window
+  // triggers recovery (remind → replan → terminate).
+  MIMOCODE_TEXT_NGRAM_N: number("MIMOCODE_TEXT_NGRAM_N") ?? 64,
+  MIMOCODE_TEXT_REPEAT_THRESHOLD: number("MIMOCODE_TEXT_REPEAT_THRESHOLD") ?? 3,
+  MIMOCODE_TEXT_WINDOW_TOKENS: number("MIMOCODE_TEXT_WINDOW_TOKENS") ?? 8192,
+  MIMOCODE_TEXT_NGRAM_CHECK_INTERVAL: number("MIMOCODE_TEXT_NGRAM_CHECK_INTERVAL") ?? 256,
+  // "monitor" logs n-gram and tool-loop detections without intervening;
+  // "enforce" injects recovery and eventually terminates. Defaults to monitor
+  // so the new thresholds are calibrated on real trajectories before they
+  // can cut a session. Does not gate the older cross-step identical-output
+  // guard (detectTextLoop), which keeps its pre-existing behaviour.
+  MIMOCODE_LOOP_MODE: process.env["MIMOCODE_LOOP_MODE"] ?? "monitor",
+  MIMOCODE_TOOL_LOOP_WINDOW: number("MIMOCODE_TOOL_LOOP_WINDOW") ?? 12,
+  MIMOCODE_TOOL_LOOP_THRESHOLD: number("MIMOCODE_TOOL_LOOP_THRESHOLD") ?? 3,
+  MIMOCODE_TOOL_LOOP_PERIOD_MIN: number("MIMOCODE_TOOL_LOOP_PERIOD_MIN") ?? 2,
+  MIMOCODE_TOOL_LOOP_PERIOD_MAX: number("MIMOCODE_TOOL_LOOP_PERIOD_MAX") ?? 4,
 
   // Caps applied to image attachments before a prompt is sent.
   // MIMOCODE_MAX_PROMPT_IMAGES (default undefined = no count limit) bounds how
