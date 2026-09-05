@@ -1,5 +1,5 @@
 export const TEXT_LOOP_BUFFER_SIZE = 5
-export const TEXT_LOOP_TRIGGER_COUNT = 3
+export const TEXT_LOOP_TRIGGER_COUNT = 2
 export const TEXT_LOOP_MAX_RECOVERY = 2
 
 export function normalizeForLoopDetection(text: string): string {
