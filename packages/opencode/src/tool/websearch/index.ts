@@ -4,6 +4,7 @@ import { HttpClient } from "effect/unstable/http"
 import * as Tool from "../tool"
 import * as McpExa from "../mcp-exa"
 import * as MimoWebsearch from "./mimo"
+import { DEFAULT_BASE_URL } from "./mimo"
 import { Auth } from "@/auth"
 import { Provider } from "@/provider"
 import DESCRIPTION from "./websearch.txt"
@@ -68,16 +69,24 @@ export const WebSearchTool = Tool.define(
                   Effect.gen(function* () {
                     const info = yield* auth.get("xiaomi")
                     if (!info || info.type !== "api") return undefined
+                    // 优先用凭据里的 base_url（Token Plan 用户指向 token-plan-cn 端点），
+                    // 其次模型配置，兜底硬编码默认值
+                    const baseURL = (info.metadata as Record<string, string> | undefined)?.base_url
+                      ?? model.api.url
+                      ?? DEFAULT_BASE_URL
                     return yield* MimoWebsearch.call(
                       http,
-                      model.api.url,
+                      baseURL,
                       info.key,
                       params.query,
                       model.api.id,
                       timeout ?? "30 seconds",
                     )
                   }),
-                  () => Effect.succeed(undefined),
+                  (cause) => {
+                    console.error("[websearch] xiaomi branch failed:", cause)
+                    return Effect.succeed(undefined)
+                  },
                 )
               : yield* McpExa.call(
                   http,
