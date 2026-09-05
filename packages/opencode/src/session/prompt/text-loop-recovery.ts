@@ -17,6 +17,26 @@ export function detectTextLoop(buffer: string[], triggerCount: number): boolean 
   return tail.every((t) => t === tail[0])
 }
 
+export type ToolLoopKind = "consecutive" | "periodic"
+
+/** Detects repeated completed-tool signatures in newest-first order. */
+export function detectToolLoop(
+  signatures: readonly string[],
+  threshold = 3,
+  periodMin = 2,
+  periodMax = 4,
+): ToolLoopKind | undefined {
+  if (signatures.length >= threshold && signatures.slice(0, threshold).every((sig) => sig === signatures[0])) {
+    return "consecutive"
+  }
+  for (let period = periodMin; period <= periodMax; period++) {
+    if (signatures.length < period * threshold) continue
+    const tail = signatures.slice(0, period * threshold)
+    if (tail.every((sig, index) => sig === tail[index % period])) return "periodic"
+  }
+  return undefined
+}
+
 export const RECOVERY_PROMPT_MILD = `<system-reminder>
 LOOP DETECTED: Your last several outputs were identical. You are stuck in a repetitive pattern.
 
@@ -37,4 +57,14 @@ Your previous approach has failed repeatedly. You MUST:
 3. Ask the user for guidance on how to proceed
 
 If you repeat the same output again, the session will be terminated.
+</system-reminder>`
+
+export const TOOL_RECOVERY_PROMPT_MILD = `<system-reminder>
+LOOP DETECTED (TOOL): The same tool action has been repeated without progress.
+Stop repeating it. Inspect the latest result and choose a different action or explain the blocker.
+</system-reminder>`
+
+export const TOOL_RECOVERY_PROMPT_STRONG = `<system-reminder>
+CRITICAL TOOL LOOP: Your tool calls are cycling without progress.
+Abandon this approach, state why it failed, and write a different plan before using another tool.
 </system-reminder>`

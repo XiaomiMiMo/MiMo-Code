@@ -5,6 +5,7 @@ import {
   detectRepeatedNgram,
   tokenizeForNgram,
 } from "../../src/session/prompt/text-ngram-detection"
+import { detectToolLoop } from "../../src/session/prompt/text-loop-recovery"
 
 describe("tokenizeForNgram", () => {
   test("normalizes whitespace and case", () => {
@@ -165,5 +166,28 @@ describe("TextNgramMonitor", () => {
   test("detects English model loop", () => {
     const monitor = new TextNgramMonitor(4, 20, 500)
     expect(monitor.append("I will fix this bug ".repeat(20))).toBe(true)
+  })
+
+  test("continues checking after the window is full", () => {
+    const monitor = new TextNgramMonitor(64, 3, 8192, 3, 256)
+    const unique = Array.from({ length: 9000 }, (_, index) => `unique-${index}`).join(" ") + " "
+    const repeated = Array.from({ length: 64 }, (_, index) => `repeat-${index}`).join(" ") + " "
+
+    expect(monitor.append(unique)).toBe(false)
+    for (let index = 0; index < 6; index++) expect(monitor.append(repeated)).toBe(index === 3)
+  })
+})
+
+describe("detectToolLoop", () => {
+  test("detects consecutive identical tool signatures", () => {
+    expect(detectToolLoop(["a", "a", "a"])).toBe("consecutive")
+  })
+
+  test("detects periodic tool signatures", () => {
+    expect(detectToolLoop(["a", "b", "a", "b", "a", "b"])).toBe("periodic")
+  })
+
+  test("includes arguments in the signature", () => {
+    expect(detectToolLoop(['read:{"path":"a"}', 'read:{"path":"b"}', 'read:{"path":"a"}'])).toBeUndefined()
   })
 })

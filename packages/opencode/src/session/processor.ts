@@ -827,7 +827,12 @@ export const layer: Layer.Layer<
 
             yield* stream.pipe(
               Stream.tap((event) => handleEvent(event)),
-              Stream.takeUntil(() => ctx.needsOverflowHandling || ctx.textNgramRepeat || ctx.blocked),
+              Stream.takeUntil(
+                () =>
+                  ctx.needsOverflowHandling ||
+                  (Flag.MIMOCODE_LOOP_MODE !== "monitor" && ctx.textNgramRepeat) ||
+                  ctx.blocked,
+              ),
               Stream.runDrain,
             )
           }).pipe(
@@ -904,7 +909,7 @@ export const layer: Layer.Layer<
           )
 
           if (ctx.needsOverflowHandling) return "overflow"
-          if (ctx.textNgramRepeat) return "text-repeat"
+          if (ctx.textNgramRepeat && Flag.MIMOCODE_LOOP_MODE !== "monitor") return "text-repeat"
           if (ctx.blocked || ctx.assistantMessage.error) return "stop"
           return "continue"
         })

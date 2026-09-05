@@ -12,14 +12,17 @@ export function tokenizeForNgram(text: string): string[] {
     .filter(Boolean)
 }
 
-export function detectRepeatedNgram(tokens: readonly string[], n: number, threshold: number): boolean {
+export function detectRepeatedNgram(tokens: readonly string[], n: number, threshold: number, minDistinct = 1): boolean {
   if (tokens.length < n || threshold < 2) return false
-  const counts = new Map<string, number>()
+  const counts = new Map<string, { count: number; next: number }>()
   for (let i = 0; i <= tokens.length - n; i++) {
     const gram = tokens.slice(i, i + n).join("\0")
-    const next = (counts.get(gram) ?? 0) + 1
-    if (next >= threshold) return true
-    counts.set(gram, next)
+    const entry = counts.get(gram) ?? { count: 0, next: -1 }
+    if (i < entry.next) continue
+    entry.count++
+    entry.next = i + n
+    if (entry.count >= threshold && new Set(tokens.slice(i, i + n)).size >= minDistinct) return true
+    counts.set(gram, entry)
   }
   return false
 }
@@ -54,26 +57,32 @@ export function detectConsecutiveRepeat(
 export class TextNgramMonitor {
   private buffer = ""
   private tokens: string[] = []
+  private pending = 0
 
   constructor(
     private readonly n: number,
     private readonly threshold: number,
     private readonly windowTokens: number,
     private readonly minDistinct: number = 3,
+    private readonly checkInterval: number = 0,
   ) {}
 
   append(text: string): boolean {
     if (!text) return false
+    this.pending += tokenizeForNgram(text).length
     this.buffer += text
     const all = tokenizeForNgram(this.buffer)
     this.tokens = all.length > this.windowTokens ? all.slice(-this.windowTokens) : all
     if (all.length > this.windowTokens * 2) this.buffer = this.tokens.join(" ")
-    return detectConsecutiveRepeat(this.tokens, this.n, this.threshold, this.minDistinct)
+    if (this.checkInterval > 0 && this.pending < this.checkInterval) return false
+    this.pending = 0
+    return detectRepeatedNgram(this.tokens, this.n, this.threshold, this.minDistinct)
   }
 
   reset() {
     this.buffer = ""
     this.tokens = []
+    this.pending = 0
   }
 }
 
@@ -82,6 +91,8 @@ export function createTextNgramMonitor() {
     Flag.MIMOCODE_TEXT_NGRAM_N,
     Flag.MIMOCODE_TEXT_REPEAT_THRESHOLD,
     Flag.MIMOCODE_TEXT_WINDOW_TOKENS,
+    3,
+    Flag.MIMOCODE_TEXT_NGRAM_CHECK_INTERVAL,
   )
 }
 
