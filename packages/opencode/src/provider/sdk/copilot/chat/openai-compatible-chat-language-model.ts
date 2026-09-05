@@ -342,7 +342,10 @@ export class OpenAICompatibleChatLanguageModel implements LanguageModelV3 {
       unified: ReturnType<typeof mapOpenAICompatibleFinishReason>
       raw: string | undefined
     } = {
-      unified: "other",
+      // Gateways that never send a finish_reason (e.g. muse-spark via
+      // opencode.ai/zen/go/v1) deliver complete responses — assume "stop"
+      // unless a chunk says otherwise, so they are not flagged degraded (#2173).
+      unified: "stop",
       raw: undefined,
     }
     const usage: {
