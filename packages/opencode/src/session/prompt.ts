@@ -141,6 +141,12 @@ import {
 import { isMcpToolSearchEnabled, usesGPTToolset } from "@/tool/gpt"
 import { GPT_TOP_LEVEL_TOOLS } from "@/tool/tool-script-ref"
 import { SessionPrefixSnapshot } from "./prefix-snapshot"
+import {
+  buildSteerHint,
+  lastRealUserMessage,
+  pendingUserMessages,
+  shouldInjectSteerHint,
+} from "./steer-hint"
 
 // @ts-ignore
 globalThis.AI_SDK_LOG_WARNINGS = false
@@ -3720,6 +3726,23 @@ NOTE: At any point in time through this workflow you should feel free to ask the
                 ].join("\n"),
               })
             }
+          }
+
+          // Follow-up intent: loop-local steer pickup (step ≥ 1 + new lastUser).
+          // Anchor to the last real user so inbox.drain synthetics cannot hide it.
+          const lastRealUserForSteer = lastRealUserMessage(msgs)
+          if (
+            lastRealUserForSteer &&
+            shouldInjectSteerHint({ messages: msgs, lastUser: lastRealUserForSteer, lastAssistant, step })
+          ) {
+            lastRealUserForSteer.parts.push({
+              id: PartID.ascending(),
+              messageID: lastRealUserForSteer.info.id,
+              sessionID,
+              type: "text" as const,
+              synthetic: true,
+              text: buildSteerHint(pendingUserMessages(msgs).length),
+            })
           }
 
           const lastAssistantMsg = msgs.findLast(
