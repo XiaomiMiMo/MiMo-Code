@@ -343,6 +343,7 @@ export function MessageTimeline(props: {
 
   const [title, setTitle] = createStore({
     draft: "",
+    expectedRevision: 0,
     editing: false,
     menuOpen: false,
     pendingRename: false,
@@ -399,13 +400,17 @@ export function MessageTimeline(props: {
   }))
 
   const titleMutation = useMutation(() => ({
-    mutationFn: (input: { id: string; title: string }) =>
-      sdk.client.session.update({ sessionID: input.id, title: input.title }),
-    onSuccess: (_, input) => {
+    mutationFn: (input: { id: string; title: string; expectedRevision: number }) =>
+      sdk.client.session.update({ sessionID: input.id, title: input.title, expectedRevision: input.expectedRevision }, { throwOnError: true }),
+    onSuccess: (response, input) => {
       sync.set(
         produce((draft) => {
           const index = draft.session.findIndex((s) => s.id === input.id)
-          if (index !== -1) draft.session[index].title = input.title
+          if (index !== -1 && response.data && response.data.titleRevision > draft.session[index].titleRevision) {
+            draft.session[index].title = response.data.title
+            draft.session[index].titleSource = response.data.titleSource
+            draft.session[index].titleRevision = response.data.titleRevision
+          }
         }),
       )
       setTitle("editing", false)
@@ -461,7 +466,7 @@ export function MessageTimeline(props: {
 
   const openTitleEditor = () => {
     if (!sessionID() || parentID()) return
-    setTitle({ editing: true, draft: titleLabel() ?? "" })
+    setTitle({ editing: true, draft: titleLabel() ?? "", expectedRevision: info()?.titleRevision ?? 0 })
     requestAnimationFrame(() => {
       titleRef?.focus()
       titleRef?.select()
@@ -479,12 +484,12 @@ export function MessageTimeline(props: {
     if (titleMutation.isPending) return
 
     const next = title.draft.trim()
-    if (!next || next === (titleLabel() ?? "")) {
+    if (!next) {
       setTitle("editing", false)
       return
     }
 
-    titleMutation.mutate({ id, title: next })
+    titleMutation.mutate({ id, title: next, expectedRevision: title.expectedRevision })
   }
 
   const navigateAfterSessionRemoval = (sessionID: string, parentID?: string, nextSessionID?: string) => {

@@ -156,6 +156,9 @@ export const ImportCommand = cmd({
 
       const info = Session.Info.parse({
         ...exportData.info,
+        title: exportData.info.title || "Untitled",
+        titleSource: exportData.info.title ? "user" : "fallback",
+        titleRevision: 0,
         projectID: Instance.project.id,
       })
       const row = Session.toRow(info)

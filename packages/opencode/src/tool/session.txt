@@ -7,6 +7,13 @@ JSON calls always wrap the action in an `operation` object — see examples belo
 
 ## Operations
 
+- set-title: propose a generated title for the current root session. `title` required;
+             omit `sessionID` to target the current session. User-protected titles
+             cannot be overwritten. Use after understanding an attachment or a
+             substantive task change, not ordinary progress or filename guesses.
+             This operation is available without Orchestrator mode; the operations
+             below remain Orchestrator-only.
+
 - create:   spawn a new child session that runs in the BACKGROUND. `task` required
             (the child's first-turn prompt). optional: `mode` (build|plan|compose,
             default build; compose preferred for planned work, plan secondary), `model` (group/tier name or literal provider/model),

@@ -13,7 +13,7 @@ import { ViewImageTool } from "./view-image"
 import { ActorTool } from "./actor"
 import { TaskTool } from "./task"
 import { CronTool } from "./cron"
-import { SessionTool } from "./session"
+import { SessionTool, SessionTitleTool } from "./session"
 import { WorkflowTool } from "./workflow"
 import { WebFetchTool } from "./webfetch"
 import { WriteTool } from "./write"
@@ -178,6 +178,7 @@ export const layer = Layer.effect(
     const tasktool = yield* TaskTool
     const crontool = yield* CronTool
     const sessiontool = yield* SessionTool
+    const sessiontitle = yield* SessionTitleTool
     const workflowtool = yield* WorkflowTool
     const toolscript = yield* ToolScriptTool
     const agent = yield* Agent.Service
@@ -276,6 +277,7 @@ export const layer = Layer.effect(
           task: Tool.init(tasktool),
           cron: Tool.init(crontool),
           session: Tool.init(sessiontool),
+          sessiontitle: Tool.init(sessiontitle),
           workflow: Tool.init(workflowtool),
           toolscript: Tool.init(toolscript),
         })
@@ -308,7 +310,7 @@ export const layer = Layer.effect(
             tool.task,
             tool.toolscript,
             ...(Flag.MIMOCODE_EXPERIMENTAL_CRON ? [tool.cron] : []),
-            ...(Flag.MIMOCODE_EXPERIMENTAL_ORCHESTRATOR ? [tool.session] : []),
+            Flag.MIMOCODE_EXPERIMENTAL_ORCHESTRATOR ? tool.session : tool.sessiontitle,
             ...(Flag.MIMOCODE_EXPERIMENTAL_WORKFLOW_TOOL ? [tool.workflow] : []),
           ],
           actor: tool.actor,

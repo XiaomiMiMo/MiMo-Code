@@ -101,7 +101,7 @@ export function project<Def extends Definition>(
   return [def, func as ProjectorFunc]
 }
 
-function process<Def extends Definition>(def: Def, event: Event<Def>, options: { publish: boolean }) {
+function process<Def extends Definition>(def: Def, event: Event<Def>, options: { publish: boolean; replay?: boolean }) {
   if (projectors == null) {
     throw new Error("No projectors available. Call `SyncEvent.init` to install projectors")
   }
@@ -116,7 +116,7 @@ function process<Def extends Definition>(def: Def, event: Event<Def>, options: {
   Database.transaction((tx) => {
     projector(tx, event.data)
 
-    if (Flag.MIMOCODE_EXPERIMENTAL_WORKSPACES) {
+    if (Flag.MIMOCODE_EXPERIMENTAL_WORKSPACES || options.replay) {
       tx.insert(EventSequenceTable)
         .values({
           aggregate_id: event.aggregateID,
@@ -172,25 +172,14 @@ export function replay(event: SerializedEvent, options?: { publish: boolean }) {
     throw new Error(`Unknown event type: ${event.type}`)
   }
 
-  const row = Database.use((db) =>
-    db
-      .select({ seq: EventSequenceTable.seq })
-      .from(EventSequenceTable)
-      .where(eq(EventSequenceTable.aggregate_id, event.aggregateID))
-      .get(),
-  )
-
-  const latest = row?.seq ?? -1
-  if (event.seq <= latest) {
-    return
-  }
-
-  const expected = latest + 1
-  if (event.seq !== expected) {
-    throw new Error(`Sequence mismatch for aggregate "${event.aggregateID}": expected ${expected}, got ${event.seq}`)
-  }
-
-  process(def, event, { publish: !!options?.publish })
+  return Database.transaction((db) => {
+    const row = db.select({ seq: EventSequenceTable.seq }).from(EventSequenceTable).where(eq(EventSequenceTable.aggregate_id, event.aggregateID)).get()
+    const latest = row?.seq ?? -1
+    if (event.seq <= latest) return
+    const expected = latest + 1
+    if (event.seq !== expected) throw new Error(`Sequence mismatch for aggregate "${event.aggregateID}": expected ${expected}, got ${event.seq}`)
+    process(def, event, { publish: !!options?.publish, replay: true })
+  }, { behavior: "immediate" })
 }
 
 export function replayAll(events: SerializedEvent[], options?: { publish: boolean }) {

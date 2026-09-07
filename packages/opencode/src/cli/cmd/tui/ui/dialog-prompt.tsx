@@ -14,6 +14,7 @@ export type DialogPromptProps = {
   busy?: boolean
   busyText?: string
   onConfirm?: (value: string) => void
+  onChange?: (value: string) => void
   onCancel?: () => void
 }
 
@@ -74,6 +75,7 @@ export function DialogPrompt(props: DialogPromptProps) {
       <box gap={1}>
         {props.description}
         <textarea
+          onContentChange={() => props.onChange?.(textarea?.plainText ?? props.value ?? "")}
           onSubmit={() => {
             if (props.busy) return
             props.onConfirm?.(textarea.plainText)

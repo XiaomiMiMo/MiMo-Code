@@ -2018,6 +2018,7 @@ export class Session2 extends HeyApiClient {
       directory?: string
       workspace?: string
       title?: string
+      expectedRevision?: number
       permission?: PermissionRuleset
       time?: {
         archived?: number
@@ -2034,6 +2035,7 @@ export class Session2 extends HeyApiClient {
             { in: "query", key: "directory" },
             { in: "query", key: "workspace" },
             { in: "body", key: "title" },
+            { in: "body", key: "expectedRevision" },
             { in: "body", key: "permission" },
             { in: "body", key: "time" },
           ],
@@ -2204,6 +2206,7 @@ export class Session2 extends HeyApiClient {
       directory?: string
       workspace?: string
       messageID?: string
+      title?: string
     },
     options?: Options<never, ThrowOnError>,
   ) {
@@ -2216,6 +2219,7 @@ export class Session2 extends HeyApiClient {
             { in: "query", key: "directory" },
             { in: "query", key: "workspace" },
             { in: "body", key: "messageID" },
+            { in: "body", key: "title" },
           ],
         },
       ],

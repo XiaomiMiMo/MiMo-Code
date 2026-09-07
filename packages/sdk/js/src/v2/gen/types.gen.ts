@@ -1421,6 +1421,8 @@ export type Session = {
     url: string
   }
   title: string
+  titleSource: "fallback" | "generated" | "user"
+  titleRevision: number
   version: string
   time: {
     created: number
@@ -1442,16 +1444,16 @@ export type Session = {
   }
 }
 
-export type EventSessionCreated = {
-  type: "session.created"
+export type EventSessionUpdated = {
+  type: "session.updated"
   properties: {
     sessionID: string
     info: Session
   }
 }
 
-export type EventSessionUpdated = {
-  type: "session.updated"
+export type EventSessionCreated = {
+  type: "session.created"
   properties: {
     sessionID: string
     info: Session
@@ -1516,26 +1518,15 @@ export type SyncEventMessagePartRemoved = {
   }
 }
 
-export type SyncEventSessionCreated = {
-  type: "sync"
-  name: "session.created.1"
-  id: string
-  seq: number
-  aggregateID: "sessionID"
-  data: {
-    sessionID: string
-    info: Session
-  }
-}
-
 export type SyncEventSessionUpdated = {
   type: "sync"
-  name: "session.updated.1"
+  name: "session.updated.2"
   id: string
   seq: number
   aggregateID: "sessionID"
   data: {
     sessionID: string
+    previousRevision?: number
     info: {
       id: string | null
       slug: string | null
@@ -1555,6 +1546,8 @@ export type SyncEventSessionUpdated = {
         url: string | null
       }
       title: string | null
+      titleSource: "fallback" | "generated" | "user" | null
+      titleRevision: number | null
       version: string | null
       time?: {
         created: number | null
@@ -1575,6 +1568,18 @@ export type SyncEventSessionUpdated = {
         diff?: string
       } | null
     }
+  }
+}
+
+export type SyncEventSessionCreated = {
+  type: "sync"
+  name: "session.created.1"
+  id: string
+  seq: number
+  aggregateID: "sessionID"
+  data: {
+    sessionID: string
+    info: Session
   }
 }
 
@@ -1669,15 +1674,15 @@ export type GlobalEvent = {
     | EventMessageRemoved
     | EventMessagePartUpdated
     | EventMessagePartRemoved
-    | EventSessionCreated
     | EventSessionUpdated
+    | EventSessionCreated
     | EventSessionDeleted
     | SyncEventMessageUpdated
     | SyncEventMessageRemoved
     | SyncEventMessagePartUpdated
     | SyncEventMessagePartRemoved
-    | SyncEventSessionCreated
     | SyncEventSessionUpdated
+    | SyncEventSessionCreated
     | SyncEventSessionDeleted
 }
 
@@ -3050,6 +3055,8 @@ export type GlobalSession = {
     url: string
   }
   title: string
+  titleSource: "fallback" | "generated" | "user"
+  titleRevision: number
   version: string
   time: {
     created: number
@@ -3078,6 +3085,13 @@ export type McpResource = {
   description?: string
   mimeType?: string
   client: string
+}
+
+export type TitleSnapshot = {
+  sessionID: string
+  title: string
+  titleSource: "fallback" | "generated" | "user"
+  titleRevision: number
 }
 
 export type ConflictError = {
@@ -3295,8 +3309,8 @@ export type Event =
   | EventMessageRemoved
   | EventMessagePartUpdated
   | EventMessagePartRemoved
-  | EventSessionCreated
   | EventSessionUpdated
+  | EventSessionCreated
   | EventSessionDeleted
 
 export type McpStatusConnected = {
@@ -4803,6 +4817,7 @@ export type SessionGetResponse = SessionGetResponses[keyof SessionGetResponses]
 export type SessionUpdateData = {
   body?: {
     title?: string
+    expectedRevision?: number
     permission?: PermissionRuleset
     time?: {
       archived?: number
@@ -4827,6 +4842,15 @@ export type SessionUpdateErrors = {
    * Not found
    */
   404: NotFoundError
+  /**
+   * Title changed by another writer
+   */
+  409: {
+    name: "TitleConflictError"
+    data: {
+      current: TitleSnapshot
+    }
+  }
 }
 
 export type SessionUpdateError = SessionUpdateErrors[keyof SessionUpdateErrors]
@@ -4998,6 +5022,7 @@ export type SessionInitResponse = SessionInitResponses[keyof SessionInitResponse
 export type SessionForkData = {
   body?: {
     messageID?: string
+    title?: string
   }
   path: {
     sessionID: string

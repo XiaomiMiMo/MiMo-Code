@@ -21,6 +21,7 @@ import type {
   VcsInfo,
 } from "@mimo-ai/sdk/v2"
 import { createStore, produce, reconcile } from "solid-js/store"
+import { mergeSessionTitle } from "../util/session-title"
 import { useProject } from "@tui/context/project"
 import { useEvent } from "@tui/context/event"
 import { useSDK } from "@tui/context/sdk"
@@ -350,6 +351,30 @@ export const { use: useSync, provider: SyncProvider } = createSimpleContext({
     }
 
     const fullSyncedSessions = new Set<string>()
+    const deletedSessions = new Set<string>()
+    const titleReads = new Set<string>()
+    function mergedSession(incoming: Session) {
+      const known = store.session.find(item => item.id === incoming.id)
+      return mergeSessionTitle(known, incoming, () => {
+        const key = `${incoming.id}:${incoming.titleRevision}`
+        if (titleReads.has(key)) return
+        titleReads.add(key)
+        Log.Default.error("title revision protocol mismatch", { sessionID: incoming.id })
+        void sdk.client.session.get({ sessionID: incoming.id }, { throwOnError: true }).then(response => {
+          if (response.data) applySession(response.data)
+        }).catch(() => {})
+      })
+    }
+    function applySession(incoming: Session) {
+      if (deletedSessions.has(incoming.id)) return
+      const next = mergedSession(incoming)
+      const found = Binary.search(store.session, incoming.id, item => item.id)
+      if (found.found) setStore("session", found.index, reconcile(next))
+      else setStore("session", produce(draft => { draft.splice(found.index, 0, next) }))
+    }
+    function applySessions(incoming: Session[]) {
+      setStore("session", reconcile(incoming.filter(item => !deletedSessions.has(item.id)).map(mergedSession)))
+    }
     let syncedWorkspace = project.workspace.current()
     let syncedDirectory = sdk.directory
 
@@ -484,6 +509,7 @@ export const { use: useSync, provider: SyncProvider } = createSimpleContext({
 
         case "session.deleted": {
           const sid = event.properties.info.id
+          deletedSessions.add(sid)
           const result = Binary.search(store.session, sid, (s) => s.id)
           if (result.found) {
             setStore(
@@ -519,17 +545,7 @@ export const { use: useSync, provider: SyncProvider } = createSimpleContext({
           break
         }
         case "session.updated": {
-          const result = Binary.search(store.session, event.properties.info.id, (s) => s.id)
-          if (result.found) {
-            setStore("session", result.index, reconcile(event.properties.info))
-            break
-          }
-          setStore(
-            "session",
-            produce((draft) => {
-              draft.splice(result.index, 0, event.properties.info)
-            }),
-          )
+          applySession(event.properties.info)
           break
         }
 
@@ -869,7 +885,7 @@ export const { use: useSync, provider: SyncProvider } = createSimpleContext({
               setStore("console_state", reconcile(consoleState))
               setStore("agent", reconcile(agents))
               setStore("config", reconcile(config))
-              if (sessions !== undefined) setStore("session", reconcile(sessions))
+              if (sessions !== undefined) applySessions(sessions)
             })
           })
         })
@@ -880,7 +896,7 @@ export const { use: useSync, provider: SyncProvider } = createSimpleContext({
           void Promise.all([
             ...(args.continue
               ? []
-              : [guard(sessionListPromise, (sessions) => setStore("session", reconcile(sessions)))]),
+              : [guard(sessionListPromise, (sessions) => applySessions(sessions))]),
             guard(consoleStatePromise, (consoleState) => setStore("console_state", reconcile(consoleState))),
             guard(sdk.client.command.list({ workspace }), (x) => setStore("command", reconcile(x.data ?? []))),
             guard(sdk.client.lsp.status({ workspace }), (x) => setStore("lsp", reconcile(x.data ?? []))),
@@ -942,6 +958,7 @@ export const { use: useSync, provider: SyncProvider } = createSimpleContext({
         return project.instance.path()
       },
       session: {
+        apply: applySession,
         get(sessionID: string) {
           const match = Binary.search(store.session, sessionID, (s) => s.id)
           if (match.found) return store.session[match.index]
@@ -952,7 +969,7 @@ export const { use: useSync, provider: SyncProvider } = createSimpleContext({
           const list = await sdk.client.session
             .list({ start, roots: true })
             .then((x) => (x.data ?? []).toSorted((a, b) => a.id.localeCompare(b.id)))
-          setStore("session", reconcile(list))
+          applySessions(list)
         },
         // Resolve THE root session of the directory the client currently talks
         // to, creating one only when the server really has none.
@@ -1014,16 +1031,11 @@ export const { use: useSync, provider: SyncProvider } = createSimpleContext({
             // subagent sessions" is not a third kind.
             sdk.client.session.children({ sessionID, visible: true }).catch(() => undefined),
           ])
+          if (deletedSessions.has(sessionID)) return
+          applySession(session.data!)
+          for (const child of children?.data ?? []) applySession(child)
           setStore(
             produce((draft) => {
-              const match = Binary.search(draft.session, sessionID, (s) => s.id)
-              if (match.found) draft.session[match.index] = session.data!
-              if (!match.found) draft.session.splice(match.index, 0, session.data!)
-              for (const child of children?.data ?? []) {
-                const childMatch = Binary.search(draft.session, child.id, (s) => s.id)
-                if (childMatch.found) draft.session[childMatch.index] = child
-                if (!childMatch.found) draft.session.splice(childMatch.index, 0, child)
-              }
               draft.todo[sessionID] = todo.data ?? []
               draft.session_recovery[sessionID] = recovery.data ?? []
               draft.task[sessionID] = task.data ?? []

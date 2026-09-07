@@ -1018,6 +1018,16 @@ export const layer = Layer.effect(
           result.compaction = { ...result.compaction, prune: false }
         }
 
+        // Preserve explicit lite (even unresolvable refs); small_model is a
+        // compatibility alias only when lite is absent. Host defaults come last
+        // and underneath effective user configuration, never via CONFIG_CONTENT.
+        if (result.model_groups?.lite === undefined && result.small_model !== undefined) {
+          result.model_groups = { ...result.model_groups, lite: result.small_model }
+        }
+        if (process.env.MIMOCODE_CONFIG_DEFAULTS) {
+          const defaults = yield* loadConfig(process.env.MIMOCODE_CONFIG_DEFAULTS, { dir: ctx.directory, source: "MIMOCODE_CONFIG_DEFAULTS" })
+          result = mergeConfigConcatArrays(defaults, result)
+        }
         return {
           config: result,
           directories,
