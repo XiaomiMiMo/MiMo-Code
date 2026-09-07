@@ -37,6 +37,7 @@ export default defineConfig({
   },
   use: {
     baseURL,
+    launchOptions: { executablePath: process.env.PLAYWRIGHT_EXECUTABLE_PATH },
     trace: "on-first-retry",
     screenshot: "only-on-failure",
     video: "retain-on-failure",

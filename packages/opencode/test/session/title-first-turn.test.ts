@@ -1,7 +1,10 @@
-import { expect, test } from "bun:test"
+import { expect, spyOn, test } from "bun:test"
+import { Database, sql } from "../../src/storage"
+import { Effect } from "effect"
 import path from "node:path"
 import { Instance } from "../../src/project/instance"
 import { Session } from "../../src/session"
+import { Command } from "../../src/command"
 import { SessionPrompt } from "../../src/session/prompt"
 import { ProviderID, ModelID } from "../../src/provider/schema"
 import { AppRuntime } from "../../src/effect/app-runtime"
@@ -186,6 +189,31 @@ test("fallback commits before detached lite request; duplicate receipt and later
         )
         await Bun.sleep(50)
         expect(captured).toHaveLength(3)
+
+        const retry = await run(Session.Service.use(svc => svc.create()))
+        Database.use(db => db.run(sql`CREATE TEMP TRIGGER reject_initial_title BEFORE UPDATE OF title ON session WHEN NEW.title_source = 'fallback' BEGIN SELECT RAISE(ABORT, 'initial title fault'); END`))
+        try {
+          await run(SessionPrompt.Service.use(svc => svc.prompt({ ...input, sessionID: retry.id, messageID: MessageID.ascending(), parts: [{ type: "text", text: "12345" }] })))
+          expect(await run(Session.Service.use(svc => svc.get(retry.id)))).toMatchObject({ title: "Untitled", titleRevision: 0 })
+        } finally {
+          Database.use(db => db.run(sql`DROP TRIGGER reject_initial_title`))
+        }
+        await run(SessionPrompt.Service.use(svc => svc.prompt({ ...input, sessionID: retry.id, messageID: MessageID.ascending(), parts: [{ type: "text", text: "67890" }] })))
+        expect(await run(Session.Service.use(svc => svc.get(retry.id)))).toMatchObject({ title: "12345", titleSource: "fallback", titleRevision: 1 })
+        expect(captured).toHaveLength(3)
+
+        const same = await run(Session.Service.use(svc => svc.create()))
+        await run(SessionPrompt.Service.use(svc => svc.prompt({ ...input, sessionID: same.id, messageID: MessageID.ascending(), parts: [{ type: "text", text: "Untitled" }] })))
+        await until(() => captured.length === 4)
+        expect(await run(Session.Service.use(svc => svc.get(same.id)))).toMatchObject({ title: "Untitled", titleRevision: 1 })
+        const service = await run(Session.Service.use(svc => Effect.succeed(svc)))
+        const historyReads = spyOn(service, "messages")
+        try {
+          await run(SessionPrompt.Service.use(svc => svc.prompt({ ...input, source: "spawn", sessionID: same.id, messageID: MessageID.ascending(), parts: [{ type: "text", text: "Later task" }] })))
+          expect(historyReads).not.toHaveBeenCalled()
+          expect(await run(Session.Service.use(svc => svc.get(same.id)))).toMatchObject({ title: "Untitled", titleRevision: 1 })
+          expect(captured).toHaveLength(4)
+        } finally { historyReads.mockRestore() }
       },
     })
   } finally {
@@ -194,7 +222,39 @@ test("fallback commits before detached lite request; duplicate receipt and later
   }
 }, 30000)
 
-test("two completed user turns trigger contextual title reconsideration", async () => {
+test("registered skill command titles use user arguments rather than the selected slash prefix", async () => {
+  const titles: string[] = []
+  const server = Bun.serve({ port: 0, async fetch(request) {
+    const body = await request.json()
+    const isTitle = new URL(request.url).pathname.startsWith("/lite/")
+    if (isTitle) titles.push(JSON.stringify(body.messages))
+    const response = isTitle
+      ? toolCallResponse({ id: "skill-title", name: "StructuredOutput", args: JSON.stringify({ title: "Repair API 404" }) })
+      : textStopResponse("Done")
+    return new Response(response.join(""), { headers: { "content-type": "text/event-stream" } })
+  } })
+  try {
+    await using tmp = await tmpdir({ git: true, init: async dir => {
+      await Bun.write(path.join(dir, ".mimocode/skill/title-fixture-skill/SKILL.md"), "---\nname: title-fixture-skill\ndescription: Test skill command title provenance.\n---\nSKILL_BODY_NOT_A_TITLE\n")
+      const provider = (prefix: string) => ({ npm: "@ai-sdk/openai-compatible", env: [], options: { apiKey: "fixture", baseURL: `http://localhost:${server.port}/${prefix}/v1` }, models: { text: { name: "Text", tool_call: true, limit: { context: 128000, output: 1000 }, modalities: { input: ["text"], output: ["text"] } } } })
+      await Bun.write(path.join(dir, "mimocode.json"), JSON.stringify({ enabled_providers: ["main", "lite"], model: "main/text", model_groups: { lite: "lite/text" }, provider: { main: provider("main"), lite: provider("lite") } }))
+    } })
+    await Instance.provide({ directory: tmp.path, fn: async () => {
+      const run = AppRuntime.runPromise
+      const commands = await run(Command.Service.use(svc => svc.list()))
+      expect(commands.find(command => command.name === "title-fixture-skill")?.source).toBe("skill")
+      const session = await run(Session.Service.use(svc => svc.create()))
+      await run(SessionPrompt.Service.use(svc => svc.command({ sessionID: session.id, command: "title-fixture-skill", arguments: "Repair API 404", model: "main/text" })))
+      await until(async () => (await run(Session.Service.use(svc => svc.get(session.id)))).titleSource === "generated")
+      expect(titles).toHaveLength(1)
+      expect(titles[0]).toContain("Repair API 404")
+      expect(titles[0]).not.toContain("/title-fixture-skill")
+      expect(titles[0]).not.toContain("SKILL_BODY_NOT_A_TITLE")
+    } })
+  } finally { await server.stop(true) }
+}, 30000)
+
+test("two completed user turns trigger contextual title reconsideration",  async () => {
   let reviews = 0
   const server = Bun.serve({ port: 0, async fetch(request) {
     const body = await request.json()

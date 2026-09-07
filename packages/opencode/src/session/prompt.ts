@@ -1097,7 +1097,6 @@ export const layer = Layer.effect(
       }).pipe(Effect.catchCause(cause => elog.warn("title reconsideration failed", { error: Cause.squash(cause) })), Effect.ensuring(Effect.sync(() => titleReviewPending.delete(sessionID))), Effect.forkDetach({ startImmediately: true }))
     })
 
-    const titleStarted = new Set<SessionID>()
     const title = Effect.fn("SessionPrompt.ensureTitle")(function* (input: {
       session: Session.Info
       agent: string | undefined
@@ -1106,8 +1105,7 @@ export const layer = Layer.effect(
       modelID: ModelID
       titleLocale?: string
     }) {
-      if (input.session.parentID || input.session.titleSource !== "fallback" || titleStarted.has(input.session.id)) return
-      titleStarted.add(input.session.id)
+      if (input.session.parentID || input.session.titleSource !== "fallback" || input.session.titleRevision !== 0) return
       const stable = stableRootTitle({ agent: input.agent, parentID: input.session.parentID })
       if (stable) {
         yield* sessions.setTitle({ sessionID: input.session.id, title: stable, expectedRevision: input.session.titleRevision })
@@ -3015,7 +3013,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
           // session is genuinely idle.
           yield* sweepOrphanToolParts(input.sessionID)
         }
-        const eligibleTitle = session.titleSource === "fallback" && !session.parentID && (input.agentID ?? "main") === "main"
+        const eligibleTitle = session.titleSource === "fallback" && session.titleRevision === 0 && !session.parentID && (input.agentID ?? "main") === "main"
         const titleCommands = eligibleTitle ? (yield* commands.list()).map(command => command.name) : []
         const previous = eligibleTitle ? yield* sessions.messages({ sessionID: input.sessionID, agentID: "main" }) : []
         const message = yield* createUserMessage(input)
@@ -3029,8 +3027,9 @@ NOTE: At any point in time through this workflow you should feel free to ask the
           yield* sessions.setPermission({ sessionID: session.id, permission: permissions })
         }
 
-        if (eligibleTitle && !previous.some(item => hasTitleInput(item, titleCommands)) && hasTitleInput(message, titleCommands) && message.info.role === "user") {
-          yield* title({ session, agent: message.info.agent, providerID: message.info.model.providerID, modelID: message.info.model.modelID, titleLocale: input.titleLocale, history: [message] }).pipe(Effect.catchCause(cause => elog.warn("title initialization failed", { error: Cause.squash(cause) })))
+        const titleMessage = eligibleTitle ? [...previous, message].find(item => hasTitleInput(item, titleCommands)) : undefined
+        if (titleMessage?.info.role === "user") {
+          yield* title({ session, agent: titleMessage.info.agent, providerID: titleMessage.info.model.providerID, modelID: titleMessage.info.model.modelID, titleLocale: input.titleLocale, history: [titleMessage] }).pipe(Effect.catchCause(cause => elog.warn("title initialization failed", { error: Cause.squash(cause) })))
         }
         if (input.noReply === true) return message
         // Short-circuit: when the message was dropped for being empty-content

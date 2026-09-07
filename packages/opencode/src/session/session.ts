@@ -259,7 +259,8 @@ export function writeTitle(input: SetTitleInput, source: "user" | "fallback" | "
       if (parsed.expectedRevision > current.titleRevision) throw new TitleRevisionError("expectedRevision is in the future")
       if (parsed.expectedRevision < current.titleRevision && current.titleSource === "user") throw new TitleConflictError(current)
     } else if (current.titleSource === "user" || (mode === "initial" && current.titleSource !== "fallback") || parsed.expectedRevision !== current.titleRevision) return false
-    if ((source === "fallback" || mode === "machine") && current.title === parsed.title) return false
+    // Revision zero is uninitialized; the first fallback commit records completion even for identical text.
+    if (((source === "fallback" && current.titleRevision > 0) || mode === "machine") && current.title === parsed.title) return false
     if (current.titleRevision === Number.MAX_SAFE_INTEGER) throw new RangeError("Title revision exhausted")
     const next = { ...current, title: parsed.title, titleSource: source, titleRevision: current.titleRevision + 1 }
     SyncEvent.run(Event.Updated, {

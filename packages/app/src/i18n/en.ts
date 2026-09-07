@@ -225,6 +225,8 @@ export const dict = {
   "common.disconnect": "Disconnect",
   "common.continue": "Continue",
   "common.submit": "Submit",
+  "session.title.conflict": "The saved title changed to “{{title}}”. Your draft is unchanged. Save your title instead?",
+  "session.title.overwrite": "Save my title instead",
   "common.save": "Save",
   "common.saving": "Saving...",
   "common.default": "Default",

@@ -244,6 +244,8 @@ export const dict = {
   "common.disconnect": "断开连接",
   "common.continue": "提交",
   "common.submit": "提交",
+  "session.title.conflict": "已保存的标题已变为“{{title}}”。你的草稿已保留。要改为保存你的标题吗？",
+  "session.title.overwrite": "改为保存我的标题",
   "common.save": "保存",
   "common.saving": "保存中...",
   "common.default": "默认",
