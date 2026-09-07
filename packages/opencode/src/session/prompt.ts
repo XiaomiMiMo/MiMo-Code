@@ -8,8 +8,9 @@ import { Log, Token } from "../util"
 import { SessionRevert } from "./revert"
 import * as Session from "./session"
 import { Agent } from "../agent/agent"
-import { decideAskRouting, hasActorTool, resolveInvalidOutputPolicy, SYSTEM_SPAWNED_AGENT_TYPES } from "@/agent/config"
-import { renderActorNotification } from "@/inbox/render"
+import { decideAskRouting, hasActorTool, resolveInvalidOutputPolicy } from "@/agent/config"
+import { makeTerminalNotifier } from "@/actor/notification"
+import { ActorExecution } from "@/actor/execution"
 import { parseReturnHeader } from "@/actor/return-header"
 import { runTurn } from "@/actor/turn"
 import { Provider } from "../provider"
@@ -480,6 +481,8 @@ export const layer = Layer.effect(
     const llm = yield* LLM.Service
     const actorRegistry = yield* ActorRegistry.Service
     const inbox = yield* Inbox.Service
+    const executions = yield* ActorExecution.Service
+    const notifyTerminal = makeTerminalNotifier({ inbox, registry: actorRegistry, sessions })
 
     // Track sessions that have already shown the "loaded instructions" toast so we
     // surface it once per primary session rather than on every run-loop turn.
@@ -2990,6 +2993,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
           agentID: input.agentID ?? "main",
           task_id: input.task_id,
           titleLocale: input.titleLocale,
+          deferInbox: input.source === "hook" && input.agentID !== undefined && input.agentID !== "main",
         })
       },
     )
@@ -3052,8 +3056,9 @@ NOTE: At any point in time through this workflow you should feel free to ask the
       agentID?: string,
       task_id?: string,
       titleLocale?: string,
+      deferInbox?: boolean,
     ) => Effect.Effect<MessageV2.WithParts> = Effect.fn("SessionPrompt.run")(
-      function* (sessionID: SessionID, agentID?: string, task_id?: string, titleLocale?: string) {
+      function* (sessionID: SessionID, agentID?: string, task_id?: string, titleLocale?: string, deferInbox = false) {
         const ctx = yield* InstanceState.context
         const slog = elog.with({ sessionID })
         let structured: unknown | undefined
@@ -3640,7 +3645,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
           // must not touch session-level status (Runner.onBusy is Effect.void
           // for non-main actors per F47).
           if (!agentID || agentID === "main") yield* status.set(sessionID, { type: "busy" })
-          yield* inbox.drain(sessionID, agentID ?? "main").pipe(Effect.ignore)
+          if (!deferInbox) yield* inbox.drain(sessionID, agentID ?? "main").pipe(Effect.ignore)
           yield* slog.info("loop", { step })
 
           // F37: filter by agentID so subagent slices stay isolated from the
@@ -4900,50 +4905,46 @@ NOTE: At any point in time through this workflow you should feel free to ask the
       "SessionPrompt.loop",
     )(function* (input: z.infer<typeof LoopInput>) {
       const agentID = input.agentID ?? "main"
-      const work = runLoop(input.sessionID, agentID, input.task_id, input.titleLocale)
-      // The inbox-started executor owns settlement, not every caller joining the
-      // runner. Spawn has its own outer boundary (including pre/postStop hooks).
-      const continued = runTurn(input.sessionID, agentID, work.pipe(
-        Effect.tap((final) => final.info.role === "assistant" && final.info.error
-          ? Effect.die(new Error(sessionErrorText(final.info.error)))
-          : Effect.void),
-      )).pipe(
-        Effect.provideService(ActorRegistry.Service, actorRegistry),
-        Effect.onExit((exit) => Effect.gen(function* () {
-          const actor = yield* actorRegistry.get(input.sessionID, agentID)
-          if (!actor?.background || SYSTEM_SPAWNED_AGENT_TYPES.has(actor.agent)) return
-          const parentSessionID = actor.mode === "peer"
-            ? (yield* sessions.get(input.sessionID)).parentID
-            : input.sessionID
-          if (!parentSessionID) {
-            yield* Effect.logError(`actor terminal notification missing parent: ${input.sessionID}/${agentID}`)
-            return
+      const work = runLoop(input.sessionID, agentID, input.task_id, input.titleLocale, input.deferInbox)
+      if (!input.notifyParentOnComplete || agentID === "main") {
+        return yield* state.ensureRunning(input.sessionID, agentID, lastAssistant(input.sessionID, agentID), work)
+      }
+      return yield* Effect.acquireUseRelease(
+        executions.acquire(input.sessionID, agentID),
+        (execution) => Effect.gen(function* () {
+          yield* executions.attach(execution)
+          if (input.inboxWake && (yield* inbox.drain(input.sessionID, agentID)) === 0) {
+            return yield* lastAssistant(input.sessionID, agentID)
           }
-          const final = Exit.isSuccess(exit) ? exit.value : undefined
-          const text = final?.info.role === "assistant" ? assistantFinalText(final.info, final.parts) : undefined
-          const parsed = parseReturnHeader(text)
-          const status = Exit.isSuccess(exit) ? "completed" : Cause.hasInterruptsOnly(exit.cause) ? "cancelled" : "failed"
-          yield* inbox.send({
-            receiverSessionID: parentSessionID,
-            receiverActorID: actor.parentActorID ?? "main",
-            senderSessionID: input.sessionID,
-            senderActorID: agentID,
-            type: "actor_notification",
-            content: renderActorNotification({
-              actorID: agentID,
-              description: actor.description,
-              status,
-              ...(status === "completed" ? { result: text ?? "(no output)", reportedStatus: parsed.status, reportedSummary: parsed.summary } : {}),
-              ...(Exit.isFailure(exit) && status === "failed" ? { error: Cause.pretty(exit.cause) } : {}),
-            }),
-          })
-        }).pipe(Effect.ignoreCause({ log: "Error", message: `actor terminal notification failed: ${input.sessionID}/${agentID}` }))),
-      )
-      return yield* state.ensureRunning(
-        input.sessionID,
-        agentID,
-        lastAssistant(input.sessionID, agentID),
-        input.notifyParentOnComplete && agentID !== "main" ? continued : work,
+          const continued = Effect.gen(function* () {
+            if (execution.cancelled) return yield* Effect.interrupt
+            const final = yield* state.ensureRunning(input.sessionID, agentID, lastAssistant(input.sessionID, agentID), work)
+            if (final.info.role === "assistant" && final.info.error) {
+              return yield* Effect.die(new Error(sessionErrorText(final.info.error)))
+            }
+            return final
+          }).pipe(Effect.onExit((exit) => Exit.isFailure(exit) && Cause.hasInterruptsOnly(exit.cause)
+            ? state.cancelActor(input.sessionID, agentID)
+            : Effect.void))
+          return yield* runTurn(input.sessionID, agentID, continued).pipe(
+            Effect.provideService(ActorRegistry.Service, actorRegistry),
+            Effect.onExit((exit) => Effect.gen(function* () {
+              const final = Exit.isSuccess(exit) ? exit.value : undefined
+              const text = final?.info.role === "assistant" ? assistantFinalText(final.info, final.parts) : undefined
+              const parsed = parseReturnHeader(text)
+              const status = Exit.isSuccess(exit) ? "completed" : Cause.hasInterruptsOnly(exit.cause) ? "cancelled" : "failed"
+              yield* notifyTerminal({
+                sessionID: input.sessionID,
+                actorID: agentID,
+                source: "continuation",
+                status,
+                ...(status === "completed" ? { result: text ?? "(no output)", reportedStatus: parsed.status, reportedSummary: parsed.summary } : {}),
+                ...(Exit.isFailure(exit) && status === "failed" ? { error: Cause.pretty(exit.cause) } : {}),
+              })
+            })),
+          )
+        }).pipe(Effect.uninterruptible),
+        (execution) => executions.release(execution),
       )
     })
 
@@ -5360,7 +5361,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
     )
     return impl
   }),
-)
+).pipe(Layer.provide(ActorExecution.layer))
 
 /** App composition variant with MCP supplied by the process-wide layer. */
 export const appLayer = Layer.suspend(() =>
@@ -5517,6 +5518,8 @@ export const LoopInput = z.object({
   // the FIRST/spawn turn). Left false on spawn/user-driven loops to avoid
   // double-notifying the spawn turn that forkWork already covers.
   notifyParentOnComplete: z.boolean().optional(),
+  inboxWake: z.boolean().optional(),
+  deferInbox: z.boolean().optional(),
 })
 
 export const ShellInput = z.object({

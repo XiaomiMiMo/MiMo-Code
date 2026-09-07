@@ -258,6 +258,22 @@ const parentInboxRows = (parentID: SessionID, parentActorID = "main") =>
   )
 
 describe("Actor cancel notification (T41 unified terminal-status bridge)", () => {
+  it.live("[TP-R14-07] a spawn provider error produces one failed notification and a failed wait", () => provideTmpdirServer(
+    Effect.fnUntraced(function* ({ llm }) {
+      const actor = yield* Actor.Service
+      const sessions = yield* Session.Service
+      const parent = yield* sessions.create({ title: "provider failure" })
+      yield* llm.error(401, { error: { message: "invalid credential", type: "authentication_error" } })
+      const child = yield* actor.spawn({ mode: "subagent", sessionID: parent.id, agentType: "build", task: "fail", context: "none", tools: [], background: true, model: ref })
+      expect((yield* Deferred.await(child.outcome)).status).toBe("failure")
+      const rows = yield* parentInboxRows(parent.id)
+      const result = yield* ActorWaiter.Service.use(waiter => waiter.wait({ sessionID: child.sessionID, actor_id: child.actorID })).pipe(Effect.provide(ActorWaiter.defaultLayer))
+      expect(result.lastOutcome).toBe("failure")
+      expect(result.error).toBeDefined()
+      expect(rows).toHaveLength(1)
+      expect((rows[0].content as { text: string }).text).toContain("failed.")
+    }), { git: true, config: providerCfg },
+  ))
   it.live("[TP-R14-12] undeliverable terminal notification is logged", () => {
     const messages: string[] = []
     return provideTmpdirServer(Effect.fnUntraced(function* ({ llm }) {

@@ -24,6 +24,7 @@ export interface WaitResult {
   // reconciled status from the spawn outcome Deferred instead.
   reportedStatus?: ReturnStatus
   reportedSummary?: string
+  warnings?: string[]
   time?: { created: number; updated: number; completed?: number }
 }
 
@@ -65,8 +66,12 @@ export const layer: Layer.Layer<Service, never, Bus.Service | ActorRegistry.Serv
     const lastAssistantResult = (sessionID: SessionID, actorID: string) =>
       Effect.gen(function* () {
         const msgs = yield* sessions.messages({ sessionID, agentID: actorID })
-        const last = msgs.findLast((m) => m.info.role === "assistant")
+        const last = msgs.findLast((m) => m.info.role === "assistant" && (!m.info.error || m.info.actorResult))
         if (!last) return { result: undefined as string | undefined, structured: undefined as unknown }
+        if (last.info.role === "assistant" && last.info.actorResult) {
+          const delivery = last.info.actorResult
+          return { result: delivery.finalText, structured: delivery.structured, delivery }
+        }
         const structured = last.info.role === "assistant" ? last.info.structured : undefined
         if (structured !== undefined) return { result: undefined as string | undefined, structured }
         const textPart = last.parts.findLast(
@@ -81,7 +86,10 @@ export const layer: Layer.Layer<Service, never, Bus.Service | ActorRegistry.Serv
           entry.status === "idle" && entry.lastOutcome === "success"
             ? yield* lastAssistantResult(sessionID, actorID)
             : { result: undefined as string | undefined, structured: undefined as unknown }
-        const reported = parseReturnHeader(extracted.result)
+        const delivery = "delivery" in extracted ? extracted.delivery : undefined
+        const reported = delivery
+          ? { status: delivery.reportedStatus, summary: delivery.reportedSummary }
+          : parseReturnHeader(extracted.result)
         return {
           status: entry.status,
           actor_id: entry.actorID,
@@ -96,6 +104,7 @@ export const layer: Layer.Layer<Service, never, Bus.Service | ActorRegistry.Serv
           ...(extracted.structured !== undefined ? { structured: extracted.structured } : {}),
           ...(reported.status ? { reportedStatus: reported.status } : {}),
           ...(reported.summary ? { reportedSummary: reported.summary } : {}),
+          ...(delivery?.warnings?.length ? { warnings: delivery.warnings } : {}),
           time: entry.time,
         }
       })

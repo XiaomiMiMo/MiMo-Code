@@ -36,6 +36,7 @@ export function renderActorNotification(event: {
   error?: string
   reportedStatus?: string
   reportedSummary?: string
+  warnings?: string[]
   // For a stalled notification: how long (ms) the child has been SILENT — nothing
   // has landed for its slice. NOT time since the last completed step: the T40
   // watchdog classifies on last_activity_time (actor/schema.ts deriveLiveness),
@@ -51,7 +52,8 @@ export function renderActorNotification(event: {
     // outcome so we never imply a success the sub-session didn't claim.
     const reported = event.reportedStatus?.toLowerCase()
     const summaryLine = event.reportedSummary ? `\nSummary: ${event.reportedSummary}` : ""
-    const resultLine = `\nResult: ${event.result ?? "(no output)"}`
+    const warningLines = event.warnings?.map((warning) => `\nWarning: ${warning}`).join("") ?? ""
+    const resultLine = `${warningLines}\nResult: ${event.result ?? "(no output)"}`
     // success/partial (or absent → treat as a plain completion) keep the
     // affirmative "completed" verb.
     if (!reported || reported === "success" || reported === "partial") {
@@ -68,7 +70,8 @@ export function renderActorNotification(event: {
     return `<actor-notification>\n${header} ended (status not reported).${summaryLine}${resultLine}\n</actor-notification>`
   }
   if (event.status === "failed") {
-    return `<actor-notification>\n${header} failed.\nError: ${event.error ?? "unknown"}\n</actor-notification>`
+    const partial = event.result === undefined ? "" : `\nPartial result: ${event.result}`
+    return `<actor-notification>\n${header} failed.\nError: ${event.error ?? "unknown"}${partial}\n</actor-notification>`
   }
   if (event.status === "stalled") {
     // "no activity", not "no turn advance". The quantity is silence since the last

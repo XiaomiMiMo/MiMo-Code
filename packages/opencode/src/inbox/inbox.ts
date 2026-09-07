@@ -185,6 +185,7 @@ export const layer: Layer.Layer<
             // through SessionPrompt.prompt (no flag) so forkWork.notify remains
             // the sole notifier for turn 1 — no double-notify.
             notifyParentOnComplete: true,
+            inboxWake: true,
           })
           .pipe(Effect.ignore, Effect.forkIn(scope))
       } else {

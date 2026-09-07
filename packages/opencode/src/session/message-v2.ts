@@ -562,6 +562,13 @@ export const Assistant = Base.extend({
     }),
   }),
   structured: z.any().optional(),
+  actorResult: z.object({
+    finalText: z.string().optional(),
+    structured: z.unknown().optional(),
+    reportedStatus: z.enum(["success", "partial", "failed", "blocked"]).optional(),
+    reportedSummary: z.string().optional(),
+    warnings: z.array(z.string()).optional(),
+  }).optional(),
   variant: z.string().optional(),
   finish: z.string().optional(),
 }).meta({

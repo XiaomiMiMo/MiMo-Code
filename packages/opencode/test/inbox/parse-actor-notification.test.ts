@@ -2,6 +2,30 @@ import { describe, expect, test } from "bun:test"
 import { parseActorNotification, renderActorNotification } from "../../src/inbox/render"
 
 describe("parseActorNotification", () => {
+  test("[TP-R14-07] completion preserves its result alongside hook warnings", () => {
+    const text = renderActorNotification({
+      actorID: "child",
+      description: "work",
+      status: "completed",
+      result: "MAIN-RESULT",
+      warnings: ["postStop failed"],
+    })
+    expect(text).toContain("Warning: postStop failed")
+    expect(text).toContain("Result: MAIN-RESULT")
+    expect(parseActorNotification(text)?.status).toBe("completed")
+  })
+
+  test("[TP-R14-07] failure includes available partial output without becoming success", () => {
+    const text = renderActorNotification({
+      actorID: "child",
+      description: "work",
+      status: "failed",
+      error: "verification failed",
+      result: "PARTIAL-RESULT",
+    })
+    expect(text).toContain("Partial result: PARTIAL-RESULT")
+    expect(parseActorNotification(text)?.status).toBe("failed")
+  })
   test("parses a completed notification with reported status + summary", () => {
     const text = renderActorNotification({
       actorID: "explore-1",
@@ -172,7 +196,7 @@ describe("parseActorNotification", () => {
 
   test("returns null for non-notification text", () => {
     expect(parseActorNotification("just a normal user message")).toBeNull()
-    expect(parseActorNotification("<inbox from=\"x:y\">hello</inbox>")).toBeNull()
+    expect(parseActorNotification('<inbox from="x:y">hello</inbox>')).toBeNull()
     expect(parseActorNotification("")).toBeNull()
   })
 

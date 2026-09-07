@@ -11,6 +11,7 @@ import { Plugin, HookEvent } from "../../src/plugin"
 import { Bus } from "../../src/bus"
 import { AppRuntime } from "../../src/effect/app-runtime"
 import { Actor } from "../../src/actor/spawn"
+import { ActorWaiter } from "../../src/actor/waiter"
 import { startScriptedLLMServer, textStopResponse } from "../lib/scripted-llm-server"
 
 void Log.init({ print: false })
@@ -440,7 +441,7 @@ describe("actor.preStop ReAct loop", () => {
 })
 
 describe("actor.postStop ReAct loop", () => {
-  test("[TP-R14-11] postStop settles before delivery with its final output", async () => {
+  test("[TP-R14-11] postStop settles before delivery without replacing the main result", async () => {
     // Use a marker file so the test plugin can record postStop completion.
     const markerPath = path.join("/tmp", `marker-${Date.now()}-${Math.random()}`)
 
@@ -517,7 +518,7 @@ describe("actor.postStop ReAct loop", () => {
           ),
       })
 
-      expect(callerFinalText).toBe("second")
+      expect(callerFinalText).toBe("first")
       expect(await Bun.file(markerPath).exists()).toBe(true)
       expect(server.captures.length).toBe(2)  // delivery turn + postStop turn
     } finally {
@@ -600,7 +601,7 @@ describe("actor.postStop ReAct loop", () => {
           ),
       })
 
-      expect(callerFinalText).toBe("post3")
+      expect(callerFinalText).toBe("delivery-text")
 
       // 1 delivery + 3 postStop re-entries (MAX_POST_REACT cap) = 4 total
       expect(server.captures.length).toBe(4)
@@ -609,7 +610,7 @@ describe("actor.postStop ReAct loop", () => {
     }
   })
 
-  test("[TP-R14-07] postStop LLM failure is delivered as failure", async () => {
+  test("[TP-R14-07] postStop LLM failure preserves the successful result with a warning", async () => {
     const server = startScriptedLLMServer([
       { lines: textStopResponse("delivered") },     // delivery turn
       { lines: [], status: 400 },                   // postStop turn — HTTP 400 triggers LLM error (no retry)
@@ -674,14 +675,18 @@ describe("actor.postStop ReAct loop", () => {
                 background: false,
               })
               const outcome = yield* Deferred.await(result.outcome)
-              expect(outcome.status).toBe("failure")
-              if (outcome.status === "failure") expect(outcome.error.length).toBeGreaterThan(0)
+              expect(outcome.status).toBe("success")
+              if (outcome.status === "success") expect(outcome.warnings?.join(" ")).toContain("postStop")
+              const waited = yield* ActorWaiter.Service.use((waiter) => waiter.wait({ sessionID: result.sessionID, actor_id: result.actorID }))
+                .pipe(Effect.provide(ActorWaiter.defaultLayer))
+              expect(waited.result).toBe("delivered")
+              expect(waited.warnings?.join(" ")).toContain("postStop")
               return outcome.status === "success" ? outcome.finalText : undefined
             }),
           ),
       })
 
-      expect(callerFinalText).toBeUndefined()
+      expect(callerFinalText).toBe("delivered")
       // Server saw 2 calls: delivery + 1 postStop attempt (which failed)
       expect(server.captures.length).toBe(2)
       // No exception escaped — test reaches this assertion cleanly
