@@ -11,6 +11,7 @@ import { Agent } from "../agent/agent"
 import { decideAskRouting, hasActorTool, resolveInvalidOutputPolicy, SYSTEM_SPAWNED_AGENT_TYPES } from "@/agent/config"
 import { renderActorNotification } from "@/inbox/render"
 import { parseReturnHeader } from "@/actor/return-header"
+import { runTurn } from "@/actor/turn"
 import { Provider } from "../provider"
 import { ModelID, ProviderID } from "../provider/schema"
 import {
@@ -3050,10 +3051,9 @@ NOTE: At any point in time through this workflow you should feel free to ask the
       sessionID: SessionID,
       agentID?: string,
       task_id?: string,
-      notifyParentOnComplete?: boolean,
       titleLocale?: string,
     ) => Effect.Effect<MessageV2.WithParts> = Effect.fn("SessionPrompt.run")(
-      function* (sessionID: SessionID, agentID?: string, task_id?: string, notifyParentOnComplete?: boolean, titleLocale?: string) {
+      function* (sessionID: SessionID, agentID?: string, task_id?: string, titleLocale?: string) {
         const ctx = yield* InstanceState.context
         const slog = elog.with({ sessionID })
         let structured: unknown | undefined
@@ -4891,49 +4891,6 @@ NOTE: At any point in time through this workflow you should feel free to ask the
           finalIsError ? "error" : "completed",
           Option.isSome(lastUserForMetrics) ? lastUserForMetrics.value.info.agent : final.info.agent,
         )
-        // Woken-peer completion signal. forkWork.notify only wraps the FIRST
-        // (spawn) turn; a persistent background peer that finishes a later,
-        // inbox-driven turn would otherwise go idle silently and force the
-        // orchestrator to poll. When this loop was woken via the inbox path
-        // (notifyParentOnComplete), mirror forkWork's actor_notification to the
-        // parent so the event-driven model holds. Gated to background peers and
-        // excludes system subagents (checkpoint-writer/dream/distill). The flag
-        // is never set on the spawn turn, so turn 1 is not double-notified.
-        if (notifyParentOnComplete && agentID && session.parentID) {
-          const actor = yield* actorRegistry.get(sessionID, agentID)
-          if (
-            actor &&
-            actor.mode === "peer" &&
-            actor.background &&
-            !SYSTEM_SPAWNED_AGENT_TYPES.has(actor.agent)
-          ) {
-            const finalText =
-              final.info.role === "assistant" ? assistantFinalText(final.info, final.parts) : undefined
-            const parsed = parseReturnHeader(finalText)
-            const status = finalIsError ? "failed" : "completed"
-            yield* inbox
-              .send({
-                receiverSessionID: session.parentID,
-                receiverActorID: actor.parentActorID ?? "main",
-                senderSessionID: sessionID,
-                senderActorID: agentID,
-                type: "actor_notification",
-                content: renderActorNotification({
-                  actorID: agentID,
-                  description: actor.description,
-                  status,
-                  ...(status === "completed"
-                    ? {
-                        result: finalText ?? "(no output)",
-                        ...(parsed.status ? { reportedStatus: parsed.status } : {}),
-                        ...(parsed.summary ? { reportedSummary: parsed.summary } : {}),
-                      }
-                    : { error: final.info.role === "assistant" ? sessionErrorText(final.info.error) : "unknown" }),
-                }),
-              })
-              .pipe(Effect.ignore)
-          }
-        }
         return final
         }).pipe(Effect.onExit(firePostSession), Effect.orDie)
       },
@@ -4943,11 +4900,50 @@ NOTE: At any point in time through this workflow you should feel free to ask the
       "SessionPrompt.loop",
     )(function* (input: z.infer<typeof LoopInput>) {
       const agentID = input.agentID ?? "main"
+      const work = runLoop(input.sessionID, agentID, input.task_id, input.titleLocale)
+      // The inbox-started executor owns settlement, not every caller joining the
+      // runner. Spawn has its own outer boundary (including pre/postStop hooks).
+      const continued = runTurn(input.sessionID, agentID, work.pipe(
+        Effect.tap((final) => final.info.role === "assistant" && final.info.error
+          ? Effect.die(new Error(sessionErrorText(final.info.error)))
+          : Effect.void),
+      )).pipe(
+        Effect.provideService(ActorRegistry.Service, actorRegistry),
+        Effect.onExit((exit) => Effect.gen(function* () {
+          const actor = yield* actorRegistry.get(input.sessionID, agentID)
+          if (!actor?.background || SYSTEM_SPAWNED_AGENT_TYPES.has(actor.agent)) return
+          const parentSessionID = actor.mode === "peer"
+            ? (yield* sessions.get(input.sessionID)).parentID
+            : input.sessionID
+          if (!parentSessionID) {
+            yield* Effect.logError(`actor terminal notification missing parent: ${input.sessionID}/${agentID}`)
+            return
+          }
+          const final = Exit.isSuccess(exit) ? exit.value : undefined
+          const text = final?.info.role === "assistant" ? assistantFinalText(final.info, final.parts) : undefined
+          const parsed = parseReturnHeader(text)
+          const status = Exit.isSuccess(exit) ? "completed" : Cause.hasInterruptsOnly(exit.cause) ? "cancelled" : "failed"
+          yield* inbox.send({
+            receiverSessionID: parentSessionID,
+            receiverActorID: actor.parentActorID ?? "main",
+            senderSessionID: input.sessionID,
+            senderActorID: agentID,
+            type: "actor_notification",
+            content: renderActorNotification({
+              actorID: agentID,
+              description: actor.description,
+              status,
+              ...(status === "completed" ? { result: text ?? "(no output)", reportedStatus: parsed.status, reportedSummary: parsed.summary } : {}),
+              ...(Exit.isFailure(exit) && status === "failed" ? { error: Cause.pretty(exit.cause) } : {}),
+            }),
+          })
+        }).pipe(Effect.ignoreCause({ log: "Error", message: `actor terminal notification failed: ${input.sessionID}/${agentID}` }))),
+      )
       return yield* state.ensureRunning(
         input.sessionID,
         agentID,
         lastAssistant(input.sessionID, agentID),
-        runLoop(input.sessionID, agentID, input.task_id, input.notifyParentOnComplete, input.titleLocale),
+        input.notifyParentOnComplete && agentID !== "main" ? continued : work,
       )
     })
 
@@ -5284,7 +5280,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
         input.sessionID,
         agentID,
         lastAssistant(input.sessionID, agentID),
-        runLoop(input.sessionID, agentID, input.task_id, undefined, input.titleLocale).pipe(
+        runLoop(input.sessionID, agentID, input.task_id, input.titleLocale).pipe(
           Effect.ensuring(
             abandonRecoveredAssistant({ sessionID: input.sessionID, assistantMessageID: input.assistantMessageID, agentID }).pipe(
               Effect.catchCause((cause) =>
@@ -5317,7 +5313,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
         input.sessionID,
         agentID,
         lastAssistant(input.sessionID, agentID),
-        runLoop(input.sessionID, agentID, input.task_id, undefined, input.titleLocale).pipe(
+        runLoop(input.sessionID, agentID, input.task_id, input.titleLocale).pipe(
           Effect.ensuring(
             abandonRecoveredAssistant({ sessionID: input.sessionID, assistantMessageID: input.assistantMessageID, agentID }).pipe(
               Effect.catchCause((cause) =>

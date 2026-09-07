@@ -309,16 +309,9 @@ export const layer = Layer.effect(
     const forkContexts = new Map<string, ForkContext>()
     const forkContextKey = (sessionID: SessionID, actorID: string) => sessionID + ":" + actorID
 
-    // Actors whose cancel() has begun, keyed "sessionID:actorID". Populated
-    // BEFORE the fiber is interrupted so forkWork's onSuccess/onFailure notify
-    // can suppress its own (misleading) emit — a cancelled child's interrupt is
-    // masked by the runLoop onInterrupt handler (returns lastAssistant), so the
-    // work fiber sees a spurious "success". The authoritative "cancelled"
-    // notification is emitted instead by Actor.cancel via notifyTerminal, which
-    // runs in-context after updateStatus. This unifies success/failure/cancel
-    // onto one parent-notification contract without double-notifying. See T41.
-    const cancelling = new Set<string>()
-    const cancelKey = (sessionID: SessionID, actorID: string) => `${sessionID}:${actorID}`
+    // Track the whole spawn execution, including hooks outside the prompt runner.
+    // Cancellation joins this boundary so terminal delivery completes before return.
+    const executions = new Map<string, Fiber.Fiber<void, never>>()
 
     // Real agent loop: marks the actor running, then drives a SessionPrompt.prompt
     // turn. The user message persisted by SessionPrompt carries the actor's
@@ -419,13 +412,7 @@ export const layer = Layer.effect(
           status: "completed" | "failed" | "cancelled",
           extra: { result?: string; error?: string; reportedStatus?: ReturnStatus; reportedSummary?: string },
         ) =>
-          // An external cancel masks its own interrupt (runLoop.onInterrupt
-          // returns lastAssistant), so this fiber would otherwise emit a bogus
-          // "completed"/"failed". Defer to the terminal-status bridge, which
-          // emits the single authoritative "cancelled" notification.
-          cancelling.has(cancelKey(input.sessionID, input.actorID))
-            ? Effect.void
-            : input.background && input.agentType !== "checkpoint-writer"
+          input.background && input.agentType !== "checkpoint-writer"
             ? inbox
                 .send({
                   receiverSessionID: input.parentSessionID,
@@ -440,7 +427,7 @@ export const layer = Layer.effect(
                     ...extra,
                   }),
                 })
-                .pipe(Effect.ignore)
+                .pipe(Effect.ignoreCause({ log: "Error", message: `actor terminal notification failed: ${input.sessionID}/${input.actorID}` }))
                 // Also give the user a visible signal (the child may be unfocused).
                 .pipe(
                   Effect.andThen(
@@ -471,7 +458,7 @@ export const layer = Layer.effect(
         const forkAgentInfo = yield* agents.get(input.agentType)
         const canWrite = forkAgentInfo ? !Permission.disabled(["write"], forkAgentInfo.permission).has("write") : true
 
-        const work = Effect.gen(function* () {
+        const work = runTurn(input.sessionID, input.actorID, Effect.gen(function* () {
           let finalText: string | undefined
           let structured: unknown | undefined
           let iteration = 0
@@ -481,10 +468,7 @@ export const layer = Layer.effect(
 
           while (true) {
             const reentryDecision = iteration > 0 ? lastDecision : undefined
-            const turn = yield* runTurn(
-              input.sessionID,
-              input.actorID,
-              runAgentLoop({
+            const turn = yield* runAgentLoop({
                 ...input,
                 task: reentryDecision ? reentryDecision.reason : input.task,
                 source: reentryDecision ? "hook" : "spawn",
@@ -496,8 +480,7 @@ export const layer = Layer.effect(
                       hookIDs: reentryDecision.contributingHookIDs,
                     }
                   : undefined,
-              }),
-            )
+              })
             finalText = turn.finalText
             structured = turn.structured
 
@@ -550,9 +533,7 @@ export const layer = Layer.effect(
 
           return { finalText, structured }
         }).pipe(
-          Effect.provideService(ActorRegistry.Service, actorReg),
-          Effect.matchCauseEffect({
-            onSuccess: ({ finalText, structured }) =>
+          Effect.flatMap(({ finalText, structured }) =>
               Effect.gen(function* () {
                 // === COMPLETION GATE (B) + structured parse (A) ===
                 // Delegates the list/decide step to TaskGate.decide.
@@ -570,24 +551,12 @@ export const layer = Layer.effect(
                     }).pipe(Effect.provideService(TaskRegistry.Service, taskRegistry))
                     if (!decision.needReentry) break
                     gateIter++
-                    const gateTurn = yield* runTurn(
-                      input.sessionID,
-                      input.actorID,
-                      runAgentLoop({
+                    const gateTurn = yield* runAgentLoop({
                         ...input,
                         task: decision.reentryText,
                         source: "hook",
                         provenance: { hookPhase: "post", hookIteration: gateIter, pluginNames: [], hookIDs: [] },
-                      }),
-                    ).pipe(
-                      Effect.catch(() =>
-                        Effect.gen(function* () {
-                          log.error("actor.gate runTurn failed", { actorID: input.actorID })
-                          return { finalText: undefined as string | undefined, structured: undefined as unknown }
-                        }),
-                      ),
-                      Effect.provideService(ActorRegistry.Service, actorReg),
-                    )
+                      })
                     // The gate re-run's re-emitted text updates the delivered body
                     // (and structured, if it produced one) so the reconciliation +
                     // delivery below see the latest turn.
@@ -596,50 +565,12 @@ export const layer = Layer.effect(
                   }
                 }
 
-                // Reconcile: DB truth wins over the model's self-reported header.
-                const remaining = input.gateEligible
-                  ? yield* taskRegistry
-                      .list({ session_id: input.parentSessionID, owner: input.actorID, include_terminal: false })
-                      .pipe(Effect.orElseSucceed(() => []))
-                  : []
-                const stillActionable = remaining.filter((t) => t.status === "open" || t.status === "in_progress")
-                const downgrade: ReturnStatus | undefined =
-                  stillActionable.length > 0 ? "partial" : remaining.length > 0 ? "blocked" : undefined
-                const parsed = parseReturnHeader(deliveredText)
-                const reportedStatus = downgrade ?? parsed.status
-                const incompleteTasks = remaining.map((t) => t.id)
-                const reconciledText =
-                  downgrade && incompleteTasks.length > 0
-                    ? `${deliveredText ?? ""}\n\n**Incomplete tasks**: ${incompleteTasks.join(", ")}`
-                    : deliveredText
-
-                // === DELIVERY ===
-                // structured (json_schema result) takes precedence over text for the
-                // notification body (DW spec P3 §5.2); otherwise deliver the gate's
-                // reconciled text. The success outcome carries both the reconciled
-                // text + completion-gate fields AND structured when present.
-                const deliveryText =
-                  structured !== undefined ? JSON.stringify(structured) : (reconciledText ?? "(no output)")
-                yield* notify("completed", {
-                  result: deliveryText,
-                  ...(reportedStatus ? { reportedStatus } : {}),
-                  ...(parsed.summary ? { reportedSummary: parsed.summary } : {}),
-                })
-                yield* Deferred.succeed(outcome, {
-                  status: "success" as const,
-                  ...(reconciledText !== undefined ? { finalText: reconciledText } : {}),
-                  ...(structured !== undefined ? { structured } : {}),
-                  ...(reportedStatus ? { reportedStatus } : {}),
-                  ...(parsed.summary ? { reportedSummary: parsed.summary } : {}),
-                  ...(incompleteTasks.length > 0 ? { incompleteTasks } : {}),
-                })
-
                 // === postStop ReAct loop ===
-                // Caller has already resolved; new finalTexts are not propagated.
+                // Keep the execution running until hooks and their re-entries settle.
                 // NOTE: parallel structure to preStop loop above — pre runs turn THEN checks,
                 // post checks THEN runs turn. Both give 1 (delivery) + MAX_POST_REACT re-entries.
                 let postIter = 0
-                let lastFinalText = finalText
+                let lastFinalText = deliveredText
                 let postReentry:
                   | { reason: string; contributingPluginNames: string[]; contributingHookIDs: string[] }
                   | undefined
@@ -693,11 +624,7 @@ export const layer = Layer.effect(
                     contributingHookIDs: decision.contributingHookIDs,
                   }
 
-                  // Run another turn (new finalText is not written back to outcome)
-                  const newTurn = yield* runTurn(
-                    input.sessionID,
-                    input.actorID,
-                    runAgentLoop({
+                  const newTurn = yield* runAgentLoop({
                       ...input,
                       task: postReentry.reason,
                       source: "hook",
@@ -707,26 +634,47 @@ export const layer = Layer.effect(
                         pluginNames: postReentry.contributingPluginNames,
                         hookIDs: postReentry.contributingHookIDs,
                       },
-                    }),
-                  ).pipe(
-                    // postStop LLM failure: log + break loop, do NOT propagate
-                    Effect.catch(() =>
-                      Effect.gen(function* () {
-                        log.error("actor.postStop runTurn failed", {
-                          actorID: input.actorID,
-                        })
-                        return { finalText: undefined as string | undefined, structured: undefined as unknown }
-                      }),
-                    ),
-                    Effect.provideService(ActorRegistry.Service, actorReg),
-                  )
+                    })
 
+                  if (newTurn.structured !== undefined) structured = newTurn.structured
                   if (newTurn.finalText === undefined) break
                   lastFinalText = newTurn.finalText
+                  deliveredText = newTurn.finalText
                 }
 
-                yield* Effect.sync(() => forkContexts.delete(forkContextKey(input.sessionID, input.actorID)))
+                // Reconcile only the final postStop output with task truth.
+                const remaining = input.gateEligible
+                  ? yield* taskRegistry.list({ session_id: input.parentSessionID, owner: input.actorID, include_terminal: false })
+                  : []
+                const actionable = remaining.filter((t) => t.status === "open" || t.status === "in_progress")
+                const downgrade: ReturnStatus | undefined = actionable.length ? "partial" : remaining.length ? "blocked" : undefined
+                const parsed = parseReturnHeader(deliveredText)
+                const reportedStatus = downgrade ?? parsed.status
+                const incompleteTasks = remaining.map((t) => t.id)
+                const reconciledText = downgrade && incompleteTasks.length
+                  ? `${deliveredText ?? ""}\n\n**Incomplete tasks**: ${incompleteTasks.join(", ")}`
+                  : deliveredText
+                return {
+                  status: "success" as const,
+                  ...(reconciledText !== undefined ? { finalText: reconciledText } : {}),
+                  ...(structured !== undefined ? { structured } : {}),
+                  ...(reportedStatus ? { reportedStatus } : {}),
+                  ...(parsed.summary ? { reportedSummary: parsed.summary } : {}),
+                  ...(incompleteTasks.length ? { incompleteTasks } : {}),
+                }
               }),
+          ),
+        )).pipe(
+          Effect.provideService(ActorRegistry.Service, actorReg),
+          Effect.matchCauseEffect({
+            onSuccess: (result) => Effect.gen(function* () {
+              yield* notify("completed", {
+                result: result.structured !== undefined ? JSON.stringify(result.structured) : (result.finalText ?? "(no output)"),
+                reportedStatus: result.reportedStatus,
+                reportedSummary: result.reportedSummary,
+              })
+              yield* Deferred.succeed(outcome, result)
+            }),
             onFailure: (cause) =>
               Effect.gen(function* () {
                 const cancelled = Cause.hasInterruptsOnly(cause)
@@ -744,14 +692,19 @@ export const layer = Layer.effect(
                     ? { status: "cancelled" as const }
                     : { status: "failure" as const, error, ...(failure ? { failure } : {}) },
                 )
-                yield* Effect.sync(() => forkContexts.delete(forkContextKey(input.sessionID, input.actorID)))
               }),
           }),
+          Effect.ensuring(Effect.sync(() => {
+            forkContexts.delete(forkContextKey(input.sessionID, input.actorID))
+            executions.delete(forkContextKey(input.sessionID, input.actorID))
+          })),
+          Effect.uninterruptible,
         )
         const boundWork = input.instanceRef
           ? work.pipe(Effect.provideService(InstanceRef, input.instanceRef))
           : work
-        const fiber = yield* boundWork.pipe(Effect.forkIn(scope))
+        const fiber = yield* boundWork.pipe(Effect.forkIn(scope, { uninterruptible: true }))
+        executions.set(forkContextKey(input.sessionID, input.actorID), fiber)
         return { fiber, outcome }
       })
 
@@ -882,17 +835,7 @@ export const layer = Layer.effect(
     })
 
     // === Unified terminal notification (T41) ===
-    // Single parent-notification contract for a terminal outcome. Completion and
-    // failure already notify directly from forkWork.notify on the woken/spawn
-    // turn; a CANCELLED child cannot, because its interrupt is masked by the
-    // runLoop.onInterrupt handler (returns lastAssistant) so the work fiber sees
-    // a spurious "success" and its own notify is suppressed via the `cancelling`
-    // set. `cancel` therefore emits the one authoritative cancelled notification
-    // here, reusing the exact shape forkWork.notify uses (renderActorNotification
-    // + actor_notification inbox message + a TUI toast). Gating (background,
-    // non-system peer/subagent) matches forkWork.notify so cancel/success/fail
-    // stay a single contract with no double-notify. Best-effort: a missing row
-    // or unresolved parent silently no-ops.
+    // Pending actors without an executor still need a cancellation receipt.
     const notifyTerminal = (
       sessionID: SessionID,
       actorID: string,
@@ -922,7 +865,6 @@ export const layer = Layer.effect(
               status,
             }),
           })
-          .pipe(Effect.ignore)
         yield* Effect.promise(() =>
           Bus.publish(TuiEvent.ToastShow, {
             message: `Child "${actor.description}" ${status}`,
@@ -938,17 +880,20 @@ export const layer = Layer.effect(
           concurrency: "unbounded",
           discard: true,
         })
-        // Mark cancelling BEFORE interrupting so forkWork.notify (which fires on
-        // the interrupt-masked "success") suppresses its own emit; the single
-        // authoritative "cancelled" notification is emitted below instead.
-        yield* Effect.sync(() => cancelling.add(cancelKey(sessionID, actorID)))
-        // Snapshot the actor row before cancelActor tears state down — we need
-        // its mode/agent/background/parentActorID to decide + address the notify.
         const actor = yield* actorReg.get(sessionID, actorID)
+        if (!actor || actor.status === "idle") return
+        const execution = executions.get(forkContextKey(sessionID, actorID))
+        // Stop the prompt first, then join the full spawn (including postStop).
+        // Each executing boundary owns its notification; cancel only settles a
+        // pending actor that has no executor, never an already finished turn.
         yield* state.cancelActor(sessionID, actorID)
-        yield* actorReg
-          .updateStatus(sessionID, actorID, { status: "idle", lastOutcome: "cancelled" })
-          .pipe(Effect.ignore)
+        if (execution) {
+          yield* Fiber.interrupt(execution)
+          return
+        }
+        const current = yield* actorReg.get(sessionID, actorID)
+        if (!current || current.status === "idle") return
+        yield* actorReg.updateStatus(sessionID, actorID, { status: "idle", lastOutcome: "cancelled" })
         yield* notifyTerminal(sessionID, actorID, actor, "cancelled")
         yield* Effect.sync(() => forkContexts.delete(forkContextKey(sessionID, actorID)))
       })

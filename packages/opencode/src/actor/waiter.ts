@@ -147,6 +147,8 @@ export const layer: Layer.Layer<Service, never, Bus.Service | ActorRegistry.Serv
               Effect.catchTag("TimeoutError", () => Effect.succeed(null)),
             )
             if (raced === null) {
+              const final = yield* reg.get(input.sessionID, input.actor_id)
+              if (final && isWaitResolving(final)) return yield* snapshot(input.sessionID, input.actor_id, final)
               return { status: "timeout" as const, actor_id: input.actor_id }
             }
             return raced

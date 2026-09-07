@@ -418,7 +418,8 @@ describe("ActorRegistry", () => {
   })
 
   describe("orphan recovery", () => {
-    test("marks previously pending/running tasks as idle+failure on new layer init", async () => {
+    // Desktop tool-step-schema regression [TP-R14-10].
+    test("preserves running tasks from another instance on new layer init", async () => {
       // First, create a task in "running" state
       await using tmp = await tmpdir({ git: true })
 
@@ -476,9 +477,9 @@ describe("ActorRegistry", () => {
         const recovered = await rt.runPromise(
           ActorRegistry.Service.use((svc) => svc.get(parentId!, taskId!)),
         )
-        expect(recovered!.status).toBe("idle")
-        expect(recovered!.lastOutcome).toBe("failure")
-        expect(recovered!.lastError).toBe("orphaned: process restarted")
+        expect(recovered!.status).toBe("running")
+        expect(recovered!.lastOutcome).toBeUndefined()
+        expect(recovered!.lastError).toBeUndefined()
       })
     })
 
@@ -566,7 +567,7 @@ describe("ActorRegistry", () => {
       })
     })
 
-    test("row from a different instanceID IS orphaned", async () => {
+    test("[TP-R14-10] a different instanceID is not evidence of failure", async () => {
       await using tmp = await tmpdir({ git: true })
 
       // First runtime: register an actor
@@ -624,9 +625,9 @@ describe("ActorRegistry", () => {
         const recovered = await rt.runPromise(
           ActorRegistry.Service.use((svc) => svc.get(parentId!, taskId!)),
         )
-        expect(recovered!.status).toBe("idle")
-        expect(recovered!.lastOutcome).toBe("failure")
-        expect(recovered!.lastError).toBe("orphaned: process restarted")
+        expect(recovered!.status).toBe("running")
+        expect(recovered!.lastOutcome).toBeUndefined()
+        expect(recovered!.lastError).toBeUndefined()
       })
     })
   })

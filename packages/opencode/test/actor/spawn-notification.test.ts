@@ -399,11 +399,7 @@ describe("Actor.spawn inbox notifications (Plan 3 / Task 2)", () => {
   // T12: a persistent background PEER that finishes a *woken* (inbox-driven)
   // turn must notify its parent exactly once — forkWork.notify only covers the
   // spawn turn, so later woken turns would otherwise go idle silently.
-  // SKIP: test relies on polling (600×50ms=30s) that equals the bun timeout,
-  // causing flaky timeouts under CI load. No deterministic signal exists for
-  // woken-turn completion in the test context. Spawn-turn notification is
-  // already tested deterministically above.
-  it.live.skip("background peer finishing a woken turn sends exactly one actor_notification to parent", () =>
+  it.live("[TP-R14-08] background peer finishing a woken turn notifies its parent", () =>
     provideTmpdirServer(
       Effect.fnUntraced(function* ({ llm }) {
         const actor = yield* Actor.Service
@@ -417,7 +413,7 @@ describe("Actor.spawn inbox notifications (Plan 3 / Task 2)", () => {
 
         // One response for the spawn turn, one for the woken turn.
         yield* llm.text("**Status**: success\n**Summary**: spawn turn")
-        yield* llm.text("**Status**: success\n**Summary**: woken turn")
+        yield* llm.textMatch(({ body }) => JSON.stringify(body.messages).includes("please do more work"), "**Status**: success\n**Summary**: woken turn")
 
         const result = yield* actor.spawn({
           mode: "peer",
@@ -480,14 +476,14 @@ describe("Actor.spawn inbox notifications (Plan 3 / Task 2)", () => {
             const r = yield* inboxRows("main")
             if (r.length > 0) {
               const content = r[0].content as { text?: string }
-              return { type: r[0].type, text: content.text ?? "" }
+              if (content.text?.includes("woken turn")) return { type: r[0].type, text: content.text }
             }
             const msgs = yield* Session.Service.use((s) => s.messages({ sessionID: parent.id, agentID: "main" })).pipe(
               Effect.catch(() => Effect.succeed([] as MessageV2.WithParts[])),
             )
             for (const m of msgs) {
               for (const p of m.parts) {
-                if (p.type === "text" && p.synthetic && p.text.includes("<actor-notification>")) {
+                if (p.type === "text" && p.synthetic && p.text.includes("<actor-notification>") && p.text.includes("woken turn")) {
                   return { type: "actor_notification", text: p.text }
                 }
               }
@@ -502,11 +498,13 @@ describe("Actor.spawn inbox notifications (Plan 3 / Task 2)", () => {
         expect(found!.text).toContain("<actor-notification>")
         expect(found!.text).toContain("woken peer task")
         expect(found!.text).toContain("completed")
+        expect(found!.text).toContain("woken turn")
 
         yield* actor.cancel(result.sessionID, result.actorID, "forced").pipe(Effect.ignore)
       }),
       { git: true, config: providerCfg },
     ),
+    45000,
   )
 
   // T12 gate: a SYSTEM subagent agentType (checkpoint-writer) spawned as a peer

@@ -73,7 +73,8 @@ export const layer = Layer.effect(
               data.runners.delete(key)
             }),
         onBusy: isMain ? status.set(sessionID, { type: "busy" }) : Effect.void,
-        onInterrupt,
+        // Child executors must observe cancellation, not a stale assistant.
+        onInterrupt: isMain ? onInterrupt : Effect.interrupt,
         busy: () => new Session.BusyError(sessionID),
       })
       data.runners.set(key, next)

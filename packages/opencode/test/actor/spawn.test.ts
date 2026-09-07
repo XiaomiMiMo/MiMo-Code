@@ -915,6 +915,8 @@ describe("Actor forkContext lifecycle", () => {
         const session = yield* Session.Service
         const first = yield* session.create({ title: "first fork context" })
         const second = yield* session.create({ title: "second fork context" })
+        // Both executors must remain live while cancellation joins the first.
+        yield* llm.hang
         yield* llm.hang
 
         const firstResult = yield* actor.spawn({

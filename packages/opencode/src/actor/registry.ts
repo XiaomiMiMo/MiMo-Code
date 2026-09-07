@@ -7,19 +7,13 @@ import { SessionTable } from "@/session/session.sql"
 import type { Actor, ActorStatus, ActorOutcome, ContextMode, Lifecycle, SpawnMode, ToolWhitelist, Liveness } from "./schema"
 import { deriveLiveness } from "./schema"
 import * as Events from "./events"
-import { Log } from "@/util"
 import { SYSTEM_SPAWNED_AGENT_TYPES } from "@/agent/config"
 import { randomUUID } from "node:crypto"
-
-const log = Log.create({ service: "actor.registry" })
 
 const STUCK_THRESHOLD_MS = 5 * 60 * 1000 // 5 minutes
 const SCAN_INTERVAL_MS = 60 * 1000 // every 60s
 
-// Process-level singleton instance ID for orphan recovery.
-// A unique token generated once at module load. Stable across layer rebuilds
-// within the same process; a fresh process gets a new token and correctly
-// reclaims dead rows.
+// Identifies the registering process; a different token does not prove termination.
 const PROCESS_INSTANCE_ID = randomUUID()
 
 type ActorRow = typeof ActorRegistryTable.$inferSelect
@@ -110,7 +104,7 @@ export const layer: Layer.Layer<Service, never, Bus.Service> = Layer.effect(
   Effect.gen(function* () {
     const bus = yield* Bus.Service
 
-    // Use the process-level singleton for orphan recovery.
+    // Layer rebuilds retain the same process identity.
     // This is stable across layer rebuilds within the same process.
     const instanceID = PROCESS_INSTANCE_ID
 
@@ -452,26 +446,8 @@ export const layer: Layer.Layer<Service, never, Bus.Service> = Layer.effect(
       return `${agentType}-${max + 1}`
     })
 
-    // --- Orphan Recovery ---
-    // On init, mark pending/running actors from a PREVIOUS process as idle
-    // with failure outcome. Actors from this very instance (same instanceID)
-    // are still alive and must NOT be touched.
-    yield* Effect.sync(() =>
-      Database.use((db) => {
-        const now = Date.now()
-        db.run(sql`
-          UPDATE actor_registry
-          SET status = 'idle',
-              last_outcome = 'failure',
-              last_error = 'orphaned: process restarted',
-              time_updated = ${now},
-              time_completed = ${now}
-          WHERE status IN ('pending', 'running')
-            AND instance_id != ${instanceID}
-        `)
-      }),
-    )
-    log.info("orphan recovery complete", { instanceID })
+    // Initialization cannot infer execution failure from another instance ID.
+    // Only the executor settles its turn; stuck detection remains advisory.
 
     // --- Stuck Detection ---
     const scanStuck = Effect.gen(function* () {

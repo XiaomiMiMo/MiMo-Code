@@ -630,6 +630,7 @@ export const ActorTool = Tool.define(
             background: entry.background,
             turnCount: entry.turnCount,
             lastTurnTime: entry.lastTurnTime,
+            lastOutcome: entry.lastOutcome,
             ...(entry.lastError !== undefined ? { error: entry.lastError } : {}),
             time: entry.time,
           }
