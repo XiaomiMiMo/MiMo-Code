@@ -5,7 +5,7 @@ import { createSignal, onCleanup } from "solid-js"
 import { useSDK } from "../context/sdk"
 import { useToast } from "../ui/toast"
 import { useTheme } from "../context/theme"
-import { titleReadback } from "../util/session-title"
+import { titleReadback, unchangedTitle } from "../util/session-title"
 
 interface DialogSessionRenameProps {
   session: string
@@ -19,13 +19,15 @@ export function DialogSessionRename(props: DialogSessionRenameProps) {
   const toast = useToast()
   const { theme } = useTheme()
   // Capture the edit base once; incoming AI/SSE never changes this draft.
-  const initial = sync.session.get(sessionID)
+  const currentSession = sync.session.get(sessionID)
+  const initial = currentSession && { title: currentSession.title, titleRevision: currentSession.titleRevision }
   const [revision, setRevision] = createSignal(initial?.titleRevision)
   const [busy, setBusy] = createSignal(false)
   const [message, setMessage] = createSignal("")
   let active = true
   let saved = false
   let attempted = false
+  let conflicted = false
   let draft = initial?.title ?? ""
   onCleanup(() => {
     active = false
@@ -40,6 +42,11 @@ export function DialogSessionRename(props: DialogSessionRenameProps) {
 
   async function save(value: string) {
     if (busy()) return
+    if (unchangedTitle(value, initial?.title, conflicted)) {
+      draft = initial?.title ?? ""
+      dialog.clear()
+      return
+    }
     const title = Array.from(value.trim()).slice(0, 80).join("")
     if (!title) {
       setMessage("Enter a nonempty title (up to 80 characters).")
@@ -67,6 +74,7 @@ export function DialogSessionRename(props: DialogSessionRenameProps) {
     } catch (error) {
       const rejectedConflict =
         typeof error === "object" && error !== null && "name" in error && error.name === "TitleConflictError"
+      if (rejectedConflict) conflicted = true
       // A lost response may have committed. Never automatically resend it.
       try {
         const response = await sdk.client.session.get(
@@ -94,6 +102,7 @@ export function DialogSessionRename(props: DialogSessionRenameProps) {
           return
         }
         const conflict = outcome === "conflict"
+        if (conflict) conflicted = true
         setRevision(current.titleRevision)
         setMessage(
           conflict

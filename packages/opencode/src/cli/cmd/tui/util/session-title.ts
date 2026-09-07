@@ -1,5 +1,9 @@
 import type { Session } from "@mimo-ai/sdk/v2"
 
+export function unchangedTitle(draft: string, original: string | undefined, conflicted: boolean) {
+  return !conflicted && original !== undefined && draft.trim() === original.trim()
+}
+
 export function titleReadback(
   baseRevision: number | undefined,
   submitted: string,

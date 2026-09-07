@@ -16,7 +16,7 @@ import { MessageID, PartID } from "@/session/schema"
 import { createStore, produce, unwrap } from "solid-js/store"
 import { useKeybind } from "@tui/context/keybind"
 import { usePromptHistory, type PromptInfo } from "./history"
-import { assign, expandPlaceholders } from "./part"
+import { assign, expandPlaceholders, resolvePromptCommand } from "./part"
 import { usePromptStash } from "./stash"
 import { clampStatusMessage } from "./footer"
 import { DialogStash } from "../dialog-stash"
@@ -52,7 +52,6 @@ import { DialogWorkspaceCreate, restoreWorkspaceSession } from "../dialog-worksp
 import { DialogWorkspaceUnavailable } from "../dialog-workspace-unavailable"
 import { DialogAgreement, FREE_AGREEMENT_KEY, FREE_MODEL_IDS } from "../dialog-agreement"
 import { useArgs } from "@tui/context/args"
-import { resolveSkillSlash } from "@tui/i18n/skill"
 import {
   isFreeApiModel,
   isFreeApiSunset,
@@ -115,6 +114,7 @@ let activeVoice: {
 
 export function Prompt(props: PromptProps) {
   let input: TextareaRenderable
+  let pickedSkill: string | undefined
   let anchor: BoxRenderable
   let autocomplete: AutocompleteRef
 
@@ -575,12 +575,20 @@ export function Prompt(props: PromptProps) {
     on(
       () => props.sessionID,
       () => {
+        pickedSkill = undefined
         setGhost("")
         setStore("placeholder", randomIndex(list().length))
       },
       { defer: true },
     ),
   )
+
+  createEffect(() => {
+    const text = store.prompt.input
+    if (!pickedSkill) return
+    const prefix = `/${pickedSkill}`
+    if (text !== prefix && !text.startsWith(prefix + " ") && !text.startsWith(prefix + "\n")) pickedSkill = undefined
+  })
 
   // Derive sticky mode from whether session has messages
   createEffect(() => {
@@ -777,6 +785,7 @@ export function Prompt(props: PromptProps) {
           dialog.replace(() => (
             <DialogSkill
               onSelect={(skill) => {
+                pickedSkill = skill
                 input.setText(`/${skill} `)
                 setStore("prompt", {
                   input: `/${skill} `,
@@ -1238,12 +1247,7 @@ export function Prompt(props: PromptProps) {
     const clientSlash = inputText.startsWith("/")
       ? command.slashes().find((s) => s.display === inputText.trim())
       : undefined
-    const serverSlash = inputText.startsWith("/")
-      ? iife(() => {
-          const name = inputText.split("\n")[0].split(" ")[0].slice(1)
-          return sync.data.command.find((item) => item.name === name)?.name ?? resolveSkillSlash(t, name, sync.data.command)
-        })
-      : undefined
+    const serverSlash = resolvePromptCommand(inputText, sync.data.command, t, pickedSkill)
 
     if (store.mode === "shell") {
       void sdk.client.session.shell({
@@ -1294,17 +1298,9 @@ export function Prompt(props: PromptProps) {
     } else if (clientSlash) {
       clientSlash.onSelect?.()
     } else if (serverSlash) {
-      // Parse command from first line, preserve multi-line content in arguments
-      const firstLineEnd = inputText.indexOf("\n")
-      const firstLine = firstLineEnd === -1 ? inputText : inputText.slice(0, firstLineEnd)
-      const [command, ...firstLineArgs] = firstLine.split(" ")
-      const restOfInput = firstLineEnd === -1 ? "" : inputText.slice(firstLineEnd + 1)
-      const args = firstLineArgs.join(" ") + (restOfInput ? "\n" + restOfInput : "")
-
       void sdk.client.session.command({
         sessionID,
-        command: serverSlash,
-        arguments: args,
+        ...serverSlash,
         agent: agent.name,
         model: `${selectedModel.providerID}/${selectedModel.modelID}`,
         titleLocale: language.intl(),

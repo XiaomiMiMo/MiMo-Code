@@ -1,6 +1,14 @@
 import { expect, test } from "bun:test"
 import type { Session } from "@mimo-ai/sdk/v2"
-import { mergeSessionTitle, titleReadback } from "../../../src/cli/cmd/tui/util/session-title"
+import { mergeSessionTitle, titleReadback, unchangedTitle } from "../../../src/cli/cmd/tui/util/session-title"
+
+test("unchanged opening title is a no-op unless resolving a conflict", () => {
+  expect(unchangedTitle(" Untitled ", "Untitled", false)).toBe(true)
+  expect(unchangedTitle("Opening", "Opening", false)).toBe(true)
+  expect(unchangedTitle("AI replacement", "Opening", false)).toBe(false)
+  expect(unchangedTitle("Opening", "Opening", true)).toBe(false)
+  expect(unchangedTitle("", undefined, false)).toBe(false)
+})
 
 const base = { id: "ses_test", title: "Saved", titleSource: "user", titleRevision: 3 } as Session
 // [TP-ST-R3-07, TP-ST-R11-03] All TUI snapshot paths use this reducer.
