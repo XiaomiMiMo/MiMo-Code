@@ -56,12 +56,6 @@ export const SessionTable = sqliteTable(
   ],
 )
 
-// Identity tombstones enforce that import/restore cannot resurrect a deleted
-// session and thereby reset title authority. This is not title scheduling state.
-export const SessionDeletedIdentityTable = sqliteTable("session_deleted_identity", {
-  id: text().$type<SessionID>().primaryKey().notNull(),
-})
-
 export type SessionPrefixToolSnapshot = {
   name: string
   description?: string

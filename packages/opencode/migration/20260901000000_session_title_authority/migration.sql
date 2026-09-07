@@ -11,12 +11,3 @@ WHEN (NEW.title_revision != OLD.title_revision + 1 AND NOT (OLD.title_revision =
   OR (OLD.title_source = 'user' AND NEW.title_source != 'user')
   OR (OLD.title_source = 'generated' AND NEW.title_source != 'user')
 BEGIN SELECT RAISE(ABORT, 'invalid session title transition'); END;
---> statement-breakpoint
-CREATE TABLE session_deleted_identity (id text PRIMARY KEY NOT NULL);
---> statement-breakpoint
-CREATE TRIGGER session_identity_remember AFTER DELETE ON session
-BEGIN INSERT OR IGNORE INTO session_deleted_identity(id) VALUES (OLD.id); END;
---> statement-breakpoint
-CREATE TRIGGER session_identity_no_reuse BEFORE INSERT ON session
-WHEN EXISTS (SELECT 1 FROM session_deleted_identity WHERE id = NEW.id)
-BEGIN SELECT RAISE(ABORT, 'deleted session identity cannot be reused'); END;

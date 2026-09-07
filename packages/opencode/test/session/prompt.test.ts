@@ -1,6 +1,5 @@
 import path from "path"
 import { PNG } from "pngjs"
-import jpeg from "jpeg-js"
 import { describe, expect, test } from "bun:test"
 import { NamedError } from "@mimo-ai/shared/util/error"
 import { fileURLToPath } from "url"
@@ -26,10 +25,10 @@ describe("title helpers", () => {
     expect(titleContext({ info: { role: "user" }, parts } as MessageV2.WithParts)).toBe("")
   })
 
-  test("excludes skill provenance while preserving literal paths", () => {
+  test("excludes synthetic skill text while preserving literal paths", () => {
     const parts = [
-      { type: "text", text: "/compose-next", metadata: { titleOrigin: "skill" } },
-      { type: "text", text: "/api/v1/docs is this path right", metadata: { titleOrigin: "path" } },
+      { type: "text", text: "/compose-next", synthetic: true },
+      { type: "text", text: "/api/v1/docs is this path right" },
     ]
     expect(normalizeTitleInput(parts).text).toBe("/api/v1/docs is this path right")
     expect(titleInputText("/api endpoint", undefined)).toBe("/api endpoint")
@@ -160,9 +159,8 @@ describe("predictContext", () => {
 })
 
 describe("SessionPrompt.genTitle multimodal request", () => {
-  test("uses configured lite and user text without forwarding direct or context images", async () => {
+  test("uses configured lite and user text without forwarding images", async () => {
     const direct = PNG.sync.write(new PNG({ width: 1, height: 1 })).toString("base64")
-    const context = jpeg.encode({ width: 1, height: 1, data: Buffer.from([255, 255, 255, 255]) }).data.toString("base64")
     const stub = startScriptedLLMServer([
       {
         lines: toolCallResponse({
@@ -221,12 +219,6 @@ describe("SessionPrompt.genTitle multimodal request", () => {
                 text: "请分析 Chrome 商店截图",
                 parts: [{ type: "image", data: direct, mime: "image/png", filename: "direct.png" }],
                 locale: "zh-CN",
-                context: [
-                  {
-                    info: { role: "user", id: "context-user" },
-                    parts: [{ type: "file", mime: "image/jpeg", url: `data:image/jpeg;base64,${context}`, filename: "context.jpg" }],
-                  },
-                ] as unknown as MessageV2.WithParts[],
                 providerID: ProviderID.make("title-test"),
                 modelID: ModelID.make("text-lite"),
               })
@@ -243,7 +235,7 @@ describe("SessionPrompt.genTitle multimodal request", () => {
               expect(content).toContain("zh-CN")
               expect(content).toContain("<conversation>")
               expect(content).toContain("请分析 Chrome 商店截图")
-              for (const excluded of ["image_url", "base64", "direct.png", "context.jpg"]) {
+              for (const excluded of ["image_url", "base64", "direct.png"]) {
                 expect(JSON.stringify(messages)).not.toContain(excluded)
               }
             }),

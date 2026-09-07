@@ -801,10 +801,11 @@ export type EventSessionIdle = {
   }
 }
 
-export type EventVcsBranchUpdated = {
-  type: "vcs.branch.updated"
+export type EventSessionCompacted = {
+  type: "session.compacted"
   properties: {
-    branch?: string
+    sessionID: string
+    agentID?: string
   }
 }
 
@@ -830,6 +831,31 @@ export type EventCommandExecuted = {
     sessionID: string
     arguments: string
     messageID: string
+  }
+}
+
+export type EventSessionGoal = {
+  type: "session.goal"
+  properties: {
+    sessionID: string
+    goal?: {
+      condition: string
+    }
+    lastVerdict?: {
+      ok: boolean
+      impossible?: boolean
+      reason: string
+      attempt: number
+      messageID?: string
+      error?: boolean
+    }
+  }
+}
+
+export type EventVcsBranchUpdated = {
+  type: "vcs.branch.updated"
+  properties: {
+    branch?: string
   }
 }
 
@@ -864,32 +890,6 @@ export type EventTodoUpdated = {
   properties: {
     sessionID: string
     todos: Array<Todo>
-  }
-}
-
-export type EventSessionGoal = {
-  type: "session.goal"
-  properties: {
-    sessionID: string
-    goal?: {
-      condition: string
-    }
-    lastVerdict?: {
-      ok: boolean
-      impossible?: boolean
-      reason: string
-      attempt: number
-      messageID?: string
-      error?: boolean
-    }
-  }
-}
-
-export type EventSessionCompacted = {
-  type: "session.compacted"
-  properties: {
-    sessionID: string
-    agentID?: string
   }
 }
 
@@ -1653,15 +1653,15 @@ export type GlobalEvent = {
     | EventBashInteractiveReplied
     | EventSessionStatus
     | EventSessionIdle
-    | EventVcsBranchUpdated
+    | EventSessionCompacted
     | EventMcpToolsChanged
     | EventMcpBrowserOpenFailed
     | EventCommandExecuted
+    | EventSessionGoal
+    | EventVcsBranchUpdated
     | EventWorktreeReady
     | EventWorktreeFailed
     | EventTodoUpdated
-    | EventSessionGoal
-    | EventSessionCompacted
     | EventPtyCreated
     | EventPtyUpdated
     | EventPtyExited
@@ -3288,15 +3288,15 @@ export type Event =
   | EventBashInteractiveReplied
   | EventSessionStatus
   | EventSessionIdle
-  | EventVcsBranchUpdated
+  | EventSessionCompacted
   | EventMcpToolsChanged
   | EventMcpBrowserOpenFailed
   | EventCommandExecuted
+  | EventSessionGoal
+  | EventVcsBranchUpdated
   | EventWorktreeReady
   | EventWorktreeFailed
   | EventTodoUpdated
-  | EventSessionGoal
-  | EventSessionCompacted
   | EventPtyCreated
   | EventPtyUpdated
   | EventPtyExited
@@ -5702,14 +5702,30 @@ export type SessionCommandData = {
      * Harness mode selected by the session's first user command. Later values are ignored. Auto preserves model/process inference and explicit default forces the native tool schema for non-GPT models. MIMOCODE_CODEX_MODE=false forces the default harness for every model, including GPT.
      */
     harness?: "auto" | "codex" | "default"
-    parts?: Array<{
-      id?: string
-      type: "file"
-      mime: string
-      filename?: string
-      url: string
-      source?: FilePartSource
-    }>
+    parts?: Array<
+      | {
+          id?: string
+          type: "text"
+          text: string
+          synthetic?: boolean
+          ignored?: boolean
+          time?: {
+            start: number
+            end?: number
+          }
+          metadata?: {
+            [key: string]: unknown
+          }
+        }
+      | {
+          id?: string
+          type: "file"
+          mime: string
+          filename?: string
+          url: string
+          source?: FilePartSource
+        }
+    >
   }
   path: {
     sessionID: string

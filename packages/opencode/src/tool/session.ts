@@ -8,7 +8,6 @@ import z from "zod"
 import { Cause, Effect, Deferred } from "effect"
 import { Session } from "@/session"
 import { sanitizeGeneratedTitle, truncateTitle } from "@/session/prompt"
-import { TITLE_PURPOSE_SIGNAL } from "@/session/title-runner"
 import { classifySession, classifyUnreadableActors } from "@/session/visibility"
 import { Worktree } from "@/worktree"
 import { Instance } from "@/project/instance"
@@ -313,7 +312,7 @@ const setTitleOperation = z.strictObject({
   sessionID: z.string().optional().describe("Omit for the current session; another session cannot be renamed here."),
 })
 const titleParameters = z.strictObject({ operation: setTitleOperation })
-const TITLE_DESCRIPTION = `Set a semantic session title with operation.action=set-title. Omit sessionID for the current session. This is a generated title, never a manual rename: user-protected titles cannot change. Use after understanding an attachment or when the substantive task changes, not for ordinary progress. Never infer a task from a filename alone. Do not retry to force an overwrite. In a root session, when the user's substantive task changes from the existing purpose, append ${TITLE_PURPOSE_SIGNAL} on its own line in the final response so consecutive changed-task turns can trigger reconsideration. Do not signal ordinary progress, debugging or tool results.`
+const TITLE_DESCRIPTION = `Set a semantic session title with operation.action=set-title. Omit sessionID for the current session. This is a generated title, never a manual rename: user-protected titles cannot change. Use after understanding an attachment or when the substantive task changes, not for ordinary progress. Never infer a task from a filename alone. Do not retry to force an overwrite.`
 
 function setSessionTitle(sessions: Session.Interface, input: z.infer<typeof setTitleOperation>, ctx: Tool.Context<Metadata>) {
   return Effect.gen(function* () {
