@@ -264,6 +264,10 @@ test("ephemeral lite reads a referenced fixture then emits StructuredOutput with
         await run(SessionPrompt.Service.use(svc => svc.genTitle({ text: `Describe ${reference}`, sessionID: session.id, providerID: ProviderID.make("fixture"), references: [{ name: "restricted", path: reference }] })))
         expect(captured.at(-1)!.tools.map(tool => tool.function.name)).not.toContain("read")
       }
+      const restricted = await run(Session.Service.use(svc => svc.create()))
+      await run(SessionPrompt.Service.use(svc => svc.prompt({ sessionID: restricted.id, noReply: true, tools: { read: false }, model: { providerID: ProviderID.make("fixture"), modelID: ModelID.make("text") }, parts: [{ type: "text", text: `Analyze ${resource}`, metadata: { titleAttachments: [{ name: "notes.txt", path: resource }] } }] })))
+      await until(async () => (await run(Session.Service.use(svc => svc.get(restricted.id)))).titleSource === "generated")
+      expect(captured.at(-1)!.tools.map(tool => tool.function.name)).not.toContain("read")
       await run(Session.Service.use(svc => svc.setPermission({ sessionID: session.id, permission: [{ permission: "read", pattern: "*", action: "deny" }] })))
       await run(SessionPrompt.Service.use(svc => svc.genTitle({ text: `Describe ${resource}`, sessionID: session.id, providerID: ProviderID.make("fixture"), references: [{ name: "denied", path: resource }] })))
       expect(captured.at(-1)!.tools.map(tool => tool.function.name)).not.toContain("read")

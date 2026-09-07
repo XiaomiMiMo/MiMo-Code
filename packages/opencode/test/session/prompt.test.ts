@@ -43,9 +43,9 @@ describe("title helpers", () => {
     expect(truncateTitle("𠮷".repeat(48))).toBe("𠮷".repeat(48))
   })
 
-  test("builds fallback context for image-only and mixed multimodal requests", () => {
-    expect(titleInputText(undefined, [{ type: "image", data: "AA==", mime: "image/png", filename: "screen.png" }])).toBe("Attachment: screen.png")
-    expect(titleInputText("What is wrong?", [{ type: "image", data: "AA==", mime: "image/png" }])).toBe("What is wrong?\nAttachment: image/png")
+  test("keeps filenames and image bytes out of the text title input", () => {
+    expect(titleInputText(undefined, [{ type: "image", data: "AA==", mime: "image/png", filename: "screen.png" }])).toBe("")
+    expect(titleInputText("What is wrong?", [{ type: "image", data: "AA==", mime: "image/png" }])).toBe("What is wrong?")
   })
 
   test("wraps conversation data after the title instruction", () => {
@@ -160,7 +160,7 @@ describe("predictContext", () => {
 })
 
 describe("SessionPrompt.genTitle multimodal request", () => {
-  test("uses one user message and forwards direct and context images", async () => {
+  test("uses configured lite and user text without forwarding direct or context images", async () => {
     const direct = PNG.sync.write(new PNG({ width: 1, height: 1 })).toString("base64")
     const context = jpeg.encode({ width: 1, height: 1, data: Buffer.from([255, 255, 255, 255]) }).data.toString("base64")
     const stub = startScriptedLLMServer([
@@ -205,7 +205,6 @@ describe("SessionPrompt.genTitle multimodal request", () => {
                 },
               },
               model_groups: { lite: "title-test/text-lite" },
-              vision_model: "title-test/vision",
               agent: { build: { model: "title-test/text-lite" } },
             }),
           )
@@ -232,26 +231,21 @@ describe("SessionPrompt.genTitle multimodal request", () => {
                 modelID: ModelID.make("text-lite"),
               })
 
-             expect(result).toEqual({ title: "分析 Chrome 商店截图", status: "generated" })
-             expect(stub.captures).toHaveLength(1)
-             const messages = stub.captures[0]?.messages ?? []
-              expect(stub.captures[0]?.model).toBe("vision")
+              expect(result).toEqual({ title: "分析 Chrome 商店截图", status: "generated" })
+              expect(stub.captures).toHaveLength(1)
+              expect(stub.captures[0]?.model).toBe("text-lite")
+              const messages = stub.captures[0]?.messages ?? []
               const userMessages = messages.filter((message) => message.role === "user")
               expect(userMessages).toHaveLength(1)
-              expect(Array.isArray(userMessages[0]?.content)).toBe(true)
-
-              const content = userMessages[0]?.content as Array<Record<string, unknown>>
-              const textPart = content.find((part) => part.type === "text")
-              expect(textPart?.text).toContain("Generate a single-line title of at most 48 characters for this conversation.")
-              expect(textPart?.text).toContain("Write the title using locale \"zh-CN\".")
-              expect(textPart?.text).toContain("<conversation>")
-              expect(textPart?.text).toContain("请分析 Chrome 商店截图")
-
-              const imageUrls = content
-                .filter((part) => part.type === "image_url")
-                .map((part) => (part.image_url as { url?: string })?.url)
-              expect(imageUrls).toContain(`data:image/png;base64,${direct}`)
-              expect(imageUrls).toContain(`data:image/jpeg;base64,${context}`)
+              const content = JSON.stringify(userMessages[0]?.content)
+              expect(content).toContain("Generate a single-line title of at most 48 characters for this conversation.")
+              expect(content).toContain("For mixed or ambiguous language only")
+              expect(content).toContain("zh-CN")
+              expect(content).toContain("<conversation>")
+              expect(content).toContain("请分析 Chrome 商店截图")
+              for (const excluded of ["image_url", "base64", "direct.png", "context.jpg"]) {
+                expect(JSON.stringify(messages)).not.toContain(excluded)
+              }
             }),
           ),
       })
@@ -262,7 +256,7 @@ describe("SessionPrompt.genTitle multimodal request", () => {
 })
 
 describe("SessionPrompt.genTitle fallback locale", () => {
-  test("does not hardcode a language for image-only fallback", async () => {
+  test("preserves the image filename as fallback regardless of locale", async () => {
     await using tmp = await tmpdir({ git: true })
     await Instance.provide({
       directory: tmp.path,
@@ -275,7 +269,8 @@ describe("SessionPrompt.genTitle fallback locale", () => {
               locale: "fr-FR",
               providerID: ProviderID.make("title-test"),
             })
-            expect(result).toEqual({ title: "", status: "untitled" })
+            expect(result).toEqual({ title: "screen.png", status: "fallback" })
+            expect(yield* prompt.genTitle({ parts: [{ type: "image", data: "AA==", mime: "image/png" }] })).toEqual({ title: "Untitled", status: "untitled" })
           }),
         ),
     })
