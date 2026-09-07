@@ -38,7 +38,7 @@ export function createTitleReader(references: readonly TitleReference[]) {
       const bytes = Buffer.alloc(limit)
       const { bytesRead } = await file.read(bytes, 0, limit, 0)
       const content = bytes.subarray(0, bytesRead)
-      if (/\.(?:pdf|zip|gz|png|jpe?g|gif|webp|mp[34]|wav|exe|dll|bin|docx?|xlsx?|pptx?)$/i.test(filename)
+      if (/\.(?:pdf|zip|gz|dmg|png|jpe?g|gif|webp|mp[34]|wav|exe|dll|bin|docx?|xlsx?|pptx?)$/i.test(filename)
         || content.some(byte => byte === 0 || (byte < 32 && byte !== 9 && byte !== 10 && byte !== 13)))
         throw new Error("Binary title resource rejected")
       return new TextDecoder("utf-8", { fatal: true }).decode(content, { stream: bytesRead === limit })

@@ -293,32 +293,44 @@ export function titleContext(input: MessageV2.WithParts, registered: readonly st
   return normalizeTitleInput(input.parts, registered).text
 }
 
-// Single source of automatic title input, shared by fallback and the LLM.
-// Metadata is supplied before host/reference expansion; no guessing of ses_* IDs
-// or ambiguous absolute paths from the text itself.
-export function normalizeTitleInput(parts: readonly { type: string; text?: string; filename?: string; synthetic?: boolean; ignored?: boolean; metadata?: Record<string, unknown> }[], registered: readonly string[] = []) {
+function localAttachmentPath(part: { url?: string; source?: unknown }) {
+  const source = part.source
+  if (source && typeof source === "object" && "type" in source && source.type === "resource") return
+  const original = source && typeof source === "object" && "type" in source && source.type === "file" && "path" in source && typeof source.path === "string" ? source.path : undefined
+  if (part.url?.startsWith("file:")) {
+    try {
+      const resolved = fileURLToPath(part.url)
+      if (original && path.normalize(original) !== path.normalize(resolved)) return
+      return resolved
+    } catch { return }
+  }
+  return original && path.isAbsolute(original) ? original : undefined
+}
+
+// Derive automatic title input from the persisted user message.
+export function normalizeTitleInput(parts: readonly { type: string; text?: string; filename?: string; mime?: string; url?: string; source?: unknown; synthetic?: boolean; ignored?: boolean; metadata?: Record<string, unknown> }[], registered: readonly string[] = []) {
+  if (parts.some(part => part.type === "text" && (["scheduled", "forwarded"].includes(String(part.metadata?.titleOrigin)) || /^\s*<(?:inbox|scheduled-task)\b/i.test(part.text ?? "")))) {
+    return { text: "", fallback: "Untitled", hasInput: false, canGenerate: false }
+  }
   // Names are deterministic fallback data only. Never read paths or append names
   // to the text supplied to lite; host placeholders are excluded by provenance.
   const attachments = [...new Set(parts.flatMap(part => {
     if (part.synthetic || part.ignored) return []
     const origin = part.metadata?.titleOrigin
-    if (origin !== undefined && origin !== "user" && origin !== "path" && origin !== "attachment-placeholder") return []
+    if (origin !== undefined && origin !== "user" && origin !== "path") return []
     if (origin === undefined && part.metadata?.origin) return []
-    if (part.type === "file") return typeof part.filename === "string" && part.filename.trim() ? [part.filename.trim()] : []
-    if (part.type !== "text" || !Array.isArray(part.metadata?.titleAttachments)) return []
-    return part.metadata.titleAttachments.flatMap(item => {
-      if (!item || typeof item !== "object" || !("name" in item) || typeof item.name !== "string") return []
-      return item.name.trim() ? [item.name.trim()] : []
-    })
+    if (part.type !== "file") return []
+    const location = localAttachmentPath(part)
+    const name = part.filename?.trim() || (location ? path.basename(location) : "")
+    return name ? [name] : []
   }))]
   const references: TitleReference[] = []
   const chunks = parts.flatMap(part => {
     if (part.type !== "text" || part.synthetic || part.ignored) return []
     const origin = part.metadata?.titleOrigin
-    if (origin !== undefined && origin !== "user" && origin !== "path" && origin !== "command" && origin !== "paste") return []
+    if (origin !== undefined && origin !== "user" && origin !== "path" && origin !== "command") return []
     if (part.metadata?.origin && origin === undefined) return []
-    const excerpt = origin === "paste" && typeof part.metadata?.titleExcerpt === "string" ? part.metadata.titleExcerpt.slice(0, 16384) : ""
-    const raw = origin === "command" ? part.metadata?.titleUserText : [part.text, excerpt].filter(Boolean).join("\n")
+    const raw = origin === "command" ? part.metadata?.titleUserText : part.text
     if (typeof raw !== "string") return []
     let text = raw.replace(/\r\n?/g, "\n").trim()
     // Unknown host envelopes are not ordinary prose. Do not send them to AI.
@@ -332,22 +344,18 @@ export function normalizeTitleInput(parts: readonly { type: string; text?: strin
         text = text.slice(token.length).trimStart()
       }
     }
-    if (text) {
-      for (const key of ["titleReferences", "titleAttachments"] as const) {
-        const items = part.metadata?.[key]
-        if (!Array.isArray(items)) continue
-        for (const item of items) {
-          if (!item || typeof item !== "object" || typeof item.name !== "string" || typeof item.path !== "string" || !path.isAbsolute(item.path)) continue
-          // References are structured body nodes; attachments need an explicit
-          // body mention of this exact resource. Never discover arbitrary paths.
-          if (key === "titleAttachments" && !text.includes(item.path)) continue
-          if (!references.some(ref => ref.path === item.path)) references.push({ name: item.name, path: item.path })
-        }
-      }
-    }
     return text ? [text] : []
   })
   const text = chunks.join("\n").trim()
+  for (const part of parts) {
+    if (part.type !== "file" || part.synthetic || part.ignored || part.metadata?.origin || (part.metadata?.titleOrigin !== undefined && !["user", "path"].includes(String(part.metadata.titleOrigin)))) continue
+    if (!part.mime || !/^(?:text\/|application\/(?:json|xml|javascript)(?:$|;))/.test(part.mime)) continue
+    const filename = localAttachmentPath(part)
+    if (!filename || !path.isAbsolute(filename)) continue
+    const name = part.filename?.trim() || path.basename(filename)
+    if (!text.includes(filename) && !(part.url && text.includes(part.url)) && !text.includes(name)) continue
+    if (!references.some(ref => ref.path === filename)) references.push({ name, path: filename })
+  }
   const first = text.split("\n").map(line => line.trim()).find(Boolean)
   return { text, fallback: first ? truncateTitle(first) : attachments.length ? truncateTitle(attachments.join(", ")) : "Untitled", hasInput: Boolean(text) || attachments.length > 0, canGenerate: /\p{L}/u.test(text), ...(references.length ? { references } : {}) }
 }
@@ -2631,6 +2639,10 @@ NOTE: At any point in time through this workflow you should feel free to ask the
               log.info("file", { mime: part.mime })
               const filepath = fileURLToPath(part.url)
               if (yield* fsys.isDir(filepath)) part.mime = "application/x-directory"
+
+              if (part.mime !== "text/plain" && part.mime !== "application/x-directory" && part.mime !== "application/pdf" && !/^(?:image|audio|video)\//.test(part.mime)) {
+                return [{ ...part, messageID: info.id, sessionID: input.sessionID }]
+              }
 
               const { read } = yield* registry.named()
               const execRead = (args: Parameters<typeof read.execute>[0], extra?: Tool.Context["extra"]) => {

@@ -5,7 +5,6 @@ import { normalizeTitleInput, sanitizeGeneratedTitle, titlePromptText } from "..
 test("one input normalizer preserves user paths and strips only confirmed scaffolding", () => {
   const input = [
     { type: "text", text: "ses_secret Reference preview", metadata: { titleOrigin: "reference" } },
-    { type: "text", text: "scheduled instructions", metadata: { titleOrigin: "scheduled" } },
     { type: "text", text: "assistant instruction", synthetic: true },
     { type: "text", text: "ignored instruction", ignored: true },
     {
@@ -61,11 +60,9 @@ test("structured attachment names supply fallback without treating a host placeh
     {
       type: "text",
       text: "(见附件)",
-      metadata: {
-        titleOrigin: "attachment-placeholder",
-        titleAttachments: [{ name: "研究报告.pdf", path: "/private/report.pdf" }],
-      },
+      synthetic: true,
     },
+    { type: "file", filename: "研究报告.pdf", url: "file:///private/report.pdf" },
   ]
   const before = JSON.stringify(input)
   expect(normalizeTitleInput(input)).toEqual({ text: "", fallback: "研究报告.pdf", hasInput: true, canGenerate: false })
@@ -91,34 +88,29 @@ test("structured attachment names supply fallback without treating a host placeh
     hasInput: true,
     canGenerate: true,
   })
-  expect(
-    normalizeTitleInput([{ type: "text", text: "(见附件)", metadata: { titleOrigin: "attachment-placeholder" } }])
-      .fallback,
-  ).toBe("Untitled")
-  expect(
-    normalizeTitleInput([{ type: "text", text: "分析预算", metadata: { titleAttachments: [{ name: "budget.xlsx" }] } }])
-      .fallback,
-  ).toBe("分析预算")
-  expect(
-    normalizeTitleInput([
-      {
-        type: "text",
-        text: "",
-        metadata: { titleAttachments: [{ path: "/secret/no-name.pdf" }, { name: " " }, null, "not-a-record"] },
-      },
-    ]).fallback,
-  ).toBe("Untitled")
+  expect(normalizeTitleInput([{ type: "text", text: "(见附件)", synthetic: true }]).fallback).toBe("Untitled")
+  expect(normalizeTitleInput([{ type: "text", text: "分析预算" }, { type: "file", filename: "budget.xlsx" }]).fallback).toBe("分析预算")
+  expect(normalizeTitleInput([{ type: "file", filename: " " }, { type: "file" }]).fallback).toBe("Untitled")
   expect(normalizeTitleInput([{ type: "file", filename: "hidden.pdf", synthetic: true }]).fallback).toBe("Untitled")
+  expect(normalizeTitleInput([{ type: "file", url: "file:///fixture/report%20one.pdf" }]).fallback).toBe("report one.pdf")
 })
 
-test("paste excerpts and explicitly referenced attachment paths provide bounded title evidence", () => {
-  expect(normalizeTitleInput([{ type: "text", text: "", metadata: { titleOrigin: "paste", titleExcerpt: "Investigate queue latency" } }]).text).toBe("Investigate queue latency")
-  expect(normalizeTitleInput([{ type: "text", text: "", metadata: { titleExcerpt: "not paste" } }]).text).toBe("")
-  const ref = { name: "notes", path: "/fixture/notes.txt" }
-  expect(normalizeTitleInput([{ type: "text", text: "Review [notes](/fixture/notes.txt)", metadata: { titleAttachments: [ref] } }]).references).toEqual([ref])
-  expect(normalizeTitleInput([{ type: "text", text: "Review notes", metadata: { titleAttachments: [ref] } }]).references).toBeUndefined()
-  expect(normalizeTitleInput([{ type: "text", text: "Review notes", metadata: { titleReferences: [ref] } }]).references).toEqual([ref])
-  expect(normalizeTitleInput([{ type: "text", text: "Review notes", metadata: { titleOrigin: "forwarded", titleReferences: [ref], titleExcerpt: "not allowed" } }]).canGenerate).toBe(false)
+test("explicitly mentioned FileParts provide local title references only", () => {
+  const file = { type: "file", mime: "text/plain", filename: "notes.txt", url: "file:///fixture/notes.txt" }
+  const ref = { name: "notes.txt", path: "/fixture/notes.txt" }
+  expect(normalizeTitleInput([{ type: "text", text: "Review [notes](/fixture/notes.txt)" }, file]).references).toEqual([ref])
+  expect(normalizeTitleInput([{ type: "text", text: "Review notes.txt" }, file]).references).toEqual([ref])
+  expect(normalizeTitleInput([{ type: "text", text: "Review notes" }, file]).references).toBeUndefined()
+  expect(normalizeTitleInput([{ type: "text", text: "Review notes.txt" }, { ...file, url: "data:text/plain;base64,c2VjcmV0", source: { type: "file", path: ref.path } }]).references).toEqual([ref])
+  expect(normalizeTitleInput([{ type: "text", text: "Review notes.txt" }, { ...file, url: "data:text/plain;base64,c2VjcmV0" }]).references).toBeUndefined()
+  for (const mime of ["image/png", "image/svg+xml", "application/pdf", "audio/wav", "video/mp4", "application/octet-stream"]) {
+    expect(normalizeTitleInput([{ type: "text", text: "Review notes.txt" }, { ...file, mime, source: { type: "file", path: ref.path } }]).references).toBeUndefined()
+  }
+  expect(normalizeTitleInput([{ type: "text", text: "Review notes.txt" }, { ...file, source: { type: "file", path: "/other/notes.txt" } }]).references).toBeUndefined()
+  expect(normalizeTitleInput([{ type: "text", text: "Review notes.txt" }, { ...file, source: { type: "resource", uri: "remote://notes" } }]).references).toBeUndefined()
+  for (const origin of ["scheduled", "forwarded"]) {
+    expect(normalizeTitleInput([{ type: "text", text: "Review notes.txt", metadata: { titleOrigin: origin } }, file])).toMatchObject({ hasInput: false, canGenerate: false, fallback: "Untitled" })
+  }
 })
 
 // [TP-ST-R9-02] Validation precedes persistence; malformed output never owns a title.

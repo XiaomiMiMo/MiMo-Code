@@ -2,6 +2,7 @@ import { expect, spyOn, test } from "bun:test"
 import { Database, sql } from "../../src/storage"
 import { Effect } from "effect"
 import path from "node:path"
+import { pathToFileURL } from "node:url"
 import { Instance } from "../../src/project/instance"
 import { Session } from "../../src/session"
 import { Command } from "../../src/command"
@@ -158,15 +159,16 @@ test("fallback commits before detached lite request; duplicate receipt and later
         expect((await run(Session.Service.use((svc) => svc.get(numeric.id)))).title).toBe("12345 😀")
         expect(captured).toHaveLength(2)
         const attachment = await run(Session.Service.use((svc) => svc.create()))
-        await run(SessionPrompt.Service.use((svc) => svc.prompt({
+        const binary = path.join(tmp.path, "MiMo-AI-latest-arm64.dmg")
+        await Bun.write(binary, Buffer.alloc(32 * 1024 * 1024, 0))
+        const attached = await run(SessionPrompt.Service.use((svc) => svc.prompt({
           ...input,
           sessionID: attachment.id,
           messageID: MessageID.ascending(),
-          parts: [{ type: "text", text: "(见附件)", metadata: {
-            titleOrigin: "attachment-placeholder",
-            titleAttachments: [{ name: "MiMo-AI-latest-arm64.dmg", path: "/fixture/MiMo-AI-latest-arm64.dmg" }],
-          } }],
+          parts: [{ type: "text", text: "(见附件)", synthetic: true }, { type: "file", filename: path.basename(binary), mime: "application/x-apple-diskimage", url: pathToFileURL(binary).href }],
         })))
+        expect(attached.parts.filter(part => part.type === "file")).toMatchObject([{ url: pathToFileURL(binary).href }])
+        expect(JSON.stringify(attached.parts).length).toBeLessThan(4096)
         expect(await run(Session.Service.use((svc) => svc.get(attachment.id)))).toMatchObject({
           title: "MiMo-AI-latest-arm64.dmg", titleSource: "fallback", titleRevision: 1,
         })
@@ -311,7 +313,7 @@ test("ephemeral lite reads a referenced fixture then emits StructuredOutput with
     await Instance.provide({ directory: tmp.path, fn: async () => {
       const run = AppRuntime.runPromise
       const session = await run(Session.Service.use(svc => svc.create()))
-      await run(SessionPrompt.Service.use(svc => svc.prompt({ sessionID: session.id, noReply: true, model: { providerID: ProviderID.make("fixture"), modelID: ModelID.make("text") }, parts: [{ type: "text", text: `Analyze [notes](${resource})`, metadata: { titleAttachments: [{ name: "notes.txt", path: resource }] } }] })))
+      await run(SessionPrompt.Service.use(svc => svc.prompt({ sessionID: session.id, noReply: true, model: { providerID: ProviderID.make("fixture"), modelID: ModelID.make("text") }, parts: [{ type: "text", text: `Analyze [notes](${resource})` }, { type: "file", filename: "notes.txt", mime: "text/plain", url: pathToFileURL(resource).href }] })))
       await until(async () => (await run(Session.Service.use(svc => svc.get(session.id)))).titleSource === "generated")
       expect(captured).toHaveLength(2)
       expect(captured[0].tools.map(tool => tool.function.name).sort()).toEqual(["StructuredOutput", "read"])
@@ -325,7 +327,7 @@ test("ephemeral lite reads a referenced fixture then emits StructuredOutput with
         expect(captured.at(-1)!.tools.map(tool => tool.function.name)).not.toContain("read")
       }
       const restricted = await run(Session.Service.use(svc => svc.create()))
-      await run(SessionPrompt.Service.use(svc => svc.prompt({ sessionID: restricted.id, noReply: true, tools: { read: false }, model: { providerID: ProviderID.make("fixture"), modelID: ModelID.make("text") }, parts: [{ type: "text", text: `Analyze ${resource}`, metadata: { titleAttachments: [{ name: "notes.txt", path: resource }] } }] })))
+      await run(SessionPrompt.Service.use(svc => svc.prompt({ sessionID: restricted.id, noReply: true, tools: { read: false }, model: { providerID: ProviderID.make("fixture"), modelID: ModelID.make("text") }, parts: [{ type: "text", text: `Analyze ${resource}` }, { type: "file", filename: "notes.txt", mime: "text/plain", url: pathToFileURL(resource).href }] })))
       await until(async () => (await run(Session.Service.use(svc => svc.get(restricted.id)))).titleSource === "generated")
       expect(captured.at(-1)!.tools.map(tool => tool.function.name)).not.toContain("read")
       await run(Session.Service.use(svc => svc.setPermission({ sessionID: session.id, permission: [{ permission: "read", pattern: "*", action: "deny" }] })))
