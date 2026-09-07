@@ -1,5 +1,5 @@
 import { afterEach, expect, test } from "bun:test"
-import { Deferred, Effect } from "effect"
+import { Deferred, Effect, Fiber } from "effect"
 import path from "node:path"
 import { pathToFileURL } from "node:url"
 import { tmpdir } from "../fixture/fixture"
@@ -18,6 +18,154 @@ import { AppRuntime } from "../../src/effect/app-runtime"
 import { startScriptedLLMServer, textStopResponse } from "../lib/scripted-llm-server"
 
 afterEach(() => Instance.disposeAll())
+
+// Desktop tool-step-schema [TP-R14-07] [TP-R14-11].
+test("a pending wait receives a preStop failure's partial delivery before terminal publication", async () => {
+  const entered = Promise.withResolvers<void>()
+  const release = Promise.withResolvers<void>()
+  const server = startScriptedLLMServer([
+    { lines: textStopResponse("PRESERVED-MAIN-RESULT") },
+    {
+      lines: [],
+      status: 400,
+      beforeReply: async () => {
+        entered.resolve()
+        await release.promise
+      },
+    },
+  ])
+  await using tmp = await tmpdir({
+    git: true,
+    init: async (dir) => {
+      const hook = path.join(dir, "hook.ts")
+      await Bun.write(
+        hook,
+        `export default async () => ({ 'actor.preStop': async (input, output) => { if (input.iteration === 0) { output.continue = true; output.reason = 'required verification'; } } });`,
+      )
+      await Bun.write(
+        path.join(dir, "mimocode.json"),
+        JSON.stringify({
+          plugin: [pathToFileURL(hook).href],
+          enabled_providers: ["alibaba"],
+          provider: { alibaba: { options: { apiKey: "test-key", baseURL: `${server.origin}/v1` } } },
+          agent: { custom: { model: "alibaba/qwen-plus" } },
+        }),
+      )
+    },
+  })
+  try {
+    await Instance.provide({
+      directory: tmp.path,
+      fn: () =>
+        AppRuntime.runPromise(
+          Effect.gen(function* () {
+            const actors = yield* Actor.Service
+            const sessions = yield* Session.Service
+            const registry = yield* ActorRegistry.Service
+            const parent = yield* sessions.create({ title: "partial delivery" })
+            const child = yield* actors.spawn({
+              mode: "subagent",
+              sessionID: parent.id,
+              agentType: "custom",
+              task: "work",
+              context: "none",
+              tools: [],
+              background: true,
+            })
+            yield* Effect.promise(() => entered.promise)
+            const pending = yield* ActorWaiter.Service.use((waiter) =>
+              waiter.wait({ sessionID: child.sessionID, actor_id: child.actorID, timeout_ms: 10000 }),
+            ).pipe(Effect.provide(ActorWaiter.layer), Effect.forkChild)
+            yield* Effect.sleep("25 millis")
+            const start = Date.now()
+            release.resolve()
+            const waited = yield* Fiber.join(pending)
+            expect(Date.now() - start).toBeLessThan(8000)
+            expect(waited.lastOutcome).toBe("failure")
+            expect(waited.result).toBe("PRESERVED-MAIN-RESULT")
+            expect(waited.error).toBeDefined()
+            const outcome = yield* Deferred.await(child.outcome)
+            expect(outcome.status).toBe("failure")
+            if (outcome.status === "failure") expect(outcome.finalText).toBe(waited.result)
+            expect((yield* registry.get(child.sessionID, child.actorID))?.resultMessageID).toBeDefined()
+          }).pipe(Effect.scoped),
+        ),
+    })
+  } finally {
+    release.resolve()
+    await server.stop()
+  }
+}, 30000)
+
+for (const scenario of [
+  { reported: "failed", taskStatus: "done", expected: "failed" },
+  { reported: "blocked", taskStatus: "done", expected: "blocked" },
+  { reported: "success", taskStatus: "done", expected: "partial" },
+  { reported: undefined, taskStatus: "done", expected: "partial" },
+  { reported: "success", taskStatus: "blocked", expected: "blocked" },
+] as const) {
+  test(`[TP-R14-07] gate failure preserves status priority: ${scenario.reported}/${scenario.taskStatus}`, async () => {
+    let settleTask: () => Promise<unknown> = async () => undefined
+    const server = startScriptedLLMServer([
+      { lines: textStopResponse(`${scenario.reported ? `**Status**: ${scenario.reported}\n` : ""}MAIN-RESULT`) },
+      { lines: [], status: 400, beforeReply: () => settleTask() },
+    ])
+    await using tmp = await tmpdir({
+      git: true,
+      config: {
+        enabled_providers: ["alibaba"],
+        provider: { alibaba: { options: { apiKey: "test-key", baseURL: `${server.origin}/v1` } } },
+        agent: {
+          custom: { model: "alibaba/qwen-plus", mode: "subagent", completionGate: true, permission: { "*": "deny" } },
+        },
+      },
+    })
+    try {
+      await Instance.provide({
+        directory: tmp.path,
+        fn: () =>
+          AppRuntime.runPromise(
+            Effect.gen(function* () {
+              const actors = yield* Actor.Service
+              const sessions = yield* Session.Service
+              const tasks = yield* TaskRegistry.Service
+              const parent = yield* sessions.create({ title: "gate priority" })
+              const task = yield* tasks.create({ session_id: parent.id, summary: "concurrently settled task" })
+              settleTask = () =>
+                Instance.provide({
+                  directory: tmp.path,
+                  fn: () =>
+                    AppRuntime.runPromise(
+                      scenario.taskStatus === "done"
+                        ? tasks.done({ session_id: parent.id, id: task.id })
+                        : tasks.block({ session_id: parent.id, id: task.id }),
+                    ),
+                })
+              const child = yield* actors.spawn({
+                mode: "subagent",
+                sessionID: parent.id,
+                agentType: "custom",
+                task: "work",
+                task_id: task.id,
+                context: "none",
+                tools: [],
+                background: false,
+              })
+              const outcome = yield* Deferred.await(child.outcome)
+              expect(outcome.status).toBe("success")
+              if (outcome.status === "success") {
+                expect(outcome.reportedStatus).toBe(scenario.expected)
+                expect(outcome.warnings?.join(" ")).toContain("completion gate")
+                expect(outcome.finalText).toContain("MAIN-RESULT")
+              }
+            }),
+          ),
+      })
+    } finally {
+      await server.stop()
+    }
+  }, 30000)
+}
 
 // Desktop tool-step-schema [TP-R14-07] [TP-R14-11].
 test("failed completion-gate reentry preserves the result without reporting task success", async () => {

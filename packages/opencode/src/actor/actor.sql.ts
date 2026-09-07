@@ -15,6 +15,7 @@ export const ActorRegistryTable = sqliteTable(
     parent_actor_id: text(),
     status: text().$type<"pending" | "running" | "idle">().notNull(),
     last_outcome: text().$type<"success" | "failure" | "cancelled">(),
+    result_message_id: text().$type<MessageID>(),
     lifecycle: text().$type<"ephemeral" | "persistent">().notNull(),
     agent: text().notNull(),
     description: text().notNull(),

@@ -5,6 +5,7 @@ import { Session as SessionNs } from "../../src/session"
 import { SessionID, MessageID, PartID } from "../../src/session/schema"
 import { ActorRegistry } from "../../src/actor/registry"
 import { ActorWaiter } from "../../src/actor/waiter"
+import { runTurn } from "../../src/actor/turn"
 import { Instance } from "../../src/project/instance"
 import { provideTmpdirInstance } from "../fixture/fixture"
 import { testEffect } from "../lib/effect"
@@ -77,6 +78,90 @@ const seedAssistantText = (sessionID: SessionID, actorID: string, text: string) 
   })
 
 describe("ActorWaiter — lifecycle predicate (Plan 3 / Task 3)", () => {
+  it.live(
+    "[TP-R14-11] failure reads the referenced structured delivery rather than newer text",
+    provideTmpdirInstance(() =>
+      Effect.gen(function* () {
+        const sessions = yield* SessionNs.Service
+        const registry = yield* ActorRegistry.Service
+        const waiter = yield* ActorWaiter.Service
+        const parent = yield* sessions.create({ title: "structured partial" })
+        yield* registry.register({
+          sessionID: parent.id,
+          actorID: "child",
+          mode: "subagent",
+          agent: "general",
+          description: "child",
+          contextMode: "none",
+          background: true,
+          lifecycle: "ephemeral",
+        })
+        yield* seedAssistantText(parent.id, "child", "raw text")
+        const delivery = (yield* sessions.messages({ sessionID: parent.id, agentID: "child" })).findLast(
+          (m) => m.info.role === "assistant",
+        )!
+        if (delivery.info.role !== "assistant") throw new Error("missing assistant")
+        yield* sessions.updateMessage({ ...delivery.info, actorResult: { structured: { answer: 42 } } })
+        yield* seedAssistantText(parent.id, "child", "UNRELATED-NEWER-TEXT")
+        yield* registry.updateStatus(parent.id, "child", {
+          status: "idle",
+          lastOutcome: "failure",
+          lastError: "verification failed",
+          resultMessageID: delivery.info.id,
+        })
+        const snapshot = yield* waiter.wait({ sessionID: parent.id, actor_id: "child" })
+        expect(snapshot.lastOutcome).toBe("failure")
+        expect(snapshot.structured).toEqual({ answer: 42 })
+        expect(snapshot.result).toBeUndefined()
+      }),
+    ),
+  )
+  for (const previousOutcome of ["success", "failure"] as const) {
+    it.live(
+      `[TP-R14-11] failure without output does not reuse a previous ${previousOutcome} delivery`,
+      provideTmpdirInstance(() =>
+        Effect.gen(function* () {
+          const sessions = yield* SessionNs.Service
+          const registry = yield* ActorRegistry.Service
+          const waiter = yield* ActorWaiter.Service
+          const parent = yield* sessions.create({ title: "delivery isolation" })
+          yield* registry.register({
+            sessionID: parent.id,
+            actorID: "child",
+            mode: "subagent",
+            agent: "general",
+            description: "child",
+            contextMode: "none",
+            background: true,
+            lifecycle: "ephemeral",
+          })
+          yield* seedAssistantText(parent.id, "child", "OLD-RESULT")
+          const message = (yield* sessions.messages({ sessionID: parent.id, agentID: "child" })).findLast(
+            (m) => m.info.role === "assistant",
+          )!
+          if (message.info.role !== "assistant") throw new Error("missing assistant")
+          yield* sessions.updateMessage({ ...message.info, actorResult: { finalText: "OLD-RESULT" } })
+          yield* registry.updateStatus(parent.id, "child", {
+            status: "idle",
+            lastOutcome: previousOutcome,
+            resultMessageID: message.info.id,
+          })
+          expect((yield* waiter.wait({ sessionID: parent.id, actor_id: "child" })).result).toBe("OLD-RESULT")
+          yield* runTurn(parent.id, "child", Effect.fail("CURRENT-FAILURE")).pipe(Effect.exit)
+          const current = yield* waiter.wait({ sessionID: parent.id, actor_id: "child" })
+          expect(current.lastOutcome).toBe("failure")
+          expect(current.error).toContain("CURRENT-FAILURE")
+          expect(current.result).toBeUndefined()
+          expect(current.structured).toBeUndefined()
+          expect((yield* registry.get(parent.id, "child"))?.resultMessageID).toBeUndefined()
+          const prior = (yield* sessions.messages({ sessionID: parent.id, agentID: "child" })).find(
+            (m) => m.info.id === message.info.id,
+          )!
+          if (prior.info.role === "assistant") expect(prior.info.actorResult?.finalText).toBe("OLD-RESULT")
+        }),
+      ),
+    )
+  }
   // Test 1: ephemeral idle/success → resolves with result from slice's last assistant
   it.live(
     "ephemeral idle/success resolves with result text from last assistant message",

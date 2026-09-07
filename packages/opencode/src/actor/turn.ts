@@ -1,11 +1,12 @@
 import { Cause, Effect, Exit } from "effect"
 import { ActorRegistry } from "@/actor/registry"
-import type { SessionID } from "@/session/schema"
+import type { SessionID, MessageID } from "@/session/schema"
 
 export const runTurn = <A, E>(
   sessionID: SessionID,
   actorID: string,
   work: Effect.Effect<A, E>,
+  settle?: (exit: Exit.Exit<A, E>) => Effect.Effect<MessageID | undefined>,
 ): Effect.Effect<A, E, ActorRegistry.Service> =>
   // Wrap the entire turn in Effect.uninterruptible so that status cleanup
   // always runs even when the fiber is externally interrupted (Fiber.interrupt).
@@ -18,13 +19,21 @@ export const runTurn = <A, E>(
       // Effect.exit captures the outcome without re-raising, letting us
       // write status unconditionally before propagating the cause.
       const exit: Exit.Exit<A, E> = yield* work.pipe(Effect.interruptible, Effect.exit)
-      // Write the outcome unconditionally before re-raising.
+      const resultMessageID = settle
+        ? yield* settle(exit).pipe(
+            Effect.catchCause((cause) =>
+              Effect.logError("actor delivery persistence failed", cause).pipe(Effect.as(undefined)),
+            ),
+          )
+        : undefined
+      // Persist delivery before publishing its reference; never reuse an older one.
       if (Exit.isSuccess(exit)) {
         yield* reg
           .updateStatus(sessionID, actorID, {
             status: "idle",
             lastOutcome: "success",
             lastError: undefined,
+            resultMessageID,
           })
           .pipe(Effect.ignore)
         return exit.value
@@ -36,6 +45,7 @@ export const runTurn = <A, E>(
           status: "idle",
           lastOutcome: cancelled ? "cancelled" : "failure",
           lastError: cancelled ? undefined : extractErrorString(cause),
+          resultMessageID,
         })
         .pipe(Effect.ignore)
       return yield* Effect.failCause(cause) as Effect.Effect<A, E>

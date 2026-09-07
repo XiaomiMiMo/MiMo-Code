@@ -593,6 +593,7 @@ export const dict = {
 
   // Session badges
   "tui.session.badge.auto": "自动",
+  "tui.session.actor_warning": "警告",
 
   // Context rebuild boundary marker (inserted by /rebuild)
   "tui.session.rebuild_boundary.label": "上下文已重建",

@@ -76,6 +76,7 @@ import { DialogSubagent } from "./dialog-subagent.tsx"
 import { isActorToolRunning } from "./actor-tool-state"
 import { Flag } from "@/flag/flag"
 import { parseActorNotification } from "@/inbox/render"
+import { ActorNotificationWarnings } from "./actor-notification-warnings"
 import { LANGUAGE_EXTENSIONS } from "@/lsp/language"
 import parsers from "../../../../../../parsers-config.ts"
 import * as Clipboard from "../../util/clipboard"
@@ -1703,6 +1704,7 @@ function UserMessage(props: {
                 <Show when={note().summary}>
                   <span style={{ fg: theme.textMuted }}> — {note().summary}</span>
                 </Show>
+                <ActorNotificationWarnings warnings={note().warnings} label={t("tui.session.actor_warning")} color={theme.warning} />
               </text>
             </box>
           )

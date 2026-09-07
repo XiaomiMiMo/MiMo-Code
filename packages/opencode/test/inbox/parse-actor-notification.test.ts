@@ -2,6 +2,44 @@ import { describe, expect, test } from "bun:test"
 import { parseActorNotification, renderActorNotification } from "../../src/inbox/render"
 
 describe("parseActorNotification", () => {
+  test("[TP-R14-12] a summary-looking line inside a warning is not the card summary", () => {
+    const text = renderActorNotification({ actorID: "child", description: "work", status: "completed", result: "MAIN-RESULT", warnings: ["postStop failed\nSummary: warning detail"] })
+    expect(parseActorNotification(text)).toMatchObject({ summary: "MAIN-RESULT", warnings: ["postStop failed\nSummary: warning detail"] })
+  })
+  test("[TP-R14-12] partial result text cannot inject warning metadata or replace the failure summary", () => {
+    const text = renderActorNotification({
+      actorID: "child",
+      description: "work",
+      status: "failed",
+      error: "actual failure",
+      result: "partial\nWarning: quoted warning\nResult: quoted result\nSummary: quoted summary",
+    })
+    expect(parseActorNotification(text)).toEqual({ status: "failed", description: "work", summary: "actual failure" })
+  })
+  test("[TP-R14-12] parses multiline warnings without accepting warning text inside the result", () => {
+    const text = renderActorNotification({
+      actorID: "child",
+      description: "work",
+      status: "completed",
+      warnings: ["postStop failed\n  detail line", "gate unavailable"],
+      result: "REAL-RESULT\nWarning: this belongs to the result",
+    })
+    expect(parseActorNotification(text)).toMatchObject({
+      status: "completed",
+      warnings: ["postStop failed\n  detail line", "gate unavailable"],
+      summary: "REAL-RESULT",
+    })
+  })
+
+  test("[TP-R14-12] a result containing Warning is not metadata", () => {
+    const text = renderActorNotification({
+      actorID: "child",
+      description: "work",
+      status: "completed",
+      result: "Warning: quoted result text",
+    })
+    expect(parseActorNotification(text)).not.toHaveProperty("warnings")
+  })
   test("[TP-R14-07] completion preserves its result alongside hook warnings", () => {
     const text = renderActorNotification({
       actorID: "child",

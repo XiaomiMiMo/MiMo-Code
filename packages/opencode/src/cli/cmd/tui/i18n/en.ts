@@ -573,6 +573,7 @@ export const dict: Record<string, string> = {
 
   // Session badges
   "tui.session.badge.auto": "Auto",
+  "tui.session.actor_warning": "Warning",
 
   // Context rebuild boundary marker (inserted by /rebuild)
   "tui.session.rebuild_boundary.label": "context rebuilt",

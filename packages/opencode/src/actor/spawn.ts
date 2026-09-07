@@ -653,7 +653,11 @@ export const layer = Layer.effect(
                     ? "blocked"
                     : undefined
                 const parsed = parseReturnHeader(deliveredText)
-                const reportedStatus = downgrade ?? (gateFailed ? "partial" : parsed.status)
+                const reportedStatus =
+                  downgrade ??
+                  (gateFailed && (parsed.status === undefined || parsed.status === "success")
+                    ? "partial"
+                    : parsed.status)
                 const incompleteTasks = remaining.map((t) => t.id)
                 const reconciledText =
                   downgrade && incompleteTasks.length
@@ -666,11 +670,6 @@ export const layer = Layer.effect(
                   ...(parsed.summary ? { reportedSummary: parsed.summary } : {}),
                   ...(warnings.length ? { warnings } : {}),
                 }
-                const messages = yield* session.messages({ sessionID: input.sessionID, agentID: input.actorID })
-                const last = messages.findLast((message) => message.info.role === "assistant")
-                if (last?.info.role === "assistant") {
-                  yield* session.updateMessage({ ...last.info, actorResult })
-                }
                 return {
                   status: "success" as const,
                   ...actorResult,
@@ -679,6 +678,28 @@ export const layer = Layer.effect(
               }),
             ),
           ),
+          (exit) =>
+            Effect.gen(function* () {
+              if (Exit.isFailure(exit) && Cause.hasInterruptsOnly(exit.cause)) return undefined
+              const result = Exit.isSuccess(exit) ? exit.value : lastResult
+              if (Exit.isFailure(exit) && result.finalText === undefined && result.structured === undefined)
+                return undefined
+              const messages = yield* session.messages({ sessionID: input.sessionID, agentID: input.actorID })
+              const last = messages.findLast((message) => message.info.role === "assistant")
+              if (last?.info.role !== "assistant") return undefined
+              yield* session.updateMessage({
+                ...last.info,
+                actorResult: {
+                  finalText: result.finalText,
+                  structured: result.structured,
+                  ...(Exit.isSuccess(exit)
+                    ? { reportedStatus: exit.value.reportedStatus, reportedSummary: exit.value.reportedSummary }
+                    : {}),
+                  ...(warnings.length ? { warnings } : {}),
+                },
+              })
+              return last.info.id
+            }),
         ).pipe(
           Effect.provideService(ActorRegistry.Service, actorReg),
           Effect.matchCauseEffect({

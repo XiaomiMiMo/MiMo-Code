@@ -4,7 +4,16 @@ import { Bus } from "@/bus"
 import type { SessionID, MessageID } from "@/session/schema"
 import { ActorRegistryTable } from "./actor.sql"
 import { SessionTable } from "@/session/session.sql"
-import type { Actor, ActorStatus, ActorOutcome, ContextMode, Lifecycle, SpawnMode, ToolWhitelist, Liveness } from "./schema"
+import type {
+  Actor,
+  ActorStatus,
+  ActorOutcome,
+  ContextMode,
+  Lifecycle,
+  SpawnMode,
+  ToolWhitelist,
+  Liveness,
+} from "./schema"
 import { deriveLiveness } from "./schema"
 import * as Events from "./events"
 import { SYSTEM_SPAWNED_AGENT_TYPES } from "@/agent/config"
@@ -26,6 +35,7 @@ function fromRow(row: ActorRow): Actor {
     parentActorID: row.parent_actor_id ?? undefined,
     status: row.status,
     lastOutcome: row.last_outcome ?? undefined,
+    ...(row.result_message_id ? { resultMessageID: row.result_message_id } : {}),
     lifecycle: row.lifecycle,
     agent: row.agent,
     description: row.description,
@@ -67,6 +77,7 @@ export interface Interface {
       status: ActorStatus
       lastOutcome?: ActorOutcome | undefined
       lastError?: string | undefined
+      resultMessageID?: MessageID | undefined
     },
   ) => Effect.Effect<void>
   readonly updateTurn: (sessionID: SessionID, actorID: string) => Effect.Effect<void>
@@ -131,6 +142,7 @@ export const layer: Layer.Layer<Service, never, Bus.Service> = Layer.effect(
         parent_actor_id: input.parentActorID ?? null,
         status: "pending" as const,
         last_outcome: null,
+        result_message_id: null,
         lifecycle: input.lifecycle,
         agent: input.agent,
         description: input.description,
@@ -170,6 +182,7 @@ export const layer: Layer.Layer<Service, never, Bus.Service> = Layer.effect(
         status: ActorStatus
         lastOutcome?: ActorOutcome | undefined
         lastError?: string | undefined
+        resultMessageID?: MessageID | undefined
       },
     ) {
       const now = Date.now()
@@ -177,7 +190,8 @@ export const layer: Layer.Layer<Service, never, Bus.Service> = Layer.effect(
       const set: Record<string, unknown> = {
         status: patch.status,
         time_updated: now,
-        ...(isTerminal ? { time_completed: now } : {}),
+        ...(isTerminal ? { time_completed: now, result_message_id: patch.resultMessageID ?? null } : {}),
+        ...(patch.status === "running" ? { result_message_id: null } : {}),
       }
       if (patch.lastOutcome !== undefined) set.last_outcome = patch.lastOutcome
       if (patch.lastError !== undefined) set.last_error = patch.lastError
@@ -187,9 +201,7 @@ export const layer: Layer.Layer<Service, never, Bus.Service> = Layer.effect(
           db
             .update(ActorRegistryTable)
             .set(set)
-            .where(
-              and(eq(ActorRegistryTable.session_id, sessionID), eq(ActorRegistryTable.actor_id, actorID)),
-            )
+            .where(and(eq(ActorRegistryTable.session_id, sessionID), eq(ActorRegistryTable.actor_id, actorID)))
             .run(),
         ),
       )
@@ -201,9 +213,7 @@ export const layer: Layer.Layer<Service, never, Bus.Service> = Layer.effect(
           db
             .select()
             .from(ActorRegistryTable)
-            .where(
-              and(eq(ActorRegistryTable.session_id, sessionID), eq(ActorRegistryTable.actor_id, actorID)),
-            )
+            .where(and(eq(ActorRegistryTable.session_id, sessionID), eq(ActorRegistryTable.actor_id, actorID)))
             .get(),
         ),
       )
@@ -230,9 +240,7 @@ export const layer: Layer.Layer<Service, never, Bus.Service> = Layer.effect(
               turn_count: sql`${ActorRegistryTable.turn_count} + 1`,
               time_updated: now,
             })
-            .where(
-              and(eq(ActorRegistryTable.session_id, sessionID), eq(ActorRegistryTable.actor_id, actorID)),
-            )
+            .where(and(eq(ActorRegistryTable.session_id, sessionID), eq(ActorRegistryTable.actor_id, actorID)))
             .run(),
         ),
       )
@@ -248,9 +256,7 @@ export const layer: Layer.Layer<Service, never, Bus.Service> = Layer.effect(
           db
             .update(ActorRegistryTable)
             .set({ agent, time_updated: Date.now() })
-            .where(
-              and(eq(ActorRegistryTable.session_id, sessionID), eq(ActorRegistryTable.actor_id, actorID)),
-            )
+            .where(and(eq(ActorRegistryTable.session_id, sessionID), eq(ActorRegistryTable.actor_id, actorID)))
             .run(),
         ),
       )
@@ -262,9 +268,7 @@ export const layer: Layer.Layer<Service, never, Bus.Service> = Layer.effect(
           db
             .select()
             .from(ActorRegistryTable)
-            .where(
-              and(eq(ActorRegistryTable.session_id, sessionID), eq(ActorRegistryTable.actor_id, actorID)),
-            )
+            .where(and(eq(ActorRegistryTable.session_id, sessionID), eq(ActorRegistryTable.actor_id, actorID)))
             .get(),
         ),
       )
@@ -297,10 +301,7 @@ export const layer: Layer.Layer<Service, never, Bus.Service> = Layer.effect(
             .select()
             .from(ActorRegistryTable)
             .where(
-              and(
-                inArray(ActorRegistryTable.status, ["pending", "running"]),
-                eq(ActorRegistryTable.background, true),
-              ),
+              and(inArray(ActorRegistryTable.status, ["pending", "running"]), eq(ActorRegistryTable.background, true)),
             )
             .all(),
         ),
@@ -318,10 +319,7 @@ export const layer: Layer.Layer<Service, never, Bus.Service> = Layer.effect(
             .select()
             .from(ActorRegistryTable)
             .where(
-              and(
-                eq(ActorRegistryTable.session_id, sessionID),
-                eq(ActorRegistryTable.parent_actor_id, parentActorID),
-              ),
+              and(eq(ActorRegistryTable.session_id, sessionID), eq(ActorRegistryTable.parent_actor_id, parentActorID)),
             )
             .all(),
         ),
@@ -361,7 +359,9 @@ export const layer: Layer.Layer<Service, never, Bus.Service> = Layer.effect(
 
     const renderForAgent = Effect.fn("ActorRegistry.renderForAgent")(function* (sessionID: SessionID) {
       const actors = yield* listBySession(sessionID)
-      const active = actors.filter((actor) => actor.background && (actor.status === "pending" || actor.status === "running"))
+      const active = actors.filter(
+        (actor) => actor.background && (actor.status === "pending" || actor.status === "running"),
+      )
       if (active.length === 0) return ""
 
       const lines: string[] = []
@@ -380,10 +380,7 @@ export const layer: Layer.Layer<Service, never, Bus.Service> = Layer.effect(
       return lines.join("\n")
     })
 
-    const agentTypeFor = Effect.fn("ActorRegistry.agentTypeFor")(function* (
-      sessionID: SessionID,
-      actorID: string,
-    ) {
+    const agentTypeFor = Effect.fn("ActorRegistry.agentTypeFor")(function* (sessionID: SessionID, actorID: string) {
       if (actorID === "main") return "main"
       const actor = yield* get(sessionID, actorID)
       return actor?.agent ?? "main"
@@ -457,12 +454,7 @@ export const layer: Layer.Layer<Service, never, Bus.Service> = Layer.effect(
           db
             .select()
             .from(ActorRegistryTable)
-            .where(
-              and(
-                eq(ActorRegistryTable.status, "running"),
-                lte(ActorRegistryTable.last_turn_time, cutoff),
-              ),
-            )
+            .where(and(eq(ActorRegistryTable.status, "running"), lte(ActorRegistryTable.last_turn_time, cutoff)))
             .all(),
         ),
       )
@@ -479,11 +471,7 @@ export const layer: Layer.Layer<Service, never, Bus.Service> = Layer.effect(
     })
 
     // Fork stuck detection fiber in the layer scope
-    yield* scanStuck.pipe(
-      Effect.repeat(Schedule.fixed(SCAN_INTERVAL_MS)),
-      Effect.ignore,
-      Effect.forkScoped,
-    )
+    yield* scanStuck.pipe(Effect.repeat(Schedule.fixed(SCAN_INTERVAL_MS)), Effect.ignore, Effect.forkScoped)
 
     return Service.of({
       register,

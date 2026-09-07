@@ -21,9 +21,7 @@ export function renderInboxRow(row: InboxRow): string {
   // the LLM can route by sender; the wrapper format mirrors the
   // <actor-notification> convention from the legacy completion.ts.
   const content = row.content as { text?: string }
-  const sender = row.sender_session_id
-    ? `${row.sender_session_id}:${row.sender_actor_id ?? "?"}`
-    : "system"
+  const sender = row.sender_session_id ? `${row.sender_session_id}:${row.sender_actor_id ?? "?"}` : "system"
   const sentAt = new Date(row.created_at).toISOString()
   return `<inbox from="${sender}" sent_at="${sentAt}">\n${blankTo(content.text, "(empty)")}\n</inbox>`
 }
@@ -95,6 +93,7 @@ export type ParsedActorNotification = {
   status: "completed" | "failed" | "cancelled" | "stalled" | "ended"
   description: string
   summary?: string
+  warnings?: string[]
 }
 
 // Inverse of renderActorNotification: recover the structured fields from the
@@ -130,9 +129,18 @@ export function parseActorNotification(text: string): ParsedActorNotification | 
   // line, so restrict the Summary match to the region before the first
   // "Result:" line — otherwise a `Summary:`-prefixed line inside the Result
   // body would be mistaken for the notification's own summary.
-  const resultIdx = text.search(/^Result:/m)
+  const resultIdx = text.search(/^(?:Result|Partial result):/m)
   const beforeResult = resultIdx === -1 ? text : text.slice(0, resultIdx)
   const line = (label: string, scope: string) => scope.match(new RegExp(`^${label}:\\s*(.+)$`, "m"))?.[1]?.trim()
-  const summary = line("Summary", beforeResult) ?? line("Result", text) ?? line("Error", text)
-  return summary ? { status, description, summary } : { status, description }
+  const resultSummary =
+    resultIdx !== -1 && text.slice(resultIdx).startsWith("Result:") ? line("Result", text.slice(resultIdx)) : undefined
+  const warningIdx = beforeResult.search(/^Warning:/m)
+  const metadataHeader = warningIdx === -1 ? beforeResult : beforeResult.slice(0, warningIdx)
+  const summary = line("Summary", metadataHeader) ?? resultSummary ?? line("Error", metadataHeader)
+  const warnings = beforeResult
+    .split(/^Warning:[ \t]*/m)
+    .slice(1)
+    .map((warning) => warning.replace(/\n<\/actor-notification>\s*$/, "").trim())
+    .filter(Boolean)
+  return { status, description, ...(summary ? { summary } : {}), ...(warnings.length ? { warnings } : {}) }
 }
