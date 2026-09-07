@@ -131,8 +131,8 @@ function basePart(messageID: string, id: string) {
 }
 
 describe("session.message-v2.toModelMessage", () => {
-  test("local binary references become path text instead of provider uploads", async () => {
-    for (const mime of ["application/x-apple-diskimage", "application/vnd.openxmlformats-officedocument.wordprocessingml.document", "application/octet-stream"]) {
+  test("local binary and structured text references become paths instead of uploads", async () => {
+    for (const mime of ["application/x-apple-diskimage", "application/vnd.openxmlformats-officedocument.wordprocessingml.document", "application/octet-stream", "text/csv", "application/json"]) {
       const messages = await MessageV2.toModelMessages([{ info: userInfo("local-file"), parts: [{ ...basePart("local-file", "binary"), type: "file", filename: "fixture file", mime, url: "file:///fixture/local%20file" }] }], model)
       expect(messages).toEqual([{ role: "user", content: [{ type: "text", text: "[Attached local file: /fixture/local file]" }] }])
     }

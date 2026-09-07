@@ -307,11 +307,17 @@ function localAttachmentPath(part: { url?: string; source?: unknown }) {
   return original && path.isAbsolute(original) ? original : undefined
 }
 
+function containsPathToken(text: string, value: string) {
+  const delimiter = (char: string | undefined) => char === undefined || /[\s"'`()\[\]{}<>]/u.test(char)
+  for (let at = text.indexOf(value); at !== -1; at = text.indexOf(value, at + value.length)) {
+    if (delimiter(at === 0 ? undefined : text[at - 1]) && delimiter(text[at + value.length])) return true
+  }
+  return false
+}
+
 // Derive automatic title input from the persisted user message.
 export function normalizeTitleInput(parts: readonly { type: string; text?: string; filename?: string; mime?: string; url?: string; source?: unknown; synthetic?: boolean; ignored?: boolean; metadata?: Record<string, unknown> }[], registered: readonly string[] = []) {
-  if (parts.some(part => part.type === "text" && (["scheduled", "forwarded"].includes(String(part.metadata?.titleOrigin)) || /^\s*<(?:inbox|scheduled-task)\b/i.test(part.text ?? "")))) {
-    return { text: "", fallback: "Untitled", hasInput: false, canGenerate: false }
-  }
+  const hasEnvelope = parts.some(part => part.type === "text" && (["scheduled", "forwarded"].includes(String(part.metadata?.titleOrigin)) || /^\s*<(?:inbox|scheduled-task)\b/i.test(part.text ?? "")))
   // Names are deterministic fallback data only. Never read paths or append names
   // to the text supplied to lite; host placeholders are excluded by provenance.
   const attachments = [...new Set(parts.flatMap(part => {
@@ -325,6 +331,7 @@ export function normalizeTitleInput(parts: readonly { type: string; text?: strin
     return name ? [name] : []
   }))]
   const references: TitleReference[] = []
+  const sourceTexts: { raw: string; offset: number; text: string }[] = []
   const chunks = parts.flatMap(part => {
     if (part.type !== "text" || part.synthetic || part.ignored) return []
     const origin = part.metadata?.titleOrigin
@@ -332,7 +339,9 @@ export function normalizeTitleInput(parts: readonly { type: string; text?: strin
     if (part.metadata?.origin && origin === undefined) return []
     const raw = origin === "command" ? part.metadata?.titleUserText : part.text
     if (typeof raw !== "string") return []
-    let text = raw.replace(/\r\n?/g, "\n").trim()
+    const normalized = raw.replace(/\r\n?/g, "\n")
+    let text = normalized.trim()
+    let offset = normalized.length - normalized.trimStart().length
     // Unknown host envelopes are not ordinary prose. Do not send them to AI.
     if (origin === undefined && /^\s*<(?:system-reminder|inbox|session-context|scheduled-task)\b/i.test(text)) return []
     const prefixes = part.metadata?.titleCommandPrefixes
@@ -341,19 +350,31 @@ export function normalizeTitleInput(parts: readonly { type: string; text?: strin
         if (typeof name !== "string" || !registered.includes(name)) break
         const token = `/${name}`
         if (text !== token && !text.startsWith(token + "\n") && !text.startsWith(token + " ")) break
-        text = text.slice(token.length).trimStart()
+        const rest = text.slice(token.length).trimStart()
+        offset += text.length - rest.length
+        text = rest
       }
     }
+    if (text) sourceTexts.push({ raw, offset, text })
     return text ? [text] : []
   })
   const text = chunks.join("\n").trim()
+  if (!text && hasEnvelope) return { text: "", fallback: "Untitled", hasInput: false, canGenerate: false }
   for (const part of parts) {
     if (part.type !== "file" || part.synthetic || part.ignored || part.metadata?.origin || (part.metadata?.titleOrigin !== undefined && !["user", "path"].includes(String(part.metadata.titleOrigin)))) continue
     if (!part.mime || !/^(?:text\/|application\/(?:json|xml|javascript)(?:$|;))/.test(part.mime)) continue
     const filename = localAttachmentPath(part)
     if (!filename || !path.isAbsolute(filename)) continue
     const name = part.filename?.trim() || path.basename(filename)
-    if (!text.includes(filename) && !(part.url && text.includes(part.url)) && !text.includes(name)) continue
+    const source = MessageV2.FileSource.safeParse(part.source)
+    const sourceMentioned = source.success && sourceTexts.some(({ raw, offset, text }) => {
+      const { start, end, value } = source.data.text
+      if (!Number.isSafeInteger(start) || !Number.isSafeInteger(end) || start < 0 || end <= start || end > raw.length || !value || raw.slice(start, end) !== value) return false
+      const normalizedStart = raw.slice(0, start).replace(/\r\n?/g, "\n").length
+      const normalizedEnd = raw.slice(0, end).replace(/\r\n?/g, "\n").length
+      return normalizedStart >= offset && normalizedEnd <= offset + text.length
+    })
+    if (!containsPathToken(text, filename) && !(part.url?.startsWith("file:") && containsPathToken(text, part.url)) && !sourceMentioned) continue
     if (!references.some(ref => ref.path === filename)) references.push({ name, path: filename })
   }
   const first = text.split("\n").map(line => line.trim()).find(Boolean)
