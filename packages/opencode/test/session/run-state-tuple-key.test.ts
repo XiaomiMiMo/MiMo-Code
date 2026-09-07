@@ -1,5 +1,5 @@
 import { describe, expect } from "bun:test"
-import { Effect, Exit, Fiber, Scope } from "effect"
+import { Deferred, Effect, Exit, Fiber, Scope } from "effect"
 import { Runner } from "../../src/effect"
 import { it } from "../lib/effect"
 
@@ -71,28 +71,30 @@ describe("SessionRunState tuple key — independent Runners per (sid, agentID)",
         onInterrupt: Effect.succeed("sub-interrupted"),
       })
 
-      // Start main with long work
+      const mainStarted = yield* Deferred.make<void>()
+      const subStarted = yield* Deferred.make<void>()
+      const finishMain = yield* Deferred.make<string>()
       const mainFiber = yield* mainRunner
         .ensureRunning(
           Effect.gen(function* () {
-            yield* Effect.sleep("200 millis")
-            return "main-complete"
+            yield* Deferred.succeed(mainStarted, undefined)
+            return yield* Deferred.await(finishMain)
           }),
         )
         .pipe(Effect.forkChild)
-
-      // Start sub with long work
       const subFiber = yield* subRunner
         .ensureRunning(
           Effect.gen(function* () {
-            yield* Effect.sleep("10 seconds")
-            return "sub-complete"
+            yield* Deferred.succeed(subStarted, undefined)
+            return yield* Effect.never
           }),
         )
         .pipe(Effect.forkChild)
 
-      // Let both start
-      yield* Effect.sleep("10 millis")
+      yield* Deferred.await(mainStarted)
+      yield* Deferred.await(subStarted)
+      expect(mainRunner.busy).toBe(true)
+      expect(subRunner.busy).toBe(true)
 
       // Cancel only the subagent
       yield* subRunner.cancel
@@ -101,7 +103,8 @@ describe("SessionRunState tuple key — independent Runners per (sid, agentID)",
       expect(Exit.isSuccess(subExit)).toBe(true)
       if (Exit.isSuccess(subExit)) expect(subExit.value).toBe("sub-interrupted")
 
-      // Main should complete normally
+      expect(mainRunner.busy).toBe(true)
+      yield* Deferred.succeed(finishMain, "main-complete")
       const mainExit = yield* Fiber.await(mainFiber)
       expect(Exit.isSuccess(mainExit)).toBe(true)
       if (Exit.isSuccess(mainExit)) expect(mainExit.value).toBe("main-complete")

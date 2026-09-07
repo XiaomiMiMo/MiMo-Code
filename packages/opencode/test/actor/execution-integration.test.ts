@@ -1,5 +1,5 @@
 import { afterEach, expect, test } from "bun:test"
-import { Deferred, Effect, Fiber } from "effect"
+import { Deferred, Effect, Fiber, type Layer, type Scope } from "effect"
 import path from "node:path"
 import { pathToFileURL } from "node:url"
 import { tmpdir } from "../fixture/fixture"
@@ -14,8 +14,15 @@ import { ActorWaiter } from "../../src/actor/waiter"
 import { Inbox } from "../../src/inbox"
 import { sessionPromptRef } from "../../src/inbox/inbox-ref"
 import { SessionPrompt } from "../../src/session/prompt"
-import { AppRuntime } from "../../src/effect/app-runtime"
+import { AppLayer } from "../../src/effect/app-runtime"
+import { attach } from "../../src/effect/run-service"
 import { startScriptedLLMServer, textStopResponse } from "../lib/scripted-llm-server"
+
+type Services = Layer.Success<typeof AppLayer>
+
+// Each test owns its app services; the process runtime can outlive other fixtures.
+const run = <A, E>(effect: Effect.Effect<A, E, Services | Scope.Scope>) =>
+  Effect.runPromise(attach(effect).pipe(Effect.scoped, Effect.provide(AppLayer)))
 
 afterEach(() => Instance.disposeAll())
 
@@ -57,7 +64,7 @@ test("a pending wait receives a preStop failure's partial delivery before termin
     await Instance.provide({
       directory: tmp.path,
       fn: () =>
-        AppRuntime.runPromise(
+        run(
           Effect.gen(function* () {
             const actors = yield* Actor.Service
             const sessions = yield* Session.Service
@@ -124,21 +131,24 @@ for (const scenario of [
       await Instance.provide({
         directory: tmp.path,
         fn: () =>
-          AppRuntime.runPromise(
+          run(
             Effect.gen(function* () {
               const actors = yield* Actor.Service
               const sessions = yield* Session.Service
               const tasks = yield* TaskRegistry.Service
+              const context = yield* Effect.context<Services>()
               const parent = yield* sessions.create({ title: "gate priority" })
               const task = yield* tasks.create({ session_id: parent.id, summary: "concurrently settled task" })
               settleTask = () =>
                 Instance.provide({
                   directory: tmp.path,
                   fn: () =>
-                    AppRuntime.runPromise(
-                      scenario.taskStatus === "done"
-                        ? tasks.done({ session_id: parent.id, id: task.id })
-                        : tasks.block({ session_id: parent.id, id: task.id }),
+                    Effect.runPromiseWith(context)(
+                      attach(
+                        scenario.taskStatus === "done"
+                          ? tasks.done({ session_id: parent.id, id: task.id })
+                          : tasks.block({ session_id: parent.id, id: task.id }),
+                      ),
                     ),
                 })
               const child = yield* actors.spawn({
@@ -184,7 +194,7 @@ test("failed completion-gate reentry preserves the result without reporting task
     await Instance.provide({
       directory: tmp.path,
       fn: () =>
-        AppRuntime.runPromise(
+        run(
           Effect.gen(function* () {
             const actors = yield* Actor.Service
             const sessions = yield* Session.Service
@@ -254,7 +264,7 @@ test("inbox waits for the entire spawn execution before starting a continuation"
     await Instance.provide({
       directory: tmp.path,
       fn: () =>
-        AppRuntime.runPromise(
+        run(
           Effect.gen(function* () {
             const actors = yield* Actor.Service
             const sessions = yield* Session.Service
@@ -289,6 +299,7 @@ test("inbox waits for the entire spawn execution before starting a continuation"
               yield* Effect.sleep("10 millis")
             expect(yield* Effect.promise(() => Bun.file(path.join(tmp.path, "entered")).exists())).toBe(true)
             const bus = yield* Bus.Service
+            const context = yield* Effect.context<Services>()
             let completions = 0
             let lateSend: Promise<unknown> | undefined
             const unsubscribe = yield* bus.subscribeCallback(ActorStatusChanged, (event) => {
@@ -300,14 +311,16 @@ test("inbox waits for the entire spawn execution before starting a continuation"
                 return
               completions++
               if (completions === 2)
-                lateSend = AppRuntime.runPromise(
-                  inbox.send({
-                    receiverSessionID: child.sessionID,
-                    receiverActorID: child.actorID,
-                    senderSessionID: parent.id,
-                    senderActorID: "main",
-                    content: "late wake at terminal boundary",
-                  }),
+                lateSend = Effect.runPromiseWith(context)(
+                  attach(
+                    inbox.send({
+                      receiverSessionID: child.sessionID,
+                      receiverActorID: child.actorID,
+                      senderSessionID: parent.id,
+                      senderActorID: "main",
+                      content: "late wake at terminal boundary",
+                    }),
+                  ),
                 )
             })
             yield* Effect.addFinalizer(() => Effect.sync(unsubscribe))
@@ -374,11 +387,12 @@ test("cancellation at onActorID is retained before the spawn fiber is attached",
     await Instance.provide({
       directory: tmp.path,
       fn: () =>
-        AppRuntime.runPromise(
+        run(
           Effect.gen(function* () {
             const actor = yield* Actor.Service
             const sessions = yield* Session.Service
             const registry = yield* ActorRegistry.Service
+            const context = yield* Effect.context<Services>()
             const parent = yield* sessions.create({ title: "cancel before attachment" })
             let cancellation: Promise<void> | undefined
             const child = yield* actor.spawn({
@@ -390,7 +404,7 @@ test("cancellation at onActorID is retained before the spawn fiber is attached",
               tools: [],
               background: false,
               onActorID: (actorID) => {
-                cancellation = AppRuntime.runPromise(actor.cancel(parent.id, actorID, "forced"))
+                cancellation = Effect.runPromiseWith(context)(attach(actor.cancel(parent.id, actorID, "forced")))
               },
             })
             yield* Effect.promise(() => cancellation!)
