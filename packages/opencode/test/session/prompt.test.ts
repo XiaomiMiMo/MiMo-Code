@@ -1,4 +1,6 @@
 import path from "path"
+import { PNG } from "pngjs"
+import jpeg from "jpeg-js"
 import { describe, expect, test } from "bun:test"
 import { NamedError } from "@mimo-ai/shared/util/error"
 import { fileURLToPath } from "url"
@@ -188,6 +190,8 @@ describe("predictContext", () => {
 
 describe("SessionPrompt.genTitle multimodal request", () => {
   test("uses one user message and forwards direct and context images", async () => {
+    const direct = PNG.sync.write(new PNG({ width: 1, height: 1 })).toString("base64")
+    const context = jpeg.encode({ width: 1, height: 1, data: Buffer.from([255, 255, 255, 255]) }).data.toString("base64")
     const stub = startScriptedLLMServer([
       {
         lines: toolCallResponse({
@@ -245,12 +249,12 @@ describe("SessionPrompt.genTitle multimodal request", () => {
               const prompt = yield* SessionPrompt.Service
               const result = yield* prompt.genTitle({
                 text: "请分析 Chrome 商店截图",
-                parts: [{ type: "image", data: "AA==", mime: "image/png", filename: "direct.png" }],
+                parts: [{ type: "image", data: direct, mime: "image/png", filename: "direct.png" }],
                 locale: "zh-CN",
                 context: [
                   {
                     info: { role: "user", id: "context-user" },
-                    parts: [{ type: "file", mime: "image/jpeg", url: "data:image/jpeg;base64,AQ==", filename: "context.jpg" }],
+                    parts: [{ type: "file", mime: "image/jpeg", url: `data:image/jpeg;base64,${context}`, filename: "context.jpg" }],
                   },
                 ] as unknown as MessageV2.WithParts[],
                 providerID: ProviderID.make("title-test"),
@@ -275,8 +279,8 @@ describe("SessionPrompt.genTitle multimodal request", () => {
               const imageUrls = content
                 .filter((part) => part.type === "image_url")
                 .map((part) => (part.image_url as { url?: string })?.url)
-              expect(imageUrls).toContain("data:image/png;base64,AA==")
-              expect(imageUrls).toContain("data:image/jpeg;base64,AQ==")
+              expect(imageUrls).toContain(`data:image/png;base64,${direct}`)
+              expect(imageUrls).toContain(`data:image/jpeg;base64,${context}`)
             }),
           ),
       })
