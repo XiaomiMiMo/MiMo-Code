@@ -106,6 +106,52 @@ describe("message conversion", () => {
     ])
   })
 
+  test("converts input_audio data URLs while preserving accompanying text", () => {
+    const messages = parse({
+      ...base,
+      messages: [{ role: "user", content: [
+        { type: "text", text: "Describe this recording" },
+        { type: "input_audio", input_audio: { data: "data:audio/wav;base64,AAAB" } },
+      ] }],
+    }).messages
+    expect(toModelMessages(messages)).toEqual([
+      { role: "user", content: [
+        { type: "text", text: "Describe this recording" },
+        { type: "file", data: "AAAB", mediaType: "audio/wav" },
+      ] },
+    ])
+  })
+
+  test.each([
+    ["wav", "audio/wav"],
+    ["mp3", "audio/mpeg"],
+    ["mpeg", "audio/mpeg"],
+    ["m4a", "audio/mp4"],
+    ["flac", "audio/flac"],
+    ["ogg", "audio/ogg"],
+    ["webm", "audio/webm"],
+  ])("maps bare input_audio format %s to %s", (format, mediaType) => {
+    const messages = parse({
+      ...base,
+      messages: [{ role: "user", content: [
+        { type: "input_audio", input_audio: { data: "AAAB", format } },
+      ] }],
+    }).messages
+    expect(toModelMessages(messages)).toEqual([
+      { role: "user", content: [{ type: "file", data: "AAAB", mediaType }] },
+    ])
+  })
+
+  test("rejects bare input_audio without a format", () => {
+    const messages = parse({
+      ...base,
+      messages: [{ role: "user", content: [
+        { type: "input_audio", input_audio: { data: "AAAB" } },
+      ] }],
+    }).messages
+    expect(() => toModelMessages(messages)).toThrow("input_audio requires `format` when `data` is not a data: URL")
+  })
+
   test("leaves a remote image as a URL for the provider to fetch", () => {
     const messages = parse({
       ...base,
