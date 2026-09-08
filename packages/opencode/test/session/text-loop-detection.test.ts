@@ -72,10 +72,9 @@ describe("detectTextLoop", () => {
 })
 
 describe("text loop detection integration logic", () => {
-  test("full detection flow: 3 identical triggers detection", () => {
+  test("full detection flow: 2 identical triggers detection", () => {
     const buffer: string[] = []
     const texts = [
-      "Let me check if one was already created earlier and update it.",
       "Let me check if one was already created earlier and update it.",
       "Let me check if one was already created earlier and update it.",
     ]
@@ -126,8 +125,8 @@ describe("text loop detection integration logic", () => {
     let recoveryAttempts = 0
     const repeatedText = "The user wants me to create a ChangeLog file."
 
-    // First 3 identical → trigger #1
-    for (let i = 0; i < 3; i++) {
+    // First 2 identical → trigger #1
+    for (let i = 0; i < 2; i++) {
       buffer.push(normalizeForLoopDetection(repeatedText))
     }
     expect(detectTextLoop(buffer, TEXT_LOOP_TRIGGER_COUNT)).toBe(true)
@@ -146,7 +145,7 @@ describe("text loop detection integration logic", () => {
     buffer.length = 0
 
     // Third trigger would exceed max
-    for (let i = 0; i < 3; i++) {
+    for (let i = 0; i < 2; i++) {
       buffer.push(normalizeForLoopDetection(repeatedText))
     }
     expect(detectTextLoop(buffer, TEXT_LOOP_TRIGGER_COUNT)).toBe(true)
@@ -159,8 +158,8 @@ describe("text loop detection integration logic", () => {
     const repeatedText = "I am stuck in a loop"
     const differentText = "OK I will try something else"
 
-    // 3 identical → trigger
-    for (let i = 0; i < 3; i++) {
+    // 2 identical → trigger
+    for (let i = 0; i < 2; i++) {
       buffer.push(normalizeForLoopDetection(repeatedText))
     }
     expect(detectTextLoop(buffer, TEXT_LOOP_TRIGGER_COUNT)).toBe(true)
@@ -179,7 +178,7 @@ describe("text loop detection integration logic", () => {
 
   test("constants have expected values", () => {
     expect(TEXT_LOOP_BUFFER_SIZE).toBe(5)
-    expect(TEXT_LOOP_TRIGGER_COUNT).toBe(3)
+    expect(TEXT_LOOP_TRIGGER_COUNT).toBe(2)
     expect(TEXT_LOOP_MAX_RECOVERY).toBe(2)
   })
 })
