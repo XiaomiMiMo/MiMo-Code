@@ -16,6 +16,7 @@ export type Locale =
   | "th"
   | "bs"
   | "tr"
+  | "fa"
 
 export const LOCALES: readonly Locale[] = [
   "en",
@@ -35,6 +36,7 @@ export const LOCALES: readonly Locale[] = [
   "br",
   "th",
   "tr",
+  "fa",
 ]
 
 export const INTL: Record<Locale, string> = {
@@ -55,6 +57,7 @@ export const INTL: Record<Locale, string> = {
   th: "th",
   bs: "bs",
   tr: "tr",
+  fa: "fa",
 }
 
 export const LABEL_KEY: Record<Locale, string> = {
@@ -75,6 +78,7 @@ export const LABEL_KEY: Record<Locale, string> = {
   th: "language.th",
   bs: "language.bs",
   tr: "language.tr",
+  fa: "language.fa",
 }
 
 export function normalizeLocale(value: string): Locale {

@@ -17,6 +17,7 @@ export const dict: Record<string, string> = {
   "language.bs": "Bosanski",
   "language.th": "ไทย",
   "language.tr": "Türkçe",
+  "language.fa": "فارسی",
 
   // Prompt placeholders
   "tui.prompt.placeholder.normal": "Type your message... (type / for commands)",
