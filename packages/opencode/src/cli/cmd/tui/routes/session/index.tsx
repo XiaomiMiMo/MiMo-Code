@@ -96,6 +96,7 @@ import { UI } from "@/cli/ui.ts"
 import { useTuiConfig } from "../../context/tui-config"
 import { getScrollAcceleration } from "../../util/scroll"
 import { nextThinkingMode, reasoningSummary, useThinkingMode, type ThinkingMode } from "../../context/thinking"
+import { isolateBidiText } from "../../util/bidi"
 import { TuiPluginRuntime } from "../../plugin"
 import { DialogGoUpsell } from "../../component/dialog-go-upsell"
 import { DialogTokenPlan } from "../../component/dialog-token-plan"
@@ -1385,7 +1386,7 @@ export function Session() {
               />
             }
           >
-          
+
           <Show when={session()}>
             <scrollbox
               ref={(r) => (scroll = r)}
@@ -1751,7 +1752,7 @@ function UserMessage(props: {
             backgroundColor={hover() ? theme.backgroundElement : theme.backgroundPanel}
             flexShrink={0}
           >
-            <text fg={theme.text}>{text()?.text}</text>
+            <text fg={theme.text}>{isolateBidiText(text()?.text ?? "")}</text>
             <Show when={files().length}>
               <box flexDirection="row" paddingBottom={metadataVisible() ? 1 : 0} paddingTop={1} gap={1} flexWrap="wrap">
                 <For each={files()}>
@@ -1990,7 +1991,7 @@ function AssistantMessage(props: {
             <Show when={verdictOpen()}>
               <box paddingLeft={2}>
                 <text fg={theme.textMuted} wrapMode="word">
-                  {verdict()!.reason}
+                  {isolateBidiText(verdict()!.reason)}
                 </text>
               </box>
             </Show>
@@ -2083,7 +2084,7 @@ function ErrorBlock(props: { error: MessageError }) {
       </box>
       <box paddingLeft={3}>
         <text fg={theme.text} wrapMode="word">
-          {errorBody(props.error)}
+          {isolateBidiText(errorBody(props.error))}
         </text>
       </box>
     </box>
@@ -2141,6 +2142,7 @@ function ReasoningPart(props: { last: boolean; part: ReasoningPart; message: Ass
     return end === undefined ? 0 : Math.max(0, end - props.part.time.start)
   })
   const summary = createMemo(() => reasoningSummary(content()))
+  const displayBody = createMemo(() => isolateBidiText(summary().body))
 
   const toggle = () => {
     if (!inMinimal()) return
@@ -2159,14 +2161,14 @@ function ReasoningPart(props: { last: boolean; part: ReasoningPart; message: Ass
             duration={isDone() ? Locale.duration(duration()) : undefined}
           />
         </box>
-        <Show when={(!inMinimal() || expanded()) && summary().body}>
+        <Show when={(!inMinimal() || expanded()) && displayBody()}>
           <box paddingLeft={inMinimal() ? 2 : 0} marginTop={1}>
             <code
               filetype="markdown"
               drawUnstyledText={false}
               streaming={true}
               syntaxStyle={subtleSyntax()}
-              content={summary().body}
+              content={displayBody()}
               conceal={ctx.conceal()}
               fg={theme.textMuted}
             />
@@ -2224,15 +2226,16 @@ function ReasoningHeader(props: {
 function TextPart(props: { last: boolean; part: TextPart; message: AssistantMessage }) {
   const ctx = use()
   const { theme, syntax } = useTheme()
+  const content = createMemo(() => isolateBidiText(props.part.text.trim()))
   return (
-    <Show when={props.part.text.trim()}>
+    <Show when={content()}>
       <box id={"text-" + props.part.id} paddingLeft={3} marginTop={1} flexShrink={0}>
         <Switch>
           <Match when={Flag.MIMOCODE_EXPERIMENTAL_MARKDOWN}>
             <markdown
               syntaxStyle={syntax()}
               streaming={true}
-              content={props.part.text.trim()}
+              content={content()}
               conceal={ctx.conceal()}
               fg={theme.markdownText}
               bg={theme.background}
@@ -2244,7 +2247,7 @@ function TextPart(props: { last: boolean; part: TextPart; message: AssistantMess
               drawUnstyledText={false}
               streaming={true}
               syntaxStyle={syntax()}
-              content={props.part.text.trim()}
+              content={content()}
               conceal={ctx.conceal()}
               fg={theme.text}
             />
