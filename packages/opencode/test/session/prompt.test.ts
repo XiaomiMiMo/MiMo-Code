@@ -1,9 +1,12 @@
 import path from "path"
+import { rm } from "node:fs/promises"
+import { Global } from "../../src/global"
 import { PNG } from "pngjs"
 import { describe, expect, test } from "bun:test"
 import { NamedError } from "@mimo-ai/shared/util/error"
 import { fileURLToPath } from "url"
-import { Effect, Exit, Layer } from "effect"
+import { Cause, Effect, Exit, Fiber, Layer } from "effect"
+import * as TestClock from "effect/testing/TestClock"
 import { Instance } from "../../src/project/instance"
 import { ModelID, ProviderID } from "../../src/provider/schema"
 import { Session } from "../../src/session"
@@ -220,7 +223,6 @@ describe("SessionPrompt.genTitle multimodal request", () => {
                 parts: [{ type: "image", data: direct, mime: "image/png", filename: "direct.png" }],
                 locale: "zh-CN",
                 providerID: ProviderID.make("title-test"),
-                modelID: ModelID.make("text-lite"),
               })
 
               expect(result).toEqual({ title: "分析 Chrome 商店截图", status: "generated" })
@@ -245,6 +247,110 @@ describe("SessionPrompt.genTitle multimodal request", () => {
       await stub.stop()
     }
   })
+})
+
+describe("SessionPrompt.genTitle source model routing", () => {
+  const cases = [
+    { name: "no lite uses exact source instead of configured default", config: {}, expected: ["source"] },
+    { name: "no lite ignores recent model when default is absent", config: { model: undefined }, recent: true, expected: ["source"] },
+    { name: "explicit lite wins over small_model", config: { model_groups: { lite: "title-test/lite" }, small_model: "title-test/other" }, expected: ["lite"] },
+    { name: "small_model compatibility", config: { small_model: "title-test/lite" }, expected: ["lite"] },
+    { name: "DEFAULTS-only small_model compatibility", config: {}, defaults: { small_model: "title-test/lite" }, expected: ["lite"] },
+    { name: "provider-aware lite member resolves before default", config: { model_groups: { lite: { default: "title-test/other", models: ["title-test/lite"] } } }, expected: ["lite"] },
+    { name: "group member source is deduplicated by resolved identity", config: { model_groups: { lite: { default: "title-test/other", models: ["title-test/source"] } } }, failure: true, expected: ["source"], fallback: true },
+    { name: "failed lite uses source once", config: { model_groups: { lite: "title-test/lite" } }, failure: true, expected: ["lite", "source"] },
+    { name: "invalid output uses source", config: { model_groups: { lite: "title-test/lite" } }, invalid: true, expected: ["lite", "source"] },
+    { name: "same resolved model is not retried", config: { model_groups: { lite: "title-test/source" } }, failure: true, expected: ["source"], fallback: true },
+    { name: "both requests fail", config: { model_groups: { lite: "title-test/lite" } }, failure: true, both: true, expected: ["lite", "source"], fallback: true },
+    { name: "invalid lite resolution uses source", config: { model_groups: { lite: "missing/model" } }, expected: ["source"] },
+    { name: "empty lite never enters default model chain", config: { model_groups: { lite: "" } }, expected: ["source"] },
+    { name: "incapable lite uses source", config: { model_groups: { lite: "title-test/no-tools" } }, expected: ["source"] },
+    { name: "no source and no lite does not guess", config: {}, noSource: true, expected: [], fallback: true },
+  ]
+  for (const item of cases) test(item.name, async () => {
+    const recentFile = Bun.file(path.join(Global.Path.state, "model.json"))
+    const recent = item.recent && await recentFile.exists() ? await recentFile.text() : undefined
+    if (item.recent) await Bun.write(recentFile, JSON.stringify({ recent: [{ providerID: "title-test", modelID: "other" }] }))
+    const defaults = process.env.MIMOCODE_CONFIG_DEFAULTS
+    if (item.defaults) process.env.MIMOCODE_CONFIG_DEFAULTS = JSON.stringify(item.defaults)
+    const good = { lines: toolCallResponse({ id: "call-title", name: "StructuredOutput", args: JSON.stringify({ title: "Generated title" }) }) }
+    const bad = { status: 403, lines: [] }
+    const stub = startScriptedLLMServer([
+      item.failure ? bad : item.invalid ? { lines: toolCallResponse({ id: "call-invalid", name: "StructuredOutput", args: JSON.stringify({ title: "12345" }) }) } : good,
+      item.both ? bad : good,
+    ])
+    try {
+      await using tmp = await tmpdir({ git: true, config: {
+        enabled_providers: ["title-test"],
+        model: "title-test/other",
+        provider: { "title-test": {
+          npm: "@ai-sdk/openai-compatible", env: [],
+          options: { apiKey: "test-key", baseURL: `${stub.origin}/v1` },
+          models: Object.fromEntries(["source", "lite", "other", "no-tools"].map(id => [id, {
+            name: id, tool_call: id !== "no-tools", limit: { context: 8000, output: 2000 },
+            modalities: { input: ["text"], output: ["text"] },
+          }])),
+        } },
+        ...item.config,
+      } })
+      await Instance.provide({ directory: tmp.path, fn: () => run(Effect.gen(function* () {
+        const prompt = yield* SessionPrompt.Service
+        const result = yield* prompt.genTitle({ text: "Original task", model: item.noSource ? undefined : { providerID: ProviderID.make("title-test"), modelID: ModelID.make("source") } })
+        expect(result).toEqual(item.fallback ? { title: "Original task", status: "fallback" } : { title: "Generated title", status: "generated" })
+        expect(stub.captures.map(capture => capture.model)).toEqual(item.expected)
+      })) })
+    } finally {
+      if (item.recent) {
+        if (recent === undefined) await rm(path.join(Global.Path.state, "model.json"), { force: true })
+        else await Bun.write(recentFile, recent)
+      }
+      if (defaults === undefined) delete process.env.MIMOCODE_CONFIG_DEFAULTS
+      else process.env.MIMOCODE_CONFIG_DEFAULTS = defaults
+      await stub.stop()
+    }
+  }, 15000)
+})
+
+for (const interrupt of [false, true]) test(`genTitle slow request ${interrupt ? "interruption stops chain" : "has no title cutoff"}`, async () => {
+  const ready = defer<void>()
+  const gate = defer<void>()
+  const captures: string[] = []
+  const server = Bun.serve({ port: 0, async fetch(request) {
+    captures.push((await request.json()).model)
+    ready.resolve()
+    await gate.promise
+    return new Response(toolCallResponse({ id: "slow-title", name: "StructuredOutput", args: JSON.stringify({ title: "Slow result" }) }).join(""), { headers: { "content-type": "text/event-stream" } })
+  } })
+  try {
+    await using tmp = await tmpdir({ git: true, config: {
+      enabled_providers: ["title-test"], model_groups: { lite: "title-test/lite" },
+      provider: { "title-test": { npm: "@ai-sdk/openai-compatible", env: [], options: { apiKey: "test-key", baseURL: `http://localhost:${server.port}/v1` }, models: Object.fromEntries(["lite", "source"].map(id => [id, { name: id, tool_call: true, limit: { context: 8000, output: 2000 }, modalities: { input: ["text"], output: ["text"] } }])) } },
+    } })
+    await Instance.provide({ directory: tmp.path, fn: () => run(Effect.gen(function* () {
+      const prompt = yield* SessionPrompt.Service
+      yield* Effect.gen(function* () {
+        let finished = false
+        const fiber = yield* prompt.genTitle({ text: "Slow task", model: { providerID: ProviderID.make("title-test"), modelID: ModelID.make("source") } }).pipe(Effect.onExit(() => Effect.sync(() => { finished = true })), Effect.forkChild)
+        yield* Effect.promise(() => ready.promise)
+        yield* TestClock.adjust("31 seconds")
+        expect(finished).toBe(false)
+        expect(captures).toEqual(["lite"])
+        if (interrupt) {
+          yield* Fiber.interrupt(fiber)
+          const exit = yield* Fiber.await(fiber)
+          expect(Exit.isFailure(exit) && Cause.hasInterrupts(exit.cause)).toBe(true)
+          gate.resolve()
+        } else {
+          gate.resolve()
+          expect(yield* Fiber.join(fiber)).toEqual({ title: "Slow result", status: "generated" })
+        }
+        expect(captures).toEqual(["lite"])
+      }).pipe(Effect.provide(TestClock.layer()))
+    })) })
+  } finally {
+    gate.resolve()
+    await server.stop(true)
+  }
 })
 
 describe("SessionPrompt.genTitle fallback locale", () => {

@@ -4544,6 +4544,10 @@ export type ExperimentalTitleGenerateData = {
         }
     >
     locale?: string
+    model?: {
+      providerID: string
+      modelID: string
+    }
   }
   path?: never
   query?: {

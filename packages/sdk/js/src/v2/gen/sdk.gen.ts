@@ -937,7 +937,7 @@ export class Title extends HeyApiClient {
   /**
    * Generate conversation title
    *
-   * Generate a short conversation title with the configured lite model and deterministic fallback.
+   * Generate a short conversation title with the configured lite model, optional source model, and deterministic fallback.
    */
   public generate<ThrowOnError extends boolean = false>(
     parameters?: {
@@ -957,6 +957,10 @@ export class Title extends HeyApiClient {
           }
       >
       locale?: string
+      model?: {
+        providerID: string
+        modelID: string
+      }
     },
     options?: Options<never, ThrowOnError>,
   ) {
@@ -970,6 +974,7 @@ export class Title extends HeyApiClient {
             { in: "body", key: "text" },
             { in: "body", key: "parts" },
             { in: "body", key: "locale" },
+            { in: "body", key: "model" },
           ],
         },
       ],

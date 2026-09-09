@@ -173,7 +173,7 @@ test("fallback commits before detached lite request; duplicate receipt and later
           title: "MiMo-AI-latest-arm64.dmg", titleSource: "fallback", titleRevision: 1,
         })
         expect(captured).toHaveLength(2)
-        // [TP-ST-R3-02, TP-ST-R4-03] A failed resolved lite model does not rotate providers or retry on later user turns.
+        // [TP-ST-R3-02, TP-ST-R4-03] Failed lite tries the exact source once, never on later turns.
         reject = true
         const failed = await run(Session.Service.use((svc) => svc.create()))
         await run(
@@ -181,7 +181,8 @@ test("fallback commits before detached lite request; duplicate receipt and later
             svc.prompt({ ...input, sessionID: failed.id, messageID: MessageID.ascending() }),
           ),
         )
-        await until(() => captured.length === 3)
+        await until(() => captured.length === 4)
+        expect(captured.slice(2).map(request => request.path)).toEqual(["/lite/v1/chat/completions", "/v1/chat/completions"])
         await Bun.sleep(150)
         expect((await run(Session.Service.use((svc) => svc.get(failed.id)))).titleSource).toBe("fallback")
         await run(
@@ -190,7 +191,7 @@ test("fallback commits before detached lite request; duplicate receipt and later
           ),
         )
         await Bun.sleep(50)
-        expect(captured).toHaveLength(3)
+        expect(captured).toHaveLength(4)
 
 
         const hooked = await run(Session.Service.use(svc => svc.create()))
@@ -208,11 +209,11 @@ test("fallback commits before detached lite request; duplicate receipt and later
         }
         await run(SessionPrompt.Service.use(svc => svc.prompt({ ...input, sessionID: retry.id, messageID: MessageID.ascending(), parts: [{ type: "text", text: "67890" }] })))
         expect(await run(Session.Service.use(svc => svc.get(retry.id)))).toMatchObject({ title: "12345", titleSource: "fallback", titleRevision: 1 })
-        expect(captured).toHaveLength(3)
+        expect(captured).toHaveLength(4)
 
         const same = await run(Session.Service.use(svc => svc.create()))
         await run(SessionPrompt.Service.use(svc => svc.prompt({ ...input, sessionID: same.id, messageID: MessageID.ascending(), parts: [{ type: "text", text: "Untitled" }] })))
-        await until(() => captured.length === 4)
+        await until(() => captured.length === 6)
         expect(await run(Session.Service.use(svc => svc.get(same.id)))).toMatchObject({ title: "Untitled", titleRevision: 1 })
         const service = await run(Session.Service.use(svc => Effect.succeed(svc)))
         const rejected = await run(Session.Service.use(svc => svc.create()))
@@ -224,14 +225,14 @@ test("fallback commits before detached lite request; duplicate receipt and later
         expect((await run(Session.Service.use(svc => svc.messages({ sessionID: sourceOnly.id }))))[0].parts).toMatchObject([{ synthetic: true }])
         await run(SessionPrompt.Service.use(svc => svc.prompt({ ...input, sessionID: sourceOnly.id, messageID: MessageID.ascending(), parts: [{ type: "text", text: "98765" }] })))
         expect(await run(Session.Service.use(svc => svc.get(sourceOnly.id)))).toMatchObject({ title: "98765", titleRevision: 1 })
-        expect(captured).toHaveLength(4)
+        expect(captured).toHaveLength(6)
         const actorRoot = await run(Session.Service.use(svc => svc.create()))
         const spawned = await run(SessionPrompt.Service.use(svc => svc.prompt({ ...input, sessionID: actorRoot.id, messageID: MessageID.ascending(), source: "spawn", agentID: "fixture-actor", parts: [{ type: "text", text: "Spawn task is not root user input" }] })))
         expect(spawned.parts[0]).not.toHaveProperty("synthetic", true)
         expect(await run(Session.Service.use(svc => svc.get(actorRoot.id)))).toMatchObject({ titleRevision: 0 })
         await run(SessionPrompt.Service.use(svc => svc.prompt({ ...input, sessionID: actorRoot.id, messageID: MessageID.ascending(), parts: [{ type: "text", text: "45678" }] })))
         expect(await run(Session.Service.use(svc => svc.get(actorRoot.id)))).toMatchObject({ title: "45678", titleRevision: 1 })
-        expect(captured).toHaveLength(4)
+        expect(captured).toHaveLength(6)
         await expect(run(SessionPrompt.Service.use(svc => svc.prompt({ ...input, sessionID: rejected.id, source: "spawn", parts: [{ type: "text", text: "Not a root user" }] })))).rejects.toThrow("Spawn input requires")
         expect(await run(Session.Service.use(svc => svc.messages({ sessionID: rejected.id })))).toHaveLength(0)
         expect((await run(Session.Service.use(svc => svc.get(rejected.id)))).titleRevision).toBe(0)
@@ -240,7 +241,7 @@ test("fallback commits before detached lite request; duplicate receipt and later
           await run(SessionPrompt.Service.use(svc => svc.prompt({ ...input, sessionID: same.id, messageID: MessageID.ascending(), parts: [{ type: "text", text: "Later task" }] })))
           expect(historyReads.mock.calls.filter(([query]) => query.agentID === "main")).toHaveLength(0)
           expect(await run(Session.Service.use(svc => svc.get(same.id)))).toMatchObject({ title: "Untitled", titleRevision: 1 })
-          expect(captured).toHaveLength(4)
+          expect(captured).toHaveLength(6)
         } finally { historyReads.mockRestore() }
       },
     })
@@ -333,6 +334,53 @@ test("registered skill command titles use user arguments rather than the selecte
         await Bun.sleep(50)
         expect(requests).toBe(beforeInvalid)
         expect(titles).toHaveLength(3)
+      }
+    } })
+  } finally { await server.stop(true) }
+}, 30000)
+
+test("source model threads through persisted prompt, command user model and historical recovery", async () => {
+  const titles: { model: string; messages: unknown }[] = []
+  const server = Bun.serve({ port: 0, async fetch(request) {
+    const body = await request.json()
+    const title = body.tools?.length === 1 && body.tools[0].function?.name === "StructuredOutput"
+    if (title) titles.push(body)
+    return new Response((title ? toolCallResponse({ id: "source-title", name: "StructuredOutput", args: JSON.stringify({ title: "Source summary" }) }) : textStopResponse("Done")).join(""), { headers: { "content-type": "text/event-stream" } })
+  } })
+  try {
+    await using tmp = await tmpdir({ git: true, config: {
+      enabled_providers: ["fixture"], model: "fixture/other",
+      provider: { fixture: { npm: "@ai-sdk/openai-compatible", env: [], options: { apiKey: "fixture", baseURL: `http://localhost:${server.port}/v1` }, models: Object.fromEntries(["source", "other", "task"].map(id => [id, { name: id, tool_call: true, limit: { context: 128000, output: 1000 }, modalities: { input: ["text"], output: ["text"] } }])) } },
+      command: { regular: { template: "TEMPLATE $ARGUMENTS", model: "fixture/task" }, delegated: { template: "TEMPLATE $ARGUMENTS", agent: "explore", model: "fixture/task", subtask: true } },
+    } })
+    await Instance.provide({ directory: tmp.path, fn: async () => {
+      const run = AppRuntime.runPromise
+      const source = { providerID: ProviderID.make("fixture"), modelID: ModelID.make("source") }
+      const ordinary = await run(Session.Service.use(svc => svc.create()))
+      const persisted = await run(SessionPrompt.Service.use(svc => svc.prompt({ sessionID: ordinary.id, noReply: true, model: source, parts: [{ type: "text", text: "Ordinary request" }] })))
+      await until(() => titles.length === 1)
+      expect(persisted.info.role === "user" && persisted.info.model).toEqual(source)
+      expect(titles[0].model).toBe("source")
+      for (const command of ["regular", "delegated"]) {
+        const session = await run(Session.Service.use(svc => svc.create()))
+        await run(SessionPrompt.Service.use(svc => svc.command({ sessionID: session.id, command, arguments: "Command request", model: "fixture/source" })))
+        await until(() => titles.length === (command === "regular" ? 2 : 3))
+        expect(titles.at(-1)?.model).toBe(command === "regular" ? "task" : "source")
+        expect(JSON.stringify(titles.at(-1)?.messages)).not.toContain("TEMPLATE")
+      }
+      for (const entry of ["prompt", "command"] as const) {
+        const session = await run(Session.Service.use(svc => svc.create()))
+        Database.use(db => db.run(sql`CREATE TEMP TRIGGER reject_source_title BEFORE UPDATE OF title ON session WHEN NEW.title_source = 'fallback' BEGIN SELECT RAISE(ABORT, 'initial title fault'); END`))
+        try {
+          await run(SessionPrompt.Service.use(svc => svc.prompt({ sessionID: session.id, noReply: true, model: source, parts: [{ type: "text", text: "Historical first request" }] })))
+          expect((await run(Session.Service.use(svc => svc.get(session.id)))).titleRevision).toBe(0)
+        } finally { Database.use(db => db.run(sql`DROP TRIGGER reject_source_title`)) }
+        if (entry === "prompt") await run(SessionPrompt.Service.use(svc => svc.prompt({ sessionID: session.id, noReply: true, model: { ...source, modelID: ModelID.make("other") }, parts: [{ type: "text", text: "Later request" }] })))
+        else await run(SessionPrompt.Service.use(svc => svc.command({ sessionID: session.id, command: "regular", arguments: "Later command", model: "fixture/other" })))
+        await until(() => titles.length === (entry === "prompt" ? 4 : 5))
+        expect(titles.at(-1)?.model).toBe("source")
+        expect(JSON.stringify(titles.at(-1)?.messages)).toContain("Historical first request")
+        expect(JSON.stringify(titles.at(-1)?.messages)).not.toContain("Later")
       }
     } })
   } finally { await server.stop(true) }
