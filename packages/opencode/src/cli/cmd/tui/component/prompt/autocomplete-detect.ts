@@ -11,6 +11,21 @@ export function exactSubmitOption<T extends { display: string; submitOnSelect?: 
   return options.find((option) => option.submitOnSelect && option.display.trimEnd() === "/" + query)
 }
 
+export type EnterAction = "select-exact" | "select" | "submit"
+
+/**
+ * What Enter should do while the autocomplete popup is (or is not) open.
+ *
+ * A visible popup with zero options (a literal "$100" or "@nonexistent" in the
+ * message) must not swallow Enter — there is nothing to select, so the key
+ * falls through and the message submits (#2208).
+ */
+export function enterAction(visible: boolean, optionCount: number, hasExactOption: boolean): EnterAction {
+  if (visible && hasExactOption) return "select-exact"
+  if (!visible || optionCount === 0) return "submit"
+  return "select"
+}
+
 // Decide whether an autocomplete popup should open for the current input.
 //
 // `value` is the editor plainText (UTF-16) and `cursorWidth` is the editor's
