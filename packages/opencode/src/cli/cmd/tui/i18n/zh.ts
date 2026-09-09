@@ -192,6 +192,7 @@ export const dict = {
   "tui.slash.distill.description": "在最近工作中发现重复流程，打包为 skill、子智能体或命令",
   "tui.slash.goal.description": "设置终止条件目标；运行直到判定达成。使用 /goal clear 中止",
   "tui.slash.deep-research.description": "深度多来源、事实核查的研究报告（运行 deep-research 工作流）",
+  "tui.slash.grill-me.description": "对计划或设计进行严苛追问，直至方案明确。",
 
   // Built-in bundled skill descriptions (user-facing, decoupled from SKILL.md description which targets the LLM)
   "tui.skill.docx-official.description": "创建、编辑、读取 Microsoft Word (.docx) 文档",

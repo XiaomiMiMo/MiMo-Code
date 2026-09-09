@@ -280,6 +280,8 @@ export const dict = {
     "задать цель с условием остановки; выполняется, пока судья не подтвердит. /goal clear для отмены",
   "tui.slash.deep-research.description":
     "глубокий многоисточниковый проверенный отчёт (запускает workflow deep-research)",
+  "tui.slash.grill-me.description":
+    "Неустанное интервью для оттачивания плана или дизайна.",
 
   // Built-in bundled skill descriptions (user-facing, decoupled from SKILL.md description which targets the LLM)
   "tui.skill.docx-official.description": "Создание, редактирование и чтение файлов Microsoft Word (.docx)",
