@@ -149,6 +149,19 @@ export const layer: Layer.Layer<Service, never, AppFileSystem.Service | Config.S
               }
             }
           }
+
+          // .local.md files are project-local personal overrides (typically gitignored),
+          // stacked on top of the main AGENTS.md/CLAUDE.md. Like the main files, local
+          // overrides are first-match-wins across candidates: AGENTS.local.md beats CLAUDE.local.md.
+          if (!Flag.MIMOCODE_DISABLE_CLAUDE_CODE_PROMPT) {
+            for (const name of ["AGENTS.local.md", "CLAUDE.local.md"]) {
+              const local = yield* fs.findUp(name, ctx.directory, ctx.worktree)
+              if (local.length > 0) {
+                local.forEach((item) => paths.add(path.resolve(item)))
+                break // first-match-wins
+              }
+            }
+          }
         }
 
         for (const file of globalFiles()) {
