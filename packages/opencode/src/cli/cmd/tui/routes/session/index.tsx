@@ -504,6 +504,21 @@ export function Session() {
   }
 
   const command = useCommandDialog()
+
+  // Permission/question prompts are modal, but they render inline — never on the
+  // DialogProvider stack — and they unmount the input, leaving focus null. Both
+  // guards in the command layer (dialog stack, text-input focus) therefore miss,
+  // and the command layer runs before the prompt handlers, so bare keybinds like
+  // session_child_cycle ("right") would fire mid-prompt. Suspend global command
+  // keybinds for the modal's lifetime, same mechanism as the ghost-suggestion
+  // suspension in the Prompt component; the prompt's own key handlers are
+  // component-level and unaffected.
+  createEffect(() => {
+    if (!disabled()) return
+    command.keybinds(false)
+    onCleanup(() => command.keybinds(true))
+  })
+
   const language = useLanguage()
   const t = language.t
   const recoveryErrorMessage = (error: unknown) => {

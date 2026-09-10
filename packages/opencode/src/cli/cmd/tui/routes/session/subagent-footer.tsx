@@ -74,6 +74,16 @@ export function SubagentFooter() {
   const [hover, setHover] = createSignal<"parent" | "prev" | "next" | null>(null)
   useTerminalDimensions()
 
+  // While a permission/question prompt is up, global command keybinds are
+  // suspended (see the modal suspension in Session), so the printed hints
+  // below would advertise keys that do nothing. Keep the click targets, hide
+  // the key labels.
+  const modalPending = createMemo(() => {
+    const permission = sync.data.permission[route.sessionID] ?? []
+    const question = sync.data.question[route.sessionID] ?? []
+    return permission.length > 0 || question.length > 0
+  })
+
   return (
     <box flexShrink={0}>
       <box
@@ -115,7 +125,9 @@ export function SubagentFooter() {
             >
               <text fg={theme.text}>
                 {route.fromWorkflowRunID ? "Workflow" : "Main"}{" "}
-                <span style={{ fg: theme.textMuted }}>{keybind.print("session_parent")}</span>
+                <Show when={!modalPending()}>
+                  <span style={{ fg: theme.textMuted }}>{keybind.print("session_parent")}</span>
+                </Show>
               </text>
             </box>
             <box
@@ -125,7 +137,10 @@ export function SubagentFooter() {
               backgroundColor={hover() === "prev" ? theme.backgroundElement : theme.backgroundPanel}
             >
               <text fg={theme.text}>
-                Prev <span style={{ fg: theme.textMuted }}>{keybind.print("session_child_cycle_reverse")}</span>
+                Prev{" "}
+                <Show when={!modalPending()}>
+                  <span style={{ fg: theme.textMuted }}>{keybind.print("session_child_cycle_reverse")}</span>
+                </Show>
               </text>
             </box>
             <box
@@ -135,7 +150,10 @@ export function SubagentFooter() {
               backgroundColor={hover() === "next" ? theme.backgroundElement : theme.backgroundPanel}
             >
               <text fg={theme.text}>
-                Next <span style={{ fg: theme.textMuted }}>{keybind.print("session_child_cycle")}</span>
+                Next{" "}
+                <Show when={!modalPending()}>
+                  <span style={{ fg: theme.textMuted }}>{keybind.print("session_child_cycle")}</span>
+                </Show>
               </text>
             </box>
           </box>
