@@ -45,7 +45,7 @@ export function FormatError(input: unknown) {
   // ConfigJsonError: { path: string, message?: string }
   if (NamedError.hasName(input, "ConfigJsonError")) {
     const data = (input as ErrorLike).data
-    return `Config file at ${data?.path} is not valid JSON(C)` + (data?.message ? `: ${data.message}` : "")
+    return `Config file at ${data?.path} is not valid JSON` + (data?.message ? `: ${data.message}` : "")
   }
 
   // ConfigDirectoryTypoError: { dir: string, path: string, suggestion: string }
