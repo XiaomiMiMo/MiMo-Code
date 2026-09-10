@@ -1,4 +1,4 @@
-import { mkdirSync } from "fs"
+import { mkdtempSync } from "fs"
 import path from "path"
 import os from "os"
 
@@ -7,5 +7,5 @@ import os from "os"
 // home instead of the developer's real one. No-op when the runner already
 // provided one.
 if (!process.env.MIMOCODE_HOME) {
-  process.env.MIMOCODE_HOME = mkdirSync(path.join(os.tmpdir(), "mimocode-tui-test-home-"), { recursive: true })
+  process.env.MIMOCODE_HOME = mkdtempSync(path.join(os.tmpdir(), "mimocode-tui-test-home-"))
 }
