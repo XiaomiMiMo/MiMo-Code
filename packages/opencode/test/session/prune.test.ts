@@ -545,14 +545,15 @@ describe("SessionPrune.fireCheckpoints writer failure is not retried in place", 
 
           yield* svc.fireCheckpoints({ sessionID: info.id, model, tokens: makeTokensAt(21_000), promptOps })
           yield* Effect.sleep(100)
-          // Final threshold 45K fired at maxAllowed itself, so the gate would be
-          // min(47_000 + 25_000, 47_000) = 47_000 — not ahead of where it fired.
+          // usable = min(90K, 100K − 32K) = 68K; maxAllowed = 68K − 13K = 55K.
+          // Final threshold 45K fired at 55K (== maxAllowed), so the gate would
+          // be min(55K + 25K, 55K) = 55K — not ahead of where it fired.
           // The retry budget IS the unused window, so here it is zero.
-          yield* svc.fireCheckpoints({ sessionID: info.id, model, tokens: makeTokensAt(47_000), promptOps })
+          yield* svc.fireCheckpoints({ sessionID: info.id, model, tokens: makeTokensAt(55_000), promptOps })
           yield* Effect.sleep(100)
           expect(harness.state.enqueueCount).toBe(2)
 
-          for (const tokens of [47_000, 50_000, 59_000]) {
+          for (const tokens of [55_000, 58_000, 67_000]) {
             yield* svc.fireCheckpoints({ sessionID: info.id, model, tokens: makeTokensAt(tokens), promptOps })
             yield* Effect.sleep(100)
           }

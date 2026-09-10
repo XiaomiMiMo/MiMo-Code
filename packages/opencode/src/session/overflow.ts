@@ -84,10 +84,17 @@ export function contextWindow(input: { cfg: Config.Info; model: Provider.Model }
   const reserved = reserves(input)
   const configured = budget(input, hard, reserved)
   const effective = configured ?? hard
+  // When the provider has no dedicated input cap the API enforces
+  // input + max_tokens ≤ context. Cap the trigger at the safe input budget so
+  // the request after compaction still fits (#2356). Keep at least half the
+  // window so tiny contexts don't collapse the trigger to zero.
+  const completionReserve = input.model.limit.input ? 0 : ProviderTransform.maxOutputTokens(input.model)
+  const maxSafeInput = Math.max(effective - completionReserve, Math.floor(effective * 0.5))
+  const trigger = Math.floor(effective * Flag.MIMOCODE_COMPACTION_TRIGGER_RATIO)
   return {
     hard,
     effective,
-    usable: Math.floor(effective * Flag.MIMOCODE_COMPACTION_TRIGGER_RATIO),
+    usable: Math.min(trigger, maxSafeInput),
     source: configured === undefined ? "model" : "config",
   }
 }
