@@ -451,7 +451,7 @@ describe("Auto context overflow: write a checkpoint before degrading to compacti
           init: (dir) =>
             Bun.write(
               path.join(dir, "mimocode.json"),
-              mimocodeConfig(llm.origin, 80_000, { thresholds: ["24K"], reserved: 100 }),
+              mimocodeConfig(llm.origin, 50_000, { thresholds: ["24K"], reserved: 100 }),
             ),
         })
 
@@ -472,9 +472,9 @@ describe("Auto context overflow: write a checkpoint before degrading to compacti
                   agent: "build",
                 })
 
-                // usable = min(floor(80K × 0.9), 80K − 32K) = min(72K, 48K) = 48K.
-                // The single 24K checkpoint threshold is below it, so 25K must
-                // write a checkpoint without rebuilding before the 48K trigger.
+                // usable = min(floor(50K * 0.9), 50K - 20K reserve) = 30K. The
+                // single 24K checkpoint threshold is below it, so 25K must
+                // write a checkpoint without rebuilding before the 30K trigger.
                 const first = yield* Effect.promise(() => seedUserMessage(info.id, "earlier question"))
                 yield* Effect.promise(() => seedFinishedAssistant(info.id, first.id, 25_000))
 
