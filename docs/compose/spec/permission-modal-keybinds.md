@@ -1,14 +1,45 @@
 ---
 feature: permission-modal-keybinds
-status: in-progress
+status: delivered
 updated: 2026-02-27
 branch: fix/permission-modal-keybinds
-commits: df9f3c9d..(pending)
+commits: df9f3c9d..da9b6641
 ---
 
 # Permission Modal Keybinds
 
 ## Report
+
+**What was built** — A pending permission or question prompt is now a true
+modal for keyboard purposes. While one is pending, the Session route suspends
+global command keybinds (`command.keybinds(false)`, resumed on cleanup) — the
+same mechanism the Prompt component already uses for ghost suggestions. This
+stops ←/→ (default `session_child_cycle` / `session_child_cycle_reverse`)
+from navigating into subagent views mid-prompt, and incidentally gives
+`escape` → `session.interrupt` proper modal semantics (it was previously
+protected only by an `input.focused` accident). The prompt components
+(PermissionPrompt, RejectPrompt, QuestionPrompt) additionally ignore
+`defaultPrevented` events so no handler double-processes a claimed key.
+The SubagentFooter hides its Main/Prev/Next keybind hint labels while the
+modal state is active (the keys are suspended); the click targets remain and
+mouse navigation still works (`command.trigger` intentionally bypasses
+suspension).
+
+Known intentional behavior change worth QA awareness: ctrl+p (command palette)
+and other command-layer shortcuts no longer fire while a permission/question
+prompt is on screen — that is the modal semantics, matching how dialogs
+already block commands via the dialog stack.
+
+**Verification** —
+- `bun test test/cli/tui/command-modal-suspension.test.tsx test/cli/tui/permission-bash-delete.test.tsx test/cli/tui/press-gate.test.tsx test/cli/tui/use-event.test.tsx` (from `packages/opencode`): 20 pass, 0 fail.
+- `bun run typecheck` (packages/opencode): exit 0.
+- Independent review (fresh subagent) over df9f3c9d..da9b6641: no critical findings; spec compliance, correctness, consistency all pass. Follow-up commit 5fc0fde7 (review minor: per-run unique test home) re-verified with the same test file (2 pass) and typecheck (exit 0).
+
+**Journey log** —
+- Root cause was not any single bug but an interaction: inline (non-dialog-stack) prompt + unmounted input leaving renderer focus `null` + subscription-order dispatch favoring the command layer + opentui not stopping later global listeners on `defaultPrevented`. The session has subagent actors only in some sessions, which is why the symptom looked probabilistic.
+- First test attempt dispatched keys before Solid `onMount` subscriptions flushed (they register after the first render pass); the deterministic fix is awaiting an innermost-`onMount` ready promise before the harness dispatches any key.
+- `mockInput.pressArrow` keys flow synchronously through opentui's stdin parser to `keyInput` — no render-loop coupling, but subscribers must exist first.
+- Mechanism-level test deliberately mirrors the Session effect instead of mounting the full Session route (SDK-heavy); if the Session effect is ever restructured, the test still guards the suspension mechanism itself.
 
 ## [S1] Problem
 
@@ -72,11 +103,12 @@ ghost-suggestion suspension in component/prompt/index.tsx).
    handler reacts to an event already claimed by an earlier listener.
 
 3. **Subagent footer hints** — `SubagentFooter` (routes/session/subagent-footer.tsx)
-   hides its "Prev <left> / Next <right>" hints while a permission/question is
-   pending for the session, since those keys are suspended in the modal state.
-   Pending state is read from sync data (`permission`/`question` buckets for
-   the session). Footer navigation via mouse click (`command.trigger`) remains
-   available — `trigger()` intentionally bypasses suspension.
+   hides its keybind hint labels (Main/Workflow `up`, Prev `left`, Next
+   `right`) while a permission/question is pending for the session, since
+   those keys are suspended in the modal state. Pending state is read from
+   sync data (`permission`/`question` buckets for the session). Footer
+   navigation via mouse click (`command.trigger`) remains available —
+   `trigger()` intentionally bypasses suspension.
 
 Error behavior: none of the changes alter reply/reject/request flows; they only
 gate which component consumes keyboard events.
@@ -97,6 +129,6 @@ an existing memo and is covered by typecheck + manual QA, not a full-route test.
 
 ## Tasks
 
-- [ ] T1: Suspend global command keybinds while a permission/question is pending (Session-level effect) — acceptance: with a probe command bound to `right`, a dispatched right-arrow keypress does not invoke the probe while the modal state is active, and does invoke it after resumption (covers: S2.1)
-- [ ] T2: Add `evt.defaultPrevented` guards to PermissionPrompt.Prompt, RejectPrompt and QuestionPrompt key handlers — acceptance: an event already preventDefault'ed by an earlier listener does not move the prompt selection or trigger submit/reject (covers: S2.2)
-- [ ] T3: Hide SubagentFooter Prev/Next keybind hints while a permission/question is pending — acceptance: hints are absent from the rendered footer during the modal state and present otherwise (covers: S2.3)
+- [x] T1: Suspend global command keybinds while a permission/question is pending (Session-level effect) — acceptance: with a probe command bound to `right`, a dispatched right-arrow keypress does not invoke the probe while the modal state is active, and does invoke it after resumption (covers: S2.1)
+- [x] T2: Add `evt.defaultPrevented` guards to PermissionPrompt.Prompt, RejectPrompt and QuestionPrompt key handlers — acceptance: an event already preventDefault'ed by an earlier listener does not move the prompt selection or trigger submit/reject (covers: S2.2)
+- [x] T3: Hide SubagentFooter keybind hint labels while a permission/question is pending — acceptance: hint labels are absent from the rendered footer during the modal state and present otherwise (covers: S2.3)
