@@ -150,7 +150,7 @@ describe("recovery candidate predicate", () => {
             ? { created: Date.now(), completed: Date.now() }
             : { created: Date.now() },
           ...(overrides.finish ? { finish: overrides.finish as "stop" | "length" | "tool-calls" | "other" } : {}),
-          ...(overrides.error ? { error: { name: "ProviderModelError", data: { message: "model unavailable", statusCode: 503, isRetryable: true } } } : {}),
+          ...(overrides.error ? { error: { name: "APIError", data: { message: "model unavailable", statusCode: 503, isRetryable: true } } } : {}),
         } as Parameters<typeof sessions.updateMessage>[0])
         const candidates = yield* SessionPrompt.Service.use((svc) =>
           svc.recovery({ sessionID: session.id, agentID: "main" }),
