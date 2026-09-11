@@ -7,6 +7,7 @@ import { ProjectTable } from "../../src/project/project.sql"
 import { HistoryTool } from "../../src/tool/history"
 import { History } from "../../src/history"
 import { Truncate } from "../../src/tool"
+import { Provider } from "../../src/provider"
 import { Agent } from "../../src/agent/agent"
 import { Instance } from "../../src/project/instance"
 import { provideTmpdirInstance } from "../fixture/fixture"
@@ -26,7 +27,13 @@ afterEach(async () => {
 })
 
 const it = testEffect(
-  Layer.mergeAll(History.defaultLayer, Truncate.defaultLayer, Agent.defaultLayer, CrossSpawnSpawner.defaultLayer),
+  Layer.mergeAll(
+    History.defaultLayer,
+    Provider.defaultLayer,
+    Truncate.defaultLayer,
+    Agent.defaultLayer,
+    CrossSpawnSpawner.defaultLayer,
+  ),
 )
 
 const ctx = {
@@ -60,10 +67,7 @@ describe("HistoryTool", () => {
         })
         const info = yield* HistoryTool
         const tool = yield* info.init()
-        const result = yield* tool.execute(
-          { operation: "search", query: "JWT", scope: "global" },
-          ctx as any,
-        )
+        const result = yield* tool.execute({ operation: "search", query: "JWT", scope: "global" }, ctx as any)
         expect(result.output).toContain("msg_a")
         expect(result.output).toContain("JWT")
         expect(result.metadata.count).toBe(1)
@@ -76,10 +80,7 @@ describe("HistoryTool", () => {
       Effect.gen(function* () {
         const info = yield* HistoryTool
         const tool = yield* info.init()
-        const result = yield* tool.execute(
-          { operation: "search", query: "nothing", scope: "global" },
-          ctx as any,
-        )
+        const result = yield* tool.execute({ operation: "search", query: "nothing", scope: "global" }, ctx as any)
         expect(result.metadata.count).toBe(0)
         expect(result.output).toContain("0 matches")
       }),
@@ -92,7 +93,13 @@ describe("HistoryTool", () => {
         const now = Date.now()
         Database.use((db) => {
           db.insert(ProjectTable)
-            .values({ id: "p" as any, worktree: "/tmp", sandboxes: [] as any, time_created: now, time_updated: now } as any)
+            .values({
+              id: "p" as any,
+              worktree: "/tmp",
+              sandboxes: [] as any,
+              time_created: now,
+              time_updated: now,
+            } as any)
             .run()
           db.insert(SessionTable)
             .values({
@@ -131,11 +138,8 @@ describe("HistoryTool", () => {
         })
         const info = yield* HistoryTool
         const tool = yield* info.init()
-        const result = yield* tool.execute(
-          { operation: "around", message_id: "m1", before: 1, after: 1 },
-          ctx as any,
-        )
-        expect(result.output).toContain(">>> m1")
+        const result = yield* tool.execute({ operation: "around", message_id: "m1", before: 1, after: 1 }, ctx as any)
+        expect(result.output).toContain(">>> message_id=m1")
         expect(result.output).toContain("m0")
         expect(result.output).toContain("m2")
       }),

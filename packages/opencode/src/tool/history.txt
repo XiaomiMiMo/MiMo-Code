@@ -3,15 +3,17 @@ Search RAW conversation trajectory: prior user/assistant messages, tool inputs, 
 USE ONLY WHEN MEMORY SEARCH RETURNS NOTHING USEFUL.
 
 memory is your curated notebook — small, fast, semantically organized. ALWAYS try `memory` first.
-history is the unindexed firehose of your past sessions: bigger, noisier, slower, and tool result
-cap will likely truncate `around` output forcing a follow-up Grep/Read. Reach for it as a last
+history searches a derived index of your past sessions. Search and around return bounded summaries, not full source text; use get with the displayed part_id for details. Reach for it as a last
 resort, e.g.:
   - memory had no entry, but you suspect this came up in a prior session
   - you need verbatim recall of something the memory summary glossed over
   - debugging "did I already try X" across the project
 
-Two operations:
-  - search: FTS BM25 over text/tool kinds (returns snippets + message_ids)
-  - around: given a search hit's message_id, pull ±N surrounding messages from the raw store
+Three operations:
+  - search: FTS BM25 over text/tool kinds (bounded snippets, message_id and part_id)
+  - around: given message_id, show bounded summaries of surrounding messages
+  - get: required part_id reads source detail even during index rebuild. offset is a non-negative UTF-16 cursor (default 0), length is 1–8000 (default 4000). Continue using next_offset while has_more; never guess a cursor inside an emoji. A length=1 page may include a complete two-unit surrogate pair to ensure progress. Data URL payloads are replaced by stable attachment locators.
+
+Media is never automatically returned. Get lists locators; request exactly one with attachment="inline:0", "file:0", or "tool:0" as listed. Model/provider limitations are reported explicitly. Historical file:// URLs require normal read permissions; no external URL is proactively downloaded. Attachment lists are budget-limited; tool:N and inline:N indices are zero-based. During background index rebuild search may temporarily be incomplete; known part_id get remains available.
 
 Default scope is current project; pass scope="global" to search every project on this machine.
