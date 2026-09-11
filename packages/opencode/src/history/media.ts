@@ -1,7 +1,9 @@
 export type Attachment = { id: string; mime: string; url: string; filename?: string }
 
+export type CleanStyle = "display" | "index"
+
 // Forward-only scans recognize explicit base64 data URLs, never ordinary long tokens.
-export function cleanDataUrls(text: string, attachments?: Attachment[]) {
+export function cleanDataUrls(text: string, attachments?: Attachment[], style: CleanStyle = "display") {
   const chunks: string[] = []
   let cursor = 0
   let ordinal = attachments?.length ?? 0
@@ -9,8 +11,18 @@ export function cleanDataUrls(text: string, attachments?: Attachment[]) {
   const headerEnd = /[^a-z0-9!#$&^_.+%/=;-]/gi
   const outside = /[^\x2b-\x7a]/
   const punctuation = /[\x2c-\x2e\x3a-\x40\x5b-\x60]/
+  const placeholder = (mime: string, id?: string) => {
+    if (style === "index") return `[media ${mime}]`
+    if (id) return `[media ${mime}; attachment=${id}; call history get attachment=${id}]`
+    return `[media ${mime}; omitted; use history get]`
+  }
   for (let match = marker.exec(text); match; match = marker.exec(text)) {
     const index = match.index
+    // Reject mid-token prefixes like metadata: / form-data: / application/data:
+    if (index > 0 && /[A-Za-z0-9._/-]/.test(text[index - 1]!)) {
+      marker.lastIndex = index + 5
+      continue
+    }
     headerEnd.lastIndex = index + 5
     const comma = headerEnd.exec(text)?.index ?? text.length
     const fields = text.slice(index + 5, comma).split(";")
@@ -39,9 +51,15 @@ export function cleanDataUrls(text: string, attachments?: Attachment[]) {
       end += a < 0 ? b : b < 0 ? a : Math.min(a, b)
       break
     }
+    // Wrapped base64 (base64(1) 76-col, PEM, etc.) stops at CR/LF; that is not a data URL.
+    if (text[end] === "\n" || text[end] === "\r") {
+      chunks.push(text.slice(cursor, index + 5))
+      cursor = index + 5
+      continue
+    }
     const size = end - comma - 1
     const padding = text[end] === "=" ? (text[end + 1] === "=" ? 2 : 1) : 0
-    const tail = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/".indexOf(text[end - 1])
+    const tail = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/".indexOf(text[end - 1]!)
     if (
       size === 0 ||
       size % 4 === 1 ||
@@ -55,12 +73,11 @@ export function cleanDataUrls(text: string, attachments?: Attachment[]) {
       continue
     }
     end += padding
+    const payload = text.slice(comma + 1, end)
     const id = `inline:${ordinal++}`
-    attachments?.push({ id, mime, url: text.slice(index, end) })
-    chunks.push(
-      text.slice(cursor, index),
-      `[media ${mime}; ${attachments ? `attachment=${id}; call history get attachment=${id}` : "omitted; use history get"}]`,
-    )
+    // Normalize so routeToolAttachment can send it (params like charset are not routable).
+    attachments?.push({ id, mime, url: `data:${mime};base64,${payload}` })
+    chunks.push(text.slice(cursor, index), placeholder(mime, attachments ? id : undefined))
     cursor = end
     marker.lastIndex = end
   }

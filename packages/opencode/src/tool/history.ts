@@ -31,19 +31,58 @@ const parameters = z
   })
   .strict()
 
-// Bound serialized bytes rather than FTS tokens, without hidden spill files.
+const BUDGET = 19500
+const OMIT = "[More summaries omitted; narrow search/around or call get on the part_id you need.]"
+
 function bounded(lines: string[]) {
   const result: string[] = []
   let bytes = 0
+  let truncated = false
   for (const line of lines) {
-    if (bytes + Buffer.byteLength(line) + 1 > 19500) {
-      result.push("[More summaries omitted; narrow search/around. Use history operation=get part_id=... for details.]")
+    if (bytes + Buffer.byteLength(line) + 1 > BUDGET) {
+      truncated = true
       break
     }
     result.push(line)
     bytes += Buffer.byteLength(line) + 1
   }
-  return result.join("\n")
+  if (truncated) result.push(OMIT)
+  return { text: result.join("\n"), truncated }
+}
+
+// Always keep the anchor; fill remaining budget around it in chronological order.
+function aroundBlocks(
+  messages: Array<{
+    matched: boolean
+    message_id: string
+    time_created: number
+    parts: Array<{ part_id: string; role: string; type: string; text: string }>
+  }>,
+) {
+  const blocks = messages.map((m) => ({
+    matched: m.matched,
+    lines: [
+      `${m.matched ? ">>>" : "---"} message_id=${m.message_id} time=${m.time_created}`,
+      ...m.parts.map((p) => `part_id=${p.part_id} ${p.role} ${p.type}\n${p.text}`),
+    ],
+  }))
+  const picked: typeof blocks = []
+  let bytes = 0
+  const take = (b: (typeof blocks)[number]) => {
+    const size = b.lines.reduce((n, line) => n + Buffer.byteLength(line) + 1, 0)
+    if (bytes + size > BUDGET - Buffer.byteLength(OMIT) - 1) return false
+    picked.push(b)
+    bytes += size
+    return true
+  }
+  const anchor = blocks.find((b) => b.matched)
+  if (anchor) take(anchor)
+  for (const b of blocks) {
+    if (b === anchor) continue
+    if (!take(b)) break
+  }
+  const truncated = picked.length < blocks.length
+  return { picked, truncated }
 }
 
 export const HistoryTool = Tool.define(
@@ -56,10 +95,10 @@ export const HistoryTool = Tool.define(
       parameters,
       execute: (args: z.infer<typeof parameters>, ctx) =>
         Effect.gen(function* () {
-          const reply = (output: string, count = 0) => ({
+          const reply = (output: string, count = 0, truncated = false) => ({
             title: `History ${args.operation}`,
             output,
-            metadata: { count, truncated: false },
+            metadata: { count, truncated },
           })
           if (args.operation === "get") {
             if (!args.part_id) return reply("operation=get requires part_id.")
@@ -100,7 +139,7 @@ export const HistoryTool = Tool.define(
             const locators = result.attachments.map(
               (a) => `attachment=${a.id} mime=${page(cleanDataUrls(a.mime), 0, 120, 240).text}`,
             )
-            const list = page(bounded(locators), 0, 2000, 2000).text
+            const list = page(bounded(locators).text, 0, 2000, 2000).text
             const ranges = ["inline", "tool", "file"]
               .map((kind) => {
                 const count = result.attachments.filter((a) => a.id.startsWith(`${kind}:`)).length
@@ -116,29 +155,27 @@ export const HistoryTool = Tool.define(
             if (!args.query) return reply("operation=search requires query.")
             const hits = yield* history.search({ ...args, query: args.query })
             if (!hits.length) return reply("0 matches. Broaden the query or use memory search.")
-            return reply(
-              bounded([
-                `Found ${hits.length} matches. Summaries only; use history operation=get part_id=... for full details.`,
-                ...hits.map(
-                  (h) =>
-                    `### session_id=${h.session_id} message_id=${h.message_id} part_id=${h.part_id}\n${h.kind} ${h.tool_name ?? ""} score=${h.score.toFixed(3)}\n${h.snippet}`,
-                ),
-              ]),
-              hits.length,
-            )
+            const out = bounded([
+              `Found ${hits.length} matches. Summaries only; use history operation=get part_id=... for full details.`,
+              ...hits.map(
+                (h) =>
+                  `### session_id=${h.session_id} message_id=${h.message_id} part_id=${h.part_id} time=${h.time_created}\n${h.kind} ${h.tool_name ?? ""} score=${h.score.toFixed(3)}\n${h.snippet}`,
+              ),
+            ])
+            return reply(out.text, hits.length, out.truncated)
           }
           if (!args.message_id) return reply("operation=around requires message_id.")
           const result = yield* history.around({ ...args, message_id: args.message_id })
           if (!result.messages.length) return reply("Anchor message not found.")
+          const { picked, truncated } = aroundBlocks(result.messages)
           return reply(
-            bounded([
+            [
               `Session ${result.session_id}. Summaries only; use history operation=get part_id=... for full details.`,
-              ...result.messages.flatMap((m) => [
-                `${m.matched ? ">>>" : "---"} message_id=${m.message_id}`,
-                ...m.parts.map((p) => `part_id=${p.part_id} ${p.role} ${p.type}\n${p.text}`),
-              ]),
-            ]),
+              ...picked.flatMap((b) => b.lines),
+              ...(truncated ? [OMIT] : []),
+            ].join("\n"),
             result.messages.length,
+            truncated,
           )
         }),
     }

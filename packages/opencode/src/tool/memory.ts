@@ -10,14 +10,8 @@ const parameters = z.object({
   operation: z.enum(["search"]).default("search").describe("Memory operation to perform"),
   query: z.string().describe("Search query (BM25 over markdown bodies)"),
   scope: z.enum(["global", "projects", "sessions", "cc"]).optional().describe("Filter by memory scope"),
-  scope_id: z
-    .string()
-    .optional()
-    .describe("Filter by scope id (e.g., session id, task id, project id hash)"),
-  type: z
-    .string()
-    .optional()
-    .describe("Filter by memory type (pinned, snapshot, learning, progress, free, ...)"),
+  scope_id: z.string().optional().describe("Filter by scope id (e.g., session id, task id, project id hash)"),
+  type: z.string().optional().describe("Filter by memory type (pinned, snapshot, learning, progress, free, ...)"),
   limit: z.number().optional().describe("Max results (default 10)"),
 })
 
@@ -50,8 +44,8 @@ export const MemoryTool = Tool.define(
                 `2. For a LITERAL string the tokenizer splits (URLs like postgres://…, ports`,
                 `   like 5433, paths) — Grep the memory dir directly; FTS can't see it.`,
                 `3. For VERBATIM recall of something a summary may have glossed over (exact`,
-                `   command, the user's precise wording) — use the history tool (raw`,
-                `   conversation), which keeps original messages.`,
+                `   command, the user's precise wording) — use the history tool: search/around`,
+                `   give summaries, then get(part_id) reads the original text.`,
                 `Widen scope progressively: session → project → global → history.`,
               ].join("\n"),
               metadata: { count: 0 },
@@ -61,7 +55,7 @@ export const MemoryTool = Tool.define(
             `Found ${results.length} match${results.length === 1 ? "" : "es"} (BM25-ranked, best first).`,
             `A hit here is authoritative — use it even if a parallel/sibling query returned nothing.`,
             `If you need the FULL body (snippets are truncated), Read the path.`,
-            `If you need an EXACT literal (a connection string, port, token, full command line, path) and the snippet/body only paraphrases or partially shows it, the curated memory may have dropped the precise form — query the history tool for the original message, which holds it verbatim.`,
+            `If you need an EXACT literal (a connection string, port, token, full command line, path) and the snippet/body only paraphrases or partially shows it, the curated memory may have dropped the precise form — search the history tool, then get(part_id) for the original text.`,
             ``,
           ]
           for (const r of results) {

@@ -89,7 +89,7 @@ describe("History.Writer", () => {
           db.select().from(HistoryFtsTable).where(eq(HistoryFtsTable.part_id, "prt_w1")).get(),
         )
         expect(row).toBeTruthy()
-        expect(row?.body).toBe("hello [media image/png; omitted; use history get] world")
+        expect(row?.body).toBe("hello [media image/png] world")
         expect(row?.body).not.toContain("YWJj")
         expect(row?.kind).toBe("user_text")
         expect(row?.session_id).toBe("ses_t")

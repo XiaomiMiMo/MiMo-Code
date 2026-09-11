@@ -9,7 +9,7 @@ export type Extracted = { kind: Kind; body: string; tool_name: string | null }
 
 export function extract(...args: Parameters<typeof extractRaw>): Extracted | null {
   const result = extractRaw(...args)
-  return result ? { ...result, body: cleanDataUrls(result.body) } : null
+  return result ? { ...result, body: cleanDataUrls(result.body, undefined, "index") } : null
 }
 
 function extractRaw(

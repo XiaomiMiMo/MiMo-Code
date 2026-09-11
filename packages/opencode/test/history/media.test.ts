@@ -48,6 +48,30 @@ test("summary omits locators while get resolves JSON keys and values distinctly"
   }
 })
 
+test("mid-token data: prefixes and wrapped base64 are not collected", () => {
+  expect(cleanDataUrls("metadata:image/png;base64,SGVsbG8=")).toBe("metadata:image/png;base64,SGVsbG8=")
+  expect(cleanDataUrls("multipart/form-data:image/png;base64,SGVsbG8=")).toBe(
+    "multipart/form-data:image/png;base64,SGVsbG8=",
+  )
+  expect(cleanDataUrls("application/data:foo")).toBe("application/data:foo")
+  const wrapped = "data:image/png;base64," + "YWJj".repeat(20) + "\n" + "YWJj".repeat(20)
+  expect(detail({ type: "text", text: wrapped }).attachments).toHaveLength(0)
+  expect(detail({ type: "text", text: wrapped }).text).toContain("YWJj")
+})
+
+test("parameterized data URLs normalize to routable data:mime;base64", () => {
+  const result = detail({ type: "text", text: "data:image/png;charset=utf-8;base64,YWJj" })
+  expect(result.attachments[0]?.url).toBe("data:image/png;base64,YWJj")
+  expect(result.attachments[0]?.mime).toBe("image/png")
+})
+
+test("index style emits a neutral marker without UX words", () => {
+  const body = cleanDataUrls("before data:image/png;base64,YWJj after", undefined, "index")
+  expect(body).toBe("before [media image/png] after")
+  expect(body).not.toContain("get")
+  expect(body).not.toContain("history")
+})
+
 test("stable native and inline attachment locators without mutation", () => {
   const raw = {
     type: "tool",
