@@ -1,5 +1,6 @@
 import { createOpencodeClient } from "@mimo-ai/sdk/v2"
-import { RGBA, type CliRenderer } from "@opentui/core"
+import type { ActiveBinding } from "@mimo-ai/plugin/tui"
+import { RGBA, type CliRenderer, type KeyEvent, type Renderable } from "@opentui/core"
 import { createPluginKeybind } from "../../src/cli/cmd/tui/context/plugin-keybinds"
 import type { HostPluginApi } from "../../src/cli/cmd/tui/plugin/slots"
 
@@ -203,6 +204,21 @@ export function createTuiPluginApi(opts: Opts = {}): HostPluginApi {
       },
       trigger: () => {},
       show: () => {},
+    },
+    keymap: {
+      registerLayer: () => () => {},
+      dispatchCommand: () => ({ ok: false, reason: "not-found" as const }),
+      runCommand: () => ({ ok: false, reason: "not-found" as const }),
+      getCommands: () => [],
+      getCommandEntries: () => [],
+      getCommandBindings: () => new Map<string, readonly ActiveBinding<Renderable, KeyEvent>[]>(),
+      setData: () => {},
+      getData: () => undefined,
+      on: () => () => {},
+      intercept: () => () => {},
+      createKeyMatcher: () => () => false,
+      parseKeySequence: () => [],
+      formatKey: () => "",
     },
     route: {
       register: () => {

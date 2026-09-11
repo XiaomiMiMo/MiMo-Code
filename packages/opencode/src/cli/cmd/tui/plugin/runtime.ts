@@ -533,6 +533,7 @@ function pluginApi(runtime: RuntimeState, plugin: PluginEntry, scope: PluginScop
   return {
     app: api.app,
     command,
+    keymap: api.keymap,
     route,
     ui: api.ui,
     keybind: api.keybind,
