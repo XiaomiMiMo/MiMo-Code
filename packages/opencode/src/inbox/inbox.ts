@@ -119,7 +119,14 @@ export interface SendResult {
 
 export interface Interface {
   readonly send: (input: SendInput) => Effect.Effect<SendResult, InboxReceiverNotFound>
-  readonly drain: (sessionID: SessionID, actorID: string) => Effect.Effect<number>
+  readonly drain: (
+    sessionID: SessionID,
+    actorID: string,
+    // Called just before committing (synthetic user message + inbox DELETE).
+    // When it returns true the drain aborts without consuming, so a cancel
+    // that lands mid-drain cannot drop queued wake content.
+    isCancelled?: () => boolean,
+  ) => Effect.Effect<number>
 }
 
 export class Service extends Context.Service<Service, Interface>()("@opencode/Inbox") {}
@@ -202,6 +209,7 @@ export const layer: Layer.Layer<
     const drain = Effect.fn("Inbox.drain")(function* (
       sessionID: SessionID,
       actorID: string,
+      isCancelled?: () => boolean,
     ) {
       // Cheap indexed SELECT first — if inbox is empty, bail immediately.
       // Common case: every iteration discovers nothing to drain.
@@ -284,6 +292,19 @@ export const layer: Layer.Layer<
               .run(),
           ),
         )
+        return 0
+      }
+
+      // Abort before any mutation when the execution was cancelled mid-drain.
+      // Leaving rows durable means the next non-cancelled wake still consumes
+      // them; writing a synthetic user message and then interrupting the turn
+      // would strand the wake in the transcript with no assistant delivery.
+      if (isCancelled?.()) {
+        log.info("inbox.drain: cancelled before commit — leaving rows durable", {
+          sessionID,
+          actorID,
+          pending: rendered.length,
+        })
         return 0
       }
 

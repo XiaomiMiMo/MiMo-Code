@@ -220,3 +220,77 @@ describe("Inbox.drain never persists an empty user text part", () => {
     })
   })
 })
+
+describe("Inbox.drain leaves rows durable when cancelled before commit", () => {
+  test("isCancelled aborts without writing a synthetic user message or deleting rows", async () => {
+    await using tmp = await tmpdir({ git: true })
+    await withInbox(tmp.path, async (rt) => {
+      const session = await rt.runPromise(Session.Service.use((s) => s.create()))
+      await registerActor(rt, session.id, "actor-cancel")
+      await seedRealMessage(rt, session.id, "actor-cancel")
+
+      await rt.runPromise(
+        Inbox.Service.use((inbox) =>
+          inbox.send({
+            receiverSessionID: session.id,
+            receiverActorID: "actor-cancel",
+            type: "actor_notification",
+            content: "<actor-notification>\nkeep me\n</actor-notification>",
+          }),
+        ),
+      )
+
+      let cancelled = false
+      const count = await rt.runPromise(
+        Inbox.Service.use((inbox) =>
+          inbox.drain(session.id, "actor-cancel", () => {
+            cancelled = true
+            return true
+          }),
+        ),
+      )
+      expect(cancelled).toBe(true)
+      expect(count).toBe(0)
+
+      const msgs = await rt.runPromise(
+        Session.Service.use((sessions) => sessions.messages({ sessionID: session.id, agentID: "actor-cancel" })),
+      )
+      const synthetic = msgs
+        .filter((m) => m.info.role === "user")
+        .flatMap((m) => m.parts)
+        .filter((p) => p.type === "text" && p.synthetic)
+      expect(synthetic.length).toBe(0)
+
+      // Rows remain durable — a later non-cancelled drain consumes them.
+      const later = await rt.runPromise(Inbox.Service.use((inbox) => inbox.drain(session.id, "actor-cancel")))
+      expect(later).toBe(1)
+    })
+  })
+
+  test("isCancelled false still commits normally", async () => {
+    await using tmp = await tmpdir({ git: true })
+    await withInbox(tmp.path, async (rt) => {
+      const session = await rt.runPromise(Session.Service.use((s) => s.create()))
+      await registerActor(rt, session.id, "actor-ok")
+      await seedRealMessage(rt, session.id, "actor-ok")
+
+      await rt.runPromise(
+        Inbox.Service.use((inbox) =>
+          inbox.send({
+            receiverSessionID: session.id,
+            receiverActorID: "actor-ok",
+            type: "actor_notification",
+            content: "<actor-notification>\nok\n</actor-notification>",
+          }),
+        ),
+      )
+
+      const count = await rt.runPromise(
+        Inbox.Service.use((inbox) => inbox.drain(session.id, "actor-ok", () => false)),
+      )
+      expect(count).toBe(1)
+      const later = await rt.runPromise(Inbox.Service.use((inbox) => inbox.drain(session.id, "actor-ok")))
+      expect(later).toBe(0)
+    })
+  })
+})

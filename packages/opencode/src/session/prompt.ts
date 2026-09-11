@@ -4916,12 +4916,17 @@ NOTE: At any point in time through this workflow you should feel free to ask the
           // Cancelled before drain: skip consuming messages for a turn that won't
           // run. Still falls through to runTurn so onExit sends the cancelled
           // notification (continued interrupts immediately).
-          // Re-check cancelled after an empty drain: cancel can land between the
-          // first check and the short-circuit, and Actor.cancel's execution path
-          // does not notify — only runTurn.onExit does.
+          // isCancelled is re-checked inside drain just before commit, so a
+          // cancel that lands mid-drain leaves Inbox rows durable instead of
+          // writing a synthetic user message for a turn that will not run.
+          // Re-check cancelled after an empty drain: Actor.cancel's execution
+          // path does not notify — only runTurn.onExit does.
           if (execution.cancelled) {
             // no-op; continued below handles interrupt + notification
-          } else if (input.inboxWake && (yield* inbox.drain(input.sessionID, agentID)) === 0) {
+          } else if (
+            input.inboxWake &&
+            (yield* inbox.drain(input.sessionID, agentID, () => execution.cancelled)) === 0
+          ) {
             if (!execution.cancelled) return yield* lastAssistant(input.sessionID, agentID)
           }
           // Capture the last assistant delivery even when the turn dies with a
