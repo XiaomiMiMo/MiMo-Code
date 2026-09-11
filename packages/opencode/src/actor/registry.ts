@@ -14,7 +14,7 @@ import type {
   ToolWhitelist,
   Liveness,
 } from "./schema"
-import { deriveLiveness } from "./schema"
+import { deriveLiveness, DEFAULT_LIVENESS_ABANDON_MS } from "./schema"
 import * as Events from "./events"
 import { SYSTEM_SPAWNED_AGENT_TYPES } from "@/agent/config"
 import { randomUUID } from "node:crypto"
@@ -187,6 +187,10 @@ export const layer: Layer.Layer<Service, never, Bus.Service> = Layer.effect(
     ) {
       const now = Date.now()
       const isTerminal = patch.status === "idle" && patch.lastOutcome !== undefined
+      // Running clears result_message_id so a wait in flight cannot resolve
+      // against a delivery from the previous turn. Terminal writes the new
+      // pointer (or null when settle produced no delivery) — a failure without
+      // output must not reuse an older success (TP-R14-11).
       const set: Record<string, unknown> = {
         status: patch.status,
         time_updated: now,
@@ -445,6 +449,36 @@ export const layer: Layer.Layer<Service, never, Bus.Service> = Layer.effect(
 
     // Initialization cannot infer execution failure from another instance ID.
     // Only the executor settles its turn; stuck detection remains advisory.
+    //
+    // Time-based zombie sweep: a crashed process leaves running/pending rows
+    // that nothing will ever settle. deriveLiveness already returns "idle" for
+    // them at read time (abandon threshold), but the DB row stays non-terminal
+    // and ActorWaiter only resolves on status==='idle'. Persist the terminal
+    // state once at init so restarts don't leave parents waiting forever.
+    // Time-based, not instance-id-based, so a live peer from another instance
+    // is never falsely settled.
+    yield* Effect.sync(() => {
+      const cutoff = Date.now() - DEFAULT_LIVENESS_ABANDON_MS
+      Database.use((db) =>
+        db
+          .update(ActorRegistryTable)
+          .set({
+            status: "idle",
+            last_outcome: "failure",
+            last_error: "Process restarted while actor was active; settled by abandon threshold.",
+            time_completed: Date.now(),
+            time_updated: Date.now(),
+          })
+          .where(
+            and(
+              inArray(ActorRegistryTable.status, ["running", "pending"]),
+              // last_activity_time is nullable; fall back to time_created like deriveLiveness does.
+              sql`COALESCE(${ActorRegistryTable.last_activity_time}, ${ActorRegistryTable.time_created}) < ${cutoff}`,
+            ),
+          )
+          .run(),
+      )
+    }).pipe(Effect.ignore)
 
     // --- Stuck Detection ---
     const scanStuck = Effect.gen(function* () {

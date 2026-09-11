@@ -903,4 +903,105 @@ describe("ActorRegistry", () => {
       })
     })
   })
+
+  describe("zombie sweep on init", () => {
+    test("settles running/pending rows older than the abandon threshold", async () => {
+      await using tmp = await tmpdir({ git: true })
+      // Create sessions first (FK constraint), then insert zombie/fresh rows
+      // BEFORE the layer inits so the sweep sees them.
+      await Instance.provide({
+        directory: tmp.path,
+        fn: async () => {
+          const rt = ManagedRuntime.make(Layer.mergeAll(Session.defaultLayer))
+          try {
+            const zombieSession = await rt.runPromise(Session.Service.use((svc) => svc.create()))
+            const freshSession = await rt.runPromise(Session.Service.use((svc) => svc.create()))
+            const stale = Date.now() - 11 * 60 * 1000
+            Database.use((db) =>
+              db
+                .insert(ActorRegistryTable)
+                .values({
+                  session_id: zombieSession.id,
+                  actor_id: "zombie-1",
+                  mode: "subagent",
+                  parent_actor_id: null,
+                  status: "running",
+                  last_outcome: null,
+                  result_message_id: null,
+                  lifecycle: "ephemeral",
+                  agent: "explore",
+                  description: "crashed child",
+                  context_mode: "none",
+                  context_watermark: null,
+                  background: true,
+                  tools: null,
+                  last_turn_time: stale,
+                  turn_count: 1,
+                  last_activity_time: stale,
+                  last_error: null,
+                  instance_id: "dead-instance",
+                  time_completed: null,
+                  time_created: stale,
+                  time_updated: stale,
+                })
+                .run(),
+            )
+            Database.use((db) =>
+              db
+                .insert(ActorRegistryTable)
+                .values({
+                  session_id: freshSession.id,
+                  actor_id: "fresh-1",
+                  mode: "subagent",
+                  parent_actor_id: null,
+                  status: "running",
+                  last_outcome: null,
+                  result_message_id: null,
+                  lifecycle: "ephemeral",
+                  agent: "explore",
+                  description: "live child",
+                  context_mode: "none",
+                  context_watermark: null,
+                  background: true,
+                  tools: null,
+                  last_turn_time: Date.now(),
+                  turn_count: 1,
+                  last_activity_time: Date.now(),
+                  last_error: null,
+                  instance_id: "live-instance",
+                  time_completed: null,
+                  time_created: Date.now(),
+                  time_updated: Date.now(),
+                })
+                .run(),
+            )
+            // Store for later assertion
+            ;(globalThis as Record<string, unknown>).__zombieTest = {
+              zombieSession: zombieSession.id,
+              freshSession: freshSession.id,
+            }
+          } finally {
+            await rt.dispose()
+          }
+        },
+      })
+      const ids = (globalThis as Record<string, unknown>).__zombieTest as {
+        zombieSession: string
+        freshSession: string
+      }
+      // Init the registry layer — sweep runs here.
+      await withRegistry(tmp.path, async (rt) => {
+        const zombie = await rt.runPromise(
+          ActorRegistry.Service.use((svc) => svc.get(ids.zombieSession as never, "zombie-1")),
+        )
+        expect(zombie?.status).toBe("idle")
+        expect(zombie?.lastOutcome).toBe("failure")
+        expect(zombie?.lastError).toContain("abandon threshold")
+        const fresh = await rt.runPromise(
+          ActorRegistry.Service.use((svc) => svc.get(ids.freshSession as never, "fresh-1")),
+        )
+        expect(fresh?.status).toBe("running")
+      })
+    })
+  })
 })
