@@ -29,6 +29,7 @@ describe("bundled skill discovery", () => {
           expect(names.has("grok-build")).toBe(true)
           expect(names.has("product-design")).toBe(true)
           expect(names.has("sales")).toBe(true)
+          expect(names.has("drive-mimo")).toBe(false)
           expect(
             list.filter((item) => item.bundled && item.location.includes(`${path.sep}workflows${path.sep}`)),
           ).toEqual([])

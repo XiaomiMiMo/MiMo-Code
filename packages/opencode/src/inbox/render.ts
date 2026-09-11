@@ -36,7 +36,10 @@ export function renderActorNotification(event: {
   error?: string
   reportedStatus?: string
   reportedSummary?: string
-  // For a stalled notification: how long (ms) since the child's last turn advanced.
+  // For a stalled notification: how long (ms) the child has been SILENT — nothing
+  // has landed for its slice. NOT time since the last completed step: the T40
+  // watchdog classifies on last_activity_time (actor/schema.ts deriveLiveness),
+  // and a child inside one long step keeps writing parts, so it never lands here.
   stalledForMs?: number
 }): string {
   const header = `Background sub-session "${event.description}" (actor_id: ${event.actorID})`
@@ -68,9 +71,14 @@ export function renderActorNotification(event: {
     return `<actor-notification>\n${header} failed.\nError: ${event.error ?? "unknown"}\n</actor-notification>`
   }
   if (event.status === "stalled") {
+    // "no activity", not "no turn advance". The quantity is silence since the last
+    // part write; saying "turn" described a signal the derivation stopped reading
+    // and made healthy children inside long steps look wedged. Likewise "nothing
+    // has landed" rather than "has made no progress" — a long step IS progress,
+    // and we cannot see inside one, only whether anything is coming out.
     const forLine =
-      event.stalledForMs !== undefined ? ` (no turn advance for ${Math.floor(event.stalledForMs / 1000)}s)` : ""
-    return `<actor-notification>\n${header} appears stalled${forLine}. It is still running but has made no progress. Consider checking on it, sending it a nudge, or cancelling it.\n</actor-notification>`
+      event.stalledForMs !== undefined ? ` (no activity for ${Math.floor(event.stalledForMs / 1000)}s)` : ""
+    return `<actor-notification>\n${header} appears stalled${forLine}. It is still running, but nothing has landed for it in that time. Consider checking on it, sending it a nudge, or cancelling it.\n</actor-notification>`
   }
   return `<actor-notification>\n${header} was cancelled.\n</actor-notification>`
 }

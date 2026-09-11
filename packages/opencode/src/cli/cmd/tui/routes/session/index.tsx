@@ -1,5 +1,4 @@
 import {
-  batch,
   createContext,
   createEffect,
   createMemo,
@@ -16,7 +15,7 @@ import { Dynamic } from "solid-js/web"
 import path from "path"
 import { useCurrentAgentID, useRoute, useRouteData } from "@tui/context/route"
 import { useProject } from "@tui/context/project"
-import { useSync } from "@tui/context/sync"
+import { selectMessages, useSync } from "@tui/context/sync"
 import { useEvent } from "@tui/context/event"
 import { SplitBorder } from "@tui/component/border"
 import { Spinner } from "@tui/component/spinner"
@@ -34,6 +33,7 @@ import type {
 } from "@mimo-ai/sdk/v2"
 import { useLocal } from "@tui/context/local"
 import { Locale } from "@/util"
+import { verifySessionRenderable, type SessionActorInput } from "@/session/visibility"
 import type { Tool } from "@/tool"
 import type { ReadTool } from "@/tool/read"
 import type { WriteTool } from "@/tool/write"
@@ -51,7 +51,7 @@ import type { TaskTool } from "@/tool/task"
 import type { QuestionTool } from "@/tool/question"
 import type { SkillTool } from "@/tool/skill"
 import type { WorkflowTool } from "@/tool/workflow"
-import type { ToolScriptTool } from "@/tool/tool-script"
+import { viewExecSubtools, type ExecSubPartSnapshot, type ToolScriptTool } from "@/tool/tool-script"
 import { useKeyboard, useRenderer, useTerminalDimensions, type JSX } from "@opentui/solid"
 import { useSDK } from "@tui/context/sdk"
 import { useCommandDialog } from "@tui/component/dialog-command"
@@ -67,7 +67,9 @@ import { DialogPrompt } from "@tui/ui/dialog-prompt"
 import { DialogTimeline } from "./dialog-timeline"
 import { DialogForkFromTimeline } from "./dialog-fork-from-timeline"
 import { DialogSessionRename } from "../../component/dialog-session-rename"
-import { Sidebar } from "./sidebar"
+import { Sidebar, SIDEBAR_WIDTH } from "./sidebar"
+import { sidebarToggle, sidebarVisibleFor, type SidebarPreference } from "./sidebar-state"
+import { createPress } from "../../ui/press"
 import { WorkflowTree } from "@tui/component/workflow-tree"
 import { SubagentFooter } from "./subagent-footer.tsx"
 import { DialogSubagent } from "./dialog-subagent.tsx"
@@ -100,6 +102,8 @@ import { DialogTokenPlan } from "../../component/dialog-token-plan"
 import { SessionRetry } from "@/session/retry"
 import { getRevertDiffFiles } from "../../util/revert-diff"
 import * as Collapse from "../../util/collapse"
+import { shouldHideTool } from "../../util/tool-visibility"
+import { planSwitchTarget } from "./plan-switch"
 import {
   createFreeApiSunsetSignal,
   freeApiModelNameKey,
@@ -140,19 +144,19 @@ function use() {
 
 function SidebarToggleButton(props: { visible: boolean; onToggle: () => void }) {
   const { theme } = useTheme()
-  const [hover, setHover] = createSignal(false)
+  const press = createPress(() => props.onToggle())
   return (
     <box
       width={3}
       height="100%"
       justifyContent="flex-start"
       alignItems="center"
-      backgroundColor={hover() ? theme.backgroundElement : undefined}
-      onMouseOver={() => setHover(true)}
-      onMouseOut={() => setHover(false)}
-      onMouseUp={() => props.onToggle()}
+      backgroundColor={press.hover() ? theme.backgroundElement : undefined}
+      {...press.props}
     >
-      <text fg={hover() ? theme.text : theme.textMuted}>{props.visible ? "▶" : "◀"}</text>
+      <text selectable={false} fg={press.hover() ? theme.text : theme.textMuted}>
+        {props.visible ? "▶" : "◀"}
+      </text>
     </box>
   )
 }
@@ -172,16 +176,9 @@ export function Session() {
   const session = createMemo(() => sync.session.get(route.sessionID))
   const currentAgentID = useCurrentAgentID()
   const actors = createMemo(() => sync.data.actor[route.sessionID] ?? [])
-  const messages = createMemo(() => {
-    const buckets = sync.data.message[route.sessionID]
-    const agentID = currentAgentID()
-    // A peer child runs its own turns under agentID == its own sessionID
-    // (spawn.ts), so its messages bucket under [sessionID] not ["main"]. When
-    // attaching to such a child at "main", fall back to its own-id bucket so the
-    // full session renders instead of an empty "main" view.
-    if (agentID === "main" && !buckets?.["main"]?.length) return buckets?.[route.sessionID] ?? []
-    return buckets?.[agentID] ?? []
-  })
+  const messages = createMemo(() =>
+    selectMessages(sync.data.message[route.sessionID], currentAgentID(), route.sessionID),
+  )
   const permissions = createMemo(() => sync.data.permission[route.sessionID] ?? [])
   const questions = createMemo(() => sync.data.question[route.sessionID] ?? [])
   const visible = createMemo(
@@ -200,9 +197,21 @@ export function Session() {
     return messages().findLast((x) => x.role === "assistant")
   })
 
+  const recoveryCandidate = createMemo(() => {
+    const message = lastAssistant()
+    if (!message || currentAgentID() !== "main") return undefined
+    return sync.data.session_recovery[route.sessionID]?.find(
+      (candidate) => candidate.assistantMessageID === message.id,
+    )
+  })
+
+  const canRecover = createMemo(() => {
+    const status = sync.data.session_status[route.sessionID]
+    return Boolean(recoveryCandidate()) && status?.type !== "busy" && status?.type !== "retry"
+  })
+
   const dimensions = useTerminalDimensions()
-  const [sidebar, setSidebar] = kv.signal<"auto" | "hide">("sidebar", "auto")
-  const [sidebarOpen, setSidebarOpen] = createSignal(false)
+  const [sidebar, setSidebar] = kv.signal<SidebarPreference>("sidebar", "auto")
   const [conceal, setConceal] = createSignal(true)
   const thinking = useThinkingMode()
   const thinkingMode = thinking.mode
@@ -234,14 +243,14 @@ export function Session() {
   const fromWorkflowRunID = createMemo(() => route.fromWorkflowRunID)
 
   const wide = createMemo(() => dimensions().width > 120)
-  const sidebarVisible = createMemo(() => {
-    if (currentAgentID() !== "main") return false
-    if (sidebarOpen()) return true
-    if (sidebar() === "auto" && wide()) return true
-    return false
-  })
+  // Subagent views have no sidebar at all, so neither the panel nor its control belongs there.
+  const sidebarAllowed = createMemo(() => currentAgentID() === "main")
+  const sidebarVisible = createMemo(() => sidebarAllowed() && sidebarVisibleFor(sidebar(), wide()))
+  // Only a docked sidebar consumes layout width; the narrow overlay floats above the transcript.
+  const sidebarDocked = createMemo(() => sidebarVisible() && wide())
+  const toggleSidebar = () => setSidebar(() => sidebarToggle(sidebar(), wide()))
   const showTimestamps = createMemo(() => timestamps() === "show")
-  const contentWidth = createMemo(() => dimensions().width - (sidebarVisible() ? 42 : 0) - 4)
+  const contentWidth = createMemo(() => dimensions().width - (sidebarDocked() ? SIDEBAR_WIDTH : 0) - 4)
   const providers = createMemo(() => Model.index(sync.data.provider))
 
   const scrollAcceleration = createMemo(() => getScrollAcceleration(tuiConfig))
@@ -254,6 +263,37 @@ export function Session() {
     if (!result.data) {
       toast.show({
         message: `Session not found: ${route.sessionID}`,
+        variant: "error",
+      })
+      navigate({ type: "home" })
+      return
+    }
+
+    // The prohibition. Every way of reaching this route hands a raw session id
+    // straight to the renderer and bypasses both hiding layers: -s/--session
+    // (thread.ts → app.tsx), `attach --session`, POST /tui/select-session, POST
+    // /tui/event, the session tool's `switch`, MIMOCODE_ROUTE, plugin
+    // navigate("session", …) and the session-list dialog's child injection. This
+    // effect is the one point all of them must pass, so the refusal lives here
+    // rather than on any single entry point. What counts as forbidden lives in
+    // session/visibility.ts: a host for a RUNTIME-spawned agent, which today
+    // means the checkpoint writer. It reads the session's own actor rows, so no
+    // parent round-trip is needed.
+    const verdict = await verifySessionRenderable(result.data, (sessionID) =>
+      // `throwOnError` is load-bearing, not tidiness: without it this client
+      // RESOLVES `{ data: undefined }` on an HTTP error, which the classifier
+      // reads as "this session has no actor rows" and renders. The failure has to
+      // arrive as a rejection for the gate to see it as unverified rather than as
+      // verified-absent.
+      // SessionActorsResponses[200] is generated as `unknown`, so the shape is
+      // asserted here exactly as sync.tsx does for the same endpoint.
+      sdk.client.session
+        .actors({ sessionID }, { throwOnError: true })
+        .then((res) => res.data as SessionActorInput[] | undefined),
+    )
+    if (!verdict.renderable) {
+      toast.show({
+        message: `Cannot open session: ${verdict.reason}`,
         variant: "error",
       })
       navigate({ type: "home" })
@@ -280,16 +320,12 @@ export function Session() {
     const part = evt.properties.part
     if (part.type !== "tool") return
     if (part.sessionID !== route.sessionID) return
-    if (part.state.status !== "completed") return
     if (part.id === lastSwitch) return
 
-    if (part.tool === "plan_exit" && part.state.metadata?.switched) {
-      local.agent.set("build")
-      lastSwitch = part.id
-    } else if (part.tool === "plan_enter") {
-      local.agent.set("plan")
-      lastSwitch = part.id
-    }
+    const agent = planSwitchTarget(part)
+    if (!agent) return
+    local.agent.set(agent)
+    lastSwitch = part.id
   })
 
   let seeded = false
@@ -309,8 +345,9 @@ export function Session() {
 
   event.on("session.status", (evt) => {
     if (evt.properties.sessionID !== route.sessionID) return
-    if (evt.properties.status.type !== "retry") return
-    if (evt.properties.status.message !== SessionRetry.GO_UPSELL_MESSAGE) return
+    const status = evt.properties.status
+    if (status.type === "idle" || status.type === "busy") return
+    if (status.message !== SessionRetry.GO_UPSELL_MESSAGE) return
     if (dialog.stack.length > 0) return
 
     const seen = kv.get(GO_UPSELL_LAST_SEEN_AT)
@@ -467,8 +504,58 @@ export function Session() {
   }
 
   const command = useCommandDialog()
-  const t = useLanguage().t
+  const language = useLanguage()
+  const t = language.t
+  const recoveryErrorMessage = (error: unknown) => {
+    const message = error instanceof Error ? error.message : String(error)
+    return /busy|409/i.test(message) ? t("tui.toast.session.recover.busy") : message
+  }
+
+  const recover = async (assistantMessageID?: string) => {
+    const candidates = await sdk.client.session.recovery(
+      { sessionID: route.sessionID },
+      { throwOnError: true },
+    )
+    const candidate = assistantMessageID
+      ? candidates.data?.find((item) => item.assistantMessageID === assistantMessageID)
+      : candidates.data?.at(-1)
+    if (!candidate) {
+      toast.show({ message: t("tui.toast.session.recover.none"), variant: "info" })
+      return
+    }
+    await sdk.client.session.resume(
+      { sessionID: route.sessionID, assistantMessageID: candidate.assistantMessageID, titleLocale: language.intl() },
+      { throwOnError: true },
+    )
+    sync.set("session_recovery_active", route.sessionID, candidate.assistantMessageID)
+    toast.show({ message: t("tui.toast.session.recover.started"), variant: "info" })
+  }
+
   command.register(() => [
+    {
+      title: t("tui.command.session.recover.title"),
+      value: "session.recover",
+      suggested: canRecover(),
+      category: "session",
+      slash: {
+        name: "recover",
+      },
+      onSelect: async (dialog) => {
+        try {
+          const candidate = recoveryCandidate()
+          const status = sync.data.session_status[route.sessionID]
+          if (status?.type === "busy" || status?.type === "retry") {
+            toast.show({ message: t("tui.toast.session.recover.busy"), variant: "info" })
+          } else await recover(candidate?.assistantMessageID)
+        } catch (error) {
+          toast.show({
+            message: recoveryErrorMessage(error),
+            variant: "error",
+          })
+        }
+        dialog.clear()
+      },
+    },
     {
       title: t(session()?.share?.url ? "tui.command.session.share.copy_link" : "tui.command.session.share.title"),
       value: "session.share",
@@ -769,12 +856,9 @@ export function Session() {
       value: "session.sidebar.toggle",
       keybind: "sidebar_toggle",
       category: "session",
+      enabled: sidebarAllowed(),
       onSelect: (dialog) => {
-        batch(() => {
-          const isVisible = sidebarVisible()
-          setSidebar(() => (isVisible ? "hide" : "auto"))
-          setSidebarOpen(!isVisible)
-        })
+        toggleSidebar()
         dialog.clear()
       },
     },
@@ -1412,6 +1496,12 @@ export function Session() {
                         last={lastAssistant()?.id === message.id}
                         message={message as AssistantMessage}
                         parts={sync.data.part[message.id] ?? []}
+                        recoverable={
+                          recoveryCandidate()?.assistantMessageID === message.id &&
+                          sync.session.status(route.sessionID) === "idle"
+                        }
+                        recovering={sync.data.session_recovery_active[route.sessionID] === message.id}
+                        onRecover={recover}
                       />
                     </Match>
                   </Switch>
@@ -1455,17 +1545,8 @@ export function Session() {
           </Show>
           <Toast />
         </box>
-        <Show when={wide() || sidebarVisible()}>
-          <SidebarToggleButton
-            visible={sidebarVisible()}
-            onToggle={() => {
-              batch(() => {
-                const isVisible = sidebarVisible()
-                setSidebar(() => (isVisible ? "hide" : "auto"))
-                setSidebarOpen(!isVisible)
-              })
-            }}
-          />
+        <Show when={sidebarAllowed() && wide()}>
+          <SidebarToggleButton visible={sidebarVisible()} onToggle={toggleSidebar} />
         </Show>
         <Show when={sidebarVisible()}>
           <Switch>
@@ -1473,15 +1554,19 @@ export function Session() {
               <Sidebar sessionID={route.sessionID} />
             </Match>
             <Match when={!wide()}>
+              {/* The control rides inside the overlay so it keeps the same position
+                  relative to the sidebar as when docked: immediately to its left. */}
               <box
                 position="absolute"
                 top={0}
                 left={0}
                 right={0}
                 bottom={0}
-                alignItems="flex-end"
+                flexDirection="row"
+                justifyContent="flex-end"
                 backgroundColor={RGBA.fromInts(0, 0, 0, 70)}
               >
+                <SidebarToggleButton visible={sidebarVisible()} onToggle={toggleSidebar} />
                 <Sidebar sessionID={route.sessionID} />
               </box>
             </Match>
@@ -1537,7 +1622,26 @@ function UserMessage(props: {
       return parsed ? [parsed] : []
     })[0]
   })
+  // Checkpoint-off notices stay synthetic + ignored so undo, title prediction,
+  // and model context never treat them as user input. Render the engine's
+  // stable notice text explicitly instead of exposing it through text().
+  const checkpointOffNotice = createMemo(() => {
+    return props.parts.flatMap((x) => {
+      if (x.type !== "text" || !x.synthetic || !x.ignored) return []
+      const origin = (x.metadata as { origin?: { kind?: string } } | undefined)?.origin
+      return origin?.kind === "checkpoint-off" ? [x.text] : []
+    })[0]
+  })
+  // A context rebuild (`/rebuild`) inserts a single user message carrying a
+  // `checkpoint` part plus `synthetic: true` text parts (the rendered context
+  // and index). Neither renders — `checkpoint` has no PART_MAPPING entry and
+  // synthetic text is excluded from `text()` above — so the boundary used to be
+  // completely invisible in the transcript, unlike compaction which at least
+  // leaves a visible summary message behind. Surface it as a one-line marker
+  // row so the user can see that a rebuild happened and where.
+  const rebuildBoundary = createMemo(() => props.parts.some((x) => x.type === "checkpoint"))
   const { theme } = useTheme()
+  const t = useLanguage().t
   const [hover, setHover] = createSignal(false)
   const queued = createMemo(() => props.pending && props.message.id > props.pending)
   const color = createMemo(() => local.agent.color(props.message.agent))
@@ -1604,6 +1708,27 @@ function UserMessage(props: {
           )
         }}
       </Show>
+      <Show when={checkpointOffNotice()}>
+        {(notice) => (
+          <box id={props.message.id} marginTop={props.index === 0 ? 0 : 1} paddingLeft={2} flexDirection="row" gap={1}>
+            <text fg={theme.textMuted}>
+              <span style={{ bg: theme.backgroundElement, fg: theme.warning, bold: true }}> checkpoint off </span>
+              <span style={{ fg: theme.text }}> {notice()}</span>
+            </text>
+          </box>
+        )}
+      </Show>
+      <Show when={rebuildBoundary()}>
+        <box id={props.message.id} marginTop={props.index === 0 ? 0 : 1} paddingLeft={2} flexDirection="row" gap={1}>
+          <text fg={theme.textMuted}>
+            <span style={{ bg: theme.backgroundElement, fg: theme.primary, bold: true }}>
+              {" "}
+              ⟲ {t("tui.session.rebuild_boundary.label")}{" "}
+            </span>
+            <span style={{ fg: theme.textMuted }}> {t("tui.session.rebuild_boundary.detail")}</span>
+          </text>
+        </box>
+      </Show>
       <Show when={text() && !actorNotification()}>
         <box
           id={props.message.id}
@@ -1669,7 +1794,14 @@ function UserMessage(props: {
   )
 }
 
-function AssistantMessage(props: { message: AssistantMessage; parts: Part[]; last: boolean }) {
+function AssistantMessage(props: {
+  message: AssistantMessage
+  parts: Part[]
+  last: boolean
+  recoverable: boolean
+  recovering: boolean
+  onRecover: (assistantMessageID: string) => Promise<void>
+}) {
   const ctx = use()
   const local = useLocal()
   const { theme } = useTheme()
@@ -1678,6 +1810,7 @@ function AssistantMessage(props: { message: AssistantMessage; parts: Part[]; las
   const renderer = useRenderer()
   const t = useLanguage().t
   const [copyHover, setCopyHover] = createSignal(false)
+  const [recoverHover, setRecoverHover] = createSignal(false)
   const messages = createMemo(() => sync.data.message[props.message.sessionID]?.[props.message.agentID ?? "main"] ?? [])
   const model = createMemo(() =>
     isFreeApiModel({ providerID: props.message.providerID, modelID: props.message.modelID })
@@ -1700,6 +1833,7 @@ function AssistantMessage(props: { message: AssistantMessage; parts: Part[]; las
   // while a last message is streaming (finish undefined) or for the final/aborted
   // message, which preserves non-orchestrator behavior.
   const showFooter = createMemo(() => {
+    if (props.recovering) return true
     if (props.message.error?.name === "MessageAbortedError") return true
     if (final()) return true
     return props.last && props.message.finish !== "tool-calls"
@@ -1807,7 +1941,31 @@ function AssistantMessage(props: { message: AssistantMessage; parts: Part[]; las
               <Show when={props.message.error?.name === "MessageAbortedError"}>
                 <span style={{ fg: theme.textMuted }}> · interrupted</span>
               </Show>
+              <Show when={props.recovering}>
+                <span style={{ fg: theme.warning }}> · {t("tui.session.recovering")}</span>
+              </Show>
             </text>
+            <Show when={props.recoverable}>
+              <box
+                onMouseOver={() => setRecoverHover(true)}
+                onMouseOut={() => setRecoverHover(false)}
+                onMouseUp={() => {
+                  void props.onRecover(props.message.id).catch((error) => {
+                    toast.show({
+                      message:
+                        error instanceof Error && /busy|409/i.test(error.message)
+                          ? t("tui.toast.session.recover.busy")
+                          : error instanceof Error
+                            ? error.message
+                            : t("tui.toast.session.recover.failed"),
+                      variant: "error",
+                    })
+                  })
+                }}
+              >
+                <text fg={recoverHover() ? theme.warning : theme.textMuted}>↻ /recover</text>
+              </box>
+            </Show>
             <Show when={props.message.time.completed}>
               <box
                 onMouseOver={() => setCopyHover(true)}
@@ -2103,12 +2261,16 @@ function ToolPart(props: { last: boolean; part: ToolPart; message: AssistantMess
   const ctx = use()
   const sync = useSync()
 
-  // Hide tool if showDetails is false and tool completed successfully
-  const shouldHide = createMemo(() => {
-    if (ctx.showDetails()) return false
-    if (props.part.state.status !== "completed") return false
-    return true
-  })
+  // A completed exec may be the assistant's entire visible turn. Keep its
+  // clickable summary even when generic tool details are hidden, otherwise a
+  // successful side effect (for example creating a PR) renders as a blank turn.
+  const shouldHide = createMemo(() =>
+    shouldHideTool({
+      showDetails: ctx.showDetails(),
+      tool: props.part.tool,
+      status: props.part.state.status,
+    }),
+  )
 
   const toolprops = {
     get metadata() {
@@ -2131,12 +2293,16 @@ function ToolPart(props: { last: boolean; part: ToolPart; message: AssistantMess
     get part() {
       return props.part
     },
+    message: props.message,
   }
 
   return (
     <Show when={!shouldHide()}>
       <Switch>
         <Match when={props.part.tool === "bash"}>
+          <Bash {...toolprops} />
+        </Match>
+        <Match when={props.part.tool === "exec_command"}>
           <Bash {...toolprops} />
         </Match>
         <Match when={props.part.tool === "glob"}>
@@ -2205,6 +2371,7 @@ type ToolProps<T> = {
   tool: string
   output?: string
   part: ToolPart
+  message: AssistantMessage
 }
 function PlanExit(props: ToolProps<any>) {
   const { theme } = useTheme()
@@ -2286,14 +2453,88 @@ function WorkItemTask(props: ToolProps<typeof TaskTool>) {
   )
 }
 
+function ExecSubtoolRow(props: {
+  part: ExecSubPartSnapshot
+  parent: ToolPart
+  message: AssistantMessage
+}) {
+  const synthetic = createMemo(() => {
+    const state = props.part.state
+    const input = state.input && typeof state.input === "object" && !Array.isArray(state.input)
+      ? state.input
+      : state.input === undefined ? {} : { value: state.input }
+    return {
+      id: props.part.callID as ToolPart["id"],
+      sessionID: props.parent.sessionID,
+      messageID: props.parent.messageID,
+      type: "tool" as const,
+      callID: props.part.callID,
+      tool: props.part.tool,
+      state: {
+        status: state.status,
+        input,
+        ...(state.status === "running" ? {
+          title: state.title,
+          ...(state.metadata ? { metadata: state.metadata } : {}),
+          time: state.time,
+        } : state.status === "completed" ? {
+          title: state.title ?? props.part.tool,
+          output: state.output ?? "",
+          metadata: state.metadata ?? {},
+          time: { start: state.time.start, end: state.time.end ?? state.time.start },
+          ...(state.attachments ? { attachments: state.attachments } : {}),
+          ...(state.providerOutput !== undefined ? { providerOutput: state.providerOutput } : {}),
+          ...(state.providerMetadata ? { providerMetadata: state.providerMetadata } : {}),
+        } : {
+          error: state.error ?? "Tool failed",
+          ...(state.metadata ? { metadata: state.metadata } : {}),
+          time: { start: state.time.start, end: state.time.end ?? state.time.start },
+          ...(state.attachments ? { attachments: state.attachments } : {}),
+        }),
+      },
+    } as ToolPart
+  })
+
+  return <ToolPart last={false} part={synthetic()} message={props.message} />
+}
+
+function ExecSubtoolGroup(props: {
+  parts: ExecSubPartSnapshot[]
+  parent: ToolPart
+  message: AssistantMessage
+  clearParentHover: () => void
+}) {
+  const { theme } = useTheme()
+  return (
+    <box
+      border={["left"]}
+      paddingLeft={2}
+      borderColor={theme.borderSubtle}
+      customBorderChars={SplitBorder.customBorderChars}
+      onMouseUp={(event: MouseEvent) => event.stopPropagation()}
+      onMouseOver={(event: MouseEvent) => {
+        event.stopPropagation()
+        props.clearParentHover()
+      }}
+      onMouseOut={(event: MouseEvent) => {
+        event.stopPropagation()
+        props.clearParentHover()
+      }}
+    >
+      <For each={props.parts}>
+        {(part) => <ExecSubtoolRow part={part} parent={props.parent} message={props.message} />}
+      </For>
+    </box>
+  )
+}
+
 // Renderer for the `exec` batch-orchestration tool. Collapsed view is a compact
-// BlockTool: summary title (spinner + live aggregated call counts published
-// through ctx.metadata) plus the last few sub-calls — one bordered clickable
-// unit, visible while running and kept after completion. Clicking swaps to the
-// full BlockTool with code, result, logs and trace. Before any sub-call lands
-// it stays a one-line InlineTool.
+// BlockTool with aggregate counts. Expanded view uses the pure nested-part view
+// so every admitted sub-call can be rendered as its own row; actor rows reuse
+// the direct actor navigation path whenever a target reference is available.
 function ToolScript(props: ToolProps<typeof ToolScriptTool>) {
   const { theme } = useTheme()
+  const hoverControl = { clear: () => {} }
   const [expanded, setExpanded] = createSignal(false)
   const isRunning = createMemo(() => props.part.state.status === "running")
   const meta = createMemo(() =>
@@ -2333,10 +2574,7 @@ function ToolScript(props: ToolProps<typeof ToolScriptTool>) {
           `  ${t.status === "error" ? "✗" : "✓"} ${t.name} [${t.durationMs}ms]${t.error ? ` ${t.error.slice(0, 80)}` : ""}`,
       ),
   )
-  // exec embeds nested tool output (a `bash` call's stdout) into <return_value>
-  // and <logs>, so escape sequences reach this renderer raw.
-  const output = createMemo(() => stripAnsi(props.output?.trim() ?? ""))
-
+  const subParts = createMemo(() => viewExecSubtools(meta()))
   return (
     <Show
       when={expanded()}
@@ -2346,7 +2584,7 @@ function ToolScript(props: ToolProps<typeof ToolScriptTool>) {
         // unit. An InlineTool with a loose text underneath read as two
         // elements and the click target was easy to miss.
         <Show
-          when={recentLines().length > 0}
+          when={recentLines().length > 0 || subParts().length > 0}
           fallback={
             <InlineTool
               icon="»"
@@ -2372,14 +2610,16 @@ function ToolScript(props: ToolProps<typeof ToolScriptTool>) {
         </Show>
       }
     >
-      <BlockTool title={`# exec · ${summary()}`} part={props.part} onClick={() => setExpanded(false)}>
+      <BlockTool
+        title={`# exec · ${summary()}`}
+        part={props.part}
+        onClick={() => setExpanded(false)}
+        hoverControl={hoverControl}
+      >
         <box gap={1}>
           <text fg={theme.textMuted}>{((props.input.code as string | undefined) ?? "").trim()}</text>
-          <Show when={recentLines().length > 0}>
-            <text fg={theme.textMuted}>{recentLines().join("\n")}</text>
-          </Show>
-          <Show when={output()}>
-            <text fg={failed() ? theme.error : theme.text}>{output()}</text>
+          <Show when={subParts().length > 0}>
+            <ExecSubtoolGroup parts={subParts()} parent={props.part} message={props.message} clearParentHover={hoverControl.clear} />
           </Show>
           <text fg={theme.textMuted}>Click to collapse</text>
         </box>
@@ -2535,7 +2775,7 @@ function WorkflowPanel(props: {
     >
       <box flexDirection="row" gap={1} paddingLeft={3}>
         <Show when={props.running} fallback={<text fg={theme.accent} attributes={TextAttributes.BOLD}>⚡</text>}>
-          <spinner frames={["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]} interval={80} color={theme.accent} />
+          <Spinner color={theme.accent} />
         </Show>
         <text attributes={TextAttributes.BOLD} fg={theme.accent}>
           {props.name}
@@ -2909,10 +3149,12 @@ function BlockTool(props: {
   onClick?: () => void
   part?: ToolPart
   spinner?: boolean
+  hoverControl?: { clear: () => void }
 }) {
   const { theme } = useTheme()
   const renderer = useRenderer()
   const [hover, setHover] = createSignal(false)
+  if (props.hoverControl) props.hoverControl.clear = () => setHover(false)
   const error = createMemo(() => (props.part?.state.status === "error" ? props.part.state.error : undefined))
   return (
     <box
@@ -2995,9 +3237,9 @@ function Bash(props: ToolProps<typeof BashTool>) {
   const title = createMemo(() => {
     const desc = props.input.description ?? "Shell"
     const wd = workdirDisplay()
-    if (!wd) return `# ${desc}`
-    if (desc.includes(wd)) return `# ${desc}`
-    return `# ${desc} in ${wd}`
+    const prefix = props.tool === "exec_command" ? "# exec_command" : `# ${desc}`
+    if (!wd || (props.tool !== "exec_command" && desc.includes(wd))) return prefix
+    return `${prefix} in ${wd}`
   })
 
   return (

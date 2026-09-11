@@ -46,11 +46,9 @@ open ⇄ in_progress, either → blocked → open, either → done | abandoned.
 Status values for `task list <status>`: open | in_progress | blocked | done | abandoned
 
 # Removed verbs (use the listed equivalents instead):
-#   progress       — progress is maintained by the checkpoint writer in the
-#                    session-level progress.md; you do not journal events
+#   progress       — not a verb; task progress is not journaled through this tool
 #   approve        — proposed state was removed; new tasks start in 'open'
-#   revise         — task is rename-only; long descriptions belong in §1
-#                    Active intent or main progress.md sections
+#   revise         — task is rename-only; long descriptions belong in the task summary
 #   create_sub     — use 'create' with parent_id
 
 # Don't repeat the task tree in your reply — the UI already shows it.

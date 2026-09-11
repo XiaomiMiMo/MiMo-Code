@@ -1,6 +1,7 @@
 import { useProject } from "@tui/context/project"
 import { useSync } from "@tui/context/sync"
 import { createMemo, Show } from "solid-js"
+import { useTerminalDimensions } from "@opentui/solid"
 import { useTheme } from "../../context/theme"
 import { useTuiConfig } from "../../context/tui-config"
 import { InstallationChannel, InstallationVersion } from "@/installation/version"
@@ -8,11 +9,14 @@ import { TuiPluginRuntime } from "../../plugin"
 
 import { getScrollAcceleration } from "../../util/scroll"
 
+export const SIDEBAR_WIDTH = 42
+
 export function Sidebar(props: { sessionID: string; overlay?: boolean }) {
   const project = useProject()
   const sync = useSync()
   const { theme } = useTheme()
   const tuiConfig = useTuiConfig()
+  const dimensions = useTerminalDimensions()
   const session = createMemo(() => sync.session.get(props.sessionID))
   const workspaceStatus = () => {
     const workspaceID = session()?.workspaceID
@@ -32,7 +36,7 @@ export function Sidebar(props: { sessionID: string; overlay?: boolean }) {
     <Show when={session()}>
       <box
         backgroundColor={theme.backgroundPanel}
-        width={42}
+        width={Math.min(SIDEBAR_WIDTH, dimensions().width)}
         height="100%"
         paddingTop={1}
         paddingBottom={1}

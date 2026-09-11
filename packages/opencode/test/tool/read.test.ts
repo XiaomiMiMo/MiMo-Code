@@ -1,4 +1,5 @@
-import { afterEach, describe, expect } from "bun:test"
+import { afterAll, afterEach, beforeAll, describe, expect } from "bun:test"
+import { PNG } from "pngjs"
 import { Cause, Effect, Exit, Layer } from "effect"
 import path from "path"
 import { Agent } from "../../src/agent/agent"
@@ -8,6 +9,7 @@ import { LSP } from "../../src/lsp"
 import { Permission } from "../../src/permission"
 import { Instance } from "../../src/project/instance"
 import { SessionID, MessageID } from "../../src/session/schema"
+import { ModelID } from "../../src/provider/schema"
 import { Instruction } from "../../src/session/instruction"
 import { ReadTool } from "../../src/tool/read"
 import { Truncate } from "../../src/tool"
@@ -18,6 +20,24 @@ import { testEffect } from "../lib/effect"
 import { ProviderTest } from "../fake/provider"
 
 const FIXTURES_DIR = path.join(import.meta.dir, "fixtures")
+
+// Random noise defeats PNG's own compression, so a small canvas yields a file
+// far larger than the tiny attachment limit the size-gate tests run under.
+function noisyPng(size: number) {
+  let seed = 4242
+  const rand = () => {
+    seed = (seed * 1103515245 + 12345) & 0x7fffffff
+    return seed % 256
+  }
+  const png = new PNG({ width: size, height: size })
+  for (let i = 0; i < png.data.length; i += 4) {
+    png.data[i] = rand()
+    png.data[i + 1] = rand()
+    png.data[i + 2] = rand()
+    png.data[i + 3] = 255
+  }
+  return PNG.sync.write(png)
+}
 
 afterEach(async () => {
   await Instance.disposeAll()
@@ -434,6 +454,27 @@ describe("tool.read truncation", () => {
     }),
   )
 
+  it.live("attaches BMP files by sniffed MIME so transform can transcode them", () =>
+    Effect.gen(function* () {
+      const dir = yield* tmpdirScoped()
+      const rowSize = Math.floor((24 * 1 + 31) / 32) * 4
+      const bmp = Buffer.alloc(54 + rowSize)
+      bmp.write("BM", 0, "ascii")
+      bmp.writeUInt32LE(bmp.length, 2)
+      bmp.writeUInt32LE(54, 10)
+      bmp.writeUInt32LE(40, 14)
+      bmp.writeInt32LE(1, 18)
+      bmp.writeInt32LE(1, 22)
+      bmp.writeUInt16LE(1, 26)
+      bmp.writeUInt16LE(24, 28)
+      yield* put(path.join(dir, "screenshot.png"), bmp)
+
+      const result = yield* exec(dir, { file_path: path.join(dir, "screenshot.png") })
+      expect(result.output).toBe("Image read successfully")
+      expect(result.attachments?.[0].mime).toBe("image/bmp")
+    }),
+  )
+
   it.live("large image files are properly attached without error", () =>
     Effect.gen(function* () {
       const result = yield* exec(FIXTURES_DIR, { file_path: path.join(FIXTURES_DIR, "large-image.png") })
@@ -505,6 +546,129 @@ describe("tool.read binary detection", () => {
 
       const err = yield* fail(dir, { file_path: path.join(dir, "module.wasm") })
       expect(err.message).toContain("Cannot read binary file")
+    }),
+  )
+})
+
+describe("tool.read pdf capability gate", () => {
+  const pdf = Buffer.from("%PDF-1.4\n1 0 obj<<>>endobj\ntrailer<<>>\n%%EOF\n")
+
+  it.live("attaches a PDF when the active model accepts pdf input", () =>
+    Effect.gen(function* () {
+      const dir = yield* tmpdirScoped()
+      yield* put(path.join(dir, "doc.pdf"), pdf)
+
+      const result = yield* exec(dir, { file_path: path.join(dir, "doc.pdf") })
+      expect(result.output).toBe("PDF read successfully")
+      expect(result.attachments?.length).toBe(1)
+      expect(result.attachments?.[0].mime).toBe("application/pdf")
+    }),
+  )
+
+  it.live("refuses a PDF without reading it when the model lacks pdf input", () =>
+    Effect.gen(function* () {
+      const dir = yield* tmpdirScoped()
+      yield* put(path.join(dir, "doc.pdf"), pdf)
+      const textOnly = ProviderTest.model({ id: ModelID.make("text-only"), providerID: visionModel.providerID })
+
+      const result = yield* exec(dir, { file_path: path.join(dir, "doc.pdf") }, { ...ctx, extra: { model: textOnly } })
+      expect(result.attachments).toBeUndefined()
+      expect(result.output).toContain('Cannot attach PDF "doc.pdf"')
+      expect(result.output).toContain(path.join("pdf-official", "SKILL.md"))
+      expect(result.metadata.truncated).toBe(false)
+    }),
+  )
+})
+
+describe("tool.read attachment size limit", () => {
+  // The size comes from stat, before any bytes are read. An oversized image is
+  // then read and recompressed; a PDF or an undecodable image is refused, so
+  // the base64 that would have bloated the session DB never exists.
+  // The limits come from Flag.MIMOCODE_MAX_ATTACHMENT_SIZE and
+  // Flag.MIMOCODE_MAX_ATTACHMENT_SOURCE_SIZE, lowered here so the fixtures
+  // stay small.
+  const LIMIT = 4096
+  const CEILING = 32 * 1024
+  beforeAll(() => {
+    process.env["MIMOCODE_MAX_ATTACHMENT_SIZE"] = String(LIMIT)
+    process.env["MIMOCODE_MAX_ATTACHMENT_SOURCE_SIZE"] = String(CEILING)
+  })
+  afterAll(() => {
+    delete process.env["MIMOCODE_MAX_ATTACHMENT_SIZE"]
+    delete process.env["MIMOCODE_MAX_ATTACHMENT_SOURCE_SIZE"]
+  })
+  it.live("recompresses an oversized image under the limit instead of refusing it", () =>
+    Effect.gen(function* () {
+      const dir = yield* tmpdirScoped()
+      const bytes = noisyPng(120) // noise defeats PNG compression: ~18 KB raw, over LIMIT and under CEILING
+      expect(bytes.byteLength).toBeGreaterThan(LIMIT)
+      expect(bytes.byteLength).toBeLessThanOrEqual(CEILING)
+      yield* put(path.join(dir, "huge.png"), bytes)
+
+      const result = yield* exec(dir, { file_path: path.join(dir, "huge.png") })
+      expect(result.attachments?.length).toBe(1)
+      expect(result.attachments?.[0].mime).toBe("image/jpeg")
+      const url = result.attachments![0].url
+      expect(Buffer.from(url.slice(url.indexOf(",") + 1), "base64").byteLength).toBeLessThanOrEqual(LIMIT)
+      expect(result.output).toContain(`recompressed from ${bytes.byteLength} bytes`)
+      expect(result.metadata.truncated).toBe(false)
+    }),
+  )
+
+  it.live("drops an oversized image that cannot be decoded", () =>
+    Effect.gen(function* () {
+      const dir = yield* tmpdirScoped()
+      // Valid PNG signature, garbage body: over the limit and undecodable.
+      const bytes = Buffer.alloc(LIMIT + 1)
+      Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]).copy(bytes)
+      yield* put(path.join(dir, "broken.png"), bytes)
+
+      const result = yield* exec(dir, { file_path: path.join(dir, "broken.png") })
+      expect(result.attachments).toBeUndefined()
+      expect(result.output).toContain(`"broken.png" (image/png) is ${LIMIT + 1} bytes`)
+      expect(result.output).toContain("could not be compressed")
+    }),
+  )
+
+  it.live("refuses an image over the source ceiling without reading or compressing it", () =>
+    Effect.gen(function* () {
+      const dir = yield* tmpdirScoped()
+      // A decodable PNG that compression could handle, but too large to bother.
+      const bytes = noisyPng(200)
+      expect(bytes.byteLength).toBeGreaterThan(CEILING)
+      yield* put(path.join(dir, "giant.png"), bytes)
+
+      const result = yield* exec(dir, { file_path: path.join(dir, "giant.png") })
+      expect(result.attachments).toBeUndefined()
+      expect(result.output).toContain(`"giant.png" (image/png) is ${bytes.byteLength} bytes`)
+      expect(result.output).toContain("ceiling above which compression is not attempted")
+      expect(result.output).toContain("It was not read")
+    }),
+  )
+
+  it.live("refuses an oversized PDF", () =>
+    Effect.gen(function* () {
+      const dir = yield* tmpdirScoped()
+      const bytes = Buffer.alloc(LIMIT + 1)
+      Buffer.from("%PDF-1.4").copy(bytes)
+      yield* put(path.join(dir, "huge.pdf"), bytes)
+
+      const result = yield* exec(dir, { file_path: path.join(dir, "huge.pdf") })
+      expect(result.attachments).toBeUndefined()
+      expect(result.output).toContain(`"huge.pdf" (application/pdf)`)
+      expect(result.output).toContain("It was not read")
+    }),
+  )
+
+  it.live("still attaches an image just under the limit", () =>
+    Effect.gen(function* () {
+      const dir = yield* tmpdirScoped()
+      const bytes = Buffer.alloc(LIMIT)
+      Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]).copy(bytes)
+      yield* put(path.join(dir, "edge.png"), bytes)
+
+      const result = yield* exec(dir, { file_path: path.join(dir, "edge.png") })
+      expect(result.attachments?.length).toBe(1)
     }),
   )
 })

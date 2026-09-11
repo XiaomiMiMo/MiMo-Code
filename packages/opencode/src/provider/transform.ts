@@ -6,7 +6,16 @@ import type * as Provider from "./provider"
 import type * as ModelsDev from "./models"
 import { iife } from "@/util/iife"
 import { Flag } from "@/flag/flag"
-import { compressImage, DEFAULT_MAX_IMAGE_BYTES } from "./image"
+import {
+  compressImage,
+  canonicalImageMime,
+  DEFAULT_MAX_IMAGE_BYTES,
+  DEFAULT_MAX_IMAGE_DIMENSION,
+  imageDimensions,
+  ImageInputError,
+  prepareImage,
+  supportsImageDimensions,
+} from "./image"
 
 type Modality = NonNullable<ModelsDev.Model["modalities"]>["input"][number]
 
@@ -19,7 +28,14 @@ function mimeToModality(mime: string): Modality | undefined {
 }
 
 export const OUTPUT_TOKEN_MAX = Flag.MIMOCODE_EXPERIMENTAL_OUTPUT_TOKEN_MAX || 32_000
-const MIMO_OUTPUT_TOKEN_MAX = 128_000
+export const LARGE_MODEL_OUTPUT_TOKEN_MAX = 128_000
+
+export function usesLargeModelDefaults(model: { id: string; providerID: string; api: { id: string } }) {
+  if (["mimo", "xiaomi"].includes(model.providerID.toLowerCase())) return true
+  return [model.id, model.api.id].some((id) =>
+    ["claude", "gpt", "mimo"].some((name) => id.toLowerCase().includes(name)),
+  )
+}
 
 // Maps npm package to the key the AI SDK expects for providerOptions
 function sdkKey(npm: string): string | undefined {
@@ -69,13 +85,18 @@ function stripsEmptyParts(model: Provider.Model): boolean {
   ].includes(model.api.npm)
 }
 
+function record(value: unknown): Record<string, unknown> | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined
+  return value as Record<string, unknown>
+}
+
 function normalizeMessages(
   msgs: ModelMessage[],
   model: Provider.Model,
   _options: Record<string, unknown>,
 ): ModelMessage[] {
-  // Anthropic rejects messages with empty content - filter out empty string messages
-  // and remove empty text/reasoning parts from array content
+  // Anthropic rejects messages with empty content. Signed thinking is the exception:
+  // its text may be empty, but its signature/redacted data must survive for replay.
   if (stripsEmptyParts(model)) {
     msgs = msgs
       .map((msg) => {
@@ -85,8 +106,14 @@ function normalizeMessages(
         }
         if (!Array.isArray(msg.content)) return msg
         const filtered = msg.content.filter((part) => {
-          if (part.type === "text" || part.type === "reasoning") {
-            return part.text !== ""
+          if (part.type === "text") return part.text !== ""
+          if (part.type === "reasoning") {
+            if (part.text !== "") return true
+            const metadata = record(part.providerOptions?.anthropic ?? part.providerOptions?.[model.providerID])
+            return (
+              (typeof metadata?.signature === "string" && metadata.signature !== "") ||
+              (typeof metadata?.redactedData === "string" && metadata.redactedData !== "")
+            )
           }
           return true
         })
@@ -624,11 +651,6 @@ function normalizeContentArray(msgs: ModelMessage[]): ModelMessage[] {
   })
 }
 
-function record(value: unknown): Record<string, unknown> | undefined {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined
-  return value as Record<string, unknown>
-}
-
 // Anthropic's SDK discards historical reasoning without a signature or redacted
 // data. The opt-in compatibility mode supplies an empty placeholder signature,
 // making unsigned reasoning follow the same native thinking-block serializer
@@ -759,23 +781,8 @@ function imagePayload(value: unknown, mediaType?: string): ImagePayload | undefi
   return { kind: "bytes", mime: mediaType, bytes, size: bytes.byteLength }
 }
 
-// Bring one oversized image under maxSize: recompress if we can decode it,
-// otherwise return undefined so the caller strips it to a text placeholder.
-// Never returns something still over the limit.
-function shrinkBase64(
-  mime: string,
-  base64: string,
-  maxSize: number,
-): { mime: string; base64: string } | undefined {
-  const compressed = compressImage(mime, Buffer.from(base64, "base64"), maxSize)
-  if (compressed && base64ByteSize(compressed.data) <= maxSize) {
-    return { mime: compressed.mediaType, base64: compressed.data }
-  }
-  return undefined
-}
-
-const OVERSIZE_PLACEHOLDER = (size: number, maxSize: number) =>
-  `[Image omitted: ${size} bytes exceeds the ${maxSize}-byte limit and could not be compressed.]`
+const OVERSIZE_PLACEHOLDER = (size: number) =>
+  `[Image omitted: ${size}-byte image exceeds provider limits or could not be safely processed.]`
 
 // Per-provider inline-image byte cap. Only Anthropic and Bedrock reject a single
 // image whose decoded base64 exceeds ~5 MB with a non-retryable 400 — that is the
@@ -806,28 +813,64 @@ function providerImageCap(model: Provider.Model): number {
     npm === "@openrouter/ai-sdk-provider" ||
     npm === "@ai-sdk/github-copilot"
   ) {
+    const apiID = model.api.id.toLowerCase()
+    const modelID = model.id.toLowerCase()
     const routesToAnthropic =
-      model.api.id.includes("claude") ||
-      model.api.id.includes("anthropic") ||
-      model.id.includes("claude") ||
-      model.id.includes("anthropic")
+      apiID.includes("claude") ||
+      apiID.includes("anthropic") ||
+      modelID.includes("claude") ||
+      modelID.includes("anthropic")
     if (routesToAnthropic) return DEFAULT_MAX_IMAGE_BYTES
   }
   return Infinity
 }
 
-// Two responsibilities:
-// 1. Count cap (maxImages): drop the oldest excess *user* prompt images,
+function providerImageDimensionCap(model: Provider.Model): number {
+  return providerImageCap(model) === Infinity ? Infinity : DEFAULT_MAX_IMAGE_DIMENSION
+}
+
+function payloadBytes(payload: ImagePayload) {
+  return payload.kind === "bytes"
+    ? Buffer.from(payload.bytes.buffer, payload.bytes.byteOffset, payload.bytes.byteLength)
+    : Buffer.from(payload.base64, "base64")
+}
+
+function serializePrepared(payload: ImagePayload, mime: string, bytes: Buffer) {
+  if (payload.kind === "data-url") return `data:${mime};base64,${bytes.toString("base64")}`
+  if (payload.kind === "bytes") return new Uint8Array(bytes)
+  return bytes.toString("base64")
+}
+
+function preparedImage(bytes: Buffer, mime: string | undefined, model: Provider.Model) {
+  try {
+    return { ok: true as const, value: prepareImage(bytes, mime, model) }
+  } catch (error) {
+    if (ImageInputError.isInstance(error)) return { ok: false as const, text: error.data.message }
+    throw error
+  }
+}
+
+function imageWithinCaps(mime: string, bytes: Buffer, maxSize: number, maxDimension: number) {
+  if (bytes.byteLength > maxSize) return false
+  if (!supportsImageDimensions(mime) || maxDimension === Infinity) return true
+  const dimensions = imageDimensions(mime, bytes)
+  return Boolean(dimensions && Math.max(dimensions.width, dimensions.height) <= maxDimension)
+}
+
+// Unified image exit, run on every send:
+// 1. Sniff the real MIME, verify vendor-supported bytes, and transcode
+//    vendor-unsupported but decodable formats (BMP → PNG). Corrupt images
+//    become ImageInputError text and are never forwarded to the provider.
+// 2. Count cap (maxImages): drop the oldest excess *user* prompt images,
 //    including image-typed `file` parts produced by synthetic tool attachments.
-// 2. Size cap (maxSize): for EVERY image the provider would measure — user
+// 3. Byte/dimension caps: for EVERY image the provider would measure — user
 //    `image`/image-`file` parts AND tool-result `media`/`image-data`/`file-data`
-//    parts on tool/assistant messages — recompress oversized ones under the
-//    limit, or strip them to a text placeholder.
+//    parts on tool/assistant messages — recompress oversized ones under both
+//    limits, or strip them to a text placeholder.
 //
-// The size cap is PROVIDER-AWARE (providerImageCap): only Anthropic/Bedrock have
-// the ~5 MB hard limit, so only they get DEFAULT_MAX_IMAGE_BYTES; other providers
-// get Infinity (untouched). An explicit Flag.MIMOCODE_MAX_PROMPT_IMAGE_SIZE always
-// wins when set.
+// The caps are provider-aware: Anthropic/Claude routes get the ~5 MB byte limit
+// and 2000 px longest-edge limit; other providers remain untouched unless the
+// explicit Flag.MIMOCODE_MAX_PROMPT_IMAGE_SIZE byte override is set.
 //
 // For the capped providers the size cap runs by default (no flag needed) because a
 // single >5 MB image in history otherwise 400s on every subsequent request and
@@ -837,11 +880,7 @@ function providerImageCap(model: Provider.Model): number {
 function limitImages(msgs: ModelMessage[], model: Provider.Model): ModelMessage[] {
   const maxImages = Flag.MIMOCODE_MAX_PROMPT_IMAGES
   const maxSize = Flag.MIMOCODE_MAX_PROMPT_IMAGE_SIZE ?? providerImageCap(model)
-
-  // Zero-allocation fast path: with no image-count cap and no size cap there is
-  // nothing to drop or shrink, so return the messages untouched instead of
-  // rebuilding every tool-result content object on each send.
-  if (maxImages === undefined && maxSize === Infinity) return msgs
+  const maxDimension = providerImageDimensionCap(model)
 
   const total = msgs.reduce(
     (sum, msg) =>
@@ -871,16 +910,20 @@ function limitImages(msgs: ModelMessage[], model: Provider.Model): ModelMessage[
     )
   }
 
-  // Enforce the byte-size cap on one tool-result content entry. Rewrites the
-  // media bytes in place when we can recompress, otherwise swaps it for a text
-  // entry so the oversized payload never reaches the provider.
   const capToolMedia = (entry: unknown) => {
     if (!isImageMediaEntry(entry)) return entry
-    const size = base64ByteSize(entry.data)
-    if (size <= maxSize) return entry
-    const shrunk = shrinkBase64(entry.mediaType, entry.data, maxSize)
-    if (shrunk) return { ...entry, data: shrunk.base64, mediaType: shrunk.mime }
-    return { type: "text" as const, text: OVERSIZE_PLACEHOLDER(size, maxSize) }
+    const bytes = Buffer.from(entry.data, "base64")
+    const prepared = preparedImage(bytes, entry.mediaType, model)
+    if (!prepared.ok) return { type: "text" as const, text: prepared.text }
+    const mime = prepared.value.mime
+    const out = prepared.value.bytes
+    if (imageWithinCaps(mime, out, maxSize, maxDimension)) {
+      if (mime === canonicalImageMime(entry.mediaType) && out.equals(bytes)) return entry
+      return { ...entry, data: out.toString("base64"), mediaType: mime }
+    }
+    const shrunk = compressImage(mime, out, maxSize, maxDimension)
+    if (shrunk) return { ...entry, data: shrunk.data, mediaType: shrunk.mediaType }
+    return { type: "text" as const, text: OVERSIZE_PLACEHOLDER(out.byteLength) }
   }
 
   return msgs.map((msg) => {
@@ -911,30 +954,31 @@ function limitImages(msgs: ModelMessage[], model: Provider.Model): ModelMessage[
           text: `[Image omitted: exceeds the configured limit of ${maxImages} prompt image(s).]`,
         }
       }
-      const payload = imagePayload(
-        part.type === "image" ? part.image : part.data,
-        part.mediaType,
-      )
-      if (!payload || payload.size <= maxSize) return part
-      if (payload.mime?.startsWith("image/")) {
-        const base64 =
-          payload.kind === "bytes"
-            ? Buffer.from(payload.bytes.buffer, payload.bytes.byteOffset, payload.bytes.byteLength).toString("base64")
-            : payload.base64
-        const shrunk = shrinkBase64(payload.mime, base64, maxSize)
-        if (shrunk) {
-          const data =
-            payload.kind === "data-url"
-              ? `data:${shrunk.mime};base64,${shrunk.base64}`
-              : payload.kind === "bytes"
-                ? new Uint8Array(Buffer.from(shrunk.base64, "base64"))
-                : shrunk.base64
-          return part.type === "image"
-            ? { ...part, image: data, mediaType: shrunk.mime }
-            : { ...part, data, mediaType: shrunk.mime }
-        }
+      const payload = imagePayload(part.type === "image" ? part.image : part.data, part.mediaType)
+      if (!payload) return part
+      const bytes = payloadBytes(payload)
+      const prepared = preparedImage(bytes, payload.mime, model)
+      if (!prepared.ok) return { type: "text" as const, text: prepared.text }
+      const mime = prepared.value.mime
+      const out = prepared.value.bytes
+      if (imageWithinCaps(mime, out, maxSize, maxDimension)) {
+        if (mime === canonicalImageMime(payload.mime ?? "") && out.equals(bytes)) return part
+        const data = serializePrepared(payload, mime, out)
+        return part.type === "image" ? { ...part, image: data, mediaType: mime } : { ...part, data, mediaType: mime }
       }
-      return { type: "text" as const, text: OVERSIZE_PLACEHOLDER(payload.size, maxSize) }
+      const shrunk = compressImage(mime, out, maxSize, maxDimension)
+      if (shrunk) {
+        const data =
+          payload.kind === "data-url"
+            ? `data:${shrunk.mediaType};base64,${shrunk.data}`
+            : payload.kind === "bytes"
+              ? new Uint8Array(Buffer.from(shrunk.data, "base64"))
+              : shrunk.data
+        return part.type === "image"
+          ? { ...part, image: data, mediaType: shrunk.mediaType }
+          : { ...part, data, mediaType: shrunk.mediaType }
+      }
+      return { type: "text" as const, text: OVERSIZE_PLACEHOLDER(out.byteLength) }
     })
     return { ...msg, content }
   })
@@ -1009,14 +1053,89 @@ export function message(msgs: ModelMessage[], model: Provider.Model, options: Re
   return msgs
 }
 
-// Place a cache breakpoint on the tool definitions. The cache hierarchy is
-// `tools` → `system` → `messages`, so marking the LAST tool caches the entire
-// tool-schema block (often several KB) as a stable prefix that sits in front of
-// the system + message caches. Tools are passed to the SDK separately from
-// `message()` and never go through its providerID→SDK-key remap, so we resolve
-// the SDK-keyed marker via `cacheMarkerFor`. Tool registration order is stable
-// (insertion order of the tools record), so "last tool" is deterministic.
+// OpenAI's Responses API treats a function tool that OMITS `strict` as strict,
+// and `@ai-sdk/openai` only emits the field when the tool sets it
+// (`...tool.strict != null ? { strict: tool.strict } : {}`) — so by default we
+// were opting into constrained decoding by accident.
+//
+// Our tool schemas are deliberately NOT strict-compatible: optional parameters
+// stay out of `required`, not every object carries `additionalProperties: false`,
+// and discriminated unions keep an `anyOf`. Rather than reject the request, the
+// Codex backend auto-patches such a schema (observed on the wire: all 17 tools
+// came back tagged `strict: true`, `bash.required` grew from 2 entries to 5, and
+// `task.parameters.properties.operation` gained `additionalProperties: false`)
+// and then fails to compile the resulting decoding grammar. Because the failure
+// happens at GENERATION time, the 200 is already committed and the error can
+// only arrive mid-stream as `event: error` (`server_error`) + `response.failed` —
+// i.e. "the answer stops half-written". Sending `strict: true` explicitly with
+// the same schema gets a clean 502 instead, which is why this read as random
+// upstream flakiness rather than a deterministic schema problem.
+//
+// So state the intent explicitly.
+//
+// This list is keyed by npm package, but the Responses-vs-Chat decision is made
+// per PROVIDER in `provider.ts` `getModel`. Those two can drift, so here is the
+// full set of `sdk.responses()` call sites and why each is or is not listed:
+//
+//   provider.ts:323  openai                    @ai-sdk/openai  → LISTED
+//   provider.ts:359  azure                     @ai-sdk/azure   → LISTED, builds
+//                    `OpenAIResponsesLanguageModel` from `@ai-sdk/openai/internal`
+//   provider.ts:379  azure-cognitive-services  @ai-sdk/azure   → covered by the above
+//                    (catalog pins the provider's npm to `@ai-sdk/azure`)
+//   provider.ts:340  github-copilot            → the npm id resolves to the VENDORED
+//                    `./sdk/copilot`, whose prepare-tools already always emits
+//                    `strict`, so it is immune and must stay out of this list
+//   provider.ts:331  xai                       @ai-sdk/xai     → NOT listed. It
+//                    forwards `tool.strict` with the same omit-when-null guard, but
+//                    its prepare-tools runs every tool schema through
+//                    `removeAdditionalPropertiesFalse` (xai/dist:319). Strict mode
+//                    REQUIRES `additionalProperties: false`, so a strict-by-default
+//                    xAI would reject every tool call the SDK makes. It therefore
+//                    cannot be strict by default, and forcing the field here would
+//                    assert a constraint xAI has not been shown to honour.
+//
+// Everything else is left alone on purpose: `@ai-sdk/anthropic` warns ("strict mode
+// is not supported by this provider") for any non-null `strict`, so a blanket
+// default would spam warnings on every Anthropic request.
+//
+// An explicit per-tool `strict` is preserved, so a tool that has been made
+// strict-compatible can still opt in.
+//
+// Azure's `useCompletionUrls` branch sends the same tools to Chat Completions
+// instead, where the field lands as `function.strict: false` — a documented
+// boolean whose default is already false, so that path is unaffected.
+const EXPLICIT_NON_STRICT_TOOL_SDKS = ["@ai-sdk/openai", "@ai-sdk/azure"]
+
+// The single choke point for the outbound tool set (session/llm.ts passes the
+// result straight to `streamText`). Two responsibilities:
+//
+// 1. Pin `strict: false` for EXPLICIT_NON_STRICT_TOOL_SDKS — see above for why
+//    omitting the field breaks the Codex backend mid-stream.
+// 2. Place a cache breakpoint on the tool definitions. The cache hierarchy is
+//    `tools` → `system` → `messages`, so marking the LAST tool caches the entire
+//    tool-schema block (often several KB) as a stable prefix that sits in front
+//    of the system + message caches. Tools are passed to the SDK separately from
+//    `message()` and never go through its providerID→SDK-key remap, so we
+//    resolve the SDK-keyed marker via `cacheMarkerFor`. Tool registration order
+//    is stable (insertion order of the tools record), so "last tool" is
+//    deterministic.
+//
+// Both mutate in place. That is safe because the record and every tool object in
+// it are rebuilt per request: `resolveTools` allocates a fresh record and calls
+// `tool()` per entry, and MCP entries come from `convertMcpTool`, which returns
+// a new `dynamicTool()` on every `MCP.tools()` call. Nothing here outlives the
+// request, so a model switch between steps cannot carry `strict` over to a
+// provider that would reject or warn on it.
 export function tools<T extends Record<string, any>>(tools: T, model: Provider.Model): T {
+  if (EXPLICIT_NON_STRICT_TOOL_SDKS.includes(model.api.npm)) {
+    // Guarded because this walks every entry; the single `last` lookup below can
+    // assume a well-formed record, but a loop over N values is cheaper to make
+    // safe than to debug as a crash in the request path.
+    for (const tool of Object.values(tools)) {
+      if (tool && tool.strict == null) tool.strict = false
+    }
+  }
+
   if (!supportsCacheMarkers(model)) return tools
   const marker = cacheMarkerFor(model)
   if (!marker) return tools
@@ -1026,6 +1145,48 @@ export function tools<T extends Record<string, any>>(tools: T, model: Provider.M
   const last = tools[names[names.length - 1]]
   last.providerOptions = mergeDeep(last.providerOptions ?? {}, marker)
   return tools
+}
+
+// The `response_format` / `text.format` sibling of the tool `strict` problem
+// above. `generateObject`/`streamObject` ship our zod schema as a `json_schema`
+// response format, and there the OpenAI SDKs default `strictJsonSchema` to TRUE
+// — `@ai-sdk/openai` on both the chat and responses paths, and
+// `@ai-sdk/openai-compatible` — so `strict: true` goes out EXPLICITLY rather
+// than being omitted.
+//
+// Our judge schema is not strict-compatible: `SessionGoal.Verdict` marks
+// `impossible` optional, so `required` ships 2 of its 3 properties and OpenAI
+// rejects the request (strict mode requires every key in `properties` to appear
+// in `required`). Verified on the wire: `text.format` goes out as `strict: true`
+// with `required: ["ok", "reason"]`. Because `goal.ts` judges with the SESSION's
+// model, this breaks the stop-condition judge on every OpenAI-backed model.
+//
+// Unlike the tool case this fails cleanly at validation instead of mid-stream, so
+// it is a separate, visible bug — but the root cause is the same: a strict
+// default meeting a deliberately non-strict schema.
+//
+// Making the schema strict-compatible is the wrong trade here. `impossible` is
+// optional BY DESIGN — JUDGE_SYSTEM tells the judge to return `{"ok": false}`
+// WITHOUT `impossible` when in doubt — so forcing it into `required` would change
+// what the judge is asked to produce. State `strict: false` instead, exactly as
+// for tools.
+//
+// Scoped to the SDKs that read `strictJsonSchema` AND default it to true.
+// `@ai-sdk/openai-compatible` is included: it looks up provider options under the
+// name it was constructed with, which provider.ts sets to `model.providerID` —
+// the same key `providerOptions()` falls back to when `sdkKey()` has no mapping.
+//
+// Schemas that ARE strict-compatible (e.g. the agent-config schema in
+// agent/agent.ts) are deliberately left alone so they keep constrained decoding.
+const DEFAULT_STRICT_SCHEMA_SDKS = ["@ai-sdk/openai", "@ai-sdk/azure", "@ai-sdk/openai-compatible"]
+
+// Feed through `providerOptions()` before handing to generateObject/streamObject.
+// Returns undefined — not `{}` — for SDKs that do not default strict on, so
+// callers can skip attaching a provider-options bag entirely rather than sending
+// an empty one to every other provider.
+export function structuredOutputOptions(model: Provider.Model) {
+  if (!DEFAULT_STRICT_SCHEMA_SDKS.includes(model.api.npm)) return undefined
+  return { strictJsonSchema: false }
 }
 
 export function temperature(model: Provider.Model) {
@@ -1709,9 +1870,7 @@ export function providerOptions(model: Provider.Model, options: { [x: string]: a
 }
 
 export function maxOutputTokens(model: Provider.Model): number {
-  if (model.providerID === "mimo" || model.providerID === "xiaomi" || model.id.toLowerCase().includes("mimo")) {
-    return MIMO_OUTPUT_TOKEN_MAX
-  }
+  if (usesLargeModelDefaults(model)) return LARGE_MODEL_OUTPUT_TOKEN_MAX
   return Math.min(model.limit.output, OUTPUT_TOKEN_MAX) || OUTPUT_TOKEN_MAX
 }
 

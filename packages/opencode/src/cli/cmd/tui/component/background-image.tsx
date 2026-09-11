@@ -7,6 +7,7 @@ import { PNG } from "pngjs"
 import jpeg from "jpeg-js"
 import path from "path"
 import { allocImageId, detectImageProtocol, kittyClear, kittyDisplay } from "../util/image-protocol"
+import { useVisualMode } from "../context/visual"
 
 const HALF_BLOCK = "▀"
 const PROTOCOL = detectImageProtocol()
@@ -99,6 +100,7 @@ function BackgroundImageKitty(props: { path: string }) {
 }
 
 function BackgroundImageHalfBlock(props: { path: string }) {
+  const visual = useVisualMode()
   const dimensions = useTerminalDimensions()
   const { theme } = useTheme()
   const [pixels] = createResource(
@@ -141,7 +143,14 @@ function BackgroundImageHalfBlock(props: { path: string }) {
   })
 
   return (
-    <Show when={content()} fallback={<StarryBackground />}>
+    <Show
+      when={content()}
+      fallback={
+        <Show when={visual.vivid()}>
+          <StarryBackground animated={visual.motion} />
+        </Show>
+      }
+    >
       <box position="absolute" top={0} left={0} width="100%" height="100%" zIndex={0}>
         <StyledBackgroundText content={content} />
       </box>

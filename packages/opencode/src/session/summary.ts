@@ -129,6 +129,21 @@ export const layer = Layer.effect(
     })
 
     const diff = Effect.fn("SessionSummary.diff")(function* (input: { sessionID: SessionID; messageID?: MessageID }) {
+      if (input.messageID) {
+        const all = yield* sessions.messages({ sessionID: input.sessionID, agentID: "*" })
+        const target = all.find((item) => item.info.id === input.messageID)
+        if (!target || target.info.role !== "user") return []
+        const diffs =
+          target.info.summary?.diffs ??
+          (yield* computeDiff({
+            messages: all.filter(
+              (item) =>
+                item.info.id === input.messageID ||
+                (item.info.role === "assistant" && item.info.parentID === input.messageID),
+            ),
+          }))
+        return diffs.map((item) => ({ ...item, file: unquoteGitPath(item.file) }))
+      }
       const diffs = yield* storage
         .read<Snapshot.FileDiff[]>(["session_diff", input.sessionID])
         .pipe(Effect.catch(() => Effect.succeed([] as Snapshot.FileDiff[])))

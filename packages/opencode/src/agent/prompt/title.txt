@@ -7,13 +7,13 @@ Follow all rules in <rules>
 Use the <examples> so you know what a good title looks like.
 Your output must be:
 - A single line
-- ≤50 characters
+- ≤48 characters
 - No explanations or markdown quotes
 </task>
 
 <rules>
-- You MUST use the same language as the user message you are summarizing (e.g., Chinese for Chinese user prompt, English for English user prompt)
-- Title must be grammatically correct and read naturally
+- If the title request specifies a locale, use that locale; otherwise use the same language as the user message you are summarizing (e.g., Chinese for Chinese user prompt, English for English user prompt)
+- Title must be grammatically correct and read naturally - no word salad
 - NEVER use tools or invoke functions
 - Never include tool names in the title (e.g. "read tool", "bash tool", "edit tool")
 - Focus on the main topic or task the user wants to accomplish

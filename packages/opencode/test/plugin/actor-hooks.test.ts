@@ -66,7 +66,7 @@ describe("provenance plumbing", () => {
     }
   })
 
-  test("source=spawn (default) leaves provenance undefined", async () => {
+  test("source=spawn for a same-session subagent leaves provenance undefined", async () => {
     await using tmp = await tmpdir({})
 
     const result = await Instance.provide({
@@ -77,14 +77,21 @@ describe("provenance plumbing", () => {
             const sessions = yield* Session.Service
             const prompt = yield* SessionPrompt.Service
             const created = yield* sessions.create({ title: "test" })
-            return yield* prompt.prompt({
+            const message = yield* prompt.prompt({
               sessionID: created.id,
               agent: "build",
-              agentID: "main",
+              agentID: "build-1",
               source: "spawn",
               parts: [{ type: "text", text: "regular task" }],
               noReply: true,
             })
+            const persisted = yield* sessions.messages({ sessionID: created.id, agentID: "build-1" })
+            expect(persisted).toHaveLength(1)
+            expect(persisted[0].info).toMatchObject({ id: message.info.id, agentID: "build-1" })
+            expect(persisted[0].info).not.toHaveProperty("provenance")
+            expect(persisted[0].parts[0]).toMatchObject({ type: "text", text: "regular task" })
+            expect(persisted[0].parts[0]).not.toHaveProperty("synthetic", true)
+            return message
           }),
         ),
     })

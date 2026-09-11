@@ -23,7 +23,10 @@ export const AcpCommand = cmd({
     process.env.MIMOCODE_CLIENT = "acp"
     await bootstrap(process.cwd(), async () => {
       const opts = await resolveNetworkOptions(args)
-      const server = await Server.listen(opts)
+      // Private HTTP shim for this ACP session's SDK client — not a task-token host.
+      // Advertising would hand `issue`/`list` a base_url that only works for callers
+      // already inside this process's directory scope.
+      const server = await Server.listen({ ...opts, advertise: false })
 
       const sdk = createOpencodeClient({
         baseUrl: `http://${server.hostname}:${server.port}`,

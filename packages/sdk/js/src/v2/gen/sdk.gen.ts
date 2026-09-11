@@ -33,6 +33,8 @@ import type {
   ExperimentalConsoleSwitchOrgResponses,
   ExperimentalResourceListResponses,
   ExperimentalSessionListResponses,
+  ExperimentalTitleGenerateErrors,
+  ExperimentalTitleGenerateResponses,
   ExperimentalWorkspaceAdaptorListResponses,
   ExperimentalWorkspaceCreateErrors,
   ExperimentalWorkspaceCreateResponses,
@@ -86,12 +88,18 @@ import type {
   PartUpdateErrors,
   PartUpdateResponses,
   PathGetResponses,
+  PermissionAskTimeoutResponses,
+  PermissionAutoApproveDeleteResponses,
   PermissionListResponses,
   PermissionReplyErrors,
   PermissionReplyResponses,
   PermissionRespondErrors,
   PermissionRespondResponses,
   PermissionRuleset,
+  PermissionSetAskTimeoutErrors,
+  PermissionSetAskTimeoutResponses,
+  PermissionSetAutoApproveDeleteErrors,
+  PermissionSetAutoApproveDeleteResponses,
   PermissionSetSkipAllErrors,
   PermissionSetSkipAllResponses,
   PermissionSkipAllResponses,
@@ -162,6 +170,10 @@ import type {
   SessionPromptAsyncResponses,
   SessionPromptErrors,
   SessionPromptResponses,
+  SessionRecoveryErrors,
+  SessionRecoveryResponses,
+  SessionResumeErrors,
+  SessionResumeResponses,
   SessionRevertErrors,
   SessionRevertResponses,
   SessionShareErrors,
@@ -216,6 +228,8 @@ import type {
   WorkflowResumeResponses,
   WorkflowStructureResponses,
   WorkflowTranscriptResponses,
+  WorktreeAutoErrors,
+  WorktreeAutoResponses,
   WorktreeCreateErrors,
   WorktreeCreateInput,
   WorktreeCreateResponses,
@@ -919,6 +933,69 @@ export class Console extends HeyApiClient {
   }
 }
 
+export class Title extends HeyApiClient {
+  /**
+   * Generate conversation title
+   *
+   * Generate a short conversation title with the configured lite model, optional source model, and deterministic fallback.
+   */
+  public generate<ThrowOnError extends boolean = false>(
+    parameters?: {
+      directory?: string
+      workspace?: string
+      text?: string
+      parts?: Array<
+        | {
+            type: "text"
+            text: string
+          }
+        | {
+            type: "image"
+            data: string
+            mime: "image/jpeg" | "image/png" | "image/webp" | "image/gif"
+            filename?: string
+          }
+      >
+      locale?: string
+      model?: {
+        providerID: string
+        modelID: string
+      }
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "query", key: "directory" },
+            { in: "query", key: "workspace" },
+            { in: "body", key: "text" },
+            { in: "body", key: "parts" },
+            { in: "body", key: "locale" },
+            { in: "body", key: "model" },
+          ],
+        },
+      ],
+    )
+    return (options?.client ?? this.client).post<
+      ExperimentalTitleGenerateResponses,
+      ExperimentalTitleGenerateErrors,
+      ThrowOnError
+    >({
+      url: "/experimental/title",
+      ...options,
+      ...params,
+      headers: {
+        "Content-Type": "application/json",
+        ...options?.headers,
+        ...params.headers,
+      },
+    })
+  }
+}
+
 export class Session extends HeyApiClient {
   /**
    * List sessions
@@ -1004,6 +1081,11 @@ export class Experimental extends HeyApiClient {
   private _console?: Console
   get console(): Console {
     return (this._console ??= new Console({ client: this.client }))
+  }
+
+  private _title?: Title
+  get title(): Title {
+    return (this._title ??= new Title({ client: this.client }))
   }
 
   private _session?: Session
@@ -1718,6 +1800,36 @@ export class Worktree extends HeyApiClient {
       },
     })
   }
+
+  /**
+   * Auto-create worktree on conflict
+   *
+   * Check for conflicts and auto-create a worktree if needed.
+   */
+  public auto<ThrowOnError extends boolean = false>(
+    parameters?: {
+      directory?: string
+      workspace?: string
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "query", key: "directory" },
+            { in: "query", key: "workspace" },
+          ],
+        },
+      ],
+    )
+    return (options?.client ?? this.client).post<WorktreeAutoResponses, WorktreeAutoErrors, ThrowOnError>({
+      url: "/experimental/worktree/auto",
+      ...options,
+      ...params,
+    })
+  }
 }
 
 export class Session2 extends HeyApiClient {
@@ -1911,6 +2023,7 @@ export class Session2 extends HeyApiClient {
       directory?: string
       workspace?: string
       title?: string
+      expectedRevision?: number
       permission?: PermissionRuleset
       time?: {
         archived?: number
@@ -1927,6 +2040,7 @@ export class Session2 extends HeyApiClient {
             { in: "query", key: "directory" },
             { in: "query", key: "workspace" },
             { in: "body", key: "title" },
+            { in: "body", key: "expectedRevision" },
             { in: "body", key: "permission" },
             { in: "body", key: "time" },
           ],
@@ -2097,6 +2211,7 @@ export class Session2 extends HeyApiClient {
       directory?: string
       workspace?: string
       messageID?: string
+      title?: string
     },
     options?: Options<never, ThrowOnError>,
   ) {
@@ -2109,6 +2224,7 @@ export class Session2 extends HeyApiClient {
             { in: "query", key: "directory" },
             { in: "query", key: "workspace" },
             { in: "body", key: "messageID" },
+            { in: "body", key: "title" },
           ],
         },
       ],
@@ -2405,7 +2521,10 @@ export class Session2 extends HeyApiClient {
         [key: string]: boolean
       }
       format?: OutputFormat
+      titleLocale?: string
       system?: string
+      systemMode?: "append" | "replace-agent"
+      harness?: "auto" | "codex" | "default"
       variant?: string
       parts?: Array<TextPartInput | FilePartInput | AgentPartInput | SubtaskPartInput>
     },
@@ -2430,7 +2549,10 @@ export class Session2 extends HeyApiClient {
             { in: "body", key: "noReply" },
             { in: "body", key: "tools" },
             { in: "body", key: "format" },
+            { in: "body", key: "titleLocale" },
             { in: "body", key: "system" },
+            { in: "body", key: "systemMode" },
+            { in: "body", key: "harness" },
             { in: "body", key: "variant" },
             { in: "body", key: "parts" },
           ],
@@ -2522,6 +2644,80 @@ export class Session2 extends HeyApiClient {
   }
 
   /**
+   * List interrupted turn recovery candidates
+   *
+   * Return the latest incomplete assistant turn that can be resumed without creating a user message.
+   */
+  public recovery<ThrowOnError extends boolean = false>(
+    parameters: {
+      sessionID: string
+      directory?: string
+      workspace?: string
+      agentID?: string
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "path", key: "sessionID" },
+            { in: "query", key: "directory" },
+            { in: "query", key: "workspace" },
+            { in: "query", key: "agentID" },
+          ],
+        },
+      ],
+    )
+    return (options?.client ?? this.client).get<SessionRecoveryResponses, SessionRecoveryErrors, ThrowOnError>({
+      url: "/session/{sessionID}/recovery",
+      ...options,
+      ...params,
+    })
+  }
+
+  /**
+   * Resume an interrupted turn
+   *
+   * Resume an incomplete assistant turn without creating another user message.
+   */
+  public resume<ThrowOnError extends boolean = false>(
+    parameters: {
+      sessionID: string
+      assistantMessageID: string
+      directory?: string
+      workspace?: string
+      agentID?: string
+      task_id?: string
+      titleLocale?: string
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "path", key: "sessionID" },
+            { in: "path", key: "assistantMessageID" },
+            { in: "query", key: "directory" },
+            { in: "query", key: "workspace" },
+            { in: "query", key: "agentID" },
+            { in: "query", key: "task_id" },
+            { in: "query", key: "titleLocale" },
+          ],
+        },
+      ],
+    )
+    return (options?.client ?? this.client).post<SessionResumeResponses, SessionResumeErrors, ThrowOnError>({
+      url: "/session/{sessionID}/turn/{assistantMessageID}/resume",
+      ...options,
+      ...params,
+    })
+  }
+
+  /**
    * Send async message
    *
    * Create and send a new message to a session asynchronously, starting the session if needed and returning immediately.
@@ -2547,7 +2743,10 @@ export class Session2 extends HeyApiClient {
         [key: string]: boolean
       }
       format?: OutputFormat
+      titleLocale?: string
       system?: string
+      systemMode?: "append" | "replace-agent"
+      harness?: "auto" | "codex" | "default"
       variant?: string
       parts?: Array<TextPartInput | FilePartInput | AgentPartInput | SubtaskPartInput>
     },
@@ -2572,7 +2771,10 @@ export class Session2 extends HeyApiClient {
             { in: "body", key: "noReply" },
             { in: "body", key: "tools" },
             { in: "body", key: "format" },
+            { in: "body", key: "titleLocale" },
             { in: "body", key: "system" },
+            { in: "body", key: "systemMode" },
+            { in: "body", key: "harness" },
             { in: "body", key: "variant" },
             { in: "body", key: "parts" },
           ],
@@ -2606,15 +2808,35 @@ export class Session2 extends HeyApiClient {
       model?: string
       arguments?: string
       command?: string
+      titleLocale?: string
       variant?: string
-      parts?: Array<{
-        id?: string
-        type: "file"
-        mime: string
-        filename?: string
-        url: string
-        source?: FilePartSource
-      }>
+      system?: string
+      systemMode?: "append" | "replace-agent"
+      harness?: "auto" | "codex" | "default"
+      parts?: Array<
+        | {
+            id?: string
+            type: "text"
+            text: string
+            synthetic?: boolean
+            ignored?: boolean
+            time?: {
+              start: number
+              end?: number
+            }
+            metadata?: {
+              [key: string]: unknown
+            }
+          }
+        | {
+            id?: string
+            type: "file"
+            mime: string
+            filename?: string
+            url: string
+            source?: FilePartSource
+          }
+      >
     },
     options?: Options<never, ThrowOnError>,
   ) {
@@ -2631,7 +2853,11 @@ export class Session2 extends HeyApiClient {
             { in: "body", key: "model" },
             { in: "body", key: "arguments" },
             { in: "body", key: "command" },
+            { in: "body", key: "titleLocale" },
             { in: "body", key: "variant" },
+            { in: "body", key: "system" },
+            { in: "body", key: "systemMode" },
+            { in: "body", key: "harness" },
             { in: "body", key: "parts" },
           ],
         },
@@ -3090,6 +3316,148 @@ export class Permission extends HeyApiClient {
       ThrowOnError
     >({
       url: "/permission/skip-all",
+      ...options,
+      ...params,
+      headers: {
+        "Content-Type": "application/json",
+        ...options?.headers,
+        ...params.headers,
+      },
+    })
+  }
+
+  /**
+   * Get auto-approve-delete state
+   *
+   * Whether irreversible deletes skip the extra bash_delete confirmation. Instance-scoped; defaults to the MIMOCODE_AUTO_APPROVE_DELETE env var.
+   */
+  public autoApproveDelete<ThrowOnError extends boolean = false>(
+    parameters?: {
+      directory?: string
+      workspace?: string
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "query", key: "directory" },
+            { in: "query", key: "workspace" },
+          ],
+        },
+      ],
+    )
+    return (options?.client ?? this.client).get<PermissionAutoApproveDeleteResponses, unknown, ThrowOnError>({
+      url: "/permission/auto-approve-delete",
+      ...options,
+      ...params,
+    })
+  }
+
+  /**
+   * Set auto-approve-delete state
+   *
+   * Trust the model with irreversible deletes, skipping the extra bash_delete confirmation. Distinct from skip-all, which deliberately does NOT cover forced-ask permissions. Applies instance-wide (this directory only, so other directories served by the same process are unaffected) and subagents inherit it. Explicit `bash: deny` rules still block. Already-pending delete asks are left for a human — the command they guard is irreversible.
+   */
+  public setAutoApproveDelete<ThrowOnError extends boolean = false>(
+    parameters?: {
+      directory?: string
+      workspace?: string
+      enabled?: boolean
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "query", key: "directory" },
+            { in: "query", key: "workspace" },
+            { in: "body", key: "enabled" },
+          ],
+        },
+      ],
+    )
+    return (options?.client ?? this.client).post<
+      PermissionSetAutoApproveDeleteResponses,
+      PermissionSetAutoApproveDeleteErrors,
+      ThrowOnError
+    >({
+      url: "/permission/auto-approve-delete",
+      ...options,
+      ...params,
+      headers: {
+        "Content-Type": "application/json",
+        ...options?.headers,
+        ...params.headers,
+      },
+    })
+  }
+
+  /**
+   * Get permission ask timeout
+   *
+   * Timeout in milliseconds for permission asks that require human confirmation. null means no timeout (wait indefinitely). Applies to all asks — normal and forced-ask. Orthogonal to skip-all.
+   */
+  public askTimeout<ThrowOnError extends boolean = false>(
+    parameters?: {
+      directory?: string
+      workspace?: string
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "query", key: "directory" },
+            { in: "query", key: "workspace" },
+          ],
+        },
+      ],
+    )
+    return (options?.client ?? this.client).get<PermissionAskTimeoutResponses, unknown, ThrowOnError>({
+      url: "/permission/ask-timeout",
+      ...options,
+      ...params,
+    })
+  }
+
+  /**
+   * Set permission ask timeout
+   *
+   * Set the timeout in milliseconds for permission asks that require human confirmation. null disables the timeout (wait indefinitely). Applies instance-wide; subagents inherit it. Orthogonal to skip-all — both can be enabled independently.
+   */
+  public setAskTimeout<ThrowOnError extends boolean = false>(
+    parameters?: {
+      directory?: string
+      workspace?: string
+      ms?: number | null
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "query", key: "directory" },
+            { in: "query", key: "workspace" },
+            { in: "body", key: "ms" },
+          ],
+        },
+      ],
+    )
+    return (options?.client ?? this.client).post<
+      PermissionSetAskTimeoutResponses,
+      PermissionSetAskTimeoutErrors,
+      ThrowOnError
+    >({
+      url: "/permission/ask-timeout",
       ...options,
       ...params,
       headers: {

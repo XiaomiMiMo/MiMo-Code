@@ -1,7 +1,7 @@
 ---
 feature: compose-next
 status: delivered
-updated: 2026-07-22
+updated: 2026-09-01
 branch: compose-next
 commits: 8e2817cfddb35ba19fcea221b6567966890dfc87..42613223d00eec340651b632aacfcac01677f795
 predecessor: compose-slim (draft PR #1850)
@@ -9,9 +9,31 @@ predecessor: compose-slim (draft PR #1850)
 
 # Compose Next
 
+> **Current status (2026-08-12):** Compose Next no longer sets `disable-model-invocation`, so models may discover and invoke it. The generic field contract remains valid for other skills; see `skill-invocation-control.md`. Compose Next's own description and body require explicit user authorization, including any clear natural-language request for the workflow.
+
+## Superseded in part (2026-07-31)
+
+The invisibility mechanism described below was replaced by
+`docs/compose/spec/skill-invocation-control.md`, which is the current contract.
+Three statements in this document no longer hold:
+
+1. The exact `"compose-next": "deny"` default-agent skill permission is gone.
+   Permission now means authorization only — a `deny` makes a skill unusable by
+   the user too — so keeping it would have broken the user's own
+   `/compose-next`. Model invisibility moved to `disable-model-invocation: true`
+   in the skill's own frontmatter.
+2. S2's "`SkillTool.execute()` stays permissive… if a model guesses the exact
+   name it may invoke it" is reversed: the skill tool now refuses a
+   `disable-model-invocation` skill and redirects to the user's slash command.
+3. `skill/search.ts` no longer special-cases the name `compose-next`; its
+   exclusion from `skill_search` is carried by the field.
+
+The rest — the skill's content, its presence in `Skill.all()` for slash
+autocomplete, the deprecation touchpoints, and the i18n keys — is unchanged.
+
 ## Report
 
-**What was built** - One self-contained builtin skill `compose-next` (grill → spec → workspace → implement → verify → review → finalize → finish), invoked from Build as `/compose-next`. Hidden from model auto-discovery via an exact `"compose-next": "deny"` default-agent skill permission plus `skill_search` sourcing from `Skill.available(agent)`; still present in `Skill.all()` so slash autocomplete works. Legacy Compose is untouched functionally and marked deprecated through three additive touchpoints: agent description line, `Compose (legacy)` input-bar label, and a compose-only home-tip display override. Side fix: tips now render for first-time users (first-session gate removed).
+**What was built** - One self-contained builtin skill `compose-next` (grill → workspace → spec → implement → verify → review → finalize → finish), invoked from Build as `/compose-next`. Hidden from model auto-discovery via an exact `"compose-next": "deny"` default-agent skill permission plus `skill_search` sourcing from `Skill.available(agent)`; still present in `Skill.all()` so slash autocomplete works. Legacy Compose is untouched functionally and marked deprecated through three additive touchpoints: agent description line, `Compose (legacy)` input-bar label, and a compose-only home-tip display override. Side fix: tips now render for first-time users (first-session gate removed).
 
 **Verification** - From `packages/opencode`: `bun test test/skill test/permission test/tool/skill-search.test.ts` — 230 pass / 0 fail / 555 assertions. `bun typecheck` — PASS. `git diff --check` — PASS. CI (lint, typecheck, unit shards 1-4) — all green on PR #1861.
 
@@ -46,13 +68,13 @@ Canonical name: `compose-next`. Bundle root: builtin. Not prefixed with `compose
 The skill body is a single executable contract, in this order:
 
 1. **Grill** - resolve genuine user decisions (question tool with concrete options); apply Never-Ask to a single decision only; do not batch later decisions under one grant.
-2. **Spec** - create or amend a feature document at `docs/compose/spec/<feature>.md` when the work warrants one; keep design, tasks, and delivery report in that one document. The path is fixed in the skill text; no `<compose_docs_dir>` prompt injection is involved (that block only exists for the Compose agent and `compose.js`, neither of which is in the `/compose-next` path).
-3. **Workspace** - own a worktree before implementation on every path (linked worktree under `.worktrees/` by default); never start on `main`/`master` without explicit consent.
-4. **Implement** - proceed in dependency order; use test-first where applicable; do not spawn parallel edits into the same worktree.
+2. **Workspace** - own the active workspace before Spec or Implement on every path (linked worktree under `.worktrees/` by default; skip creation when the workspace is already chosen); never start on `main`/`master` without explicit consent.
+3. **Spec** - create or amend a feature document at `docs/compose/spec/<feature>.md` from the workspace root when the work warrants one; keep design, tasks, and delivery report in that one document. Do not write the feature document before Workspace owns the active workspace. The path is fixed in the skill text; no `<compose_docs_dir>` prompt injection is involved (that block only exists for the Compose agent and `compose.js`, neither of which is in the `/compose-next` path).
+4. **Implement** - proceed in dependency order; use test-first where applicable; do not spawn parallel edits into the same workspace.
 5. **Verify** - run verification and produce a compact PASS/FAIL/PRE-EXISTING summary; verification must complete before review is dispatched.
-6. **Review** - dispatch one fresh reviewer with spec path, worktree path, base/head SHAs, diff coordinates, and the compact verification summary; the reviewer reuses that summary rather than duplicating heavy E2E commands without cause.
-7. **Finalize** - update the feature document (report, journey log, verification evidence) before branch completion.
-8. **Finish** - explicit merge / PR / keep-branch / discard, with worktree ownership stated; destructive actions never auto-approve.
+6. **Review** - dispatch one fresh reviewer with spec path, workspace path, base/head SHAs, diff coordinates, and the compact verification summary; the reviewer reuses that summary rather than duplicating heavy E2E commands without cause. If there is no feature document, take acceptance criteria from the conversation or ask the user before dispatching.
+7. **Finalize** - if a feature document exists, update it (report, journey log, verification evidence) before branch completion.
+8. **Finish** - explicit merge / PR / keep-branch / discard, with workspace ownership stated; destructive actions never auto-approve.
 
 The three slim experimental skills are source material for this document; they are not carried into the production bundle.
 

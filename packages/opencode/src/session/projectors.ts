@@ -1,8 +1,10 @@
-import { NotFoundError, eq, and } from "../storage"
+import { NotFoundError, eq, and, sql } from "../storage"
 import { SyncEvent } from "@/sync"
 import * as Session from "./session"
 import { MessageV2 } from "./message-v2"
 import { SessionTable, MessageTable, PartTable } from "./session.sql"
+import { ActorRegistryTable } from "@/actor/actor.sql"
+import { ACTIVITY_COALESCE_MS } from "@/actor/schema"
 import { Log } from "../util"
 
 const log = Log.create({ service: "session.projector" })
@@ -45,6 +47,8 @@ export function toPartialRow(info: DeepPartial<Session.Info>) {
     slug: grab(info, "slug"),
     directory: grab(info, "directory"),
     title: grab(info, "title"),
+    title_source: grab(info, "titleSource"),
+    title_revision: grab(info, "titleRevision"),
     version: grab(info, "version"),
     share_url: grab(info, "share", (v) => grab(v, "url")),
     summary_additions: grab(info, "summary", (v) => grab(v, "additions")),
@@ -53,6 +57,7 @@ export function toPartialRow(info: DeepPartial<Session.Info>) {
     summary_diffs: grab(info, "summary", (v) => grab(v, "diffs")),
     revert: grab(info, "revert"),
     permission: grab(info, "permission"),
+    prompt: grab(info, "prompt"),
     time_created: grab(info, "time", (v) => grab(v, "created")),
     time_updated: grab(info, "time", (v) => grab(v, "updated")),
     time_compacting: grab(info, "time", (v) => grab(v, "compacting")),
@@ -67,8 +72,31 @@ export default [
     db.insert(SessionTable).values(Session.toRow(data.info)).run()
   }),
 
+  SyncEvent.project(Session.LegacyUpdated, (db, data) => {
+    const current = db.select().from(SessionTable).where(eq(SessionTable.id, data.sessionID)).get()
+    if (!current) throw new NotFoundError({ message: `Session not found: ${data.sessionID}` })
+    const { title, ...rest } = data.info
+    // Schema migration initializes old data at revision zero. Rebuilding the
+    // legacy prefix must produce that same baseline before any v2 transition.
+    // Once a revisioned title command exists, no v1 title can follow it.
+    if (title !== undefined && current.title_revision !== 0) throw new Error("Legacy title event after revisioned title command")
+    db.update(SessionTable).set({
+      ...toPartialRow(rest),
+      ...(title !== undefined ? { title: title || "Untitled", title_source: "user" as const, title_revision: 0 } : {}),
+    }).where(eq(SessionTable.id, data.sessionID)).run()
+  }),
+
   SyncEvent.project(Session.Event.Updated, (db, data) => {
     const info = data.info
+    if ("title" in info || "titleSource" in info || "titleRevision" in info) {
+      const current = db.select().from(SessionTable).where(eq(SessionTable.id, data.sessionID)).get()
+      if (!current) throw new NotFoundError({ message: `Session not found: ${data.sessionID}` })
+      const next = Session.TitleSnapshot.parse({ sessionID: data.sessionID, ...info })
+      if (data.previousRevision !== current.title_revision || next.titleRevision !== current.title_revision + 1)
+        throw new Error("Title event revision mismatch")
+      if (current.title_source === "user" && next.titleSource !== "user") throw new Error("Protected title cannot be unlocked")
+      if (next.titleSource === "fallback" && current.title_source !== "fallback") throw new Error("Generated title cannot return to fallback")
+    } else if (data.previousRevision !== undefined) throw new Error("Title event is missing its snapshot")
     const row = db
       .update(SessionTable)
       .set(toPartialRow(info))
@@ -128,6 +156,41 @@ export default [
           data: rest,
         })
         .onConflictDoUpdate({ target: PartTable.id, set: { data: rest } })
+        .run()
+      // Activity heartbeat for actor liveness (actor/schema.ts deriveLiveness).
+      // This projector is the single writer of `part` rows, so it is the one
+      // place that already fires on every part write — no new hook in the session
+      // loop. Sequenced after the insert so activity is recorded only if the part
+      // actually landed. `part` carries no agent id (the agent slice lives on
+      // `message`), so the owning actor is resolved through the message's primary
+      // key; together with session_id that hits actor_registry's PK directly. A
+      // 0-row no-op when the session has no registry row, exactly like updateTurn.
+      //
+      // Coalesced to at most one write per actor per ACTIVITY_COALESCE_MS. The
+      // part-write path this hangs off is unthrottled — the bash tool's
+      // ctx.metadata fires per decoded stdout chunk — which measured 539-867 of
+      // these UPDATEs per second, each running the correlated subquery below,
+      // while the only consumers (deriveLiveness's 6m stall display and 10m
+      // abandonment bound) cannot resolve anything finer than tens of seconds.
+      // The staleness predicate is part of the WHERE rather than a process-local
+      // cache so it stays correct across instances and restarts, and it also
+      // makes the column monotonic: an out-of-order event carrying an older
+      // `data.time` no longer drags it backwards. `IS NULL` is the first
+      // disjunct because the column is nullable and a fresh row records NULL,
+      // which must still take its first write (AGENTS.md, "Reading a nullable
+      // column").
+      db.update(ActorRegistryTable)
+        .set({ last_activity_time: data.time })
+        .where(
+          and(
+            eq(ActorRegistryTable.session_id, sessionID),
+            eq(
+              ActorRegistryTable.actor_id,
+              sql`(SELECT ${MessageTable.agent_id} FROM ${MessageTable} WHERE ${MessageTable.id} = ${messageID})`,
+            ),
+            sql`(${ActorRegistryTable.last_activity_time} IS NULL OR ${ActorRegistryTable.last_activity_time} < ${data.time - ACTIVITY_COALESCE_MS})`,
+          ),
+        )
         .run()
     } catch (err) {
       if (!foreign(err)) throw err

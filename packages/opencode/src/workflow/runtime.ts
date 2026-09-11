@@ -318,6 +318,8 @@ export const layer = Layer.effect(
     // lazily below — it reads the per-instance ALS context and returns Effect<Info>
     // with no requirement, so it stays out of the public method types.
     const config = yield* Config.Service
+    const hostBridge = yield* EffectBridge.make()
+    const fork = <A, E, R>(effect: Effect.Effect<A, E, R>) => hostBridge.fork(effect)
     const scope = yield* Scope.Scope
     const runs = new Map<string, RunEntry>()
 
@@ -419,7 +421,7 @@ export const layer = Layer.effect(
         entry.runID,
         setTimeout(() => {
           flushTimers.delete(entry.runID)
-          Effect.runFork(
+          fork(
             WorkflowPersistence.flushCounters({
               runID: entry.runID,
               running: entry.running,
@@ -690,7 +692,7 @@ export const layer = Layer.effect(
         info: { actorID?: string; errorMessage?: string } = {},
       ) => {
         try {
-          Effect.runFork(
+          fork(
             bus
               .publish(WorkflowAgentFailed, {
                 sessionID: input.sessionID,
@@ -1212,16 +1214,16 @@ export const layer = Layer.effect(
         const phaseId = "p" + entry.structure.length
         entry.structure.push({ type: "phase", id: phaseId, title: String(title) })
         entry.currentPhaseId = phaseId
-        Effect.runFork(WorkflowPersistence.recordPhase({ runID, phase: String(title) }).pipe(Effect.ignore))
-        Effect.runFork(WorkflowPersistence.appendJournal(runID, { t: "phase", title: String(title), pass }).pipe(Effect.ignore))
-        Effect.runFork(bus.publish(WorkflowPhase, { sessionID: input.sessionID, runID, title: String(title) }))
+        fork(WorkflowPersistence.recordPhase({ runID, phase: String(title) }).pipe(Effect.ignore))
+        fork(WorkflowPersistence.appendJournal(runID, { t: "phase", title: String(title), pass }).pipe(Effect.ignore))
+        fork(bus.publish(WorkflowPhase, { sessionID: input.sessionID, runID, title: String(title) }))
         return undefined
       }
 
       const logHook: HostFn = (message: unknown) => {
         entry.transcript.push({ kind: "log", text: String(message) })
-        Effect.runFork(WorkflowPersistence.appendJournal(runID, { t: "log", msg: String(message), pass }).pipe(Effect.ignore))
-        Effect.runFork(bus.publish(WorkflowLog, { sessionID: input.sessionID, runID, message: String(message) }))
+        fork(WorkflowPersistence.appendJournal(runID, { t: "log", msg: String(message), pass }).pipe(Effect.ignore))
+        fork(bus.publish(WorkflowLog, { sessionID: input.sessionID, runID, message: String(message) }))
         return undefined
       }
 

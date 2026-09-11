@@ -1,4 +1,5 @@
 import { BusEvent } from "@/bus/bus-event"
+import { childProcessEnv } from "@/util/child-process-env"
 import { Bus } from "@/bus"
 import { InstanceState } from "@/effect"
 import { Instance } from "@/project/instance"
@@ -182,8 +183,9 @@ export const layer = Layer.effect(
 
       const cwd = input.cwd || s.dir
       const shell = yield* plugin.trigger("shell.env", { cwd }, { env: {} })
+      // childProcessEnv: a terminal is a shell the user (or agent) types into.
       const env = {
-        ...process.env,
+        ...childProcessEnv(),
         ...input.env,
         ...shell.env,
         TERM: "xterm-256color",

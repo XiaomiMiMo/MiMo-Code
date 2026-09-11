@@ -24,6 +24,14 @@ export const ActorRegistryTable = sqliteTable(
     tools: text({ mode: "json" }).$type<readonly string[] | "INHERIT">(),
     last_turn_time: integer().notNull(),
     turn_count: integer().notNull().default(0),
+    // Last time ANY part write landed for this actor's (session_id, agent_id)
+    // slice — the last moment something actually succeeded, at per-API-call
+    // granularity instead of per-completed-step. Nullable on purpose: rows that
+    // predate this column, and a row read in the instant between register() and
+    // its first part write, have genuinely recorded no activity, and NULL states
+    // that rather than inventing a timestamp. Written by the PartUpdated
+    // projector (session/projectors.ts), the single writer of `part` rows.
+    last_activity_time: integer(),
     last_error: text(),
     instance_id: text().notNull(),
     time_completed: integer(),

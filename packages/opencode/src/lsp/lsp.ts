@@ -192,7 +192,7 @@ export const layer = Layer.effect(
                 spawn: async (root) => ({
                   process: lspspawn(item.command[0], item.command.slice(1), {
                     cwd: root,
-                    env: { ...process.env, ...item.env },
+                    env: item.env,
                   }),
                   initialization: item.initialization,
                 }),

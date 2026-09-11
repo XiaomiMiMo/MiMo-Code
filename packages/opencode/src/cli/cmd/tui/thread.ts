@@ -202,6 +202,7 @@ export const TuiThreadCommand = cmd({
         default: false,
       })
       .option("dangerously-skip-permissions", {
+        alias: ["yolo"],
         type: "boolean",
         describe: "auto-approve permissions that are not explicitly denied (dangerous!)",
         default: false,
@@ -333,6 +334,19 @@ export const TuiThreadCommand = cmd({
             fetch: createWorkerFetch(client),
             events: createEventSource(client),
           }
+
+      // Bind a loopback listener even when this TUI talks to the worker in-process.
+      // The transport above stays as it was on purpose: routing the TUI's own traffic
+      // through TCP and JSON would be a pointless downgrade. What the socket is for is
+      // everything OUTSIDE this process — the OpenAI-compatible `/v1` surface a skill or
+      // subprocess borrows a model through, which cannot exist without one. Awaited
+      // rather than fired off, so a consumer spawned in the first turn finds it already
+      // there; the call is idempotent and generates its own credential.
+      if (!external) {
+        await client
+          .call("server", undefined)
+          .catch((error) => Log.Default.warn("failed to bind loopback listener", { error: errorMessage(error) }))
+      }
 
       setTimeout(() => {
         client.call("checkUpgrade", { directory: cwd }).catch(() => {})

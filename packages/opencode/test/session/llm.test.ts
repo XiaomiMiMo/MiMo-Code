@@ -680,6 +680,7 @@ describe("session.llm.stream", () => {
     if (!server) throw new Error("Server not initialized")
 
     const source = await loadFixture("openai", "gpt-5.2")
+    let hiddenCalls = 0
     const request = waitRequest(
       "/responses",
       createEventResponse(
@@ -691,6 +692,46 @@ describe("session.llm.stream", () => {
               created_at: Math.floor(Date.now() / 1000),
               model: source.model.id,
               service_tier: null,
+            },
+          },
+          {
+            type: "response.output_item.added",
+            sequence_number: 1,
+            output_index: 0,
+            item: {
+              type: "function_call",
+              id: "fc_hidden",
+              call_id: "call_hidden",
+              name: "calendar_hidden",
+              arguments: "",
+              status: "in_progress",
+            },
+          },
+          {
+            type: "response.function_call_arguments.delta",
+            sequence_number: 2,
+            output_index: 0,
+            item_id: "fc_hidden",
+            delta: '{"private_field":"today"}',
+          },
+          {
+            type: "response.function_call_arguments.done",
+            sequence_number: 3,
+            output_index: 0,
+            item_id: "fc_hidden",
+            arguments: '{"private_field":"today"}',
+          },
+          {
+            type: "response.output_item.done",
+            sequence_number: 4,
+            output_index: 0,
+            item: {
+              type: "function_call",
+              id: "fc_hidden",
+              call_id: "call_hidden",
+              name: "calendar_hidden",
+              arguments: '{"private_field":"today"}',
+              status: "completed",
             },
           },
           {
@@ -765,7 +806,10 @@ describe("session.llm.stream", () => {
             calendar_hidden: tool({
               description: "Secret calendar MCP description",
               inputSchema: z.object({ private_field: z.string() }),
-              execute: async () => ({ title: "", output: "", metadata: {} }),
+              execute: async () => {
+                hiddenCalls++
+                return { title: "", output: "", metadata: {} }
+              },
             }),
             direct_tool: tool({
               description: "A directly exposed non-MCP tool",
@@ -781,23 +825,30 @@ describe("session.llm.stream", () => {
         expect(tools.map((item) => item.name)).not.toContain("calendar_hidden")
         expect(JSON.stringify(tools)).not.toContain("Secret calendar MCP description")
         expect(JSON.stringify(tools)).not.toContain("private_field")
+        expect(hiddenCalls).toBe(1)
       },
     })
   })
 
-  test("aborts an OpenAI request that stalls before response headers", async () => {
+  test("retries an OpenAI request that times out before response headers", async () => {
     const server = state.server
     if (!server) throw new Error("Server not initialized")
 
     const source = await loadFixture("openai", "gpt-5.2")
-    const request = deferred<Capture>()
+    const first = deferred<Capture>()
+    const second = deferred<Capture>()
     state.queue.push({
       path: "/responses",
-      resolve: request.resolve,
+      resolve: first.resolve,
       response: async () => {
         await Bun.sleep(500)
         return createEventResponse([], true)
       },
+    })
+    state.queue.push({
+      path: "/responses",
+      resolve: second.resolve,
+      response: createEventResponse([], true),
     })
 
     await using tmp = await tmpdir({
@@ -854,17 +905,17 @@ describe("session.llm.stream", () => {
               system: ["You are a helpful assistant."],
               messages: [{ role: "user", content: "Hello" }],
               tools: {},
-              retries: 0,
             })
             .pipe(Stream.runCollect),
         )
 
-        expect(Date.now() - started).toBeLessThan(400)
-        expect(Array.from(events).some((event) => event.type === "error")).toBe(true)
-        expect((await request.promise).url.pathname.endsWith("/responses")).toBe(true)
+        expect(Date.now() - started).toBeLessThan(3_000)
+        expect(Array.from(events).some((event) => event.type === "error")).toBe(false)
+        expect((await first.promise).url.pathname.endsWith("/responses")).toBe(true)
+        expect((await second.promise).url.pathname.endsWith("/responses")).toBe(true)
       },
     })
-  })
+  }, 15_000)
 
   test("accepts user image attachments as data URLs for OpenAI models", async () => {
     const server = state.server

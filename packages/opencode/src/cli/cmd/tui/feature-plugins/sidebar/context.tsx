@@ -13,7 +13,7 @@ const money = new Intl.NumberFormat("en-US", {
   currency: "USD",
 })
 
-function View(props: { api: TuiPluginApi; session_id: string }) {
+export function ContextSidebar(props: { api: TuiPluginApi; session_id: string }) {
   const theme = () => props.api.theme.current
   const msg = createMemo(() => props.api.state.session.messages(props.session_id))
   const cost = createMemo(() => msg().reduce((sum, item) => sum + (item.role === "assistant" ? item.cost : 0), 0))
@@ -82,7 +82,7 @@ function View(props: { api: TuiPluginApi; session_id: string }) {
     const win = Model.contextWindow(props.api.state.config, model)
     return {
       tokens,
-      percent: win ? Math.round((tokens / win.usable) * 100) : null,
+      percent: win ? Math.round((tokens / win.effective) * 100) : null,
       limit: win,
     }
   })
@@ -97,7 +97,7 @@ function View(props: { api: TuiPluginApi; session_id: string }) {
       <Show when={state().limit}>
         {(win) => (
           <text fg={theme().textMuted}>
-            compact at {Token.format(win().usable)}
+            limit {Token.format(win().effective)}
             {win().source === "config" ? ` of ${Token.format(win().hard)}` : ""}
           </text>
         )}
@@ -113,7 +113,7 @@ const tui: TuiPlugin = async (api) => {
     order: 100,
     slots: {
       sidebar_content(_ctx, props) {
-        return <View api={api} session_id={props.session_id} />
+        return <ContextSidebar api={api} session_id={props.session_id} />
       },
     },
   })

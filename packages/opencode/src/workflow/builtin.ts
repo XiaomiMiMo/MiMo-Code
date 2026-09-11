@@ -1,22 +1,9 @@
 export * as BuiltinWorkflow from "./builtin"
 
-// `with { type: "text" }` makes Bun inline the .js file's SOURCE as a string
-// (not import it as a module) and embeds it into the compiled binary via
-// `bun build --compile` (mirrors the `with { type: "file" }` asset pattern in
-// script/build.ts) — so the built-in script ships with the binary. The Bun
-// runtime and bundler both honour this, but tsgo resolves the .js as a real
-// module and flags TS1192 ("no default export"); the suppression is scoped to
-// this single import. A `Bun.file(...).text()` fallback is intentionally NOT
-// used: it reads the real filesystem at runtime, which does not exist inside a
-// compiled standalone binary.
-// @ts-expect-error TS1192: import-attribute text loader, resolved by Bun not tsgo
-import DEEP_RESEARCH_SCRIPT from "./builtin/deep-research.js" with { type: "text" }
-// @ts-expect-error TS1192: import-attribute text loader, resolved by Bun not tsgo
-import FACT_CHECK_SCRIPT from "./builtin/fact-check.js" with { type: "text" }
-// @ts-expect-error TS1192: import-attribute text loader, resolved by Bun not tsgo
-import COMPOSE_SCRIPT from "./builtin/compose.js" with { type: "text" }
-// @ts-expect-error TS1192: import-attribute text loader, resolved by Bun not tsgo
-import RESEARCH_EXPERIMENT_SCRIPT from "./builtin/research-experiment.js" with { type: "text" }
+// A macro, not an import, so these function bodies never enter the module graph and no ESM
+// parser can reach them. docs/compose/spec/bun-text-import-esm-collision.md explains why.
+import { loadBuiltinScripts } from "./builtin.macro" with { type: "macro" }
+import { loadBuiltinScripts as loadBuiltinScriptsDev } from "./builtin.macro"
 import { parseMeta } from "./meta"
 
 export type Entry = {
@@ -27,17 +14,19 @@ export type Entry = {
   script: string
 }
 
-// Built-in workflow scripts shipped with the binary. Each is parsed ONCE at
-// module load (meta is static data, not executed). Add new built-ins here.
-// `file` is carried so a malformed meta names the offending script — this throw
-// runs at module init, so a broken built-in fails the whole app boot; the path
-// tells the user which one.
-const SCRIPTS: { file: string; script: string }[] = [
-  { file: "deep-research.js", script: DEEP_RESEARCH_SCRIPT },
-  { file: "fact-check.js", script: FACT_CHECK_SCRIPT },
-  { file: "compose.js", script: COMPOSE_SCRIPT },
-  { file: "research-experiment.js", script: RESEARCH_EXPERIMENT_SCRIPT },
-]
+// `bun test` strips the macro import without replacing the call, so fall back to the same
+// function imported normally — the pattern skill/builtin/extract.ts established.
+function safeLoadBuiltinScripts() {
+  try {
+    return loadBuiltinScripts()
+  } catch (e) {
+    if (e instanceof ReferenceError) return loadBuiltinScriptsDev()
+    throw e
+  }
+}
+
+// Parsed ONCE at module load; `file` names the offending script if a meta is malformed.
+const SCRIPTS = safeLoadBuiltinScripts()
 
 // Null-prototype so the registry is a self-evidently closed set: a lookup like
 // get("constructor")/get("toString") returns undefined, not an inherited

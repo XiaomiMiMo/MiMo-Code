@@ -8,6 +8,8 @@ export type OpenAIResponsesInputItem =
   | OpenAIResponsesAssistantMessage
   | OpenAIResponsesFunctionCall
   | OpenAIResponsesFunctionCallOutput
+  | OpenAIResponsesCustomToolCall
+  | OpenAIResponsesCustomToolCallOutput
   | OpenAIResponsesComputerCall
   | OpenAIResponsesLocalShellCall
   | OpenAIResponsesLocalShellCallOutput
@@ -59,6 +61,20 @@ export type OpenAIResponsesFunctionCall = {
 
 export type OpenAIResponsesFunctionCallOutput = {
   type: "function_call_output"
+  call_id: string
+  output: string
+}
+
+export type OpenAIResponsesCustomToolCall = {
+  type: "custom_tool_call"
+  call_id: string
+  name: string
+  input: string
+  id?: string
+}
+
+export type OpenAIResponsesCustomToolCallOutput = {
+  type: "custom_tool_call_output"
   call_id: string
   output: string
 }
@@ -136,6 +152,11 @@ export type OpenAIResponsesFileSearchToolCompoundFilter = {
 }
 
 export type OpenAIResponsesTool =
+  | {
+      type: "custom"
+      name: string
+      description: string | undefined
+    }
   | {
       type: "function"
       name: string

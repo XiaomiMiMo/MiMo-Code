@@ -1,6 +1,6 @@
 import { Show } from "solid-js"
 import { useTheme } from "../context/theme"
-import { useKV } from "../context/kv"
+import { useVisualMode } from "../context/visual"
 import "opentui-spinner/solid"
 
 // Inlined (not the shared <Spinner>) so the animated glyph occupies exactly
@@ -18,7 +18,7 @@ export interface TaskItemProps {
 
 export function TaskItem(props: TaskItemProps) {
   const { theme } = useTheme()
-  const kv = useKV()
+  const visual = useVisualMode()
   const running = () => props.status === "in_progress"
   const glyph =
     props.status === "done"
@@ -47,7 +47,7 @@ export function TaskItem(props: TaskItemProps) {
         <box flexShrink={0} flexDirection="row" gap={0}>
           <text style={{ fg: theme.warning }}>[</text>
           <Show
-            when={kv.get("animations_enabled", true)}
+            when={visual.motion()}
             fallback={<text style={{ fg: theme.warning }}>•</text>}
           >
             <spinner frames={spinnerFrames} interval={80} color={theme.warning} />

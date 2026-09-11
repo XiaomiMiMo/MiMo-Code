@@ -12,6 +12,20 @@ const dir = path.resolve(__dirname, "..")
 
 process.chdir(dir)
 
+// Refuse to build with a bun other than the pinned one. `bun run` prepends every
+// ancestor node_modules/.bin to PATH, so a stray `bun` npm package installed in a
+// directory above this checkout silently hijacks nested `bun` invocations — and a
+// compiled binary inherits that bun's runtime, which has shipped broken (TUI worker
+// RPC hangs on startup) while still passing the `--version` smoke test.
+const pinned = (await Bun.file(path.resolve(dir, "../../package.json")).json()).packageManager?.split("@")[1]
+if (pinned && Bun.version !== pinned) {
+  console.error(
+    `refusing to build: running bun ${Bun.version} (${process.execPath}) but package.json pins bun@${pinned}.\n` +
+      `Check PATH for a stray bun (e.g. a parent directory's node_modules/.bin) or update the packageManager pin.`,
+  )
+  process.exit(1)
+}
+
 await import("./generate.ts")
 
 import { Script } from "@mimo-ai/script"
@@ -204,8 +218,11 @@ process.on("exit", () => {
 
 const binaries: Record<string, string> = {}
 if (!skipInstall) {
-  await $`bun install --os="*" --cpu="*" @opentui/core@${pkg.dependencies["@opentui/core"]}`
-  await $`bun install --os="*" --cpu="*" @parcel/watcher@${pkg.dependencies["@parcel/watcher"]}`
+  // process.execPath, not `bun`: a bare `bun` resolves through the PATH described
+  // above. --no-save keeps this build step from rewriting package.json / bun.lock
+  // (e.g. re-pointing every lockfile entry at the locally configured registry).
+  await $`${process.execPath} install --no-save --os="*" --cpu="*" @opentui/core@${pkg.dependencies["@opentui/core"]}`
+  await $`${process.execPath} install --no-save --os="*" --cpu="*" @parcel/watcher@${pkg.dependencies["@parcel/watcher"]}`
 }
 for (const item of targets) {
   const name = [

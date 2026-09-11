@@ -125,7 +125,7 @@ describe("rebuild waits for the first in-flight writer before rendering", () => 
         // the rebuild must be waiting — a bounded observation shows it still
         // pending (None), proving it doesn't rebuild off the template mid-write.
         const result = yield* svc
-          .renderRebuildContext(info.id, { agentID: "main" })
+          .renderRebuildContext(info.id, { agentID: "main" }).pipe(Effect.map((r) => r.text))
           .pipe(Effect.timeout("2 seconds"), Effect.option)
         expect(result._tag).toBe("None")
       }),
@@ -150,7 +150,7 @@ describe("rebuild waits for the first in-flight writer before rendering", () => 
         yield* Effect.sleep("500 millis") // let the settle watcher advance the watermark
 
         const ctx = yield* svc
-          .renderRebuildContext(info.id, { agentID: "main" })
+          .renderRebuildContext(info.id, { agentID: "main" }).pipe(Effect.map((r) => r.text))
           .pipe(Effect.catch(() => Effect.succeed("")))
         expect(ctx.length).toBeGreaterThan(0)
       }),

@@ -4,7 +4,7 @@ import fs from "fs/promises"
 import os from "os"
 import path from "path"
 import { Shell } from "../../src/shell/shell"
-import { BashTool } from "../../src/tool/bash"
+import { BashTool, DEFAULT_MAX_OUTPUT_TOKENS } from "../../src/tool/bash"
 import { Instance } from "../../src/project/instance"
 import { Filesystem } from "../../src/util"
 import { tmpdir } from "../fixture/fixture"
@@ -15,6 +15,7 @@ import { SessionID, MessageID } from "../../src/session/schema"
 import * as CrossSpawnSpawner from "../../src/effect/cross-spawn-spawner"
 import { AppFileSystem } from "@mimo-ai/shared/filesystem"
 import { Plugin } from "../../src/plugin"
+import { Git } from "../../src/git"
 
 const runtime = ManagedRuntime.make(
   Layer.mergeAll(
@@ -23,6 +24,7 @@ const runtime = ManagedRuntime.make(
     Plugin.defaultLayer,
     Truncate.defaultLayer,
     Agent.defaultLayer,
+    Git.defaultLayer,
   ),
 )
 
@@ -187,6 +189,119 @@ describe("tool.bash", () => {
         expect(result.metadata.output).toContain("test")
       },
     })
+  })
+})
+
+describe("tool.bash git identity floor", () => {
+  const savedEnv = () => ({
+    GIT_AUTHOR_NAME: process.env["GIT_AUTHOR_NAME"],
+    GIT_AUTHOR_EMAIL: process.env["GIT_AUTHOR_EMAIL"],
+    GIT_COMMITTER_NAME: process.env["GIT_COMMITTER_NAME"],
+    GIT_COMMITTER_EMAIL: process.env["GIT_COMMITTER_EMAIL"],
+  })
+  const restoreEnv = (saved: ReturnType<typeof savedEnv>) => {
+    for (const [k, v] of Object.entries(saved)) {
+      if (v === undefined) delete process.env[k]
+      else process.env[k] = v
+    }
+  }
+  const printGitEnv =
+    process.platform === "win32"
+      ? "echo GIT_AUTHOR_NAME=$env:GIT_AUTHOR_NAME; echo GIT_AUTHOR_EMAIL=$env:GIT_AUTHOR_EMAIL; echo GIT_COMMITTER_NAME=$env:GIT_COMMITTER_NAME; echo GIT_COMMITTER_EMAIL=$env:GIT_COMMITTER_EMAIL"
+      : "echo GIT_AUTHOR_NAME=$GIT_AUTHOR_NAME; echo GIT_AUTHOR_EMAIL=$GIT_AUTHOR_EMAIL; echo GIT_COMMITTER_NAME=$GIT_COMMITTER_NAME; echo GIT_COMMITTER_EMAIL=$GIT_COMMITTER_EMAIL"
+
+  each("injects the 4 GIT_* vars inherited from the repo config", async () => {
+    const saved = savedEnv()
+    restoreEnv({
+      GIT_AUTHOR_NAME: undefined,
+      GIT_AUTHOR_EMAIL: undefined,
+      GIT_COMMITTER_NAME: undefined,
+      GIT_COMMITTER_EMAIL: undefined,
+    })
+    try {
+      await using tmp = await tmpdir({ git: true })
+      await Instance.provide({
+        directory: tmp.path,
+        fn: async () => {
+          const bash = await initBash()
+          const result = await Effect.runPromise(
+            bash.execute({ command: printGitEnv, description: "print git env" }, ctx),
+          )
+          // The tmpdir git fixture sets user.name=Test / user.email=test@mimocode.test.
+          expect(result.metadata.output).toContain("GIT_AUTHOR_NAME=Test")
+          expect(result.metadata.output).toContain("GIT_AUTHOR_EMAIL=test@mimocode.test")
+          expect(result.metadata.output).toContain("GIT_COMMITTER_NAME=Test")
+          expect(result.metadata.output).toContain("GIT_COMMITTER_EMAIL=test@mimocode.test")
+        },
+      })
+    } finally {
+      restoreEnv(saved)
+    }
+  })
+
+  each("injects NO GIT_* vars for a non-git project (worktree=/), leaving authorship to git", async () => {
+    const saved = savedEnv()
+    restoreEnv({
+      GIT_AUTHOR_NAME: undefined,
+      GIT_AUTHOR_EMAIL: undefined,
+      GIT_COMMITTER_NAME: undefined,
+      GIT_COMMITTER_EMAIL: undefined,
+    })
+    try {
+      // outsideGit -> a truly non-git project -> Instance.worktree === "/".
+      await using tmp = await tmpdir({ outsideGit: true })
+      await Instance.provide({
+        directory: tmp.path,
+        fn: async () => {
+          expect(Instance.worktree).toBe("/")
+          const bash = await initBash()
+          const result = await Effect.runPromise(
+            bash.execute({ command: printGitEnv, description: "print git env" }, ctx),
+          )
+          // There is no project repo to inherit from, so injecting anything would
+          // override the config of whatever repo the command actually runs in
+          // (GIT_AUTHOR_*/GIT_COMMITTER_* env outrank `user.name`/`user.email`).
+          for (const key of ["GIT_AUTHOR_NAME", "GIT_AUTHOR_EMAIL", "GIT_COMMITTER_NAME", "GIT_COMMITTER_EMAIL"]) {
+            const line = result.metadata.output.split("\n").find((l) => l.trim().startsWith(`${key}=`))
+            expect(line?.trim()).toBe(`${key}=`)
+          }
+        },
+      })
+    } finally {
+      restoreEnv(saved)
+    }
+  })
+
+  each("applies the floor per-variable, not all-or-nothing, when only GIT_AUTHOR_NAME is operator-set", async () => {
+    const saved = savedEnv()
+    restoreEnv({
+      GIT_AUTHOR_NAME: "Operator",
+      GIT_AUTHOR_EMAIL: undefined,
+      GIT_COMMITTER_NAME: undefined,
+      GIT_COMMITTER_EMAIL: undefined,
+    })
+    try {
+      await using tmp = await tmpdir({ git: true })
+      await Instance.provide({
+        directory: tmp.path,
+        fn: async () => {
+          const bash = await initBash()
+          const result = await Effect.runPromise(
+            bash.execute({ command: printGitEnv, description: "print git env" }, ctx),
+          )
+          // The one operator-set var wins over the floor.
+          expect(result.metadata.output).toContain("GIT_AUTHOR_NAME=Operator")
+          // The other three are absent from process.env, so each still receives
+          // the floor independently. The tmpdir git fixture sets
+          // user.name=Test / user.email=test@mimocode.test.
+          expect(result.metadata.output).toContain("GIT_AUTHOR_EMAIL=test@mimocode.test")
+          expect(result.metadata.output).toContain("GIT_COMMITTER_NAME=Test")
+          expect(result.metadata.output).toContain("GIT_COMMITTER_EMAIL=test@mimocode.test")
+        },
+      })
+    } finally {
+      restoreEnv(saved)
+    }
   })
 })
 
@@ -369,6 +484,149 @@ describe("tool.bash permissions", () => {
           ),
         )
         expect(requests.find((r) => r.permission === "bash_delete")).toBeUndefined()
+      },
+    })
+  })
+
+  // The temp-scoped delete exemption. The interesting assertions are the
+  // fail-closed ones: an exemption that mis-fires silently authorizes an
+  // irreversible action, so every case it CANNOT prove must still ask.
+  each("skips bash_delete for a delete confined to the OS temp dir", async () => {
+    await using tmp = await tmpdir()
+    const scratch = await fs.mkdtemp(path.join(os.tmpdir(), "mimocode-bash-tmpdel-"))
+    await Bun.write(path.join(scratch, "scratch.txt"), "x")
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () => {
+        const bash = await initBash()
+        const requests: Array<Omit<Permission.Request, "id" | "sessionID" | "tool">> = []
+        await Effect.runPromise(
+          bash.execute(
+            { command: `rm ${path.join(scratch, "scratch.txt")}`, description: "Remove scratch file" },
+            capture(requests),
+          ),
+        )
+        expect(requests.find((r) => r.permission === "bash_delete")).toBeUndefined()
+      },
+    })
+    await fs.rm(scratch, { recursive: true, force: true })
+  })
+
+  each("still asks for bash_delete when a temp path cannot be resolved", async () => {
+    await using tmp = await tmpdir()
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () => {
+        const bash = await initBash()
+        const err = new Error("stop after permission")
+        const requests: Array<Omit<Permission.Request, "id" | "sessionID" | "tool">> = []
+        await expect(
+          Effect.runPromise(
+            bash.execute(
+              // $BUILD_DIR is unresolvable, so the target is UNKNOWN — and
+              // unknown must never be treated as temp-scoped.
+              { command: "rm -rf $BUILD_DIR/*", description: "Remove build dir" },
+              capture(requests, err),
+            ),
+          ),
+        ).rejects.toThrow(err.message)
+        expect(requests.find((r) => r.permission === "bash_delete")).toBeDefined()
+      },
+    })
+  })
+
+  each("still asks for bash_delete when one target of several is outside temp", async () => {
+    await using tmp = await tmpdir({
+      init: async (dir) => {
+        await Bun.write(path.join(dir, "victim.txt"), "x")
+      },
+    })
+    const scratch = await fs.mkdtemp(path.join(os.tmpdir(), "mimocode-bash-tmpdel-"))
+    await Bun.write(path.join(scratch, "scratch.txt"), "x")
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () => {
+        const bash = await initBash()
+        const err = new Error("stop after permission")
+        const requests: Array<Omit<Permission.Request, "id" | "sessionID" | "tool">> = []
+        await expect(
+          Effect.runPromise(
+            bash.execute(
+              {
+                command: `rm ${path.join(scratch, "scratch.txt")} ${path.join(tmp.path, "victim.txt")}`,
+                description: "Remove two files",
+              },
+              capture(requests, err),
+            ),
+          ),
+        ).rejects.toThrow(err.message)
+        expect(requests.find((r) => r.permission === "bash_delete")).toBeDefined()
+      },
+    })
+    await fs.rm(scratch, { recursive: true, force: true })
+  })
+
+  each("still asks for bash_delete for a project file even when the project is under temp", async () => {
+    // A project genuinely living under os.tmpdir() would be exempted by a naive
+    // "is it under temp?" test, taking the checkout's own files with it. The
+    // shared fixture roots tmpdirs under cwd, so this case has to build the
+    // project inside os.tmpdir() explicitly or it proves nothing.
+    const projectRoot = await fs.mkdtemp(path.join(os.tmpdir(), "mimocode-bash-tmpproj-"))
+    const project = await fs.realpath(projectRoot)
+    await Bun.write(path.join(project, "victim.txt"), "x")
+    await Instance.provide({
+      directory: project,
+      fn: async () => {
+        const bash = await initBash()
+        const err = new Error("stop after permission")
+        const requests: Array<Omit<Permission.Request, "id" | "sessionID" | "tool">> = []
+        await expect(
+          Effect.runPromise(
+            bash.execute({ command: "rm victim.txt", description: "Remove victim" }, capture(requests, err)),
+          ),
+        ).rejects.toThrow(err.message)
+        expect(requests.find((r) => r.permission === "bash_delete")).toBeDefined()
+      },
+    })
+    await fs.rm(project, { recursive: true, force: true })
+  })
+
+  each("still asks for bash_delete on a destructive git subcommand run from temp", async () => {
+    await using tmp = await tmpdir()
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () => {
+        const bash = await initBash()
+        const err = new Error("stop after permission")
+        const requests: Array<Omit<Permission.Request, "id" | "sessionID" | "tool">> = []
+        await expect(
+          Effect.runPromise(
+            bash.execute(
+              // Acts on repository state, not on a path in temp — never exempt.
+              { command: "git stash drop", description: "Drop stash" },
+              capture(requests, err),
+            ),
+          ),
+        ).rejects.toThrow(err.message)
+        expect(requests.find((r) => r.permission === "bash_delete")).toBeDefined()
+      },
+    })
+  })
+
+  each("still asks for bash_delete when the target is a temp root itself", async () => {
+    await using tmp = await tmpdir()
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () => {
+        const bash = await initBash()
+        const err = new Error("stop after permission")
+        const requests: Array<Omit<Permission.Request, "id" | "sessionID" | "tool">> = []
+        await expect(
+          Effect.runPromise(
+            bash.execute({ command: `rm -rf ${os.tmpdir()}`, description: "Remove temp root" }, capture(requests, err)),
+          ),
+        ).rejects.toThrow(err.message)
+        expect(requests.find((r) => r.permission === "bash_delete")).toBeDefined()
       },
     })
   })
@@ -1216,34 +1474,33 @@ describe("tool.bash abort", () => {
 })
 
 describe("tool.bash truncation", () => {
-  test("truncates output exceeding line limit", async () => {
+  test("does not truncate many short lines within the token budget", async () => {
     await Instance.provide({
       directory: projectRoot,
       fn: async () => {
         const bash = await initBash()
-        const lineCount = Truncate.MAX_LINES + 500
+        const lineCount = 5000
         const result = await Effect.runPromise(
           bash.execute(
             {
               command: fill("lines", lineCount),
-              description: "Generate lines exceeding limit",
+              description: "Generate many short lines",
             },
             ctx,
           ),
         )
-        mustTruncate(result)
-        expect(result.output).toMatch(/\.\.\.output truncated\.\.\./)
-        expect(result.output).toMatch(/Full output saved to:\s+\S+/)
+        expect((result.metadata as { truncated?: boolean }).truncated).toBe(false)
+        expect(result.output).toContain(String(lineCount))
       },
     })
   })
 
-  test("truncates output exceeding byte limit", async () => {
+  test("truncates output exceeding the default token limit", async () => {
     await Instance.provide({
       directory: projectRoot,
       fn: async () => {
         const bash = await initBash()
-        const byteCount = Truncate.MAX_BYTES + 10000
+        const byteCount = DEFAULT_MAX_OUTPUT_TOKENS * 4 + 10000
         const result = await Effect.runPromise(
           bash.execute(
             {
@@ -1254,8 +1511,38 @@ describe("tool.bash truncation", () => {
           ),
         )
         mustTruncate(result)
-        expect(result.output).toMatch(/\.\.\.output truncated\.\.\./)
+        expect(result.output).toContain(
+          `Warning: truncated output (original token count: ${Math.ceil(byteCount / 4)})`,
+        )
+        expect(result.output).toContain("tokens truncated…")
         expect(result.output).toMatch(/Full output saved to:\s+\S+/)
+      },
+    })
+  })
+
+  test("limits output by approximate tokens and appends the tool storage path", async () => {
+    await Instance.provide({
+      directory: projectRoot,
+      fn: async () => {
+        const bash = await initBash()
+        const result = await Effect.runPromise(
+          bash.execute(
+            {
+              command: fill("bytes", 5000),
+              description: "Generate output exceeding token limit",
+              max_output_tokens: 100,
+            },
+            ctx,
+          ),
+        )
+        mustTruncate(result)
+
+        const filepath = (result.metadata as { outputPath?: string }).outputPath
+        expect(filepath).toBeTruthy()
+        expect(result.output).toContain("Warning: truncated output (original token count: 1250)")
+        expect(result.output).toContain("tokens truncated…")
+        expect(result.output.endsWith(`Full output saved to: ${filepath}`)).toBe(true)
+        expect(await Filesystem.readText(filepath!)).toBe("a".repeat(5000))
       },
     })
   })
@@ -1285,7 +1572,7 @@ describe("tool.bash truncation", () => {
       directory: projectRoot,
       fn: async () => {
         const bash = await initBash()
-        const lineCount = Truncate.MAX_LINES + 100
+        const lineCount = 30_000
         const result = await Effect.runPromise(
           bash.execute(
             {

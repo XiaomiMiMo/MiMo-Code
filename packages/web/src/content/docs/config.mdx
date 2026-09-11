@@ -634,9 +634,9 @@ the `/context-limit` command in the TUI to set the budget for the current model 
 preset tiers.
 
 A common reason to set this: OpenAI prices GPT-5.6 prompts above 272K input tokens at 2x
-input and 1.5x output **for the whole request**. The models are capped at their Codex
-capacity (372K) rather than that billing line, so if you want to stay inside the cheaper
-tier, set the budget yourself:
+input and 1.5x output **for the whole request**. The models use their full catalog
+context window, which may exceed that billing line, so if you want to stay inside the
+cheaper tier, set the budget yourself:
 
 ```json title="opencode.json"
 {

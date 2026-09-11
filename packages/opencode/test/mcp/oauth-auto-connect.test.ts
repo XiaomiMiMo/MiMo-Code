@@ -90,6 +90,10 @@ void mock.module("@modelcontextprotocol/sdk/client/index.js", () => ({
 
     setNotificationHandler() {}
 
+    // Production registers a sampling/createMessage request handler on every
+    // client, so the double must offer this or connect throws.
+    setRequestHandler() {}
+
     async listTools() {
       return { tools: [{ name: "test_tool", inputSchema: { type: "object", properties: {} } }] }
     }

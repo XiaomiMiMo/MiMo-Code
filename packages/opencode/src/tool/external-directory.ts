@@ -1,8 +1,10 @@
 import path from "path"
-import { Effect } from "effect"
+import { Effect, Option } from "effect"
 import { EffectLogger } from "@/effect"
 import { InstanceState } from "@/effect"
 import { Global } from "@/global"
+import { Config } from "@/config"
+import { isMemoryWriteEnabled } from "@/memory/write-gate"
 import type * as Tool from "./tool"
 import { Instance } from "../project/instance"
 import { ProjectID } from "../project/schema"
@@ -72,6 +74,24 @@ export async function assertExternalDirectory(ctx: Tool.Context, target?: string
 }
 
 /**
+ * Whether new memory may be written (see memory/write-gate.ts for the field).
+ *
+ * Resolved with `Effect.serviceOption` rather than `yield* Config.Service` on
+ * purpose: `Tool.Def.execute` is typed `Effect<ExecuteResult>` with NO
+ * requirements, so every helper a write tool calls must keep R = never.
+ * serviceOption reads the service out of the ambient runtime when present
+ * (always, in-app) without adding it to the requirement set.
+ *
+ * Fails OPEN — no Config service (unit tests, detached fibers) means writing
+ * stays enabled. A config we cannot read must never silently block memory writes.
+ */
+const memoryWriteEnabled = Effect.gen(function* () {
+  const svc = yield* Effect.serviceOption(Config.Service)
+  if (Option.isNone(svc)) return true
+  return isMemoryWriteEnabled(yield* svc.value.get())
+})
+
+/**
  * The single write-permission gate for file-mutating tools (edit, write,
  * apply_patch). Runs the two checks every write must pass, in order:
  *   1. external_directory — asks before touching paths outside the worktree
@@ -123,6 +143,7 @@ export const assertWriteAllowed = Effect.fn("Tool.assertWriteAllowed")(function*
     projectID,
     sessionID: ctx.sessionID,
     taskId: ctx.taskId,
+    writeEnabled: yield* memoryWriteEnabled,
   })
 })
 

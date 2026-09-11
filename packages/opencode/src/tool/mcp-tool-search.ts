@@ -50,6 +50,7 @@ let cached: SearchIndex | undefined
 const DESCRIPTION = [
   "Search locally available MCP tools and load only the matching capabilities for the current user request.",
   "Use this before attempting an MCP operation. Matching tools become callable on the next step.",
+  "This tool is not available inside exec; exec scripts discover their request-authorized MCP tools through the global ALL_TOOLS catalog and call them through tools.",
 ].join("\n")
 
 function normalizeMetadata(value: string) {

@@ -14,11 +14,27 @@
   <a href="https://mimo.xiaomi.com/zh/mimocode">官网</a> | <a href="https://mimo.xiaomi.com/zh/blog/mimo-code-long-horizon">博客</a>
 </p>
 
----
-
 MiMoCode 是一个终端原生的 AI 编程助手。它能读写代码、执行命令、管理 Git，通过持久化记忆系统，在多次会话间保持对你项目的深度理解，并自我进化。
 
-内置 MiMo Auto 限时免费通道——零配置即可开始使用。也支持接入各家主流 LLM 厂商 API。
+---
+
+<p align="center"><strong>MiMo 桌面端内测邀请</strong>：<a href="https://mimo.xiaomimimo.com/desktop/invite/">立即申请国内邀测</a></p>
+
+## Xiaomi MiMo Desktop 开放邀测
+
+<p align="center"><img src="assets/readme/mimo-desktop-cn.jpg" alt="Xiaomi MiMo Desktop 中文界面：会话与研究报告预览" width="900"></p>
+
+Xiaomi MiMo Desktop 面向真实工作场景打造，一个会话即可完成办公、设计、编程和全模态创作；多个会话可自动分工、协作与通信。桌面端以 **MiMo Code 作为核心引擎**，将终端原生的智能能力延伸到桌面工作流。
+
+- **「Smart」调度**：自动评估任务类型与成本，动态选择模型、框架与工具，复杂任务由多个 Agent 并行推进。
+- **从生成结果到持续迭代**：支持拖入多格式文件，成果覆盖 PPT、网页、3D、App 等；会话内实时预览和操作，选中局部即可精准修改，并支持版本回退。
+- **让长任务成本可控**：标准与旗舰模型自动路由，局部编辑只修改需要的部分；同会话缓存命中率最高 99%，跨会话最高 95%。
+- **浏览器操控**：自主打开网页、检索和提取信息、填写表单，生成网页后自动检查关键交互。
+- **电脑操控（仅限海外版）**：读屏并操作键鼠，跨应用执行；Record & Replay 录制一次后，可用自然语言复用。
+
+通过邀测审核后，可限时限量体验新一代小米模型 **MiMo-X-Pro-Preview** 和 **MiMo-X-Flash-Preview**。
+
+支持接入各家主流 LLM 厂商 API。
 
 ---
 
@@ -39,7 +55,6 @@ mimo
 ```
 
 首次启动自动引导配置。支持：
-- **MiMo Auto（限时免费）** — 匿名通道，零配置
 - **小米 MiMo 平台** — OAuth 登录
 - **Codex（ChatGPT Pro/Plus）** — OpenAI OAuth 登录
 - **从 Claude Code 导入** — 一键迁移已有认证
@@ -53,6 +68,36 @@ mimo
 ```bash
 sudo apt install xsel
 ```
+</details>
+
+<details>
+<summary><strong>macOS：默认终端渲染异常</strong></summary>
+
+MiMoCode 不支持 macOS 自带的“终端”（Terminal.app）。如果界面出现错位、闪烁或其他渲染异常，请改用 [iTerm2](https://iterm2.com/) 或 VS Code 集成终端：
+
+```bash
+brew install --cask iterm2
+```
+</details>
+
+<details>
+<summary><strong>TUI 卡顿与视觉动画问题</strong></summary>
+
+如果通过 SSH 直接运行 TUI 时卡顿，可以让 TUI 在本地渲染，远端只运行 MiMoCode 服务。先在远端项目目录中启动服务：
+
+```bash
+# 远端主机
+mimo serve --port 4096
+
+# 本地主机：建立 SSH 端口转发
+ssh -N -L 4096:127.0.0.1:4096 user@remote-host
+
+# 本地主机：在另一个终端连接远端 MiMoCode
+mimo attach http://127.0.0.1:4096
+```
+
+如果卡顿来自装饰性动画，可以运行 `/vivid`，或在 `ctrl+p` 命令面板中设置“丰富显示”，根据实际情况在丰富视觉模式和简洁模式间切换。
+
 </details>
 
 <details>
@@ -158,7 +203,7 @@ sudo apt install xsel
 
 Compose 是 MiMoCode 的 specs-driven 结构化开发流程，编排从 spec 到交付的完整开发生命周期。
 
-推荐用法是在 **build** agent 中使用 **`/compose-next`** 技能：一份独立完整的契约，覆盖 grill → spec → workspace → implement → verify → review → finalize → finish，功能文档落在 `docs/compose/spec/<feature>.md`。它面向前沿模型（Fable/Sol 级）设计——这类模型已内化大部分流程，用一份紧凑契约效果最好。
+推荐用法是在 **build** agent 中使用 **`/compose-next`** 技能：一份独立完整的契约，覆盖 grill → workspace → spec → implement → verify → review → finalize → finish，功能文档落在 workspace root 下的 `docs/compose/spec/<feature>.md`。它面向前沿模型（Fable/Sol 级）设计——这类模型已内化大部分流程，用一份紧凑契约效果最好。
 
 Legacy 路径是专用的 **compose agent**（按 `Tab` 切换），它编排规划、执行、代码审查、TDD、调试、验证、合并等十四个内置技能——这套分步技能课程对较弱模型依然适用。
 
@@ -190,12 +235,11 @@ MiMoCode 打包了以下内置技能：
 | `arxiv` | 搜索、阅读、引用和分析 arXiv 论文 |
 | `claude-code` | 将编码、测试、审查和 Git 任务委派给 Claude Code CLI |
 | `codex` | 在无头自动化、CI、容器和远程环境中运行及排查 Codex CLI |
-| `compose-next` | 推荐的 spec→ship 功能交付工作流（grill → spec → implement → verify → review → finish）；通过 `/compose-next` 显式调用 |
+| `compose-next` | 推荐的 spec→ship 功能交付工作流；仅在用户明确授意时调用 |
 | `data-analytics` | 通过数据质量、KPI、仪表盘、报告、Notebook 和市场规模测算等工作流分析产品与业务数据 |
 | `deep-research` | 使用并行子智能体和内置 Web 工具生成带引用的多源深度调研报告 |
 | `design-blueprint` | 动手做视觉前先出设计蓝图（DESIGN.md + 决策轨迹）|
 | `docx-official` | 生成、读取和转换 Word (.docx) 文件 |
-| `drive-mimo` | 以无头或交互式 TUI 模式编排、测试和自动化另一个 MiMoCode 进程 |
 | `evolve` | 全面自我修改——改写 Agent 的任意层面：工具、行为钩子、知识、工作流，乃至界面本身 |
 | `frontend-design` | UI 开发的视觉设计指导 |
 | `html-to-video-pipeline` | 通过无头浏览器 + ffmpeg 将 HTML 渲染为 MP4 |

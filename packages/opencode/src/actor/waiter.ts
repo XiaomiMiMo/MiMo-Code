@@ -55,6 +55,7 @@ export const layer: Layer.Layer<Service, never, Bus.Service | ActorRegistry.Serv
     const reg = yield* ActorRegistry.Service
     const bus = yield* Bus.Service
     const sessions = yield* Session.Service
+    const context = yield* Effect.context()
 
     // Pull the most recent assistant text + structured object from the actor's
     // slice. Used as result body when the actor reaches idle/success on
@@ -129,6 +130,7 @@ export const layer: Layer.Layer<Service, never, Bus.Service | ActorRegistry.Serv
               Effect.catchCause((cause) =>
                 Effect.logError(`waiter rehydrate failed: ${cause}`),
               ),
+              Effect.provide(context),
             ),
           )
         }),

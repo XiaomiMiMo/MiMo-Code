@@ -1,6 +1,6 @@
 // packages/opencode/src/cli/cmd/run-completion.ts
 
-export type StatusInfo = { type: "idle" | "busy" | "retry"; [k: string]: unknown }
+export type StatusInfo = { type: "idle" | "busy" | "retry" | "notice"; [k: string]: unknown }
 
 /** Returns current status of the tracked session, or undefined if absent (= idle). */
 export type StatusQuery = () => Promise<StatusInfo | undefined>

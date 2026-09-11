@@ -29,24 +29,34 @@ function patch(diff: ReviewDiff) {
   if (typeof diff.patch === "string") {
     const [patch] = parsePatch(diff.patch)
 
-    const beforeLines = []
-    const afterLines = []
+    const beforeLines: string[] = []
+    const afterLines: string[] = []
 
     for (const hunk of patch.hunks) {
-      for (const line of hunk.lines) {
+      for (const [index, line] of hunk.lines.entries()) {
+        if (line.startsWith("\\")) {
+          const previous = hunk.lines[index - 1]?.[0]
+          if (previous === "-" || previous === " ") {
+            beforeLines[beforeLines.length - 1] = beforeLines.at(-1)!.replace(/\n$/, "")
+          }
+          if (previous === "+" || previous === " ") {
+            afterLines[afterLines.length - 1] = afterLines.at(-1)!.replace(/\n$/, "")
+          }
+          continue
+        }
         if (line.startsWith("-")) {
-          beforeLines.push(line.slice(1))
+          beforeLines.push(line.slice(1) + "\n")
         } else if (line.startsWith("+")) {
-          afterLines.push(line.slice(1))
+          afterLines.push(line.slice(1) + "\n")
         } else {
           // context line (starts with ' ')
-          beforeLines.push(line.slice(1))
-          afterLines.push(line.slice(1))
+          beforeLines.push(line.slice(1) + "\n")
+          afterLines.push(line.slice(1) + "\n")
         }
       }
     }
 
-    return { before: beforeLines.join("\n"), after: afterLines.join("\n"), patch: diff.patch }
+    return { before: beforeLines.join(""), after: afterLines.join(""), patch: diff.patch }
   }
   return {
     before: "before" in diff && typeof diff.before === "string" ? diff.before : "",

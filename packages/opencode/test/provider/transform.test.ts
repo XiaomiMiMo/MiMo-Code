@@ -1,5 +1,7 @@
 import { describe, expect, test } from "bun:test"
+import { PNG } from "pngjs"
 import { ProviderTransform, type Provider } from "../../src/provider"
+import { DEFAULT_MAX_IMAGE_DIMENSION, imageDimensions } from "../../src/provider/image"
 import { ModelID, ProviderID } from "../../src/provider/schema"
 
 describe("ProviderTransform.options - setCacheKey", () => {
@@ -163,6 +165,24 @@ describe("ProviderTransform.maxOutputTokens", () => {
         ...baseModel,
         id: ModelID.make("mimo-coder"),
         providerID: ProviderID.make("xiaomi"),
+      }),
+    ).toBe(128_000)
+  })
+
+  test("uses 128K for claude models", () => {
+    expect(
+      ProviderTransform.maxOutputTokens({
+        ...baseModel,
+        id: ModelID.make("claude-sonnet-4-6"),
+      }),
+    ).toBe(128_000)
+  })
+
+  test("uses 128K for gpt models", () => {
+    expect(
+      ProviderTransform.maxOutputTokens({
+        ...baseModel,
+        api: { ...baseModel.api, id: "gpt-5.6" },
       }),
     ).toBe(128_000)
   })
@@ -1449,7 +1469,7 @@ describe("ProviderTransform.message - oversized image handling", () => {
     const result = ProviderTransform.message(msgs, mockModel, {})
     const part = (result[0].content as any[])[0]
     expect(part.type).toBe("text")
-    expect(part.text).toContain("Image omitted")
+    expect(part.text).toContain("was not sent to the model")
   })
 
   test("strips an oversized undecodable tool-result image to a placeholder", () => {
@@ -1474,7 +1494,7 @@ describe("ProviderTransform.message - oversized image handling", () => {
     const result = ProviderTransform.message(msgs, mockModel, {})
     const entry = (result[0].content[0] as any).output.value[0]
     expect(entry.type).toBe("text")
-    expect(entry.text).toContain("Image omitted")
+    expect(entry.text).toContain("was not sent to the model")
   })
 
   test("leaves a small image untouched (default cap applies by default)", () => {
@@ -1521,12 +1541,139 @@ describe("ProviderTransform.message - provider-aware image size cap", () => {
 
   // 6 MB of raw base64 bytes. Not a decodable jpeg/png, so if it ever hit the
   // cap path it would be STRIPPED to a placeholder — which makes "left untouched"
-  // an unambiguous signal that no cap was applied.
-  const sixMbJunk = Buffer.alloc(6_000_000, 0x42).toString("base64")
+  // an unambiguous signal that no cap was applied. Prefixed with a valid WebP
+  // header so sniff/verify treat it as image/webp rather than corrupt junk.
+  const sixMbJunk = (() => {
+    const bytes = Buffer.alloc(6_000_000, 0x42)
+    bytes.write("RIFF", 0, "ascii")
+    bytes.writeUInt32LE(5_999_992, 4)
+    bytes.write("WEBP", 8, "ascii")
+    bytes.write("VP8X", 12, "ascii")
+    bytes.writeUIntLE(99, 24, 3)
+    bytes.writeUIntLE(99, 27, 3)
+    return bytes.toString("base64")
+  })()
   const wrappedSixMbJunk = sixMbJunk.replace(/.{76}/g, "$&\n")
+  const widePng = (() => {
+    const png = new PNG({ width: 2_100, height: 10 })
+    png.data.fill(0x80)
+    return PNG.sync.write(png).toString("base64")
+  })()
+  const wideWebp = (() => {
+    const bytes = Buffer.alloc(30)
+    bytes.write("RIFF", 0, "ascii")
+    bytes.writeUInt32LE(22, 4)
+    bytes.write("WEBP", 8, "ascii")
+    bytes.write("VP8X", 12, "ascii")
+    bytes.writeUIntLE(2_099, 24, 3)
+    bytes.writeUIntLE(9, 27, 3)
+    return bytes.toString("base64")
+  })()
+  const wideGif = (() => {
+    const bytes = Buffer.alloc(10)
+    bytes.write("GIF89a", 0, "ascii")
+    bytes.writeUInt16LE(2_100, 6)
+    bytes.writeUInt16LE(10, 8)
+    return bytes.toString("base64")
+  })()
 
   test("baseline: fixture exceeds the anthropic 5MB hard limit", () => {
     expect(base64ByteSize(sixMbJunk)).toBeGreaterThan(PROVIDER_HARD_LIMIT)
+  })
+
+  test.each([
+    ["native Anthropic", "anthropic", "claude-sonnet-4", "@ai-sdk/anthropic"],
+    ["Vertex Anthropic", "google-vertex-anthropic", "claude-sonnet-4", "@ai-sdk/google-vertex/anthropic"],
+    ["Bedrock", "amazon-bedrock", "anthropic.claude-sonnet-4", "@ai-sdk/amazon-bedrock"],
+    ["Gateway Claude", "gateway", "anthropic/claude-sonnet-4", "@ai-sdk/gateway"],
+    ["OpenRouter Claude", "openrouter", "anthropic/claude-sonnet-4", "@openrouter/ai-sdk-provider"],
+    ["Copilot Claude", "github-copilot", "claude-sonnet-4", "@ai-sdk/github-copilot"],
+  ])("%s scales a small-byte image whose edge exceeds 2000px", (_, providerID, apiID, npm) => {
+    const model = withApi(providerID, { id: apiID, url: "https://example.invalid", npm })
+    const result = ProviderTransform.message(
+      [{ role: "user", content: [{ type: "image", image: `data:image/png;base64,${widePng}` }] }] as any[],
+      model,
+      {},
+    )
+    const part = (result[0].content as any[])[0]
+    expect(part.type).toBe("image")
+    const base64 = String(part.image).replace(/^data:[^;]+;base64,/, "")
+    const dimensions = imageDimensions(part.mediaType, Buffer.from(base64, "base64"))
+    expect(dimensions && Math.max(dimensions.width, dimensions.height)).toBe(DEFAULT_MAX_IMAGE_DIMENSION)
+  })
+
+  test("non-Claude gateway leaves the same over-2000px image untouched", () => {
+    const image = `data:image/png;base64,${widePng}`
+    const model = withApi("gateway", { id: "openai/gpt-5", url: "https://example.invalid", npm: "@ai-sdk/gateway" })
+    const part = (
+      ProviderTransform.message([{ role: "user", content: [{ type: "image", image }] }] as any[], model, {})[0]
+        .content as any[]
+    )[0]
+    expect(part).toEqual({ type: "image", image })
+  })
+
+  test("malformed PNG becomes a placeholder instead of reaching Anthropic", () => {
+    const model = withApi("anthropic", {
+      id: "claude-sonnet-4",
+      url: "https://api.anthropic.com",
+      npm: "@ai-sdk/anthropic",
+    })
+    const image = Buffer.from("not really a png").toString("base64")
+    const part = (
+      ProviderTransform.message(
+        [{ role: "user", content: [{ type: "image", image: `data:image/png;base64,${image}` }] }] as any[],
+        model,
+        {},
+      )[0].content as any[]
+    )[0]
+    expect(part.type).toBe("text")
+    expect(part.text).toContain("was not sent to the model")
+  })
+
+  test.each([
+    ["WebP", "image/webp", wideWebp],
+    ["GIF", "image/gif", wideGif],
+  ])("small-byte over-2000px %s becomes a placeholder", (_, mime, data) => {
+    const model = withApi("anthropic", {
+      id: "claude-sonnet-4",
+      url: "https://api.anthropic.com",
+      npm: "@ai-sdk/anthropic",
+    })
+    const part = (ProviderTransform.message(
+      [{ role: "user", content: [{ type: "image", image: `data:${mime};base64,${data}` }] }] as any[],
+      model,
+      {},
+    )[0].content as any[])[0]
+    expect(part.type).toBe("text")
+    expect(part.text).toContain("Image omitted")
+  })
+
+  test("small-byte over-2000px WebP tool result becomes a placeholder", () => {
+    const model = withApi("anthropic", {
+      id: "claude-sonnet-4",
+      url: "https://api.anthropic.com",
+      npm: "@ai-sdk/anthropic",
+    })
+    const result = ProviderTransform.message(
+      [
+        {
+          role: "tool",
+          content: [
+            {
+              type: "tool-result",
+              toolCallId: "call_1",
+              toolName: "read",
+              output: { type: "content", value: [{ type: "media", mediaType: "image/webp", data: wideWebp }] },
+            },
+          ],
+        },
+      ] as any[],
+      model,
+      {},
+    )
+    const entry = (result[0].content[0] as any).output.value[0]
+    expect(entry.type).toBe("text")
+    expect(entry.text).toContain("Image omitted")
   })
 
   const userMsgs = () =>
@@ -1647,6 +1794,141 @@ describe("ProviderTransform.message - provider-aware image size cap", () => {
   })
 })
 
+describe("ProviderTransform.message - image sniff, transcode, and ImageInputError", () => {
+  const jpeg = require("jpeg-js")
+  const vision = {
+    id: "gpt-4o",
+    providerID: "openai",
+    api: { id: "gpt-4o", url: "https://api.openai.com", npm: "@ai-sdk/openai" },
+    name: "gpt-4o",
+    capabilities: {
+      temperature: true,
+      reasoning: false,
+      attachment: true,
+      toolcall: true,
+      input: { text: true, audio: false, image: true, video: false, pdf: false },
+      output: { text: true, audio: false, image: false, video: false, pdf: false },
+      interleaved: false,
+    },
+    cost: { input: 1, output: 1, cache: { read: 0, write: 0 } },
+    limit: { context: 8000, output: 2000 },
+    status: "active",
+    options: {},
+    headers: {},
+  } as any
+
+  function tinyJpeg() {
+    const width = 2
+    const height = 2
+    const data = Buffer.alloc(width * height * 4, 80)
+    for (let i = 3; i < data.length; i += 4) data[i] = 255
+    return Buffer.from(jpeg.encode({ data, width, height }, 90).data)
+  }
+
+  function tinyBmp() {
+    const width = 2
+    const height = 1
+    const rowSize = Math.floor((24 * width + 31) / 32) * 4
+    const bytes = Buffer.alloc(54 + rowSize)
+    bytes.write("BM", 0, "ascii")
+    bytes.writeUInt32LE(bytes.length, 2)
+    bytes.writeUInt32LE(54, 10)
+    bytes.writeUInt32LE(40, 14)
+    bytes.writeInt32LE(width, 18)
+    bytes.writeInt32LE(height, 22)
+    bytes.writeUInt16LE(1, 26)
+    bytes.writeUInt16LE(24, 28)
+    bytes.writeUInt32LE(rowSize, 34)
+    bytes[54] = 0
+    bytes[55] = 128
+    bytes[56] = 255
+    bytes[57] = 255
+    bytes[58] = 128
+    bytes[59] = 0
+    return bytes
+  }
+
+  test("rewrites a JPEG labeled as PNG to the sniffed MIME", () => {
+    const bytes = tinyJpeg()
+    const part = (
+      ProviderTransform.message(
+        [
+          {
+            role: "user",
+            content: [{ type: "image", image: `data:image/png;base64,${bytes.toString("base64")}` }],
+          },
+        ] as any[],
+        vision,
+        {},
+      )[0].content as any[]
+    )[0]
+    expect(part.type).toBe("image")
+    expect(part.mediaType).toBe("image/jpeg")
+    expect(String(part.image).startsWith("data:image/jpeg;base64,")).toBe(true)
+  })
+
+  test("transcodes BMP to PNG before send", () => {
+    const bytes = tinyBmp()
+    const part = (
+      ProviderTransform.message(
+        [
+          {
+            role: "user",
+            content: [{ type: "file", mediaType: "image/bmp", filename: "shot.bmp", data: bytes.toString("base64") }],
+          },
+        ] as any[],
+        vision,
+        {},
+      )[0].content as any[]
+    )[0]
+    expect(part.type).toBe("file")
+    expect(part.mediaType).toBe("image/png")
+    const decoded = PNG.sync.read(Buffer.from(part.data, "base64"))
+    expect(decoded.width).toBe(2)
+    expect(decoded.height).toBe(1)
+    expect(decoded.data[0]).toBe(255)
+    expect(decoded.data[1]).toBe(128)
+    expect(decoded.data[2]).toBe(0)
+  })
+
+  test("corrupt image becomes ImageInputError text and is not forwarded", () => {
+    const part = (
+      ProviderTransform.message(
+        [{ role: "user", content: [{ type: "image", image: "data:image/png;base64,bm90YSBwbmc=" }] }] as any[],
+        vision,
+        {},
+      )[0].content as any[]
+    )[0]
+    expect(part.type).toBe("text")
+    expect(part.text).toContain("was not sent to the model")
+    expect(part.text).not.toContain("bm90YSBwbmc=")
+  })
+
+  test("corrupt tool-result image is not forwarded to the provider", () => {
+    const entry = (
+      ProviderTransform.message(
+        [
+          {
+            role: "tool",
+            content: [
+              {
+                type: "tool-result",
+                toolCallId: "call_1",
+                toolName: "read",
+                output: { type: "content", value: [{ type: "media", mediaType: "image/png", data: "bm90YSBwbmc=" }] },
+              },
+            ],
+          },
+        ] as any[],
+        vision,
+        {},
+      )[0].content[0] as any
+    ).output.value[0]
+    expect(entry.type).toBe("text")
+    expect(entry.text).toContain("was not sent to the model")
+  })
+})
+
 describe("ProviderTransform.message - anthropic empty content filtering", () => {
   const anthropicModel = {
     id: "anthropic/claude-3-5-sonnet",
@@ -1734,6 +2016,53 @@ describe("ProviderTransform.message - anthropic empty content filtering", () => 
     expect(result).toHaveLength(2)
     expect(result[0].content).toHaveLength(1)
     expect(result[0].content[0]).toEqual({ type: "text", text: "Answer" })
+  })
+
+  test("preserves empty Anthropic reasoning with a signature", () => {
+    const reasoning = {
+      type: "reasoning" as const,
+      text: "",
+      providerOptions: { anthropic: { signature: "signed-thinking" } },
+    }
+    const msgs = [
+      {
+        role: "assistant",
+        content: [reasoning, { type: "text", text: "Answer" }],
+      },
+      { role: "user", content: [{ type: "text", text: "next" }] },
+    ] as any[]
+
+    const result = ProviderTransform.message(msgs, anthropicModel, {})
+
+    expect(result).toHaveLength(2)
+    expect(result[0].content).toEqual([reasoning, { type: "text", text: "Answer" }])
+  })
+
+  test("preserves signed empty reasoning from a custom Anthropic route", () => {
+    const result = ProviderTransform.message(
+      [
+        {
+          role: "assistant",
+          content: [
+            {
+              type: "reasoning",
+              text: "",
+              providerOptions: { prod: { signature: "prod-signature" } },
+            },
+            { type: "text", text: "Answer" },
+          ],
+        },
+        { role: "user", content: [{ type: "text", text: "next" }] },
+      ] as any[],
+      { ...anthropicModel, providerID: "prod" },
+      {},
+    )
+
+    expect(result[0].content[0]).toEqual({
+      type: "reasoning",
+      text: "",
+      providerOptions: { anthropic: { signature: "prod-signature" } },
+    })
   })
 
   test("removes entire message when all parts are empty", () => {

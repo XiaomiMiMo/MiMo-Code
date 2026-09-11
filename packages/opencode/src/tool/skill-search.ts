@@ -26,7 +26,6 @@ export const SkillSearchTool = Tool.define(
     return {
       description: [
         "Search the available non-Compose skills using exact ID/name/alias matching and BM25 relevance.",
-        "On the user's first query, call this tool when the task might benefit from a specialized workflow.",
         "Include: action, input, desired output, and audience. Omit dimensions the user did not provide.",
         "An exact high-confidence match is loaded automatically; uncertain matches are returned for you to assess.",
       ].join("\n"),
@@ -34,7 +33,7 @@ export const SkillSearchTool = Tool.define(
       execute: (params: z.infer<typeof Parameters>, ctx: Tool.Context) =>
         Effect.gen(function* () {
           const agent = yield* agents.get(ctx.agent)
-          const available = yield* skill.available(agent)
+          const available = yield* skill.modelInvocable(agent)
           const results = searchSkills(params.query, available)
           if (results.length === 0) {
             return {

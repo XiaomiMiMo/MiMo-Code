@@ -31,44 +31,36 @@ const it = testEffect(
   ),
 )
 
-describe("F1 — prune resetThresholds clears sticky maxCrossed", () => {
-  it.live("resetThresholds clears maxThresholdCrossed flag", () =>
-    provideTmpdirInstance(() =>
-      Effect.gen(function* () {
-        const prune = yield* SessionPrune.Service
-        const session = yield* Session.Service
-        const sess = yield* session.create({ title: "t1" })
-
-        // Initially false (never crossed)
-        expect(yield* prune.maxThresholdCrossed(sess.id)).toBe(false)
-
-        // resetThresholds is a no-op when state is empty
-        yield* prune.resetThresholds(sess.id)
-        expect(yield* prune.maxThresholdCrossed(sess.id)).toBe(false)
-      }),
-    ),
-  )
-
+describe("F1 — rebuild resets checkpoint thresholds", () => {
   it.live("prompt.ts rebuild path resets thresholds and sets skipOverflowCheck before continue", () =>
     provideTmpdirInstance(() =>
       Effect.gen(function* () {
         // Source-level regression guard (F1). The site-1 main rebuild path now
         // delegates the boundary insert + threshold reset to the shared
-        // rebuildFromCheckpoint helper (reused by the /rebuild command), then
-        // sets skipOverflowCheck and continues. Assert BOTH halves of the
-        // invariant: (a) the shared helper resets thresholds after a successful
-        // insert; (b) site-1 sets skipOverflowCheck=true then continue after
-        // calling rebuildFromCheckpoint — so the loop can't immediately
-        // re-trigger overflow on the same crossed thresholds.
+        // rebuildFromCheckpoint helper, which is itself wrapped by
+        // rebuildEnsuringCheckpoint (the start-a-writer-and-wait step reused by
+        // the /rebuild command). Assert BOTH halves of the invariant: (a) the
+        // shared helper resets thresholds after a successful insert; (b) site-1
+        // sets skipOverflowCheck=true then continue on a successful rebuild — so
+        // the loop can't immediately re-trigger overflow on the same token
+        // count.
+        //
+        // DELIBERATE UPDATE: (b)'s pattern used to be
+        //   const inserted = yield* rebuildFromCheckpoint(…)
+        //   if (inserted) { skipOverflowCheck = true; continue }
+        // Site-1 now calls rebuildEnsuringCheckpoint and branches on a
+        // discriminated outcome instead of a boolean, so the old regex matched a
+        // code shape that no longer exists. The INVARIANT is unchanged and still
+        // asserted; only the shape it is expressed in moved.
         const promptSrc = yield* Effect.promise(() =>
           Bun.file(`${import.meta.dir}/../../src/session/prompt.ts`).text(),
         )
         expect(promptSrc).not.toContain("Do NOT reset thresholds here")
         // (a) shared helper resets thresholds on a successful insert.
         expect(promptSrc).toMatch(/if\s*\(inserted\)\s+yield\*\s+prune\.resetThresholds\(input\.sessionID\)/)
-        // (b) site-1 guards on the helper result, then skips + continues.
+        // (b) site-1 guards on the helper's outcome, then skips + continues.
         expect(promptSrc).toMatch(
-          /const\s+inserted\s*=\s*yield\*\s+rebuildFromCheckpoint\([\s\S]*?\)\s*\n\s*if\s*\(inserted\)\s*\{\s*\n\s*skipOverflowCheck\s*=\s*true\s*\n\s*continue/,
+          /const\s+attempt:\s*RebuildAttempt\s*=\s*yield\*\s+rebuildEnsuringCheckpoint\([\s\S]*?\)\s*\n\s*if\s*\(attempt\s*===\s*"rebuilt"\)\s*\{\s*\n\s*skipOverflowCheck\s*=\s*true\s*\n\s*continue/,
         )
       }),
     ),

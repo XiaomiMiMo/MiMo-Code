@@ -27,6 +27,7 @@ import { AppFileSystem } from "@mimo-ai/shared/filesystem"
 import { isRecord } from "@/util/record"
 import { withStatics } from "@/util/schema"
 import { isFreeApiModel, isFreeApiSunset } from "@/util/free-api-sunset"
+import { usesMimoResponsesApi } from "../tool/gpt"
 
 import * as ProviderTransform from "./transform"
 import { ModelID, ProviderID } from "./schema"
@@ -38,6 +39,8 @@ const DEFAULT_CONTEXT_WINDOW = 1_000_000
 const BUILTIN_TIERS = new Set(["ultra", "standard", "lite"])
 // F41: warn once per (providerID, modelID) when limit.context falls back to default
 const warnedContextDefaults = new Set<string>()
+// defaultModel() runs per cheap task; warn once per stale cfg.model, not every call
+const warnedStaleDefaultModels = new Set<string>()
 
 export const DEFAULT_OPENAI_HEADER_TIMEOUT = 300_000
 export const DEFAULT_CHUNK_TIMEOUT = 480_000 // 8 minutes — bounds single-attempt SSE stall.
@@ -94,23 +97,138 @@ function wrapSSE(res: Response, ms: number, ctl: AbortController) {
     },
   })
 
-  return new Response(body, {
+  return wrapResponse(res, body)
+}
+
+function wrapResponse(res: Response, body: ReadableStream<Uint8Array>) {
+  const wrapped = new Response(body, {
     headers: new Headers(res.headers),
     status: res.status,
     statusText: res.statusText,
   })
+  Object.defineProperties(wrapped, {
+    redirected: { get: () => res.redirected },
+    type: { get: () => res.type },
+    url: { get: () => res.url },
+  })
+  return wrapped
 }
 
-function timeoutController(ms: number) {
+function timeoutController(ms: number, message = `Response header timed out after ${ms}ms`) {
   const ctl = new AbortController()
-  const id = setTimeout(
-    () => ctl.abort(Object.assign(new Error(`Response header timed out after ${ms}ms`), { code: "ETIMEDOUT" })),
-    ms,
-  )
+  const id = setTimeout(() => ctl.abort(Object.assign(new Error(message), { code: "ETIMEDOUT" })), ms)
   return {
     signal: ctl.signal,
     clear: () => clearTimeout(id),
   }
+}
+
+type AbortSource = "request" | "timeout"
+
+export function trackAbortSource(requestSignal: AbortSignal | null | undefined, timeoutSignals: AbortSignal[]) {
+  const signals = [requestSignal, ...timeoutSignals].filter((signal) => signal !== null && signal !== undefined)
+  let source: AbortSource | undefined = requestSignal?.aborted
+    ? "request"
+    : timeoutSignals.some((signal) => signal.aborted)
+      ? "timeout"
+      : undefined
+  let winner = requestSignal?.aborted ? requestSignal : timeoutSignals.find((signal) => signal.aborted)
+  const listeners = signals.map((signal, index) => {
+    const listener = () => {
+      if (source) return
+      source = index === 0 && requestSignal ? "request" : "timeout"
+      winner = signal
+    }
+    signal.addEventListener("abort", listener, { once: true })
+    if (signal.aborted) listener()
+    return { signal, listener }
+  })
+  return {
+    signal: signals.length === 0 ? undefined : signals.length === 1 ? signals[0] : AbortSignal.any(signals),
+    source: () => source,
+    winner: () => winner,
+    dispose: () => listeners.forEach((item) => item.signal.removeEventListener("abort", item.listener)),
+  }
+}
+
+export function normalizeTimeoutError(error: unknown, source: AbortSource | undefined, signal?: AbortSignal) {
+  if (source !== "timeout") return error
+  const reason = signal?.reason
+  return Object.assign(new Error(reason instanceof Error ? reason.message : "Request timed out"), {
+    code: "ETIMEDOUT",
+    cause: error,
+  })
+}
+
+export function requestSignal(input: RequestInfo | URL, init?: RequestInit) {
+  return init?.signal ?? (input instanceof Request ? input.signal : undefined)
+}
+
+export function wrapRequestTimeout(
+  res: Response,
+  requestSignal: AbortSignal | null | undefined,
+  timeoutSignal: AbortSignal,
+  clear: () => void,
+) {
+  const tracked = trackAbortSource(requestSignal, [timeoutSignal])
+  let finalized = false
+  const finalize = () => {
+    if (finalized) return
+    finalized = true
+    clear()
+    tracked.dispose()
+  }
+  if (!res.body) {
+    finalize()
+    return res
+  }
+
+  const reader = res.body.getReader()
+  return wrapResponse(
+    res,
+    new ReadableStream<Uint8Array>({
+      async pull(ctrl) {
+        const part = await new Promise<Awaited<ReturnType<typeof reader.read>>>((resolve, reject) => {
+          const onAbort = () => {
+            const error = normalizeTimeoutError(
+              tracked.signal?.reason ?? new DOMException("The operation was aborted", "AbortError"),
+              tracked.source(),
+              tracked.winner(),
+            )
+            cleanup()
+            void reader.cancel(error).catch(() => {})
+            reject(error)
+          }
+          const cleanup = () => tracked.signal?.removeEventListener("abort", onAbort)
+          if (tracked.signal?.aborted) return onAbort()
+          tracked.signal?.addEventListener("abort", onAbort, { once: true })
+          reader.read().then(
+            (part) => {
+              cleanup()
+              resolve(part)
+            },
+            (error) => {
+              cleanup()
+              reject(normalizeTimeoutError(error, tracked.source(), tracked.winner()))
+            },
+          )
+        }).catch((error) => {
+          finalize()
+          throw error
+        })
+        if (part.done) {
+          finalize()
+          ctrl.close()
+          return
+        }
+        ctrl.enqueue(part.value)
+      },
+      async cancel(reason) {
+        finalize()
+        await reader.cancel(reason)
+      },
+    }),
+  )
 }
 
 type BundledSDK = {
@@ -215,6 +333,14 @@ function custom(dep: CustomDep): Record<string, CustomLoader> {
           return sdk.responses(modelID)
         },
         options: { headerTimeout: DEFAULT_OPENAI_HEADER_TIMEOUT },
+      }),
+    xiaomi: () =>
+      Effect.succeed({
+        autoload: false,
+        async getModel(sdk: any, modelID: string, _options?: Record<string, any>) {
+          return usesMimoResponsesApi(modelID) ? sdk.responses(modelID) : sdk.languageModel(modelID)
+        },
+        options: {},
       }),
     xai: () =>
       Effect.succeed({
@@ -972,7 +1098,7 @@ export interface Interface {
     query: string[],
   ) => Effect.Effect<{ providerID: ProviderID; modelID: string } | undefined>
   readonly getSmallModel: (providerID: ProviderID) => Effect.Effect<Model | undefined>
-  readonly getVisionModel: () => Effect.Effect<Model | undefined>
+  readonly getVisionModel: (providerID?: ProviderID) => Effect.Effect<Model | undefined>
   readonly resolveModelRef: (ref: string, contextProviderID?: ProviderID) => Effect.Effect<Model>
   readonly defaultModel: () => Effect.Effect<{ providerID: ProviderID; modelID: ModelID }>
 }
@@ -1439,7 +1565,16 @@ const layer: Layer.Layer<
                   return DEFAULT_CONTEXT_WINDOW
                 })(),
                 input: model.limit?.input ?? existingModel?.limit?.input,
-                output: model.limit?.output ?? existingModel?.limit?.output ?? 0,
+                output:
+                  model.limit?.output ??
+                  existingModel?.limit?.output ??
+                  (ProviderTransform.usesLargeModelDefaults({
+                    id: modelID,
+                    providerID,
+                    api: { id: apiID },
+                  })
+                    ? ProviderTransform.LARGE_MODEL_OUTPUT_TOKEN_MAX
+                    : 0),
               },
               headers: mergeDeep(existingModel?.headers ?? {}, model.headers ?? {}),
               family: model.family ?? existingModel?.family ?? "",
@@ -1500,10 +1635,16 @@ const layer: Layer.Layer<
           if (!stored) continue
           if (!plugin.auth.loader) continue
 
+          const catalog = database[plugin.auth.provider]
+          if (!catalog) {
+            log.warn("skipping plugin auth loader; provider missing from model catalog", { providerID })
+            continue
+          }
+
           const options = yield* Effect.promise(() =>
             plugin.auth!.loader!(
               () => bridge.promise(auth.get(providerID).pipe(Effect.orDie)) as any,
-              database[plugin.auth!.provider],
+              catalog,
             ),
           )
           const opts = options ?? {}
@@ -1569,7 +1710,7 @@ const layer: Layer.Layer<
           const pluginAuth = yield* auth.get(providerID).pipe(Effect.orDie)
 
           provider.models = yield* Effect.promise(async () => {
-            const next = await models(provider as any, { auth: pluginAuth })
+            const next = await models(provider, { auth: pluginAuth })
             return Object.fromEntries(
               Object.entries(next).map(([id, model]) => [
                 id,
@@ -1715,31 +1856,65 @@ const layer: Layer.Layer<
         options["fetch"] = async (input: any, init?: BunFetchRequestInit) => {
           const fetchFn = customFetch ?? fetch
           const opts = init ?? {}
+          const callerSignal = requestSignal(input, opts)
           const chunkAbortCtl = typeof chunkTimeout === "number" && chunkTimeout > 0 ? new AbortController() : undefined
           const headerTimeoutMs = headerTimeout === false ? undefined : headerTimeout
           const headerTimeoutCtl = typeof headerTimeoutMs === "number" ? timeoutController(headerTimeoutMs) : undefined
-          const signals: AbortSignal[] = []
+          const requestTimeoutCtl =
+            typeof options["timeout"] === "number" && options["timeout"] > 0
+              ? timeoutController(options["timeout"], `Request timed out after ${options["timeout"]}ms`)
+              : undefined
+          const tracked = trackAbortSource(
+            callerSignal,
+            [headerTimeoutCtl?.signal, requestTimeoutCtl?.signal].filter((signal) => signal !== undefined),
+          )
+          const signals = [tracked.signal, chunkAbortCtl?.signal].filter((signal) => signal !== undefined)
+          if (signals.length > 0) opts.signal = signals.length === 1 ? signals[0] : AbortSignal.any(signals)
 
-          if (opts.signal) signals.push(opts.signal)
-          if (chunkAbortCtl) signals.push(chunkAbortCtl.signal)
-          if (headerTimeoutCtl) signals.push(headerTimeoutCtl.signal)
-          if (options["timeout"] !== undefined && options["timeout"] !== null && options["timeout"] !== false)
-            signals.push(AbortSignal.timeout(options["timeout"]))
+          const res = await Promise.resolve()
+            .then(() =>
+              fetchFn(input, {
+                ...opts,
+                // @ts-ignore see here: https://github.com/oven-sh/bun/issues/16682
+                timeout: false,
+              }),
+            )
+            .catch((error: unknown) => {
+              requestTimeoutCtl?.clear()
+              tracked.dispose()
+              throw normalizeTimeoutError(error, tracked.source(), tracked.winner())
+            })
+            .finally(() => {
+              headerTimeoutCtl?.clear()
+            })
 
-          const combined = signals.length === 0 ? null : signals.length === 1 ? signals[0] : AbortSignal.any(signals)
-          if (combined) opts.signal = combined
-
-          const res = await fetchFn(input, {
-            ...opts,
-            // @ts-ignore see here: https://github.com/oven-sh/bun/issues/16682
-            timeout: false,
-          }).finally(() => headerTimeoutCtl?.clear())
-
-          if (!chunkAbortCtl) return res
-          return wrapSSE(res, chunkTimeout, chunkAbortCtl)
+          tracked.dispose()
+          const bounded = requestTimeoutCtl
+            ? wrapRequestTimeout(res, callerSignal, requestTimeoutCtl.signal, requestTimeoutCtl.clear)
+            : res
+          if (!chunkAbortCtl) return bounded
+          return wrapSSE(bounded, chunkTimeout, chunkAbortCtl)
         }
 
-        const bundledLoader = BUNDLED_PROVIDERS[model.api.npm]
+        // Xiaomi: only PTC needs the bundled Responses harness (free-form `exec` custom tool);
+        // every non-PTC model must stay on the stock openai-compatible chat model. The bundled
+        // Copilot fork only understands Copilot's `reasoning_text`, so routing chat through it
+        // silently drops the `reasoning_content` that Xiaomi models stream back.
+        const bundledLoader =
+          model.providerID === "xiaomi" && model.api.npm === "@ai-sdk/openai-compatible"
+            ? () =>
+                Promise.all([BUNDLED_PROVIDERS["@ai-sdk/openai-compatible"](), import("./sdk/copilot")]).then(
+                  ([createChat, copilot]) =>
+                    (options: any) => {
+                      const chat = createChat(options)
+                      const responses = copilot.createOpenaiCompatible({ ...options, customToolNames: ["exec"] })
+                      return {
+                        languageModel: (modelId: string) => chat.languageModel(modelId),
+                        responses: (modelId: string) => responses.responses(modelId),
+                      }
+                    },
+                )
+            : BUNDLED_PROVIDERS[model.api.npm]
         if (bundledLoader) {
           log.info("using bundled provider", {
             providerID: model.providerID,
@@ -1906,7 +2081,7 @@ const layer: Layer.Layer<
       return yield* resolveModelRef("lite", providerID)
     })
 
-    const getVisionModel = Effect.fn("Provider.getVisionModel")(function* () {
+    const getVisionModel = Effect.fn("Provider.getVisionModel")(function* (providerID?: ProviderID) {
       const cfg = yield* config.get()
       // Explicit vision_model literal wins. getModel raises ModelNotFoundError as
       // a defect, so a misconfigured vision_model must not propagate — catch it and
@@ -1916,21 +2091,37 @@ const layer: Layer.Layer<
         const explicit = yield* getModel(parsed.providerID, parsed.modelID).pipe(
           Effect.catchDefect(() => Effect.succeed(undefined)),
         )
-        if (explicit) return explicit
+        if (explicit && (!providerID || explicit.providerID === providerID)) return explicit
       }
       // Smart default: in-house preferred, then cheapest vision-capable model.
       const providers = yield* list()
       const vision = Object.values(providers)
+        .filter((info) => !providerID || info.id === providerID)
         .flatMap((info) => Object.values(info.models))
         .filter((m) => m.capabilities.input.image === true)
       return sortVisionModels(vision)[0]
     })
 
+    // Stable default chain. Product-priority substring ranking (`sort`) is for
+    // menus/listings, not for choosing a working default — Desktop's empty
+    // recent + router leftovers made that path pick unavailable models.
+    // Last-resort picks require a usable chat model (toolcall + text input +
+    // non-zero context): live openai id-asc starts at chatgpt-image-latest
+    // (tool_call false, context 0), which titles/agents cannot call.
     const defaultModel = Effect.fn("Provider.defaultModel")(function* () {
       const cfg = yield* config.get()
-      if (cfg.model) return parseModel(cfg.model)
-
       const s = yield* InstanceState.get(state)
+
+      if (cfg.model) {
+        const parsed = parseModel(cfg.model)
+        const provider = s.providers[parsed.providerID]
+        if (provider?.models[parsed.modelID]) return parsed
+        if (!warnedStaleDefaultModels.has(cfg.model)) {
+          warnedStaleDefaultModels.add(cfg.model)
+          log.warn("configured default model missing from registry, falling through", { model: cfg.model })
+        }
+      }
+
       const recent = yield* fs.readJson(path.join(Global.Path.state, "model.json")).pipe(
         Effect.map((x): { providerID: ProviderID; modelID: ModelID }[] => {
           if (!isRecord(x) || !Array.isArray(x.recent)) return []
@@ -1950,19 +2141,18 @@ const layer: Layer.Layer<
         return { providerID: entry.providerID, modelID: entry.modelID }
       }
 
-      const mimo = s.providers[ProviderID.make("mimo")]
-      if (mimo?.models[ModelID.make("mimo-auto")]) {
-        return { providerID: mimo.id, modelID: ModelID.make("mimo-auto") }
+      const allowed = Object.values(s.providers).filter((p) => !cfg.provider || Object.keys(cfg.provider).includes(p.id))
+      if (!allowed.length) throw new Error("no providers found")
+      for (const provider of allowed) {
+        const model = sortBy(
+          Object.values(provider.models).filter(
+            (m) => m.capabilities.toolcall && m.capabilities.input.text && (m.limit?.context ?? 1) > 0,
+          ),
+          [(m) => m.id, "asc"],
+        )[0]
+        if (model) return { providerID: provider.id, modelID: model.id }
       }
-
-      const provider = Object.values(s.providers).find((p) => !cfg.provider || Object.keys(cfg.provider).includes(p.id))
-      if (!provider) throw new Error("no providers found")
-      const [model] = sort(Object.values(provider.models))
-      if (!model) throw new Error("no models found")
-      return {
-        providerID: provider.id,
-        modelID: model.id,
-      }
+      throw new Error("no models found")
     })
 
     return Service.of({ list, getProvider, getModel, getLanguage, closest, getSmallModel, getVisionModel, defaultModel, resolveModelRef })

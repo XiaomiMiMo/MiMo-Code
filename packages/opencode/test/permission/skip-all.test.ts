@@ -80,6 +80,9 @@ describe("Permission skip-all runtime toggle", () => {
     provideTmpdirInstance(() =>
       Effect.gen(function* () {
         const perm = yield* Permission.Service
+        // Isolate skip-all from a process started in dangerous mode, which now
+        // seeds the separate delete exemption by design.
+        yield* perm.setAutoApproveDelete(false)
         yield* perm.setSkipAll(true)
         let asked = 0
         const unsub = Bus.subscribe(Permission.Event.Asked, () => {

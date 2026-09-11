@@ -29,7 +29,7 @@ export const WriteTool = Tool.define(
       description: DESCRIPTION,
       parameters: z.object({
         content: z.string().describe("The content to write to the file"),
-        file_path: z.string().describe("The absolute path to the file to write (must be absolute, not relative)"),
+        file_path: z.string().describe("Path to the file to write"),
       }),
       execute: (params: { content: string; file_path: string }, ctx: Tool.Context) =>
         Effect.gen(function* () {

@@ -4,6 +4,15 @@ import { Runner } from "../../src/effect"
 import { it } from "../lib/effect"
 
 describe("Runner", () => {
+  it.live("start reports busy as a failure instead of a defect", Effect.gen(function* () {
+    const s = yield* Scope.Scope
+    const runner = Runner.make<string>(s)
+    yield* runner.start(Effect.never)
+    const exit = yield* runner.start(Effect.succeed("later")).pipe(Effect.exit)
+    expect(Exit.isFailure(exit)).toBe(true)
+    yield* runner.cancel
+  }))
+
   // --- ensureRunning semantics ---
 
   it.live(

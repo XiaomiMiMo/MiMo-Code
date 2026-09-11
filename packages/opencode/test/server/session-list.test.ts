@@ -93,6 +93,25 @@ describe("session.list", () => {
     })
   })
 
+  test("search is case-insensitive for mixed CJK and Latin titles", async () => {
+    await using tmp = await tmpdir({ git: true })
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () => {
+        await svc.create({ title: "使用 OpenCode 重构测试" })
+        await svc.create({ title: "中文标题ABC" })
+
+        const lower = [...svc.list({ search: "opencode" })].map((s) => s.title)
+        const upper = [...svc.list({ search: "OPENCODE" })].map((s) => s.title)
+        const mixed = [...svc.list({ search: "abc" })].map((s) => s.title)
+
+        expect(lower).toContain("使用 OpenCode 重构测试")
+        expect(upper).toContain("使用 OpenCode 重构测试")
+        expect(mixed).toContain("中文标题ABC")
+      },
+    })
+  })
+
   test("respects limit parameter", async () => {
     await using tmp = await tmpdir({ git: true })
     await Instance.provide({

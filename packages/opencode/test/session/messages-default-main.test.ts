@@ -8,6 +8,7 @@ import { ProviderID, ModelID } from "../../src/provider/schema"
 import { Log } from "../../src/util"
 import { testEffect } from "../lib/effect"
 import * as CrossSpawnSpawner from "../../src/effect/cross-spawn-spawner"
+import { viewExecSubtools } from "../../src/tool/tool-script"
 
 void Log.init({ print: false })
 
@@ -99,6 +100,64 @@ describe("MessageV2.page / stream — default slice contract", () => {
 
         const subPage = MessageV2.page({ sessionID: info.id, limit: 10, agentID: "explore-1" })
         expect(subPage.items.map((m) => m.info.id)).toEqual([subUserID])
+      }),
+    ),
+  )
+
+  it.live(
+    "round-trips exec sub_parts through the SQLite-backed message part",
+    provideTmpdirInstance(() =>
+      Effect.gen(function* () {
+        const ssn = yield* SessionNs.Service
+        const info = yield* ssn.create({})
+        const messageID = MessageID.ascending()
+        yield* ssn.updateMessage({
+          id: messageID,
+          role: "user" as const,
+          sessionID: info.id,
+          agent: "build",
+          model: ref,
+          time: { created: Date.now() },
+        })
+        const metadata = {
+          exec_schema: 1,
+          sub_parts: [
+            {
+              seq: 1,
+              type: "tool" as const,
+              callID: "exec:1",
+              tool: "actor",
+              state: {
+                status: "completed" as const,
+                input: { operation: { action: "spawn" } },
+                title: "Child",
+                output: "started",
+                metadata: { sessionId: "ses_child", actorId: "general-1" },
+                time: { start: 1, end: 2 },
+              },
+            },
+          ],
+        }
+        yield* ssn.updatePart({
+          id: PartID.ascending(),
+          messageID,
+          sessionID: info.id,
+          type: "tool" as const,
+          callID: "exec",
+          tool: "exec",
+          state: {
+            status: "completed" as const,
+            input: { code: "return 1" },
+            output: "1",
+            title: "1 tool calls",
+            metadata,
+            time: { start: 1, end: 2 },
+          },
+        })
+
+        const part = MessageV2.page({ sessionID: info.id, limit: 10 }).items[0]?.parts.find((item) => item.type === "tool")
+        expect(part?.type).toBe("tool")
+        expect(part?.type === "tool" && part.state.status !== "pending" ? viewExecSubtools(part.state.metadata) : []).toEqual(metadata.sub_parts)
       }),
     ),
   )

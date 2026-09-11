@@ -413,4 +413,56 @@ describe("postStop progress.md is gated by the subagent's write permission", () 
       { git: true, config: providerCfg },
     ),
   )
+
+  // memory.disable_write: true — the write gate hard-rejects progress.md, so the
+  // checker must not nudge at all. If it did, the subagent would loop
+  // nudge → rejected write → nudge until MAX_POST_REACT, burning a model turn per
+  // pass (the T3 death loop).
+  //
+  // The assertion is on the NUDGE TEXT, not the turn count: a task left
+  // in_progress triggers an unrelated "tasks you own are unfinished" reminder that
+  // also consumes turns, so a turn count would not isolate this hook.
+  it.live("memory writing disabled → task-bound general is never asked for a journal (no postStop loop)", () =>
+    provideTmpdirServer(
+      Effect.fnUntraced(function* ({ llm }) {
+        const actor = yield* Actor.Service
+        const session = yield* Session.Service
+        const tasks = yield* TaskRegistry.Service
+
+        const parent = yield* session.create({ title: "writing off, no nudge" })
+        const task = yield* tasks.create({ session_id: parent.id, summary: "probe" })
+        const target = progressPath(parent.id, task.id)
+
+        for (let i = 0; i < 6; i++) {
+          yield* llm.text("**Status**: success\n**Summary**: did the work, no journal expected")
+        }
+
+        const result = yield* actor.spawn({
+          mode: "subagent",
+          sessionID: parent.id,
+          agentType: "general",
+          task: "do the work",
+          context: "none",
+          tools: "INHERIT",
+          background: false,
+          model: ref,
+          task_id: task.id,
+        })
+
+        const outcome = yield* Deferred.await(result.outcome).pipe(Effect.timeout("30 seconds"))
+        expect(outcome.status).toBe("success")
+
+        // No request may carry the progress-journal nudge. buildFeedback emits these
+        // two openers; either one appearing means the checker asked for a write the
+        // gate would refuse.
+        const sent = JSON.stringify(yield* llm.inputs)
+        expect(sent).not.toContain("write the task progress journal")
+        expect(sent).not.toContain("is missing required sections")
+
+        const fs = yield* AppFileSystem.Service
+        expect(yield* fs.existsSafe(target)).toBe(false)
+      }),
+      { git: true, config: (url) => ({ ...providerCfg(url), memory: { disable_write: true } }) },
+    ),
+  )
 })

@@ -133,7 +133,10 @@ export const layer = Layer.effect(
         ORDER BY score
         LIMIT ?
       `
-      const rows = Database.Client().$client.query(sqlText).all(ftsQuery, ...params, limit) as Row[]
+      // `prepare` rather than `query`: both bun:sqlite and node:sqlite expose it with the same
+      // `.all(...positionalParams)` shape, so this path works under either driver (`#db`
+      // resolves to node:sqlite outside Bun). See the same note in memory/service.ts.
+      const rows = Database.Client().$client.prepare(sqlText).all(ftsQuery, ...params, limit) as Row[]
       return rows.map((r) => ({
         part_id: r.part_id,
         session_id: r.session_id,

@@ -23,12 +23,126 @@ import type { SpawnInput, AgentOutcome } from "../../src/actor/spawn"
 import { Team } from "../../src/team"
 import { Truncate } from "../../src/tool"
 import { ToolRegistry } from "../../src/tool"
+import { RecoverableError } from "../../src/tool/recoverable"
 import { provideTmpdirInstance } from "../fixture/fixture"
 import { testEffect } from "../lib/effect"
 
 let prevSpawnRef: typeof spawnRef.current
 beforeAll(() => {
   prevSpawnRef = spawnRef.current
+})
+
+describe("Actor tool fromExec guard", () => {
+  it.live("subagent calling spawn via exec receives RecoverableError", () =>
+    provideTmpdirInstance(() =>
+      Effect.gen(function* () {
+        yield* installMockSpawn()
+        const { chat, assistant } = yield* seed()
+        const tool = yield* ActorTool
+        const def = yield* tool.init()
+
+        const exit = yield* Effect.exit(def.execute(
+          {
+            operation: {
+              action: "spawn",
+              description: "nested spawn attempt",
+              prompt: "should be blocked",
+              subagent_type: "general",
+            },
+          },
+          {
+            sessionID: chat.id,
+            messageID: assistant.id,
+            agent: "general",
+            abort: new AbortController().signal,
+            extra: { fromExec: true },
+            messages: [],
+            metadata: () => Effect.void,
+            ask: () => Effect.void,
+          },
+        ))
+
+        expect(exit._tag).toBe("Failure")
+        if (exit._tag === "Failure") {
+          const causeStr = String(exit.cause)
+          expect(causeStr).toContain("Subagents can only use actor send")
+        }
+      }),
+    ),
+  )
+
+  it.live("subagent calling send via exec is allowed", () =>
+    provideTmpdirInstance(() =>
+      Effect.gen(function* () {
+        const { chat, assistant } = yield* seed()
+        const tool = yield* ActorTool
+        const def = yield* tool.init()
+
+        const exit = yield* Effect.exit(def.execute(
+          {
+            operation: {
+              action: "send",
+              to_actor_id: "ses_nonexistent",
+              content: "hello",
+            },
+          },
+          {
+            sessionID: chat.id,
+            messageID: assistant.id,
+            agent: "general",
+            abort: new AbortController().signal,
+            extra: { fromExec: true },
+            messages: [],
+            metadata: () => Effect.void,
+            ask: () => Effect.void,
+          },
+        ))
+
+        // send is not blocked by the fromExec guard — it reaches the inbox service
+        // (which is not set up in this test, so we get an inbox error, not a guard error)
+        expect(exit._tag).toBe("Failure")
+        if (exit._tag === "Failure") {
+          const causeStr = String(exit.cause)
+          expect(causeStr).toContain("Inbox service unavailable")
+          expect(causeStr).not.toContain("Subagents can only use actor send")
+        }
+      }),
+    ),
+  )
+
+  it.live("primary agent calling spawn via exec is not blocked", () =>
+    provideTmpdirInstance(() =>
+      Effect.gen(function* () {
+        yield* installMockSpawn()
+        const { chat, assistant } = yield* seed()
+        const tool = yield* ActorTool
+        const def = yield* tool.init()
+
+        const result = yield* def.execute(
+          {
+            operation: {
+              action: "spawn",
+              description: "legitimate spawn",
+              prompt: "go do something",
+              subagent_type: "general",
+            },
+          },
+          {
+            sessionID: chat.id,
+            messageID: assistant.id,
+            agent: "build",
+            abort: new AbortController().signal,
+            extra: { fromExec: true },
+            messages: [],
+            metadata: () => Effect.void,
+            ask: () => Effect.void,
+          },
+        )
+
+        expect(result.metadata.sessionId).toBe(chat.id)
+      }),
+    ),
+  )
 })
 
 afterEach(async () => {
@@ -249,43 +363,6 @@ describe("tool.actor", () => {
     ),
   )
 
-  it.live("execute resumes an existing task session from actor_id", () =>
-    provideTmpdirInstance(() =>
-      Effect.gen(function* () {
-        yield* installMockSpawn()
-        const { chat, assistant } = yield* seed()
-        const tool = yield* ActorTool
-        const def = yield* tool.init()
-
-        const result = yield* def.execute(
-          {
-            operation: {
-              action: "run",
-              description: "inspect bug",
-              prompt: "look into the cache key path",
-              subagent_type: "general",
-              actor_id: "ses_missing", // v9: actor_id in run action is ignored — always creates new
-            },
-          },
-          {
-            sessionID: chat.id,
-            messageID: assistant.id,
-            agent: "build",
-            abort: new AbortController().signal,
-            extra: {},
-            messages: [],
-            metadata: () => Effect.void,
-            ask: () => Effect.void,
-          },
-        )
-
-        // v9: run always creates a new actor under the parent session
-        expect(result.metadata.sessionId).toBe(chat.id)
-        expect(result.output).toContain("actor_id:")
-      }),
-    ),
-  )
-
   it.live("execute asks by default and skips checks when bypassed", () =>
     provideTmpdirInstance(() =>
       Effect.gen(function* () {
@@ -337,7 +414,7 @@ describe("tool.actor", () => {
     ),
   )
 
-  it.live("execute creates a child when actor_id does not exist", () =>
+  it.live("execute creates a fresh actor under the parent session and reports its id", () =>
     provideTmpdirInstance(() =>
       Effect.gen(function* () {
         yield* installMockSpawn()
@@ -352,7 +429,6 @@ describe("tool.actor", () => {
               description: "inspect bug",
               prompt: "look into the cache key path",
               subagent_type: "general",
-              actor_id: "ses_missing",
             },
           },
           {
@@ -367,10 +443,11 @@ describe("tool.actor", () => {
           },
         )
 
-        // v9: run creates a new actor under the parent session (subagent mode)
         expect(result.metadata.sessionId).toBe(chat.id)
         expect(result.metadata.actorId).toBeDefined()
         expect(result.output).toContain(`actor_id: ${result.metadata.actorId}`)
+        // The id is offered for follow-up via send/wait, never for a resume arg.
+        expect(result.output).toContain("send")
       }),
     ),
   )
@@ -506,8 +583,8 @@ describe("Actor tool subagent_type enum (F36)", () => {
 
   // Mirror of the task tool's schema regression test (commit 334cf6708).
   // The pre-discriminated-union schema let the model fill every "optional" string
-  // with "" — including actor_id — which slipped past the runtime guards in some
-  // paths and produced confusing tool errors elsewhere.
+  // with "", which slipped past the runtime guards in some paths and produced
+  // confusing tool errors elsewhere.
   it.live("schema rejects empty strings, unknown fields, and per-action missing required fields", () =>
     provideTmpdirInstance(() =>
       Effect.gen(function* () {
@@ -522,8 +599,11 @@ describe("Actor tool subagent_type enum (F36)", () => {
 
         expect(wrap({ operation: { action: "run", description: "", prompt: "y", subagent_type: "general" } }).success).toBe(false)
         expect(wrap({ operation: { action: "run", description: "x", prompt: "", subagent_type: "general" } }).success).toBe(false)
-        expect(wrap({ operation: { action: "run", description: "x", prompt: "y", subagent_type: "general", actor_id: "" } }).success).toBe(false)
         expect(wrap({ operation: { action: "run", description: "x", prompt: "y", subagent_type: "general", junk: "z" } }).success).toBe(false)
+        // spawn/run never resume — actor_id is not part of their schema, so a model
+        // reaching for it gets a validation error instead of a silently fresh actor.
+        expect(wrap({ operation: { action: "run", description: "x", prompt: "y", subagent_type: "general", actor_id: "general-1" } }).success).toBe(false)
+        expect(wrap({ operation: { action: "spawn", description: "x", prompt: "y", subagent_type: "general", actor_id: "general-1" } }).success).toBe(false)
         expect(wrap({ operation: { action: "run", description: "x", prompt: "y" } }).success).toBe(false) // missing subagent_type
         expect(wrap({ operation: { action: "run", prompt: "y", subagent_type: "general" } }).success).toBe(false) // missing description
         expect(wrap({ description: "x", prompt: "y", subagent_type: "general" }).success).toBe(false) // missing operation envelope
@@ -565,6 +645,32 @@ describe("Actor tool subagent_type enum (F36)", () => {
         // don't stringify the envelope, and must retain its inner 7-way union.
         expect(flat.properties.operation.type).toBe("object")
         expect((flat.properties.operation.oneOf ?? flat.properties.operation.anyOf).length).toBe(7)
+      }),
+    ),
+  )
+
+  // The union order is behaviour-neutral for PARSING but it is the one part of
+  // "spawn is the default" that reaches the model as structure rather than
+  // prose: the branch order in the JSON schema handed to the provider. The
+  // actor.txt wording tests assert a file on disk; this asserts the wire format.
+  it.live("flattened schema offers spawn ahead of run in the operation union", () =>
+    provideTmpdirInstance(() =>
+      Effect.gen(function* () {
+        const tool = yield* ActorTool
+        const def = yield* tool.init()
+        const fakeModel = {
+          providerID: "mimo",
+          api: { id: "mimo-v2.5", npm: "@ai-sdk/openai-compatible" },
+          id: "mimo-v2.5",
+          capabilities: { input: {} },
+        } as any
+        const flat = transformSchema(fakeModel, z.toJSONSchema(def.parameters)) as any
+        const branches = (flat.properties.operation.oneOf ?? flat.properties.operation.anyOf) as any[]
+        const actions = branches.map((b) => b.properties?.action?.const ?? b.properties?.action?.enum?.[0])
+        expect(actions).toContain("spawn")
+        expect(actions).toContain("run")
+        expect(actions[0]).toBe("spawn")
+        expect(actions.indexOf("spawn")).toBeLessThan(actions.indexOf("run"))
       }),
     ),
   )

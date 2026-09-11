@@ -1,6 +1,7 @@
 import { Schema } from "effect"
 import { zod } from "@/util/effect-zod"
 import { withStatics } from "@/util/schema"
+import { ConfigRetry } from "./retry"
 
 const PositiveInt = Schema.Number.check(Schema.isInt()).check(Schema.isGreaterThan(0))
 
@@ -116,6 +117,9 @@ export class Info extends Schema.Class<Info>("ProviderConfig")({
       [Schema.Record(Schema.String, Schema.Any)],
     ),
   ),
+  retry: Schema.optional(ConfigRetry.Info).annotate({
+    description: "Provider-specific overrides for retry budgets",
+  }),
   models: Schema.optional(Schema.Record(Schema.String, Model)),
   only_configured_models: Schema.optional(Schema.Boolean).annotate({
     description:

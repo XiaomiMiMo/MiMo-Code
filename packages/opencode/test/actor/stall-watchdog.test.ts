@@ -209,18 +209,41 @@ const parentInboxRows = (parentID: SessionID) =>
     ),
   )
 
-// Backdate a peer's last_turn_time so deriveLiveness reads `stalled` on the next
-// scan WITHOUT advancing turn_count — exactly the wedged-child shape the watchdog
-// exists to catch. turn_count is forced to >= 1 (the child has run at least one
-// turn, then wedged): a not-yet-started child (turnCount 0) is deliberately
-// exempt from the stall path, so a stalled row must have run once. Keeps status
-// pending/running so it stays in listActive().
+// Backdate a peer's activity so deriveLiveness reads `stalled` on the next scan
+// WITHOUT advancing turn_count — exactly the wedged-child shape the watchdog
+// exists to catch. last_activity_time is the field the derivation reads;
+// last_turn_time is aged alongside it so the row stays internally consistent
+// (and so the separate STUCK_THRESHOLD_MS step-completion scan still sees what it
+// always saw). turn_count is forced to >= 1 to keep expressing "has run, then
+// wedged" — it is no longer load-bearing for the stall path, since the
+// turnCount-0 exemption is gone. Keeps status running so it stays in listActive().
 const backdateTurn = (sessionID: SessionID, actorID: string, agoMs: number) =>
   Effect.sync(() =>
     Database.use((db) =>
       db
         .update(ActorRegistryTable)
-        .set({ status: "running", last_turn_time: Date.now() - agoMs, turn_count: sql`max(${ActorRegistryTable.turn_count}, 1)` })
+        .set({
+          status: "running",
+          last_turn_time: Date.now() - agoMs,
+          last_activity_time: Date.now() - agoMs,
+          turn_count: sql`max(${ActorRegistryTable.turn_count}, 1)`,
+        })
+        .where(and(eq(ActorRegistryTable.session_id, sessionID), eq(ActorRegistryTable.actor_id, actorID)))
+        .run(),
+    ),
+  )
+
+// The inverse of backdateTurn: work lands again, which is what a resuming child
+// actually does (its parts get written, bumping last_activity_time). Expressed as
+// a direct row update rather than a real part write so this file stays a
+// watchdog test and does not depend on the message/part projection path — that
+// end-to-end link is covered in test/actor/liveness.test.ts.
+const freshenActivity = (sessionID: SessionID, actorID: string) =>
+  Effect.sync(() =>
+    Database.use((db) =>
+      db
+        .update(ActorRegistryTable)
+        .set({ last_activity_time: Date.now() })
         .where(and(eq(ActorRegistryTable.session_id, sessionID), eq(ActorRegistryTable.actor_id, actorID)))
         .run(),
     ),
@@ -277,9 +300,12 @@ describe("Actor stall watchdog (T40)", () => {
         yield* actor.scanStalledOnce!()
         expect((yield* parentInboxRows(parent.id)).length).toBe(1)
 
-        // (4) Child resumes (a turn advances → recent last_turn_time + turnCount++).
-        //     Now PROGRESSING: a scan sends nothing new AND re-arms the debounce.
+        // (4) Child resumes: work lands again (a part write bumps
+        //     last_activity_time) and a turn completes. Now PROGRESSING: a scan
+        //     sends nothing new AND re-arms the debounce. updateTurn alone is no
+        //     longer sufficient — the derivation reads activity, not step count.
         yield* actorReg.updateTurn(child.id, child.id)
+        yield* freshenActivity(child.id, child.id)
         yield* actor.scanStalledOnce!()
         expect((yield* parentInboxRows(parent.id)).length).toBe(1)
 

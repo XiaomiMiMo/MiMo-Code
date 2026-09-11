@@ -16,6 +16,7 @@ Invoked from the shell. `mimo` with no command opens the TUI.
 | `mimo upgrade` | Update to the latest version |
 | `mimo uninstall` | Uninstall MiMoCode |
 | `mimo serve` | Run the server |
+| `mimo llm-server issue`/`list`/`revoke` | Mint and manage tokens that let a task reach this instance's models over `/v1`; it starts nothing — see @capability-api.md |
 | `mimo stats` | Usage statistics |
 | `mimo export` / `mimo import` | Export / import sessions |
 | `mimo session` | Manage sessions |
@@ -29,7 +30,9 @@ Invoked from the shell. `mimo` with no command opens the TUI.
 
 Run `mimo <command> --help` for flags on any command.
 
-Notable TUI flags: `--continue`/`-c` (resume last session), `--session`/`-s`, `--model`/`-m`, `--agent`, `--never-ask`, `--trust`, and `--dangerously-skip-permissions` (auto-approve everything not explicitly denied; prompts once for confirmation — see permissions.md).
+Notable TUI flags: `--continue`/`-c` (resume last session), `--session`/`-s`, `--model`/`-m`, `--agent`, `--never-ask`, `--trust`, and `--dangerously-skip-permissions`/`--yolo` (auto-approve everything not explicitly denied; prompts once for confirmation — see permissions.md).
+
+For terminal compatibility, TUI rendering or lag, and local rendering over SSH with `mimo serve` + `mimo attach`, see @guide.md.
 
 ## Slash commands (inside the TUI)
 
@@ -60,6 +63,7 @@ Most client commands run only when the whole input is the command. `/btw <questi
 | `/themes` | — | Choose a color theme |
 | `/background` | — | Choose the home-screen background |
 | `/logo` | — | Choose the home-screen logo style |
+| `/vivid` | — | Toggle Vivid and Minimal visuals |
 | `/dark` | — | Switch to dark mode |
 | `/light` | — | Switch to light mode |
 | `/help` | — | Open command help |
@@ -75,7 +79,7 @@ Most client commands run only when the whole input is the command. `/btw <questi
 | `/skills` | Browse and select available skills |
 | `/revoke-consent` | Revoke consent for the free service |
 | `/voice` | Toggle streaming voice input (requires `sox` and a MiMo login) |
-| `/voice-send` | Toggle sending transcribed voice input automatically |
+| `/voice-send` | Allow voice control to submit when you say「发送」/ "send it" (ASR always dictates) |
 | `/voice-control` | Toggle voice control |
 
 ### Session commands
@@ -127,6 +131,7 @@ The slash menu also includes commands discovered at runtime:
 ## Keybindings
 
 - `Tab` — cycle primary agents (build → plan → compose). After the first message the mode locks: Build and Plan can still switch between each other, but Compose is isolated — it can't be entered mid-session, and a session started in Compose stays there. (Many models ignore tools injected mid-conversation; a fixed skill/tool set from session start improves tool-call reliability.)
+- Entering plan mode is a user gesture: `Tab` (or the agent dialog) — there is no `plan_enter` tool, so the agent cannot put you in plan mode and will not offer to unless you raise it. Leaving works either way: `Tab` back, or the agent calls `plan_exit` to ask you to approve the finished plan and return to build.
 - Other keybinds are configurable; the keybinds config module governs them.
 
 ## Notes

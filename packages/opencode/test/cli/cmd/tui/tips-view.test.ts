@@ -20,6 +20,13 @@ describe("buildTipKeys", () => {
     Array.of(en, es, fr, ja, ru, zh, zht).forEach((dict) => expect(dict[key]).toBeTruthy())
   })
 
+  test("includes localized guidance for toggling visual modes", () => {
+    const key = "tui.tips.vivid"
+    expect(buildTipKeys(false, "linux")).toContain(key)
+    expect(tipWeight(key)).toBe(tipWeight("tui.tips.theme_mode"))
+    Array.of(en, es, fr, ja, ru, zh, zht).forEach((dict) => expect(dict[key]).toContain("{highlight}/vivid{/highlight}"))
+  })
+
   test("omits the Orchestrator tab tip when the flag is off", () => {
     const keys = buildTipKeys(false, "linux")
     expect(keys).toContain("tui.tips.tab_agent")

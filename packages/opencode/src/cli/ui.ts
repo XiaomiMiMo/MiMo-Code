@@ -39,6 +39,10 @@ export function print(...message: string[]) {
   process.stderr.write(message.join(" "))
 }
 
+export function withTrailingEOL(text: string) {
+  return text.replace(/[\r\n]+$/, "") + EOL
+}
+
 let blank = false
 export function empty() {
   if (blank) return

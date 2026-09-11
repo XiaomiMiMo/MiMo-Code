@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import { APICallError } from "ai"
-import { parseAPICallError } from "../../src/provider/error"
+import { parseAPICallError, parseStreamError } from "../../src/provider/error"
 import { ProviderID } from "../../src/provider/schema"
 
 const xiaomi = ProviderID.make("xiaomi")
@@ -156,5 +156,76 @@ describe("provider error message", () => {
       }),
     })
     expect(parsed.message).toBe("Insufficient account balance")
+  })
+})
+
+describe("provider stream error", () => {
+  test("marks OpenAI server overload events as retryable", () => {
+    const input = {
+      type: "error",
+      sequence_number: 2,
+      error: {
+        type: "service_unavailable_error",
+        code: "server_is_overloaded",
+        message: "Our servers are currently overloaded. Please try again later.",
+        param: null,
+      },
+    }
+
+    expect(parseStreamError(input)).toStrictEqual({
+      type: "api_error",
+      message: input.error.message,
+      isRetryable: true,
+      responseBody: JSON.stringify(input),
+    })
+  })
+
+  test("marks upstream stream_read_error events as retryable", () => {
+    const input = {
+      type: "error",
+      sequence_number: 0,
+      error: {
+        type: "upstream_error",
+        code: "stream_read_error",
+        message: "stream_read_error",
+      },
+    }
+
+    expect(parseStreamError(input)).toStrictEqual({
+      type: "api_error",
+      message: input.error.message,
+      isRetryable: true,
+      responseBody: JSON.stringify(input),
+    })
+  })
+
+  test("marks OpenAI server_error events as retryable", () => {
+    const input = {
+      type: "error",
+      sequence_number: 3,
+      error: {
+        type: "server_error",
+        code: "server_error",
+        message: "An error occurred while processing your request. You can retry your request.",
+        param: null,
+      },
+    }
+
+    expect(parseStreamError(input)).toStrictEqual({
+      type: "api_error",
+      message: input.error.message,
+      isRetryable: true,
+      responseBody: JSON.stringify(input),
+    })
+  })
+
+  test("marks Anthropic overloaded_error events as retryable without an error code", () => {
+    const input = { type: "error", error: { type: "overloaded_error", message: "Overloaded" } }
+    expect(parseStreamError(input)).toStrictEqual({
+      type: "api_error",
+      message: "Overloaded",
+      isRetryable: true,
+      responseBody: JSON.stringify(input),
+    })
   })
 })

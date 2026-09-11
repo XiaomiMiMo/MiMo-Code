@@ -98,7 +98,7 @@ Prefer a markdown file (`.mimocode/agent/<name>.md`, body = system prompt) for d
 | Key | Purpose |
 |-----|---------|
 | `skills` | `paths[]` extra skill folders + `urls[]` remote skill indexes |
-| `mcp` | MCP servers: `local` (command/env) or `remote` (url/headers/oauth); `{ "enabled": false }` disables one |
+| `mcp` | MCP servers: `local` (command/env) or `remote` (url/headers/oauth); `{ "enabled": false }` disables one; `sampling` sets the client-sampling policy (`deny`/`ask`/`allow`, default `ask`) |
 | `tools` | Record of tool-id → boolean enable/disable |
 | `tool.invocation_style` | `json` (default) or `shell`; `tool.invocation_style_by_tool` for per-tool override |
 | `command` | Custom slash commands |
@@ -123,8 +123,7 @@ The trigger is the model's prompt capacity (`limit.input` when the provider publ
 | `compaction.max_context` | Compact earlier than the model window. One value for all models, or a map keyed `"<providerID>/<modelID>"` (wildcards allowed, longest pattern wins). Values: token count, `"300K"`, `"1M"`, or `"50%"` of the window. Always clamped to the provider cap — can only lower the trigger, never raise it. `0` = no budget. Set it from the TUI with `/context-limit` |
 | `checkpoint.thresholds` | Context-fill triggers, e.g. `["40%","60%","80%"]` |
 | `checkpoint.reserved` | Token buffer for checkpoint ops (default 20000) |
-| `checkpoint.max_writer_failures` | Consecutive writer failures before pausing (default 3) |
-| `checkpoint.fork` | Fork parent prefix into writer session for cache reuse (default false) |
+| `checkpoint.fork` | Fork parent prefix into writer session for cache reuse (default true) |
 | `checkpoint.push_caps.*` | Per-section token caps for rebuild context (tasks_ledger, focus_task, checkpoint, memory, notes, global, recent_user, …) |
 | `checkpoint.task_archive_days` | Days before done/abandoned tasks filtered out (default 7) |
 | `checkpoint.memory_search_score_floor` | BM25 relative floor for memory search (default 0.15) |
@@ -158,6 +157,7 @@ The trigger is the model's prompt capacity (`limit.input` when the provider publ
 | `autoupdate` | `true` / `false` / `"notify"` |
 | `share` | `"manual"` / `"auto"` / `"disabled"` |
 | `snapshot` | Filesystem snapshot tracking for undo/redo (default true) |
+| `auto_worktree` | Auto-Worktree Notice on main-worktree writes (default false) |
 | `logLevel` | Log verbosity |
 | `server` | Config for `mimo serve` |
 | `enterprise.url` | Enterprise endpoint |

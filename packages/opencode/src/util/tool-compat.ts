@@ -1,21 +1,50 @@
 import type { JSONSchema7 } from "@ai-sdk/provider"
+import { Flag } from "@/flag/flag"
 import { isRecord } from "./record"
 
-/** Collapse PascalCase, camelCase, snake_case, and kebab-case to one comparable token. */
-export function canonical(name: string): string {
-  return name.replace(/[-_\s]+/g, "").toLowerCase()
+/** `mcp__<server>__<tool>`, the AI SDK's prefixed form of an MCP tool name. */
+const MCP_NAME = /^mcp__(.+?)__(.+)$/
+
+/**
+ * Collapse PascalCase, camelCase, snake_case, and kebab-case to one comparable
+ * token, flattening the `mcp__server__tool` prefix to `server_tool`. With
+ * `ignoreCase` off, separators are still stripped but letter case is preserved,
+ * so `apply-patch` and `apply_patch` share a token while `applyPatch` does not.
+ */
+export function canonical(name: string, ignoreCase = true): string {
+  const mcp = MCP_NAME.exec(name)
+  const collapsed = (mcp ? mcp[1] + "_" + mcp[2] : name).replace(/[-_\s]+/g, "")
+  return ignoreCase ? collapsed.toLowerCase() : collapsed
 }
 
-/** Resolve a model-provided identifier to a registered name when casing or separators differ. */
+/**
+ * Resolve a model-provided identifier to a registered name when casing or
+ * separators differ. Case folding is gated on
+ * `Flag.MIMOCODE_IGNORE_TOOL_NAME_CASE` (lenient by default); with the flag off
+ * only separator differences are repaired and a mis-cased name stays unresolved.
+ *
+ * MCP names are exempt and always fold case: `mcp__server__tool` is an SDK-level
+ * convention whose two segments are authored by the remote server, so there is
+ * no local casing for the strict mode to enforce there.
+ */
 export function resolveName(name: string, candidates: readonly string[]): string | undefined {
-  if (candidates.includes(name)) return name
-
+  const always = Flag.MIMOCODE_IGNORE_TOOL_NAME_CASE || MCP_NAME.test(name)
   const lower = name.toLowerCase()
-  const caseMatch = candidates.find((candidate) => candidate.toLowerCase() === lower)
-  if (caseMatch) return caseMatch
+  const foldedKey = canonical(name, true)
+  const exactKey = canonical(name, false)
 
-  const key = canonical(name)
-  return candidates.find((candidate) => canonical(candidate) === key)
+  // Single pass over the catalog; the strongest match still wins regardless of
+  // where it sits: exact name > case-insensitive name > canonical token.
+  let caseMatch: string | undefined
+  let canonicalMatch: string | undefined
+  for (const candidate of candidates) {
+    if (candidate === name) return candidate
+    const fold = always || MCP_NAME.test(candidate)
+    if (fold && !caseMatch && candidate.toLowerCase() === lower) caseMatch = candidate
+    if (!canonicalMatch && canonical(candidate, fold) === (fold ? foldedKey : exactKey)) canonicalMatch = candidate
+  }
+
+  return caseMatch ?? canonicalMatch
 }
 
 export function schemaPropertyKeys(schema: JSONSchema7): string[] {
@@ -198,6 +227,18 @@ export async function repairToolCall(input: RepairToolCallInput): Promise<Repair
 
   const schema = await Promise.resolve(input.getSchema(resolvedName))
   const parsed = parseToolInput(input.input)
+  const codeSchema = isRecord(schema.properties) ? schema.properties.code : undefined
+  if (
+    resolvedName === "exec" &&
+    typeof parsed === "string" &&
+    isRecord(codeSchema) &&
+    codeSchema.type === "string"
+  ) {
+    return {
+      toolName: resolvedName,
+      input: JSON.stringify({ code: parsed }),
+    }
+  }
   const normalized = normalizeInput(parsed, schema)
   const repairedInput = stringifyToolInput(normalized)
 

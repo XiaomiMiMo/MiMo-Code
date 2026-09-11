@@ -3,11 +3,13 @@ import path from "path"
 import { Global } from "@/global"
 import { Bus } from "@/bus"
 import { Config } from "@/config"
+import { Flag } from "@/flag/flag"
 import { Memory } from "@/memory"
+import { isMemoryWriteEnabled } from "@/memory/write-gate"
 import { MemoryFtsTable } from "@/memory/fts.sql"
 import { TaskRegistry } from "@/task/registry"
 import { ActorRegistry } from "@/actor/registry"
-import type { AgentOutcome, ForkContext } from "@/actor/spawn"
+import type { AgentOutcome, FailureInfo, ForkContext } from "@/actor/spawn"
 import { spawnRef } from "@/actor/spawn-ref"
 import { prefixCaptureRef } from "./prefix-capture-ref"
 import { Database, and, eq, or } from "@/storage"
@@ -41,11 +43,50 @@ import { alignToNonToolResultUser } from "./checkpoint-align"
 import { loadPriorDiscoveredTitles } from "./checkpoint-retry"
 import * as CheckpointContext from "./checkpoint-context"
 import { buildProgressDiff } from "./checkpoint-progress-reconcile"
+import { renderTailDigest } from "./tail-digest"
 
 const log = Log.create({ service: "session.checkpoint" })
 
 function truncate(s: string, max: number): string {
   return s.length <= max ? s : s.slice(0, max - 60) + "\n... (truncated, full body at file)"
+}
+
+/**
+ * Drop every top-level `# ` heading (outside fenced code blocks) so the
+ * section H1 is the only file root. Stripping only the first leaves a
+ * surviving root that reparents every following section, and a `# ` line
+ * inside a fence would otherwise be stripped as if it were a heading.
+ */
+function stripTopLevelH1s(text: string): string {
+  let inFence = false
+  return text
+    .split("\n")
+    .filter((line) => {
+      if (/^(```|~~~)/.test(line)) {
+        inFence = !inFence
+        return true
+      }
+      if (!inFence && /^# [^#]/.test(line)) return false
+      return true
+    })
+    .join("\n")
+    .trim()
+}
+
+/**
+ * Push a top-level section. File-backed sections carry a single full `File:`
+ * path under the H1 — do not also put the basename in the H1; that repeats
+ * the last path segment. The file body's own top-level H1s are stripped so
+ * this section heading is the only root and every following ## belongs to it.
+ */
+function pushSection(lines: string[], heading: string, body?: string, filePath?: string) {
+  lines.push(`# ${heading}`)
+  if (filePath) lines.push(`File: ${filePath}`)
+  if (body !== undefined) {
+    const text = filePath ? stripTopLevelH1s(body) : body.trim()
+    if (text) lines.push(text)
+  }
+  lines.push("")
 }
 
 /**
@@ -420,9 +461,9 @@ export type TryStartCheckpointWriterInput = {
  *              newest wins because its range is a strict superset of the
  *              older pending range, so the older one would just duplicate
  *              work. (F40)
- * - "skipped": the request was rejected outright — empty session, system-
- *              spawned subagent, or Actor service unavailable. No writer
- *              will fire for this request now or later.
+ * - "skipped": the request was rejected outright — memory writing disabled,
+ *              empty session, system-spawned subagent, or Actor service
+ *              unavailable. No writer will fire for this request now or later.
  */
 export type TryStartCheckpointWriterResult = "started" | "queued" | "skipped"
 
@@ -432,6 +473,20 @@ export interface Interface {
   ) => Effect.Effect<TryStartCheckpointWriterResult>
 
   readonly waitForWriter: (sessionID: SessionID) => Effect.Effect<WriterOutcome | "no-writer">
+
+  /**
+   * The same bounded wait as `waitForWriter`, additionally surfacing the
+   * failure classification the writer's outcome already carries.
+   *
+   * `waitForWriter` is #1938's contract — three flat values, one of which
+   * ("timeout") means "still in flight". That contract is deliberately left
+   * alone; this is the shape a caller needs when the CLASS of a failure
+   * changes what it does next (prune's recovery gate). Both are one
+   * implementation: `waitForWriter` projects `.outcome` off this, so the two
+   * can never disagree about what a settled writer did.
+   */
+  readonly waitForWriterSettlement: (sessionID: SessionID) => Effect.Effect<WriterSettlement>
+
 
   /**
    * Await all in-flight writers across sessions up to `timeoutMs`. Used by
@@ -486,8 +541,18 @@ export interface Interface {
    */
   readonly renderRebuildContext: (
     sessionID: SessionID,
-    opts?: { lastMessageInfo?: LastMessageInfo; agentID?: string },
-  ) => Effect.Effect<string>
+    opts?: {
+      lastMessageInfo?: LastMessageInfo
+      agentID?: string
+      digestUpTo?: MessageID
+      /**
+       * Watermark this rebuild is inserting against. When present, Recent
+       * activity is sliced from this boundary instead of re-reading
+       * last_checkpoint_message_id (which can race an in-flight writer).
+       */
+      boundary?: MessageID
+    },
+  ) => Effect.Effect<{ text: string; hasActivity: boolean }>
 
   readonly lastBoundary: (sessionID: SessionID) => Effect.Effect<MessageID | undefined>
 
@@ -503,6 +568,7 @@ export interface Interface {
     sessionID: SessionID
     boundary: MessageID
     lastMessageInfo?: LastMessageInfo
+    digestUpTo?: MessageID
     agentID?: string
     agent: string
     model: { providerID: string; modelID: string }
@@ -521,6 +587,22 @@ export class Service extends Context.Service<Service, Interface>()("@opencode/Se
 // unsuccessfully). See waitForWriter for why conflating the two silently
 // disables checkpointing for a session whose writers are merely slow.
 export type WriterOutcome = "success" | "failure" | "timeout"
+
+/**
+ * A settled (or bound-expired) writer, plus the classification its
+ * AgentOutcome already carried.
+ *
+ * `failure` is present only when `outcome === "failure"` AND the writer's
+ * error was classifiable at the construction site. It is absent for a
+ * cancelled writer and for a failure whose error never reached
+ * classifyAssistantError — so "absent" means "unknown class", never
+ * "retryable".
+ */
+export type WriterSettlement = {
+  outcome: WriterOutcome | "no-writer"
+  failure?: FailureInfo
+}
+
 
 interface WriterState {
   // Holds the AgentOutcome Deferred returned by Actor.spawn so callers can
@@ -561,6 +643,32 @@ export const layer: Layer.Layer<
     ) => Effect.Effect<TryStartCheckpointWriterResult> = Effect.fn("SessionCheckpoint.tryStartCheckpointWriter")(function* (
       input: TryStartCheckpointWriterInput,
     ) {
+      if (Flag.MIMOCODE_DISABLE_CHECKPOINT) {
+        log.info("checkpointing disabled, skipping checkpoint", { sessionID: input.sessionID })
+        return "skipped" as const
+      }
+
+      // Memory writing disabled — stop producing NEW memory. This is the single
+      // gate for the whole write side of checkpointing: template bootstrap
+      // (ensureCheckpointTemplate / ensureMemoryTemplate / ensureNotesTemplate),
+      // the writer subagent spawn, and the validator retry rename all live past
+      // this point, so returning here holds every one of them down at once. We
+      // deliberately never spawn rather than spawn-and-drop-the-write: the writer
+      // would burn a full model turn producing bytes nobody stores.
+      //
+      // READS are untouched — renderRebuildContext still injects an existing
+      // checkpoint.md / MEMORY.md / notes.md, and the `memory` search tool keeps
+      // working. The reads inside this function (prior checkpoint, progressDiff)
+      // exist only to feed the writer prompt, so short-circuiting loses no
+      // read capability.
+      //
+      // Default is ENABLED: absent config → write. The field name and polarity
+      // live in exactly one place (memory/write-gate.ts).
+      if (!isMemoryWriteEnabled(yield* config.get())) {
+        log.info("memory writing disabled, skipping checkpoint", { sessionID: input.sessionID })
+        return "skipped" as const
+      }
+
       // F40: writer1 still running. Evict any prior pending and queue this
       // request — newest wins because its range is a strict superset of the
       // older pending range, so older pending checkpoints would only
@@ -694,14 +802,11 @@ export const layer: Layer.Layer<
       //          last_checkpoint_message_id (aligned past tool_use/tool_result).
       // See spec 2026-06-09-checkpoint-writer-child-session-and-no-fork-fallback-design.md §3.
       //
-      // Default-behavior change at this PR: previously the writer always forked
-      // the parent's full prefix (effectively fork: true). The default is now
-      // false (no-fork delta-only). Users on cache-breakpoint providers
-      // (Anthropic) who want to retain the prefix-cache benefit must set
-      // `checkpoint.fork: true` in their config. See the spec at
-      // docs/superpowers/specs/2026-06-09-checkpoint-writer-child-session-and-no-fork-fallback-design.md §4.5.
+      // The writer forks the parent's full prefix by default for prefix-cache
+      // reuse. Users who need cold-start delta-only behavior can set
+      // `checkpoint.fork: false` in their config.
       const cfg = yield* config.get()
-      const forkMode = cfg.checkpoint?.fork ?? false
+      const forkMode = cfg.checkpoint?.fork ?? true
 
       const parentRow = yield* Effect.sync(() =>
         Database.use((d) =>
@@ -930,10 +1035,39 @@ export const layer: Layer.Layer<
             ),
           )
         } else {
-          log.warn("checkpoint writer did not succeed — leaving watermark unchanged so the delta is re-covered", {
-            sessionID: input.sessionID,
-            status: outcome.status,
-          })
+          // Classify instead of count. This is the replacement for the failure
+          // accounting deleted earlier in this branch: the same "is this writer
+          // broken?" question, answered by reading the outcome the writer already
+          // carries instead of accumulating a tally across thresholds.
+          //
+          // A TRANSIENT failure needs nothing here — the writer's LLM calls run
+          // through SessionRetry's ladder (session/retry.ts), so it is already
+          // post-retry, and the next threshold crossing re-covers the delta with
+          // fresher context. A DETERMINISTIC one (overflow / auth / bad request)
+          // will recur identically at every future threshold, so it is reported
+          // as the distinct thing it is rather than as one more copy of an
+          // undifferentiated line.
+          //
+          // Deliberately STATELESS: no per-session memory of previous failures.
+          // Such memory is a trend detector, and the trend is the deferred
+          // user-facing-warning change's own state — accumulating it here under a
+          // new name is precisely what this branch removed.
+          // `failure` is optional and its source is nullable — truthiness, never
+          // `=== undefined` (AGENTS.md, "Reading a nullable column").
+          const failure = outcome.status === "failure" ? outcome.failure : undefined
+          const classified = failure ? { kind: failure.kind, cause: failure.name } : {}
+          if (failure && !failure.retryable) {
+            log.warn(
+              "checkpoint writer failed deterministically — this will recur at every threshold until the cause is fixed; leaving watermark unchanged so the delta is re-covered",
+              { sessionID: input.sessionID, status: outcome.status, ...classified },
+            )
+          } else {
+            log.warn("checkpoint writer did not succeed — leaving watermark unchanged so the delta is re-covered", {
+              sessionID: input.sessionID,
+              status: outcome.status,
+              ...classified,
+            })
+          }
         }
 
         // F40: capture pending before deleting the slot so a queued writer
@@ -981,33 +1115,59 @@ export const layer: Layer.Layer<
       return "started" as const
     })
 
-    const waitForWriter = Effect.fn("SessionCheckpoint.waitForWriter")(function* (sessionID: SessionID) {
+    const waitForWriterSettlement = Effect.fn("SessionCheckpoint.waitForWriterSettlement")(function* (
+      sessionID: SessionID,
+    ) {
       const state = writers.get(sessionID)
-      if (!state) return "no-writer" as const
+      if (!state) return { outcome: "no-writer" as const }
 
-      // v2 writers manage 3 file types and frequently take 60-180s; pad to
-      // 5min so a long-but-honest writer is not mistaken for a failure by
-      // the prune retry watcher. AgentOutcome → WriterOutcome translation:
-      // success → "success", failure / cancelled → "failure".
+      // v2 writers manage 3 file types and frequently take 60-180s, so the
+      // wait is bounded at 5min rather than left unbounded. AgentOutcome →
+      // WriterOutcome translation: success → "success", failure / cancelled →
+      // "failure", bound expired with the writer still unsettled → "timeout".
       //
-      // The bound expiring is NOT a writer failure. This timeout does not
-      // cancel the writer, and the settle watcher that owns the watermark
+      // The bound expiring is NOT a writer failure — the padding is not what
+      // keeps the two apart, the distinct return value is. This timeout does
+      // not cancel the writer, and the settle watcher that owns the watermark
       // advance (see tryStartCheckpointWriter) awaits the SAME Deferred with no
       // bound — so a slow-but-successful writer still advances
       // last_checkpoint_message_id after we stop waiting. Reporting "failure"
-      // here made the prune retry watcher count a working writer as broken,
-      // and MAX_WRITER_FAILURES such waits then tripped "gave up after max
-      // consecutive failures", permanently disabling checkpointing for a
-      // session whose every writer had actually succeeded. Report "timeout" so
-      // callers can distinguish "still in flight" from "settled unsuccessfully"
-      // (prune's `result !== "failure"` guard already skips the counter).
+      // here made a slow-but-working writer indistinguishable from a broken
+      // one, which is why the two outcomes stay distinct. Callers must be able
+      // to tell "still in flight" from "settled unsuccessfully": prune arms its
+      // recovery gate on a settled TRANSIENT failure only, and "timeout" must
+      // never reach that gate — the writer may still be about to succeed.
       const outcome = yield* Deferred.await(state.writing).pipe(
         Effect.timeout(300_000),
         Effect.catch(() => Effect.succeed("timeout" as const)),
       )
-      if (outcome === "timeout") return "timeout" as const
-      return outcome.status === "success" ? ("success" as const) : ("failure" as const)
+      if (outcome === "timeout") {
+        // Hitting the bound must stay observable: the caller reports neither a
+        // success nor a failure, so without this line a writer stuck past 5min
+        // produces no log at all until it finally settles.
+        log.info("checkpoint writer wait bound expired — writer still in flight", {
+          sessionID,
+          boundMs: 300_000,
+        })
+        return { outcome: "timeout" as const }
+      }
+      if (outcome.status === "success") return { outcome: "success" as const }
+      // `failure` is optional and its source is nullable — truthiness, never
+      // `=== undefined` (AGENTS.md, "Reading a nullable column"). A cancelled
+      // outcome has no failure arm at all, so it lands here unclassified.
+      const failure = outcome.status === "failure" ? outcome.failure : undefined
+      return failure ? { outcome: "failure" as const, failure } : { outcome: "failure" as const }
     })
+
+    // #1938's contract, unchanged: three flat values, "timeout" distinct from
+    // "failure". Projected off waitForWriterSettlement rather than duplicated,
+    // so the classification-aware caller and this one can never disagree.
+    const waitForWriter: (sessionID: SessionID) => Effect.Effect<WriterOutcome | "no-writer"> = Effect.fn(
+      "SessionCheckpoint.waitForWriter",
+    )(function* (sessionID: SessionID) {
+      return (yield* waitForWriterSettlement(sessionID)).outcome
+    })
+
 
     const drainWriters = Effect.fn("SessionCheckpoint.drainWriters")(function* (input?: { timeoutMs?: number }) {
       const timeoutMs = input?.timeoutMs ?? 120_000
@@ -1085,16 +1245,21 @@ export const layer: Layer.Layer<
       lines.push("")
       lines.push(`Directory: ${dir}/`)
       lines.push("")
-      lines.push(`Current checkpoint (${topic}): checkpoint.md [shown below]`)
-      lines.push("")
-      lines.push(`Use read("${snapFile}") to access the full checkpoint.`)
+      // Point at the exact section that holds the body. "shown below" / "use
+      // Read" both conflict with the F17 "already loaded" header that follows.
+      lines.push(`Current checkpoint (${topic}) — body is in the "# Session checkpoint" section.`)
 
       return lines.join("\n")
     })
 
     const renderRebuildContext = Effect.fn("SessionCheckpoint.renderRebuildContext")(function* (
       sessionID: SessionID,
-      opts?: { lastMessageInfo?: LastMessageInfo; agentID?: string },
+      opts?: {
+        lastMessageInfo?: LastMessageInfo
+        agentID?: string
+        digestUpTo?: MessageID
+        boundary?: MessageID
+      },
     ) {
       // renderRebuildContext is for the user-facing main agent's context rebuild.
       // Subagent-mode actors (system-spawned writers, model-spawned subagents)
@@ -1105,7 +1270,7 @@ export const layer: Layer.Layer<
       // message-v2.ts populates info.agentID from agent_id column), and the
       // runLoop calls this with that value. Treating "main" as subagent here
       // would skip rebuild → fall through to F39 compaction → context loss.
-      if (opts?.agentID && opts.agentID !== "main") return ""
+      if (opts?.agentID && opts.agentID !== "main") return { text: "", hasActivity: false }
 
       // Decide whether a usable checkpoint exists using the WATERMARK
       // (last_checkpoint_message_id), not the on-disk file's text. The writer's
@@ -1244,22 +1409,25 @@ export const layer: Layer.Layer<
         actors.length === 0 &&
         recentUserEntries.length === 0
       ) {
-        return ""
+        return { text: "", hasActivity: false }
       }
 
       const lines: string[] = []
 
       // F17: Explicit "already loaded" header. Anchors the active recall
       // protocol's "look for this header" instruction in buildMemoryInstructions.
+      // File-backed sections are H1 + `File:` path; their ## children belong
+      // to that file. Non-file sections are also H1 so nothing nests under
+      // the previous file by accident.
       lines.push(
-        "The following blocks are auto-loaded from your session memory. They are already in your context — do not Read them as whole files. Use Grep for specific facts instead.",
+        "The sections below are auto-loaded session context already in this message. File-backed sections list their path on a `File:` line — Grep that path for specific facts; do not Read the whole file again.",
       )
       lines.push("")
 
-      // Section 3: tasks ledger (hierarchical with subtasks).
-      lines.push("## Tasks ledger")
+      // Section: tasks ledger (hierarchical with subtasks).
+      const taskLines: string[] = []
       if (tasks.length === 0) {
-        lines.push("(none)")
+        taskLines.push("(none)")
       } else {
         const topLevel = tasks.filter((t) => !t.parent_task_id)
         const byParent = new Map<string, typeof tasks>()
@@ -1281,62 +1449,46 @@ export const layer: Layer.Layer<
             .join(" / ")
           ledgerLines.push(`  Subtasks: ${sublist}`)
         }
-        lines.push(truncate(ledgerLines.join("\n"), caps.tasks_ledger ?? 2000))
+        taskLines.push(truncate(ledgerLines.join("\n"), caps.tasks_ledger ?? 2000))
       }
-      lines.push("")
+      pushSection(lines, "Tasks ledger", taskLines.join("\n"))
 
-      // Section 5: session checkpoint (full body, capped).
+      // File-backed: session checkpoint body.
       if (checkpointText.trim()) {
-        lines.push("## Session checkpoint")
-        lines.push(checkpointText.trim())
-        lines.push("")
+        pushSection(lines, "Session checkpoint", checkpointText, checkpointPath(sessionID))
       }
 
-      // Section 6: active actors ledger (one line per running actor).
+      // Active actors (DB/registry, not a file).
       if (actors.length > 0) {
-        lines.push("## Active actors")
+        const actorLines: string[] = []
         let actorBudget = caps.actor_ledger ?? 500
         for (const a of actors) {
           const line = `- ${a.actorID} — ${a.status}, "${a.description}" (agent=${a.agent})`
           const cost = Token.estimate(line)
           if (actorBudget - cost < 0) break
-          lines.push(line)
+          actorLines.push(line)
           actorBudget -= cost
         }
-        lines.push("")
+        pushSection(lines, "Active actors", actorLines.join("\n"))
       }
 
-      // Section 6.5: recent user input (verbatim, FIFO, budget-bounded).
-      // Preserves original user prose from the live DB — writer summaries
-      // paraphrase user commands, losing anchors like exact flags or pasted
-      // content. (entries computed earlier so the early-bail guard sees them.)
+      // Recent user input (verbatim, FIFO, budget-bounded).
       if (recentUserEntries.length > 0) {
-        lines.push("## Recent user input (verbatim)")
-        lines.push(...recentUserEntries)
-        lines.push("")
+        pushSection(lines, "Recent user input (verbatim)", recentUserEntries.join("\n"))
       }
 
-      // Section 7: project memory (full body, capped).
+      // File-backed: project / global memory and session notes.
       if (memoryText.trim()) {
-        lines.push("## Project memory")
-        lines.push(memoryText.trim())
-        lines.push("")
+        // Not "Project memory": that reads like session memory's sibling and
+        // collides with "this session has memory at …". This section is the
+        // cross-session durable knowledge file (MEMORY.md) only.
+        pushSection(lines, "Project durable knowledge", memoryText, memoryPath(projectID))
       }
-
-      // Section 7.4: global memory (full body, capped). User-level cross-project
-      // preferences. Placed after project memory (more actionable) and before
-      // session notes (more volatile).
       if (globalText.trim()) {
-        lines.push("## Global memory")
-        lines.push(globalText.trim())
-        lines.push("")
+        pushSection(lines, "Global memory", globalText, globalMemoryPath())
       }
-
-      // F14 Section 7.5: session notes (full body, capped). Skip if empty.
       if (notesText.trim()) {
-        lines.push("## Session notes")
-        lines.push(notesText.trim())
-        lines.push("")
+        pushSection(lines, "Session notes", notesText, notesPath(sessionID))
       }
 
       // Section 8: memory keys index (paths only, omit already-pushed).
@@ -1375,7 +1527,7 @@ export const layer: Layer.Layer<
         .filter((p) => !pushedPaths.has(p) && !p.includes(`${path.sep}checkpoint${path.sep}learning-`))
         .map((p) => p.replace(memoryRoot + path.sep, ""))
       if (keyEntries.length > 0) {
-        lines.push("## Memory keys index")
+        lines.push("# Memory keys index")
         let kBudget = caps.memory_titles ?? 500
         for (const entry of keyEntries) {
           const cost = Token.estimate(entry)
@@ -1386,22 +1538,39 @@ export const layer: Layer.Layer<
         lines.push("")
       }
 
-      // Section 10: explicit seam framing for LLM continuity post-rebuild.
-      // Compaction-summary pattern: tells the model
-      // that preserved messages below are real history, not pseudo-content,
-      // so it resumes mid-loop instead of asking "what would you like me
-      // to do".
+      // Section: Recent activity — messages that already exist after the
+      // watermark at insert time, as a compact name+args list. Written into
+      // the same rebuild-context block as the checkpoint body so send-time
+      // collapse only has to drop those messages (no second digest block).
+      // Slice from opts.boundary (the watermark this insert is using) —
+      // re-reading lastBoundary here can disagree with the insert if a
+      // concurrent writer advances the watermark between the two reads.
+      let hasActivity = false
+      if (opts?.digestUpTo) {
+        const digestUpTo = opts.digestUpTo
+        const boundaryID = opts.boundary
+        if (boundaryID) {
+          // Main slice only — the runLoop collapse is main-scoped; subagent
+          // activity must not appear as if the main agent performed it.
+          const all = yield* session.messages({ sessionID })
+          const tail = all.filter((m) => m.info.id > boundaryID && m.info.id <= digestUpTo)
+          const activity = renderTailDigest(tail)
+          if (activity) {
+            hasActivity = true
+            lines.push("")
+            lines.push(activity)
+          }
+        }
+      }
+
+      // Section 10: seam framing. Only claim a Recent activity list when one
+      // was actually rendered — a silent render bail would otherwise leave
+      // prose pointing at a section that does not exist.
       lines.push("")
       lines.push(
-        "This session is being continued from a previous conversation that hit a checkpoint. The session checkpoint and project memory above cover the earlier portion of the conversation.",
-      )
-      lines.push("")
-      lines.push(
-        "Recent messages are preserved verbatim below — the assistant turn (and any tool results) you'll see is real history, not pseudo-content. Continue your task by responding to the most recent state.",
-      )
-      lines.push("")
-      lines.push(
-        "Resume directly. Do not acknowledge this memory dump, do not recap, do not preface with \"I'll continue\" or similar. Pick up the last task as if the break never happened.",
+        hasActivity
+          ? "This session is continued from a checkpoint. The blocks above cover earlier history and the recent activity list. Resume the last task from that list and any live messages after it. Do not recap this dump."
+          : "This session is continued from a checkpoint. The blocks above cover earlier history. Resume the last task from the most recent live messages. Do not recap this dump.",
       )
 
       // Section 11: tail-aware system reminder. Picks the appropriate nudge
@@ -1427,7 +1596,7 @@ export const layer: Layer.Layer<
         }
       }
 
-      return lines.join("\n")
+      return { text: lines.join("\n"), hasActivity }
     })
 
     const lastBoundary = Effect.fn("SessionCheckpoint.lastBoundary")(function* (sessionID: SessionID) {
@@ -1439,7 +1608,36 @@ export const layer: Layer.Layer<
             .get(),
         ),
       )
-      return row?.last_checkpoint_message_id as MessageID | undefined
+      // Two independent absences meet in this one expression, and only one of
+      // them is `undefined`:
+      //
+      //   row is undefined      -> no such session row. Drizzle normalises the
+      //                            driver's null to undefined here (measured:
+      //                            bun:sqlite's .get() returns null, Drizzle
+      //                            returns undefined), so this half is honest.
+      //   column is null        -> the session exists but no writer has set the
+      //                            watermark yet. SQL NULL, faithfully mapped to
+      //                            JS null, because the column is nullable
+      //                            (session.sql.ts: text().$type<MessageID>()
+      //                            with no .notNull()).
+      //
+      // So `row?.last_checkpoint_message_id` is `MessageID | null | undefined`.
+      // Callers only ever ask "is there a boundary to rebuild from", for which
+      // the last two are the same answer, so flattening to `undefined` is right
+      // — it also matches Drizzle's own row-level convention.
+      //
+      // The flattening is written as an ANNOTATION rather than an `as` cast on
+      // purpose. A cast would let the union be narrowed by assertion, which is
+      // how this went wrong before: the previous version claimed
+      // `as MessageID | undefined` while returning `null`, and a caller that
+      // then wrote `boundary !== undefined` got a condition that is always true
+      // — a guard that typechecks, reads correctly, and does nothing. Every
+      // other caller happened to test truthiness (`!boundary` at prompt.ts:413
+      // and `watermarkBefore ?` at :1131) and so never noticed. With an
+      // annotation, dropping the `?? undefined` is a
+      // compile error instead of a silent lie.
+      const boundary: MessageID | undefined = row?.last_checkpoint_message_id ?? undefined
+      return boundary
     })
 
     const isWriterRunning = Effect.fn("SessionCheckpoint.isWriterRunning")(function* (sessionID: SessionID) {
@@ -1450,18 +1648,30 @@ export const layer: Layer.Layer<
       sessionID: SessionID
       boundary: MessageID
       lastMessageInfo?: LastMessageInfo
+      /**
+       * Newest message that already exists at insert time. Stored as
+       * CheckpointPart.digestUpTo so send-time collapse digests only the
+       * pre-insert tail and leaves post-insert messages live.
+       */
+      digestUpTo?: MessageID
       agentID?: string
       agent: string
       model: { providerID: string; modelID: string }
       boundaryCreatedAt?: number
     }) {
-      const rebuildContext = yield* renderRebuildContext(input.sessionID, {
+      const rendered = yield* renderRebuildContext(input.sessionID, {
         lastMessageInfo: input.lastMessageInfo,
         agentID: input.agentID,
-      }).pipe(Effect.catch(() => Effect.succeed("")))
-      if (!rebuildContext) return false
+        digestUpTo: input.digestUpTo,
+        boundary: input.boundary,
+      }).pipe(Effect.catch(() => Effect.succeed({ text: "", hasActivity: false })))
+      if (!rendered.text) return false
 
       const indexText = yield* renderIndex(input.sessionID).pipe(Effect.catch(() => Effect.succeed("")))
+      // Persist digestUpTo only when the activity section was actually
+      // rendered. Sending-time collapse would otherwise drop the tail while
+      // nothing recorded what those messages were.
+      const hasActivity = rendered.hasActivity
 
       const syntheticTime = (input.boundaryCreatedAt ?? Date.now()) + 1
       const msg = yield* session.updateMessage({
@@ -1481,6 +1691,7 @@ export const layer: Layer.Layer<
         checkpointDir: "",
         checkpointNumber: 0,
         coveredUpTo: input.boundary,
+        ...(input.digestUpTo && hasActivity ? { digestUpTo: input.digestUpTo } : {}),
       })
 
       if (indexText) {
@@ -1500,7 +1711,7 @@ export const layer: Layer.Layer<
         sessionID: input.sessionID,
         type: "text",
         synthetic: true,
-        text: rebuildContext,
+        text: rendered.text,
       })
 
       const actorsText = yield* actorRegistry
@@ -1569,6 +1780,7 @@ export const layer: Layer.Layer<
     return Service.of({
       tryStartCheckpointWriter,
       waitForWriter,
+      waitForWriterSettlement,
       drainWriters,
       hasCheckpoint,
       hasMemoryOrTasks,
@@ -1591,8 +1803,9 @@ export const layer: Layer.Layer<
 // the Actor implementation through the late-bound `spawnRef` (see
 // `actor/spawn-ref.ts`). This deliberately breaks the otherwise-unresolvable
 // layer cycle Actor → SessionPrompt → SessionCheckpoint → Actor. The AppLayer
-// constructs `Actor.defaultLayer` separately; its initialiser populates
-// `spawnRef`, which `tryStartCheckpointWriter` reads at call time.
+// constructs `Actor.appLayer` separately; that variant wraps the same
+// `Actor.layer`, whose initialiser populates `spawnRef` (see
+// `actor/spawn.ts`), and `tryStartCheckpointWriter` reads the ref at call time.
 export const defaultLayer = Layer.suspend(() =>
   layer.pipe(
     Layer.provide(Session.defaultLayer),
@@ -1631,9 +1844,10 @@ export async function renderRebuildContext(input: {
   lastMessageInfo?: LastMessageInfo
   agentID?: string
 }) {
-  return runPromise((svc) =>
+  const rendered = await runPromise((svc) =>
     svc.renderRebuildContext(input.sessionID, { lastMessageInfo: input.lastMessageInfo, agentID: input.agentID }),
   )
+  return rendered.text
 }
 
 export async function lastBoundary(input: { sessionID: SessionID }) {

@@ -69,6 +69,8 @@ Rules (hard requirements):
 Weak: `description: Helps with projects.`
 Strong: `description: Manages Linear sprint workflows including planning, task creation, and status tracking. Use when the user mentions "sprint", "Linear tasks", or asks to "create tickets".`
 
+Optional `disable-model-invocation: true` makes the skill user-only: the agent never sees it (no skill catalog entry, no `skill_search` hit, and the `skill` tool refuses it), while `/skill-name` still works for the user. Use it for a long or interrupting workflow whose timing the user should control — a multi-phase orchestration, a deploy, anything with side effects. Leave it off by default; a skill the agent cannot see is a skill it cannot offer. Keep the "only when the user asks" rule in the `description` and body as well, so the skill still behaves if the flag is ever removed.
+
 For all optional fields (`license`, `compatibility`, `metadata`, `allowed-tools`) and more good/bad examples, read `references/frontmatter.md`.
 
 ### Step 4: Write the instructions

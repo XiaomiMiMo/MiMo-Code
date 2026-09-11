@@ -15,7 +15,7 @@ import { assertFileRead } from "./read-state"
 import { trimDiff } from "./edit"
 
 const Parameters = z.object({
-  notebook_path: z.string().describe("The absolute path to the .ipynb file to modify"),
+  notebook_path: z.string().describe("Path to the .ipynb file"),
   cell_id: z
     .string()
     .optional()

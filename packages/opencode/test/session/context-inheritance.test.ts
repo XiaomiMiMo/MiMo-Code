@@ -14,6 +14,8 @@ describe("Session context inheritance", () => {
       projectID: "proj",
       directory: "/tmp",
       title: "test",
+      titleSource: "user",
+      titleRevision: 0,
       version: "1.0.0",
       time: { created: 1, updated: 1 },
       contextFrom: parentSessionId,
@@ -34,6 +36,8 @@ describe("Session context inheritance", () => {
       projectID: "proj",
       directory: "/tmp",
       title: "test",
+      titleSource: "user",
+      titleRevision: 0,
       version: "1.0.0",
       time: { created: 1, updated: 1 },
     })

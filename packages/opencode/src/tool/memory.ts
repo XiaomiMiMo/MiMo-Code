@@ -2,6 +2,8 @@ import { Effect } from "effect"
 import z from "zod"
 import { Memory } from "@/memory"
 import DESCRIPTION from "./memory.txt"
+import DESCRIPTION_CHECKPOINT from "./memory.checkpoint.txt"
+import { withCheckpointDescription } from "./checkpoint-description"
 import * as Tool from "./tool"
 
 const parameters = z.object({
@@ -24,7 +26,7 @@ export const MemoryTool = Tool.define(
   Effect.gen(function* () {
     const memory = yield* Memory.Service
     return {
-      description: DESCRIPTION,
+      description: withCheckpointDescription(DESCRIPTION, DESCRIPTION_CHECKPOINT),
       parameters,
       execute: (args: z.infer<typeof parameters>) =>
         Effect.gen(function* () {

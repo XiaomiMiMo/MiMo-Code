@@ -8,6 +8,10 @@ commits: 9c8f950..HEAD
 related: docs/compose/reports/plan-mode-write-restrictions.md (PR #1324, kept as draft for comparison)
 ---
 
+> **Historical record:** This report documents behavior before the standalone
+> `change_directory` tool was removed. References to that tool below are kept
+> for historical accuracy and no longer describe the current tool surface.
+
 # Plan Mode edit/write Backstop — Final Report
 
 > No plan doc was written for this branch; it was implemented directly as a

@@ -101,7 +101,10 @@ const instance = HttpRouter.middleware()(
         const workspace = query.workspace || undefined
         const directory = Filesystem.resolve(decode(raw))
 
-        if (!Flag.MIMOCODE_SERVER_PASSWORD) {
+        // Same rule as `routes/instance/middleware.ts`, keyed the same way: only an
+        // operator-supplied password buys the right to serve directories outside cwd. A
+        // password generated for a listener nobody asked for must not widen access.
+        if (!Flag.MIMOCODE_SERVER_PASSWORD_SUPPLIED) {
           const cwd = Filesystem.resolve(process.cwd())
           if (!Filesystem.contains(cwd, directory)) {
             return yield* new DirectoryAccessDenied({

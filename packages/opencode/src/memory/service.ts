@@ -114,7 +114,11 @@ export const layer: Layer.Layer<Service, never, Config.Service> = Layer.effect(
       // Over-fetch (3x, capped) so the relative floor can trim common-word
       // noise without starving the list when there ARE enough real hits.
       const fetchLimit = Math.min(limit * 3, 50)
-      const rows = Database.Client().$client.query(sql).all(ftsQuery, ...params, fetchLimit) as SearchRow[]
+      // `prepare` rather than `query`: both bun:sqlite and node:sqlite expose it with the
+      // same `.all(...positionalParams)` shape, so this path works under either driver
+      // (`#db` resolves to node:sqlite outside Bun). `query`'s statement cache is Bun-only,
+      // and caching buys little here — the SQL varies with the filter clause.
+      const rows = Database.Client().$client.prepare(sql).all(ftsQuery, ...params, fetchLimit) as SearchRow[]
 
       // FTS5 bm25() returns lower = better; convert to higher = better for caller
       const mapped = rows.map((r) => ({

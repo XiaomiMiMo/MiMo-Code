@@ -1,4 +1,5 @@
-import { describe, expect, test } from "bun:test"
+import { afterAll, beforeAll, describe, expect, test } from "bun:test"
+import { PNG } from "pngjs"
 import { CallToolResultSchema, type CallToolResult } from "@modelcontextprotocol/sdk/types.js"
 import { normalizeToolResult } from "../../src/mcp/tool-result"
 
@@ -7,6 +8,18 @@ function parseResult(result: CallToolResult) {
 }
 
 describe("MCP tool result normalization", () => {
+  // Flag.MIMOCODE_MAX_ATTACHMENT_SIZE, lowered so the oversized fixture stays small.
+  const LIMIT = 4096
+  const CEILING = 32 * 1024
+  beforeAll(() => {
+    process.env["MIMOCODE_MAX_ATTACHMENT_SIZE"] = String(LIMIT)
+    process.env["MIMOCODE_MAX_ATTACHMENT_SOURCE_SIZE"] = String(CEILING)
+  })
+  afterAll(() => {
+    delete process.env["MIMOCODE_MAX_ATTACHMENT_SIZE"]
+    delete process.env["MIMOCODE_MAX_ATTACHMENT_SOURCE_SIZE"]
+  })
+
   test("preserves standard fields and classifies tool execution errors", () => {
     const result: CallToolResult = {
       content: [
@@ -169,5 +182,47 @@ describe("MCP tool result normalization", () => {
     const normalized = normalizeToolResult(parseResult(result))
 
     expect(normalized.output).toBe("Processed an empty {} template\n\nStructured content:\n{}")
+  })
+  test("recompresses an oversized decodable image and drops an uncompressible payload", () => {
+    const noisy = (size: number) => {
+      const png = new PNG({ width: size, height: size })
+      let seed = 4242
+      for (let i = 0; i < png.data.length; i++) {
+        seed = (seed * 1103515245 + 12345) & 0x7fffffff
+        png.data[i] = i % 4 === 3 ? 255 : seed % 256
+      }
+      return PNG.sync.write(png)
+    }
+    const image = noisy(120)
+    expect(image.byteLength).toBeGreaterThan(LIMIT)
+    expect(image.byteLength).toBeLessThanOrEqual(CEILING)
+    const giant = noisy(200)
+    expect(giant.byteLength).toBeGreaterThan(CEILING)
+    // Decoded size is 3 bytes per 4 base64 chars; one group past the cap.
+    const audio = "A".repeat(Math.ceil((LIMIT + 1) / 3) * 4)
+    const result: CallToolResult = {
+      content: [
+        { type: "text", text: "rendered" },
+        { type: "image", data: image.toString("base64"), mimeType: "image/png" },
+        { type: "audio", data: audio, mimeType: "audio/wav" },
+        { type: "image", data: giant.toString("base64"), mimeType: "image/png" },
+        { type: "image", data: "Zm9v", mimeType: "image/jpeg" },
+      ],
+    }
+
+    const normalized = normalizeToolResult(parseResult(result))
+
+    expect(normalized.attachments).toHaveLength(2)
+    expect(normalized.attachments[0].mime).toBe("image/jpeg")
+    const url = normalized.attachments[0].url
+    expect(Buffer.from(url.slice(url.indexOf(",") + 1), "base64").byteLength).toBeLessThanOrEqual(LIMIT)
+    expect(normalized.attachments[1]).toEqual({ mime: "image/jpeg", url: "data:image/jpeg;base64,Zm9v" })
+    expect(normalized.output).toContain("rendered")
+    expect(normalized.output).toContain("Attachment audio/wav is")
+    expect(normalized.output).toContain("it cannot be compressed")
+    expect(normalized.output).toContain(`Attachment image/png is ${giant.byteLength} bytes`)
+    expect(normalized.output).toContain("ceiling above which compression is not attempted")
+    expect(normalized.output).not.toContain(`Attachment image/png is ${image.byteLength} bytes`)
+    expect(normalized.output).not.toContain(audio.slice(0, 64))
   })
 })

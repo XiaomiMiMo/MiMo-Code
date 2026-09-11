@@ -56,6 +56,7 @@ import { Session as SessionApi } from "@/session"
 import { orchestratorDir } from "@/global"
 import { TuiEvent } from "./event"
 import { KVProvider, useKV } from "./context/kv"
+import { resolveVisualMode, toggleVisualMode } from "./context/visual"
 import { LanguageProvider, UiI18nBridge, useLanguage } from "./context/language"
 import type { Locale } from "./i18n/locales"
 import { LOCALES } from "./i18n/locales"
@@ -82,6 +83,7 @@ import type { EventSource } from "./context/sdk"
 import { DialogVariant } from "./component/dialog-variant"
 import { DialogModalities } from "./component/dialog-modalities"
 import { DialogContextLimit } from "./component/dialog-context-limit"
+import { DialogPermissionTimeout } from "./component/dialog-permission-timeout"
 
 function rendererConfig(_config: TuiConfig.Info, plainTerminal: boolean): CliRendererConfig {
   const mouseEnabled = !plainTerminal && !Flag.MIMOCODE_DISABLE_MOUSE && (_config.mouse ?? true)
@@ -754,6 +756,17 @@ function App(props: { onSnapshot?: () => Promise<string[]> }) {
       },
     },
     {
+      title: t("tui.command.permission_timeout.title"),
+      value: "permission.ask_timeout",
+      category: "agent",
+      slash: {
+        name: "permission-timeout",
+      },
+      onSelect: () => {
+        DialogPermissionTimeout.show(dialog)
+      },
+    },
+    {
       title: t("tui.command.mcp.list.title"),
       value: "mcp.list",
       category: "agent",
@@ -918,6 +931,28 @@ function App(props: { onSnapshot?: () => Promise<string[]> }) {
         dialog.replace(() => <DialogLogoDesign />)
       },
       category: "system",
+    },
+    {
+      title: t(
+        resolveVisualMode(kv.get("visual_mode", "vivid")) === "vivid"
+          ? "tui.command.visual_mode.title_on"
+          : "tui.command.visual_mode.title_off",
+      ),
+      value: "app.toggle.visual_mode",
+      slash: {
+        name: "vivid",
+      },
+      category: "system",
+      onSelect: (dialog) => {
+        const next = toggleVisualMode(kv.get("visual_mode", "vivid"))
+        kv.set("visual_mode", next)
+        toast.show({
+          message: t(next === "vivid" ? "tui.visual_mode.enabled" : "tui.visual_mode.disabled"),
+          variant: "info",
+          duration: 3000,
+        })
+        dialog.clear()
+      },
     },
     {
       title: t("tui.command.theme.switch_mode.to_dark"),

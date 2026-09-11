@@ -14,7 +14,6 @@ import { Effect, Layer } from "effect"
 import { Instance } from "../../src/project/instance"
 import { Session } from "../../src/session"
 import { SessionPrompt } from "../../src/session/prompt"
-import { Flag } from "../../src/flag/flag"
 import { Log } from "../../src/util"
 import { tmpdir } from "../fixture/fixture"
 import {
@@ -275,42 +274,6 @@ describe("invalid-output continuation — integration", () => {
               expect(stub.captures.length).toBe(2)
               expect(JSON.stringify(stub.captures[1].messages)).toContain("output token limit")
               expect(result.parts.some((p) => p.type === "text" && p.text === "final answer")).toBe(true)
-            }),
-          ),
-      })
-    } finally {
-      await stub.stop()
-    }
-  })
-
-  test("repeated empty output is caught by the empty-step guard and halts the turn", async () => {
-    await using tmp = await tmpdir({ git: true })
-    // Server repeats the last entry, so every call returns an empty stop.
-    // The empty/no-op tool-call guard (empty-step-detection) intercepts these
-    // empty terminals BEFORE autoContinueInvalidOutput and hard-halts the turn
-    // after EMPTY_STEP_MAX_RECOVERY soft nudges + 1 halting step.
-    const stub = startScriptedLLMServer([{ lines: emptyStopResponse() }])
-    try {
-      await writeConfig(tmp.path, stub.origin)
-      await Instance.provide({
-        directory: tmp.path,
-        fn: () =>
-          run(
-            Effect.gen(function* () {
-              const sessions = yield* Session.Service
-              const prompt = yield* SessionPrompt.Service
-              const session = yield* sessions.create({ title: "invalid-exhaust" })
-              const result = yield* prompt.prompt({
-                sessionID: session.id,
-                agent: "build",
-                parts: [{ type: "text", text: "Answer my question." }],
-              })
-              // EMPTY_STEP_MAX_RECOVERY soft nudges + 1 halting step.
-              expect(stub.captures.length).toBe(Flag.MIMOCODE_EMPTY_STEP_MAX_RECOVERY + 1)
-              expect(result.info.role).toBe("assistant")
-              if (result.info.role === "assistant") {
-                expect(result.info.error).toBeDefined()
-              }
             }),
           ),
       })

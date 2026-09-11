@@ -59,7 +59,7 @@ function createModel(opts: { context: number; output: number }): Provider.Model 
       input: { text: true, image: false, audio: false, video: false },
       output: { text: true, image: false, audio: false, video: false },
     },
-    api: { npm: "@ai-sdk/anthropic" },
+    api: { id: "test-model", npm: "@ai-sdk/anthropic" },
     options: {},
   } as Provider.Model
 }

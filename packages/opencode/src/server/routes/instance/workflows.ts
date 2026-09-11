@@ -8,13 +8,13 @@ import { jsonRequest } from "./trace"
 import type { SessionID } from "@/session/schema"
 
 // Read-only routes (transcript/structure) accept BOTH runID shapes: a top-level
-// run is `wf_` + 26 base62 (Identifier.descending), a nested child workflow is
-// `wf_` + 64 hex (sha256 of parent runID + key, see runtime.ts). The resume route
-// keeps the strict 26-char form because only top-level runs are resumable AND it
-// builds a filesystem path from the id; these read routes only do an in-memory
-// runtime map lookup, so the wider (still traversal-proof — no `.`/`/`) charset is
-// safe here.
-const READ_RUN_ID = /^wf_(?:[0-9A-Za-z]{26}|[0-9a-f]{64})$/
+// run is `wf_` + 26-char Identifier payload (v1 hex+base62, or v2 `-`/hex+base62),
+// a nested child workflow is `wf_` + 64 hex (sha256 of parent runID + key, see
+// runtime.ts). The resume route keeps the strict 26-char form because only
+// top-level runs are resumable AND it builds a filesystem path from the id; these
+// read routes only do an in-memory runtime map lookup, so the wider (still
+// traversal-proof — no `.`/`/`) charset is safe here.
+const READ_RUN_ID = /^wf_(?:[0-9A-Za-z-]{26}|[0-9a-f]{64})$/
 
 export const WorkflowRoutes = lazy(() =>
   new Hono()
@@ -63,11 +63,11 @@ export const WorkflowRoutes = lazy(() =>
           // Strict shape, NOT just startsWith("wf"): runID flows into
           // scriptPath = join(scriptDir, runID + ".js"), so a value like
           // `wf_../../../etc/passwd` (which startsWith "wf") would escape scriptDir.
-          // Identifier mints `wf_` + 26 base62 chars; this charset has no `.` or `/`,
-          // so it is traversal-proof by construction. The `{26}` tracks
-          // Identifier.LENGTH — if that constant ever changes, widen this too (the
-          // in-depth persistence guard uses `+`, so it stays correct regardless).
-          runID: z.string().regex(/^wf_[0-9A-Za-z]{26}$/, "invalid workflow runID"),
+          // Identifier mints `wf_` + 26 payload chars (`[0-9A-Za-z-]`). This charset
+          // has no `.` or `/`, so it is traversal-proof by construction. The `{26}`
+          // tracks Identifier.LENGTH — if that constant ever changes, widen this too
+          // (the in-depth persistence guard uses `+`, so it stays correct regardless).
+          runID: z.string().regex(/^wf_[0-9A-Za-z-]{26}$/, "invalid workflow runID"),
         }),
       ),
       async (c) =>

@@ -1,8 +1,7 @@
 Search session/project/global memory using BM25 over markdown
-bodies. Use this to recall content the agent or writer subagent
-persisted previously: project memory, session checkpoints, task
-narratives (under sessions/<sid>/tasks/), project notes, global
-preferences.
+bodies. Use this to recall content persisted previously: project
+memory, task narratives (under sessions/<sid>/tasks/), project
+notes, global preferences.
 
 Memory layout: <data>/memory/<scope>/<scope_id>/<key>.md
 Scopes: global | projects | sessions | cc (opt-in, see below)

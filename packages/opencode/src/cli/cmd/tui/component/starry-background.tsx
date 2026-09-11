@@ -66,7 +66,7 @@ function brailleBit(col: number, row: number): number {
   return row === 3 ? 7 : 3 + row
 }
 
-export function StarryBackground(props: { meteor?: () => boolean } = {}) {
+export function StarryBackground(props: { animated?: () => boolean; meteor?: () => boolean } = {}) {
   const { theme } = useTheme()
   const [field, setField] = createSignal<StarField>({ grid: [], brightness: [] })
   const [size, setSize] = createSignal({ w: 80, h: 24 })
@@ -77,7 +77,7 @@ export function StarryBackground(props: { meteor?: () => boolean } = {}) {
   let frameTimer: ReturnType<typeof setInterval> | undefined
   let box: BoxRenderable | undefined
   let text: TextRenderable | undefined
-  let mounted = false
+  const [mounted, setMounted] = createSignal(false)
 
   const sync = () => {
     if (!box) return
@@ -88,12 +88,26 @@ export function StarryBackground(props: { meteor?: () => boolean } = {}) {
     setField(generateField(next.w, next.h))
   }
 
-  onMount(() => {
-    mounted = true
-    sync()
-    box?.on("resize", sync)
+  const stopMotion = () => {
+    if (timer) {
+      clearInterval(timer)
+      timer = undefined
+    }
+    if (meteorTimer) {
+      clearInterval(meteorTimer)
+      meteorTimer = undefined
+    }
+    if (frameTimer) {
+      clearInterval(frameTimer)
+      frameTimer = undefined
+    }
+    setMeteor(undefined)
+  }
+
+  const startMotion = () => {
+    if (timer || meteorTimer) return
     timer = setInterval(() => {
-      if (!mounted) return
+      if (!mounted()) return
       const { w, h } = size()
       setField((prev) => {
         const next = { grid: prev.grid, brightness: [...prev.brightness.map((r) => [...r])] }
@@ -112,7 +126,7 @@ export function StarryBackground(props: { meteor?: () => boolean } = {}) {
       })
     }, TWINKLE_INTERVAL)
     meteorTimer = setInterval(() => {
-      if (!mounted) return
+      if (!mounted()) return
       if (props.meteor && !props.meteor()) return
       const { w, h } = size()
       const startY = Math.floor(Math.random() * 2)
@@ -125,7 +139,7 @@ export function StarryBackground(props: { meteor?: () => boolean } = {}) {
       })
       if (frameTimer) clearInterval(frameTimer)
       frameTimer = setInterval(() => {
-        if (!mounted) {
+        if (!mounted()) {
           if (frameTimer) clearInterval(frameTimer)
           frameTimer = undefined
           return
@@ -141,23 +155,26 @@ export function StarryBackground(props: { meteor?: () => boolean } = {}) {
         }
       }, METEOR_FRAME_INTERVAL)
     }, METEOR_INTERVAL)
+  }
+
+  createEffect(() => {
+    if (!mounted() || (props.animated && !props.animated())) {
+      stopMotion()
+      return
+    }
+    startMotion()
+  })
+
+  onMount(() => {
+    sync()
+    box?.on("resize", sync)
+    setMounted(true)
   })
 
   onCleanup(() => {
-    mounted = false
+    setMounted(false)
     box?.off("resize", sync)
-    if (timer) {
-      clearInterval(timer)
-      timer = undefined
-    }
-    if (meteorTimer) {
-      clearInterval(meteorTimer)
-      meteorTimer = undefined
-    }
-    if (frameTimer) {
-      clearInterval(frameTimer)
-      frameTimer = undefined
-    }
+    stopMotion()
   })
 
   const isDark = createMemo(() => {

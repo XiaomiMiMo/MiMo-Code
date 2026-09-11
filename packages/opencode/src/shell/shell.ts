@@ -5,6 +5,7 @@ import { which } from "@/util/which"
 import path from "path"
 import { spawn, type ChildProcess } from "child_process"
 import { setTimeout as sleep } from "node:timers/promises"
+import { childProcessEnv } from "@/util/child-process-env"
 
 const SIGKILL_TIMEOUT_MS = 200
 
@@ -21,6 +22,7 @@ export async function killTree(proc: ChildProcess, opts?: { exited?: () => boole
       const killer = spawn("taskkill", ["/pid", String(pid), "/f", "/t"], {
         stdio: "ignore",
         windowsHide: true,
+        env: childProcessEnv(),
       })
       killer.once("exit", () => resolve())
       killer.once("error", () => resolve())

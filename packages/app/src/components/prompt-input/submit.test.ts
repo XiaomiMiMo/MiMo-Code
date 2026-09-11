@@ -194,6 +194,7 @@ beforeAll(async () => {
   mock.module("@/context/language", () => ({
     useLanguage: () => ({
       t: (key: string) => key,
+      intl: () => "en-US",
     }),
   }))
 

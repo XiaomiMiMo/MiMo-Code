@@ -19,10 +19,24 @@ describe("recoverActorArgs", () => {
     expect(r.operation.action).toBe("spawn")
   })
 
-  test("optional model/task_id/actor_id carried; junk dropped", () => {
+  test("optional model/task_id carried; junk dropped", () => {
     expect(
       recoverActorArgs({ subagent_type: "explore", description: "d", prompt: "p", model: "lite", task_id: "T4", junk: 1 }),
     ).toEqual({ operation: { action: "run", subagent_type: "explore", description: "d", prompt: "p", model: "lite", task_id: "T4" } })
+  })
+
+  // spawn/run have no resume argument. Recovery must NOT quietly drop a top-level
+  // actor_id: that would lift the call into a valid spawn and hand back a fresh,
+  // empty subagent — the silent failure removing the argument exists to end.
+  // Carrying it through means the strict schema rejects the call instead.
+  test("top-level actor_id is carried through so the schema can reject it", () => {
+    const recovered = recoverActorArgs({
+      subagent_type: "explore",
+      description: "d",
+      prompt: "p",
+      actor_id: "explore-1",
+    }) as { operation: Record<string, unknown> }
+    expect(recovered.operation.actor_id).toBe("explore-1")
   })
 
   test("stringified operation envelope → parsed nested object", () => {

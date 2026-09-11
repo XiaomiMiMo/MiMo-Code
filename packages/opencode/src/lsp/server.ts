@@ -106,9 +106,6 @@ export const Typescript: Info = {
     if (!bin) return
     const proc = spawn(bin, ["--stdio"], {
       cwd: root,
-      env: {
-        ...process.env,
-      },
     })
     return {
       process: proc,
@@ -137,9 +134,6 @@ export const Vue: Info = {
     args.push("--stdio")
     const proc = spawn(binary, args, {
       cwd: root,
-      env: {
-        ...process.env,
-      },
     })
     return {
       process: proc,
@@ -196,9 +190,6 @@ export const ESLint: Info = {
 
     const proc = spawn("node", [serverPath, "--stdio"], {
       cwd: root,
-      env: {
-        ...process.env,
-      },
     })
 
     return {
@@ -331,9 +322,6 @@ export const Biome: Info = {
 
     const proc = spawn(bin, args, {
       cwd: root,
-      env: {
-        ...process.env,
-      },
     })
 
     return {
@@ -358,7 +346,7 @@ export const Gopls: Info = {
 
       log.info("installing gopls")
       const proc = Process.spawn(["go", "install", "golang.org/x/tools/gopls@latest"], {
-        env: { ...process.env, GOBIN: Global.Path.bin },
+        env: { GOBIN: Global.Path.bin },
         stdout: "pipe",
         stderr: "pipe",
         stdin: "pipe",
@@ -514,9 +502,6 @@ export const Pyright: Info = {
 
     const proc = spawn(binary, args, {
       cwd: root,
-      env: {
-        ...process.env,
-      },
     })
     return {
       process: proc,
@@ -569,10 +554,9 @@ export const ElixirLS: Info = {
         })
 
         const cwd = path.join(Global.Path.bin, "elixir-ls-master")
-        const env = { MIX_ENV: "prod", ...process.env }
-        await Process.run(["mix", "deps.get"], { cwd, env })
-        await Process.run(["mix", "compile"], { cwd, env })
-        await Process.run(["mix", "elixir_ls.release2", "-o", "release"], { cwd, env })
+        await Process.run(["mix", "deps.get"], { cwd, env: { MIX_ENV: "prod" } })
+        await Process.run(["mix", "compile"], { cwd, env: { MIX_ENV: "prod" } })
+        await Process.run(["mix", "elixir_ls.release2", "-o", "release"], { cwd, env: { MIX_ENV: "prod" } })
 
         log.info(`installed elixir-ls`, {
           path: elixirLsPath,
@@ -1016,9 +1000,6 @@ export const Svelte: Info = {
     args.push("--stdio")
     const proc = spawn(binary, args, {
       cwd: root,
-      env: {
-        ...process.env,
-      },
     })
     return {
       process: proc,
@@ -1050,9 +1031,6 @@ export const Astro: Info = {
     args.push("--stdio")
     const proc = spawn(binary, args, {
       cwd: root,
-      env: {
-        ...process.env,
-      },
     })
     return {
       process: proc,
@@ -1301,9 +1279,6 @@ export const YamlLS: Info = {
     args.push("--stdio")
     const proc = spawn(binary, args, {
       cwd: root,
-      env: {
-        ...process.env,
-      },
     })
     return {
       process: proc,
@@ -1468,9 +1443,6 @@ export const PHPIntelephense: Info = {
     args.push("--stdio")
     const proc = spawn(binary, args, {
       cwd: root,
-      env: {
-        ...process.env,
-      },
     })
     return {
       process: proc,
@@ -1552,9 +1524,6 @@ export const BashLS: Info = {
     args.push("start")
     const proc = spawn(binary, args, {
       cwd: root,
-      env: {
-        ...process.env,
-      },
     })
     return {
       process: proc,
@@ -1747,9 +1716,6 @@ export const DockerfileLS: Info = {
     args.push("--stdio")
     const proc = spawn(binary, args, {
       cwd: root,
-      env: {
-        ...process.env,
-      },
     })
     return {
       process: proc,
@@ -1819,9 +1785,6 @@ export const Nixd: Info = {
     return {
       process: spawn(nixd, [], {
         cwd: root,
-        env: {
-          ...process.env,
-        },
       }),
     }
   },

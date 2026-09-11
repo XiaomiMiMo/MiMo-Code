@@ -190,3 +190,42 @@ describe("parseActorNotification", () => {
     })
   })
 })
+
+// The stalled notification is the one user-visible surface of deriveLiveness, and
+// its wording is load-bearing: it told operators "no turn advance" long after the
+// derivation stopped reading the turn clock, so healthy children inside a single
+// long step (`bun ci`, a full test suite) produced a dozen-plus notifications that
+// read as flat contradictions of what the child was visibly doing. The reader
+// learned to ignore the channel — which is the real cost, because a true stall then
+// goes unread. The number and the noun have to describe the same thing.
+describe("renderActorNotification stalled wording", () => {
+  const stalledText = (stalledForMs?: number) =>
+    renderActorNotification({
+      actorID: "general-7",
+      description: "long step child",
+      status: "stalled",
+      stalledForMs,
+    })
+
+  test("reports silence, not turn advance", () => {
+    const text = stalledText(372_000)
+    expect(text).toContain("(no activity for 372s)")
+    expect(text).not.toContain("no turn advance")
+    expect(text).not.toContain("turn")
+  })
+
+  test("does not claim the child made no progress, only that nothing landed", () => {
+    // A long step IS progress; we cannot see inside one, only whether output is
+    // coming out of it. The old text asserted the stronger, unknowable claim.
+    const text = stalledText(372_000)
+    expect(text).not.toContain("has made no progress")
+    expect(text).toContain("nothing has landed for it")
+    expect(text).toContain("It is still running")
+  })
+
+  test("omits the duration clause entirely when no duration is supplied", () => {
+    const text = stalledText(undefined)
+    expect(text).toContain("appears stalled.")
+    expect(text).not.toContain("no activity for")
+  })
+})

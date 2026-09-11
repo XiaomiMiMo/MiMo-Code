@@ -11,8 +11,8 @@
     "typecheck": "tsgo --noEmit"
   },
   "dependencies": {
-    "@mimo-ai/app": "0.1.9",
-    "@mimo-ai/ui": "0.1.9",
+    "@mimo-ai/app": "workspace:*",
+    "@mimo-ai/ui": "workspace:*",
     "solid-js": "catalog:",
     "@tauri-apps/api": "^2.2.0",
     "@tauri-apps/plugin-clipboard-manager": "^2.2.0",

@@ -554,24 +554,14 @@ it.live("session.processor effect tests retry recognized structured json errors"
   ),
 )
 
-// TODO: Re-enable after we restructure the retry-status path.
-// Task 1 of docs/superpowers/plans/2026-05-17-retry-and-timeout-tuning.md
-// bumped streamText maxRetries 0→10. AI SDK now consumes 503 (and other
-// transient HTTP errors) inside its own exp-backoff loop, so the outer
-// Effect-based SessionRetry.policy at processor.ts:568 never sees this
-// error and the `type: "retry"` status banner never publishes for the
-// single-503 fixture this test uses. The user-facing contract changed:
-// silent retries during the SDK window, banner only when AI SDK gives
-// up after 10+ retries. A proper rewrite would either inject 11+
-// errors (so AI SDK exhausts then outer retry fires) or use a
-// non-AI-SDK-retryable error path.
-it.live.skip("session.processor effect tests publish retry status updates", () =>
+it.live("session.processor effect tests publish retry status updates", () =>
   provideTmpdirServer(
     ({ dir, llm }) =>
       Effect.gen(function* () {
         const { processors, session, provider } = yield* boot()
         const bus = yield* Bus.Service
 
+        yield* llm.error(503, { error: "boom" })
         yield* llm.error(503, { error: "boom" })
         yield* llm.text("")
 
@@ -580,9 +570,21 @@ it.live.skip("session.processor effect tests publish retry status updates", () =
         const msg = yield* assistant(chat.id, parent.id, path.resolve(dir))
         const mdl = yield* provider.getModel(ref.providerID, ref.modelID)
         const states: number[] = []
+        const retryEvents: Array<{ attempt: number; phaseAttempt: number; maxAttempts: number; phase: string; kind: string; scope: string }> = []
         const off = yield* bus.subscribeCallback(SessionStatus.Event.Status, (evt) => {
           if (evt.properties.sessionID !== chat.id) return
           if (evt.properties.status.type === "retry") states.push(evt.properties.status.attempt)
+        })
+        const offRetry = yield* bus.subscribeCallback(Session.Event.RetryAttempt, (evt) => {
+          if (evt.properties.sessionID !== chat.id) return
+          retryEvents.push({
+            attempt: evt.properties.attempt,
+            phaseAttempt: evt.properties.phaseAttempt,
+            maxAttempts: evt.properties.maxAttempts,
+            phase: evt.properties.phase,
+            kind: evt.properties.kind,
+            scope: evt.properties.scope,
+          })
         })
         const handle = yield* processors.create({
           assistantMessage: msg,
@@ -608,12 +610,24 @@ it.live.skip("session.processor effect tests publish retry status updates", () =
         })
 
         off()
+        offRetry()
 
         expect(value).toBe("continue")
-        expect(yield* llm.calls).toBe(2)
-        expect(states).toStrictEqual([1])
+        expect(yield* llm.calls).toBe(3)
+        expect(states).toStrictEqual([1, 2])
+        expect(retryEvents).toContainEqual({
+          attempt: 2,
+          phaseAttempt: 1,
+          maxAttempts: 8,
+          phase: "stream",
+          kind: "server",
+          scope: "live-step",
+        })
       }),
-    { git: true, config: (url) => providerCfg(url) },
+    {
+      git: true,
+      config: (url) => ({ ...providerCfg(url), retry: { request: { maxRetries: 1 } } }),
+    },
   ),
 )
 

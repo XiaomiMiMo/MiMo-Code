@@ -5,8 +5,10 @@ import DESCRIPTION from "./session.txt"
 import SHELL_DESCRIPTION from "./session.shell.txt"
 import { tokenize } from "./shell-tokenize"
 import z from "zod"
-import { Effect, Deferred } from "effect"
+import { Cause, Effect, Deferred } from "effect"
 import { Session } from "@/session"
+import { sanitizeGeneratedTitle, truncateTitle } from "@/session/prompt"
+import { classifySession, classifyUnreadableActors } from "@/session/visibility"
 import { Worktree } from "@/worktree"
 import { Instance } from "@/project/instance"
 import { InstanceRef } from "@/effect/instance-ref"
@@ -29,7 +31,7 @@ import type { FleetActorInput, WorktreeEntry } from "./fleet"
 import type { SessionID, MessageID } from "../session/schema"
 import type { ProviderID, ModelID } from "../provider/schema"
 
-const KNOWN_VERBS = ["create", "send", "switch", "list", "dashboard", "status", "cancel", "ask", "join", "setmode", "approve", "grant-approval"]
+const KNOWN_VERBS = ["create", "send", "switch", "list", "dashboard", "status", "cancel", "ask", "join", "setmode", "approve", "grant-approval", "set-title"]
 
 // Wraps the human/agent question in a side-boundary system-reminder:
 // one-shot, READ-ONLY, answer-to-caller.
@@ -195,6 +197,20 @@ function tagTitle(topic: string, title: string): string {
   return `[topic:${topic}] ${base}`
 }
 
+// The topic label is a MODEL-authored free-text string, so exact-string matching
+// makes find-or-reuse silently fail on the near-misses a model actually produces:
+// `pr-1741` vs `PR 1741` vs `pr_1741` are one topic to a human and three to
+// `===`, and each miss spawns a duplicate child for the same theme. Normalize to
+// a case-folded alphanumeric-run key so those all collide. Deliberately NOT
+// fuzzy/semantic: it only forgives casing and separators, so it cannot merge two
+// genuinely different topics.
+export function topicKey(label: string): string {
+  return label
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+}
+
 
 const createOperation = z.strictObject({
   action: z.literal("create"),
@@ -290,6 +306,32 @@ const grantApprovalOperation = z.strictObject({
     .describe("A child session id to auto-approve future asks for, or 'all' to auto-approve every child."),
 })
 
+const setTitleOperation = z.strictObject({
+  action: z.literal("set-title"),
+  title: z.string().min(1),
+  sessionID: z.string().optional().describe("Omit for the current session; another session cannot be renamed here."),
+})
+const titleParameters = z.strictObject({ operation: setTitleOperation })
+const TITLE_DESCRIPTION = `Set a semantic session title with operation.action=set-title. Omit sessionID for the current session. This is a generated title, never a manual rename: user-protected titles cannot change. Use after understanding an attachment or when the substantive task changes, not for ordinary progress. Never infer a task from a filename alone. Do not retry to force an overwrite.`
+
+function setSessionTitle(sessions: Session.Interface, input: z.infer<typeof setTitleOperation>, ctx: Tool.Context<Metadata>) {
+  return Effect.gen(function* () {
+    const rejected = { title: "Session title unchanged", output: "Title unchanged: protected, stale, invalid, or ineligible session.", metadata: { changed: false } }
+    if (ctx.abort.aborted || (ctx.actorID && ctx.actorID !== "main") || (input.sessionID && input.sessionID !== ctx.sessionID)) return rejected
+    const current = yield* sessions.get(ctx.sessionID)
+    if (current.parentID || current.titleSource === "user") return rejected
+    const title = sanitizeGeneratedTitle(input.title)
+    if (!title) return rejected
+    const result = yield* sessions.setGeneratedTitle({ sessionID: current.id, title: truncateTitle(title), expectedRevision: current.titleRevision })
+    return result ? { title: "Session title updated", output: JSON.stringify(result), metadata: { changed: true } } : rejected
+  })
+}
+
+export const SessionTitleTool = Tool.define<typeof titleParameters, Metadata, Session.Service>("session", Effect.gen(function* () {
+  const sessions = yield* Session.Service
+  return { description: TITLE_DESCRIPTION, parameters: titleParameters, execute: (input, ctx) => setSessionTitle(sessions, input.operation, ctx) }
+}))
+
 const parameters = z.strictObject({
   // .meta({ type: "object" }) is REQUIRED — without it, the emitted JSON
   // schema's `operation` node has only `anyOf`, no `type`. Some models
@@ -297,7 +339,7 @@ const parameters = z.strictObject({
   // {"operation":"{\"action\":\"create\",...}"} which fails zod validation.
   // See research-tool-call-schema/REPORT.md §2.5 "success-nested" warning.
   operation: z
-    .discriminatedUnion("action", [createOperation, sendOperation, switchOperation, listOperation, dashboardOperation, statusOperation, cancelOperation, askOperation, joinOperation, setmodeOperation, approveOperation, grantApprovalOperation])
+    .discriminatedUnion("action", [createOperation, sendOperation, switchOperation, listOperation, dashboardOperation, statusOperation, cancelOperation, askOperation, joinOperation, setmodeOperation, approveOperation, grantApprovalOperation, setTitleOperation])
     .meta({ type: "object" }),
 })
 
@@ -305,6 +347,7 @@ type SessionInput = z.infer<typeof parameters>
 type SessionOperation = SessionInput
 
 type Metadata = {
+  changed?: boolean
   sessionID?: string
 }
 
@@ -330,10 +373,20 @@ function parseSessionScript(script: string): Effect.Effect<SessionOperation[], u
   })
 }
 
+// Fields that only make sense for an operation OTHER than `create` — they name
+// an already-existing session (or an ask/grant target). Their presence is
+// positive evidence the model meant to ROUTE, so recovery must never answer with
+// a synthesized `create`: that would silently spawn a duplicate child instead of
+// erroring, which is precisely the route-first violation #1741 exists to prevent
+// (and it is invisible — no error, just an extra session).
+const ROUTE_ONLY_FIELDS = ["sessionID", "session_id", "sessionIDs", "question", "target"]
+
 // Recover a shell-mode session call shaped like the JSON args (no `script`):
-// a stringified/nested `operation`, or the common bare `{task}` create.
-// Conservative — only the unambiguous create-from-task is synthesized; anything
-// else passes through (nested) or returns undefined (→ teach JSON). Mirrors
+// a stringified/nested `operation`, a FLATTENED `{operation|action, ...operands}`,
+// or the common bare `{task}` create. Conservative — a `create` is synthesized
+// only from an unambiguous bare `{task}` with no routing evidence; everything
+// else either reconstructs the operation the model actually named or returns
+// undefined (→ the call errors loudly and the model self-corrects). Mirrors
 // recoverTaskArgs in tool/task.ts.
 export function recoverSessionArgs(rawArgs: unknown): SessionOperation | undefined {
   if (rawArgs == null || typeof rawArgs !== "object") return undefined
@@ -346,7 +399,23 @@ export function recoverSessionArgs(rawArgs: unknown): SessionOperation | undefin
   }
   if (obj.operation && typeof obj.operation === "object" && !Array.isArray(obj.operation))
     return { operation: obj.operation } as SessionOperation
-  if (typeof obj.task === "string") {
+  // FLATTENED shape, repeatedly observed from mimo-v2.5:
+  //   {"operation":"send","sessionID":"ses_…","task":"…"}
+  // The discriminator sits at the TOP level — either as a bare `operation` verb
+  // that survived the JSON.parse above, or as `action` — with the operands as its
+  // siblings. Re-nest and validate against the real union so the model's actual
+  // intent runs. Note shell-wrap hands a recovered value straight to
+  // def.execute WITHOUT re-validating it, so validating here is what makes the
+  // reconstruction safe; a shape that does not validate returns undefined and
+  // surfaces as an "invalid arguments" error rather than being coerced.
+  const action =
+    typeof obj.action === "string" ? obj.action : typeof obj.operation === "string" ? obj.operation : undefined
+  if (action !== undefined) {
+    const operands = Object.fromEntries(Object.entries(obj).filter(([key]) => key !== "operation" && key !== "action"))
+    const parsed = parameters.safeParse({ operation: { ...operands, action } })
+    return parsed.success ? (parsed.data as SessionOperation) : undefined
+  }
+  if (typeof obj.task === "string" && !ROUTE_ONLY_FIELDS.some((field) => obj[field] !== undefined)) {
     const op: Record<string, unknown> = { action: "create", task: obj.task }
     if (obj.mode === "build" || obj.mode === "plan" || obj.mode === "compose") op.mode = obj.mode
     if (typeof obj.model === "string") op.model = obj.model
@@ -410,6 +479,12 @@ function arityError(verb: string, expected: string, args: string[], line: number
 
 function mapVerb(verb: string | undefined, args: string[], line: number): Effect.Effect<SessionOperation, unknown> {
   switch (verb) {
+    case "set-title": {
+      const { rest, error } = extractSessionFlags(args, [])
+      if (error) return flagError("set-title", error, line)
+      if (!rest.length) return arityError("set-title", "<title...>", rest, line)
+      return Effect.succeed({ operation: { action: "set-title", title: rest.join(" ") } })
+    }
     case "create": {
       const { flags, bools, rest, error } = extractSessionFlags(args, ["mode", "model", "title", "dir", "topic"], ["isolate"])
       if (error) return flagError("create", error, line)
@@ -600,15 +675,82 @@ export const SessionTool = Tool.define<typeof parameters, Metadata, Deps>(
       if (!a) {
         return Effect.fail(
           new Error(
-            "Actor service unavailable — Actor.defaultLayer must be running for the session tool to spawn or cancel sessions",
+            "Actor service unavailable — Actor.appLayer must be running for the session tool to spawn or cancel sessions",
           ),
         )
       }
       return Effect.succeed(a)
     }
 
+    // ROUTE-FIRST WITHIN ONE TURN. The system-prompt fleet roster is assembled
+    // once per REQUEST, so a child dispatched earlier in the SAME turn is
+    // invisible to the model until the next request — which is exactly how one
+    // live turn spawned two children for the same docs topic and then had to
+    // cancel one, burning a worktree. A tool RESULT, unlike the system prompt, is
+    // read before the model's next tool call, so every DISPATCH (`create` AND
+    // `send`) echoes the live sibling roster into its own output. That closes the
+    // staleness hole with DATA (the ids needed to `session send`) rather than with
+    // prompt wording, and without any mid-turn system-prompt rebuild.
+    //
+    // The child THIS call just dispatched to is INCLUDED and marked, with an
+    // excerpt of the brief it was handed. The failure being fixed is
+    // self-duplication — the model re-dispatching work it just sent — so listing
+    // only the OTHER siblings hides precisely the row that makes the repeat
+    // self-evident, and leaves the first dispatch of a turn with no ledger at all.
+    // Making the duplicate VISIBLE is deliberate in place of refusing it: there is
+    // no reliable semantic key for "same topic", and a false refusal would block
+    // legitimate parallel fan-out — strictly worse than a duplicate the model can
+    // see and correct.
+    //
+    // EXPOSURE. A tool result is MORE exposed than the system prompt, not less:
+    // it arrives mid-turn as fresh content and a model may relay it as if it were
+    // its own output — which is exactly how the system-prompt roster's
+    // `<active-sessions>` envelope ended up on a user's screen (see ROSTER_HEADER
+    // in session/llm.ts). This block was already safer in the way that mattered
+    // there: it carries no XML tag for the model to imitate, only a prose lead-in
+    // and indented rows. The added "internal working context" sentence is the
+    // weak half of the same pair — it can only ask, and it does not stop a
+    // paraphrase of a child's title. It is here because it costs one clause and
+    // sits adjacent to the data it governs.
+    const dispatchLedgerNotice = Effect.fn("SessionTool.dispatchLedger")(function* (
+      parentID: SessionID,
+      dispatched: { id: string; verb: string; task: string },
+    ) {
+      const children = yield* sessions.children(parentID)
+      const enriched = yield* Effect.forEach(children, (child) =>
+        actorReg.get(child.id, child.id).pipe(Effect.map((actor) => ({ child, actor }))),
+      )
+      const now = Date.now()
+      // Same routability rule as the roster in session/llm.ts: real peers only,
+      // dead (failed/cancelled) children excluded, success reported as idle. The
+      // just-dispatched child is EXEMPT from the liveness filter — its line is a
+      // fact about what this call did, not a judgement about the child's health,
+      // so it must survive whatever deriveLiveness reports for a brand-new row.
+      const lines = enriched
+        .flatMap(({ child, actor }) => (actor ? [{ child, actor }] : []))
+        .filter(({ actor }) => actor.mode !== "subagent" && !SYSTEM_SPAWNED_AGENT_TYPES.has(actor.agent))
+        .map((e) => ({ ...e, live: deriveLiveness(e.actor, now) }))
+        .filter(({ child, live }) => child.id === dispatched.id || (live !== "failure" && live !== "cancelled"))
+        .map(
+          ({ child, actor, live }) =>
+            `  ${child.id} | ${child.title} | ${actor.agent} | ${live === "success" ? "idle" : live}` +
+            (child.id === dispatched.id
+              ? `   <-- YOU JUST ${dispatched.verb} THIS, IN THE CURRENT TURN: "${dispatched.task.replace(/\s+/g, " ").slice(0, 100)}"`
+              : ``),
+        )
+      if (lines.length === 0) return ""
+      return (
+        `\n\nROUTE FIRST — these are your routable child sessions right now, including the one this call just ` +
+        `dispatched to. Before you dispatch again in THIS turn, re-read this list: if the next piece of work ` +
+        `belongs to one of these, use \`session send <id> <task>\` instead of \`session create\` — and do not ` +
+        `re-send work that is already marked as just dispatched. This ledger is internal working ` +
+        `context, not output — do not repeat it to the user, report what you routed:\n${lines.join("\n")}`
+      )
+    })
+
     const run = Effect.fn("SessionTool.execute")(function* (input: SessionInput, ctx: Tool.Context<Metadata>) {
       const op = input.operation
+      if (op.action === "set-title") return yield* setSessionTitle(sessions, op, ctx)
 
       if (op.action === "create") {
         const actor = yield* requireActor()
@@ -624,10 +766,15 @@ export const SessionTool = Tool.define<typeof parameters, Metadata, Deps>(
             actorReg.get(child.id, child.id).pipe(Effect.map((a) => ({ child, actor: a }))),
           )
           const match = enriched.find(
-            ({ child, actor: a }) =>
-              a?.mode !== "subagent" &&
-              !(a && SYSTEM_SPAWNED_AGENT_TYPES.has(a.agent)) &&
-              topicOf(child.title) === op.topic,
+            ({ child, actor: a }) => {
+              if (a?.mode === "subagent") return false
+              if (a && SYSTEM_SPAWNED_AGENT_TYPES.has(a.agent)) return false
+              const existing = topicOf(child.title)
+              // Normalized compare: `--topic "PR 1741"` must find the child
+              // tagged `pr-1741`, otherwise find-or-reuse degrades to
+              // find-or-duplicate on the first label the model retypes.
+              return existing !== undefined && topicKey(existing) === topicKey(op.topic!)
+            },
           )
           if (match) {
             const childID = match.child.id
@@ -651,7 +798,12 @@ export const SessionTool = Tool.define<typeof parameters, Metadata, Deps>(
                 title: `Reused topic '${op.topic}' → relayed to ${childID}`,
                 output:
                   `Found standing child ${childID} for topic '${op.topic}'. ` +
-                  `Enqueued the task into it and woke it — it runs the relayed task as its next turn.`,
+                  `Enqueued the task into it and woke it — it runs the relayed task as its next turn.` +
+                  (yield* dispatchLedgerNotice(ctx.sessionID as SessionID, {
+                    id: childID,
+                    verb: "SENT THIS TASK TO",
+                    task: op.task,
+                  })),
                 metadata: { sessionID: childID } as Metadata,
               }
             }
@@ -724,17 +876,23 @@ export const SessionTool = Tool.define<typeof parameters, Metadata, Deps>(
         // standing child (topicOf reads it back from sessions.children).
         if (op.topic) {
           const base = op.title ?? `${op.mode ?? "build"}: ${op.task.slice(0, 40)}`
-          yield* sessions.setTitle({ sessionID: result.sessionID, title: tagTitle(op.topic, base) })
+          yield* sessions.setTitle({ sessionID: result.sessionID, title: tagTitle(op.topic, base), expectedRevision: (yield* sessions.get(result.sessionID)).titleRevision })
         } else if (op.title) {
-          yield* sessions.setTitle({ sessionID: result.sessionID, title: op.title })
+          yield* sessions.setTitle({ sessionID: result.sessionID, title: op.title, expectedRevision: (yield* sessions.get(result.sessionID)).titleRevision })
         }
+        const siblingNotice = yield* dispatchLedgerNotice(ctx.sessionID as SessionID, {
+          id: result.sessionID,
+          verb: "CREATED",
+          task: op.task,
+        })
         return {
           title: `Session created: ${result.sessionID}`,
           output:
             `Created child session ${result.sessionID} (mode: ${op.mode ?? "build"}) in ${effectiveDir}.` +
             (op.topic ? ` Tagged with topic '${op.topic}' for reuse.` : ``) +
             (op.isolate && !isolateNotice ? ` Isolated in its own worktree.` : isolateNotice) +
-            ` Running in the background.`,
+            ` Running in the background.` +
+            siblingNotice,
           metadata: { sessionID: result.sessionID } as Metadata,
         }
       }
@@ -796,12 +954,58 @@ export const SessionTool = Tool.define<typeof parameters, Metadata, Deps>(
             `It will run the relayed task as its next turn` +
             (actor.status === "running" || actor.status === "pending"
               ? ` (currently busy — the task is queued and drains after its current turn).`
-              : `.`),
+              : `.`) +
+            (yield* dispatchLedgerNotice(ctx.sessionID as SessionID, {
+              id: childID,
+              verb: "SENT THIS TASK TO",
+              task: op.task,
+            })),
           metadata: { sessionID: op.sessionID } as Metadata,
         }
       }
 
       if (op.action === "switch") {
+        // Same prohibition the renderer enforces (cli/cmd/tui/routes/session/index.tsx).
+        // The renderer is the choke point, but refusing here too is what reaches
+        // the model mid-turn: a silent no-op would just make it retry.
+        // NotFoundError is a synchronous throw inside an Effect.fn (a DEFECT, not
+        // a typed failure — see the Worktree.create note above), so Effect.catch
+        // can't see it; Effect.exit captures any non-success.
+        const targetExit = yield* Effect.exit(sessions.get(op.sessionID as SessionID))
+        if (targetExit._tag !== "Success")
+          return {
+            title: `Refused switch to ${op.sessionID}`,
+            output: `Refused to move the UI to ${op.sessionID}: no such session. Run \`session list\` to see the child sessions you can switch to.`,
+            metadata: { sessionID: op.sessionID } as Metadata,
+          }
+        const target = targetExit.value
+        // Same shared helpers the renderer uses, so the criterion cannot drift
+        // between the two enforcement points: they read the TARGET's own actor
+        // rows, not its parent's child list.
+        //
+        // listBySession is typed as never-failing, so a DB error surfaces as a
+        // defect — the same shape as the NotFoundError above, and equally
+        // invisible to Effect.catch. Left unwrapped it would abort the whole tool
+        // call, which reaches the model as a crash rather than as a decision; and
+        // "rows could not be read" must NOT reach classifySession, because there
+        // it would be indistinguishable from "this session has no rows" and would
+        // fail open onto exactly the population the prohibition exists to refuse.
+        const actorsExit = yield* Effect.exit(actorReg.listBySession(target.id as SessionID))
+        const verdict =
+          actorsExit._tag === "Success"
+            ? classifySession(target, actorsExit.value)
+            : classifyUnreadableActors(target, Cause.pretty(actorsExit.cause))
+        if (!verdict.renderable)
+          return {
+            title: `Refused switch to ${op.sessionID}`,
+            output:
+              `Refused to move the UI to ${op.sessionID}: ${verdict.reason}. ` +
+              (actorsExit._tag === "Success"
+                ? `A session hosting a runtime-spawned agent is never rendered. `
+                : `That is a read failure, not a prohibition: retry the switch, and if it keeps failing the actor registry is broken. `) +
+              `Run \`session list\` to see the child sessions you can switch to, or switch to this session's parent instead.`,
+            metadata: { sessionID: op.sessionID } as Metadata,
+          }
         yield* Effect.promise(() => Bus.publish(TuiEvent.SessionSelect, { sessionID: op.sessionID as SessionID }))
         return {
           title: `Switched to ${op.sessionID}`,
@@ -828,10 +1032,10 @@ export const SessionTool = Tool.define<typeof parameters, Metadata, Deps>(
           return { title: "Child sessions: 0", output: "No child sessions.", metadata: {} as Metadata }
         // The actor row's status enum is only pending|running|idle; a terminal
         // idle carries a lastOutcome (success/failure/cancelled). deriveLiveness
-        // maps (status, lastOutcome, lastTurnTime) to a display bucket:
-        // running/pending split into progressing vs stalled by whether the last
-        // turn advanced within the staleness window (updateTurn bumps
-        // last_turn_time per step — recent == progressing); terminal idle rows
+        // maps (status, lastOutcome, lastActivityTime) to a display bucket:
+        // running/pending split into progressing vs stalled by whether anything
+        // LANDED within the staleness window (the PartUpdated projector bumps
+        // last_activity_time per part — recent == progressing); terminal idle rows
         // map to success(→idle)/failure/cancelled. Never fabricate a state the
         // data lacks: a missing actor row is a plain idle.
         const now = Date.now()
@@ -854,7 +1058,7 @@ export const SessionTool = Tool.define<typeof parameters, Metadata, Deps>(
         }
         const groups: { bucket: keyof typeof counts; heading: string }[] = [
           { bucket: "progressing", heading: "In progress — progressing (running/pending, advancing)" },
-          { bucket: "stalled", heading: "In progress — stalled (running/pending, no recent turn)" },
+          { bucket: "stalled", heading: "In progress — stalled (running/pending, no recent activity)" },
           { bucket: "idle", heading: "Finished / idle" },
           { bucket: "failed", heading: "Failed" },
           { bucket: "cancelled", heading: "Cancelled" },
@@ -929,8 +1133,9 @@ export const SessionTool = Tool.define<typeof parameters, Metadata, Deps>(
         // Derived pull-side liveness for one child. A peer registers with
         // session_id === actor_id === its own child id (see the create branch /
         // Actor.spawnPeer), so key the row by (childID, childID). deriveLiveness
-        // turns the honest registry fields (status/lastOutcome/lastTurnTime) into
-        // progressing|stalled|terminal — never fabricating a state the row lacks.
+        // turns the honest registry fields (status/lastOutcome/lastActivityTime)
+        // into progressing|stalled|terminal — never fabricating a state the row
+        // lacks.
         const childID = op.sessionID
         const found = yield* actorReg.liveness(childID as SessionID, childID)
         if (!found)
@@ -939,16 +1144,24 @@ export const SessionTool = Tool.define<typeof parameters, Metadata, Deps>(
             output: `No actor registered for ${childID}. It may not exist or never started.`,
             metadata: { sessionID: childID } as Metadata,
           }
-        const ageMs = Date.now() - found.actor.lastTurnTime
-        const ageStr = ageMs < 60_000 ? `${Math.floor(ageMs / 1000)}s` : `${Math.floor(ageMs / 60_000)}m`
+        const age = (ms: number) => (ms < 60_000 ? `${Math.floor(ms / 1000)}s` : `${Math.floor(ms / 60_000)}m`)
+        const nowMs = Date.now()
+        // Report the age the verdict was computed from FIRST. `?? time.created` is
+        // the same fallback deriveLiveness uses, and the column is nullable so it
+        // arrives as `null` — see AGENTS.md "Reading a nullable column".
+        const activityAge = age(nowMs - (found.actor.lastActivityTime ?? found.actor.time.created))
+        // turnCount/lastTurnTime stay on the dump as step bookkeeping, explicitly
+        // labelled as not being what the liveness above was derived from.
+        const turnAge = age(nowMs - found.actor.lastTurnTime)
         const outcome = found.actor.lastOutcome ? ` (last outcome: ${found.actor.lastOutcome})` : ""
         return {
           title: `Status ${childID}: ${found.liveness}`,
           output:
             `${childID} — ${found.liveness}${outcome}\n` +
             `  raw status: ${found.actor.status}\n` +
+            `  lastActivityTime: ${found.actor.lastActivityTime ?? "(none)"} (${activityAge} ago) — liveness derives from this\n` +
             `  turnCount: ${found.actor.turnCount}\n` +
-            `  lastTurnTime: ${found.actor.lastTurnTime} (${ageStr} ago)`,
+            `  lastTurnTime: ${found.actor.lastTurnTime} (${turnAge} ago) — last COMPLETED step, not the liveness input`,
           metadata: { sessionID: childID } as Metadata,
         }
       }
@@ -1110,7 +1323,7 @@ export const SessionTool = Tool.define<typeof parameters, Metadata, Deps>(
     })
 
     return {
-      description: DESCRIPTION,
+      description: `${DESCRIPTION}\n\n${TITLE_DESCRIPTION}`,
       parameters,
       execute: (args: z.infer<typeof parameters>, ctx: Tool.Context<Metadata>) => run(args, ctx).pipe(Effect.orDie),
       shell: {

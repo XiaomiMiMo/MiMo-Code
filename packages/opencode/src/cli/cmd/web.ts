@@ -53,7 +53,7 @@ export const WebCommand = cmd({
       UI.println(UI.Style.TEXT_WARNING_BOLD + "!  MIMOCODE_SERVER_PASSWORD is not set; server is unsecured.")
     }
 
-    const server = await Server.listen(opts)
+    const server = await Server.listen({ ...opts, advertise: false })
     UI.empty()
     UI.println(UI.logo("  "))
     UI.empty()

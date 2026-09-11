@@ -106,6 +106,15 @@ const imageGenerationCallItem = z.object({
   result: z.string(),
 })
 
+const customToolCallItem = z.object({
+  type: z.literal("custom_tool_call"),
+  id: z.string(),
+  call_id: z.string(),
+  name: z.string(),
+  input: z.string(),
+  status: z.string().optional(),
+})
+
 /**
  * `top_logprobs` request body argument can be set to an integer between
  * 0 and 20 specifying the number of most likely tokens to return at each
@@ -194,7 +203,7 @@ export class OpenAIResponsesLanguageModel implements LanguageModelV3 {
     }
 
     const openaiOptions = await parseProviderOptions({
-      provider: "copilot",
+      provider: this.config.providerOptionsKey ?? "copilot",
       providerOptions,
       schema: openaiResponsesProviderOptionsSchema,
     })
@@ -205,6 +214,7 @@ export class OpenAIResponsesLanguageModel implements LanguageModelV3 {
       fileIdPrefixes: this.config.fileIdPrefixes,
       store: openaiOptions?.store ?? true,
       hasLocalShellTool: hasOpenAITool("openai.local_shell"),
+      providerOptionsKey: this.config.providerOptionsKey ?? "copilot",
     })
 
     warnings.push(...inputWarnings)
@@ -377,6 +387,7 @@ export class OpenAIResponsesLanguageModel implements LanguageModelV3 {
       tools,
       toolChoice,
       strictJsonSchema,
+      customToolNames: this.config.customToolNames ? new Set(this.config.customToolNames) : undefined,
     })
 
     return {
@@ -459,6 +470,7 @@ export class OpenAIResponsesLanguageModel implements LanguageModelV3 {
               codeInterpreterCallItem,
               imageGenerationCallItem,
               localShellCallItem,
+              customToolCallItem,
               z.object({
                 type: z.literal("function_call"),
                 call_id: z.string(),
@@ -624,6 +636,24 @@ export class OpenAIResponsesLanguageModel implements LanguageModelV3 {
             providerMetadata: {
               openai: {
                 itemId: part.id,
+              },
+            },
+          })
+          break
+        }
+
+        case "custom_tool_call": {
+          hasFunctionCall = true
+
+          content.push({
+            type: "tool-call",
+            toolCallId: part.call_id,
+            toolName: part.name,
+            input: JSON.stringify({ code: part.input }),
+            providerMetadata: {
+              openai: {
+                itemId: part.id,
+                toolCallType: "custom",
               },
             },
           })
@@ -826,6 +856,9 @@ export class OpenAIResponsesLanguageModel implements LanguageModelV3 {
           codeInterpreter?: {
             containerId: string
           }
+          custom?: {
+            inputEnded: boolean
+          }
         }
       | undefined
     > = {}
@@ -888,6 +921,23 @@ export class OpenAIResponsesLanguageModel implements LanguageModelV3 {
                   type: "tool-input-start",
                   id: value.item.call_id,
                   toolName: value.item.name,
+                })
+              } else if (value.item.type === "custom_tool_call") {
+                ongoingToolCalls[value.output_index] = {
+                  toolName: value.item.name,
+                  toolCallId: value.item.call_id,
+                  custom: { inputEnded: false },
+                }
+
+                controller.enqueue({
+                  type: "tool-input-start",
+                  id: value.item.call_id,
+                  toolName: value.item.name,
+                })
+                controller.enqueue({
+                  type: "tool-input-delta",
+                  id: value.item.call_id,
+                  delta: '{"code":"',
                 })
               } else if (value.item.type === "web_search_call") {
                 ongoingToolCalls[value.output_index] = {
@@ -996,6 +1046,27 @@ export class OpenAIResponsesLanguageModel implements LanguageModelV3 {
                   providerMetadata: {
                     openai: {
                       itemId: value.item.id,
+                    },
+                  },
+                })
+              } else if (value.item.type === "custom_tool_call") {
+                const toolCall = ongoingToolCalls[value.output_index]
+                if (toolCall?.custom && !toolCall.custom.inputEnded) {
+                  controller.enqueue({ type: "tool-input-delta", id: value.item.call_id, delta: '"}' })
+                  controller.enqueue({ type: "tool-input-end", id: value.item.call_id })
+                }
+                ongoingToolCalls[value.output_index] = undefined
+                hasFunctionCall = true
+
+                controller.enqueue({
+                  type: "tool-call",
+                  toolCallId: value.item.call_id,
+                  toolName: value.item.name,
+                  input: JSON.stringify({ code: value.item.input }),
+                  providerMetadata: {
+                    openai: {
+                      itemId: value.item.id,
+                      toolCallType: "custom",
                     },
                   },
                 })
@@ -1144,6 +1215,24 @@ export class OpenAIResponsesLanguageModel implements LanguageModelV3 {
                   id: toolCall.toolCallId,
                   delta: value.delta,
                 })
+              }
+            } else if (isResponseCustomToolCallInputDeltaChunk(value)) {
+              const toolCall = ongoingToolCalls[value.output_index]
+
+              if (toolCall?.custom) {
+                controller.enqueue({
+                  type: "tool-input-delta",
+                  id: toolCall.toolCallId,
+                  delta: JSON.stringify(value.delta).slice(1, -1),
+                })
+              }
+            } else if (isResponseCustomToolCallInputDoneChunk(value)) {
+              const toolCall = ongoingToolCalls[value.output_index]
+
+              if (toolCall?.custom && !toolCall.custom.inputEnded) {
+                toolCall.custom.inputEnded = true
+                controller.enqueue({ type: "tool-input-delta", id: toolCall.toolCallId, delta: '"}' })
+                controller.enqueue({ type: "tool-input-end", id: toolCall.toolCallId })
               }
             } else if (isResponseImageGenerationCallPartialImageChunk(value)) {
               controller.enqueue({
@@ -1415,6 +1504,7 @@ const responseOutputItemAddedSchema = z.object({
       name: z.string(),
       arguments: z.string(),
     }),
+    customToolCallItem,
     z.object({
       type: z.literal("web_search_call"),
       id: z.string(),
@@ -1478,6 +1568,7 @@ const responseOutputItemDoneSchema = z.object({
       arguments: z.string(),
       status: z.literal("completed"),
     }),
+    customToolCallItem,
     codeInterpreterCallItem,
     imageGenerationCallItem,
     webSearchCallItem,
@@ -1496,6 +1587,20 @@ const responseFunctionCallArgumentsDeltaSchema = z.object({
   item_id: z.string(),
   output_index: z.number(),
   delta: z.string(),
+})
+
+const responseCustomToolCallInputDeltaSchema = z.object({
+  type: z.literal("response.custom_tool_call_input.delta"),
+  item_id: z.string(),
+  output_index: z.number(),
+  delta: z.string(),
+})
+
+const responseCustomToolCallInputDoneSchema = z.object({
+  type: z.literal("response.custom_tool_call_input.done"),
+  item_id: z.string(),
+  output_index: z.number(),
+  input: z.string(),
 })
 
 const responseImageGenerationCallPartialImageSchema = z.object({
@@ -1559,6 +1664,8 @@ const openaiResponsesChunkSchema = z.union([
   responseOutputItemAddedSchema,
   responseOutputItemDoneSchema,
   responseFunctionCallArgumentsDeltaSchema,
+  responseCustomToolCallInputDeltaSchema,
+  responseCustomToolCallInputDoneSchema,
   responseImageGenerationCallPartialImageSchema,
   responseCodeInterpreterCallCodeDeltaSchema,
   responseCodeInterpreterCallCodeDoneSchema,
@@ -1607,6 +1714,18 @@ function isResponseFunctionCallArgumentsDeltaChunk(
   chunk: z.infer<typeof openaiResponsesChunkSchema>,
 ): chunk is z.infer<typeof responseFunctionCallArgumentsDeltaSchema> {
   return chunk.type === "response.function_call_arguments.delta"
+}
+
+function isResponseCustomToolCallInputDeltaChunk(
+  chunk: z.infer<typeof openaiResponsesChunkSchema>,
+): chunk is z.infer<typeof responseCustomToolCallInputDeltaSchema> {
+  return chunk.type === "response.custom_tool_call_input.delta"
+}
+
+function isResponseCustomToolCallInputDoneChunk(
+  chunk: z.infer<typeof openaiResponsesChunkSchema>,
+): chunk is z.infer<typeof responseCustomToolCallInputDoneSchema> {
+  return chunk.type === "response.custom_tool_call_input.done"
 }
 function isResponseImageGenerationCallPartialImageChunk(
   chunk: z.infer<typeof openaiResponsesChunkSchema>,

@@ -10,10 +10,12 @@ export function prepareResponsesTools({
   tools,
   toolChoice,
   strictJsonSchema,
+  customToolNames,
 }: {
   tools: LanguageModelV3CallOptions["tools"]
   toolChoice?: LanguageModelV3CallOptions["toolChoice"]
   strictJsonSchema: boolean
+  customToolNames?: ReadonlySet<string>
 }): {
   tools?: Array<OpenAIResponsesTool>
   toolChoice?:
@@ -24,6 +26,7 @@ export function prepareResponsesTools({
     | { type: "web_search_preview" }
     | { type: "web_search" }
     | { type: "function"; name: string }
+    | { type: "custom"; name: string }
     | { type: "code_interpreter" }
     | { type: "image_generation" }
   toolWarnings: SharedV3Warning[]
@@ -42,6 +45,14 @@ export function prepareResponsesTools({
   for (const tool of tools) {
     switch (tool.type) {
       case "function":
+        if (customToolNames?.has(tool.name)) {
+          openaiTools.push({
+            type: "custom",
+            name: tool.name,
+            description: tool.description,
+          })
+          break
+        }
         openaiTools.push({
           type: "function",
           name: tool.name,
@@ -151,6 +162,13 @@ export function prepareResponsesTools({
     case "required":
       return { tools: openaiTools, toolChoice: type, toolWarnings }
     case "tool":
+      if (customToolNames?.has(toolChoice.toolName)) {
+        return {
+          tools: openaiTools,
+          toolChoice: { type: "custom", name: toolChoice.toolName },
+          toolWarnings,
+        }
+      }
       return {
         tools: openaiTools,
         toolChoice:
