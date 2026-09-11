@@ -27,7 +27,11 @@ export const Model = z.object({
   reasoning: z.boolean(),
   temperature: z.boolean(),
   tool_call: z.boolean(),
-  /** Operator-supplied voice capabilities; absent upstream. */
+  /**
+   * Operator/embedder speech metadata. Absent from upstream models.dev (#2336);
+   * kept optional so Desktop speech models keep capabilities. Prefer moving these
+   * to a Desktop overlay before re-coupling further shared schema fields.
+   */
   voice_design: z.boolean().optional().default(false),
   voice_clone: z.boolean().optional().default(false),
   interleaved: z

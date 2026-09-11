@@ -1,4 +1,5 @@
 export { Auth } from "./auth"
+/** Public models.dev lifecycle API. Embedders must call `ModelsDev.startRefresh()` after wiring fetch. */
 export { ModelsDev } from "./provider/models"
 export { Config } from "./config"
 export { Server } from "./server/server"

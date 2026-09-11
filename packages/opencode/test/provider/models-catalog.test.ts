@@ -116,7 +116,7 @@ test("explicit PATH is exclusive and never overwritten by network", () =>
     expect(Object.keys(await catalog.get())).toEqual(["only"])
   }))
 
-test("missing or malformed fresh cache falls back locally; disabled startup never fetches", () =>
+test("missing or malformed cache falls back to snapshot; auto refresh is gated but force still fetches", () =>
   fixture(async (cache) => {
     let calls = 0
     const catalog = createCatalog({
@@ -129,9 +129,13 @@ test("missing or malformed fresh cache falls back locally; disabled startup neve
       },
     })
     const stop = catalog.startRefresh()
-    await catalog.refresh(true)
+    await catalog.refresh()
     expect(await catalog.get()).toEqual(validateCatalog(baseline))
     expect(calls).toBe(0)
+    // Explicit force is not gated by DISABLE_MODELS_FETCH (matches pre-catalog contract).
+    await catalog.refresh(true)
+    expect(calls).toBe(1)
+    expect(await catalog.get()).toEqual(validateCatalog(baseline))
     stop()
     await writeFile(cache, "{}")
     const enabled = createCatalog({
@@ -143,9 +147,126 @@ test("missing or malformed fresh cache falls back locally; disabled startup neve
       },
     })
     await enabled.refresh()
-    expect(calls).toBe(1)
+    expect(calls).toBe(2)
     expect(await enabled.get()).toEqual(validateCatalog(baseline))
     expect(await readFile(cache, "utf8")).toBe("{}")
+  }))
+
+test("snapshot does not revive entities dropped by a successful authoritative refresh", () =>
+  fixture(async (cache) => {
+    const withGhost = {
+      native: baseline.native,
+      ghost: { ...baseline.native, id: "ghost", models: { gone: { ...model, id: "gone" } } },
+    }
+    await writeFile(
+      cache,
+      JSON.stringify({
+        native: baseline.native,
+        ghost: withGhost.ghost,
+      }),
+    )
+    const catalog = createCatalog({
+      cache,
+      snapshot: async () => withGhost,
+      fetch: async () => Response.json({ native: { ...baseline.native, name: "Live" } }),
+    })
+    const local = await catalog.get()
+    expect(local.ghost).toBeDefined()
+    await catalog.refresh(true)
+    expect((await catalog.get()).ghost).toBeUndefined()
+    expect((await catalog.get()).native.name).toBe("Live")
+  }))
+
+test("force is not swallowed by an in-flight non-force refresh", () =>
+  fixture(async (cache) => {
+    // Stale mtime so non-force takes the fetch path and can hold the gate.
+    await writeFile(cache, JSON.stringify(baseline))
+    const { utimes } = await import("node:fs/promises")
+    await utimes(cache, new Date(Date.now() - 10 * 60 * 1000), new Date(Date.now() - 10 * 60 * 1000))
+    let calls = 0
+    let release!: () => void
+    const gate = new Promise<void>((r) => {
+      release = r
+    })
+    const catalog = createCatalog({
+      cache,
+      snapshot: async () => baseline,
+      fetch: async () => {
+        calls++
+        if (calls === 1) await gate
+        return Response.json({ native: { ...baseline.native, name: `Fetched${calls}` } })
+      },
+    })
+    const background = catalog.refresh()
+    await new Promise((r) => setTimeout(r, 20))
+    expect(calls).toBe(1)
+    const forced = catalog.refresh(true)
+    release()
+    await Promise.all([background, forced])
+    // Force must not join the non-force flight without a subsequent fetch.
+    expect(calls).toBe(2)
+    expect((await catalog.get()).native.name).toBe("Fetched2")
+  }))
+
+test("invalid explicit PATH fails closed and never falls back to the public cache", () =>
+  fixture(async (cache) => {
+    const explicit = cache + ".custom"
+    await writeFile(cache, JSON.stringify(baseline))
+    await writeFile(explicit, JSON.stringify({ native: { id: "native" } }))
+    let calls = 0
+    const catalog = createCatalog({
+      cache,
+      explicit,
+      snapshot: async () => baseline,
+      fetch: async () => {
+        calls++
+        return Response.json(baseline)
+      },
+    })
+    expect(await catalog.get()).toEqual({})
+    await catalog.refresh(true)
+    expect(await catalog.get()).toEqual({})
+    expect(calls).toBe(0)
+    expect(await readFile(cache, "utf8")).toBe(JSON.stringify(baseline))
+  }))
+
+test("explicit PATH short-circuits update: no fetch and no shared-cache rewrite", () =>
+  fixture(async (cache) => {
+    const explicit = cache + ".custom"
+    await writeFile(explicit, JSON.stringify({ only: { ...baseline.native, id: "only" } }))
+    let calls = 0
+    const catalog = createCatalog({
+      cache,
+      explicit,
+      snapshot: async () => baseline,
+      fetch: async () => {
+        calls++
+        return Response.json(baseline)
+      },
+    })
+    await catalog.refresh()
+    await catalog.refresh(true)
+    expect(calls).toBe(0)
+    expect(Object.keys(await catalog.get())).toEqual(["only"])
+  }))
+
+test("reset discards an in-flight load settle", async () =>
+  fixture(async (cache) => {
+    let resolveSnapshot!: (v: unknown) => void
+    const catalog = createCatalog({
+      cache,
+      snapshot: () =>
+        new Promise((r) => {
+          resolveSnapshot = r
+        }),
+      fetch: async () => Response.json(baseline),
+    })
+    const first = catalog.get()
+    catalog.reset()
+    resolveSnapshot({ native: { ...baseline.native, name: "AfterReset" } })
+    await first
+    const second = await catalog.get()
+    expect(second.native.name).toBe("AfterReset")
   }))
 
 test("same-source deep merge preserves omitted fields and explicit false/zero; listeners unsubscribe", () =>
