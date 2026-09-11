@@ -15,9 +15,17 @@ import { SessionCheckpoint } from "@/session/checkpoint"
 import { ensureProcessMetadata } from "@/util/mimo-process"
 
 import { ModelsDev } from "@/provider/models"
+import { watchModelsCatalogReload } from "@/provider/models-catalog-reload"
 
 ensureProcessMetadata("worker")
 ModelsDev.startRefresh()
+// Successful models.dev publishes rebuild provider state like `/connect`:
+// dispose idle instances → `server.instance.disposed` → TUI bootstrap.
+// `disposeAll` skips directories with in-flight work.
+watchModelsCatalogReload({
+  subscribe: (listener) => ModelsDev.subscribe(listener),
+  reload: () => Instance.disposeAll(),
+})
 
 await Log.init({
   print: process.argv.includes("--print-logs"),
