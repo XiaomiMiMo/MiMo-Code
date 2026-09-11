@@ -250,8 +250,47 @@ test("explicit PATH short-circuits update: no fetch and no shared-cache rewrite"
     expect(Object.keys(await catalog.get())).toEqual(["only"])
   }))
 
-test("reset discards an in-flight load settle", async () =>
+test("force still runs after an in-flight non-force refresh fails", () =>
   fixture(async (cache) => {
+    await writeFile(cache, JSON.stringify(baseline))
+    const { utimes } = await import("node:fs/promises")
+    const stale = new Date(Date.now() - 10 * 60 * 1000)
+    await utimes(cache, stale, stale)
+    let calls = 0
+    let release!: () => void
+    const gate = new Promise<void>((r) => {
+      release = r
+    })
+    const catalog = createCatalog({
+      cache,
+      snapshot: async () => baseline,
+      fetch: async () => {
+        calls++
+        if (calls === 1) {
+          await gate
+          throw new Error("network down")
+        }
+        return Response.json({ native: { ...baseline.native, name: "Recovered" } })
+      },
+    })
+    const background = catalog.refresh()
+    await new Promise((r) => setTimeout(r, 20))
+    const forced = catalog.refresh(true)
+    release()
+    await Promise.all([background, forced])
+    expect(calls).toBe(2)
+    expect((await catalog.get()).native.name).toBe("Recovered")
+  }))
+
+test("reset discards an in-flight load settle so the next get re-reads", () =>
+  fixture(async (cache) => {
+    const cachedA = {
+      native: { ...baseline.native, models: { m: { ...model, name: "FromCacheA" } } },
+    }
+    const cachedB = {
+      native: { ...baseline.native, models: { m: { ...model, name: "FromCacheB" } } },
+    }
+    await writeFile(cache, JSON.stringify(cachedA))
     let resolveSnapshot!: (v: unknown) => void
     const catalog = createCatalog({
       cache,
@@ -262,11 +301,16 @@ test("reset discards an in-flight load settle", async () =>
       fetch: async () => Response.json(baseline),
     })
     const first = catalog.get()
+    // Let load finish readCache(A) and park on snapshot.
+    await new Promise((r) => setTimeout(r, 10))
     catalog.reset()
-    resolveSnapshot({ native: { ...baseline.native, name: "AfterReset" } })
-    await first
+    await writeFile(cache, JSON.stringify(cachedB))
+    resolveSnapshot(baseline)
+    const firstResult = await first
+    expect(firstResult.native.models.m.name).toBe("FromCacheA")
+    // Without a generation guard the in-flight settle would publish A and skip re-read.
     const second = await catalog.get()
-    expect(second.native.name).toBe("AfterReset")
+    expect(second.native.models.m.name).toBe("FromCacheB")
   }))
 
 test("same-source deep merge preserves omitted fields and explicit false/zero; listeners unsubscribe", () =>

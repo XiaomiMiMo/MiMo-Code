@@ -138,11 +138,14 @@ export function createCatalog(options: {
     await publish(next)
   }
   async function publish(cached?: Catalog) {
+    const gen = generation
     let next: Catalog
     const explicit = await readExplicit()
     if (explicit === "invalid") next = {}
     else if (explicit) next = structuredClone(explicit)
     else next = await compose(cached ?? (await readCache(options.cache)))
+    // reset() during await must not let this settle write back.
+    if (gen !== generation) return
     if (isDeepStrictEqual(current, next)) return
     current = next
     for (const listener of listeners) {
@@ -170,11 +173,16 @@ export function createCatalog(options: {
           const runForce = flightForce || queuedForce
           flightForce = runForce
           queuedForce = false
-          await (options.lock ? options.lock(() => update(runForce)) : update(runForce))
+          try {
+            await (options.lock ? options.lock(() => update(runForce)) : update(runForce))
+          } catch (error) {
+            options.onError?.(error)
+            // A force that joined this flight is still owed after a failed attempt.
+            if (!queuedForce) break
+            continue
+          }
           if (!queuedForce) break
         }
-      } catch (error) {
-        options.onError?.(error)
       } finally {
         flight = undefined
         flightForce = false
