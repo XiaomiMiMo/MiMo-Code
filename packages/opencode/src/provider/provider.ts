@@ -1452,10 +1452,16 @@ const layer: Layer.Layer<
           if (!stored) continue
           if (!plugin.auth.loader) continue
 
+          const catalog = database[plugin.auth.provider]
+          if (!catalog) {
+            log.warn("skipping plugin auth loader; provider missing from model catalog", { providerID })
+            continue
+          }
+
           const options = yield* Effect.promise(() =>
             plugin.auth!.loader!(
               () => bridge.promise(auth.get(providerID).pipe(Effect.orDie)) as any,
-              database[plugin.auth!.provider],
+              catalog,
             ),
           )
           const opts = options ?? {}
@@ -1707,12 +1713,23 @@ const layer: Layer.Layer<
           return wrapSSE(bounded, chunkTimeout, chunkAbortCtl)
         }
 
+        // Xiaomi: only PTC needs the bundled Responses harness (free-form `exec` custom tool);
+        // every non-PTC model must stay on the stock openai-compatible chat model. The bundled
+        // Copilot fork only understands Copilot's `reasoning_text`, so routing chat through it
+        // silently drops the `reasoning_content` that Xiaomi models stream back.
         const bundledLoader =
           model.providerID === "xiaomi" && model.api.npm === "@ai-sdk/openai-compatible"
             ? () =>
-                import("./sdk/copilot").then(
-                  (module) => (options: any) =>
-                    module.createOpenaiCompatible({ ...options, customToolNames: ["exec"] }),
+                Promise.all([BUNDLED_PROVIDERS["@ai-sdk/openai-compatible"](), import("./sdk/copilot")]).then(
+                  ([createChat, copilot]) =>
+                    (options: any) => {
+                      const chat = createChat(options)
+                      const responses = copilot.createOpenaiCompatible({ ...options, customToolNames: ["exec"] })
+                      return {
+                        languageModel: (modelId: string) => chat.languageModel(modelId),
+                        responses: (modelId: string) => responses.responses(modelId),
+                      }
+                    },
                 )
             : BUNDLED_PROVIDERS[model.api.npm]
         if (bundledLoader) {

@@ -92,7 +92,7 @@ function pushSection(lines: string[], heading: string, body?: string, filePath?:
 /**
  * Truncate verbatim user input that exceeds per-message cap. Keeps head (~60%)
  * + tail (~30%) with an elision marker pointing at messageID for full recall
- * via the history tool's operation=around. ~4 chars/token approximation matches
+ * via history around then get(part_id); around returns summaries, not full text. ~4 chars/token approximation matches
  * Token.estimate.
  */
 function truncateVerbatimUserMsg(text: string, capTokens: number, messageID: string): string {
@@ -105,7 +105,7 @@ function truncateVerbatimUserMsg(text: string, capTokens: number, messageID: str
   const elidedTokens = Token.estimate(text) - Token.estimate(head) - Token.estimate(tail)
   return [
     head,
-    `[…elided ${elidedTokens} tokens; messageID=${messageID}; use the history tool with operation=around to fetch full content]`,
+    `[…elided ${elidedTokens} tokens; messageID=${messageID}; use the history tool with operation=around then get part_id to recover full content]`,
     tail,
   ].join("\n")
 }

@@ -27,6 +27,8 @@ export const SessionTable = sqliteTable(
     slug: text().notNull(),
     directory: text().notNull(),
     title: text().notNull(),
+    title_source: text().$type<"fallback" | "generated" | "user">().notNull().default("user"),
+    title_revision: integer().notNull().default(0),
     version: text().notNull(),
     share_url: text(),
     summary_additions: integer(),

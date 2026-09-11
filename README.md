@@ -18,6 +18,22 @@
 
 MiMoCode is a terminal-native AI coding assistant. It can read and write code, run commands, manage Git, and use a persistent memory system to keep a deep understanding of your project across sessions while continuously improving itself.
 
+<p align="center"><strong>MiMo Desktop Beta Invitation</strong>: <a href="https://mimo-ai.xiaomimimo.com/desktop/invite/">Apply for the international beta</a></p>
+
+## Xiaomi MiMo Desktop Beta
+
+<p align="center"><img src="assets/readme/mimo-desktop-en.jpg" alt="Xiaomi MiMo Desktop English interface: starting a new task" width="900"></p>
+
+Xiaomi MiMo Desktop is built for real-world work: one conversation can handle office work, design, coding, and multimodal creation, while multiple conversations can divide work and collaborate. The desktop app is powered by **MiMo Code as its core engine**, bringing its terminal-native intelligence to desktop workflows.
+
+- **Smart orchestration**: evaluates task type and cost, then dynamically selects models, frameworks, and tools; complex tasks can run across multiple agents in parallel.
+- **Continuous iteration**: drag in files in multiple formats, create PPTs, webpages, 3D assets, and apps, preview and operate on results in-session, edit selected regions precisely, and roll back versions.
+- **Controlled long-task cost**: routes between standard and flagship models, edits only the required regions, and supports up to 99% same-session and 95% cross-session cache hit rates.
+- **Browser control**: opens webpages, retrieves information, fills forms, and checks key interactions after generating webpages.
+- **Computer control (international version only)**: reads the screen and operates mouse and keyboard across apps; Record & Replay lets you reuse recorded workflows with natural language.
+
+After beta approval, users can access limited-time, limited-quantity trials of the new **MiMo-X-Pro-Preview** and **MiMo-X-Flash-Preview** models.
+
 MiMoCode supports connecting to any mainstream LLM provider API.
 
 ---

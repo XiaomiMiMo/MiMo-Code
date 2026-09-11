@@ -368,6 +368,7 @@ export const SessionRoutes = lazy(() =>
             },
           },
           ...errors(400, 404),
+          409: { description: "Title changed by another writer", content: { "application/json": { schema: resolver(Session.TitleConflict) } } },
         },
       }),
       validator(
@@ -379,14 +380,15 @@ export const SessionRoutes = lazy(() =>
       validator(
         "json",
         z.object({
-          title: z.string().optional(),
+          title: Session.SetTitleInput.shape.title.optional(),
+          expectedRevision: Session.Info.shape.titleRevision.optional(),
           permission: Permission.Ruleset.zod.optional(),
           time: z
             .object({
               archived: z.number().optional(),
             })
             .optional(),
-        }),
+        }).strict().refine((input) => input.title === undefined || input.expectedRevision !== undefined, { message: "expectedRevision is required when renaming", path: ["expectedRevision"] }),
       ),
       async (c) =>
         jsonRequest("SessionRoutes.update", c, function* () {
@@ -396,7 +398,7 @@ export const SessionRoutes = lazy(() =>
           const current = yield* session.get(sessionID)
 
           if (updates.title !== undefined) {
-            yield* session.setTitle({ sessionID, title: updates.title })
+            yield* session.setTitle({ sessionID, title: updates.title, expectedRevision: updates.expectedRevision! })
           }
           if (updates.permission !== undefined) {
             yield* session.setPermission({
@@ -1051,10 +1053,16 @@ export const SessionRoutes = lazy(() =>
         agentID: z.string().optional(),
         task_id: z.string().optional(),
         titleLocale: z.string().optional(),
+        modelProviderID: z.string().optional(),
+        modelID: z.string().optional(),
       })),
       async (c) => {
         const params = c.req.valid("param")
         const query = c.req.valid("query")
+        // modelProviderID / modelID 必须同时提供,否则 400(不允许只覆盖一侧)。
+        if (!!query.modelProviderID !== !!query.modelID) {
+          return c.json({ data: { name: "InvalidRequest", data: { message: "modelProviderID and modelID must be provided together" } } }, 400)
+        }
         await runRequest(
           "SessionRoutes.resume.assertNotBusy",
           c,
@@ -1086,6 +1094,7 @@ export const SessionRoutes = lazy(() =>
             agentID: query.agentID,
             task_id: query.task_id,
             titleLocale: query.titleLocale,
+            ...(query.modelProviderID && query.modelID ? { model: { providerID: query.modelProviderID, modelID: query.modelID } } : {}),
           })),
         ).catch((error) => {
           log.error("session resume failed", { sessionID: params.sessionID, error })

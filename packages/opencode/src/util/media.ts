@@ -1,3 +1,5 @@
+import { Flag } from "@/flag/flag"
+
 const startsWith = (bytes: Uint8Array, prefix: number[]) => prefix.every((value, index) => bytes[index] === value)
 
 export function isPdfAttachment(mime: string) {
@@ -23,4 +25,45 @@ export function sniffAttachmentMime(bytes: Uint8Array, fallback: string) {
   }
 
   return fallback
+}
+
+// Attachment size gate, driven by Flag.MIMOCODE_MAX_ATTACHMENT_SIZE and
+// Flag.MIMOCODE_MAX_ATTACHMENT_SOURCE_SIZE. Enforced where the attachment is
+// produced (read tool, user prompt attachments, MCP result normalization) on a
+// size known up front (stat or base64 length), so nothing over the limit
+// reaches the session DB:
+//   fits    — under the limit, attach as-is
+//   shrink  — an image over the limit but under the source ceiling: read it
+//             and recompress under the limit, reject only if that fails
+//   reject  — anything else over the limit (non-image, or an image so large
+//             that recompressing it is not worth attempting)
+
+// Decoded byte count of raw base64, O(1) — no decoding needed to classify.
+export function base64ByteSize(base64: string) {
+  if (!base64) return 0
+  const padding = base64.endsWith("==") ? 2 : base64.endsWith("=") ? 1 : 0
+  return Math.floor((base64.length * 3) / 4) - padding
+}
+
+export function classifyAttachment(mime: string, size: number): "fits" | "shrink" | "reject" {
+  if (size <= Flag.MIMOCODE_MAX_ATTACHMENT_SIZE) return "fits"
+  if (!mime.startsWith("image/")) return "reject"
+  return size > Flag.MIMOCODE_MAX_ATTACHMENT_SOURCE_SIZE ? "reject" : "shrink"
+}
+
+function mb(bytes: number) {
+  return `${Math.round((bytes / 1024 / 1024) * 10) / 10} MB`
+}
+
+// Notice for a rejected attachment. `compressed: true` means a shrink was
+// attempted and failed; otherwise the payload was refused on size alone and
+// the notice says why (over the source ceiling, or not an image).
+export function oversizedAttachmentNotice(input: { label: string; size: number; compressed?: boolean; hint: string }) {
+  const limit = mb(Flag.MIMOCODE_MAX_ATTACHMENT_SIZE)
+  const reason = input.compressed
+    ? "it could not be compressed under the limit"
+    : input.size > Flag.MIMOCODE_MAX_ATTACHMENT_SOURCE_SIZE
+      ? `it is also over the ${mb(Flag.MIMOCODE_MAX_ATTACHMENT_SOURCE_SIZE)} ceiling above which compression is not attempted`
+      : "it cannot be compressed"
+  return `Attachment ${input.label} is ${input.size} bytes, over the ${limit} attachment limit, and ${reason}. ${input.hint}`
 }

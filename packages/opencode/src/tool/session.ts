@@ -7,6 +7,7 @@ import { tokenize } from "./shell-tokenize"
 import z from "zod"
 import { Cause, Effect, Deferred } from "effect"
 import { Session } from "@/session"
+import { sanitizeGeneratedTitle, truncateTitle } from "@/session/prompt"
 import { classifySession, classifyUnreadableActors } from "@/session/visibility"
 import { Worktree } from "@/worktree"
 import { Instance } from "@/project/instance"
@@ -30,7 +31,7 @@ import type { FleetActorInput, WorktreeEntry } from "./fleet"
 import type { SessionID, MessageID } from "../session/schema"
 import type { ProviderID, ModelID } from "../provider/schema"
 
-const KNOWN_VERBS = ["create", "send", "switch", "list", "dashboard", "status", "cancel", "ask", "join", "setmode", "approve", "grant-approval"]
+const KNOWN_VERBS = ["create", "send", "switch", "list", "dashboard", "status", "cancel", "ask", "join", "setmode", "approve", "grant-approval", "set-title"]
 
 // Wraps the human/agent question in a side-boundary system-reminder:
 // one-shot, READ-ONLY, answer-to-caller.
@@ -305,6 +306,32 @@ const grantApprovalOperation = z.strictObject({
     .describe("A child session id to auto-approve future asks for, or 'all' to auto-approve every child."),
 })
 
+const setTitleOperation = z.strictObject({
+  action: z.literal("set-title"),
+  title: z.string().min(1),
+  sessionID: z.string().optional().describe("Omit for the current session; another session cannot be renamed here."),
+})
+const titleParameters = z.strictObject({ operation: setTitleOperation })
+const TITLE_DESCRIPTION = `Set a semantic session title with operation.action=set-title. Omit sessionID for the current session. This is a generated title, never a manual rename: user-protected titles cannot change. Use after understanding an attachment or when the substantive task changes, not for ordinary progress. Never infer a task from a filename alone. Do not retry to force an overwrite.`
+
+function setSessionTitle(sessions: Session.Interface, input: z.infer<typeof setTitleOperation>, ctx: Tool.Context<Metadata>) {
+  return Effect.gen(function* () {
+    const rejected = { title: "Session title unchanged", output: "Title unchanged: protected, stale, invalid, or ineligible session.", metadata: { changed: false } }
+    if (ctx.abort.aborted || (ctx.actorID && ctx.actorID !== "main") || (input.sessionID && input.sessionID !== ctx.sessionID)) return rejected
+    const current = yield* sessions.get(ctx.sessionID)
+    if (current.parentID || current.titleSource === "user") return rejected
+    const title = sanitizeGeneratedTitle(input.title)
+    if (!title) return rejected
+    const result = yield* sessions.setGeneratedTitle({ sessionID: current.id, title: truncateTitle(title), expectedRevision: current.titleRevision })
+    return result ? { title: "Session title updated", output: JSON.stringify(result), metadata: { changed: true } } : rejected
+  })
+}
+
+export const SessionTitleTool = Tool.define<typeof titleParameters, Metadata, Session.Service>("session", Effect.gen(function* () {
+  const sessions = yield* Session.Service
+  return { description: TITLE_DESCRIPTION, parameters: titleParameters, execute: (input, ctx) => setSessionTitle(sessions, input.operation, ctx) }
+}))
+
 const parameters = z.strictObject({
   // .meta({ type: "object" }) is REQUIRED — without it, the emitted JSON
   // schema's `operation` node has only `anyOf`, no `type`. Some models
@@ -312,7 +339,7 @@ const parameters = z.strictObject({
   // {"operation":"{\"action\":\"create\",...}"} which fails zod validation.
   // See research-tool-call-schema/REPORT.md §2.5 "success-nested" warning.
   operation: z
-    .discriminatedUnion("action", [createOperation, sendOperation, switchOperation, listOperation, dashboardOperation, statusOperation, cancelOperation, askOperation, joinOperation, setmodeOperation, approveOperation, grantApprovalOperation])
+    .discriminatedUnion("action", [createOperation, sendOperation, switchOperation, listOperation, dashboardOperation, statusOperation, cancelOperation, askOperation, joinOperation, setmodeOperation, approveOperation, grantApprovalOperation, setTitleOperation])
     .meta({ type: "object" }),
 })
 
@@ -320,6 +347,7 @@ type SessionInput = z.infer<typeof parameters>
 type SessionOperation = SessionInput
 
 type Metadata = {
+  changed?: boolean
   sessionID?: string
 }
 
@@ -451,6 +479,12 @@ function arityError(verb: string, expected: string, args: string[], line: number
 
 function mapVerb(verb: string | undefined, args: string[], line: number): Effect.Effect<SessionOperation, unknown> {
   switch (verb) {
+    case "set-title": {
+      const { rest, error } = extractSessionFlags(args, [])
+      if (error) return flagError("set-title", error, line)
+      if (!rest.length) return arityError("set-title", "<title...>", rest, line)
+      return Effect.succeed({ operation: { action: "set-title", title: rest.join(" ") } })
+    }
     case "create": {
       const { flags, bools, rest, error } = extractSessionFlags(args, ["mode", "model", "title", "dir", "topic"], ["isolate"])
       if (error) return flagError("create", error, line)
@@ -716,6 +750,7 @@ export const SessionTool = Tool.define<typeof parameters, Metadata, Deps>(
 
     const run = Effect.fn("SessionTool.execute")(function* (input: SessionInput, ctx: Tool.Context<Metadata>) {
       const op = input.operation
+      if (op.action === "set-title") return yield* setSessionTitle(sessions, op, ctx)
 
       if (op.action === "create") {
         const actor = yield* requireActor()
@@ -841,9 +876,9 @@ export const SessionTool = Tool.define<typeof parameters, Metadata, Deps>(
         // standing child (topicOf reads it back from sessions.children).
         if (op.topic) {
           const base = op.title ?? `${op.mode ?? "build"}: ${op.task.slice(0, 40)}`
-          yield* sessions.setTitle({ sessionID: result.sessionID, title: tagTitle(op.topic, base) })
+          yield* sessions.setTitle({ sessionID: result.sessionID, title: tagTitle(op.topic, base), expectedRevision: (yield* sessions.get(result.sessionID)).titleRevision })
         } else if (op.title) {
-          yield* sessions.setTitle({ sessionID: result.sessionID, title: op.title })
+          yield* sessions.setTitle({ sessionID: result.sessionID, title: op.title, expectedRevision: (yield* sessions.get(result.sessionID)).titleRevision })
         }
         const siblingNotice = yield* dispatchLedgerNotice(ctx.sessionID as SessionID, {
           id: result.sessionID,
@@ -1288,7 +1323,7 @@ export const SessionTool = Tool.define<typeof parameters, Metadata, Deps>(
     })
 
     return {
-      description: DESCRIPTION,
+      description: `${DESCRIPTION}\n\n${TITLE_DESCRIPTION}`,
       parameters,
       execute: (args: z.infer<typeof parameters>, ctx: Tool.Context<Metadata>) => run(args, ctx).pipe(Effect.orDie),
       shell: {

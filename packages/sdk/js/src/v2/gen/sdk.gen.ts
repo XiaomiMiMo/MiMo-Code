@@ -937,7 +937,7 @@ export class Title extends HeyApiClient {
   /**
    * Generate conversation title
    *
-   * Generate a short conversation title with the configured lite model and deterministic fallback.
+   * Generate a short conversation title with the configured lite model, optional source model, and deterministic fallback.
    */
   public generate<ThrowOnError extends boolean = false>(
     parameters?: {
@@ -957,6 +957,10 @@ export class Title extends HeyApiClient {
           }
       >
       locale?: string
+      model?: {
+        providerID: string
+        modelID: string
+      }
     },
     options?: Options<never, ThrowOnError>,
   ) {
@@ -970,6 +974,7 @@ export class Title extends HeyApiClient {
             { in: "body", key: "text" },
             { in: "body", key: "parts" },
             { in: "body", key: "locale" },
+            { in: "body", key: "model" },
           ],
         },
       ],
@@ -2018,6 +2023,7 @@ export class Session2 extends HeyApiClient {
       directory?: string
       workspace?: string
       title?: string
+      expectedRevision?: number
       permission?: PermissionRuleset
       time?: {
         archived?: number
@@ -2034,6 +2040,7 @@ export class Session2 extends HeyApiClient {
             { in: "query", key: "directory" },
             { in: "query", key: "workspace" },
             { in: "body", key: "title" },
+            { in: "body", key: "expectedRevision" },
             { in: "body", key: "permission" },
             { in: "body", key: "time" },
           ],
@@ -2204,6 +2211,7 @@ export class Session2 extends HeyApiClient {
       directory?: string
       workspace?: string
       messageID?: string
+      title?: string
     },
     options?: Options<never, ThrowOnError>,
   ) {
@@ -2216,6 +2224,7 @@ export class Session2 extends HeyApiClient {
             { in: "query", key: "directory" },
             { in: "query", key: "workspace" },
             { in: "body", key: "messageID" },
+            { in: "body", key: "title" },
           ],
         },
       ],
@@ -2682,6 +2691,8 @@ export class Session2 extends HeyApiClient {
       agentID?: string
       task_id?: string
       titleLocale?: string
+      modelProviderID?: string
+      modelID?: string
     },
     options?: Options<never, ThrowOnError>,
   ) {
@@ -2697,6 +2708,8 @@ export class Session2 extends HeyApiClient {
             { in: "query", key: "agentID" },
             { in: "query", key: "task_id" },
             { in: "query", key: "titleLocale" },
+            { in: "query", key: "modelProviderID" },
+            { in: "query", key: "modelID" },
           ],
         },
       ],
@@ -2804,14 +2817,30 @@ export class Session2 extends HeyApiClient {
       system?: string
       systemMode?: "append" | "replace-agent"
       harness?: "auto" | "codex" | "default"
-      parts?: Array<{
-        id?: string
-        type: "file"
-        mime: string
-        filename?: string
-        url: string
-        source?: FilePartSource
-      }>
+      parts?: Array<
+        | {
+            id?: string
+            type: "text"
+            text: string
+            synthetic?: boolean
+            ignored?: boolean
+            time?: {
+              start: number
+              end?: number
+            }
+            metadata?: {
+              [key: string]: unknown
+            }
+          }
+        | {
+            id?: string
+            type: "file"
+            mime: string
+            filename?: string
+            url: string
+            source?: FilePartSource
+          }
+      >
     },
     options?: Options<never, ThrowOnError>,
   ) {

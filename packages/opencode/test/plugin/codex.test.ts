@@ -64,6 +64,32 @@ describe("plugin.codex", () => {
       }
     })
 
+    test("returns empty options when provider is missing from the catalog", async () => {
+      const hooks = await CodexAuthPlugin(fakeInput)
+      const result = await hooks.auth!.loader!(
+        async () => ({ type: "oauth", access: "access", refresh: "refresh", expires: Date.now() + 60_000 }),
+        undefined as never,
+      )
+      expect(result).toEqual({})
+    })
+
+    test("passes through fetch when oauth auth is cleared after load", async () => {
+      globalThis.fetch = mock(() => Promise.resolve(new Response("ok"))) as unknown as typeof fetch
+      const hooks = await CodexAuthPlugin(fakeInput)
+      const auths: Array<{ type: "oauth"; access: string; refresh: string; expires: number } | undefined> = [
+        { type: "oauth", access: "access", refresh: "refresh", expires: Date.now() + 60_000 },
+        undefined,
+      ]
+      const options = await hooks.auth!.loader!(
+        async () => auths.shift() as never,
+        { models: {} } as never,
+      )
+
+      const response = await options.fetch!("https://api.openai.com/v1/responses")
+      expect(response.ok).toBe(true)
+      expect(await response.text()).toBe("ok")
+    })
+
     test("forwards request cancellation while refreshing an expired token", async () => {
       const signal = AbortSignal.timeout(25)
       const signals: Array<AbortSignal | null | undefined> = []

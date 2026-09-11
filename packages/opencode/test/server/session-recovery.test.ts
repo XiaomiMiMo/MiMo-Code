@@ -5,6 +5,7 @@ import { AppRuntime } from "../../src/effect/app-runtime"
 import { Instance } from "../../src/project/instance"
 import { Server } from "../../src/server/server"
 import { Session } from "../../src/session"
+import { SessionPrompt } from "../../src/session/prompt"
 import { MessageID } from "../../src/session/schema"
 import { ModelID, ProviderID } from "../../src/provider/schema"
 import { Log } from "../../src/util"
@@ -113,4 +114,105 @@ test("SDK serializes resume titleLocale in the query string", async () => {
   expect(url.pathname).toBe("/session/ses_test/turn/msg_test/resume")
   expect(url.searchParams.get("titleLocale")).toBe("fr-FR")
   expect(captured!.body).toBeNull()
+})
+
+// [TP-SR-R21-07] 恢复判据:completed+tool-calls / completed+length / 无 completed 均为候选;
+// completed+stop / completed+other 不进候选。
+describe("recovery candidate predicate", () => {
+  async function setupAssistant(overrides: Partial<{ finish: string; completed: boolean; error: boolean }>) {
+    await using tmp = await tmpdir({ git: true })
+    return Instance.provide({
+      directory: tmp.path,
+      fn: async () => AppRuntime.runPromise(Effect.gen(function* () {
+        const sessions = yield* Session.Service
+        const session = yield* sessions.create({ title: "predicate" })
+        const user = yield* sessions.updateMessage({
+          id: MessageID.ascending(),
+          role: "user",
+          sessionID: session.id,
+          agent: "build",
+          model: { providerID: ProviderID.make("test"), modelID: ModelID.make("test-model") },
+          time: { created: Date.now() },
+        })
+        const assistant = yield* sessions.updateMessage({
+          id: MessageID.ascending(),
+          role: "assistant",
+          parentID: user.id,
+          sessionID: session.id,
+          mode: "build",
+          agent: "build",
+          path: { cwd: tmp.path, root: tmp.path },
+          cost: 0,
+          tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+          modelID: ModelID.make("test-model"),
+          providerID: ProviderID.make("test"),
+          time: overrides.completed
+            ? { created: Date.now(), completed: Date.now() }
+            : { created: Date.now() },
+          ...(overrides.finish ? { finish: overrides.finish as "stop" | "length" | "tool-calls" | "other" } : {}),
+          ...(overrides.error ? { error: { name: "APIError", data: { message: "model unavailable", statusCode: 503, isRetryable: true } } } : {}),
+        } as Parameters<typeof sessions.updateMessage>[0])
+        const candidates = yield* SessionPrompt.Service.use((svc) =>
+          svc.recovery({ sessionID: session.id, agentID: "main" }),
+        )
+        return { candidates, assistantId: assistant.id }
+      })),
+    })
+  }
+
+  test("completed + tool-calls → candidate", async () => {
+    const result = await setupAssistant({ completed: true, finish: "tool-calls" })
+    expect(result.candidates.length).toBe(1)
+    expect(result.candidates[0]!.assistantMessageID).toBe(result.assistantId)
+  })
+
+  test("completed + length → candidate", async () => {
+    const result = await setupAssistant({ completed: true, finish: "length" })
+    expect(result.candidates.length).toBe(1)
+  })
+
+  test("no completed → candidate", async () => {
+    const result = await setupAssistant({ completed: false })
+    expect(result.candidates.length).toBe(1)
+  })
+
+  test("completed + stop → NOT candidate", async () => {
+    const result = await setupAssistant({ completed: true, finish: "stop" })
+    expect(result.candidates.length).toBe(0)
+  })
+
+  test("completed + other → NOT candidate", async () => {
+    const result = await setupAssistant({ completed: true, finish: "other" })
+    expect(result.candidates.length).toBe(0)
+  })
+
+  // [Finding #1 回归] finish=stop 但有 error:processor 因 error 不写 completed → 可恢复。
+  test("finish=stop + error → candidate (error means not completed)", async () => {
+    const result = await setupAssistant({ completed: false, finish: "stop", error: true })
+    expect(result.candidates.length).toBe(1)
+  })
+
+  // error + 无 completed:任何 finish 都是候选(有 error = 没完成)。
+  test("error + no completed → candidate", async () => {
+    const result = await setupAssistant({ completed: false, error: true })
+    expect(result.candidates.length).toBe(1)
+  })
+})
+
+// [TP-SR-R21-08] model 参数校验:modelProviderID / modelID 必须同时提供。
+test("resume with only modelProviderID returns 400", async () => {
+  await using tmp = await tmpdir({ git: true })
+  const result = await Instance.provide({
+    directory: tmp.path,
+    fn: async () => AppRuntime.runPromise(Effect.gen(function* () {
+      const sessions = yield* Session.Service
+      const session = yield* sessions.create({ title: "model-param" })
+      const app = Server.Default().app
+      const res = yield* Effect.promise(() =>
+        Promise.resolve(app.request(`/session/${session.id}/turn/msg_test/resume?directory=${encodeURIComponent(tmp.path)}&modelProviderID=test`, { method: "POST" })),
+      )
+      return res.status
+    })),
+  })
+  expect(result).toBe(400)
 })

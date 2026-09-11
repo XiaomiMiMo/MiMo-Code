@@ -1,8 +1,30 @@
 import { PartID } from "@/session/schema"
+import { resolveSkillSlash } from "../../i18n/skill"
 import type { PromptInfo } from "./history"
 import { widthToStringIndex } from "./offset"
 
 type Item = PromptInfo["parts"][number]
+
+// The picker can confirm a skill before the command catalog has synchronized.
+export function resolvePromptCommand(
+  inputText: string,
+  commands: Parameters<typeof resolveSkillSlash>[2],
+  t: (key: string) => string,
+  pickedSkill?: string,
+) {
+  if (!inputText.startsWith("/")) return
+  const firstLineEnd = inputText.indexOf("\n")
+  const firstLine = firstLineEnd === -1 ? inputText : inputText.slice(0, firstLineEnd)
+  const [prefix, ...firstLineArgs] = firstLine.split(" ")
+  const name = prefix.slice(1)
+  const command = commands.find((item) => item.name === name)?.name ?? resolveSkillSlash(t, name, commands) ?? (name === pickedSkill ? pickedSkill : undefined)
+  if (!command) return
+  const restOfInput = firstLineEnd === -1 ? "" : inputText.slice(firstLineEnd + 1)
+  return {
+    command,
+    arguments: firstLineArgs.join(" ") + (restOfInput ? "\n" + restOfInput : ""),
+  }
+}
 
 export function strip(part: Item & { id: string; messageID: string; sessionID: string }): Item {
   const { id: _id, messageID: _messageID, sessionID: _sessionID, ...rest } = part

@@ -31,15 +31,17 @@ PARTIAL HIT, EXACT LITERAL NEEDED. A hit may give the gist but have
 dropped the precise form of a connection string, port, token, full
 command line, or path (curation paraphrases). If you need the literal
 byte-for-byte and the result only approximates it, query the history
-tool — the original message holds it verbatim. Don't reconstruct or
-guess the exact value from a paraphrase.
+tool — search/around give summaries, then get(part_id) reads the
+original text. Don't reconstruct or guess the exact value from a
+paraphrase.
 
 WHEN SEARCH RETURNS 0 (escalate, do not give up):
 1. Retry with fewer / rarer terms (see guidelines above).
 2. For a literal string the tokenizer splits (URL, port, path) — Grep
    the memory dir directly; FTS can't match the punctuation form.
 3. For verbatim recall a summary may have glossed over — use the
-   history tool (raw conversation messages).
+   history tool: search/around give summaries, then get(part_id)
+   reads the original text.
 Widen scope progressively: session → project → global → history.
 
 Actions:

@@ -12,7 +12,15 @@ import { assertExternalDirectoryEffect } from "./external-directory"
 import { SessionCwd } from "./session-cwd"
 import { Instruction } from "../session/instruction"
 import { Provider } from "@/provider"
-import { isImageAttachment, isPdfAttachment, sniffAttachmentMime } from "@/util/media"
+import { shrinkAttachment } from "@/provider/image"
+import { builtinSkillRoot } from "@/skill/builtin/extract"
+import {
+  classifyAttachment,
+  isImageAttachment,
+  isPdfAttachment,
+  oversizedAttachmentNotice,
+  sniffAttachmentMime,
+} from "@/util/media"
 
 const DEFAULT_READ_LIMIT = 2000
 const MAX_LINE_LENGTH = 2000
@@ -210,32 +218,65 @@ export const ReadTool = Tool.define(
       const sample = yield* readSample(filepath, Number(stat.size), SAMPLE_BYTES)
 
       const mime = sniffAttachmentMime(sample, AppFileSystem.mimeType(filepath))
+      // Size gate on stat, before any bytes are read (see classifyAttachment):
+      // a rejected PDF or image is never read, an oversized image within the
+      // source ceiling is read and recompressed below. Either way nothing over
+      // the limit becomes base64 or reaches the session DB.
+      const verdict =
+        isImageAttachment(mime) || isPdfAttachment(mime) ? classifyAttachment(mime, Number(stat.size)) : "fits"
+      if (verdict === "reject") {
+        const warning = oversizedAttachmentNotice({
+          label: `"${path.basename(filepath)}" (${mime})`,
+          size: Number(stat.size),
+          hint: "It was not read.",
+        })
+        return {
+          title,
+          output: warning,
+          metadata: { preview: warning, truncated: false, loaded: loaded.map((item) => item.filepath) },
+        }
+      }
+      // The active model is carried on ctx.extra.model (set on both the
+      // agent-call path and the @file resolution path, which passes messages: []).
+      // Fall back to resolving the last user message's model for any caller that
+      // doesn't populate extra. Mirrors tool/websearch/index.ts.
+      const extraModel = (ctx.extra as { model?: Provider.Model } | undefined)?.model
+      const messageModelRef = extraModel
+        ? undefined
+        : [...ctx.messages]
+            .reverse()
+            .map((m) => m.info)
+            .find((i): i is Extract<typeof i, { role: "user" }> => i.role === "user")?.model
+      const model =
+        extraModel ??
+        (messageModelRef
+          ? yield* provider
+              .getModel(messageModelRef.providerID, messageModelRef.modelID)
+              .pipe(Effect.catchDefect(() => Effect.succeed(undefined)))
+          : undefined)
+
+      if (isPdfAttachment(mime) && !(model?.capabilities.input.pdf ?? false)) {
+        // Same shape as the image gate below: the bytes are never read, so a
+        // PDF the model cannot take never becomes base64 and never reaches the
+        // session DB. The model is pointed at the bundled pdf skill instead.
+        const warning = [
+          `Cannot attach PDF "${path.basename(filepath)}" — the current model has no PDF input support, so the file was not read.`,
+          `To work with its contents, extract text (or render pages to images) with the bundled pdf skill: read ${path.join(builtinSkillRoot(), "pdf-official", "SKILL.md")} and follow it.`,
+        ].join("\n")
+        return {
+          title,
+          output: warning,
+          metadata: { preview: warning, truncated: false, loaded: loaded.map((item) => item.filepath) },
+        }
+      }
       if (isImageAttachment(mime)) {
-        // The active model is carried on ctx.extra.model (set on both the
-        // agent-call path and the @file resolution path, which passes messages: []).
-        // Fall back to resolving the last user message's model for any caller that
-        // doesn't populate extra. Mirrors tool/websearch/index.ts.
-        const extraModel = (ctx.extra as { model?: Provider.Model } | undefined)?.model
-        const messageModelRef = extraModel
-          ? undefined
-          : [...ctx.messages]
-              .reverse()
-              .map((m) => m.info)
-              .find((i): i is Extract<typeof i, { role: "user" }> => i.role === "user")?.model
-        const model =
-          extraModel ??
-          (messageModelRef
-            ? yield* provider
-                .getModel(messageModelRef.providerID, messageModelRef.modelID)
-                .pipe(Effect.catchDefect(() => Effect.succeed(undefined)))
-            : undefined)
         const supportsImage = model?.capabilities.input.image ?? false
         if (!supportsImage) {
-        const preferred = yield* provider.getVisionModel().pipe(Effect.orElseSucceed(() => undefined))
-        const preferredRef = preferred ? `${preferred.providerID}/${preferred.id}` : undefined
-        const dispatch = preferredRef
-          ? `dispatch a vision-capable subagent: actor run <type> "<desc>" "analyze the image at ${filepath}" --model ${preferredRef} (run \`actor models --vision\` for the full list)`
-          : `no vision-capable model is configured — ask the user to configure one or use an OCR tool`
+          const preferred = yield* provider.getVisionModel().pipe(Effect.orElseSucceed(() => undefined))
+          const preferredRef = preferred ? `${preferred.providerID}/${preferred.id}` : undefined
+          const dispatch = preferredRef
+            ? `dispatch a vision-capable subagent: actor run <type> "<desc>" "analyze the image at ${filepath}" --model ${preferredRef} (run \`actor models --vision\` for the full list)`
+            : `no vision-capable model is configured — ask the user to configure one or use an OCR tool`
           const warning = [
             `Cannot read image "${path.basename(filepath)}" — the current model has no vision support, so its visual content is unavailable.`,
             `If you need to understand the image visually, ${dispatch}.`,
@@ -247,20 +288,38 @@ export const ReadTool = Tool.define(
             metadata: { preview: warning, truncated: false, loaded: [] as string[] },
           }
         }
-        const bytes = yield* fs.readFile(filepath)
+        const bytes = Buffer.from(yield* fs.readFile(filepath))
+        const fitted = verdict === "shrink" ? shrinkAttachment(mime, bytes) : { mime, base64: bytes.toString("base64") }
+        if (!fitted) {
+          const warning = oversizedAttachmentNotice({
+            label: `"${path.basename(filepath)}" (${mime})`,
+            size: bytes.byteLength,
+            compressed: true,
+            hint: "It was not attached.",
+          })
+          return {
+            title,
+            output: warning,
+            metadata: { preview: warning, truncated: false, loaded: loaded.map((item) => item.filepath) },
+          }
+        }
+        const output =
+          verdict === "shrink"
+            ? `Image read successfully (recompressed from ${bytes.byteLength} bytes to ${fitted.mime} to fit the attachment limit)`
+            : "Image read successfully"
         return {
           title,
-          output: "Image read successfully",
+          output,
           metadata: {
-            preview: "Image read successfully",
+            preview: output,
             truncated: false,
             loaded: loaded.map((item) => item.filepath),
           },
           attachments: [
             {
               type: "file" as const,
-              mime,
-              url: `data:${mime};base64,${Buffer.from(bytes).toString("base64")}`,
+              mime: fitted.mime,
+              url: `data:${fitted.mime};base64,${fitted.base64}`,
             },
           ],
         }

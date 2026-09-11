@@ -47,6 +47,8 @@ export function toPartialRow(info: DeepPartial<Session.Info>) {
     slug: grab(info, "slug"),
     directory: grab(info, "directory"),
     title: grab(info, "title"),
+    title_source: grab(info, "titleSource"),
+    title_revision: grab(info, "titleRevision"),
     version: grab(info, "version"),
     share_url: grab(info, "share", (v) => grab(v, "url")),
     summary_additions: grab(info, "summary", (v) => grab(v, "additions")),
@@ -70,8 +72,31 @@ export default [
     db.insert(SessionTable).values(Session.toRow(data.info)).run()
   }),
 
+  SyncEvent.project(Session.LegacyUpdated, (db, data) => {
+    const current = db.select().from(SessionTable).where(eq(SessionTable.id, data.sessionID)).get()
+    if (!current) throw new NotFoundError({ message: `Session not found: ${data.sessionID}` })
+    const { title, ...rest } = data.info
+    // Schema migration initializes old data at revision zero. Rebuilding the
+    // legacy prefix must produce that same baseline before any v2 transition.
+    // Once a revisioned title command exists, no v1 title can follow it.
+    if (title !== undefined && current.title_revision !== 0) throw new Error("Legacy title event after revisioned title command")
+    db.update(SessionTable).set({
+      ...toPartialRow(rest),
+      ...(title !== undefined ? { title: title || "Untitled", title_source: "user" as const, title_revision: 0 } : {}),
+    }).where(eq(SessionTable.id, data.sessionID)).run()
+  }),
+
   SyncEvent.project(Session.Event.Updated, (db, data) => {
     const info = data.info
+    if ("title" in info || "titleSource" in info || "titleRevision" in info) {
+      const current = db.select().from(SessionTable).where(eq(SessionTable.id, data.sessionID)).get()
+      if (!current) throw new NotFoundError({ message: `Session not found: ${data.sessionID}` })
+      const next = Session.TitleSnapshot.parse({ sessionID: data.sessionID, ...info })
+      if (data.previousRevision !== current.title_revision || next.titleRevision !== current.title_revision + 1)
+        throw new Error("Title event revision mismatch")
+      if (current.title_source === "user" && next.titleSource !== "user") throw new Error("Protected title cannot be unlocked")
+      if (next.titleSource === "fallback" && current.title_source !== "fallback") throw new Error("Generated title cannot return to fallback")
+    } else if (data.previousRevision !== undefined) throw new Error("Title event is missing its snapshot")
     const row = db
       .update(SessionTable)
       .set(toPartialRow(info))

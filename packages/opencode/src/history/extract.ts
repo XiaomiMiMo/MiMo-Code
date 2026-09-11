@@ -1,23 +1,18 @@
+import { cleanDataUrls } from "./media"
 import type { MessageV2 } from "../session/message-v2"
 
-export type Kind =
-  | "user_text"
-  | "assistant_text"
-  | "tool_input"
-  | "tool_error"
-  | "reasoning"
-  | "tool_output"
+export type Kind = "user_text" | "assistant_text" | "tool_input" | "tool_error" | "reasoning" | "tool_output"
 
-export const DEFAULT_KINDS: ReadonlyArray<Kind> = [
-  "user_text",
-  "assistant_text",
-  "tool_input",
-  "tool_error",
-]
+export const DEFAULT_KINDS: ReadonlyArray<Kind> = ["user_text", "assistant_text", "tool_input", "tool_error"]
 
 export type Extracted = { kind: Kind; body: string; tool_name: string | null }
 
-export function extract(
+export function extract(...args: Parameters<typeof extractRaw>): Extracted | null {
+  const result = extractRaw(...args)
+  return result ? { ...result, body: cleanDataUrls(result.body, undefined, "index") } : null
+}
+
+function extractRaw(
   part: MessageV2.Part,
   messageRole: "user" | "assistant",
   enabledKinds: ReadonlySet<Kind>,

@@ -8,7 +8,8 @@ import { Icon } from "@mimo-ai/ui/icon"
 import { IconButton } from "@mimo-ai/ui/icon-button"
 import { DropdownMenu } from "@mimo-ai/ui/dropdown-menu"
 import { Dialog } from "@mimo-ai/ui/dialog"
-import { InlineInput } from "@mimo-ai/ui/inline-input"
+import { TitleEditor } from "./title-editor"
+import type { TitleSnapshot } from "./title-editor-state"
 import { Spinner } from "@mimo-ai/ui/spinner"
 import { SessionTurn } from "@mimo-ai/ui/session-turn"
 import { ScrollView } from "@mimo-ai/ui/scroll-view"
@@ -342,13 +343,15 @@ export function MessageTimeline(props: {
   })
 
   const [title, setTitle] = createStore({
-    draft: "",
+    original: "",
+    sessionKey: "",
+    sessionID: "",
+    baseRevision: 0,
     editing: false,
     menuOpen: false,
     pendingRename: false,
     pendingShare: false,
   })
-  let titleRef: HTMLInputElement | undefined
 
   const [share, setShare] = createStore({
     open: false,
@@ -398,25 +401,25 @@ export function MessageTimeline(props: {
     },
   }))
 
-  const titleMutation = useMutation(() => ({
-    mutationFn: (input: { id: string; title: string }) =>
-      sdk.client.session.update({ sessionID: input.id, title: input.title }),
-    onSuccess: (_, input) => {
-      sync.set(
-        produce((draft) => {
-          const index = draft.session.findIndex((s) => s.id === input.id)
-          if (index !== -1) draft.session[index].title = input.title
-        }),
-      )
-      setTitle("editing", false)
-    },
-    onError: (err) => {
-      showToast({
-        title: language.t("common.requestFailed"),
-        description: errorMessage(err),
-      })
-    },
-  }))
+  const applyTitle = (snapshot: TitleSnapshot): TitleSnapshot => {
+    sync.set(
+      produce((draft) => {
+        const session = draft.session.find((s) => s.id === snapshot.sessionID)
+        if (!session || snapshot.titleRevision <= session.titleRevision) return
+        session.title = snapshot.title
+        session.titleSource = snapshot.titleSource
+        session.titleRevision = snapshot.titleRevision
+      }),
+    )
+    const current = sync.session.get(snapshot.sessionID)
+    if (!current || current.titleRevision <= snapshot.titleRevision) return snapshot
+    return {
+      sessionID: current.id,
+      title: current.title,
+      titleSource: current.titleSource,
+      titleRevision: current.titleRevision,
+    }
+  }
 
   const shareSession = () => {
     const id = sessionID()
@@ -437,7 +440,8 @@ export function MessageTimeline(props: {
       sessionKey,
       () =>
         setTitle({
-          draft: "",
+          original: "",
+          sessionID: "",
           editing: false,
           menuOpen: false,
           pendingRename: false,
@@ -460,31 +464,15 @@ export function MessageTimeline(props: {
   )
 
   const openTitleEditor = () => {
-    if (!sessionID() || parentID()) return
-    setTitle({ editing: true, draft: titleLabel() ?? "" })
-    requestAnimationFrame(() => {
-      titleRef?.focus()
-      titleRef?.select()
-    })
-  }
-
-  const closeTitleEditor = () => {
-    if (titleMutation.isPending) return
-    setTitle("editing", false)
-  }
-
-  const saveTitleEditor = () => {
     const id = sessionID()
-    if (!id) return
-    if (titleMutation.isPending) return
-
-    const next = title.draft.trim()
-    if (!next || next === (titleLabel() ?? "")) {
-      setTitle("editing", false)
-      return
-    }
-
-    titleMutation.mutate({ id, title: next })
+    if (!id || parentID()) return
+    setTitle({
+      editing: true,
+      sessionKey: sessionKey(),
+      sessionID: id,
+      original: titleLabel() ?? "",
+      baseRevision: info()?.titleRevision ?? 0,
+    })
   }
 
   const navigateAfterSessionRemoval = (sessionID: string, parentID?: string, nextSessionID?: string) => {
@@ -773,7 +761,7 @@ export function MessageTimeline(props: {
                       </div>
                       <Show when={childTitle() || title.editing}>
                         <Show
-                          when={title.editing}
+                          when={title.editing && title.sessionKey === sessionKey()}
                           fallback={
                             <h1
                               data-slot="session-title-child"
@@ -784,29 +772,24 @@ export function MessageTimeline(props: {
                             </h1>
                           }
                         >
-                          <InlineInput
-                            ref={(el) => {
-                              titleRef = el
+                          <TitleEditor
+                            sessionID={title.sessionID}
+                            original={title.original}
+                            baseRevision={title.baseRevision}
+                            update={async (input) => {
+                              const response = await sdk.client.session.update(input, { throwOnError: true })
+                              return response.data && { ...response.data, sessionID: response.data.id }
                             }}
-                            data-slot="session-title-child"
-                            value={title.draft}
-                            disabled={titleMutation.isPending}
-                            class="text-14-medium text-text-strong grow-1 min-w-0 rounded-[6px] pl-1 -ml-1"
-                            style={{ "--inline-input-shadow": "var(--shadow-xs-border-select)" }}
-                            onInput={(event) => setTitle("draft", event.currentTarget.value)}
-                            onKeyDown={(event) => {
-                              event.stopPropagation()
-                              if (event.key === "Enter") {
-                                event.preventDefault()
-                                void saveTitleEditor()
-                                return
-                              }
-                              if (event.key === "Escape") {
-                                event.preventDefault()
-                                closeTitleEditor()
-                              }
+                            apply={applyTitle}
+                            close={() => setTitle("editing", false)}
+                            error={(err) =>
+                              showToast({ title: language.t("common.requestFailed"), description: errorMessage(err) })
+                            }
+                            labels={{
+                              conflict: (current) => language.t("session.title.conflict", { title: current }),
+                              overwrite: language.t("session.title.overwrite"),
+                              cancel: language.t("common.cancel"),
                             }}
-                            onBlur={closeTitleEditor}
                           />
                         </Show>
                       </Show>

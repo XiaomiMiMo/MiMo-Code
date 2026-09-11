@@ -113,4 +113,87 @@ describe("plugin.trigger", () => {
 
     expect(out.system).toEqual(["async"])
   })
+
+  test("skips plugins that return undefined instead of a hook object", async () => {
+    await using tmp = await project(["export default async () => {}", ""].join("\n"))
+
+    const out = await Instance.provide({
+      directory: tmp.path,
+      fn: async () =>
+        Effect.gen(function* () {
+          const plugin = yield* Plugin.Service
+          const listed = yield* plugin.list()
+          const output = { message: { role: "user" } as any, parts: [] as any[] }
+          yield* plugin.trigger("chat.message", { sessionID: "ses_test" }, output)
+          return { listed, output }
+        }).pipe(Effect.provide(Plugin.defaultLayer), Effect.runPromise),
+    })
+
+    expect(out.listed.every((hook) => hook != null && typeof hook === "object")).toBe(true)
+    expect(out.output.parts).toEqual([])
+  })
+
+  test("chat.message is a no-op when no plugin implements the hook", async () => {
+    await using tmp = await tmpdir({
+      init: async (dir) => {
+        await Bun.write(path.join(dir, "mimocode.json"), "{}")
+      },
+    })
+
+    const output = await Instance.provide({
+      directory: tmp.path,
+      fn: async () =>
+        Effect.gen(function* () {
+          const plugin = yield* Plugin.Service
+          const output = { message: { role: "user" } as any, parts: [] as any[] }
+          return yield* plugin.trigger("chat.message", { sessionID: "ses_test" }, output)
+        }).pipe(Effect.provide(Plugin.defaultLayer), Effect.runPromise),
+    })
+
+    expect(output.parts).toEqual([])
+  })
+
+  test("still runs valid hooks when another plugin returns undefined", async () => {
+    await using tmp = await tmpdir({
+      init: async (dir) => {
+        const empty = path.join(dir, "empty.ts")
+        const valid = path.join(dir, "valid.ts")
+        await Bun.write(empty, ["export default async () => {}", ""].join("\n"))
+        await Bun.write(
+          valid,
+          [
+            "export default async () => ({",
+            '  "chat.message": (_input, output) => {',
+            '    output.parts.push({ type: "text", text: "ok" })',
+            "  },",
+            "})",
+            "",
+          ].join("\n"),
+        )
+        await Bun.write(
+          path.join(dir, "mimocode.json"),
+          JSON.stringify(
+            {
+              $schema: "https://opencode.ai/config.json",
+              plugin: [pathToFileURL(empty).href, pathToFileURL(valid).href],
+            },
+            null,
+            2,
+          ),
+        )
+      },
+    })
+
+    const output = await Instance.provide({
+      directory: tmp.path,
+      fn: async () =>
+        Effect.gen(function* () {
+          const plugin = yield* Plugin.Service
+          const output = { message: { role: "user" } as any, parts: [] as any[] }
+          return yield* plugin.trigger("chat.message", { sessionID: "ses_test" }, output)
+        }).pipe(Effect.provide(Plugin.defaultLayer), Effect.runPromise),
+    })
+
+    expect(output.parts).toEqual([{ type: "text", text: "ok" }])
+  })
 })

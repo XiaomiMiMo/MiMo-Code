@@ -14,9 +14,25 @@
   <a href="https://mimo.xiaomi.com/zh/mimocode">官网</a> | <a href="https://mimo.xiaomi.com/zh/blog/mimo-code-long-horizon">博客</a>
 </p>
 
+MiMoCode 是一个终端原生的 AI 编程助手。它能读写代码、执行命令、管理 Git，通过持久化记忆系统，在多次会话间保持对你项目的深度理解，并自我进化。
+
 ---
 
-MiMoCode 是一个终端原生的 AI 编程助手。它能读写代码、执行命令、管理 Git，通过持久化记忆系统，在多次会话间保持对你项目的深度理解，并自我进化。
+<p align="center"><strong>MiMo 桌面端内测邀请</strong>：<a href="https://mimo.xiaomimimo.com/desktop/invite/">立即申请国内邀测</a></p>
+
+## Xiaomi MiMo Desktop 开放邀测
+
+<p align="center"><img src="assets/readme/mimo-desktop-cn.jpg" alt="Xiaomi MiMo Desktop 中文界面：会话与研究报告预览" width="900"></p>
+
+Xiaomi MiMo Desktop 面向真实工作场景打造，一个会话即可完成办公、设计、编程和全模态创作；多个会话可自动分工、协作与通信。桌面端以 **MiMo Code 作为核心引擎**，将终端原生的智能能力延伸到桌面工作流。
+
+- **「Smart」调度**：自动评估任务类型与成本，动态选择模型、框架与工具，复杂任务由多个 Agent 并行推进。
+- **从生成结果到持续迭代**：支持拖入多格式文件，成果覆盖 PPT、网页、3D、App 等；会话内实时预览和操作，选中局部即可精准修改，并支持版本回退。
+- **让长任务成本可控**：标准与旗舰模型自动路由，局部编辑只修改需要的部分；同会话缓存命中率最高 99%，跨会话最高 95%。
+- **浏览器操控**：自主打开网页、检索和提取信息、填写表单，生成网页后自动检查关键交互。
+- **电脑操控（仅限海外版）**：读屏并操作键鼠，跨应用执行；Record & Replay 录制一次后，可用自然语言复用。
+
+通过邀测审核后，可限时限量体验新一代小米模型 **MiMo-X-Pro-Preview** 和 **MiMo-X-Flash-Preview**。
 
 支持接入各家主流 LLM 厂商 API。
 

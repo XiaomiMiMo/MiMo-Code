@@ -8,11 +8,13 @@ import { Plugin } from "../../src/plugin/index"
 import { ModelsDev } from "../../src/provider"
 import { Provider } from "../../src/provider"
 import { ProviderID, ModelID } from "../../src/provider/schema"
+import { Auth } from "../../src/auth"
 import { Env } from "../../src/env"
 import { Global } from "../../src/global"
 import { Effect } from "effect"
 import { AppRuntime } from "../../src/effect/app-runtime"
 import { makeRuntime } from "../../src/effect/run-service"
+import { OpenAICompatibleChatLanguageModel } from "@ai-sdk/openai-compatible"
 
 const env = makeRuntime(Env.Service, Env.defaultLayer)
 const set = (k: string, v: string) => env.runSync((svc) => svc.set(k, v))
@@ -1911,8 +1913,74 @@ test("xiaomi models outside PTC mode stay on Chat Completions regardless of vers
       )
       const languages = await Promise.all(models.map((model) => getLanguage(model)))
       expect(languages.map((language) => language.provider)).toEqual(["xiaomi.chat", "xiaomi.chat"])
+      // Non-PTC must be the stock SDK, not the bundled Copilot fork (which only parses `reasoning_text`).
+      for (const language of languages) expect(language).toBeInstanceOf(OpenAICompatibleChatLanguageModel)
     },
   })
+})
+
+test("xiaomi non-PTC chat streams reasoning_content as reasoning parts", async () => {
+  await using tmp = await tmpdir({
+    init: async (dir) => {
+      await Bun.write(
+        path.join(dir, "mimocode.json"),
+        JSON.stringify({
+          $schema: "https://opencode.ai/config.json",
+          enabled_providers: ["xiaomi"],
+          provider: {
+            xiaomi: {
+              models: {
+                "mimo-v2.6": {
+                  name: "MiMo V2.6",
+                  reasoning: true,
+                  tool_call: true,
+                  limit: { context: 8192, output: 2048 },
+                },
+              },
+              options: { apiKey: "test-key", baseURL: "https://example.test/v1" },
+            },
+          },
+        }),
+      )
+    },
+  })
+  const chunks = [
+    { id: "c1", choices: [{ delta: { role: "assistant", reasoning_content: "think " } }] },
+    { id: "c1", choices: [{ delta: { reasoning_content: "hard" } }] },
+    { id: "c1", choices: [{ delta: { content: "answer" }, finish_reason: "stop" }] },
+  ]
+  const originalFetch = globalThis.fetch
+  globalThis.fetch = (async () =>
+    new Response(chunks.map((chunk) => `data: ${JSON.stringify(chunk)}\n\n`).join("") + "data: [DONE]\n\n", {
+      headers: { "content-type": "text/event-stream" },
+    })) as unknown as typeof fetch
+  try {
+    await Instance.provide({
+      directory: tmp.path,
+      init: async () => {
+        set("XIAOMI_API_KEY", "test-key")
+      },
+      fn: async () => {
+        const model = await getModel(ProviderID.make("xiaomi"), ModelID.make("mimo-v2.6"))
+        const language = await getLanguage(model)
+        const result = await language.doStream({ prompt: [{ role: "user", content: [{ type: "text", text: "hi" }] }] })
+        const parts: any[] = []
+        const reader = result.stream.getReader()
+        while (true) {
+          const next = await reader.read()
+          if (next.done) break
+          parts.push(next.value)
+        }
+        expect(parts.filter((part) => part.type === "reasoning-delta").map((part) => part.delta)).toEqual([
+          "think ",
+          "hard",
+        ])
+        expect(parts.filter((part) => part.type === "text-delta").map((part) => part.delta)).toEqual(["answer"])
+      },
+    })
+  } finally {
+    globalThis.fetch = originalFetch
+  }
 })
 
 // Edge cases for model configuration
@@ -3315,6 +3383,57 @@ test("plugin config providers persist after instance dispose", async () => {
   })
   expect(second[ProviderID.make("demo")]).toBeDefined()
   expect(second[ProviderID.make("demo")].models[ModelID.make("chat")]).toBeDefined()
+})
+
+test("plugin auth loader is skipped when provider is missing from catalog", async () => {
+  await using tmp = await tmpdir({
+    init: async (dir) => {
+      const root = path.join(dir, ".mimocode", "plugin")
+      await mkdir(root, { recursive: true })
+      await Bun.write(
+        path.join(root, "missing-catalog.ts"),
+        [
+          "export default {",
+          '  id: "demo.missing-catalog",',
+          "  server: async () => ({",
+          "    auth: {",
+          '      provider: "test-missing-provider",',
+          "      async loader() {",
+          '        throw new Error("plugin auth loader should not run when provider is missing from catalog")',
+          "      },",
+          "      methods: [],",
+          "    },",
+          "  }),",
+          "}",
+          "",
+        ].join("\n"),
+      )
+    },
+  })
+
+  Auth.inject(
+    JSON.stringify({
+      "test-missing-provider": {
+        type: "api",
+        key: "test-key",
+      },
+    }),
+  )
+  try {
+    await Instance.provide({
+      directory: tmp.path,
+      init: async () => {
+        set("ANTHROPIC_API_KEY", "test-api-key")
+      },
+      fn: async () => {
+        const providers = await list()
+        expect(providers[ProviderID.anthropic]).toBeDefined()
+        expect(providers[ProviderID.make("test-missing-provider")]).toBeUndefined()
+      },
+    })
+  } finally {
+    Auth.inject(undefined)
+  }
 })
 
 test("plugin config enabled and disabled providers are honored", async () => {

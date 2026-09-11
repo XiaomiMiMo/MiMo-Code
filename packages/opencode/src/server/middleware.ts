@@ -28,6 +28,8 @@ export const ErrorMiddleware: ErrorHandler = (err, c) => {
     else status = 500
     return c.json(err.toObject(), { status })
   }
+  if (err instanceof Session.TitleConflictError) return c.json(err.toObject(), { status: 409 })
+  if (err instanceof Session.TitleRevisionError) return c.json({ success: false, data: { message: err.message }, errors: [{ message: err.message }] }, { status: 400 })
   if (err instanceof Session.BusyError) {
     return c.json(new NamedError.Unknown({ message: err.message }).toObject(), { status: 409 })
   }

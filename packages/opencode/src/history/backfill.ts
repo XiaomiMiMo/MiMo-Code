@@ -6,6 +6,7 @@ import { PartTable, SessionTable } from "../session/session.sql"
 import { HistoryFtsTable } from "./fts.sql"
 import { extract, DEFAULT_KINDS, type Kind } from "./extract"
 import { makeResolver, type Resolver } from "./resolve"
+import { projection } from "./projection"
 import { Log } from "../util"
 import type { MessageV2 } from "../session/message-v2"
 
@@ -43,17 +44,20 @@ export function backfillAll(enabled: ReadonlySet<Kind> = new Set(DEFAULT_KINDS))
   })
 }
 
-function scanSession(
-  session: { id: string; project_id: string },
-  resolver: Resolver,
-  enabled: ReadonlySet<Kind>,
-) {
+function scanSession(session: { id: string; project_id: string }, resolver: Resolver, enabled: ReadonlySet<Kind>) {
   return Effect.gen(function* () {
     let cursor = ""
     while (true) {
       const parts = Database.use((db) =>
         db
-          .select()
+          .select(
+            projection(
+              enabled.has("tool_output"),
+              enabled.has("tool_error"),
+              enabled.has("reasoning"),
+              enabled.has("user_text") || enabled.has("assistant_text"),
+            ),
+          )
           .from(PartTable)
           .where(
             and(
@@ -151,9 +155,7 @@ export const layer: Layer.Layer<Service, never, Config.Service> = Layer.effect(
         const enabled = new Set<Kind>(kinds as readonly Kind[])
         // Fire-and-forget: do not block bootstrap on the potentially long scan.
         yield* backfillAll(enabled).pipe(
-          Effect.catchCause((cause) =>
-            Effect.sync(() => log.warn("backfill aborted", { cause: String(cause) })),
-          ),
+          Effect.catchCause((cause) => Effect.sync(() => log.warn("backfill aborted", { cause: String(cause) }))),
           Effect.forkDetach,
         )
       }),

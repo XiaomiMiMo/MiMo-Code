@@ -209,6 +209,29 @@ export const Flag = {
   // placeholder when they can't be compressed. Values must be positive integers.
   MIMOCODE_MAX_PROMPT_IMAGES: number("MIMOCODE_MAX_PROMPT_IMAGES"),
   MIMOCODE_MAX_PROMPT_IMAGE_SIZE: number("MIMOCODE_MAX_PROMPT_IMAGE_SIZE"),
+  // Upper bound, in bytes, on a single inline attachment (image, PDF, audio,
+  // MCP blob). Enforced where the attachment is produced — the read tool, user
+  // prompt attachments, and MCP result normalization — with the size taken
+  // from stat or the base64 length so an under-limit payload costs nothing
+  // extra. Over the limit, an image is read and recompressed to fit; anything
+  // that still cannot fit (PDFs, audio, video, undecodable images) is replaced
+  // by a notice, so nothing oversized ever becomes a stored part. Defaults to
+  // 50 MB. Provider limits are lower (the Claude API takes 10 MB per image,
+  // Bedrock and Vertex 5 MB) and are still enforced at send time by the
+  // MIMOCODE_MAX_PROMPT_IMAGE_SIZE / provider cap in provider/transform.ts.
+  // Read lazily so tests can flip it at runtime.
+  get MIMOCODE_MAX_ATTACHMENT_SIZE() {
+    return number("MIMOCODE_MAX_ATTACHMENT_SIZE") ?? 50 * 1024 * 1024
+  },
+  // Ceiling, in bytes, above which an oversized image is refused outright
+  // instead of being read and recompressed. Defaults to 150 MB: compressImage
+  // already refuses anything over MAX_DECODE_IMAGE_PIXELS (64 MP), and a PNG
+  // that decodes within that budget is at most ~150-200 MB on disk, so a
+  // larger file would only be read into memory to fail the pixel guard.
+  // Read lazily so tests can flip it at runtime.
+  get MIMOCODE_MAX_ATTACHMENT_SOURCE_SIZE() {
+    return number("MIMOCODE_MAX_ATTACHMENT_SOURCE_SIZE") ?? 150 * 1024 * 1024
+  },
   MIMOCODE_MIMO_ONLY,
   MIMOCODE_DISABLE_PROVIDER_ENV: MIMOCODE_MIMO_ONLY || truthy("MIMOCODE_DISABLE_PROVIDER_ENV"),
   MIMOCODE_DISABLE_CLAUDE_CODE,

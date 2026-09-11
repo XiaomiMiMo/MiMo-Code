@@ -160,6 +160,23 @@ function isServerPlugin(value: unknown): value is PluginInstance {
   return typeof value === "function"
 }
 
+function isHookObject(value: unknown): value is Hooks {
+  return value != null && typeof value === "object"
+}
+
+function registerHook(hooks: Hooks[], hooksWithMeta: HookEntry[], hook: unknown, pluginName: string) {
+  if (!isHookObject(hook)) {
+    log.warn("plugin did not return a hook object, skipping", { pluginName })
+    return
+  }
+  hooks.push(hook)
+  hooksWithMeta.push({
+    hook,
+    pluginName,
+    hookIDFor: (event: string) => `${pluginName}#${event}`,
+  })
+}
+
 function getServerPlugin(value: unknown) {
   if (isServerPlugin(value)) return value
   if (!value || typeof value !== "object" || !("server" in value)) return
@@ -192,13 +209,7 @@ async function applyPlugin(
   if (plugin) {
     await resolvePluginId(load.source, load.spec, load.target, readPluginId(plugin.id, load.spec), load.pkg)
     const pluginName = readPluginId(plugin.id, load.spec) ?? load.pkg?.pkg ?? load.spec
-    const hookObj = await (plugin as PluginModule).server(input, load.options)
-    hooks.push(hookObj)
-    hooksWithMeta.push({
-      hook: hookObj,
-      pluginName,
-      hookIDFor: (event: string) => `${pluginName}#${event}`,
-    })
+    registerHook(hooks, hooksWithMeta, await (plugin as PluginModule).server(input, load.options), pluginName)
     return
   }
 
@@ -207,13 +218,7 @@ async function applyPlugin(
     const pluginName = fnName && fnName !== "default" && fnName !== ""
       ? fnName
       : (load.pkg?.pkg ?? load.spec)
-    const hookObj = await server(input, load.options)
-    hooks.push(hookObj)
-    hooksWithMeta.push({
-      hook: hookObj,
-      pluginName,
-      hookIDFor: (event: string) => `${pluginName}#${event}`,
-    })
+    registerHook(hooks, hooksWithMeta, await server(input, load.options), pluginName)
   }
 }
 
@@ -264,6 +269,10 @@ export const layer = Layer.effect(
         }
 
         for (const plugin of INTERNAL_PLUGINS) {
+          if (typeof plugin !== "function") {
+            log.warn("skipping invalid internal plugin")
+            continue
+          }
           log.info("loading internal plugin", { name: plugin.name })
           const init = yield* Effect.tryPromise({
             try: () => plugin(input),
@@ -271,14 +280,7 @@ export const layer = Layer.effect(
               log.error("failed to load internal plugin", { name: plugin.name, error: err })
             },
           }).pipe(Effect.option)
-          if (init._tag === "Some") {
-            hooks.push(init.value)
-            hooksWithMeta.push({
-              hook: init.value,
-              pluginName: plugin.name,
-              hookIDFor: (event: string) => `${plugin.name}#${event}`,
-            })
-          }
+          if (init._tag === "Some") registerHook(hooks, hooksWithMeta, init.value, plugin.name || "internal")
         }
 
         // Load optional local extensions under src/ext/. Prefers the generated
@@ -319,14 +321,7 @@ export const layer = Layer.effect(
             try: () => overlay(input),
             catch: (err) => log.error("failed to load extension", { name, error: err }),
           }).pipe(Effect.option)
-          if (init._tag === "Some") {
-            hooks.push(init.value)
-            hooksWithMeta.push({
-              hook: init.value,
-              pluginName: name,
-              hookIDFor: (event: string) => `${name}#${event}`,
-            })
-          }
+          if (init._tag === "Some") registerHook(hooks, hooksWithMeta, init.value, name)
         }
 
         const plugins = Flag.MIMOCODE_PURE ? [] : (cfg.plugin_origins ?? [])
@@ -403,6 +398,7 @@ export const layer = Layer.effect(
 
         // Notify plugins of current config
         for (const hook of hooks) {
+          if (!isHookObject(hook)) continue
           yield* Effect.tryPromise({
             try: () => Promise.resolve((hook as any).config?.(cfg)),
             catch: (err) => {
@@ -416,6 +412,7 @@ export const layer = Layer.effect(
           Stream.runForEach((input) =>
             Effect.sync(() => {
               for (const hook of hooks) {
+                if (!isHookObject(hook)) continue
                 void hook["event"]?.({ event: input as any })
               }
             }),
@@ -471,8 +468,8 @@ export const layer = Layer.effect(
               return Effect.succeed(undefined)
             }))
             if (!mod) continue
-            const hookObj: Hooks = (mod.default ?? mod) as Hooks
-            if (hookObj && typeof hookObj === "object") {
+            const hookObj = mod.default ?? mod
+            if (isHookObject(hookObj)) {
               const name = path.basename(match, path.extname(match))
               hooks.push(hookObj)
               meta.push({ hook: hookObj, pluginName: `file:${name}`, hookIDFor: (event: string) => `file:${name}#${event}` })
@@ -489,7 +486,7 @@ export const layer = Layer.effect(
             Stream.runForEach((input) =>
               Effect.sync(() => {
                 for (const entry of meta) {
-                  const fn = entry.hook.event
+                  const fn = entry?.hook?.event
                   if (!fn) continue
                   try {
                     void Promise.resolve(fn({ event: input as any })).catch((err) => {
@@ -555,8 +552,10 @@ export const layer = Layer.effect(
         const hookIDs: string[] = []
         let anyContinue = false
 
-        for (const entry of [...s.hooksWithMeta, ...fh.meta]) {
-          const reg = entry.hook[eventName]
+        for (const entry of [...(s.hooksWithMeta ?? []), ...(fh.meta ?? [])]) {
+          const hook = entry?.hook
+          if (!isHookObject(hook)) continue
+          const reg = hook[eventName]
           if (!reg) continue
 
           const fn = typeof reg === "function" ? reg : reg.run
@@ -665,15 +664,15 @@ export const layer = Layer.effect(
       const s = yield* InstanceState.get(state)
       const fh = yield* freshFileHooks
 
-      for (const entry of s.hooksWithMeta) {
-        const fn = entry.hook[name] as any
-        if (!fn) continue
+      for (const entry of s.hooksWithMeta ?? []) {
+        const fn = entry?.hook?.[name] as ((input: Input, output: Output) => unknown) | undefined
+        if (typeof fn !== "function") continue
         yield* Effect.promise(async () => fn(input, output))
       }
 
-      for (const entry of fh.meta) {
-        const fn = entry.hook[name] as any
-        if (!fn) continue
+      for (const entry of fh.meta ?? []) {
+        const fn = entry?.hook?.[name] as ((input: Input, output: Output) => unknown) | undefined
+        if (typeof fn !== "function") continue
         const hookID = entry.hookIDFor(name)
 
         if ((hookFailures.get(hookID) ?? 0) >= CIRCUIT_BREAKER_THRESHOLD) {

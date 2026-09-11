@@ -9,9 +9,10 @@ export type GenTitlePart =
   | { type: "text"; text: string }
   | { type: "image"; data: string; mime: "image/jpeg" | "image/png" | "image/webp" | "image/gif"; filename?: string }
 
-export type GenTitleInput =
+export type GenTitleInput = (
   | { text: string; parts?: GenTitlePart[]; locale?: string }
   | { text?: string; parts: GenTitlePart[]; locale?: string }
+) & { model?: { providerID: string; modelID: string } }
 
 export function genTitle(client: OpencodeClient, input: GenTitleInput) {
   const hasText = typeof input.text === "string" && input.text.trim().length > 0

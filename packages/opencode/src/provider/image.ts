@@ -3,6 +3,7 @@ import jpeg from "jpeg-js"
 import z from "zod"
 import { NamedError } from "@mimo-ai/shared/util/error"
 import { sniffAttachmentMime } from "@/util/media"
+import { Flag } from "@/flag/flag"
 import type * as Provider from "./provider"
 import { modelDeclaration } from "./capability-registry"
 
@@ -411,4 +412,16 @@ export function compressImage(
     }
   }
   return undefined
+}
+
+// Shrink an attachment the caller already knows is over
+// Flag.MIMOCODE_MAX_ATTACHMENT_SIZE (from stat or the base64 length, so the
+// common under-limit case never pays for this). An image is recompressed to a
+// JPEG under the limit; anything that cannot be shrunk — undecodable image
+// formats, PDFs, audio, video — yields undefined and the caller drops it with
+// a notice.
+export function shrinkAttachment(mime: string, bytes: Buffer): { mime: string; base64: string } | undefined {
+  if (!mime.startsWith("image/")) return undefined
+  const shrunk = compressImage(mime, bytes, Flag.MIMOCODE_MAX_ATTACHMENT_SIZE)
+  return shrunk ? { mime: shrunk.mediaType, base64: shrunk.data } : undefined
 }

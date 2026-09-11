@@ -86,9 +86,11 @@ export const Client = lazy(() => {
 
   const db = init(Path)
 
+  // The WAL pragma itself takes a lock. Install the busy handler first so
+  // simultaneous engine connections do not fail before reaching title CAS.
+  db.run("PRAGMA busy_timeout = 5000")
   db.run("PRAGMA journal_mode = WAL")
   db.run("PRAGMA synchronous = NORMAL")
-  db.run("PRAGMA busy_timeout = 5000")
   db.run("PRAGMA cache_size = -64000")
   db.run("PRAGMA foreign_keys = ON")
   db.run("PRAGMA wal_checkpoint(PASSIVE)")
