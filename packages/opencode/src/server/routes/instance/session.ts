@@ -1059,6 +1059,10 @@ export const SessionRoutes = lazy(() =>
       async (c) => {
         const params = c.req.valid("param")
         const query = c.req.valid("query")
+        // modelProviderID / modelID 必须同时提供,否则 400(不允许只覆盖一侧)。
+        if (!!query.modelProviderID !== !!query.modelID) {
+          return c.json({ data: { name: "InvalidRequest", data: { message: "modelProviderID and modelID must be provided together" } } }, 400)
+        }
         await runRequest(
           "SessionRoutes.resume.assertNotBusy",
           c,

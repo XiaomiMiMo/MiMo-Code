@@ -5576,6 +5576,8 @@ export type SessionResumeData = {
     agentID?: string
     task_id?: string
     titleLocale?: string
+    modelProviderID?: string
+    modelID?: string
   }
   url: "/session/{sessionID}/turn/{assistantMessageID}/resume"
 }

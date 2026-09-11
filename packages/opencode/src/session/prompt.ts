@@ -3102,9 +3102,11 @@ NOTE: At any point in time through this workflow you should feel free to ask the
       const candidates: RecoveryCandidate[] = []
       for (const [index, msg] of msgs.entries()) {
         if (msg.info.role !== "assistant") continue
-        // 只有整轮正常 finish 才排除;step 完成(time.completed)不等于 turn 完成——
-        // 工具步完成、length 截断、tool-calls 中断等 finished assistant 仍可恢复。
-        if ("completed" in msg.info.time && msg.info.finish === "stop" && !msg.info.error) continue
+        // 未完成 assistant 才是恢复候选。步级 time.completed 不等于整轮完成——
+        // tool-calls(工具步完但整轮未答)、length(输出截断)、无 finish(中断)均可恢复;
+        // stop / other 等已正常或已终态收尾的不进候选(allowlist,不靠排除法)。
+        if ("completed" in msg.info.time && msg.info.finish && msg.info.finish !== "tool-calls" && msg.info.finish !== "length") continue
+        if (msg.info.finish === "stop") continue
         const assistant = msg.info
         if (!msgs.some((parent) => parent.info.role === "user" && parent.info.id === assistant.parentID)) continue
         if (msgs.slice(index + 1).some((later) => later.info.role === "user" || later.info.role === "assistant")) continue
@@ -5374,6 +5376,10 @@ NOTE: At any point in time through this workflow you should feel free to ask the
         )
       }
       const agentID = input.agentID ?? "main"
+      // 校验 model override 在 abandon 之前:getModel 失败时不能先把原消息改成 abandoned。
+      if (input.model) {
+        yield* getModel(ProviderID.make(input.model.providerID), ModelID.make(input.model.modelID), input.sessionID)
+      }
       // Abandon the recovered assistant BEFORE detaching runLoop so callers that
       // observe Error / completed state see it immediately (not only in ensuring
       // after the detached loop finishes). ensuring below remains as an idempotent
@@ -5410,6 +5416,10 @@ NOTE: At any point in time through this workflow you should feel free to ask the
         )
       }
       const agentID = input.agentID ?? "main"
+      // 校验 model override 在 abandon 之前:getModel 失败时不能先把原消息改成 abandoned。
+      if (input.model) {
+        yield* getModel(ProviderID.make(input.model.providerID), ModelID.make(input.model.modelID), input.sessionID)
+      }
       // Abandon before detaching runLoop — same timing requirement as resume.
       yield* abandonRecoveredAssistant({ sessionID: input.sessionID, assistantMessageID: input.assistantMessageID, agentID })
       yield* state.start(
