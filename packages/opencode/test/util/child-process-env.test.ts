@@ -36,6 +36,16 @@ test("no-set callers keep reading the current process environment", () => {
   expect(env.resolve()).toEqual({ VALUE: "second" })
 })
 
+test("when a baseline is set, process.env is not used as a source", () => {
+  const env = makeChildProcessEnv(() => ({ FALLBACK: "ignored" }))
+  env.set({ PATH: "/terminal/bin" })
+  const resolved = env.resolve()
+
+  expect(resolved.PATH).toBe("/terminal/bin")
+  expect(resolved.FALLBACK).toBeUndefined()
+  expect(Object.keys(resolved)).toEqual(["PATH"])
+})
+
 test("credential scrub applies only to inherited baseline", () => {
   const env = makeChildProcessEnv(() => ({
     MIMOCODE_AUTH_CONTENT: "inherited-secret",
