@@ -1,7 +1,7 @@
 import { chmod, mkdir, readFile, stat as statFile, writeFile } from "fs/promises"
 import { createWriteStream, existsSync, statSync } from "fs"
 import { realpathSync } from "fs"
-import { dirname, join, relative, resolve as pathResolve, win32 } from "path"
+import { dirname, isAbsolute, join, relative, resolve as pathResolve, win32 } from "path"
 import { Readable } from "stream"
 import { pipeline } from "stream/promises"
 import { Glob } from "@mimo-ai/shared/util/glob"
@@ -155,14 +155,18 @@ export function windowsPath(p: string): string {
       .replace(/^\/mnt\/([a-zA-Z])(?:\/|$)/, (_, drive) => `${drive.toUpperCase()}:/`)
   )
 }
+function isWithinRelativePath(rel: string) {
+  return !isAbsolute(rel) && !/^[A-Za-z]:[\\/]/.test(rel) && !/^\\\\/.test(rel) && !rel.startsWith("..")
+}
+
 export function overlaps(a: string, b: string) {
   const relA = relative(a, b)
   const relB = relative(b, a)
-  return !relA || !relA.startsWith("..") || !relB || !relB.startsWith("..")
+  return !relA || isWithinRelativePath(relA) || !relB || isWithinRelativePath(relB)
 }
 
 export function contains(parent: string, child: string) {
-  return !relative(parent, child).startsWith("..")
+  return isWithinRelativePath(relative(parent, child))
 }
 
 export async function findUp(
