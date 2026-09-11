@@ -4913,12 +4913,23 @@ NOTE: At any point in time through this workflow you should feel free to ask the
         executions.acquire(input.sessionID, agentID),
         (execution) => Effect.gen(function* () {
           yield* executions.attach(execution)
-          if (input.inboxWake && (yield* inbox.drain(input.sessionID, agentID)) === 0) {
+          // Cancelled before drain: skip consuming messages for a turn that won't
+          // run. Still falls through to runTurn so onExit sends the cancelled
+          // notification (continued interrupts immediately).
+          if (execution.cancelled) {
+            // no-op; continued below handles interrupt + notification
+          } else if (input.inboxWake && (yield* inbox.drain(input.sessionID, agentID)) === 0) {
             return yield* lastAssistant(input.sessionID, agentID)
           }
+          // Capture the last assistant delivery even when the turn dies with a
+          // settled error, so settle can persist a partial result the way spawn
+          // does via lastResult. Without this, a failed continuation leaves
+          // result_message_id null after the running transition cleared it.
+          let lastFinal: MessageV2.WithParts | undefined
           const continued = Effect.gen(function* () {
             if (execution.cancelled) return yield* Effect.interrupt
             const final = yield* state.ensureRunning(input.sessionID, agentID, lastAssistant(input.sessionID, agentID), work)
+            lastFinal = final
             if (final.info.role === "assistant" && final.info.error) {
               return yield* Effect.die(new Error(sessionErrorText(final.info.error)))
             }
@@ -4926,10 +4937,39 @@ NOTE: At any point in time through this workflow you should feel free to ask the
           }).pipe(Effect.onExit((exit) => Exit.isFailure(exit) && Cause.hasInterruptsOnly(exit.cause)
             ? state.cancelActor(input.sessionID, agentID)
             : Effect.void))
-          return yield* runTurn(input.sessionID, agentID, continued).pipe(
+          return yield* runTurn(
+            input.sessionID,
+            agentID,
+            continued,
+            // Persist actorResult on the final assistant message so a subsequent
+            // failure wait can find this cycle's delivery via result_message_id.
+            // Without this, registry.updateStatus clears the column on the
+            // running transition and never writes a new one. Mirrors spawn.ts:
+            // success uses the exit value; failure falls back to lastFinal.
+            (exit) =>
+              Effect.gen(function* () {
+                if (Exit.isFailure(exit) && Cause.hasInterruptsOnly(exit.cause)) return undefined
+                const final = Exit.isSuccess(exit) ? exit.value : lastFinal
+                if (!final || final.info.role !== "assistant") return undefined
+                const text = assistantFinalText(final.info, final.parts)
+                const structured = final.info.structured
+                if (text === undefined && structured === undefined) return undefined
+                const parsed = parseReturnHeader(text)
+                yield* sessions.updateMessage({
+                  ...final.info,
+                  actorResult: {
+                    finalText: text,
+                    structured,
+                    ...(parsed.status ? { reportedStatus: parsed.status } : {}),
+                    ...(parsed.summary ? { reportedSummary: parsed.summary } : {}),
+                  },
+                })
+                return final.info.id
+              }),
+          ).pipe(
             Effect.provideService(ActorRegistry.Service, actorRegistry),
             Effect.onExit((exit) => Effect.gen(function* () {
-              const final = Exit.isSuccess(exit) ? exit.value : undefined
+              const final = Exit.isSuccess(exit) ? exit.value : lastFinal
               const text = final?.info.role === "assistant" ? assistantFinalText(final.info, final.parts) : undefined
               const parsed = parseReturnHeader(text)
               const status = Exit.isSuccess(exit) ? "completed" : Cause.hasInterruptsOnly(exit.cause) ? "cancelled" : "failed"
@@ -4939,7 +4979,14 @@ NOTE: At any point in time through this workflow you should feel free to ask the
                 source: "continuation",
                 status,
                 ...(status === "completed" ? { result: text ?? "(no output)", reportedStatus: parsed.status, reportedSummary: parsed.summary } : {}),
-                ...(Exit.isFailure(exit) && status === "failed" ? { error: Cause.pretty(exit.cause) } : {}),
+                ...(Exit.isFailure(exit) && status === "failed" ? {
+                  error: Cause.pretty(exit.cause),
+                  // Carry partial delivery so the parent sees what the turn
+                  // produced before the settled error, matching spawn's notify.
+                  ...(text !== undefined ? { result: text } : {}),
+                  ...(parsed.status ? { reportedStatus: parsed.status } : {}),
+                  ...(parsed.summary ? { reportedSummary: parsed.summary } : {}),
+                } : {}),
               })
             })),
           )

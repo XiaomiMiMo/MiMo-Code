@@ -322,6 +322,11 @@ describe("Actor cancel notification (T41 unified terminal-status bridge)", () =>
           expect(entry?.status).toBe("idle")
           expect(entry?.lastOutcome).toBe(terminal)
           if (terminal === "failure") expect(entry?.lastError).toContain("invalid credential")
+          // Continuation settle must rewrite result_message_id after the running
+          // transition cleared it. Success always has a delivery. A pure API
+          // error with no partial text intentionally leaves it null (TP-R14-11).
+          if (terminal === "success") expect(entry?.resultMessageID).toBeDefined()
+          if (terminal === "failure") expect(entry?.resultMessageID).toBeUndefined()
           yield* actor.cancel(spawned.sessionID, spawned.actorID, "forced")
           const rows = yield* parentInboxRows(parent.id, "owner")
           // Inbox delivery consumes the previous turn's envelope; the new
