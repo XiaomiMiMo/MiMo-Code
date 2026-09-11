@@ -51,11 +51,19 @@ export function cleanDataUrls(text: string, attachments?: Attachment[], style: C
       end += a < 0 ? b : b < 0 ? a : Math.min(a, b)
       break
     }
-    // Wrapped base64 (base64(1) 76-col, PEM, etc.) stops at CR/LF; that is not a data URL.
-    if (text[end] === "\n" || text[end] === "\r") {
-      chunks.push(text.slice(cursor, index + 5))
-      cursor = index + 5
-      continue
+    // Wrapped base64 (base64(1) 76-col, PEM, space/tab-separated dumps) is not
+    // a data URL. CR/LF always means wrap. Other whitespace only means wrap when
+    // another long base64 run follows — a complete payload followed by prose
+    // ("data:…YWJj after") must still be collected.
+    if (text[end] !== undefined && /\s/.test(text[end]!)) {
+      let look = end
+      while (look < text.length && /\s/.test(text[look]!)) look++
+      const cont = /^[A-Za-z0-9+/]+/.exec(text.slice(look, look + 64))?.[0] ?? ""
+      if (text[end] === "\n" || text[end] === "\r" || cont.length >= 16) {
+        chunks.push(text.slice(cursor, index + 5))
+        cursor = index + 5
+        continue
+      }
     }
     const size = end - comma - 1
     const padding = text[end] === "=" ? (text[end + 1] === "=" ? 2 : 1) : 0

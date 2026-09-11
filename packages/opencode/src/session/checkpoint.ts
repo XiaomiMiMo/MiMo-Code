@@ -105,7 +105,7 @@ function truncateVerbatimUserMsg(text: string, capTokens: number, messageID: str
   const elidedTokens = Token.estimate(text) - Token.estimate(head) - Token.estimate(tail)
   return [
     head,
-    `[...elided ${elidedTokens} tokens; messageID=${messageID}; use history operation=around then get part_id to recover full content]`,
+    `[…elided ${elidedTokens} tokens; messageID=${messageID}; use the history tool with operation=around then get part_id to recover full content]`,
     tail,
   ].join("\n")
 }

@@ -33,6 +33,7 @@ const parameters = z
 
 const BUDGET = 19500
 const OMIT = "[More summaries omitted; narrow search/around or call get on the part_id you need.]"
+const ANCHOR_TRUNCATED = "[Anchor truncated; remaining parts omitted — call get on the part_id you need.]"
 
 function bounded(lines: string[]) {
   const result: string[] = []
@@ -50,7 +51,9 @@ function bounded(lines: string[]) {
   return { text: result.join("\n"), truncated }
 }
 
-// Always keep the anchor; fill remaining budget around it in chronological order.
+// Keep the anchor even when it alone exceeds the budget: fully when it fits,
+// otherwise partial (message header + as many part lines as fit). Fill the
+// remaining budget around it in chronological order.
 function aroundBlocks(
   messages: Array<{
     matched: boolean
@@ -68,20 +71,50 @@ function aroundBlocks(
   }))
   const picked: typeof blocks = []
   let bytes = 0
-  const take = (b: (typeof blocks)[number]) => {
+  const limit = BUDGET - Buffer.byteLength(OMIT) - 1
+  const take = (b: (typeof blocks)[number], allowPartial = false) => {
     const size = b.lines.reduce((n, line) => n + Buffer.byteLength(line) + 1, 0)
-    if (bytes + size > BUDGET - Buffer.byteLength(OMIT) - 1) return false
-    picked.push(b)
-    bytes += size
+    if (bytes + size <= limit) {
+      picked.push(b)
+      bytes += size
+      return true
+    }
+    if (!allowPartial || b.lines.length === 0) return false
+    // Partial anchor: keep the message_id header plus every part line that still
+    // fits, reserving room for the truncation marker.
+    const partial: string[] = []
+    let used = 0
+    const markerSize = Buffer.byteLength(ANCHOR_TRUNCATED) + 1
+    for (const line of b.lines) {
+      const lineSize = Buffer.byteLength(line) + 1
+      if (bytes + used + lineSize + markerSize > limit) break
+      partial.push(line)
+      used += lineSize
+    }
+    if (partial.length === 0) {
+      // Even the header does not fit after earlier picks — still force it in
+      // so the caller can address this message; drop whatever else was picked.
+      const header = b.lines[0]!
+      picked.length = 0
+      picked.push({ ...b, lines: [header] })
+      bytes = Buffer.byteLength(header) + 1
+      return true
+    }
+    picked.push({
+      ...b,
+      lines: [...partial, ANCHOR_TRUNCATED],
+    })
+    bytes += used + markerSize
     return true
   }
   const anchor = blocks.find((b) => b.matched)
-  if (anchor) take(anchor)
+  if (anchor) take(anchor, true)
   for (const b of blocks) {
     if (b === anchor) continue
     if (!take(b)) break
   }
-  const truncated = picked.length < blocks.length
+  const truncated =
+    picked.length < blocks.length || (anchor !== undefined && (picked[0] !== anchor || picked[0]!.lines.length !== anchor.lines.length))
   return { picked, truncated }
 }
 

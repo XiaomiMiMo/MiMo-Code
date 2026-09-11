@@ -57,6 +57,18 @@ test("mid-token data: prefixes and wrapped base64 are not collected", () => {
   const wrapped = "data:image/png;base64," + "YWJj".repeat(20) + "\n" + "YWJj".repeat(20)
   expect(detail({ type: "text", text: wrapped }).attachments).toHaveLength(0)
   expect(detail({ type: "text", text: wrapped }).text).toContain("YWJj")
+  // Space/tab-separated base64 is the same wrap class as CR/LF — do not accept
+  // a truncated first segment as a complete attachment.
+  for (const sep of [" ", "\t"]) {
+    const spaced = "data:image/png;base64," + "YWJj".repeat(10) + sep + "YWJj".repeat(10)
+    const result = detail({ type: "text", text: spaced })
+    expect(result.attachments).toHaveLength(0)
+    expect(result.text).toContain("YWJj")
+  }
+  // A complete payload followed by a short prose word is still a data URL.
+  const prose = detail({ type: "text", text: "data:image/png;base64,YWJj after" })
+  expect(prose.attachments[0]?.url).toBe("data:image/png;base64,YWJj")
+  expect(prose.text).toEndWith(" after")
 })
 
 test("parameterized data URLs normalize to routable data:mime;base64", () => {
