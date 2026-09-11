@@ -116,17 +116,21 @@ function fresh() {
 }
 
 function skip(force: boolean) {
+  // A pinned fixture path is authoritative; never replace it from the network.
+  if (Flag.MIMOCODE_MODELS_PATH) return true
   return !force && fresh()
 }
 
 const fetchApi = async () => {
   const result = await fetch(`${url()}/api.json`, {
     headers: { "User-Agent": Installation.USER_AGENT },
-    signal: AbortSignal.timeout(10000),
+    signal: AbortSignal.timeout(5000),
   })
   return { ok: result.ok, text: await result.text() }
 }
 
+// Local-only read: pinned path → cache file → build-time snapshot → {}.
+// Never fetch here. TUI first paint and Provider.state must not wait on models.dev.
 export const Data = lazy(async () => {
   const result = await Filesystem.readJson(Flag.MIMOCODE_MODELS_PATH ?? filepath).catch(() => {})
   if (result) return result
@@ -135,18 +139,7 @@ export const Data = lazy(async () => {
     .then((m) => m.snapshot as Record<string, unknown>)
     .catch(() => undefined)
   if (snapshot) return snapshot
-  if (Flag.MIMOCODE_DISABLE_MODELS_FETCH) return {}
-  return Flock.withLock(`models-dev:${filepath}`, async () => {
-    const result = await Filesystem.readJson(Flag.MIMOCODE_MODELS_PATH ?? filepath).catch(() => {})
-    if (result) return result
-    const result2 = await fetchApi()
-    if (result2.ok) {
-      await Filesystem.write(filepath, result2.text).catch((e) => {
-        log.error("Failed to write models cache", { error: e })
-      })
-    }
-    return JSON.parse(result2.text)
-  })
+  return {} as Record<string, unknown>
 })
 
 export async function get() {
@@ -154,22 +147,29 @@ export async function get() {
   return result as Record<string, Provider>
 }
 
+// Background-only cache refresh. Callers of get()/Data() never await this.
 export async function refresh(force = false) {
+  if (Flag.MIMOCODE_DISABLE_MODELS_FETCH) return
   if (skip(force)) return Data.reset()
-  await Flock.withLock(`models-dev:${filepath}`, async () => {
-    if (skip(force)) return Data.reset()
-    const result = await fetchApi()
-    if (!result.ok) return
-    await Filesystem.write(filepath, result.text)
-    Data.reset()
-  }).catch((e) => {
+  await Flock.withLock(
+    `models-dev:${filepath}`,
+    async () => {
+      if (skip(force)) return Data.reset()
+      const result = await fetchApi()
+      if (!result.ok) return
+      await Filesystem.write(filepath, result.text)
+      Data.reset()
+    },
+    // Keep a stuck peer from parking refresh for the default 5 minutes.
+    { timeoutMs: 3000 },
+  ).catch((e) => {
     log.error("Failed to fetch models.dev", {
       error: e,
     })
   })
 }
 
-if (!Flag.MIMOCODE_DISABLE_MODELS_FETCH && !process.argv.includes("--get-yargs-completions")) {
+if (!Flag.MIMOCODE_DISABLE_MODELS_FETCH && !Flag.MIMOCODE_MODELS_PATH && !process.argv.includes("--get-yargs-completions")) {
   void refresh()
   setInterval(
     async () => {
