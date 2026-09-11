@@ -17,7 +17,7 @@ initProjectors()
 const release = Promise.withResolvers<void>()
 process.on("message", message => { if (message === "finish") release.resolve() })
 const send = (value: unknown) => new Promise<void>((resolve, reject) => {
-  process.send!(value, error => error ? reject(error) : resolve())
+  process.send!(value, (error?: Error | null) => (error ? reject(error) : resolve()))
 })
 const services = Layer.mergeAll(Session.defaultLayer, ActorRegistry.defaultLayer, ActorWaiter.defaultLayer)
 
