@@ -59,7 +59,7 @@ export function cleanDataUrls(text: string, attachments?: Attachment[]) {
     attachments?.push({ id, mime, url: text.slice(index, end) })
     chunks.push(
       text.slice(cursor, index),
-      `[media ${mime}; ${attachments ? `attachment=${id}; ` : "omitted; "}use history get]`,
+      `[media ${mime}; ${attachments ? `attachment=${id}; call history get attachment=${id}` : "omitted; use history get"}]`,
     )
     cursor = end
     marker.lastIndex = end

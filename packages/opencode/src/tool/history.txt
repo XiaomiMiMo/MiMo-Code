@@ -1,12 +1,8 @@
 Search RAW conversation trajectory: prior user/assistant messages, tool inputs, tool errors.
 
-USE ONLY WHEN MEMORY SEARCH RETURNS NOTHING USEFUL.
-
-memory is your curated notebook — small, fast, semantically organized. ALWAYS try `memory` first.
-history searches a derived index of your past sessions. Search and around return bounded summaries, not full source text; use get with the displayed part_id for details. Reach for it as a last
-resort, e.g.:
-  - memory had no entry, but you suspect this came up in a prior session
-  - you need verbatim recall of something the memory summary glossed over
+Use memory first when you need a quick curated answer. Use history when you need the raw source: verbatim wording, exact tool args/output, or details a memory summary may have glossed over or distorted. Typical cases:
+  - memory answered, but you must verify or fill in precise details
+  - memory had no entry, but this came up in a prior session
   - debugging "did I already try X" across the project
 
 Three operations:
@@ -14,6 +10,6 @@ Three operations:
   - around: given message_id, show bounded summaries of surrounding messages
   - get: required part_id reads source detail even during index rebuild. offset is a non-negative UTF-16 cursor (default 0), length is 1–8000 (default 4000). Continue using next_offset while has_more; never guess a cursor inside an emoji. A length=1 page may include a complete two-unit surrogate pair to ensure progress. Data URL payloads are replaced by stable attachment locators.
 
-Media is never automatically returned. Get lists locators; request exactly one with attachment="inline:0", "file:0", or "tool:0" as listed. Model/provider limitations are reported explicitly. Historical file:// URLs require normal read permissions; no external URL is proactively downloaded. Attachment lists are budget-limited; tool:N and inline:N indices are zero-based. During background index rebuild search may temporarily be incomplete; known part_id get remains available.
+Search and around return summaries only — one get call per part_id for full text. Media is never automatic: get without attachment lists locators; then call get again with exactly one attachment="inline:0" / "file:0" / "tool:0" as listed. Model/provider limits are reported explicitly. Historical file:// URLs need normal read permissions; no external URL is downloaded. Attachment lists are budget-limited; tool:N and inline:N are zero-based. During background index rebuild search may be temporarily incomplete; known part_id get remains available.
 
 Default scope is current project; pass scope="global" to search every project on this machine.
