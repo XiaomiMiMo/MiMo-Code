@@ -350,7 +350,20 @@ export const layer: Layer.Layer<
           text: entry.text,
         })
       }
-      if (isCancelled?.()) {
+      // Last cancel check and the inbox DELETE share one Effect.sync so a
+      // cancel cannot land between them. If cancelled we skip the DELETE and
+      // roll the synthetic message back below; rows stay durable.
+      const cancelledAtDelete = yield* Effect.sync(() => {
+        if (isCancelled?.()) return true
+        Database.use((db) =>
+          db
+            .delete(InboxTable)
+            .where(inArray(InboxTable.id, rows.map((r) => r.id)))
+            .run(),
+        )
+        return false
+      })
+      if (cancelledAtDelete) {
         yield* sessions.removeMessage({ sessionID, messageID: msgID }).pipe(Effect.ignore)
         log.info("inbox.drain: cancelled before inbox delete — rolled back synthetic message, rows durable", {
           sessionID,
@@ -360,14 +373,6 @@ export const layer: Layer.Layer<
         })
         return 0
       }
-      yield* Effect.sync(() =>
-        Database.use((db) =>
-          db
-            .delete(InboxTable)
-            .where(inArray(InboxTable.id, rows.map((r) => r.id)))
-            .run(),
-        ),
-      )
 
       return rendered.length
     })
