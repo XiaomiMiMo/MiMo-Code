@@ -314,6 +314,11 @@ export const layer: Layer.Layer<
       // a transactional fix would require threading tx through
       // sessions.updateMessage/updatePart, which crosses three abstraction
       // layers.
+      //
+      // Cancel that lands after the first isCancelled check but before the
+      // inbox DELETE is handled by re-checking around the writes and rolling
+      // the synthetic message back (removeMessage) so Inbox rows stay the
+      // durable source of truth.
       const msgID = MessageID.ascending()
       const now = Date.now()
       yield* sessions.updateMessage({
@@ -326,6 +331,16 @@ export const layer: Layer.Layer<
         model: seed.model,
       })
       for (const entry of rendered) {
+        if (isCancelled?.()) {
+          yield* sessions.removeMessage({ sessionID, messageID: msgID }).pipe(Effect.ignore)
+          log.info("inbox.drain: cancelled mid-commit — rolled back synthetic message, rows durable", {
+            sessionID,
+            actorID,
+            messageID: msgID,
+            pending: rendered.length,
+          })
+          return 0
+        }
         yield* sessions.updatePart({
           id: PartID.ascending(),
           messageID: msgID,
@@ -334,6 +349,16 @@ export const layer: Layer.Layer<
           synthetic: true,
           text: entry.text,
         })
+      }
+      if (isCancelled?.()) {
+        yield* sessions.removeMessage({ sessionID, messageID: msgID }).pipe(Effect.ignore)
+        log.info("inbox.drain: cancelled before inbox delete — rolled back synthetic message, rows durable", {
+          sessionID,
+          actorID,
+          messageID: msgID,
+          pending: rendered.length,
+        })
+        return 0
       }
       yield* Effect.sync(() =>
         Database.use((db) =>

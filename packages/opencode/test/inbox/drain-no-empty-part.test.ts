@@ -293,4 +293,50 @@ describe("Inbox.drain leaves rows durable when cancelled before commit", () => {
       expect(later).toBe(0)
     })
   })
+
+  test("cancel after the first check rolls back the synthetic message and keeps inbox rows", async () => {
+    await using tmp = await tmpdir({ git: true })
+    await withInbox(tmp.path, async (rt) => {
+      const session = await rt.runPromise(Session.Service.use((s) => s.create()))
+      await registerActor(rt, session.id, "actor-mid")
+      await seedRealMessage(rt, session.id, "actor-mid")
+
+      await rt.runPromise(
+        Inbox.Service.use((inbox) =>
+          inbox.send({
+            receiverSessionID: session.id,
+            receiverActorID: "actor-mid",
+            type: "actor_notification",
+            content: "<actor-notification>\nmid-commit\n</actor-notification>",
+          }),
+        ),
+      )
+
+      // First isCancelled() is the pre-commit check (must pass); the second
+      // lands mid-commit (before a part write or the inbox DELETE).
+      let calls = 0
+      const count = await rt.runPromise(
+        Inbox.Service.use((inbox) =>
+          inbox.drain(session.id, "actor-mid", () => {
+            calls += 1
+            return calls >= 2
+          }),
+        ),
+      )
+      expect(calls).toBeGreaterThanOrEqual(2)
+      expect(count).toBe(0)
+
+      const msgs = await rt.runPromise(
+        Session.Service.use((sessions) => sessions.messages({ sessionID: session.id, agentID: "actor-mid" })),
+      )
+      const synthetic = msgs
+        .filter((m) => m.info.role === "user")
+        .flatMap((m) => m.parts)
+        .filter((p) => p.type === "text" && p.synthetic)
+      expect(synthetic.length).toBe(0)
+
+      const later = await rt.runPromise(Inbox.Service.use((inbox) => inbox.drain(session.id, "actor-mid")))
+      expect(later).toBe(1)
+    })
+  })
 })
