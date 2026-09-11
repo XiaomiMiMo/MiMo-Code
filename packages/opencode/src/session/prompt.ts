@@ -441,6 +441,8 @@ export interface ResumeTurnInput {
   agentID?: string
   task_id?: string
   titleLocale?: string
+  /** 可选模型覆盖：用户在继续前切换了模型时，用新模型执行恢复步。 */
+  model?: { providerID: string; modelID: string }
 }
 
 export class Service extends Context.Service<Service, Interface>()("@opencode/SessionPrompt") {}
@@ -3099,7 +3101,10 @@ NOTE: At any point in time through this workflow you should feel free to ask the
       const msgs = yield* sessions.messages({ sessionID: input.sessionID, agentID: input.agentID ?? "main" })
       const candidates: RecoveryCandidate[] = []
       for (const [index, msg] of msgs.entries()) {
-        if (msg.info.role !== "assistant" || "completed" in msg.info.time) continue
+        if (msg.info.role !== "assistant") continue
+        // 只有整轮正常 finish 才排除;step 完成(time.completed)不等于 turn 完成——
+        // 工具步完成、length 截断、tool-calls 中断等 finished assistant 仍可恢复。
+        if ("completed" in msg.info.time && msg.info.finish === "stop" && !msg.info.error) continue
         const assistant = msg.info
         if (!msgs.some((parent) => parent.info.role === "user" && parent.info.id === assistant.parentID)) continue
         if (msgs.slice(index + 1).some((later) => later.info.role === "user" || later.info.role === "assistant")) continue
@@ -3119,10 +3124,12 @@ NOTE: At any point in time through this workflow you should feel free to ask the
     }) {
       const messages = yield* sessions.messages({ sessionID: input.sessionID, agentID: input.agentID ?? "main" })
       const message = messages.find((item) => item.info.id === input.assistantMessageID)
-      if (!message || message.info.role !== "assistant" || "completed" in message.info.time) return
+      if (!message || message.info.role !== "assistant") return
+      // 已标记 completed 且已有 error → 幂等跳过
+      if ("completed" in message.info.time && message.info.error) return
       yield* sessions.updateMessage({
         ...message.info,
-        time: { ...message.info.time, completed: Date.now() },
+        time: { ...message.info.time, completed: message.info.time.completed ?? Date.now() },
         error: new MessageV2.AbortedError({ message: "Abandoned: resumed as a new assistant turn" }).toObject(),
       })
     })
@@ -3133,8 +3140,10 @@ NOTE: At any point in time through this workflow you should feel free to ask the
       task_id?: string,
       notifyParentOnComplete?: boolean,
       titleLocale?: string,
+      resumeFrom?: string,
+      modelOverride?: { providerID: string; modelID: string },
     ) => Effect.Effect<MessageV2.WithParts> = Effect.fn("SessionPrompt.run")(
-      function* (sessionID: SessionID, agentID?: string, task_id?: string, notifyParentOnComplete?: boolean, titleLocale?: string) {
+      function* (sessionID: SessionID, agentID?: string, task_id?: string, notifyParentOnComplete?: boolean, titleLocale?: string, resumeFrom?: string, modelOverride?: { providerID: string; modelID: string }) {
         const ctx = yield* InstanceState.context
         const slog = elog.with({ sessionID })
         let structured: unknown | undefined
@@ -3822,7 +3831,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
             continue
           }
 
-          if (lastAssistant) {
+          if (lastAssistant && lastAssistant.id !== resumeFrom) {
             const classification = classifyAssistantStep({
               phase: "existing-assistant",
               lastUser,
@@ -3914,7 +3923,9 @@ NOTE: At any point in time through this workflow you should feel free to ask the
             }
           }
 
-          const model = yield* getModel(lastUser.model.providerID, lastUser.model.modelID, sessionID, lastUser)
+          const modelProviderID = modelOverride ? ProviderID.make(modelOverride.providerID) : lastUser.model.providerID
+          const modelModelID = modelOverride ? ModelID.make(modelOverride.modelID) : lastUser.model.modelID
+          const model = yield* getModel(modelProviderID, modelModelID, sessionID, lastUser)
           lastModelForPrune = model
           lastFinishedForPrune = usageRecovered ? undefined : lastFinished
           const task = tasks.pop()
@@ -5372,7 +5383,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
         input.sessionID,
         agentID,
         lastAssistant(input.sessionID, agentID),
-        runLoop(input.sessionID, agentID, input.task_id, undefined, input.titleLocale).pipe(
+        runLoop(input.sessionID, agentID, input.task_id, undefined, input.titleLocale, input.assistantMessageID, input.model).pipe(
           Effect.ensuring(
             abandonRecoveredAssistant({ sessionID: input.sessionID, assistantMessageID: input.assistantMessageID, agentID }).pipe(
               Effect.catchCause((cause) =>
@@ -5405,7 +5416,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
         input.sessionID,
         agentID,
         lastAssistant(input.sessionID, agentID),
-        runLoop(input.sessionID, agentID, input.task_id, undefined, input.titleLocale).pipe(
+        runLoop(input.sessionID, agentID, input.task_id, undefined, input.titleLocale, input.assistantMessageID, input.model).pipe(
           Effect.ensuring(
             abandonRecoveredAssistant({ sessionID: input.sessionID, assistantMessageID: input.assistantMessageID, agentID }).pipe(
               Effect.catchCause((cause) =>
