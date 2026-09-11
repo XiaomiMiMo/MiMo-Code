@@ -100,6 +100,21 @@ export type ParsedActorNotification = {
 // pre-rendered <actor-notification> text so the TUI can show a card instead of
 // the raw wrapper. Pure + exported so it's unit-testable without the renderer.
 // Returns null for any text that isn't an actor notification.
+//
+// TUI-facing fields (summary/warnings) are compacted: stack frames and long
+// dumps are noise on a terminal card. The raw XML stays on the synthetic
+// message part for the main agent / transcript.
+const CARD_LINE_LIMIT = 160
+
+function compactForCard(raw: string): string {
+  const first = raw
+    .split("\n")
+    .map((line) => line.trim())
+    .find((line) => line.length > 0 && !/^\s*at\s+\S/.test(line) && !/^\s*\.{3}\s/.test(line))
+  const text = (first ?? raw.trim()).replace(/\s+/g, " ")
+  return text.length > CARD_LINE_LIMIT ? `${text.slice(0, CARD_LINE_LIMIT - 1)}…` : text
+}
+
 export function parseActorNotification(text: string): ParsedActorNotification | null {
   if (!text.trimStart().startsWith("<actor-notification>")) return null
   // The verb reflects the *task* outcome, not just the process lifecycle:
@@ -136,11 +151,18 @@ export function parseActorNotification(text: string): ParsedActorNotification | 
     resultIdx !== -1 && text.slice(resultIdx).startsWith("Result:") ? line("Result", text.slice(resultIdx)) : undefined
   const warningIdx = beforeResult.search(/^Warning:/m)
   const metadataHeader = warningIdx === -1 ? beforeResult : beforeResult.slice(0, warningIdx)
-  const summary = line("Summary", metadataHeader) ?? resultSummary ?? line("Error", metadataHeader)
+  const summaryRaw = line("Summary", metadataHeader) ?? resultSummary ?? line("Error", metadataHeader)
   const warnings = beforeResult
     .split(/^Warning:[ \t]*/m)
     .slice(1)
     .map((warning) => warning.replace(/\n<\/actor-notification>\s*$/, "").trim())
     .filter(Boolean)
-  return { status, description, ...(summary ? { summary } : {}), ...(warnings.length ? { warnings } : {}) }
+    .map(compactForCard)
+    .filter(Boolean)
+  return {
+    status,
+    description,
+    ...(summaryRaw ? { summary: compactForCard(summaryRaw) } : {}),
+    ...(warnings.length ? { warnings } : {}),
+  }
 }

@@ -4,7 +4,8 @@ import { parseActorNotification, renderActorNotification } from "../../src/inbox
 describe("parseActorNotification", () => {
   test("[TP-R14-12] a summary-looking line inside a warning is not the card summary", () => {
     const text = renderActorNotification({ actorID: "child", description: "work", status: "completed", result: "MAIN-RESULT", warnings: ["postStop failed\nSummary: warning detail"] })
-    expect(parseActorNotification(text)).toMatchObject({ summary: "MAIN-RESULT", warnings: ["postStop failed\nSummary: warning detail"] })
+    // TUI card keeps the first non-stack line only; the raw XML still carries the rest for the main agent.
+    expect(parseActorNotification(text)).toMatchObject({ summary: "MAIN-RESULT", warnings: ["postStop failed"] })
   })
   test("[TP-R14-12] partial result text cannot inject warning metadata or replace the failure summary", () => {
     const text = renderActorNotification({
@@ -26,7 +27,7 @@ describe("parseActorNotification", () => {
     })
     expect(parseActorNotification(text)).toMatchObject({
       status: "completed",
-      warnings: ["postStop failed\n  detail line", "gate unavailable"],
+      warnings: ["postStop failed", "gate unavailable"],
       summary: "REAL-RESULT",
     })
   })
@@ -64,6 +65,23 @@ describe("parseActorNotification", () => {
     expect(text).toContain("Partial result: PARTIAL-RESULT")
     expect(parseActorNotification(text)?.status).toBe("failed")
   })
+  test("[TP-R14-07] card drops stack frames; raw XML keeps them for the main agent", () => {
+    const stack = "postStop: Error: Actor assistant failed: APIError\n    at foo (/tmp/spawn.ts:357:15)\n    at bar (/tmp/spawn.ts:620:43)"
+    const text = renderActorNotification({
+      actorID: "custom-1",
+      description: "custom",
+      status: "completed",
+      result: "PRESERVED-WARNING-RESULT",
+      warnings: [stack],
+    })
+    const note = parseActorNotification(text)!
+    expect(note.summary).toBe("PRESERVED-WARNING-RESULT")
+    expect(note.warnings).toEqual(["postStop: Error: Actor assistant failed: APIError"])
+    expect(note.warnings![0]).not.toContain("spawn.ts")
+    // Main agent still sees the full dump on the synthetic message text.
+    expect(text).toContain("at foo (/tmp/spawn.ts:357:15)")
+  })
+
   test("parses a completed notification with reported status + summary", () => {
     const text = renderActorNotification({
       actorID: "explore-1",
