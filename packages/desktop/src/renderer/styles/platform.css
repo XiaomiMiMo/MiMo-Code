@@ -1,0 +1,30 @@
+/* Cross-Platform Typography, Selection & Focus Normalization */
+
+:root {
+  --font-system-mac: -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display", "Helvetica Neue", Arial, sans-serif;
+  --font-system-win: "Segoe UI", "Segoe UI Variable Text", Tahoma, Geneva, Verdana, sans-serif;
+  --font-mono-desktop: "JetBrainsMono Nerd Font Mono", "JetBrains Mono", "Cascadia Code", "Fira Code", Consolas, monospace;
+}
+
+body {
+  font-family: var(--font-sans, var(--font-system-mac));
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+}
+
+/* Platform Selection Highlight */
+::selection {
+  background-color: var(--surface-interactive-selected, rgba(59, 130, 246, 0.3));
+  color: inherit;
+}
+
+/* Keyboard Focus Ring Normalization */
+:focus-visible {
+  outline: 2px solid var(--border-focus, #3b82f6);
+  outline-offset: 1px;
+}
+
+:focus:not(:focus-visible) {
+  outline: none;
+}

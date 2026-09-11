@@ -29,7 +29,7 @@ import { CHECKPOINT_SECTION_BUDGETS, MEMORY_SECTION_BUDGETS } from "./checkpoint
 export async function loadPriorDiscoveredTitles(
   sessionID: SessionID,
 ): Promise<Set<string>> {
-  const text = await Bun.file(checkpointPath(sessionID)).text().catch(() => "")
+  const text = await fs.readFile(checkpointPath(sessionID), "utf-8").catch(() => "")
   if (!text) return new Set()
   return new Set(extractTitlesFromLearning(text))
 }
@@ -50,8 +50,8 @@ export async function runValidatorsForCkpt(
     budgets?: { checkpoint: number; memory: number; progress_per_task: number }
   },
 ): Promise<Violation[]> {
-  const checkpointContent = await Bun.file(checkpointPath(sessionID)).text().catch(() => "")
-  const memoryContent = await Bun.file(memoryPath(injected.projectID)).text().catch(() => "")
+  const checkpointContent = await fs.readFile(checkpointPath(sessionID), "utf-8").catch(() => "")
+  const memoryContent = await fs.readFile(memoryPath(injected.projectID), "utf-8").catch(() => "")
 
   const violations: Violation[] = []
 

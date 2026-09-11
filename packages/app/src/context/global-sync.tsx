@@ -178,6 +178,7 @@ function createGlobalSync() {
   }
 
   async function loadSessions(directory: string) {
+    if (!directory || directory === "/" || directory.replaceAll("\\", "/").trim() === "/") return
     const pending = sessionLoads.get(directory)
     if (pending) return pending
 

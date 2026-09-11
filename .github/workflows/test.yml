@@ -104,3 +104,17 @@ jobs:
         timeout-minutes: 2
         working-directory: packages/opencode
         run: bun test test/mcp/stdio-exit-observe.test.ts --timeout 120000
+
+  desktop-test:
+    name: Desktop Tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Setup Bun
+        uses: ./.github/actions/setup-bun
+
+      - name: Run desktop tests
+        working-directory: packages/desktop
+        run: bun test

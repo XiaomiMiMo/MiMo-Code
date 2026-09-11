@@ -3419,6 +3419,16 @@ export type FormatterStatus = {
   enabled: boolean
 }
 
+export type Schema0 =
+  | string
+  | number
+  | boolean
+  | null
+  | Array<Schema0>
+  | {
+      [key: string]: Schema0
+    }
+
 export type GlobalHealthData = {
   body?: never
   path?: never

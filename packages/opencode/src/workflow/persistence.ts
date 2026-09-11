@@ -231,10 +231,13 @@ const writeScript = (runID: string, body: string) =>
   Effect.promise(async () => {
     const fs = await import("fs/promises")
     await fs.mkdir(scriptDir(), { recursive: true })
-    await Bun.write(scriptPath(runID), body)
+    await fs.writeFile(scriptPath(runID), body, "utf-8")
   })
 
-const readScript = (runID: string) => Effect.promise(() => Bun.file(scriptPath(runID)).text())
+const readScript = (runID: string) => Effect.promise(async () => {
+  const fs = await import("fs/promises")
+  return fs.readFile(scriptPath(runID), "utf-8")
+})
 
 const appendJournal = (runID: string, event: JournalEvent) =>
   Effect.promise(async () => {
@@ -262,9 +265,11 @@ const appendJournalSync = (runID: string, events: JournalEvent[]) =>
 
 const loadJournal = (runID: string): Effect.Effect<JournalLoad> =>
   Effect.promise(async () => {
-    const file = Bun.file(journalPath(runID))
-    if (!(await file.exists())) return { results: new Map(), pass: 1 }
-    const text = await file.text()
+    const fs = await import("fs/promises")
+    const p = journalPath(runID)
+    const exists = await fs.stat(p).then(() => true).catch(() => false)
+    if (!exists) return { results: new Map(), pass: 1 }
+    const text = await fs.readFile(p, "utf-8")
     const results = new Map<string, unknown>()
     let maxPass = 0
     for (const line of text.split("\n")) {
@@ -293,7 +298,7 @@ const clearJournal = (runID: string) =>
   Effect.promise(async () => {
     const fs = await import("fs/promises")
     await fs.mkdir(scriptDir(), { recursive: true })
-    await Bun.write(journalPath(runID), "")
+    await fs.writeFile(journalPath(runID), "", "utf-8")
   })
 
 export const WorkflowPersistence = {

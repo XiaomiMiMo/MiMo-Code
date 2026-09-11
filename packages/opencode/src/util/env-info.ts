@@ -40,7 +40,7 @@ export async function getEnvInfo() {
       homedir: os.homedir(),
     },
     runtime: {
-      bun_version: Bun.version,
+      bun_version: typeof Bun !== "undefined" ? Bun.version : undefined,
       node_version: process.versions.node,
       pid: process.pid,
       timezone: timezone(),

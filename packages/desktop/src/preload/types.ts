@@ -63,6 +63,9 @@ export type ElectronAPI = {
   openLink: (url: string) => void
   openPath: (path: string, app?: string) => Promise<void>
   readClipboardImage: () => Promise<{ buffer: ArrayBuffer; width: number; height: number } | null>
+  readClipboardText: () => Promise<string>
+  writeClipboardText: (text: string) => Promise<void>
+  syncUniversalClipboard: () => Promise<string>
   showNotification: (title: string, body?: string) => void
   getWindowFocused: () => Promise<boolean>
   setWindowFocus: () => Promise<void>
@@ -76,4 +79,29 @@ export type ElectronAPI = {
   checkUpdate: () => Promise<{ updateAvailable: boolean; version?: string }>
   installUpdate: () => Promise<void>
   setBackgroundColor: (color: string) => Promise<void>
+  setWindowTitle: (title: string) => Promise<void>
+  setRecentProjects: (directories: string[]) => Promise<void>
+  setCurrentSession: (session: { id: string; directory: string; title?: string } | null) => Promise<void>
+  onTrayCommand: (cb: (id: string) => void) => () => void
+
+  // macOS 系统集成 (只在 macOS 上可用，Windows/Linux 调用会 throw)
+  mac?: {
+    capabilities: () => Promise<{
+      platform: NodeJS.Platform
+      supports: {
+        keychain: boolean
+        notifications: boolean
+        dockBadge: boolean
+        appleScript: boolean
+        universalClipboard: boolean
+        spotlight: boolean
+      }
+    }>
+    credentialSet: (name: string, value: string) => Promise<void>
+    credentialGet: (name: string) => Promise<string | null>
+    credentialDelete: (name: string) => Promise<void>
+    openInTerminal: (command: string, terminal?: "Terminal" | "iTerm") => Promise<void>
+    setDockBadge: (text: string | number | null) => Promise<void>
+    showNotification: (title: string, body?: string, opts?: { silent?: boolean; subtitle?: string }) => void
+  }
 }

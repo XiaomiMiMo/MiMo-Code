@@ -48,8 +48,9 @@ export function globalMemoryPath(): string {
 export async function migrateProjectMemory(projectID: ProjectID): Promise<void> {
   const upper = memoryPath(projectID)
   const lower = path.join(path.dirname(upper), "memory.md")
-  if (await Bun.file(upper).exists()) return
-  if (await Bun.file(lower).exists())
+  const exists = (p: string) => fs.stat(p).then(() => true).catch(() => false)
+  if (await exists(upper)) return
+  if (await exists(lower))
     // Two migrators (e.g. concurrent sessions/writers on the same project) can
     // both pass the exists() checks; the loser's rename then sees lower already
     // gone. ENOENT means the peer won — treat as success. Re-throw real FS

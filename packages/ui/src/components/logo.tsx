@@ -5,12 +5,39 @@ export const Mark = (props: { class?: string }) => {
     <svg
       data-component="logo-mark"
       classList={{ [props.class ?? ""]: !!props.class }}
-      viewBox="0 0 16 20"
+      viewBox="0 0 40 40"
       fill="none"
       xmlns="http://www.w3.org/2000/svg"
     >
-      <path data-slot="logo-logo-mark-shadow" d="M12 16H4V8H12V16Z" fill="var(--icon-weak-base)" />
-      <path data-slot="logo-logo-mark-o" d="M12 4H4V16H12V4ZM16 20H0V0H16V20Z" fill="var(--icon-strong-base)" />
+      {/* 外框 */}
+      <rect
+        x="4"
+        y="4"
+        width="32"
+        height="32"
+        rx="9"
+        stroke="var(--icon-strong-base)"
+        stroke-width="2.5"
+        fill="none"
+      />
+      {/* 硬朗利落的 M 字形 */}
+      <path
+        d="M 11 28 V 12 L 20 21 L 29 12 V 28"
+        stroke="var(--icon-strong-base)"
+        stroke-width="2.5"
+        stroke-linecap="round"
+        stroke-linejoin="round"
+        fill="none"
+      />
+      {/* 终端提示符 > _ 代表 Coding Agent */}
+      <path
+        d="M 15 22 L 18 24.5 L 15 27 M 21 27 H 25"
+        stroke="var(--icon-base)"
+        stroke-width="2"
+        stroke-linecap="round"
+        stroke-linejoin="round"
+        fill="none"
+      />
     </svg>
   )
 }
@@ -21,12 +48,44 @@ export const Splash = (props: Pick<ComponentProps<"svg">, "ref" | "class">) => {
       ref={props.ref}
       data-component="logo-splash"
       classList={{ [props.class ?? ""]: !!props.class }}
-      viewBox="0 0 80 100"
+      viewBox="0 0 100 100"
       fill="none"
       xmlns="http://www.w3.org/2000/svg"
     >
-      <path d="M60 80H20V40H60V80Z" fill="var(--icon-base)" />
-      <path d="M60 20H20V80H60V20ZM80 100H0V0H80V100Z" fill="var(--icon-strong-base)" />
+      {/* 极简圆角框架 */}
+      <rect
+        x="10"
+        y="10"
+        width="80"
+        height="80"
+        rx="22"
+        stroke="var(--icon-strong-base)"
+        stroke-width="5"
+        fill="none"
+      />
+      {/* 主立柱 M 简笔架构 */}
+      <path
+        d="M 28 70 V 30 L 50 52 L 72 30 V 70"
+        stroke="var(--icon-strong-base)"
+        stroke-width="5"
+        stroke-linecap="round"
+        stroke-linejoin="round"
+        fill="none"
+      />
+      {/* 底部代码终端标识 > _ */}
+      <path
+        d="M 38 56 L 45 61 L 38 66 M 52 66 H 62"
+        stroke="var(--icon-base)"
+        stroke-width="4"
+        stroke-linecap="round"
+        stroke-linejoin="round"
+        fill="none"
+      />
+      {/* 顶部 AI 闪耀四角星 */}
+      <path
+        d="M 50 20 L 51.5 24.5 L 56 26 L 51.5 27.5 L 50 32 L 48.5 27.5 L 44 26 L 48.5 24.5 Z"
+        fill="var(--icon-strong-base)"
+      />
     </svg>
   )
 }

@@ -288,9 +288,12 @@ export const Flag = {
    * is deliberately NOT written to `process.env`: every child we spawn inherits the
    * environment, and a subprocess is supposed to hold a scoped task token, never the
    * credential that opens the whole instance API.
+   *
+   * `OPENCODE_SERVER_PASSWORD` is honored as a fallback so callers that still set the
+   * pre-rename variable keep working.
    */
   get MIMOCODE_SERVER_PASSWORD() {
-    return process.env["MIMOCODE_SERVER_PASSWORD"] || generatedServerPassword
+    return process.env["MIMOCODE_SERVER_PASSWORD"] || process.env["OPENCODE_SERVER_PASSWORD"] || generatedServerPassword
   },
   /**
    * Did the OPERATOR configure auth, as opposed to us generating a password for a
@@ -302,9 +305,9 @@ export const Flag = {
    * credential guards it.
    */
   get MIMOCODE_SERVER_PASSWORD_SUPPLIED() {
-    return Boolean(process.env["MIMOCODE_SERVER_PASSWORD"])
+    return Boolean(process.env["MIMOCODE_SERVER_PASSWORD"] || process.env["OPENCODE_SERVER_PASSWORD"])
   },
-  MIMOCODE_SERVER_USERNAME: process.env["MIMOCODE_SERVER_USERNAME"],
+  MIMOCODE_SERVER_USERNAME: process.env["MIMOCODE_SERVER_USERNAME"] ?? process.env["OPENCODE_SERVER_USERNAME"],
   MIMOCODE_ENABLE_QUESTION_TOOL: truthy("MIMOCODE_ENABLE_QUESTION_TOOL"),
 
   // Defaults to false. Set MIMOCODE_ENABLE_TRY_BEST_HANDOFF=true (or 1) to
@@ -468,6 +471,6 @@ export const Flag = {
     return process.env["MIMOCODE_PLUGIN_META_FILE"]
   },
   get MIMOCODE_CLIENT() {
-    return process.env["MIMOCODE_CLIENT"] ?? "cli"
+    return process.env["MIMOCODE_CLIENT"] ?? process.env["OPENCODE_CLIENT"] ?? "cli"
   },
 }

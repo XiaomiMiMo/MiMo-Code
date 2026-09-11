@@ -43,7 +43,7 @@ export function parseReconciledMap(mainCheckpoint: string): Map<string, number> 
 // Scan tasks/*/progress.md and compare written-at against prior reconciliation
 // Returns NEW and CHANGED items; UNCHANGED and unparseable files are omitted
 export async function buildProgressDiffItems(sessionID: SessionID): Promise<ProgressDiffItem[]> {
-  const main = await Bun.file(checkpointPath(sessionID)).text().catch(() => "")
+  const main = await fs.readFile(checkpointPath(sessionID), "utf-8").catch(() => "")
   const reconciled = parseReconciledMap(main)
 
   const root = tasksDir(sessionID)
@@ -59,7 +59,7 @@ export async function buildProgressDiffItems(sessionID: SessionID): Promise<Prog
     const fp = path.join(root, entry, "progress.md")
     let body: string
     try {
-      body = await Bun.file(fp).text()
+      body = await fs.readFile(fp, "utf-8")
     } catch {
       continue
     }

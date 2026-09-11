@@ -172,7 +172,7 @@ export async function listen(opts: {
         // skips this; the pid liveness check in `addresses` is the backstop.
         if (advertise) await LLMServerTokens.unpublish(directory, process.pid, server.port).catch(() => {})
         if (mdns) MDNS.unpublish()
-        await server.stop(close)
+        await server.stop(close ?? true)
       })()
       return closing
     },

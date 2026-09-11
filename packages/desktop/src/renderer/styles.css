@@ -1,0 +1,6 @@
+/* OpenCode Desktop Master Stylesheet */
+
+@import "./styles/frame.css";
+@import "./styles/loading.css";
+@import "./styles/scrollbar.css";
+@import "./styles/platform.css";

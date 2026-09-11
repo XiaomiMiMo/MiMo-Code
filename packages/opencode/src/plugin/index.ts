@@ -447,6 +447,9 @@ export const layer = Layer.effect(
             // .ts in some contexts but not others (CI Linux edge case).
             const mod = yield* Effect.tryPromise({
               try: async () => {
+                if (typeof Bun === "undefined") {
+                  return (await import(match)) as Record<string, unknown>
+                }
                 const result = await Bun.build({
                   entrypoints: [match],
                   target: "bun",
@@ -457,7 +460,7 @@ export const layer = Layer.effect(
                 const tmpFile = `${match}.${Date.now()}.mjs`
                 await Bun.write(tmpFile, blob)
                 try {
-                  return await import(tmpFile) as Record<string, unknown>
+                  return (await import(tmpFile)) as Record<string, unknown>
                 } finally {
                   fs.promises.unlink(tmpFile).catch(() => {})
                 }

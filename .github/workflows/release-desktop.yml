@@ -1,0 +1,134 @@
+name: release-desktop
+
+on:
+  push:
+    tags:
+      - "desktop/v*"
+      - "v*-desktop"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag to release (e.g. desktop/v1.2.3)"
+        required: true
+      channel:
+        description: "Release channel"
+        required: true
+        default: "prod"
+        type: choice
+        options:
+          - prod
+          - beta
+          - dev
+
+concurrency:
+  group: release-desktop
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+  id-token: write
+
+env:
+  OPENCODE_CHANNEL: >-
+    ${{
+      inputs.channel != '' && inputs.channel ||
+      (contains(github.ref_name, 'beta') && 'beta' || 'prod')
+    }}
+
+jobs:
+  # ── 1. 类型检查 (并行启动，零等待) ──────────────────────────────
+  typecheck:
+    name: Typecheck
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: ./.github/actions/setup-bun
+
+      - name: Typecheck desktop & desktop-tauri
+        run: |
+          bun run --cwd packages/desktop typecheck
+          bun run --cwd packages/desktop-tauri typecheck
+
+  # ── 2. 构建 & 打包 ──────────────────────────────────────────────
+  package-mac:
+    name: Package macOS (Electron + Tauri Parallel)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: ./.github/actions/setup-bun
+
+      - name: Install Rust toolchain for Tauri
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Rust Cache Acceleration for Tauri
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            packages/desktop-tauri/src-tauri -> target
+          shared-key: "tauri-rust-cache-v1"
+
+      - name: Package macOS
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: bun run package:all
+
+      # 仅上传 DMG / ZIP 压缩发布文件，决不上传包含成千上万零散文件的 .app 文件夹，秒级上传
+      - name: Upload macOS release artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: desktop-mac
+          path: |
+            packages/desktop-tauri/src-tauri/target/release/bundle/dmg/*.dmg
+            packages/desktop/dist/*.dmg
+            packages/desktop/dist/*.zip
+          if-no-files-found: error
+
+  # ── 3. 发布 GitHub Release ──────────────────────────────────────
+  release:
+    name: Publish GitHub Release
+    needs: [package-mac]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Download all platform artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: desktop-*
+          path: dist/
+          merge-multiple: false
+
+      - name: Extract version from tag or branch
+        id: version
+        run: |
+          if [[ "$GITHUB_REF_NAME" == desktop/v* ]]; then
+            VERSION="${GITHUB_REF_NAME#desktop/v}"
+            TAG_NAME="$GITHUB_REF_NAME"
+          elif [[ "$GITHUB_REF_NAME" == v*-desktop ]]; then
+            VERSION="${GITHUB_REF_NAME%-desktop}"
+            VERSION="${VERSION#v}"
+            TAG_NAME="$GITHUB_REF_NAME"
+          else
+            SHORT_SHA=$(git rev-parse --short HEAD)
+            VERSION="dev-${SHORT_SHA}"
+            TAG_NAME="v0.0.0-dev-${SHORT_SHA}-desktop"
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "tag_name=$TAG_NAME" >> "$GITHUB_OUTPUT"
+          IS_PRE=$([[ "$VERSION" == *beta* || "$VERSION" == *alpha* || "$VERSION" == *dev* ]] && echo true || echo false)
+          echo "is_prerelease=$IS_PRE" >> "$GITHUB_OUTPUT"
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: "desktop v${{ steps.version.outputs.version }}"
+          tag_name: ${{ steps.version.outputs.tag_name }}
+          prerelease: ${{ steps.version.outputs.is_prerelease }}
+          generate_release_notes: true
+          # 精准上传 DMG 和 ZIP 发布包，规避 Secondary Rate Limit
+          files: dist/**/*.{dmg,zip}

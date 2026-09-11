@@ -1,4 +1,4 @@
-import { createMemo } from "solid-js"
+import { batch, createMemo } from "solid-js"
 import { createStore } from "solid-js/store"
 import { DateTime } from "luxon"
 import { filter, firstBy, flat, groupBy, mapValues, pipe, uniqueBy, values } from "remeda"
@@ -117,6 +117,8 @@ export const { use: useModels, provider: ModelsProvider } = createSimpleContext(
       if (state === "hide") return false
       if (state === "show") return true
       if (latestSet().has(key)) return true
+      const modelsForProvider = available().filter((m) => m.provider.id === model.providerID)
+      if (modelsForProvider.length <= 5) return true
       const date = release().get(key)
       if (!date?.isValid) return true
       return false
@@ -124,6 +126,14 @@ export const { use: useModels, provider: ModelsProvider } = createSimpleContext(
 
     const setVisibility = (model: ModelKey, state: boolean) => {
       update(model, state ? "show" : "hide")
+    }
+
+    const setBulkVisibility = (items: { model: ModelKey; state: boolean }[]) => {
+      batch(() => {
+        for (const item of items) {
+          update(item.model, item.state ? "show" : "hide")
+        }
+      })
     }
 
     const push = (model: ModelKey) => {
@@ -150,6 +160,7 @@ export const { use: useModels, provider: ModelsProvider } = createSimpleContext(
       find,
       visible,
       setVisibility,
+      setBulkVisibility,
       recent: {
         list: createMemo(() => store.recent),
         push,

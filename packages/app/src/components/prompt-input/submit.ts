@@ -154,6 +154,14 @@ export async function sendFollowupDraft(input: FollowupSendInput) {
       return false
     }
 
+    console.log("🚀 [DEV-TRACE][1. Frontend Submit] Sending promptAsync:", {
+      sessionID: input.draft.sessionID,
+      agent: input.draft.agent,
+      model: input.draft.model,
+      messageID,
+      requestPartsCount: requestParts.length,
+    })
+
     await input.client.session.promptAsync({
       sessionID: input.draft.sessionID,
       agent: input.draft.agent,
@@ -163,6 +171,7 @@ export async function sendFollowupDraft(input: FollowupSendInput) {
       parts: requestParts,
       variant: input.draft.variant,
     })
+    console.log("✅ [DEV-TRACE][1. Frontend Submit] promptAsync 204 received")
     return true
   } catch (err) {
     batch(() => {

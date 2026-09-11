@@ -954,14 +954,14 @@ export const ToolScriptTool = Tool.define(
           // giant file can't blow the guest memory limit.
           const readText: HostFn = async (p: unknown) => {
             const abs = resolveJailed(jailRoots, String(p), "read")
-            const file = Bun.file(abs)
-            if (!(await file.exists())) return null
-            if (file.size > MAX_FILE_BYTES) throw new Error(`file exceeds ${MAX_FILE_BYTES} bytes: ${String(p)}`)
+            const stat = await fs.promises.stat(abs).catch(() => null)
+            if (!stat) return null
+            if (stat.size > MAX_FILE_BYTES) throw new Error(`file exceeds ${MAX_FILE_BYTES} bytes: ${String(p)}`)
             // Non-UTF-8 content cannot survive the string boundary into the guest
             // (Bun's .text() folds invalid sequences to U+FFFD and NULs previously
             // truncated at the C-string marshal). Fail loud instead of silently
             // returning corrupted/empty data.
-            const bytes = await file.bytes()
+            const bytes = await fs.promises.readFile(abs)
             try {
               return new TextDecoder("utf-8", { fatal: true }).decode(bytes)
             } catch {

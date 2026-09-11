@@ -76,13 +76,15 @@ export function createMainWindow() {
     width: state.width,
     height: state.height,
     show: false,
-    title: "OpenCode",
+    title: "MiMo-Code",
     icon: iconPath(),
     backgroundColor,
     ...(process.platform === "darwin"
       ? {
-          titleBarStyle: "hidden" as const,
-          trafficLightPosition: { x: 12, y: 14 },
+          // hiddenInset 保留 traffic-light 按钮 + 透明背景，让 renderer 渲染自己的 macOS 风格标题栏
+          // 参考：https://www.electronjs.org/docs/latest/api/structures/browser-window-options#titlebarstyle
+          titleBarStyle: "hiddenInset" as const,
+          trafficLightPosition: { x: 14, y: 16 },
         }
       : {}),
     ...(process.platform === "win32"
@@ -121,6 +123,11 @@ export function createMainWindow() {
     win.show()
   })
 
+  // 渲染进程崩溃时自动 reload（sidecar 不重启）
+  win.webContents.on("render-process-gone", () => {
+    win?.reload()
+  })
+
   return win
 }
 
@@ -134,7 +141,7 @@ export function createLoadingWindow() {
     show: true,
     icon: iconPath(),
     backgroundColor,
-    ...(process.platform === "darwin" ? { titleBarStyle: "hidden" as const } : {}),
+    ...(process.platform === "darwin" ? { titleBarStyle: "hiddenInset" as const } : {}),
     ...(process.platform === "win32"
       ? {
           frame: false,
@@ -186,9 +193,6 @@ function loadWindow(win: BrowserWindow, html: string) {
 }
 function wireZoom(win: BrowserWindow) {
   win.webContents.setZoomFactor(1)
-  win.webContents.on("zoom-changed", () => {
-    win.webContents.setZoomFactor(1)
-  })
 }
 
 function upsertKeyValue(obj: Record<string, any>, keyToChange: string, value: any) {

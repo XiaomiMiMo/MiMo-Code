@@ -3013,6 +3013,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
 
     const prompt: (input: PromptInput) => Effect.Effect<MessageV2.WithParts> = Effect.fn("SessionPrompt.prompt")(
       function* (input: PromptInput) {
+        console.log("🔄 [DEV-TRACE][3. SessionPrompt] prompt starting for session:", input.sessionID)
         const session = yield* sessions.get(input.sessionID)
         if (input.source === "hook" && !input.provenance && input.parts.some(part => part.type !== "text")) {
           throw new Error("Hook input with non-text parts requires provenance")

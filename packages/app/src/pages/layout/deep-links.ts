@@ -1,4 +1,4 @@
-export const deepLinkEvent = "opencode:deep-link"
+export const deepLinkEvent = "mimo:deep-link"
 
 const parseUrl = (input: string) => {
   if (!input.startsWith("opencode://")) return
