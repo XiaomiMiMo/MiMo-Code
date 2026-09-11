@@ -594,6 +594,11 @@ export const dict = {
   // Session badges
   "tui.session.badge.auto": "自动",
   "tui.session.actor_warning": "警告",
+  "tui.session.actor_status.completed": "子代理已完成",
+  "tui.session.actor_status.failed": "子代理失败",
+  "tui.session.actor_status.cancelled": "子代理已取消",
+  "tui.session.actor_status.stalled": "子代理停滞",
+  "tui.session.actor_status.ended": "子代理已结束（状态未报告）",
 
   // Context rebuild boundary marker (inserted by /rebuild)
   "tui.session.rebuild_boundary.label": "上下文已重建",

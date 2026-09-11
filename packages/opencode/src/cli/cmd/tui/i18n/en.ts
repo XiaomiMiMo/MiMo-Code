@@ -574,6 +574,11 @@ export const dict: Record<string, string> = {
   // Session badges
   "tui.session.badge.auto": "Auto",
   "tui.session.actor_warning": "Warning",
+  "tui.session.actor_status.completed": "Subagent completed",
+  "tui.session.actor_status.failed": "Subagent failed",
+  "tui.session.actor_status.cancelled": "Subagent cancelled",
+  "tui.session.actor_status.stalled": "Subagent stalled",
+  "tui.session.actor_status.ended": "Subagent ended (status not reported)",
 
   // Context rebuild boundary marker (inserted by /rebuild)
   "tui.session.rebuild_boundary.label": "context rebuilt",
