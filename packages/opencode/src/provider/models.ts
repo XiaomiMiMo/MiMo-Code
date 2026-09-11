@@ -133,7 +133,9 @@ const fetchApi = async () => {
 // fetch → {}. The fetch is a last resort for fresh installs with no cache and
 // no bundled snapshot; it carries its own 5s AbortSignal timeout and never
 // enters Flock, so a hung network cannot park startup behind a multi-minute
-// lock. TUI first paint and Provider.state must not wait on models.dev.
+// lock. Production builds ship models-snapshot.js, so TUI first paint does
+// not wait on models.dev. A source checkout without snapshot/cache may block
+// up to 5s on that single fetch before falling back to {}.
 export const Data = lazy(async () => {
   const result = await Filesystem.readJson(Flag.MIMOCODE_MODELS_PATH ?? filepath).catch(() => {})
   if (result) return result
@@ -145,13 +147,15 @@ export const Data = lazy(async () => {
   if (Flag.MIMOCODE_DISABLE_MODELS_FETCH) return {} as Record<string, unknown>
   // Fresh install: no cache, no snapshot. One blocking fetch (bounded by
   // fetchApi's own 5s timeout) so the first launch isn't permanently empty.
-  try {
-    const fetched = await fetchApi()
-    if (fetched.ok) {
-      await Filesystem.write(filepath, fetched.text).catch(() => {})
+  const fetched = await fetchApi().catch(() => undefined)
+  if (fetched?.ok) {
+    await Filesystem.write(filepath, fetched.text).catch(() => {})
+    try {
       return JSON.parse(fetched.text) as Record<string, unknown>
+    } catch {
+      return {} as Record<string, unknown>
     }
-  } catch {}
+  }
   return {} as Record<string, unknown>
 })
 

@@ -1003,5 +1003,61 @@ describe("ActorRegistry", () => {
         expect(fresh?.status).toBe("running")
       })
     })
+
+    test("same-process rebuild does not settle a stale-but-alive running row", async () => {
+      await using tmp = await tmpdir({ git: true })
+      await Instance.provide({
+        directory: tmp.path,
+        fn: async () => {
+          const taskId = SessionID.descending()
+          let parentId: SessionID
+          const rt1 = ManagedRuntime.make(testLayer)
+          try {
+            const parent = await rt1.runPromise(Session.Service.use((svc) => svc.create()))
+            parentId = parent.id
+            await rt1.runPromise(
+              ActorRegistry.Service.use((svc) =>
+                svc.register({
+                  sessionID: parentId,
+                  actorID: taskId,
+                  mode: "subagent",
+                  agent: "explore",
+                  description: "long LLM step, no part writes",
+                  contextMode: "none",
+                  background: false,
+                  lifecycle: "ephemeral",
+                }),
+              ),
+            )
+            await rt1.runPromise(
+              ActorRegistry.Service.use((svc) => svc.updateStatus(parentId, taskId, { status: "running" })),
+            )
+            // Backdate activity past the abandon threshold. This row still
+            // belongs to PROCESS_INSTANCE_ID — a rebuild must not settle it.
+            const stale = Date.now() - 11 * 60 * 1000
+            Database.use((db) =>
+              db
+                .update(ActorRegistryTable)
+                .set({ last_activity_time: stale, last_turn_time: stale, time_created: stale, time_updated: stale })
+                .where(and(eq(ActorRegistryTable.session_id, parentId), eq(ActorRegistryTable.actor_id, taskId)))
+                .run(),
+            )
+          } finally {
+            await rt1.dispose()
+          }
+          const rt2 = ManagedRuntime.make(testLayer)
+          try {
+            const actor = await rt2.runPromise(
+              ActorRegistry.Service.use((svc) => svc.get(parentId, taskId)),
+            )
+            expect(actor?.status).toBe("running")
+            expect(actor?.lastOutcome).toBeUndefined()
+            expect(actor?.lastError).toBeUndefined()
+          } finally {
+            await rt2.dispose()
+          }
+        },
+      })
+    })
   })
 })

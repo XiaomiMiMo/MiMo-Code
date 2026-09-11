@@ -1,5 +1,5 @@
 import { Effect, Layer, Context, Schedule } from "effect"
-import { Database, inArray, eq, and, lte, sql } from "@/storage"
+import { Database, inArray, eq, and, lte, ne, sql } from "@/storage"
 import { Bus } from "@/bus"
 import type { SessionID, MessageID } from "@/session/schema"
 import { ActorRegistryTable } from "./actor.sql"
@@ -455,8 +455,10 @@ export const layer: Layer.Layer<Service, never, Bus.Service> = Layer.effect(
     // them at read time (abandon threshold), but the DB row stays non-terminal
     // and ActorWaiter only resolves on status==='idle'. Persist the terminal
     // state once at init so restarts don't leave parents waiting forever.
-    // Time-based, not instance-id-based, so a live peer from another instance
-    // is never falsely settled.
+    // Exclude this process's instance_id: a same-process layer rebuild must
+    // never settle a still-running fiber that merely has not written a part
+    // for >abandon (long LLM step). Other-instance abandoned rows are fair
+    // game — their process is gone or silent past the abandon threshold.
     yield* Effect.sync(() => {
       const cutoff = Date.now() - DEFAULT_LIVENESS_ABANDON_MS
       Database.use((db) =>
@@ -472,6 +474,7 @@ export const layer: Layer.Layer<Service, never, Bus.Service> = Layer.effect(
           .where(
             and(
               inArray(ActorRegistryTable.status, ["running", "pending"]),
+              ne(ActorRegistryTable.instance_id, PROCESS_INSTANCE_ID),
               // last_activity_time is nullable; fall back to time_created like deriveLiveness does.
               sql`COALESCE(${ActorRegistryTable.last_activity_time}, ${ActorRegistryTable.time_created}) < ${cutoff}`,
             ),
