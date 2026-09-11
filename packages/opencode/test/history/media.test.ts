@@ -54,6 +54,8 @@ test("mid-token data: prefixes and wrapped base64 are not collected", () => {
     "multipart/form-data:image/png;base64,SGVsbG8=",
   )
   expect(cleanDataUrls("application/data:foo")).toBe("application/data:foo")
+  expect(cleanDataUrls("x+data:image/png;base64,YQ==")).toBe("x+data:image/png;base64,YQ==")
+  expect(cleanDataUrls("x%data:image/png;base64,YQ==")).toBe("x%data:image/png;base64,YQ==")
   const wrapped = "data:image/png;base64," + "YWJj".repeat(20) + "\n" + "YWJj".repeat(20)
   expect(detail({ type: "text", text: wrapped }).attachments).toHaveLength(0)
   expect(detail({ type: "text", text: wrapped }).text).toContain("YWJj")

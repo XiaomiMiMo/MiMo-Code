@@ -18,8 +18,8 @@ export function cleanDataUrls(text: string, attachments?: Attachment[], style: C
   }
   for (let match = marker.exec(text); match; match = marker.exec(text)) {
     const index = match.index
-    // Reject mid-token prefixes like metadata: / form-data: / application/data:
-    if (index > 0 && /[A-Za-z0-9._/-]/.test(text[index - 1]!)) {
+    // Reject mid-token prefixes like metadata: / form-data: / foo+data: / foo%data:
+    if (index > 0 && /[A-Za-z0-9._/+%-]/.test(text[index - 1]!)) {
       marker.lastIndex = index + 5
       continue
     }
