@@ -150,6 +150,35 @@ describe("parsePath", () => {
   })
 })
 
+describe("parsePath (Windows backslash paths)", () => {
+  test("global scope with backslash separators", () => {
+    expect(parsePath("C:\\data\\memory\\global\\tooling-prefs.md")).toEqual({
+      scope: "global",
+      scope_id: "",
+      type: "free",
+      key: "tooling-prefs",
+    })
+  })
+
+  test("project MEMORY.md with backslash separators", () => {
+    expect(parsePath("C:\\data\\memory\\projects\\uuid-1\\MEMORY.md")).toEqual({
+      scope: "projects",
+      scope_id: "uuid-1",
+      type: "memory",
+      key: "MEMORY",
+    })
+  })
+
+  test("session checkpoint with backslash separators", () => {
+    expect(parsePath("C:\\data\\memory\\sessions\\ses_abc\\checkpoint.md")).toEqual({
+      scope: "sessions",
+      scope_id: "ses_abc",
+      type: "checkpoint",
+      key: "checkpoint",
+    })
+  })
+})
+
 describe("buildPath", () => {
   test("session checkpoint", () => {
     expect(

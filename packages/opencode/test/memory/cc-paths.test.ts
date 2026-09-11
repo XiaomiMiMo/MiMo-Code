@@ -57,4 +57,13 @@ describe("parseCcPath", () => {
   test("non-md file returns null", () => {
     expect(parseCcPath("/home/u/.claude/projects/-foo/memory/x.txt")).toBeNull()
   })
+
+  test("CC memory with backslash separators", () => {
+    expect(parseCcPath("C:\\Users\\me\\.claude\\projects\\slug\\memory\\notes.md")).toEqual({
+      scope: "cc",
+      scope_id: "slug",
+      type: "free",
+      key: "notes",
+    })
+  })
 })
