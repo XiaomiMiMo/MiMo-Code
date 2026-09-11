@@ -1,4 +1,5 @@
 export { Auth } from "./auth"
+export { ModelsDev } from "./provider/models"
 export { Config } from "./config"
 export { Server } from "./server/server"
 export { bootstrap } from "./cli/bootstrap"

@@ -44,7 +44,10 @@ import { Heap } from "./cli/heap"
 import { drizzle } from "drizzle-orm/bun-sqlite"
 import { ensureProcessMetadata } from "./util/mimo-process"
 
+import { ModelsDev } from "./provider/models"
+
 const processMetadata = ensureProcessMetadata("main")
+ModelsDev.startRefresh()
 
 process.on("unhandledRejection", (e) => {
   Log.Default.error("rejection", {

@@ -1,197 +1,67 @@
+export * as ModelsDev from "./models"
+export { Model, Provider } from "./models-schema"
 import { Global } from "../global"
 import { Log } from "../util"
-import path from "path"
-import z from "zod"
+import path from "node:path"
 import { Installation } from "../installation"
 import { Flag } from "../flag/flag"
 import { lazy } from "@/util/lazy"
-import { Filesystem } from "../util"
 import { Flock } from "@mimo-ai/shared/util/flock"
 import { Hash } from "@mimo-ai/shared/util/hash"
-
-// Try to import bundled snapshot (generated at build time)
-// Falls back to undefined in dev mode when snapshot doesn't exist
-/* @ts-ignore */
+import { createCatalog } from "./models-catalog"
 
 const log = Log.create({ service: "models.dev" })
-const source = url()
-const filepath = path.join(
-  Global.Path.cache,
-  source === "https://models.dev" ? "models.json" : `models-${Hash.fast(source)}.json`,
-)
-const ttl = 5 * 60 * 1000
-
-type JsonValue = string | number | boolean | null | { [key: string]: JsonValue } | JsonValue[]
-
-const JsonValue: z.ZodType<JsonValue> = z.lazy(() =>
-  z.union([z.string(), z.number(), z.boolean(), z.null(), z.array(JsonValue), z.record(z.string(), JsonValue)]),
-)
-
-const Cost = z.object({
-  input: z.number(),
-  output: z.number(),
-  cache_read: z.number().optional(),
-  cache_write: z.number().optional(),
-  context_over_200k: z
-    .object({
-      input: z.number(),
-      output: z.number(),
-      cache_read: z.number().optional(),
-      cache_write: z.number().optional(),
-    })
-    .optional(),
-})
-
-export const Model = z.object({
-  id: z.string(),
-  name: z.string(),
-  family: z.string().optional(),
-  release_date: z.string(),
-  attachment: z.boolean(),
-  reasoning: z.boolean(),
-  temperature: z.boolean(),
-  tool_call: z.boolean(),
-  interleaved: z
-    .union([
-      z.literal(true),
-      z
-        .object({
-          field: z.enum(["reasoning", "reasoning_content", "reasoning_details"]),
-        })
-        .strict(),
-    ])
-    .optional(),
-  cost: Cost.optional(),
-  limit: z.object({
-    context: z.number(),
-    input: z.number().optional(),
-    output: z.number(),
-  }),
-  modalities: z
-    .object({
-      input: z.array(z.enum(["text", "audio", "image", "video", "pdf"])),
-      output: z.array(z.enum(["text", "audio", "image", "video", "pdf"])),
-    })
-    .optional(),
-  experimental: z
-    .object({
-      modes: z
-        .record(
-          z.string(),
-          z.object({
-            cost: Cost.optional(),
-            provider: z
-              .object({
-                body: z.record(z.string(), JsonValue).optional(),
-                headers: z.record(z.string(), z.string()).optional(),
-              })
-              .optional(),
-          }),
-        )
-        .optional(),
-    })
-    .optional(),
-  status: z.enum(["alpha", "beta", "deprecated"]).optional(),
-  provider: z.object({ npm: z.string().optional(), api: z.string().optional() }).optional(),
-})
-export type Model = z.infer<typeof Model>
-
-export const Provider = z.object({
-  api: z.string().optional(),
-  name: z.string(),
-  env: z.array(z.string()),
-  id: z.string(),
-  npm: z.string().optional(),
-  models: z.record(z.string(), Model),
-})
-
-export type Provider = z.infer<typeof Provider>
-
-function url() {
-  return Flag.MIMOCODE_MODELS_URL || "https://models.dev"
-}
-
-function fresh() {
-  return Date.now() - Number(Filesystem.stat(filepath)?.mtimeMs ?? 0) < ttl
-}
-
-function skip(force: boolean) {
-  // A pinned fixture path is authoritative; never replace it from the network.
-  if (Flag.MIMOCODE_MODELS_PATH) return true
-  return !force && fresh()
-}
-
-const fetchApi = async () => {
-  const result = await fetch(`${url()}/api.json`, {
-    headers: { "User-Agent": Installation.USER_AGENT },
-    signal: AbortSignal.timeout(5000),
-  })
-  return { ok: result.ok, text: await result.text() }
-}
-
-// Local-first read: pinned path → cache file → build-time snapshot → one-shot
-// fetch → {}. The fetch is a last resort for fresh installs with no cache and
-// no bundled snapshot; it carries its own 5s AbortSignal timeout and never
-// enters Flock, so a hung network cannot park startup behind a multi-minute
-// lock. Production builds ship models-snapshot.js, so TUI first paint does
-// not wait on models.dev. A source checkout without snapshot/cache may block
-// up to 5s on that single fetch before falling back to {}.
-export const Data = lazy(async () => {
-  const result = await Filesystem.readJson(Flag.MIMOCODE_MODELS_PATH ?? filepath).catch(() => {})
-  if (result) return result
-  // @ts-ignore
-  const snapshot = await import("./models-snapshot.js")
-    .then((m) => m.snapshot as Record<string, unknown>)
-    .catch(() => undefined)
-  if (snapshot) return snapshot
-  if (Flag.MIMOCODE_DISABLE_MODELS_FETCH) return {} as Record<string, unknown>
-  // Fresh install: no cache, no snapshot. One blocking fetch (bounded by
-  // fetchApi's own 5s timeout) so the first launch isn't permanently empty.
-  const fetched = await fetchApi().catch(() => undefined)
-  if (fetched?.ok) {
-    await Filesystem.write(filepath, fetched.text).catch(() => {})
-    try {
-      return JSON.parse(fetched.text) as Record<string, unknown>
-    } catch {
-      return {} as Record<string, unknown>
-    }
-  }
-  return {} as Record<string, unknown>
-})
-
-export async function get() {
-  const result = await Data()
-  return result as Record<string, Provider>
-}
-
-// Background-only cache refresh. Callers of get()/Data() never await this.
-export async function refresh(force = false) {
-  if (Flag.MIMOCODE_DISABLE_MODELS_FETCH) return
-  if (skip(force)) return Data.reset()
-  await Flock.withLock(
-    `models-dev:${filepath}`,
-    async () => {
-      if (skip(force)) return Data.reset()
-      const result = await fetchApi()
-      if (!result.ok) return
-      await Filesystem.write(filepath, result.text)
-      Data.reset()
+const catalog = lazy(() => {
+  const source = Flag.MIMOCODE_MODELS_URL || "https://models.dev"
+  const cache = path.join(
+    Global.Path.cache,
+    source === "https://models.dev" ? "models.json" : `models-${Hash.fast(source)}.json`,
+  )
+  return createCatalog({
+    cache,
+    explicit: Flag.MIMOCODE_MODELS_PATH,
+    snapshot: async () => {
+      // Generated and validated at build time; absent in an unbuilt source checkout.
+      // @ts-ignore
+      return import("./models-snapshot.js").then((m) => m.snapshot)
     },
-    // Keep a stuck peer from parking refresh for the default 5 minutes.
-    { timeoutMs: 3000 },
-  ).catch((e) => {
-    log.error("Failed to fetch models.dev", {
-      error: e,
-    })
+    fetch: () =>
+      fetch(`${source}/api.json`, {
+        headers: { "User-Agent": Installation.USER_AGENT },
+        signal: AbortSignal.timeout(10000),
+      }),
+    disabled: () => Flag.MIMOCODE_DISABLE_MODELS_FETCH || process.argv.includes("--get-yargs-completions"),
+    lock: (run) => Flock.withLock(`models-dev:${cache}`, run),
+    onError: (error) => log.error("Failed to refresh models.dev", { error }),
   })
-}
+})
 
-if (!Flag.MIMOCODE_DISABLE_MODELS_FETCH && !Flag.MIMOCODE_MODELS_PATH && !process.argv.includes("--get-yargs-completions")) {
-  void refresh()
-  setInterval(
-    async () => {
-      await refresh()
-    },
-    60 * 1000 * 60,
-  ).unref()
+/**
+ * Local-only read. Every caller owns its copy; never waits for HTTP.
+ * Entity set comes from the last-good cache (or build-time snapshot when absent);
+ * snapshot only fills missing fields — it does not revive dropped providers/models.
+ */
+export function get() {
+  return catalog().get()
+}
+/** Backward-compatible local data entry point. */
+export const Data = Object.assign(get, { reset: () => catalog().reset() })
+/**
+ * `force` always fetches (even under `MIMOCODE_DISABLE_MODELS_FETCH`).
+ * Concurrent non-force flights cannot swallow a later force request.
+ */
+export function refresh(force = false): Promise<void> {
+  return catalog().refresh(force)
+}
+/**
+ * Start best-effort background refresh. Import has no network side effect.
+ * Embedders that do not go through `src/index.ts` / TUI worker MUST call this
+ * after installing their fetch adapter, or the catalog stays frozen at snapshot∪cache.
+ */
+export function startRefresh(): () => void {
+  return catalog().startRefresh()
+}
+/** Successful changes only; consumers re-read get() and invalidate instances at a safe turn boundary. */
+export function subscribe(listener: () => void): () => void {
+  return catalog().subscribe(listener)
 }

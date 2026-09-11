@@ -14,7 +14,10 @@ import { AppRuntime } from "@/effect/app-runtime"
 import { SessionCheckpoint } from "@/session/checkpoint"
 import { ensureProcessMetadata } from "@/util/mimo-process"
 
+import { ModelsDev } from "@/provider/models"
+
 ensureProcessMetadata("worker")
+ModelsDev.startRefresh()
 
 await Log.init({
   print: process.argv.includes("--print-logs"),
