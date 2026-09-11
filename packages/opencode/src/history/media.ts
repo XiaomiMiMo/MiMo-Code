@@ -110,7 +110,7 @@ export function detail(data: Data, collect = true) {
       text +
       attachments
         .slice(inlineCount)
-        .map((a) => `\n[media ${cleanDataUrls(a.mime)}; attachment=${a.id}; use history get]`)
+        .map((a) => `\n[media ${cleanDataUrls(a.mime)}; attachment=${a.id}; call history get attachment=${a.id}]`)
         .join(""),
     attachments: collect ? attachments : [],
   }
