@@ -171,6 +171,25 @@ describe("assertMainWorktreeWriteAllowed (write-tool hard gate)", () => {
   )
 
   it.live(
+    "spawned actor (actorID ≠ main) with mode all gets escalate copy",
+    provideTmpdirInstance(
+      (dir) =>
+        Effect.gen(function* () {
+          yield* Effect.promise(() => seedLinkedWorktree(dir).then(() => undefined))
+          const exit = yield* Effect.exit(assertMainWorktreeWriteAllowed(path.join(dir, "src", "app.ts"), {
+            agentMode: "all",
+            actorID: "explore-1",
+          }))
+          expect(Exit.isFailure(exit)).toBe(true)
+          const message = failureMessage(exit)
+          expect(message).toContain("You are a subagent")
+          expect(message).not.toContain("Isolate this change into a worktree")
+        }),
+      { git: true, config: { auto_worktree: true } },
+    ),
+  )
+
+  it.live(
     "primary (agentMode=primary) gets isolate-without-recipe copy",
     provideTmpdirInstance(
       (dir) =>
@@ -221,11 +240,17 @@ describe("buildMainWorktreeWriteRejection message contract", () => {
   )
 
   it.live(
-    "isolationRoleFromContext: only agentMode=subagent is child",
+    "isolationRoleFromContext: actorID child wins over mode all; main keeps parent",
     Effect.sync(() => {
-      expect(isolationRoleFromContext({ agentMode: "subagent" })).toBe("child")
-      expect(isolationRoleFromContext({ agentMode: "primary" })).toBe("parent")
+      // Spawned actor with custom agent mode "all" is still a child.
+      expect(isolationRoleFromContext({ agentMode: "all", actorID: "explore-1" })).toBe("child")
+      expect(isolationRoleFromContext({ actorID: "explore-1" })).toBe("child")
+      // Root / main stays parent.
+      expect(isolationRoleFromContext({ agentMode: "all", actorID: "main" })).toBe("parent")
+      expect(isolationRoleFromContext({ agentMode: "primary", actorID: "main" })).toBe("parent")
       expect(isolationRoleFromContext({ agentMode: "all" })).toBe("parent")
+      // Fallback: mode=subagent without actorID still child.
+      expect(isolationRoleFromContext({ agentMode: "subagent" })).toBe("child")
       expect(isolationRoleFromContext({})).toBe("parent")
       expect(isolationRoleFromContext(undefined)).toBe("parent")
     }),

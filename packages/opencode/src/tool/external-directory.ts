@@ -9,6 +9,7 @@ import type * as Tool from "./tool"
 import { Instance } from "../project/instance"
 import { ProjectID } from "../project/schema"
 import { assertMemoryWriteAllowed, assertAgentWriteSandbox } from "./memory-path-guard"
+import { assertMainWorktreeWriteAllowed } from "./auto-worktree-hint"
 import { AppFileSystem } from "@mimo-ai/shared/filesystem"
 
 type Kind = "file" | "directory"
@@ -93,18 +94,17 @@ const memoryWriteEnabled = Effect.gen(function* () {
 
 /**
  * The single write-permission gate for file-mutating tools (edit, write,
- * apply_patch). Runs the two checks every write must pass, in order:
+ * apply_patch, notebook_edit). Runs every write check in order:
  *   1. external_directory — asks before touching paths outside the worktree
  *      (defers the memory subtree to the memory guard; see the early return above).
- *   2. memory-path-guard — finer authority over the memory tree: a task-bound
- *      subagent may write its own tasks/<taskId>/*.md, the checkpoint-writer its
- *      canonical paths, and everything else is rejected.
+ *   2. memory-path-guard — finer authority over the memory tree.
+ *   3. auto-worktree hard gate — habit-repo main worktree writes fail closed
+ *      when config.auto_worktree is on (parent isolates; subagent escalates).
  *
- * Collapsing both into one call removes the per-tool duplication and, more
- * importantly, makes "call external_directory but forget the memory guard"
- * unrepresentable — a new write tool that calls this one gate cannot drift into
- * leaving the memory tree unguarded. Read-only tools (read/grep/glob/lsp) keep
- * calling assertExternalDirectoryEffect directly; the memory guard is write-only.
+ * Collapsing into one call makes "call one gate but forget another"
+ * unrepresentable — a new write tool that calls this cannot drift into
+ * leaving memory unguarded or habit-repo main writable. bash keeps its own
+ * pre-spawn gate (no filepath; uses mainWorktreeHits).
  */
 export const assertWriteAllowed = Effect.fn("Tool.assertWriteAllowed")(function* (
   ctx: Tool.Context,
@@ -145,6 +145,10 @@ export const assertWriteAllowed = Effect.fn("Tool.assertWriteAllowed")(function*
     taskId: ctx.taskId,
     writeEnabled: yield* memoryWriteEnabled,
   })
+
+  // Habit-repo main worktree hard gate (auto_worktree). Same entry as memory
+  // so a future write tool cannot forget it by calling only assertWriteAllowed.
+  yield* assertMainWorktreeWriteAllowed(target, ctx)
 })
 
 /**

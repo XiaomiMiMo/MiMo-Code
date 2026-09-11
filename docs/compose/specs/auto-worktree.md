@@ -40,13 +40,15 @@ topic: auto-worktree
 
 ### 3.1 硬门（习惯仓）
 
-- 入口：`assertMainWorktreeWriteAllowed` / `assertHabitRepoMainWriteBlocked`
+- 入口：写工具经 **`assertWriteAllowed`**（与 external_directory / memory 同口）；bash 在 ask 前经 `assertHabitRepoMainWriteBlocked`（`mainWorktreeHits`）
 - 挂在 write / edit / apply_patch（含 move 目标）/ notebook_edit；multiedit 走 edit
-- bash：`mainWorktreeHits` 非空时在 spawn/ask **之前**拒绝（含 redirect 写与 git 变更）
 - 路径判定与 Notice 共用 `walkGitLayout` / `findGitMainWorktree` / `repoHasLinkedWorktrees`
-- Config 经 `Effect.serviceOption` 读取；**缺失 fail-open**（默认产品关，读不到配置不得锁死写）
-- 生产：`AppRuntime.mergeAll` 含 `Config`，EffectBridge 上下文里能读到
-- 测试：必须在**外层 fiber** `Effect.provide(Config.defaultLayer)`（对齐 AppRuntime）；只给 `SessionPrompt.defaultLayer` 时 Config 被 layer 消费，硬门会假绿 fail-open
+- **child 判据**：`actorID` 非 `main`（对齐 `task.ts`），或 `agentMode === "subagent"`；自定义 agent 默认 `mode: "all"` 但以 actor 身份运行时仍是 child
+- Config 经 `Effect.serviceOption` 读取；**缺失 fail-open**
+- 生产：`AppRuntime.mergeAll` 含 `Config`
+- 测试：外层 fiber `Effect.provide(Config.defaultLayer)`，否则硬门假绿
+
+**bash 穿孔（诚实边界）**：门只认 `mainWorktreeHits` 静态 AST。含 `$` 的 redirect、`node -e` / `python -c` 一类解释器写盘**不在 hits 内**——write/edit 是真硬门，bash 是 best-effort 子集，不是完备不可绕过。
 
 ### 3.2 软提醒（noHabit）
 

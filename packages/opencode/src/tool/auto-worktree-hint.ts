@@ -239,7 +239,10 @@ export function buildAutoWorktreeNotice(mainWorktreePath: string): string {
  */
 export type IsolationRole = "parent" | "child"
 
-export function isolationRoleFromContext(ctx?: { agentMode?: string }): IsolationRole {
+export function isolationRoleFromContext(ctx?: { agentMode?: string; actorID?: string }): IsolationRole {
+  // Prefer actorID: custom agents default to mode "all" but still run as a
+  // spawned child. Aligns with task.ts (`actorID !== undefined && !== "main"`).
+  if (ctx?.actorID !== undefined && ctx.actorID !== "main") return "child"
   return ctx?.agentMode === "subagent" ? "child" : "parent"
 }
 
@@ -277,12 +280,12 @@ export function buildMainWorktreeWriteRejection(mainRoot: string, role: Isolatio
  * Throws when the repo already uses worktrees and `config.auto_worktree` is true.
  * Missing Config fails OPEN — default product is off, unreadable config must not block writes.
  *
- * `ctx.agentMode === "subagent"` gets the escalate-to-parent rejection, never
- * the self-isolate recovery path (see IsolationRole).
+ * Child (spawned actor / agentMode=subagent) gets the escalate-to-parent rejection,
+ * never the self-isolate recovery path (see IsolationRole).
  */
 export const assertHabitRepoMainWriteBlocked = Effect.fn("Tool.assertHabitRepoMainWriteBlocked")(function* (
   mainRoot: string,
-  ctx?: { agentMode?: string },
+  ctx?: { agentMode?: string; actorID?: string },
 ) {
   if (!repoHasLinkedWorktrees(mainRoot)) return
   const svc = yield* Effect.serviceOption(Config.Service)
@@ -302,7 +305,7 @@ export const assertHabitRepoMainWriteBlocked = Effect.fn("Tool.assertHabitRepoMa
  */
 export const assertMainWorktreeWriteAllowed = Effect.fn("Tool.assertMainWorktreeWriteAllowed")(function* (
   filepath: string,
-  ctx?: { agentMode?: string },
+  ctx?: { agentMode?: string; actorID?: string },
 ) {
   const mainRoot = findGitMainWorktree(filepath)
   if (!mainRoot) return

@@ -14,7 +14,6 @@ import { Instance } from "../project/instance"
 import { SessionCwd } from "./session-cwd"
 import { trimDiff } from "./edit"
 import { assertWriteAllowed, askEditUnlessMemory } from "./external-directory"
-import { assertMainWorktreeWriteAllowed } from "./auto-worktree-hint"
 
 const MAX_PROJECT_DIAGNOSTICS_FILES = 5
 
@@ -38,7 +37,6 @@ export const WriteTool = Tool.define(
             ? params.file_path
             : path.join(SessionCwd.get(ctx.sessionID), params.file_path)
           yield* assertWriteAllowed(ctx, filepath)
-          yield* assertMainWorktreeWriteAllowed(filepath, ctx)
 
           const exists = yield* fs.existsSafe(filepath)
           const contentOld = exists ? yield* fs.readFileString(filepath) : ""
