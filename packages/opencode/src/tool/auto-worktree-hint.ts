@@ -1,8 +1,10 @@
 import { Instance } from "@/project/instance"
+import { Config } from "@/config"
 import { Database, eq } from "@/storage"
 import { SessionTable } from "@/session/session.sql"
 import type { SessionID } from "@/session/schema"
 import type { MessageV2 } from "@/session/message-v2"
+import { Effect, Option } from "effect"
 import path from "path"
 import fs from "fs"
 
@@ -27,7 +29,7 @@ export type GitLayout = {
 
 /**
  * Walk up from `startDir` to the nearest `.git`. Shared by the main-worktree
- * habit gate and conflict-detection so both keep one notion of git layout.
+ * habit gate so both keep one notion of git layout.
  */
 export function walkGitLayout(startDir: string): GitLayout | null {
   try {
@@ -191,20 +193,118 @@ export function buildAutoWorktreeNotice(mainWorktreePath: string): string {
   const hasHabit = repoHasLinkedWorktrees(mainWorktreePath)
   const body = hasHabit
     ? [
-        `This session is mutating the git main worktree at \`${mainWorktreePath}\`. Concurrent write/edit or git operations there can interfere with other agents or local changes.`,
+        `STOP. This session is mutating the git MAIN worktree at \`${mainWorktreePath}\`. Concurrent write/edit or git operations there can interfere with other agents or local changes.`,
         "",
-        "This repo already uses worktrees. Isolate this task in a new worktree and switch into it before any further write or edit. You do not need to ask the user first.",
+        "This repo already uses worktrees — that is the repo habit, not an optional suggestion.",
+        "",
+        "You MUST create an isolated worktree for this task and switch into it before ANY further write, edit, apply_patch, or git mutation under the main worktree (or any other repo main worktree later). You do not need to ask the user first.",
+        "",
+        "Do NOT write/edit/apply_patch under the main worktree path again after this notice. Do NOT continue the current change in place. Pause the implementation, isolate first, then resume only in the new worktree.",
+        "",
+        "After isolating, briefly confirm the worktree path (and branch if you created one) in your next reply. Isolation failure must be stated explicitly — do not silently fall back to writing main.",
         "",
         "This rule is not limited to the path above. If you later start writing to another git repository that already uses worktrees, or run git mutations against its main worktree, isolate there the same way without asking.",
       ]
     : [
         `This session is mutating the git main worktree at \`${mainWorktreePath}\`. Concurrent write/edit or git operations there can interfere with other agents or local changes.`,
         "",
-        "Do NOT create a worktree on your own. Before any further write or edit, ask the user whether they want an isolated worktree.",
+        "No linked worktrees exist in this repo yet, so habit is unknown. Choose intentionally:",
+        "- Prefer an isolated worktree for multi-file or risky changes.",
+        "- You MAY create one without asking if the task clearly benefits from isolation.",
+        "- Otherwise ask the user before further main-worktree writes, or continue only if they already accepted main as the working area.",
         "",
-        "If the user agrees, isolate this task in a new worktree and switch into it before continuing. If the user declines, continue with the original plan without creating a worktree.",
+        "Do NOT ignore this trade-off and keep editing main as if nothing was flagged. If you stay on main, say so in your reply.",
         "",
-        "This rule is not limited to the path above. If you later start writing to another git repository, or run git mutations against another repo's main worktree, apply the same check there: ask the user before continuing in that main worktree.",
+        "This rule is not limited to the path above. Apply the same check when you later write or run git mutations against another repository's main worktree.",
       ]
   return ["<system-reminder>", AUTO_WORKTREE_NOTICE_MARKER, "", ...body, "</system-reminder>"].join("\n")
 }
+
+/**
+ * Tool-level gate: reject write/edit into a git MAIN worktree when this is a
+ * habit repo (already has linked worktrees) and `auto_worktree` is on.
+ *
+ * Soft notice alone is not enough — models finish single-shot tasks without
+ * isolating, and multi-file turns keep writing main. A failed tool call is the
+ * only consequence with a forced recovery path (create worktree, then retry).
+ *
+ * Non-habit repos and linked worktrees pass. Does not auto-create a worktree.
+ */
+/**
+ * Who may recover by creating a worktree:
+ * - `parent` (primary / root agent): isolate yourself, then retry.
+ * - `child` (subagent): NEVER self-isolate — report the block; the parent
+ *   decides isolation. Concurrent subagents each running `git worktree add`
+ *   race on `.git/worktrees` and leave orphan trees the parent never chose.
+ */
+export type IsolationRole = "parent" | "child"
+
+export function isolationRoleFromContext(ctx?: { agentMode?: string }): IsolationRole {
+  return ctx?.agentMode === "subagent" ? "child" : "parent"
+}
+
+export function buildMainWorktreeWriteRejection(mainRoot: string, role: IsolationRole = "parent"): Error {
+  // Policy + outcome only — do not prescribe `git worktree add` recipes.
+  // The model already knows isolation; micromanaging the command caused
+  // sibling-path / external_directory friction and hid real product issues.
+  const shared = [
+    `Blocked: this path is inside the git MAIN worktree \`${mainRoot}\`.`,
+    "",
+    "This repo already uses worktrees. Writes to the main worktree are not allowed for this session.",
+    "",
+  ]
+  const body =
+    role === "child"
+      ? [
+          "You are a subagent. Do NOT create a worktree yourself and do NOT retry this write on main.",
+          "",
+          "Escalate to the parent agent: report this block, wait for a worktree path the parent chose, then retry only under that path.",
+          "",
+          "Do NOT retry against the main worktree path.",
+        ]
+      : [
+          "Isolate this change into a worktree under this repo, then retry with a path under that worktree.",
+          "",
+          "Do NOT retry against the main worktree path. Do not ask the user to lift this block.",
+        ]
+  const err = new Error([...shared, ...body].join("\n"))
+  err.name = "AutoWorktreeBlockedError"
+  return err
+}
+
+/**
+ * Shared habit-repo gate. `mainRoot` must already be a git MAIN worktree root.
+ * Throws when the repo already uses worktrees and `config.auto_worktree` is true.
+ * Missing Config fails OPEN — default product is off, unreadable config must not block writes.
+ *
+ * `ctx.agentMode === "subagent"` gets the escalate-to-parent rejection, never
+ * the self-isolate recovery path (see IsolationRole).
+ */
+export const assertHabitRepoMainWriteBlocked = Effect.fn("Tool.assertHabitRepoMainWriteBlocked")(function* (
+  mainRoot: string,
+  ctx?: { agentMode?: string },
+) {
+  if (!repoHasLinkedWorktrees(mainRoot)) return
+  const svc = yield* Effect.serviceOption(Config.Service)
+  if (Option.isNone(svc)) return
+  const cfg = yield* svc.value.get()
+  if (cfg.auto_worktree !== true) return
+  throw buildMainWorktreeWriteRejection(mainRoot, isolationRoleFromContext(ctx))
+})
+
+/**
+ * Assert that `filepath` may be written under the current auto-worktree policy.
+ * Throws `AutoWorktreeBlockedError` when the target is a habit-repo main worktree
+ * and config.auto_worktree is true. Linked worktrees and non-git paths pass.
+ *
+ * Config is resolved with `Effect.serviceOption` so Tool.Def.execute stays
+ * R = never (same pattern as external-directory memory gate).
+ */
+export const assertMainWorktreeWriteAllowed = Effect.fn("Tool.assertMainWorktreeWriteAllowed")(function* (
+  filepath: string,
+  ctx?: { agentMode?: string },
+) {
+  const mainRoot = findGitMainWorktree(filepath)
+  if (!mainRoot) return
+  yield* assertHabitRepoMainWriteBlocked(mainRoot, ctx)
+})

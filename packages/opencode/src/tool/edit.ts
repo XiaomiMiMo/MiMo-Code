@@ -18,6 +18,7 @@ import { Instance } from "../project/instance"
 import { SessionCwd } from "./session-cwd"
 import { Snapshot } from "@/snapshot"
 import { assertWriteAllowed, askEditUnlessMemory } from "./external-directory"
+import { assertMainWorktreeWriteAllowed } from "./auto-worktree-hint"
 import { assertFileRead } from "./read-state"
 import { AppFileSystem } from "@mimo-ai/shared/filesystem"
 import { Flag } from "@/flag/flag"
@@ -79,6 +80,7 @@ export const EditTool = Tool.define(
             ? params.file_path
             : path.join(SessionCwd.get(ctx.sessionID), params.file_path)
           yield* assertWriteAllowed(ctx, filePath)
+          yield* assertMainWorktreeWriteAllowed(filePath, ctx)
 
           // The "create new file" branch (oldString === "") is effectively a
           // write, so a prior Read isn't meaningful there. For real edits we

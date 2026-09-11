@@ -4507,34 +4507,6 @@ export type WorktreeResetResponses = {
 
 export type WorktreeResetResponse = WorktreeResetResponses[keyof WorktreeResetResponses]
 
-export type WorktreeAutoData = {
-  body?: never
-  path?: never
-  query?: {
-    directory?: string
-    workspace?: string
-  }
-  url: "/experimental/worktree/auto"
-}
-
-export type WorktreeAutoErrors = {
-  /**
-   * Bad request
-   */
-  400: BadRequestError
-}
-
-export type WorktreeAutoError = WorktreeAutoErrors[keyof WorktreeAutoErrors]
-
-export type WorktreeAutoResponses = {
-  /**
-   * Worktree info or null
-   */
-  200: Worktree | null
-}
-
-export type WorktreeAutoResponse = WorktreeAutoResponses[keyof WorktreeAutoResponses]
-
 export type ExperimentalTitleGenerateData = {
   body: {
     text?: string

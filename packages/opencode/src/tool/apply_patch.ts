@@ -9,6 +9,7 @@ import { SessionCwd } from "./session-cwd"
 import { Patch } from "../patch"
 import { createTwoFilesPatch, diffLines } from "diff"
 import { assertWriteAllowed } from "./external-directory"
+import { assertMainWorktreeWriteAllowed } from "./auto-worktree-hint"
 import { trimDiff } from "./edit"
 import { LSP } from "../lsp"
 import { AppFileSystem } from "@mimo-ai/shared/filesystem"
@@ -68,6 +69,7 @@ export const ApplyPatchTool = Tool.define(
       for (const hunk of hunks) {
         const filePath = path.resolve(SessionCwd.get(ctx.sessionID), hunk.path)
         yield* assertWriteAllowed(ctx, filePath)
+        yield* assertMainWorktreeWriteAllowed(filePath, ctx)
 
         switch (hunk.type) {
           case "add": {
@@ -128,6 +130,7 @@ export const ApplyPatchTool = Tool.define(
 
             const movePath = hunk.move_path ? path.resolve(SessionCwd.get(ctx.sessionID), hunk.move_path) : undefined
             yield* assertWriteAllowed(ctx, movePath)
+            if (movePath) yield* assertMainWorktreeWriteAllowed(movePath, ctx)
 
             fileChanges.push({
               filePath,

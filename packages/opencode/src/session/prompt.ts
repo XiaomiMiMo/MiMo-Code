@@ -1578,6 +1578,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
           execMcp,
         },
         agent: input.agent.name,
+        agentMode: input.agent.mode,
         actorID: input.agentID,
         taskId: input.task_id,
         messages: input.messages,

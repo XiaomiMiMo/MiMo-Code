@@ -1,10 +1,12 @@
 import path from "path"
+import fs from "fs"
 import { describe, expect, test } from "bun:test"
 import { $ } from "bun"
 import { Effect, Layer } from "effect"
 import { Instance } from "../../src/project/instance"
 import { Session } from "../../src/session"
 import { SessionPrompt } from "../../src/session/prompt"
+import { Config } from "../../src/config"
 import { Log } from "../../src/util"
 import { tmpdir } from "../fixture/fixture"
 import { startScriptedLLMServer, textStopResponse, toolCallResponse } from "../lib/scripted-llm-server"
@@ -21,7 +23,13 @@ async function seedLinkedWorktree(repo: string) {
 
 function run<A, E>(fx: Effect.Effect<A, E, SessionPrompt.Service | Session.Service>) {
   return Effect.runPromise(
-    fx.pipe(Effect.scoped, Effect.provide(Layer.mergeAll(SessionPrompt.defaultLayer, Session.defaultLayer))),
+    fx.pipe(
+      Effect.scoped,
+      // Config must sit on the OUTER fiber (like AppRuntime.mergeAll). SessionPrompt's
+      // own Layer.provide(Config) is consumed at construction; tool execute runs via
+      // EffectBridge and Effect.serviceOption(Config) only sees the caller's context.
+      Effect.provide(Layer.mergeAll(SessionPrompt.defaultLayer, Session.defaultLayer, Config.defaultLayer)),
+    ),
   )
 }
 
@@ -58,7 +66,7 @@ function noticeParts(session: { parts: Array<{ type: string; text?: string; synt
 }
 
 describe("session.prompt auto-worktree first-write notice", () => {
-  test("injects once after the first write tool, then persists the flag", async () => {
+  test("habit repo + auto_worktree:true blocks write into main (hard gate, not notice)", async () => {
     const stub = startScriptedLLMServer([
       {
         lines: toolCallResponse({
@@ -68,7 +76,6 @@ describe("session.prompt auto-worktree first-write notice", () => {
         }),
       },
       { lines: textStopResponse("done-write") },
-      { lines: textStopResponse("done-again") },
     ])
 
     try {
@@ -91,7 +98,7 @@ describe("session.prompt auto-worktree first-write notice", () => {
               const prompt = yield* SessionPrompt.Service
               const sessions = yield* Session.Service
               const session = yield* sessions.create({
-                title: "aw write notice",
+                title: "aw write gate",
                 permission: [{ permission: "*", pattern: "*", action: "allow" }],
               })
 
@@ -101,44 +108,27 @@ describe("session.prompt auto-worktree first-write notice", () => {
                 parts: [{ type: "text", text: "Create hello.txt with hello" }],
               })
 
+              // File must NOT land on main — the write tool is the hard gate.
+              expect(fs.existsSync(path.join(tmp.path, "hello.txt"))).toBe(false)
+
               const msgs = yield* sessions.messages({ sessionID: session.id })
+              const toolParts = msgs.flatMap((m) => m.parts).filter((p) => p.type === "tool" && p.tool === "write")
+              expect(toolParts.length).toBeGreaterThan(0)
+              const failed = toolParts.find(
+                (p): p is Extract<typeof p, { type: "tool" }> => p.type === "tool" && p.state.status === "error",
+              )
+              expect(failed).toBeDefined()
+              // Tool layer strips Error.name; assert the recovery contract in the message.
+              const errText = String((failed?.state as { error?: string } | undefined)?.error ?? "")
+              expect(errText).toContain("MAIN worktree")
+              expect(errText).toContain("Isolate this change into a worktree")
+              expect(errText).toContain("Do NOT retry against the main worktree path")
+              expect(errText).not.toContain("git worktree add")
+
+              // No successful mutation → notice must not inject (gate is the signal).
               const userMsgs = msgs.filter((m) => m.info.role === "user")
-              expect(userMsgs).toHaveLength(1)
-
-              const notices = noticeParts(userMsgs[0])
-              expect(notices).toHaveLength(1)
-              const text = notices[0].type === "text" ? notices[0].text : ""
-              // Habit repo: may isolate without asking first.
-              expect(text).toContain("already uses worktrees")
-              expect(text).toContain("do not need to ask the user first")
-              expect(text).not.toContain("Do NOT create a worktree on your own")
-              expect(text).toContain(path.resolve(tmp.path))
-              expect(text).not.toContain("Conflict detected")
-              expect(isAutoWorktreeHintSent(session.id)).toBe(true)
-
-              // Cache-safety: the notice must ride a user message, never the system prompt.
-              // First LLM call happens before any write, so it must not see the notice.
-              // Second call (post-write step) must see it only in a user-role message.
-              expect(stub.captures.length).toBeGreaterThanOrEqual(2)
-              const firstMsgs = JSON.stringify(stub.captures[0]?.messages ?? [])
-              expect(firstMsgs).not.toContain("Auto-Worktree Notice")
-              const second = stub.captures[1]?.messages ?? []
-              const systemText = JSON.stringify(second.filter((m) => m.role === "system"))
-              expect(systemText).not.toContain("Auto-Worktree Notice")
-              const userText = JSON.stringify(second.filter((m) => m.role === "user"))
-              expect(userText).toContain("Auto-Worktree Notice")
-
-              // Second turn must not re-inject.
-              yield* prompt.prompt({
-                sessionID: session.id,
-                agent: "build",
-                parts: [{ type: "text", text: "Say done-again" }],
-              })
-              const msgs2 = yield* sessions.messages({ sessionID: session.id })
-              const userMsgs2 = msgs2.filter((m) => m.info.role === "user")
-              expect(userMsgs2).toHaveLength(2)
-              expect(noticeParts(userMsgs2[0])).toHaveLength(1)
-              expect(noticeParts(userMsgs2[1])).toHaveLength(0)
+              expect(noticeParts(userMsgs[0])).toHaveLength(0)
+              expect(isAutoWorktreeHintSent(session.id)).toBe(false)
 
               yield* sessions.remove(session.id)
             }),
@@ -147,6 +137,27 @@ describe("session.prompt auto-worktree first-write notice", () => {
     } finally {
       void stub.stop()
     }
+  })
+
+  test("habit notice copy still builds MUST-isolate body when a mutation is observed", async () => {
+    // Soft-notice builder remains the multi-step explanation; the hard gate is the
+    // primary consequence. Unit-level: copy contract without needing a successful write.
+    await using tmp = await tmpdir({
+      git: true,
+      init: async (dir) => {
+        await seedLinkedWorktree(dir)
+      },
+    })
+    const { buildAutoWorktreeNotice } = await import("../../src/tool/auto-worktree-hint")
+    const text = buildAutoWorktreeNotice(tmp.path)
+    expect(text).toContain("already uses worktrees")
+    expect(text).toContain("You MUST create an isolated worktree")
+    expect(text).toContain("Do NOT write/edit/apply_patch under the main worktree")
+    expect(text).toContain("do not need to ask the user first")
+    expect(text).toContain("briefly confirm the worktree path")
+    expect(text).not.toContain("Do NOT create a worktree on your own")
+    expect(text).toContain(path.resolve(tmp.path))
+    expect(text).not.toContain("Conflict detected")
   })
 
   test("injects ask-first notice when the repo has no linked worktrees yet", async () => {
@@ -197,8 +208,11 @@ describe("session.prompt auto-worktree first-write notice", () => {
               const notices = noticeParts(userMsgs[0])
               expect(notices).toHaveLength(1)
               const text = notices[0].type === "text" ? notices[0].text : ""
-              expect(text).toContain("Do NOT create a worktree on your own")
+              expect(text).toContain("No linked worktrees exist in this repo yet")
+              expect(text).toContain("Choose intentionally")
               expect(text).toContain("ask the user")
+              expect(text).toContain("Do NOT ignore this trade-off")
+              expect(text).not.toContain("You MUST create an isolated worktree")
               expect(isAutoWorktreeHintSent(session.id)).toBe(true)
 
               yield* sessions.remove(session.id)
@@ -253,7 +267,7 @@ describe("session.prompt auto-worktree first-write notice", () => {
     }
   })
 
-  test("injects once after a bash write command (redirect)", async () => {
+  test("habit repo + auto_worktree:true blocks bash redirect write into main", async () => {
     const stub = startScriptedLLMServer([
       {
         lines: toolCallResponse({
@@ -295,15 +309,75 @@ describe("session.prompt auto-worktree first-write notice", () => {
                 parts: [{ type: "text", text: "Write from-bash.txt via bash redirect" }],
               })
 
-              const msgs = yield* sessions.messages({ sessionID: session.id })
-              const bashTool = msgs
-                .flatMap((m) => m.parts)
-                .find((p) => p.type === "tool" && p.tool === "bash")
-              expect(bashTool).toBeDefined()
-              if (bashTool?.type === "tool" && bashTool.state.status === "completed") {
-                expect(bashTool.state.metadata.fileWrite).toBe(true)
-              }
+              expect(fs.existsSync(path.join(tmp.path, "from-bash.txt"))).toBe(false)
 
+              const msgs = yield* sessions.messages({ sessionID: session.id })
+              const bashTool = msgs.flatMap((m) => m.parts).find((p) => p.type === "tool" && p.tool === "bash")
+              expect(bashTool).toBeDefined()
+              expect(bashTool?.type === "tool" && bashTool.state.status).toBe("error")
+              const errText = String(
+                (bashTool?.type === "tool" ? (bashTool.state as { error?: string }).error : "") ?? "",
+              )
+              expect(errText).toContain("MAIN worktree")
+              expect(errText).toContain("Isolate this change into a worktree")
+
+              const userMsgs = msgs.filter((m) => m.info.role === "user")
+              expect(noticeParts(userMsgs[0])).toHaveLength(0)
+              expect(isAutoWorktreeHintSent(session.id)).toBe(false)
+
+              yield* sessions.remove(session.id)
+            }),
+          ),
+      })
+    } finally {
+      void stub.stop()
+    }
+  })
+
+  test("noHabit + auto_worktree:true bash redirect write succeeds and injects notice", async () => {
+    const stub = startScriptedLLMServer([
+      {
+        lines: toolCallResponse({
+          id: "call_bash_nohabit",
+          name: "bash",
+          args: JSON.stringify({ command: "echo hello > from-bash.txt", description: "Write via redirect" }),
+        }),
+      },
+      { lines: textStopResponse("done-bash") },
+    ])
+
+    try {
+      await using tmp = await tmpdir({
+        git: true,
+        init: async (dir) => {
+          await Bun.write(
+            path.join(dir, "mimocode.json"),
+            JSON.stringify(providerConfig(stub.origin, { auto_worktree: true })),
+          )
+        },
+      })
+
+      await Instance.provide({
+        directory: tmp.path,
+        fn: () =>
+          run(
+            Effect.gen(function* () {
+              const prompt = yield* SessionPrompt.Service
+              const sessions = yield* Session.Service
+              const session = yield* sessions.create({
+                title: "aw bash write nohabit",
+                permission: [{ permission: "*", pattern: "*", action: "allow" }],
+              })
+
+              yield* prompt.prompt({
+                sessionID: session.id,
+                agent: "build",
+                parts: [{ type: "text", text: "Write from-bash.txt via bash redirect" }],
+              })
+
+              expect(fs.existsSync(path.join(tmp.path, "from-bash.txt"))).toBe(true)
+
+              const msgs = yield* sessions.messages({ sessionID: session.id })
               const userMsgs = msgs.filter((m) => m.info.role === "user")
               expect(noticeParts(userMsgs[0])).toHaveLength(1)
               expect(isAutoWorktreeHintSent(session.id)).toBe(true)
@@ -375,8 +449,8 @@ describe("session.prompt auto-worktree first-write notice", () => {
     }
   })
 
-  test("cd-escape from a non-git session dir into another repo's main worktree still injects", async () => {
-    // Target repo is the real main worktree the command will write into.
+  test("cd-escape into another habit repo's main is blocked even from a non-git session dir", async () => {
+    // Target repo is the real main worktree the command will try to write into.
     await using target = await tmpdir({
       git: true,
       init: async (dir) => {
@@ -435,19 +509,20 @@ describe("session.prompt auto-worktree first-write notice", () => {
                 ],
               })
 
+              expect(fs.existsSync(path.join(targetRepo, "escaped.txt"))).toBe(false)
+
               const msgs = yield* sessions.messages({ sessionID: session.id })
               const bashTool = msgs.flatMap((m) => m.parts).find((p) => p.type === "tool" && p.tool === "bash")
-              expect(bashTool).toBeDefined()
-              if (bashTool?.type === "tool" && bashTool.state.status === "completed") {
-                expect(bashTool.state.metadata.mainWorktreeHits?.[0]).toBe(path.resolve(targetRepo))
-              }
+              expect(bashTool?.type === "tool" && bashTool.state.status).toBe("error")
+              const errText = String(
+                (bashTool?.type === "tool" ? (bashTool.state as { error?: string }).error : "") ?? "",
+              )
+              expect(errText).toContain(path.resolve(targetRepo))
+              expect(errText).toContain("MAIN worktree")
 
               const userMsgs = msgs.filter((m) => m.info.role === "user")
-              const notices = noticeParts(userMsgs[0])
-              expect(notices).toHaveLength(1)
-              const text = notices[0].type === "text" ? notices[0].text : ""
-              expect(text).toContain(path.resolve(targetRepo))
-              expect(isAutoWorktreeHintSent(session.id)).toBe(true)
+              expect(noticeParts(userMsgs[0])).toHaveLength(0)
+              expect(isAutoWorktreeHintSent(session.id)).toBe(false)
 
               yield* sessions.remove(session.id)
             }),
@@ -458,7 +533,7 @@ describe("session.prompt auto-worktree first-write notice", () => {
     }
   })
 
-  test("git checkout on a main worktree injects even without a file write", async () => {
+  test("git checkout on a habit main worktree is blocked even without a file write", async () => {
     const stub = startScriptedLLMServer([
       {
         lines: toolCallResponse({
@@ -505,15 +580,17 @@ describe("session.prompt auto-worktree first-write notice", () => {
 
               const msgs = yield* sessions.messages({ sessionID: session.id })
               const bashTool = msgs.flatMap((m) => m.parts).find((p) => p.type === "tool" && p.tool === "bash")
-              expect(bashTool).toBeDefined()
-              if (bashTool?.type === "tool" && bashTool.state.status === "completed") {
-                expect(bashTool.state.metadata.fileWrite).not.toBe(true)
-                expect(bashTool.state.metadata.mainWorktreeHits?.[0]).toBe(path.resolve(tmp.path))
-              }
+              expect(bashTool?.type === "tool" && bashTool.state.status).toBe("error")
+              const errText = String(
+                (bashTool?.type === "tool" ? (bashTool.state as { error?: string }).error : "") ?? "",
+              )
+              expect(errText).toContain("MAIN worktree")
+
+              const branches = yield* Effect.promise(() => $`git -C ${tmp.path} branch --list wt/feature`.text())
+              expect(branches.trim()).toBe("")
 
               const userMsgs = msgs.filter((m) => m.info.role === "user")
-              expect(noticeParts(userMsgs[0])).toHaveLength(1)
-              expect(isAutoWorktreeHintSent(session.id)).toBe(true)
+              expect(noticeParts(userMsgs[0])).toHaveLength(0)
 
               yield* sessions.remove(session.id)
             }),
@@ -525,7 +602,7 @@ describe("session.prompt auto-worktree first-write notice", () => {
   })
 
   test(
-    "second repo mutated later does not re-inject; standing rule covers it",
+    "second noHabit repo mutated later does not re-inject; standing rule covers it",
     async () => {
     await using repoB = await tmpdir({
       git: true,
@@ -562,7 +639,7 @@ describe("session.prompt auto-worktree first-write notice", () => {
             path.join(dir, "mimocode.json"),
             JSON.stringify(providerConfig(stub.origin, { auto_worktree: true })),
           )
-          await seedLinkedWorktree(dir)
+          // noHabit on purpose: first write must SUCCEED so the notice can inject.
         },
       })
       const pathA = tmp.path
@@ -591,7 +668,7 @@ describe("session.prompt auto-worktree first-write notice", () => {
               const text1 = noticeParts(user1[0])[0].type === "text" ? noticeParts(user1[0])[0].text : ""
               expect(text1).toContain(path.resolve(pathA))
               expect(text1).toContain("not limited to the path above")
-              expect(text1).toContain("another git repository")
+              expect(text1).toContain("another repository")
 
               yield* prompt.prompt({
                 sessionID: session.id,
