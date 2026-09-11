@@ -3105,8 +3105,9 @@ NOTE: At any point in time through this workflow you should feel free to ask the
         // 未完成 assistant 才是恢复候选。步级 time.completed 不等于整轮完成——
         // tool-calls(工具步完但整轮未答)、length(输出截断)、无 finish(中断)均可恢复;
         // stop / other 等已正常或已终态收尾的不进候选(allowlist,不靠排除法)。
+        // 有 error = 没完成 = 可恢复(processor 注释不变量):stop+error 仍进候选。
         if ("completed" in msg.info.time && msg.info.finish && msg.info.finish !== "tool-calls" && msg.info.finish !== "length") continue
-        if (msg.info.finish === "stop") continue
+        if (msg.info.finish === "stop" && !msg.info.error) continue
         const assistant = msg.info
         if (!msgs.some((parent) => parent.info.role === "user" && parent.info.id === assistant.parentID)) continue
         if (msgs.slice(index + 1).some((later) => later.info.role === "user" || later.info.role === "assistant")) continue

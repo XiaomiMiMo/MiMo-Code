@@ -150,6 +150,7 @@ describe("recovery candidate predicate", () => {
             ? { created: Date.now(), completed: Date.now() }
             : { created: Date.now() },
           ...(overrides.finish ? { finish: overrides.finish as "stop" | "length" | "tool-calls" | "other" } : {}),
+          ...(overrides.error ? { error: { name: "ProviderModelError", data: { message: "model unavailable", statusCode: 503, isRetryable: true } } } : {}),
         } as Parameters<typeof sessions.updateMessage>[0])
         const candidates = yield* SessionPrompt.Service.use((svc) =>
           svc.recovery({ sessionID: session.id, agentID: "main" }),
@@ -183,6 +184,18 @@ describe("recovery candidate predicate", () => {
   test("completed + other → NOT candidate", async () => {
     const result = await setupAssistant({ completed: true, finish: "other" })
     expect(result.candidates.length).toBe(0)
+  })
+
+  // [Finding #1 回归] finish=stop 但有 error:processor 因 error 不写 completed → 可恢复。
+  test("finish=stop + error → candidate (error means not completed)", async () => {
+    const result = await setupAssistant({ completed: false, finish: "stop", error: true })
+    expect(result.candidates.length).toBe(1)
+  })
+
+  // error + 无 completed:任何 finish 都是候选(有 error = 没完成)。
+  test("error + no completed → candidate", async () => {
+    const result = await setupAssistant({ completed: false, error: true })
+    expect(result.candidates.length).toBe(1)
   })
 })
 
