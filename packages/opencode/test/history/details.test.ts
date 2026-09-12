@@ -106,7 +106,8 @@ it.live("get reads original parts without index; Unicode pages, errors, stable m
             error: `oops ${url}`,
             attachments: [
               { id: "old-id", mime: "image/png", url },
-              { mime: "audio/ogg", url: "data:audio/ogg;base64,YWJj" },
+              // tool:1 unsupported audio (aac off allowlist); tool:3 wav is routable.
+              { mime: "audio/aac", url: "data:audio/aac;base64,YWJj" },
               { mime: "application/pdf", url: "data:application/pdf;base64,YWJj" },
               { mime: "audio/wav", url: "data:audio/wav;base64,YWJj" },
               { mime: "image/png", url: "https://example.com/never-downloaded.png" },
