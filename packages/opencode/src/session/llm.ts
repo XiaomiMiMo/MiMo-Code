@@ -16,7 +16,8 @@ import { SystemPrompt } from "./system"
 import { Permission } from "@/permission"
 import { PermissionID } from "@/permission/schema"
 import { Bus } from "@/bus"
-import { Wildcard, ToolCompat } from "@/util"
+import { Wildcard, ToolCompat, Token } from "@/util"
+import { completionBudget } from "./overflow"
 import { asSchema } from "@ai-sdk/provider-utils"
 import { SessionID } from "@/session/schema"
 import * as Session from "@/session/session"
@@ -592,6 +593,14 @@ const live: Layer.Layer<
         },
       )
 
+      // Applied after the plugin hook so a plugin's own max_tokens is clamped
+      // too, and a plugin that drops it keeps it dropped.
+      const maxOutputTokens = completionBudget({
+        model: input.model,
+        requested: params.maxOutputTokens,
+        inputTokens: () => Token.estimate(JSON.stringify(messages)),
+      })
+
       const { headers } = input.ephemeral ? { headers: {} } : yield* plugin.trigger(
         "chat.headers",
         {
@@ -819,7 +828,7 @@ const live: Layer.Layer<
         activeTools,
         tools: ProviderTransform.tools(tools, input.model),
         toolChoice: input.toolChoice,
-        maxOutputTokens: params.maxOutputTokens,
+        maxOutputTokens,
         abortSignal: input.abort,
         headers: {
           ...(!input.ephemeral ? { "x-session-affinity": input.sessionID } : {}),
