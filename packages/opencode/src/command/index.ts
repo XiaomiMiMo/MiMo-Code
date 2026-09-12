@@ -262,17 +262,21 @@ export const layer = Layer.effect(
       }
 
       for (const item of yield* skill.all()) {
-        if (commands[item.name]) continue
-        commands[item.name] = {
-          name: item.name,
-          description: item.description,
-          source: "skill",
-          bundled: item.bundled,
-          get template() {
-            return item.content
-          },
-          hints: [],
+        const register = (name: string) => {
+          if (commands[name]) return
+          commands[name] = {
+            name,
+            description: item.description,
+            source: "skill",
+            bundled: item.bundled,
+            get template() {
+              return item.content
+            },
+            hints: [],
+          }
         }
+        register(item.name)
+        if (item.namespace) register(`${item.namespace}:${item.name}`)
       }
 
       return {
