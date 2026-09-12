@@ -29,7 +29,7 @@ import { ChildProcessSpawner } from "effect/unstable/process/ChildProcessSpawner
 import * as BashInteractive from "./bash-interactive"
 import * as BashTokenEfficient from "./bash_token_efficient_pipeline"
 import * as BashTokenEfficientHeuristic from "./bash_token_efficient_heuristic"
-import { findGitMainWorktree } from "./auto-worktree-hint"
+import { findGitMainWorktree, assertHabitRepoMainWriteBlocked } from "./auto-worktree-hint"
 
 const MAX_METADATA_LENGTH = 30_000
 export const DEFAULT_MAX_OUTPUT_TOKENS = 30_000
@@ -1231,6 +1231,16 @@ export const BashTool = Tool.define(
               const root = yield* parse(params.command, ps)
               const fileWrite = isFileWrite(root, ps)
               const hits = mainWorktreeHits(root, cwd, ps)
+              // Habit-repo hard gate: same policy as write/edit/apply_patch. A
+              // `echo x > main/file` or `git commit` in the main checkout would
+              // otherwise bypass the write-tool gate and only get a soft notice.
+              // Fail before ask() so a rejected mutation never prompts and never
+              // spawns. Does not auto-create a worktree.
+              if (hits.length > 0) {
+                for (const hit of hits) {
+                  yield* assertHabitRepoMainWriteBlocked(hit, ctx)
+                }
+              }
               // Cross-branch git guard for isolated children. Sits on the SAME
               // parsed AST the permission scan uses, so every command node in a
               // pipeline / `&&` chain / subshell is checked, and it runs BEFORE

@@ -10,7 +10,7 @@ base: be5af909ae
 
 ## Report
 
-**What was built** — Added a top-level optional boolean `auto_worktree` to `Config.Info`. The default is off: omitting the key or setting `false` means the Auto-Worktree Notice is never injected. Setting `true` preserves the previous soft-hint behavior (once per primary root session after a main-worktree mutation). Conflict detection and `POST /experimental/worktree/auto` remain outside this flag. Bundled `mimocode-docs` config table and the generated JS SDK types list the new key.
+**What was built** — Added a top-level optional boolean `auto_worktree` to `Config.Info`. The default is off. When `true`: (1) habit repos (already have linked worktrees) HARD-BLOCK write/edit/apply_patch/bash mutations into the main worktree; (2) noHabit repos still get the once-per-session Auto-Worktree Notice after a successful main mutation. Scope is those two mechanisms only — auto-create was never gated by this flag and the experimental auto-create endpoint has since been removed (see `docs/compose/specs/auto-worktree.md`). Bundled `mimocode-docs` config table and the generated JS SDK types list the new key.
 
 **Verification** — `bun typecheck` (packages/opencode) PASS; `bun test test/session/auto-worktree-notice.test.ts` PASS 10/10; `bun test test/tool/auto-worktree-scan.test.ts test/tool/auto-worktree-bash-write.test.ts` PASS 47/47; `bun test test/config` PASS 177 + new `test/config/auto-worktree.test.ts` 3/3; `./packages/sdk/js/script/build.ts` regenerated `packages/sdk/js/src/v2/gen/types.gen.ts` including `auto_worktree?: boolean`.
 
@@ -36,9 +36,9 @@ Add one top-level optional boolean in `InfoSchema` (`packages/opencode/src/confi
 
 Contract:
 
-- **Default `false` / omitted** — do not inject the Auto-Worktree Notice. This is a deliberate product default: the feature ships off.
-- **`true`** — keep the current soft-hint behavior: once per session, after a completed write or successful git mutation lands in a git MAIN worktree, inject the existing `buildAutoWorktreeNotice` system-reminder on the last user message and set `session.auto_worktree_hint_sent`.
-- Scope is the notice only. `checkConflict` / `POST /experimental/worktree/auto` are unchanged and remain outside this flag.
+- **Default `false` / omitted** — no hard gate and no Auto-Worktree Notice. This is a deliberate product default: the feature ships off.
+- **`true`** — habit repos: write/edit/apply_patch/bash into the main worktree fail with recovery steps (model creates the worktree). noHabit repos: once-per-session soft notice after a completed main mutation on the last user message, then `session.auto_worktree_hint_sent`.
+- Scope is the notice only. The experimental `POST /experimental/worktree/auto` endpoint is removed.
 - The existing once-per-session gate (`auto_worktree_hint_sent`, `primary` agent, `!parentID`) stays; the flag is an outer gate that skips the entire block when off.
 - When the flag is off, `auto_worktree_hint_sent` is not written and `firstMutatedMainWorktree` is not consulted, so no side effects.
 
@@ -47,7 +47,6 @@ Access path in `insertReminders`: `(yield* config.get()).auto_worktree === true`
 ## [S3] Out of Scope
 
 - Nested `auto_worktree: { notice, create }` shapes, CLI flags, or TUI settings UI.
-- Changing conflict-detection behavior or wiring `POST /worktree/auto` into any host client.
 - Migrating or flipping `auto_worktree_hint_sent` for sessions that already received the notice under the old always-on behavior.
 - Changing notice copy, habit detection, or write-tool detection lists.
 
