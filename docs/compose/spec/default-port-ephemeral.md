@@ -1,14 +1,20 @@
 ---
 feature: default-port-ephemeral
-status: in-progress
+status: delivered
 updated: 2026-09-12
 branch: feat/default-port-ephemeral
-commits: 
+commits: 98702641a985fd2a3b81e407f58df7cbcee1f248..bc99ffbd50533d6fe46a474c4b670fec9fda2b43
 ---
 
 # Default Listen Port Ephemeral
 
 ## Report
+
+**What was built** — `Server.listen({ port: 0 })` now binds an OS-assigned ephemeral port on both node and bun adapters; the conventional 4096 preference is removed so embedders (MiMo Desktop) and other local tools no longer collide by default. Fixed ports require an explicit `port` / `--port` / `config.server.port`. Runtime hardcodes of `localhost:4096` were removed from the plugin client placeholder and CLI help; documentation examples may still show `--port 4096` when a known URL is required.
+
+**Verification** — `packages/opencode`: `bun test test/cli/cmd/server-port-ephemeral.test.ts test/cli/cmd/serve-advertise.test.ts` PASS 8/8; `bun test test/skill/mimocode-docs.test.ts test/plugin/mimo.test.ts test/plugin/codex.test.ts` PASS 44/44; `bun typecheck` PASS. Independent review: no critical findings.
+
+**Journey log** — Prefer `start(opts.port)` over a special-case `port===0 → 4096` branch; yargs default `0` therefore means ephemeral unless config supplies a port. Downstream Desktop must keep consuming listen-returned `Server.url` / `Listener.port` (already dynamic). Generated SDK default `baseUrl` and unmanaged `packages/app` UI placeholders still mention 4096 (out of runtime listen path). Node adapter is code-symmetric with bun; unit suite exercises the bun path under Bun.
 
 ## [S1] Problem
 
@@ -19,14 +25,14 @@ commits:
 - **Adapter (node + bun)**: `port: 0` → `start(0)` (OS-assigned ephemeral). No intermediate bind of a conventional port. Explicit `port: N` binds only `N`.
 - **CLI**: yargs default remains `0`, so an unspecified `--port` now means ephemeral. Fixed ports require an explicit flag or `config.server.port`.
 - **Docs**: network flags and skill/README examples that need a **known** port must pass it explicitly (e.g. `--port 4096`). Example strings may keep 4096; runtime code must not hardcode it as the listen target.
-- **In-process plugin client**: dummy `baseUrl` / `serverUrl` fallback must not use `http://localhost:4096`. Use a non-listening placeholder origin; real traffic uses `Server.url` after listen or in-process `app.fetch`.
+- **In-process plugin client**: dummy `baseUrl` / `serverUrl` fallback uses `http://mimocode.internal` (not a conventional listen port). Real traffic uses `Server.url` after listen or in-process `app.fetch`.
 - **Generated SDK default** `baseUrl: http://localhost:4096` is a client template, not a listen path; left as generated (docs/examples domain).
 
 ## [S3] Out of Scope
 
 - Desktop-side engine-pin bump (downstream).
 - Changing `config.server.port` schema (still optional and `> 0`).
-- Rewriting all multilingual web docs beyond note-level consistency where they state “default port”.
+- Rewriting all multilingual web docs / unmanaged `packages/app` UI placeholders beyond note-level consistency.
 
 ## Tasks
 
