@@ -37,11 +37,21 @@ export const { use: useExit, provider: ExitProvider } = createSimpleContext({
           // Reset window title before destroying renderer
           renderer.setTerminalTitle("")
           renderer.destroy()
-          // SGR reset + show cursor + OSC 110/111/112 reset terminal fg/bg/cursor color.
+          // SGR reset + show cursor + disable mouse tracking + OSC 110/111/112
+          // reset terminal fg/bg/cursor color.
+          // Mouse tracking (X10/button/any-motion + SGR encoding, enabled for
+          // the TUI's mouse support) is switched off explicitly: if the terminal
+          // is left in any-motion mode, every mouse move after exit prints
+          // escape sequences such as `[555;17;51M` into the shell (seen on
+          // Windows Terminal / PowerShell).
           // Without the OSC resets, whatever fg/bg the active mimocode theme pushed
           // via OSC 10/11/12 would persist in the terminal session, leaving the
           // shell prompt unreadable (e.g. white-on-white).
-          process.stdout.write("\x1b[0m\x1b[?25h\x1b]110\x07\x1b]111\x07\x1b]112\x07")
+          process.stdout.write(
+            "\x1b[0m\x1b[?25h" +
+              "\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1006l" +
+              "\x1b]110\x07\x1b]111\x07\x1b]112\x07",
+          )
           win32FlushInputBuffer()
           if (reason) {
             const formatted = FormatError(reason) ?? FormatUnknownError(reason)
