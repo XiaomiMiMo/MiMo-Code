@@ -5,6 +5,8 @@ import {
   detectRepeatedNgram,
   tokenizeForNgram,
 } from "../../src/session/prompt/text-ngram-detection"
+import { detectToolLoop, recentToolSignatures } from "../../src/session/prompt/text-loop-recovery"
+import type { MessageV2 } from "../../src/session/message-v2"
 
 describe("tokenizeForNgram", () => {
   test("normalizes whitespace and case", () => {
@@ -165,5 +167,69 @@ describe("TextNgramMonitor", () => {
   test("detects English model loop", () => {
     const monitor = new TextNgramMonitor(4, 20, 500)
     expect(monitor.append("I will fix this bug ".repeat(20))).toBe(true)
+  })
+
+  test("continues checking after the window is full", () => {
+    const monitor = new TextNgramMonitor(64, 3, 8192, 3, 256)
+    const unique = Array.from({ length: 9000 }, (_, index) => `unique-${index}`).join(" ") + " "
+    const repeated = Array.from({ length: 64 }, (_, index) => `repeat-${index}`).join(" ") + " "
+
+    expect(monitor.append(unique)).toBe(false)
+    for (let index = 0; index < 6; index++) expect(monitor.append(repeated)).toBe(index === 3)
+  })
+})
+
+describe("detectToolLoop", () => {
+  test("detects consecutive identical tool signatures", () => {
+    expect(detectToolLoop(["a", "a", "a"])).toBe("consecutive")
+  })
+
+  test("detects periodic tool signatures", () => {
+    expect(detectToolLoop(["a", "b", "a", "b", "a", "b"])).toBe("periodic")
+  })
+
+  test("includes arguments in the signature", () => {
+    expect(detectToolLoop(['read:{"path":"a"}', 'read:{"path":"b"}', 'read:{"path":"a"}'])).toBeUndefined()
+  })
+})
+
+describe("recentToolSignatures", () => {
+  const tool = (name: string, input: unknown) =>
+    ({ type: "tool", tool: name, state: { status: "completed", input } }) as unknown as MessageV2.Part
+  const text = (synthetic: boolean) => ({ type: "text", text: "x", synthetic }) as unknown as MessageV2.Part
+  const assistant = (parts: MessageV2.Part[], finish = "tool-calls") =>
+    ({ info: { role: "assistant", finish }, parts }) as unknown as MessageV2.WithParts
+  const user = (synthetic: boolean) => ({ info: { role: "user" }, parts: [text(synthetic)] }) as unknown as MessageV2.WithParts
+
+  test("returns newest-first signatures with key-order-independent input", () => {
+    const msgs = [
+      user(false),
+      assistant([tool("read", { path: "a", limit: 1 })]),
+      assistant([tool("read", { limit: 1, path: "a" })]),
+      assistant([tool("grep", { q: "b" })]),
+    ]
+    const sigs = recentToolSignatures(msgs, 12)
+    expect(sigs).toHaveLength(3)
+    expect(sigs[0]).toContain("grep")
+    expect(sigs[1]).toBe(sigs[2])
+  })
+
+  test("stops at the most recent synthetic user turn", () => {
+    const step = assistant([tool("read", { path: "a" })])
+    const msgs = [user(false), step, step, step, user(true), step]
+    expect(recentToolSignatures(msgs, 12)).toHaveLength(1)
+    expect(detectToolLoop(recentToolSignatures(msgs, 12))).toBeUndefined()
+  })
+
+  test("skips real user turns and unfinished steps, stops at tool-less steps", () => {
+    const step = assistant([tool("read", { path: "a" })])
+    const unfinished = { info: { role: "assistant" }, parts: [] } as unknown as MessageV2.WithParts
+    const msgs = [user(false), step, assistant([text(false)]), step, user(false), step, unfinished]
+    expect(recentToolSignatures(msgs, 12)).toHaveLength(2)
+  })
+
+  test("is bounded by the window", () => {
+    const step = assistant([tool("read", { path: "a" })])
+    expect(recentToolSignatures(Array.from({ length: 20 }, () => step), 12)).toHaveLength(12)
   })
 })

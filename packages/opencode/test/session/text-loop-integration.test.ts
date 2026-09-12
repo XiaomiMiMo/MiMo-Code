@@ -6,7 +6,7 @@
  */
 import { Worktree } from "../../src/worktree"
 import { NodeFileSystem } from "@effect/platform-node"
-import { describe, expect } from "bun:test"
+import { afterAll, beforeAll, describe, expect } from "bun:test"
 import { Effect, Layer } from "effect"
 import { Agent as AgentSvc } from "../../src/agent/agent"
 import { Bus } from "../../src/bus"
@@ -57,6 +57,7 @@ import { provideTmpdirInstance } from "../fixture/fixture"
 import { testEffect } from "../lib/effect"
 import { MockLLM, textReply, textWithToolReply } from "../lib/mock-llm"
 import { Inbox } from "../../src/inbox"
+import { Flag } from "../../src/flag/flag"
 
 void Log.init({ print: true })
 
@@ -452,6 +453,138 @@ describe("text loop detection (integration, MockLLM)", () => {
           expect(recoveryMsgs.length).toBe(2)
           expect(recoveryMsgs[0].parts.some((p) => p.type === "text" && p.text.includes("LOOP DETECTED"))).toBe(true)
           expect(recoveryMsgs[1].parts.some((p) => p.type === "text" && p.text.includes("CRITICAL"))).toBe(true)
+        }),
+      { git: true, config: cfg },
+    ),
+    30_000,
+  )
+})
+
+describe("tool loop detection (integration, MockLLM)", () => {
+  const originalMode = Flag.MIMOCODE_LOOP_MODE
+  beforeAll(() => {
+    Flag.MIMOCODE_LOOP_MODE = "enforce"
+  })
+  afterAll(() => {
+    Flag.MIMOCODE_LOOP_MODE = originalMode
+  })
+
+  // Text differs each step so the cross-step text-loop guard stays silent and
+  // only the repeated tool signature can trip detection.
+  const sameTool = (text: string) => textWithToolReply(text, "check", { q: 1 })
+
+  it.live("3 identical tool calls inject recovery visible to the very next LLM request", () =>
+    provideTmpdirInstance(
+      () =>
+        Effect.gen(function* () {
+          const prompt = yield* SessionPrompt.Service
+          const sessions = yield* Session.Service
+          const session = yield* sessions.create({
+            title: "Tool loop test",
+            permission: [{ permission: "*", pattern: "*", action: "allow" }],
+          })
+          yield* prompt.prompt({
+            sessionID: session.id,
+            agent: "build",
+            noReply: true,
+            parts: [{ type: "text", text: "find the config" }],
+          })
+          mockLLM.reset()
+          mockLLM.enqueue(
+            sameTool("Checking the first candidate."),
+            sameTool("Let me look once more."),
+            sameTool("Trying the check again."),
+            textReply("Switching to a different approach."),
+          )
+
+          const result = yield* prompt.loop({ sessionID: session.id })
+
+          expect(mockLLM.calls).toBe(4)
+          expect(result.parts.some((p) => p.type === "text" && p.text.includes("different approach"))).toBe(true)
+
+          const msgs = yield* sessions.messages({ sessionID: session.id })
+          const recovery = msgs.filter(
+            (m) =>
+              m.info.role === "user" &&
+              m.parts.some((p) => p.type === "text" && p.synthetic && p.text.includes("LOOP DETECTED (TOOL)")),
+          )
+          expect(recovery).toHaveLength(1)
+          // P0 regression guard: the recovery turn must be in the request that
+          // immediately follows the detection, not one step later.
+          expect(JSON.stringify(mockLLM.trajectory[3].input.messages)).toContain("LOOP DETECTED (TOOL)")
+          expect(JSON.stringify(mockLLM.trajectory[2].input.messages)).not.toContain("LOOP DETECTED (TOOL)")
+        }),
+      { git: true, config: cfg },
+    ),
+    30_000,
+  )
+
+  it.live("7 identical tool calls escalate mild then strong", () =>
+    provideTmpdirInstance(
+      () =>
+        Effect.gen(function* () {
+          const prompt = yield* SessionPrompt.Service
+          const sessions = yield* Session.Service
+          const session = yield* sessions.create({
+            title: "Tool loop escalation",
+            permission: [{ permission: "*", pattern: "*", action: "allow" }],
+          })
+          yield* prompt.prompt({
+            sessionID: session.id,
+            agent: "build",
+            noReply: true,
+            parts: [{ type: "text", text: "find the config" }],
+          })
+          mockLLM.reset()
+          for (let i = 0; i < 7; i++) mockLLM.enqueue(sameTool(`Attempt number ${i + 1}.`))
+          mockLLM.enqueue(textReply("Giving up on that path."))
+
+          yield* prompt.loop({ sessionID: session.id })
+
+          expect(mockLLM.calls).toBe(8)
+          const msgs = yield* sessions.messages({ sessionID: session.id })
+          const recovery = msgs.filter(
+            (m) => m.info.role === "user" && m.parts.some((p) => p.type === "text" && p.synthetic),
+          )
+          expect(recovery).toHaveLength(2)
+          expect(recovery[0].parts.some((p) => p.type === "text" && p.text.includes("LOOP DETECTED (TOOL)"))).toBe(true)
+          expect(recovery[1].parts.some((p) => p.type === "text" && p.text.includes("CRITICAL TOOL LOOP"))).toBe(true)
+        }),
+      { git: true, config: cfg },
+    ),
+    30_000,
+  )
+
+  it.live("monitor mode logs only and never injects", () =>
+    provideTmpdirInstance(
+      () =>
+        Effect.gen(function* () {
+          Flag.MIMOCODE_LOOP_MODE = "monitor"
+          const prompt = yield* SessionPrompt.Service
+          const sessions = yield* Session.Service
+          const session = yield* sessions.create({
+            title: "Tool loop monitor",
+            permission: [{ permission: "*", pattern: "*", action: "allow" }],
+          })
+          yield* prompt.prompt({
+            sessionID: session.id,
+            agent: "build",
+            noReply: true,
+            parts: [{ type: "text", text: "find the config" }],
+          })
+          mockLLM.reset()
+          for (let i = 0; i < 4; i++) mockLLM.enqueue(sameTool(`Attempt number ${i + 1}.`))
+          mockLLM.enqueue(textReply("Done."))
+
+          yield* prompt.loop({ sessionID: session.id }).pipe(
+            Effect.ensuring(Effect.sync(() => {
+              Flag.MIMOCODE_LOOP_MODE = "enforce"
+            })),
+          )
+
+          expect(mockLLM.calls).toBe(5)
+          const msgs = yield* sessions.messages({ sessionID: session.id })
+          expect(msgs.some((m) => m.info.role === "user" && m.parts.some((p) => p.type === "text" && p.synthetic))).toBe(false)
         }),
       { git: true, config: cfg },
     ),

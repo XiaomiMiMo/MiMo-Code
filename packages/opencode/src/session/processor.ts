@@ -409,7 +409,10 @@ export const layer: Layer.Layer<
 
       const checkTextNgram = (text: string) => {
         if (ctx.textNgramRepeat || !ctx.textNgramMonitor) return
-        if (ctx.textNgramMonitor.append(text)) ctx.textNgramRepeat = true
+        if (!ctx.textNgramMonitor.append(text)) return
+        ctx.textNgramRepeat = true
+        // In monitor mode the stream is never cut, so this is the only trace.
+        if (Flag.MIMOCODE_LOOP_MODE === "monitor") slog.info("text n-gram detected (monitor)")
       }
 
       const handleEvent = Effect.fnUntraced(function* (value: StreamEvent) {
@@ -827,7 +830,12 @@ export const layer: Layer.Layer<
 
             yield* stream.pipe(
               Stream.tap((event) => handleEvent(event)),
-              Stream.takeUntil(() => ctx.needsOverflowHandling || ctx.textNgramRepeat || ctx.blocked),
+              Stream.takeUntil(
+                () =>
+                  ctx.needsOverflowHandling ||
+                  (Flag.MIMOCODE_LOOP_MODE !== "monitor" && ctx.textNgramRepeat) ||
+                  ctx.blocked,
+              ),
               Stream.runDrain,
             )
           }).pipe(
@@ -904,7 +912,7 @@ export const layer: Layer.Layer<
           )
 
           if (ctx.needsOverflowHandling) return "overflow"
-          if (ctx.textNgramRepeat) return "text-repeat"
+          if (ctx.textNgramRepeat && Flag.MIMOCODE_LOOP_MODE !== "monitor") return "text-repeat"
           if (ctx.blocked || ctx.assistantMessage.error) return "stop"
           return "continue"
         })
