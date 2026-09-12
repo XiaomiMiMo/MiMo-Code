@@ -2,7 +2,10 @@ import { dlopen, ptr } from "bun:ffi"
 import type { ReadStream } from "node:tty"
 
 const STD_INPUT_HANDLE = -10
+const STD_OUTPUT_HANDLE = -11
 const ENABLE_PROCESSED_INPUT = 0x0001
+const ENABLE_VIRTUAL_TERMINAL_PROCESSING = 0x0004
+const ENABLE_VIRTUAL_TERMINAL_INPUT = 0x0200
 
 const kernel = () =>
   dlopen("kernel32.dll", {
@@ -21,6 +24,37 @@ function load() {
     return true
   } catch {
     return false
+  }
+}
+
+/**
+ * Enable VT (Virtual Terminal) processing on both stdin and stdout.
+ *
+ * Without ENABLE_VIRTUAL_TERMINAL_INPUT on stdin, the terminal echoes mouse
+ * tracking reports as raw text (e.g. "[55;65;1M") instead of delivering them
+ * as input events. Without ENABLE_VIRTUAL_TERMINAL_PROCESSING on stdout,
+ * ANSI escape sequences may not be processed correctly.
+ */
+export function win32EnableVTProcessing() {
+  if (process.platform !== "win32") return
+  if (!load()) return
+
+  // Enable VT input on stdin so mouse/key events arrive as VT sequences
+  if (process.stdin.isTTY) {
+    const stdinHandle = k32!.symbols.GetStdHandle(STD_INPUT_HANDLE)
+    const buf = new Uint32Array(1)
+    if (k32!.symbols.GetConsoleMode(stdinHandle, ptr(buf)) !== 0) {
+      k32!.symbols.SetConsoleMode(stdinHandle, buf[0]! | ENABLE_VIRTUAL_TERMINAL_INPUT)
+    }
+  }
+
+  // Enable VT output on stdout so ANSI escape sequences render correctly
+  if (process.stdout.isTTY) {
+    const stdoutHandle = k32!.symbols.GetStdHandle(STD_OUTPUT_HANDLE)
+    const buf = new Uint32Array(1)
+    if (k32!.symbols.GetConsoleMode(stdoutHandle, ptr(buf)) !== 0) {
+      k32!.symbols.SetConsoleMode(stdoutHandle, buf[0]! | ENABLE_VIRTUAL_TERMINAL_PROCESSING)
+    }
   }
 }
 
@@ -84,8 +118,8 @@ export function win32InstallCtrlCGuard() {
   const enforce = () => {
     if (k32!.symbols.GetConsoleMode(handle, ptr(buf)) === 0) return
     const mode = buf[0]!
-    if ((mode & ENABLE_PROCESSED_INPUT) === 0) return
-    k32!.symbols.SetConsoleMode(handle, mode & ~ENABLE_PROCESSED_INPUT)
+    const desired = (mode & ~ENABLE_PROCESSED_INPUT) | ENABLE_VIRTUAL_TERMINAL_INPUT
+    if (desired !== mode) k32!.symbols.SetConsoleMode(handle, desired)
   }
 
   // Some runtimes can re-apply console modes on the next tick; enforce twice.
