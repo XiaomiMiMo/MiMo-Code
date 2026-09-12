@@ -20,6 +20,7 @@ import { useSettings } from "@/context/settings"
 import { useSync } from "@/context/sync"
 import { useTerminal } from "@/context/terminal"
 import { focusTerminalById } from "@/pages/session/helpers"
+import { GridToggle } from "./grid-toggle"
 import { useSessionLayout } from "@/pages/session/session-layout"
 import { messageAgentColor } from "@/utils/agent"
 import { decode64 } from "@/utils/base64"
@@ -129,7 +130,8 @@ const showRequestError = (language: ReturnType<typeof useLanguage>, err: unknown
   })
 }
 
-export function SessionHeader() {
+export function SessionHeader(props: { sessionID?: string } = {}) {
+  const effectiveSessionID = createMemo(() => props.sessionID ?? params.id)
   const layout = useLayout()
   const command = useCommand()
   const server = useServer()
@@ -228,9 +230,10 @@ export function SessionHeader() {
       ({ id: "finder", label: fileManager().label, icon: fileManager().icon } as const),
   )
   const opening = createMemo(() => openRequest.app !== undefined)
-  const tint = createMemo(() =>
-    messageAgentColor(params.id ? sync.data.message[params.id] : undefined, sync.data.agent),
-  )
+  const tint = createMemo(() => {
+    const id = effectiveSessionID()
+    return messageAgentColor(id ? sync.data.message[id] : undefined, sync.data.agent)
+  })
 
   const selectApp = (app: OpenApp) => {
     if (!options().some((item) => item.id === app)) return
@@ -431,6 +434,7 @@ export function SessionHeader() {
                     <StatusPopover />
                   </Tooltip>
                 </Show>
+                <GridToggle dir={projectDirectory()} />
                 <Show when={term()}>
                   <TooltipKeybind
                     title={language.t("command.terminal.toggle")}
