@@ -592,6 +592,9 @@ function RejectPrompt(props: { onConfirm: (message: string) => void; onCancel: (
 
   useKeyboard((evt) => {
     if (dialog.stack.length > 0) return
+    // An earlier global listener may already have consumed the key
+    // (e.g. the command layer before its modal suspension applies).
+    if (evt.defaultPrevented) return
 
     if (evt.name === "escape" || keybind.match("app_exit", evt)) {
       evt.preventDefault()
@@ -679,6 +682,9 @@ function Prompt<const T extends Record<string, string>>(props: {
 
   useKeyboard((evt) => {
     if (dialog.stack.length > 0) return
+    // Global listeners run in subscription order and later ones still see
+    // preventDefault'ed events — never double-handle a claimed key.
+    if (evt.defaultPrevented) return
 
     if (evt.name === "left" || evt.name == "h") {
       evt.preventDefault()

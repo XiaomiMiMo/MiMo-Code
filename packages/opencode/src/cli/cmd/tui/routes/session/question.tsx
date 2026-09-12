@@ -144,6 +144,9 @@ export function QuestionPrompt(props: { request: QuestionRequest }) {
   useKeyboard((evt) => {
     // Skip processing if a dialog (e.g., command palette) is open
     if (dialog.stack.length > 0) return
+    // Global listeners run in subscription order and later ones still see
+    // preventDefault'ed events — never double-handle a claimed key.
+    if (evt.defaultPrevented) return
 
     // When editing custom answer textarea
     if (store.editing && !confirm()) {
