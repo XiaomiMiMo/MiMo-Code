@@ -2640,3 +2640,44 @@ describe("tool config inline struct", () => {
     ).toThrow()
   })
 })
+
+describe("dream/distill config aliases", () => {
+  test("normalizeLoadedConfig maps enabled -> auto and intervalDays -> interval_days for dream", () => {
+    const { normalizeLoadedConfig } = require("../../src/config/config")
+    const input = {
+      dream: { enabled: true, intervalDays: 14 },
+    }
+    const result = normalizeLoadedConfig(input, "test.json")
+    expect(result.dream).toEqual({ auto: true, interval_days: 14 })
+  })
+
+  test("normalizeLoadedConfig maps enabled -> auto and intervalDays -> interval_days for distill", () => {
+    const { normalizeLoadedConfig } = require("../../src/config/config")
+    const input = {
+      distill: { enabled: true, intervalDays: 60 },
+    }
+    const result = normalizeLoadedConfig(input, "test.json")
+    expect(result.distill).toEqual({ auto: true, interval_days: 60 })
+  })
+
+  test("normalizeLoadedConfig preserves canonical keys when both are present", () => {
+    const { normalizeLoadedConfig } = require("../../src/config/config")
+    const input = {
+      dream: { auto: true, enabled: false, interval_days: 7, intervalDays: 3 },
+    }
+    const result = normalizeLoadedConfig(input, "test.json")
+    // canonical keys take precedence
+    expect(result.dream).toEqual({ auto: true, interval_days: 7 })
+  })
+
+  test("normalizeLoadedConfig passes through valid config unchanged", () => {
+    const { normalizeLoadedConfig } = require("../../src/config/config")
+    const input = {
+      dream: { auto: true, interval_days: 7 },
+      distill: { auto: false },
+    }
+    const result = normalizeLoadedConfig(input, "test.json")
+    expect(result.dream).toEqual({ auto: true, interval_days: 7 })
+    expect(result.distill).toEqual({ auto: false })
+  })
+})

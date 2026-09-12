@@ -59,15 +59,55 @@ function mergeConfigConcatArrays(target: Info, source: Info): Info {
   return merged
 }
 
-function normalizeLoadedConfig(data: unknown, source: string) {
+function normalizeDreamDistillAliases(
+  section: Record<string, unknown> | undefined,
+  name: string,
+  source: string,
+) {
+  if (!section || typeof section !== "object") return section
+  const result = { ...section }
+  const aliases: [string, string][] = [
+    ["enabled", "auto"],
+    ["intervalDays", "interval_days"],
+  ]
+  let hasLegacy = false
+  for (const [legacy, canonical] of aliases) {
+    if (legacy in result) {
+      if (!(canonical in result)) {
+        result[canonical] = result[legacy]
+      }
+      delete result[legacy]
+      hasLegacy = true
+    }
+  }
+  if (hasLegacy) {
+    log.warn(
+      `${name} config uses legacy key names (enabled/intervalDays); use auto/interval_days instead`,
+      { path: source },
+    )
+  }
+  return result
+}
+
+export function normalizeLoadedConfig(data: unknown, source: string) {
   if (!isRecord(data)) return data
   const copy = { ...data }
   const hadLegacy = "theme" in copy || "keybinds" in copy || "tui" in copy
-  if (!hadLegacy) return copy
-  delete copy.theme
-  delete copy.keybinds
-  delete copy.tui
-  log.warn("tui keys in mimocode config are deprecated; move them to tui.json", { path: source })
+  if (hadLegacy) {
+    delete copy.theme
+    delete copy.keybinds
+    delete copy.tui
+    log.warn("tui keys in mimocode config are deprecated; move them to tui.json", {
+      path: source,
+    })
+  }
+  // Normalize dream/distill alias keys
+  if (isRecord(copy.dream)) {
+    copy.dream = normalizeDreamDistillAliases(copy.dream, "dream", source)
+  }
+  if (isRecord(copy.distill)) {
+    copy.distill = normalizeDreamDistillAliases(copy.distill, "distill", source)
+  }
   return copy
 }
 
