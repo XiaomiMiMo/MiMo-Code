@@ -584,9 +584,20 @@ export function tint(base: RGBA, overlay: RGBA, alpha: number): RGBA {
 
 function generateSystem(colors: TerminalColors, mode: "dark" | "light"): ThemeJson {
   const bg = RGBA.fromHex(colors.defaultBackground ?? colors.palette[0]!)
-  const fg = RGBA.fromHex(colors.defaultForeground ?? colors.palette[7]!)
+  let fg = RGBA.fromHex(colors.defaultForeground ?? colors.palette[7]!)
   const transparent = RGBA.fromValues(bg.r, bg.g, bg.b, 0)
   const isDark = mode == "dark"
+
+  // In light mode, if the terminal foreground is too light (close to white),
+  // clamp it to a dark color so text remains readable against light backgrounds.
+  // This fixes Windows Terminal light themes where the default foreground is
+  // near-white, causing invisible "whitish" text in the TUI (#2144).
+  if (!isDark) {
+    const fgLum = fg.r * 255 * 0.299 + fg.g * 255 * 0.587 + fg.b * 255 * 0.114
+    if (fgLum > 180) {
+      fg = RGBA.fromHex("#1a1a1a")
+    }
+  }
 
   const col = (i: number) => {
     const value = colors.palette[i]
