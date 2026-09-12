@@ -558,3 +558,121 @@ describe("session.llm system prompt — memory-instructions guard", () => {
     }
   })
 })
+
+
+// https://github.com/XiaomiMiMo/MiMo-Code/issues/2317 — OpenCode Go rejects
+// requests with no per-conversation ID from 09/05. This reuses the module's
+// scripted-upstream harness (see the memory-instructions guard above) purely
+// to inspect the outbound request headers, not the system prompt.
+describe("session.llm outbound headers", () => {
+  test("a non-ephemeral stream call carries x-opencode-session and x-session-affinity", async () => {
+    const server = queueState.server!
+    const providerID = "alibaba"
+    const modelID = "qwen-plus"
+    const fixture = await loadFixture(providerID, modelID)
+    const request = waitRequest(
+      "/chat/completions",
+      new Response(createChatStream("Hi"), { status: 200, headers: { "Content-Type": "text/event-stream" } }),
+    )
+
+    await using tmp = await tmpdir({
+      init: async (dir) => {
+        await Bun.write(path.join(dir, "mimocode.json"), tmpConfig(providerID, `${server.url.origin}/v1`))
+      },
+    })
+
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () => {
+        const resolved = await getModel(ProviderID.make(providerID), ModelID.make(fixture.model.id))
+        const sessionRt = ManagedRuntime.make(SessionNs.defaultLayer)
+        let sessionID: SessionID
+        try {
+          const info = await sessionRt.runPromise(SessionNs.Service.use((svc) => svc.create({})))
+          sessionID = info.id
+        } finally {
+          await sessionRt.dispose()
+        }
+        const rt = ManagedRuntime.make(Layer.mergeAll(LLM.defaultLayer))
+        try {
+          await rt.runPromise(
+            LLM.Service.use((svc) =>
+              svc
+                .stream({
+                  user: makeBaseUser(sessionID, providerID, resolved.id),
+                  sessionID,
+                  model: resolved,
+                  agent: makeAgent(),
+                  system: ["You are a helpful assistant."],
+                  messages: [{ role: "user", content: "Hello" }],
+                  tools: {},
+                })
+                .pipe(Stream.runDrain),
+            ),
+          )
+        } finally {
+          await rt.dispose()
+        }
+        const capture = await request
+        expect(capture.headers.get("x-opencode-session")).toBe(sessionID)
+        expect(capture.headers.get("x-session-affinity")).toBe(sessionID)
+      },
+    })
+  })
+
+  test("an ephemeral call (title generation) carries neither header", async () => {
+    const server = queueState.server!
+    const providerID = "alibaba"
+    const modelID = "qwen-plus"
+    const fixture = await loadFixture(providerID, modelID)
+    const request = waitRequest(
+      "/chat/completions",
+      new Response(createChatStream("Hi"), { status: 200, headers: { "Content-Type": "text/event-stream" } }),
+    )
+
+    await using tmp = await tmpdir({
+      init: async (dir) => {
+        await Bun.write(path.join(dir, "mimocode.json"), tmpConfig(providerID, `${server.url.origin}/v1`))
+      },
+    })
+
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () => {
+        const resolved = await getModel(ProviderID.make(providerID), ModelID.make(fixture.model.id))
+        const sessionRt = ManagedRuntime.make(SessionNs.defaultLayer)
+        let sessionID: SessionID
+        try {
+          const info = await sessionRt.runPromise(SessionNs.Service.use((svc) => svc.create({})))
+          sessionID = info.id
+        } finally {
+          await sessionRt.dispose()
+        }
+        const rt = ManagedRuntime.make(Layer.mergeAll(LLM.defaultLayer))
+        try {
+          await rt.runPromise(
+            LLM.Service.use((svc) =>
+              svc
+                .stream({
+                  user: makeBaseUser(sessionID, providerID, resolved.id),
+                  sessionID,
+                  model: resolved,
+                  agent: makeAgent(),
+                  system: ["You are a helpful assistant."],
+                  messages: [{ role: "user", content: "Hello" }],
+                  tools: {},
+                  ephemeral: true,
+                })
+                .pipe(Stream.runDrain),
+            ),
+          )
+        } finally {
+          await rt.dispose()
+        }
+        const capture = await request
+        expect(capture.headers.get("x-opencode-session")).toBeNull()
+        expect(capture.headers.get("x-session-affinity")).toBeNull()
+      },
+    })
+  })
+})
