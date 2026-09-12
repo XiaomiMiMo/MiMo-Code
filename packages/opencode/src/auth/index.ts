@@ -25,6 +25,9 @@ export function inject(content: string | undefined) {
   injected = content
 }
 
+/** Whether reads currently come from a snapshot rather than the file. */
+const snapshotActive = () => injected !== undefined || process.env.MIMOCODE_AUTH_CONTENT !== undefined
+
 const fail = (message: string) => (cause: unknown) => new AuthError({ message, cause })
 
 export class Oauth extends Schema.Class<Oauth>("OAuth")({
@@ -88,14 +91,23 @@ export const layer = Layer.effect(
       return (yield* all())[providerID]
     })
 
+    // A mutation through this service is authoritative, so the snapshot has to move with the write.
+    // Otherwise a write while `inject` (or the env fallback) is active reaches only the file while
+    // every later read keeps returning the pre-write state: an OAuth refresh, a key rotation or a
+    // logout looks like it succeeded and changes nothing. Updated only after the write lands, so a
+    // failed write cannot leave memory and disk disagreeing. The host re-injects from the file on its
+    // own schedule, which converges on the same content.
+    const persist = Effect.fn("Auth.persist")(function* (data: Record<string, Info>) {
+      yield* fsys.writeJson(file, data, 0o600).pipe(Effect.mapError(fail("Failed to write auth data")))
+      if (snapshotActive()) injected = JSON.stringify(data)
+    })
+
     const set = Effect.fn("Auth.set")(function* (key: string, info: Info) {
       const norm = key.replace(/\/+$/, "")
       const data = yield* all()
       if (norm !== key) delete data[key]
       delete data[norm + "/"]
-      yield* fsys
-        .writeJson(file, { ...data, [norm]: info }, 0o600)
-        .pipe(Effect.mapError(fail("Failed to write auth data")))
+      yield* persist({ ...data, [norm]: info })
     })
 
     const remove = Effect.fn("Auth.remove")(function* (key: string) {
@@ -103,7 +115,7 @@ export const layer = Layer.effect(
       const data = yield* all()
       delete data[key]
       delete data[norm]
-      yield* fsys.writeJson(file, data, 0o600).pipe(Effect.mapError(fail("Failed to write auth data")))
+      yield* persist(data)
     })
 
     return Service.of({ get, all, set, remove })

@@ -1,6 +1,9 @@
 import { describe, expect } from "bun:test"
+import path from "path"
+import fs from "fs/promises"
 import { Effect, Layer } from "effect"
 import { Auth } from "../../src/auth"
+import { Global } from "../../src/global"
 import * as CrossSpawnSpawner from "../../src/effect/cross-spawn-spawner"
 import { provideTmpdirInstance } from "../fixture/fixture"
 import { testEffect } from "../lib/effect"
@@ -109,6 +112,71 @@ describe("Auth", () => {
         Auth.inject(undefined)
         expect((yield* auth.all())["xiaomi"]).toEqual({ type: "api", key: "sk-env" })
         delete process.env.MIMOCODE_AUTH_CONTENT
+      }),
+    ),
+  )
+
+  // A write through this service is authoritative. If `inject` (or the env fallback) is active and a
+  // mutation only reaches the file, every later read keeps returning the pre-write snapshot — an
+  // OAuth refresh, a key rotation or a logout looks like it succeeded and changes nothing.
+  it.live("set is visible to later reads while inject is active", () =>
+    provideTmpdirInstance(() =>
+      Effect.gen(function* () {
+        Auth.inject(JSON.stringify({ xiaomi: { type: "api", key: "sk-old" } }))
+        const auth = yield* Auth.Service
+        yield* auth.set("xiaomi", { type: "api", key: "sk-new" })
+        expect((yield* auth.all())["xiaomi"]).toEqual({ type: "api", key: "sk-new" })
+        Auth.inject(undefined)
+      }),
+    ),
+  )
+
+  it.live("remove is visible to later reads while inject is active", () =>
+    provideTmpdirInstance(() =>
+      Effect.gen(function* () {
+        Auth.inject(JSON.stringify({ xiaomi: { type: "api", key: "sk-old" }, other: { type: "api", key: "sk-keep" } }))
+        const auth = yield* Auth.Service
+        yield* auth.remove("xiaomi")
+        const data = yield* auth.all()
+        expect(data["xiaomi"]).toBeUndefined()
+        expect(data["other"]).toEqual({ type: "api", key: "sk-keep" })
+        Auth.inject(undefined)
+      }),
+    ),
+  )
+
+  // Same defect on the env channel, which predates `inject`: the var shadows the file, so a token
+  // refresh inside a workspace child was invisible to that same child.
+  it.live("set is visible to later reads while the env channel is active", () =>
+    provideTmpdirInstance(() =>
+      Effect.gen(function* () {
+        process.env.MIMOCODE_AUTH_CONTENT = JSON.stringify({ xiaomi: { type: "api", key: "sk-env" } })
+        const auth = yield* Auth.Service
+        yield* auth.set("xiaomi", { type: "api", key: "sk-rotated" })
+        expect((yield* auth.all())["xiaomi"]).toEqual({ type: "api", key: "sk-rotated" })
+        delete process.env.MIMOCODE_AUTH_CONTENT
+        Auth.inject(undefined)
+      }),
+    ),
+  )
+
+  // The snapshot moves only after the write lands. If it moved first, a failed write would leave the
+  // in-memory credentials ahead of the file — the next process would silently run on the old ones.
+  it.live("a failed write leaves the snapshot untouched", () =>
+    provideTmpdirInstance(() =>
+      Effect.gen(function* () {
+        const file = path.join(Global.Path.data, "auth.json")
+        yield* Effect.promise(async () => {
+          await fs.rm(file, { force: true })
+          await fs.mkdir(file, { recursive: true }) // writing over a directory fails
+        })
+        Auth.inject(JSON.stringify({ xiaomi: { type: "api", key: "sk-old" } }))
+        const auth = yield* Auth.Service
+        const result = yield* Effect.result(auth.set("xiaomi", { type: "api", key: "sk-new" }))
+        expect(result._tag).toBe("Failure")
+        expect((yield* auth.all())["xiaomi"]).toEqual({ type: "api", key: "sk-old" })
+        Auth.inject(undefined)
+        yield* Effect.promise(() => fs.rm(file, { recursive: true, force: true }))
       }),
     ),
   )
