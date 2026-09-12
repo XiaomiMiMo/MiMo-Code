@@ -21,7 +21,8 @@ export const adapter: Adapter = {
             return
           }
         }
-        const server = opts.port === 0 ? (start(4096) ?? start(0)) : start(opts.port)
+        // port 0 = OS-assigned ephemeral (no conventional-port preference)
+        const server = start(opts.port)
         if (!server) {
           throw new Error(`Failed to start server on port ${opts.port}`)
         }

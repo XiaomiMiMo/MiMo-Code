@@ -277,7 +277,7 @@ export const RunCommand = cmd({
       })
       .option("attach", {
         type: "string",
-        describe: "attach to a running mimocode server (e.g., http://localhost:4096)",
+        describe: "attach to a running mimocode server (use the URL printed by `mimo serve`)",
       })
       .option("password", {
         alias: ["p"],

@@ -30,7 +30,8 @@ export const adapter: Adapter = {
             server.listen(port, opts.hostname)
           })
 
-        const server = opts.port === 0 ? await start(4096).catch(() => start(0)) : await start(opts.port)
+        // port 0 = OS-assigned ephemeral (no conventional-port preference; avoids Desktop/OpenCode clashes)
+        const server = await start(opts.port)
         const addr = server.address()
         if (!addr || typeof addr === "string") {
           throw new Error(`Failed to resolve server address for port ${opts.port}`)

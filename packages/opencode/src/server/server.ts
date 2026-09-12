@@ -94,6 +94,7 @@ export async function openapi() {
 export let url: URL
 
 export async function listen(opts: {
+  /** Bind port. `0` = OS-assigned ephemeral. Explicit N binds only N. */
   port: number
   hostname: string
   mdns?: boolean

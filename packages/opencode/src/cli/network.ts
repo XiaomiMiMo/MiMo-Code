@@ -5,7 +5,7 @@ import { AppRuntime } from "@/effect/app-runtime"
 const options = {
   port: {
     type: "number" as const,
-    describe: "port to listen on",
+    describe: "port to listen on (0 = OS-assigned ephemeral; pass an explicit port when a fixed URL is required)",
     default: 0,
   },
   hostname: {
