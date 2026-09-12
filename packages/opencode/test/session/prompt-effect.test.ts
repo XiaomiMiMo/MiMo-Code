@@ -334,34 +334,38 @@ const mcpSuccessResult: CallToolResult = {
   structuredContent: { changed: true, windowID: 42 },
   _meta: { privateToken: "success-meta-is-client-only" },
 }
+const mcpSuccessTool = dynamicTool({
+  description: "Return a standard structured MCP success result",
+  inputSchema: jsonSchema({
+    type: "object",
+    properties: {
+      private_window_id: { type: "number", description: "Secret nested MCP window selector" },
+    },
+    additionalProperties: false,
+  }),
+  execute: async () => mcpSuccessResult,
+})
+const mcpResultTool = dynamicTool({
+  description: "Return a standard MCP tool execution error",
+  inputSchema: jsonSchema({
+    type: "object",
+    properties: {
+      private_error_code: { type: "string", description: "Secret nested MCP error selector" },
+    },
+    additionalProperties: false,
+  }),
+  execute: async () => mcpErrorResult,
+})
 const mcpIt = testEffect(
   makeHttp(
     mcpLayer(() => ({
-      mcp_success: dynamicTool({
-        description: "Return a standard structured MCP success result",
-        inputSchema: jsonSchema({
-          type: "object",
-          properties: {
-            private_window_id: { type: "number", description: "Secret nested MCP window selector" },
-          },
-          additionalProperties: false,
-        }),
-        execute: async () => mcpSuccessResult,
-      }),
-      mcp_result: dynamicTool({
-        description: "Return a standard MCP tool execution error",
-        inputSchema: jsonSchema({
-          type: "object",
-          properties: {
-            private_error_code: { type: "string", description: "Secret nested MCP error selector" },
-          },
-          additionalProperties: false,
-        }),
-        execute: async () => mcpErrorResult,
-      }),
+      mcp_success: mcpSuccessTool,
+      mcp_result: mcpResultTool,
     })),
   ),
 )
+const growingMcp: Record<string, AITool> = {}
+const growingMcpIt = testEffect(makeHttp(mcpLayer(() => ({ ...growingMcp }))))
 const lifecycleContexts: MCP.TurnContext[] = []
 const lifecycleNotifications: Array<Record<string, any>> = []
 let lifecycleNotificationHangs = false
@@ -1468,6 +1472,75 @@ it.live(
             revision: 1,
             watermark_message_id: lastAssistant?.info.id,
           })
+        }),
+        { git: true, config: providerCfg },
+      ),
+    ),
+  30_000,
+)
+
+growingMcpIt.live(
+  "keeps the frozen prefix when MCP tools appear after the first pin",
+  () =>
+    withoutDynamicSystemPrompt(() =>
+      provideTmpdirServer(
+        Effect.fnUntraced(function* ({ llm }) {
+          for (const key of Object.keys(growingMcp)) delete growingMcp[key]
+          growingMcp.mcp_success = mcpSuccessTool
+          const prompt = yield* SessionPrompt.Service
+          const sessions = yield* Session.Service
+          const file = path.join(Instance.directory, "AGENTS.md")
+          yield* Effect.promise(() => Bun.write(file, "PREFIX_INSTRUCTION_V1"))
+          const chat = yield* sessions.create({
+            title: "Frozen MCP prefix",
+            permission: [{ permission: "*", pattern: "*", action: "allow" }],
+          })
+
+          yield* llm.text("first")
+          yield* prompt.prompt({
+            sessionID: chat.id,
+            agent: "build",
+            model: ref,
+            parts: [{ type: "text", text: "first query" }],
+          })
+          growingMcp.mcp_result = mcpResultTool
+          yield* Effect.promise(() => Bun.write(file, "PREFIX_INSTRUCTION_V2"))
+          yield* llm.text("second")
+          yield* prompt.prompt({
+            sessionID: chat.id,
+            agent: "build",
+            model: ref,
+            parts: [{ type: "text", text: "second query" }],
+          })
+
+          const inputs = yield* llm.inputs
+          const names = inputs.slice(0, 2).map((input) =>
+            ((input.tools ?? []) as Array<Record<string, unknown>>).map(wireToolName),
+          )
+          expect(names[0]).toContain("mcp_success")
+          expect(names[0]).not.toContain("mcp_result")
+          expect(names[1]).toEqual(names[0])
+          const systems = inputs.slice(0, 2).map((input) =>
+            ((input.messages ?? []) as { role: string; content: unknown }[])
+              .flatMap((message) =>
+                message.role === "system" && typeof message.content === "string" ? [message.content] : [],
+              )
+              .join("\n"),
+          )
+          expect(systems[1]).toBe(systems[0])
+          expect(systems[1]).not.toContain("PREFIX_INSTRUCTION_V2")
+
+          const snapshots = yield* Effect.sync(() =>
+            Database.use((db) =>
+              db
+                .select()
+                .from(SessionPrefixSnapshotTable)
+                .where(eq(SessionPrefixSnapshotTable.session_id, chat.id))
+                .all(),
+            ),
+          )
+          expect(snapshots).toHaveLength(1)
+          expect(snapshots[0]?.revision).toBe(1)
         }),
         { git: true, config: providerCfg },
       ),
