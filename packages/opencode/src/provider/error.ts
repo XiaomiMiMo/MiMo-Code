@@ -167,7 +167,18 @@ function isOverflow(message: string) {
 // non-standard semantics (e.g. moderation/risk-control blocks under HTTP 400),
 // so the gateway-specific handling below is scoped to these providers and leaves
 // every other provider's error flow untouched.
+// models.dev ships several Xiaomi gateway aliases (billing + regional token plans):
+//   xiaomi                         → api.xiaomimimo.com/v1
+//   xiaomi-token-plan-cn|ams|sgp   → token-plan-*.xiaomimimo.com/v1
+// Desktop BYOK presets may also use xiaomi-mimo-* against the same gateways.
+// Treat any `xiaomi-*` id as gateway-backed so regional/token-plan aliases
+// get the same 421/441 relabeling.
 const MIMO_GATEWAY_PROVIDERS = new Set(["xiaomi", "mimo", "mimo-desktop"])
+
+function isMimoGatewayProvider(providerID: string): boolean {
+  const id = String(providerID || "").toLowerCase()
+  return MIMO_GATEWAY_PROVIDERS.has(id) || id.startsWith("xiaomi-")
+}
 
 // MiMo gateway error.code values worth relabeling: moderation (421) and
 // risk-control (441) blocks arrive under a generic HTTP 400.
@@ -182,7 +193,7 @@ function message(providerID: ProviderID, e: APICallError) {
     // reason often lives there while error.message stays generic). json() returns
     // undefined for non-JSON, so HTML/proxy error pages fall through to the
     // original handling below.
-    const gw = MIMO_GATEWAY_PROVIDERS.has(providerID) ? json(e.responseBody)?.error : undefined
+    const gw = isMimoGatewayProvider(providerID) ? json(e.responseBody)?.error : undefined
     if (gw && typeof gw === "object") {
       const base = FRIENDLY_GATEWAY_CODES[String(gw.code)] ?? (typeof gw.message === "string" ? gw.message : "")
       if (base) return typeof gw.param === "string" && gw.param !== base ? `${base}: ${gw.param}` : base
