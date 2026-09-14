@@ -15,7 +15,7 @@ import { AppFileSystem } from "@mimo-ai/shared/filesystem"
 import { CurrentWorkingDirectory } from "./cwd"
 import { ConfigPlugin } from "@/config/plugin"
 import { ConfigKeybinds } from "@/config/keybinds"
-import { InstallationLocal, InstallationVersion } from "@/installation/version"
+import { PluginSdkNpmVersion } from "@/installation/version"
 import { makeRuntime } from "@/effect/runtime"
 import { Filesystem, Log } from "@/util"
 import { ConfigVariable } from "@/config/variable"
@@ -162,7 +162,7 @@ export const layer = Layer.effect(
             add: [
               {
                 name: "@mimo-ai/plugin",
-                version: InstallationLocal ? undefined : InstallationVersion,
+                version: PluginSdkNpmVersion,
               },
             ],
           })
