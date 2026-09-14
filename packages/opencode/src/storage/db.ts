@@ -15,6 +15,7 @@ import { InstallationChannel } from "../installation/version"
 import { InstanceState } from "@/effect"
 import { iife } from "@/util/iife"
 import { init } from "#db"
+import { startIndexMigration, stopIndexMigration } from "../history/migration"
 
 declare const OPENCODE_MIGRATIONS: { sql: string; timestamp: number; name: string }[] | undefined
 
@@ -113,10 +114,12 @@ export const Client = lazy(() => {
     migrate(db, entries)
   }
 
+  if (!Flag.MIMOCODE_SKIP_MIGRATIONS) startIndexMigration(db)
   return db
 })
 
 export function close() {
+  stopIndexMigration(Client())
   Client().$client.close()
   Client.reset()
 }

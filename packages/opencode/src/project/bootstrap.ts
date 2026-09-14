@@ -15,7 +15,7 @@ import * as Effect from "effect/Effect"
 import { Config } from "@/config"
 import { Metrics } from "@/metrics"
 import { Memory } from "@/memory"
-import { WriterService, BackfillService } from "@/history"
+import { WriterService } from "@/history"
 
 export const InstanceBootstrap = Effect.gen(function* () {
   Log.Default.info("bootstrapping", { directory: Instance.directory })
@@ -33,7 +33,6 @@ export const InstanceBootstrap = Effect.gen(function* () {
       Vcs.Service,
       Snapshot.Service,
       WriterService,
-      BackfillService,
     ].map((s) => Effect.forkDetach(s.use((i) => i.init()))),
   ).pipe(Effect.withSpan("InstanceBootstrap.init"))
 

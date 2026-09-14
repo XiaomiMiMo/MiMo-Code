@@ -1,3 +1,4 @@
+import { indexImportedParts } from "../history/import"
 import path from "path"
 import { existsSync } from "fs"
 import { readFile } from "fs/promises"
@@ -385,6 +386,8 @@ export async function run(opts?: { force?: boolean }): Promise<ImportStats> {
               .run()
           }
         }
+
+        indexImportedParts(tx, parsed.messages.flatMap((m) => m.parts.map((p) => p.part.id)))
 
         tx.insert(ExternalImportTable)
           .values({

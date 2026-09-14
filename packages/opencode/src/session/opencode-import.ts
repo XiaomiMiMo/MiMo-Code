@@ -1,3 +1,4 @@
+import { indexImportedParts } from "../history/import"
 import { existsSync } from "fs"
 import { Log } from "../util"
 import { Database, eq, and, inArray } from "../storage"
@@ -247,6 +248,8 @@ export async function run(opts?: { force?: boolean; dbPath?: string }): Promise<
               })
               .run()
           }
+
+          indexImportedParts(tx, parts.map((p) => p.id))
 
           tx.insert(ExternalImportTable)
             .values({

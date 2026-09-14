@@ -1,8 +1,9 @@
+import { migrateIndexBatch } from "../../src/history/migration"
 import { afterEach, expect } from "bun:test"
 import { Effect, Layer } from "effect"
 import { Database } from "../../src/storage"
 import { History } from "../../src/history"
-import { backfillAll } from "../../src/history/backfill"
+import { backfillAll } from "./fixtures/seed-index"
 import { projection } from "../../src/history/projection"
 import { PartTable } from "../../src/session/session.sql"
 import { HistoryTool } from "../../src/tool/history"
@@ -257,21 +258,18 @@ it.live("mixed 500+ scan, SQL projection, legacy migration and interrupted rebui
       yield* backfillAll()
       expect((db.prepare("SELECT count(*) AS n FROM history_fts").get() as { n: number }).n).toBe(408)
       expect(JSON.stringify(db.prepare("SELECT body FROM history_fts").all())).not.toContain("YWJj")
-      // Emulate an old dirty index; execute the real migration, then an interrupted
-      // rebuild (some rows already present) followed by idempotent continuation.
-      db.prepare("UPDATE history_fts SET body=? WHERE part_id='prt_0001'").run(`old ${url}`)
+      // An unupgraded index survives the old migration and is cleaned in place.
+      db.prepare("UPDATE history_fts SET body=? WHERE part_id='prt_0001'").run(`needle before ${url} after 1`)
       const migration = yield* Effect.promise(() =>
         Bun.file(new URL("../../migration/20260908000000_history_media_rebuild/migration.sql", import.meta.url)).text(),
       )
       db.exec(migration)
-      expect((db.prepare("SELECT count(*) AS n FROM history_fts").get() as { n: number }).n).toBe(0)
+      expect((db.prepare("SELECT count(*) AS n FROM history_fts").get() as { n: number }).n).toBe(408)
       const history = yield* History.Service
       expect((yield* history.get({ part_id: "prt_0001" }))?.text).toContain("before")
-      db.exec(
-        "INSERT INTO history_fts(part_id,session_id,message_id,project_id,kind,body,time_created) VALUES('prt_0001','ses_detail','msg_detail','detail','user_text','needle before [media] after 1',1)",
-      )
-      yield* backfillAll()
-      yield* backfillAll()
+      db.exec("UPDATE history_index_migration SET phase='clean', cursor=0, fts_end=(SELECT MAX(rowid) FROM history_fts), part_end=(SELECT MAX(rowid) FROM part)")
+      while (migrateIndexBatch(Database.Client())) yield* Effect.sleep("1 millis")
+      expect(JSON.stringify(db.prepare("SELECT body FROM history_fts").all())).not.toContain("YWJj")
       expect((db.prepare("SELECT count(*) AS n FROM history_fts").get() as { n: number }).n).toBe(408)
       expect(db.prepare("SELECT data FROM part ORDER BY id").all()).toEqual(original)
       expect((yield* history.search({ query: "after", scope: "global" })).length).toBe(10)

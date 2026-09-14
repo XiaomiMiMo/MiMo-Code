@@ -12,7 +12,6 @@ import { Instance } from "../project/instance"
 import { buildFtsQuery } from "./fts-query"
 import type { Kind } from "./extract"
 import { layer as writerLayer, Service as WriterService } from "./writer"
-import { layer as backfillLayer, Service as BackfillService } from "./backfill"
 
 export type SearchHit = {
   part_id: string
@@ -82,11 +81,8 @@ type Row = {
   time_created: number
 }
 
-export const defaultLayer: Layer.Layer<Service | WriterService | BackfillService, never, never> = Layer.suspend(() =>
-  Layer.mergeAll(layer, writerLayer, backfillLayer).pipe(
-    Layer.provide(Config.defaultLayer),
-    Layer.provide(Bus.defaultLayer),
-  ),
+export const defaultLayer: Layer.Layer<Service | WriterService, never, never> = Layer.suspend(() =>
+  Layer.mergeAll(layer, writerLayer).pipe(Layer.provide(Config.defaultLayer), Layer.provide(Bus.defaultLayer)),
 )
 
 export const layer = Layer.effect(

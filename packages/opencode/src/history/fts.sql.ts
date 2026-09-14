@@ -19,8 +19,11 @@ export const HistoryFtsTable = sqliteTable(
   ],
 )
 
-// Durable completion of the one-time historical index migration.
-export const HistoryBackfillTable = sqliteTable("history_backfill", {
-  id: integer().primaryKey(),
-  completed: integer({ mode: "boolean" }).notNull(),
+// Versioned content migration. Cursor and index writes commit together.
+export const HistoryIndexMigrationTable = sqliteTable("history_index_migration", {
+  version: integer().primaryKey(),
+  phase: text({ enum: ["clean", "repair", "done"] }).notNull(),
+  cursor: integer().notNull(),
+  fts_end: integer().notNull(),
+  part_end: integer().notNull(),
 })

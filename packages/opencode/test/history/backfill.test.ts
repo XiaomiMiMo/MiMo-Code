@@ -1,11 +1,13 @@
-import { afterEach, beforeEach, describe, expect, spyOn } from "bun:test"
+import { afterEach, beforeEach, describe, expect, test } from "bun:test"
 import { Effect, Layer } from "effect"
 import { Database } from "../../src/storage"
-import { HistoryFtsTable, HistoryBackfillTable } from "../../src/history/fts.sql"
+import { HistoryFtsTable, HistoryIndexMigrationTable } from "../../src/history/fts.sql"
 import { MessageTable, PartTable, SessionTable } from "../../src/session/session.sql"
 import { ProjectTable } from "../../src/project/project.sql"
-import { backfillAll, backfillOnce } from "../../src/history/backfill"
-import { History, BackfillService } from "../../src/history"
+import { backfillAll } from "./fixtures/seed-index"
+import { migrateIndexBatch, startIndexMigration, stopIndexMigration } from "../../src/history/migration"
+import { fileURLToPath } from "node:url"
+import { History } from "../../src/history"
 import { Instance } from "../../src/project/instance"
 import { provideTmpdirInstance } from "../fixture/fixture"
 import { testEffect } from "../lib/effect"
@@ -27,6 +29,7 @@ const wipe = () =>
 beforeEach(() => {
   Database.close()
   wipe()
+  stopIndexMigration(Database.Client())
 })
 
 afterEach(async () => {
@@ -160,103 +163,144 @@ describe("History.backfill", () => {
       }),
     ),
   )
-
-  // [TP-HISTORY-BOOTSTRAP-01] Directory bootstrap never repeats a completed migration.
-  it.live("shares a one-time migration across directories and ignores later kind changes", () =>
-    provideTmpdirInstance(() =>
-      Effect.gen(function* () {
-        seed([{ session_id: "ses_boot", message_id: "m1", part_id: "p1", role: "user", type: "text", text: "hello" }])
-        const db = Database.Client()
-        db.update(HistoryBackfillTable).set({ completed: false }).run()
-        const select = spyOn(db, "select")
-        const scans = () => select.mock.calls.filter(([fields]) => fields && "project_id" in fields).length
-        yield* Effect.gen(function* () {
-          yield* backfillOnce(new Set())
-          expect(scans()).toBe(0)
-          yield* Effect.all(
-            Array.from({ length: 20 }, () => backfillOnce(new Set(["user_text"]))),
-            { concurrency: "unbounded" },
-          )
-          expect(scans()).toBe(1)
-          expect(db.select().from(HistoryBackfillTable).get()?.completed).toBe(true)
-          expect(
-            db
-              .select()
-              .from(HistoryFtsTable)
-              .all()
-              .map((row) => row.part_id),
-          ).toEqual(["p1"])
-          yield* backfillOnce(new Set(["reasoning"]))
-          for (let directory = 0; directory < 3; directory++) {
-            yield* provideTmpdirInstance(() =>
-              Effect.gen(function* () {
-                const service = yield* BackfillService
-                yield* service.init()
-              }),
-            )
-          }
-          expect(scans()).toBe(1)
-        }).pipe(Effect.ensuring(Effect.sync(() => select.mockRestore())))
-      }),
-    ),
-  )
-
-  // [TP-HISTORY-BOOTSTRAP-02] Real migration + file-backed DB across independent processes.
-  for (const scenario of ["pending", "existing", "empty-result", "failure", "fresh"] as const) {
-    it.live(`persists migration completion across restart: ${scenario}`, () =>
-      provideTmpdirInstance(() =>
-        Effect.gen(function* () {
-          if (scenario !== "fresh")
-            seed([
-              {
-                session_id: "ses_restart",
-                message_id: "m1",
-                part_id: "p1",
-                role: "user",
-                type: scenario === "empty-result" ? "step-start" : "text",
-                text: "history",
-              },
-            ])
-          if (scenario === "existing") yield* backfillAll()
-          const db = Database.Client()
-          db.$client.exec("DROP TABLE history_backfill")
-          db.$client.exec(
-            yield* Effect.promise(() =>
-              Bun.file(
-                new URL("../../migration/20260914000000_history_backfill_once/migration.sql", import.meta.url),
-              ).text(),
-            ),
-          )
-          const file = `${Instance.directory}/restart.db`
-          db.$client.prepare("VACUUM INTO ?").run(file)
-          const run = (fail = false) =>
-            Effect.promise(async () => {
-              const child = Bun.spawn(
-                [process.execPath, new URL("./fixtures/backfill-restart.ts", import.meta.url).pathname],
-                {
-                  cwd: process.cwd(),
-                  env: { ...process.env, MIMOCODE_DB: file, HISTORY_FAIL_SCAN: fail ? "1" : "0" },
-                  stdout: "pipe",
-                  stderr: "pipe",
-                },
-              )
-              const [code, stdout, stderr] = await Promise.all([
-                child.exited,
-                new Response(child.stdout).text(),
-                new Response(child.stderr).text(),
-              ])
-              expect(code, stderr).toBe(0)
-              return JSON.parse(stdout.trim().split("\n").at(-1)!)
-            })
-          const skipped = scenario === "existing" || scenario === "fresh"
-          expect(yield* run(scenario === "failure")).toEqual({
-            scans: skipped ? 0 : 1,
-            completed: scenario !== "failure",
-          })
-          expect(yield* run()).toEqual({ scans: scenario === "failure" ? 1 : 0, completed: true })
-          expect(yield* run()).toEqual({ scans: 0, completed: true })
-        }),
-      ),
-    )
-  }
 })
+
+async function prepareMigration() {
+  const db = Database.Client()
+  db.$client.exec("DROP TABLE history_index_migration; DROP TRIGGER history_part_ad")
+  db.$client.exec(
+    await Bun.file(
+      new URL("../../migration/20260914010000_history_index_version/migration.sql", import.meta.url),
+    ).text(),
+  )
+  return db
+}
+function finish(db: ReturnType<typeof Database.Client>) {
+  let count = 0
+  while (migrateIndexBatch(db)) {
+    if (++count > 100) throw new Error("migration failed to terminate")
+  }
+}
+function textParts(count: number) {
+  return Array.from({ length: count }, (_, i) => ({
+    session_id: "ses_compat",
+    message_id: "msg_compat",
+    part_id: `part_${i}`,
+    role: "user" as const,
+    type: "text",
+    text: `searchable${i}`,
+  }))
+}
+
+// [TP-HISTORY-BOOTSTRAP-02] Compatibility uses durable version/cursor, never row count.
+test("repairs a partially rebuilt index and preserves existing non-default kinds", async () => {
+  seed(textParts(300))
+  const db = Database.Client()
+  db.insert(HistoryFtsTable)
+    .values({
+      part_id: "part_0",
+      session_id: "ses_compat",
+      message_id: "msg_compat",
+      project_id: "proj_ses_compat",
+      kind: "reasoning",
+      body: "keepword data:image/png;base64,aGVsbG8= tailword",
+      time_created: 1,
+    })
+    .run()
+  await prepareMigration()
+  finish(db)
+  const rows = db.select().from(HistoryFtsTable).all()
+  expect(rows).toHaveLength(300)
+  expect(rows.find((r) => r.part_id === "part_0")?.kind).toBe("reasoning")
+  expect(rows.find((r) => r.part_id === "part_0")?.body).not.toContain("aGVsbG8=")
+  expect(
+    db.$client.prepare("SELECT count(*) AS n FROM history_fts_idx WHERE history_fts_idx MATCH 'keepword'").get(),
+  ).toEqual({ n: 1 })
+  expect(
+    db.$client.prepare("SELECT count(*) AS n FROM history_fts_idx WHERE history_fts_idx MATCH 'searchable299'").get(),
+  ).toEqual({ n: 1 })
+  expect(db.select().from(HistoryIndexMigrationTable).get()?.phase).toBe("done")
+  expect(migrateIndexBatch(db)).toBe(false)
+})
+
+test("failed batch rolls back index writes and cursor; resumes without revisiting prior batch", async () => {
+  seed(textParts(300))
+  const db = await prepareMigration()
+  migrateIndexBatch(db) // clean -> repair
+  migrateIndexBatch(db) // first 128 rows
+  const before = db.select().from(HistoryIndexMigrationTable).get()
+  db.$client.exec(
+    "CREATE TRIGGER fail_history BEFORE INSERT ON history_fts WHEN NEW.part_id = 'part_200' BEGIN SELECT RAISE(ABORT, 'test failure'); END",
+  )
+  expect(() => migrateIndexBatch(db)).toThrow("test failure")
+  expect(db.select().from(HistoryIndexMigrationTable).get()).toEqual(before)
+  expect(db.select().from(HistoryFtsTable).all()).toHaveLength(128)
+  db.$client.exec("DROP TRIGGER fail_history")
+  // If the committed prefix were visited again, corrupt JSON would fail extraction.
+  db.$client.exec("DELETE FROM history_fts WHERE part_id = 'part_0'")
+  db.$client.exec("UPDATE part SET data = 'invalid json' WHERE id = 'part_0'")
+  finish(db)
+  expect(db.select().from(HistoryFtsTable).all()).toHaveLength(299)
+})
+
+for (const count of [0, 300]) {
+  test(`durable progress across real processes, ${count} parts`, async () => {
+    seed(textParts(count))
+    const db = await prepareMigration()
+    const { tmpdir } = await import("../fixture/fixture")
+    await using dir = await tmpdir()
+    const file = `${dir.path}/index with spaces.db`
+    db.$client.prepare("VACUUM INTO ?").run(file)
+    const run = async (limit = Infinity) => {
+      const child = Bun.spawn(
+        [process.execPath, fileURLToPath(new URL("./fixtures/backfill-restart.ts", import.meta.url))],
+        {
+          cwd: process.cwd(),
+          env: { ...process.env, MIMOCODE_DB: file, HISTORY_BATCH_LIMIT: String(limit) },
+          stdout: "pipe",
+          stderr: "pipe",
+        },
+      )
+      const [code, stdout, stderr] = await Promise.all([
+        child.exited,
+        new Response(child.stdout).text(),
+        new Response(child.stderr).text(),
+      ])
+      expect(code, stderr).toBe(0)
+      return JSON.parse(stdout.trim().split("\n").at(-1)!)
+    }
+    const first = await run(2)
+    const second = await run()
+    expect(second.before).toEqual(first.after)
+    expect(second.after.phase).toBe("done")
+    expect((await run()).batches).toBe(0)
+    if (count) expect(first.after.cursor).toBe(128)
+  })
+}
+
+// [TP-HISTORY-BOOTSTRAP-01] The real DB lifecycle owns one finite background job.
+it.live("database startup finishes once and directory initialization does not reopen migration", () =>
+  provideTmpdirInstance(() =>
+    Effect.gen(function* () {
+      Database.close()
+      const db = Database.Client()
+      for (let i = 0; i < 20; i++) startIndexMigration(db)
+      yield* Effect.sleep("100 millis")
+      expect(db.select().from(HistoryIndexMigrationTable).get()?.phase).toBe("done")
+      // Deliberately bypass all normal writers to detect an unwanted historical scan.
+      seed(textParts(1))
+      for (let i = 0; i < 3; i++) {
+        yield* provideTmpdirInstance(() =>
+          Effect.gen(function* () {
+            const history = yield* History.Service
+            yield* history.search({ query: "searchable0", scope: "global" })
+          }),
+        )
+        startIndexMigration(db)
+      }
+      yield* Effect.sleep("30 millis")
+      expect(db.select().from(HistoryFtsTable).all()).toHaveLength(0)
+      expect(db.select().from(HistoryIndexMigrationTable).get()?.phase).toBe("done")
+    }),
+  ),
+)

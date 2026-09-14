@@ -1,3 +1,4 @@
+import { indexImportedParts } from "../history/import"
 import type { SQLiteBunDatabase } from "drizzle-orm/bun-sqlite"
 import type { NodeSQLiteDatabase } from "drizzle-orm/node-sqlite"
 import { Global } from "../global"
@@ -98,9 +99,14 @@ export async function run(db: SQLiteBunDatabase<any, any> | NodeSQLiteDatabase<a
   function insert(values: unknown[], table: Parameters<typeof db.insert>[0], label: string) {
     if (values.length === 0) return 0
     try {
+      db.run("SAVEPOINT import_batch")
       db.insert(table).values(values).onConflictDoNothing().run()
+      if (table === PartTable) indexImportedParts<unknown>(db, (values as { id: string }[]).map((row) => row.id))
+      db.run("RELEASE import_batch")
       return values.length
     } catch (e) {
+      db.run("ROLLBACK TO import_batch")
+      db.run("RELEASE import_batch")
       errs.push(`failed to migrate ${label} batch: ${e}`)
       return 0
     }

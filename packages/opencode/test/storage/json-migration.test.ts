@@ -1,3 +1,4 @@
+import { HistoryIndexMigrationTable } from "../../src/history/fts.sql"
 import { describe, test, expect, beforeEach, afterEach } from "bun:test"
 import { Database } from "bun:sqlite"
 import { drizzle, SQLiteBunDatabase } from "drizzle-orm/bun-sqlite"
@@ -228,7 +229,9 @@ describe("JSON to SQLite migration", () => {
     expect(sessions[0].share_url).toBe("https://example.com/share")
   })
 
+  // [TP-HISTORY-IMPORT-01] Fresh databases import searchable parts after migration completion.
   test("migrates messages and parts", async () => {
+    db.update(HistoryIndexMigrationTable).set({ phase: "done" }).run()
     await writeProject(storageDir, {
       id: "proj_test123abc",
       worktree: "/",
@@ -257,6 +260,8 @@ describe("JSON to SQLite migration", () => {
     const parts = db.select().from(PartTable).all()
     expect(parts.length).toBe(1)
     expect(parts[0].id).toBe(PartID.make("prt_testabc123"))
+    expect(sqlite.prepare("SELECT count(*) AS n FROM history_fts_idx WHERE history_fts_idx MATCH 'Hello'").get()).toEqual({ n: 1 })
+    expect(db.select().from(HistoryIndexMigrationTable).get()?.phase).toBe("done")
   })
 
   test("migrates legacy parts without ids in body", async () => {

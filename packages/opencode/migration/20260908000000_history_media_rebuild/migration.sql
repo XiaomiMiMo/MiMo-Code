@@ -1,3 +1,4 @@
--- Derived index only. Existing delete triggers clear FTS; startup backfill is
--- resumable via NOT EXISTS. Original parts and sessions remain untouched.
-DELETE FROM history_fts;
+-- Preserve derived content for installations that have not applied this step.
+-- Versioned history_index_migration cleans it in place and also repairs databases
+-- where the earlier release already executed DELETE FROM history_fts.
+SELECT 1;

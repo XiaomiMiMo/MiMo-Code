@@ -4,4 +4,4 @@ export { SessionTable, MessageTable, PartTable, TodoTable, PermissionTable } fro
 export { SessionShareTable } from "../share/share.sql"
 export { WorkspaceTable } from "../control-plane/workspace.sql"
 export { WorkflowRunTable } from "../workflow/workflow.sql"
-export { HistoryFtsTable } from "../history/fts.sql"
+export { HistoryFtsTable, HistoryIndexMigrationTable } from "../history/fts.sql"

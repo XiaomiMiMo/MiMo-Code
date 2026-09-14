@@ -1,40 +1,18 @@
-import { Context, Effect, Layer } from "effect"
+// Test-only full index builder for explicit kinds. Never used at startup.
+import { Effect } from "effect"
 import { and, asc, desc, eq, gt, sql } from "drizzle-orm"
-import { Database } from "../storage"
-import { Config } from "../config"
-import { PartTable, SessionTable } from "../session/session.sql"
-import { HistoryFtsTable, HistoryBackfillTable } from "./fts.sql"
-import { extract, DEFAULT_KINDS, type Kind } from "./extract"
-import { makeResolver, type Resolver } from "./resolve"
-import { projection } from "./projection"
-import { Log } from "../util"
-import type { MessageV2 } from "../session/message-v2"
+import { Database } from "../../../src/storage"
+import { PartTable, SessionTable } from "../../../src/session/session.sql"
+import { HistoryFtsTable } from "../../../src/history/fts.sql"
+import { extract, DEFAULT_KINDS, type Kind } from "../../../src/history/extract"
+import { makeResolver, type Resolver } from "../../../src/history/resolve"
+import { projection } from "../../../src/history/projection"
+import { Log } from "../../../src/util"
+import type { MessageV2 } from "../../../src/session/message-v2"
 
 const log = Log.create({ service: "history.backfill" })
 
 const BATCH = 500
-
-// Only one attempt per connection. Failed/interrupted migrations retry on restart,
-// not each time another directory initializes.
-const attempted = new WeakSet<ReturnType<typeof Database.Client>>()
-
-export function backfillOnce(enabled: ReadonlySet<Kind>) {
-  return Effect.gen(function* () {
-    if (enabled.size === 0) return
-    const db = Database.Client()
-    if (attempted.has(db)) return
-    attempted.add(db)
-    const state = Database.use((db) =>
-      db.select().from(HistoryBackfillTable).where(eq(HistoryBackfillTable.id, 1)).get(),
-    )
-    if (!state || state.completed) return
-    if (yield* backfillAll(enabled)) {
-      Database.use((db) =>
-        db.update(HistoryBackfillTable).set({ completed: true }).where(eq(HistoryBackfillTable.id, 1)).run(),
-      )
-    }
-  })
-}
 
 /**
  * Walk PartTable newest-session-first with the given enabled kinds.
@@ -164,28 +142,3 @@ function writeBatch(
     })
   })
 }
-
-export interface Interface {
-  readonly init: () => Effect.Effect<void>
-}
-
-export class Service extends Context.Service<Service, Interface>()("@opencode/History.Backfill") {}
-
-export const layer: Layer.Layer<Service, never, Config.Service> = Layer.effect(
-  Service,
-  Effect.gen(function* () {
-    const cfg = yield* Config.Service
-    return Service.of({
-      init: Effect.fn("History.Backfill.init")(function* () {
-        const config = yield* cfg.get()
-        const kinds = config.history?.kinds ?? DEFAULT_KINDS
-        const enabled = new Set<Kind>(kinds as readonly Kind[])
-        // Fire-and-forget: do not block bootstrap on the potentially long scan.
-        yield* backfillOnce(enabled).pipe(
-          Effect.catchCause((cause) => Effect.sync(() => log.warn("backfill aborted", { cause: String(cause) }))),
-          Effect.forkDetach,
-        )
-      }),
-    })
-  }),
-)
