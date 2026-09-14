@@ -1,3 +1,4 @@
+import { partExamples } from "./fixtures/parts"
 import { indexImportedParts } from "../../src/history/import"
 import { migrateIndexBatch } from "../../src/history/migration"
 import { afterEach, expect } from "bun:test"
@@ -366,6 +367,47 @@ it.live("uniform indexing finds reasoning, full tool output and images, then get
         { ...ctx, extra: { model } },
       )
       expect(image.attachments?.[0]?.url).toBe(url)
+    }),
+  ),
+)
+
+it.live("all part details remain readable and v4 adds every searchable variant to completed v3 indexes", () =>
+  provideTmpdirInstance(() =>
+    Effect.gen(function* () {
+      seed(partExamples.map(({ data }) => data))
+      const db = Database.Client()
+      db.$client.exec(
+        "UPDATE history_index_migration SET phase='done' WHERE version=3; DELETE FROM history_index_migration WHERE version=4",
+      )
+      const migration = yield* Effect.promise(() =>
+        Bun.file(new URL("../../migration/20260914040000_history_part_content/migration.sql", import.meta.url)).text(),
+      )
+      db.$client.exec(migration)
+      let batches = 0
+      while (migrateIndexBatch(db)) {
+        if (++batches > 100) throw new Error("migration failed to finish")
+      }
+      const history = yield* History.Service
+      for (const [i, example] of partExamples.entries()) {
+        const part_id = `prt_${String(i).padStart(4, "0")}`
+        const matches = yield* history.search({ query: example.query ?? example.detail, scope: "global" })
+        expect(matches.map((hit) => hit.part_id)).toEqual(example.query ? [part_id] : [])
+        const value = yield* history.get({ part_id })
+        expect(value?.text).toContain(example.detail)
+        expect(value?.text).not.toContain("YWJj")
+      }
+      for (const [query, part_id] of [
+        ["sourcepath", "prt_0002"],
+        ["manifestneedle", "prt_0005"],
+        ["responseneedle", "prt_0008"],
+      ]) {
+        const hits = yield* history.search({ query, scope: "global" })
+        expect(hits.map((hit) => hit.part_id)).toEqual([part_id])
+      }
+      expect(migrateIndexBatch(db)).toBe(false)
+      const all = yield* history.around({ message_id: "msg_detail", before: 0, after: 0 })
+      expect(all.messages[0].parts.map((part) => part.type)).toEqual(partExamples.map(({ data }) => data.type))
+      for (const [i, example] of partExamples.entries()) expect(all.messages[0].parts[i].text).toContain(example.detail)
     }),
   ),
 )

@@ -7,7 +7,7 @@ import { indexImportedParts } from "./import"
 import { Log } from "../util"
 
 const log = Log.create({ service: "history.migration" })
-const version = 3
+const version = 4
 const batch = 128
 const jobs = new WeakMap<ReturnType<typeof Database.Client>, AbortController>()
 

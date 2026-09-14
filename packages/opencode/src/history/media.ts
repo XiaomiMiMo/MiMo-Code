@@ -100,6 +100,7 @@ type Data = {
   mime?: string
   url?: string
   filename?: string
+  source?: unknown
   state?: {
     input?: unknown
     output?: unknown
@@ -118,7 +119,15 @@ export function detail(data: Data, collect = true) {
       ? clean(data.text ?? "")
       : data.type === "tool"
         ? `tool: ${clean(data.tool ?? "")}\ninput: ${json(data.state?.input ?? {})}\noutput: ${json(data.state?.output ?? "")}\nerror: ${clean(data.state?.error ?? "")}`
-        : `[${data.type}]`
+        : data.type === "file"
+          ? json({
+              type: data.type,
+              filename: data.filename,
+              mime: data.mime,
+              source: data.source,
+              url: data.url && !/^data:/i.test(data.url) ? data.url : undefined,
+            })
+          : json(data)
   const inlineCount = attachments.length
   if (data.type === "file" && data.url)
     attachments.push({

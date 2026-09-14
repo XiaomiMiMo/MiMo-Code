@@ -1,3 +1,5 @@
+import { MessageV2 } from "../../src/session/message-v2"
+import { partExamples } from "./fixtures/parts"
 import { describe, expect, test } from "bun:test"
 import { extract } from "../../src/history/extract"
 
@@ -58,8 +60,8 @@ describe("history.extract", () => {
     })
   })
 
-  test("step-start / step-finish / patch / compaction → null", () => {
-    for (const type of ["step-start", "step-finish", "patch", "compaction"]) {
+  test("execution markers are not indexed", () => {
+    for (const type of ["step-start", "step-finish", "snapshot", "checkpoint"]) {
       const r = extract({ type } as any)
       expect(r).toBeNull()
     }
@@ -87,4 +89,17 @@ test("image filename and MIME are searchable without binary payload", () => {
   } as any)
   expect(result?.body).toContain("diagramneedle.png")
   expect(result?.body).not.toContain("YWJj")
+})
+
+test("every declared part variant has an explicit indexing decision", () => {
+  expect(partExamples.map(({ data }) => data.type).sort()).toEqual(
+    MessageV2.Part.options.map((schema) => schema.shape.type.value).sort(),
+  )
+  for (const [i, example] of partExamples.entries()) {
+    const part = MessageV2.Part.parse({ id: `prt_${i}`, sessionID: "ses_all", messageID: "msg_all", ...example.data })
+    const result = extract(part)
+    if (example.query) expect(result?.body).toContain(example.query)
+    else expect(result).toBeNull()
+    expect(result?.body ?? "").not.toContain("YWJj")
+  }
 })

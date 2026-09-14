@@ -177,6 +177,11 @@ async function prepareMigration() {
   db.$client.exec(
     await Bun.file(new URL("../../migration/20260914020000_history_all_content/migration.sql", import.meta.url)).text(),
   )
+  db.$client.exec(
+    await Bun.file(
+      new URL("../../migration/20260914040000_history_part_content/migration.sql", import.meta.url),
+    ).text(),
+  )
   return db
 }
 function finish(db: ReturnType<typeof Database.Client>) {
@@ -223,7 +228,7 @@ test("repairs missing rows and replaces stale content from original parts", asyn
     db.$client.prepare("SELECT count(*) AS n FROM history_fts_idx WHERE history_fts_idx MATCH 'searchable299'").get(),
   ).toEqual({ n: 1 })
   expect(
-    db.select().from(HistoryIndexMigrationTable).where(eq(HistoryIndexMigrationTable.version, 3)).get()?.phase,
+    db.select().from(HistoryIndexMigrationTable).where(eq(HistoryIndexMigrationTable.version, 4)).get()?.phase,
   ).toBe("done")
   expect(migrateIndexBatch(db)).toBe(false)
 })
@@ -233,12 +238,12 @@ test("failed batch rolls back index writes and cursor; resumes without revisitin
   const db = await prepareMigration()
   migrateIndexBatch(db) // clean -> repair
   migrateIndexBatch(db) // first 128 rows
-  const before = db.select().from(HistoryIndexMigrationTable).where(eq(HistoryIndexMigrationTable.version, 3)).get()
+  const before = db.select().from(HistoryIndexMigrationTable).where(eq(HistoryIndexMigrationTable.version, 4)).get()
   db.$client.exec(
     "CREATE TRIGGER fail_history BEFORE INSERT ON history_fts WHEN NEW.part_id = 'part_200' BEGIN SELECT RAISE(ABORT, 'test failure'); END",
   )
   expect(() => migrateIndexBatch(db)).toThrow("test failure")
-  expect(db.select().from(HistoryIndexMigrationTable).where(eq(HistoryIndexMigrationTable.version, 3)).get()).toEqual(
+  expect(db.select().from(HistoryIndexMigrationTable).where(eq(HistoryIndexMigrationTable.version, 4)).get()).toEqual(
     before,
   )
   expect(db.select().from(HistoryFtsTable).all()).toHaveLength(128)
@@ -294,7 +299,7 @@ it.live("database startup finishes once and directory initialization does not re
       for (let i = 0; i < 20; i++) startIndexMigration(db)
       yield* Effect.sleep("100 millis")
       expect(
-        db.select().from(HistoryIndexMigrationTable).where(eq(HistoryIndexMigrationTable.version, 3)).get()?.phase,
+        db.select().from(HistoryIndexMigrationTable).where(eq(HistoryIndexMigrationTable.version, 4)).get()?.phase,
       ).toBe("done")
       // Deliberately bypass all normal writers to detect an unwanted historical scan.
       seed(textParts(1))
@@ -310,7 +315,7 @@ it.live("database startup finishes once and directory initialization does not re
       yield* Effect.sleep("30 millis")
       expect(db.select().from(HistoryFtsTable).all()).toHaveLength(0)
       expect(
-        db.select().from(HistoryIndexMigrationTable).where(eq(HistoryIndexMigrationTable.version, 3)).get()?.phase,
+        db.select().from(HistoryIndexMigrationTable).where(eq(HistoryIndexMigrationTable.version, 4)).get()?.phase,
       ).toBe("done")
     }),
   ),
@@ -352,7 +357,7 @@ test("missing migration metadata does not prevent use of the database", async ()
   }
 })
 
-test("completed version 2 indexes gain tool output and reasoning in version 3 only once", async () => {
+test("completed version 3 indexes gain omitted content in version 4 only once", async () => {
   seed([
     {
       session_id: "ses_expand",
@@ -385,10 +390,12 @@ test("completed version 2 indexes gain tool output and reasoning in version 3 on
     })
     .run()
   db.$client.exec(
-    "UPDATE history_index_migration SET phase='done' WHERE version=2; DELETE FROM history_index_migration WHERE version=3",
+    "UPDATE history_index_migration SET phase='done' WHERE version=3; DELETE FROM history_index_migration WHERE version=4",
   )
   db.$client.exec(
-    await Bun.file(new URL("../../migration/20260914020000_history_all_content/migration.sql", import.meta.url)).text(),
+    await Bun.file(
+      new URL("../../migration/20260914040000_history_part_content/migration.sql", import.meta.url),
+    ).text(),
   )
   finish(db)
   for (const word of ["inputneedle", "outputneedle", "reasonneedle"]) {
@@ -397,7 +404,7 @@ test("completed version 2 indexes gain tool output and reasoning in version 3 on
     ).toEqual({ n: 1 })
   }
   expect(
-    db.select().from(HistoryIndexMigrationTable).where(eq(HistoryIndexMigrationTable.version, 2)).get()?.phase,
+    db.select().from(HistoryIndexMigrationTable).where(eq(HistoryIndexMigrationTable.version, 3)).get()?.phase,
   ).toBe("done")
   expect(migrateIndexBatch(db)).toBe(false)
 })

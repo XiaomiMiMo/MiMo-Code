@@ -19,13 +19,13 @@ function extractRaw(part: MessageV2.Part): Extracted | null {
       return { body: part.text, tool_name: null }
     }
     case "file": {
-      return { body: `${part.filename ?? ""} ${part.mime}`, tool_name: null }
+      return { body: fileText(part), tool_name: null }
     }
     case "tool": {
       const state = part.state
       if (state.status === "pending" || state.status === "running") return null
 
-      const attachments = (state.attachments ?? []).map((file) => `${file.filename ?? ""} ${file.mime}`).join(" ")
+      const attachments = (state.attachments ?? []).map(fileText).join(" ")
       if (state.status === "error") {
         return {
           body: `${part.tool} ${JSON.stringify(state.input ?? {})} ${state.error ?? ""} ${attachments}`.trim(),
@@ -40,7 +40,42 @@ function extractRaw(part: MessageV2.Part): Extracted | null {
       }
       return null
     }
+    case "subtask":
+      return {
+        body: [part.prompt, part.description, part.agent, part.command].filter(Boolean).join(" "),
+        tool_name: null,
+      }
+    case "compaction": {
+      const body = [part.projection?.summary, part.projection?.manifest].filter(Boolean).join(" ")
+      return body ? { body, tool_name: null } : null
+    }
+    case "patch":
+      return part.files.length ? { body: part.files.join(" "), tool_name: null } : null
+    case "agent":
+      return { body: [part.name, part.source?.value].filter(Boolean).join(" "), tool_name: null }
+    case "retry":
+      return {
+        body: [part.error.data.message, part.error.data.responseBody].filter(Boolean).join(" "),
+        tool_name: null,
+      }
+    case "snapshot":
+    case "checkpoint":
+    case "step-start":
+    case "step-finish":
+      return null
     default:
+      part satisfies never
       return null
   }
+}
+
+function fileText(file: Pick<MessageV2.FilePart, "filename" | "mime" | "source" | "url">) {
+  return [
+    file.filename,
+    file.mime,
+    file.source ? JSON.stringify(file.source) : undefined,
+    file.url && !/^data:/i.test(file.url) ? file.url : undefined,
+  ]
+    .filter(Boolean)
+    .join(" ")
 }
