@@ -147,6 +147,41 @@ test("loads JSON config file", async () => {
   })
 })
 
+test("loads native MCP env alias as environment", async () => {
+  await using tmp = await tmpdir({
+    init: async (dir) => {
+      await writeConfig(dir, {
+        $schema: "https://opencode.ai/config.json",
+        mcp: {
+          postgres: {
+            type: "local",
+            command: ["cmd.exe", "/c", "npx", "-y", "@yawlabs/postgres-mcp@latest"],
+            env: {
+              DATABASE_URL: "postgres://postgres:secret@localhost:5432/demo1",
+              ALLOW_WRITES: "1",
+            },
+          },
+        },
+      })
+    },
+  })
+
+  await Instance.provide({
+    directory: tmp.path,
+    fn: async () => {
+      const config = await load()
+      expect(config.mcp?.postgres).toEqual({
+        type: "local",
+        command: ["cmd.exe", "/c", "npx", "-y", "@yawlabs/postgres-mcp@latest"],
+        environment: {
+          DATABASE_URL: "postgres://postgres:secret@localhost:5432/demo1",
+          ALLOW_WRITES: "1",
+        },
+      })
+    },
+  })
+})
+
 test("loads Claude Code MCP servers from home and project config", async () => {
   await writeClaudeConfig(path.join(Global.Path.home, ".claude.json"), {
     mcpServers: {
