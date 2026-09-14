@@ -189,7 +189,7 @@ export const HistoryTool = Tool.define(
               `Found ${hits.length} matches. Summaries only; use history operation=get part_id=... for full details.`,
               ...hits.map(
                 (h) =>
-                  `### session_id=${h.session_id} message_id=${h.message_id} part_id=${h.part_id} time=${h.time_created}\n${h.kind} ${h.tool_name ?? ""} score=${h.score.toFixed(3)}\n${h.snippet}`,
+                  `### session_id=${h.session_id} message_id=${h.message_id} part_id=${h.part_id} time=${h.time_created}\n${h.tool_name ?? ""} score=${h.score.toFixed(3)}\n${h.snippet}`,
               ),
             ])
             return reply(out.text, hits.length, out.truncated)

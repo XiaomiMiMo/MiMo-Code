@@ -4,8 +4,7 @@ import { and, asc, desc, eq, gt, sql } from "drizzle-orm"
 import { Database } from "../../../src/storage"
 import { PartTable, SessionTable } from "../../../src/session/session.sql"
 import { HistoryFtsTable } from "../../../src/history/fts.sql"
-import { extract, type Kind } from "../../../src/history/extract"
-import { makeResolver, type Resolver } from "../../../src/history/resolve"
+import { extract } from "../../../src/history/extract"
 import { projection } from "../../../src/history/projection"
 import { Log } from "../../../src/util"
 import type { MessageV2 } from "../../../src/session/message-v2"
@@ -21,7 +20,6 @@ const BATCH = 500
 export function backfillAll() {
   return Effect.gen(function* () {
     let failed = false
-    const resolver = makeResolver()
     const sessions = Database.use((db) =>
       db
         .select({ id: SessionTable.id, project_id: SessionTable.project_id })
@@ -31,7 +29,7 @@ export function backfillAll() {
     )
 
     for (const session of sessions) {
-      yield* scanSession(session, resolver).pipe(
+      yield* scanSession(session).pipe(
         Effect.catchCause((cause) =>
           Effect.sync(() => {
             failed = true
@@ -46,7 +44,7 @@ export function backfillAll() {
   })
 }
 
-function scanSession(session: { id: string; project_id: string }, resolver: Resolver) {
+function scanSession(session: { id: string; project_id: string }) {
   return Effect.gen(function* () {
     let cursor = ""
     while (true) {
@@ -67,7 +65,7 @@ function scanSession(session: { id: string; project_id: string }, resolver: Reso
       )
       if (parts.length === 0) return
 
-      yield* writeBatch(parts, session.project_id, resolver)
+      yield* writeBatch(parts, session.project_id)
       cursor = parts[parts.length - 1]!.id
       yield* Effect.sleep("10 millis")
     }
@@ -77,19 +75,16 @@ function scanSession(session: { id: string; project_id: string }, resolver: Reso
 function writeBatch(
   parts: Array<{ id: string; session_id: string; message_id: string; data: unknown; time_created: number }>,
   projectID: string,
-  resolver: Resolver,
 ) {
   return Effect.gen(function* () {
     type ToWrite = {
       part: (typeof parts)[number]
-      kind: Kind
       body: string
       tool_name: string | null
       time: number
     }
     const writes: ToWrite[] = []
     for (const p of parts) {
-      const role = yield* resolver.role(p.message_id)
       // Reconstruct the MessageV2.Part shape that extract() expects.
       // PartTable.data stores everything except id/sessionID/messageID.
       const fullPart = {
@@ -98,11 +93,11 @@ function writeBatch(
         messageID: p.message_id,
         ...(p.data as object),
       } as MessageV2.Part
-      const extracted = extract(fullPart, role)
+      const extracted = extract(fullPart)
       if (!extracted) continue
       writes.push({
         part: p,
-        kind: extracted.kind,
+
         body: extracted.body,
         tool_name: extracted.tool_name,
         time: p.time_created,
@@ -117,14 +112,14 @@ function writeBatch(
             session_id: w.part.session_id,
             message_id: w.part.message_id,
             project_id: projectID,
-            kind: w.kind,
+
             tool_name: w.tool_name,
             body: w.body,
             time_created: w.time,
           })
           .onConflictDoUpdate({
             target: HistoryFtsTable.part_id,
-            set: { kind: w.kind, tool_name: w.tool_name, body: w.body, time_created: w.time },
+            set: { tool_name: w.tool_name, body: w.body, time_created: w.time },
           })
           .run()
       }

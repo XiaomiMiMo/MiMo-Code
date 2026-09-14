@@ -32,7 +32,7 @@ function seedFts(rows: Array<Partial<typeof HistoryFtsTable.$inferInsert>>) {
           session_id: r.session_id ?? "ses_a",
           message_id: r.message_id ?? "msg_x",
           project_id: r.project_id ?? "proj_a",
-          kind: r.kind ?? "user_text",
+
           tool_name: r.tool_name ?? null,
           body: r.body!,
           time_created: r.time_created ?? Date.now(),
@@ -55,6 +55,7 @@ describe("History.search", () => {
         expect(r.length).toBe(1)
         expect(r[0].part_id).toBe("p1")
         expect(r[0].score).toBeGreaterThan(0)
+        expect(r[0]).not.toHaveProperty("kind")
       }),
     ),
   )
@@ -76,25 +77,12 @@ describe("History.search", () => {
     ),
   )
 
-  it.live("search includes every content type", () =>
-    provideTmpdirInstance(() =>
-      Effect.gen(function* () {
-        const kinds = ["user_text", "assistant_text", "reasoning", "tool_output", "tool_error", "file"] as const
-        seedFts(kinds.map((kind, i) => ({ part_id: `p${i}`, kind, body: "sharedneedle" })))
-        const svc = yield* History.Service
-        const hits = yield* svc.search({ query: "sharedneedle", scope: "global" })
-        expect(hits).toHaveLength(kinds.length)
-        expect(hits.map((hit) => hit.kind).sort()).toEqual([...kinds].sort())
-      }),
-    ),
-  )
-
   it.live("tool_name filter requires matching tool", () =>
     provideTmpdirInstance(() =>
       Effect.gen(function* () {
         seedFts([
-          { part_id: "p1", kind: "tool_input", tool_name: "Bash", body: "Bash git log" },
-          { part_id: "p2", kind: "tool_input", tool_name: "Read", body: "Read git log" },
+          { part_id: "p1", tool_name: "Bash", body: "Bash git log" },
+          { part_id: "p2", tool_name: "Read", body: "Read git log" },
         ])
         const svc = yield* History.Service
         const r = yield* svc.search({ query: "git", scope: "global", tool_name: "Bash" })
@@ -122,9 +110,7 @@ describe("History.search", () => {
   it.live("limit hard-capped at 50", () =>
     provideTmpdirInstance(() =>
       Effect.gen(function* () {
-        seedFts(
-          Array.from({ length: 60 }, (_, i) => ({ part_id: `p${i}`, body: "match" })),
-        )
+        seedFts(Array.from({ length: 60 }, (_, i) => ({ part_id: `p${i}`, body: "match" })))
         const svc = yield* History.Service
         const r = yield* svc.search({ query: "match", scope: "global", limit: 1000 })
         expect(r.length).toBe(50)
@@ -150,7 +136,9 @@ describe("History.around", () => {
       Effect.gen(function* () {
         const now = Date.now()
         Database.use((db) => {
-          db.insert(ProjectTable).values({ id: "p", worktree: "/tmp", sandboxes: [] as any, time_created: now, time_updated: now } as any).run()
+          db.insert(ProjectTable)
+            .values({ id: "p", worktree: "/tmp", sandboxes: [] as any, time_created: now, time_updated: now } as any)
+            .run()
           db.insert(SessionTable)
             .values({
               id: "ses_a" as any,

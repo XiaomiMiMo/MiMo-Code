@@ -1,4 +1,4 @@
-import { eq, inArray, sql } from "drizzle-orm"
+import { eq, inArray } from "drizzle-orm"
 import type { BaseSQLiteDatabase } from "drizzle-orm/sqlite-core"
 import type { MessageV2 } from "../session/message-v2"
 import { MessageTable, PartTable, SessionTable } from "../session/session.sql"
@@ -17,7 +17,6 @@ export function indexImportedParts<T>(
     const rows = db
       .select({
         ...projection(),
-        role: sql<"user" | "assistant">`json_extract(${MessageTable.data}, '$.role')`,
         project: SessionTable.project_id,
       })
       .from(PartTable)
@@ -26,10 +25,12 @@ export function indexImportedParts<T>(
       .where(inArray(PartTable.id, ids.slice(offset, offset + 128) as PartID[]))
       .all()
     for (const row of rows) {
-      const value = extract(
-        { ...row.data, id: row.id, messageID: row.message_id, sessionID: row.session_id } as MessageV2.Part,
-        row.role,
-      )
+      const value = extract({
+        ...row.data,
+        id: row.id,
+        messageID: row.message_id,
+        sessionID: row.session_id,
+      } as MessageV2.Part)
       if (!value) {
         db.delete(HistoryFtsTable).where(eq(HistoryFtsTable.part_id, row.id)).run()
         continue

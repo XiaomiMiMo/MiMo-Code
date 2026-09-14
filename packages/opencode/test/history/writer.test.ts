@@ -94,7 +94,6 @@ describe("History.Writer", () => {
         expect(row).toBeTruthy()
         expect(row?.body).toBe("hello [media image/png] world")
         expect(row?.body).not.toContain("YWJj")
-        expect(row?.kind).toBe("user_text")
         expect(row?.session_id).toBe(sessionID)
         expect(row?.project_id).toBe("proj_t")
       }),

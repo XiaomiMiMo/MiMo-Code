@@ -9,7 +9,6 @@ import type { MessageID } from "../session/schema"
 import { Bus } from "../bus"
 import { Instance } from "../project/instance"
 import { buildFtsQuery } from "./fts-query"
-import type { Kind } from "./extract"
 import { layer as writerLayer, Service as WriterService } from "./writer"
 
 export type SearchHit = {
@@ -17,7 +16,6 @@ export type SearchHit = {
   session_id: string
   message_id: string
   project_id: string
-  kind: Kind
   tool_name: string | null
   snippet: string
   score: number
@@ -72,7 +70,6 @@ type Row = {
   session_id: string
   message_id: string
   project_id: string
-  kind: string
   tool_name: string | null
   snippet: string
   score: number
@@ -120,7 +117,7 @@ export const layer = Layer.effect(
       const whereClause = conditions.length > 0 ? `AND ${conditions.join(" AND ")}` : ""
       const sqlText = `
         SELECT history_fts.part_id, history_fts.session_id, history_fts.message_id,
-               history_fts.project_id, history_fts.kind, history_fts.tool_name,
+               history_fts.project_id, history_fts.tool_name,
                history_fts.time_created,
                substr(snippet(history_fts_idx, 0, '<<', '>>', '...', 32), 1, 1001) AS snippet,
                bm25(history_fts_idx) AS score
@@ -142,7 +139,6 @@ export const layer = Layer.effect(
         session_id: r.session_id,
         message_id: r.message_id,
         project_id: r.project_id,
-        kind: r.kind as Kind,
         tool_name: r.tool_name,
         snippet: summary(r.snippet),
         score: -r.score,

@@ -7,7 +7,6 @@ export const HistoryFtsTable = sqliteTable(
     session_id: text().notNull(),
     message_id: text().notNull(),
     project_id: text().notNull(),
-    kind: text().notNull(),
     tool_name: text(),
     body: text().notNull(),
     time_created: integer().notNull(),

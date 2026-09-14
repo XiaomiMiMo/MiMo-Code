@@ -206,7 +206,7 @@ test("repairs missing rows and replaces stale content from original parts", asyn
       session_id: "ses_compat",
       message_id: "msg_compat",
       project_id: "proj_ses_compat",
-      kind: "reasoning",
+
       body: "keepword data:image/png;base64,aGVsbG8= tailword",
       time_created: 1,
     })
@@ -215,7 +215,6 @@ test("repairs missing rows and replaces stale content from original parts", asyn
   finish(db)
   const rows = db.select().from(HistoryFtsTable).all()
   expect(rows).toHaveLength(300)
-  expect(rows.find((r) => r.part_id === "part_0")?.kind).toBe("user_text")
   expect(rows.find((r) => r.part_id === "part_0")?.body).not.toContain("aGVsbG8=")
   expect(
     db.$client.prepare("SELECT count(*) AS n FROM history_fts_idx WHERE history_fts_idx MATCH 'searchable0'").get(),
@@ -326,7 +325,7 @@ test("upgrade removes search entries whose original parts were deleted", async (
       session_id: "ses_compat",
       message_id: "msg_compat",
       project_id: "proj_ses_compat",
-      kind: "user_text",
+
       body: "ghostneedle",
       time_created: 1,
     })
@@ -380,7 +379,7 @@ test("completed version 2 indexes gain tool output and reasoning in version 3 on
       session_id: "ses_expand",
       message_id: "msg_expand",
       project_id: "proj_ses_expand",
-      kind: "tool_input",
+
       body: "read inputneedle",
       time_created: 1,
     })
@@ -401,4 +400,56 @@ test("completed version 2 indexes gain tool output and reasoning in version 3 on
     db.select().from(HistoryIndexMigrationTable).where(eq(HistoryIndexMigrationTable.version, 2)).get()?.phase,
   ).toBe("done")
   expect(migrateIndexBatch(db)).toBe(false)
+})
+
+test("removing classification preserves existing FTS rows, progress and update triggers", async () => {
+  const { Database: SQLite } = await import("bun:sqlite")
+  const db = new SQLite(":memory:")
+  try {
+    db.exec(await Bun.file(new URL("../../migration/20260609000000_history_fts/migration.sql", import.meta.url)).text())
+    db.exec(
+      "INSERT INTO history_fts(rowid,part_id,session_id,message_id,project_id,kind,body,time_created) VALUES(42,'p','s','m','project','tool_input','originalneedle',1)",
+    )
+    db.exec("CREATE TABLE part(id TEXT); INSERT INTO part VALUES('p')")
+    db.exec(
+      await Bun.file(
+        new URL("../../migration/20260914010000_history_index_version/migration.sql", import.meta.url),
+      ).text(),
+    )
+    db.exec(
+      await Bun.file(
+        new URL("../../migration/20260914020000_history_all_content/migration.sql", import.meta.url),
+      ).text(),
+    )
+    db.exec("UPDATE history_index_migration SET phase='done', cursor=42")
+    const progress = db.prepare("SELECT * FROM history_index_migration").all()
+    const before = db.prepare("SELECT rowid,part_id,body FROM history_fts").all()
+    db.exec(
+      await Bun.file(
+        new URL("../../migration/20260914030000_history_remove_kind/migration.sql", import.meta.url),
+      ).text(),
+    )
+    expect(
+      db
+        .prepare("PRAGMA table_info(history_fts)")
+        .all()
+        .map((row) => (row as { name: string }).name),
+    ).not.toContain("kind")
+    expect(db.prepare("SELECT rowid,part_id,body FROM history_fts").all()).toEqual(before)
+    expect(db.prepare("SELECT * FROM history_index_migration").all()).toEqual(progress)
+    const hits = (word: string) =>
+      db.prepare("SELECT rowid FROM history_fts_idx WHERE history_fts_idx MATCH ?").all(word)
+    expect(hits("originalneedle")).toEqual([{ rowid: 42 }])
+    db.exec("UPDATE history_fts SET body='updatedneedle' WHERE part_id='p'")
+    expect(hits("originalneedle")).toEqual([])
+    expect(hits("updatedneedle")).toEqual([{ rowid: 42 }])
+    db.exec(
+      "INSERT INTO history_fts(part_id,session_id,message_id,project_id,body,time_created) VALUES('q','s','m','project','newneedle',2)",
+    )
+    expect(hits("newneedle")).toHaveLength(1)
+    db.exec("DELETE FROM part WHERE id='p'")
+    expect(hits("updatedneedle")).toEqual([])
+  } finally {
+    db.close()
+  }
 })
