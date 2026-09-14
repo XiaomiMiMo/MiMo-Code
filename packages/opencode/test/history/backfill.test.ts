@@ -1,11 +1,11 @@
-import { afterEach, beforeEach, describe, expect } from "bun:test"
+import { afterEach, beforeEach, describe, expect, spyOn } from "bun:test"
 import { Effect, Layer } from "effect"
 import { Database } from "../../src/storage"
 import { HistoryFtsTable } from "../../src/history/fts.sql"
 import { MessageTable, PartTable, SessionTable } from "../../src/session/session.sql"
 import { ProjectTable } from "../../src/project/project.sql"
-import { backfillAll } from "../../src/history/backfill"
-import { History } from "../../src/history"
+import { backfillAll, backfillOnce } from "../../src/history/backfill"
+import { History, BackfillService } from "../../src/history"
 import { Instance } from "../../src/project/instance"
 import { provideTmpdirInstance } from "../fixture/fixture"
 import { testEffect } from "../lib/effect"
@@ -56,7 +56,13 @@ function seed(
       const projectID = "proj_" + p.session_id
       if (!seenProjects.has(projectID)) {
         db.insert(ProjectTable)
-          .values({ id: projectID as any, worktree: "/tmp", sandboxes: [] as any, time_created: now, time_updated: now } as any)
+          .values({
+            id: projectID as any,
+            worktree: "/tmp",
+            sandboxes: [] as any,
+            time_created: now,
+            time_updated: now,
+          } as any)
           .onConflictDoNothing()
           .run()
         seenProjects.add(projectID)
@@ -143,17 +149,90 @@ describe("History.backfill", () => {
   it.live("is idempotent (NOT EXISTS skips already-indexed parts)", () =>
     provideTmpdirInstance(() =>
       Effect.gen(function* () {
-        seed([
-          { session_id: "ses_x", message_id: "m1", part_id: "p1", role: "user", type: "text", text: "first" },
-        ])
+        seed([{ session_id: "ses_x", message_id: "m1", part_id: "p1", role: "user", type: "text", text: "first" }])
         yield* backfillAll()
-        seed([
-          { session_id: "ses_x", message_id: "m2", part_id: "p2", role: "user", type: "text", text: "second" },
-        ])
+        seed([{ session_id: "ses_x", message_id: "m2", part_id: "p2", role: "user", type: "text", text: "second" }])
         yield* backfillAll()
 
         const rows = Database.use((db) => db.select().from(HistoryFtsTable).all())
         expect(rows.map((r) => r.part_id).sort()).toEqual(["p1", "p2"])
+      }),
+    ),
+  )
+
+  // [TP-HISTORY-BOOTSTRAP-01] Database-wide bootstrap requests share one scan.
+  it.live("deduplicates concurrent and completed scans, retries failures, and respects kinds", () =>
+    provideTmpdirInstance(() =>
+      Effect.gen(function* () {
+        seed([
+          { session_id: "ses_boot", message_id: "m1", part_id: "p1", role: "user", type: "text", text: "hello" },
+          {
+            session_id: "ses_boot",
+            message_id: "m2",
+            part_id: "p2",
+            role: "assistant",
+            type: "reasoning",
+            text: "think",
+          },
+        ])
+        const db = Database.Client()
+        const original = db.select.bind(db)
+        const select = spyOn(db, "select")
+        const scans = () => select.mock.calls.filter(([fields]) => fields && "project_id" in fields).length
+        yield* Effect.gen(function* () {
+          yield* backfillOnce(new Set())
+          expect(scans()).toBe(0)
+          yield* Effect.all(
+            Array.from({ length: 20 }, (_, i) =>
+              backfillOnce(new Set(i % 2 ? ["user_text", "assistant_text"] : ["assistant_text", "user_text"])),
+            ),
+            { concurrency: "unbounded" },
+          )
+          expect(scans()).toBe(1)
+          yield* backfillOnce(new Set(["user_text", "assistant_text"]))
+          expect(scans()).toBe(1)
+          expect(
+            db
+              .select()
+              .from(HistoryFtsTable)
+              .all()
+              .map((row) => row.part_id),
+          ).toEqual(["p1"])
+          yield* backfillOnce(new Set(["reasoning"]))
+          expect(scans()).toBe(2)
+          expect(
+            db
+              .select()
+              .from(HistoryFtsTable)
+              .all()
+              .map((row) => row.part_id)
+              .sort(),
+          ).toEqual(["p1", "p2"])
+
+          // A session scan failure must not poison the process-wide completion state.
+          select.mockImplementationOnce(original).mockImplementationOnce(() => {
+            throw new Error("read failed")
+          })
+          yield* backfillOnce(new Set(["tool_input"]))
+          expect(scans()).toBe(3)
+          yield* backfillOnce(new Set(["tool_input"]))
+          expect(scans()).toBe(4)
+          yield* backfillOnce(new Set(["tool_input"]))
+          expect(scans()).toBe(4)
+
+          // Exercise the actual bootstrap entry under distinct directory contexts.
+          for (let directory = 0; directory < 3; directory++) {
+            yield* provideTmpdirInstance(() =>
+              Effect.gen(function* () {
+                const service = yield* BackfillService
+                yield* service.init()
+                // Wait behind the detached startup task without a timing assertion.
+                yield* backfillOnce(new Set(["user_text", "assistant_text", "tool_input", "tool_error"]))
+              }),
+            )
+          }
+          expect(scans()).toBe(5)
+        }).pipe(Effect.ensuring(Effect.sync(() => select.mockRestore())))
       }),
     ),
   )

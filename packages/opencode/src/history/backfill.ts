@@ -1,4 +1,4 @@
-import { Context, Effect, Layer } from "effect"
+import { Context, Effect, Layer, Semaphore } from "effect"
 import { and, asc, desc, eq, gt, sql } from "drizzle-orm"
 import { Database } from "../storage"
 import { Config } from "../config"
@@ -14,6 +14,32 @@ const log = Log.create({ service: "history.backfill" })
 
 const BATCH = 500
 
+// Directory-scoped service layers share the lifetime of the actual database.
+// A reopened connection gets fresh state; completed scans do not retain old DBs.
+const scans = new WeakMap<
+  ReturnType<typeof Database.Client>,
+  {
+    lock: Semaphore.Semaphore
+    completed: Set<string>
+  }
+>()
+
+export function backfillOnce(enabled: ReadonlySet<Kind>) {
+  return Effect.gen(function* () {
+    if (enabled.size === 0) return
+    const db = Database.Client()
+    const state = scans.get(db) ?? { lock: Semaphore.makeUnsafe(1), completed: new Set<string>() }
+    scans.set(db, state)
+    const key = [...enabled].sort().join(",")
+    yield* state.lock.withPermits(1)(
+      Effect.gen(function* () {
+        if (state.completed.has(key)) return
+        if (yield* backfillAll(enabled)) state.completed.add(key)
+      }),
+    )
+  })
+}
+
 /**
  * Walk PartTable newest-session-first with the given enabled kinds.
  * Idempotent — re-running skips already-indexed parts via NOT EXISTS.
@@ -21,8 +47,9 @@ const BATCH = 500
  */
 export function backfillAll(enabled: ReadonlySet<Kind> = new Set(DEFAULT_KINDS)) {
   return Effect.gen(function* () {
-    if (enabled.size === 0) return
+    if (enabled.size === 0) return true
 
+    let failed = false
     const resolver = makeResolver()
     const sessions = Database.use((db) =>
       db
@@ -35,12 +62,16 @@ export function backfillAll(enabled: ReadonlySet<Kind> = new Set(DEFAULT_KINDS))
     for (const session of sessions) {
       yield* scanSession(session, resolver, enabled).pipe(
         Effect.catchCause((cause) =>
-          Effect.sync(() => log.warn("session scan failed", { session: session.id, cause: String(cause) })),
+          Effect.sync(() => {
+            failed = true
+            log.warn("session scan failed", { session: session.id, cause: String(cause) })
+          }),
         ),
       )
       yield* Effect.sleep("50 millis")
     }
-    log.info("backfill complete", { sessions: sessions.length })
+    log.info("backfill complete", { sessions: sessions.length, failed })
+    return !failed
   })
 }
 
@@ -154,7 +185,7 @@ export const layer: Layer.Layer<Service, never, Config.Service> = Layer.effect(
         const kinds = config.history?.kinds ?? DEFAULT_KINDS
         const enabled = new Set<Kind>(kinds as readonly Kind[])
         // Fire-and-forget: do not block bootstrap on the potentially long scan.
-        yield* backfillAll(enabled).pipe(
+        yield* backfillOnce(enabled).pipe(
           Effect.catchCause((cause) => Effect.sync(() => log.warn("backfill aborted", { cause: String(cause) }))),
           Effect.forkDetach,
         )
