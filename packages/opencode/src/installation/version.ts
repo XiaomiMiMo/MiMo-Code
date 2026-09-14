@@ -10,8 +10,8 @@ export const InstallationChannel = typeof MIMOCODE_CHANNEL === "string" ? MIMOCO
 export const InstallationLocal = InstallationChannel === "local"
 
 // InstallationVersion is an install identity (local / desktop-<hash> / release semver),
-// not an npm dist-tag. @mimo-ai/plugin installs only pin when that identity is a real
-// published semver; otherwise omit the version so npm resolves latest.
+// not an npm dist-tag. @mimo-ai/plugin installs only pin when that identity is a valid
+// semver string; otherwise omit the version so npm resolves latest.
 export function pluginSdkNpmVersion(version: string, local: boolean): string | undefined {
   if (local) return undefined
   return semver.valid(version) ? version : undefined

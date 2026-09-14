@@ -15,8 +15,8 @@ describe("pluginSdkNpmVersion", () => {
   })
 
   test("non-semver install identity falls back to latest (undefined)", () => {
-    expect(pluginSdkNpmVersion("desktop-4b1dfe2", false)).toBeUndefined()
     expect(pluginSdkNpmVersion("desktop-abc1234", false)).toBeUndefined()
+    expect(pluginSdkNpmVersion("desktop-0000000", false)).toBeUndefined()
     expect(pluginSdkNpmVersion("preview-build-99", false)).toBeUndefined()
   })
 })
