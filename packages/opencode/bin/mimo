@@ -6,7 +6,10 @@ const path = require("path")
 const os = require("os")
 
 function run(target) {
-  const result = childProcess.spawnSync(target, process.argv.slice(2), {
+  // On Android/Termux, glibc-linked binaries need grun (glibc-runner)
+  const isAndroid = os.platform() === "android"
+  const args = isAndroid ? ["grun", target, ...process.argv.slice(2)] : [target, ...process.argv.slice(2)]
+  const result = childProcess.spawnSync(args[0], args.slice(1), {
     stdio: "inherit",
   })
   if (result.error) {
@@ -35,6 +38,7 @@ const platformMap = {
   darwin: "darwin",
   linux: "linux",
   win32: "windows",
+  android: "linux", // Termux/Android uses linux binary via grun
 }
 const archMap = {
   x64: "x64",
