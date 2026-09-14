@@ -1,6 +1,7 @@
 import { cleanDataUrls } from "./media"
 import type { MessageV2 } from "../session/message-v2"
 
+// tool_input can occur in stored rows while the one-time upgrade is in progress.
 export type Kind = "user_text" | "assistant_text" | "tool_input" | "tool_error" | "reasoning" | "tool_output" | "file"
 
 export type Extracted = { kind: Kind; body: string; tool_name: string | null }
@@ -28,17 +29,18 @@ function extractRaw(part: MessageV2.Part, messageRole: "user" | "assistant"): Ex
       const state = part.state
       if (state.status === "pending" || state.status === "running") return null
 
+      const attachments = (state.attachments ?? []).map((file) => `${file.filename ?? ""} ${file.mime}`).join(" ")
       if (state.status === "error") {
         return {
           kind: "tool_error",
-          body: `${part.tool} ${JSON.stringify(state.input ?? {})} ${state.error ?? ""}`,
+          body: `${part.tool} ${JSON.stringify(state.input ?? {})} ${state.error ?? ""} ${attachments}`.trim(),
           tool_name: part.tool,
         }
       }
       if (state.status === "completed") {
         return {
           kind: "tool_output",
-          body: `${part.tool} ${JSON.stringify(state.input ?? {})} ${JSON.stringify(state.output ?? "")} ${(state.attachments ?? []).map((file) => `${file.filename ?? ""} ${file.mime}`).join(" ")}`.trim(),
+          body: `${part.tool} ${JSON.stringify(state.input ?? {})} ${JSON.stringify(state.output ?? "")} ${attachments}`.trim(),
           tool_name: part.tool,
         }
       }

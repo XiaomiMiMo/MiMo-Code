@@ -331,8 +331,18 @@ it.live("uniform indexing finds reasoning, full tool output and images, then get
           },
         },
         { type: "file", filename: "designneedle.png", mime: "image/png", url },
+        {
+          type: "tool",
+          tool: "image",
+          state: {
+            status: "error",
+            input: {},
+            error: "failed",
+            attachments: [{ filename: "errorneedle.png", mime: "image/png", url }],
+          },
+        },
       ])
-      Database.transaction((tx) => indexImportedParts(tx, ["prt_0000", "prt_0001", "prt_0002"]))
+      Database.transaction((tx) => indexImportedParts(tx, ["prt_0000", "prt_0001", "prt_0002", "prt_0003"]))
       const history = yield* History.Service
       for (const [query, part_id] of [
         ["reasonneedle", "prt_0000"],
@@ -340,6 +350,7 @@ it.live("uniform indexing finds reasoning, full tool output and images, then get
         ["outputneedle", "prt_0001"],
         ["diagramneedle", "prt_0001"],
         ["designneedle", "prt_0002"],
+        ["errorneedle", "prt_0003"],
       ]) {
         const hits = yield* history.search({ query, scope: "global" })
         expect(hits).toHaveLength(1)

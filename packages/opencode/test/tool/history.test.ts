@@ -235,3 +235,18 @@ describe("HistoryTool", () => {
     ),
   )
 })
+
+it.live("search schema does not offer tool_input after unified indexing", () =>
+  provideTmpdirInstance(() =>
+    Effect.gen(function* () {
+      const info = yield* HistoryTool
+      const tool = yield* info.init()
+      expect(tool.parameters.safeParse({ operation: "search", query: "needle", kind: ["tool_input"] }).success).toBe(
+        false,
+      )
+      expect(tool.parameters.safeParse({ operation: "search", query: "needle", kind: ["tool_output"] }).success).toBe(
+        true,
+      )
+    }),
+  ),
+)

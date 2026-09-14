@@ -14,7 +14,7 @@ const parameters = z
     scope: z.enum(["project", "global"]).optional(),
     session_id: z.string().optional(),
     kind: z
-      .array(z.enum(["user_text", "assistant_text", "tool_input", "tool_error", "reasoning", "tool_output", "file"]))
+      .array(z.enum(["user_text", "assistant_text", "tool_error", "reasoning", "tool_output", "file"]))
       .min(1)
       .optional(),
     tool_name: z.string().optional(),

@@ -1097,13 +1097,13 @@ export const layer = Layer.effect(
 
       let next: Info
       if (!file.endsWith(".jsonc")) {
-        const existing = ConfigParse.schema(Info, ConfigParse.jsonc(before, file), file)
+        const existing = ConfigParse.schema(Info, normalizeLoadedConfig(ConfigParse.jsonc(before, file), file), file)
         const merged = mergeDeep(writable(existing), writable(config))
         yield* fs.writeFileString(file, JSON.stringify(merged, null, 2)).pipe(Effect.orDie)
         next = merged
       } else {
         const updated = patchJsonc(before, writable(config))
-        next = ConfigParse.schema(Info, ConfigParse.jsonc(updated, file), file)
+        next = ConfigParse.schema(Info, normalizeLoadedConfig(ConfigParse.jsonc(updated, file), file), file)
         yield* fs.writeFileString(file, updated).pipe(Effect.orDie)
       }
 
