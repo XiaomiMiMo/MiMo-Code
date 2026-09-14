@@ -18,3 +18,9 @@ export const HistoryFtsTable = sqliteTable(
     index("history_fts_message_idx").on(t.message_id),
   ],
 )
+
+// Durable completion of the one-time historical index migration.
+export const HistoryBackfillTable = sqliteTable("history_backfill", {
+  id: integer().primaryKey(),
+  completed: integer({ mode: "boolean" }).notNull(),
+})

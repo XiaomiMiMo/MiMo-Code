@@ -1,9 +1,9 @@
-import { Context, Effect, Layer, Semaphore } from "effect"
+import { Context, Effect, Layer } from "effect"
 import { and, asc, desc, eq, gt, sql } from "drizzle-orm"
 import { Database } from "../storage"
 import { Config } from "../config"
 import { PartTable, SessionTable } from "../session/session.sql"
-import { HistoryFtsTable } from "./fts.sql"
+import { HistoryFtsTable, HistoryBackfillTable } from "./fts.sql"
 import { extract, DEFAULT_KINDS, type Kind } from "./extract"
 import { makeResolver, type Resolver } from "./resolve"
 import { projection } from "./projection"
@@ -14,29 +14,25 @@ const log = Log.create({ service: "history.backfill" })
 
 const BATCH = 500
 
-// Directory-scoped service layers share the lifetime of the actual database.
-// A reopened connection gets fresh state; completed scans do not retain old DBs.
-const scans = new WeakMap<
-  ReturnType<typeof Database.Client>,
-  {
-    lock: Semaphore.Semaphore
-    completed: Set<string>
-  }
->()
+// Only one attempt per connection. Failed/interrupted migrations retry on restart,
+// not each time another directory initializes.
+const attempted = new WeakSet<ReturnType<typeof Database.Client>>()
 
 export function backfillOnce(enabled: ReadonlySet<Kind>) {
   return Effect.gen(function* () {
     if (enabled.size === 0) return
     const db = Database.Client()
-    const state = scans.get(db) ?? { lock: Semaphore.makeUnsafe(1), completed: new Set<string>() }
-    scans.set(db, state)
-    const key = [...enabled].sort().join(",")
-    yield* state.lock.withPermits(1)(
-      Effect.gen(function* () {
-        if (state.completed.has(key)) return
-        if (yield* backfillAll(enabled)) state.completed.add(key)
-      }),
+    if (attempted.has(db)) return
+    attempted.add(db)
+    const state = Database.use((db) =>
+      db.select().from(HistoryBackfillTable).where(eq(HistoryBackfillTable.id, 1)).get(),
     )
+    if (!state || state.completed) return
+    if (yield* backfillAll(enabled)) {
+      Database.use((db) =>
+        db.update(HistoryBackfillTable).set({ completed: true }).where(eq(HistoryBackfillTable.id, 1)).run(),
+      )
+    }
   })
 }
 

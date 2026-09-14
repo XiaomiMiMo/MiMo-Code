@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, spyOn } from "bun:test"
 import { Effect, Layer } from "effect"
 import { Database } from "../../src/storage"
-import { HistoryFtsTable } from "../../src/history/fts.sql"
+import { HistoryFtsTable, HistoryBackfillTable } from "../../src/history/fts.sql"
 import { MessageTable, PartTable, SessionTable } from "../../src/session/session.sql"
 import { ProjectTable } from "../../src/project/project.sql"
 import { backfillAll, backfillOnce } from "../../src/history/backfill"
@@ -25,6 +25,7 @@ const wipe = () =>
   })
 
 beforeEach(() => {
+  Database.close()
   wipe()
 })
 
@@ -160,37 +161,24 @@ describe("History.backfill", () => {
     ),
   )
 
-  // [TP-HISTORY-BOOTSTRAP-01] Database-wide bootstrap requests share one scan.
-  it.live("deduplicates concurrent and completed scans, retries failures, and respects kinds", () =>
+  // [TP-HISTORY-BOOTSTRAP-01] Directory bootstrap never repeats a completed migration.
+  it.live("shares a one-time migration across directories and ignores later kind changes", () =>
     provideTmpdirInstance(() =>
       Effect.gen(function* () {
-        seed([
-          { session_id: "ses_boot", message_id: "m1", part_id: "p1", role: "user", type: "text", text: "hello" },
-          {
-            session_id: "ses_boot",
-            message_id: "m2",
-            part_id: "p2",
-            role: "assistant",
-            type: "reasoning",
-            text: "think",
-          },
-        ])
+        seed([{ session_id: "ses_boot", message_id: "m1", part_id: "p1", role: "user", type: "text", text: "hello" }])
         const db = Database.Client()
-        const original = db.select.bind(db)
+        db.update(HistoryBackfillTable).set({ completed: false }).run()
         const select = spyOn(db, "select")
         const scans = () => select.mock.calls.filter(([fields]) => fields && "project_id" in fields).length
         yield* Effect.gen(function* () {
           yield* backfillOnce(new Set())
           expect(scans()).toBe(0)
           yield* Effect.all(
-            Array.from({ length: 20 }, (_, i) =>
-              backfillOnce(new Set(i % 2 ? ["user_text", "assistant_text"] : ["assistant_text", "user_text"])),
-            ),
+            Array.from({ length: 20 }, () => backfillOnce(new Set(["user_text"]))),
             { concurrency: "unbounded" },
           )
           expect(scans()).toBe(1)
-          yield* backfillOnce(new Set(["user_text", "assistant_text"]))
-          expect(scans()).toBe(1)
+          expect(db.select().from(HistoryBackfillTable).get()?.completed).toBe(true)
           expect(
             db
               .select()
@@ -199,41 +187,76 @@ describe("History.backfill", () => {
               .map((row) => row.part_id),
           ).toEqual(["p1"])
           yield* backfillOnce(new Set(["reasoning"]))
-          expect(scans()).toBe(2)
-          expect(
-            db
-              .select()
-              .from(HistoryFtsTable)
-              .all()
-              .map((row) => row.part_id)
-              .sort(),
-          ).toEqual(["p1", "p2"])
-
-          // A session scan failure must not poison the process-wide completion state.
-          select.mockImplementationOnce(original).mockImplementationOnce(() => {
-            throw new Error("read failed")
-          })
-          yield* backfillOnce(new Set(["tool_input"]))
-          expect(scans()).toBe(3)
-          yield* backfillOnce(new Set(["tool_input"]))
-          expect(scans()).toBe(4)
-          yield* backfillOnce(new Set(["tool_input"]))
-          expect(scans()).toBe(4)
-
-          // Exercise the actual bootstrap entry under distinct directory contexts.
           for (let directory = 0; directory < 3; directory++) {
             yield* provideTmpdirInstance(() =>
               Effect.gen(function* () {
                 const service = yield* BackfillService
                 yield* service.init()
-                // Wait behind the detached startup task without a timing assertion.
-                yield* backfillOnce(new Set(["user_text", "assistant_text", "tool_input", "tool_error"]))
               }),
             )
           }
-          expect(scans()).toBe(5)
+          expect(scans()).toBe(1)
         }).pipe(Effect.ensuring(Effect.sync(() => select.mockRestore())))
       }),
     ),
   )
+
+  // [TP-HISTORY-BOOTSTRAP-02] Real migration + file-backed DB across independent processes.
+  for (const scenario of ["pending", "existing", "empty-result", "failure", "fresh"] as const) {
+    it.live(`persists migration completion across restart: ${scenario}`, () =>
+      provideTmpdirInstance(() =>
+        Effect.gen(function* () {
+          if (scenario !== "fresh")
+            seed([
+              {
+                session_id: "ses_restart",
+                message_id: "m1",
+                part_id: "p1",
+                role: "user",
+                type: scenario === "empty-result" ? "step-start" : "text",
+                text: "history",
+              },
+            ])
+          if (scenario === "existing") yield* backfillAll()
+          const db = Database.Client()
+          db.$client.exec("DROP TABLE history_backfill")
+          db.$client.exec(
+            yield* Effect.promise(() =>
+              Bun.file(
+                new URL("../../migration/20260914000000_history_backfill_once/migration.sql", import.meta.url),
+              ).text(),
+            ),
+          )
+          const file = `${Instance.directory}/restart.db`
+          db.$client.prepare("VACUUM INTO ?").run(file)
+          const run = (fail = false) =>
+            Effect.promise(async () => {
+              const child = Bun.spawn(
+                [process.execPath, new URL("./fixtures/backfill-restart.ts", import.meta.url).pathname],
+                {
+                  cwd: process.cwd(),
+                  env: { ...process.env, MIMOCODE_DB: file, HISTORY_FAIL_SCAN: fail ? "1" : "0" },
+                  stdout: "pipe",
+                  stderr: "pipe",
+                },
+              )
+              const [code, stdout, stderr] = await Promise.all([
+                child.exited,
+                new Response(child.stdout).text(),
+                new Response(child.stderr).text(),
+              ])
+              expect(code, stderr).toBe(0)
+              return JSON.parse(stdout.trim().split("\n").at(-1)!)
+            })
+          const skipped = scenario === "existing" || scenario === "fresh"
+          expect(yield* run(scenario === "failure")).toEqual({
+            scans: skipped ? 0 : 1,
+            completed: scenario !== "failure",
+          })
+          expect(yield* run()).toEqual({ scans: scenario === "failure" ? 1 : 0, completed: true })
+          expect(yield* run()).toEqual({ scans: 0, completed: true })
+        }),
+      ),
+    )
+  }
 })
