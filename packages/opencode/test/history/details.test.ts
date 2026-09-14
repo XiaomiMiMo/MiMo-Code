@@ -1,3 +1,4 @@
+import { indexImportedParts } from "../../src/history/import"
 import { migrateIndexBatch } from "../../src/history/migration"
 import { afterEach, expect } from "bun:test"
 import { Effect, Layer } from "effect"
@@ -188,7 +189,10 @@ it.live("get reads original parts without index; Unicode pages, errors, stable m
         (yield* tool.execute({ operation: "get", part_id: "prt_0001", attachment: "inline:0" }, ctx)).output,
       ).toContain("Cannot display")
       expect(
-        (yield* tool.execute({ operation: "get", part_id: "prt_0002", attachment: "file:0" }, ctx)).output,
+        (yield* tool.execute(
+          { operation: "get", part_id: "prt_0002", attachment: "file:0" },
+          { ...ctx, extra: { model } },
+        )).output,
       ).toContain("no file was read")
       for (const args of [{ offset: -1 }, { offset: 1.5 }, { length: 0 }, { length: 8001 }, { length: 1.2 }])
         expect(tool.parameters.safeParse({ operation: "get", part_id: "prt_0000", ...args }).success).toBe(false)
@@ -204,12 +208,7 @@ it.live("SQL preview bounds NUL-containing fields without losing get details", (
         { type: "text", text },
         { type: "tool", state: { input: {}, output: text } },
       ])
-      const projected = Database.use((db) =>
-        db
-          .select(projection(true, true, true, true, true))
-          .from(PartTable)
-          .all(),
-      )
+      const projected = Database.use((db) => db.select(projection(true)).from(PartTable).all())
       expect(JSON.stringify(projected)).not.toContain("x".repeat(100))
       expect(JSON.stringify(projected)).toContain("large field omitted")
       const history = yield* History.Service
@@ -242,21 +241,16 @@ it.live("mixed 500+ scan, SQL projection, legacy migration and interrupted rebui
       )
       const db = Database.Client().$client
       const original = db.prepare("SELECT data FROM part ORDER BY id").all()
-      const projected = Database.use((db) => db.select(projection(false, false)).from(PartTable).all())
-      expect(JSON.stringify(projected.filter((p) => p.data.type !== "text"))).not.toContain("YWJj")
-      const preview = Database.use((db) =>
-        db
-          .select(projection(true, true, true, true, true))
-          .from(PartTable)
-          .all(),
-      )
+      const projected = Database.use((db) => db.select(projection()).from(PartTable).all())
+      expect(JSON.stringify(projected.filter((p) => p.data.type === "file"))).not.toContain("YWJj")
+      const preview = Database.use((db) => db.select(projection(true)).from(PartTable).all())
       expect(JSON.stringify(preview)).not.toContain("YWJj")
       expect(JSON.stringify(preview)).toContain("large field omitted")
       const context = yield* (yield* History.Service).around({ message_id: "msg_detail", before: 0, after: 0 })
       expect(context.messages[0].parts[1].text).toContain("omitted")
       expect(context.messages[0].parts[1].part_id).toBe("prt_0001")
       yield* backfillAll()
-      expect((db.prepare("SELECT count(*) AS n FROM history_fts").get() as { n: number }).n).toBe(408)
+      expect((db.prepare("SELECT count(*) AS n FROM history_fts").get() as { n: number }).n).toBe(612)
       expect(JSON.stringify(db.prepare("SELECT body FROM history_fts").all())).not.toContain("YWJj")
       // An unupgraded index survives the old migration and is cleaned in place.
       db.prepare("UPDATE history_fts SET body=? WHERE part_id='prt_0001'").run(`needle before ${url} after 1`)
@@ -264,13 +258,15 @@ it.live("mixed 500+ scan, SQL projection, legacy migration and interrupted rebui
         Bun.file(new URL("../../migration/20260908000000_history_media_rebuild/migration.sql", import.meta.url)).text(),
       )
       db.exec(migration)
-      expect((db.prepare("SELECT count(*) AS n FROM history_fts").get() as { n: number }).n).toBe(408)
+      expect((db.prepare("SELECT count(*) AS n FROM history_fts").get() as { n: number }).n).toBe(612)
       const history = yield* History.Service
       expect((yield* history.get({ part_id: "prt_0001" }))?.text).toContain("before")
-      db.exec("UPDATE history_index_migration SET phase='clean', cursor=0, fts_end=(SELECT MAX(rowid) FROM history_fts), part_end=(SELECT MAX(rowid) FROM part)")
+      db.exec(
+        "UPDATE history_index_migration SET phase='clean', cursor=0, fts_end=(SELECT MAX(rowid) FROM history_fts), part_end=(SELECT MAX(rowid) FROM part)",
+      )
       while (migrateIndexBatch(Database.Client())) yield* Effect.sleep("1 millis")
       expect(JSON.stringify(db.prepare("SELECT body FROM history_fts").all())).not.toContain("YWJj")
-      expect((db.prepare("SELECT count(*) AS n FROM history_fts").get() as { n: number }).n).toBe(408)
+      expect((db.prepare("SELECT count(*) AS n FROM history_fts").get() as { n: number }).n).toBe(612)
       expect(db.prepare("SELECT data FROM part ORDER BY id").all()).toEqual(original)
       expect((yield* history.search({ query: "after", scope: "global" })).length).toBe(10)
       const tool = yield* (yield* HistoryTool).init()
@@ -314,6 +310,51 @@ it.live("summary and many-attachment lists have total byte budgets, locators rem
       expect(Buffer.byteLength(search.output)).toBeLessThanOrEqual(20480)
       expect(search.output).toContain("omitted")
       expect(search.output).toContain("part_id=")
+    }),
+  ),
+)
+
+it.live("uniform indexing finds reasoning, full tool output and images, then get reads original content", () =>
+  provideTmpdirInstance(() =>
+    Effect.gen(function* () {
+      const url = "data:image/png;base64,YWJj"
+      seed([
+        { type: "reasoning", text: "reasonneedle" },
+        {
+          type: "tool",
+          tool: "image",
+          state: {
+            status: "completed",
+            input: { prompt: "inputneedle" },
+            output: "outputneedle " + "result ".repeat(2000),
+            attachments: [{ filename: "diagramneedle.png", mime: "image/png", url }],
+          },
+        },
+        { type: "file", filename: "designneedle.png", mime: "image/png", url },
+      ])
+      Database.transaction((tx) => indexImportedParts(tx, ["prt_0000", "prt_0001", "prt_0002"]))
+      const history = yield* History.Service
+      for (const [query, part_id] of [
+        ["reasonneedle", "prt_0000"],
+        ["inputneedle", "prt_0001"],
+        ["outputneedle", "prt_0001"],
+        ["diagramneedle", "prt_0001"],
+        ["designneedle", "prt_0002"],
+      ]) {
+        const hits = yield* history.search({ query, scope: "global" })
+        expect(hits).toHaveLength(1)
+        expect(hits[0].part_id).toBe(part_id)
+        expect(hits[0].snippet.length).toBeLessThanOrEqual(1000)
+        expect(hits[0].snippet).not.toContain("YWJj")
+      }
+      const result = yield* history.get({ part_id: "prt_0001" })
+      expect(result?.has_more).toBe(true)
+      const tool = yield* (yield* HistoryTool).init()
+      const image = yield* tool.execute(
+        { operation: "get", part_id: "prt_0002", attachment: "file:0" },
+        { ...ctx, extra: { model } },
+      )
+      expect(image.attachments?.[0]?.url).toBe(url)
     }),
   ),
 )

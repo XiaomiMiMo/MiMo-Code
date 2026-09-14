@@ -1,3 +1,4 @@
+import { indexImportedParts } from "../../history/import"
 import type { Argv } from "yargs"
 import type { Session as SDKSession, Message, Part } from "@mimo-ai/sdk/v2"
 import { Session } from "../../session"
@@ -72,6 +73,38 @@ export function transformShareData(shareData: ShareData[]): {
       parts: partMap.get(msg.id) ?? [],
     })),
   }
+}
+
+export function storeImportedSession(
+  info: Session.Info,
+  messages: readonly { info: unknown; parts: readonly unknown[] }[],
+) {
+  const row = Session.toRow(info)
+  Database.transaction((tx) => {
+    tx.insert(SessionTable)
+      .values(row)
+      .onConflictDoUpdate({ target: SessionTable.id, set: { project_id: row.project_id } })
+      .run()
+    for (const msg of messages) {
+      const msgInfo = MessageV2.Info.parse(msg.info)
+      const { id, sessionID: _, ...msgData } = msgInfo
+      tx.insert(MessageTable)
+        .values({ id, session_id: row.id, time_created: msgInfo.time?.created ?? Date.now(), data: msgData })
+        .onConflictDoNothing()
+        .run()
+      const ids = []
+      for (const part of msg.parts) {
+        const partInfo = MessageV2.Part.parse(part)
+        const { id: partId, sessionID: _s, messageID, ...partData } = partInfo
+        tx.insert(PartTable)
+          .values({ id: partId, message_id: messageID, session_id: row.id, data: partData })
+          .onConflictDoNothing()
+          .run()
+        ids.push(partId)
+      }
+      indexImportedParts(tx, ids)
+    }
+  })
 }
 
 export const ImportCommand = cmd({
@@ -161,48 +194,7 @@ export const ImportCommand = cmd({
         titleRevision: 0,
         projectID: Instance.project.id,
       })
-      const row = Session.toRow(info)
-      Database.use((db) =>
-        db
-          .insert(SessionTable)
-          .values(row)
-          .onConflictDoUpdate({ target: SessionTable.id, set: { project_id: row.project_id } })
-          .run(),
-      )
-
-      for (const msg of exportData.messages) {
-        const msgInfo = MessageV2.Info.parse(msg.info)
-        const { id, sessionID: _, ...msgData } = msgInfo
-        Database.use((db) =>
-          db
-            .insert(MessageTable)
-            .values({
-              id,
-              session_id: row.id,
-              time_created: msgInfo.time?.created ?? Date.now(),
-              data: msgData,
-            })
-            .onConflictDoNothing()
-            .run(),
-        )
-
-        for (const part of msg.parts) {
-          const partInfo = MessageV2.Part.parse(part)
-          const { id: partId, sessionID: _s, messageID, ...partData } = partInfo
-          Database.use((db) =>
-            db
-              .insert(PartTable)
-              .values({
-                id: partId,
-                message_id: messageID,
-                session_id: row.id,
-                data: partData,
-              })
-              .onConflictDoNothing()
-              .run(),
-          )
-        }
-      }
+      storeImportedSession(info, exportData.messages)
 
       process.stdout.write(`Imported session: ${exportData.info.id}`)
       process.stdout.write(EOL)

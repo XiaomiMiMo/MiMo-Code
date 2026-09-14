@@ -1,10 +1,10 @@
-// Test-only full index builder for explicit kinds. Never used at startup.
+// Test-only full index builder. Never used at startup.
 import { Effect } from "effect"
 import { and, asc, desc, eq, gt, sql } from "drizzle-orm"
 import { Database } from "../../../src/storage"
 import { PartTable, SessionTable } from "../../../src/session/session.sql"
 import { HistoryFtsTable } from "../../../src/history/fts.sql"
-import { extract, DEFAULT_KINDS, type Kind } from "../../../src/history/extract"
+import { extract, type Kind } from "../../../src/history/extract"
 import { makeResolver, type Resolver } from "../../../src/history/resolve"
 import { projection } from "../../../src/history/projection"
 import { Log } from "../../../src/util"
@@ -15,14 +15,11 @@ const log = Log.create({ service: "history.backfill" })
 const BATCH = 500
 
 /**
- * Walk PartTable newest-session-first with the given enabled kinds.
+ * Walk PartTable newest-session-first.
  * Idempotent — re-running skips already-indexed parts via NOT EXISTS.
- * Exposed for tests so callers can pass a pre-resolved enabled set.
  */
-export function backfillAll(enabled: ReadonlySet<Kind> = new Set(DEFAULT_KINDS)) {
+export function backfillAll() {
   return Effect.gen(function* () {
-    if (enabled.size === 0) return true
-
     let failed = false
     const resolver = makeResolver()
     const sessions = Database.use((db) =>
@@ -34,7 +31,7 @@ export function backfillAll(enabled: ReadonlySet<Kind> = new Set(DEFAULT_KINDS))
     )
 
     for (const session of sessions) {
-      yield* scanSession(session, resolver, enabled).pipe(
+      yield* scanSession(session, resolver).pipe(
         Effect.catchCause((cause) =>
           Effect.sync(() => {
             failed = true
@@ -49,20 +46,13 @@ export function backfillAll(enabled: ReadonlySet<Kind> = new Set(DEFAULT_KINDS))
   })
 }
 
-function scanSession(session: { id: string; project_id: string }, resolver: Resolver, enabled: ReadonlySet<Kind>) {
+function scanSession(session: { id: string; project_id: string }, resolver: Resolver) {
   return Effect.gen(function* () {
     let cursor = ""
     while (true) {
       const parts = Database.use((db) =>
         db
-          .select(
-            projection(
-              enabled.has("tool_output"),
-              enabled.has("tool_error"),
-              enabled.has("reasoning"),
-              enabled.has("user_text") || enabled.has("assistant_text"),
-            ),
-          )
+          .select(projection())
           .from(PartTable)
           .where(
             and(
@@ -77,7 +67,7 @@ function scanSession(session: { id: string; project_id: string }, resolver: Reso
       )
       if (parts.length === 0) return
 
-      yield* writeBatch(parts, session.project_id, resolver, enabled)
+      yield* writeBatch(parts, session.project_id, resolver)
       cursor = parts[parts.length - 1]!.id
       yield* Effect.sleep("10 millis")
     }
@@ -88,7 +78,6 @@ function writeBatch(
   parts: Array<{ id: string; session_id: string; message_id: string; data: unknown; time_created: number }>,
   projectID: string,
   resolver: Resolver,
-  enabled: ReadonlySet<Kind>,
 ) {
   return Effect.gen(function* () {
     type ToWrite = {
@@ -109,7 +98,7 @@ function writeBatch(
         messageID: p.message_id,
         ...(p.data as object),
       } as MessageV2.Part
-      const extracted = extract(fullPart, role, enabled)
+      const extracted = extract(fullPart, role)
       if (!extracted) continue
       writes.push({
         part: p,

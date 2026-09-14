@@ -2640,3 +2640,19 @@ describe("tool config inline struct", () => {
     ).toThrow()
   })
 })
+
+test("ignores removed history kinds in existing configuration", async () => {
+  await using tmp = await tmpdir({
+    init: async (dir) => {
+      await writeConfig(dir, { history: { kinds: [] }, model: "test/model" })
+    },
+  })
+  await Instance.provide({
+    directory: tmp.path,
+    fn: async () => {
+      const config = await load()
+      expect(config.model).toBe("test/model")
+      expect((config as Record<string, unknown>).history).toBeUndefined()
+    },
+  })
+})

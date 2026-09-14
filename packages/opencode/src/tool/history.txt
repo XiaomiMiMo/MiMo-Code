@@ -6,7 +6,7 @@ Use memory first when you need a quick curated answer. Use history when you need
   - debugging "did I already try X" across the project
 
 Three operations:
-  - search: FTS BM25 over text/tool kinds (bounded snippets, message_id and part_id)
+  - search: FTS BM25 over text, reasoning, tool input/results and file names/MIME types (bounded snippets, message_id and part_id)
   - around: given message_id, show bounded summaries of surrounding messages
   - get: required part_id reads source detail even during index rebuild. offset is a non-negative UTF-16 cursor (default 0), length is 1–8000 (default 4000). Continue using next_offset while has_more; never guess a cursor inside an emoji. A length=1 page may include a complete two-unit surrogate pair to ensure progress. Data URL payloads are replaced by stable attachment locators.
 

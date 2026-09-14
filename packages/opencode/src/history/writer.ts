@@ -2,18 +2,15 @@ import { Context, Effect, Layer, Queue } from "effect"
 import { Database, eq } from "../storage"
 import { Bus } from "../bus"
 import { MessageV2 } from "../session/message-v2"
-import { Config } from "../config"
 import { InstanceState } from "../effect"
 import { HistoryFtsTable } from "./fts.sql"
-import { extract, DEFAULT_KINDS, type Kind } from "./extract"
+import { extract } from "./extract"
 import { makeResolver, type Resolver } from "./resolve"
 import { Log } from "../util"
 
 const log = Log.create({ service: "history.writer" })
 
-type Job =
-  | { type: "upsert"; part: MessageV2.Part; time: number }
-  | { type: "delete"; partID: string }
+type Job = { type: "upsert"; part: MessageV2.Part; time: number } | { type: "delete"; partID: string }
 
 export interface Interface {
   readonly init: () => Effect.Effect<void>
@@ -21,19 +18,13 @@ export interface Interface {
 
 export class Service extends Context.Service<Service, Interface>()("@opencode/History.Writer") {}
 
-export const layer: Layer.Layer<Service, never, Config.Service | Bus.Service> = Layer.effect(
+export const layer: Layer.Layer<Service, never, Bus.Service> = Layer.effect(
   Service,
   Effect.gen(function* () {
-    const cfg = yield* Config.Service
     const bus = yield* Bus.Service
 
     const state = yield* InstanceState.make<{ started: boolean }>(
       Effect.fn("History.Writer.state")(function* (_ctx) {
-        const config = yield* cfg.get()
-        const kinds = config.history?.kinds ?? DEFAULT_KINDS
-        const enabled = new Set<Kind>(kinds as readonly Kind[])
-        if (enabled.size === 0) return { started: true }
-
         const queue = yield* Queue.unbounded<Job>()
         const resolver = makeResolver()
 
@@ -50,10 +41,8 @@ export const layer: Layer.Layer<Service, never, Config.Service | Bus.Service> = 
         yield* Effect.forever(
           Effect.gen(function* () {
             const job = yield* Queue.take(queue)
-            yield* handle(job, resolver, enabled).pipe(
-              Effect.catchCause((cause) =>
-                Effect.sync(() => log.warn("write failed", { cause: String(cause) })),
-              ),
+            yield* handle(job, resolver).pipe(
+              Effect.catchCause((cause) => Effect.sync(() => log.warn("write failed", { cause: String(cause) }))),
             )
           }),
         ).pipe(Effect.forkScoped)
@@ -70,7 +59,7 @@ export const layer: Layer.Layer<Service, never, Config.Service | Bus.Service> = 
   }),
 )
 
-function handle(job: Job, resolver: Resolver, enabled: ReadonlySet<Kind>) {
+function handle(job: Job, resolver: Resolver) {
   if (job.type === "delete") {
     return Effect.sync(() =>
       Database.use((db) => db.delete(HistoryFtsTable).where(eq(HistoryFtsTable.part_id, job.partID)).run()),
@@ -79,7 +68,7 @@ function handle(job: Job, resolver: Resolver, enabled: ReadonlySet<Kind>) {
   return Effect.gen(function* () {
     const part = job.part
     const role = yield* resolver.role(part.messageID)
-    const extracted = extract(part, role, enabled)
+    const extracted = extract(part, role)
     if (!extracted) return
     const projectID = yield* resolver.projectID(part.sessionID)
 
@@ -109,4 +98,3 @@ function handle(job: Job, resolver: Resolver, enabled: ReadonlySet<Kind>) {
     )
   })
 }
-

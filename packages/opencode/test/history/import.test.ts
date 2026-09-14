@@ -27,6 +27,7 @@ beforeEach(() => {
   db.update(HistoryIndexMigrationTable).set({ phase: "done" }).run()
 })
 afterEach(async () => {
+  Database.Client().$client.exec("DROP TRIGGER IF EXISTS reject_cli_index; DROP TRIGGER IF EXISTS reject_index")
   await Promise.all(files.splice(0).map((file) => rm(file, { force: true })))
 })
 function hits(word: string) {
@@ -113,4 +114,48 @@ test("OpenCode: import and source edits maintain search without directory initia
   } finally {
     src.close()
   }
+})
+
+test("CLI import writes searchable parts atomically after migration completion", async () => {
+  const { storeImportedSession } = await import("../../src/cli/cmd/import")
+  const { Session } = await import("../../src/session")
+  const { ProjectID } = await import("../../src/project/schema")
+  const db = Database.Client()
+  db.insert(ProjectTable)
+    .values({ id: ProjectID.global, worktree: "/tmp/example", sandboxes: [], time_created: 1, time_updated: 1 })
+    .run()
+  const info = Session.Info.parse({
+    id: "ses_cli",
+    slug: "example",
+    projectID: "global",
+    directory: "/tmp/example",
+    title: "Imported",
+    titleSource: "user",
+    titleRevision: 0,
+    version: "1",
+    time: { created: 1, updated: 1 },
+  })
+  const messages = [
+    {
+      info: {
+        id: "msg_cli",
+        sessionID: "ses_cli",
+        role: "user",
+        agent: "main",
+        model: { providerID: "test", modelID: "model" },
+        time: { created: 1 },
+      },
+      parts: [{ id: "prt_cli", sessionID: "ses_cli", messageID: "msg_cli", type: "text", text: "clineedle" }],
+    },
+  ]
+  db.$client.exec(
+    "CREATE TRIGGER reject_cli_index BEFORE INSERT ON history_fts BEGIN SELECT RAISE(ABORT, 'index failure'); END",
+  )
+  expect(() => storeImportedSession(info, messages)).toThrow("index failure")
+  expect(db.select().from(PartTable).all()).toHaveLength(0)
+  expect(db.select().from(MessageTable).all()).toHaveLength(0)
+  db.$client.exec("DROP TRIGGER reject_cli_index")
+  storeImportedSession(info, messages)
+  expect(hits("clineedle")).toEqual({ n: 1 })
+  expect(db.select().from(HistoryIndexMigrationTable).get()?.phase).toBe("done")
 })

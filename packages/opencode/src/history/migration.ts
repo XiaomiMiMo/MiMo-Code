@@ -7,7 +7,7 @@ import { indexImportedParts } from "./import"
 import { Log } from "../util"
 
 const log = Log.create({ service: "history.migration" })
-const version = 2
+const version = 3
 const batch = 128
 const jobs = new WeakMap<ReturnType<typeof Database.Client>, AbortController>()
 
@@ -20,13 +20,18 @@ export function migrateIndexBatch(db: ReturnType<typeof Database.Client>) {
       if (state.phase === "clean") {
         const rowid = sql<number>`history_fts.rowid`
         const rows = tx
-          .select({ rowid, id: HistoryFtsTable.part_id, body: HistoryFtsTable.body })
+          .select({ rowid, id: HistoryFtsTable.part_id, body: HistoryFtsTable.body, source: PartTable.id })
           .from(HistoryFtsTable)
+          .leftJoin(PartTable, eq(PartTable.id, HistoryFtsTable.part_id))
           .where(and(gt(rowid, state.cursor), lte(rowid, state.fts_end)))
           .orderBy(asc(rowid))
           .limit(batch)
           .all()
         for (const row of rows) {
+          if (row.source === null) {
+            tx.delete(HistoryFtsTable).where(eq(HistoryFtsTable.part_id, row.id)).run()
+            continue
+          }
           const body = cleanDataUrls(row.body, undefined, "index")
           if (body !== row.body)
             tx.update(HistoryFtsTable).set({ body }).where(eq(HistoryFtsTable.part_id, row.id)).run()
@@ -40,16 +45,15 @@ export function migrateIndexBatch(db: ReturnType<typeof Database.Client>) {
       const rowid = sql<number>`part.rowid`
       // Bound visited rows as well as writes, even if most parts are already indexed.
       const rows = tx
-        .select({ rowid, id: PartTable.id, indexed: HistoryFtsTable.part_id })
+        .select({ rowid, id: PartTable.id })
         .from(PartTable)
-        .leftJoin(HistoryFtsTable, eq(HistoryFtsTable.part_id, PartTable.id))
         .where(and(gt(rowid, state.cursor), lte(rowid, state.part_end)))
         .orderBy(asc(rowid))
         .limit(batch)
         .all()
       indexImportedParts(
         tx,
-        rows.filter((row) => row.indexed === null).map((row) => row.id),
+        rows.map((row) => row.id),
       )
       tx.update(State)
         .set(rows.length ? { cursor: rows.at(-1)!.rowid } : { phase: "done" })
@@ -65,7 +69,12 @@ export function startIndexMigration(db: ReturnType<typeof Database.Client>) {
   if (jobs.has(db)) return
   const abort = new AbortController()
   jobs.set(db, abort)
-  if (db.select().from(State).where(eq(State.version, version)).get()?.phase === "done") return
+  try {
+    if (db.select().from(State).where(eq(State.version, version)).get()?.phase === "done") return
+  } catch (error) {
+    log.warn("index migration unavailable", { error: String(error) })
+    return
+  }
   const run = () => {
     if (abort.signal.aborted) return
     try {

@@ -5,7 +5,6 @@ import * as CrossSpawnSpawner from "../../src/effect/cross-spawn-spawner"
 import { Database } from "../../src/storage"
 import { History } from "../../src/history"
 import { backfillAll } from "./fixtures/seed-index"
-import { DEFAULT_KINDS, type Kind } from "../../src/history/extract"
 import { provideTmpdirInstance } from "../fixture/fixture"
 import { testEffect } from "../lib/effect"
 
@@ -16,7 +15,7 @@ import { testEffect } from "../lib/effect"
 // First timings are first-use after seeding, NOT OS/disk-cache-cold measurements.
 const it = testEffect(Layer.mergeAll(History.defaultLayer, CrossSpawnSpawner.defaultLayer))
 const run = process.env.HISTORY_BENCH === "1" ? it.live : it.live.skip
-const cases = ["none", "file", "attachment", "input", "output-default", "output-enabled"]
+const cases = ["none", "file", "attachment", "input", "output"]
 
 for (const variant of cases.filter((x) => !process.env.HISTORY_BENCH_CASE || x === process.env.HISTORY_BENCH_CASE)) {
   run(`synthetic history benchmark: ${variant}`, () =>
@@ -33,7 +32,6 @@ for (const variant of cases.filter((x) => !process.env.HISTORY_BENCH_CASE || x =
         expect(bytes > 0).toBe(true)
         const anchor = Math.floor(count / 2)
         const id = (i: number) => `msg_${String(i).padStart(8, "0")}`
-        const kinds = new Set<Kind>(variant === "output-enabled" ? [...DEFAULT_KINDS, "tool_output"] : DEFAULT_KINDS)
         const timings: Record<string, number> = {}
         const measure = <A, E, R>(label: string, effect: Effect.Effect<A, E, R>) =>
           Effect.gen(function* () {
@@ -116,8 +114,8 @@ for (const variant of cases.filter((x) => !process.env.HISTORY_BENCH_CASE || x =
           }),
         )
         const history = yield* History.Service
-        yield* measure("backfill_first_ms", backfillAll(kinds))
-        yield* measure("backfill_repeat_ms", backfillAll(kinds))
+        yield* measure("backfill_first_ms", backfillAll())
+        yield* measure("backfill_repeat_ms", backfillAll())
         const search = () => history.search({ query: "needle", scope: "global", limit: 10 })
         expect((yield* measure("search_first_ms", search())).length).toBe(10)
         for (let n = 0; n < 3; n++) yield* measure(`search_warm_${n}_ms`, search())

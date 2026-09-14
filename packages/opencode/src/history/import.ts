@@ -4,10 +4,8 @@ import type { MessageV2 } from "../session/message-v2"
 import { MessageTable, PartTable, SessionTable } from "../session/session.sql"
 import type { PartID } from "../session/schema"
 import { HistoryFtsTable } from "./fts.sql"
-import { DEFAULT_KINDS, extract } from "./extract"
+import { extract } from "./extract"
 import { projection } from "./projection"
-
-const enabled = new Set(DEFAULT_KINDS)
 
 // Importers bypass the Bus writer. Call inside the transaction that writes parts.
 // Read persisted rows so conflict/no-op imports cannot index a rejected value.
@@ -18,7 +16,7 @@ export function indexImportedParts<T>(
   for (let offset = 0; offset < ids.length; offset += 128) {
     const rows = db
       .select({
-        ...projection(false, true, false, true),
+        ...projection(),
         role: sql<"user" | "assistant">`json_extract(${MessageTable.data}, '$.role')`,
         project: SessionTable.project_id,
       })
@@ -31,7 +29,6 @@ export function indexImportedParts<T>(
       const value = extract(
         { ...row.data, id: row.id, messageID: row.message_id, sessionID: row.session_id } as MessageV2.Part,
         row.role,
-        enabled,
       )
       if (!value) {
         db.delete(HistoryFtsTable).where(eq(HistoryFtsTable.part_id, row.id)).run()

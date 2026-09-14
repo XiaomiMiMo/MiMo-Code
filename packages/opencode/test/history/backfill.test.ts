@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test"
 import { Effect, Layer } from "effect"
+import { eq } from "drizzle-orm"
 import { Database } from "../../src/storage"
 import { HistoryFtsTable, HistoryIndexMigrationTable } from "../../src/history/fts.sql"
 import { MessageTable, PartTable, SessionTable } from "../../src/session/session.sql"
@@ -173,6 +174,9 @@ async function prepareMigration() {
       new URL("../../migration/20260914010000_history_index_version/migration.sql", import.meta.url),
     ).text(),
   )
+  db.$client.exec(
+    await Bun.file(new URL("../../migration/20260914020000_history_all_content/migration.sql", import.meta.url)).text(),
+  )
   return db
 }
 function finish(db: ReturnType<typeof Database.Client>) {
@@ -193,7 +197,7 @@ function textParts(count: number) {
 }
 
 // A partially populated index still needs recovery.
-test("repairs a partially rebuilt index and preserves existing non-default kinds", async () => {
+test("repairs missing rows and replaces stale content from original parts", async () => {
   seed(textParts(300))
   const db = Database.Client()
   db.insert(HistoryFtsTable)
@@ -211,15 +215,17 @@ test("repairs a partially rebuilt index and preserves existing non-default kinds
   finish(db)
   const rows = db.select().from(HistoryFtsTable).all()
   expect(rows).toHaveLength(300)
-  expect(rows.find((r) => r.part_id === "part_0")?.kind).toBe("reasoning")
+  expect(rows.find((r) => r.part_id === "part_0")?.kind).toBe("user_text")
   expect(rows.find((r) => r.part_id === "part_0")?.body).not.toContain("aGVsbG8=")
   expect(
-    db.$client.prepare("SELECT count(*) AS n FROM history_fts_idx WHERE history_fts_idx MATCH 'keepword'").get(),
+    db.$client.prepare("SELECT count(*) AS n FROM history_fts_idx WHERE history_fts_idx MATCH 'searchable0'").get(),
   ).toEqual({ n: 1 })
   expect(
     db.$client.prepare("SELECT count(*) AS n FROM history_fts_idx WHERE history_fts_idx MATCH 'searchable299'").get(),
   ).toEqual({ n: 1 })
-  expect(db.select().from(HistoryIndexMigrationTable).get()?.phase).toBe("done")
+  expect(
+    db.select().from(HistoryIndexMigrationTable).where(eq(HistoryIndexMigrationTable.version, 3)).get()?.phase,
+  ).toBe("done")
   expect(migrateIndexBatch(db)).toBe(false)
 })
 
@@ -228,12 +234,14 @@ test("failed batch rolls back index writes and cursor; resumes without revisitin
   const db = await prepareMigration()
   migrateIndexBatch(db) // clean -> repair
   migrateIndexBatch(db) // first 128 rows
-  const before = db.select().from(HistoryIndexMigrationTable).get()
+  const before = db.select().from(HistoryIndexMigrationTable).where(eq(HistoryIndexMigrationTable.version, 3)).get()
   db.$client.exec(
     "CREATE TRIGGER fail_history BEFORE INSERT ON history_fts WHEN NEW.part_id = 'part_200' BEGIN SELECT RAISE(ABORT, 'test failure'); END",
   )
   expect(() => migrateIndexBatch(db)).toThrow("test failure")
-  expect(db.select().from(HistoryIndexMigrationTable).get()).toEqual(before)
+  expect(db.select().from(HistoryIndexMigrationTable).where(eq(HistoryIndexMigrationTable.version, 3)).get()).toEqual(
+    before,
+  )
   expect(db.select().from(HistoryFtsTable).all()).toHaveLength(128)
   db.$client.exec("DROP TRIGGER fail_history")
   // If the committed prefix were visited again, corrupt JSON would fail extraction.
@@ -286,7 +294,9 @@ it.live("database startup finishes once and directory initialization does not re
       const db = Database.Client()
       for (let i = 0; i < 20; i++) startIndexMigration(db)
       yield* Effect.sleep("100 millis")
-      expect(db.select().from(HistoryIndexMigrationTable).get()?.phase).toBe("done")
+      expect(
+        db.select().from(HistoryIndexMigrationTable).where(eq(HistoryIndexMigrationTable.version, 3)).get()?.phase,
+      ).toBe("done")
       // Deliberately bypass all normal writers to detect an unwanted historical scan.
       seed(textParts(1))
       for (let i = 0; i < 3; i++) {
@@ -300,7 +310,95 @@ it.live("database startup finishes once and directory initialization does not re
       }
       yield* Effect.sleep("30 millis")
       expect(db.select().from(HistoryFtsTable).all()).toHaveLength(0)
-      expect(db.select().from(HistoryIndexMigrationTable).get()?.phase).toBe("done")
+      expect(
+        db.select().from(HistoryIndexMigrationTable).where(eq(HistoryIndexMigrationTable.version, 3)).get()?.phase,
+      ).toBe("done")
     }),
   ),
 )
+
+test("upgrade removes search entries whose original parts were deleted", async () => {
+  seed(textParts(1))
+  const db = Database.Client()
+  db.insert(HistoryFtsTable)
+    .values({
+      part_id: "removed-part",
+      session_id: "ses_compat",
+      message_id: "msg_compat",
+      project_id: "proj_ses_compat",
+      kind: "user_text",
+      body: "ghostneedle",
+      time_created: 1,
+    })
+    .run()
+  await prepareMigration()
+  finish(db)
+  expect(
+    db.$client.prepare("SELECT count(*) AS n FROM history_fts_idx WHERE history_fts_idx MATCH 'ghostneedle'").get(),
+  ).toEqual({ n: 0 })
+  expect(
+    db.$client.prepare("SELECT count(*) AS n FROM history_fts_idx WHERE history_fts_idx MATCH 'searchable0'").get(),
+  ).toEqual({ n: 1 })
+})
+
+test("missing migration metadata does not prevent use of the database", async () => {
+  const { init } = await import("../../src/storage/db.bun")
+  const db = init(":memory:")
+  try {
+    expect(() => startIndexMigration(db)).not.toThrow()
+    expect(db.$client.prepare("SELECT 1 AS available").get()).toEqual({ available: 1 })
+  } finally {
+    stopIndexMigration(db)
+    db.$client.close()
+  }
+})
+
+test("completed version 2 indexes gain tool output and reasoning in version 3 only once", async () => {
+  seed([
+    {
+      session_id: "ses_expand",
+      message_id: "msg_expand",
+      part_id: "prt_tool",
+      role: "assistant",
+      type: "tool",
+      tool: "read",
+      state: { status: "completed", input: { path: "inputneedle" }, output: "outputneedle" },
+    },
+    {
+      session_id: "ses_expand",
+      message_id: "msg_expand",
+      part_id: "prt_reason",
+      role: "assistant",
+      type: "reasoning",
+      text: "reasonneedle",
+    },
+  ])
+  const db = Database.Client()
+  db.insert(HistoryFtsTable)
+    .values({
+      part_id: "prt_tool",
+      session_id: "ses_expand",
+      message_id: "msg_expand",
+      project_id: "proj_ses_expand",
+      kind: "tool_input",
+      body: "read inputneedle",
+      time_created: 1,
+    })
+    .run()
+  db.$client.exec(
+    "UPDATE history_index_migration SET phase='done' WHERE version=2; DELETE FROM history_index_migration WHERE version=3",
+  )
+  db.$client.exec(
+    await Bun.file(new URL("../../migration/20260914020000_history_all_content/migration.sql", import.meta.url)).text(),
+  )
+  finish(db)
+  for (const word of ["inputneedle", "outputneedle", "reasonneedle"]) {
+    expect(
+      db.$client.prepare("SELECT count(*) AS n FROM history_fts_idx WHERE history_fts_idx MATCH ?").get(word),
+    ).toEqual({ n: 1 })
+  }
+  expect(
+    db.select().from(HistoryIndexMigrationTable).where(eq(HistoryIndexMigrationTable.version, 2)).get()?.phase,
+  ).toBe("done")
+  expect(migrateIndexBatch(db)).toBe(false)
+})

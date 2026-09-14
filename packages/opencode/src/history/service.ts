@@ -6,7 +6,6 @@ import { detail, page, summary } from "./media"
 import { projection } from "./projection"
 import type { PartID } from "../session/schema"
 import type { MessageID } from "../session/schema"
-import { Config } from "../config"
 import { Bus } from "../bus"
 import { Instance } from "../project/instance"
 import { buildFtsQuery } from "./fts-query"
@@ -82,7 +81,7 @@ type Row = {
 }
 
 export const defaultLayer: Layer.Layer<Service | WriterService, never, never> = Layer.suspend(() =>
-  Layer.mergeAll(layer, writerLayer).pipe(Layer.provide(Config.defaultLayer), Layer.provide(Bus.defaultLayer)),
+  Layer.mergeAll(layer, writerLayer).pipe(Layer.provide(Bus.defaultLayer)),
 )
 
 export const layer = Layer.effect(
@@ -214,7 +213,7 @@ export const layer = Layer.effect(
       if (messages.length === 0) return { session_id: anchor.session_id, messages: [] }
       const parts = Database.use((db) =>
         db
-          .select(projection(true, true, true, true, true))
+          .select(projection(true))
           .from(PartTable)
           .where(
             and(

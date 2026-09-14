@@ -14,7 +14,7 @@ const parameters = z
     scope: z.enum(["project", "global"]).optional(),
     session_id: z.string().optional(),
     kind: z
-      .array(z.enum(["user_text", "assistant_text", "tool_input", "tool_error", "reasoning", "tool_output"]))
+      .array(z.enum(["user_text", "assistant_text", "tool_input", "tool_error", "reasoning", "tool_output", "file"]))
       .min(1)
       .optional(),
     tool_name: z.string().optional(),
@@ -114,7 +114,8 @@ function aroundBlocks(
     if (!take(b)) break
   }
   const truncated =
-    picked.length < blocks.length || (anchor !== undefined && (picked[0] !== anchor || picked[0]!.lines.length !== anchor.lines.length))
+    picked.length < blocks.length ||
+    (anchor !== undefined && (picked[0] !== anchor || picked[0]!.lines.length !== anchor.lines.length))
   return { picked, truncated }
 }
 
