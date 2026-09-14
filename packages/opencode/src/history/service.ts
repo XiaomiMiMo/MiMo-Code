@@ -50,7 +50,6 @@ export interface Interface {
     query: string
     scope?: "project" | "global"
     session_id?: string
-    kind?: Kind | Kind[]
     tool_name?: string
     time_after?: number
     time_before?: number
@@ -104,11 +103,6 @@ export const layer = Layer.effect(
       if (input.session_id) {
         conditions.push("history_fts.session_id = ?")
         params.push(input.session_id)
-      }
-      if (input.kind) {
-        const kinds = Array.isArray(input.kind) ? input.kind : [input.kind]
-        conditions.push(`history_fts.kind IN (${kinds.map(() => "?").join(",")})`)
-        for (const k of kinds) params.push(k)
       }
       if (input.tool_name) {
         conditions.push("history_fts.tool_name = ?")

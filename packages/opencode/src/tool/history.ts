@@ -13,10 +13,6 @@ const parameters = z
     query: z.string().optional(),
     scope: z.enum(["project", "global"]).optional(),
     session_id: z.string().optional(),
-    kind: z
-      .array(z.enum(["user_text", "assistant_text", "tool_error", "reasoning", "tool_output", "file"]))
-      .min(1)
-      .optional(),
     tool_name: z.string().optional(),
     time_after: z.number().finite().optional(),
     time_before: z.number().finite().optional(),

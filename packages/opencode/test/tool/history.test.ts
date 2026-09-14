@@ -236,17 +236,16 @@ describe("HistoryTool", () => {
   )
 })
 
-it.live("search schema does not offer tool_input after unified indexing", () =>
+it.live("search schema has no content-type filter", () =>
   provideTmpdirInstance(() =>
     Effect.gen(function* () {
       const info = yield* HistoryTool
       const tool = yield* info.init()
-      expect(tool.parameters.safeParse({ operation: "search", query: "needle", kind: ["tool_input"] }).success).toBe(
-        false,
-      )
-      expect(tool.parameters.safeParse({ operation: "search", query: "needle", kind: ["tool_output"] }).success).toBe(
-        true,
-      )
+      expect(tool.parameters.shape).not.toHaveProperty("kind")
+      expect(tool.parameters.safeParse({ operation: "search", query: "needle" }).success).toBe(true)
+      for (const kind of ["user_text", "assistant_text", "reasoning", "tool_output", "tool_error", "file"]) {
+        expect(tool.parameters.safeParse({ operation: "search", query: "needle", kind: [kind] }).success).toBe(false)
+      }
     }),
   ),
 )

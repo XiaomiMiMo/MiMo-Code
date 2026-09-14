@@ -76,17 +76,15 @@ describe("History.search", () => {
     ),
   )
 
-  it.live("kind filter narrows results", () =>
+  it.live("search includes every content type", () =>
     provideTmpdirInstance(() =>
       Effect.gen(function* () {
-        seedFts([
-          { part_id: "p1", kind: "user_text", body: "git log oneline" },
-          { part_id: "p2", kind: "tool_input", body: "Bash git log oneline" },
-        ])
+        const kinds = ["user_text", "assistant_text", "reasoning", "tool_output", "tool_error", "file"] as const
+        seedFts(kinds.map((kind, i) => ({ part_id: `p${i}`, kind, body: "sharedneedle" })))
         const svc = yield* History.Service
-        const onlyTool = yield* svc.search({ query: "git", scope: "global", kind: "tool_input" })
-        expect(onlyTool.length).toBe(1)
-        expect(onlyTool[0].kind).toBe("tool_input")
+        const hits = yield* svc.search({ query: "sharedneedle", scope: "global" })
+        expect(hits).toHaveLength(kinds.length)
+        expect(hits.map((hit) => hit.kind).sort()).toEqual([...kinds].sort())
       }),
     ),
   )
