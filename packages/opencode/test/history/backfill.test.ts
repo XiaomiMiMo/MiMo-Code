@@ -192,7 +192,7 @@ function textParts(count: number) {
   }))
 }
 
-// [TP-HISTORY-BOOTSTRAP-02] Compatibility uses durable version/cursor, never row count.
+// A partially populated index still needs recovery.
 test("repairs a partially rebuilt index and preserves existing non-default kinds", async () => {
   seed(textParts(300))
   const db = Database.Client()
@@ -278,7 +278,7 @@ for (const count of [0, 300]) {
   })
 }
 
-// [TP-HISTORY-BOOTSTRAP-01] The real DB lifecycle owns one finite background job.
+// Opening directories must not restart a completed migration.
 it.live("database startup finishes once and directory initialization does not reopen migration", () =>
   provideTmpdirInstance(() =>
     Effect.gen(function* () {

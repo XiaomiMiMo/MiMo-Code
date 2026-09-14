@@ -35,7 +35,7 @@ function hits(word: string) {
     .get(word)
 }
 
-// [TP-HISTORY-IMPORT-01] Real importer entry points maintain search after the one-time job is done.
+// Imports remain searchable after the migration has finished.
 for (const source of ["claude", "codex"] as const) {
   test(`${source}: imported and resynchronized text is searchable without bootstrap`, async () => {
     const file =

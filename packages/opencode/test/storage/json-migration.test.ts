@@ -229,7 +229,7 @@ describe("JSON to SQLite migration", () => {
     expect(sessions[0].share_url).toBe("https://example.com/share")
   })
 
-  // [TP-HISTORY-IMPORT-01] Fresh databases import searchable parts after migration completion.
+  // JSON imports remain searchable when the database migration is already complete.
   test("migrates messages and parts", async () => {
     db.update(HistoryIndexMigrationTable).set({ phase: "done" }).run()
     await writeProject(storageDir, {
