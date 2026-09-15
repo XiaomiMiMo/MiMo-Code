@@ -11,7 +11,9 @@ JSON calls always wrap the action in an `operation` object — see examples belo
 - loop:     self-paced one-shot with keepalive. `delay_seconds` (clamped to
             [60, 3600]) + `prompt` required. Always session-only, always kind=loop.
             Call again each turn to keep the loop alive; omit to end the loop.
-- list:     enumerate active jobs. optional: `kind`, `durable_only`.
+- list:     enumerate active jobs. optional: `kind`, `durable_only`, `all`.
+  `all` lists jobs from every session (default: only this session's jobs) —
+  use it when a job id the user mentions isn't in the default listing.
 - get:      fetch one job by id.
 - delete:   cancel a job by id.
 - rename:   change the prompt body of an existing job.
