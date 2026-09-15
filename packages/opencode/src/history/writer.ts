@@ -4,7 +4,6 @@ import { Bus } from "../bus"
 import { MessageV2 } from "../session/message-v2"
 import { InstanceState } from "../effect"
 import { extract } from "./extract"
-import { previewToolOutput } from "../tool/truncate"
 import { makeResolver, type Resolver } from "./resolve"
 import { deleteHistoryRows, upsertHistoryBody } from "./chunk-write"
 import { Log } from "../util"
@@ -68,8 +67,7 @@ function handle(job: Job, resolver: Resolver) {
       Database.use((db) => deleteHistoryRows(db, part.id))
       return
     }
-    // Same truncation path as tool call results — before history write.
-    const forIndex = previewToolOutput(extracted.body).content
+    // Truncation (tool-result path) is applied inside upsertHistoryBody.
     const projectID = yield* resolver.projectID(part.sessionID)
     Database.use((db) =>
       upsertHistoryBody(db, {
@@ -78,7 +76,7 @@ function handle(job: Job, resolver: Resolver) {
         message_id: part.messageID,
         project_id: projectID,
         tool_name: extracted.tool_name,
-        body: forIndex,
+        body: extracted.body,
         time_created: job.time,
       }),
     )

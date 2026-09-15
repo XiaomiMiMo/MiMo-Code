@@ -1,7 +1,7 @@
 import { test, expect } from "bun:test"
 import { extract } from "../../src/history/extract"
 
-test("extract tool output does not pre-clean media (cleaning happens before index write)", () => {
+test("extract strips data-URLs before tool-result preview budget", () => {
   const part = {
     type: "tool",
     tool: "bash",
@@ -12,5 +12,7 @@ test("extract tool output does not pre-clean media (cleaning happens before inde
     },
   } as never
   const r = extract(part)
-  expect(r?.body).toContain("data:text/plain;base64")
+  expect(r).not.toBeNull()
+  expect(r!.body).not.toContain("AAAA")
+  expect(r!.body).toContain("bash")
 })

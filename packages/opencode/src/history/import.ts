@@ -4,7 +4,6 @@ import type { MessageV2 } from "../session/message-v2"
 import { MessageTable, PartTable, SessionTable } from "../session/session.sql"
 import type { PartID } from "../session/schema"
 import { extract } from "./extract"
-import { previewToolOutput } from "../tool/truncate"
 import { projection } from "./projection"
 import { deleteHistoryRows, upsertHistoryBody } from "./chunk-write"
 
@@ -38,14 +37,14 @@ export function indexImportedParts<T>(
         deleteHistoryRows(db, row.id)
         continue
       }
-      // Same truncation path as tool call results — before history write.
+      // Truncation is applied inside upsertHistoryBody (tool-result preview path).
       upsertHistoryBody(db, {
         part_id: row.id,
         session_id: row.session_id,
         message_id: row.message_id,
         project_id: row.project,
         tool_name: value.tool_name,
-        body: previewToolOutput(value.body).content,
+        body: value.body,
         time_created: row.time_created,
       })
     }

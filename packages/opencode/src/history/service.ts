@@ -116,8 +116,9 @@ export const layer = Layer.effect(
       }
 
       const whereClause = conditions.length > 0 ? `AND ${conditions.join(" AND ")}` : ""
-      // Over-fetch: chunked parts may contribute multiple FTS rows; dedupe after LIMIT
-      // would drop distinct parts during legacy cleanup. Old writers capped chunks at 24.
+      // Legacy chunk rows may still exist until migration v6 finishes. Over-fetch
+      // so one multi-row part cannot fill LIMIT before dedupe. After v6 is done
+      // indexes are single-row; follow-up may tighten this back to `limit`.
       const fetchLimit = Math.min(limit * 24, HARD_CAP * 24)
       const sqlText = `
         SELECT history_fts.part_id, history_fts.session_id, history_fts.message_id,

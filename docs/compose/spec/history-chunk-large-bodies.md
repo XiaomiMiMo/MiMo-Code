@@ -3,7 +3,7 @@ feature: history-index-tool-output-budget
 status: delivered
 updated: 2026-09-16
 branch: feat/history-chunk-large-bodies
-commits: b4cc11cd652195af9a80297ed543218f3172e6c4..<worktree-uncommitted>
+commits: b4cc11cd652195af9a80297ed543218f3172e6c4..HEAD
 ---
 
 # History FTS Index Budget (tool-output policy)
@@ -28,10 +28,12 @@ Tool outputs already have a staged length policy before entering the model (`tru
 
 ### Contracts
 
-- Single write path `upsertHistoryBody`: **always** `previewToolOutput(body)` before FTS insert (live writer, import, migration rebuild, test backfill)
+- Single write path `upsertHistoryBody`: **cleanDataUrls then previewToolOutput** before FTS insert (live writer, import, migration rebuild, test backfill)
+- Extract also strips data-URLs before preview so binary payloads never consume the tool-result budget
 - Budget: `MAX_BYTES=50KiB` / `MAX_LINES=2000` from `tool/truncate.ts`, head+tail when tail looks like errors
+- Migration v6 SQL marks prior `history_index_migration` versions `done` so superseded state cannot linger at `clean`
+- Search keeps temporary `limit*24` over-fetch until legacy chunk rows are gone after v6
 - Tool parts: index stored tool-result string when present (incl. `Full output saved to: <path>`); still bound legacy payloads
-- Other parts: compose then preview; rebuild/migration also preview before write
 - `history get` reads full `PartTable` text
 - No new index chunks are written. Indexed deletion and search normalization only support legacy chunks during background cleanup.
 

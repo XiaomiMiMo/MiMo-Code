@@ -5,7 +5,6 @@ import { Database } from "../../../src/storage"
 import { PartTable, SessionTable } from "../../../src/session/session.sql"
 import { HistoryFtsTable } from "../../../src/history/fts.sql"
 import { extract } from "../../../src/history/extract"
-import { previewToolOutput } from "../../../src/tool/truncate"
 import { upsertHistoryBody } from "../../../src/history/chunk-write"
 import { projection } from "../../../src/history/projection"
 import { Log } from "../../../src/util"
@@ -99,8 +98,8 @@ function writeBatch(
       if (!extracted) continue
       writes.push({
         part: p,
-        // Rebuild/backfill path: truncate like tool call results before FTS write.
-        body: previewToolOutput(extracted.body).content,
+        // upsertHistoryBody applies tool-result truncation (single write gate).
+        body: extracted.body,
         tool_name: extracted.tool_name,
         time: p.time_created,
       })

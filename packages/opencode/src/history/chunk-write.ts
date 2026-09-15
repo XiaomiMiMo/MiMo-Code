@@ -39,12 +39,13 @@ export function upsertHistoryBody(
 ) {
   const base = basePartId(input.part_id)
   deleteHistoryRows(db, base)
-  // Rebuild/migration/live write 兜底: same truncation path as tool call results.
-  const bounded = previewToolOutput(input.body).content
+  // Single write gate: clean data-URLs first, then tool-result preview budget.
+  // Rebuild/migration/live/backfill all land here.
+  const bounded = previewToolOutput(cleanDataUrls(input.body, undefined, "index")).content
   const data = {
     ...input,
     part_id: base,
-    body: cleanDataUrls(bounded, undefined, "index"),
+    body: bounded,
   }
   db.insert(HistoryFtsTable).values(data).onConflictDoUpdate({ target: HistoryFtsTable.part_id, set: data }).run()
 }

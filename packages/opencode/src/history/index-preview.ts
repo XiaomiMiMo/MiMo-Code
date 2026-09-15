@@ -1,8 +1,13 @@
+import { cleanDataUrls } from "./media"
 import { previewToolOutput } from "../tool/truncate"
 
-/** History index preview — same pure path as tool call results (`tool/truncate.previewToolOutput`). */
+/**
+ * History index preview — same pure path as tool call results
+ * (`tool/truncate.previewToolOutput`). Strip data-URLs first so binary
+ * payloads do not consume the tool-result byte/line budget.
+ */
 export function previewForIndex(text: string): string {
-  return previewToolOutput(text).content
+  return previewToolOutput(cleanDataUrls(text, undefined, "index")).content
 }
 
 export function boundedJson(value: unknown): string {
