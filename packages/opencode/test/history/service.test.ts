@@ -1,4 +1,5 @@
-import { afterEach, describe, expect } from "bun:test"
+import { afterEach, describe, expect, spyOn } from "bun:test"
+import { spawnSync } from "node:child_process"
 import { Effect, Layer } from "effect"
 import { Database } from "../../src/storage"
 import { HistoryFtsTable } from "../../src/history/fts.sql"
@@ -43,6 +44,50 @@ function seedFts(rows: Array<Partial<typeof HistoryFtsTable.$inferInsert>>) {
 }
 
 describe("History.search", () => {
+  it.live("Node SQLite matches FTS before applying selective project filters", () =>
+    provideTmpdirInstance(() =>
+      Effect.gen(function* () {
+        const project = Instance.project.id
+        seedFts([{ part_id: "p1", project_id: project, body: "needle" }])
+        const client = Database.Client().$client
+        const prepare = client.prepare.bind(client)
+        let query = ""
+        const capture = spyOn(client, "prepare").mockImplementation((sql, ...args) => {
+          if (sql.includes("history_fts_idx MATCH")) query = sql
+          return prepare(sql, ...args)
+        })
+        try {
+          const svc = yield* History.Service
+          expect((yield* svc.search({ query: "needle", scope: "project", limit: 5 })).map((hit) => hit.part_id)).toEqual(["p1"])
+        } finally {
+          capture.mockRestore()
+        }
+        expect(query).not.toBe("")
+        // Replay the actual service SQL under Node's SQLite planner, not Bun's.
+        const result = spawnSync("node", ["--input-type=module", "-e", `
+          import assert from "node:assert/strict"
+          import { readFileSync } from "node:fs"
+          import { DatabaseSync } from "node:sqlite"
+          const {query, project} = JSON.parse(readFileSync(0, "utf8"))
+          const db = new DatabaseSync(":memory:")
+          db.exec(readFileSync("migration/20260609000000_history_fts/migration.sql", "utf8"))
+          const insert = db.prepare("INSERT INTO history_fts(part_id,session_id,message_id,project_id,kind,body,time_created) VALUES(?,?,?,?,?,?,?)")
+          db.exec("BEGIN")
+          for (let i = 0; i < 3000; i++) insert.run("part_"+i,"ses_test","msg_test",i===0 ? project : "project_"+i,"text",i===0 ? "needle" : "common",1)
+          db.exec("COMMIT; ANALYZE")
+          const args = ['"needle"', project, 120]
+          const plan = db.prepare("EXPLAIN QUERY PLAN " + query).all(...args)
+          const loops = plan.filter(row => /^(SCAN|SEARCH) /.test(row.detail))
+          assert.match(loops[0].detail, /^SCAN history_fts_idx VIRTUAL TABLE/)
+          assert.match(loops[1].detail, /^SEARCH history_fts USING INTEGER PRIMARY KEY/)
+          assert.deepEqual(db.prepare(query).all(...args).map(row => row.part_id), ["part_0"])
+          db.close()
+        `], { cwd: new URL("../../", import.meta.url), input: JSON.stringify({ query, project }), encoding: "utf8", timeout: 10000 })
+        expect(result.status, result.stderr).toBe(0)
+      }),
+    ),
+  )
+
   it.live("returns BM25-ranked matches", () =>
     provideTmpdirInstance(() =>
       Effect.gen(function* () {

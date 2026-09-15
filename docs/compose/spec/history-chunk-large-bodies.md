@@ -33,6 +33,7 @@ Tool outputs already have a staged length policy before entering the model (`tru
 - Budget: `MAX_BYTES=50KiB` / `MAX_LINES=2000` from `tool/truncate.ts`, head+tail when tail looks like errors
 - Migration v6 SQL marks prior `history_index_migration` versions `done` so superseded state cannot linger at `clean`
 - Search keeps temporary `limit*24` over-fetch until legacy chunk rows are gone after v6
+- Search fixes the join order with `history_fts_idx CROSS JOIN history_fts`: evaluate MATCH first, then look up content by rowid and apply scope filters. Node SQLite must not scan the project index and rerun MATCH for every candidate. A regression test captures the service's actual SQL and verifies the query plan and results with Node SQLite after ANALYZE; project/session/tool/time filters and BM25 ordering remain intact.
 - Tool parts: index stored tool-result string when present (incl. `Full output saved to: <path>`); still bound legacy payloads
 - `history get` reads full `PartTable` text
 - No new index chunks are written. Indexed deletion and search normalization only support legacy chunks during background cleanup.

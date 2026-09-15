@@ -120,6 +120,8 @@ export const layer = Layer.effect(
       // so one multi-row part cannot fill LIMIT before dedupe. After v6 is done
       // indexes are single-row; follow-up may tighten this back to `limit`.
       const fetchLimit = Math.min(limit * 24, HARD_CAP * 24)
+      // CROSS JOIN fixes the loop order in SQLite: MATCH once, then rowid lookup.
+      // Node SQLite may otherwise scan a project first and rerun MATCH per row.
       const sqlText = `
         SELECT history_fts.part_id, history_fts.session_id, history_fts.message_id,
                history_fts.project_id, history_fts.tool_name,
@@ -127,7 +129,7 @@ export const layer = Layer.effect(
                substr(snippet(history_fts_idx, 0, '<<', '>>', '...', 32), 1, 1001) AS snippet,
                bm25(history_fts_idx) AS score
         FROM history_fts_idx
-        JOIN history_fts ON history_fts.rowid = history_fts_idx.rowid
+        CROSS JOIN history_fts ON history_fts.rowid = history_fts_idx.rowid
         WHERE history_fts_idx MATCH ?
         ${whereClause}
         ORDER BY score
