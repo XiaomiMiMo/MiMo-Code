@@ -1220,10 +1220,9 @@ export const layer = Layer.effect(
         (p) => p.type === "text" && p.synthetic === true && !p.ignored && p.text.includes(input.marker),
       )
       if (existingIdx >= 0) {
-        if (input.position === "head" && existingIdx !== 0) {
-          const [existing] = input.message.parts.splice(existingIdx, 1)
-          if (existing) input.message.parts.unshift(existing)
-        }
+        if (input.position !== "head" || existingIdx === 0) return
+        const [existing] = input.message.parts.splice(existingIdx, 1)
+        if (existing) input.message.parts.unshift(existing)
         return
       }
       const part = yield* sessions.updatePart({
@@ -1234,8 +1233,11 @@ export const layer = Layer.effect(
         synthetic: true,
         text: input.text,
       })
-      if (input.position === "head") input.message.parts.unshift(part)
-      else input.message.parts.push(part)
+      if (input.position === "head") {
+        input.message.parts.unshift(part)
+        return
+      }
+      input.message.parts.push(part)
     })
 
     const insertReminders = Effect.fn("SessionPrompt.insertReminders")(function* (input: {

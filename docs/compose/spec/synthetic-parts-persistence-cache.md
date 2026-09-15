@@ -3,7 +3,7 @@ feature: synthetic-parts-persistence-cache
 status: delivered
 updated: 2026-09-16
 branch: analyze/recall-unpersisted-push-cache
-commits: e93a49cd97954df8cedbeff71d5f7230f6f8cc1d..HEAD
+commits: e93a49cd97954df8cedbeff71d5f7230f6f8cc1d..f2108146437c8d0e36b1d0a1b30bbdd906b61085
 ---
 
 # Synthetic Parts Unpersistence and Prompt-Cache Break
@@ -27,7 +27,9 @@ Multi-step runLoop reloads `msgs` from DB; marker hit skips re-push → last-use
 |---------|--------|
 | `bun typecheck` (filter: `src/session/prompt.ts`, `test/session/recall*`) | PASS — no errors in changed files |
 | `bun test test/session/recall-reminder.test.ts test/session/recall-reminder-persist.test.ts test/session/plan-reminder-dedup.test.ts` | PASS — 14 pass / 0 fail / 45 expect |
-| `bun test test/session/prompt-skill-command-multi.test.ts test/session/messages-pagination.test.ts` | PASS — 50 pass / 0 fail / 157 expect |
+| `bun test test/session/prompt-skill-command-multi.test.ts test/session/messages-pagination.test.ts` | PASS — 50 pass / 0 fail / 157 expect (run by orchestrator; review agent did not re-run) |
+
+**Review residual (non-critical)** — Compose `position: "head"` is request-layer only. Parts reload `orderBy(PartTable.id)`; fork/checkpoint capture will still see `[user text, compose, …]` while parent runLoop requests `[compose, user, …]`. Main-loop prompt cache is stable; compose **fork** prefix parity is not fully closed. Recall/loop-streak (append + persist) achieve presence **and** PartID-order parity on DB reload.
 
 **Journey log**
 
@@ -103,9 +105,9 @@ Mid-turn `p.text` wrap (`step > 1`) remains request-only: intentional steering t
 ## Tasks
 
 - [x] T1: Decide strategy — **Option A** (user: 方案A)
-- [x] T2: Align recall / loop-streak / compose to persist + marker — acceptance: no bare push; compose head stable after reload (covers: S2, S4)
+- [x] T2: Align recall / loop-streak / compose to persist + marker — acceptance: no bare push; compose head stable after reload **on the runLoop request path** (covers: S2, S4)
 - [x] T3: Regression tests — `recall-reminder.test.ts` (markers/helpers) + `recall-reminder-persist.test.ts` (exactly one recall part after multi-step turn) (covers: S2; depends: T2)
-- [x] T4: Fork prefix parity — persisted parts visible on DB reload used by `tryStartCheckpointWriter` capture (covers: S2; depends: T2)
+- [x] T4: Fork prefix parity — **presence** parity for recall/loop-stream via DB reload (parts visible to `tryStartCheckpointWriter`); **compose position** parity remains open (head is request-layer reorder) (covers: S2; depends: T2)
 
 ## Anchors (origin/main `e93a49cd` at analysis; delivered on feature branch)
 
