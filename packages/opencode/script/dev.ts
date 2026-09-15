@@ -23,7 +23,7 @@ function cleanup() {
 }
 process.on("exit", cleanup)
 
-const proc = Bun.spawn(["bun", "run", "--conditions=browser", "src/index.ts", ...process.argv.slice(2)], {
+const proc = Bun.spawn([process.execPath, "run", "--conditions=browser", "src/index.ts", ...process.argv.slice(2)], {
   cwd: pkgDir,
   stdio: ["inherit", "inherit", "inherit"],
   env: { ...process.env, MIMOCODE_HOME: process.env.MIMOCODE_HOME ?? path.resolve(pkgDir, "../../.dev-home") },
