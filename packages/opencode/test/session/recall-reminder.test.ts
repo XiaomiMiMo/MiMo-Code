@@ -1,6 +1,16 @@
 import { describe, test, expect } from "bun:test"
-import { recallHintLines } from "../../src/session/prompt"
+import {
+  recallHintLines,
+  hasSyntheticReminder,
+  buildRecallReminderText,
+  buildLoopStreakReminderText,
+  RECALL_REMINDER_MARKER,
+  LOOP_STREAK_REMINDER_MARKER,
+  COMPOSE_REMINDER_MARKER,
+} from "../../src/session/prompt"
 import { hasActorTool } from "../../src/agent/config"
+import type { MessageV2 } from "../../src/session/message-v2"
+import type { PartID, SessionID, MessageID } from "../../src/session/schema"
 
 describe("recallHintLines", () => {
   test("json mode (no tool config): task and actor use JSON form", () => {
@@ -38,6 +48,59 @@ describe("recallHintLines", () => {
   test("drops the actor hint when the tool is masked out for the agent", () => {
     const lines = recallHintLines({ invocation_style: "shell" }, false)
     expect(lines).toEqual([`- memory({ operation: "search", query: "<keyword>" })`, "- task list"])
+  })
+})
+
+function textPart(text: string, synthetic?: boolean, ignored?: boolean): MessageV2.TextPart {
+  return {
+    id: "p1" as PartID,
+    sessionID: "ses_test" as SessionID,
+    messageID: "msg_test" as MessageID,
+    type: "text",
+    text,
+    ...(synthetic ? { synthetic: true } : {}),
+    ...(ignored ? { ignored: true } : {}),
+  }
+}
+
+describe("synthetic reminder markers", () => {
+  test("buildRecallReminderText embeds the stable marker and memory path", () => {
+    const text = buildRecallReminderText({
+      sessMemDir: "/tmp/example/memory/sessions/ses_test",
+      hints: [`- memory({ operation: "search", query: "<keyword>" })`, "- task list"],
+    })
+    expect(text).toContain(RECALL_REMINDER_MARKER)
+    expect(text).toContain("/tmp/example/memory/sessions/ses_test/")
+    expect(text).toContain("Don't ask the user about something memory may already record.")
+  })
+
+  test("buildLoopStreakReminderText embeds the stable marker", () => {
+    const text = buildLoopStreakReminderText(3)
+    expect(text).toContain(LOOP_STREAK_REMINDER_MARKER)
+    expect(text).toContain("Your last 3 steps")
+  })
+
+  test("compose marker is distinct and non-empty", () => {
+    expect(COMPOSE_REMINDER_MARKER.length).toBeGreaterThan(0)
+    expect(COMPOSE_REMINDER_MARKER).not.toBe(RECALL_REMINDER_MARKER)
+    expect(COMPOSE_REMINDER_MARKER).not.toBe(LOOP_STREAK_REMINDER_MARKER)
+  })
+
+  test("hasSyntheticReminder matches only non-ignored synthetic text parts", () => {
+    const marker = RECALL_REMINDER_MARKER
+    expect(hasSyntheticReminder([], marker)).toBe(false)
+    expect(hasSyntheticReminder([textPart(`user asked about ${marker}`)], marker)).toBe(false)
+    expect(hasSyntheticReminder([textPart(marker, true)], marker)).toBe(true)
+    expect(hasSyntheticReminder([textPart(marker, true, true)], marker)).toBe(false)
+    expect(
+      hasSyntheticReminder(
+        [
+          textPart("other synthetic", true),
+          textPart(`<system-reminder>${marker} /x/</system-reminder>`, true),
+        ],
+        marker,
+      ),
+    ).toBe(true)
   })
 })
 
