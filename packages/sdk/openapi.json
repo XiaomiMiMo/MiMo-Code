@@ -2289,64 +2289,6 @@
         ]
       }
     },
-    "/experimental/worktree/auto": {
-      "post": {
-        "operationId": "worktree.auto",
-        "parameters": [
-          {
-            "in": "query",
-            "name": "directory",
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "in": "query",
-            "name": "workspace",
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "summary": "Auto-create worktree on conflict",
-        "description": "Check for conflicts and auto-create a worktree if needed.",
-        "responses": {
-          "200": {
-            "description": "Worktree info or null",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "anyOf": [
-                    {
-                      "$ref": "#/components/schemas/Worktree"
-                    },
-                    {
-                      "type": "null"
-                    }
-                  ]
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "Bad request",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/BadRequestError"
-                }
-              }
-            }
-          }
-        },
-        "x-codeSamples": [
-          {
-            "lang": "js",
-            "source": "import { createOpencodeClient } from \"@mimo-ai/sdk\"\n\nconst client = createOpencodeClient()\nawait client.worktree.auto({\n  ...\n})"
-          }
-        ]
-      }
-    },
     "/experimental/title": {
       "post": {
         "operationId": "experimental.title.generate",
