@@ -69,6 +69,7 @@ import { PromptRefProvider, usePromptRef } from "./context/prompt"
 import { TuiConfigProvider, useTuiConfig } from "./context/tui-config"
 import { TuiConfig } from "@/cli/cmd/tui/config/tui"
 import { createTuiApi, TuiPluginRuntime, type RouteMap } from "./plugin"
+import { createPluginKeymap } from "./plugin/keymap"
 import { FormatError, FormatUnknownError } from "@/cli/error"
 import { isPlainTerminal, isWindowsTerminal } from "./util/terminal"
 import {
@@ -263,8 +264,10 @@ function App(props: { onSnapshot?: () => Promise<string[]> }) {
     return routes.get(name)?.at(-1)?.render
   }
 
+  const keymap = createPluginKeymap({ command, keybind, dialog })
   const api = createTuiApi({
     command,
+    keymap,
     tuiConfig,
     dialog,
     keybind,
