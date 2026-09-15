@@ -2908,13 +2908,20 @@ NOTE: At any point in time through this workflow you should feel free to ask the
       )
 
       // User-provided images: Codex-style provenance envelope (synthetic, not tool fiction).
+      // Insert immediately before the first non-synthetic user content so Desktop
+      // system-reminders cannot sit between "## My request:" and the user's text.
       const userImages = parts.filter(
         (part): part is Extract<MessageV2.Part, { type: "file" }> =>
           part.type === "file" && isUserImageMime(part.mime) && !(isSyntheticPart(part)),
       )
       const envelope = userImageAttachmentEnvelope(userImages)
       if (envelope) {
-        parts.unshift(
+        const firstUserContent = parts.findIndex(
+          (part) => !isSyntheticPart(part) && (part.type === "text" || part.type === "file"),
+        )
+        parts.splice(
+          firstUserContent === -1 ? 0 : firstUserContent,
+          0,
           assign({
             messageID: info.id,
             sessionID: input.sessionID,

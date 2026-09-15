@@ -745,6 +745,58 @@ describe("session.prompt user image attachment codex envelope", () => {
     })
   })
 
+  test("[TP-R3-07] envelope sits before user text even when synthetic parts precede it", async () => {
+    await using tmp = await tmpdir({
+      git: true,
+      config: {
+        agent: {
+          build: {
+            model: "openai/gpt-5.2",
+          },
+        },
+      },
+      init: async (dir) => {
+        const png = new PNG({ width: 2, height: 2 })
+        png.data.fill(180)
+        await Bun.write(path.join(dir, "roster.png"), PNG.sync.write(png))
+      },
+    })
+
+    await Instance.provide({
+      directory: tmp.path,
+      fn: () =>
+        run(
+          Effect.gen(function* () {
+            const prompt = yield* SessionPrompt.Service
+            const sessions = yield* Session.Service
+            const session = yield* sessions.create({})
+            const imagePath = path.join(tmp.path, "roster.png")
+            const msg = yield* prompt.prompt({
+              sessionID: session.id,
+              agent: "build",
+              noReply: true,
+              parts: [
+                { type: "text", text: "<system-reminder>runtime scaffold</system-reminder>", synthetic: true },
+                { type: "text", text: "这些才是我们团队成员名单" },
+                { type: "file", mime: "image/png", url: `file://${imagePath}`, filename: "roster.png" },
+              ],
+            })
+            if (msg.info.role !== "user") throw new Error("expected user message")
+            const ordered = msg.parts
+              .filter((part) => part.type === "text")
+              .map((part) => (part.type === "text" ? part.text : ""))
+            const envIdx = ordered.findIndex((t) => t.includes("## My request:"))
+            const userIdx = ordered.findIndex((t) => t.includes("这些才是我们团队成员名单"))
+            const scaffoldIdx = ordered.findIndex((t) => t.includes("runtime scaffold"))
+            expect(envIdx).toBeGreaterThanOrEqual(0)
+            expect(userIdx).toBeGreaterThan(envIdx)
+            if (scaffoldIdx >= 0) expect(scaffoldIdx).toBeLessThan(envIdx)
+            yield* sessions.remove(session.id)
+          }),
+        ),
+    })
+  })
+
   test("[TP-R3-08] text/plain file part still uses Read narrative; no envelope without images", async () => {
     await using tmp = await tmpdir({
       git: true,
