@@ -3,7 +3,7 @@ feature: synthetic-parts-persistence-cache
 status: delivered
 updated: 2026-09-16
 branch: analyze/recall-unpersisted-push-cache
-commits: b4cc11cd652195af9a80297ed543218f3172e6c4..61a2bc3ad595bcd115222e26ddae74b0bc74598f
+commits: b4cc11cd652195af9a80297ed543218f3172e6c4..73003a620907031d67de979ce357310e10441223
 ---
 
 # Synthetic Parts Unpersistence and Prompt-Cache Break
