@@ -5,6 +5,8 @@ import { Database } from "../../../src/storage"
 import { PartTable, SessionTable } from "../../../src/session/session.sql"
 import { HistoryFtsTable } from "../../../src/history/fts.sql"
 import { extract } from "../../../src/history/extract"
+import { previewToolOutput } from "../../../src/tool/truncate"
+import { upsertHistoryBody } from "../../../src/history/chunk-write"
 import { projection } from "../../../src/history/projection"
 import { Log } from "../../../src/util"
 import type { MessageV2 } from "../../../src/session/message-v2"
@@ -97,8 +99,8 @@ function writeBatch(
       if (!extracted) continue
       writes.push({
         part: p,
-
-        body: extracted.body,
+        // Rebuild/backfill path: truncate like tool call results before FTS write.
+        body: previewToolOutput(extracted.body).content,
         tool_name: extracted.tool_name,
         time: p.time_created,
       })
@@ -106,22 +108,15 @@ function writeBatch(
     if (writes.length === 0) return
     Database.transaction((tx) => {
       for (const w of writes) {
-        tx.insert(HistoryFtsTable)
-          .values({
-            part_id: w.part.id,
-            session_id: w.part.session_id,
-            message_id: w.part.message_id,
-            project_id: projectID,
-
-            tool_name: w.tool_name,
-            body: w.body,
-            time_created: w.time,
-          })
-          .onConflictDoUpdate({
-            target: HistoryFtsTable.part_id,
-            set: { tool_name: w.tool_name, body: w.body, time_created: w.time },
-          })
-          .run()
+        upsertHistoryBody(tx, {
+          part_id: w.part.id,
+          session_id: w.part.session_id,
+          message_id: w.part.message_id,
+          project_id: projectID,
+          tool_name: w.tool_name,
+          body: w.body,
+          time_created: w.time,
+        })
       }
     })
   })

@@ -1,13 +1,18 @@
 import { and, asc, eq, gt, lte, sql } from "drizzle-orm"
 import type { Database } from "../storage"
-import { PartTable } from "../session/session.sql"
+import type { PartID } from "../session/schema"
+import { PartTable, SessionTable } from "../session/session.sql"
 import { HistoryFtsTable, HistoryIndexMigrationTable as State } from "./fts.sql"
-import { cleanDataUrls } from "./media"
 import { indexImportedParts } from "./import"
+import { basePartId, CHUNK_BODY_MAX } from "./chunk"
+import { deleteHistoryRows, upsertHistoryBody } from "./chunk-write"
+import { extract } from "./extract"
+import { previewToolOutput } from "../tool/truncate"
 import { Log } from "../util"
 
 const log = Log.create({ service: "history.migration" })
-const version = 4
+/** v5: re-chunk oversized FTS bodies + drop orphans; then re-index from parts. */
+const version = 5
 const batch = 128
 const jobs = new WeakMap<ReturnType<typeof Database.Client>, AbortController>()
 
@@ -20,30 +25,67 @@ export function migrateIndexBatch(db: ReturnType<typeof Database.Client>) {
       if (state.phase === "clean") {
         const rowid = sql<number>`history_fts.rowid`
         const rows = tx
-          .select({ rowid, id: HistoryFtsTable.part_id, body: HistoryFtsTable.body, source: PartTable.id })
+          .select({ rowid, id: HistoryFtsTable.part_id, body: HistoryFtsTable.body })
           .from(HistoryFtsTable)
-          .leftJoin(PartTable, eq(PartTable.id, HistoryFtsTable.part_id))
-          .where(and(gt(rowid, state.cursor), lte(rowid, state.fts_end)))
+          .where(gt(rowid, state.cursor))
           .orderBy(asc(rowid))
           .limit(batch)
           .all()
         for (const row of rows) {
-          if (row.source === null) {
-            tx.delete(HistoryFtsTable).where(eq(HistoryFtsTable.part_id, row.id)).run()
+          const base = basePartId(row.id)
+          const partRow = tx
+            .select({
+              id: PartTable.id,
+              session_id: PartTable.session_id,
+              message_id: PartTable.message_id,
+              data: PartTable.data,
+              time_created: PartTable.time_created,
+              project_id: SessionTable.project_id,
+            })
+            .from(PartTable)
+            .innerJoin(SessionTable, eq(SessionTable.id, PartTable.session_id))
+            .where(eq(PartTable.id, base as PartID))
+            .get()
+          if (!partRow) {
+            deleteHistoryRows(tx, base)
             continue
           }
-          const body = cleanDataUrls(row.body, undefined, "index")
-          if (body !== row.body)
-            tx.update(HistoryFtsTable).set({ body }).where(eq(HistoryFtsTable.part_id, row.id)).run()
+          const oversized = row.body.length > CHUNK_BODY_MAX
+          const alreadyChunked = base !== row.id
+          if (!oversized && !alreadyChunked) continue
+          const extracted = extract({
+            ...partRow.data,
+            id: partRow.id,
+            messageID: partRow.message_id,
+            sessionID: partRow.session_id,
+          } as never)
+          if (!extracted) {
+            deleteHistoryRows(tx, base)
+            continue
+          }
+          upsertHistoryBody(tx, {
+            part_id: base,
+            session_id: partRow.session_id,
+            message_id: partRow.message_id,
+            project_id: partRow.project_id,
+            tool_name: extracted.tool_name,
+            // Rebuild path also truncates — same tool-result preview path.
+            body: previewToolOutput(extracted.body).content,
+            time_created: partRow.time_created,
+          })
         }
-        tx.update(State)
-          .set(rows.length ? { cursor: rows.at(-1)!.rowid } : { phase: "repair", cursor: 0 })
-          .where(eq(State.version, version))
-          .run()
+        if (!rows.length) {
+          tx.update(State).set({ phase: "repair", cursor: 0 }).where(eq(State.version, version)).run()
+          return true
+        }
+        const nextCursor = rows.at(-1)!.rowid
+        tx.update(State).set({ cursor: nextCursor }).where(eq(State.version, version)).run()
+        if (state.fts_end > 0 && nextCursor >= state.fts_end) {
+          tx.update(State).set({ phase: "repair", cursor: 0 }).where(eq(State.version, version)).run()
+        }
         return true
       }
       const rowid = sql<number>`part.rowid`
-      // Bound visited rows as well as writes, even if most parts are already indexed.
       const rows = tx
         .select({ rowid, id: PartTable.id })
         .from(PartTable)
@@ -70,7 +112,8 @@ export function startIndexMigration(db: ReturnType<typeof Database.Client>) {
   const abort = new AbortController()
   jobs.set(db, abort)
   try {
-    if (db.select().from(State).where(eq(State.version, version)).get()?.phase === "done") return
+    const state = db.select().from(State).where(eq(State.version, version)).get()
+    if (state?.phase === "done") return
   } catch (error) {
     log.warn("index migration unavailable", { error: String(error) })
     return
@@ -80,7 +123,6 @@ export function startIndexMigration(db: ReturnType<typeof Database.Client>) {
     try {
       if (migrateIndexBatch(db)) setTimeout(run, 10).unref()
     } catch (error) {
-      // The failed batch rolled back. Resume its durable cursor on next open.
       log.warn("index migration paused", { error: String(error) })
     }
   }
@@ -90,3 +132,5 @@ export function startIndexMigration(db: ReturnType<typeof Database.Client>) {
 export function stopIndexMigration(db: ReturnType<typeof Database.Client>) {
   jobs.get(db)?.abort()
 }
+
+export const MIGRATION_VERSION = version

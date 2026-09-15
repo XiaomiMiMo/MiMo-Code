@@ -22,6 +22,8 @@ const TAIL_SCAN_CHARS = 2048
 
 export type Result = { content: string; truncated: false } | { content: string; truncated: true; outputPath: string }
 
+export type PreviewResult = { content: string; truncated: false } | { content: string; truncated: true }
+
 export interface Options {
   maxLines?: number
   maxBytes?: number
@@ -35,12 +37,109 @@ function hasActorTool(agent?: Agent.Info) {
   return evaluate("actor", "*", agent.permission).action !== "deny"
 }
 
+/**
+ * Pure tool-result preview. Shared by `Truncate.output` (model-facing tool
+ * results) and history FTS extract — same budget and head/tail policy.
+ * Does not write files; `Truncate.output` adds the full-output path hint.
+ */
+export function previewToolOutput(text: string, options: Options = {}): PreviewResult {
+  let maxLines = options.maxLines ?? MAX_LINES
+  let maxBytes = options.maxBytes ?? MAX_BYTES
+  const direction = options.direction ?? "head+tail"
+  if (options.pressureCaps) {
+    maxLines = Math.floor(maxLines / 2)
+    maxBytes = Math.floor(maxBytes / 2)
+  }
+
+  const lines = text.split("\n")
+  const totalBytes = Buffer.byteLength(text, "utf-8")
+  if (lines.length <= maxLines && totalBytes <= maxBytes) {
+    return { content: text, truncated: false }
+  }
+
+  if (direction === "head+tail") {
+    const tailScan = text.length > TAIL_SCAN_CHARS ? text.slice(-TAIL_SCAN_CHARS) : text
+    const hasErrors = ERROR_PATTERN.test(tailScan)
+    if (hasErrors) {
+      const headMaxLines = Math.floor(maxLines * 0.7)
+      const headMaxBytes = Math.floor(maxBytes * 0.7)
+      const tailMaxLines = maxLines - headMaxLines
+      const tailMaxBytes = maxBytes - headMaxBytes
+      const headOut: string[] = []
+      let headBytes = 0
+      for (let i = 0; i < lines.length && headOut.length < headMaxLines; i++) {
+        const size = Buffer.byteLength(lines[i]!, "utf-8") + (i > 0 ? 1 : 0)
+        if (headBytes + size > headMaxBytes) break
+        headOut.push(lines[i]!)
+        headBytes += size
+      }
+      const tailOut: string[] = []
+      let tailBytes = 0
+      for (let i = lines.length - 1; i >= 0 && tailOut.length < tailMaxLines; i--) {
+        const size = Buffer.byteLength(lines[i]!, "utf-8") + (tailOut.length > 0 ? 1 : 0)
+        if (tailBytes + size > tailMaxBytes) break
+        tailOut.unshift(lines[i]!)
+        tailBytes += size
+      }
+      const omitted = lines.length - headOut.length - tailOut.length
+      return {
+        content: `${headOut.join("\n")}\n\n... ${omitted} lines omitted — showing head and tail ...\n\n${tailOut.join("\n")}`,
+        truncated: true,
+      }
+    }
+  }
+
+  const out: string[] = []
+  let bytes = 0
+  let hitBytes = false
+  if (direction === "head" || direction === "head+tail") {
+    for (let i = 0; i < lines.length && i < maxLines; i++) {
+      const size = Buffer.byteLength(lines[i]!, "utf-8") + (i > 0 ? 1 : 0)
+      if (bytes + size > maxBytes) {
+        hitBytes = true
+        break
+      }
+      out.push(lines[i]!)
+      bytes += size
+    }
+    const removed = hitBytes ? totalBytes - bytes : lines.length - out.length
+    const unit = hitBytes ? "bytes" : "lines"
+    return {
+      content: `${out.join("\n")}\n\n...${removed} ${unit} truncated...`,
+      truncated: true,
+    }
+  }
+
+  for (let i = lines.length - 1; i >= 0 && out.length < maxLines; i--) {
+    const size = Buffer.byteLength(lines[i]!, "utf-8") + (out.length > 0 ? 1 : 0)
+    if (bytes + size > maxBytes) {
+      hitBytes = true
+      break
+    }
+    out.unshift(lines[i]!)
+    bytes += size
+  }
+  const removed = hitBytes ? totalBytes - bytes : lines.length - out.length
+  const unit = hitBytes ? "bytes" : "lines"
+  return {
+    content: `...${removed} ${unit} truncated...\n\n${out.join("\n")}`,
+    truncated: true,
+  }
+}
+
+export function formatToolTruncationHint(file: string, outcome: "success" | "error", agent?: Agent.Info): string {
+  const result = outcome === "error" ? "failed" : "succeeded"
+  return hasActorTool(agent)
+    ? `The tool call ${result} but the output was truncated. Full output saved to: ${file}\nUse the actor tool to have explore agent process this file with Grep and Read (with offset/limit). Do NOT read the full file yourself - delegate to save context.`
+    : `The tool call ${result} but the output was truncated. Full output saved to: ${file}\nUse Grep to search the full content or Read with offset/limit to view specific sections.`
+}
+
 export interface Interface {
   readonly cleanup: () => Effect.Effect<void>
   readonly write: (text: string) => Effect.Effect<string>
   /**
-   * Returns output unchanged when it fits within the limits, otherwise writes the full text
-   * to the truncation directory and returns a preview plus a hint to inspect the saved file.
+   * Same preview as `previewToolOutput`; when truncated, writes the full text
+   * to the truncation directory and appends the tool-result file-path hint.
    */
   readonly output: (text: string, options?: Options, agent?: Agent.Info) => Effect.Effect<Result>
 }
@@ -74,112 +173,14 @@ export const layer = Layer.effect(
     })
 
     const output = Effect.fn("Truncate.output")(function* (text: string, options: Options = {}, agent?: Agent.Info) {
-      let maxLines = options.maxLines ?? MAX_LINES
-      let maxBytes = options.maxBytes ?? MAX_BYTES
-      const direction = options.direction ?? "head+tail"
-      const pressureCaps = options.pressureCaps ?? false
-      const outcome = options.outcome ?? "success"
-
-      const hint = (file: string) => {
-        const result = outcome === "error" ? "failed" : "succeeded"
-        return hasActorTool(agent)
-          ? `The tool call ${result} but the output was truncated. Full output saved to: ${file}\nUse the actor tool to have explore agent process this file with Grep and Read (with offset/limit). Do NOT read the full file yourself - delegate to save context.`
-          : `The tool call ${result} but the output was truncated. Full output saved to: ${file}\nUse Grep to search the full content or Read with offset/limit to view specific sections.`
+      const preview = previewToolOutput(text, options)
+      if (!preview.truncated) {
+        return { content: preview.content, truncated: false } as const
       }
-
-      if (pressureCaps) {
-        maxLines = Math.floor(maxLines / 2)
-        maxBytes = Math.floor(maxBytes / 2)
-      }
-
-      const lines = text.split("\n")
-      const totalBytes = Buffer.byteLength(text, "utf-8")
-
-      if (lines.length <= maxLines && totalBytes <= maxBytes) {
-        return { content: text, truncated: false } as const
-      }
-
-      if (direction === "head+tail") {
-        // Check if the last TAIL_SCAN_CHARS contain an error pattern
-        const tailScan = text.length > TAIL_SCAN_CHARS ? text.slice(-TAIL_SCAN_CHARS) : text
-        const hasErrors = ERROR_PATTERN.test(tailScan)
-
-        if (hasErrors) {
-          // Allocate 70% of budget to head, 30% to tail
-          const headMaxLines = Math.floor(maxLines * 0.7)
-          const headMaxBytes = Math.floor(maxBytes * 0.7)
-          const tailMaxLines = maxLines - headMaxLines
-          const tailMaxBytes = maxBytes - headMaxBytes
-
-          // Collect head lines
-          const headOut: string[] = []
-          let headBytes = 0
-          for (let i = 0; i < lines.length && headOut.length < headMaxLines; i++) {
-            const size = Buffer.byteLength(lines[i], "utf-8") + (i > 0 ? 1 : 0)
-            if (headBytes + size > headMaxBytes) break
-            headOut.push(lines[i])
-            headBytes += size
-          }
-
-          // Collect tail lines
-          const tailOut: string[] = []
-          let tailBytes = 0
-          for (let i = lines.length - 1; i >= 0 && tailOut.length < tailMaxLines; i--) {
-            const size = Buffer.byteLength(lines[i], "utf-8") + (tailOut.length > 0 ? 1 : 0)
-            if (tailBytes + size > tailMaxBytes) break
-            tailOut.unshift(lines[i])
-            tailBytes += size
-          }
-
-          const omitted = lines.length - headOut.length - tailOut.length
-          const file = yield* write(text)
-
-          return {
-            content: `${headOut.join("\n")}\n\n... ${omitted} lines omitted — showing head and tail ...\n\n${tailOut.join("\n")}\n\n${hint(file)}`,
-            truncated: true,
-            outputPath: file,
-          } as const
-        }
-        // No errors in tail: degrade to head behavior
-      }
-
-      const out: string[] = []
-      let i = 0
-      let bytes = 0
-      let hitBytes = false
-
-      if (direction === "head" || direction === "head+tail") {
-        for (i = 0; i < lines.length && i < maxLines; i++) {
-          const size = Buffer.byteLength(lines[i], "utf-8") + (i > 0 ? 1 : 0)
-          if (bytes + size > maxBytes) {
-            hitBytes = true
-            break
-          }
-          out.push(lines[i])
-          bytes += size
-        }
-      } else {
-        for (i = lines.length - 1; i >= 0 && out.length < maxLines; i--) {
-          const size = Buffer.byteLength(lines[i], "utf-8") + (out.length > 0 ? 1 : 0)
-          if (bytes + size > maxBytes) {
-            hitBytes = true
-            break
-          }
-          out.unshift(lines[i])
-          bytes += size
-        }
-      }
-
-      const removed = hitBytes ? totalBytes - bytes : lines.length - out.length
-      const unit = hitBytes ? "bytes" : "lines"
-      const preview = out.join("\n")
       const file = yield* write(text)
-
+      const hint = formatToolTruncationHint(file, options.outcome ?? "success", agent)
       return {
-        content:
-          direction === "head" || direction === "head+tail"
-            ? `${preview}\n\n...${removed} ${unit} truncated...\n\n${hint(file)}`
-            : `...${removed} ${unit} truncated...\n\n${hint(file)}\n\n${preview}`,
+        content: `${preview.content}\n\n${hint}`,
         truncated: true,
         outputPath: file,
       } as const

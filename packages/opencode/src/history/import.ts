@@ -3,9 +3,10 @@ import type { BaseSQLiteDatabase } from "drizzle-orm/sqlite-core"
 import type { MessageV2 } from "../session/message-v2"
 import { MessageTable, PartTable, SessionTable } from "../session/session.sql"
 import type { PartID } from "../session/schema"
-import { HistoryFtsTable } from "./fts.sql"
 import { extract } from "./extract"
+import { previewToolOutput } from "../tool/truncate"
 import { projection } from "./projection"
+import { deleteHistoryRows, upsertHistoryBody } from "./chunk-write"
 
 // Importers bypass the Bus writer. Call inside the transaction that writes parts.
 // Read persisted rows so conflict/no-op imports cannot index a rejected value.
@@ -14,6 +15,8 @@ export function indexImportedParts<T>(
   ids: readonly string[],
 ) {
   for (let offset = 0; offset < ids.length; offset += 128) {
+    const batch = ids.slice(offset, offset + 128) as PartID[]
+    if (batch.length === 0) continue
     const rows = db
       .select({
         ...projection(),
@@ -22,7 +25,7 @@ export function indexImportedParts<T>(
       .from(PartTable)
       .innerJoin(MessageTable, eq(MessageTable.id, PartTable.message_id))
       .innerJoin(SessionTable, eq(SessionTable.id, PartTable.session_id))
-      .where(inArray(PartTable.id, ids.slice(offset, offset + 128) as PartID[]))
+      .where(inArray(PartTable.id, batch))
       .all()
     for (const row of rows) {
       const value = extract({
@@ -32,18 +35,19 @@ export function indexImportedParts<T>(
         sessionID: row.session_id,
       } as MessageV2.Part)
       if (!value) {
-        db.delete(HistoryFtsTable).where(eq(HistoryFtsTable.part_id, row.id)).run()
+        deleteHistoryRows(db, row.id)
         continue
       }
-      const data = {
+      // Same truncation path as tool call results — before history write.
+      upsertHistoryBody(db, {
         part_id: row.id,
         session_id: row.session_id,
         message_id: row.message_id,
         project_id: row.project,
-        ...value,
+        tool_name: value.tool_name,
+        body: previewToolOutput(value.body).content,
         time_created: row.time_created,
-      }
-      db.insert(HistoryFtsTable).values(data).onConflictDoUpdate({ target: HistoryFtsTable.part_id, set: data }).run()
+      })
     }
   }
 }

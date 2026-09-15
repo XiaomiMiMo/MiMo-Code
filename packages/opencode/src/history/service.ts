@@ -9,6 +9,7 @@ import type { MessageID } from "../session/schema"
 import { Bus } from "../bus"
 import { Instance } from "../project/instance"
 import { buildFtsQuery } from "./fts-query"
+import { basePartId } from "./chunk"
 import { layer as writerLayer, Service as WriterService } from "./writer"
 
 export type SearchHit = {
@@ -115,6 +116,9 @@ export const layer = Layer.effect(
       }
 
       const whereClause = conditions.length > 0 ? `AND ${conditions.join(" AND ")}` : ""
+      // Over-fetch: chunked parts may contribute multiple FTS rows; dedupe after LIMIT
+      // would drop distinct parts. CHUNK_MAX=24, so limit*24 is the worst-case window.
+      const fetchLimit = Math.min(limit * 24, HARD_CAP * 24)
       const sqlText = `
         SELECT history_fts.part_id, history_fts.session_id, history_fts.message_id,
                history_fts.project_id, history_fts.tool_name,
@@ -133,17 +137,26 @@ export const layer = Layer.effect(
       // resolves to node:sqlite outside Bun). See the same note in memory/service.ts.
       const rows = Database.Client()
         .$client.prepare(sqlText)
-        .all(ftsQuery, ...params, limit) as Row[]
-      return rows.map((r) => ({
-        part_id: r.part_id,
-        session_id: r.session_id,
-        message_id: r.message_id,
-        project_id: r.project_id,
-        tool_name: r.tool_name,
-        snippet: summary(r.snippet),
-        score: -r.score,
-        time_created: r.time_created,
-      }))
+        .all(ftsQuery, ...params, fetchLimit) as Row[]
+      const seen = new Set<string>()
+      const hits = []
+      for (const r of rows) {
+        const partId = basePartId(r.part_id)
+        if (seen.has(partId)) continue
+        seen.add(partId)
+        hits.push({
+          part_id: partId,
+          session_id: r.session_id,
+          message_id: r.message_id,
+          project_id: r.project_id,
+          tool_name: r.tool_name,
+          snippet: summary(r.snippet),
+          score: -r.score,
+          time_created: r.time_created,
+        })
+        if (hits.length >= limit) break
+      }
+      return hits
     })
 
     const around = Effect.fn("History.around")(function* (input: Parameters<Interface["around"]>[0]) {
@@ -259,7 +272,7 @@ export const layer = Layer.effect(
         db
           .select({ data: PartTable.data })
           .from(PartTable)
-          .where(eq(PartTable.id, input.part_id as PartID))
+          .where(eq(PartTable.id, basePartId(input.part_id) as PartID))
           .get(),
       )
       if (!row) return undefined
