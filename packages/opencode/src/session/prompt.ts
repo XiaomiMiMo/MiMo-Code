@@ -378,8 +378,30 @@ export function userImageAttachmentEnvelope(
   )
 }
 
-function isUserImageMime(mime: string | undefined | null): boolean {
-  return typeof mime === "string" && mime.startsWith("image/")
+/** MIME types are case-insensitive (RFC 2045); normalize before prefix checks. */
+export function isUserImageMime(mime: string | undefined | null): boolean {
+  return typeof mime === "string" && mime.trim().toLowerCase().startsWith("image/")
+}
+
+/**
+ * User-provided image attachment eligible for the Codex provenance envelope.
+ * Excludes synthetic scaffolding and MCP `resource` sources — those must not be
+ * described as "user-provided media".
+ */
+export function isUserAttachmentImagePart(part: {
+  type?: string
+  mime?: string | null
+  synthetic?: boolean
+  source?: unknown
+}): boolean {
+  if (part.type !== "file") return false
+  if (!isUserImageMime(part.mime)) return false
+  if (part.synthetic === true) return false
+  const source = part.source
+  if (source !== null && typeof source === "object" && "type" in source && (source as { type?: unknown }).type === "resource") {
+    return false
+  }
+  return true
 }
 
 const PREDICT_SYSTEM = `You predict the single most likely next message a user will send to a coding assistant, based on the conversation so far. Output only that next message as one short, natural first-person request (what the user would type). No preamble, no quotes, no explanation, no markdown. Keep it under 100 characters.`
@@ -387,6 +409,13 @@ const PREDICT_SYSTEM = `You predict the single most likely next message a user w
 const PREDICT_NUDGE = `Based on the conversation above, write the user's most likely next message:`
 
 const isSyntheticPart = (part: MessageV2.Part) => "synthetic" in part && part.synthetic === true
+
+/** First model-visible user text/file part — skip synthetic and ignored text for envelope placement. */
+const isEnvelopeAnchorPart = (part: MessageV2.Part): boolean => {
+  if (isSyntheticPart(part)) return false
+  if (part.type === "text" && part.ignored === true) return false
+  return part.type === "text" || part.type === "file"
+}
 
 /**
  * Builds the context `predict` feeds the model, or `undefined` when the session
@@ -2908,17 +2937,15 @@ NOTE: At any point in time through this workflow you should feel free to ask the
       )
 
       // User-provided images: Codex-style provenance envelope (synthetic, not tool fiction).
-      // Insert immediately before the first non-synthetic user content so Desktop
-      // system-reminders cannot sit between "## My request:" and the user's text.
-      const userImages = parts.filter(
-        (part): part is Extract<MessageV2.Part, { type: "file" }> =>
-          part.type === "file" && isUserImageMime(part.mime) && !(isSyntheticPart(part)),
+      // Insert immediately before the first non-synthetic, non-ignored user content so Desktop
+      // system-reminders / ignored text cannot sit between "## My request:" and the user's text.
+      // Predicate excludes MCP resource sources and synthetic parts (isUserAttachmentImagePart).
+      const userImages = parts.filter((part): part is Extract<MessageV2.Part, { type: "file" }> =>
+        isUserAttachmentImagePart(part),
       )
       const envelope = userImageAttachmentEnvelope(userImages)
       if (envelope) {
-        const firstUserContent = parts.findIndex(
-          (part) => !isSyntheticPart(part) && (part.type === "text" || part.type === "file"),
-        )
+        const firstUserContent = parts.findIndex(isEnvelopeAnchorPart)
         parts.splice(
           firstUserContent === -1 ? 0 : firstUserContent,
           0,

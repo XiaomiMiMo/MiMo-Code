@@ -13,6 +13,8 @@ import { Session } from "../../src/session"
 import { MessageV2 } from "../../src/session/message-v2"
 import {
   SessionPrompt,
+  isUserAttachmentImagePart,
+  isUserImageMime,
   normalizeTitleInput,
   predictContext,
   sanitizeGeneratedTitle,
@@ -692,6 +694,22 @@ describe("session.prompt user image attachment codex envelope", () => {
     expect(userImageAttachmentEnvelope([])).toBe("")
   })
 
+  test("[TP-R3-07] isUserAttachmentImagePart excludes MCP resource / synthetic; accepts file:// and data:", () => {
+    expect(isUserAttachmentImagePart({ type: "file", mime: "image/png" })).toBe(true)
+    expect(isUserAttachmentImagePart({ type: "file", mime: "IMAGE/PNG" })).toBe(true)
+    expect(
+      isUserAttachmentImagePart({
+        type: "file",
+        mime: "image/png",
+        source: { type: "resource" },
+      }),
+    ).toBe(false)
+    expect(isUserAttachmentImagePart({ type: "file", mime: "image/png", synthetic: true })).toBe(false)
+    expect(isUserAttachmentImagePart({ type: "text", mime: "image/png" })).toBe(false)
+    expect(isUserImageMime("  Image/WebP  ")).toBe(true)
+    expect(isUserImageMime("text/plain")).toBe(false)
+  })
+
   test("[TP-R3-07] file:// image attachment is user media + envelope, not fake Read", async () => {
     await using tmp = await tmpdir({
       git: true,
@@ -728,17 +746,162 @@ describe("session.prompt user image attachment codex envelope", () => {
               ],
             })
             if (msg.info.role !== "user") throw new Error("expected user message")
-            const texts = msg.parts.filter((part) => part.type === "text").map((part) => part.text)
-            const files = msg.parts.filter((part) => part.type === "file")
-            expect(texts.join("\n")).not.toContain("Called the Read tool")
-            expect(texts.join("\n")).toContain("Files mentioned by the user")
-            expect(texts.join("\n")).toContain("## My request:")
-            expect(texts.join("\n")).toContain("这些才是我们团队成员名单")
+            const texts = msg.parts.filter((part) => part.type === "text") as Extract<
+              MessageV2.Part,
+              { type: "text" }
+            >[]
+            const files = msg.parts.filter((part) => part.type === "file") as Extract<
+              MessageV2.Part,
+              { type: "file" }
+            >[]
+            const joined = texts.map((p) => p.text).join("\n")
+            expect(joined).not.toContain("Called the Read tool")
             expect(files).toHaveLength(1)
-            expect(files[0]?.type === "file" && files[0].url.startsWith("data:image/")).toBe(true)
-            expect(files[0]?.type === "file" && files[0].filename).toBe("team.png")
-            const envelope = msg.parts.find((part) => part.type === "text" && part.text.includes("Files mentioned by the user"))
-            expect(envelope?.type === "text" && envelope.synthetic).toBe(true)
+            expect(files[0]!.url.startsWith("data:image/png;base64,")).toBe(true)
+            expect(files[0]!.mime).toBe("image/png")
+            expect(files[0]!.filename).toBe("team.png")
+            const envelope = texts.find((p) => p.text.includes("Files mentioned by the user"))
+            expect(envelope).toBeDefined()
+            expect(envelope!.synthetic).toBe(true)
+            expect(envelope!.text).toContain("## My request:")
+            expect(envelope!.text).toContain("- team.png (image/png)")
+            const userText = texts.find((p) => p.text === "这些才是我们团队成员名单")
+            expect(userText).toBeDefined()
+            expect(userText!.synthetic !== true).toBe(true)
+            // Independent parts + order: envelope (synthetic) → user text → file
+            const envIdx = msg.parts.findIndex(
+              (p) => p.type === "text" && p.text.includes("Files mentioned by the user"),
+            )
+            const userIdx = msg.parts.findIndex((p) => p.type === "text" && p.text === "这些才是我们团队成员名单")
+            const fileIdx = msg.parts.findIndex((p) => p.type === "file" && p.filename === "team.png")
+            expect(envIdx).toBeGreaterThanOrEqual(0)
+            expect(userIdx).toBeGreaterThan(envIdx)
+            expect(fileIdx).toBeGreaterThan(userIdx)
+            yield* sessions.remove(session.id)
+          }),
+        ),
+    })
+  })
+
+  test("[TP-R3-07] envelope lists multiple images and sits before user text", async () => {
+    await using tmp = await tmpdir({
+      git: true,
+      config: { agent: { build: { model: "openai/gpt-5.2" } } },
+      init: async (dir) => {
+        const png = new PNG({ width: 2, height: 2 })
+        png.data.fill(160)
+        await Bun.write(path.join(dir, "a.png"), PNG.sync.write(png))
+        await Bun.write(path.join(dir, "b.png"), PNG.sync.write(png))
+      },
+    })
+    await Instance.provide({
+      directory: tmp.path,
+      fn: () =>
+        run(
+          Effect.gen(function* () {
+            const prompt = yield* SessionPrompt.Service
+            const sessions = yield* Session.Service
+            const session = yield* sessions.create({})
+            const msg = yield* prompt.prompt({
+              sessionID: session.id,
+              agent: "build",
+              noReply: true,
+              parts: [
+                { type: "text", text: "对比这两张图" },
+                { type: "file", mime: "image/png", url: `file://${path.join(tmp.path, "a.png")}`, filename: "a.png" },
+                { type: "file", mime: "image/png", url: `file://${path.join(tmp.path, "b.png")}`, filename: "b.png" },
+              ],
+            })
+            if (msg.info.role !== "user") throw new Error("expected user message")
+            const texts = msg.parts.filter((p) => p.type === "text") as Extract<MessageV2.Part, { type: "text" }>[]
+            const env = texts.find((p) => p.synthetic === true && p.text.includes("Files mentioned by the user"))
+            expect(env).toBeDefined()
+            expect(env!.text).toContain("- a.png (image/png)")
+            expect(env!.text).toContain("- b.png (image/png)")
+            const files = msg.parts.filter((p) => p.type === "file") as Extract<MessageV2.Part, { type: "file" }>[]
+            expect(files).toHaveLength(2)
+            expect(files.every((f) => f.url.startsWith("data:image/png;base64,"))).toBe(true)
+            const envIdx = msg.parts.findIndex((p) => p.type === "text" && p.text.includes("## My request:"))
+            const userIdx = msg.parts.findIndex((p) => p.type === "text" && p.text === "对比这两张图")
+            expect(userIdx).toBeGreaterThan(envIdx)
+            yield* sessions.remove(session.id)
+          }),
+        ),
+    })
+  })
+
+  test("[TP-R3-07] empty body + only image keeps message and injects envelope", async () => {
+    await using tmp = await tmpdir({
+      git: true,
+      config: { agent: { build: { model: "openai/gpt-5.2" } } },
+      init: async (dir) => {
+        const png = new PNG({ width: 2, height: 2 })
+        png.data.fill(90)
+        await Bun.write(path.join(dir, "only.png"), PNG.sync.write(png))
+      },
+    })
+    await Instance.provide({
+      directory: tmp.path,
+      fn: () =>
+        run(
+          Effect.gen(function* () {
+            const prompt = yield* SessionPrompt.Service
+            const sessions = yield* Session.Service
+            const session = yield* sessions.create({})
+            const msg = yield* prompt.prompt({
+              sessionID: session.id,
+              agent: "build",
+              noReply: true,
+              parts: [
+                { type: "file", mime: "image/png", url: `file://${path.join(tmp.path, "only.png")}`, filename: "only.png" },
+              ],
+            })
+            if (msg.info.role !== "user") throw new Error("expected user message")
+            expect(msg.parts.length).toBeGreaterThan(0)
+            const texts = msg.parts.filter((p) => p.type === "text") as Extract<MessageV2.Part, { type: "text" }>[]
+            const env = texts.find((p) => p.synthetic === true && p.text.includes("Files mentioned by the user"))
+            expect(env).toBeDefined()
+            expect(env!.text).toContain("- only.png (image/png)")
+            const files = msg.parts.filter((p) => p.type === "file") as Extract<MessageV2.Part, { type: "file" }>[]
+            expect(files).toHaveLength(1)
+            expect(files[0]!.url.startsWith("data:image/png;base64,")).toBe(true)
+            yield* sessions.remove(session.id)
+          }),
+        ),
+    })
+  })
+
+  test("[TP-R3-07] data:image user input still gets Codex envelope", async () => {
+    await using tmp = await tmpdir({
+      git: true,
+      config: { agent: { build: { model: "openai/gpt-5.2" } } },
+    })
+    const png = new PNG({ width: 1, height: 1 })
+    png.data.fill(10)
+    const b64 = Buffer.from(PNG.sync.write(png)).toString("base64")
+    await Instance.provide({
+      directory: tmp.path,
+      fn: () =>
+        run(
+          Effect.gen(function* () {
+            const prompt = yield* SessionPrompt.Service
+            const sessions = yield* Session.Service
+            const session = yield* sessions.create({})
+            const msg = yield* prompt.prompt({
+              sessionID: session.id,
+              agent: "build",
+              noReply: true,
+              parts: [
+                { type: "text", text: "看这张图" },
+                { type: "file", mime: "image/png", url: `data:image/png;base64,${b64}`, filename: "pasted.png" },
+              ],
+            })
+            if (msg.info.role !== "user") throw new Error("expected user message")
+            const texts = msg.parts.filter((p) => p.type === "text") as Extract<MessageV2.Part, { type: "text" }>[]
+            const env = texts.find((p) => p.synthetic === true && p.text.includes("Files mentioned by the user"))
+            expect(env).toBeDefined()
+            expect(env!.text).toContain("- pasted.png (image/png)")
+            expect(texts.map((p) => p.text).join("\n")).not.toContain("Called the Read tool")
             yield* sessions.remove(session.id)
           }),
         ),
