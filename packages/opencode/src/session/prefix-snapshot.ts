@@ -4,6 +4,7 @@ import { asSchema } from "@ai-sdk/provider-utils"
 import { Effect } from "effect"
 import { and, Database, eq } from "@/storage"
 import type { Permission } from "@/permission"
+import { MCP_TOOL_SEARCH_ID } from "@/tool/mcp-tool-search"
 import type { MessageID, SessionID } from "./schema"
 import { SessionPrefixSnapshotTable, type SessionPrefixToolSnapshot } from "./session.sql"
 
@@ -80,6 +81,41 @@ export function restoreTools(items: SessionPrefixToolSnapshot[]) {
       }),
     ]),
   )
+}
+
+export function advertisePinned(
+  live: Record<string, AITool>,
+  liveActive: string[],
+  frozen: SessionPrefixToolSnapshot[] | null | undefined,
+) {
+  if (frozen == null) return { tools: live, activeTools: liveActive }
+  const restored = restoreTools(frozen)
+  const tools: Record<string, AITool> = {}
+  for (const item of frozen) {
+    const pinned = restored[item.name]
+    const current = live[item.name]
+    if (current && pinned) {
+      tools[item.name] = { ...current, description: pinned.description, inputSchema: pinned.inputSchema }
+      continue
+    }
+    if (current) {
+      tools[item.name] = current
+      continue
+    }
+    if (pinned) tools[item.name] = pinned
+  }
+  for (const [name, item] of Object.entries(live)) {
+    if (tools[name]) continue
+    tools[name] = item
+  }
+  const frozenNames = frozen.map((item) => item.name).filter((name) => tools[name])
+  const frozenSet = new Set(frozenNames)
+  const allowSearchExtras = frozenSet.has(MCP_TOOL_SEARCH_ID)
+  const extras = liveActive.filter((name) => {
+    if (frozenSet.has(name) || !tools[name]) return false
+    return name === "StructuredOutput" || allowSearchExtras
+  })
+  return { tools, activeTools: [...frozenNames, ...extras] }
 }
 
 export const get = Effect.fn("SessionPrefixSnapshot.get")(function* (sessionID: SessionID, key: string) {

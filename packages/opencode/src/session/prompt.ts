@@ -4627,12 +4627,9 @@ NOTE: At any point in time through this workflow you should feel free to ask the
                 ...(Flag.MIMOCODE_DISABLE_INSTRUCTIONS ? [] : instructions.content),
               ]
             })
-            // Note: `buildLLMRequestPrefix` also returns a `tools` field, but we
-            // intentionally don't use it here — the `tools` variable from `resolveTools`
-            // (set earlier via `handle.process({tools: ...})`) carries `execute` closures
-            // the AI SDK needs for runtime tool dispatch, while `buildLLMRequestPrefix`
-            // produces schema-only tools. Schema bytes match between both paths (both call
-            // registry.tools with identical args), so prefix cache parity holds.
+            // `buildLLMRequestPrefix` tools are schema-only; dispatch uses resolveTools
+            // execute closures. After the first pin, advertised schemas stay frozen so
+            // MCP catalog drift cannot miss the prefix cache.
             // Main runLoop: no watermark — LLM must see the full msgs list,
             // including this turn's intermediate assistant turns (tool reads,
             // task creates, etc.) so each step doesn't replay from the bare
@@ -4653,42 +4650,23 @@ NOTE: At any point in time through this workflow you should feel free to ask the
               Effect.provideService(LLM.Service, llm),
               Effect.provideService(ToolRegistry.Service, registry),
             )
-            const currentToolsHash = SessionPrefixSnapshot.toolsHash(tools, activeTools)
-            const currentTools = yield* Effect.promise(() => SessionPrefixSnapshot.snapshotTools(tools, activeTools))
             const resolvedPrefix = yield* Effect.gen(function* () {
-              if (!frozen) {
-                const snapshot = yield* SessionPrefixSnapshot.pin({
-                  sessionID,
-                  profileKey: prefixProfileKey,
-                  system: initialPrefix.system,
-                  toolsHash: currentToolsHash,
-                  tools: currentTools,
-                  watermarkMessageID: lastUser.id,
-                })
-                return { prefix: initialPrefix, snapshot }
+              if (frozen) {
+                return {
+                  prefix: initialPrefix,
+                  snapshot: frozen,
+                  ...SessionPrefixSnapshot.advertisePinned(tools, activeTools, frozen.tools),
+                }
               }
-              if (frozen.tools && frozen.tools_hash === currentToolsHash) return { prefix: initialPrefix, snapshot: frozen }
-              const prefix = yield* buildLLMRequestPrefix({
-                sessionID,
-                agent,
-                model,
-                msgs,
-                additions: yield* currentAdditions(),
-                prompt: sessionPrompt,
-                collapseCheckpointTail: true,
-              }).pipe(
-                Effect.provideService(LLM.Service, llm),
-                Effect.provideService(ToolRegistry.Service, registry),
-              )
-              const snapshot = yield* SessionPrefixSnapshot.rotate({
+              const snapshot = yield* SessionPrefixSnapshot.pin({
                 sessionID,
                 profileKey: prefixProfileKey,
-                system: prefix.system,
-                toolsHash: currentToolsHash,
-                tools: currentTools,
+                system: initialPrefix.system,
+                toolsHash: SessionPrefixSnapshot.toolsHash(tools, activeTools),
+                tools: yield* Effect.promise(() => SessionPrefixSnapshot.snapshotTools(tools, activeTools)),
                 watermarkMessageID: lastUser.id,
               })
-              return { prefix, snapshot }
+              return { prefix: initialPrefix, snapshot, tools, activeTools }
             })
             const prebuiltSystem = resolvedPrefix.prefix.system
             const modelMsgs = resolvedPrefix.prefix.inheritedMessages
@@ -4708,8 +4686,8 @@ NOTE: At any point in time through this workflow you should feel free to ask the
               prebuiltSystem,
               messages: [...modelMsgs, ...(isLastStep ? [{ role: "user" as const, content: MAX_STEPS }] : [])],
               mergeTurnContextIntoLastUser: true,
-              tools,
-              activeTools,
+              tools: resolvedPrefix.tools,
+              activeTools: resolvedPrefix.activeTools,
               model,
               toolChoice: isLastStep ? ("none" as const) : format.type === "json_schema" ? ("required" as const) : undefined,
               agentID: lastUser.agentID,
