@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, test } from "bun:test"
+import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test"
 import { Effect, Layer } from "effect"
 import { eq } from "drizzle-orm"
 import { Database } from "../../src/storage"
@@ -187,6 +187,9 @@ async function prepareMigration() {
       new URL("../../migration/20260915010000_history_chunk_bodies/migration.sql", import.meta.url),
     ).text(),
   )
+  db.$client.exec(
+    await Bun.file(new URL("../../migration/20260916000000_history_single_row_index/migration.sql", import.meta.url)).text(),
+  )
   return db
 }
 function finish(db: ReturnType<typeof Database.Client>) {
@@ -205,6 +208,75 @@ function textParts(count: number) {
     text: `searchable${i}`,
   }))
 }
+
+test.each(["clean", "repair"] as const)("%s yields at its time budget and resumes without losing original content", async (phase) => {
+  const parts = textParts(6)
+  parts[0]!.text = "sourceword\n" + ("x".repeat(100) + "\n").repeat(1000)
+  seed(parts)
+  const db = Database.Client()
+  for (const part of parts) {
+    for (let index = 0; index < 2; index++) {
+      db.insert(HistoryFtsTable).values({
+        part_id: `${part.part_id}#${index}`, session_id: part.session_id,
+        message_id: part.message_id, project_id: "proj_ses_compat", body: "stalechunk", time_created: 1,
+      }).run()
+    }
+  }
+  await prepareMigration()
+  db.update(HistoryIndexMigrationTable).set({ phase, cursor: 0 })
+    .where(eq(HistoryIndexMigrationTable.version, MIGRATION_VERSION)).run()
+  let clock = 0
+  const now = spyOn(performance, "now").mockImplementation(() => clock += 10)
+  try {
+    expect(migrateIndexBatch(db)).toBe(true)
+  } finally {
+    now.mockRestore()
+  }
+  const state = db.select().from(HistoryIndexMigrationTable)
+    .where(eq(HistoryIndexMigrationTable.version, MIGRATION_VERSION)).get()!
+  expect(state.phase).toBe(phase)
+  expect(state.cursor).toBe(1)
+  finish(db)
+  const rows = db.select().from(HistoryFtsTable).all()
+  expect(rows).toHaveLength(parts.length)
+  expect(rows.map((row) => row.part_id).sort()).toEqual(parts.map((part) => part.part_id).sort())
+  expect(rows.find((row) => row.part_id === "part_0")!.body).toContain("sourceword")
+  expect(rows.every((row) => !row.body.includes("stalechunk"))).toBe(true)
+  expect(Buffer.byteLength(rows.find((row) => row.part_id === "part_0")!.body)).toBeLessThanOrEqual(51_600)
+  expect(db.$client.prepare("SELECT data FROM part WHERE id=?").get("part_0"))
+    .toEqual({ data: JSON.stringify({ type: "text", text: parts[0]!.text }) })
+})
+
+test("background migration delays startup, rests after expensive work and cancels on close", () => {
+  Database.close()
+  const scheduled: { run: () => void; delay: number }[] = []
+  const timeout = spyOn(globalThis, "setTimeout").mockImplementation(((run: () => void, delay: number) => {
+    scheduled.push({ run, delay })
+    return { unref() { return this } }
+  }) as typeof setTimeout)
+  let clock = 0
+  const now = spyOn(performance, "now").mockImplementation(() => clock += 10)
+  try {
+    const db = Database.Client()
+    seed(textParts(6))
+    db.update(HistoryIndexMigrationTable).set({ phase: "repair", cursor: 0, part_end: 6 })
+      .where(eq(HistoryIndexMigrationTable.version, MIGRATION_VERSION)).run()
+    expect(scheduled).toHaveLength(1)
+    expect(scheduled[0]!.delay).toBeGreaterThanOrEqual(1000)
+    scheduled[0]!.run()
+    expect(scheduled).toHaveLength(2)
+    // 30ms measured work -> at least 570ms rest; a fixed 10ms retry fails this.
+    expect(scheduled[1]!.delay).toBeGreaterThanOrEqual(570)
+    expect(db.select().from(HistoryIndexMigrationTable)
+      .where(eq(HistoryIndexMigrationTable.version, MIGRATION_VERSION)).get()!.cursor).toBe(1)
+    Database.close()
+    expect(() => scheduled[1]!.run()).not.toThrow()
+    expect(scheduled).toHaveLength(2)
+  } finally {
+    now.mockRestore()
+    timeout.mockRestore()
+  }
+})
 
 // A partially populated index still needs recovery.
 test("repairs missing rows and replaces stale content from original parts", async () => {
@@ -242,16 +314,21 @@ test("failed batch rolls back index writes and cursor; resumes without revisitin
   seed(textParts(300))
   const db = await prepareMigration()
   migrateIndexBatch(db) // clean -> repair
-  migrateIndexBatch(db) // first 128 rows
+  migrateIndexBatch(db) // commit the first time-bounded batch
   const before = db.select().from(HistoryIndexMigrationTable).where(eq(HistoryIndexMigrationTable.version, MIGRATION_VERSION)).get()
   db.$client.exec(
-    "CREATE TRIGGER fail_history BEFORE INSERT ON history_fts WHEN NEW.part_id = 'part_200' BEGIN SELECT RAISE(ABORT, 'test failure'); END",
+    `CREATE TRIGGER fail_history BEFORE INSERT ON history_fts WHEN NEW.part_id = 'part_${before!.cursor + 1}' BEGIN SELECT RAISE(ABORT, 'test failure'); END`,
   )
-  expect(() => migrateIndexBatch(db)).toThrow("test failure")
+  const now = spyOn(performance, "now").mockReturnValue(0)
+  try {
+    expect(() => migrateIndexBatch(db)).toThrow("test failure")
+  } finally {
+    now.mockRestore()
+  }
   expect(db.select().from(HistoryIndexMigrationTable).where(eq(HistoryIndexMigrationTable.version, MIGRATION_VERSION)).get()).toEqual(
     before,
   )
-  expect(db.select().from(HistoryFtsTable).all()).toHaveLength(128)
+  expect(db.select().from(HistoryFtsTable).all()).toHaveLength(before!.cursor)
   db.$client.exec("DROP TRIGGER fail_history")
   // If the committed prefix were visited again, corrupt JSON would fail extraction.
   db.$client.exec("DELETE FROM history_fts WHERE part_id = 'part_0'")
@@ -291,7 +368,10 @@ for (const count of [0, 300]) {
     expect(second.before).toEqual(first.after)
     expect(second.after.phase).toBe("done")
     expect((await run()).batches).toBe(0)
-    if (count) expect(first.after.cursor).toBe(128)
+    if (count) {
+      expect(first.after.cursor).toBeGreaterThan(0)
+      expect(first.after.cursor).toBeLessThanOrEqual(32)
+    }
   })
 }
 
@@ -302,7 +382,7 @@ it.live("database startup finishes once and directory initialization does not re
       Database.close()
       const db = Database.Client()
       for (let i = 0; i < 20; i++) startIndexMigration(db)
-      yield* Effect.sleep("100 millis")
+      yield* Effect.sleep("1500 millis")
       expect(
         db.select().from(HistoryIndexMigrationTable).where(eq(HistoryIndexMigrationTable.version, MIGRATION_VERSION)).get()?.phase,
       ).toBe("done")
@@ -395,7 +475,7 @@ test("completed version 3 indexes gain omitted content in version 4 only once", 
     })
     .run()
   db.$client.exec(
-    "UPDATE history_index_migration SET phase='done' WHERE version=3; DELETE FROM history_index_migration WHERE version=4 OR version=5",
+    "UPDATE history_index_migration SET phase='done' WHERE version=3; DELETE FROM history_index_migration WHERE version=4 OR version=5 OR version=6",
   )
   db.$client.exec(
     await Bun.file(
@@ -406,6 +486,9 @@ test("completed version 3 indexes gain omitted content in version 4 only once", 
     await Bun.file(
       new URL("../../migration/20260915010000_history_chunk_bodies/migration.sql", import.meta.url),
     ).text(),
+  )
+  db.$client.exec(
+    await Bun.file(new URL("../../migration/20260916000000_history_single_row_index/migration.sql", import.meta.url)).text(),
   )
   finish(db)
   for (const word of ["inputneedle", "outputneedle", "reasonneedle"]) {

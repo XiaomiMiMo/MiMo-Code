@@ -1,9 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test"
+import type { SQLQueryBindings } from "bun:sqlite"
 import { Database } from "../../src/storage"
 import { HistoryFtsTable } from "../../src/history/fts.sql"
 import { MessageTable, PartTable, SessionTable } from "../../src/session/session.sql"
 import { ProjectTable } from "../../src/project/project.sql"
-import { deleteHistoryRows, upsertHistoryBody } from "../../src/history/chunk-write"
+import { chunkRowFilter, deleteHistoryRows, upsertHistoryBody } from "../../src/history/chunk-write"
 import { extract } from "../../src/history/extract"
 import { MAX_BYTES } from "../../src/tool/truncate"
 
@@ -30,6 +31,36 @@ function seedProject() {
 }
 
 describe("history upsert truncation 兜底", () => {
+  it.each([48_001, 51_200, 980_000])("writes exactly one truncated row for %i characters", (length) => {
+    const db = Database.Client()
+    upsertHistoryBody(db, {
+      part_id: "prt_single", session_id: "ses_a", message_id: "msg_1",
+      project_id: "p", tool_name: null, body: "x".repeat(length), time_created: 1,
+    })
+    const rows = db.select().from(HistoryFtsTable).all()
+    expect(rows).toHaveLength(1)
+    expect(rows[0]!.part_id).toBe("prt_single")
+    expect(Buffer.byteLength(rows[0]!.body)).toBeLessThanOrEqual(MAX_BYTES + 400)
+  })
+
+  it("indexed legacy cleanup preserves adjacent ids and literal wildcard characters", () => {
+    const db = Database.Client()
+    const base = "prt_under_%score"
+    const keep = [base + "0", base + "$", "prt_under_Xscore#0", "prt_under_%scor#0"]
+    for (const id of [base, base + "#0", base + "#12", ...keep]) {
+      db.insert(HistoryFtsTable).values({
+        part_id: id, session_id: "ses_a", message_id: "msg_1", project_id: "p",
+        body: "legacy", time_created: 1,
+      }).run()
+    }
+    const query = db.delete(HistoryFtsTable).where(chunkRowFilter(base)).toSQL()
+    const plan = db.$client.prepare("EXPLAIN QUERY PLAN " + query.sql).all(...query.params as SQLQueryBindings[]) as { detail: string }[]
+    expect(plan.some((row) => /SCAN history_fts/.test(row.detail))).toBe(false)
+    expect(plan.some((row) => /SEARCH history_fts.*INDEX/.test(row.detail))).toBe(true)
+    deleteHistoryRows(db, base + "#1")
+    expect(db.select().from(HistoryFtsTable).all().map((row) => row.part_id).sort()).toEqual(keep.sort())
+  })
+
   it("upsertHistoryBody truncates oversized body via tool-result preview path", () => {
     seedProject()
     const huge = "find-result\n".repeat(20_000) + "END_MARKER"

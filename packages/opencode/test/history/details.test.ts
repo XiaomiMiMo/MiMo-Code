@@ -377,7 +377,7 @@ it.live("all part details remain readable and v4 adds every searchable variant t
       seed(partExamples.map(({ data }) => data))
       const db = Database.Client()
       db.$client.exec(
-        "UPDATE history_index_migration SET phase='done' WHERE version=3; DELETE FROM history_index_migration WHERE version=4 OR version=5",
+        "UPDATE history_index_migration SET phase='done' WHERE version=3; DELETE FROM history_index_migration WHERE version=4 OR version=5 OR version=6",
       )
       const migration = yield* Effect.promise(() =>
         Bun.file(new URL("../../migration/20260914040000_history_part_content/migration.sql", import.meta.url)).text(),
@@ -388,6 +388,11 @@ it.live("all part details remain readable and v4 adds every searchable variant t
           Bun.file(
             new URL("../../migration/20260915010000_history_chunk_bodies/migration.sql", import.meta.url),
           ).text(),
+        ),
+      )
+      db.$client.exec(
+        yield* Effect.promise(() =>
+          Bun.file(new URL("../../migration/20260916000000_history_single_row_index/migration.sql", import.meta.url)).text(),
         ),
       )
       let batches = 0

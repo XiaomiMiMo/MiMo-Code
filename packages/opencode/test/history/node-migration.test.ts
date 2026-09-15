@@ -27,6 +27,19 @@ test("Node migration updates the trigger to delete chunked history rows", () => 
       name: "20260915010000_history_chunk_bodies",
     }])
     assert.equal(sqlite.prepare("SELECT phase FROM history_index_migration WHERE version=5").get().phase, "clean")
+    sqlite.exec("UPDATE history_index_migration SET phase='done', cursor=42 WHERE version=5")
+    migrate(drizzle({ client: sqlite }), [{
+      sql: readFileSync("migration/20260916000000_history_single_row_index/migration.sql", "utf8"),
+      timestamp: 1789516800000,
+      name: "20260916000000_history_single_row_index",
+    }])
+    assert.equal(sqlite.prepare("SELECT phase FROM history_index_migration WHERE version=6").get().phase, "clean")
+    assert.equal(sqlite.prepare("SELECT cursor FROM history_index_migration WHERE version=5").get().cursor, 42)
+    const trigger = sqlite.prepare("SELECT sql FROM sqlite_master WHERE name='history_part_ad'").get().sql
+    const deletion = trigger.slice(trigger.indexOf("DELETE FROM"), trigger.lastIndexOf("END")).replaceAll("OLD.id", "'prt_under_score'")
+    const plan = sqlite.prepare("EXPLAIN QUERY PLAN " + deletion).all()
+    assert(!plan.some(row => /SCAN history_fts/.test(row.detail)))
+    assert(plan.some(row => /SEARCH history_fts.*INDEX/.test(row.detail)))
     sqlite.prepare("DELETE FROM part WHERE id=?").run("prt_under_score")
     assert.deepEqual(sqlite.prepare("SELECT part_id FROM history_fts").all().map(row => row.part_id), ["prt_other#0"])
     sqlite.close()

@@ -1,7 +1,7 @@
 import { test, expect } from "bun:test"
 import { extract } from "../../src/history/extract"
 
-test("extract tool output does not pre-clean media (cleaning is per-chunk)", () => {
+test("extract tool output does not pre-clean media (cleaning happens before index write)", () => {
   const part = {
     type: "tool",
     tool: "bash",

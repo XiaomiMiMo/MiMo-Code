@@ -117,7 +117,7 @@ export const layer = Layer.effect(
 
       const whereClause = conditions.length > 0 ? `AND ${conditions.join(" AND ")}` : ""
       // Over-fetch: chunked parts may contribute multiple FTS rows; dedupe after LIMIT
-      // would drop distinct parts. CHUNK_MAX=24, so limit*24 is the worst-case window.
+      // would drop distinct parts during legacy cleanup. Old writers capped chunks at 24.
       const fetchLimit = Math.min(limit * 24, HARD_CAP * 24)
       const sqlText = `
         SELECT history_fts.part_id, history_fts.session_id, history_fts.message_id,
