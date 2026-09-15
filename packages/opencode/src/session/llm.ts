@@ -652,9 +652,7 @@ const live: Layer.Layer<
         workflowModel.sessionID = input.sessionID
         workflowModel.systemPrompt = system.join("\n")
         workflowModel.toolExecutor = async (toolName, argsJson, _requestID) => {
-          const registered = Object.keys(tools)
-          const resolvedName = ToolCompat.resolveName(toolName, registered) ?? toolName
-          const t = tools[resolvedName]
+          const t = tools[toolName]
           if (!t || !t.execute) {
             return { result: "", error: `Unknown tool: ${toolName}` }
           }

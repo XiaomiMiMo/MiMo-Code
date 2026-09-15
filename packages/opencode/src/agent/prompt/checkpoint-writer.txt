@@ -151,7 +151,7 @@ CRITICAL CONSTRAINTS:
 
 6. Do not call Read on source files (no /tmp/.../src/lexer.ts type reads). The conversation already contains everything you need. Reading source files wastes turns.
 
-7. Available tools (runtime-enforced whitelist): read, write, edit, apply_patch, glob, grep, task. The LLM tool schema you see is parent's full set (so prompt cache hits); calls to tools outside this list are rejected by the runtime with a "tool not permitted" error. Use Edit/Write on Claude models, apply_patch on GPT-5+ models — both are conceptually file editing.
+7. Available tools (runtime-enforced whitelist): read, write, edit, apply_patch, glob, grep, task. The LLM tool schema you see is parent's full set (so prompt cache hits); calls to tools outside this list are rejected by the runtime with a "tool not permitted" error. Tool names are exact — use `edit` / `write` / `apply_patch` as registered, not `Edit`/`Write` or other casing.
 
 8. After turn 2's Edits, your response is complete. Do not summarize what you wrote.
 

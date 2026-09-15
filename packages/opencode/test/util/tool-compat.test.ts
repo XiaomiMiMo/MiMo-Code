@@ -1,11 +1,10 @@
-import { afterEach, beforeEach, describe, expect, test } from "bun:test"
+import { describe, expect, test } from "bun:test"
 import type { JSONSchema7 } from "@ai-sdk/provider"
 import {
   canonical,
   normalizeInput,
   parseToolInput,
   repairToolCall,
-  resolveName,
 } from "../../src/util/tool-compat"
 
 describe("util.tool-compat", () => {
@@ -18,84 +17,6 @@ describe("util.tool-compat", () => {
       expect(canonical("ApplyPatch")).toBe("applypatch")
       expect(canonical("read")).toBe("read")
       expect(canonical("Read")).toBe("read")
-    })
-  })
-
-  describe("resolveName", () => {
-    const tools = ["read", "write", "apply_patch", "multi_edit"] as const
-
-    test("returns exact matches unchanged", () => {
-      expect(resolveName("read", tools)).toBe("read")
-      expect(resolveName("apply_patch", tools)).toBe("apply_patch")
-    })
-
-    test("matches PascalCase and camelCase tool names", () => {
-      expect(resolveName("Read", tools)).toBe("read")
-      expect(resolveName("ApplyPatch", tools)).toBe("apply_patch")
-      expect(resolveName("MultiEdit", tools)).toBe("multi_edit")
-    })
-
-    test("returns undefined for unknown tools", () => {
-      expect(resolveName("grep", tools)).toBeUndefined()
-    })
-
-    test("resolves MCP-prefixed names to the registered catalog name", () => {
-      const mcpTools = ["feishu-mcp-pro_doc_read"] as const
-
-      expect(resolveName("mcp__feishu-mcp-pro__doc_read", mcpTools)).toBe("feishu-mcp-pro_doc_read")
-      expect(resolveName("mcp__feishu_mcp_pro__doc_read", mcpTools)).toBe("feishu-mcp-pro_doc_read")
-    })
-
-    test("prefers an exact match over an earlier case-insensitive one", () => {
-      expect(resolveName("Read", ["Read", "read"])).toBe("Read")
-      expect(resolveName("read", ["Read", "read"])).toBe("read")
-    })
-
-    test("prefers a case-insensitive match over an earlier canonical one", () => {
-      expect(resolveName("apply_patch", ["applyPatch", "Apply_Patch"])).toBe("Apply_Patch")
-    })
-
-    describe("with MIMOCODE_IGNORE_TOOL_NAME_CASE=false", () => {
-      const previous = process.env["MIMOCODE_IGNORE_TOOL_NAME_CASE"]
-
-      beforeEach(() => {
-        process.env["MIMOCODE_IGNORE_TOOL_NAME_CASE"] = "false"
-      })
-
-      afterEach(() => {
-        if (previous === undefined) delete process.env["MIMOCODE_IGNORE_TOOL_NAME_CASE"]
-        else process.env["MIMOCODE_IGNORE_TOOL_NAME_CASE"] = previous
-      })
-
-      test("still returns exact matches", () => {
-        expect(resolveName("read", tools)).toBe("read")
-        expect(resolveName("apply_patch", tools)).toBe("apply_patch")
-      })
-
-      test("rejects names that only differ by case", () => {
-        expect(resolveName("Read", tools)).toBeUndefined()
-        expect(resolveName("ApplyPatch", tools)).toBeUndefined()
-        expect(resolveName("MultiEdit", tools)).toBeUndefined()
-      })
-
-      test("still repairs separator-only differences", () => {
-        expect(resolveName("apply-patch", tools)).toBe("apply_patch")
-        expect(resolveName("multi edit", tools)).toBe("multi_edit")
-      })
-
-      test("keeps MCP names case-insensitive", () => {
-        const mcpTools = ["feishu-mcp-pro_doc_read"] as const
-
-        expect(resolveName("mcp__feishu-mcp-pro__doc_read", mcpTools)).toBe("feishu-mcp-pro_doc_read")
-        expect(resolveName("mcp__feishu-mcp-pro__Doc_Read", mcpTools)).toBe("feishu-mcp-pro_doc_read")
-        expect(resolveName("mcp__Feishu_MCP_Pro__doc_read", mcpTools)).toBe("feishu-mcp-pro_doc_read")
-      })
-
-      test("keeps MCP-prefixed candidates case-insensitive", () => {
-        const mcpTools = ["mcp__feishu-mcp-pro__doc_read"] as const
-
-        expect(resolveName("feishu_mcp_pro_Doc_Read", mcpTools)).toBe("mcp__feishu-mcp-pro__doc_read")
-      })
     })
   })
 
@@ -221,9 +142,9 @@ describe("util.tool-compat", () => {
       },
     } satisfies JSONSchema7
 
-    test("repairs tool name and input keys together", async () => {
+    test("repairs input keys when the tool name already matches", async () => {
       const repaired = await repairToolCall({
-        toolName: "Read",
+        toolName: "read",
         input: JSON.stringify({ filePath: "/tmp/a.ts" }),
         toolNames: ["read", "write"],
         getSchema: () => readSchema,
@@ -233,6 +154,26 @@ describe("util.tool-compat", () => {
         toolName: "read",
         input: JSON.stringify({ file_path: "/tmp/a.ts" }),
       })
+    })
+
+    test("does not repair a tool name that is not registered exactly", async () => {
+      const schema = {
+        type: "object",
+        properties: {
+          file_path: { type: "string" },
+          replace_all: { type: "boolean" },
+        },
+      } satisfies JSONSchema7
+
+      for (const toolName of ["Edit", "apply-patch", "mcp__feishu-mcp-pro__doc_read"]) {
+        const repaired = await repairToolCall({
+          toolName,
+          input: JSON.stringify({ filePath: "/tmp/a.ts", replace_all: true }),
+          toolNames: ["edit", "apply_patch", "feishu-mcp-pro_doc_read"],
+          getSchema: () => schema,
+        })
+        expect(repaired).toBeUndefined()
+      }
     })
 
     test("returns undefined when nothing changed", async () => {

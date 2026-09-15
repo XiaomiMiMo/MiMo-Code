@@ -775,8 +775,7 @@ export const ToolScriptTool = Tool.define(
             const id = String(name)
             const alias = TOOL_SCRIPT_ALIASES[id as keyof typeof TOOL_SCRIPT_ALIASES]
             const def = byId.get(alias ?? id)
-            const mcpID = def ? undefined : ToolCompat.resolveName(id, [...mcpById.keys()])
-            const mcpDef = mcpID ? mcpById.get(mcpID) : undefined
+            const mcpDef = def ? undefined : mcpById.get(id)
             if (!def && !mcpDef) return Promise.reject(new Error(`unknown tool: ${id}`))
             const toolArgs = id === "exec_command" ? execCommandArgs(args) : args
             calls++

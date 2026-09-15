@@ -1034,7 +1034,7 @@ describe("exec MCP dispatch", () => {
     expect(result.output).toContain("found: hello")
   })
 
-  test("MCP aliases dispatch to the registered catalog tool", async () => {
+  test("MCP tools dispatch only by exact catalog name", async () => {
     const seen: string[] = []
     const mcp = {
       "feishu-mcp-pro_doc_read": fakeMcpTool(async (args) => {
@@ -1042,7 +1042,16 @@ describe("exec MCP dispatch", () => {
         return { output: "read: " + args.document_id, metadata: {}, attachments: [] }
       }),
     }
-    const result = await runToolScript(
+    const exact = await runToolScript(
+      `const r = await tools["feishu-mcp-pro_doc_read"]({ document_id: "exact" }); return r.output`,
+      [],
+      undefined,
+      { mcp },
+    )
+    expect(exact.metadata.status).toBe("completed")
+    expect(exact.output).toContain("read: exact")
+
+    const aliased = await runToolScript(
       `const dashed = await tools["mcp__feishu-mcp-pro__doc_read"]({ document_id: "dash" });
        const underscored = await tools["mcp__feishu_mcp_pro__doc_read"]({ document_id: "underscore" });
        return [dashed.output, underscored.output]`,
@@ -1050,11 +1059,8 @@ describe("exec MCP dispatch", () => {
       undefined,
       { mcp },
     )
-
-    expect(result.metadata.status).toBe("completed")
-    expect(result.output).toContain("read: dash")
-    expect(result.output).toContain("read: underscore")
-    expect(seen).toEqual(["dash", "underscore"])
+    expect(aliased.output.toLowerCase()).toContain("unknown tool")
+    expect(seen).toEqual(["exact"])
   }, 15_000)
 
   test("structuredContent crosses into the guest as parsed `structured`", async () => {

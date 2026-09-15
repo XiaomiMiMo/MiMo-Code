@@ -177,15 +177,6 @@ export const Flag = {
   MIMOCODE_OUTPUT_LENGTH_CONTINUATION_LIMIT: number("MIMOCODE_OUTPUT_LENGTH_CONTINUATION_LIMIT") ?? 3,
   MIMOCODE_INVALID_OUTPUT_CONTINUATION_LIMIT: number("MIMOCODE_INVALID_OUTPUT_CONTINUATION_LIMIT") ?? 2,
   MIMOCODE_TEXT_TOOL_CALL_RETRY_LIMIT: number("MIMOCODE_TEXT_TOOL_CALL_RETRY_LIMIT") ?? 2,
-  // Defaults to true (lenient): a tool call whose name only differs from the
-  // registered one by letter case (`Read` for `read`, `applyPatch` for
-  // `apply_patch`) still resolves instead of failing. Set
-  // MIMOCODE_IGNORE_TOOL_NAME_CASE=false to require exact casing, which leaves
-  // separator-only aliasing (`apply-patch` for `apply_patch`) as the sole
-  // remaining repair.
-  get MIMOCODE_IGNORE_TOOL_NAME_CASE() {
-    return !falsy("MIMOCODE_IGNORE_TOOL_NAME_CASE")
-  },
   // Defaults to false. When enabled, unsigned historical reasoning sent through
   // the Anthropic Messages format receives an empty placeholder signature so it
   // follows the same native thinking-block serialization path as signed content.
