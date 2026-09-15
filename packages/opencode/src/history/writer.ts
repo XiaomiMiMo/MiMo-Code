@@ -1,11 +1,11 @@
 import { Context, Effect, Layer, Queue } from "effect"
-import { Database, eq } from "../storage"
+import { Database } from "../storage"
 import { Bus } from "../bus"
 import { MessageV2 } from "../session/message-v2"
 import { InstanceState } from "../effect"
-import { HistoryFtsTable } from "./fts.sql"
 import { extract } from "./extract"
 import { makeResolver, type Resolver } from "./resolve"
+import { deleteHistoryRows, upsertHistoryBody } from "./chunk-write"
 import { Log } from "../util"
 
 const log = Log.create({ service: "history.writer" })
@@ -28,9 +28,6 @@ export const layer: Layer.Layer<Service, never, Bus.Service> = Layer.effect(
         const queue = yield* Queue.unbounded<Job>()
         const resolver = makeResolver()
 
-        // Use subscribeCallback (synchronous PubSub.subscribe) so subscriptions
-        // are guaranteed live before init() returns. Stream-based subscribe is
-        // lazy (Stream.unwrap) and would race with immediate publishes.
         yield* bus.subscribeCallback(MessageV2.Event.PartUpdated, (evt) => {
           Queue.offerUnsafe(queue, { type: "upsert", part: evt.properties.part, time: evt.properties.time })
         })
@@ -61,38 +58,27 @@ export const layer: Layer.Layer<Service, never, Bus.Service> = Layer.effect(
 
 function handle(job: Job, resolver: Resolver) {
   if (job.type === "delete") {
-    return Effect.sync(() =>
-      Database.use((db) => db.delete(HistoryFtsTable).where(eq(HistoryFtsTable.part_id, job.partID)).run()),
-    )
+    return Effect.sync(() => Database.use((db) => deleteHistoryRows(db, job.partID)))
   }
   return Effect.gen(function* () {
     const part = job.part
     const extracted = extract(part)
-    if (!extracted) return
+    if (!extracted) {
+      Database.use((db) => deleteHistoryRows(db, part.id))
+      return
+    }
+    // Truncation (tool-result path) is applied inside upsertHistoryBody.
     const projectID = yield* resolver.projectID(part.sessionID)
-
     Database.use((db) =>
-      db
-        .insert(HistoryFtsTable)
-        .values({
-          part_id: part.id,
-          session_id: part.sessionID,
-          message_id: part.messageID,
-          project_id: projectID,
-
-          tool_name: extracted.tool_name,
-          body: extracted.body,
-          time_created: job.time,
-        })
-        .onConflictDoUpdate({
-          target: HistoryFtsTable.part_id,
-          set: {
-            tool_name: extracted.tool_name,
-            body: extracted.body,
-            time_created: job.time,
-          },
-        })
-        .run(),
+      upsertHistoryBody(db, {
+        part_id: part.id,
+        session_id: part.sessionID,
+        message_id: part.messageID,
+        project_id: projectID,
+        tool_name: extracted.tool_name,
+        body: extracted.body,
+        time_created: job.time,
+      }),
     )
   })
 }

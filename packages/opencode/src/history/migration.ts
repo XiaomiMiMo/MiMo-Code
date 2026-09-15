@@ -1,18 +1,23 @@
 import { and, asc, eq, gt, lte, sql } from "drizzle-orm"
 import type { Database } from "../storage"
+import type { PartID } from "../session/schema"
 import { PartTable } from "../session/session.sql"
 import { HistoryFtsTable, HistoryIndexMigrationTable as State } from "./fts.sql"
-import { cleanDataUrls } from "./media"
 import { indexImportedParts } from "./import"
+import { basePartId } from "./chunk"
+import { deleteHistoryRows } from "./chunk-write"
 import { Log } from "../util"
 
 const log = Log.create({ service: "history.migration" })
-const version = 4
-const batch = 128
+/** v6: drop legacy chunks/orphans; rebuild one truncated index row per part. */
+const version = 6
+const batch = 32
+const budgetMs = 8
 const jobs = new WeakMap<ReturnType<typeof Database.Client>, AbortController>()
 
 /** One bounded, atomic batch. Other processes reread the cursor under the lock. */
 export function migrateIndexBatch(db: ReturnType<typeof Database.Client>) {
+  const started = performance.now()
   return db.transaction(
     (tx) => {
       const state = tx.select().from(State).where(eq(State.version, version)).get()
@@ -20,30 +25,36 @@ export function migrateIndexBatch(db: ReturnType<typeof Database.Client>) {
       if (state.phase === "clean") {
         const rowid = sql<number>`history_fts.rowid`
         const rows = tx
-          .select({ rowid, id: HistoryFtsTable.part_id, body: HistoryFtsTable.body, source: PartTable.id })
+          .select({ rowid, id: HistoryFtsTable.part_id })
           .from(HistoryFtsTable)
-          .leftJoin(PartTable, eq(PartTable.id, HistoryFtsTable.part_id))
           .where(and(gt(rowid, state.cursor), lte(rowid, state.fts_end)))
           .orderBy(asc(rowid))
           .limit(batch)
           .all()
+        let cursor = state.cursor
         for (const row of rows) {
-          if (row.source === null) {
-            tx.delete(HistoryFtsTable).where(eq(HistoryFtsTable.part_id, row.id)).run()
+          if (cursor !== state.cursor && performance.now() - started >= budgetMs) break
+          cursor = row.rowid
+          const base = basePartId(row.id)
+          if (base !== row.id) {
+            deleteHistoryRows(tx, base)
             continue
           }
-          const body = cleanDataUrls(row.body, undefined, "index")
-          if (body !== row.body)
-            tx.update(HistoryFtsTable).set({ body }).where(eq(HistoryFtsTable.part_id, row.id)).run()
+          const part = tx.select({ id: PartTable.id }).from(PartTable)
+            .where(eq(PartTable.id, base as PartID)).get()
+          if (!part) deleteHistoryRows(tx, base)
         }
-        tx.update(State)
-          .set(rows.length ? { cursor: rows.at(-1)!.rowid } : { phase: "repair", cursor: 0 })
-          .where(eq(State.version, version))
-          .run()
+        if (!rows.length) {
+          tx.update(State).set({ phase: "repair", cursor: 0 }).where(eq(State.version, version)).run()
+          return true
+        }
+        tx.update(State).set({ cursor }).where(eq(State.version, version)).run()
+        if (cursor >= state.fts_end) {
+          tx.update(State).set({ phase: "repair", cursor: 0 }).where(eq(State.version, version)).run()
+        }
         return true
       }
       const rowid = sql<number>`part.rowid`
-      // Bound visited rows as well as writes, even if most parts are already indexed.
       const rows = tx
         .select({ rowid, id: PartTable.id })
         .from(PartTable)
@@ -51,12 +62,14 @@ export function migrateIndexBatch(db: ReturnType<typeof Database.Client>) {
         .orderBy(asc(rowid))
         .limit(batch)
         .all()
-      indexImportedParts(
-        tx,
-        rows.map((row) => row.id),
-      )
+      let cursor = state.cursor
+      for (const row of rows) {
+        if (cursor !== state.cursor && performance.now() - started >= budgetMs) break
+        indexImportedParts(tx, [row.id])
+        cursor = row.rowid
+      }
       tx.update(State)
-        .set(rows.length ? { cursor: rows.at(-1)!.rowid } : { phase: "done" })
+        .set(rows.length ? { cursor } : { phase: "done" })
         .where(eq(State.version, version))
         .run()
       return rows.length > 0
@@ -70,23 +83,31 @@ export function startIndexMigration(db: ReturnType<typeof Database.Client>) {
   const abort = new AbortController()
   jobs.set(db, abort)
   try {
-    if (db.select().from(State).where(eq(State.version, version)).get()?.phase === "done") return
+    const state = db.select().from(State).where(eq(State.version, version)).get()
+    if (state?.phase === "done") return
   } catch (error) {
     log.warn("index migration unavailable", { error: String(error) })
     return
   }
   const run = () => {
     if (abort.signal.aborted) return
+    const started = performance.now()
     try {
-      if (migrateIndexBatch(db)) setTimeout(run, 10).unref()
+      // Target <=5% duty cycle for this migration, including transaction commit.
+      // A synchronous row/commit cannot be preempted; compensate with a longer rest.
+      if (migrateIndexBatch(db)) {
+        const elapsed = performance.now() - started
+        setTimeout(run, Math.max(100, Math.ceil(elapsed * 19))).unref()
+      }
     } catch (error) {
-      // The failed batch rolled back. Resume its durable cursor on next open.
       log.warn("index migration paused", { error: String(error) })
     }
   }
-  setTimeout(run, 0).unref()
+  setTimeout(run, 1000).unref()
 }
 
 export function stopIndexMigration(db: ReturnType<typeof Database.Client>) {
   jobs.get(db)?.abort()
 }
+
+export const MIGRATION_VERSION = version

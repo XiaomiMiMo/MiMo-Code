@@ -1,7 +1,7 @@
 import { MessageV2 } from "../../src/session/message-v2"
 import { partExamples } from "./fixtures/parts"
 import { describe, expect, test } from "bun:test"
-import { extract } from "../../src/history/extract"
+import { extract, extractCleaned } from "../../src/history/extract"
 
 describe("history.extract", () => {
   test("user text is indexed", () => {
@@ -77,7 +77,8 @@ test("image filename and MIME are searchable without binary payload", () => {
       url: "data:image/png;base64,YWJj",
     } as any),
   ).toEqual({ body: "designneedle.png image/png", tool_name: null })
-  const result = extract({
+  // extract() returns raw text; FTS write cleans media per chunk.
+  const raw = extract({
     type: "tool",
     tool: "image",
     state: {
@@ -87,8 +88,19 @@ test("image filename and MIME are searchable without binary payload", () => {
       attachments: [{ filename: "diagramneedle.png", mime: "image/png", url: "data:image/png;base64,YWJj" }],
     },
   } as any)
-  expect(result?.body).toContain("diagramneedle.png")
-  expect(result?.body).not.toContain("YWJj")
+  expect(raw?.body).toContain("diagramneedle.png")
+  const cleaned = extractCleaned({
+    type: "tool",
+    tool: "image",
+    state: {
+      status: "completed",
+      input: {},
+      output: "data:image/png;base64,YWJj",
+      attachments: [{ filename: "diagramneedle.png", mime: "image/png", url: "data:image/png;base64,YWJj" }],
+    },
+  } as any)
+  expect(cleaned?.body).toContain("diagramneedle.png")
+  expect(cleaned?.body).not.toContain("YWJj")
 })
 
 test("every declared part variant has an explicit indexing decision", () => {
@@ -97,7 +109,7 @@ test("every declared part variant has an explicit indexing decision", () => {
   )
   for (const [i, example] of partExamples.entries()) {
     const part = MessageV2.Part.parse({ id: `prt_${i}`, sessionID: "ses_all", messageID: "msg_all", ...example.data })
-    const result = extract(part)
+    const result = extractCleaned(part)
     if (example.query) expect(result?.body).toContain(example.query)
     else expect(result).toBeNull()
     expect(result?.body ?? "").not.toContain("YWJj")
