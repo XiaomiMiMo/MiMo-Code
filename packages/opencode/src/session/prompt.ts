@@ -2,7 +2,7 @@ import path from "path"
 import os from "os"
 import z from "zod"
 import { SessionID, MessageID, PartID } from "./schema"
-import { MessageV2, COMPOSE_REMINDER_MARKER } from "./message-v2"
+import { MessageV2, COMPOSE_REMINDER_MARKER, promoteComposeProtocolFirst } from "./message-v2"
 export { COMPOSE_REMINDER_MARKER }
 import {
   base64ByteSize,
@@ -1214,16 +1214,19 @@ export const layer = Layer.effect(
       message: MessageV2.WithParts
       marker: string
       text: string
-      /** `head` keeps compose protocol first after DB reload; default appends. */
+      /**
+       * `head` promotes the compose protocol to parts[0] for this request.
+       * Durable load-order lives in MessageV2.promoteComposeProtocolFirst
+       * (hydrate/parts); this flag only aligns the in-memory slice before
+       * the first DB reload after inject.
+       */
       position?: "append" | "head"
     }) {
       const existingIdx = input.message.parts.findIndex(
         (p) => p.type === "text" && p.synthetic === true && !p.ignored && p.text.includes(input.marker),
       )
       if (existingIdx >= 0) {
-        if (input.position !== "head" || existingIdx === 0) return
-        const [existing] = input.message.parts.splice(existingIdx, 1)
-        if (existing) input.message.parts.unshift(existing)
+        if (input.position === "head") promoteComposeProtocolFirst(input.message.parts as MessageV2.Part[])
         return
       }
       const part = yield* sessions.updatePart({
@@ -1234,11 +1237,8 @@ export const layer = Layer.effect(
         synthetic: true,
         text: input.text,
       })
-      if (input.position === "head") {
-        input.message.parts.unshift(part)
-        return
-      }
       input.message.parts.push(part)
+      if (input.position === "head") promoteComposeProtocolFirst(input.message.parts as MessageV2.Part[])
     })
 
     const insertReminders = Effect.fn("SessionPrompt.insertReminders")(function* (input: {

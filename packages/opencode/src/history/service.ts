@@ -224,6 +224,9 @@ export const layer = Layer.effect(
         list.push(p)
         byMessage.set(p.message_id, list)
       }
+      // Non-LLM search projection: PartID-asc is fine. Compose head order is a
+      // MessageV2 hydrate invariant for prompt/fork prefixes (see
+      // promoteComposeProtocolFirst); history summaries do not feed those paths.
 
       const out: MessageContext[] = messages.map((m) => {
         const role: "user" | "assistant" = m.role === "user" ? "user" : "assistant"

@@ -739,6 +739,9 @@ export const COMPOSE_REMINDER_MARKER = "MiMoCode Compose Agent"
  * head of the user message for every consumer (runLoop request, checkpoint fork
  * capture, trajectory) or parent/fork prompt prefixes diverge. Promote on hydrate
  * so position is a load-time invariant, not a request-layer compensating projection.
+ *
+ * Mutates `parts` in place (splice/unshift) and returns the same array. Callers
+ * must not share the array with a consumer that requires PartID-asc order.
  */
 export function promoteComposeProtocolFirst(parts: Part[]): Part[] {
   const idx = parts.findIndex(

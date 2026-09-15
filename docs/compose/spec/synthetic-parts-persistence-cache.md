@@ -15,11 +15,11 @@ User selected **Option A** (persist + marker dedupe). Mid-turn `p.text` wrap sta
 **What was built** — Unpersisted user-side synthetic injections in `session/prompt.ts` now follow the harness persist-once contract.
 
 1. **Recall reminder** — `ensurePersistedUserSynthetic` + `RECALL_REMINDER_MARKER`; `hasMemoryOrTasks` only consulted when the marker is absent.
-2. **Loop-streak nudge** — same helper + `LOOP_STREAK_REMINDER_MARKER` (replaces in-memory text check that never saw DB state).
-3. **Compose prompt** — persist + marker; `position: "head"` keeps protocol first after DB reload (PartID order alone would append it after user text).
-4. Exported pure helpers for unit tests: markers, `hasSyntheticReminder`, `buildRecallReminderText`, `buildLoopStreakReminderText`.
+2. **Loop-streak nudge** — same helper + `LOOP_STREAK_REMINDER_MARKER`.
+3. **Compose prompt** — persist + `COMPOSE_REMINDER_MARKER`; durable order via `MessageV2.promoteComposeProtocolFirst` on hydrate/parts load (shared by runLoop, fork capture, trajectory). In-memory `position: "head"` only aligns the same request before the first reload.
+4. Exported pure helpers: markers, `hasSyntheticReminder`, `buildRecallReminderText`, `buildLoopStreakReminderText`; `COMPOSE_REMINDER_MARKER` owned by `message-v2.ts`, re-exported from `prompt.ts` for tests.
 
-Multi-step runLoop reloads `msgs` from DB; marker hit skips re-push → last-user tail order stays stable across steps → provider prompt cache can reuse the prefix. Checkpoint-writer `ForkContext` capture (DB reload) now sees the same persisted parts as the parent request.
+Multi-step runLoop reloads `msgs` from DB; marker hit skips re-push → last-user tail order stays stable. Compose head is a **load-time invariant** (not a per-request compensating projection), so checkpoint-writer `ForkContext` matches the parent request prefix.
 
 **Verification** —
 
@@ -36,8 +36,9 @@ Multi-step runLoop reloads `msgs` from DB; marker hit skips re-push → last-use
 1. User screenshot line numbers `3840-3876` match **origin/main** at analysis time (`e93a49cd`), not the stale main checkout.
 2. Bare `parts.push` is half the user-side reminder contract — `updatePart` + marker dedupe is the other half (auto-worktree / skills / plan).
 3. Cache break was **order instability vs persisted `insertReminders` siblings** + **fork prefix DB reload**, not volatile recall text.
-4. Compose needs `position: "head"` reorder after persist — ascending PartIDs alone put the protocol after user text on reload.
+4. Compose head is closed by `promoteComposeProtocolFirst` at the MessageV2 load boundary — not by request-layer-only reorder.
 5. Mid-turn `p.text` wrap left request-only (intentional step≥2 steering); separate from Option A.
+6. History search (`history/service.ts` PartTable projection) does not promote compose order — non-LLM summary path, accepted boundary.
 
 ## [S1] Problem
 
@@ -58,19 +59,21 @@ Several synthetic injections `parts.push(...)` (or `unshift`) **without** `sessi
 
 **Chosen contract (Option A):** every durable user-side synthetic reminder does `updatePart` once, then dedupes by stable marker substring on re-entry. Same pattern as auto-worktree / skill bodies / plan mode.
 
-`ensurePersistedUserSynthetic` (`prompt.ts` ~1212):
+`ensurePersistedUserSynthetic` (`prompt.ts` ~1213):
 
-- Marker present + `position: "head"` → move that part to index 0 (request-order stability).
+- Marker present + `position: "head"` → `promoteComposeProtocolFirst` on the in-memory parts array.
 - Marker present + append → no-op.
-- Marker absent → `sessions.updatePart` then `push`/`unshift`.
+- Marker absent → `sessions.updatePart`, `push`, then optional promote for head.
+
+`MessageV2.promoteComposeProtocolFirst` (`message-v2.ts` ~735): load-time compose-first invariant applied in `hydrate` and `parts()`. Mutates the parts array in place; DB remains PartID-asc.
 
 Markers:
 
-| Constant | Value | Site |
-|----------|-------|------|
-| `RECALL_REMINDER_MARKER` | `This session has memory at` | recall inject |
-| `LOOP_STREAK_REMINDER_MARKER` | `repeating the same action without making progress` | loop-streak nudge |
-| `COMPOSE_REMINDER_MARKER` | `MiMoCode Compose Agent` | compose protocol |
+| Constant | Value | Owner |
+|----------|-------|-------|
+| `RECALL_REMINDER_MARKER` | `This session has memory at` | `prompt.ts` |
+| `LOOP_STREAK_REMINDER_MARKER` | `repeating the same action without making progress` | `prompt.ts` |
+| `COMPOSE_REMINDER_MARKER` | `MiMoCode Compose Agent` | `message-v2.ts` (re-export from `prompt.ts`) |
 
 `toModelMessagesEffect` still includes non-ignored synthetic text; Desktop UI may hide `synthetic`. DB history now matches the request for these parts → trajectory / fork capture / history reload agree.
 
@@ -89,7 +92,7 @@ Mid-turn `p.text` wrap (`step > 1`) remains request-only: intentional steering t
 |------|--------|-------|
 | Recall | bare push every step | persist + `RECALL_REMINDER_MARKER` |
 | Loop-streak | bare push; in-memory dedupe | persist + `LOOP_STREAK_REMINDER_MARKER` |
-| Compose | unpersisted unshift | persist + marker + head reorder |
+| Compose | unpersisted unshift | persist + marker + hydrate promote to head |
 | Crop / insertReminders / recovery users | already persisted | unchanged |
 | Mid-turn wrap | request-only mutate | unchanged (out of scope) |
 
@@ -110,17 +113,17 @@ Mid-turn `p.text` wrap (`step > 1`) remains request-only: intentional steering t
 - [x] T4: Fork prefix parity — presence via persist; compose position via `promoteComposeProtocolFirst` on hydrate/parts load (covers: S2; depends: T2)
 - [x] T5: CR r1 — explicit `E2E-EXEMPT: pure-logic`; promoteComposeProtocolFirst + unit tests; spec commits base `b4cc11cd` (covers: S2, S4)
 
-## Anchors (origin/main `e93a49cd` at analysis; delivered on feature branch)
+## Anchors (base `b4cc11cd`; delivered on feature branch)
 
-| Symbol | File:line |
-|--------|-----------|
-| Markers + helpers | `packages/opencode/src/session/prompt.ts:177-213` |
-| `ensurePersistedUserSynthetic` | `prompt.ts:1212-1239` |
-| Compose inject | `prompt.ts:1258+` |
-| Recall inject | `prompt.ts:3912-3936` |
-| Loop-streak inject | `prompt.ts:4086-4112` |
-| Mid-turn wrap (unchanged) | `prompt.ts` `step > 1` wrap |
+| Symbol | File |
+|--------|------|
+| Markers + helpers | `packages/opencode/src/session/prompt.ts` (`RECALL_…`, `LOOP_STREAK_…`, re-export `COMPOSE_…`) |
+| `COMPOSE_REMINDER_MARKER` + `promoteComposeProtocolFirst` | `packages/opencode/src/session/message-v2.ts` |
+| `ensurePersistedUserSynthetic` | `packages/opencode/src/session/prompt.ts` (same file, ~1213) |
+| Compose / recall / loop-streak inject | `prompt.ts` `insertReminders` + runLoop |
+| Mid-turn wrap (unchanged, S3) | `prompt.ts` `step > 1` wrap |
 | Tests | `test/session/recall-reminder.test.ts`, `test/session/recall-reminder-persist.test.ts` |
+| History non-promote boundary | `packages/opencode/src/history/service.ts` comment near part assembly |
 
 ## Journey log
 
