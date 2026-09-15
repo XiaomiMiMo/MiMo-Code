@@ -2,7 +2,8 @@ import path from "path"
 import os from "os"
 import z from "zod"
 import { SessionID, MessageID, PartID } from "./schema"
-import { MessageV2 } from "./message-v2"
+import { MessageV2, COMPOSE_REMINDER_MARKER } from "./message-v2"
+export { COMPOSE_REMINDER_MARKER }
 import {
   base64ByteSize,
   classifyAttachment,
@@ -177,9 +178,9 @@ export function recallHintLines(toolCfg: ToolStyleConfig | undefined, hasActor =
 // Stable substring markers for user-side synthetic reminders that must be
 // persisted once per message (runLoop reloads msgs from DB every step; bare
 // parts.push re-attaches a new PartID and reorders the user tail → prompt-cache miss).
+// COMPOSE_REMINDER_MARKER re-exported from message-v2 (hydrate promotes it to head).
 export const RECALL_REMINDER_MARKER = "This session has memory at"
 export const LOOP_STREAK_REMINDER_MARKER = "repeating the same action without making progress"
-export const COMPOSE_REMINDER_MARKER = "MiMoCode Compose Agent"
 
 /** True when `parts` already carries a non-ignored synthetic text reminder containing `marker`. */
 export function hasSyntheticReminder(parts: readonly MessageV2.Part[], marker: string): boolean {

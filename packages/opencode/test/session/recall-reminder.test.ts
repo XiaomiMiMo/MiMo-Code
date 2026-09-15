@@ -8,6 +8,7 @@ import {
   LOOP_STREAK_REMINDER_MARKER,
   COMPOSE_REMINDER_MARKER,
 } from "../../src/session/prompt"
+import { promoteComposeProtocolFirst } from "../../src/session/message-v2"
 import { hasActorTool } from "../../src/agent/config"
 import type { MessageV2 } from "../../src/session/message-v2"
 import type { PartID, SessionID, MessageID } from "../../src/session/schema"
@@ -101,6 +102,26 @@ describe("synthetic reminder markers", () => {
         marker,
       ),
     ).toBe(true)
+  })
+
+  test("promoteComposeProtocolFirst moves compose synthetic to head after DB order", () => {
+    const user = textPart("do the task")
+    const compose = textPart(`\n<system-reminder>\n${COMPOSE_REMINDER_MARKER}...\n`, true)
+    const other = textPart("skill body", true)
+    const texts = (parts: MessageV2.Part[]) =>
+      parts.flatMap((p) => (p.type === "text" ? [p.text] : []))
+    expect(texts(promoteComposeProtocolFirst([user, compose, other]))).toEqual([
+      compose.text,
+      user.text,
+      other.text,
+    ])
+    expect(texts(promoteComposeProtocolFirst([compose, user]))).toEqual([compose.text, user.text])
+    expect(texts(promoteComposeProtocolFirst([user, other]))).toEqual([user.text, other.text])
+  })
+
+  test("buildLoopStreakReminderText marker dedupes via hasSyntheticReminder", () => {
+    const text = buildLoopStreakReminderText(3)
+    expect(hasSyntheticReminder([textPart(text, true)], LOOP_STREAK_REMINDER_MARKER)).toBe(true)
   })
 })
 

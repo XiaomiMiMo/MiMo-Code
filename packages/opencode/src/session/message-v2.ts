@@ -731,6 +731,27 @@ const part = (row: typeof PartTable.$inferSelect) =>
     messageID: row.message_id,
   }) as Part
 
+/** Stable substring for the compose-agent synthetic protocol (request-order head). */
+export const COMPOSE_REMINDER_MARKER = "MiMoCode Compose Agent"
+
+/**
+ * DB orders parts by `PartTable.id` (ascending). Compose protocol must sit at the
+ * head of the user message for every consumer (runLoop request, checkpoint fork
+ * capture, trajectory) or parent/fork prompt prefixes diverge. Promote on hydrate
+ * so position is a load-time invariant, not a request-layer compensating projection.
+ */
+export function promoteComposeProtocolFirst(parts: Part[]): Part[] {
+  const idx = parts.findIndex(
+    (p) => p.type === "text" && p.synthetic === true && !p.ignored && p.text.includes(COMPOSE_REMINDER_MARKER),
+  )
+  if (idx <= 0) return parts
+  const found = parts[idx]
+  if (!found) return parts
+  parts.splice(idx, 1)
+  parts.unshift(found)
+  return parts
+}
+
 const older = (row: Cursor) =>
   or(lt(MessageTable.time_created, row.time), and(eq(MessageTable.time_created, row.time), lt(MessageTable.id, row.id)))
 
@@ -756,7 +777,7 @@ function hydrate(rows: (typeof MessageTable.$inferSelect)[]) {
 
   return rows.map((row) => ({
     info: info(row),
-    parts: partByMessage.get(row.id) ?? [],
+    parts: promoteComposeProtocolFirst(partByMessage.get(row.id) ?? []),
   }))
 }
 
@@ -1185,14 +1206,16 @@ export function parts(message_id: MessageID) {
   const rows = Database.use((db) =>
     db.select().from(PartTable).where(eq(PartTable.message_id, message_id)).orderBy(PartTable.id).all(),
   )
-  return rows.map(
-    (row) =>
-      ({
-        ...row.data,
-        id: row.id,
-        sessionID: row.session_id,
-        messageID: row.message_id,
-      }) as Part,
+  return promoteComposeProtocolFirst(
+    rows.map(
+      (row) =>
+        ({
+          ...row.data,
+          id: row.id,
+          sessionID: row.session_id,
+          messageID: row.message_id,
+        }) as Part,
+    ),
   )
 }
 
