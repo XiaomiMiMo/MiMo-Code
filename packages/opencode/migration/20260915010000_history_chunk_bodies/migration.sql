@@ -3,9 +3,9 @@
 INSERT INTO history_index_migration
 SELECT 5, 'clean', 0,
   COALESCE((SELECT MAX(rowid) FROM history_fts), 0),
-  COALESCE((SELECT MAX(rowid) FROM part), 0);
+  COALESCE((SELECT MAX(rowid) FROM part), 0);--> statement-breakpoint
 
-DROP TRIGGER IF EXISTS `history_part_ad`;
+DROP TRIGGER IF EXISTS `history_part_ad`;--> statement-breakpoint
 CREATE TRIGGER `history_part_ad` AFTER DELETE ON part BEGIN
   DELETE FROM history_fts
   WHERE part_id = OLD.id

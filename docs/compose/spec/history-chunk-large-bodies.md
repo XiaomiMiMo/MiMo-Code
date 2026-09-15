@@ -41,6 +41,7 @@ Tool outputs already have a staged length policy before entering the model (`tru
 - `clean`: drop orphan FTS rows; re-extract oversized bodies (now budgeted)
 - `repair`: re-index all parts via shared upsert
 - Recreate `history_part_ad` for chunk ids
+- Separate the state insert, trigger drop, and trigger creation with Drizzle statement breakpoints so Node SQLite executes all three statements. `test/history/node-migration.test.ts` verifies deletion removes chunk rows while preserving unrelated parts through the actual Node driver.
 
 ## [S3] Out of Scope
 
