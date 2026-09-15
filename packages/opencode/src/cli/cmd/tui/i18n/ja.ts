@@ -215,6 +215,7 @@ export const dict = {
   "tui.slash.distill.description": "最近の作業から繰り返しワークフローを見つけ、skill・サブエージェント・コマンドにパッケージ化",
   "tui.slash.goal.description": "停止条件付きゴールを設定；判定が達成と言うまで実行。/goal clear で中止",
   "tui.slash.deep-research.description": "深い多ソース・ファクトチェック済み調査レポート（deep-research ワークフローを実行）",
+  "tui.slash.grill-me.description": "計画や設計を練り上げるための執拗なインタビュー。",
 
   // Built-in bundled skill descriptions (user-facing, decoupled from SKILL.md description which targets the LLM)
   "tui.skill.docx-official.description": "Microsoft Word (.docx) ファイルの作成・編集・読み取り",
