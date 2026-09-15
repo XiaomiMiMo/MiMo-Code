@@ -180,14 +180,12 @@ export function tui(input: {
                   <UiI18nBridge>
                 <ToastProvider>
                   <RouteProvider
-                    initialRoute={
-                      input.args.continue
-                        ? {
-                            type: "session",
-                            sessionID: "dummy",
-                          }
-                        : undefined
-                    }
+                    // `-c` starts on Home and the resolver effect below
+                    // navigates to the resumed session once the session list
+                    // lands. Seeding a placeholder session route here used to
+                    // mount the session page against an id that cannot exist,
+                    // which rendered black until the real navigation landed.
+                    initialRoute={undefined}
                   >
                     <TuiConfigProvider config={input.config}>
                       <SDKProvider
