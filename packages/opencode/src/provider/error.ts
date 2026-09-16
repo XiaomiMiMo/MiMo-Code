@@ -9,6 +9,8 @@ const RETRYABLE_NETWORK_CODES = new Set([
   "ECONNRESET",
   "EHOSTDOWN",
   "EHOSTUNREACH",
+  "ENETRESET",
+  "ENOTFOUND",
   "EPIPE",
   "ENETDOWN",
   "ENETUNREACH",
@@ -29,6 +31,9 @@ const RETRYABLE_NETWORK_MESSAGES = [
   /network (?:connection|error)/i,
   /response body (?:terminated|closed)/i,
   /socket hang up/i,
+  /getaddrinfo/i,
+  /\bENOTFOUND\b/i,
+  /^Cannot connect to API\b/i,
 ]
 
 export type CauseSummary = {

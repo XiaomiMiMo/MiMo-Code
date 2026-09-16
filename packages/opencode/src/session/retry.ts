@@ -96,18 +96,18 @@ const DEFAULT_RETRY_CONFIG: ResolvedRetryConfig = {
     maxDelayMs: NETWORK_MAX_DELAY_MS,
     jitterRatio: 0,
   },
+  // Recoverable kinds wait with exponential backoff — longer wait raises recovery odds.
+  // They must NOT be short-circuited by phase=request (product: no phase-based kill window).
   server: {
-    mode: "bounded",
-    maxRetries: SERVER_MAX_RETRIES,
-    maxElapsedMs: SERVER_RETRY_DEADLINE_MS,
+    mode: "persistent",
+    maxElapsedMs: 0,
     initialDelayMs: RETRY_INITIAL_DELAY,
     maxDelayMs: RETRY_MAX_DELAY_NO_HEADERS,
     jitterRatio: RETRY_JITTER_RATIO,
   },
   rateLimit: {
-    mode: "bounded",
-    maxRetries: RATE_LIMIT_MAX_RETRIES,
-    maxElapsedMs: SERVER_RETRY_DEADLINE_MS,
+    mode: "persistent",
+    maxElapsedMs: 0,
     initialDelayMs: RETRY_INITIAL_DELAY,
     maxDelayMs: RETRY_MAX_DELAY_MESSAGE,
     jitterRatio: RETRY_JITTER_RATIO,
@@ -159,12 +159,15 @@ export function resolve(config: RetryConfigSource | undefined, providerID?: stri
 }
 
 export function budgetFor(config: ResolvedRetryConfig, decision: RetryDecision): RetryBudget {
-  if (decision.phase === "request") return config.request
-  if (decision.kind === "network") return config.network
+  // max-mode candidate/judge keep their own budgets (not session transport retry).
   if (decision.scope === "max-candidate") return config.maxCandidate
   if (decision.scope === "max-judge") return config.maxJudge
-  if (decision.kind === "server") return config.server
+  // Product contract: network / rate_limit / server are recoverable — persistent exponential
+  // backoff regardless of request vs stream phase. Waiting longer improves recovery odds.
+  if (decision.kind === "network") return config.network
   if (decision.kind === "rate_limit") return config.rateLimit
+  if (decision.kind === "server") return config.server
+  if (decision.phase === "request") return config.request
   if (decision.kind === "unknown") return config.unknown
   return config.stream
 }
