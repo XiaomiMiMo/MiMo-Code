@@ -67,13 +67,20 @@ Persistent network retry 仍受 AbortSignal、进程退出和 provider chunkTime
 
 ## 可观测性
 
-每次实际 retry 发布 session.retry.attempt，包含 phase、scope、kind、attempt、phaseAttempt、maxAttempts、nextDelayMs 和 reason。attempt 是当前 session 跨 request/stream 的连续序号，phaseAttempt 是当前 phase 内的局部序号；attempt counter 独立于 busy/notice 状态，只在 session 回到 idle 时清零。maxAttempts 为 0 表示 persistent retry。terminal UI notice 使用独立的 session status notice，不伪装成 retry attempt。Persistent network retry 不重复创建 transcript message；UI 只更新当前状态。成功、终止、取消都必须清理 retry 状态并回到 idle。
+每次实际 retry 可发布 `Session.Event.RetryAttempt`，包含 phase、scope、kind、attempt、phaseAttempt、maxAttempts、nextDelayMs 和 reason。
+
+- **processor stream 阶段**（`isMain`）：`status.setRetry` 同时维护 session 级 `retryAttempts` 计数并写入 `session.status{type:"retry"}` 的 `attempt`——该计数跨 request/stream 在 **processor 可见 status** 上连续，session 回到 idle 时清零。
+- **llm request 阶段**：只发 `RetryAttempt` 作诊断，**不**写 session.status；其 `attempt`/`phaseAttempt` 是 **phase 局部序号**（每个 processor 外层周期从 1 起），不是 session 全局连续序号。
+
+maxAttempts 为 0 表示 persistent retry。terminal UI notice 使用独立的 session status notice，不伪装成 retry attempt。Persistent network retry 不重复创建 transcript message；UI 只更新当前状态。成功、终止、取消都必须清理 retry 状态并回到 idle。
 
 `session.status{type:"retry"}` 是 **session 维度** 的展示状态，不是 per-model-call 计数。
 
-**发布归属**：`session.status{retry}` 只由 **processor stream 阶段**（`isMain`）通过 `status.setRetry` 发布，对应用户可见等待。`llm.ts` **request 阶段** 退避只发布 `Session.Event.RetryAttempt`（诊断），**不再**写 session.status——否则每个 processor 外层周期会重置 200ms×4 的 request 阶梯，在上游不可达时实测约 32s 内叠满 ~20 条 UI「正在重新连接」帧，观感上完全不像指数退避（非法 baseURL 埋点：`4 request + 1 stream` × 多轮）。
+**发布归属**：`session.status{retry}` 只由 **processor stream 阶段**（`isMain`）通过 `status.setRetry` 发布，对应用户可见等待。`llm.ts` **request 阶段** 退避只发布 `Session.Event.RetryAttempt`（诊断），**不再**写 session.status——否则每个 processor 外层周期会重置 200ms×4 的 request 阶梯，在上游不可达时实测约 32s 内叠满 ~20 条 UI「正在重新连接」帧（`Cannot connect to API` 时 stream 侧按 ~2s 起步的 server/stream 阶梯，多轮 `4 request + 1 stream` 打包），观感上完全不像指数退避。
 
-并行的 propose-only ensemble（max-mode candidates/judge）不得对共享 sessionID 发布该状态：这些 `llm.stream` 必须 `ephemeral: true`。ensemble 内部退避仍走 max-candidate / max-judge budget。
+**request 阶段对 TUI 更安静**：在 request 微退避期间没有 `session.status{retry}`，界面保持 busy，直到 processor stream 重试才出现重连/倒计时。这是 ownership 契约的刻意取舍（用户可见等待 = stream 阶梯），不是回归。
+
+max-mode propose-only ensemble（candidates/judge）共用 sessionID 并行跑 `llm.stream`，但因 request 阶段已不写 session.status，**不需要**也不应设置 `ephemeral`（该标志还会跳过 plugin trigger、session-affinity 头、OTel functionId、system 组装等）。ensemble 内部退避走 max-candidate / max-judge budget + `onRetry`（RetryAttempt）。
 
 ## 兼容性
 

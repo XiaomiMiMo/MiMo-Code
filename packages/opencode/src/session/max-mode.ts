@@ -137,11 +137,10 @@ export const runCandidate = (input: MaxStepInput, index: number): Effect.Effect<
     }
 
     const schemaOnly = toSchemaOnlyTools(input.tools)
-    // Propose-only ensemble draws must NOT drive session.status{retry}. They share
-    // sessionID and run in parallel (default 5); each non-ephemeral llm.stream
-    // publishes request-phase setRetry on the same session, so a network blip
-    // stacks N×requestMax events (~5×4=20) onto one UI "reconnecting" streak.
-    // ephemeral skips status/RetryAttempt publish; local max-candidate backoff still applies.
+    // Propose-only candidates share sessionID and run in parallel, but session.status{retry}
+    // is processor-owned (request-phase llm.stream no longer publishes it). Do NOT set
+    // ephemeral here: that flag also skips plugins, session-affinity headers, OTel
+    // functionId, and system assembly — far more than status publishing.
     const stream = input.llm.stream({
       user: input.user,
       sessionID: input.sessionID,
@@ -155,7 +154,6 @@ export const runCandidate = (input: MaxStepInput, index: number): Effect.Effect<
       tools: schemaOnly,
       activeTools: input.activeTools,
       agentID: input.agentID,
-      ephemeral: true,
     })
 
     yield* Stream.runForEach(stream, (event: LLM.Event) => {
@@ -282,8 +280,8 @@ export const judge = (input: MaxStepInput, candidates: Candidate[]): Effect.Effe
 
     let out = ""
     let usage: any | undefined
-    // Judge is ensemble-internal like candidates: same sessionID, must not publish
-    // session.status{retry} (would inflate the desktop reconnect streak).
+    // Judge is ensemble-internal like candidates. session.status{retry} is processor-owned;
+    // do not set ephemeral (multi-purpose flag — see candidate stream comment).
     const stream = input.llm.stream({
       user: input.user,
       sessionID: input.sessionID,
@@ -296,7 +294,6 @@ export const judge = (input: MaxStepInput, candidates: Candidate[]): Effect.Effe
       tools: {},
       toolChoice: "none",
       agentID: input.agentID,
-      ephemeral: true,
     })
 
     yield* Stream.runForEach(stream, (event: LLM.Event) => {

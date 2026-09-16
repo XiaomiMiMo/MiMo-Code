@@ -93,11 +93,11 @@ export const layer = Layer.effect(
               phaseAttempt: status.phaseAttempt ?? status.attempt,
             }
           : status
-      if (normalized.type === "retry") data.retryAttempts.set(sessionID, normalized.attempt + 1)
       if (normalized.type === "retry") {
+        data.retryAttempts.set(sessionID, normalized.attempt + 1)
         // Density telemetry: UI "reconnecting N" is a local streak over these frames.
-        // Log wait so field incidents (e.g. proxy DNS down → 32s/20) can be compared
-        // against SessionRetry budgets without guessing.
+        // Log wait so field incidents (e.g. proxy DNS down) can be compared against
+        // SessionRetry budgets without guessing.
         slog.info("session.status retry publish", {
           sessionID,
           attempt: normalized.attempt,

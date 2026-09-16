@@ -20,7 +20,6 @@ import { Wildcard, ToolCompat } from "@/util"
 import { asSchema } from "@ai-sdk/provider-utils"
 import { SessionID } from "@/session/schema"
 import * as Session from "@/session/session"
-import { SessionStatus } from "@/session/status"
 import { migrateProjectMemory } from "./checkpoint-paths"
 import { ProjectID } from "@/project/schema"
 import { Auth } from "@/auth"
@@ -322,7 +321,6 @@ const live: Layer.Layer<
   | Permission.Service
   | ActorRegistry.Service
   | Memory.Service
-  | SessionStatus.Service
 > = Layer.effect(
   Service,
   Effect.gen(function* () {
@@ -333,7 +331,6 @@ const live: Layer.Layer<
     const perm = yield* Permission.Service
     const actorReg = yield* ActorRegistry.Service
     const memory = yield* Memory.Service
-    const status = yield* SessionStatus.Service
 
     const buildSystemArray = Effect.fn("LLM.buildSystemArray")(function* (input: {
       agent: Agent.Info
@@ -1018,7 +1015,6 @@ export const defaultLayer = Layer.suspend(() =>
     Layer.provide(Plugin.defaultLayer),
     Layer.provide(ActorRegistry.defaultLayer),
     Layer.provide(Memory.defaultLayer),
-    Layer.provide(SessionStatus.defaultLayer),
   ),
 )
 
