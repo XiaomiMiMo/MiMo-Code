@@ -1,9 +1,8 @@
 import { and, eq, gte, lt, or } from "drizzle-orm"
 import type { BaseSQLiteDatabase } from "drizzle-orm/sqlite-core"
 import { HistoryFtsTable } from "./fts.sql"
-import { cleanDataUrls } from "./media"
 import { basePartId } from "./chunk"
-import { previewToolOutput } from "../tool/truncate"
+import { previewForIndex } from "./index-preview"
 
 type DbLike = Pick<BaseSQLiteDatabase<"sync", unknown>, "select" | "insert" | "delete">
 
@@ -22,8 +21,8 @@ export function deleteHistoryRows(db: DbLike, partId: string) {
 
 /**
  * Single write path for history FTS. Always truncates via the tool-call-result
- * preview (`previewToolOutput`) before insert — live writer, import, migration
- * rebuild, and backfill all land here.
+ * preview (`previewForIndex` → `previewToolOutput`) before insert — live writer,
+ * import, migration rebuild, and backfill all land here.
  */
 export function upsertHistoryBody(
   db: DbLike,
@@ -39,13 +38,11 @@ export function upsertHistoryBody(
 ) {
   const base = basePartId(input.part_id)
   deleteHistoryRows(db, base)
-  // Single write gate: clean data-URLs first, then tool-result preview budget.
-  // Rebuild/migration/live/backfill all land here.
-  const bounded = previewToolOutput(cleanDataUrls(input.body, undefined, "index")).content
+  // Single gate: clean + tool-result preview (shared with extract).
   const data = {
     ...input,
     part_id: base,
-    body: bounded,
+    body: previewForIndex(input.body),
   }
   db.insert(HistoryFtsTable).values(data).onConflictDoUpdate({ target: HistoryFtsTable.part_id, set: data }).run()
 }

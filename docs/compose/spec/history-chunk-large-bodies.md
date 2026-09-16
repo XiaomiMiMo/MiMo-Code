@@ -32,8 +32,11 @@ Tool outputs already have a staged length policy before entering the model (`tru
 - Extract also strips data-URLs before preview so binary payloads never consume the tool-result budget
 - Budget: `MAX_BYTES=50KiB` / `MAX_LINES=2000` from `tool/truncate.ts`, head+tail when tail looks like errors
 - Migration v6 SQL marks prior `history_index_migration` versions `done` so superseded state cannot linger at `clean`
-- Search keeps temporary `limit*24` over-fetch until legacy chunk rows are gone after v6
-- Search fixes the join order with `history_fts_idx CROSS JOIN history_fts`: evaluate MATCH first, then look up content by rowid and apply scope filters. Node SQLite must not scan the project index and rerun MATCH for every candidate. A regression test captures the service's actual SQL and verifies the query plan and results with Node SQLite after ANALYZE; project/session/tool/time filters and BM25 ordering remain intact.
+- Search keeps temporary `limit*24` over-fetch (**debt `history-search-overfetch-after-v6`**); tighten to `limit` after v6 — see Follow-ups
+- Search uses `CROSS JOIN` so SQLite evaluates MATCH once, then rowid lookup (Node SQLite plan regression covered in tests)
+- Tool body composition: `input` JSON previewed at ~25% budget; tool output previews keep the `Full output saved to:` path hint inside budget
+- Migration scheduler: limited error backoff (5 attempts) + `jobs` slot clear on done/error/abort so restart works; `stopIndexMigration` deletes the slot
+- `previewToolOutput` reserves `MARKER_RESERVE` bytes so omission markers stay within `MAX_BYTES`; single-line giant outputs keep a head slice instead of only the marker
 - Tool parts: index stored tool-result string when present (incl. `Full output saved to: <path>`); still bound legacy payloads
 - `history get` reads full `PartTable` text
 - No new index chunks are written. Indexed deletion and search normalization only support legacy chunks during background cleanup.
@@ -49,6 +52,10 @@ Tool outputs already have a staged length policy before entering the model (`tru
 - Rest after each batch for at least 100ms and at least 19 times its elapsed duration (including commit), targeting at most a 5% migration duty cycle per process. This is cooperative throttling, not a hard process CPU cap: an individual synchronous row or commit can exceed 8ms, and normal application work has a separate cost.
 - The follow-up schema migration `20260916000000_history_single_row_index` replaces the delete trigger with the indexed prefix range and starts v6 even on databases that already completed v5; those databases can still contain chunks. V6 resumes its own persisted cursor on subsequent launches.
 - Regression coverage: exact/chunk deletion preserves adjacent ids and literal wildcard characters; both deletion paths use an indexed query plan; both migration phases yield without losing cursor progress; the scheduler rests after work and cancels on database close.
+
+## Follow-ups
+
+- `history-search-overfetch-after-v6` — after v6 migration completes on a database (or once production fleet has finished v6), set `service.ts` search `fetchLimit` back to `limit` and drop the legacy over-fetch comment.
 
 ## [S3] Out of Scope
 

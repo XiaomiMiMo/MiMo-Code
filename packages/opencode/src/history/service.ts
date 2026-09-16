@@ -116,9 +116,10 @@ export const layer = Layer.effect(
       }
 
       const whereClause = conditions.length > 0 ? `AND ${conditions.join(" AND ")}` : ""
-      // Legacy chunk rows may still exist until migration v6 finishes. Over-fetch
-      // so one multi-row part cannot fill LIMIT before dedupe. After v6 is done
-      // indexes are single-row; follow-up may tighten this back to `limit`.
+      // Debt history-search-overfetch-after-v6: legacy multi-row FTS bodies may remain
+      // until migration v6 finishes. Over-fetch so one part cannot fill LIMIT before
+      // dedupe. When v6 is done on a DB (or once fleet v6 coverage is complete), tighten
+      // fetchLimit back to `limit` — tracked in docs/compose/spec/history-chunk-large-bodies.md.
       const fetchLimit = Math.min(limit * 24, HARD_CAP * 24)
       // CROSS JOIN fixes the loop order in SQLite: MATCH once, then rowid lookup.
       // Node SQLite may otherwise scan a project first and rerun MATCH per row.
