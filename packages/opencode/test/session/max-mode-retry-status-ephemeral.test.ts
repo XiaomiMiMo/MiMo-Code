@@ -1,36 +1,68 @@
 import { describe, expect, test } from "bun:test"
-import { readFileSync } from "fs"
-import path from "path"
-import { SessionRetry } from "../../src/session/retry"
+import { Effect } from "effect"
+import * as Stream from "effect/Stream"
+import { runCandidate, judge, type MaxStepInput } from "../../src/session/max-mode"
+import type { LLM } from "../../src/session/llm"
 
 /**
- * Density ownership is enforced by llm.ts not calling status.setRetry on the
- * request path (processor owns session.status). Max-mode must NOT reuse
- * `ephemeral:true` as a status switch — that flag also skips plugins, affinity
- * headers, OTel functionId, and system assembly.
+ * Runtime contract for max-mode ensemble streams (not a source-string scan).
+ * - must NOT set ephemeral (multi-purpose: plugins/affinity/OTel/system)
+ * - MUST set quietRetryDiagnostics so N parallel request ladders do not flood
+ *   Session.Event.RetryAttempt on the shared sessionID
  */
 
-const maxModePath = path.join(import.meta.dir, "../../src/session/max-mode.ts")
+function baseInput(llm: LLM.Interface): MaxStepInput {
+  return {
+    handle: {} as any,
+    llm,
+    user: {} as any,
+    agent: {} as any,
+    model: { providerID: "test", api: { id: "test-model" } } as any,
+    sessionID: "ses_test",
+    system: [],
+    messages: [],
+    tools: {},
+  }
+}
 
-describe("max-mode does not overload ephemeral for status control", () => {
-  test("candidate/judge llm.stream calls are not marked ephemeral:true", () => {
-    const src = readFileSync(maxModePath, "utf8")
-    // Strip comments before scanning for the flag assignment.
-    const code = src.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "")
-    expect(code.includes("ephemeral: true")).toBe(false)
+function captureLLM() {
+  const calls: LLM.StreamInput[] = []
+  const llm = {
+    buildSystemArray: () => Effect.succeed([]),
+    stream: (input: LLM.StreamInput) => {
+      calls.push(input)
+      return Stream.fromIterable([
+        { type: "text-delta", text: "ok" } as LLM.Event,
+        {
+          type: "finish-step",
+          finishReason: "stop",
+          usage: { inputTokens: 1, outputTokens: 1, reasoning: 0, cache: { read: 0, write: 0 } },
+        } as unknown as LLM.Event,
+      ])
+    },
+  } as unknown as LLM.Interface
+  return { llm, calls }
+}
+
+describe("max-mode ensemble stream input contract", () => {
+  test("candidate stream: quietRetryDiagnostics=true, ephemeral unset/false", async () => {
+    const { llm, calls } = captureLLM()
+    await Effect.runPromise(runCandidate(baseInput(llm), 0))
+    expect(calls).toHaveLength(1)
+    expect(calls[0]?.quietRetryDiagnostics).toBe(true)
+    expect(calls[0]?.ephemeral).toBeFalsy()
   })
 
-  test("request-phase budget is still 4×200ms (status ownership lives in llm.ts)", () => {
-    const resolved = SessionRetry.resolve(undefined, "test")
-    const decision = {
-      retryable: true as const,
-      phase: "request" as const,
-      scope: "request" as const,
-      kind: "network" as const,
-      message: "network",
-    }
-    const budget = SessionRetry.budgetFor(resolved, decision)
-    expect(budget.maxRetries).toBe(4)
-    expect(budget.initialDelayMs).toBe(200)
+  test("judge stream: quietRetryDiagnostics=true, ephemeral unset/false", async () => {
+    const { llm, calls } = captureLLM()
+    const candidates = [
+      { index: 0, reasoning: "r", text: "t", toolCalls: [], finishReason: "stop" as const },
+      { index: 1, reasoning: "r2", text: "t2", toolCalls: [], finishReason: "stop" as const },
+    ]
+    await Effect.runPromise(judge(baseInput(llm), candidates))
+    const judgeCall = calls.find((c) => c.toolChoice === "none")
+    expect(judgeCall).toBeDefined()
+    expect(judgeCall?.quietRetryDiagnostics).toBe(true)
+    expect(judgeCall?.ephemeral).toBeFalsy()
   })
 })

@@ -80,7 +80,7 @@ maxAttempts 为 0 表示 persistent retry。terminal UI notice 使用独立的 s
 
 **request 阶段对 TUI 更安静**：在 request 微退避期间没有 `session.status{retry}`，界面保持 busy，直到 processor stream 重试才出现重连/倒计时。这是 ownership 契约的刻意取舍（用户可见等待 = stream 阶梯），不是回归。
 
-max-mode propose-only ensemble（candidates/judge）共用 sessionID 并行跑 `llm.stream`，但因 request 阶段已不写 session.status，**不需要**也不应设置 `ephemeral`（该标志还会跳过 plugin trigger、session-affinity 头、OTel functionId、system 组装等）。ensemble 内部退避走 max-candidate / max-judge budget + `onRetry`（RetryAttempt）。
+max-mode propose-only ensemble（candidates/judge）共用 sessionID 并行跑 `llm.stream`：request 阶段已不写 session.status；ensemble 传 `quietRetryDiagnostics: true` 以抑制 N 路 request `RetryAttempt` 总线噪音。**不要**为此设置 `ephemeral`（还会跳过 plugin trigger、session-affinity 头、OTel functionId、system 组装）。ensemble 内部退避走 max-candidate / max-judge budget + `onRetry`。
 
 ## 兼容性
 

@@ -246,6 +246,12 @@ export type StreamInput = {
   mergeTurnContextIntoLastUser?: boolean
   /** Keep an appended control prompt last while applying provider-specific turn context to the conversation before it. */
   mergeTurnContextBeforeLastMessage?: boolean
+  /**
+   * Propose-only / ensemble draws: skip Session.Event.RetryAttempt on request-phase
+   * ladders. Narrower than `ephemeral` (which also skips plugins, affinity headers,
+   * OTel functionId, and system assembly). session.status is already processor-owned.
+   */
+  quietRetryDiagnostics?: boolean
   ephemeral?: boolean
   requestID?: string
 }
@@ -975,8 +981,9 @@ const live: Layer.Layer<
                     // cycle; measured with unreachable baseURL: 4 request + 1 stream per
                     // cycle ≈ 20 UI frames in 32s (looks nothing like exponential backoff).
                     // Session status is owned by processor (user-visible wait); request
-                    // attempts stay on Session.Event.RetryAttempt for diagnostics only.
-                    if (!input.ephemeral) yield* Effect.promise(() =>
+                    // attempts stay on Session.Event.RetryAttempt for diagnostics only —
+                    // unless the caller is propose-only ensemble (quietRetryDiagnostics).
+                    if (!input.ephemeral && !input.quietRetryDiagnostics) yield* Effect.promise(() =>
                       Bus.publish(Session.Event.RetryAttempt, {
                         sessionID: SessionID.make(input.sessionID),
                         messageID: input.user.id,
