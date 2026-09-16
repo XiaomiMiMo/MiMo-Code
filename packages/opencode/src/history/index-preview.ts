@@ -1,9 +1,9 @@
-import { previewToolOutput } from "../tool/truncate"
+import { previewToolOutput } from "../tool/preview"
 import { cleanDataUrls } from "./media"
 
 /**
  * History index preview — same pure path as tool call results
- * (`tool/truncate.previewToolOutput`). Strip data-URLs first so binary
+ * (`tool/preview.previewToolOutput`). Strip data-URLs first so binary
  * payloads do not consume the tool-result byte/line budget.
  */
 export function previewForIndex(
@@ -18,4 +18,4 @@ export function boundedJson(value: unknown, options?: Parameters<typeof previewT
 }
 
 export { previewToolOutput }
-export { MAX_BYTES as INDEX_MAX_BYTES, MAX_LINES as INDEX_MAX_LINES } from "../tool/truncate"
+export { MAX_BYTES as INDEX_MAX_BYTES, MAX_LINES as INDEX_MAX_LINES } from "../tool/preview"

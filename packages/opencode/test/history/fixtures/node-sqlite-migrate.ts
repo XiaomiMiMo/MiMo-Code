@@ -4,7 +4,7 @@
  */
 import { DatabaseSync } from "node:sqlite"
 import { drizzle } from "drizzle-orm/node-sqlite"
-import { migrateIndexBatch, MIGRATION_VERSION } from "../../../src/history/migration.ts"
+import { migrateIndexBatch, MIGRATION_VERSION } from "../../../src/history/migration-batch.ts"
 
 function fail(message: string): never {
   console.error(message)

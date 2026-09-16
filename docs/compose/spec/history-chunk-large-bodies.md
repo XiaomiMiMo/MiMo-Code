@@ -29,8 +29,10 @@ Tool outputs already have a staged length policy before entering the model (`tru
 ### Contracts
 
 - Single write path `upsertHistoryBody`: **cleanDataUrls then previewToolOutput** before FTS insert (live writer, import, migration rebuild, test backfill)
+- Pure preview lives in `tool/preview.ts` (no Log/Global); `tool/truncate.ts` re-exports and owns model-facing `Truncate.output`
 - Extract also strips data-URLs before preview so binary payloads never consume the tool-result budget
-- Budget: `MAX_BYTES=50KiB` / `MAX_LINES=2000` from `tool/truncate.ts`, head+tail when tail looks like errors
+- Budget: `MAX_BYTES=50KiB` / `MAX_LINES=2000` from `tool/preview.ts`, head+tail when tail looks like errors; index bodies hard-clamp to this ceiling
+- Migration batch (`migration-batch.ts`) is Log-free; scheduler `startIndexMigration` accepts optional `migrate` for tests and clears `jobs` after 5 failed attempts
 - Migration v6 SQL marks prior `history_index_migration` versions `done` so superseded state cannot linger at `clean`
 - Search keeps temporary `limit*24` over-fetch (**debt `history-search-overfetch-after-v6`**); tighten to `limit` after v6 — see Follow-ups
 - Search uses `CROSS JOIN` so SQLite evaluates MATCH once, then rowid lookup (Node SQLite plan regression covered in tests)

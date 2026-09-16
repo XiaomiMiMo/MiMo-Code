@@ -278,6 +278,49 @@ test("background migration delays startup, rests after expensive work and cancel
   }
 })
 
+// R6/N1: error path — 5 failed attempts clear the jobs slot so startIndexMigration can re-arm.
+test("index migration clears jobs slot after five failed attempts and allows restart", () => {
+  process.env.MIMOCODE_SKIP_MIGRATIONS = "1"
+  Database.close()
+  const scheduled: { run: () => void; delay: number }[] = []
+  const timeout = spyOn(globalThis, "setTimeout").mockImplementation(((run: () => void, delay: number) => {
+    scheduled.push({ run, delay })
+    return { unref() { return this } }
+  }) as typeof setTimeout)
+  try {
+    const db = Database.Client()
+    stopIndexMigration(db)
+    // Drop auto-start timers captured before stop; boom path starts clean.
+    scheduled.length = 0
+    seed(textParts(3))
+    db.update(HistoryIndexMigrationTable).set({ phase: "repair", cursor: 0, part_end: 3 })
+      .where(eq(HistoryIndexMigrationTable.version, MIGRATION_VERSION)).run()
+    let attempts = 0
+    const boom = () => {
+      attempts += 1
+      throw new Error("test failure")
+    }
+    startIndexMigration(db, { migrate: boom })
+    expect(scheduled).toHaveLength(1)
+    // attempt 0..5: each failure schedules the next backoff until attempt>=5 clears the slot
+    for (let i = 0; i < 6; i++) {
+      const next = scheduled[scheduled.length - 1]
+      expect(next).toBeDefined()
+      next!.run()
+    }
+    expect(attempts).toBe(6)
+    const afterGiveUp = scheduled.length
+    expect(afterGiveUp).toBe(6) // 1 start + 5 retries; attempt 5 clears without reschedule
+    // Slot cleared — a later startIndexMigration must re-arm the 1s startup timer
+    startIndexMigration(db, { migrate: boom })
+    expect(scheduled.length).toBe(afterGiveUp + 1)
+    expect(scheduled[scheduled.length - 1]!.delay).toBeGreaterThanOrEqual(1000)
+  } finally {
+    delete process.env.MIMOCODE_SKIP_MIGRATIONS
+    timeout.mockRestore()
+  }
+})
+
 // A partially populated index still needs recovery.
 test("repairs missing rows and replaces stale content from original parts", async () => {
   seed(textParts(300))

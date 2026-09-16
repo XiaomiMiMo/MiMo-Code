@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test"
 import { spawnSync } from "node:child_process"
-import { readFileSync, writeFileSync, mkdtempSync } from "node:fs"
+import { mkdtempSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { fileURLToPath } from "node:url"
@@ -55,7 +55,7 @@ test("Node migration updates the trigger to delete chunked history rows", () => 
 })
 
 // R7: real TS migrateIndexBatch clean+repair on node:sqlite.
-// Bun cannot import node:sqlite; Node runs a bun-built bundle of the TS path.
+// Fixture imports the Log-free `migration-batch` + pure `tool/preview` path.
 test("migrateIndexBatch clean and repair run on node:sqlite", () => {
   const cwd = fileURLToPath(new URL("../../", import.meta.url))
   const fixture = fileURLToPath(new URL("./fixtures/node-sqlite-migrate.ts", import.meta.url))
@@ -67,15 +67,6 @@ test("migrateIndexBatch clean and repair run on node:sqlite", () => {
     { cwd, encoding: "utf8" },
   )
   expect(build.status).toBe(0)
-  // Bun's bundle hits a TDZ on Global filesystem cache bootstrap under Node; skip that
-  // non-migration init. migrateIndexBatch itself never touches the cache.
-  let code = readFileSync(outfile, "utf8")
-  code = code.replace(
-    /var version2 = await exports_filesystem\.readText\([\s\S]*?\)\.catch\(\(\) => "0"\);/,
-    'var version2 = "21";',
-  )
-  code = code.replace(/await exports_filesystem\.write\([\s\S]*?\);/g, "void 0;")
-  writeFileSync(outfile, code)
   const run = spawnSync("node", [outfile], { cwd, encoding: "utf8" })
   expect(run.status).toBe(0)
   const line = run.stdout.trim().split("\n").filter(Boolean).pop()!

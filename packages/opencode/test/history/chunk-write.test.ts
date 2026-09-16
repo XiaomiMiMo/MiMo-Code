@@ -40,7 +40,7 @@ describe("history upsert truncation 兜底", () => {
     const rows = db.select().from(HistoryFtsTable).all()
     expect(rows).toHaveLength(1)
     expect(rows[0]!.part_id).toBe("prt_single")
-    expect(Buffer.byteLength(rows[0]!.body)).toBeLessThanOrEqual(MAX_BYTES + 256)
+    expect(Buffer.byteLength(rows[0]!.body)).toBeLessThanOrEqual(MAX_BYTES)
   })
 
   it("indexed legacy cleanup preserves adjacent ids and literal wildcard characters", () => {
@@ -78,7 +78,7 @@ describe("history upsert truncation 兜底", () => {
     const rows = Database.use((db) => db.select().from(HistoryFtsTable).all())
     expect(rows.length).toBeGreaterThanOrEqual(1)
     const total = rows.reduce((n, r) => n + Buffer.byteLength(r.body, "utf-8"), 0)
-    expect(total).toBeLessThanOrEqual(MAX_BYTES + 256)
+    expect(total).toBeLessThanOrEqual(MAX_BYTES)
     // Full payload must not be persisted — only the tool-result preview.
     expect(total).toBeLessThan(Buffer.byteLength(huge, "utf-8") / 2)
   })
@@ -143,7 +143,7 @@ describe("history extract + budgeted index", () => {
     } as never
     const extracted = extract(part)
     expect(extracted).not.toBeNull()
-    expect(Buffer.byteLength(extracted!.body, "utf-8")).toBeLessThanOrEqual(MAX_BYTES + 256)
+    expect(Buffer.byteLength(extracted!.body, "utf-8")).toBeLessThanOrEqual(MAX_BYTES)
     seedProject()
     Database.use((db) => {
       upsertHistoryBody(db, {

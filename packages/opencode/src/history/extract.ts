@@ -18,7 +18,13 @@ const OUTPUT_PATH_HINT = /Full output saved to:\s*\S+/
  * budget even if a huge legacy payload would otherwise head-truncate it away.
  */
 function previewOutputForIndex(outputText: string): string {
-  return keepPathHint(outputText, previewForIndex(outputText))
+  return clampIndexBody(keepPathHint(outputText, previewForIndex(outputText)))
+}
+
+/** Hard ceiling for index bodies; re-preview if a re-attach exceeded the budget. */
+function clampIndexBody(body: string): string {
+  if (Buffer.byteLength(body, "utf-8") <= INDEX_MAX_BYTES) return body
+  return previewForIndex(body)
 }
 
 /** Re-attach tool name and `Full output saved to:` if a preview would drop them; stay within budget. */
@@ -43,7 +49,7 @@ function finalizeToolBody(tool: string, outputText: string, composed: string): s
   let body = previewToolOutput(composed, { maxBytes: room, direction: "head" }).content
   if (tool && !body.includes(tool)) body = `${tool}\n${body}`
   if (hint && !body.includes(hint)) body = `${body}\n${hint}`
-  return body
+  return clampIndexBody(body)
 }
 
 /**
