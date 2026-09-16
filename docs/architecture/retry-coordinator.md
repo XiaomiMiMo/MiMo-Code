@@ -69,6 +69,8 @@ Persistent network retry 仍受 AbortSignal、进程退出和 provider chunkTime
 
 每次实际 retry 发布 session.retry.attempt，包含 phase、scope、kind、attempt、phaseAttempt、maxAttempts、nextDelayMs 和 reason。attempt 是当前 session 跨 request/stream 的连续序号，phaseAttempt 是当前 phase 内的局部序号；attempt counter 独立于 busy/notice 状态，只在 session 回到 idle 时清零。maxAttempts 为 0 表示 persistent retry。terminal UI notice 使用独立的 session status notice，不伪装成 retry attempt。Persistent network retry 不重复创建 transcript message；UI 只更新当前状态。成功、终止、取消都必须清理 retry 状态并回到 idle。
 
+`session.status{type:"retry"}` 是 **session 维度** 的展示状态，不是 per-model-call 计数。并行的 propose-only ensemble（max-mode candidates/judge）不得对共享 sessionID 发布该状态：这些 `llm.stream` 必须 `ephemeral: true`，否则单次网络故障会按「并行路数 × request maxRetries」叠满桌面「正在重新连接 N」streak（默认 5×4≈20），观感上不像指数退避。ensemble 内部退避仍走 max-candidate / max-judge budget，可观测性用 `session.retry.attempt`（RetryAttempt）而非 session.status。
+
 ## 兼容性
 
 语义 retry（structured output、invalid output、text tool call、length recovery）不是 transport retry，不进入本 coordinator；它们有自己的 prompt-level bounded loop。LoadAPIKeyError 仍由 MessageV2.fromError() 识别，外部消费者只检查归一化后的 provider auth error 或 401/403 APIError。
