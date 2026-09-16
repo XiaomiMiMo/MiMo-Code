@@ -4,6 +4,9 @@ import { InstanceState } from "@/effect"
 import { SessionID } from "./schema"
 import { Effect, Layer, Context } from "effect"
 import z from "zod"
+import { Log } from "@/util"
+
+const slog = Log.create({ service: "session.status" })
 
 export const Info = z
   .union([
@@ -91,6 +94,20 @@ export const layer = Layer.effect(
             }
           : status
       if (normalized.type === "retry") data.retryAttempts.set(sessionID, normalized.attempt + 1)
+      if (normalized.type === "retry") {
+        // Density telemetry: UI "reconnecting N" is a local streak over these frames.
+        // Log wait so field incidents (e.g. proxy DNS down → 32s/20) can be compared
+        // against SessionRetry budgets without guessing.
+        slog.info("session.status retry publish", {
+          sessionID,
+          attempt: normalized.attempt,
+          phaseAttempt: normalized.phaseAttempt,
+          phase: normalized.phase,
+          scope: normalized.scope,
+          message: normalized.message,
+          waitMs: Math.max(0, normalized.next - Date.now()),
+        })
+      }
       yield* bus.publish(Event.Status, { sessionID, status: normalized })
       if (normalized.type === "idle") {
         yield* bus.publish(Event.Idle, { sessionID })

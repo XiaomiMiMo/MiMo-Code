@@ -973,15 +973,13 @@ const live: Layer.Layer<
                   return Stream.failCause(primaryCause)
                 return Stream.unwrap(
                   Effect.gen(function* () {
-                    const globalAttempt = input.ephemeral ? nextAttempt : yield* status.setRetry(SessionID.make(input.sessionID), {
-                      type: "retry",
-                      attempt: nextAttempt,
-                      phaseAttempt: nextAttempt,
-                      message: decision.message,
-                      next: Date.now() + wait,
-                      phase: "request",
-                      scope: "request",
-                    })
+                    // Request-phase ladders nest inside processor stream retries. Publishing
+                    // session.status{retry} here restarts a 200ms×4 burst on every outer
+                    // cycle; measured with unreachable baseURL: 4 request + 1 stream per
+                    // cycle ≈ 20 UI frames in 32s (looks nothing like exponential backoff).
+                    // Session status is owned by processor (user-visible wait); request
+                    // attempts stay on Session.Event.RetryAttempt for diagnostics only.
+                    const globalAttempt = input.ephemeral ? nextAttempt : nextAttempt
                     if (!input.ephemeral) yield* Effect.promise(() =>
                       Bus.publish(Session.Event.RetryAttempt, {
                         sessionID: SessionID.make(input.sessionID),
