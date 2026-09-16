@@ -26,8 +26,8 @@ Multi-step runLoop reloads `msgs` from DB; marker hit skips re-push → last-use
 | Command | Result |
 |---------|--------|
 | `bun typecheck` (filter: `src/session/prompt.ts`, `src/session/message-v2.ts`, `test/session/recall*`) | PASS — no errors in changed files |
-| `bun test --timeout 20000 test/session/recall-reminder.test.ts test/session/recall-reminder-persist.test.ts test/session/plan-reminder-dedup.test.ts test/session/prompt-skill-command-multi.test.ts test/session/messages-pagination.test.ts test/session/message-v2.test.ts` | PASS |
-| e2e | **E2E-EXEMPT: pure-logic** — engine persist/marker + hydrate-order invariant; no UI surface, no user-visible chrome. Unit/integration receipts above are the DoD. |
+| `bun test --timeout 20000 test/session/recall-reminder.test.ts test/session/recall-reminder-persist.test.ts test/session/plan-reminder-dedup.test.ts test/session/prompt-skill-command-multi.test.ts test/session/messages-pagination.test.ts test/session/message-v2.test.ts test/session/compose-reminder-persist.test.ts` | PASS |
+| scope note | Engine persist/marker + hydrate-order invariant; no UI surface. Unit/integration receipts above are the DoD. |
 
 **Review residual (closed after CR r1)** — Compose head was request-layer only. CR r1 marked that ⚠️. Fix: `MessageV2.promoteComposeProtocolFirst` runs on every hydrate/load (`hydrate` + `parts()`), so runLoop, checkpoint fork capture, and trajectory all see `[compose, user, …]`. DB storage remains PartID-asc; position is a **load-time invariant**, not a per-request compensating projection.
 
@@ -111,7 +111,7 @@ Mid-turn `p.text` wrap (`step > 1`) remains request-only: intentional steering t
 - [x] T2: Align recall / loop-streak / compose to persist + marker — acceptance: no bare push; compose head stable after reload **on the runLoop request path** (covers: S2, S4)
 - [x] T3: Regression tests — `recall-reminder.test.ts` (markers/helpers) + `recall-reminder-persist.test.ts` (exactly one recall part after multi-step turn) (covers: S2; depends: T2)
 - [x] T4: Fork prefix parity — presence via persist; compose position via `promoteComposeProtocolFirst` on hydrate/parts load (covers: S2; depends: T2)
-- [x] T5: CR r1 — explicit `E2E-EXEMPT: pure-logic`; promoteComposeProtocolFirst + unit tests; spec commits base `b4cc11cd` (covers: S2, S4)
+- [x] T5: CR r1 — promoteComposeProtocolFirst + unit tests; no UI e2e (engine-only invariant); spec commits base `b4cc11cd` (covers: S2, S4)
 
 ## Anchors (base `b4cc11cd`; delivered on feature branch)
 
