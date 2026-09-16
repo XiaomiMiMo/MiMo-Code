@@ -28,13 +28,22 @@ describe("title helpers", () => {
     expect(titleContext({ info: { role: "user" }, parts } as MessageV2.WithParts)).toBe("")
   })
 
-  test("excludes synthetic skill text while preserving literal paths", () => {
+  test("excludes synthetic skill text; leading /slug treated as skill", () => {
     const parts = [
       { type: "text", text: "/compose-next", synthetic: true },
       { type: "text", text: "/api/v1/docs is this path right" },
     ]
+    // Synthetic commands stay out of the title source; multi-segment paths keep their leading slash.
     expect(normalizeTitleInput(parts).text).toBe("/api/v1/docs is this path right")
-    expect(titleInputText("/api endpoint", undefined)).toBe("/api endpoint")
+    // Leading single `/slug` is always a skill/command; no `/api` special-case.
+    expect(titleInputText("/api endpoint", undefined)).toBe("endpoint")
+  })
+
+  test("title input strips leading /slug skill commands", () => {
+    expect(normalizeTitleInput([{ type: "text", text: "/compose-next fix session dir naming" }]).text).toBe("fix session dir naming")
+    expect(normalizeTitleInput([{ type: "text", text: "/compose-next /pdf-official write a report" }]).fallback).toBe("write a report")
+    expect(normalizeTitleInput([{ type: "text", text: "/compose-next" }]).fallback).toBe("Untitled")
+    expect(titleInputText("/compose-next fix x", undefined)).toBe("fix x")
   })
 
   test("[TP-ST-R9-03] truncates to 48 code points including ellipsis without splitting surrogate pairs", () => {

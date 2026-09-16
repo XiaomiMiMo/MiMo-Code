@@ -266,7 +266,32 @@ export type GenTitlePart =
   | { type: "image"; data: string; mime: string; filename?: string }
 
 export function titleInputText(text: string | undefined, parts: GenTitlePart[] | undefined) {
-  return [text ?? "", ...(parts ?? []).flatMap(part => part.type === "text" ? [part.text] : [])].filter(Boolean).join("\n").trim()
+  return stripLeadingSlashCommands(
+    [text ?? "", ...(parts ?? []).flatMap(part => part.type === "text" ? [part.text] : [])].filter(Boolean).join("\n").trim(),
+  )
+}
+
+// Leading `/slug` tokens are treated as skill/command prefixes and stripped before title derivation.
+// Applies to consecutive leading tokens only; mid-line paths such as `/api/v1` are left intact.
+export function stripLeadingSlashCommands(text: string): string {
+  const lines = String(text || "").replace(/\r\n?/g, "\n").split("\n")
+  let i = 0
+  while (i < lines.length) {
+    const line = (lines[i] ?? "").trim()
+    if (!line) {
+      i++
+      continue
+    }
+    const rest = line.replace(/^(?:\/[A-Za-z0-9][A-Za-z0-9:_-]*(?:[ \t]+|$))+/, "").trim()
+    if (rest === line) break
+    if (!rest) {
+      i++
+      continue
+    }
+    lines[i] = rest
+    break
+  }
+  return lines.slice(i).join("\n").trim()
 }
 
 // Keep the source conversation in the same user message as the title task.
@@ -320,9 +345,11 @@ function localAttachmentPath(part: { url?: string; source?: unknown }) {
 }
 
 // Derive automatic title input from the persisted user message.
+// Leading `/slug` skill/command prefixes are excluded from the title source text.
 export function normalizeTitleInput(parts: readonly { type: string; text?: string; filename?: string; mime?: string; url?: string; source?: unknown; synthetic?: boolean; ignored?: boolean; metadata?: Record<string, unknown> }[]) {
   const eligible = parts.filter(part => !part.synthetic && !part.ignored)
-  const text = eligible.flatMap(part => part.type === "text" && part.text ? [part.text.replace(/\r\n?/g, "\n").trim()] : []).filter(Boolean).join("\n")
+  const rawText = eligible.flatMap(part => part.type === "text" && part.text ? [part.text.replace(/\r\n?/g, "\n").trim()] : []).filter(Boolean).join("\n")
+  const text = stripLeadingSlashCommands(rawText)
   const attachments = [...new Set(eligible.flatMap(part => {
     if (part.type !== "file") return []
     const location = localAttachmentPath(part)
@@ -330,6 +357,7 @@ export function normalizeTitleInput(parts: readonly { type: string; text?: strin
     return name ? [name] : []
   }))]
   const first = text.split("\n").map(line => line.trim()).find(Boolean)
+  // After skill-prefix stripping: attachment names still count as input; otherwise Untitled.
   return { text, fallback: first ? truncateTitle(first) : attachments.length ? truncateTitle(attachments.join(", ")) : "Untitled", hasInput: Boolean(text) || attachments.length > 0, canGenerate: /\p{L}/u.test(text) }
 }
 
