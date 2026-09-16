@@ -979,12 +979,11 @@ const live: Layer.Layer<
                     // cycle ≈ 20 UI frames in 32s (looks nothing like exponential backoff).
                     // Session status is owned by processor (user-visible wait); request
                     // attempts stay on Session.Event.RetryAttempt for diagnostics only.
-                    const globalAttempt = input.ephemeral ? nextAttempt : nextAttempt
                     if (!input.ephemeral) yield* Effect.promise(() =>
                       Bus.publish(Session.Event.RetryAttempt, {
                         sessionID: SessionID.make(input.sessionID),
                         messageID: input.user.id,
-                        attempt: globalAttempt,
+                        attempt: nextAttempt,
                         phaseAttempt: nextAttempt,
                         maxAttempts: budget.maxRetries ?? 0,
                         phase: "request",
