@@ -559,6 +559,12 @@ export interface RecoveryCandidate {
   assistantMessageID: MessageID
   parentMessageID: MessageID
   created: number
+  /**
+   * assistant-continue: 候选有可用 parts（tool/text/reasoning），走 assistant-ID 续跑。
+   * user-continuation: 候选是 empty residue（无可用 parts），resume 应清理空壳后重发 parent user，
+   * 禁止 assistant prefill / 禁止再堆空壳。
+   */
+  kind?: "assistant-continue" | "user-continuation"
 }
 
 export interface ResumeTurnInput {
@@ -3327,6 +3333,38 @@ NOTE: At any point in time through this workflow you should feel free to ask the
       throw new Error("Impossible")
     })
 
+    /** empty residue = 无可用模型现场：既不能 assistant prefill，也不能当续跑目标。 */
+    const hasUsefulAssistantParts = (parts: readonly MessageV2.Part[]) =>
+      parts.some((part) => {
+        if (part.type === "text") return !part.synthetic && !part.ignored && part.text.trim().length > 0
+        if (part.type === "tool") return true
+        if (part.type === "reasoning") return part.text.trim().length > 0
+        return false
+      })
+
+    const isEmptyAssistantResidue = (assistant: MessageV2.Assistant, parts: readonly MessageV2.Part[]) =>
+      assistant.role === "assistant" && !hasUsefulAssistantParts(parts)
+
+    /** 删除 parent 下（及本轮结束后）的 empty residue assistant——不论来源，空壳一律清掉。 */
+    const cleanupEmptyResidueAssistants = Effect.fn("SessionPrompt.cleanupEmptyResidueAssistants")(function* (input: {
+      sessionID: SessionID
+      agentID?: string
+      /** 仅清理该 parent user 之后的 assistant；省略则清理会话内全部 empty residue。 */
+      parentMessageID?: MessageID
+    }) {
+      const msgs = yield* sessions.messages({ sessionID: input.sessionID, agentID: input.agentID ?? "main" })
+      const removed: MessageID[] = []
+      for (const msg of msgs) {
+        if (msg.info.role !== "assistant") continue
+        if (input.parentMessageID && msg.info.parentID !== input.parentMessageID) continue
+        if (!isEmptyAssistantResidue(msg.info, msg.parts)) continue
+        yield* sessions.removeMessage({ sessionID: input.sessionID, messageID: msg.info.id })
+        removed.push(msg.info.id)
+      }
+      if (removed.length > 0) elog.info("empty-residue-assistants-removed", { sessionID: input.sessionID, removed })
+      return removed
+    })
+
     const recovery = Effect.fn("SessionPrompt.recovery")(function* (input: { sessionID: SessionID; agentID?: string; allowBusy?: boolean }) {
       if (!input.allowBusy && (yield* status.get(input.sessionID)).type !== "idle") return []
       const msgs = yield* sessions.messages({ sessionID: input.sessionID, agentID: input.agentID ?? "main" })
@@ -3347,6 +3385,8 @@ NOTE: At any point in time through this workflow you should feel free to ask the
           assistantMessageID: assistant.id,
           parentMessageID: assistant.parentID,
           created: assistant.time.created,
+          // 表尾 empty residue → user 重发路径；有现场才 assistant 续跑。
+          kind: isEmptyAssistantResidue(assistant, msg.parts) ? "user-continuation" : "assistant-continue",
         })
       }
       return candidates
@@ -3360,6 +3400,9 @@ NOTE: At any point in time through this workflow you should feel free to ask the
       const messages = yield* sessions.messages({ sessionID: input.sessionID, agentID: input.agentID ?? "main" })
       const message = messages.find((item) => item.info.id === input.assistantMessageID)
       if (!message || message.info.role !== "assistant") return
+      // empty residue 不写 Abandoned-as-resumed 记账——那会制造「好像续过」的假象；
+      // 空壳由 cleanup 删除。
+      if (isEmptyAssistantResidue(message.info, message.parts)) return
       // 已标记 completed 且已有 error → 幂等跳过
       if ("completed" in message.info.time && message.info.error) return
       yield* sessions.updateMessage({
@@ -5640,6 +5683,28 @@ NOTE: At any point in time through this workflow you should feel free to ask the
       if (input.model) {
         yield* getModel(ProviderID.make(input.model.providerID), ModelID.make(input.model.modelID), input.sessionID)
       }
+      const targetMsgs = yield* sessions.messages({ sessionID: input.sessionID, agentID })
+      const target = targetMsgs.find((item) => item.info.id === input.assistantMessageID)
+      const emptyResidue =
+        target !== undefined && target.info.role === "assistant" && isEmptyAssistantResidue(target.info, target.parts)
+      if (emptyResidue && target?.info.role === "assistant") {
+        // 路径 B：user 失败 + 空 assistant 残渣 → 清空壳后重发 parent user（无 assistant prefill）。
+        const parentMessageID = target.info.parentID
+        yield* cleanupEmptyResidueAssistants({ sessionID: input.sessionID, agentID, parentMessageID })
+        return yield* state.ensureRunning(
+          input.sessionID,
+          agentID,
+          lastAssistant(input.sessionID, agentID),
+          runLoop(input.sessionID, agentID, input.task_id, input.titleLocale, false, undefined, input.model).pipe(
+            Effect.ensuring(
+              cleanupEmptyResidueAssistants({ sessionID: input.sessionID, agentID, parentMessageID }).pipe(
+                Effect.catchCause((cause) => elog.warn("empty-residue-cleanup-failed", { sessionID: input.sessionID, cause })),
+              ),
+            ),
+          ),
+        )
+      }
+      // 路径 A：有可用现场的中断回合 —— abandon 旧候选 + resumeFrom 续下一步。
       // Abandon the recovered assistant BEFORE detaching runLoop so callers that
       // observe Error / completed state see it immediately (not only in ensuring
       // after the detached loop finishes). ensuring below remains as an idempotent
@@ -5679,6 +5744,27 @@ NOTE: At any point in time through this workflow you should feel free to ask the
       // 校验 model override 在 abandon 之前:getModel 失败时不能先把原消息改成 abandoned。
       if (input.model) {
         yield* getModel(ProviderID.make(input.model.providerID), ModelID.make(input.model.modelID), input.sessionID)
+      }
+      const targetMsgs = yield* sessions.messages({ sessionID: input.sessionID, agentID })
+      const target = targetMsgs.find((item) => item.info.id === input.assistantMessageID)
+      const emptyResidue =
+        target !== undefined && target.info.role === "assistant" && isEmptyAssistantResidue(target.info, target.parts)
+      if (emptyResidue && target?.info.role === "assistant") {
+        const parentMessageID = target.info.parentID
+        yield* cleanupEmptyResidueAssistants({ sessionID: input.sessionID, agentID, parentMessageID })
+        yield* state.start(
+          input.sessionID,
+          agentID,
+          lastAssistant(input.sessionID, agentID),
+          runLoop(input.sessionID, agentID, input.task_id, input.titleLocale, false, undefined, input.model).pipe(
+            Effect.ensuring(
+              cleanupEmptyResidueAssistants({ sessionID: input.sessionID, agentID, parentMessageID }).pipe(
+                Effect.catchCause((cause) => elog.warn("empty-residue-cleanup-failed", { sessionID: input.sessionID, cause })),
+              ),
+            ),
+          ),
+        )
+        return
       }
       // Abandon before detaching runLoop — same timing requirement as resume.
       yield* abandonRecoveredAssistant({ sessionID: input.sessionID, assistantMessageID: input.assistantMessageID, agentID })

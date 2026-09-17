@@ -63,7 +63,11 @@ describe("session turn recovery routes", () => {
         const query = `?directory=${encodeURIComponent(tmp.path)}`
         const resumeQuery = `${query}&titleLocale=fr-FR`
         const listed = yield* Effect.promise(() => Promise.resolve(app.request(`/session/${session.id}/recovery${query}`)))
-        const candidates = yield* Effect.promise(() => listed.json() as Promise<Array<{ assistantMessageID: string; parentMessageID: string; created: number }>>)
+        const candidates = yield* Effect.promise(() =>
+          listed.json() as Promise<
+            Array<{ assistantMessageID: string; parentMessageID: string; created: number; kind?: string }>
+          >,
+        )
         const missing = yield* Effect.promise(() =>
           Promise.resolve(app.request(`/session/${session.id}/turn/${MessageID.ascending()}/resume${resumeQuery}`, { method: "POST" })),
         )
@@ -75,17 +79,34 @@ describe("session turn recovery routes", () => {
         const after = yield* sessions.messages({ sessionID: session.id, agentID: "main" })
         const abandoned = after.find((item) => item.info.id === assistant.id)?.info
         const abandonedAssistant = abandoned?.role === "assistant" ? abandoned : undefined
-        return { listed: listed.status, candidates, resumed: resumed.status, missing: missing.status, userID: user.id, errors, abandoned: abandonedAssistant }
+        return {
+          listed: listed.status,
+          candidates,
+          resumed: resumed.status,
+          missing: missing.status,
+          userID: user.id,
+          errors,
+          abandoned: abandonedAssistant,
+          shellRemoved: abandoned === undefined,
+        }
       })),
     })
 
     expect(result.listed).toBe(200)
-    expect(result.candidates).toEqual([{ assistantMessageID: expect.any(String), parentMessageID: result.userID, created: expect.any(Number) }])
+    expect(result.candidates).toEqual([
+      {
+        assistantMessageID: expect.any(String),
+        parentMessageID: result.userID,
+        created: expect.any(Number),
+        kind: "user-continuation",
+      },
+    ])
     expect(result.resumed).toBe(202)
     expect(result.missing).toBe(404)
-    expect(result.errors.length).toBeGreaterThan(0)
-    expect(result.abandoned?.time.completed).toEqual(expect.any(Number))
-    expect(result.abandoned?.error?.data.message).toContain("Abandoned")
+    // empty residue resume: shell must be cleaned; no Abandoned-as-resumed stamp
+    expect(result.shellRemoved).toBe(true)
+    const abandonMsg = result.abandoned?.error?.data?.message ?? ""
+    expect(abandonMsg).not.toContain("Abandoned: resumed as a new assistant turn")
   })
 })
 

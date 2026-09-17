@@ -1342,7 +1342,14 @@ it.live("resume continues an incomplete assistant without creating or rewriting 
       yield* llm.text("world")
 
       const candidate = yield* prompt.recovery({ sessionID: chat.id })
-      expect(candidate).toEqual([{ assistantMessageID: seeded.assistant.id, parentMessageID: seeded.user.id, created: expect.any(Number) }])
+      expect(candidate).toEqual([
+        {
+          assistantMessageID: seeded.assistant.id,
+          parentMessageID: seeded.user.id,
+          created: expect.any(Number),
+          kind: "assistant-continue",
+        },
+      ])
       const result = yield* prompt.resume({
         sessionID: chat.id,
         assistantMessageID: seeded.assistant.id,

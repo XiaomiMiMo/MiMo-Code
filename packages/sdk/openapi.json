@@ -4597,6 +4597,10 @@
                       },
                       "created": {
                         "type": "number"
+                      },
+                      "kind": {
+                        "type": "string",
+                        "enum": ["assistant-continue", "user-continuation"]
                       }
                     },
                     "required": ["assistantMessageID", "parentMessageID", "created"]
