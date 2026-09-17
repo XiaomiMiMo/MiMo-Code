@@ -31,11 +31,11 @@ function run<A, E>(fx: Effect.Effect<A, E, SessionPrompt.Service | Session.Servi
   )
 }
 
-function providerConfig(origin: string, opts?: { auto_worktree?: boolean }) {
+function providerConfig(origin: string) {
   return {
     $schema: "https://opencode.ai/config.json",
     enabled_providers: ["aw-test"],
-    ...(opts?.auto_worktree !== undefined ? { auto_worktree: opts.auto_worktree } : {}),
+    auto_worktree: true,
     provider: {
       "aw-test": {
         name: "AW Test",
@@ -87,7 +87,7 @@ describe("main-worktree writes without automatic isolation", () => {
             init: async (dir) => {
               await Bun.write(
                 path.join(dir, "mimocode.json"),
-                JSON.stringify(providerConfig(stub.origin, { auto_worktree: true })),
+                JSON.stringify(providerConfig(stub.origin)),
               )
               if (linked) await seedLinkedWorktree(dir)
             },
