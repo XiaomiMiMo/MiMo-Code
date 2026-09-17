@@ -272,6 +272,81 @@ describe("resume empty residue", () => {
     expect(result.users).toBe(1)
   })
 
+  // user-resume 在「已有 completed 回答 + 空壳」时仍必须起跑（userRedispatch），不能静默 no-op
+  test("user-resume with completed sibling still starts a run from parent user", async () => {
+    await using tmp = await tmpdir({ git: true })
+    const result = await Instance.provide({
+      directory: tmp.path,
+      fn: async () =>
+        AppRuntime.runPromise(
+          Effect.gen(function* () {
+            const sessions = yield* Session.Service
+            const prompt = yield* SessionPrompt.Service
+            const session = yield* sessions.create({ title: "completed sibling + empty tail" })
+            const user = yield* sessions.updateMessage({
+              id: MessageID.ascending(),
+              role: "user",
+              sessionID: session.id,
+              agent: "build",
+              model: modelRef,
+              time: { created: Date.now() },
+            })
+            const completed = yield* sessions.updateMessage({
+              id: MessageID.ascending(),
+              role: "assistant",
+              parentID: user.id,
+              sessionID: session.id,
+              mode: "build",
+              agent: "build",
+              path: { cwd: tmp.path, root: tmp.path },
+              cost: 0,
+              tokens: { input: 1, output: 1, reasoning: 0, cache: { read: 0, write: 0 } },
+              modelID: modelRef.modelID,
+              providerID: modelRef.providerID,
+              time: { created: Date.now(), completed: Date.now() },
+              finish: "stop",
+            })
+            yield* sessions.updatePart({
+              id: PartID.ascending(),
+              messageID: completed.id,
+              sessionID: session.id,
+              type: "text",
+              text: "already answered",
+            })
+            const empty = yield* sessions.updateMessage(
+              shellMessage({ sessionID: session.id, parentID: user.id, created: Date.now() + 3, cwd: tmp.path }) as Parameters<
+                typeof sessions.updateMessage
+              >[0],
+            )
+            const usersBefore = (yield* sessions.messages({ sessionID: session.id, agentID: "main" })).filter(
+              (m) => m.info.role === "user",
+            ).length
+            yield* prompt
+              .resumeBackground({ sessionID: session.id, assistantMessageID: empty.id, agentID: "main" })
+              .pipe(Effect.catch(() => Effect.void))
+            yield* Effect.sleep("250 millis")
+            const after = yield* sessions.messages({ sessionID: session.id, agentID: "main" })
+            const assistantsAfter = after.filter((m) => m.info.role === "assistant")
+            return {
+              emptyGone: after.find((m) => m.info.id === empty.id) === undefined,
+              completedKept: after.some((m) => m.info.id === completed.id),
+              usersStable: after.filter((m) => m.info.role === "user").length === usersBefore,
+              // run 起来了：出现新 assistant，或旧 completed 被写了 error（runLoop 失败现场）
+              ranSomething:
+                assistantsAfter.some((m) => m.info.id !== completed.id && m.info.id !== empty.id) ||
+                assistantsAfter.some(
+                  (m) => m.info.role === "assistant" && m.info.id === completed.id && Boolean(m.info.error),
+                ),
+            }
+          }),
+        ),
+    })
+    expect(result.emptyGone).toBe(true)
+    expect(result.completedKept).toBe(true)
+    expect(result.usersStable).toBe(true)
+    expect(result.ranSomething).toBe(true)
+  })
+
   test("busy rejects resume without deleting shells", async () => {
     await using tmp = await tmpdir({ git: true })
     const result = await Instance.provide({

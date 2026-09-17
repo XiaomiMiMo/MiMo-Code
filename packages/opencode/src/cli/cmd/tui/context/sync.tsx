@@ -558,8 +558,8 @@ export const { use: useSync, provider: SyncProvider } = createSimpleContext({
           break
         }
         case "session.error": {
-          // 仅 idle 时的 error（resume 异步 reject 等）清恢复中标记；
-          // busy/retry 中途的 error 不清，避免误熄 live recovery 徽标。
+          // 仅非 busy 状态下的 error（resume 异步 reject 等）清恢复中标记；
+          // busy/retry/notice（权限门）中的 error 不清，避免误熄 live 徽标。
           const errSid = event.properties.sessionID
           if (!errSid) break
           const errStatus = store.session_status[errSid]?.type

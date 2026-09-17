@@ -528,24 +528,11 @@ export function Session() {
       { sessionID: route.sessionID, assistantMessageID: candidate.assistantMessageID, titleLocale: language.intl() },
       { throwOnError: true },
     )
-    // 202 后用 status 判是否真起跑：busy/retry → 点亮恢复中（idle 清理/error 事件负责收尾）。
-    // 不可用 recovery() 无 allowBusy 的结果判断成败——path-a/b 成功时它会返回 []。
-    const st = sync.data.session_status[route.sessionID]
-    if (st?.type === "busy" || st?.type === "retry") {
-      sync.set("session_recovery_active", route.sessionID, candidate.assistantMessageID)
-      toast.show({ message: t("tui.toast.session.recover.started"), variant: "info" })
-      return
-    }
-    // 仍 idle：可能是 cleanup-only（壳已清）或异步 reject。recovery 在 idle 下可读。
-    const refreshed = await sdk.client.session.recovery({ sessionID: route.sessionID })
-    const stillListed = refreshed.data?.some((item) => item.assistantMessageID === candidate.assistantMessageID)
-    if (stillListed) {
-      sync.set("session_recovery_active", route.sessionID, candidate.assistantMessageID)
-      toast.show({ message: t("tui.toast.session.recover.started"), variant: "info" })
-      return
-    }
-    sync.set("session_recovery_active", route.sessionID, undefined)
-    toast.show({ message: t("tui.toast.session.recover.none"), variant: "info" })
+    // 202 = 引擎已受理且两种 resume 都会起 run。不在此处再 GET recovery：
+    // busy 时无 allowBusy 的 recovery 恒为 []，会把成功误报成「无可恢复」。
+    // 收尾靠 session.status→idle / session.error（见 sync.tsx）。
+    sync.set("session_recovery_active", route.sessionID, candidate.assistantMessageID)
+    toast.show({ message: t("tui.toast.session.recover.started"), variant: "info" })
   }
 
   command.register(() => [

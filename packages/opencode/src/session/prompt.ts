@@ -3455,6 +3455,8 @@ NOTE: At any point in time through this workflow you should feel free to ask the
       deferInbox?: boolean,
       resumeFrom?: string,
       modelOverride?: { providerID: string; modelID: string },
+      /** user-resume：从 parent user 强制新开一轮，不因同 parent 下旧 sibling 的 classify 提前 break。 */
+      userRedispatch?: boolean,
     ) => Effect.Effect<MessageV2.WithParts> = Effect.fn("SessionPrompt.run")(
       function* (
         sessionID: SessionID,
@@ -3464,6 +3466,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
         deferInbox = false,
         resumeFrom?: string,
         modelOverride?: { providerID: string; modelID: string },
+        userRedispatch = false,
       ) {
         const ctx = yield* InstanceState.context
         const slog = elog.with({ sessionID })
@@ -4131,7 +4134,11 @@ NOTE: At any point in time through this workflow you should feel free to ask the
           const hasToolCalls =
             lastAssistantMsg?.parts.some((part) => part.type === "tool" && !part.metadata?.providerExecuted) ?? false
 
+          // user-resume：仅**首轮**跳过旧 sibling 的 existing-assistant 分类；
+          // 本轮新建的 assistant 在后续 step 仍走正常 classify，否则会无限再调模型。
+          const skipExistingClassify = userRedispatch && step === 0
           if (
+            !skipExistingClassify &&
             lastAssistant?.finish === "length" &&
             !hasToolCalls &&
             lastUser.id < lastAssistant.id &&
@@ -4140,7 +4147,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
             continue
           }
 
-          if (lastAssistant && lastAssistant.id !== resumeFrom) {
+          if (!skipExistingClassify && lastAssistant && lastAssistant.id !== resumeFrom) {
             const classification = classifyAssistantStep({
               phase: "existing-assistant",
               lastUser,
@@ -5776,6 +5783,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
       const work =
         plan.action === "user-resume"
           ? Effect.gen(function* () {
+              // 清掉 parent 下 empty residue（含 error 空壳），否则 lastAssistant 可能仍是空壳挡 classify。
               yield* cleanupEmptyResidueAssistants({
                 sessionID: input.sessionID,
                 agentID: input.agentID,
@@ -5791,6 +5799,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
                 false,
                 undefined,
                 input.model,
+                true,
               )
             }).pipe(
               Effect.ensuring(
@@ -5852,15 +5861,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
               ),
             )
 
-      // tool-resume：launch 前也 abandon，覆盖 ensure 并入、work 未跑的情况。
-      if (plan.action === "tool-resume") {
-        yield* abandonRecoveredAssistant({
-          sessionID: input.sessionID,
-          assistantMessageID: plan.assistantMessageID,
-          agentID: input.agentID,
-        })
-      }
-
+      // tool-resume：abandon 只在 work 内（ensure/start 失败时不打假账）。
       if (input.mode === "ensure") {
         return yield* state.ensureRunning(input.sessionID, input.agentID, resumeInterrupt, work)
       }
