@@ -1356,6 +1356,15 @@ it.live("resume continues an incomplete assistant without creating or rewriting 
       expect(after.filter((message) => message.info.role === "user")).toHaveLength(1)
       expect(after.length).toBe(before.length + 1)
       expect(after.find((message) => message.info.id === seeded.assistant.id)?.info).toMatchObject(seeded.assistant)
+      // tool-resume 必须对被续的 assistant 记 Abandoned-as-resumed
+      const seededAfter = after.find((message) => message.info.id === seeded.assistant.id)?.info
+      const abandonMsg =
+        seededAfter && seededAfter.role === "assistant" && seededAfter.error
+          ? ((seededAfter.error as { data?: { message?: string }; message?: string }).data?.message ??
+            (seededAfter.error as { message?: string }).message ??
+            "")
+          : ""
+      expect(abandonMsg).toContain("Abandoned: resumed as a new assistant turn")
       expect(result.info.role).toBe("assistant")
       expect(result.info.id).not.toBe(seeded.assistant.id)
       expect(result.parts.some((part) => part.type === "text" && part.text === "world")).toBe(true)
@@ -1367,7 +1376,7 @@ it.live("resume continues an incomplete assistant without creating or rewriting 
   ),
 )
 
-// [TP-SR-R21-16] path B: empty residue resume re-dispatches parent user without assistant prefill.
+// [TP-SR-R21-16] user-resume: empty residue assistant → re-dispatch parent user without assistant prefill.
 it.live(
   "resume empty residue re-dispatches parent user without assistant prefill",
   () =>

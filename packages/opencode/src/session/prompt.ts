@@ -5863,6 +5863,11 @@ NOTE: At any point in time through this workflow you should feel free to ask the
 
       // tool-resume：abandon 只在 work 内（ensure/start 失败时不打假账）。
       if (input.mode === "ensure") {
+        // Resume 不得 ensure-join 到无关在途 run：busy 竞态直接 BusyError，保证「点了 Resume 就要跑这一轮」。
+        const busyNow = yield* state
+          .assertNotBusy(input.sessionID, input.agentID)
+          .pipe(Effect.exit, Effect.map((exit) => exit._tag === "Failure"))
+        if (busyNow) return yield* Effect.fail(new Session.BusyError(input.sessionID))
         return yield* state.ensureRunning(input.sessionID, input.agentID, resumeInterrupt, work)
       }
       yield* state.start(input.sessionID, input.agentID, resumeInterrupt, work)
