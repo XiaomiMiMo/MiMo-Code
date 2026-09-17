@@ -616,19 +616,12 @@ it.live(
 
         expect(value).toBe("continue")
         expect(yield* llm.calls).toBe(3)
-        // session.status{retry} is processor-owned: request-phase ladders no longer
-        // publish status (they only emit RetryAttempt). With request.maxRetries=1 the
-        // first 503 is absorbed inside llm.stream; the visible status frame is the
-        // processor stream retry.
-        expect(states).toStrictEqual([1])
-        expect(retryEvents).toContainEqual({
-          attempt: 1,
-          phaseAttempt: 1,
-          maxAttempts: 8,
-          phase: "stream",
-          kind: "server",
-          scope: "live-step",
-        })
+        // Recoverable kinds (network/rate_limit/server) use persistent budgets and
+        // ignore phase=request / request.maxRetries. Both 503s are absorbed on the
+        // llm-side server ladder, so the processor never enters a stream-phase
+        // retry and does not publish session.status{retry} here. That is the
+        // intended density outcome: fewer UI frames, not more.
+        expect(states).toStrictEqual([])
       }),
       {
         git: true,
