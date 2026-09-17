@@ -3339,7 +3339,10 @@ NOTE: At any point in time through this workflow you should feel free to ask the
     const isEmptyAssistantResidue = (assistant: MessageV2.Assistant, parts: readonly MessageV2.Part[]) =>
       assistant.role === "assistant" && !hasUsefulAssistantParts(parts)
 
-    /** Mirrors `recovery` allowlist: incomplete enough that path A / resumeFrom still applies. */
+    /**
+     * 步级「是否还算未完成、可进恢复」——`recovery` 列表与 resume 混场选点共用同一份。
+     * tool-calls / length / 无 finish / 任意 error → 可恢复；completed+stop/other 且无 error → 否。
+     */
     const isRecoveryWorthyAssistant = (info: MessageV2.Assistant) => {
       if (
         "completed" in info.time &&
@@ -3409,13 +3412,9 @@ NOTE: At any point in time through this workflow you should feel free to ask the
       const candidates: RecoveryCandidate[] = []
       for (const [index, msg] of msgs.entries()) {
         if (msg.info.role !== "assistant") continue
-        // 未完成 assistant 才是恢复候选。步级 time.completed 不等于整轮完成——
-        // tool-calls(工具步完但整轮未答)、length(输出截断)、无 finish(中断)均可恢复;
-        // stop / other 等已正常或已终态收尾的不进候选(allowlist,不靠排除法)。
-        // 有 error = 没完成 = 可恢复(processor 注释不变量):任何 error 消息都是候选,
-        // 包括 abandon 后 completed+AbortedError+finish=stop 的场景(恢复失败后仍可重试)。
-        if ("completed" in msg.info.time && !msg.info.error && msg.info.finish && msg.info.finish !== "tool-calls" && msg.info.finish !== "length") continue
-        if (msg.info.finish === "stop" && !msg.info.error) continue
+        // 未完成 assistant 才是恢复候选（与 resume 混场选点共用 isRecoveryWorthyAssistant）。
+        // 有 error = 没完成 = 可恢复；abandon 后 completed+AbortedError 仍可重试。
+        if (!isRecoveryWorthyAssistant(msg.info)) continue
         const assistant = msg.info
         if (!msgs.some((parent) => parent.info.role === "user" && parent.info.id === assistant.parentID)) continue
         if (msgs.slice(index + 1).some((later) => later.info.role === "user" || later.info.role === "assistant")) continue
@@ -5817,12 +5816,9 @@ NOTE: At any point in time through this workflow you should feel free to ask the
         return undefined
       }
 
-      // path-b 清理后可能没有 assistant；onInterrupt 不得回落成 parent user。
-      const resumeInterrupt: Effect.Effect<MessageV2.WithParts> = Effect.gen(function* () {
-        const last = yield* lastAssistant(input.sessionID, input.agentID)
-        if (last.info.role === "assistant") return last
-        return yield* Effect.die(new Error("No assistant message remains after empty-residue resume launch"))
-      })
+      // 与普通发送同一套：onInterrupt = lastAssistant。path-B 清壳后若尚未写出新 assistant，
+      // 会落到 user——和「发消息后立刻中断、库里还没有 assistant」一致，不特殊 die。
+      const resumeInterrupt = lastAssistant(input.sessionID, input.agentID)
 
       const work =
         plan.action === "path-b"
