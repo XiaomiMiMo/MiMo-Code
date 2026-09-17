@@ -706,9 +706,37 @@ export const layer = Layer.effect(
       } satisfies ActorPromptOps
     })
 
+    // Session abort = process-group kill (product contract, not Orchestrator-specific):
+    // interrupt main AND cascade-cancel every same-session actor/subagent so stop
+    // is not limited to the main fiber while children keep running.
     const cancel = Effect.fn("SessionPrompt.cancel")(function* (sessionID: SessionID) {
       yield* elog.info("cancel", { sessionID })
       yield* state.cancel(sessionID)
+      const actors = yield* actorRegistry.listBySession(sessionID)
+      yield* Effect.forEach(
+        actors.filter((actor) => actor.actorID !== "main" && actor.status !== "idle"),
+        (actor) =>
+          Effect.gen(function* () {
+            const svc = spawnRef.current
+            if (svc) {
+              yield* svc.cancel(sessionID, actor.actorID, "graceful")
+              return
+            }
+            const execution = yield* executions.current(sessionID, actor.actorID)
+            if (execution) {
+              yield* executions.requestCancel(execution)
+              yield* state.cancelActor(sessionID, actor.actorID)
+              yield* executions.interrupt(execution)
+              return
+            }
+            yield* state.cancelActor(sessionID, actor.actorID)
+            yield* actorRegistry.updateStatus(sessionID, actor.actorID, {
+              status: "idle",
+              lastOutcome: "cancelled",
+            })
+          }).pipe(Effect.ignore),
+        { concurrency: "unbounded", discard: true },
+      )
     })
 
     // Shared rebuild-from-checkpoint step used by BOTH the automatic overflow

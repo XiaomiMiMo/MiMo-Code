@@ -675,6 +675,54 @@ describe("Actor.cancel", () => {
   )
 })
 
+describe("SessionPrompt.cancel — process-group kill", () => {
+  // Product contract: session abort simulates a kill signal and must propagate
+  // to all same-session subagents (not only main). Independent of Orchestrator.
+  it.live(
+    "session abort cascades to background actors (registry cancelled, status idle)",
+    () =>
+      provideTmpdirServer(
+        Effect.fnUntraced(function* ({ llm }) {
+          const actor = yield* Actor.Service
+          const prompt = yield* SessionPrompt.Service
+          const reg = yield* ActorRegistry.Service
+          const status = yield* SessionStatus.Service
+          const session = yield* Session.Service
+          const parent = yield* session.create({
+            title: "abort cascade",
+            permission: [{ permission: "*", pattern: "*", action: "allow" }],
+          })
+          yield* llm.hang
+          const result = yield* actor.spawn({
+            mode: "subagent",
+            sessionID: parent.id,
+            agentType: "build",
+            task: "long background task",
+            context: "none",
+            tools: ["read"],
+            background: true,
+            model: ref,
+          })
+          // Registry may still be idle on the first read right after spawn returns.
+          let running = yield* reg.get(result.sessionID, result.actorID)
+          for (let i = 0; i < 40 && (!running || running.status === "idle"); i++) {
+            yield* Effect.sleep("50 millis")
+            running = yield* reg.get(result.sessionID, result.actorID)
+          }
+          expect(running?.status === "idle").toBe(false)
+
+          yield* prompt.cancel(parent.id)
+
+          const row = yield* reg.get(result.sessionID, result.actorID)
+          expect(row?.status).toBe("idle")
+          expect(row?.lastOutcome).toBe("cancelled")
+          expect((yield* status.get(parent.id)).type).toBe("idle")
+        }),
+        { git: true, config: providerCfg },
+      ),
+  )
+})
+
 describe("Actor.spawn agent_id persistence", () => {
   it.live("subagent's user message is persisted with agent_id = actorID", () =>
     provideTmpdirServer(

@@ -99,15 +99,30 @@ export const layer = Layer.effect(
       return
     })
 
+    // Process-group kill: session abort cancels EVERY runner under this session
+    // (main + actor/subagent slices), not only `main`. Product contract: actor
+    // cancel simulates a kill signal and must propagate to all subagents.
+    // Orchestrator is unrelated and not required for this path.
     const cancel = Effect.fn("SessionRunState.cancel")(function* (sessionID: SessionID) {
-      const key = runnerKey(sessionID, "main")
       const data = yield* InstanceState.get(state)
-      const existing = data.runners.get(key)
-      if (!existing || !existing.busy) {
+      const prefix = `${sessionID}:`
+      const targets = [...data.runners.entries()].filter(([key]) => key.startsWith(prefix))
+      if (targets.length === 0) {
         yield* status.set(sessionID, { type: "idle" })
         return
       }
-      yield* existing.cancel
+      yield* Effect.forEach(
+        targets,
+        ([key, existing]) =>
+          Effect.gen(function* () {
+            if (existing.busy) yield* existing.cancel
+            data.runners.delete(key)
+          }),
+        { concurrency: "unbounded", discard: true },
+      )
+      // Main onIdle also sets idle; force-clear when main was already gone so
+      // `/session/status` never stays busy after a successful abort.
+      yield* status.set(sessionID, { type: "idle" })
     })
 
     const cancelActor = Effect.fn("SessionRunState.cancelActor")(function* (
