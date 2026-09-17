@@ -65,74 +65,68 @@ function noticeParts(session: { parts: Array<{ type: string; text?: string; synt
 describe("main-worktree writes without automatic isolation", () => {
   for (const tool of ["write", "bash"] as const) {
     for (const linked of [false, true]) {
-      test.each([
-        ["omitted", undefined],
-        ["false", false],
-        ["true", true],
-      ] as const)(
-        `${tool}, linked=${linked}, legacy config=%s: writes succeed without isolation notices`,
-        async (_label, value) => {
-          const stub = startScriptedLLMServer([
-            {
-              lines: toolCallResponse({
-                id: "call_write_off",
-                name: tool,
-                args: JSON.stringify(
-                  tool === "write"
-                    ? { file_path: "off.txt", content: "off\n" }
-                    : { command: "echo off > off.txt", description: "Write fixture" },
-                ),
-              }),
+      test(`${tool}, linked=${linked}: legacy enabled config does not enforce isolation`, async () => {
+        const stub = startScriptedLLMServer([
+          {
+            lines: toolCallResponse({
+              id: "call_write_off",
+              name: tool,
+              args: JSON.stringify(
+                tool === "write"
+                  ? { file_path: "off.txt", content: "off\n" }
+                  : { command: "echo off > off.txt", description: "Write fixture" },
+              ),
+            }),
+          },
+          { lines: textStopResponse("done-off") },
+        ])
+
+        try {
+          await using tmp = await tmpdir({
+            git: true,
+            init: async (dir) => {
+              await Bun.write(
+                path.join(dir, "mimocode.json"),
+                JSON.stringify(providerConfig(stub.origin, { auto_worktree: true })),
+              )
+              if (linked) await seedLinkedWorktree(dir)
             },
-            { lines: textStopResponse("done-off") },
-          ])
+          })
 
-          try {
-            await using tmp = await tmpdir({
-              git: true,
-              init: async (dir) => {
-                await Bun.write(
-                  path.join(dir, "mimocode.json"),
-                  JSON.stringify(providerConfig(stub.origin, { auto_worktree: value })),
-                )
-                if (linked) await seedLinkedWorktree(dir)
-              },
-            })
+          await Instance.provide({
+            directory: tmp.path,
+            fn: () =>
+              run(
+                Effect.gen(function* () {
+                  const prompt = yield* SessionPrompt.Service
+                  const sessions = yield* Session.Service
+                  const session = yield* sessions.create({
+                    title: "worktree policy removed",
+                    permission: [{ permission: "*", pattern: "*", action: "allow" }],
+                  })
 
-            await Instance.provide({
-              directory: tmp.path,
-              fn: () =>
-                run(
-                  Effect.gen(function* () {
-                    const prompt = yield* SessionPrompt.Service
-                    const sessions = yield* Session.Service
-                    const session = yield* sessions.create({
-                      title: `aw off ${_label}`,
-                      permission: [{ permission: "*", pattern: "*", action: "allow" }],
-                    })
+                  yield* prompt.prompt({
+                    sessionID: session.id,
+                    agent: "build",
+                    parts: [{ type: "text", text: "Create off.txt" }],
+                  })
 
-                    yield* prompt.prompt({
-                      sessionID: session.id,
-                      agent: "build",
-                      parts: [{ type: "text", text: "Create off.txt" }],
-                    })
+                  const msgs = yield* sessions.messages({ sessionID: session.id })
+                  const userMsgs = msgs.filter((m) => m.info.role === "user")
+                  expect(noticeParts(userMsgs[0])).toHaveLength(0)
+                  expect(JSON.stringify(stub.captures)).not.toContain("Auto-Worktree Notice")
+                  expect(yield* Effect.promise(() => Bun.file(path.join(tmp.path, "off.txt")).text())).toBe("off\n")
+                  const parts = msgs.flatMap((m) => m.parts).filter((p) => p.type === "tool")
+                  expect(parts.some((p) => p.tool === tool && p.state.status === "completed")).toBe(true)
 
-                    const msgs = yield* sessions.messages({ sessionID: session.id })
-                    const userMsgs = msgs.filter((m) => m.info.role === "user")
-                    expect(noticeParts(userMsgs[0])).toHaveLength(0)
-                    expect(yield* Effect.promise(() => Bun.file(path.join(tmp.path, "off.txt")).text())).toBe("off\n")
-                    const parts = msgs.flatMap((m) => m.parts).filter((p) => p.type === "tool")
-                    expect(parts.some((p) => p.tool === tool && p.state.status === "completed")).toBe(true)
-
-                    yield* sessions.remove(session.id)
-                  }),
-                ),
-            })
-          } finally {
-            void stub.stop()
-          }
-        },
-      )
+                  yield* sessions.remove(session.id)
+                }),
+              ),
+          })
+        } finally {
+          void stub.stop()
+        }
+      })
     }
   }
 })

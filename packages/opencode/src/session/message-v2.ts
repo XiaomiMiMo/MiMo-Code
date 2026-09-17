@@ -30,6 +30,7 @@ import {
   toolAttachmentPlaceholder,
 } from "./tool-attachment"
 import { isSkillCatalogReminder } from "./skill-catalog"
+import { isLegacyAutoWorktreeNotice, replayLegacyWorktreeError } from "./legacy-worktree"
 import { collapseCheckpointTail } from "./tail-digest"
 
 /** Error shape thrown by Bun's fetch() when gzip/br decompression fails mid-stream */
@@ -889,7 +890,7 @@ export const toModelMessagesEffect = Effect.fnUntraced(function* (
           // by older versions so resumed sessions do not receive a duplicate user-side catalog.
           if (part.synthetic && isSkillCatalogReminder(part.text)) continue
           // Do not replay isolation instructions persisted by the removed worktree policy.
-          if (part.synthetic && part.text.startsWith("<system-reminder>\nAuto-Worktree Notice\n")) continue
+          if (part.synthetic && isLegacyAutoWorktreeNotice(part.text)) continue
           if (!part.ignored)
             userMessage.parts.push({
               type: "text",
@@ -1069,7 +1070,7 @@ export const toModelMessagesEffect = Effect.fnUntraced(function* (
                 state: "output-error",
                 toolCallId: part.callID,
                 input: part.state.input,
-                errorText: part.state.error,
+                errorText: replayLegacyWorktreeError(part.state.error),
                 ...(part.metadata?.providerExecuted ? { providerExecuted: true } : {}),
                 ...(differentModel ? {} : { callProviderMetadata: providerMeta(part.metadata) }),
               })

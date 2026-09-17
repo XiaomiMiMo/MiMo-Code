@@ -756,6 +756,33 @@ describe("session.message-v2.toModelMessage", () => {
     ])
   })
 
+  test.each([
+    "Isolate this change into a worktree under this repo, then retry with a path under that worktree.\n\nDo NOT retry against the main worktree path. Do not ask the user to lift this block.",
+    "You are a subagent. Do NOT create a worktree yourself and do NOT retry this write on main.\n\nEscalate to the parent agent: report this block, wait for a worktree path the parent chose, then retry only under that path.\n\nDo NOT retry against the main worktree path.",
+    "Permission denied: edit is disabled",
+    "Blocked: this path is inside the git MAIN worktree `/tmp/example`. Unrelated error",
+  ])("replays tool failures without retired isolation instructions: %s", async (body) => {
+    const legacy = body.startsWith("Isolate") || body.startsWith("You are a subagent")
+    const error = legacy
+      ? "Blocked: this path is inside the git MAIN worktree `/tmp/example`.\n\nThis repo already uses worktrees. Writes to the main worktree are not allowed for this session.\n\n" + body
+      : body
+    const input: MessageV2.WithParts[] = [{
+      info: assistantInfo("m-error", "m-user"),
+      parts: [{
+        ...basePart("m-error", "p-error"), type: "tool", tool: "write", callID: "call-error",
+        state: { status: "error", input: { file_path: "/tmp/example/file.txt" }, error, time: { start: 0, end: 1 } },
+      }],
+    }]
+    const messages = await MessageV2.toModelMessages(input, model)
+    expect(messages).toMatchObject([
+      { role: "assistant", content: [{ type: "tool-call", toolCallId: "call-error", toolName: "write" }] },
+      { role: "tool", content: [{ type: "tool-result", toolCallId: "call-error", toolName: "write",
+        output: { type: "error-text", value: legacy ? "[This tool call failed under a worktree isolation policy that is no longer active.]" : error },
+      }] },
+    ])
+    expect(input[0].parts[0]).toMatchObject({ state: { error } })
+  })
+
   test("preserves tool error media for OpenAI-compatible Chat models", async () => {
     const userID = "m-user"
     const assistantID = "m-assistant"

@@ -311,9 +311,9 @@ test("loads project config from Cygwin paths on Windows", async () => {
   })
 })
 
-test.each([true, false])("ignores removed auto_worktree=%s without changing other config", async (value) => {
+test("ignores removed auto_worktree without changing other config", async () => {
   await using tmp = await tmpdir({
-    init: (dir) => writeConfig(dir, { $schema: "https://opencode.ai/config.json", model: "test/model", auto_worktree: value }),
+    init: (dir) => writeConfig(dir, { $schema: "https://opencode.ai/config.json", model: "test/model", auto_worktree: true }),
   })
   await Instance.provide({
     directory: tmp.path,
