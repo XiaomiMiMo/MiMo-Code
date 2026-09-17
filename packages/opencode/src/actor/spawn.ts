@@ -943,12 +943,22 @@ export const layer = Layer.effect(
         return
       }
       const actor = yield* actorReg.get(sessionID, actorID)
+      // Registry-only cancel (no live ActorExecution fiber).
+      // R006: quiet abort (`wake:false`) must still materialize a cancelled
+      // notification — wake only suppresses auto-fork, not durable delivery.
+      // Skip when the row is already idle (terminal already delivered) or when
+      // prior lastOutcome is already cancelled (execution-path notify won the race).
       if (!actor || actor.status === "idle") return
+      const priorOutcome = actor.lastOutcome
       yield* state.cancelActor(sessionID, actorID)
       const current = yield* actorReg.get(sessionID, actorID)
-      if (!current || current.status === "idle") return
-      yield* actorReg.updateStatus(sessionID, actorID, { status: "idle", lastOutcome: "cancelled" })
-      if (wake) yield* notifyTerminal({ sessionID, actorID, source: "pending", status: "cancelled", wake: true })
+      if (current && current.status !== "idle") {
+        yield* actorReg.updateStatus(sessionID, actorID, { status: "idle", lastOutcome: "cancelled" })
+      }
+      const after = yield* actorReg.get(sessionID, actorID)
+      if (!after || after.status !== "idle" || after.lastOutcome !== "cancelled") return
+      if (priorOutcome === "cancelled") return
+      yield* notifyTerminal({ sessionID, actorID, source: "pending", status: "cancelled", wake })
       yield* Effect.sync(() => forkContexts.delete(forkContextKey(sessionID, actorID)))
     })
 

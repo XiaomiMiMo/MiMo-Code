@@ -811,6 +811,67 @@ describe("SessionPrompt.cancel — process-group kill", () => {
         { git: true, config: providerCfg },
       ),
   )
+
+  // R006: registry-only quiet cancel (pending row, no live ActorExecution) must
+  // still materialize a cancelled inbox notification — wake:false only skips auto-fork.
+  it.live(
+    "registry-only quiet cancel materializes cancelled notification without wake",
+    () =>
+      provideTmpdirServer(
+        Effect.fnUntraced(function* () {
+          const actor = yield* Actor.Service
+          const reg = yield* ActorRegistry.Service
+          const sessions = yield* Session.Service
+          const parent = yield* sessions.create({
+            title: "registry-only abort",
+            permission: [{ permission: "*", pattern: "*", action: "allow" }],
+          })
+          yield* reg.register({
+            sessionID: parent.id,
+            actorID: "pending-1",
+            mode: "subagent",
+            agent: "build",
+            description: "pending child",
+            contextMode: "none",
+            parentActorID: "main",
+            background: true,
+            lifecycle: "ephemeral",
+          })
+          yield* reg.updateStatus(parent.id, "pending-1", { status: "pending" })
+
+          yield* actor.cancel(parent.id, "pending-1", "forced", { wake: false })
+
+          const after = yield* reg.get(parent.id, "pending-1")
+          expect(after?.status).toBe("idle")
+          expect(after?.lastOutcome).toBe("cancelled")
+          const rows = yield* Effect.sync(() =>
+            Database.use((db) =>
+              db
+                .select()
+                .from(InboxTable)
+                .where(and(eq(InboxTable.receiver_session_id, parent.id), eq(InboxTable.receiver_actor_id, "main")))
+                .all(),
+            ),
+          )
+          expect(rows.length).toBe(1)
+          const content = rows[0].content as { text?: string }
+          expect(content.text).toContain("cancelled")
+          // Second cancel is a no-op — no duplicate notify.
+          yield* actor.cancel(parent.id, "pending-1", "forced", { wake: false })
+          const again = yield* Effect.sync(() =>
+            Database.use((db) =>
+              db
+                .select()
+                .from(InboxTable)
+                .where(and(eq(InboxTable.receiver_session_id, parent.id), eq(InboxTable.receiver_actor_id, "main")))
+                .all(),
+            ),
+          )
+          expect(again.length).toBe(1)
+        }),
+        { git: true, config: providerCfg },
+      ),
+  )
 })
 
 describe("Actor.spawn agent_id persistence", () => {
