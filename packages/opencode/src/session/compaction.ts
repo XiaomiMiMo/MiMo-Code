@@ -444,7 +444,10 @@ export const layer: Layer.Layer<
       const modelMessages = yield* MessageV2.toModelMessagesEffect(
         msgs,
         model,
-        input.overflow ? { stripMedia: true } : { collapseCheckpointTail: true },
+        {
+          ...(input.overflow ? { stripMedia: true } : { collapseCheckpointTail: true }),
+          languageProvider: (yield* provider.getLanguage(model)).provider,
+        },
       )
       const ctx = yield* InstanceState.context
       const msg: MessageV2.Assistant = {

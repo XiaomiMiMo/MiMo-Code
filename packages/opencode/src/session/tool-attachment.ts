@@ -89,10 +89,22 @@ function providerAcceptsSynthetic(model: Provider.Model, attachment: ToolAttachm
   return false
 }
 
-function providerAcceptsNative(model: Provider.Model, attachment: ToolAttachment) {
+export function supportsResponsesToolContent(model: Provider.Model, languageProvider?: string) {
+  return (
+    (model.api.npm === "@ai-sdk/openai" || model.api.npm === "@ai-sdk/azure" || model.api.npm === "@ai-sdk/github-copilot") &&
+    languageProvider?.endsWith(".responses") === true
+  )
+}
+
+function providerAcceptsNative(model: Provider.Model, attachment: ToolAttachment, languageProvider?: string) {
   if (!isInlineAttachment(attachment)) return false
   const npm = model.api.npm
   const mime = attachment.mime
+
+  // Inspect the resolved adapter: the same SDK can serve Chat or Responses.
+  if (supportsResponsesToolContent(model, languageProvider)) {
+    return SAFE_IMAGE_MIMES.has(mime) || mime === "application/pdf"
+  }
 
   if (ANTHROPIC_PACKAGES.has(npm) || npm === "@ai-sdk/amazon-bedrock") {
     return SAFE_IMAGE_MIMES.has(mime) || mime === "application/pdf"
@@ -109,9 +121,10 @@ export function routeToolAttachment(input: {
   model: Provider.Model
   attachment: ToolAttachment
   allowNative: boolean
+  languageProvider?: string
 }): ToolAttachmentRoute {
   if (!modelAcceptsMime(input.model, input.attachment.mime)) return "placeholder"
-  if (input.allowNative && providerAcceptsNative(input.model, input.attachment)) return "native"
+  if (input.allowNative && providerAcceptsNative(input.model, input.attachment, input.languageProvider)) return "native"
   if (providerAcceptsSynthetic(input.model, input.attachment)) return "synthetic"
   return "placeholder"
 }

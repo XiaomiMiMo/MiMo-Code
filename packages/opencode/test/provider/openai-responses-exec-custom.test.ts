@@ -136,6 +136,71 @@ describe("Responses exec custom tool", () => {
     ])
   })
 
+  test.each([false, true])("preserves multimodal tool output on the wire (custom=%s)", async (custom) => {
+    const image = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="
+    const requests: Array<{ input: unknown[] }> = []
+    const provider = createOpenaiCompatible({
+      baseURL: "https://example.test/v1",
+      fetch: Object.assign(
+        async (_url: RequestInfo | URL, init?: RequestInit) => {
+          requests.push(JSON.parse(String(init?.body)))
+          return Response.json(response([]))
+        },
+        { preconnect: fetch.preconnect },
+      ),
+    })
+    const prompt: LanguageModelV3Prompt = [
+      {
+        role: "assistant",
+        content: [
+          {
+            type: "tool-call",
+            toolName: "exec",
+            toolCallId: "call-images",
+            input: { code: "return tools.screenshot()" },
+            providerOptions: { openai: { itemId: "item-test", ...(custom ? { toolCallType: "custom" } : {}) } },
+          },
+        ],
+      },
+      {
+        role: "tool",
+        content: [
+          {
+            type: "tool-result",
+            toolName: "exec",
+            toolCallId: "call-images",
+            output: {
+              type: "content",
+              value: [
+                { type: "text", text: "Captured" },
+                ...Array.from({ length: 51 }, () => ({
+                  type: "image-data" as const,
+                  data: image,
+                  mediaType: "image/png",
+                })),
+                { type: "image-url", url: "https://example.test/image.png" },
+                { type: "file-data", data: "cGRm", mediaType: "application/pdf", filename: "example.pdf" },
+                { type: "file-url", url: "https://example.test/example.pdf" },
+              ],
+            },
+          },
+        ],
+      },
+    ]
+    await provider.responses("test-model").doGenerate({ prompt, providerOptions: { openai: { store: false } } })
+    expect(requests[0]!.input).toContainEqual({
+      type: custom ? "custom_tool_call_output" : "function_call_output",
+      call_id: "call-images",
+      output: [
+        { type: "input_text", text: "Captured" },
+        ...Array.from({ length: 51 }, () => ({ type: "input_image", image_url: `data:image/png;base64,${image}` })),
+        { type: "input_image", image_url: "https://example.test/image.png" },
+        { type: "input_file", filename: "example.pdf", file_data: "data:application/pdf;base64,cGRm" },
+        { type: "input_file", file_url: "https://example.test/example.pdf" },
+      ],
+    })
+  })
+
   test("keeps legacy function-call round trips unchanged", async () => {
     const prompt: LanguageModelV3Prompt = [
       {

@@ -1641,6 +1641,92 @@ it.live("loop continues when finish is tool-calls", () =>
   ),
 )
 
+for (const isError of [false, true]) {
+  const screenshots = Array.from({ length: 51 }, () => ({
+    type: "image" as const,
+    data: mcpErrorImage,
+    mimeType: "image/png",
+  }))
+  const screenshotsIt = testEffect(
+    makeHttp(
+      mcpLayer(() => ({
+        mcp_screenshots: dynamicTool({
+          description: "Capture screenshots",
+          inputSchema: jsonSchema({ type: "object", properties: {} }),
+          execute: async () => ({
+            content: [{ type: "text", text: isError ? "Capture failed" : "Captured" }, ...screenshots],
+            isError,
+          }),
+        }),
+      })),
+    ),
+  )
+
+  screenshotsIt.live(`Responses preserves 51 MCP screenshots through followup and resume (error=${isError})`, () =>
+    provideTmpdirServer(
+      Effect.fnUntraced(function* ({ llm }) {
+        const prompt = yield* SessionPrompt.Service
+        const sessions = yield* Session.Service
+        const session = yield* sessions.create({
+          title: "Pinned",
+          permission: [{ permission: "*", pattern: "*", action: "allow" }],
+        })
+        yield* prompt.prompt({
+          sessionID: session.id,
+          agent: "build",
+          model: mcpRef,
+          noReply: true,
+          parts: [{ type: "text", text: "Capture screenshots" }],
+        })
+        yield* llm.tool("mcp_tool_search", { query: "screenshots" })
+        yield* llm.tool("mcp_screenshots", {})
+        yield* llm.text("Screenshots received")
+        yield* prompt.loop({ sessionID: session.id })
+
+        const part = (yield* MessageV2.filterCompactedEffect(session.id))
+          .flatMap((message) => message.parts)
+          .find((part) => part.type === "tool" && part.tool === "mcp_screenshots")
+        if (part?.type !== "tool") throw new Error("Expected screenshot tool result")
+        expect(part.state.status).toBe(isError ? "error" : "completed")
+        const assertImages = (request: Record<string, unknown>) => {
+          expect(request.input).toEqual(
+            expect.arrayContaining([
+              expect.objectContaining({
+                type: "function_call_output",
+                call_id: part.callID,
+                output: [
+                  { type: "input_text", text: isError ? "Tool failed: Capture failed" : "Captured" },
+                  ...screenshots.map(() => ({ type: "input_image", image_url: mcpErrorImageURL })),
+                ],
+              }),
+            ]),
+          )
+          expect(JSON.stringify(request)).not.toContain(MessageV2.SYNTHETIC_ATTACHMENT_PROMPT)
+        }
+        assertImages((yield* llm.inputs).at(-1)!)
+        yield* llm.text("History received")
+        yield* prompt.prompt({
+          sessionID: session.id,
+          agent: "build",
+          model: mcpRef,
+          parts: [{ type: "text", text: "Inspect the previous screenshots again" }],
+        })
+        assertImages((yield* llm.inputs).at(-1)!)
+      }),
+      {
+        git: true,
+        config: (url) => {
+          const config = mediaProviderCfg(url)
+          return {
+            ...config,
+            provider: { ...config.provider, test: { ...config.provider.test, npm: "@ai-sdk/openai" } },
+          }
+        },
+      },
+    ),
+  )
+}
+
 mcpIt.live("MCP isError becomes a tool error without losing standard result fields", () =>
   provideTmpdirServer(
     Effect.fnUntraced(function* ({ llm }) {

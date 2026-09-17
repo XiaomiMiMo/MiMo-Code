@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test"
-import { APICallError, RetryError } from "ai"
+import { APICallError, RetryError, generateText } from "ai"
+import { createOpenAI } from "@ai-sdk/openai"
 import { convertToLanguageModelPrompt } from "ai/internal"
 import { MessageV2 } from "../../src/session/message-v2"
 import { ProviderTransform } from "../../src/provider"
@@ -468,6 +469,120 @@ describe("session.message-v2.toModelMessage", () => {
         ],
       },
     ])
+  })
+
+  test.each([false, true])("sends 51 historical screenshots inside Responses tool outputs (store=%s)", async (store) => {
+    const mediaModel = withInputCapabilities({ image: true })
+    const input: MessageV2.WithParts[] = [
+      {
+        info: userInfo("m-user"),
+        parts: [
+          { ...basePart("m-user", "u1"), type: "text", text: "Inspect screenshots" },
+          { ...basePart("m-user", "u2"), type: "file", mime: "image/png", url: `data:image/png;base64,${pngBase64}` },
+        ],
+      },
+      ...Array.from(
+        { length: 51 },
+        (_, i): MessageV2.WithParts => ({
+          info: assistantInfo(`m-assistant-${i}`, "m-user"),
+          parts: [
+            {
+              ...basePart(`m-assistant-${i}`, `tool-${i}`),
+              type: "tool",
+              callID: `call-${i}`,
+              tool: "screenshot",
+              metadata: { openai: { itemId: `fc-${i}` } },
+              state: {
+                status: "completed",
+                input: {},
+                output: `Screenshot ${i}`,
+                title: "Screenshot",
+                metadata: {},
+                time: { start: 0, end: 1 },
+                attachments: [
+                  {
+                    ...basePart(`m-assistant-${i}`, `image-${i}`),
+                    type: "file",
+                    mime: "image/png",
+                    url: `data:image/png;base64,${pngBase64}`,
+                  },
+                ],
+              },
+            },
+          ],
+        }),
+      ),
+    ]
+    const requests: Array<{
+      store?: boolean
+      input: Array<{ type?: string; role?: string; call_id?: string; output?: unknown; content?: unknown }>
+    }> = []
+    const sdk = createOpenAI({
+      name: "test",
+      apiKey: "test-key",
+      fetch: Object.assign(
+        async (_url: RequestInfo | URL, init?: RequestInit) => {
+          requests.push(JSON.parse(String(init?.body)))
+          return Response.json({
+            id: "resp-test",
+            created_at: 1,
+            model: "test-model",
+            output: [],
+            usage: { input_tokens: 1, output_tokens: 1, total_tokens: 2 },
+          })
+        },
+        { preconnect: fetch.preconnect },
+      ),
+    })
+    const language = sdk.responses("test-model")
+    const messages = await MessageV2.toModelMessages(input, mediaModel, { languageProvider: language.provider })
+    expect(messages.filter((message) => message.role === "user")).toHaveLength(1)
+    await generateText({
+      model: language,
+      messages: ProviderTransform.message(messages, mediaModel, {}),
+      providerOptions: { openai: { store } },
+      maxRetries: 0,
+    })
+    const sent = requests[0]!.input
+    expect(requests[0]!.store).toBe(store)
+    const outputs = sent.filter((item) => item.type === "function_call_output")
+    expect(outputs).toHaveLength(51)
+    for (const [i, output] of outputs.entries()) {
+      expect(output.call_id).toBe(`call-${i}`)
+      expect(output.output).toEqual([
+        { type: "input_text", text: `Screenshot ${i}` },
+        { type: "input_image", image_url: `data:image/png;base64,${pngBase64}` },
+      ])
+      expect(sent.some((item) => item.type === "function_call" && item.call_id === output.call_id)).toBe(true)
+    }
+    expect(sent.filter((item) => item.role === "user")).toHaveLength(1)
+    expect(JSON.stringify(sent.find((item) => item.role === "user"))).toContain("input_image")
+    expect(JSON.stringify(sent)).not.toContain(MessageV2.SYNTHETIC_ATTACHMENT_PROMPT)
+
+    const replay = await MessageV2.toModelMessages(input, mediaModel, {
+      languageProvider: sdk.chat("test-model").provider,
+    })
+    expect(replay.filter((message) => message.role === "user")).toHaveLength(52)
+    const stripped = await MessageV2.toModelMessages(input, mediaModel, {
+      languageProvider: language.provider,
+      stripMedia: true,
+    })
+    expect(JSON.stringify(stripped)).not.toContain(pngBase64)
+
+    const failed = structuredClone(input.slice(0, 2))
+    const part = failed[1]!.parts[0]!
+    if (part.type !== "tool" || part.state.status !== "completed") throw new Error("Expected completed fixture")
+    part.state = {
+      status: "error",
+      input: {},
+      error: "Screenshot interrupted",
+      time: { start: 0, end: 1 },
+      attachments: part.state.attachments,
+    }
+    const errorMessages = await MessageV2.toModelMessages(failed, mediaModel, { languageProvider: language.provider })
+    expect(errorMessages.filter((message) => message.role === "user")).toHaveLength(1)
+    expect(JSON.stringify(errorMessages)).toContain("Tool failed: Screenshot interrupted")
+    expect(JSON.stringify(errorMessages.find((message) => message.role === "tool"))).toContain(pngBase64)
   })
 
   test("routes supported and unsupported tool-result files for OpenAI-compatible Chat models", async () => {

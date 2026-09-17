@@ -166,7 +166,7 @@ export const layer = Layer.effect(
       // build site inherits from the middleware would otherwise be absent. An empty
       // user message here reaches the judge's provider unrepaired.
       const conversation = ProviderTransform.ensureNonEmptyContent(
-        yield* MessageV2.toModelMessagesEffect(input.msgs, resolved),
+        yield* MessageV2.toModelMessagesEffect(input.msgs, resolved, { languageProvider: language.provider }),
       )
 
       // Diagnostic: dump the FULL message array sent to the judge. Long strings

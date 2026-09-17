@@ -36,6 +36,7 @@ export const buildLLMRequestPrefix = Effect.fn("Session.buildLLMRequestPrefix")(
   sessionID: SessionID
   agent: Agent.Info
   model: Provider.Model
+  languageProvider?: string
   msgs: MessageV2.WithParts[]
   /**
    * Caller-built system-tail parts. Currently environment/format, skill reminder,
@@ -60,6 +61,7 @@ export const buildLLMRequestPrefix = Effect.fn("Session.buildLLMRequestPrefix")(
   // See spec changelog at docs/superpowers/specs/2026-05-26-fork-agent-prefix-cache-design.md
   const inheritedMessages = yield* MessageV2.toModelMessagesEffect(input.msgs, input.model, {
     collapseCheckpointTail: input.collapseCheckpointTail,
+    languageProvider: input.languageProvider,
   })
 
   // Find the last user message; required for system "user.system" pass-through

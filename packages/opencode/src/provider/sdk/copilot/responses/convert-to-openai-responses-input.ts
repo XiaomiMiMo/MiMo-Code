@@ -1,7 +1,7 @@
 import { type LanguageModelV3Prompt, type SharedV3Warning, UnsupportedFunctionalityError } from "@ai-sdk/provider"
 import { convertToBase64, parseProviderOptions } from "@ai-sdk/provider-utils"
 import { z } from "zod/v4"
-import type { OpenAIResponsesInput, OpenAIResponsesReasoning } from "./openai-responses-api-types"
+import type { OpenAIResponsesInput, OpenAIResponsesReasoning, OpenAIResponsesToolOutput } from "./openai-responses-api-types"
 import { localShellInputSchema, localShellOutputSchema } from "./tool/local-shell"
 
 /**
@@ -315,7 +315,7 @@ export async function convertToOpenAIResponsesInput({
             break
           }
 
-          let contentValue: string
+          let contentValue: OpenAIResponsesToolOutput
           switch (output.type) {
             case "text":
             case "error-text":
@@ -325,6 +325,28 @@ export async function convertToOpenAIResponsesInput({
               contentValue = output.reason ?? "Tool execution denied."
               break
             case "content":
+              contentValue = output.value.flatMap((item): Exclude<OpenAIResponsesToolOutput, string> => {
+                switch (item.type) {
+                  case "text":
+                    return [{ type: "input_text", text: item.text }]
+                  case "image-data":
+                    return [{ type: "input_image", image_url: `data:${item.mediaType};base64,${item.data}` }]
+                  case "image-url":
+                    return [{ type: "input_image", image_url: item.url }]
+                  case "file-data":
+                    return [{
+                      type: "input_file",
+                      filename: item.filename ?? "data",
+                      file_data: `data:${item.mediaType};base64,${item.data}`,
+                    }]
+                  case "file-url":
+                    return [{ type: "input_file", file_url: item.url }]
+                  default:
+                    warnings.push({ type: "other", message: `Unsupported tool content part type: ${item.type}` })
+                    return []
+                }
+              })
+              break
             case "json":
             case "error-json":
               contentValue = JSON.stringify(output.value)

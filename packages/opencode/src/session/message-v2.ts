@@ -26,6 +26,7 @@ import { EffectLogger } from "@/effect"
 import {
   inlineToolAttachment,
   routeToolAttachment,
+  supportsResponsesToolContent,
   toolAttachmentFilename,
   toolAttachmentPlaceholder,
 } from "./tool-attachment"
@@ -798,7 +799,7 @@ export const toModelMessagesEffect = Effect.fnUntraced(function* (
    * a single activity-log user message (see tail-digest.ts). Off by default so
    * checkpoint writers / compaction / title generation keep full fidelity.
    */
-  options?: { stripMedia?: boolean; collapseCheckpointTail?: boolean },
+  options?: { stripMedia?: boolean; collapseCheckpointTail?: boolean; languageProvider?: string },
 ) {
   const result: UIMessage[] = []
   const toolNames = new Set<string>()
@@ -954,7 +955,12 @@ export const toModelMessagesEffect = Effect.fnUntraced(function* (
         const native: FilePart[] = []
         const parts: (typeof syntheticGroups)[number]["parts"] = []
         for (const attachment of input.attachments) {
-          const route = routeToolAttachment({ model, attachment, allowNative: input.allowNative })
+          const route = routeToolAttachment({
+            model,
+            attachment,
+            allowNative: input.allowNative,
+            languageProvider: options?.languageProvider,
+          })
           if (route === "native") native.push(attachment)
           if (route === "synthetic") {
             parts.push({
@@ -1043,21 +1049,29 @@ export const toModelMessagesEffect = Effect.fnUntraced(function* (
           }
           if (part.state.status === "error") {
             const attachments = options?.stripMedia ? [] : (part.state.attachments ?? [])
-            routeAttachments({
+            const finalAttachments = routeAttachments({
               tool: part.tool,
               callID: part.callID,
               status: "error",
               attachments,
-              allowNative: false,
+              allowNative: supportsResponsesToolContent(model, options?.languageProvider),
             })
             const output = part.state.metadata?.interrupted === true ? part.state.metadata.output : undefined
-            if (typeof output === "string") {
+            if (finalAttachments.length > 0 || typeof output === "string") {
               assistantMessage.parts.push({
                 type: ("tool-" + part.tool) as `tool-${string}`,
                 state: "output-available",
                 toolCallId: part.callID,
                 input: part.state.input,
-                output,
+                // Responses has no separate error-image output variant. Keep the
+                // failure explicit in text and its images under the same call ID.
+                output:
+                  finalAttachments.length > 0
+                    ? {
+                        text: `Tool failed: ${part.state.error}${typeof output === "string" ? `\n${output}` : ""}`,
+                        attachments: finalAttachments,
+                      }
+                    : output,
                 ...(part.metadata?.providerExecuted ? { providerExecuted: true } : {}),
                 ...(differentModel ? {} : { callProviderMetadata: providerMeta(part.metadata) }),
               })
@@ -1135,7 +1149,7 @@ export const toModelMessagesEffect = Effect.fnUntraced(function* (
 export function toModelMessages(
   input: WithParts[],
   model: Provider.Model,
-  options?: { stripMedia?: boolean; collapseCheckpointTail?: boolean },
+  options?: { stripMedia?: boolean; collapseCheckpointTail?: boolean; languageProvider?: string },
 ): Promise<ModelMessage[]> {
   return Effect.runPromise(toModelMessagesEffect(input, model, options).pipe(Effect.provide(EffectLogger.layer)))
 }

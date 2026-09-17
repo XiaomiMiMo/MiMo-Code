@@ -670,6 +670,7 @@ export const layer = Layer.effect(
           agent: ag,
           model,
           msgs: captureMessages,
+          languageProvider: (yield* provider.getLanguage(model)).provider,
           additions,
           prebuiltSystem: frozen?.system,
           prompt: capturePrompt,
@@ -4561,7 +4562,9 @@ NOTE: At any point in time through this workflow you should feel free to ask the
               const ownNew = msgs.filter(
                 (m) => m.info.id > forkCtx.watermarkMsgID && m.info.agentID === lastUser.agentID,
               )
-              const ownNewModelMsgs = yield* MessageV2.toModelMessagesEffect(ownNew, model)
+              const ownNewModelMsgs = yield* MessageV2.toModelMessagesEffect(ownNew, model, {
+                languageProvider: (yield* provider.getLanguage(model)).provider,
+              })
               const prebuiltSystem = forkCtx.system
               lastSystemPrompt = prebuiltSystem
               const modelMsgs: ModelMessage[] = [...forkCtx.inheritedMessages, ...ownNewModelMsgs]
@@ -4794,6 +4797,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
               sessionID,
               agent,
               model,
+              languageProvider: (yield* provider.getLanguage(model)).provider,
               msgs,
               additions: frozen ? [] : yield* currentAdditions(),
               prebuiltSystem: frozen?.system,
@@ -4824,6 +4828,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
                 sessionID,
                 agent,
                 model,
+                languageProvider: (yield* provider.getLanguage(model)).provider,
                 msgs,
                 additions: yield* currentAdditions(),
                 prompt: sessionPrompt,
