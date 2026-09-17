@@ -3339,23 +3339,57 @@ NOTE: At any point in time through this workflow you should feel free to ask the
     const isEmptyAssistantResidue = (assistant: MessageV2.Assistant, parts: readonly MessageV2.Part[]) =>
       assistant.role === "assistant" && !hasUsefulAssistantParts(parts)
 
-    /** 删除 parent 下（及本轮结束后）的 empty residue assistant——不论来源，空壳一律清掉。 */
+    /** Mirrors `recovery` allowlist: incomplete enough that path A / resumeFrom still applies. */
+    const isRecoveryWorthyAssistant = (info: MessageV2.Assistant) => {
+      if (
+        "completed" in info.time &&
+        !info.error &&
+        info.finish &&
+        info.finish !== "tool-calls" &&
+        info.finish !== "length"
+      )
+        return false
+      if (info.finish === "stop" && !info.error) return false
+      return true
+    }
+
+    /**
+     * 删除 parent 下的 empty residue assistant——不论来源，空壳一律清掉。
+     * 必填 parentMessageID：清理范围钉在该 user 之下，不做会话级扫删。
+     * busy（status 或 runner）时跳过无 terminal 标记的 live 空壳。
+     * `force` 仅用于本轮 runLoop 结束后的 ensuring 再清。
+     */
     const cleanupEmptyResidueAssistants = Effect.fn("SessionPrompt.cleanupEmptyResidueAssistants")(function* (input: {
       sessionID: SessionID
       agentID?: string
-      /** 仅清理该 parent user 之后的 assistant；省略则清理会话内全部 empty residue。 */
-      parentMessageID?: MessageID
+      parentMessageID: MessageID
+      sessionBusy?: boolean
+      force?: boolean
     }) {
+      const busy =
+        input.sessionBusy ?? (yield* status.get(input.sessionID)).type !== "idle"
       const msgs = yield* sessions.messages({ sessionID: input.sessionID, agentID: input.agentID ?? "main" })
       const removed: MessageID[] = []
+      let skippedLive = 0
       for (const msg of msgs) {
         if (msg.info.role !== "assistant") continue
-        if (input.parentMessageID && msg.info.parentID !== input.parentMessageID) continue
+        if (msg.info.parentID !== input.parentMessageID) continue
         if (!isEmptyAssistantResidue(msg.info, msg.parts)) continue
+        const liveOwned = !input.force && busy && !msg.info.error && !("completed" in msg.info.time)
+        if (liveOwned) {
+          skippedLive += 1
+          continue
+        }
         yield* sessions.removeMessage({ sessionID: input.sessionID, messageID: msg.info.id })
         removed.push(msg.info.id)
       }
-      if (removed.length > 0) elog.info("empty-residue-assistants-removed", { sessionID: input.sessionID, removed })
+      if (removed.length > 0 || skippedLive > 0)
+        elog.info("empty-residue-assistants-cleanup", {
+          sessionID: input.sessionID,
+          parentMessageID: input.parentMessageID,
+          removed,
+          skippedLive,
+        })
       return removed
     })
 
@@ -5659,6 +5693,106 @@ NOTE: At any point in time through this workflow you should feel free to ask the
       return result
     })
 
+    type EmptyResidueResumePlan =
+      | { action: "path-b"; parentMessageID: MessageID }
+      | { action: "path-a"; assistantMessageID: MessageID }
+      | { action: "reject"; error: InstanceType<typeof NotFoundError> | Session.BusyError }
+
+    /**
+     * Resume 路径分型（空壳语义）：
+     * - target 消失 → reject（禁止带悬空 resumeFrom 落到 path A）
+     * - target 非空 → path A
+     * - parent 下 assistant **全部** empty residue → idle 时清壳后 path B；busy → reject（不删 live 壳）
+     * - 混合（有用 incomplete + 空壳）→ 清空壳后 path A 指向有用的 incomplete
+     * - 混合但仅剩 completed 有用历史 → reject（不重发 parent，避免叠答）
+     */
+    const planEmptyResidueResume = Effect.fn("SessionPrompt.planEmptyResidueResume")(function* (input: {
+      sessionID: SessionID
+      agentID: string
+      assistantMessageID: MessageID
+    }) {
+      const targetMsgs = yield* sessions.messages({ sessionID: input.sessionID, agentID: input.agentID })
+      const target = targetMsgs.find((item) => item.info.id === input.assistantMessageID)
+      if (target === undefined || target.info.role !== "assistant") {
+        const missingPlan: EmptyResidueResumePlan = {
+          action: "reject",
+          error: new NotFoundError({
+            message: "Resume target no longer present: " + input.assistantMessageID,
+          }),
+        }
+        return missingPlan
+      }
+      if (!isEmptyAssistantResidue(target.info, target.parts)) {
+        const pathA: EmptyResidueResumePlan = { action: "path-a", assistantMessageID: target.info.id }
+        return pathA
+      }
+
+      const parentMessageID = target.info.parentID
+      const parentAssistants = targetMsgs.filter(
+        (item) => item.info.role === "assistant" && item.info.parentID === parentMessageID,
+      )
+      const parentAllEmpty =
+        parentAssistants.length > 0 &&
+        parentAssistants.every(
+          (item) => item.info.role === "assistant" && isEmptyAssistantResidue(item.info, item.parts),
+        )
+
+      const runnerBusy = yield* state
+        .assertNotBusy(input.sessionID, input.agentID)
+        .pipe(
+          Effect.exit,
+          Effect.map((exit) => exit._tag === "Failure"),
+        )
+      const statusBusy = (yield* status.get(input.sessionID)).type !== "idle"
+      const sessionBusy = runnerBusy || statusBusy
+
+      yield* cleanupEmptyResidueAssistants({
+        sessionID: input.sessionID,
+        agentID: input.agentID,
+        parentMessageID,
+        sessionBusy,
+      })
+
+      if (parentAllEmpty) {
+        // path B 从 parent user 重发：busy（runner 或 status）时可能仍有 live writer，拒绝。
+        if (sessionBusy) {
+          const busyPlan: EmptyResidueResumePlan = {
+            action: "reject",
+            error: new Session.BusyError(input.sessionID),
+          }
+          return busyPlan
+        }
+        const pathB: EmptyResidueResumePlan = { action: "path-b", parentMessageID }
+        return pathB
+      }
+
+      const usefulIncomplete = parentAssistants
+        .filter(
+          (item) =>
+            item.info.role === "assistant" &&
+            !isEmptyAssistantResidue(item.info, item.parts) &&
+            isRecoveryWorthyAssistant(item.info),
+        )
+        .at(-1)
+      if (usefulIncomplete && usefulIncomplete.info.role === "assistant") {
+        const pathAUseful: EmptyResidueResumePlan = {
+          action: "path-a",
+          assistantMessageID: usefulIncomplete.info.id,
+        }
+        return pathAUseful
+      }
+
+      const rejectPlan: EmptyResidueResumePlan = {
+        action: "reject",
+        error: new NotFoundError({
+          message:
+            "Empty residue coexists with non-empty assistant history; no resumable incomplete assistant under parent " +
+            parentMessageID,
+        }),
+      }
+      return rejectPlan
+    })
+
     const resume = Effect.fn("SessionPrompt.resume")(function* (input: ResumeTurnInput) {
       yield* state.assertNotBusy(input.sessionID, input.agentID)
       const candidates = yield* recovery({ sessionID: input.sessionID, agentID: input.agentID })
@@ -5675,22 +5809,34 @@ NOTE: At any point in time through this workflow you should feel free to ask the
       if (input.model) {
         yield* getModel(ProviderID.make(input.model.providerID), ModelID.make(input.model.modelID), input.sessionID)
       }
-      const targetMsgs = yield* sessions.messages({ sessionID: input.sessionID, agentID })
-      const target = targetMsgs.find((item) => item.info.id === input.assistantMessageID)
-      const emptyResidue =
-        target !== undefined && target.info.role === "assistant" && isEmptyAssistantResidue(target.info, target.parts)
-      if (emptyResidue && target?.info.role === "assistant") {
-        // 路径 B：user 失败 + 空 assistant 残渣 → 清空壳后重发 parent user（无 assistant prefill）。
-        const parentMessageID = target.info.parentID
-        yield* cleanupEmptyResidueAssistants({ sessionID: input.sessionID, agentID, parentMessageID })
+      const plan = yield* planEmptyResidueResume({
+        sessionID: input.sessionID,
+        agentID,
+        assistantMessageID: input.assistantMessageID,
+      })
+      if (plan.action === "reject") return yield* Effect.fail(plan.error)
+      if (plan.action === "path-b") {
+        // 路径 B：parent 下 assistant 均为空壳 → 清壳后重发 parent user（无 assistant prefill）。
+        const parentMessageID = plan.parentMessageID
         return yield* state.ensureRunning(
           input.sessionID,
           agentID,
           lastAssistant(input.sessionID, agentID),
           runLoop(input.sessionID, agentID, input.task_id, input.titleLocale, false, undefined, input.model).pipe(
             Effect.ensuring(
-              cleanupEmptyResidueAssistants({ sessionID: input.sessionID, agentID, parentMessageID }).pipe(
-                Effect.catchCause((cause) => elog.warn("empty-residue-cleanup-failed", { sessionID: input.sessionID, cause })),
+              cleanupEmptyResidueAssistants({
+                sessionID: input.sessionID,
+                agentID,
+                parentMessageID,
+                force: true,
+              }).pipe(
+                Effect.catchCause((cause) =>
+                  elog.warn("empty-residue-cleanup-failed", {
+                    sessionID: input.sessionID,
+                    parentMessageID,
+                    cause,
+                  }),
+                ),
               ),
             ),
           ),
@@ -5701,18 +5847,19 @@ NOTE: At any point in time through this workflow you should feel free to ask the
       // observe Error / completed state see it immediately (not only in ensuring
       // after the detached loop finishes). ensuring below remains as an idempotent
       // safety net (abandonRecoveredAssistant no-ops once completed is set).
-      yield* abandonRecoveredAssistant({ sessionID: input.sessionID, assistantMessageID: input.assistantMessageID, agentID })
+      const resumeTarget = plan.assistantMessageID
+      yield* abandonRecoveredAssistant({ sessionID: input.sessionID, assistantMessageID: resumeTarget, agentID })
       return yield* state.ensureRunning(
         input.sessionID,
         agentID,
         lastAssistant(input.sessionID, agentID),
-        runLoop(input.sessionID, agentID, input.task_id, input.titleLocale, false, input.assistantMessageID, input.model).pipe(
+        runLoop(input.sessionID, agentID, input.task_id, input.titleLocale, false, resumeTarget, input.model).pipe(
           Effect.ensuring(
-            abandonRecoveredAssistant({ sessionID: input.sessionID, assistantMessageID: input.assistantMessageID, agentID }).pipe(
+            abandonRecoveredAssistant({ sessionID: input.sessionID, assistantMessageID: resumeTarget, agentID }).pipe(
               Effect.catchCause((cause) =>
                 elog.warn("recovered-assistant-abandon-failed", {
                   sessionID: input.sessionID,
-                  messageID: input.assistantMessageID,
+                  messageID: resumeTarget,
                   cause,
                 }),
               ),
@@ -5737,21 +5884,33 @@ NOTE: At any point in time through this workflow you should feel free to ask the
       if (input.model) {
         yield* getModel(ProviderID.make(input.model.providerID), ModelID.make(input.model.modelID), input.sessionID)
       }
-      const targetMsgs = yield* sessions.messages({ sessionID: input.sessionID, agentID })
-      const target = targetMsgs.find((item) => item.info.id === input.assistantMessageID)
-      const emptyResidue =
-        target !== undefined && target.info.role === "assistant" && isEmptyAssistantResidue(target.info, target.parts)
-      if (emptyResidue && target?.info.role === "assistant") {
-        const parentMessageID = target.info.parentID
-        yield* cleanupEmptyResidueAssistants({ sessionID: input.sessionID, agentID, parentMessageID })
+      const plan = yield* planEmptyResidueResume({
+        sessionID: input.sessionID,
+        agentID,
+        assistantMessageID: input.assistantMessageID,
+      })
+      if (plan.action === "reject") return yield* Effect.fail(plan.error)
+      if (plan.action === "path-b") {
+        const parentMessageID = plan.parentMessageID
         yield* state.start(
           input.sessionID,
           agentID,
           lastAssistant(input.sessionID, agentID),
           runLoop(input.sessionID, agentID, input.task_id, input.titleLocale, false, undefined, input.model).pipe(
             Effect.ensuring(
-              cleanupEmptyResidueAssistants({ sessionID: input.sessionID, agentID, parentMessageID }).pipe(
-                Effect.catchCause((cause) => elog.warn("empty-residue-cleanup-failed", { sessionID: input.sessionID, cause })),
+              cleanupEmptyResidueAssistants({
+                sessionID: input.sessionID,
+                agentID,
+                parentMessageID,
+                force: true,
+              }).pipe(
+                Effect.catchCause((cause) =>
+                  elog.warn("empty-residue-cleanup-failed", {
+                    sessionID: input.sessionID,
+                    parentMessageID,
+                    cause,
+                  }),
+                ),
               ),
             ),
           ),
@@ -5759,18 +5918,19 @@ NOTE: At any point in time through this workflow you should feel free to ask the
         return
       }
       // Abandon before detaching runLoop — same timing requirement as resume.
-      yield* abandonRecoveredAssistant({ sessionID: input.sessionID, assistantMessageID: input.assistantMessageID, agentID })
+      const resumeTarget = plan.assistantMessageID
+      yield* abandonRecoveredAssistant({ sessionID: input.sessionID, assistantMessageID: resumeTarget, agentID })
       yield* state.start(
         input.sessionID,
         agentID,
         lastAssistant(input.sessionID, agentID),
-        runLoop(input.sessionID, agentID, input.task_id, input.titleLocale, false, input.assistantMessageID, input.model).pipe(
+        runLoop(input.sessionID, agentID, input.task_id, input.titleLocale, false, resumeTarget, input.model).pipe(
           Effect.ensuring(
-            abandonRecoveredAssistant({ sessionID: input.sessionID, assistantMessageID: input.assistantMessageID, agentID }).pipe(
+            abandonRecoveredAssistant({ sessionID: input.sessionID, assistantMessageID: resumeTarget, agentID }).pipe(
               Effect.catchCause((cause) =>
                 elog.warn("recovered-assistant-abandon-failed", {
                   sessionID: input.sessionID,
-                  messageID: input.assistantMessageID,
+                  messageID: resumeTarget,
                   cause,
                 }),
               ),

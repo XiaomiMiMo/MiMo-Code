@@ -1367,6 +1367,82 @@ it.live("resume continues an incomplete assistant without creating or rewriting 
   ),
 )
 
+// [TP-SR-R21-16] path B: empty residue resume re-dispatches parent user without assistant prefill.
+it.live(
+  "resume empty residue re-dispatches parent user without assistant prefill",
+  () =>
+    provideTmpdirServer(
+      Effect.fnUntraced(function* ({ llm }) {
+        const prompt = yield* SessionPrompt.Service
+        const sessions = yield* Session.Service
+        const chat = yield* sessions.create({
+          permission: [{ permission: "*", pattern: "*", action: "allow" }],
+        })
+        const parent = yield* user(chat.id, "look for new resumes")
+        const shell = yield* sessions.updateMessage({
+          id: MessageID.ascending(),
+          role: "assistant",
+          parentID: parent.id,
+          sessionID: chat.id,
+          mode: "build",
+          agent: "build",
+          path: { cwd: "/tmp", root: "/tmp" },
+          cost: 0,
+          tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+          modelID: ref.modelID,
+          providerID: ref.providerID,
+          time: { created: Date.now() },
+        })
+        yield* llm.text("found 2 resumes")
+
+        const candidates = yield* prompt.recovery({ sessionID: chat.id, allowBusy: true })
+        expect(candidates.some((c) => c.assistantMessageID === shell.id)).toBe(true)
+        expect(candidates.every((c) => Object.keys(c).sort().join(",") === "assistantMessageID,created,parentMessageID")).toBe(true)
+
+        const result = yield* prompt.resume({
+          sessionID: chat.id,
+          assistantMessageID: shell.id,
+          model: ref,
+        })
+        const requests = yield* llm.inputs
+        expect(requests.length).toBeGreaterThan(0)
+        const messages = ((requests[0]?.messages ?? []) as { role: string; content?: unknown }[]).filter(
+          (m) => m.role === "user" || m.role === "assistant",
+        )
+        expect(messages.length).toBeGreaterThan(0)
+        expect(messages[messages.length - 1]?.role).toBe("user")
+        expect(JSON.stringify(requests[0]?.messages ?? [])).toContain("look for new resumes")
+        expect(JSON.stringify(requests[0]?.messages ?? [])).not.toContain("Abandoned: resumed as a new assistant turn")
+
+        const after = yield* sessions.messages({ sessionID: chat.id })
+        expect(after.find((m) => m.info.id === shell.id)).toBeUndefined()
+        expect(after.filter((m) => m.info.role === "user")).toHaveLength(1)
+        const assistants = after.filter((m) => m.info.role === "assistant")
+        expect(assistants.length).toBeGreaterThan(0)
+        // success path: no stacked empty residue under parent
+        expect(
+          assistants.every(
+            (m) =>
+              m.info.role !== "assistant" ||
+              m.parts.some(
+                (part) =>
+                  (part.type === "text" && part.text.trim().length > 0) ||
+                  part.type === "tool" ||
+                  (part.type === "reasoning" && part.text.trim().length > 0),
+              ) ||
+              Boolean(m.info.role === "assistant" && m.info.error),
+          ),
+        ).toBe(true)
+        expect(result.info.role).toBe("assistant")
+        expect(result.parts.some((part) => part.type === "text" && part.text === "found 2 resumes")).toBe(true)
+      }),
+      {
+        git: true,
+        config: providerCfg,
+      },
+    ),
+)
+
 it.live(
   "loop injects instruction files but not the dynamic environment block",
   () =>

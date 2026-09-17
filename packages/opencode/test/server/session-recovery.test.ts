@@ -100,12 +100,13 @@ describe("session turn recovery routes", () => {
         created: expect.any(Number),
       },
     ])
+    // [TP-SR-R21-16] HTTP resume admitted (202) and empty residue shell cleaned — not a no-op resume
     expect(result.resumed).toBe(202)
     expect(result.missing).toBe(404)
-    // empty residue resume: shell must be cleaned; no Abandoned-as-resumed stamp
     expect(result.shellRemoved).toBe(true)
     const abandonMsg = result.abandoned?.error?.data?.message ?? ""
     expect(abandonMsg).not.toContain("Abandoned: resumed as a new assistant turn")
+    expect(Array.isArray(result.candidates)).toBe(true)
   })
 })
 
