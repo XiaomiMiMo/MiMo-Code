@@ -861,8 +861,8 @@ function imageWithinCaps(mime: string, bytes: Buffer, maxSize: number, maxDimens
 // 1. Sniff the real MIME, verify vendor-supported bytes, and transcode
 //    vendor-unsupported but decodable formats (BMP → PNG). Corrupt images
 //    become ImageInputError text and are never forwarded to the provider.
-// 2. Count cap (maxImages): drop the oldest excess *user* prompt images,
-//    including image-typed `file` parts produced by synthetic tool attachments.
+// 2. Count cap (maxImages): drop the oldest excess images across user parts
+//    and native tool-result content, preserving tool call/result associations.
 // 3. Byte/dimension caps: for EVERY image the provider would measure — user
 //    `image`/image-`file` parts AND tool-result `media`/`image-data`/`file-data`
 //    parts on tool/assistant messages — recompress oversized ones under both
@@ -882,19 +882,6 @@ function limitImages(msgs: ModelMessage[], model: Provider.Model): ModelMessage[
   const maxSize = Flag.MIMOCODE_MAX_PROMPT_IMAGE_SIZE ?? providerImageCap(model)
   const maxDimension = providerImageDimensionCap(model)
 
-  const total = msgs.reduce(
-    (sum, msg) =>
-      msg.role === "user" && Array.isArray(msg.content)
-        ? sum +
-          msg.content.filter(
-            (part) => part.type === "image" || (part.type === "file" && part.mediaType.startsWith("image/")),
-          ).length
-        : sum,
-    0,
-  )
-  // Drop the oldest excess images so the most recent ones reach the model.
-  let toDrop = maxImages === undefined ? 0 : Math.max(0, total - maxImages)
-
   // The provider content shape for tool-result output values is untyped in the
   // AI SDK, so we narrow the one variant we act on: base64 image bytes carried
   // as `media` / `image-data` / `file-data`. Anything else is passed through.
@@ -910,7 +897,39 @@ function limitImages(msgs: ModelMessage[], model: Provider.Model): ModelMessage[
     )
   }
 
+  const isToolImage = (entry: unknown) =>
+    isImageMediaEntry(entry) ||
+    (typeof entry === "object" && entry !== null && "type" in entry && entry.type === "image-url")
+
+  const total = msgs.reduce((sum, msg) => {
+    if (!Array.isArray(msg.content)) return sum
+    if (msg.role === "user")
+      return (
+        sum +
+        msg.content.filter(
+          (part) => part.type === "image" || (part.type === "file" && part.mediaType.startsWith("image/")),
+        ).length
+      )
+    if (msg.role !== "tool" && msg.role !== "assistant") return sum
+    return (
+      sum +
+      msg.content.reduce((count, part) => {
+        if (part.type !== "tool-result" || !part.output || part.output.type !== "content" || !Array.isArray(part.output.value)) return count
+        return count + part.output.value.filter(isToolImage).length
+      }, 0)
+    )
+  }, 0)
+  let toDrop = maxImages === undefined ? 0 : Math.max(0, total - maxImages)
+  const omitted = () => ({
+    type: "text" as const,
+    text: `[Image omitted: exceeds the configured limit of ${maxImages} prompt image(s).]`,
+  })
+
   const capToolMedia = (entry: unknown) => {
+    if (isToolImage(entry) && toDrop > 0) {
+      toDrop--
+      return omitted()
+    }
     if (!isImageMediaEntry(entry)) return entry
     const bytes = Buffer.from(entry.data, "base64")
     const prepared = preparedImage(bytes, entry.mediaType, model)
@@ -949,10 +968,7 @@ function limitImages(msgs: ModelMessage[], model: Provider.Model): ModelMessage[
       if (part.type !== "image" && !isImageFile) return part
       if (toDrop > 0) {
         toDrop--
-        return {
-          type: "text" as const,
-          text: `[Image omitted: exceeds the configured limit of ${maxImages} prompt image(s).]`,
-        }
+        return omitted()
       }
       const payload = imagePayload(part.type === "image" ? part.image : part.data, part.mediaType)
       if (!payload) return part

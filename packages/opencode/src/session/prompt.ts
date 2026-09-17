@@ -665,12 +665,25 @@ export const layer = Layer.effect(
                 ...(Flag.MIMOCODE_DISABLE_INSTRUCTIONS ? [] : instructions.content),
               ]
             })
+        // Prefix capture is best-effort. Adapter loading can die (including SDK
+        // promise rejection); do not abort checkpoint creation or capture a
+        // differently routed prefix when it cannot be resolved.
+        const language = yield* provider
+          .getLanguage(model)
+          .pipe(
+            Effect.catchCause((cause) =>
+              Cause.hasInterrupts(cause)
+                ? Effect.failCause(cause)
+                : elog.warn("checkpoint adapter resolution failed", { cause }).pipe(Effect.as(undefined)),
+            ),
+          )
+        if (!language) return empty
         const prefix = yield* buildLLMRequestPrefix({
           sessionID: input.sessionID,
           agent: ag,
           model,
           msgs: captureMessages,
-          languageProvider: (yield* provider.getLanguage(model)).provider,
+          languageProvider: language.provider,
           additions,
           prebuiltSystem: frozen?.system,
           prompt: capturePrompt,

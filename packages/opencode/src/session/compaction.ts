@@ -183,6 +183,7 @@ export const buildTail = Effect.fn("SessionCompaction.buildTail")(function* (inp
   messages: MessageV2.WithParts[]
   model: Provider.Model
   budget?: number
+  languageProvider?: string
 }) {
   const rounds = groupByApiRound(input.messages)
   const kept: MessageV2.WithParts[][] = []
@@ -190,7 +191,9 @@ export const buildTail = Effect.fn("SessionCompaction.buildTail")(function* (inp
   for (let i = rounds.length - 1; i >= 0; i--) {
     const round = shrinkLargeToolResults(rounds[i])
     const cost = Token.estimate(
-      JSON.stringify(yield* Effect.promise(() => MessageV2.toModelMessages(round, input.model))),
+      JSON.stringify(yield* Effect.promise(() => MessageV2.toModelMessages(round, input.model, {
+        languageProvider: input.languageProvider,
+      }))),
     )
     if (used + cost > (input.budget ?? COMPACTION_TAIL_BUDGET)) break
     kept.unshift(round)
@@ -546,6 +549,7 @@ export const layer: Layer.Layer<
         const tail = yield* buildTail({
           messages: arrived,
           model: parentModel,
+          languageProvider: (yield* provider.getLanguage(parentModel)).provider,
         })
         const summary = MessageV2.parts(msg.id)
           .filter((part): part is MessageV2.TextPart => part.type === "text")

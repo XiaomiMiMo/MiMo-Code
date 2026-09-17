@@ -60,6 +60,7 @@ import { reply, TestLLMServer } from "../lib/llm-server"
 import { Inbox } from "../../src/inbox"
 import { Metrics } from "../../src/metrics"
 import { Database, eq } from "../../src/storage"
+import { prefixCaptureRef } from "../../src/session/prefix-capture-ref"
 import { SessionPrefixSnapshotTable } from "../../src/session/session.sql"
 
 void Log.init({ print: false })
@@ -206,7 +207,7 @@ const lsp = Layer.succeed(
 const status = SessionStatus.layer.pipe(Layer.provideMerge(Bus.layer))
 const run = SessionRunState.layer.pipe(Layer.provide(status))
 const infra = Layer.mergeAll(NodeFileSystem.layer, CrossSpawnSpawner.defaultLayer)
-function makeHttp(mcpService = mcp) {
+function makeHttp(mcpService = mcp, providerLayer = ProviderSvc.defaultLayer) {
   const taskRegistry = ActorRegistry.defaultLayer
   const deps = Layer.mergeAll(
     Session.defaultLayer,
@@ -218,7 +219,7 @@ function makeHttp(mcpService = mcp) {
     Permission.defaultLayer,
     Plugin.defaultLayer,
     Config.defaultLayer,
-    ProviderSvc.defaultLayer,
+    providerLayer,
     lsp,
     mcpService,
     AppFileSystem.defaultLayer,
@@ -3463,3 +3464,57 @@ it.live(
     ),
   30_000,
 )
+
+for (const failure of ["throw", "rejection", "interruption"] as const) {
+  let resolutions = 0
+  const failingProvider = Layer.effect(
+    ProviderSvc.Service,
+    Effect.gen(function* () {
+      const provider = yield* ProviderSvc.Service
+      return ProviderSvc.Service.of({
+        ...provider,
+        getLanguage: () => {
+          resolutions++
+          if (failure === "interruption") return Effect.interrupt
+          return failure === "throw"
+            ? Effect.sync(() => {
+                throw new Error("test adapter unavailable")
+              })
+            : Effect.promise(() => Promise.reject(new Error("test adapter unavailable")))
+        },
+      })
+    }),
+  ).pipe(Layer.provide(ProviderSvc.defaultLayer))
+
+  testEffect(makeHttp(mcp, failingProvider)).live(`checkpoint prefix capture soft-fails adapter ${failure}`, () =>
+    provideTmpdirServer(
+      Effect.fnUntraced(function* () {
+        yield* SessionPrompt.Service
+        const sessions = yield* Session.Service
+        const chat = yield* sessions.create({ title: "Pinned" })
+        yield* user(chat.id, "inspect")
+        const before = resolutions
+        const capture = prefixCaptureRef.current!
+        expect(capture).toBeDefined()
+        const result = yield* Effect.exit(
+          capture({
+            sessionID: chat.id,
+            agentName: "build",
+            ...ref,
+            msgs: yield* sessions.messages({ sessionID: chat.id }),
+          }),
+        )
+        expect(resolutions).toBe(before + 1)
+        if (failure === "interruption") {
+          expect(Exit.isFailure(result) && Cause.hasInterrupts(result.cause)).toBe(true)
+        } else {
+          expect(Exit.isSuccess(result)).toBe(true)
+          if (Exit.isSuccess(result))
+            expect(result.value).toEqual({ system: [], tools: {}, inheritedMessages: [], parentPermission: [] })
+        }
+        expect(yield* sessions.messages({ sessionID: chat.id })).toHaveLength(1)
+      }),
+      { git: true, config: providerCfg },
+    ),
+  )
+}

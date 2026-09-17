@@ -1,3 +1,6 @@
+import type { ModelMessage } from "ai"
+import { Flag } from "../../src/flag/flag"
+import { ProviderTest } from "../fake/provider"
 import { describe, expect, test } from "bun:test"
 import { PNG } from "pngjs"
 import { ProviderTransform, type Provider } from "../../src/provider"
@@ -5301,4 +5304,66 @@ describe("ProviderTransform.message - end-to-end through the AI SDK's own wire c
     expect(empty).toEqual([])
     expect(wire[wire.length - 1].role).not.toBe("assistant")
   })
+})
+
+describe("prompt image count across user and native tool results", () => {
+  test.each(["tool", "assistant"] as const)(
+    "drops oldest images on %s while preserving result IDs and non-image content",
+    (role) => {
+      const previous = Flag.MIMOCODE_MAX_PROMPT_IMAGES
+      Flag.MIMOCODE_MAX_PROMPT_IMAGES = 2
+      try {
+        const model = ProviderTest.model()
+        model.capabilities.input.image = true
+        model.capabilities.input.pdf = true
+        const messages: ModelMessage[] = [
+          { role: "user", content: [{ type: "image", image: "https://example.com/old.png" }] },
+          {
+            role,
+            content: [
+              {
+                type: "tool-result",
+                toolCallId: "call-image",
+                toolName: "screenshot",
+                output: {
+                  type: "content",
+                  value: [
+                    { type: "text", text: "Screenshot result" },
+                    { type: "image-data", mediaType: "image/png", data: "AQID" },
+                    { type: "file-data", mediaType: "image/png", data: "AQID" },
+                    { type: "file-data", mediaType: "application/pdf", data: "JVBERg==" },
+                    { type: "image-url", url: "https://example.com/recent.png" },
+                  ],
+                },
+              },
+            ],
+          },
+          { role: "user", content: [{ type: "image", image: "https://example.com/new.png" }] },
+        ]
+        const result = ProviderTransform.message(messages, model, {})
+        expect(result[0]!.content).toEqual([
+          { type: "text", text: "[Image omitted: exceeds the configured limit of 2 prompt image(s).]" },
+        ])
+        const part = result[1]!.content[0]
+        expect(part).toMatchObject({
+          type: "tool-result",
+          toolCallId: "call-image",
+          output: {
+            type: "content",
+            value: [
+              { type: "text", text: "Screenshot result" },
+              { type: "text", text: "[Image omitted: exceeds the configured limit of 2 prompt image(s).]" },
+              { type: "text", text: "[Image omitted: exceeds the configured limit of 2 prompt image(s).]" },
+              { type: "file-data", mediaType: "application/pdf", data: "JVBERg==" },
+              { type: "image-url", url: "https://example.com/recent.png" },
+            ],
+          },
+        })
+        expect(result[2]).toEqual(messages[2])
+        expect(JSON.stringify(messages)).not.toContain("Image omitted")
+      } finally {
+        Flag.MIMOCODE_MAX_PROMPT_IMAGES = previous
+      }
+    },
+  )
 })

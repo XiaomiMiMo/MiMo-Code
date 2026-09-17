@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import { APICallError, RetryError, generateText } from "ai"
+import { createAzure } from "@ai-sdk/azure"
 import { createOpenAI } from "@ai-sdk/openai"
 import { convertToLanguageModelPrompt } from "ai/internal"
 import { MessageV2 } from "../../src/session/message-v2"
@@ -471,8 +472,14 @@ describe("session.message-v2.toModelMessage", () => {
     ])
   })
 
-  test.each([false, true])("sends 51 historical screenshots inside Responses tool outputs (store=%s)", async (store) => {
+  test.each([
+    ["openai", false],
+    ["openai", true],
+    ["azure", false],
+    ["azure", true],
+  ] as const)("sends 51 historical screenshots inside %s Responses tool outputs (store=%s)", async (adapter, store) => {
     const mediaModel = withInputCapabilities({ image: true })
+    mediaModel.api = { ...mediaModel.api, npm: adapter === "azure" ? "@ai-sdk/azure" : "@ai-sdk/openai" }
     const input: MessageV2.WithParts[] = [
       {
         info: userInfo("m-user"),
@@ -517,8 +524,8 @@ describe("session.message-v2.toModelMessage", () => {
       store?: boolean
       input: Array<{ type?: string; role?: string; call_id?: string; output?: unknown; content?: unknown }>
     }> = []
-    const sdk = createOpenAI({
-      name: "test",
+    const sdk = (adapter === "azure" ? createAzure : createOpenAI)({
+      resourceName: "test",
       apiKey: "test-key",
       fetch: Object.assign(
         async (_url: RequestInfo | URL, init?: RequestInit) => {
