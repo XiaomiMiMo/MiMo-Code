@@ -236,6 +236,27 @@ describe("session.retry.retryable", () => {
     expect(decide(new Error("getaddrinfo EAI_AGAIN example.internal.srv")).kind).toBe("network")
   })
 
+  test("transport classification is shape-based, not a closed code allow-list", () => {
+    // Unlisted undici code still transport
+    const undici = Object.assign(new Error("other side closed"), { code: "UND_ERR_CLOSED" })
+    expect(ProviderError.isTransportErrnoCode("UND_ERR_CLOSED")).toBe(true)
+    expect(ProviderError.isRetryableNetworkError(undici)).toBe(true)
+    // Unlisted network errno family still transport
+    expect(ProviderError.isTransportErrnoCode("ECONNREFUSED")).toBe(true)
+    expect(ProviderError.isTransportErrnoCode("EAI_NODATA")).toBe(true)
+    expect(ProviderError.isTransportErrnoCode("ENETRESET")).toBe(true)
+    // Local fs/process errors are NOT transport
+    expect(ProviderError.isTransportErrnoCode("ENOENT")).toBe(false)
+    expect(ProviderError.isTransportErrnoCode("EACCES")).toBe(false)
+    expect(ProviderError.isTransportErrnoCode("EINVAL")).toBe(false)
+    expect(ProviderError.isRetryableNetworkError(Object.assign(new Error("missing"), { code: "ENOENT" }))).toBe(false)
+    // User abort is never network
+    expect(ProviderError.isRetryableNetworkError(Object.assign(new Error("aborted"), { name: "AbortError", code: "ABORT_ERR" }))).toBe(false)
+    // Nested cause chain: outer message clean, inner code is transport
+    const nested = new Error("request failed", { cause: Object.assign(new Error("boom"), { code: "ECONNRESET" }) })
+    expect(ProviderError.isRetryableNetworkError(nested)).toBe(true)
+  })
+
   test("caps retry-after by the selected budget", () => {
     const decision = { retryable: true, phase: "stream" as const, scope: "live-step" as const, kind: "rate_limit" as const, message: "429", retryAfterMs: 120000 }
     expect(SessionRetry.retryDelay(1, decision, 0, 100, 5000)).toBe(5000)

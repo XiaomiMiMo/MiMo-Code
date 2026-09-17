@@ -1,43 +1,34 @@
-# Retry Coordinator Design
+# Retry Coordinator
 
-本文是 MiMoCode provider retry 的单一设计来源。实现位于 packages/opencode/src/session/retry.ts，配置 schema 位于 packages/opencode/src/config/config.ts 与 packages/opencode/src/config/provider.ts。
+Retry 必须区分两个问题：错误是否可能恢复，以及当前 scope 还允许多少次尝试。transport retry 不做语义修复，只在预算内重建同一次请求。
 
-## 目标
-
-Retry 必须区分两个问题：错误是否可能恢复，以及当前 scope 是否应该继续等待。事实归一化、终态判断、预算选择和 UI 通知必须分离。
-
-- 用户取消、鉴权、额度、上下文溢出和确定性请求错误立即停止。
-- 网络连接失败可以长时间等待网络恢复，适合 long-running harness。
-- 已建立的 stream 使用有限预算，避免重复推理和重复计费。
-- 已执行 tool side effect 后禁止自动重放整个 model step。
-- 所有 retry scope 使用同一个分类器、退避算法、Retry-After 解析器和事件模型。
-- 次数、deadline、退避和 persistent network 模式可以配置，provider 可以覆盖全局默认值。
-
-## 分层模型
-
-原始 provider / transport error -> cause summary -> RetryDecision(kind, phase, scope) -> budget -> exponential backoff -> RetryAttempt event。
+## Scope
 
 | Scope         | 语义                                    | 默认策略                        |
 | ------------- | --------------------------------------- | ------------------------------- |
-| request       | 尚未产生 provider output 的请求建立失败 | 4 次，200ms 起步，30s deadline  |
+| request       | 尚未产生 provider output 的请求建立失败 | 仅作用于**非** network/rate_limit/server 的可恢复类（如 unknown）；可恢复三类见下表 |
 | live-step     | 已建立 stream、但未完成的普通 turn      | 按错误 kind 选择预算            |
 | max-candidate | max-mode 内存 candidate                 | 3 次，500ms 起步，3min deadline |
 | max-judge     | max-mode 内存 judge                     | 3 次，500ms 起步，3min deadline |
 
-| Kind       | 默认策略                                                                      |
-| ---------- | ----------------------------------------------------------------------------- |
-| network    | live stream persistent，5s 起步，最大间隔 60s，无 jitter；request 阶段使用 request budget |
-| stream     | 5 次，2s 起步，10min deadline                                                 |
-| server     | 8 次，2s 起步，15min deadline                                                 |
-| rate_limit | 5 次，优先 Retry-After，最大 delay 5min                                       |
-| unknown    | 8 次，2s 起步，15min deadline                                                 |
-| terminal   | 0 次                                                                          |
+| Kind       | 默认策略 |
+| ---------- | -------- |
+| network    | **persistent** 指数退避，5s 起步，最大间隔 60s，无 jitter；**不区分 phase**（request 阶段同样适用） |
+| rate_limit | **persistent** 指数退避，Retry-After 优先；最大间隔默认 5min；**不区分 phase** |
+| server     | **persistent** 指数退避，2s 起步，最大间隔默认 30s；**不区分 phase** |
+| stream     | 5 次，2s 起步，10min deadline（非上述三类的 live stream 故障） |
+| unknown    | 8 次，2s 起步，15min deadline |
+| terminal   | 0 次 |
 
-Persistent network retry 只适用于 transport connection failure，不适用于 quota、auth、context overflow 或已经跨过 tool side-effect boundary 的 live step。每次等待只更新同一个 retry 状态，不能向 transcript 无限追加 Reconnecting 文本。
+`budgetFor` 选择顺序：`max-candidate` / `max-judge` 自有预算 → **kind ∈ {network, rate_limit, server} 的 persistent 预算** → `phase=request` 的 request 预算 → 其余。因此 request 阶段的 DNS/连接失败、429、5xx **不会**掉进 4 次/30s 的 request 死窗口。
+
+Persistent network / rate_limit / server retry 只适用于 transport 或上游瞬态故障，不适用于 quota、auth、context overflow 或已经跨过 tool side-effect boundary 的 live step。每次等待只更新同一个 retry 状态，不能向 transcript 无限追加 Reconnecting 文本。
+
+网络指纹（`ProviderError`）**按形状判定，不是可重试码白名单**：① 用户 Abort 永不 transport；② `UND_ERR_*` 一律 undici transport；③ POSIX 形态 `E*` 系统码一律 transport，**除非**落在本地 fs/进程 deny-list（`ENOENT`/`EACCES`/`EINVAL`…）；④ message 族匹配 connect/fetch/socket/dns 语言。因此新出现的网络 errno / undici 码不必先补枚举即可落入 `kind=network`；本地文件系统错误不会误入重试。
 
 ## 配置
 
-全局配置提供默认预算，provider.<id>.retry 对同名字段做覆盖。maxRetries 是初始 attempt 之外的重试次数，schema 硬上限为 100；deadlineMs 必须是正整数，且不能与 noDeadline 同时出现。需要取消 wall-clock deadline 时必须显式设置 noDeadline: true；该选项不会取消 bounded budget 的 maxRetries 限制。
+全局配置提供默认预算，provider.<id>.retry 对同名字段做覆盖。maxRetries 是初始 attempt 之外的重试次数，schema 硬上限为 100；deadlineMs 必须是正整数，且不能与 noDeadline 同时出现。需要取消 wall-clock deadline 时必须显式设置 noDeadline: true；该选项不会取消 bounded budget 的 maxRetries 限制。persistent 模式忽略 maxRetries（merge 时置 undefined），maxElapsedMs=0 表示无 deadline。
 
 配置示例：
 
@@ -48,14 +39,14 @@ Persistent network retry 只适用于 transport connection failure，不适用�
         "maxCandidate": { "maxRetries": 3, "deadlineMs": 180000, "initialDelayMs": 500 },
         "maxJudge": { "maxRetries": 3, "deadlineMs": 180000, "initialDelayMs": 500 },
         "network": { "mode": "persistent", "noDeadline": true, "initialDelayMs": 5000, "maxDelayMs": 60000, "jitterRatio": 0 },
-        "server": { "maxRetries": 8, "deadlineMs": 900000 },
-        "rateLimit": { "maxRetries": 5, "maxDelayMs": 300000 },
+        "server": { "mode": "persistent", "noDeadline": true, "initialDelayMs": 2000, "maxDelayMs": 30000 },
+        "rateLimit": { "mode": "persistent", "noDeadline": true, "initialDelayMs": 2000, "maxDelayMs": 300000 },
         "unknown": { "maxRetries": 8, "deadlineMs": 900000 },
         "jitterRatio": 0.1
       }
     }
 
-Persistent network retry 仍受 AbortSignal、进程退出和 provider chunkTimeout 约束。默认 provider chunkTimeout 为 8 分钟；provider 可以用 chunkTimeout 覆盖该单次 stream idle timeout。
+Persistent 可恢复类 retry 仍受 AbortSignal、进程退出和 provider chunkTimeout 约束。默认 provider chunkTimeout 为 8 分钟；provider 可以用 chunkTimeout 覆盖该单次 stream idle timeout。
 
 ## 退避
 

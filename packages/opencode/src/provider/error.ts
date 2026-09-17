@@ -3,38 +3,72 @@ import { STATUS_CODES } from "http"
 import { iife } from "@/util/iife"
 import type { ProviderID } from "./schema"
 
-const RETRYABLE_NETWORK_CODES = new Set([
-  "ECONNABORTED",
-  "ECONNREFUSED",
-  "ECONNRESET",
-  "EHOSTDOWN",
-  "EHOSTUNREACH",
-  "ENETRESET",
-  "ENOTFOUND",
-  "EPIPE",
-  "ENETDOWN",
-  "ENETUNREACH",
-  "EAI_AGAIN",
-  "ETIMEDOUT",
-  "UND_ERR_BODY_TIMEOUT",
-  "UND_ERR_CONNECT_TIMEOUT",
-  "UND_ERR_HEADERS_TIMEOUT",
-  "UND_ERR_RES_CONTENT_LENGTH_MISMATCH",
-  "UND_ERR_ABORTED",
-  "UND_ERR_SOCKET",
+// Transport failures are identified by *shape*, not a closed allow-list of codes.
+// Product: recoverable transport errors must keep retrying; a growing enum of
+// "known network codes" always lags undici/Node and misses the next one.
+//
+// Rule:
+// 1. User abort is never transport-retryable (ABORT_ERR / AbortError).
+// 2. Any `code` starting with `UND_ERR_` is undici transport (except user abort).
+// 3. Any POSIX-style `E*` system code is transport unless it is on the small
+//    local-fs / process deny-list (ENOENT, EACCES, …). New network errnos
+//    (ENOTFOUND, EAI_*, ECONN*, ENET*, …) are covered by the family, not listed one-by-one.
+// 4. Message family matches connect/fetch/socket/dns language broadly.
+const NON_NETWORK_ERRNO = new Set([
+  "ABORT_ERR",
+  "ENOENT",
+  "ENOTDIR",
+  "EISDIR",
+  "EACCES",
+  "EPERM",
+  "EEXIST",
+  "EMFILE",
+  "ENFILE",
+  "EINVAL",
+  "ENOMEM",
+  "EBUSY",
+  "EROFS",
+  "ENAMETOOLONG",
+  "ELOOP",
+  "EXDEV",
+  "EFBIG",
+  "ESPIPE",
+  "ENOSPC",
+  "EDEADLK",
+  "ENOTEMPTY",
+  "ESRCH",
+  "ECHILD",
+  "ENOEXEC",
+  "EDOM",
+  "ERANGE",
+  "EILSEQ",
 ])
 
-const RETRYABLE_NETWORK_MESSAGES = [
+const TRANSPORT_MESSAGE_PATTERNS = [
   /^fetch failed$/i,
   /^SSE read timed out$/i,
-  /connection (?:aborted|closed|refused|reset)(?: by server)?$/i,
-  /network (?:connection|error)/i,
-  /response body (?:terminated|closed)/i,
   /socket hang up/i,
-  /getaddrinfo/i,
-  /\bENOTFOUND\b/i,
-  /^Cannot connect to API\b/i,
+  /response body (?:terminated|closed)/i,
+  /other side closed/i,
+  /connection (?:reset|closed|refused|aborted|timed ?out|terminated)/i,
+  /network (?:error|connection|unreachable)/i,
+  /\b(?:getaddrinfo|ENOTFOUND|EAI_[A-Z]+|ECONN[A-Z]*|ENET[A-Z]*|EHOST[A-Z]*|EPIPE|ETIMEDOUT|UND_ERR_[A-Z0-9_]+)\b/i,
+  /cannot connect to (?:the )?api/i,
+  /dns (?:lookup|resolve)/i,
 ]
+
+/** POSIX-style errno or similar (`E` + SCREAMING_SNAKE). */
+function isSystemErrnoCode(code: string): boolean {
+  return /^E[A-Z][A-Z0-9_]*$/.test(code)
+}
+
+/** Shape check: does this code look like wire/transport rather than local fs/process? */
+export function isTransportErrnoCode(code: string): boolean {
+  if (NON_NETWORK_ERRNO.has(code)) return false
+  if (code.startsWith("UND_ERR_")) return true
+  if (isSystemErrnoCode(code)) return true
+  return false
+}
 
 export type CauseSummary = {
   depth: number
@@ -98,7 +132,7 @@ export function summarizeCause(input: unknown): CauseSummary[] {
 export function networkErrorCode(input: unknown): string | undefined {
   return summarizeCause(input)
     .map((cause) => cause.code)
-    .find((code): code is string => code !== undefined && RETRYABLE_NETWORK_CODES.has(code))
+    .find((code): code is string => code !== undefined && isTransportErrnoCode(code))
 }
 
 export function isRetryableNetworkError(input: unknown): boolean {
@@ -107,9 +141,9 @@ export function isRetryableNetworkError(input: unknown): boolean {
 
   return chain.some((cause) => {
     const code = cause.code
-    if (code && RETRYABLE_NETWORK_CODES.has(code)) return true
+    if (code && isTransportErrnoCode(code)) return true
     const message = cause.message
-    return message !== undefined && RETRYABLE_NETWORK_MESSAGES.some((pattern) => pattern.test(message))
+    return message !== undefined && TRANSPORT_MESSAGE_PATTERNS.some((pattern) => pattern.test(message))
   })
 }
 
