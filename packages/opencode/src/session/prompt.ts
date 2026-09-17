@@ -761,10 +761,25 @@ export const layer = Layer.effect(
               status: "idle",
               lastOutcome: "cancelled",
             })
-            // Session abort: no notifyTerminal / inbox wake.
+            // Registry-only path: no live fiber → no notifyTerminal. Materialize
+            // a cancelled notification into parent history so chat inline can
+            // show terminal state (wake still false — no LLM turn).
+            yield* notifyTerminal({
+              sessionID,
+              actorID: actor.actorID,
+              source: "pending",
+              status: "cancelled",
+              wake: false,
+            })
           }).pipe(Effect.ignore),
         { concurrency: "unbounded", discard: true },
       )
+      // R14 terminal inline: quiet abort still persists cancelled notifications
+      // (wake:false skips auto-fork only). Drain parent main inbox NOW so those
+      // rows become synthetic <actor-notification> message parts on the parent
+      // session — desktop live/history both read that part for the terminal pill.
+      // drain does NOT start an LLM turn.
+      yield* inbox.drain(sessionID, "main").pipe(Effect.ignore)
     })
 
     // Shared rebuild-from-checkpoint step used by BOTH the automatic overflow

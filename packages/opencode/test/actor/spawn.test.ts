@@ -46,7 +46,8 @@ import { TaskRegistry } from "../../src/task/registry"
 import { defaultLayer as SchedulerDefaultLayer } from "../../src/cron/scheduler"
 import { Auth } from "../../src/auth"
 import { Database } from "../../src/storage"
-import { MessageTable } from "../../src/session/session.sql"
+import { MessageTable, PartTable } from "../../src/session/session.sql"
+import { InboxTable } from "../../src/inbox/inbox.sql"
 import { MessageV2 } from "../../src/session/message-v2"
 import { MessageID, PartID } from "../../src/session/schema"
 import { Instance } from "../../src/project/instance"
@@ -775,6 +776,37 @@ describe("SessionPrompt.cancel — process-group kill", () => {
           expect(laterB?.lastOutcome).toBe("cancelled")
           const busyLater = yield* runState.assertNotBusy(parent.id, "main").pipe(Effect.exit)
           expect(busyLater._tag).toBe("Success")
+
+          // R14 terminal inline (TP-R14-14): quiet abort still materializes cancelled
+          // notifications into parent session history (synthetic message parts).
+          // wake:false only skips auto-fork — the part must exist for chat UI.
+          const parts = yield* Effect.sync(() =>
+            Database.use((db) =>
+              db
+                .select({ data: PartTable.data })
+                .from(PartTable)
+                .where(eq(PartTable.session_id, parent.id))
+                .all(),
+            ),
+          )
+          const notes = parts
+            .map((row) => row.data as { type?: string; synthetic?: boolean; text?: string })
+            .filter((d) => d?.type === "text" && d?.synthetic === true && typeof d.text === "string")
+            .map((d) => d.text as string)
+            .filter((text) => text.includes("<actor-notification>"))
+          expect(notes.length).toBeGreaterThanOrEqual(2)
+          expect(notes.filter((text) => text.includes("was cancelled")).length).toBeGreaterThanOrEqual(2)
+          // Drain consumed the quiet inbox rows — no leftover durable wake backlog.
+          const inboxLeft = yield* Effect.sync(() =>
+            Database.use((db) =>
+              db
+                .select({ id: InboxTable.id })
+                .from(InboxTable)
+                .where(and(eq(InboxTable.receiver_session_id, parent.id), eq(InboxTable.receiver_actor_id, "main")))
+                .all(),
+            ),
+          )
+          expect(inboxLeft.length).toBe(0)
         }),
         { git: true, config: providerCfg },
       ),
