@@ -104,9 +104,15 @@ describe("session turn recovery routes", () => {
     expect(result.resumed).toBe(202)
     expect(result.missing).toBe(404)
     expect(result.shellRemoved).toBe(true)
-    const abandonMsg = result.abandoned?.error?.data?.message ?? ""
-    expect(abandonMsg).not.toContain("Abandoned: resumed as a new assistant turn")
-    expect(Array.isArray(result.candidates)).toBe(true)
+    // Positive work signal: route published a session error (runLoop failed without provider)
+    // OR recovery surface still lists candidates (API shape stable after cleanup-only/path-B).
+    // Vacuous not.toContain on empty abandonMsg is not enough.
+    expect(result.errors.length > 0 || result.candidates.length > 0).toBe(true)
+    if (result.abandoned?.error) {
+      const err = result.abandoned.error as { data?: { message?: string } }
+      const abandonMsg = err.data?.message ?? ""
+      expect(abandonMsg).not.toContain("Abandoned: resumed as a new assistant turn")
+    }
   })
 })
 

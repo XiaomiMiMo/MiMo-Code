@@ -266,8 +266,8 @@ describe("resume empty residue", () => {
     expect(result.users).toBe(1)
   })
 
-  // F1 reject: empty tail + completed useful history → refuse parent re-dispatch
-  test("empty tail after completed useful assistant rejects parent re-dispatch", async () => {
+  // completed useful + empty tail → cleanup-only (no parent re-dispatch, no Failure orphan)
+  test("empty tail after completed useful assistant cleans shells without parent re-dispatch", async () => {
     await using tmp = await tmpdir({ git: true })
     const result = await Instance.provide({
       directory: tmp.path,
@@ -331,7 +331,7 @@ describe("resume empty residue", () => {
             yield* Effect.sleep("100 millis")
             const after = yield* sessions.messages({ sessionID: session.id, agentID: "main" })
             return {
-              failed: exit._tag === "Failure",
+              succeeded: exit._tag === "Success",
               emptyGone: after.find((m) => m.info.id === empty.id) === undefined,
               completedKept: after.some((m) => m.info.id === completed.id),
               users: after.filter((m) => m.info.role === "user").length,
@@ -339,9 +339,125 @@ describe("resume empty residue", () => {
           }),
         ),
     })
-    expect(result.failed).toBe(true)
+    expect(result.succeeded).toBe(true)
     expect(result.emptyGone).toBe(true)
     expect(result.completedKept).toBe(true)
+    expect(result.users).toBe(1)
+  })
+
+  // Review#2: non-tail useful incomplete + completed middle + empty tail → cleanup-only, no false path-A abandon
+  test("non-tail useful incomplete is not retargeted when completed sits after it", async () => {
+    await using tmp = await tmpdir({ git: true })
+    const result = await Instance.provide({
+      directory: tmp.path,
+      fn: async () =>
+        AppRuntime.runPromise(
+          Effect.gen(function* () {
+            const sessions = yield* Session.Service
+            const prompt = yield* SessionPrompt.Service
+            const session = yield* sessions.create({ title: "non-tail useful + completed + empty" })
+            const user = yield* sessions.updateMessage({
+              id: MessageID.ascending(),
+              role: "user",
+              sessionID: session.id,
+              agent: "build",
+              model: { providerID: ProviderID.make("test"), modelID: ModelID.make("test-model") },
+              time: { created: Date.now() },
+            })
+            const usefulOld = yield* sessions.updateMessage({
+              id: MessageID.ascending(),
+              role: "assistant",
+              parentID: user.id,
+              sessionID: session.id,
+              mode: "build",
+              agent: "build",
+              path: { cwd: tmp.path, root: tmp.path },
+              cost: 0,
+              tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+              modelID: ModelID.make("test-model"),
+              providerID: ProviderID.make("test"),
+              time: { created: Date.now() },
+              finish: "tool-calls",
+            })
+            yield* sessions.updatePart({
+              id: PartID.ascending(),
+              messageID: usefulOld.id,
+              sessionID: session.id,
+              type: "tool",
+              callID: "call_old",
+              tool: "bash",
+              state: {
+                status: "running",
+                input: { command: "ls" },
+                title: "ls",
+                metadata: {},
+                time: { start: Date.now() },
+              },
+            })
+            const completed = yield* sessions.updateMessage({
+              id: MessageID.ascending(),
+              role: "assistant",
+              parentID: user.id,
+              sessionID: session.id,
+              mode: "build",
+              agent: "build",
+              path: { cwd: tmp.path, root: tmp.path },
+              cost: 0,
+              tokens: { input: 1, output: 1, reasoning: 0, cache: { read: 0, write: 0 } },
+              modelID: ModelID.make("test-model"),
+              providerID: ProviderID.make("test"),
+              time: { created: Date.now() + 1, completed: Date.now() + 1 },
+              finish: "stop",
+            })
+            yield* sessions.updatePart({
+              id: PartID.ascending(),
+              messageID: completed.id,
+              sessionID: session.id,
+              type: "text",
+              text: "later answer",
+            })
+            const empty = yield* sessions.updateMessage({
+              id: MessageID.ascending(),
+              role: "assistant",
+              parentID: user.id,
+              sessionID: session.id,
+              mode: "build",
+              agent: "build",
+              path: { cwd: tmp.path, root: tmp.path },
+              cost: 0,
+              tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+              modelID: ModelID.make("test-model"),
+              providerID: ProviderID.make("test"),
+              time: { created: Date.now() + 2 },
+            })
+            yield* prompt
+              .resumeBackground({
+                sessionID: session.id,
+                assistantMessageID: empty.id,
+                agentID: "main",
+              })
+              .pipe(Effect.catch(() => Effect.void))
+            yield* Effect.sleep("150 millis")
+            const after = yield* sessions.messages({ sessionID: session.id, agentID: "main" })
+            const usefulInfo = after.find((m) => m.info.id === usefulOld.id)?.info
+            const abandonMsg =
+              usefulInfo && usefulInfo.role === "assistant" && usefulInfo.error
+                ? ((usefulInfo.error as { data?: { message?: string }; message?: string }).data?.message ??
+                  (usefulInfo.error as { message?: string }).message ??
+                  "")
+                : ""
+            return {
+              emptyGone: after.find((m) => m.info.id === empty.id) === undefined,
+              completedKept: after.some((m) => m.info.id === completed.id),
+              usefulNotAbandonedAsResumeTarget: !abandonMsg.includes("Abandoned: resumed as a new assistant turn"),
+              users: after.filter((m) => m.info.role === "user").length,
+            }
+          }),
+        ),
+    })
+    expect(result.emptyGone).toBe(true)
+    expect(result.completedKept).toBe(true)
+    expect(result.usefulNotAbandonedAsResumeTarget).toBe(true)
     expect(result.users).toBe(1)
   })
 

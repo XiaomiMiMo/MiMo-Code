@@ -557,6 +557,13 @@ export const { use: useSync, provider: SyncProvider } = createSimpleContext({
           }
           break
         }
+        case "session.error": {
+          // Resume 202 后 plan 可能 reject（busy/目标消失等）而从未进入 busy；
+          // 仅靠 idle 清 recovery_active 会粘住「恢复中」标记。
+          const errSid = event.properties.sessionID
+          if (errSid) setStore("session_recovery_active", errSid, undefined)
+          break
+        }
 
         case "session.goal": {
           // Merge: a clear event (goal:undefined) keeps the accumulated verdicts
