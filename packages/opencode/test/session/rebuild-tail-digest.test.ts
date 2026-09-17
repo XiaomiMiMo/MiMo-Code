@@ -243,7 +243,7 @@ describe("collapseCheckpointTail", () => {
   })
 
   test("never drops a user-role message, even without real prose", () => {
-    // insertReminders persists skill-catalog / auto-worktree gates on the
+    // insertReminders persists skill-catalog gates on the
     // last user message. A file-only or synthetic-only user turn must stay
     // live or the gate says "already sent" while the provider never sees it.
     const collapsed = collapseCheckpointTail([

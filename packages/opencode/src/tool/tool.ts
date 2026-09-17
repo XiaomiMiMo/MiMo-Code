@@ -18,8 +18,6 @@ export type Context<M extends Metadata = Metadata> = {
   sessionID: SessionID
   messageID: MessageID
   agent: string
-  /** Registered agent mode for this invocation. Subagents must not self-isolate (auto-worktree). */
-  agentMode?: "subagent" | "primary" | "all"
   actorID?: string
   taskId?: string
   abort: AbortSignal

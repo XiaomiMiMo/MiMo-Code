@@ -63,6 +63,8 @@ function normalizeLoadedConfig(data: unknown, source: string) {
   const copy = { ...data }
   // History indexing is uniform; ignore settings written by older releases.
   delete copy.history
+  // Ignore the removed worktree policy in existing files and host-injected config.
+  delete copy.auto_worktree
   const hadLegacy = "theme" in copy || "keybinds" in copy || "tui" in copy
   if (!hadLegacy) return copy
   delete copy.theme
@@ -123,10 +125,6 @@ const InfoSchema = Schema.Struct({
   snapshot: Schema.optional(Schema.Boolean).annotate({
     description:
       "Enable or disable snapshot tracking. When false, filesystem snapshots are not recorded and undoing or reverting will not undo/redo file changes. Defaults to true.",
-  }),
-  auto_worktree: Schema.optional(Schema.Boolean).annotate({
-    description:
-      "Enable the once-per-session Auto-Worktree Notice when a primary root session mutates a git main worktree. Defaults to false (notice is off). When true, inject the existing soft-hint system-reminder; when false or omitted, inject nothing. Scope is the notice only — conflict detection and experimental worktree auto-create are not gated by this flag.",
   }),
   // User-facing plugin config is stored as Specs; provenance gets attached later while configs are merged.
   plugin: Schema.optional(Schema.mutable(Schema.Array(ConfigPlugin.Spec))),

@@ -34,7 +34,7 @@ Multi-step runLoop reloads `msgs` from DB; marker hit skips re-push → last-use
 **Journey log**
 
 1. User screenshot line numbers `3840-3876` match **origin/main** at analysis time (`e93a49cd`), not the stale main checkout.
-2. Bare `parts.push` is half the user-side reminder contract — `updatePart` + marker dedupe is the other half (auto-worktree / skills / plan).
+2. Bare `parts.push` is half the user-side reminder contract — `updatePart` + marker dedupe is the other half (skills / plan).
 3. Cache break was **order instability vs persisted `insertReminders` siblings** + **fork prefix DB reload**, not volatile recall text.
 4. Compose head is closed by `promoteComposeProtocolFirst` at the MessageV2 load boundary — not by request-layer-only reorder.
 5. Mid-turn `p.text` wrap left request-only (intentional step≥2 steering); separate from Option A.
@@ -57,7 +57,7 @@ Several synthetic injections `parts.push(...)` (or `unshift`) **without** `sessi
 
 ## [S2] Design (mechanism + chosen contract)
 
-**Chosen contract (Option A):** every durable user-side synthetic reminder does `updatePart` once, then dedupes by stable marker substring on re-entry. Same pattern as auto-worktree / skill bodies / plan mode.
+**Chosen contract (Option A):** every durable user-side synthetic reminder does `updatePart` once, then dedupes by stable marker substring on re-entry. Same pattern as skill bodies / plan mode.
 
 `ensurePersistedUserSynthetic` (`prompt.ts` ~1213):
 

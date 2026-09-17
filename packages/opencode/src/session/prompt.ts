@@ -100,13 +100,6 @@ import { NamedError } from "@mimo-ai/shared/util/error"
 import { SessionProcessor } from "./processor"
 import { buildLLMRequestPrefix } from "./llm-request-prefix"
 import {
-  buildAutoWorktreeNotice,
-  firstMutatedMainWorktree,
-  isAutoWorktreeHintSent,
-  markAutoWorktreeHintSent,
-  sessionHasAutoWorktreeNotice,
-} from "@/tool/auto-worktree-hint"
-import {
   serializeTrajectoryMessages,
   withAssistantParts,
   userQueryText,
@@ -1322,42 +1315,6 @@ export const layer = Layer.effect(
         })
       }
 
-      // Auto-worktree notice: once per session, after a completed write or git
-      // mutation landed in some git MAIN worktree. Names that path and carries a
-      // standing rule for any later repo. Path-based on purpose — a session bound
-      // to a non-git scratch dir that `cd`s into another project's main checkout
-      // still hits. Injected as a user-side system-reminder and persisted via
-      // auto_worktree_hint_sent so compaction/rebuild cannot re-inject. Never
-      // touches the system prompt. Gated by config.auto_worktree (default false).
-      // Nested branch: insertReminders cannot early-return without skipping the
-      // skill/plan reminders that follow.
-      if (
-        input.agent.mode === "primary" &&
-        !input.session.parentID &&
-        cfg.auto_worktree === true
-      ) {
-        const alreadySent = yield* Effect.sync(() => isAutoWorktreeHintSent(input.session.id))
-        if (!alreadySent) {
-          if (sessionHasAutoWorktreeNotice(input.messages)) {
-            yield* Effect.sync(() => markAutoWorktreeHintSent(input.session.id))
-          } else {
-            const hit = firstMutatedMainWorktree(input.messages)
-            if (hit) {
-              const part = yield* sessions.updatePart({
-                id: PartID.ascending(),
-                messageID: userMessage.info.id,
-                sessionID: userMessage.info.sessionID,
-                type: "text",
-                text: buildAutoWorktreeNotice(hit),
-                synthetic: true,
-              })
-              userMessage.parts.push(part)
-              yield* Effect.sync(() => markAutoWorktreeHintSent(input.session.id))
-            }
-          }
-        }
-      }
-
       const assistantMessage = input.messages.findLast((msg) => msg.info.role === "assistant")
       if (!Flag.MIMOCODE_DISABLE_BUILTIN_SKILLS && !Flag.MIMOCODE_DISABLE_OFFICIAL_SKILLS) {
         const fileCandidates = userMessage.parts.flatMap((p) => {
@@ -1710,7 +1667,6 @@ NOTE: At any point in time through this workflow you should feel free to ask the
           execMcp,
         },
         agent: input.agent.name,
-        agentMode: input.agent.mode,
         actorID: input.agentID,
         taskId: input.task_id,
         messages: input.messages,

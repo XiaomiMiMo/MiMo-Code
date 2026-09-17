@@ -888,6 +888,8 @@ export const toModelMessagesEffect = Effect.fnUntraced(function* (
           // Skill catalogs moved to the system tail. Suppress snapshots persisted
           // by older versions so resumed sessions do not receive a duplicate user-side catalog.
           if (part.synthetic && isSkillCatalogReminder(part.text)) continue
+          // Do not replay isolation instructions persisted by the removed worktree policy.
+          if (part.synthetic && part.text.startsWith("<system-reminder>\nAuto-Worktree Notice\n")) continue
           if (!part.ignored)
             userMessage.parts.push({
               type: "text",

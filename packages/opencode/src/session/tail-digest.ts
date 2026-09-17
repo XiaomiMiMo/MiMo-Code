@@ -107,7 +107,7 @@ function checkpointPart(msg: WithParts): CheckpointPart | undefined {
  * sorting before the boundary's synthetic time (watermark+1).
  *
  * User-role messages are never dropped: the last user is where insertReminders
- * persists skill-catalog / auto-worktree gates, and a file-only or
+ * persists skill-catalog gates, and a file-only or
  * synthetic-only user turn is still an instruction the provider must see.
  * Collapsing it would mark the reminder "already sent" while the provider
  * never receives it.

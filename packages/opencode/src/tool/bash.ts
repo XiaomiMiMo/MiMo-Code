@@ -29,7 +29,6 @@ import { ChildProcessSpawner } from "effect/unstable/process/ChildProcessSpawner
 import * as BashInteractive from "./bash-interactive"
 import * as BashTokenEfficient from "./bash_token_efficient_pipeline"
 import * as BashTokenEfficientHeuristic from "./bash_token_efficient_heuristic"
-import { findGitMainWorktree, assertHabitRepoMainWriteBlocked } from "./auto-worktree-hint"
 
 const MAX_METADATA_LENGTH = 30_000
 export const DEFAULT_MAX_OUTPUT_TOKENS = 30_000
@@ -232,312 +231,6 @@ function source(node: Node) {
 
 function commands(node: Node) {
   return node.descendantsOfType("command").filter((child): child is Node => Boolean(child))
-}
-
-// Commands whose primary purpose is creating/mutating files. Matched against
-// the command head (case-folded for PowerShell). `sed` is special-cased below:
-// it only writes with -i/--in-place.
-const WRITE_COMMANDS = new Set([
-  "tee",
-  "install",
-  "touch",
-  "mkdir",
-  "cp",
-  "mv",
-  "ln",
-  "truncate",
-  "dd",
-  "patch",
-  "set-content",
-  "add-content",
-  "new-item",
-  "copy-item",
-  "move-item",
-  "rename-item",
-  "out-file",
-  "tee-object",
-  "set-item",
-  "add-item",
-  "new-volume",
-  "clear-content",
-])
-
-// Operators that open a real file for writing. FD dups (`>&`, `<&`) are excluded:
-// `2>&1` rearranges descriptors and creates nothing.
-const FILE_WRITE_REDIRECT_OPS = new Set([">", ">>", ">|", "<>", "&>", "&>>"])
-
-function isFileWriteRedirect(node: Node): boolean {
-  for (let i = 0; i < node.childCount; i++) {
-    const child = node.child(i)
-    if (child && FILE_WRITE_REDIRECT_OPS.has(child.type)) return true
-  }
-  return false
-}
-
-function isSedInPlace(tokens: string[], ps: boolean): boolean {
-  const head = ps ? tokens[0]?.toLowerCase() : tokens[0]
-  if (head !== "sed") return false
-  return tokens.slice(1).some(
-    (tok) =>
-      tok === "-i" ||
-      tok === "--in-place" ||
-      tok.startsWith("--in-place=") ||
-      /^-[^-]*i/.test(tok),
-  )
-}
-
-// True when this parsed command line mutates files (create/overwrite/append),
-// as opposed to pure reads (`ls`, `cat file`, `git status`, `sed` without -i).
-// Used to flag bash tool results so the auto-worktree notice can fire on the
-// first real write even when the agent never called write/edit/apply_patch.
-export function isFileWrite(root: Node, ps: boolean): boolean {
-  for (const redirect of root.descendantsOfType("file_redirect")) {
-    if (redirect && isFileWriteRedirect(redirect)) return true
-  }
-  for (const node of commands(root)) {
-    const tokens = parts(node).map((item) => item.text)
-    if (tokens.length === 0) continue
-    const head = ps ? tokens[0].toLowerCase() : tokens[0]
-    if (WRITE_COMMANDS.has(head)) return true
-    if (isSedInPlace(tokens, ps)) return true
-  }
-  return false
-}
-
-/** Parse a command line and report whether it mutates files. Fail-closed to false. */
-export async function commandWritesFiles(command: string, ps = false): Promise<boolean> {
-  try {
-    const p = await parser()
-    const tree = (ps ? p.ps : p.bash).parse(command)
-    if (!tree) return false
-    return isFileWrite(tree.rootNode, ps)
-  } catch {
-    return false
-  }
-}
-
-// git subcommands that mutate the working tree / index / local refs.
-// `status` / `log` / `diff` / `fetch` / `show` are deliberately absent.
-const GIT_MUTATE_SUBS = new Set([
-  "add",
-  "apply",
-  "branch",
-  "checkout",
-  "cherry-pick",
-  "clean",
-  "commit",
-  "merge",
-  "mv",
-  "rebase",
-  "reset",
-  "restore",
-  "revert",
-  "rm",
-  "stash",
-  "switch",
-  "tag",
-  "worktree",
-])
-
-// Global options that may appear before the subcommand:
-//   git -C /main commit …  |  git -c k=v checkout …  |  git --git-dir=… commit
-const GIT_PRE_FLAGS = new Set(["-C", "-c", "--git-dir", "--work-tree", "--namespace", "--super-prefix"])
-
-function isGitFlag(token: string): boolean {
-  if (GIT_PRE_FLAGS.has(token)) return true
-  // --git-dir=… / --work-tree=… / --exec-path=…
-  return token.startsWith("--git-dir=") || token.startsWith("--work-tree=") || token.startsWith("--namespace=")
-}
-
-function isGitMutate(tokens: string[], ps: boolean): boolean {
-  const sub = gitSubcommand(tokens, ps)
-  if (!sub || !GIT_MUTATE_SUBS.has(sub)) return false
-  // `git worktree list|prune` only inspects. `add` is the remediation this
-  // notice recommends and does not change main working-tree files, so it must
-  // not count as a main-worktree mutation. remove/repair/move do change
-  // repo-level worktree state.
-  if (sub === "worktree") {
-    const idx = tokens.findIndex((t, i) => i > 0 && (ps ? t.toLowerCase() : t) === "worktree")
-    const verb = idx >= 0 ? tokens[idx + 1] : undefined
-    return verb === "remove" || verb === "repair" || verb === "move"
-  }
-  return true
-}
-
-/** Subcommand token after skipping git pre-flags, or undefined. */
-function gitSubcommand(tokens: string[], ps: boolean): string | undefined {
-  if (tokens.length < 2) return undefined
-  const head = ps ? tokens[0].toLowerCase() : tokens[0]
-  if (head !== "git") return undefined
-  let i = 1
-  while (i < tokens.length) {
-    const tok = tokens[i]
-    if (!isGitFlag(tok)) break
-    if (tok === "-C" || tok === "-c") i += 2
-    else i += 1
-  }
-  if (i >= tokens.length) return undefined
-  return ps ? tokens[i].toLowerCase() : tokens[i]
-}
-
-/** Directories this git invocation is aimed at (`-C dir`, `--git-dir=…`). */
-function gitTargetDirs(tokens: string[], ps: boolean): string[] {
-  const head = ps ? tokens[0].toLowerCase() : tokens[0]
-  if (head !== "git") return []
-  const out: string[] = []
-  for (let i = 1; i < tokens.length; i++) {
-    const tok = tokens[i]
-    if (tok === "-C" || tok === "--work-tree") {
-      const arg = plausiblePathArg(tokens[i + 1] ?? "")
-      if (arg) out.push(arg)
-      i += 1
-      continue
-    }
-    if (tok.startsWith("--git-dir=") || tok.startsWith("--work-tree=")) {
-      const arg = plausiblePathArg(tok.slice(tok.indexOf("=") + 1))
-      if (arg) out.push(arg)
-    }
-    // Stop at the subcommand — later path args are operands, not repo roots.
-    if (GIT_MUTATE_SUBS.has(ps ? tok.toLowerCase() : tok) || tok === "status" || tok === "log") break
-  }
-  return out
-}
-
-// cp/ln/install only create at the destination; the source stays read-only
-// (`cp /main/f /scratch/f` from scratch must not claim /main).
-const COPY_DEST_ONLY = new Set(["cp", "ln", "install", "copy-item"])
-
-function mutationPathArgs(tokens: string[], head: string): string[] {
-  const paths = tokens
-    .slice(1)
-    .map((tok) => plausiblePathArg(tok))
-    .filter((v): v is string => Boolean(v))
-  if (COPY_DEST_ONLY.has(head)) {
-    return paths.length > 0 ? [paths[paths.length - 1]!] : []
-  }
-  // mv/move/rename and everything else: every path-like arg mutates.
-  // Multi-source `mv A B C D` has A B C as sources and D as dest.
-  return paths
-}
-
-function enclosingRedirectedStatement(node: Node): Node | undefined {
-  let cur: Node | null = node.parent
-  while (cur) {
-    if (cur.type === "redirected_statement") return cur
-    cur = cur.parent
-  }
-  return undefined
-}
-
-function redirectFileTargets(node: Node): string[] {
-  // `cd dir && echo x > f` wraps the whole list in redirected_statement, so the
-  // redirect is NOT a child of the echo command. Walk up to find it.
-  const stmt = enclosingRedirectedStatement(node) ?? node
-  const out: string[] = []
-  for (const redirect of stmt.descendantsOfType("file_redirect")) {
-    if (!redirect || !isFileWriteRedirect(redirect)) continue
-    for (let i = redirect.childCount - 1; i >= 0; i--) {
-      const child = redirect.child(i)
-      if (!child) continue
-      if (child.type === "word" || child.type === "string" || child.type === "raw_string") {
-        const text = unquote(child.text)
-        if (text && !text.includes("*") && !text.includes("$") && !text.includes("(")) out.push(text)
-        break
-      }
-    }
-  }
-  return out
-}
-
-function plausiblePathArg(token: string): string | undefined {
-  if (!token || token.startsWith("-")) return
-  const text = unquote(token)
-  if (!text || text.includes("*") || text.includes("$") || text.includes("(") || text.includes(" ")) return
-  return text
-}
-
-/**
- * Resolve where this command line actually mutates: tracks `cd`, collects
- * redirect / write-command targets, and flags git subcommands that change a
- * working tree. Relative paths resolve against the effective cwd after cds.
- */
-export function collectMutationTargets(root: Node, cwd: string, ps: boolean): { paths: string[]; gitMutate: boolean } {
-  let effectiveCwd = path.resolve(cwd)
-  const cwdStack: string[] = []
-  const paths: string[] = []
-  let gitMutate = false
-
-  const add = (raw: string, base: string) => {
-    const resolved = path.isAbsolute(raw) ? path.resolve(raw) : path.resolve(base, raw)
-    paths.push(resolved)
-  }
-
-  for (const node of commands(root)) {
-    const tokens = parts(node).map((item) => item.text)
-    if (tokens.length === 0) continue
-    const head = ps ? tokens[0].toLowerCase() : tokens[0]
-
-    if (head === "cd" || head === "set-location") {
-      const arg = plausiblePathArg(tokens[1] ?? "")
-      if (arg) effectiveCwd = path.isAbsolute(arg) ? path.resolve(arg) : path.resolve(effectiveCwd, arg)
-      continue
-    }
-
-    if (head === "pushd" || head === "push-location") {
-      cwdStack.push(effectiveCwd)
-      const arg = plausiblePathArg(tokens[1] ?? "")
-      if (arg) effectiveCwd = path.isAbsolute(arg) ? path.resolve(arg) : path.resolve(effectiveCwd, arg)
-      continue
-    }
-
-    if (head === "popd" || head === "pop-location") {
-      effectiveCwd = cwdStack.pop() ?? path.resolve(cwd)
-      continue
-    }
-
-    if (isGitMutate(tokens, ps)) {
-      gitMutate = true
-      for (const dir of gitTargetDirs(tokens, ps)) add(dir, effectiveCwd)
-    }
-
-    for (const raw of redirectFileTargets(node)) add(raw, effectiveCwd)
-
-    if (WRITE_COMMANDS.has(head) || isSedInPlace(tokens, ps)) {
-      for (const arg of mutationPathArgs(tokens, head)) add(arg, effectiveCwd)
-    }
-  }
-
-  if (paths.length > 0 || gitMutate) {
-    paths.push(effectiveCwd)
-    paths.push(path.resolve(cwd))
-  }
-
-  return { paths: [...new Set(paths)], gitMutate }
-}
-
-/** Main-worktree roots this command mutates. Empty when it only reads or only touches scratch. */
-export function mainWorktreeHits(root: Node, cwd: string, ps: boolean): string[] {
-  const { paths, gitMutate } = collectMutationTargets(root, cwd, ps)
-  if (paths.length === 0 && !gitMutate) return []
-  const hits = new Set<string>()
-  // findGitMainWorktree walks up, so both file paths and directories work.
-  for (const p of paths) {
-    const hit = findGitMainWorktree(p)
-    if (hit) hits.add(hit)
-  }
-  return [...hits]
-}
-
-/** Parse a command and report which git main worktrees it mutates. Fail-closed to []. */
-export async function commandMainWorktreeHits(command: string, cwd: string, ps = false): Promise<string[]> {
-  try {
-    const p = await parser()
-    const tree = (ps ? p.ps : p.bash).parse(command)
-    if (!tree) return []
-    return mainWorktreeHits(tree.rootNode, cwd, ps)
-  } catch {
-    return []
-  }
 }
 
 // Returns true when `tokens` (the flat argv of a single command node) invokes
@@ -995,8 +688,6 @@ export const BashTool = Tool.define(
         timeout: number
         maxOutputTokens: number
         description: string
-        fileWrite?: boolean
-        mainWorktreeHits?: string[]
       },
       ctx: Tool.Context,
     ) {
@@ -1201,8 +892,6 @@ export const BashTool = Tool.define(
           description: input.description,
           truncated: cut,
           ...(cut && file ? { outputPath: file } : {}),
-          ...(input.fileWrite ? { fileWrite: true } : {}),
-          ...(input.mainWorktreeHits?.length ? { mainWorktreeHits: input.mainWorktreeHits } : {}),
         },
         output,
       }
@@ -1229,18 +918,6 @@ export const BashTool = Tool.define(
               const timeout = params.timeout ?? DEFAULT_TIMEOUT
               const ps = PS.has(name)
               const root = yield* parse(params.command, ps)
-              const fileWrite = isFileWrite(root, ps)
-              const hits = mainWorktreeHits(root, cwd, ps)
-              // Habit-repo hard gate: same policy as write/edit/apply_patch. A
-              // `echo x > main/file` or `git commit` in the main checkout would
-              // otherwise bypass the write-tool gate and only get a soft notice.
-              // Fail before ask() so a rejected mutation never prompts and never
-              // spawns. Does not auto-create a worktree.
-              if (hits.length > 0) {
-                for (const hit of hits) {
-                  yield* assertHabitRepoMainWriteBlocked(hit, ctx)
-                }
-              }
               // Cross-branch git guard for isolated children. Sits on the SAME
               // parsed AST the permission scan uses, so every command node in a
               // pipeline / `&&` chain / subshell is checked, and it runs BEFORE
@@ -1307,8 +984,6 @@ export const BashTool = Tool.define(
                     exit: interactiveResult.exitCode,
                     description: params.description,
                     truncated: false,
-                    ...(fileWrite ? { fileWrite: true } : {}),
-                    ...(hits.length ? { mainWorktreeHits: hits } : {}),
                   },
                   output:
                     interactiveResult.output ||
@@ -1326,8 +1001,6 @@ export const BashTool = Tool.define(
                   timeout,
                   maxOutputTokens: params.max_output_tokens ?? DEFAULT_MAX_OUTPUT_TOKENS,
                   description: params.description,
-                  fileWrite,
-                  mainWorktreeHits: hits,
                 },
                 ctx,
               )

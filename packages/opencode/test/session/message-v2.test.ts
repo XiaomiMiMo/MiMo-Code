@@ -143,6 +143,21 @@ describe("session.message-v2.toModelMessage", () => {
       expect(messages).toEqual([{ role: "user", content: [{ type: "file", data: "file:///fixture/media", filename: "media", mediaType: mime }] }])
     }
   })
+  test("omits persisted worktree notices but preserves user text and other reminders", async () => {
+    const text = "<system-reminder>\nAuto-Worktree Notice\nIsolate first.\n</system-reminder>"
+    const input: MessageV2.WithParts[] = [{
+      info: userInfo("m-worktree"),
+      parts: [
+        { ...basePart("m-worktree", "old-notice"), type: "text", text, synthetic: true },
+        { ...basePart("m-worktree", "user"), type: "text", text },
+        { ...basePart("m-worktree", "other"), type: "text", text: "Other reminder", synthetic: true },
+      ],
+    }]
+    expect(await MessageV2.toModelMessages(input, model)).toStrictEqual([
+      { role: "user", content: [{ type: "text", text }, { type: "text", text: "Other reminder" }] },
+    ])
+  })
+
   test("suppresses legacy user-side skill catalogs",  async () => {
     const input: MessageV2.WithParts[] = [
       {
