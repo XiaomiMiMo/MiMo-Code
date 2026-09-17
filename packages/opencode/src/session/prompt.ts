@@ -5747,6 +5747,8 @@ NOTE: At any point in time through this workflow you should feel free to ask the
             agentID: input.agentID,
             parentMessageID,
             sessionBusy: false,
+            // 保留 error 空壳：与 path-b ensuring 同口径，失败现场不因 path-A 清 sibling 消失。
+            preserveError: true,
           })
         }
         const pathA: EmptyResidueResumePlan = { action: "path-a", assistantMessageID: target.info.id }
@@ -5840,7 +5842,6 @@ NOTE: At any point in time through this workflow you should feel free to ask the
                   agentID: input.agentID,
                   parentMessageID: plan.parentMessageID,
                   force: true,
-                  // 失败现场（error 空壳）保留给 /recovery，不得被 ensuring 抹掉。
                   preserveError: true,
                 }).pipe(
                   Effect.catchCause((cause) =>
@@ -5854,15 +5855,23 @@ NOTE: At any point in time through this workflow you should feel free to ask the
                 ),
               ),
             )
-          : runLoop(
-              input.sessionID,
-              input.agentID,
-              input.task_id,
-              input.titleLocale,
-              false,
-              plan.assistantMessageID,
-              input.model,
-            ).pipe(
+          : // path-a：abandon 放进 work 首步——ensure/start 失败时不执行，避免「已 Abandoned 却没起跑」。
+            Effect.gen(function* () {
+              yield* abandonRecoveredAssistant({
+                sessionID: input.sessionID,
+                assistantMessageID: plan.assistantMessageID,
+                agentID: input.agentID,
+              })
+              return yield* runLoop(
+                input.sessionID,
+                input.agentID,
+                input.task_id,
+                input.titleLocale,
+                false,
+                plan.assistantMessageID,
+                input.model,
+              )
+            }).pipe(
               Effect.ensuring(
                 abandonRecoveredAssistant({
                   sessionID: input.sessionID,
@@ -5879,14 +5888,6 @@ NOTE: At any point in time through this workflow you should feel free to ask the
                 ),
               ),
             )
-
-      if (plan.action === "path-a") {
-        yield* abandonRecoveredAssistant({
-          sessionID: input.sessionID,
-          assistantMessageID: plan.assistantMessageID,
-          agentID: input.agentID,
-        })
-      }
 
       if (input.mode === "ensure") {
         return yield* state.ensureRunning(input.sessionID, input.agentID, resumeInterrupt, work)

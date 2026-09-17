@@ -528,8 +528,24 @@ export function Session() {
       { sessionID: route.sessionID, assistantMessageID: candidate.assistantMessageID, titleLocale: language.intl() },
       { throwOnError: true },
     )
-    sync.set("session_recovery_active", route.sessionID, candidate.assistantMessageID)
-    toast.show({ message: t("tui.toast.session.recover.started"), variant: "info" })
+    // 202 ≠ 一定起跑：cleanup-only / 异步 plan reject 可能不再产生 busy/error。
+    // 以 resume 后 recovery 是否仍列出该候选决定是否点亮「恢复中」。
+    try {
+      const refreshed = await sdk.client.session.recovery({ sessionID: route.sessionID })
+      const stillListed = refreshed.data?.some(
+        (item) => item.assistantMessageID === candidate.assistantMessageID,
+      )
+      if (stillListed) {
+        sync.set("session_recovery_active", route.sessionID, candidate.assistantMessageID)
+        toast.show({ message: t("tui.toast.session.recover.started"), variant: "info" })
+      } else {
+        sync.set("session_recovery_active", route.sessionID, undefined)
+        toast.show({ message: t("tui.toast.session.recover.none"), variant: "info" })
+      }
+    } catch {
+      sync.set("session_recovery_active", route.sessionID, candidate.assistantMessageID)
+      toast.show({ message: t("tui.toast.session.recover.started"), variant: "info" })
+    }
   }
 
   command.register(() => [

@@ -75,6 +75,14 @@ describe("session turn recovery routes", () => {
         yield* Effect.promise(() =>
           Promise.race([errorSeen, new Promise((resolve) => setTimeout(resolve, 10_000))]),
         )
+        // post-resume observable signals (not pre-resume candidates)
+        yield* Effect.sleep("150 millis")
+        const afterListed = yield* Effect.promise(() =>
+          Promise.resolve(app.request(`/session/${session.id}/recovery${query}`)),
+        )
+        const afterCandidates = yield* Effect.promise(() =>
+          afterListed.json() as Promise<Array<{ assistantMessageID: string }>>,
+        )
         unsubscribe()
         const after = yield* sessions.messages({ sessionID: session.id, agentID: "main" })
         const abandoned = after.find((item) => item.info.id === assistant.id)?.info
@@ -88,6 +96,8 @@ describe("session turn recovery routes", () => {
           errors,
           abandoned: abandonedAssistant,
           shellRemoved: abandoned === undefined,
+          afterNoLongerListsShell: !afterCandidates.some((c) => c.assistantMessageID === assistant.id),
+          afterMessageCount: after.length,
         }
       })),
     })
@@ -100,14 +110,13 @@ describe("session turn recovery routes", () => {
         created: expect.any(Number),
       },
     ])
-    // [TP-SR-R21-16] HTTP resume admitted (202) and empty residue shell cleaned — not a no-op resume
+    // [TP-SR-R21-16] HTTP resume admitted (202) and empty residue shell cleaned
     expect(result.resumed).toBe(202)
     expect(result.missing).toBe(404)
     expect(result.shellRemoved).toBe(true)
-    // Positive work signal: route published a session error (runLoop failed without provider)
-    // OR recovery surface still lists candidates (API shape stable after cleanup-only/path-B).
-    // Vacuous not.toContain on empty abandonMsg is not enough.
-    expect(result.errors.length > 0 || result.candidates.length > 0).toBe(true)
+    // Positive post-resume signal: error bus fired OR recovery no longer lists the cleaned shell.
+    // Do NOT OR against pre-resume candidates (always non-empty in this setup).
+    expect(result.errors.length > 0 || result.afterNoLongerListsShell).toBe(true)
     if (result.abandoned?.error) {
       const err = result.abandoned.error as { data?: { message?: string } }
       const abandonMsg = err.data?.message ?? ""
