@@ -558,10 +558,14 @@ export const { use: useSync, provider: SyncProvider } = createSimpleContext({
           break
         }
         case "session.error": {
-          // Resume 202 后 plan 可能 reject（busy/目标消失等）而从未进入 busy；
-          // 仅靠 idle 清 recovery_active 会粘住「恢复中」标记。
+          // 仅 idle 时的 error（resume 异步 reject 等）清恢复中标记；
+          // busy/retry 中途的 error 不清，避免误熄 live recovery 徽标。
           const errSid = event.properties.sessionID
-          if (errSid) setStore("session_recovery_active", errSid, undefined)
+          if (!errSid) break
+          const errStatus = store.session_status[errSid]?.type
+          if (errStatus === undefined || errStatus === "idle") {
+            setStore("session_recovery_active", errSid, undefined)
+          }
           break
         }
 

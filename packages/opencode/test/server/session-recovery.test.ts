@@ -98,6 +98,7 @@ describe("session turn recovery routes", () => {
           shellRemoved: abandoned === undefined,
           afterNoLongerListsShell: !afterCandidates.some((c) => c.assistantMessageID === assistant.id),
           afterMessageCount: after.length,
+          afterMessages: after.map((m) => ({ info: { role: m.info.role, id: m.info.id } })),
         }
       })),
     })
@@ -114,9 +115,14 @@ describe("session turn recovery routes", () => {
     expect(result.resumed).toBe(202)
     expect(result.missing).toBe(404)
     expect(result.shellRemoved).toBe(true)
-    // Positive post-resume signal: error bus fired OR recovery no longer lists the cleaned shell.
-    // Do NOT OR against pre-resume candidates (always non-empty in this setup).
-    expect(result.errors.length > 0 || result.afterNoLongerListsShell).toBe(true)
+    // Both must hold for empty-tail resume; not an OR against pre-resume candidates.
+    expect(result.afterNoLongerListsShell).toBe(true)
+    // Work proof independent of shellRemoved: session error bus fired (runLoop without provider)
+    // OR a new assistant message appeared after cleanup.
+    const newAssistants = result.afterMessages.filter(
+      (m: { info: { role: string; id: string } }) => m.info.role === "assistant",
+    )
+    expect(result.errors.length > 0 || newAssistants.length > 0).toBe(true)
     if (result.abandoned?.error) {
       const err = result.abandoned.error as { data?: { message?: string } }
       const abandonMsg = err.data?.message ?? ""

@@ -528,24 +528,24 @@ export function Session() {
       { sessionID: route.sessionID, assistantMessageID: candidate.assistantMessageID, titleLocale: language.intl() },
       { throwOnError: true },
     )
-    // 202 ≠ 一定起跑：cleanup-only / 异步 plan reject 可能不再产生 busy/error。
-    // 以 resume 后 recovery 是否仍列出该候选决定是否点亮「恢复中」。
-    try {
-      const refreshed = await sdk.client.session.recovery({ sessionID: route.sessionID })
-      const stillListed = refreshed.data?.some(
-        (item) => item.assistantMessageID === candidate.assistantMessageID,
-      )
-      if (stillListed) {
-        sync.set("session_recovery_active", route.sessionID, candidate.assistantMessageID)
-        toast.show({ message: t("tui.toast.session.recover.started"), variant: "info" })
-      } else {
-        sync.set("session_recovery_active", route.sessionID, undefined)
-        toast.show({ message: t("tui.toast.session.recover.none"), variant: "info" })
-      }
-    } catch {
+    // 202 后用 status 判是否真起跑：busy/retry → 点亮恢复中（idle 清理/error 事件负责收尾）。
+    // 不可用 recovery() 无 allowBusy 的结果判断成败——path-a/b 成功时它会返回 []。
+    const st = sync.data.session_status[route.sessionID]
+    if (st?.type === "busy" || st?.type === "retry") {
       sync.set("session_recovery_active", route.sessionID, candidate.assistantMessageID)
       toast.show({ message: t("tui.toast.session.recover.started"), variant: "info" })
+      return
     }
+    // 仍 idle：可能是 cleanup-only（壳已清）或异步 reject。recovery 在 idle 下可读。
+    const refreshed = await sdk.client.session.recovery({ sessionID: route.sessionID })
+    const stillListed = refreshed.data?.some((item) => item.assistantMessageID === candidate.assistantMessageID)
+    if (stillListed) {
+      sync.set("session_recovery_active", route.sessionID, candidate.assistantMessageID)
+      toast.show({ message: t("tui.toast.session.recover.started"), variant: "info" })
+      return
+    }
+    sync.set("session_recovery_active", route.sessionID, undefined)
+    toast.show({ message: t("tui.toast.session.recover.none"), variant: "info" })
   }
 
   command.register(() => [
