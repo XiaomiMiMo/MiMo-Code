@@ -2,7 +2,11 @@ import { expect, test } from "bun:test"
 import { normalizeTitleInput, sanitizeGeneratedTitle, titlePromptText } from "../../src/session/prompt"
 
 test("ordinary text uses flags, not markup or arbitrary metadata, as provenance", () => {
-  for (const text of ["/compose-next", "/api/v1", "<inbox>user example</inbox>", "<scheduled-task>example</scheduled-task>"]) {
+  // Provenance still comes from synthetic/ignored flags, not from metadata.origin.
+  // Leading single `/slug` skill tokens are stripped by title-input product rule
+  // (not because metadata says skill). Multi-segment paths and markup-like bodies stay.
+  expect(normalizeTitleInput([{ type: "text", text: "/compose-next", metadata: { origin: "skill" } }]).text).toBe("")
+  for (const text of ["/api/v1", "<inbox>user example</inbox>", "<scheduled-task>example</scheduled-task>"]) {
     expect(normalizeTitleInput([{ type: "text", text, metadata: { origin: "skill" } }]).text).toBe(text)
   }
   expect(normalizeTitleInput([{ type: "text", text: "hidden", synthetic: true }, { type: "text", text: "ignored", ignored: true }, { type: "text", text: "  Fix API\r\nDetails " }]).text).toBe("Fix API\nDetails")
