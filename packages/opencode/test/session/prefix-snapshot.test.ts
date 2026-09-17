@@ -139,4 +139,65 @@ describe("session prefix snapshot", () => {
       SessionPrefixSnapshot.toolsHash(second, ["alpha", "beta"]),
     )
   })
+
+  test("advertisePinned keeps frozen schemas and execute while ignoring later catalog tools", () => {
+    const execute = async () => ({ output: "live", title: "", metadata: {} })
+    const live = {
+      read: tool({
+        description: "live read",
+        inputSchema: jsonSchema({ type: "object", properties: { path: { type: "string" } } }),
+        execute,
+      }),
+      mcp_late: tool({
+        description: "appeared after pin",
+        inputSchema: jsonSchema({ type: "object", properties: {} }),
+        execute,
+      }),
+    }
+    const advertised = SessionPrefixSnapshot.advertisePinned(live, ["read", "mcp_late"], [
+      {
+        name: "read",
+        description: "pinned read",
+        input_schema: { type: "object", properties: { path: { type: "string" } } },
+      },
+    ])
+    expect(advertised.activeTools).toEqual(["read"])
+    expect(advertised.tools.read?.description).toBe("pinned read")
+    expect(advertised.tools.read?.execute).toBe(execute)
+    expect(advertised.tools.mcp_late?.execute).toBe(execute)
+  })
+
+  test("advertisePinned appends mcp_tool_search activations and StructuredOutput", () => {
+    const execute = async () => ({ output: "live", title: "", metadata: {} })
+    const live = {
+      mcp_tool_search: tool({
+        description: "live catalog",
+        inputSchema: jsonSchema({ type: "object", properties: { query: { type: "string" } } }),
+        execute,
+      }),
+      mcp_success: tool({
+        description: "loaded later",
+        inputSchema: jsonSchema({ type: "object", properties: {} }),
+        execute,
+      }),
+      StructuredOutput: tool({
+        description: "schema",
+        inputSchema: jsonSchema({ type: "object", properties: {} }),
+        execute,
+      }),
+    }
+    const advertised = SessionPrefixSnapshot.advertisePinned(
+      live,
+      ["mcp_tool_search", "mcp_success", "StructuredOutput"],
+      [
+        {
+          name: "mcp_tool_search",
+          description: "pinned catalog",
+          input_schema: { type: "object", properties: { query: { type: "string" } } },
+        },
+      ],
+    )
+    expect(advertised.activeTools).toEqual(["mcp_tool_search", "mcp_success", "StructuredOutput"])
+    expect(advertised.tools.mcp_tool_search?.description).toBe("pinned catalog")
+  })
 })
