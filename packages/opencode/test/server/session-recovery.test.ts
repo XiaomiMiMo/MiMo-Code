@@ -65,7 +65,7 @@ describe("session turn recovery routes", () => {
         const listed = yield* Effect.promise(() => Promise.resolve(app.request(`/session/${session.id}/recovery${query}`)))
         const candidates = yield* Effect.promise(() =>
           listed.json() as Promise<
-            Array<{ assistantMessageID: string; parentMessageID: string; created: number; kind?: string }>
+            Array<{ assistantMessageID: string; parentMessageID: string; created: number }>
           >,
         )
         const missing = yield* Effect.promise(() =>
@@ -98,7 +98,6 @@ describe("session turn recovery routes", () => {
         assistantMessageID: expect.any(String),
         parentMessageID: result.userID,
         created: expect.any(Number),
-        kind: "user-continuation",
       },
     ])
     expect(result.resumed).toBe(202)

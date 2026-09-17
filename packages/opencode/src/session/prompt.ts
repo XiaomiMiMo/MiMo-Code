@@ -559,12 +559,6 @@ export interface RecoveryCandidate {
   assistantMessageID: MessageID
   parentMessageID: MessageID
   created: number
-  /**
-   * assistant-continue: 候选有可用 parts（tool/text/reasoning），走 assistant-ID 续跑。
-   * user-continuation: 候选是 empty residue（无可用 parts），resume 应清理空壳后重发 parent user，
-   * 禁止 assistant prefill / 禁止再堆空壳。
-   */
-  kind?: "assistant-continue" | "user-continuation"
 }
 
 export interface ResumeTurnInput {
@@ -3385,8 +3379,6 @@ NOTE: At any point in time through this workflow you should feel free to ask the
           assistantMessageID: assistant.id,
           parentMessageID: assistant.parentID,
           created: assistant.time.created,
-          // 表尾 empty residue → user 重发路径；有现场才 assistant 续跑。
-          kind: isEmptyAssistantResidue(assistant, msg.parts) ? "user-continuation" : "assistant-continue",
         })
       }
       return candidates

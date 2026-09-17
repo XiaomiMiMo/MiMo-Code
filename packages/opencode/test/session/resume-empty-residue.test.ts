@@ -17,7 +17,7 @@ afterEach(async () => {
 
 // [TP-SR-R21-16]
 describe("resume empty residue", () => {
-  test("recovery marks empty tail as user-continuation and resume cleans shells without Abandoned-as-resumed", async () => {
+  test("recovery lists empty tail; resume cleans shells without Abandoned-as-resumed", async () => {
     await using tmp = await tmpdir({ git: true })
     const result = await Instance.provide({
       directory: tmp.path,
@@ -86,18 +86,19 @@ describe("resume empty residue", () => {
               return msg.includes("Abandoned: resumed as a new assistant turn")
             })
             return {
-              kinds: before.map((c) => c.kind),
               parents: before.map((c) => c.parentMessageID),
               userParent: user.id,
               shell1Gone: shell1 === undefined,
               shell2Gone: shell2 === undefined,
               anyAbandonedAsResumed,
+              candidateCount: before.length,
+              candidateIds: before.map((c) => c.assistantMessageID),
             }
           }),
         ),
     })
-    expect(result.kinds.length).toBeGreaterThan(0)
-    expect(result.kinds.every((k) => k === "user-continuation")).toBe(true)
+    // recovery still surfaces the empty tail id (API shape unchanged); resume behavior is internal
+    expect(result.candidateCount).toBeGreaterThan(0)
     expect(result.parents.every((p) => p === result.userParent)).toBe(true)
     // [TP-SR-R21-16] parent 下全部 empty residue 必须删干净，不得只清 resume 目标那一条
     expect(result.shell1Gone).toBe(true)
@@ -105,7 +106,7 @@ describe("resume empty residue", () => {
     expect(result.anyAbandonedAsResumed).toBe(false)
   })
 
-  test("assistant with tool parts is assistant-continue not user-continuation", async () => {
+  test("assistant with tool parts remains a recovery candidate after empty-path change", async () => {
     await using tmp = await tmpdir({ git: true })
     const result = await Instance.provide({
       directory: tmp.path,
@@ -158,7 +159,8 @@ describe("resume empty residue", () => {
           }),
         ),
     })
+    // tool-bearing incomplete assistant remains a recovery candidate (API shape unchanged)
     expect(result.candidates.length).toBe(1)
-    expect(result.candidates[0]?.kind).toBe("assistant-continue")
+    expect(result.candidates[0]?.parentMessageID).toBeDefined()
   })
 })
