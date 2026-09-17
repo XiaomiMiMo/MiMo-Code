@@ -709,31 +709,59 @@ export const layer = Layer.effect(
     // Session abort = process-group kill (product contract, not Orchestrator-specific):
     // interrupt main AND cascade-cancel every same-session actor/subagent so stop
     // is not limited to the main fiber while children keep running.
+    //
+    // Quiet abort is bound to EACH execution (execution.groupAbort), not a
+    // session-level switch: a new main turn must not re-arm wake for a cancelled
+    // execution's late terminal notify, and resume must not inherit quiet.
+    //
+    // Order: mark every known non-main execution BEFORE any interrupt can fire
+    // terminal handlers, then cancel runners, then Actor.cancel({wake:false}).
+    //
+    // Registry status is NOT a pre-filter: an idle registry row can still hold an
+    // ActorExecution. Actor.cancel checks the execution registry first.
     const cancel = Effect.fn("SessionPrompt.cancel")(function* (sessionID: SessionID) {
       yield* elog.info("cancel", { sessionID })
-      yield* state.cancel(sessionID)
       const actors = yield* actorRegistry.listBySession(sessionID)
+      const nonMain = actors.filter((actor) => actor.actorID !== "main")
+      // Phase 1 — mark executions before interrupt (terminal handlers read this flag).
       yield* Effect.forEach(
-        actors.filter((actor) => actor.actorID !== "main" && actor.status !== "idle"),
+        nonMain,
+        (actor) =>
+          Effect.gen(function* () {
+            const execution = yield* executions.current(sessionID, actor.actorID)
+            if (execution) execution.groupAbort = true
+          }).pipe(Effect.ignore),
+        { concurrency: "unbounded", discard: true },
+      )
+      // Phase 2 — interrupt runners.
+      yield* state.cancel(sessionID)
+      // Phase 3 — cascade Actor.cancel; wake:false for any registry-only terminal.
+      yield* Effect.forEach(
+        nonMain,
         (actor) =>
           Effect.gen(function* () {
             const svc = spawnRef.current
             if (svc) {
-              yield* svc.cancel(sessionID, actor.actorID, "graceful")
+              yield* svc.cancel(sessionID, actor.actorID, "graceful", { wake: false })
               return
             }
             const execution = yield* executions.current(sessionID, actor.actorID)
             if (execution) {
+              execution.groupAbort = true
               yield* executions.requestCancel(execution)
               yield* state.cancelActor(sessionID, actor.actorID)
               yield* executions.interrupt(execution)
               return
             }
+            if (actor.status === "idle") return
             yield* state.cancelActor(sessionID, actor.actorID)
+            const current = yield* actorRegistry.get(sessionID, actor.actorID)
+            if (!current || current.status === "idle") return
             yield* actorRegistry.updateStatus(sessionID, actor.actorID, {
               status: "idle",
               lastOutcome: "cancelled",
             })
+            // Session abort: no notifyTerminal / inbox wake.
           }).pipe(Effect.ignore),
         { concurrency: "unbounded", discard: true },
       )
@@ -4054,7 +4082,9 @@ NOTE: At any point in time through this workflow you should feel free to ask the
           // F55: only main agent sets session status to busy; subagent runners
           // must not touch session-level status (Runner.onBusy is Effect.void
           // for non-main actors per F47).
-          if (!agentID || agentID === "main") yield* status.set(sessionID, { type: "busy" })
+          if (!agentID || agentID === "main") {
+            yield* status.set(sessionID, { type: "busy" })
+          }
           if (!deferInbox) yield* inbox.drain(sessionID, agentID ?? "main").pipe(Effect.ignore)
           yield* slog.info("loop", { step })
 
@@ -5364,16 +5394,18 @@ NOTE: At any point in time through this workflow you should feel free to ask the
               const text = final?.info.role === "assistant" ? assistantFinalText(final.info, final.parts) : undefined
               const parsed = parseReturnHeader(text)
               const status = Exit.isSuccess(exit) ? "completed" : Cause.hasInterruptsOnly(exit.cause) ? "cancelled" : "failed"
+              // Quiet is bound to THIS execution: a later main turn must not
+              // re-arm wake for a cancelled continuation's terminal notify.
+              const quiet = Boolean(execution.groupAbort)
               yield* notifyTerminal({
                 sessionID: input.sessionID,
                 actorID: agentID,
                 source: "continuation",
                 status,
+                ...(quiet ? { wake: false as const } : {}),
                 ...(status === "completed" ? { result: text ?? "(no output)", reportedStatus: parsed.status, reportedSummary: parsed.summary } : {}),
                 ...(Exit.isFailure(exit) && status === "failed" ? {
                   error: Cause.pretty(exit.cause),
-                  // Carry partial delivery so the parent sees what the turn
-                  // produced before the settled error, matching spawn's notify.
                   ...(text !== undefined ? { result: text } : {}),
                   ...(parsed.status ? { reportedStatus: parsed.status } : {}),
                   ...(parsed.summary ? { reportedSummary: parsed.summary } : {}),

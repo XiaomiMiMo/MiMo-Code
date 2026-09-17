@@ -26,7 +26,12 @@ export interface Interface {
 
 export class Service extends Context.Service<Service, Interface>()("@opencode/SessionRunState") {}
 
-const runnerKey = (sessionID: SessionID, agentID: string) => `${sessionID}:${agentID}`
+/**
+ * Runners are keyed by session then agentID — NOT a flat `${sessionID}:${agentID}`
+ * string. Flat prefixes are ambiguous when a legal imported session id itself
+ * contains a colon (`ses_example` vs `ses_example:child`).
+ */
+type RunnersBySession = Map<SessionID, Map<string, Runner.Runner<MessageV2.WithParts, never, Session.BusyError>>>
 
 export const layer = Layer.effect(
   Service,
@@ -37,10 +42,11 @@ export const layer = Layer.effect(
     const state = yield* InstanceState.make(
       Effect.fn("SessionRunState.state")(function* () {
         const scope = yield* Scope.Scope
-        const runners = new Map<string, Runner.Runner<MessageV2.WithParts, never, Session.BusyError>>()
+        const runners: RunnersBySession = new Map()
         yield* Effect.addFinalizer(
           Effect.fnUntraced(function* () {
-            yield* Effect.forEach(runners.values(), (runner) => runner.cancel, {
+            const all = [...runners.values()].flatMap((byAgent) => [...byAgent.values()])
+            yield* Effect.forEach(all, (runner) => runner.cancel, {
               concurrency: "unbounded",
               discard: true,
             })
@@ -56,34 +62,42 @@ export const layer = Layer.effect(
       agentID: string,
       onInterrupt: Effect.Effect<MessageV2.WithParts>,
     ) {
-      const key = runnerKey(sessionID, agentID)
       const data = yield* InstanceState.get(state)
-      const existing = data.runners.get(key)
+      let byAgent = data.runners.get(sessionID)
+      if (!byAgent) {
+        byAgent = new Map()
+        data.runners.set(sessionID, byAgent)
+      }
+      const existing = byAgent.get(agentID)
       if (existing) return existing
       const isMain = agentID === "main"
       const next = Runner.make<MessageV2.WithParts, never, Session.BusyError>(data.scope, {
-        label: key,
+        label: `${sessionID}:${agentID}`,
         onReentryWarn: (info) => elog.warn("runner-reentry", info),
+        // Cleanup only when THIS runner is actually idle. Cancel must never
+        // delete a map entry that has already been replaced by a newer run.
         onIdle: isMain
           ? Effect.gen(function* () {
-              data.runners.delete(key)
+              byAgent.delete(agentID)
+              if (byAgent.size === 0) data.runners.delete(sessionID)
               yield* status.set(sessionID, { type: "idle" })
             })
           : Effect.sync(() => {
-              data.runners.delete(key)
+              byAgent.delete(agentID)
+              if (byAgent.size === 0) data.runners.delete(sessionID)
             }),
         onBusy: isMain ? status.set(sessionID, { type: "busy" }) : Effect.void,
         // Child executors must observe cancellation, not a stale assistant.
         onInterrupt: isMain ? onInterrupt : Effect.interrupt,
         busy: () => new Session.BusyError(sessionID),
       })
-      data.runners.set(key, next)
+      byAgent.set(agentID, next)
       return next
     })
 
     const assertNotBusy = Effect.fn("SessionRunState.assertNotBusy")(function* (sessionID: SessionID, agentID = "main") {
       const data = yield* InstanceState.get(state)
-      const existing = data.runners.get(runnerKey(sessionID, agentID))
+      const existing = data.runners.get(sessionID)?.get(agentID)
       if (existing?.busy) yield* Effect.fail(new Session.BusyError(sessionID))
       return
     })
@@ -100,26 +114,38 @@ export const layer = Layer.effect(
     })
 
     // Process-group kill: session abort cancels EVERY runner under this session
-    // (main + actor/subagent slices), not only `main`. Product contract: actor
-    // cancel simulates a kill signal and must propagate to all subagents.
-    // Orchestrator is unrelated and not required for this path.
+    // (main + actor/subagent slices). Orchestrator is unrelated.
+    //
+    // Do NOT unconditionally delete the captured runner after cancel: Runner.cancel
+    // transitions that Runner to Idle, but a replacement ensureRunning may already
+    // have reused it (or installed a newer fiber) before interrupt finishes.
+    // Unconditional delete orphans still-running work and makes assertNotBusy
+    // false-negative. onIdle is the identity-safe cleanup. Below, idle leftovers
+    // are removed only when NO runner under this session is still busy.
     const cancel = Effect.fn("SessionRunState.cancel")(function* (sessionID: SessionID) {
       const data = yield* InstanceState.get(state)
-      const prefix = `${sessionID}:`
-      const targets = [...data.runners.entries()].filter(([key]) => key.startsWith(prefix))
-      if (targets.length === 0) {
+      const byAgent = data.runners.get(sessionID)
+      if (!byAgent || byAgent.size === 0) {
         yield* status.set(sessionID, { type: "idle" })
         return
       }
-      yield* Effect.forEach(
-        targets,
-        ([key, existing]) =>
-          Effect.gen(function* () {
-            if (existing.busy) yield* existing.cancel
-            data.runners.delete(key)
-          }),
-        { concurrency: "unbounded", discard: true },
-      )
+      const targets = [...byAgent.values()]
+      yield* Effect.forEach(targets, (existing) => existing.cancel, {
+        concurrency: "unbounded",
+        discard: true,
+      })
+      // Idle only when nothing under this session is still busy (replacement
+      // work may have started on a reused Runner while cancel was interrupting).
+      const after = yield* InstanceState.get(state)
+      const current = after.runners.get(sessionID)
+      const stillBusy = current ? [...current.values()].some((r) => r.busy) : false
+      if (stillBusy) return
+      if (current) {
+        for (const [agentID, r] of [...current.entries()]) {
+          if (!r.busy) current.delete(agentID)
+        }
+        if (current.size === 0) after.runners.delete(sessionID)
+      }
       // Main onIdle also sets idle; force-clear when main was already gone so
       // `/session/status` never stays busy after a successful abort.
       yield* status.set(sessionID, { type: "idle" })
@@ -129,9 +155,8 @@ export const layer = Layer.effect(
       sessionID: SessionID,
       agentID: string,
     ) {
-      const key = runnerKey(sessionID, agentID)
       const data = yield* InstanceState.get(state)
-      const existing = data.runners.get(key)
+      const existing = data.runners.get(sessionID)?.get(agentID)
       if (!existing || !existing.busy) return
       yield* existing.cancel
     })

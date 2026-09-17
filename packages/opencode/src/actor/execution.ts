@@ -7,6 +7,12 @@ export interface Execution {
   readonly done: Deferred.Deferred<void>
   fiber?: Fiber.Fiber<unknown, unknown>
   cancelled: boolean
+  /**
+   * Session process-group abort marked THIS execution: terminal notify must
+   * not auto-wake parents. Bound to the execution object for its whole life —
+   * a later main turn or resume must not clear it for late terminal handlers.
+   */
+  groupAbort?: boolean
 }
 
 export interface Interface {

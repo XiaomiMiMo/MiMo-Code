@@ -277,7 +277,12 @@ export interface SpawnResult {
 
 export interface Interface {
   readonly spawn: (input: SpawnInput) => Effect.Effect<SpawnResult>
-  readonly cancel: (sessionID: SessionID, actorID: string, mode: "graceful" | "forced") => Effect.Effect<void>
+  readonly cancel: (
+    sessionID: SessionID,
+    actorID: string,
+    mode: "graceful" | "forced",
+    options?: { wake?: boolean },
+  ) => Effect.Effect<void>
   readonly getForkContext: (sessionID: SessionID, actorID: string) => Effect.Effect<ForkContext | undefined>
   /**
    * Run ONE stall-watchdog scan pass synchronously (the same body the background
@@ -416,7 +421,16 @@ export const layer = Layer.effect(
             reportedSummary?: string
             warnings?: string[]
           },
-        ) => notifyTerminal({ ...input, source: "spawn", status, ...extra })
+        ) =>
+          notifyTerminal({
+            ...input,
+            source: "spawn",
+            status,
+            ...extra,
+            // Quiet is execution-bound: only THIS execution's group-abort flag
+            // suppresses auto-wake. Persist the terminal row either way.
+            ...(input.execution.groupAbort ? { wake: false as const } : {}),
+          })
         const warnings: string[] = []
         let gateFailed = false
         let lastResult: { finalText?: string; structured?: unknown } = {}
@@ -726,6 +740,7 @@ export const layer = Layer.effect(
                 // absent rather than being guessed from `error`.
                 const squashed = Cause.squash(cause)
                 const failure = squashed instanceof AssistantSettledError ? squashed.failure : undefined
+                // notify() applies wake:false when this execution.groupAbort is set.
                 yield* notify(
                   cancelled ? "cancelled" : "failed",
                   cancelled
@@ -900,29 +915,42 @@ export const layer = Layer.effect(
       return yield* spawnSubagent(input)
     })
 
-    const cancel: (sessionID: SessionID, actorID: string, mode: "graceful" | "forced") => Effect.Effect<void> =
-      Effect.fn("Actor.cancel")(function* (sessionID: SessionID, actorID: string, mode: "graceful" | "forced") {
-        const children = yield* actorReg.listByParent(sessionID, actorID)
-        yield* Effect.forEach(children, (c) => cancel(sessionID, c.actorID, mode), {
-          concurrency: "unbounded",
-          discard: true,
-        })
-        const execution = yield* executions.current(sessionID, actorID)
-        if (execution) {
-          yield* executions.requestCancel(execution)
-          yield* state.cancelActor(sessionID, actorID)
-          yield* executions.interrupt(execution)
-          return
-        }
-        const actor = yield* actorReg.get(sessionID, actorID)
-        if (!actor || actor.status === "idle") return
-        yield* state.cancelActor(sessionID, actorID)
-        const current = yield* actorReg.get(sessionID, actorID)
-        if (!current || current.status === "idle") return
-        yield* actorReg.updateStatus(sessionID, actorID, { status: "idle", lastOutcome: "cancelled" })
-        yield* notifyTerminal({ sessionID, actorID, source: "pending", status: "cancelled" })
-        yield* Effect.sync(() => forkContexts.delete(forkContextKey(sessionID, actorID)))
+    const cancel: (
+      sessionID: SessionID,
+      actorID: string,
+      mode: "graceful" | "forced",
+      options?: { wake?: boolean },
+    ) => Effect.Effect<void> = Effect.fn("Actor.cancel")(function* (
+      sessionID: SessionID,
+      actorID: string,
+      mode: "graceful" | "forced",
+      options?: { wake?: boolean },
+    ) {
+      const wake = options?.wake !== false
+      const children = yield* actorReg.listByParent(sessionID, actorID)
+      yield* Effect.forEach(children, (c) => cancel(sessionID, c.actorID, mode, options), {
+        concurrency: "unbounded",
+        discard: true,
       })
+      // Authoritative execution registry first — registry status can lag
+      // (continuation acquire/attach before runTurn marks running).
+      const execution = yield* executions.current(sessionID, actorID)
+      if (execution) {
+        if (!wake) execution.groupAbort = true
+        yield* executions.requestCancel(execution)
+        yield* state.cancelActor(sessionID, actorID)
+        yield* executions.interrupt(execution)
+        return
+      }
+      const actor = yield* actorReg.get(sessionID, actorID)
+      if (!actor || actor.status === "idle") return
+      yield* state.cancelActor(sessionID, actorID)
+      const current = yield* actorReg.get(sessionID, actorID)
+      if (!current || current.status === "idle") return
+      yield* actorReg.updateStatus(sessionID, actorID, { status: "idle", lastOutcome: "cancelled" })
+      if (wake) yield* notifyTerminal({ sessionID, actorID, source: "pending", status: "cancelled", wake: true })
+      yield* Effect.sync(() => forkContexts.delete(forkContextKey(sessionID, actorID)))
+    })
 
     const getForkContext = Effect.fn("Actor.getForkContext")(function* (sessionID: SessionID, actorID: string) {
       return forkContexts.get(forkContextKey(sessionID, actorID))

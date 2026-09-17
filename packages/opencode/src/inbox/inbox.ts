@@ -111,6 +111,12 @@ export interface SendInput {
   senderActorID?: string
   content: string
   type?: string
+  /**
+   * Persist the row and publish InboxArrived, but do not fork an auto-wake loop.
+   * Used by session-level abort so cancel terminal notifications cannot restart
+   * the execution group that stop just killed. Default true.
+   */
+  wake?: boolean
 }
 
 export interface SendResult {
@@ -181,9 +187,12 @@ export const layer: Layer.Layer<
 
       // Fork-and-forget wake (B2). Sender returns after fork is scheduled;
       // wake fiber lives in the service scope, so sender lifecycle does
-      // not affect delivery.
+      // not affect delivery. `wake: false` keeps the durable row without
+      // scheduling a new turn (session abort / process-group kill).
       const promptRef = sessionPromptRef.current
-      if (promptRef) {
+      if (input.wake === false) {
+        // Row already persisted; skip auto-dispatch on purpose.
+      } else if (promptRef) {
         yield* promptRef
           .loop({
             sessionID: input.receiverSessionID,
