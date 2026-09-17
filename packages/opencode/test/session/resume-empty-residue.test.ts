@@ -228,13 +228,32 @@ describe("resume empty residue", () => {
             yield* Effect.sleep("200 millis")
             const after = yield* sessions.messages({ sessionID: session.id, agentID: "main" })
             const usefulMsg = after.find((m) => m.info.id === useful.id)
+            const usefulInfo = usefulMsg?.info
+            const abandonStamp =
+              usefulInfo && usefulInfo.role === "assistant" && usefulInfo.error
+                ? ((usefulInfo.error as { data?: { message?: string }; message?: string }).data?.message ??
+                  (usefulInfo.error as { message?: string }).message ??
+                  "")
+                : ""
             return {
               emptyGone: after.find((m) => m.info.id === empty.id) === undefined,
               usefulKept: usefulMsg !== undefined,
-              // path A on useful sibling may stamp Abandoned-as-resumed on THAT assistant (expected).
-              // empty residue must not remain and must not be the resume target.
-              usefulStillHasToolParts:
-                usefulMsg?.parts.some((part) => part.type === "tool") ?? false,
+              usefulStillHasToolParts: usefulMsg?.parts.some((part) => part.type === "tool") ?? false,
+              // path A: useful sibling is abandoned-as-resumed; path B would leave it unstamped
+              // and re-dispatch parent user (user count would stay 1 but no abandon stamp).
+              usefulAbandonedAsResumed: abandonStamp.includes("Abandoned: resumed as a new assistant turn"),
+              users: after.filter((m) => m.info.role === "user").length,
+              emptySiblingCount: after.filter(
+                (m) =>
+                  m.info.role === "assistant" &&
+                  m.info.parentID === user.id &&
+                  !m.parts.some(
+                    (part) =>
+                      (part.type === "text" && part.text.trim().length > 0) ||
+                      part.type === "tool" ||
+                      (part.type === "reasoning" && part.text.trim().length > 0),
+                  ),
+              ).length,
             }
           }),
         ),
@@ -242,6 +261,9 @@ describe("resume empty residue", () => {
     expect(result.emptyGone).toBe(true)
     expect(result.usefulKept).toBe(true)
     expect(result.usefulStillHasToolParts).toBe(true)
+    // Mixed residue must take path A on the useful incomplete, not path B parent re-dispatch.
+    expect(result.usefulAbandonedAsResumed).toBe(true)
+    expect(result.users).toBe(1)
   })
 
   // F1 reject: empty tail + completed useful history → refuse parent re-dispatch
@@ -495,5 +517,88 @@ describe("resume empty residue", () => {
     })
     expect(result.listed).toBe(true)
     expect(result.shellGone).toBe(true)
+  })
+
+  // ⚠️ round2: useful-tail resume must still clean empty siblings under the same parent
+  test("useful tail resume cleans empty siblings under the same parent", async () => {
+    await using tmp = await tmpdir({ git: true })
+    const result = await Instance.provide({
+      directory: tmp.path,
+      fn: async () =>
+        AppRuntime.runPromise(
+          Effect.gen(function* () {
+            const sessions = yield* Session.Service
+            const prompt = yield* SessionPrompt.Service
+            const session = yield* sessions.create({ title: "useful tail + empty sibling" })
+            const user = yield* sessions.updateMessage({
+              id: MessageID.ascending(),
+              role: "user",
+              sessionID: session.id,
+              agent: "build",
+              model: { providerID: ProviderID.make("test"), modelID: ModelID.make("test-model") },
+              time: { created: Date.now() },
+            })
+            const emptySibling = yield* sessions.updateMessage({
+              id: MessageID.ascending(),
+              role: "assistant",
+              parentID: user.id,
+              sessionID: session.id,
+              mode: "build",
+              agent: "build",
+              path: { cwd: tmp.path, root: tmp.path },
+              cost: 0,
+              tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+              modelID: ModelID.make("test-model"),
+              providerID: ProviderID.make("test"),
+              time: { created: Date.now() },
+            })
+            const usefulTail = yield* sessions.updateMessage({
+              id: MessageID.ascending(),
+              role: "assistant",
+              parentID: user.id,
+              sessionID: session.id,
+              mode: "build",
+              agent: "build",
+              path: { cwd: tmp.path, root: tmp.path },
+              cost: 0,
+              tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+              modelID: ModelID.make("test-model"),
+              providerID: ProviderID.make("test"),
+              time: { created: Date.now() + 2 },
+              finish: "tool-calls",
+            })
+            yield* sessions.updatePart({
+              id: PartID.ascending(),
+              messageID: usefulTail.id,
+              sessionID: session.id,
+              type: "tool",
+              callID: "call_1",
+              tool: "bash",
+              state: {
+                status: "running",
+                input: { command: "ls" },
+                title: "ls",
+                metadata: {},
+                time: { start: Date.now() },
+              },
+            })
+            yield* prompt
+              .resumeBackground({
+                sessionID: session.id,
+                assistantMessageID: usefulTail.id,
+                agentID: "main",
+              })
+              .pipe(Effect.catch(() => Effect.void))
+            yield* Effect.sleep("200 millis")
+            const after = yield* sessions.messages({ sessionID: session.id, agentID: "main" })
+            return {
+              emptySiblingGone: after.find((m) => m.info.id === emptySibling.id) === undefined,
+              usefulKept: after.some((m) => m.info.id === usefulTail.id),
+            }
+          }),
+        ),
+    })
+    expect(result.emptySiblingGone).toBe(true)
+    expect(result.usefulKept).toBe(true)
   })
 })
