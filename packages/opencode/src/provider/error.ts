@@ -275,6 +275,7 @@ export function parseStreamError(input: unknown): ParsedStreamError | undefined 
         responseBody,
       }
     case "context_length_exceeded":
+    case "context_window_exceeded":
       return {
         type: "context_overflow",
         message: "Input exceeds context window of this model",
@@ -323,7 +324,14 @@ export type ParsedAPICallError =
 export function parseAPICallError(input: { providerID: ProviderID; error: APICallError; allow404Retry?: boolean }): ParsedAPICallError {
   const m = message(input.providerID, input.error)
   const body = json(input.error.responseBody)
-  if (isOverflow(m) || input.error.statusCode === 413 || body?.error?.code === "context_length_exceeded") {
+  if (
+    isOverflow(m) ||
+    input.error.statusCode === 413 ||
+    body?.error?.code === "context_length_exceeded" ||
+    body?.error?.code === "context_window_exceeded" ||
+    body?.error?.type === "context_length_exceeded" ||
+    body?.error?.type === "context_window_exceeded"
+  ) {
     return {
       type: "context_overflow",
       message: m,
