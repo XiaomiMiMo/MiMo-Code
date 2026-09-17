@@ -36,7 +36,7 @@ function shellMessage(input: { sessionID: string; parentID: string; created: num
   }
 }
 
-// [TP-SR-R21-16] Resume 只有两种：tool-resume（有现场）/ user-resume（无现场，从 parent user 重跑）。
+// [TP-SR-R21-16] Resume has only tool-resume (useful parts) / user-resume (no parts; re-run from parent user).
 describe("resume empty residue", () => {
   test("user-resume cleans empty shells without Abandoned-as-resumed", async () => {
     await using tmp = await tmpdir({ git: true })
@@ -272,7 +272,7 @@ describe("resume empty residue", () => {
     expect(result.users).toBe(1)
   })
 
-  // user-resume 在「已有 completed 回答 + 空壳」时仍必须起跑（userRedispatch），不能静默 no-op
+  // user-resume with a completed sibling + empty tail must still start a run (userRedispatch), not silent no-op
   test("user-resume with completed sibling still starts a run from parent user", async () => {
     await using tmp = await tmpdir({ git: true })
     const result = await Instance.provide({
@@ -331,7 +331,7 @@ describe("resume empty residue", () => {
               emptyGone: after.find((m) => m.info.id === empty.id) === undefined,
               completedKept: after.some((m) => m.info.id === completed.id),
               usersStable: after.filter((m) => m.info.role === "user").length === usersBefore,
-              // run 起来了：出现新 assistant，或旧 completed 被写了 error（runLoop 失败现场）
+              // Run started: a new assistant appeared, or the old completed one gained an error (failed runLoop)
               ranSomething:
                 assistantsAfter.some((m) => m.info.id !== completed.id && m.info.id !== empty.id) ||
                 assistantsAfter.some(

@@ -158,8 +158,8 @@ test("SDK serializes resume titleLocale in the query string", async () => {
   expect(captured!.body).toBeNull()
 })
 
-// [TP-SR-R21-07] 恢复判据:completed+tool-calls / completed+length / 无 completed 均为候选;
-// completed+stop / completed+other 不进候选。
+// [TP-SR-R21-07] Recovery predicate: completed+tool-calls / completed+length / no completed are candidates;
+// completed+stop / completed+other are not.
 describe("recovery candidate predicate", () => {
   async function setupAssistant(overrides: Partial<{ finish: string; completed: boolean; error: boolean }>) {
     await using tmp = await tmpdir({ git: true })
@@ -228,20 +228,20 @@ describe("recovery candidate predicate", () => {
     expect(result.candidates.length).toBe(0)
   })
 
-  // [Finding #1 回归] finish=stop 但有 error:processor 因 error 不写 completed → 可恢复。
+  // [Finding #1 regression] finish=stop but error set: processor does not write completed on error => recoverable.
   test("finish=stop + error → candidate (error means not completed)", async () => {
     const result = await setupAssistant({ completed: false, finish: "stop", error: true })
     expect(result.candidates.length).toBe(1)
   })
 
-  // error + 无 completed:任何 finish 都是候选(有 error = 没完成)。
+  // error + no completed: any finish is a candidate (error means not finished).
   test("error + no completed → candidate", async () => {
     const result = await setupAssistant({ completed: false, error: true })
     expect(result.candidates.length).toBe(1)
   })
 })
 
-// [TP-SR-R21-08] model 参数校验:modelProviderID / modelID 必须同时提供。
+// [TP-SR-R21-08] model params: modelProviderID / modelID must be provided together.
 test("resume with only modelProviderID returns 400", async () => {
   await using tmp = await tmpdir({ git: true })
   const result = await Instance.provide({

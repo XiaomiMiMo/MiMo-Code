@@ -1356,7 +1356,7 @@ it.live("resume continues an incomplete assistant without creating or rewriting 
       expect(after.filter((message) => message.info.role === "user")).toHaveLength(1)
       expect(after.length).toBe(before.length + 1)
       expect(after.find((message) => message.info.id === seeded.assistant.id)?.info).toMatchObject(seeded.assistant)
-      // tool-resume 必须对被续的 assistant 记 Abandoned-as-resumed
+      // tool-resume must stamp Abandoned-as-resumed on the continued assistant
       const seededAfter = after.find((message) => message.info.id === seeded.assistant.id)?.info
       const abandonMsg =
         seededAfter && seededAfter.role === "assistant" && seededAfter.error

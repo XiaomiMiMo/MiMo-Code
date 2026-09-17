@@ -528,9 +528,9 @@ export function Session() {
       { sessionID: route.sessionID, assistantMessageID: candidate.assistantMessageID, titleLocale: language.intl() },
       { throwOnError: true },
     )
-    // 202 = 引擎已受理且两种 resume 都会起 run。不在此处再 GET recovery：
-    // busy 时无 allowBusy 的 recovery 恒为 []，会把成功误报成「无可恢复」。
-    // 收尾靠 session.status→idle / session.error（见 sync.tsx）。
+    // 202 = engine accepted; both resume kinds start a run. Do not GET recovery here:
+    // recovery without allowBusy returns [] while busy, which would false-report "nothing to recover".
+    // Clearing relies on session.status→idle / session.error (see sync.tsx).
     sync.set("session_recovery_active", route.sessionID, candidate.assistantMessageID)
     toast.show({ message: t("tui.toast.session.recover.started"), variant: "info" })
   }

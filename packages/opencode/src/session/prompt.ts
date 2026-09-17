@@ -567,7 +567,7 @@ export interface ResumeTurnInput {
   agentID?: string
   task_id?: string
   titleLocale?: string
-  /** 可选模型覆盖：用户在继续前切换了模型时，用新模型执行恢复步。 */
+  /** Optional model override: use the newly selected model for the recovery step. */
   model?: { providerID: string; modelID: string }
 }
 
@@ -3327,7 +3327,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
       throw new Error("Impossible")
     })
 
-    /** empty residue = 无可用模型现场：既不能 assistant prefill，也不能当续跑目标。 */
+    /** empty residue = no usable model site: not an assistant prefill target and not a continue target. */
     const hasUsefulAssistantParts = (parts: readonly MessageV2.Part[]) =>
       parts.some((part) => {
         if (part.type === "text") return !part.synthetic && !part.ignored && part.text.trim().length > 0
@@ -3340,8 +3340,10 @@ NOTE: At any point in time through this workflow you should feel free to ask the
       assistant.role === "assistant" && !hasUsefulAssistantParts(parts)
 
     /**
-     * 步级「是否还算未完成、可进恢复」——`recovery` 列表与 resume 混场选点共用同一份。
-     * tool-calls / length / 无 finish / 任意 error → 可恢复；completed+stop/other 且无 error → 否。
+     * Shared step-level "still incomplete / recoverable" predicate for `/recovery`
+     * listing and resume planning.
+     * tool-calls / length / missing finish / any error => recoverable;
+     * completed+stop/other without error => not.
      */
     const isRecoveryWorthyAssistant = (info: MessageV2.Assistant) => {
       if (
@@ -3357,12 +3359,12 @@ NOTE: At any point in time through this workflow you should feel free to ask the
     }
 
     /**
-     * 删除 parent 下的 empty residue assistant。
-     * 必填 parentMessageID：清理范围钉在该 user 之下，不做会话级扫删。
-     * - busy 且无 terminal 标记的 live 空壳默认不删。
-     * - `preserveError`: 带 error 的空壳保留（recovery 可候选；post-run 失败现场）。
-     * - `force`: 本轮 runLoop 结束后的 ensuring；仍尊重 preserveError。
-     * 注：empty 判定只看 parts；error 不等于 useful parts，但可作为「保留给 recovery」信号。
+     * Delete empty-residue assistants under one parent user.
+     * `parentMessageID` is required: cleanup is parent-scoped, never session-wide.
+     * - Live empty shells (busy, no terminal marker) are skipped by default.
+     * - `preserveError`: keep empty shells that carry `error` (recovery candidates / failure site).
+     * - `force`: post-run ensuring sweep; still respects preserveError.
+     * Emptiness is parts-only; `error` is not useful parts but is a keep-for-recovery signal.
      */
     const cleanupEmptyResidueAssistants = Effect.fn("SessionPrompt.cleanupEmptyResidueAssistants")(function* (input: {
       sessionID: SessionID
@@ -3370,7 +3372,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
       parentMessageID: MessageID
       sessionBusy?: boolean
       force?: boolean
-      /** 默认 true：带 error 的空壳保留给 recovery；path-B work 预清理显式传 false。 */
+      /** Default true: keep error-marked empty shells for recovery; user-resume pre-clean passes false. */
       preserveError?: boolean
     }) {
       const busy = input.sessionBusy ?? (yield* status.get(input.sessionID)).type !== "idle"
@@ -3412,8 +3414,9 @@ NOTE: At any point in time through this workflow you should feel free to ask the
       const candidates: RecoveryCandidate[] = []
       for (const [index, msg] of msgs.entries()) {
         if (msg.info.role !== "assistant") continue
-        // 未完成 assistant 才是恢复候选（与 resume 混场选点共用 isRecoveryWorthyAssistant）。
-        // 有 error = 没完成 = 可恢复；abandon 后 completed+AbortedError 仍可重试。
+        // Only incomplete assistants are recovery candidates (shared with resume planning via
+        // isRecoveryWorthyAssistant). error => not finished => recoverable; abandoned
+        // completed+AbortedError remains retryable.
         if (!isRecoveryWorthyAssistant(msg.info)) continue
         const assistant = msg.info
         if (!msgs.some((parent) => parent.info.role === "user" && parent.info.id === assistant.parentID)) continue
@@ -3435,10 +3438,10 @@ NOTE: At any point in time through this workflow you should feel free to ask the
       const messages = yield* sessions.messages({ sessionID: input.sessionID, agentID: input.agentID ?? "main" })
       const message = messages.find((item) => item.info.id === input.assistantMessageID)
       if (!message || message.info.role !== "assistant") return
-      // empty residue 不写 Abandoned-as-resumed 记账——那会制造「好像续过」的假象；
-      // 空壳由 cleanup 删除。
+      // Empty residue must not get an Abandoned-as-resumed stamp — that would fake a continue.
+      // Shells are deleted by cleanup.
       if (isEmptyAssistantResidue(message.info, message.parts)) return
-      // 已标记 completed 且已有 error → 幂等跳过
+      // Already completed with error => idempotent skip
       if ("completed" in message.info.time && message.info.error) return
       yield* sessions.updateMessage({
         ...message.info,
@@ -3455,7 +3458,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
       deferInbox?: boolean,
       resumeFrom?: string,
       modelOverride?: { providerID: string; modelID: string },
-      /** user-resume：从 parent user 强制新开一轮，不因同 parent 下旧 sibling 的 classify 提前 break。 */
+      /** user-resume: force a new turn from the parent user; step-0 skips classify of old siblings. */
       userRedispatch?: boolean,
     ) => Effect.Effect<MessageV2.WithParts> = Effect.fn("SessionPrompt.run")(
       function* (
@@ -3482,9 +3485,9 @@ NOTE: At any point in time through this workflow you should feel free to ask the
         // counter — do not add a second one. Local to runLoop so a fresh user
         // turn resets it (no cross-message pollution), same as outputLengthContinuations.
         let invalidContinuations = 0
-        // structured-output 专用 retry：上限来自 lastUser.format.retryCount（默认 2），
-        // 与 invalidContinuations（generic invalid）分离，互不污染。局部于 runLoop，
-        // 新一轮用户 turn 自动归零。
+        // Structured-output-only retry: cap comes from lastUser.format.retryCount (default 2),
+        // kept separate from invalidContinuations (generic invalid). Local to runLoop;
+        // resets on the next user turn.
         let structuredRetries = 0
         // Bounded retries for text-form tool calls (model wrote a tool call as
         // prose text instead of a structured tool_use). Local to runLoop so each
@@ -4134,8 +4137,8 @@ NOTE: At any point in time through this workflow you should feel free to ask the
           const hasToolCalls =
             lastAssistantMsg?.parts.some((part) => part.type === "tool" && !part.metadata?.providerExecuted) ?? false
 
-          // user-resume：仅**首轮**跳过旧 sibling 的 existing-assistant 分类；
-          // 本轮新建的 assistant 在后续 step 仍走正常 classify，否则会无限再调模型。
+          // user-resume: skip existing-assistant classify only on step 0 (old sibling);
+          // later steps classify the assistant this run created, or the loop would call the model forever.
           const skipExistingClassify = userRedispatch && step === 0
           if (
             !skipExistingClassify &&
@@ -5710,13 +5713,14 @@ NOTE: At any point in time through this workflow you should feel free to ask the
     })
 
     /**
-     * Resume 只有两种，没有第三种「只清理不起跑」：
-     * - **tool-resume**：目标 assistant 有可续现场（tool / 非 synthetic 正文 / 非空 reasoning）
-     *   → abandon + `resumeFrom` 续下一步。
-     * - **user-resume**：目标 assistant 无上述现场（脏空壳等）
-     *   → 清掉 parent 下 empty residue，从 parent user 重跑（无 assistant prefill）。
-     * 分型只看**客户端点的那条** assistant；空壳不是产品路径，只是 user-resume 时的脏数据。
-     * busy / 目标消失 → reject（不 removeMessage）。
+     * Resume has exactly two launch paths (no cleanup-only that skips runLoop):
+     * - **tool-resume**: target assistant has useful parts (tool / non-synthetic text / non-empty reasoning)
+     *   → abandon + `resumeFrom` continue that assistant.
+     * - **user-resume**: target has no such parts (dirty empty shells)
+     *   → delete empty residue under the parent user, re-run from that user (no assistant prefill).
+     * Classification uses only the assistant the client clicked; empty shells are dirty data
+     * cleaned during user-resume, not a third product path.
+     * busy / vanished target → reject (no removeMessage).
      */
     type ResumePlan =
       | { action: "tool-resume"; assistantMessageID: MessageID; parentMessageID: MessageID }
@@ -5766,7 +5770,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
       return user
     })
 
-    /** Launch: tool-resume 续 assistant；user-resume 从 parent user 重跑。两者都会起 runLoop。 */
+    /** Launch: tool-resume continues the assistant; user-resume re-runs from the parent user. Both start runLoop. */
     const launchResume = Effect.fn("SessionPrompt.launchResume")(function* (input: {
       sessionID: SessionID
       agentID: string
@@ -5777,13 +5781,14 @@ NOTE: At any point in time through this workflow you should feel free to ask the
       mode: "ensure" | "start"
     }) {
       const plan = input.plan
-      // 与普通发送同一套 onInterrupt。
+      // Same onInterrupt as a normal send.
       const resumeInterrupt = lastAssistant(input.sessionID, input.agentID)
 
       const work =
         plan.action === "user-resume"
           ? Effect.gen(function* () {
-              // 清掉 parent 下 empty residue（含 error 空壳），否则 lastAssistant 可能仍是空壳挡 classify。
+              // Clear empty residue under parent (including error shells); otherwise lastAssistant
+              // may still be an empty shell and classify would block re-dispatch.
               yield* cleanupEmptyResidueAssistants({
                 sessionID: input.sessionID,
                 agentID: input.agentID,
@@ -5861,9 +5866,10 @@ NOTE: At any point in time through this workflow you should feel free to ask the
               ),
             )
 
-      // tool-resume：abandon 只在 work 内（ensure/start 失败时不打假账）。
+      // tool-resume: abandon only inside work (no fake stamp if ensure/start fails).
       if (input.mode === "ensure") {
-        // Resume 不得 ensure-join 到无关在途 run：busy 竞态直接 BusyError，保证「点了 Resume 就要跑这一轮」。
+        // Resume must not ensure-join an unrelated in-flight run: busy race => BusyError so the
+        // clicked resume actually runs this plan.
         const busyNow = yield* state
           .assertNotBusy(input.sessionID, input.agentID)
           .pipe(Effect.exit, Effect.map((exit) => exit._tag === "Failure"))
@@ -5885,7 +5891,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
         )
       }
       const agentID = input.agentID ?? "main"
-      // 校验 model override 在 abandon 之前:getModel 失败时不能先把原消息改成 abandoned。
+      // Validate model override before abandon: getModel failure must not stamp the old message first.
       if (input.model) {
         yield* getModel(ProviderID.make(input.model.providerID), ModelID.make(input.model.modelID), input.sessionID)
       }
