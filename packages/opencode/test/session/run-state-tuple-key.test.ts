@@ -126,18 +126,19 @@ describe("SessionRunState tuple key — independent Runners per (sid, agentID)",
           }),
       })
 
-      // Start first run
+      // Start first run; signal once the run body is actually executing so the
+      // reentry path does not race a cold fiber under CI load.
+      const started = yield* Deferred.make<void>()
       const fiber1 = yield* runner
         .ensureRunning(
           Effect.gen(function* () {
-            yield* Effect.sleep("50 millis")
+            yield* Deferred.succeed(started, void 0)
+            yield* Effect.sleep("80 millis")
             return "first"
           }),
         )
         .pipe(Effect.forkChild)
-
-      // Give first run time to start
-      yield* Effect.sleep("5 millis")
+      yield* Deferred.await(started)
 
       // Second call triggers reentry warn
       const fiber2 = yield* runner.ensureRunning(Effect.succeed("second")).pipe(Effect.forkChild)
