@@ -6,10 +6,29 @@ process.chdir(dir)
 
 import { $ } from "bun"
 import path from "path"
+import { mkdtemp, rm } from "node:fs/promises"
+import { tmpdir } from "node:os"
 
 import { createClient } from "@hey-api/openapi-ts"
 
-await $`bun dev generate > ${dir}/openapi.json`.cwd(path.resolve(dir, "../../opencode"))
+// Schema generation boots the CLI and its migrations. Isolate all runtime data.
+const runtime = await mkdtemp(path.join(tmpdir(), "mimocode-sdk-"))
+try {
+  await $`bun dev generate > ${dir}/openapi.json`
+    .cwd(path.resolve(dir, "../../opencode"))
+    .env({
+      ...process.env,
+      MIMOCODE_DB: ":memory:",
+      HOME: runtime,
+      USERPROFILE: runtime,
+      XDG_DATA_HOME: path.join(runtime, "data"),
+      XDG_CONFIG_HOME: path.join(runtime, "config"),
+      XDG_CACHE_HOME: path.join(runtime, "cache"),
+      XDG_STATE_HOME: path.join(runtime, "state"),
+    })
+} finally {
+  await rm(runtime, { recursive: true, force: true })
+}
 
 await createClient({
   input: "./openapi.json",
