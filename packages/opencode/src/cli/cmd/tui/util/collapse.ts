@@ -8,8 +8,8 @@
 // therefore an approximate ceiling, not a hard bound — see the follow-up note in
 // docs/compose/spec/exec-tool-view.md.
 
-export function lines(content: string) {
-  if (!content) return []
+export function lines(content: unknown) {
+  if (typeof content !== "string" || content === "") return []
   return content.replace(/\n$/, "").split("\n")
 }
 
