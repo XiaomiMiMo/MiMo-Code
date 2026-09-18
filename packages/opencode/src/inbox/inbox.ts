@@ -202,6 +202,10 @@ export const layer: Layer.Layer<
             // the sole notifier for turn 1 — no double-notify.
             notifyParentOnComplete: true,
             inboxWake: true,
+            // Inbox wakes are internal machine scheduling (actor notifications / queued
+            // actor traffic). They must NOT be labeled user — real user turns enter via
+            // prompt()/Desktop/TUI/HTTP/command which default source to "user".
+            source: "spawn",
           })
           .pipe(Effect.ignore, Effect.forkIn(scope))
       } else {

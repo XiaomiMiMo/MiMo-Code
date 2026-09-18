@@ -674,6 +674,13 @@ export const layer: Layer.Layer<Service, never, Bus.Service | Storage.Service | 
           forwardRef.clearParentGrants(sessionID)
           promptLocks.delete(sessionID)
         })
+        // uncommitted-hint episode state is process-local; drop it when the session dies.
+        yield* Effect.promise(async () => {
+          try {
+            const mod = await import("./prompt/uncommitted-hint")
+            mod.clearAllHintStateForSession(sessionID)
+          } catch { /* best-effort */ }
+        }).pipe(Effect.ignore)
       } catch (e) {
         log.error(e)
       }

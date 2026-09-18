@@ -23,6 +23,7 @@ export interface SessionPromptLoopRef {
     // A woken child settles through SessionPrompt.loop's execution boundary.
     notifyParentOnComplete?: boolean
     inboxWake?: boolean
+    source?: "user" | "spawn" | "hook"
   }) => Effect.Effect<MessageV2.WithParts>
 }
 

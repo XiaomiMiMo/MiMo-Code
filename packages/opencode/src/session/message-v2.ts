@@ -458,14 +458,30 @@ const Base = z.object({
   agentID: z.string().optional(),
 })
 
-export const Provenance = z
+/** Plugin hook envelope: actor/spawn pre/post hook sends. */
+export const HookProvenance = z
   .object({
     hookPhase: z.enum(["pre", "post"]),
     hookIteration: z.number().int().nonnegative(),
     pluginNames: z.array(z.string()),
     hookIDs: z.array(z.string()),
   })
-  .meta({ ref: "Provenance" })
+  .meta({ ref: "HookProvenance" })
+export type HookProvenance = z.infer<typeof HookProvenance>
+
+/**
+ * Root-session machine/host envelope (desktop automation, system, scheduled host).
+ * Present provenance on source=hook allows non-text parts and does not force
+ * text parts synthetic; absence still fail-closes those checks.
+ */
+export const MachineProvenance = z
+  .object({
+    machine: z.string().min(1),
+  })
+  .meta({ ref: "MachineProvenance" })
+export type MachineProvenance = z.infer<typeof MachineProvenance>
+
+export const Provenance = z.union([HookProvenance, MachineProvenance]).meta({ ref: "Provenance" })
 export type Provenance = z.infer<typeof Provenance>
 
 export const User = Base.extend({

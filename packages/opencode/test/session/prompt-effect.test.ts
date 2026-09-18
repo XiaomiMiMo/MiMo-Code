@@ -51,6 +51,8 @@ import { TaskRegistry } from "../../src/task/registry"
 import { defaultLayer as SchedulerDefaultLayer } from "../../src/cron/scheduler"
 import { Auth } from "../../src/auth"
 import { Log } from "../../src/util"
+import { Global } from "../../src/global"
+import { EffectLogger } from "../../src/effect"
 import * as CrossSpawnSpawner from "../../src/effect/cross-spawn-spawner"
 import { Ripgrep } from "../../src/file/ripgrep"
 import { Format } from "../../src/format"
@@ -61,6 +63,12 @@ import { Inbox } from "../../src/inbox"
 import { Metrics } from "../../src/metrics"
 import { Database, eq } from "../../src/storage"
 import { prefixCaptureRef } from "../../src/session/prefix-capture-ref"
+import {
+  currentMainHintToken,
+  hintClaimBarrier,
+  hintFirePostBarrier,
+  hintGitProbeBarrier,
+} from "../../src/session/prompt/uncommitted-hint"
 import { SessionPrefixSnapshotTable } from "../../src/session/session.sql"
 
 void Log.init({ print: false })
@@ -298,7 +306,7 @@ function makeHttp(mcpService = mcp, providerLayer = ProviderSvc.defaultLayer) {
   ).pipe(Layer.provide(summary))
 }
 
-const it = testEffect(makeHttp())
+const it = testEffect(Layer.provideMerge(makeHttp(), EffectLogger.layer))
 const mcpLegacyMetadata = { interrupted: true, output: "must not become a successful result" }
 const mcpErrorImage = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="
 const mcpErrorAudio = "UklGRiUAAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQEAAACA"
@@ -669,6 +677,885 @@ it.live("loop calls LLM and returns assistant message", () =>
     }),
     { git: true, config: providerCfg },
   ),
+)
+
+// [TP-R1-01][TP-R4-01][TP-R4-02][TP-R3-01][TP-R7-01] uncommitted-hint integration.
+it.live("[TP-R1-01][TP-R4-02][TP-R7-01] uncommitted-hint dirty USER turn produces a synthetic hint", () =>
+  provideTmpdirServer(
+    Effect.fnUntraced(function* ({ llm, dir }) {
+      const prompt = yield* SessionPrompt.Service
+      const sessions = yield* Session.Service
+      yield* Effect.promise(async () => {
+        const { writeFileSync } = await import("node:fs")
+        const { join } = await import("node:path")
+        writeFileSync(join(dir, "dirty.txt"), "x")
+        return true
+      })
+      const prev = process.env.MIMOCODE_CONFIG_CONTENT
+      process.env.MIMOCODE_CONFIG_CONTENT = JSON.stringify({
+        experimental: { uncommitted_hint: { enabled: true } },
+      })
+      try {
+        const chat = yield* sessions.create({
+          title: "uh-on",
+          permission: [{ permission: "*", pattern: "*", action: "allow" }],
+        })
+        // Queue user-turn reply AND hook follow-up reply before prompt so inject path has LLM.
+        yield* llm.text("done without commit")
+        yield* llm.text("will commit next")
+        yield* prompt.prompt({
+          sessionID: chat.id,
+          agent: "build",
+          model: ref,
+          source: "user",
+          variant: "high",
+          parts: [{ type: "text", text: "please edit dirty work" }],
+        })
+        yield* Effect.sleep("2500 millis")
+        const msgs = yield* sessions.messages({ sessionID: chat.id, agentID: "main" })
+        const hintUsers = msgs.filter(
+          (m) =>
+            m.info.role === "user" &&
+            m.parts.some((p) => p.type === "text" && p.synthetic === true && String(p.text).includes("uncommitted git changes")),
+        )
+        expect(hintUsers.length).toBe(1)
+        const hintInfo = hintUsers[0]!.info
+        if (hintInfo.role !== "user") throw new Error("expected user hint message")
+        // R002: variant lives on model.variant, matching MessageV2.User DTO.
+        expect(hintInfo.model.variant).toBe("high")
+        expect(hintInfo).not.toHaveProperty("variant")
+        const hintParts = hintUsers[0]!.parts.filter((p) => p.type === "text")
+        expect(hintParts.some((p) => p.type === "text" && String(p.text).includes(" M dirty.txt") || String((p as { text?: string }).text ?? "").includes("dirty.txt"))).toBe(true)
+        // Settlement of the original user turn is not blocked by hint inject.
+        const statusSvc = yield* SessionStatus.Service
+        const settled = yield* statusSvc.get(chat.id)
+        expect(settled.type).toBe("idle")
+      } finally {
+        if (prev === undefined) delete process.env.MIMOCODE_CONFIG_CONTENT
+        else process.env.MIMOCODE_CONFIG_CONTENT = prev
+      }
+    }),
+    { git: true, config: providerCfg },
+  ),
+  20_000,
+)
+
+// [TP-R4-02] Re-hint while dirty: cancel during hook follow-up does not late-inject;
+// a later dirty USER turn may inject again (no session-once hard cap).
+it.live("[TP-R4-02] uncommitted-hint cancel hook turn then dirty USER turn re-hints", () =>
+  provideTmpdirServer(
+    Effect.fnUntraced(function* ({ llm, dir }) {
+      const prompt = yield* SessionPrompt.Service
+      const sessions = yield* Session.Service
+      yield* Effect.promise(async () => {
+        const { writeFileSync } = await import("node:fs")
+        const { join } = await import("node:path")
+        writeFileSync(join(dir, "dirty.txt"), "x")
+        return true
+      })
+      const prev = process.env.MIMOCODE_CONFIG_CONTENT
+      process.env.MIMOCODE_CONFIG_CONTENT = JSON.stringify({
+        experimental: { uncommitted_hint: { enabled: true } },
+      })
+      const countHints = Effect.fn("test.countUhHints")(function* (sessionID: SessionID) {
+        const msgs = yield* sessions.messages({ sessionID, agentID: "main" })
+        return msgs.filter((m) =>
+          m.parts.some(
+            (p) => p.type === "text" && p.synthetic === true && String(p.text).includes("uncommitted git changes"),
+          ),
+        ).length
+      })
+      try {
+        const chat = yield* sessions.create({
+          title: "uh-rehint-cancel",
+          permission: [{ permission: "*", pattern: "*", action: "allow" }],
+        })
+        // User turn completes; the NEXT queued reply (hook follow-up) hangs until cancel.
+        yield* llm.text("done without commit")
+        yield* llm.hang
+        yield* prompt.prompt({
+          sessionID: chat.id,
+          agent: "build",
+          model: ref,
+          source: "user",
+          parts: [{ type: "text", text: "dirty work first" }],
+        })
+        // Hint injects then hook runLoop requests LLM → hang reply (not empty-queue auto-ok).
+        yield* Effect.sleep("1500 millis")
+        expect(yield* countHints(chat.id)).toBe(1)
+        yield* llm.wait(2)
+        const status = yield* SessionStatus.Service
+        const during = yield* status.get(chat.id)
+        expect(during.type).toBe("busy")
+        yield* prompt.cancel(chat.id)
+        yield* Effect.sleep("300 millis")
+        // Second USER turn while workspace still dirty — re-hint is allowed.
+        yield* llm.text("second turn done")
+        yield* llm.hang
+        yield* prompt.prompt({
+          sessionID: chat.id,
+          agent: "build",
+          model: ref,
+          source: "user",
+          parts: [{ type: "text", text: "still dirty" }],
+        })
+        yield* Effect.sleep("2000 millis")
+        // 1 (first inject) + 1 (second dirty user turn) = 2
+        expect(yield* countHints(chat.id)).toBe(2)
+      } finally {
+        if (prev === undefined) delete process.env.MIMOCODE_CONFIG_CONTENT
+        else process.env.MIMOCODE_CONFIG_CONTENT = prev
+      }
+    }),
+    { git: true, config: providerCfg },
+  ),
+  20_000,
+)
+
+it.live("[TP-R3-01][TP-R4-01][TP-R7-01] uncommitted-hint disabled USER turn does not inject", () =>
+  provideTmpdirServer(
+    Effect.fnUntraced(function* ({ llm, dir }) {
+      const prompt = yield* SessionPrompt.Service
+      const sessions = yield* Session.Service
+      yield* Effect.promise(async () => {
+        const { writeFileSync } = await import("node:fs")
+        const { join } = await import("node:path")
+        writeFileSync(join(dir, "dirty.txt"), "x")
+        return true
+      })
+      const prev = process.env.MIMOCODE_CONFIG_CONTENT
+      process.env.MIMOCODE_CONFIG_CONTENT = JSON.stringify({
+        experimental: { uncommitted_hint: { enabled: false } },
+      })
+      try {
+        const chat = yield* sessions.create({
+          title: "uh-off",
+          permission: [{ permission: "*", pattern: "*", action: "allow" }],
+        })
+        yield* llm.text("ok")
+        yield* prompt.prompt({
+          sessionID: chat.id,
+          agent: "build",
+          model: ref,
+          source: "user",
+          parts: [{ type: "text", text: "dirty work" }],
+        })
+        yield* Effect.sleep("1200 millis")
+        const msgs = yield* sessions.messages({ sessionID: chat.id, agentID: "main" })
+        const hints = msgs.filter((m) =>
+          m.parts.some((p) => p.type === "text" && p.synthetic === true && String(p.text).includes("uncommitted git changes")),
+        )
+        expect(hints).toHaveLength(0)
+      } finally {
+        if (prev === undefined) delete process.env.MIMOCODE_CONFIG_CONTENT
+        else process.env.MIMOCODE_CONFIG_CONTENT = prev
+      }
+    }),
+    { git: true, config: providerCfg },
+  ),
+)
+
+it.live("[TP-R4-01][TP-R7-01] uncommitted-hint enabled + hook-source turn does not inject", () =>
+  provideTmpdirServer(
+    Effect.fnUntraced(function* ({ llm, dir }) {
+      const prompt = yield* SessionPrompt.Service
+      const sessions = yield* Session.Service
+      yield* Effect.promise(async () => {
+        const { writeFileSync } = await import("node:fs")
+        const { join } = await import("node:path")
+        writeFileSync(join(dir, "dirty.txt"), "x")
+        return true
+      })
+      const prev = process.env.MIMOCODE_CONFIG_CONTENT
+      process.env.MIMOCODE_CONFIG_CONTENT = JSON.stringify({
+        experimental: { uncommitted_hint: { enabled: true } },
+      })
+      try {
+        const chat = yield* sessions.create({
+          title: "uh-hook",
+          permission: [{ permission: "*", pattern: "*", action: "allow" }],
+        })
+        yield* llm.text("hook reply")
+        yield* prompt.prompt({
+          sessionID: chat.id,
+          agent: "build",
+          model: ref,
+          source: "hook",
+          parts: [{ type: "text", text: "machine task", synthetic: true }],
+        })
+        yield* Effect.sleep("1200 millis")
+        const msgs = yield* sessions.messages({ sessionID: chat.id, agentID: "main" })
+        const hints = msgs.filter((m) =>
+          m.parts.some((p) => p.type === "text" && p.synthetic === true && String(p.text).includes("uncommitted git changes")),
+        )
+        expect(hints).toHaveLength(0)
+      } finally {
+        if (prev === undefined) delete process.env.MIMOCODE_CONFIG_CONTENT
+        else process.env.MIMOCODE_CONFIG_CONTENT = prev
+      }
+    }),
+    { git: true, config: providerCfg },
+  ),
+)
+
+// R003: root-session machine contract — hook + provenance accepts machine payloads.
+const machineProvenance = { machine: "desktop-automation" } as const
+
+it.live("[TP-R4-01] machine hook text-only with provenance is accepted and not force-synthetic", () =>
+  provideTmpdirServer(
+    Effect.fnUntraced(function* ({ llm }) {
+      const prompt = yield* SessionPrompt.Service
+      const sessions = yield* Session.Service
+      const chat = yield* sessions.create({
+        title: "machine-text",
+        permission: [{ permission: "*", pattern: "*", action: "allow" }],
+      })
+      yield* llm.text("machine ok")
+      yield* prompt.prompt({
+        sessionID: chat.id,
+        agent: "build",
+        model: ref,
+        source: "hook",
+        provenance: machineProvenance,
+        parts: [{ type: "text", text: "scheduled automation body" }],
+      })
+      const msgs = yield* sessions.messages({ sessionID: chat.id })
+      const user = msgs.find((m) => m.info.role === "user" && (m.info as { provenance?: unknown }).provenance)
+      expect(user).toBeDefined()
+      if (!user || user.info.role !== "user") throw new Error("expected provenance user message")
+      expect(user.info.provenance).toEqual(machineProvenance)
+      const textPart = user.parts.find((p) => p.type === "text" && String((p as { text?: string }).text).includes("scheduled automation body"))
+      expect(textPart).toBeDefined()
+      if (textPart && textPart.type === "text") {
+        // With provenance, engine must not force synthetic on machine text.
+        expect(textPart.synthetic).not.toBe(true)
+      }
+    }),
+    { git: true, config: providerCfg },
+  ),
+)
+
+it.live("[TP-R4-01] machine hook prompt with file attachment + provenance is accepted", () =>
+  provideTmpdirServer(
+    Effect.fnUntraced(function* ({ llm, dir }) {
+      const prompt = yield* SessionPrompt.Service
+      const sessions = yield* Session.Service
+      const filePath = `${dir}/.mimo-automation-execution-context.txt`
+      yield* Effect.promise(async () => {
+        const { writeFileSync } = await import("node:fs")
+        writeFileSync(filePath, "automation execution protocol")
+        return true
+      })
+      const chat = yield* sessions.create({
+        title: "machine-file",
+        permission: [{ permission: "*", pattern: "*", action: "allow" }],
+      })
+      yield* llm.text("got attachment")
+      yield* prompt.prompt({
+        sessionID: chat.id,
+        agent: "build",
+        model: ref,
+        source: "hook",
+        provenance: machineProvenance,
+        parts: [
+          { type: "text", text: "run automation with protocol file" },
+          {
+            type: "file",
+            filename: ".mimo-automation-execution-context.txt",
+            mime: "text/plain",
+            url: `file://${filePath}`,
+          },
+        ],
+      })
+      const msgs = yield* sessions.messages({ sessionID: chat.id })
+      const user = msgs.find((m) => m.info.role === "user" && (m.info as { provenance?: unknown }).provenance)
+      expect(user).toBeDefined()
+      expect(user!.parts.some((p) => p.type === "file")).toBe(true)
+    }),
+    { git: true, config: providerCfg },
+  ),
+)
+
+it.live("[TP-R4-01] machine command with protocol file part + provenance is accepted", () =>
+  provideTmpdirServer(
+    Effect.fnUntraced(function* ({ llm, dir }) {
+      const prompt = yield* SessionPrompt.Service
+      const sessions = yield* Session.Service
+      yield* Effect.promise(async () => {
+        const { mkdirSync, writeFileSync } = await import("node:fs")
+        const { join } = await import("node:path")
+        const cmdDir = join(dir, ".mimocode", "command")
+        mkdirSync(cmdDir, { recursive: true })
+        writeFileSync(
+          join(cmdDir, "auto-cmd.md"),
+          "---\ndescription: automation execution\n---\n\nExecute the saved automation now.\n",
+        )
+        return true
+      })
+      const chat = yield* sessions.create({
+        title: "machine-command",
+        permission: [{ permission: "*", pattern: "*", action: "allow" }],
+      })
+      yield* llm.text("command executed")
+      const protocolPart = {
+        type: "file" as const,
+        mime: "text/plain",
+        filename: ".mimo-automation-execution-context.txt",
+        url: `data:text/plain;charset=utf-8,${encodeURIComponent("automation protocol body")}`,
+      }
+      yield* prompt.command({
+        sessionID: chat.id,
+        agent: "build",
+        model: `${ref.providerID}/${ref.modelID}`,
+        command: "auto-cmd",
+        arguments: "",
+        source: "hook",
+        provenance: machineProvenance,
+        parts: [protocolPart],
+      })
+      const msgs = yield* sessions.messages({ sessionID: chat.id })
+      const user = msgs.find((m) => m.info.role === "user" && (m.info as { provenance?: unknown }).provenance)
+      expect(user).toBeDefined()
+      if (!user || user.info.role !== "user") throw new Error("expected provenance user message")
+      expect(user.info.provenance).toEqual(machineProvenance)
+      expect(user.parts.some((p) => p.type === "file")).toBe(true)
+    }),
+    { git: true, config: providerCfg },
+  ),
+)
+
+it.live("[TP-R4-01] uncommitted-hint cancel during first git probe produces no late hint", () =>
+  provideTmpdirServer(
+    Effect.fnUntraced(function* ({ llm, dir }) {
+      const prompt = yield* SessionPrompt.Service
+      const sessions = yield* Session.Service
+      yield* Effect.promise(async () => {
+        const { writeFileSync } = await import("node:fs")
+        const { join } = await import("node:path")
+        writeFileSync(join(dir, "dirty.txt"), "x")
+        return true
+      })
+      const prev = process.env.MIMOCODE_CONFIG_CONTENT
+      process.env.MIMOCODE_CONFIG_CONTENT = JSON.stringify({
+        experimental: { uncommitted_hint: { enabled: true } },
+      })
+      let reached: (() => void) | undefined
+      const reachedP = new Promise<void>((resolve) => {
+        reached = resolve
+      })
+      let releaseGit: (() => void) | undefined
+      const gitParked = new Promise<void>((resolve) => {
+        releaseGit = resolve
+      })
+      hintGitProbeBarrier.onReached = () => reached?.()
+      hintGitProbeBarrier.wait = () => gitParked
+      try {
+        const chat = yield* sessions.create({
+          title: "uh-git-cancel",
+          permission: [{ permission: "*", pattern: "*", action: "allow" }],
+        })
+        yield* llm.text("turn-a done")
+        yield* llm.text("UNEXPECTED_HINT_FOLLOWUP")
+        // firePostSession runs in onExit and may await the git barrier — fork prompt.
+        const aFiber = yield* prompt
+          .prompt({
+            sessionID: chat.id,
+            agent: "build",
+            model: ref,
+            source: "user",
+            parts: [{ type: "text", text: "turn a dirty" }],
+          })
+          .pipe(Effect.forkChild)
+        // Pending is registered before git probe; park on the probe itself.
+        yield* Effect.promise(() => reachedP)
+        const inputsAtProbe = (yield* llm.inputs).length
+        yield* prompt.cancel(chat.id)
+        releaseGit?.()
+        yield* Fiber.join(aFiber).pipe(Effect.catch(() => Effect.void))
+        yield* Effect.sleep("500 millis")
+        const msgs = yield* sessions.messages({ sessionID: chat.id, agentID: "main" })
+        const hints = msgs.filter((m) =>
+          m.parts.some((p) => p.type === "text" && p.synthetic === true && String(p.text).includes("uncommitted git changes")),
+        )
+        expect(hints).toHaveLength(0)
+        expect((yield* llm.inputs).length).toBe(inputsAtProbe)
+      } finally {
+        if (prev === undefined) delete process.env.MIMOCODE_CONFIG_CONTENT
+        else process.env.MIMOCODE_CONFIG_CONTENT = prev
+        hintGitProbeBarrier.onReached = undefined
+        hintGitProbeBarrier.wait = undefined
+        releaseGit?.()
+      }
+    }),
+    { git: true, config: providerCfg },
+  ),
+  15_000,
+)
+
+it.live("[TP-R4-01] uncommitted-hint main cancel after child runLoop still kills main pending", () =>
+  provideTmpdirServer(
+    Effect.fnUntraced(function* ({ llm, dir }) {
+      const prompt = yield* SessionPrompt.Service
+      const sessions = yield* Session.Service
+      yield* Effect.promise(async () => {
+        const { writeFileSync } = await import("node:fs")
+        const { join } = await import("node:path")
+        writeFileSync(join(dir, "dirty.txt"), "x")
+        return true
+      })
+      const prev = process.env.MIMOCODE_CONFIG_CONTENT
+      process.env.MIMOCODE_CONFIG_CONTENT = JSON.stringify({
+        experimental: { uncommitted_hint: { enabled: true } },
+      })
+      let reached: (() => void) | undefined
+      const reachedP = new Promise<void>((resolve) => {
+        reached = resolve
+      })
+      let releaseA: (() => void) | undefined
+      const parked = new Promise<void>((resolve) => {
+        releaseA = resolve
+      })
+      hintClaimBarrier.onReached = () => reached?.()
+      hintClaimBarrier.wait = () => parked
+      try {
+        const chat = yield* sessions.create({
+          title: "uh-main-child",
+          permission: [{ permission: "*", pattern: "*", action: "allow" }],
+        })
+        yield* llm.text("turn-a done")
+        yield* llm.text("child runloop done")
+        yield* llm.text("UNEXPECTED_HINT_FOLLOWUP")
+        const aFiber = yield* prompt
+          .prompt({
+            sessionID: chat.id,
+            agent: "build",
+            model: ref,
+            source: "user",
+            parts: [{ type: "text", text: "turn a dirty" }],
+          })
+          .pipe(Effect.forkChild)
+        yield* Effect.promise(() => reachedP)
+        const mainTokBeforeChild = currentMainHintToken(chat.id)
+        expect(mainTokBeforeChild).toBeDefined()
+        const inputsBeforeChild = (yield* llm.inputs).length
+        // REAL child runLoop (not noReply): non-main agentID + spawn is legal on root.
+        yield* prompt.prompt({
+          sessionID: chat.id,
+          agent: "build",
+          agentID: "build-child",
+          model: ref,
+          source: "spawn",
+          parts: [{ type: "text", text: "child task executes runLoop" }],
+        })
+        const inputsAfterChild = (yield* llm.inputs).length
+        // Child produced a model request — proof it entered runLoop.
+        expect(inputsAfterChild).toBeGreaterThan(inputsBeforeChild)
+        // Child runLoop must not open/overwrite the MAIN hint token.
+        expect(currentMainHintToken(chat.id)).toBe(mainTokBeforeChild)
+        yield* prompt.cancel(chat.id)
+        releaseA?.()
+        yield* Fiber.join(aFiber).pipe(Effect.catch(() => Effect.void))
+        yield* Effect.sleep("800 millis")
+        const msgs = yield* sessions.messages({ sessionID: chat.id, agentID: "main" })
+        const hints = msgs.filter((m) =>
+          m.parts.some((p) => p.type === "text" && p.synthetic === true && String(p.text).includes("uncommitted git changes")),
+        )
+        expect(hints).toHaveLength(0)
+      } finally {
+        if (prev === undefined) delete process.env.MIMOCODE_CONFIG_CONTENT
+        else process.env.MIMOCODE_CONFIG_CONTENT = prev
+        hintClaimBarrier.onReached = undefined
+        hintClaimBarrier.wait = undefined
+        hintFirePostBarrier.onReached = undefined
+        hintFirePostBarrier.wait = undefined
+        hintGitProbeBarrier.onReached = undefined
+        hintGitProbeBarrier.wait = undefined
+        releaseA?.()
+      }
+    }),
+    { git: true, config: providerCfg },
+  ),
+  15_000,
+)
+
+it.live("[TP-R4-01][TP-R7-01] uncommitted-hint busy claim does not inject and does not stall settlement", () =>
+  provideTmpdirServer(
+    Effect.fnUntraced(function* ({ llm, dir }) {
+      const prompt = yield* SessionPrompt.Service
+      const sessions = yield* Session.Service
+      const status = yield* SessionStatus.Service
+      yield* Effect.promise(async () => {
+        const { writeFileSync } = await import("node:fs")
+        const { join } = await import("node:path")
+        writeFileSync(join(dir, "dirty.txt"), "x")
+        return true
+      })
+      const prev = process.env.MIMOCODE_CONFIG_CONTENT
+      process.env.MIMOCODE_CONFIG_CONTENT = JSON.stringify({
+        experimental: { uncommitted_hint: { enabled: true } },
+      })
+      try {
+        const chat = yield* sessions.create({
+          title: "uh-busy",
+          permission: [{ permission: "*", pattern: "*", action: "allow" }],
+        })
+        yield* llm.text("turn-a done")
+        yield* prompt.prompt({
+          sessionID: chat.id,
+          agent: "build",
+          model: ref,
+          source: "user",
+          parts: [{ type: "text", text: "turn a dirty" }],
+        })
+        const inputsAfterA = (yield* llm.inputs).length
+        // Immediately occupy the runner so A's delayed claim fails (state.start busy).
+        yield* llm.hang
+        const bFiber = yield* prompt
+          .prompt({
+            sessionID: chat.id,
+            agent: "build",
+            model: ref,
+            source: "user",
+            parts: [{ type: "text", text: "turn b hangs" }],
+          })
+          .pipe(Effect.forkChild)
+        yield* Effect.sleep("2000 millis")
+        const msgs = yield* sessions.messages({ sessionID: chat.id, agentID: "main" })
+        const hints = msgs.filter((m) =>
+          m.parts.some((p) => p.type === "text" && p.synthetic === true && String(p.text).includes("uncommitted git changes")),
+        )
+        expect(hints).toHaveLength(0)
+        const inputsDuring = (yield* llm.inputs).length
+        expect(inputsDuring).toBe(inputsAfterA + 1)
+        yield* prompt.cancel(chat.id)
+        yield* Fiber.join(bFiber).pipe(Effect.catch(() => Effect.void))
+        const settled = yield* status.get(chat.id)
+        expect(settled.type).toBe("idle")
+        const after = yield* sessions.messages({ sessionID: chat.id, agentID: "main" })
+        expect(
+          after.filter((m) =>
+            m.parts.some((p) => p.type === "text" && p.synthetic === true && String(p.text).includes("uncommitted git changes")),
+          ),
+        ).toHaveLength(0)
+      } finally {
+        if (prev === undefined) delete process.env.MIMOCODE_CONFIG_CONTENT
+        else process.env.MIMOCODE_CONFIG_CONTENT = prev
+        hintClaimBarrier.onReached = undefined
+        hintClaimBarrier.wait = undefined
+      }
+    }),
+    { git: true, config: providerCfg },
+  ),
+)
+
+it.live("[TP-R4-01] uncommitted-hint cancel-only invalidates pending follow-up before claim", () =>
+  provideTmpdirServer(
+    Effect.fnUntraced(function* ({ llm, dir }) {
+      const prompt = yield* SessionPrompt.Service
+      const sessions = yield* Session.Service
+      yield* Effect.promise(async () => {
+        const { writeFileSync } = await import("node:fs")
+        const { join } = await import("node:path")
+        writeFileSync(join(dir, "dirty.txt"), "x")
+        return true
+      })
+      const prev = process.env.MIMOCODE_CONFIG_CONTENT
+      process.env.MIMOCODE_CONFIG_CONTENT = JSON.stringify({
+        experimental: { uncommitted_hint: { enabled: true } },
+      })
+      let reached: (() => void) | undefined
+      const reachedP = new Promise<void>((resolve) => {
+        reached = resolve
+      })
+      let releaseA: (() => void) | undefined
+      const parked = new Promise<void>((resolve) => {
+        releaseA = resolve
+      })
+      hintClaimBarrier.onReached = () => reached?.()
+      hintClaimBarrier.wait = () => parked
+      try {
+        const chat = yield* sessions.create({
+          title: "uh-cancel-only",
+          permission: [{ permission: "*", pattern: "*", action: "allow" }],
+        })
+        yield* llm.text("turn-a done")
+        // Pre-queue an unexpected follow-up so a wrong inject cannot pass via fixture starvation.
+        yield* llm.text("UNEXPECTED_HINT_FOLLOWUP")
+        const aFiber = yield* prompt
+          .prompt({
+            sessionID: chat.id,
+            agent: "build",
+            model: ref,
+            source: "user",
+            parts: [{ type: "text", text: "turn a dirty" }],
+          })
+          .pipe(Effect.forkChild)
+        // Handshake: delayed path has finished gates and is parked before claim.
+        yield* Effect.promise(() => reachedP)
+        const inputsAtBarrier = (yield* llm.inputs).length
+        const msgsAtBarrier = yield* sessions.messages({ sessionID: chat.id, agentID: "main" })
+        expect(
+          msgsAtBarrier.filter((m) =>
+            m.parts.some((p) => p.type === "text" && p.synthetic === true && String(p.text).includes("uncommitted git changes")),
+          ),
+        ).toHaveLength(0)
+        // Cancel-only: keep the session. Pending hint must be invalidated.
+        yield* prompt.cancel(chat.id)
+        releaseA?.()
+        yield* Fiber.join(aFiber).pipe(Effect.catch(() => Effect.void))
+        yield* Effect.sleep("500 millis")
+        const msgs = yield* sessions.messages({ sessionID: chat.id, agentID: "main" })
+        const hints = msgs.filter((m) =>
+          m.parts.some((p) => p.type === "text" && p.synthetic === true && String(p.text).includes("uncommitted git changes")),
+        )
+        expect(hints).toHaveLength(0)
+        const inputsAfter = (yield* llm.inputs).length
+        expect(inputsAfter).toBe(inputsAtBarrier)
+      } finally {
+        if (prev === undefined) delete process.env.MIMOCODE_CONFIG_CONTENT
+        else process.env.MIMOCODE_CONFIG_CONTENT = prev
+        hintClaimBarrier.onReached = undefined
+        hintClaimBarrier.wait = undefined
+        releaseA?.()
+      }
+    }),
+    { git: true, config: providerCfg },
+  ),
+  15_000,
+)
+
+it.live("[TP-R4-01] uncommitted-hint supersession after barrier drops stale A by model.variant identity", () =>
+  provideTmpdirServer(
+    Effect.fnUntraced(function* ({ llm, dir }) {
+      const prompt = yield* SessionPrompt.Service
+      const sessions = yield* Session.Service
+      yield* Effect.promise(async () => {
+        const { writeFileSync } = await import("node:fs")
+        const { join } = await import("node:path")
+        writeFileSync(join(dir, "dirty.txt"), "x")
+        return true
+      })
+      const prev = process.env.MIMOCODE_CONFIG_CONTENT
+      process.env.MIMOCODE_CONFIG_CONTENT = JSON.stringify({
+        experimental: { uncommitted_hint: { enabled: true } },
+      })
+      let reached: (() => void) | undefined
+      const reachedP = new Promise<void>((resolve) => {
+        reached = resolve
+      })
+      let releaseA: (() => void) | undefined
+      const parked = new Promise<void>((resolve) => {
+        releaseA = resolve
+      })
+      hintClaimBarrier.onReached = () => reached?.()
+      hintClaimBarrier.wait = () => parked
+      try {
+        const chat = yield* sessions.create({
+          title: "uh-stale-variant",
+          permission: [{ permission: "*", pattern: "*", action: "allow" }],
+        })
+        yield* llm.text("turn-a done")
+        const aFiber = yield* prompt
+          .prompt({
+            sessionID: chat.id,
+            agent: "build",
+            model: ref,
+            source: "user",
+            variant: "low",
+            parts: [{ type: "text", text: "turn a dirty" }],
+          })
+          .pipe(Effect.forkChild)
+        yield* Effect.promise(() => reachedP)
+        // A is parked after gates, before claim. B supersedes to idle.
+        hintClaimBarrier.onReached = undefined
+        hintClaimBarrier.wait = undefined
+        yield* llm.text("turn-b done")
+        yield* prompt.prompt({
+          sessionID: chat.id,
+          agent: "build",
+          model: ref,
+          source: "user",
+          variant: "high",
+          parts: [{ type: "text", text: "turn b supersedes" }],
+        })
+        releaseA?.()
+        yield* Fiber.join(aFiber).pipe(Effect.catch(() => Effect.void))
+        yield* Effect.sleep("500 millis")
+        const msgs = yield* sessions.messages({ sessionID: chat.id, agentID: "main" })
+        const hints = msgs.filter(
+          (m) =>
+            m.info.role === "user" &&
+            m.parts.some((p) => p.type === "text" && p.synthetic === true && String(p.text).includes("uncommitted git changes")),
+        )
+        // Stale A (variant low) must never inject. Any hint present must be B's (high).
+        const staleA = hints.filter((m) => m.info.role === "user" && m.info.model.variant === "low")
+        expect(staleA).toHaveLength(0)
+        for (const hint of hints) {
+          if (hint.info.role !== "user") continue
+          expect(hint.info.model.variant).toBe("high")
+        }
+      } finally {
+        if (prev === undefined) delete process.env.MIMOCODE_CONFIG_CONTENT
+        else process.env.MIMOCODE_CONFIG_CONTENT = prev
+        hintClaimBarrier.onReached = undefined
+        hintClaimBarrier.wait = undefined
+        releaseA?.()
+      }
+    }),
+    { git: true, config: providerCfg },
+  ),
+  15_000,
+)
+
+it.live("[TP-R4-01] uncommitted-hint delete during wait produces no late hint message", () =>
+  provideTmpdirServer(
+    Effect.fnUntraced(function* ({ llm, dir }) {
+      const prompt = yield* SessionPrompt.Service
+      const sessions = yield* Session.Service
+      yield* Effect.promise(async () => {
+        const { writeFileSync } = await import("node:fs")
+        const { join } = await import("node:path")
+        writeFileSync(join(dir, "dirty.txt"), "x")
+        return true
+      })
+      const prev = process.env.MIMOCODE_CONFIG_CONTENT
+      process.env.MIMOCODE_CONFIG_CONTENT = JSON.stringify({
+        experimental: { uncommitted_hint: { enabled: true } },
+      })
+      let reached: (() => void) | undefined
+      const reachedP = new Promise<void>((resolve) => {
+        reached = resolve
+      })
+      let releaseA: (() => void) | undefined
+      const parked = new Promise<void>((resolve) => {
+        releaseA = resolve
+      })
+      hintClaimBarrier.onReached = () => reached?.()
+      hintClaimBarrier.wait = () => parked
+      try {
+        const chat = yield* sessions.create({
+          title: "uh-delete",
+          permission: [{ permission: "*", pattern: "*", action: "allow" }],
+        })
+        yield* llm.text("turn-a done")
+        const aFiber = yield* prompt
+          .prompt({
+            sessionID: chat.id,
+            agent: "build",
+            model: ref,
+            source: "user",
+            parts: [{ type: "text", text: "turn a dirty" }],
+          })
+          .pipe(Effect.forkChild)
+        yield* Effect.promise(() => reachedP)
+        const msgsBefore = yield* sessions.messages({ sessionID: chat.id, agentID: "main" })
+        expect(
+          msgsBefore.filter((m) =>
+            m.parts.some((p) => p.type === "text" && p.synthetic === true && String(p.text).includes("uncommitted git changes")),
+          ),
+        ).toHaveLength(0)
+        yield* prompt.cancel(chat.id)
+        yield* sessions.remove(chat.id)
+        releaseA?.()
+        yield* Fiber.join(aFiber).pipe(Effect.catch(() => Effect.void))
+        yield* Effect.sleep("500 millis")
+        const msgExit = yield* sessions.messages({ sessionID: chat.id, agentID: "main" }).pipe(Effect.exit)
+        if (Exit.isSuccess(msgExit)) {
+          expect(
+            msgExit.value.filter((m) =>
+              m.parts.some((p) => p.type === "text" && p.synthetic === true && String(p.text).includes("uncommitted git changes")),
+            ),
+          ).toHaveLength(0)
+        } else {
+          // Deleted session: NotFound defect is the expected "no late delivery" outcome.
+          expect(String(msgExit.cause)).toContain("NotFoundError")
+        }
+      } finally {
+        if (prev === undefined) delete process.env.MIMOCODE_CONFIG_CONTENT
+        else process.env.MIMOCODE_CONFIG_CONTENT = prev
+        hintClaimBarrier.onReached = undefined
+        hintClaimBarrier.wait = undefined
+        releaseA?.()
+      }
+    }),
+    { git: true, config: providerCfg },
+  ),
+  15_000,
+)
+
+it.live("[TP-R7-01] uncommitted-hint decision logs land in Desktop WARN-level sink", () =>
+  provideTmpdirServer(
+    Effect.fnUntraced(function* ({ llm, dir }) {
+      const prompt = yield* SessionPrompt.Service
+      const sessions = yield* Session.Service
+      yield* Effect.promise(async () => {
+        const { writeFileSync } = await import("node:fs")
+        const { join } = await import("node:path")
+        writeFileSync(join(dir, "dirty.txt"), "x")
+        return true
+      })
+      const prev = process.env.MIMOCODE_CONFIG_CONTENT
+      process.env.MIMOCODE_CONFIG_CONTENT = JSON.stringify({
+        experimental: { uncommitted_hint: { enabled: true } },
+      })
+      const prevLogPath = Global.Path.log
+      let warnLogDir = ""
+      try {
+        // Mirror Desktop engine bootstrap: Log.init({ print: false, level: "WARN" }).
+        yield* Effect.promise(async () => {
+          const { mkdtempSync } = await import("node:fs")
+          const { tmpdir } = await import("node:os")
+          const { join } = await import("node:path")
+          warnLogDir = mkdtempSync(join(tmpdir(), "uh-warn-log-"))
+          Global.Path.log = warnLogDir
+          await Log.init({ print: false, level: "WARN" })
+          return true
+        })
+        const chat = yield* sessions.create({
+          title: "uh-warn-log",
+          permission: [{ permission: "*", pattern: "*", action: "allow" }],
+        })
+        yield* llm.text("dirty work done")
+        yield* llm.text("will commit")
+        // firePostSession may await barriers; keep this path unblocked (no test barriers set).
+        yield* prompt.prompt({
+          sessionID: chat.id,
+          agent: "build",
+          model: ref,
+          source: "user",
+          parts: [{ type: "text", text: "please edit dirty work" }],
+        })
+        yield* Effect.sleep("2500 millis")
+        const logged = yield* Effect.promise(async () => {
+          await Log.flush()
+          return await Bun.file(Log.file()).text()
+        })
+        expect(logged).toContain("uncommitted-hint")
+        expect(logged).toContain("decision")
+        expect(logged).toMatch(/dirty|inject|skip/)
+        // Isolation check (R017): path still points at the WARN dir until finally restores it.
+        expect(Global.Path.log).toBe(warnLogDir)
+      } finally {
+        if (prev === undefined) delete process.env.MIMOCODE_CONFIG_CONTENT
+        else process.env.MIMOCODE_CONFIG_CONTENT = prev
+        // Restore shared test-process log sink including LEVEL (R017: omit ≠ reset).
+        yield* Effect.promise(async () => {
+          const { rm } = await import("node:fs/promises")
+          await Log.shutdown().catch(() => undefined)
+          Global.Path.log = prevLogPath
+          await Log.init({ print: false, level: "INFO" })
+          if (warnLogDir) await rm(warnLogDir, { recursive: true, force: true }).catch(() => undefined)
+          Log.Default.info("uh-log-restore-marker")
+          await Log.flush()
+          const restored = await Bun.file(Log.file()).text()
+          expect(restored).toContain("uh-log-restore-marker")
+          return true
+        })
+      }
+    }),
+    { git: true, config: providerCfg },
+  ),
+  15_000,
 )
 
 it.live("locks system and harness to the first user query", () =>

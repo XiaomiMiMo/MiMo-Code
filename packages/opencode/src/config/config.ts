@@ -440,6 +440,14 @@ const InfoSchema = Schema.Struct({
           }),
         }),
       ).annotate({ description: "Loop-streak request-layer recovery (experimental)." }),
+      uncommitted_hint: Schema.optional(
+        Schema.Struct({
+          enabled: Schema.optional(Schema.Boolean).annotate({
+            description:
+              "After a completed user-source main turn, if the session workspace has uncommitted git changes, inject a soft hint (may repeat on later dirty user turns; hook turns never re-inject; does not force a commit). Default off.",
+          }),
+        }),
+      ).annotate({ description: "Turn-end uncommitted-changes soft hint (experimental)." }),
       mcp_timeout: Schema.optional(PositiveInt).annotate({
         description: "Timeout in milliseconds for model context protocol (MCP) requests",
       }),

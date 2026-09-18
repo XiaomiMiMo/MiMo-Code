@@ -101,7 +101,12 @@ async function disposeCached(directory: string, current: Promise<InstanceContext
 
   cache.delete(directory)
   Log.Default.info("disposing instance", { directory })
+  // Capture+invalidate this instance's hint tokens BEFORE async teardown so a
+  // same-directory replacement opened during dispose is not cancelled later.
+  const uh = await import("@/session/prompt/uncommitted-hint").catch(() => undefined)
+  const finishHintDispose = uh?.beginHintStateDisposeForDirectory(directory)
   await context.provide(ctx, () => disposeInstance(directory))
+  finishHintDispose?.()
 
   GlobalBus.emit("event", {
     directory,
@@ -187,7 +192,10 @@ export const Instance = {
     const directory = AppFileSystem.resolve(input.directory)
     await directoryDisposals.get(directory)
     Log.Default.info("reloading instance", { directory })
+    const uh = await import("@/session/prompt/uncommitted-hint").catch(() => undefined)
+    const finishHintDispose = uh?.beginHintStateDisposeForDirectory(directory)
     await disposeInstance(directory)
+    finishHintDispose?.()
     cache.delete(directory)
     const next = track(directory, boot({ ...input, directory }))
 
@@ -234,8 +242,11 @@ export const Instance = {
     const directory = Instance.directory
     const project = Instance.project
     Log.Default.info("disposing instance", { directory })
+    const uh = await import("@/session/prompt/uncommitted-hint").catch(() => undefined)
+    const finishHintDispose = uh?.beginHintStateDisposeForDirectory(directory)
     await disposeInstance(directory)
     cache.delete(directory)
+    finishHintDispose?.()
 
     GlobalBus.emit("event", {
       directory,

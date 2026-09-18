@@ -78,6 +78,29 @@ import {
   streakKey,
 } from "../session/prompt/loop-streak"
 import {
+  UNCOMMITTED_HINT_GIT_TIMEOUT_MS,
+  beginPendingHint,
+  buildHintText,
+  cancelPendingHints,
+  clearHintCount,
+  clearPendingHints,
+  decideUncommittedHint,
+  endPendingHint,
+  getHintCount,
+  hintClaimBarrier,
+  hintFirePostBarrier,
+  hintGitProbeBarrier,
+  hookNonTextRequiresProvenance,
+  isPendingHintLive,
+  isWorkingTreeDirty,
+  openMainHintToken,
+  recordHintOutcome,
+  resolveUncommittedHintConfig,
+  uncommittedHintEnabledFromConfig,
+  uncommittedHintLogFields,
+  type MainHintToken,
+} from "../session/prompt/uncommitted-hint"
+import {
   TEXT_NGRAM_MAX_RECOVERY,
   TEXT_NGRAM_RECOVERY_REMIND,
   TEXT_NGRAM_RECOVERY_REPLAN,
@@ -721,6 +744,8 @@ export const layer = Layer.effect(
     // ActorExecution. Actor.cancel checks the execution registry first.
     const cancel = Effect.fn("SessionPrompt.cancel")(function* (sessionID: SessionID) {
       yield* elog.info("cancel", { sessionID })
+      // Invalidate any delayed uncommitted-hint follow-up still waiting to claim.
+      cancelPendingHints(sessionID)
       const actors = yield* actorRegistry.listBySession(sessionID)
       const nonMain = actors.filter((actor) => actor.actorID !== "main")
       // Phase 1 — mark executions before interrupt (terminal handlers read this flag).
@@ -3287,7 +3312,13 @@ NOTE: At any point in time through this workflow you should feel free to ask the
     const prompt: (input: PromptInput) => Effect.Effect<MessageV2.WithParts> = Effect.fn("SessionPrompt.prompt")(
       function* (input: PromptInput) {
         const session = yield* sessions.get(input.sessionID)
-        if (input.source === "hook" && !input.provenance && input.parts.some(part => part.type !== "text")) {
+        if (
+          hookNonTextRequiresProvenance({
+            source: input.source,
+            provenance: input.provenance,
+            parts: input.parts,
+          })
+        ) {
           throw new Error("Hook input with non-text parts requires provenance")
         }
         if (input.source === "spawn" && !session.parentID && (input.agentID ?? "main") === "main") {
@@ -3343,7 +3374,10 @@ NOTE: At any point in time through this workflow you should feel free to ask the
           agentID: input.agentID ?? "main",
           task_id: input.task_id,
           titleLocale: input.titleLocale,
-          deferInbox: input.source === "hook" && input.agentID !== undefined && input.agentID !== "main",
+          // Trusted user-facing protocol: Desktop/TUI/HTTP/command omit source → user.
+          // Internal callers must pass explicit non-user source (spawn/hook).
+          source: input.source ?? "user",
+          deferInbox: (input.source ?? "user") === "hook" && input.agentID !== undefined && input.agentID !== "main",
         })
       },
     )
@@ -3501,6 +3535,8 @@ NOTE: At any point in time through this workflow you should feel free to ask the
       modelOverride?: { providerID: string; modelID: string },
       /** user-resume: force a new turn from the parent user; step-0 skips classify of old siblings. */
       userRedispatch?: boolean,
+      /** Prompt source of this turn; "hook" must never re-enter uncommitted-hint. */
+      turnSource?: "user" | "spawn" | "hook",
     ) => Effect.Effect<MessageV2.WithParts> = Effect.fn("SessionPrompt.run")(
       function* (
         sessionID: SessionID,
@@ -3511,6 +3547,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
         resumeFrom?: string,
         modelOverride?: { providerID: string; modelID: string },
         userRedispatch = false,
+        turnSource?: "user" | "spawn" | "hook",
       ) {
         const ctx = yield* InstanceState.context
         const slog = elog.with({ sessionID })
@@ -3535,6 +3572,12 @@ NOTE: At any point in time through this workflow you should feel free to ask the
         // fresh user turn starts clean.
         let textToolCallRetries = 0
         const resolvedAgentID = agentID ?? "main"
+        // MAIN user turns own the hint token. Child/hook runLoops must not overwrite it
+        // (SessionRunState.cancel targets session:main only).
+        const hintToken: MainHintToken =
+          resolvedAgentID === "main" && turnSource === "user"
+            ? openMainHintToken(sessionID, session.directory)
+            : { cancelled: true }
         const mcpContext: MCP.TurnContext = {
           sessionId: sessionID,
           turnId: ulid(),
@@ -3610,6 +3653,232 @@ NOTE: At any point in time through this workflow you should feel free to ask the
               ],
               { concurrency: "unbounded", discard: true },
             )
+            // experimental.uncommitted_hint (default off): completed MAIN + explicit USER source
+            // + dirty git → soft commit reminder. Fail-closed: non-user sources never inject.
+            // Live MIMOCODE_CONFIG_CONTENT wins over cached config so lab toggles apply next turn.
+            if (outcome === "completed" && resolvedAgentID === "main") {
+              // Optional test seam BEFORE begin (late-register window); default unset.
+              if (turnSource === "user" && (hintFirePostBarrier.onReached || hintFirePostBarrier.wait)) {
+                hintFirePostBarrier.onReached?.()
+                if (hintFirePostBarrier.wait) yield* Effect.promise(() => hintFirePostBarrier.wait!())
+              }
+              const pending =
+                resolvedAgentID === "main" && turnSource === "user"
+                  ? beginPendingHint(sessionID, hintToken)
+                  : beginPendingHint(sessionID, { cancelled: true })
+              yield* Effect.gen(function* () {
+                try {
+                  const liveContent = process.env.MIMOCODE_CONFIG_CONTENT
+                  const cachedCfg = (yield* config.get()).experimental?.uncommitted_hint
+                  const stopCfg = resolveUncommittedHintConfig({ liveContent, cached: cachedCfg })
+                  const enabled = uncommittedHintEnabledFromConfig(stopCfg)
+                  if (!enabled || turnSource !== "user") {
+                    yield* slog.warn(
+                      "uncommitted-hint",
+                      uncommittedHintLogFields({
+                        decision: "skip",
+                        reason: !enabled ? "disabled" : "non_user_source",
+                        enabled,
+                        turnSource,
+                      }),
+                    )
+                    return
+                  }
+                  if (!finalAsst?.agent) {
+                    yield* slog.warn(
+                      "uncommitted-hint",
+                      uncommittedHintLogFields({
+                        decision: "skip",
+                        reason: "missing_agent_context",
+                        enabled,
+                        turnSource,
+                      }),
+                    )
+                    return
+                  }
+                  const turnEndedAt = Date.now()
+                  const directory = session.directory ?? ctx.directory
+                  const hasDirectory = typeof directory === "string" && directory.length > 0
+                  let isGitRepo = false
+                  let dirty = false
+                  let statusOut = ""
+                  if (hasDirectory) {
+                    hintGitProbeBarrier.onReached?.()
+                    if (hintGitProbeBarrier.wait) yield* Effect.promise(() => hintGitProbeBarrier.wait!())
+                    if (!isPendingHintLive(pending)) return
+                    const probe = yield* Effect.promise(async () => {
+                      const { execFile } = await import("node:child_process")
+                      const { promisify } = await import("node:util")
+                      const run = promisify(execFile)
+                      const opts = { cwd: directory, timeout: UNCOMMITTED_HINT_GIT_TIMEOUT_MS } as const
+                      try {
+                        await run("git", ["rev-parse", "--is-inside-work-tree"], opts)
+                      } catch {
+                        return { isGitRepo: false, dirty: false, statusOut: "" }
+                      }
+                      try {
+                        const { stdout } = await run("git", ["status", "--porcelain"], opts)
+                        return { isGitRepo: true, dirty: isWorkingTreeDirty(stdout), statusOut: stdout }
+                      } catch {
+                        return { isGitRepo: true, dirty: false, statusOut: "" }
+                      }
+                    }).pipe(Effect.catch(() => Effect.succeed({ isGitRepo: false, dirty: false, statusOut: "" })))
+                    if (!isPendingHintLive(pending)) return
+                    isGitRepo = probe.isGitRepo
+                    dirty = probe.dirty
+                    statusOut = probe.statusOut
+                  }
+                  const consecutiveHints = getHintCount(sessionID)
+                  const decision = decideUncommittedHint({
+                    enabled,
+                    outcome,
+                    agentID: resolvedAgentID,
+                    hasDirectory,
+                    isGitRepo,
+                    dirty,
+                    consecutiveHints,
+                    turnSource,
+                  })
+                  yield* slog.warn(
+                    "uncommitted-hint",
+                    uncommittedHintLogFields({
+                      decision: decision.action,
+                      reason: decision.reason,
+                      dirty,
+                      enabled,
+                      turnSource,
+                    }),
+                  )
+                  if (!dirty) {
+                    recordHintOutcome(sessionID, { dirty: false, injected: false, consecutiveHints })
+                    return
+                  }
+                  if (decision.action !== "inject" || !isPendingHintLive(pending)) return
+                  yield* Effect.sleep("400 millis")
+                  if (!isPendingHintLive(pending)) {
+                    yield* slog.warn(
+                      "uncommitted-hint",
+                      uncommittedHintLogFields({
+                        decision: "skip",
+                        reason: "cancelled",
+                        enabled,
+                        turnSource,
+                        dirty,
+                      }),
+                    )
+                    return
+                  }
+                  const liveAfter = resolveUncommittedHintConfig({
+                    liveContent: process.env.MIMOCODE_CONFIG_CONTENT,
+                    cached: cachedCfg,
+                  })
+                  if (!uncommittedHintEnabledFromConfig(liveAfter)) {
+                    yield* slog.warn(
+                      "uncommitted-hint",
+                      uncommittedHintLogFields({
+                        decision: "skip",
+                        reason: "disabled_after_delay",
+                        enabled: false,
+                        turnSource,
+                        dirty,
+                      }),
+                    )
+                    return
+                  }
+                  if (hasDirectory) {
+                    const reprobe = yield* Effect.promise(async () => {
+                      const { execFile } = await import("node:child_process")
+                      const { promisify } = await import("node:util")
+                      const run = promisify(execFile)
+                      const opts = { cwd: directory, timeout: UNCOMMITTED_HINT_GIT_TIMEOUT_MS } as const
+                      try {
+                        await run("git", ["rev-parse", "--is-inside-work-tree"], opts)
+                        const { stdout } = await run("git", ["status", "--porcelain"], opts)
+                        return { dirty: isWorkingTreeDirty(stdout), statusOut: stdout }
+                      } catch {
+                        return { dirty: false, statusOut: "" }
+                      }
+                    }).pipe(Effect.catch(() => Effect.succeed({ dirty: false, statusOut: "" })))
+                    if (!reprobe.dirty) {
+                      recordHintOutcome(sessionID, { dirty: false, injected: false, consecutiveHints })
+                      yield* slog.warn(
+                        "uncommitted-hint",
+                        uncommittedHintLogFields({
+                          decision: "skip",
+                          reason: "cleaned",
+                          enabled,
+                          turnSource,
+                          dirty: false,
+                        }),
+                      )
+                      return
+                    }
+                    statusOut = reprobe.statusOut || statusOut
+                  }
+                  if (!isPendingHintLive(pending)) return
+                  // Handshake immediately before claim; identity checks run INSIDE claimed work.
+                  hintClaimBarrier.onReached?.()
+                  if (hintClaimBarrier.wait) yield* Effect.promise(() => hintClaimBarrier.wait!())
+                  if (!isPendingHintLive(pending)) return
+                  const agentName = finalAsst.agent
+                  const model =
+                    finalAsst.providerID && finalAsst.modelID
+                      ? {
+                          providerID: finalAsst.providerID,
+                          modelID: finalAsst.modelID,
+                          variant: finalAsst.variant,
+                        }
+                      : undefined
+                  const followUp = Effect.gen(function* () {
+                    if (!isPendingHintLive(pending)) return undefined as never
+                    const latestAsst = yield* lastAssistant(sessionID, resolvedAgentID).pipe(
+                      Effect.catch(() => Effect.succeed(undefined as never)),
+                    )
+                    if (!latestAsst || latestAsst.info.role !== "assistant") return undefined as never
+                    if (finalAsst && latestAsst.info.id !== finalAsst.id) return undefined as never
+                    const newerUserOpt = yield* sessions
+                      .findMessage(
+                        sessionID,
+                        (m) => m.info.role === "user" && !m.info.provenance && (m.info.agentID ?? "main") === "main",
+                        { agentID: "main" },
+                      )
+                      .pipe(Effect.catch(() => Effect.succeed(Option.none() as never)))
+                    if (!Option.isSome(newerUserOpt)) return undefined as never
+                    if (newerUserOpt.value.info.role !== "user") return undefined as never
+                    if (newerUserOpt.value.info.time.created > turnEndedAt) return undefined as never
+                    if (!isPendingHintLive(pending)) return undefined as never
+                    const msgId = MessageID.ascending()
+                    yield* sessions.updateMessage({
+                      id: msgId,
+                      sessionID,
+                      role: "user",
+                      agentID: resolvedAgentID,
+                      time: { created: Date.now() },
+                      agent: agentName,
+                      model,
+                    } as MessageV2.User)
+                    yield* sessions.updatePart({
+                      id: PartID.ascending(),
+                      messageID: msgId,
+                      sessionID,
+                      type: "text",
+                      text: buildHintText(statusOut),
+                      synthetic: true,
+                    })
+                    // Diagnostic counter only — does not cap re-hint. Product: later dirty
+                    // USER turns may inject again; hook/spawn never re-enter.
+                    recordHintOutcome(sessionID, { dirty: true, injected: true, consecutiveHints })
+                    const result = yield* runLoop(sessionID, resolvedAgentID, undefined, undefined, false, undefined, undefined, false, "hook")
+                    return result
+                  }).pipe(Effect.catch(() => Effect.succeed(undefined as never)))
+                  yield* state
+                    .start(sessionID, resolvedAgentID, lastAssistant(sessionID, resolvedAgentID), followUp)
+                    .pipe(Effect.catch(() => Effect.void))
+                } finally {
+                  endPendingHint(pending)
+                }
+              }).pipe(Effect.forkDetach({ startImmediately: true }), Effect.ignore)
+            }
           }).pipe(Effect.ignore)
 
         return yield* Effect.gen(function* () {
@@ -4252,7 +4521,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
                     Effect.gen(function* () {
                       const s = yield* svc.create({ title: AUTO_DREAM_TITLE })
                       const sp = yield* Service
-                      yield* sp.prompt({ sessionID: s.id, agent: "dream", model: mdl, parts: [{ type: "text", text: DREAM_TASK }] })
+                      yield* sp.prompt({ sessionID: s.id, agent: "dream", model: mdl, source: "hook", parts: [{ type: "text", text: DREAM_TASK }] })
                     }),
                   ),
                 ).catch((err) => log.error("auto-dream prompt failed", { error: String(err) }))
@@ -4263,7 +4532,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
                     Effect.gen(function* () {
                       const s = yield* svc.create({ title: AUTO_DISTILL_TITLE })
                       const sp = yield* Service
-                      yield* sp.prompt({ sessionID: s.id, agent: "distill", model: mdl, parts: [{ type: "text", text: DISTILL_TASK }] })
+                      yield* sp.prompt({ sessionID: s.id, agent: "distill", model: mdl, source: "hook", parts: [{ type: "text", text: DISTILL_TASK }] })
                     }),
                   ),
                 ).catch((err) => log.error("auto-distill prompt failed", { error: String(err) }))
@@ -5333,7 +5602,17 @@ NOTE: At any point in time through this workflow you should feel free to ask the
       "SessionPrompt.loop",
     )(function* (input: z.infer<typeof LoopInput>) {
       const agentID = input.agentID ?? "main"
-      const work = runLoop(input.sessionID, agentID, input.task_id, input.titleLocale, input.deferInbox)
+      const work = runLoop(
+        input.sessionID,
+        agentID,
+        input.task_id,
+        input.titleLocale,
+        input.deferInbox,
+        undefined,
+        undefined,
+        undefined,
+        input.source,
+      )
       if (!input.notifyParentOnComplete || agentID === "main") {
         return yield* state.ensureRunning(input.sessionID, agentID, lastAssistant(input.sessionID, agentID), work)
       }
@@ -5751,6 +6030,8 @@ NOTE: At any point in time through this workflow you should feel free to ask the
         system: input.system,
         systemMode: input.systemMode,
         harness: input.harness,
+        source: input.source ?? "user",
+        provenance: input.provenance,
       })
       yield* bus.publish(Command.Event.Executed, {
         name: input.command,
@@ -5854,6 +6135,8 @@ NOTE: At any point in time through this workflow you should feel free to ask the
                 undefined,
                 input.model,
                 true,
+                // user-resume re-runs from the parent user message — trusted user source.
+                "user",
               )
             }).pipe(
               Effect.ensuring(
@@ -5896,6 +6179,9 @@ NOTE: At any point in time through this workflow you should feel free to ask the
                 false,
                 plan.assistantMessageID,
                 input.model,
+                // tool-resume continues an assistant turn — not a user-source turn.
+                undefined,
+                "hook",
               )
             }).pipe(
               Effect.ensuring(
@@ -6183,6 +6469,7 @@ export const LoopInput = z.object({
   agentID: z.string().optional(),
   task_id: z.string().optional(),
   titleLocale: z.string().optional(),
+  source: z.enum(["user", "spawn", "hook"]).optional(),
   // Set by the inbox wake path so a persistent background peer that finishes a
   // woken turn notifies its parent (mirroring forkWork.notify, which only wraps
   // the FIRST/spawn turn). Left false on spawn/user-driven loops to avoid
@@ -6217,6 +6504,9 @@ export const CommandInput = z.object({
   sessionID: SessionID.zod,
   agent: z.string().optional(),
   model: z.string().optional(),
+  source: z.enum(["user", "spawn", "hook"]).optional(),
+  /** Machine/host envelope when source=hook carries non-text parts (automation command file). */
+  provenance: MessageV2.Provenance.optional(),
   arguments: z.string(),
   command: z.string(),
   titleLocale: z.string().optional().describe("BCP 47 locale used for automatic title generation."),

@@ -425,6 +425,8 @@ jobs:
   },
 })
 
+export const GITHUB_PROMPT_PROVENANCE = { machine: "mimocode-github" } as const
+
 export const GithubRunCommand = cmd({
   command: "run",
   describe: "run the GitHub agent",
@@ -954,6 +956,10 @@ export const GithubRunCommand = cmd({
                 providerID,
                 modelID,
               },
+              // Internal CLI automation — not a user-facing turn source.
+              // hook + file parts require machine provenance (engine fail-closed gate).
+              source: "hook",
+              provenance: GITHUB_PROMPT_PROVENANCE,
               // agent is omitted - server will use default_agent from config or fall back to "build"
               parts: [
                 {
@@ -1001,6 +1007,8 @@ export const GithubRunCommand = cmd({
                 providerID,
                 modelID,
               },
+              source: "hook",
+              provenance: GITHUB_PROMPT_PROVENANCE,
               tools: { "*": false },
               parts: [
                 {
