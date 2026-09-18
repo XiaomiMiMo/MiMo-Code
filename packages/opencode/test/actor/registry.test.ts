@@ -999,7 +999,7 @@ describe("ActorRegistry", () => {
         expect(zombie?.lastError).toContain("abandon threshold")
         // [TP-RUN-R12-32] recoverability guidance on real sweep output
         expect(zombie?.lastError).toContain("Not final")
-        expect(zombie?.lastError).toContain("continue")
+        expect(zombie?.lastError).toContain("actor send")
         expect(zombie?.lastError).not.toContain("session Resume")
         const fresh = await rt.runPromise(
           ActorRegistry.Service.use((svc) => svc.get(ids.freshSession as never, "fresh-1")),
