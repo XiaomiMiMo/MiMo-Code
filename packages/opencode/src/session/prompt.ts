@@ -143,7 +143,7 @@ import { AppFileSystem } from "@mimo-ai/shared/filesystem"
 import { Truncate } from "@/tool"
 import { decodeDataUrl } from "@/util/data-url"
 import { Process } from "@/util"
-import { Cause, Effect, Exit, Layer, Option, Scope, Context } from "effect"
+import { Cause, Deferred, Effect, Exit, Fiber, Layer, Option, Scope, Context } from "effect"
 import { EffectLogger } from "@/effect"
 import { InstanceState } from "@/effect"
 import { Instance } from "@/project/instance"
@@ -561,6 +561,13 @@ export interface Interface {
   readonly recovery: (input: { sessionID: SessionID; agentID?: string; allowBusy?: boolean }) => Effect.Effect<RecoveryCandidate[]>
   readonly resume: (input: ResumeTurnInput) => Effect.Effect<MessageV2.WithParts, InstanceType<typeof NotFoundError> | Session.BusyError>
   readonly resumeBackground: (input: ResumeTurnInput) => Effect.Effect<void, InstanceType<typeof NotFoundError> | Session.BusyError>
+  /** Best-effort: resume same-session non-main actors that still have recovery candidates. */
+  readonly cascadeSubagentResume: (
+    sessionID: SessionID,
+    epoch?: number,
+  ) => Effect.Effect<{ actorID: string; status: "resumed" | "skipped" | "failed"; reason?: string }[]>
+  /** Resume main, then cascade subagents using the epoch captured at acceptance. */
+  readonly resumeMainCascading: (input: ResumeTurnInput) => Effect.Effect<void, InstanceType<typeof NotFoundError> | Session.BusyError>
   readonly loop: (input: z.infer<typeof LoopInput>) => Effect.Effect<MessageV2.WithParts>
   readonly shell: (input: ShellInput) => Effect.Effect<MessageV2.WithParts, Session.BusyError>
   readonly command: (input: CommandInput) => Effect.Effect<MessageV2.WithParts>
@@ -585,6 +592,10 @@ export interface ResumeTurnInput {
   titleLocale?: string
   /** Optional model override: use the newly selected model for the recovery step. */
   model?: { providerID: string; modelID: string }
+  /** Cascade epoch captured at cascade start; cancel bumps it to invalidate pending resumes. */
+  cascadeEpoch?: number
+  /** Fired after exclusive admission (acquire + epoch + candidate re-check) succeeded. */
+  onAdmitted?: () => void
 }
 
 export class Service extends Context.Service<Service, Interface>()("@opencode/SessionPrompt") {}
@@ -628,6 +639,9 @@ export const layer = Layer.effect(
     // Track sessions that have already shown the "loaded instructions" toast so we
     // surface it once per primary session rather than on every run-loop turn.
     const instructionsNotified = new Set<SessionID>()
+    // Bumped by SessionPrompt.cancel so remaining cascade items that have not
+    // yet acquired ActorExecution are not started after Stop.
+    const cascadeEpochBySession = new Map<SessionID, number>()
 
     // Late-bind prefix-capture helper so SessionCheckpoint.tryStartCheckpointWriter
     // can call buildLLMRequestPrefix without forming a layer cycle
@@ -746,6 +760,8 @@ export const layer = Layer.effect(
       yield* elog.info("cancel", { sessionID })
       // Invalidate any delayed uncommitted-hint follow-up still waiting to claim.
       cancelPendingHints(sessionID)
+      // Invalidate remaining cascade items that have not yet acquired ActorExecution.
+      cascadeEpochBySession.set(sessionID, (cascadeEpochBySession.get(sessionID) ?? 0) + 1)
       const actors = yield* actorRegistry.listBySession(sessionID)
       const nonMain = actors.filter((actor) => actor.actorID !== "main")
       // Phase 1 — mark executions before interrupt (terminal handlers read this flag).
@@ -4956,7 +4972,10 @@ NOTE: At any point in time through this workflow you should feel free to ask the
                 yield* actorRegistry
                   .updateStatus(sessionID, lastUser.agentID!, { status: "idle", lastOutcome: "failure", lastError: "missing fork context" })
                   .pipe(Effect.ignore)
-                return "break" as const
+                // Propagate failure at the source so resume/send/runTurn share one
+                // terminal semantic (C07) — do not return a clean break that outer
+                // wrappers re-label as success.
+                return yield* Effect.fail(new Error("missing fork context"))
               }
               const ownNew = msgs.filter(
                 (m) => m.info.id > forkCtx.watermarkMsgID && m.info.agentID === lastUser.agentID,
@@ -6061,6 +6080,11 @@ NOTE: At any point in time through this workflow you should feel free to ask the
       sessionID: SessionID
       agentID: string
       assistantMessageID: MessageID
+      /**
+       * Cascade / concurrent actor resume: main may already be busy at the
+       * session status layer. Only the per-agent Runner admission applies.
+       */
+      allowSessionBusy?: boolean
     }) {
       const targetMsgs = yield* sessions.messages({ sessionID: input.sessionID, agentID: input.agentID })
       const target = targetMsgs.find((item) => item.info.id === input.assistantMessageID)
@@ -6077,7 +6101,10 @@ NOTE: At any point in time through this workflow you should feel free to ask the
       const runnerBusy = yield* state
         .assertNotBusy(input.sessionID, input.agentID)
         .pipe(Effect.exit, Effect.map((exit) => exit._tag === "Failure"))
-      const statusBusy = (yield* status.get(input.sessionID)).type !== "idle"
+      // Session status is main-slice busy; subagent resume must not be blocked
+      // by an already-accepted main Resume (cascade after main 202).
+      const statusBusy =
+        input.allowSessionBusy !== true && (yield* status.get(input.sessionID)).type !== "idle"
       if (runnerBusy || statusBusy) {
         const busy: ResumePlan = {
           action: "reject",
@@ -6287,12 +6314,255 @@ NOTE: At any point in time through this workflow you should feel free to ask the
       return
     })
 
+    /**
+     * Resume a subagent with the full actor execution lifecycle:
+     * ActorExecution acquire + runTurn (registry running/idle/outcome) +
+     * terminal parent notification. Session status may already be busy from
+     * main Resume; only the per-agent Runner admission applies.
+     */
+    const resumeActorBackground = Effect.fn("SessionPrompt.resumeActorBackground")(function* (input: ResumeTurnInput) {
+      const agentID = input.agentID ?? "main"
+      const candidates = yield* recovery({ sessionID: input.sessionID, agentID, allowBusy: true })
+      const candidate = candidates.find((item) => item.assistantMessageID === input.assistantMessageID)
+      if (candidate === undefined) {
+        return yield* Effect.fail(
+          new NotFoundError({
+            message: "No resumable interrupted turn found for assistant message " + input.assistantMessageID,
+          }),
+        )
+      }
+      if (input.model) {
+        yield* getModel(ProviderID.make(input.model.providerID), ModelID.make(input.model.modelID), input.sessionID)
+      }
+      const plan = yield* planResume({
+        sessionID: input.sessionID,
+        agentID,
+        assistantMessageID: input.assistantMessageID,
+        allowSessionBusy: true,
+      })
+      if (plan.action === "reject") return yield* Effect.fail(plan.error)
+
+      yield* Effect.acquireUseRelease(
+        executions.acquire(input.sessionID, agentID),
+        (execution) =>
+          Effect.gen(function* () {
+            yield* executions.attach(execution)
+            if (
+              input.cascadeEpoch !== undefined &&
+              (cascadeEpochBySession.get(input.sessionID) ?? 0) !== input.cascadeEpoch
+            ) {
+              return yield* Effect.fail(
+                new NotFoundError({ message: "Cascade cancelled before actor resume admission" }),
+              )
+            }
+            // Re-validate after exclusive acquire: a concurrent send may have
+            // completed a new turn while we waited for this slot.
+            const still = yield* recovery({ sessionID: input.sessionID, agentID, allowBusy: true })
+            if (!still.some((c) => c.assistantMessageID === input.assistantMessageID)) {
+              return yield* Effect.fail(
+                new NotFoundError({
+                  message: "No resumable interrupted turn found for assistant message " + input.assistantMessageID,
+                }),
+              )
+            }
+            input.onAdmitted?.()
+            let lastFinal: MessageV2.WithParts | undefined
+            const work = launchResume({
+              sessionID: input.sessionID,
+              agentID,
+              task_id: input.task_id,
+              titleLocale: input.titleLocale,
+              model: input.model,
+              plan,
+              // Join the Runner so runTurn can settle registry + notify on exit.
+              mode: "ensure",
+            }).pipe(
+              Effect.flatMap(() => lastAssistant(input.sessionID, agentID)),
+              Effect.tap((final) => {
+                lastFinal = final
+                return Effect.void
+              }),
+              Effect.flatMap((final) => {
+                if (final.info.role === "assistant" && final.info.error) {
+                  return Effect.die(new Error(sessionErrorText(final.info.error)))
+                }
+                return Effect.succeed(final)
+              }),
+            )
+            return yield* runTurn(
+              input.sessionID,
+              agentID,
+              work,
+              (exit) =>
+                Effect.gen(function* () {
+                  if (Exit.isFailure(exit) && Cause.hasInterruptsOnly(exit.cause)) return undefined
+                  const final = Exit.isSuccess(exit) ? exit.value : lastFinal
+                  if (!final || final.info.role !== "assistant") return undefined
+                  const text = assistantFinalText(final.info, final.parts)
+                  const structured = final.info.structured
+                  if (text === undefined && structured === undefined) return undefined
+                  const parsed = parseReturnHeader(text)
+                  yield* sessions.updateMessage({
+                    ...final.info,
+                    actorResult: {
+                      finalText: text,
+                      structured,
+                      ...(parsed.status ? { reportedStatus: parsed.status } : {}),
+                      ...(parsed.summary ? { reportedSummary: parsed.summary } : {}),
+                    },
+                  })
+                  return final.info.id
+                }),
+            ).pipe(
+              Effect.provideService(ActorRegistry.Service, actorRegistry),
+              Effect.onExit((exit) =>
+                Effect.gen(function* () {
+                  const final = Exit.isSuccess(exit) ? exit.value : lastFinal
+                  const text =
+                    final?.info.role === "assistant" ? assistantFinalText(final.info, final.parts) : undefined
+                  const parsed = parseReturnHeader(text)
+                  const status = Exit.isSuccess(exit)
+                    ? "completed"
+                    : Cause.hasInterruptsOnly(exit.cause)
+                      ? "cancelled"
+                      : "failed"
+                  const quiet = Boolean(execution.groupAbort)
+                  yield* notifyTerminal({
+                    sessionID: input.sessionID,
+                    actorID: agentID,
+                    source: "continuation",
+                    status,
+                    ...(quiet ? { wake: false as const } : {}),
+                    ...(status === "completed"
+                      ? { result: text ?? "(no output)", reportedStatus: parsed.status, reportedSummary: parsed.summary }
+                      : {}),
+                    ...(Exit.isFailure(exit) && status === "failed"
+                      ? {
+                          error: Cause.pretty(exit.cause),
+                          ...(text !== undefined ? { result: text } : {}),
+                          ...(parsed.status ? { reportedStatus: parsed.status } : {}),
+                          ...(parsed.summary ? { reportedSummary: parsed.summary } : {}),
+                        }
+                      : {}),
+                  })
+                }),
+              ),
+            )
+          }).pipe(Effect.uninterruptible),
+        (execution) => executions.release(execution),
+      )
+    })
+
+    /**
+     * Session Resume cascade: after main is accepted, resume same-session
+     * subagents that are registry-idle with recovery candidates. Best-effort —
+     * never fails the caller.
+     *
+     * Ownership: only registry-`idle` rows are unclaimed. `running`/`pending`
+     * stay claimed in the shared DB — never auto-takeover (local ActorExecution
+     * absence and abandon-window liveness are not owner-exit proofs).
+     */
+    const cascadeSubagentResume = Effect.fn("SessionPrompt.cascadeSubagentResume")(function* (
+      sessionID: SessionID,
+      epochArg?: number,
+    ) {
+      // Prefer the epoch bound at the original Resume acceptance (C02). Sampling
+      // here would adopt a post-Stop epoch as valid for an older Resume.
+      const epoch = epochArg ?? cascadeEpochBySession.get(sessionID) ?? 0
+      const actors = yield* actorRegistry.listBySession(sessionID)
+      const outcomes: { actorID: string; status: "resumed" | "skipped" | "failed"; reason?: string }[] = []
+      for (const actor of actors) {
+        if (actor.actorID === "main") continue
+        if (actor.mode === "peer") continue
+        if ((cascadeEpochBySession.get(sessionID) ?? 0) !== epoch) {
+          outcomes.push({ actorID: actor.actorID, status: "skipped", reason: "cascade-cancelled" })
+          continue
+        }
+        // Ownership: only registry-idle rows are unclaimed. running/pending stay
+        // claimed in the shared DB — do not auto-takeover even if this process
+        // has no ActorExecution or abandon-window liveness says idle.
+        if (actor.status === "running" || actor.status === "pending") {
+          outcomes.push({ actorID: actor.actorID, status: "skipped", reason: "live" })
+          continue
+        }
+        const liveExecution = yield* executions.current(sessionID, actor.actorID)
+        const agentBusy = yield* state
+          .assertNotBusy(sessionID, actor.actorID)
+          .pipe(Effect.exit, Effect.map((exit) => exit._tag === "Failure"))
+        if (liveExecution || agentBusy) {
+          outcomes.push({ actorID: actor.actorID, status: "skipped", reason: "live" })
+          continue
+        }
+        const candidates = yield* recovery({ sessionID, agentID: actor.actorID, allowBusy: true })
+        if (candidates.length === 0) {
+          outcomes.push({ actorID: actor.actorID, status: "skipped", reason: "no-recovery-candidate" })
+          continue
+        }
+        const latest = candidates[candidates.length - 1]
+        const admitted = yield* Deferred.make<void>()
+        const fiber = yield* resumeActorBackground({
+          sessionID,
+          assistantMessageID: latest.assistantMessageID,
+          agentID: actor.actorID,
+          cascadeEpoch: epoch,
+          onAdmitted: () => {
+            void Effect.runPromise(Deferred.succeed(admitted, undefined))
+          },
+        }).pipe(
+          Effect.catchCause(() => Effect.void),
+          Effect.forkIn(scope),
+        )
+        // Wait for exclusive admission. On timeout, interrupt so we never report
+        // not-admitted while the fiber later starts work (C08).
+        const admittedOk = yield* Deferred.await(admitted).pipe(
+          Effect.timeout("8 seconds"),
+          Effect.as(true),
+          Effect.catch(() =>
+            Fiber.interrupt(fiber).pipe(
+              Effect.as(false),
+              Effect.catch(() => Effect.succeed(false)),
+            ),
+          ),
+        )
+        if (!admittedOk) {
+          outcomes.push({ actorID: actor.actorID, status: "failed", reason: "not-admitted" })
+          elog.info("subagent-resume-cascade", {
+            sessionID,
+            actorID: actor.actorID,
+            status: "failed",
+            reason: "not-admitted",
+          })
+          continue
+        }
+        outcomes.push({ actorID: actor.actorID, status: "resumed" })
+        elog.info("subagent-resume-cascade", {
+          sessionID,
+          actorID: actor.actorID,
+          status: "resumed",
+        })
+      }
+      return outcomes
+    })
+
+    /**
+     * Main Resume + cascade, with the cancel epoch bound at acceptance (C02):
+     * Stop after main is accepted invalidates remaining sub resumes from THIS
+     * acceptance, even if cascade has not started yet.
+     */
+    const resumeMainCascading = Effect.fn("SessionPrompt.resumeMainCascading")(function* (input: ResumeTurnInput) {
+      const epoch = cascadeEpochBySession.get(input.sessionID) ?? 0
+      yield* resumeBackground({ ...input, agentID: input.agentID ?? "main" })
+      yield* cascadeSubagentResume(input.sessionID, epoch).pipe(Effect.ignore)
+    })
+
     const impl = Service.of({
       cancel,
       prompt,
       recovery,
       resume,
       resumeBackground,
+      cascadeSubagentResume,
+      resumeMainCascading,
       loop,
       shell,
       command,

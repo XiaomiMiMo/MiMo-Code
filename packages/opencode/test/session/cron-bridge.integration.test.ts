@@ -65,6 +65,8 @@ const makeCaptureLayer = (captured: { value: CapturedPrompt[] }) =>
       recovery: () => Effect.succeed([]),
       resume: () => Effect.die("resume not expected in cron-bridge test"),
       resumeBackground: () => Effect.die("resumeBackground not expected in cron-bridge test"),
+      cascadeSubagentResume: () => Effect.succeed([]),
+      resumeMainCascading: () => Effect.void,
       loop: () => Effect.die("loop not expected in cron-bridge test"),
       shell: () => Effect.die("shell not expected in cron-bridge test"),
       command: () => Effect.die("command not expected in cron-bridge test"),

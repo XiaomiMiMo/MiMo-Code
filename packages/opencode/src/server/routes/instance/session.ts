@@ -1088,14 +1088,25 @@ export const SessionRoutes = lazy(() =>
         void runRequest(
           "SessionRoutes.resume",
           c,
-          SessionPrompt.Service.use((svc) => svc.resumeBackground({
-            sessionID: params.sessionID,
-            assistantMessageID: params.assistantMessageID,
-            agentID: query.agentID,
-            task_id: query.task_id,
-            titleLocale: query.titleLocale,
-            ...(query.modelProviderID && query.modelID ? { model: { providerID: query.modelProviderID, modelID: query.modelID } } : {}),
-          })),
+          SessionPrompt.Service.use((svc) =>
+            (query.agentID === undefined || query.agentID === "main")
+              ? svc.resumeMainCascading({
+                  sessionID: params.sessionID,
+                  assistantMessageID: params.assistantMessageID,
+                  agentID: query.agentID,
+                  task_id: query.task_id,
+                  titleLocale: query.titleLocale,
+                  ...(query.modelProviderID && query.modelID ? { model: { providerID: query.modelProviderID, modelID: query.modelID } } : {}),
+                })
+              : svc.resumeBackground({
+                  sessionID: params.sessionID,
+                  assistantMessageID: params.assistantMessageID,
+                  agentID: query.agentID,
+                  task_id: query.task_id,
+                  titleLocale: query.titleLocale,
+                  ...(query.modelProviderID && query.modelID ? { model: { providerID: query.modelProviderID, modelID: query.modelID } } : {}),
+                }),
+          ),
         ).catch((error) => {
           log.error("session resume failed", { sessionID: params.sessionID, error })
           const failure =
