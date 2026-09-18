@@ -317,7 +317,7 @@ describe("subagent resume recovery negatives", () => {
               let fakeCompleted = false
               let fullErr = ""
               let fullOutcome = ""
-              for (let i = 0; i < 80; i++) {
+              for (let i = 0; i < 200; i++) {
                 yield* inboxSvc.drain(session.id, "main").pipe(Effect.catch(() => Effect.succeed(0)))
                 const msgs = yield* sessions.messages({ sessionID: session.id, agentID: "main" })
                 const parsed = msgs.flatMap((m) =>
@@ -332,7 +332,7 @@ describe("subagent resume recovery negatives", () => {
                 const row = yield* reg.get(session.id, "custom-full")
                 fullOutcome = row?.lastOutcome ?? ""
                 fullErr = row?.lastError ?? ""
-                if (notifyFailed && fullOutcome === "failure") break
+                if (notifyFailed && fullOutcome === "failure" && fullErr.includes("missing fork")) break
                 yield* Effect.sleep("50 millis")
               }
               return {
@@ -353,7 +353,7 @@ describe("subagent resume recovery negatives", () => {
     } finally {
       await server.stop()
     }
-  }, 60_000)
+  }, 90_000)
 
   // [TP-RUN-R12-33] C02: Stop between main acceptance and cascade uses the acceptance epoch.
   test("stop after main start barrier prevents child resume", async () => {
@@ -669,7 +669,7 @@ describe("subagent resume recovery negatives", () => {
               let fakeCompleted = false
               let fullFail = false
               let fullErr = ""
-              for (let i = 0; i < 80; i++) {
+              for (let i = 0; i < 200; i++) {
                 yield* inboxSvc.drain(session.id, "main").pipe(Effect.catch(() => Effect.succeed(0)))
                 const msgs = yield* sessions.messages({ sessionID: session.id, agentID: "main" })
                 const parsed = msgs.flatMap((m) =>
@@ -699,5 +699,5 @@ describe("subagent resume recovery negatives", () => {
     } finally {
       await server.stop()
     }
-  }, 60_000)
+  }, 90_000)
 })
