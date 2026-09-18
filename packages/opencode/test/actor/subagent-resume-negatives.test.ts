@@ -268,6 +268,19 @@ describe("subagent resume recovery negatives", () => {
               const reg = yield* ActorRegistry.Service
               const inbox = yield* Inbox.Service
               const session = yield* sessions.create({ title: "missing fork send" })
+              // Main slice needs a model-bearing message so inbox.drain can seed
+              // the parent notification into a user turn (same as production).
+              const mainUser = yield* sessions.updateMessage({
+                id: MessageID.ascending(),
+                role: "user" as const,
+                sessionID: session.id,
+                agent: "build",
+                model: modelRef,
+                time: { created: Date.now() },
+              })
+              yield* sessions.updateMessage(
+                incompleteAsst({ sessionID: session.id, parentID: mainUser.id, agent: "build", cwd: tmp.path }),
+              )
               yield* reg.register({
                 sessionID: session.id,
                 actorID: "custom-full",
@@ -640,6 +653,19 @@ describe("subagent resume recovery negatives", () => {
               const prompt = yield* SessionPrompt.Service
               const reg = yield* ActorRegistry.Service
               const session = yield* sessions.create({ title: "missing fork resume" })
+              // Main slice needs a model-bearing message so inbox.drain can seed
+              // the parent notification into a user turn (same as production).
+              const mainUser = yield* sessions.updateMessage({
+                id: MessageID.ascending(),
+                role: "user" as const,
+                sessionID: session.id,
+                agent: "build",
+                model: modelRef,
+                time: { created: Date.now() },
+              })
+              yield* sessions.updateMessage(
+                incompleteAsst({ sessionID: session.id, parentID: mainUser.id, agent: "build", cwd: tmp.path }),
+              )
               yield* reg.register({
                 sessionID: session.id,
                 actorID: "custom-full",
