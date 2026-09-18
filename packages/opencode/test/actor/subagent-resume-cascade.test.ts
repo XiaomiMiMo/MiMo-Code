@@ -88,7 +88,7 @@ describe("cascadeSubagentResume", () => {
               status: "idle",
               lastOutcome: "failure",
               lastError:
-                'Process restarted; settled by abandon threshold. Not final — actor send "continue" or session Resume can recover.',
+              'Process restarted; settled by abandon threshold. Not final — actor send "continue" can recover.',
             })
             const e1User = yield* sessions.updateMessage({
               id: MessageID.ascending(),

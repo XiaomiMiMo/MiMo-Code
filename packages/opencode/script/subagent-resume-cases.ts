@@ -217,7 +217,7 @@ const outcome = await Instance.provide({
             status: "idle",
             lastOutcome: "failure",
             lastError:
-              'Process restarted while actor was active; settled by abandon threshold. Not final — actor send "continue" or session Resume can recover.',
+              'Process restarted while actor was active; settled by abandon threshold. Not final — actor send "continue" can recover.',
           })
           const zUser = yield* sessions.updateMessage({
             id: MessageID.ascending(),
@@ -512,11 +512,11 @@ const outcome = await Instance.provide({
           const settleHint =
             !!zombieBefore?.lastError?.includes("Not final") &&
             !!zombieBefore.lastError.includes("continue") &&
-            !!zombieBefore.lastError.includes("session Resume")
+            !zombieBefore.lastError.includes("session Resume")
           record({
             id: "M1",
-            title: "abandon-settle error names continue/resume recovery",
-            expect: "contains Not final + continue",
+            title: "abandon-settle error names send continue (not session Resume)",
+            expect: "Not final + continue, no session Resume",
             actual: String(zombieBefore?.lastError ?? ""),
             pass: settleHint,
           })
